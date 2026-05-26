@@ -1,10 +1,10 @@
-"""Tests for :mod:`forze_fastapi.openapi.docs`."""
+"""Tests for :mod:`forze_fastapi.docs`."""
 
 from unittest.mock import MagicMock
 
 from starlette.requests import Request
 
-from forze_fastapi.openapi.docs import _is_valid_dns, register_scalar_docs, scalar_docs
+from forze_fastapi.docs import _is_valid_dns, register_scalar_docs, scalar_docs
 
 
 def test_is_valid_dns() -> None:

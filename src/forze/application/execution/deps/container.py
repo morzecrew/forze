@@ -7,8 +7,8 @@ from typing import TYPE_CHECKING, Any, Iterator, Mapping, Self, cast, final
 import attrs
 
 from forze.application._logger import logger
-from forze.application.contracts.base import DepKey
-from forze.application.execution.tracing.buffer import RuntimeTrace
+from forze.application.contracts.base import DepKey, BaseSpec
+from forze.application.execution.tracing import RuntimeTrace
 from forze.base.descriptors import hybridmethod
 from forze.base.exceptions import exc
 from forze.base.primitives import StrKey
@@ -338,7 +338,7 @@ class Deps[K: StrKey]:
         self,
         ctx: ExecutionContext,
         key: DepKey[Any],
-        spec: object,
+        spec: BaseSpec,
         *,
         route: K | None = None,
     ) -> Any:

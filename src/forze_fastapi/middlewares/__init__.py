@@ -1,11 +1,13 @@
-from .context import ContextBindingMiddleware
 from .custom_headers import CustomHeadersMiddleware
+from .invocation import InvocationMetadataMiddleware
 from .logging import LoggingMiddleware
+from .security import SecurityContextMiddleware
 
 # ----------------------- #
 
 __all__ = [
-    "ContextBindingMiddleware",
     "LoggingMiddleware",
     "CustomHeadersMiddleware",
+    "SecurityContextMiddleware",
+    "InvocationMetadataMiddleware",
 ]

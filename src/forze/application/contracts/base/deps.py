@@ -89,7 +89,7 @@ class ConvenientDeps:
     def _resolve_configurable(
         self,
         key: DepKey[Any],
-        spec: object,
+        spec: BaseSpec,
         *,
         route: StrKey | None = None,
     ) -> Any:
