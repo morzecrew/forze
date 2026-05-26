@@ -4,52 +4,88 @@ require_rabbitmq()
 
 # ....................... #
 
-from functools import partial
-from typing import Any
+from typing import Any, Mapping
 
 from aio_pika import exceptions as aio_pika_errors
 
-from forze.base.errors import CoreError, InfrastructureError, error_handler, handled
+from forze.base.conformity import static_fn_conformity
+from forze.base.exceptions import (
+    CoreException,
+    ExceptionInterceptor,
+    ExceptionMapper,
+    default_chain_exc_mapper,
+)
 
 # ----------------------- #
 
 
-@error_handler
-def _rabbitmq_eh(e: Exception, op: str, **kwargs: Any) -> CoreError:
-    match e:
-        case CoreError():
-            return e
+@static_fn_conformity(ExceptionMapper)  # type: ignore[type-abstract]
+def _rabbitmq_eh(
+    exc: BaseException,
+    *,
+    site: str,
+    details: Mapping[str, Any] | None = None,
+) -> CoreException | None:
+    match exc:
+        case CoreException():
+            return exc
 
         case aio_pika_errors.AuthenticationError():
-            return InfrastructureError("RabbitMQ authentication failed.")
+            return CoreException.infrastructure(
+                "RabbitMQ authentication failed.",
+                details=details,
+            )
 
         case aio_pika_errors.IncompatibleProtocolError():
-            return InfrastructureError("RabbitMQ protocol mismatch.")
+            return CoreException.infrastructure(
+                "RabbitMQ protocol mismatch.",
+                details=details,
+            )
 
         case aio_pika_errors.AMQPConnectionError():
-            return InfrastructureError("RabbitMQ connection error.")
+            return CoreException.infrastructure(
+                "RabbitMQ connection error.",
+                details=details,
+            )
 
         case aio_pika_errors.ChannelInvalidStateError():
-            return InfrastructureError("RabbitMQ channel is in an invalid state.")
+            return CoreException.infrastructure(
+                "RabbitMQ channel is in an invalid state.",
+                details=details,
+            )
 
         case aio_pika_errors.AMQPChannelError():
-            return InfrastructureError("RabbitMQ channel error.")
+            return CoreException.infrastructure(
+                "RabbitMQ channel error.",
+                details=details,
+            )
 
         case aio_pika_errors.PublishError() | aio_pika_errors.DeliveryError():
-            return InfrastructureError("RabbitMQ message delivery failed.")
+            return CoreException.infrastructure(
+                "RabbitMQ message delivery failed.",
+                details=details,
+            )
 
         case aio_pika_errors.MessageProcessError():
-            return InfrastructureError("RabbitMQ message processing failed.")
+            return CoreException.infrastructure(
+                "RabbitMQ message processing failed.",
+                details=details,
+            )
 
         case TimeoutError():
-            return InfrastructureError("RabbitMQ operation timed out.")
+            return CoreException.infrastructure(
+                "RabbitMQ operation timed out.",
+                details=details,
+            )
 
         case _:
-            return InfrastructureError(
-                f"An error occurred while executing RabbitMQ operation {op}: {e}"
+            return CoreException.infrastructure(
+                f"An error occurred while executing RabbitMQ operation {site}: {exc}",
+                details=details,
             )
 
 
-# ----------------------- #
+# ....................... #
 
-rabbitmq_handled = partial(handled, _rabbitmq_eh)
+_rabbitmq_chain = default_chain_exc_mapper.chain(_rabbitmq_eh)
+exc_interceptor = ExceptionInterceptor(mapper=_rabbitmq_chain)

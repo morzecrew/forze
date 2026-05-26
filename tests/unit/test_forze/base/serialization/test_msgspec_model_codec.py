@@ -7,7 +7,6 @@ import msgspec
 import pytest
 from pydantic import BaseModel
 
-from forze.base.errors import CoreError
 from forze.base.serialization import MsgspecRecordMappingCodec
 from forze.base.serialization.msgspec import (
     msgspec_decode_json_bytes,
@@ -93,7 +92,9 @@ def test_decode_mapping_many_batched_matches_msgspec_validate_many_batched() -> 
     data = [{"a": i} for i in range(5)]
 
     actual_chunks = list(codec.decode_mapping_many_batched(data, batch_size=2))
-    expected_chunks = list(msgspec_validate_many_batched(SampleStruct, data, batch_size=2))
+    expected_chunks = list(
+        msgspec_validate_many_batched(SampleStruct, data, batch_size=2)
+    )
 
     assert _chunk_lengths(actual_chunks) == [2, 2, 1]
     assert _chunk_lengths(actual_chunks) == _chunk_lengths(expected_chunks)
@@ -141,7 +142,7 @@ def test_encode_mapping_rejects_unset_exclusion() -> None:
     codec = MsgspecRecordMappingCodec(SampleStruct)
 
     with pytest.raises(
-        CoreError,
+        exc.internal,
         match="msgspec codec does not support exclude=\\{'unset': True\\}",
     ):
         codec.encode_mapping(SampleStruct(a=1), exclude={"unset": True})
@@ -189,7 +190,7 @@ def test_encode_json_bytes_rejects_unset_exclusion() -> None:
     codec = MsgspecRecordMappingCodec(SampleStruct)
 
     with pytest.raises(
-        CoreError,
+        exc.internal,
         match="msgspec codec does not support exclude=\\{'unset': True\\}",
     ):
         codec.encode_json_bytes(SampleStruct(a=1), exclude={"unset": True})

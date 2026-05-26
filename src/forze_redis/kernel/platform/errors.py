@@ -1,4 +1,4 @@
-"""Redis error handler that maps ``redis-py`` exceptions to :class:`~forze.base.errors.CoreError` subtypes."""
+"""Redis error handler that maps ``redis-py`` exceptions to :class:`~forze.base.errors.exc.internal` subtypes."""
 
 from forze_redis._compat import require_redis
 
@@ -6,71 +6,110 @@ require_redis()
 
 # ....................... #
 
-from functools import partial
-from typing import Any
+from typing import Any, Mapping
 
 from redis import exceptions as redis_errors
 
-from forze.base.errors import CoreError, InfrastructureError, error_handler, handled
+from forze.base.conformity import static_fn_conformity
+from forze.base.exceptions import (
+    CoreException,
+    ExceptionInterceptor,
+    ExceptionMapper,
+    default_chain_exc_mapper,
+)
 
 # ----------------------- #
 
 
-@error_handler
-def _redis_eh(e: Exception, op: str, **kwargs: Any) -> CoreError:
-    """Convert a ``redis-py`` exception into an :class:`~forze.base.errors.InfrastructureError`.
+@static_fn_conformity(ExceptionMapper)  # type: ignore[type-abstract]
+def _redis_eh(
+    exc: BaseException,
+    *,
+    site: str,
+    details: Mapping[str, Any] | None = None,
+) -> CoreException | None:
+    """Convert a ``redis-py`` exception into an :class:`~forze.base.exceptions.CoreException`.
 
     Connection, timeout, authentication, and data errors are mapped to specific
     messages. Unrecognised exceptions fall back to a generic infrastructure error
     that includes the operation name.
     """
 
-    match e:
-        case CoreError():
-            return e
+    match exc:
+        case CoreException():
+            return exc
 
         # --- infra / availability ---
         # ``AuthenticationError`` and ``BusyLoadingError`` subclass
         # ``ConnectionError``; match them before the broad connection case.
         case redis_errors.AuthenticationError():
-            return InfrastructureError("Redis authentication failed.")
+            return CoreException.infrastructure(
+                "Redis authentication failed.",
+                details=details,
+            )
 
         case redis_errors.BusyLoadingError():
-            return InfrastructureError("Redis is loading data, try again later.")
+            return CoreException.infrastructure(
+                "Redis is loading data, try again later.",
+                details=details,
+            )
 
         case redis_errors.ConnectionError():
-            return InfrastructureError("Redis connection error.")
+            return CoreException.infrastructure(
+                "Redis connection error.",
+                details=details,
+            )
 
         case redis_errors.TimeoutError():
-            return InfrastructureError("Redis timeout.")
+            return CoreException.infrastructure(
+                "Redis timeout.",
+                details=details,
+            )
 
         # ``ReadOnlyError`` subclasses ``ResponseError``; handle before the
         # generic response branch.
         case redis_errors.ReadOnlyError():
-            return InfrastructureError("Redis instance is read-only.")
+            return CoreException.infrastructure(
+                "Redis instance is read-only.",
+                details=details,
+            )
 
         # --- semantic / client-side errors ---
         case redis_errors.DataError():
-            return InfrastructureError("Invalid Redis command arguments.")
+            return CoreException.infrastructure(
+                "Invalid Redis command arguments.",
+                details=details,
+            )
 
         case redis_errors.ResponseError() as re:
             msg = str(re)
 
             if "WRONGTYPE" in msg:
-                return InfrastructureError("Redis key has wrong type.")
+                return CoreException.infrastructure(
+                    "Redis key has wrong type.",
+                    details=details,
+                )
 
             if "BUSY" in msg:
-                return InfrastructureError("Redis resource is busy.")
+                return CoreException.infrastructure(
+                    "Redis resource is busy.",
+                    details=details,
+                )
 
-            return InfrastructureError(f"Redis response error: {msg}")
+            return CoreException.infrastructure(
+                f"Redis response error: {msg}",
+                details=details,
+            )
 
         # --- fallback ---
         case _:
-            return InfrastructureError(
-                f"An error occurred while executing Redis operation {op}: {e}"
+            return CoreException.infrastructure(
+                f"An error occurred while executing Redis operation {site}: {exc}",
+                details=details,
             )
 
 
-# ----------------------- #
+# ....................... #
 
-redis_handled = partial(handled, _redis_eh)
+_redis_chain = default_chain_exc_mapper.chain(_redis_eh)
+exc_interceptor = ExceptionInterceptor(mapper=_redis_chain)

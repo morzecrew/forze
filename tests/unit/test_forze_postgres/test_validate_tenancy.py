@@ -2,8 +2,6 @@
 
 import pytest
 
-from forze.base.errors import CoreError
-
 from forze_postgres.kernel.validate_tenancy import (
     PostgresTenancyRouteSpec,
     derive_postgres_tenant_isolation_mode,
@@ -54,7 +52,7 @@ def test_derive_mode_database() -> None:
 
 
 def test_routed_without_partition_key_fails() -> None:
-    with pytest.raises(CoreError, match="postgres_tenancy_validation_failed"):
+    with pytest.raises(exc.internal, match="postgres_tenancy_validation_failed"):
         validate_postgres_tenancy_wiring(
             client_is_routed=True,
             introspector_cache_partition_key_set=False,

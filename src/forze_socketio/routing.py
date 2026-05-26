@@ -13,7 +13,7 @@ from socketio.async_server import AsyncServer
 
 from forze.application.contracts.execution import Handler
 from forze.application.execution import ExecutionContext
-from forze.base.errors import CoreError
+from forze.base.exceptions import exc
 from forze.base.primitives import StrKey
 
 # ----------------------- #
@@ -153,10 +153,10 @@ class SocketIONamespaceRouter:
 
         :param route: Event mapping configuration.
         :returns: Current router for chaining.
-        :raises CoreError: If the event is already registered.
+        :raises exc.internal: If the event is already registered.
         """
         if route.event in self.__commands:
-            raise CoreError(
+            raise exc.internal(
                 f"Socket.IO event `{route.event}` is already registered for namespace `{self.namespace}`"
             )
 
@@ -275,10 +275,10 @@ class ForzeSocketIOAdapter:
 
         :param router: Namespace router with command registrations.
         :returns: Current adapter for chaining.
-        :raises CoreError: If namespace was already attached.
+        :raises exc.internal: If namespace was already attached.
         """
         if router.namespace in self.__routers:
-            raise CoreError(
+            raise exc.internal(
                 f"Socket.IO namespace `{router.namespace}` is already attached"
             )
 

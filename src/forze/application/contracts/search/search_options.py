@@ -7,7 +7,7 @@ from forze.application.contracts.search.specs import (
     HubSearchSpec,
 )
 from forze.application.contracts.search.types import SearchOptions
-from forze.base.errors import CoreError
+from forze.base.exceptions import exc
 
 from ..._logger import logger
 
@@ -154,7 +154,7 @@ def _apply_member_weight_overrides(
             w = float(v)
 
             if w < 0 or w > 1:
-                raise CoreError(
+                raise exc.internal(
                     f"Member weight for {scope} member {k!r} must be between 0.0 and 1.0.",
                 )
 

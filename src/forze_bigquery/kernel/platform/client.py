@@ -14,10 +14,10 @@ from aiohttp import ClientSession
 from gcloud.aio.bigquery import Job, Table, query_response_to_dict
 from pydantic import BaseModel
 
-from forze.base.errors import CoreError, InfrastructureError
+from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
 
-from .errors import bigquery_handled
+from .errors import exc_interceptor
 from .port import BigQueryClientPort
 from .query import build_sync_query_request, params_to_query_parameters
 from .value_objects import (
@@ -29,7 +29,8 @@ from .value_objects import (
 # ----------------------- #
 
 T = TypeVar("T")
-_READ_RETRY_EXC = (InfrastructureError, TimeoutError, OSError, ConnectionError)
+
+_READ_RETRY_EXC = (TimeoutError, OSError, ConnectionError)
 _MAX_INSERT_ERRORS = 50
 
 # ....................... #
@@ -108,7 +109,7 @@ class BigQueryClient(BigQueryClientPort):
 
     def __require_project_id(self) -> str:
         if self.__project_id is None:
-            raise CoreError("BigQuery client is not initialized")
+            raise exc.internal("BigQuery client is not initialized")
 
         return self.__project_id
 
@@ -116,7 +117,7 @@ class BigQueryClient(BigQueryClientPort):
 
     def __require_session(self) -> Any:
         if self.__session is None:
-            raise CoreError("BigQuery client is not initialized")
+            raise exc.internal("BigQuery client is not initialized")
 
         return self.__session
 
@@ -145,7 +146,7 @@ class BigQueryClient(BigQueryClientPort):
                 await asyncio.sleep(base * (2**i))
 
         if last is None:
-            raise CoreError("Last exception is None")
+            raise exc.internal("Last exception is None")
 
         raise last
 
@@ -261,20 +262,20 @@ class BigQueryClient(BigQueryClientPort):
                 errors = status.get("status", {}).get("errors")
 
                 if errors:
-                    raise CoreError(f"BigQuery job failed: {errors!r}")
+                    raise exc.internal(f"BigQuery job failed: {errors!r}")
 
                 return
 
             if state in {"FAILED", "CANCELLED"}:
-                raise CoreError(f"BigQuery job ended with state {state!r}")
+                raise exc.internal(f"BigQuery job ended with state {state!r}")
 
             await asyncio.sleep(poll_interval)
 
-        raise CoreError("BigQuery job polling timed out.")
+        raise exc.internal("BigQuery job polling timed out.")
 
     # ....................... #
 
-    @bigquery_handled("bigquery.run_query")  # type: ignore[untyped-decorator]
+    @exc_interceptor.coroutine("bigquery.run_query")  # type: ignore[untyped-decorator]
     async def run_query(
         self,
         sql: str,
@@ -329,7 +330,7 @@ class BigQueryClient(BigQueryClientPort):
             job_id: str | None = job_ref.get("jobId")
 
             if not job_id:
-                raise CoreError("BigQuery query did not return a job id.")
+                raise exc.internal("BigQuery query did not return a job id.")
 
             await self.__poll_job_done(job_id, timeout=timeout_sec)
 
@@ -344,7 +345,7 @@ class BigQueryClient(BigQueryClientPort):
 
     # ....................... #
 
-    @bigquery_handled("bigquery.run_query_all_pages")  # type: ignore[untyped-decorator]
+    @exc_interceptor.coroutine("bigquery.run_query_all_pages")  # type: ignore[untyped-decorator]
     async def run_query_all_pages(
         self,
         sql: str,
@@ -356,7 +357,7 @@ class BigQueryClient(BigQueryClientPort):
         fetch_batch_size: int = 2000,
     ) -> list[JsonDict]:
         if fetch_batch_size < 1:
-            raise CoreError("fetch_batch_size must be >= 1")
+            raise exc.internal("fetch_batch_size must be >= 1")
 
         async def _run() -> list[JsonDict]:
             all_rows: list[JsonDict] = []
@@ -386,7 +387,7 @@ class BigQueryClient(BigQueryClientPort):
 
     # ....................... #
 
-    @bigquery_handled("bigquery.insert_rows")  # type: ignore[untyped-decorator]
+    @exc_interceptor.coroutine("bigquery.insert_rows")  # type: ignore[untyped-decorator]
     async def insert_rows(
         self,
         dataset: str,
@@ -439,7 +440,7 @@ class BigQueryClient(BigQueryClientPort):
                     all_errors.extend(insert_errors[:remaining])
 
         if all_errors and accepted_total == 0:
-            raise CoreError(f"BigQuery insert failed: {all_errors!r}")
+            raise exc.internal(f"BigQuery insert failed: {all_errors!r}")
 
         return BigQueryInsertResult(
             accepted=accepted_total,

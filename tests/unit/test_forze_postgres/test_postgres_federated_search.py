@@ -16,7 +16,6 @@ from forze.application.contracts.search import (
     SearchSpec,
 )
 from forze.application.coordinators import SearchResultSnapshotCoordinator
-from forze.base.errors import CoreError
 from forze_postgres.adapters.search.federated import (
     PostgresFederatedSearchAdapter,
 )
@@ -86,7 +85,7 @@ def test_weighted_rrf_skips_non_positive_weight_leg() -> None:
 
 
 def test_validate_postgres_federated_search_conf_requires_two_members() -> None:
-    with pytest.raises(CoreError, match="at least two"):
+    with pytest.raises(exc.internal, match="at least two"):
         validate_postgres_federated_search_conf(
             {
                 "members": {
@@ -262,9 +261,7 @@ async def test_federated_search_pagination_on_merged_pool() -> None:
         rrf_k=60,
         rrf_per_leg_limit=10,
     )
-    page = await adapter.search_page(
-        "q", pagination={"offset": 2, "limit": 2}
-    )
+    page = await adapter.search_page("q", pagination={"offset": 2, "limit": 2})
     assert page.count == 6
     assert len(page.hits) == 2
 
@@ -331,12 +328,12 @@ async def test_federated_search_with_cursor_is_not_implemented() -> None:
         federated_spec=_fed(),
         legs=(("a", MagicMock()), ("b", MagicMock())),
     )
-    with pytest.raises(CoreError, match="search_cursor"):
+    with pytest.raises(exc.internal, match="search_cursor"):
         await adapter.search_cursor("q")
 
 
 def test_federated_adapter_rejects_leg_count_mismatch() -> None:
-    with pytest.raises(CoreError, match="match.*members length"):
+    with pytest.raises(exc.internal, match="match.*members length"):
         PostgresFederatedSearchAdapter(
             federated_spec=_fed(),
             legs=(("a", MagicMock()),),
@@ -346,7 +343,7 @@ def test_federated_adapter_rejects_leg_count_mismatch() -> None:
 def test_federated_adapter_rejects_leg_name_mismatch() -> None:
     pa = MagicMock()
     pb = MagicMock()
-    with pytest.raises(CoreError, match="does not match SearchSpec.name"):
+    with pytest.raises(exc.internal, match="does not match SearchSpec.name"):
         PostgresFederatedSearchAdapter(
             federated_spec=_fed(),
             legs=(("wrong", pa), ("b", pb)),
@@ -359,7 +356,7 @@ async def test_federated_search_rejects_return_fields() -> None:
         federated_spec=_fed(),
         legs=(("a", MagicMock()), ("b", MagicMock())),
     )
-    with pytest.raises(CoreError, match="project_search"):
+    with pytest.raises(exc.internal, match="project_search"):
         await adapter.project_search(("id",), "q")
 
 
@@ -471,7 +468,7 @@ def test_configurable_federated_search_member_missing_in_config() -> None:
             },
         },
     )
-    with pytest.raises(CoreError, match="Member 'a' not found"):
+    with pytest.raises(exc.internal, match="Member 'a' not found"):
         factory(_federated_exec_context(), _fed())
 
 
@@ -480,7 +477,7 @@ def test_configurable_federated_search_rejects_unknown_engine() -> None:
     members = dict(cfg["members"])
     members["a"] = {**members["a"], "engine": "unknown"}
     factory = ConfigurablePostgresFederatedSearch(config={"members": members})
-    with pytest.raises(CoreError, match="not supported"):
+    with pytest.raises(exc.internal, match="not supported"):
         factory(_federated_exec_context(), _fed())
 
 
@@ -488,7 +485,7 @@ def test_configurable_federated_search_fts_requires_groups() -> None:
     cfg = _two_member_pgroonga_config()
     members = {k: {**v, "engine": "fts"} for k, v in dict(cfg["members"]).items()}
     factory = ConfigurablePostgresFederatedSearch(config={"members": members})
-    with pytest.raises(CoreError, match="fts_groups"):
+    with pytest.raises(exc.internal, match="fts_groups"):
         factory(_federated_exec_context(), _fed())
 
 
@@ -559,7 +556,7 @@ def test_configurable_federated_search_hub_member_requires_embedded_hub_config()
             },
         },
     )
-    with pytest.raises(CoreError, match="'hub' and 'members'"):
+    with pytest.raises(exc.internal, match="'hub' and 'members'"):
         factory(_federated_exec_context(), _fed_hub_and_flat())
 
 
@@ -591,5 +588,5 @@ def test_configurable_federated_search_searchspec_rejects_hub_shaped_config() ->
         },
     }
     factory = ConfigurablePostgresFederatedSearch(config=cfg)
-    with pytest.raises(CoreError, match="looks like an embedded hub"):
+    with pytest.raises(exc.internal, match="looks like an embedded hub"):
         factory(_federated_exec_context(), _fed())

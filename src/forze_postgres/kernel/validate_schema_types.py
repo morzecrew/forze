@@ -9,7 +9,7 @@ from uuid import UUID
 from pydantic import BaseModel
 from pydantic.fields import FieldInfo
 
-from forze.base.errors import CoreError
+from forze.base.exceptions import exc
 from forze_postgres.kernel.introspect.types import PostgresType
 
 # ----------------------- #
@@ -118,7 +118,7 @@ def validate_field_type_compatibility(
         if pg_t.is_array:
             elem_ok = actual in expected
             if not elem_ok:
-                raise CoreError(
+                raise exc.internal(
                     f"Postgres schema validation failed for {label!r}: "
                     f"field {name!r} array element type {actual!r} "
                     f"is incompatible with annotation {field.annotation!r}.",
@@ -134,7 +134,7 @@ def validate_field_type_compatibility(
             continue
 
         if actual not in expected:
-            raise CoreError(
+            raise exc.internal(
                 f"Postgres schema validation failed for {label!r}: "
                 f"field {name!r} column type {actual!r} "
                 f"is incompatible with annotation {field.annotation!r}.",
@@ -171,7 +171,7 @@ def validate_field_nullability(
         required = field.is_required() and not optional
 
         if required and not pg_t.not_null:
-            raise CoreError(
+            raise exc.internal(
                 f"Postgres schema validation failed for {label!r}: "
                 f"required field {name!r} maps to a nullable column.",
                 code="postgres_schema_validation_failed",

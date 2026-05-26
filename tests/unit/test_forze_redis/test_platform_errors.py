@@ -6,13 +6,13 @@ pytest.importorskip("redis")
 
 from redis import exceptions as redis_errors
 
-from forze.base.errors import CoreError, InfrastructureError
+from forze.base.exceptions import InfrastructureError
 from forze_redis.kernel.platform.errors import _redis_eh
 
 
 class TestRedisErrorHandler:
     def test_core_error_passthrough(self) -> None:
-        original = CoreError("x")
+        original = exc.internal("x")
         assert _redis_eh(original, "op") is original
 
     def test_connection_error(self) -> None:

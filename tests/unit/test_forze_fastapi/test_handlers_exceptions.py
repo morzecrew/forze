@@ -9,7 +9,7 @@ from starlette.testclient import TestClient
 
 from forze.base.errors import (
     ConflictError,
-    CoreError,
+    exc.internal,
     InfrastructureError,
     NotFoundError,
     ValidationError,
@@ -57,8 +57,8 @@ class TestForzeExceptionHandler:
 
     @pytest.mark.asyncio
     async def test_unknown_core_error_returns_500(self) -> None:
-        """Unmapped CoreError maps to 500."""
-        exc = CoreError(message="Something went wrong", code="internal")
+        """Unmapped exc.internal maps to 500."""
+        exc = exc.internal(message="Something went wrong", code="internal")
         request = Request(scope={"type": "http", "path": "/", "method": "GET"})
         response = await _forze_exception_handler(request, exc)
         assert response.status_code == 500
@@ -66,7 +66,7 @@ class TestForzeExceptionHandler:
 
     @pytest.mark.asyncio
     async def test_includes_context_when_error_has_details(self) -> None:
-        """Responses include context payload when CoreError details are present."""
+        """Responses include context payload when exc.internal details are present."""
         exc = NotFoundError(
             message="Document not found",
             details={"table": "users", "value": "a57cf97f-a50f-42eb-bdc6-502f8c7f18af"},
@@ -117,7 +117,7 @@ class TestRegisterExceptionHandlers:
     """Tests for register_exception_handlers."""
 
     def test_registers_handler(self) -> None:
-        """register_exception_handlers wires CoreError to the app."""
+        """register_exception_handlers wires exc.internal to the app."""
         app = FastAPI()
 
         @app.get("/raise")
@@ -133,7 +133,7 @@ class TestRegisterExceptionHandlers:
         assert response.headers.get(ERROR_CODE_HEADER) == "not_found"
 
     def test_unhandled_exception_returns_500(self) -> None:
-        """Unhandled (non-CoreError) exceptions return 500."""
+        """Unhandled (non-exc.internal) exceptions return 500."""
         app = FastAPI()
 
         @app.get("/raise")

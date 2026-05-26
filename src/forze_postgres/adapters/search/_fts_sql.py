@@ -16,7 +16,7 @@ from forze.application.contracts.search import (
     SearchSpec,
     calculate_effective_field_weights,
 )
-from forze.base.errors import CoreError
+from forze.base.exceptions import exc
 
 from ...kernel.gateways import PostgresQualifiedName
 from ...kernel.introspect import PostgresIntrospector
@@ -41,7 +41,7 @@ async def fts_resolve_tsvector_expr(
     )
 
     if not index_info.expr:
-        raise CoreError("Unable to infer tsvector expression from index definition.")
+        raise exc.internal("Unable to infer tsvector expression from index definition.")
 
     # NOTE: expr is raw SQL fragment from Postgres catalog; we still treat it as config.
     return sql.SQL(index_info.expr)  # pyright: ignore[reportArgumentType]
@@ -80,7 +80,7 @@ def fts_tsquery_expr_disjunction(
 
     parts = [q.strip() for q in queries if q.strip()]
     if not parts:
-        raise CoreError(
+        raise exc.internal(
             "fts_tsquery_expr_disjunction requires at least one non-empty query."
         )
     if len(parts) == 1:
@@ -102,7 +102,7 @@ def fts_tsquery_expr_conjunction(
 
     parts = [q.strip() for q in queries if q.strip()]
     if not parts:
-        raise CoreError(
+        raise exc.internal(
             "fts_tsquery_expr_conjunction requires at least one non-empty query."
         )
     if len(parts) == 1:

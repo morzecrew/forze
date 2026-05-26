@@ -6,7 +6,6 @@ import logging
 
 import pytest
 
-from forze.base.errors import CoreError
 from forze_fastapi.transport.http.attach._loop import (
     iter_catalog_operations,
     resolve_include_in_schema,
@@ -74,7 +73,7 @@ def test_iter_catalog_operations_yields_known() -> None:
 
 
 def test_iter_catalog_operations_strict_unknown() -> None:
-    with pytest.raises(CoreError, match="Unknown test route 'missing'"):
+    with pytest.raises(exc.internal, match="Unknown test route 'missing'"):
         list(
             iter_catalog_operations(
                 ("missing",),

@@ -21,7 +21,7 @@ from forze.application.contracts.authn import (
     TokenVerifierDepKey,
 )
 from forze.application.execution import Deps, DepsModule
-from forze.base.errors import CoreError
+from forze.base.exceptions import exc
 
 from .configs import (
     AuthnKernelConfig,
@@ -113,7 +113,7 @@ class AuthnDepsModule[K: str | StrEnum](DepsModule[K]):
             return Deps[K]()
 
         if self.kernel is None:
-            raise CoreError(
+            raise exc.internal(
                 "kernel is required when registering authn dependency routes"
             )
 

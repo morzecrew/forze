@@ -44,7 +44,7 @@ from forze.application.contracts.querying import (
     assert_cursor_projection_includes_sort_keys,
     normalize_sorts_with_id,
 )
-from forze.base.errors import CoreError, InvalidOperationError
+from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
 from forze.base.serialization import (
     pydantic_dump,
@@ -453,12 +453,12 @@ class DocumentCoordinator(
         """Check compatibility of cache coordinator with read gateway and specification."""
 
         if self.cache_coord.read_model_type is not self.read_gw.model_type:
-            raise CoreError(
+            raise exc.configuration(
                 "Document cache coordinator read model type mismatches read gateway model type."
             )
 
         if self.cache_coord.document_name != self.spec.name:
-            raise CoreError(
+            raise exc.configuration(
                 "Document cache coordinator name mismatches document specification name."
             )
 
@@ -500,7 +500,7 @@ class DocumentCoordinator(
         doc_pk = domain.id if domain is not None else pk
 
         if doc_pk is None:
-            raise CoreError(
+            raise exc.internal(
                 "Cannot load read model after write: domain row missing and no primary key.",
                 code="document_hydration_failed",
             )
@@ -528,7 +528,7 @@ class DocumentCoordinator(
             )
 
         if pks is not None and len(pks) != len(domains):
-            raise CoreError(
+            raise exc.internal(
                 "Primary keys length must match domain rows for read-back.",
                 code="document_hydration_failed",
             )
@@ -541,7 +541,7 @@ class DocumentCoordinator(
             elif pks is not None:
                 keys.append(pks[i])
             else:
-                raise CoreError(
+                raise exc.internal(
                     "Cannot load read models after write: domain row missing and no primary key.",
                     code="document_hydration_failed",
                 )
@@ -552,7 +552,7 @@ class DocumentCoordinator(
 
     def _require_write(self) -> DocumentWriteGatewayPort[D, C, U]:
         if self.write_gw is None:
-            raise CoreError("Write gateway is not configured")
+            raise exc.configuration("Write gateway is not configured")
 
         return self.write_gw
 
@@ -568,7 +568,7 @@ class DocumentCoordinator(
         """Fetch a single document by primary key, using the cache when available."""
 
         if not self.cache_coord.id_rev_capable():
-            raise InvalidOperationError(
+            raise exc.internal(
                 f"Cannot get document of type '{type(self.read_gw.model_type).__name__}' as it does not have defined id field"
             )
 
@@ -598,7 +598,7 @@ class DocumentCoordinator(
             return []
 
         if not self.cache_coord.id_rev_capable():
-            raise InvalidOperationError(
+            raise exc.internal(
                 f"Cannot get many documents of type '{type(self.read_gw.model_type).__name__}' as it does not have defined id field"
             )
 
@@ -806,7 +806,7 @@ class DocumentCoordinator(
         return_fields: Sequence[str] | None,
     ) -> Any:
         if aggregates is not None and return_fields is not None:
-            raise CoreError("Aggregates cannot be combined with return_fields")
+            raise exc.precondition("Aggregates cannot be combined with return_fields")
 
         pagination = pagination or {}
         parsed_filters = self.read_gw.compile_filters(filters)
@@ -1243,7 +1243,7 @@ class DocumentCoordinator(
         return_fields: Sequence[str] | None,
     ) -> CursorPage[R] | CursorPage[JsonDict] | CursorPage[T]:
         if return_model is not None and return_fields is not None:
-            raise CoreError("return_model and return_fields cannot be combined")
+            raise exc.precondition("return_model and return_fields cannot be combined")
 
         normalized = normalize_sorts_with_id(sorts)
 
@@ -1258,7 +1258,7 @@ class DocumentCoordinator(
         if self.enforce_primary_key_cursor_sort and (
             sort_keys != [ID_FIELD] or len(sort_keys) != 1
         ):
-            raise CoreError(
+            raise exc.precondition(
                 "find_cursor (strict) requires sorting only by primary key: "
                 "omit ``sorts`` or pass a single {id: asc|desc}.",
             )
@@ -1922,8 +1922,9 @@ class DocumentCoordinator(
         self._require_write()
 
         eff_chunk = self.eff_batch_size if chunk_size is None else chunk_size
+
         if eff_chunk < 1:
-            raise CoreError("chunk_size must be positive")
+            raise exc.precondition("chunk_size must be positive")
 
         logger.debug(
             "update_matching_strict on '%s' (chunk=%s)",

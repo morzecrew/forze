@@ -9,7 +9,7 @@ from forze.application.contracts.authn import (
     VerifiedAssertion,
 )
 from forze.application.contracts.document import DocumentCommandPort, DocumentQueryPort
-from forze.base.errors import AuthenticationError, CoreError
+from forze.base.exceptions import exc
 
 from ..domain.models.identity_mapping import (
     CreateIdentityMappingCmd,
@@ -38,12 +38,15 @@ class MappingTableResolver(PrincipalResolverPort):
     qry: DocumentQueryPort[ReadIdentityMapping]
     """Identity mapping query port."""
 
-    cmd: DocumentCommandPort[
-        ReadIdentityMapping,
-        IdentityMapping,
-        CreateIdentityMappingCmd,
-        Any,
-    ] | None = attrs.field(default=None)
+    cmd: (
+        DocumentCommandPort[
+            ReadIdentityMapping,
+            IdentityMapping,
+            CreateIdentityMappingCmd,
+            Any,
+        ]
+        | None
+    ) = attrs.field(default=None)
     """Command port; required when ``provision_on_first_sight`` is ``True``."""
 
     provision_on_first_sight: bool = attrs.field(default=False)
@@ -55,17 +58,17 @@ class MappingTableResolver(PrincipalResolverPort):
         spec = self.qry.spec
 
         if spec.cache is not None:
-            raise CoreError(
+            raise exc.configuration(
                 "Identity mapping caching is forbidden by security reasons"
             )
 
         if spec.history_enabled:
-            raise CoreError(
+            raise exc.configuration(
                 "Identity mapping history is forbidden by security reasons"
             )
 
         if self.provision_on_first_sight and self.cmd is None:
-            raise CoreError(
+            raise exc.configuration(
                 "MappingTableResolver requires a command port to provision new mappings",
             )
 
@@ -85,13 +88,13 @@ class MappingTableResolver(PrincipalResolverPort):
             return AuthnIdentity(principal_id=existing.principal_id)
 
         if not self.provision_on_first_sight:
-            raise AuthenticationError(
+            raise exc.authentication(
                 "No identity mapping for this subject",
                 code="unknown_external_subject",
             )
 
         if self.cmd is None:  # defensive; covered by post-init
-            raise CoreError(
+            raise exc.configuration(
                 "MappingTableResolver requires a command port to provision new mappings",
             )
 

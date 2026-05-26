@@ -7,7 +7,7 @@ from uuid import UUID, uuid4
 import pytest
 
 from forze.application.contracts.tenancy import TENANT_ID_FIELD, TenantIdentity
-from forze.base.errors import ConcurrencyError, CoreError
+from forze.base.errors import ConcurrencyError, exc.internal
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document
 from forze_mongo.kernel.gateways import (
     MongoHistoryGateway,
@@ -218,7 +218,7 @@ class TestMongoWriteGatewayPostInit:
     def test_rejects_mismatched_read_collection(self) -> None:
         client = _build_client()
         read = _build_read(client, collection="read_col")
-        with pytest.raises(CoreError, match="Collection mismatch"):
+        with pytest.raises(exc.internal, match="Collection mismatch"):
             MongoWriteGateway(
                 model_type=MyDoc,
                 collection="write_col",
@@ -233,7 +233,7 @@ class TestMongoWriteGatewayPostInit:
         c_read = _build_client()
         c_write = _build_client()
         read = _build_read(c_read)
-        with pytest.raises(CoreError, match="Client mismatch"):
+        with pytest.raises(exc.internal, match="Client mismatch"):
             MongoWriteGateway(
                 model_type=MyDoc,
                 collection="docs",
@@ -248,7 +248,7 @@ class TestMongoWriteGatewayPostInit:
         client = _build_client()
         read = _build_read(client)
         read.database = "db_a"
-        with pytest.raises(CoreError, match="Database mismatch"):
+        with pytest.raises(exc.internal, match="Database mismatch"):
             MongoWriteGateway(
                 model_type=MyDoc,
                 collection="docs",
@@ -263,7 +263,7 @@ class TestMongoWriteGatewayPostInit:
         client = _build_client()
         read = _build_read(client)
         read.tenant_aware = True
-        with pytest.raises(CoreError, match="Tenant awareness mismatch"):
+        with pytest.raises(exc.internal, match="Tenant awareness mismatch"):
             MongoWriteGateway(
                 model_type=MyDoc,
                 collection="docs",
@@ -289,7 +289,7 @@ class TestMongoWriteGatewayPostInit:
             target_collection="docs",
         )
         with pytest.raises(
-            CoreError, match="nested history gateway must use the same client"
+            exc.internal, match="nested history gateway must use the same client"
         ):
             MongoWriteGateway(
                 model_type=MyDoc,

@@ -51,7 +51,7 @@ from forze.application.contracts.search import (
     prepare_hub_search_options,
 )
 from forze.application.coordinators import SearchResultSnapshotCoordinator
-from forze.base.errors import CoreError
+from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
 from forze.base.serialization import pydantic_validate_many
 from forze.domain.constants import ID_FIELD
@@ -136,7 +136,7 @@ class HubLegRuntime:
     def __attrs_post_init__(self) -> None:
         if self.engine == "vector":
             if not self.vector_column or self.embedding_dimensions is None:
-                raise CoreError(
+                raise exc.internal(
                     "Vector hub leg requires vector_column and embedding_dimensions.",
                 )
 
@@ -382,7 +382,7 @@ class FtsHubLegEngine(HubSearchLegEngine):
         groups = leg.fts_groups
 
         if groups is None:
-            raise CoreError("FTS hub leg requires fts_groups.")
+            raise exc.internal("FTS hub leg requires fts_groups.")
 
         return await build_fts_leg(
             introspector=introspector,
@@ -420,12 +420,12 @@ class VectorHubLegEngine(HubSearchLegEngine):
         score_column: str,
     ) -> tuple[sql.Composable, sql.Composable, list[Any]]:
         if leg.engine != "vector" or leg.vector_column is None:
-            raise CoreError("VectorHubLegEngine requires a vector hub leg.")
+            raise exc.internal("VectorHubLegEngine requires a vector hub leg.")
 
         edim = leg.embedding_dimensions
 
         if edim is None:
-            raise CoreError("embedding_dimensions is required for vector engine.")
+            raise exc.internal("embedding_dimensions is required for vector engine.")
 
         return await build_vector_leg(
             embedder=self.embedder,
@@ -465,11 +465,11 @@ def hub_leg_engine_for(
 
     if eng == "vector":
         if vector_embedder is None:
-            raise CoreError("Vector hub leg requires an embeddings provider.")
+            raise exc.internal("Vector hub leg requires an embeddings provider.")
 
         return VectorHubLegEngine(embedder=vector_embedder)
 
-    raise CoreError(f"Unsupported hub search leg engine: {eng!r}.")
+    raise exc.internal(f"Unsupported hub search leg engine: {eng!r}.")
 
 
 # ....................... #
@@ -837,7 +837,7 @@ class PostgresHubSearchAdapter[M: BaseModel](
                 d = str(direction).lower()
 
                 if d not in ("asc", "desc"):
-                    raise CoreError(
+                    raise exc.internal(
                         f"Invalid sort direction in hub cursor: {direction!r}"
                     )
                 spec.append((field, d))
@@ -1265,14 +1265,14 @@ class PostgresHubSearchAdapter[M: BaseModel](
         c = dict(cursor or {})
 
         if c.get("after") and c.get("before"):
-            raise CoreError(
+            raise exc.internal(
                 "Cursor pagination: pass at most one of 'after' or 'before'",
             )
 
         lim: int = 10 if c.get("limit") is None else int(c["limit"])  # type: ignore[arg-type, assignment, call-overload]
 
         if lim < 1:
-            raise CoreError("Cursor pagination 'limit' must be positive")
+            raise exc.internal("Cursor pagination 'limit' must be positive")
 
         use_after = c.get("after") is not None
         use_before = c.get("before") is not None
@@ -1312,11 +1312,11 @@ class PostgresHubSearchAdapter[M: BaseModel](
             tk, td, tv = decode_keyset_v1(token)
 
             if tk != sort_keys or len(td) != len(directions):
-                raise CoreError("Cursor does not match current search sort")
+                raise exc.internal("Cursor does not match current search sort")
 
             for i, di in enumerate(directions):
                 if (td[i] or "").lower() != di:
-                    raise CoreError("Cursor does not match current search sort")
+                    raise exc.internal("Cursor does not match current search sort")
 
             sk, sp = build_seek_condition(
                 exprs,

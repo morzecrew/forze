@@ -7,7 +7,6 @@ import pytest
 from pydantic import BaseModel
 
 from forze.application.contracts.search import SearchSpec
-from forze.base.errors import CoreError
 from forze_postgres.adapters.search._fts_sql import (
     fts_effective_group_weights,
     fts_rank_cd_weight_array,
@@ -21,7 +20,6 @@ from forze_postgres.adapters.search._pgroonga_sql import (
     pgroonga_phrase_match_text,
     pgroonga_score_rank_expr,
 )
-from forze_postgres.kernel.introspect.types import PostgresIndexInfo
 from forze_postgres.adapters.search._vector_sql import vector_knn_multi_score_expr
 from forze_postgres.adapters.search.hub import (
     FtsHubLegEngine,
@@ -31,6 +29,7 @@ from forze_postgres.adapters.search.hub import (
     hub_leg_engine_for,
 )
 from forze_postgres.kernel.gateways import PostgresQualifiedName
+from forze_postgres.kernel.introspect.types import PostgresIndexInfo
 
 
 class _Doc(BaseModel):
@@ -97,12 +96,14 @@ def test_hub_leg_engine_for_rejects_unknown_engine() -> None:
         heap_pk_column="id",
         engine=cast(Any, "bogus"),
     )
-    with pytest.raises(CoreError, match="Unsupported hub search leg engine"):
+    with pytest.raises(exc.internal, match="Unsupported hub search leg engine"):
         hub_leg_engine_for(leg)
 
 
 class _VecEmb:
-    async def embed_one(self, text: str, *, input_kind: str = "document") -> tuple[float, ...]:
+    async def embed_one(
+        self, text: str, *, input_kind: str = "document"
+    ) -> tuple[float, ...]:
         _ = text, input_kind
         return (0.1, 0.2, 0.3)
 
@@ -135,7 +136,7 @@ def test_hub_leg_engine_for_vector_without_embedder_raises() -> None:
         vector_column="emb",
         embedding_dimensions=2,
     )
-    with pytest.raises(CoreError, match="embeddings provider"):
+    with pytest.raises(exc.internal, match="embeddings provider"):
         hub_leg_engine_for(leg, vector_embedder=None)
 
 
@@ -151,7 +152,7 @@ async def test_fts_hub_leg_engine_requires_fts_groups() -> None:
         fts_groups=None,
     )
     eng = FtsHubLegEngine()
-    with pytest.raises(CoreError, match="FTS hub leg requires fts_groups"):
+    with pytest.raises(exc.internal, match="FTS hub leg requires fts_groups"):
         await eng.build_leg(
             leg,
             introspector=MagicMock(),
@@ -162,7 +163,9 @@ async def test_fts_hub_leg_engine_requires_fts_groups() -> None:
         )
 
 
-def _pg_index_info(*, expr: str | None, columns: tuple[str, ...] = ()) -> PostgresIndexInfo:
+def _pg_index_info(
+    *, expr: str | None, columns: tuple[str, ...] = ()
+) -> PostgresIndexInfo:
     return PostgresIndexInfo(
         schema="public",
         name="idx",

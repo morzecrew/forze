@@ -9,7 +9,7 @@ pytest.importorskip("aiohttp")
 from aiohttp import ClientResponseError, RequestInfo
 from yarl import URL
 
-from forze.base.errors import CoreError, InfrastructureError
+from forze.base.exceptions import InfrastructureError
 from forze_bigquery.kernel.platform.errors import _bigquery_eh
 
 
@@ -31,7 +31,7 @@ def _client_error(status: int) -> ClientResponseError:
 
 class TestBigQueryErrorHandler:
     def test_core_error_passthrough(self) -> None:
-        original = CoreError("boom")
+        original = exc.internal("boom")
         assert _bigquery_eh(original, "op") is original
 
     def test_not_found(self) -> None:

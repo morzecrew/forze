@@ -8,7 +8,7 @@ from forze.application.contracts.authn import (
     PrincipalResolverPort,
     VerifiedAssertion,
 )
-from forze.base.errors import AuthenticationError
+from forze.base.exceptions import exc
 
 # ----------------------- #
 
@@ -32,10 +32,10 @@ class JwtNativeUuidResolver(PrincipalResolverPort):
         try:
             principal_id = UUID(assertion.subject)
 
-        except ValueError as exc:
-            raise AuthenticationError(
+        except ValueError as e:
+            raise exc.authentication(
                 "Subject is not a valid UUID; use a different resolver",
                 code="invalid_principal_subject",
-            ) from exc
+            ) from e
 
         return AuthnIdentity(principal_id=principal_id)

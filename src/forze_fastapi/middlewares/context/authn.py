@@ -17,7 +17,7 @@ from forze.application.contracts.authn import (
     AuthnSpec,
 )
 from forze.application.execution import ExecutionContext
-from forze.base.errors import AuthenticationError
+from forze.base.exceptions import exc
 
 from .ports import AuthnIdentityResolverPort
 
@@ -69,7 +69,7 @@ class HeaderTokenAuthnIdentityResolver(AuthnIdentityResolverPort):
 
         if raw is None:
             if self.required:
-                raise AuthenticationError(
+                raise exc.authentication(
                     "Authentication credentials are required",
                     code="auth_required",
                 )
@@ -132,7 +132,7 @@ class CookieTokenAuthnIdentityResolver(AuthnIdentityResolverPort):
 
         if raw is None or not str(raw).strip():
             if self.required:
-                raise AuthenticationError(
+                raise exc.authentication(
                     "Authentication cookie is required",
                     code="auth_required",
                 )
@@ -186,7 +186,7 @@ class HeaderApiKeyAuthnIdentityResolver(AuthnIdentityResolverPort):
 
         if raw is None:
             if self.required:
-                raise AuthenticationError(
+                raise exc.authentication(
                     "Authentication credentials are required",
                     code="auth_required",
                 )

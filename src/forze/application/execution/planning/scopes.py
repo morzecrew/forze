@@ -19,7 +19,7 @@ from forze.application.contracts.execution import (
     OnSuccess,
     OnSuccessStep,
 )
-from forze.base.errors import CoreError
+from forze.base.exceptions import exc
 from forze.base.primitives import AbstractSequence, StrKey
 
 from .builders import graph_from_sequence, pipe_from_sequence
@@ -173,7 +173,7 @@ class TransactionScope(Scope):
         routes = {scope.route for scope in scopes if scope.route is not None}
 
         if len(routes) > 1:
-            raise CoreError(
+            raise exc.internal(
                 "Conflicting transaction routes for one operation: " + ", ".join(routes)
             )
 

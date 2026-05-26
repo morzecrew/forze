@@ -35,7 +35,7 @@ from forze.application.contracts.querying import (
     QueryValue,
     QueryValueCaster,
 )
-from forze.base.errors import CoreError
+from forze.base.exceptions import exc
 
 from ..introspect import PostgresColumnTypes, PostgresType
 from ..type_cast import cast_sql_for_column_type
@@ -96,7 +96,7 @@ class PsycopgValueCoercer:
             return self.caster.pass_through(v)
 
         if t.is_array:
-            raise CoreError(f"Array type not supported: {t!r}")
+            raise exc.internal(f"Array type not supported: {t!r}")
 
         match t.base:
             case "uuid":
@@ -136,13 +136,13 @@ class PsycopgValueCoercer:
             return []
 
         if isinstance(v, QueryValue.Scalar):
-            raise CoreError(f"Scalar value not supported: {v!r}")
+            raise exc.internal(f"Scalar value not supported: {v!r}")
 
         if t is None:
             return [self.scalar(x, t=None) for x in v]
 
         if not t.is_array and raise_on_scalar_t:
-            raise CoreError("Expected array column, got scalar")
+            raise exc.internal("Expected array column, got scalar")
 
         elem_t = PostgresType(base=t.base, is_array=False, not_null=True)
 
@@ -277,7 +277,7 @@ class PsycopgQueryRenderer:
         bad = [field for field in sorts if field not in aliases]
 
         if bad:
-            raise CoreError(f"Invalid aggregate sort fields: {bad}")
+            raise exc.internal(f"Invalid aggregate sort fields: {bad}")
 
         parts: list[sql.Composable] = []
 
@@ -301,7 +301,7 @@ class PsycopgQueryRenderer:
             return self._render_aggregate_filter(count_expr, computed)
 
         if field is None:
-            raise CoreError("Computed field has no field path")
+            raise exc.internal("Computed field has no field path")
 
         field_expr = self._render_source_expr(field)
         agg_expr: sql.Composable
@@ -349,10 +349,10 @@ class PsycopgQueryRenderer:
 
     def _render_source_expr(self, field: str) -> sql.Composable:
         if self.types is None:
-            raise CoreError("Aggregate rendering requires column type metadata")
+            raise exc.internal("Aggregate rendering requires column type metadata")
 
         if self.model_type is None:
-            raise CoreError("Aggregate rendering requires gateway model_type")
+            raise exc.internal("Aggregate rendering requires gateway model_type")
 
         return sort_key_expr(
             field=field,
@@ -373,12 +373,12 @@ class PsycopgQueryRenderer:
         segments = field.split(".")
         if len(segments) > 1:
             if self.types is None:
-                raise CoreError(
+                raise exc.internal(
                     f"Nested compare path {field!r} requires column type metadata "
                     "(introspected types).",
                 )
             if self.model_type is None:
-                raise CoreError(
+                raise exc.internal(
                     f"Nested compare path {field!r} requires gateway model_type "
                     "for read-model validation.",
                 )
@@ -395,7 +395,7 @@ class PsycopgQueryRenderer:
             t = self.types.get(segments[0])
 
             if t is None:
-                raise CoreError(f"Unknown column: {segments[0]!r}")
+                raise exc.internal(f"Unknown column: {segments[0]!r}")
 
         else:
             t = None
@@ -421,7 +421,7 @@ class PsycopgQueryRenderer:
             return
 
         if left_t.is_array or right_t.is_array:
-            raise CoreError(
+            raise exc.internal(
                 f"Field compare between {left!r} and {right!r} does not support array columns.",
             )
 
@@ -432,7 +432,7 @@ class PsycopgQueryRenderer:
             if left_t.base in group and right_t.base in group:
                 return
 
-        raise CoreError(
+        raise exc.internal(
             f"Incompatible types for field compare {left!r} ({left_t.base!r}) "
             f"and {right!r} ({right_t.base!r}).",
         )
@@ -454,7 +454,7 @@ class PsycopgQueryRenderer:
             )
 
         else:
-            raise CoreError(f"Unknown compare operator: {op!r}")
+            raise exc.internal(f"Unknown compare operator: {op!r}")
 
         return sql.SQL("{} {} {}").format(left_expr, op_sql, right_expr)
 
@@ -470,19 +470,19 @@ class PsycopgQueryRenderer:
 
                 if len(segments) > 1:
                     if self.types is None:
-                        raise CoreError(
+                        raise exc.internal(
                             f"Nested filter path {name!r} requires column type metadata "
                             "(introspected types).",
                         )
 
                     if self.model_type is None:
-                        raise CoreError(
+                        raise exc.internal(
                             f"Nested filter path {name!r} requires gateway model_type "
                             "for read-model validation.",
                         )
 
                     if op in _NESTED_JSON_UNSUPPORTED:
-                        raise CoreError(
+                        raise exc.internal(
                             f"Operator {op!r} is not supported for nested JSON path {name!r}.",
                         )
 
@@ -501,7 +501,7 @@ class PsycopgQueryRenderer:
                     t = self.types.get(name)
 
                     if t is None:
-                        raise CoreError(f"Unknown column: {name!r}")
+                        raise exc.internal(f"Unknown column: {name!r}")
 
                 else:
                     t = None
@@ -543,7 +543,7 @@ class PsycopgQueryRenderer:
                 return self._render_elem(path, quantifier, inner)
 
             case _:
-                raise CoreError(f"Unknown expression: {expr!r}")
+                raise exc.internal(f"Unknown expression: {expr!r}")
 
     # ....................... #
 
@@ -575,7 +575,7 @@ class PsycopgQueryRenderer:
                 return self._render_text(col, op, value, t=t)
 
             case _:  # pyright: ignore[reportUnnecessaryComparison]
-                raise CoreError(f"Unknown operator: {op!r}")
+                raise exc.internal(f"Unknown operator: {op!r}")
 
     # ....................... #
 
@@ -584,12 +584,12 @@ class PsycopgQueryRenderer:
             return
 
         if t.is_array:
-            raise CoreError(
+            raise exc.internal(
                 f"Operator {op!r} is not supported on array column type {t!r}",
             )
 
         if t.base not in _TEXT_LIKE_BASES:
-            raise CoreError(
+            raise exc.internal(
                 f"Operator {op!r} requires a text-like column; got {t.base!r}",
             )
 
@@ -617,7 +617,7 @@ class PsycopgQueryRenderer:
                 op_sql = sql.SQL("~")
 
             case _:
-                raise CoreError(f"Unknown text operator: {op!r}")
+                raise exc.internal(f"Unknown text operator: {op!r}")
 
         return sql.SQL("{} {} {}").format(col, op_sql, self.binder.add(pattern))
 
@@ -726,7 +726,7 @@ class PsycopgQueryRenderer:
                 value,
                 (str, bytes, bytearray),
             ):
-                raise CoreError(
+                raise exc.internal(
                     f"Array column filter {op!r} requires a list/tuple value; "
                     "use $null for null checks, $superset / $overlaps / $in for "
                     "containment-style matches.",
@@ -825,7 +825,7 @@ class PsycopgQueryRenderer:
         vacuous = self._elem_vacuous_sql(quantifier)
 
         if t is not None and not t.is_array and t.base not in ("jsonb", "json"):
-            raise CoreError(
+            raise exc.internal(
                 f"Element quantifier on {path!r} requires an array or jsonb array column",
             )
 
@@ -882,7 +882,7 @@ class PsycopgQueryRenderer:
 
         if len(segments) > 1:
             if self.types is None or self.model_type is None:
-                raise CoreError(
+                raise exc.internal(
                     f"Nested element path {path!r} requires column types and model_type",
                 )
 
@@ -901,7 +901,7 @@ class PsycopgQueryRenderer:
             t = self.types.get(path)
 
             if t is None:
-                raise CoreError(f"Unknown column: {path!r}")
+                raise exc.internal(f"Unknown column: {path!r}")
 
         else:
             t = None
@@ -970,7 +970,7 @@ class PsycopgQueryRenderer:
                 return sql.SQL("(") + sql.SQL(" OR ").join(parts) + sql.SQL(")")
 
             case _:
-                raise CoreError(f"Invalid scalar element inner: {inner!r}")
+                raise exc.internal(f"Invalid scalar element inner: {inner!r}")
 
         elem_t = (
             PostgresType(base=t.base, is_array=False, not_null=True)
@@ -1016,7 +1016,7 @@ class PsycopgQueryRenderer:
                 return sql.SQL("(") + sql.SQL(" OR ").join(or_parts) + sql.SQL(")")
 
             case _:
-                raise CoreError(f"Invalid object element inner: {inner!r}")
+                raise exc.internal(f"Invalid object element inner: {inner!r}")
 
         parts: list[sql.Composable] = []
 
@@ -1035,7 +1035,7 @@ class PsycopgQueryRenderer:
                             segments=[path, *segments],
                             nested_field_hints=self.nested_field_hints,
                         )
-                    except CoreError:
+                    except exc:
                         leaf_t = None
 
             pg_t = self._python_ann_to_postgres_type(leaf_t) if leaf_t else None

@@ -9,7 +9,7 @@ from uuid import UUID
 
 from pydantic import BaseModel
 
-from forze.base.errors import CoreError
+from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
 
 # ----------------------- #
@@ -67,7 +67,9 @@ def _infer_parameter(value: Any) -> tuple[JsonDict, JsonDict]:
     if isinstance(value, (list, tuple)):
         if not value:
             return {"type": "ARRAY"}, {"arrayValues": []}
+
         elem_type, _ = _infer_parameter(value[0])
+
         return {
             "type": "ARRAY",
             "arrayType": elem_type,
@@ -77,7 +79,7 @@ def _infer_parameter(value: Any) -> tuple[JsonDict, JsonDict]:
             ],
         }
 
-    raise CoreError(
+    raise exc.precondition(
         f"Unsupported BigQuery query parameter type: {type(value).__name__}"
     )
 
@@ -134,6 +136,5 @@ def build_count_sql(inner_sql: str) -> str:
     """Wrap *inner_sql* in ``SELECT COUNT(*)`` for total row counts."""
 
     stripped = inner_sql.strip().rstrip(";")
-    return (
-        f"SELECT COUNT(*) AS forze_cnt FROM ({stripped}) AS forze_analytics_subq"  # nosec B608
-    )
+
+    return f"SELECT COUNT(*) AS forze_cnt FROM ({stripped}) AS forze_analytics_subq"  # nosec B608

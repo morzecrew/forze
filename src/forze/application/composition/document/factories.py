@@ -18,7 +18,7 @@ from forze.application.handlers.document import (
     UpdateDocument,
 )
 from forze.application.mapping import PydanticPipelineMapperFactory
-from forze.base.errors import CoreError
+from forze.base.exceptions import exc
 from forze.base.primitives import StrKeyNamespace
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document
 
@@ -48,7 +48,7 @@ def _default_create_mapper(
     c_cmd = spec.write["create_cmd"] if spec.write else None
 
     if cdto is None or c_cmd is None:
-        raise CoreError("Create DTO or create command is not provided")
+        raise exc.configuration("Create DTO or create command is not provided")
 
     return PydanticPipelineMapperFactory(in_=cdto, out=c_cmd)
 
@@ -68,7 +68,7 @@ def _default_update_mapper(
     )
 
     if udto is None or u_cmd is None:
-        raise CoreError("Update DTO or update command is not provided")
+        raise exc.configuration("Update DTO or update command is not provided")
 
     return PydanticPipelineMapperFactory(in_=udto, out=u_cmd)
 

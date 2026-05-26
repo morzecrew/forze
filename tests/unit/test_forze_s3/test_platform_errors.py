@@ -6,7 +6,7 @@ pytest.importorskip("botocore")
 
 from botocore import exceptions as s3_errors
 
-from forze.base.errors import CoreError, InfrastructureError
+from forze.base.exceptions import InfrastructureError
 from forze_s3.kernel.platform.errors import _s3_eh
 
 
@@ -19,7 +19,7 @@ def _client_error(code: str) -> s3_errors.ClientError:
 
 class TestS3ErrorHandler:
     def test_core_error_passthrough(self) -> None:
-        original = CoreError("x")
+        original = exc.internal("x")
         assert _s3_eh(original, "op") is original
 
     def test_endpoint_connection_error(self) -> None:
@@ -67,7 +67,7 @@ class TestS3ErrorHandler:
         assert needle in r.message.lower()
 
     def test_botocore_fallback(self) -> None:
-        r = _s3_eh(s3_errors.BotoCoreError(), "op")
+        r = _s3_eh(s3_errors.Botoexc.internal(), "op")
         assert isinstance(r, InfrastructureError)
         assert "core error" in r.message.lower()
 

@@ -8,7 +8,7 @@ import pytest
 
 from forze.application.contracts.document import DocumentSpec
 from forze.application.coordinators import DocumentCacheCoordinator
-from forze.base.errors import CoreError, ValidationError
+from forze.base.exceptions import ValidationError
 from forze.base.serialization import pydantic_cache_dump
 from forze.domain.constants import ID_FIELD
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
@@ -283,7 +283,7 @@ class TestPostgresDocumentAdapterInit:
         write_gw = _write_gw()
         write_gw.client = object()
 
-        with pytest.raises(CoreError, match="same client"):
+        with pytest.raises(exc.internal, match="same client"):
             PostgresDocumentAdapter(
                 spec=(ds := _full_spec()),
                 read_gw=read_gw,
@@ -298,7 +298,7 @@ class TestPostgresDocumentAdapterInit:
         read_gw.tenant_aware = False
         write_gw.tenant_aware = True
 
-        with pytest.raises(CoreError, match="tenant"):
+        with pytest.raises(exc.internal, match="tenant"):
             PostgresDocumentAdapter(
                 spec=(ds := _full_spec()),
                 read_gw=read_gw,
@@ -435,7 +435,7 @@ class TestPostgresDocumentAdapterRequireWrite:
             cache_coord=_pg_cc(rg, ds),
         )
 
-        with pytest.raises(CoreError, match="not configured"):
+        with pytest.raises(exc.internal, match="not configured"):
             await adapter.create(TCreate(title="x"))
 
 
@@ -515,9 +515,7 @@ class TestPostgresDocumentAdapterQueryDelegation:
             cache_coord=_pg_cc(read_gw, ds),
         )
 
-        page = await adapter.find_page(
-            filters=None, pagination={"limit": 10}
-        )
+        page = await adapter.find_page(filters=None, pagination={"limit": 10})
 
         assert page.hits == docs and page.count == 2
 
@@ -666,6 +664,7 @@ class TestPostgresDocumentAdapterQueryDelegation:
         assert read_gw.find_many_aggregates.await_count == 2
         assert read_gw.find_many_aggregates.await_args_list[0].kwargs["offset"] == 0
         assert read_gw.find_many_aggregates.await_args_list[1].kwargs["offset"] == 10
+
     async def test_count_delegates(self) -> None:
         read_gw = _read_gw_full()
         read_gw.count = AsyncMock(return_value=7)

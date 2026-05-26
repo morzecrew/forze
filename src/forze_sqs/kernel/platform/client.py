@@ -20,9 +20,9 @@ from botocore.config import Config as AioConfig
 from pydantic import SecretStr
 from types_aiobotocore_sqs.client import SQSClient as AsyncSQSClient
 
-from forze.base.errors import CoreError, InfrastructureError
+from forze.base.exceptions import exc
 
-from .errors import sqs_handled
+from .errors import exc_interceptor
 from .port import SQSClientPort
 from .types import SQSQueueMessage
 from .value_objects import SQSConfig, SQSConnectionOpts
@@ -133,7 +133,7 @@ class SQSClient(SQSClientPort):
 
     def __require_session(self) -> aioboto3.Session:
         if self.__session is None:
-            raise CoreError("SQS session is not initialized")
+            raise exc.internal("SQS session is not initialized")
 
         return self.__session
 
@@ -148,7 +148,7 @@ class SQSClient(SQSClientPort):
         c = self.__current_client()
 
         if c is None:
-            raise CoreError("SQS client is not initialized")
+            raise exc.internal("SQS client is not initialized")
 
         return c
 
@@ -213,7 +213,7 @@ class SQSClient(SQSClientPort):
         opts = self.__opts
 
         if opts is None:
-            raise CoreError("SQS client options are not initialized")
+            raise exc.internal("SQS client options are not initialized")
 
         cm = session.client(  # type: ignore
             "sqs",
@@ -238,7 +238,7 @@ class SQSClient(SQSClientPort):
 
     # ....................... #
 
-    @sqs_handled("sqs.health")  # type: ignore[untyped-decorator]
+    @exc_interceptor.coroutine("sqs.health")  # type: ignore[untyped-decorator]
     async def health(self) -> tuple[str, bool]:
         """Check SQS client health by listing queues."""
 
@@ -253,7 +253,7 @@ class SQSClient(SQSClientPort):
 
     # ....................... #
 
-    @sqs_handled("sqs.create_queue")  # type: ignore[untyped-decorator]
+    @exc_interceptor.coroutine("sqs.create_queue")  # type: ignore[untyped-decorator]
     async def create_queue(
         self,
         queue: str,
@@ -283,7 +283,7 @@ class SQSClient(SQSClientPort):
 
     # ....................... #
 
-    @sqs_handled("sqs.get_queue_url")  # type: ignore[untyped-decorator]
+    @exc_interceptor.coroutine("sqs.get_queue_url")  # type: ignore[untyped-decorator]
     async def queue_url(self, queue: str) -> str:
         """Resolve queue name (or URL) to queue URL."""
 
@@ -375,10 +375,9 @@ class SQSClient(SQSClientPort):
         if encoding == _ENCODING_B64:
             try:
                 return base64.b64decode(body, validate=True)
+
             except Exception as e:
-                raise InfrastructureError(
-                    "SQS message payload is not valid base64."
-                ) from e
+                raise exc.internal("SQS message payload is not valid base64.") from e
 
         return body.encode("utf-8")
 
@@ -412,7 +411,7 @@ class SQSClient(SQSClientPort):
 
     # ....................... #
 
-    @sqs_handled("sqs.enqueue")  # type: ignore[untyped-decorator]
+    @exc_interceptor.coroutine("sqs.enqueue")  # type: ignore[untyped-decorator]
     async def enqueue(
         self,
         queue: str,
@@ -437,7 +436,7 @@ class SQSClient(SQSClientPort):
 
     # ....................... #
 
-    @sqs_handled("sqs.enqueue_many")  # type: ignore[untyped-decorator]
+    @exc_interceptor.coroutine("sqs.enqueue_many")  # type: ignore[untyped-decorator]
     async def enqueue_many(
         self,
         queue: str,
@@ -460,7 +459,7 @@ class SQSClient(SQSClientPort):
             return []
 
         if message_ids is not None and len(message_ids) != len(bodies):
-            raise InfrastructureError("SQS message_ids size must match batch body size")
+            raise exc.precondition("SQS message_ids size must match batch body size")
 
         resolved_ids = (
             list(message_ids)
@@ -508,7 +507,8 @@ class SQSClient(SQSClientPort):
 
             if failed:
                 failed_ids = ", ".join(f.get("Id", "unknown") for f in failed)
-                raise InfrastructureError(
+
+                raise exc.internal(
                     f"SQS send_message_batch has failed entries: {failed_ids}"
                 )
 
@@ -537,7 +537,7 @@ class SQSClient(SQSClientPort):
 
     # ....................... #
 
-    @sqs_handled("sqs.receive")  # type: ignore[untyped-decorator]
+    @exc_interceptor.coroutine("sqs.receive")  # type: ignore[untyped-decorator]
     async def receive(
         self,
         queue: str,
@@ -596,7 +596,7 @@ class SQSClient(SQSClientPort):
 
     # ....................... #
 
-    @sqs_handled("sqs.consume")  # type: ignore[untyped-decorator]
+    @exc_interceptor.asyncgenerator("sqs.consume")  # type: ignore[untyped-decorator]
     async def consume(
         self,
         queue: str,
@@ -615,7 +615,7 @@ class SQSClient(SQSClientPort):
 
     # ....................... #
 
-    @sqs_handled("sqs.ack")  # type: ignore[untyped-decorator]
+    @exc_interceptor.coroutine("sqs.ack")  # type: ignore[untyped-decorator]
     async def ack(self, queue: str, ids: Sequence[str]) -> int:
         """Acknowledge messages by deleting them from the queue."""
         if not ids:
@@ -639,7 +639,8 @@ class SQSClient(SQSClientPort):
 
             if failed:
                 failed_ids = ", ".join(f.get("Id", "unknown") for f in failed)
-                raise InfrastructureError(
+
+                raise exc.internal(
                     f"SQS delete_message_batch has failed entries: {failed_ids}"
                 )
 
@@ -649,7 +650,7 @@ class SQSClient(SQSClientPort):
 
     # ....................... #
 
-    @sqs_handled("sqs.nack")  # type: ignore[untyped-decorator]
+    @exc_interceptor.coroutine("sqs.nack")  # type: ignore[untyped-decorator]
     async def nack(
         self,
         queue: str,
@@ -690,7 +691,8 @@ class SQSClient(SQSClientPort):
 
             if failed:
                 failed_ids = ", ".join(f.get("Id", "unknown") for f in failed)
-                raise InfrastructureError(
+
+                raise exc.internal(
                     "SQS change_message_visibility_batch has failed entries: "
                     f"{failed_ids}"
                 )

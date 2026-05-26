@@ -4,7 +4,6 @@ from datetime import timedelta
 
 import pytest
 
-from forze.base.errors import CoreError
 from forze_redis.adapters import RedisSearchResultSnapshotAdapter
 
 
@@ -56,7 +55,12 @@ async def test_put_run_multi_chunk_span(
         ttl=timedelta(seconds=60),
         chunk_size=3,
     )
-    assert await redis_search_snapshot.get_id_range("r3", 2, 4) == ["x2", "x3", "x4", "x5"]
+    assert await redis_search_snapshot.get_id_range("r3", 2, 4) == [
+        "x2",
+        "x3",
+        "x4",
+        "x5",
+    ]
 
 
 @pytest.mark.integration
@@ -77,9 +81,9 @@ async def test_fingerprint_mismatch(
         )
         is None
     )
-    assert await redis_search_snapshot.get_id_range("r4", 0, 1, expected_fingerprint="secret") == [
-        "a"
-    ]
+    assert await redis_search_snapshot.get_id_range(
+        "r4", 0, 1, expected_fingerprint="secret"
+    ) == ["a"]
 
 
 @pytest.mark.integration
@@ -142,7 +146,7 @@ async def test_append_chunk_wrong_index(
         chunk_size=2,
         ttl=timedelta(seconds=60),
     )
-    with pytest.raises(CoreError, match="expected chunk_index"):
+    with pytest.raises(exc.internal, match="expected chunk_index"):
         await redis_search_snapshot.append_chunk(
             run_id="r7", chunk_index=1, ids=["x"], is_last=True
         )

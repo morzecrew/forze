@@ -3,22 +3,15 @@
 from __future__ import annotations
 
 from typing import Any
-from uuid import uuid4
 
 import attrs
 import pytest
-from fastapi import APIRouter, FastAPI
-from starlette.testclient import TestClient
 
-from forze.application.contracts.authn import AuthnIdentity
-from forze.application.execution import Deps, ExecutionContext
-from forze.base.errors import CoreError
 from forze_fastapi.endpoints.http import (
     AuthnRequirement,
     HttpEndpointSpec,
     HttpSpec,
     apply_authn_requirement,
-    build_authn_requirement_dependency,
 )
 from forze_fastapi.endpoints.http.composition import build_http_endpoint_spec
 from forze_fastapi.endpoints.http.features.security import RequireAuthnFeature
@@ -38,7 +31,9 @@ class _NoopHandler:
         return None
 
 
-def _stub_endpoint_spec() -> HttpEndpointSpec[Any, Any, Any, Any, Any, None, None, None]:
+def _stub_endpoint_spec() -> (
+    HttpEndpointSpec[Any, Any, Any, Any, Any, None, None, None]
+):
     http: HttpSpec = {"method": "GET", "path": "/dummy"}
 
     return build_http_endpoint_spec(
@@ -68,7 +63,7 @@ class TestAuthnRequirement:
         assert r.scheme_name == "forze_authn__main__api_key"
 
     def test_mutually_exclusive_transports_raises(self) -> None:
-        with pytest.raises(CoreError, match="exactly one of"):
+        with pytest.raises(exc.internal, match="exactly one of"):
             AuthnRequirement(
                 authn_route="main",
                 token_header="Authorization",
@@ -76,7 +71,7 @@ class TestAuthnRequirement:
             )
 
     def test_no_transport_raises(self) -> None:
-        with pytest.raises(CoreError, match="exactly one"):
+        with pytest.raises(exc.internal, match="exactly one"):
             AuthnRequirement(authn_route="main")
 
 

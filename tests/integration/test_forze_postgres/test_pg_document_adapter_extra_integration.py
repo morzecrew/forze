@@ -16,10 +16,12 @@ from forze.application.contracts.document import (
 )
 from forze.application.contracts.transaction.deps import TransactionManagerDepKey
 from forze.application.execution import Deps, ExecutionContext
-from forze.base.errors import CoreError
 from forze.domain.constants import ID_FIELD
-from forze_contrib.soft_deletion.models import DocWithSoftDeletion, UpdateCmdWithSoftDeletion
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
+from forze_contrib.soft_deletion.models import (
+    DocWithSoftDeletion,
+    UpdateCmdWithSoftDeletion,
+)
 from forze_mock import MockCacheAdapter, MockState, MockStateDepKey
 from forze_postgres.execution.deps.deps import (
     ConfigurablePostgresDocument,
@@ -91,7 +93,9 @@ def _ctx_cached(
     state = MockState()
 
     def _cache_factory(ctx: ExecutionContext, cspec: CacheSpec) -> MockCacheAdapter:
-        return MockCacheAdapter(state=ctx.deps.provide(MockStateDepKey), namespace=cspec.name)
+        return MockCacheAdapter(
+            state=ctx.deps.provide(MockStateDepKey), namespace=cspec.name
+        )
 
     ctx = ExecutionContext(
         deps=Deps.plain(
@@ -135,7 +139,9 @@ def _ctx_cached_tx(
     state = MockState()
 
     def _cache_factory(ctx: ExecutionContext, cspec: CacheSpec) -> MockCacheAdapter:
-        return MockCacheAdapter(state=ctx.deps.provide(MockStateDepKey), namespace=cspec.name)
+        return MockCacheAdapter(
+            state=ctx.deps.provide(MockStateDepKey), namespace=cspec.name
+        )
 
     plain = Deps.plain(
         {
@@ -314,7 +320,7 @@ async def test_pg_adapter_project_cursor_requires_sort_fields_in_projection(
 
     await cmd.create(_CxCreate(sku="x"))
 
-    with pytest.raises(CoreError, match="projection must include"):
+    with pytest.raises(exc.internal, match="projection must include"):
         await q.project_cursor(
             ["sku"],
             None,
@@ -458,7 +464,9 @@ async def test_pg_adapter_soft_delete_restore_return_new_false(
     state = MockState()
 
     def _cache_factory(ctx: ExecutionContext, cspec: CacheSpec) -> MockCacheAdapter:
-        return MockCacheAdapter(state=ctx.deps.provide(MockStateDepKey), namespace=cspec.name)
+        return MockCacheAdapter(
+            state=ctx.deps.provide(MockStateDepKey), namespace=cspec.name
+        )
 
     ctx = ExecutionContext(
         deps=Deps.plain(
@@ -482,7 +490,9 @@ async def test_pg_adapter_soft_delete_restore_return_new_false(
     loaded = await q.get(doc.id)
     assert loaded.is_deleted is True
 
-    await cmd.update(doc.id, loaded.rev, _SoftUpdate(is_deleted=False), return_new=False)
+    await cmd.update(
+        doc.id, loaded.rev, _SoftUpdate(is_deleted=False), return_new=False
+    )
     again = await q.get(doc.id)
     assert again.is_deleted is False
 
@@ -699,7 +709,9 @@ async def test_pg_adapter_soft_delete_and_restore_many_return_new_true(
     state = MockState()
 
     def _cache_factory(ctx: ExecutionContext, cspec: CacheSpec) -> MockCacheAdapter:
-        return MockCacheAdapter(state=ctx.deps.provide(MockStateDepKey), namespace=cspec.name)
+        return MockCacheAdapter(
+            state=ctx.deps.provide(MockStateDepKey), namespace=cspec.name
+        )
 
     ctx = ExecutionContext(
         deps=Deps.plain(

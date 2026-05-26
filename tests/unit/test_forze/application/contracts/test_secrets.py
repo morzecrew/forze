@@ -4,7 +4,7 @@ import pytest
 from pydantic import BaseModel
 
 from forze.application.contracts.secrets import SecretRef, resolve_structured
-from forze.base.errors import CoreError, SecretNotFoundError
+from forze.base.exceptions import SecretNotFoundError
 
 # ----------------------- #
 
@@ -45,7 +45,7 @@ async def test_resolve_structured_ok() -> None:
 async def test_resolve_structured_invalid() -> None:
     sec = _MemSecrets({"db/1": '{"dsn": 1}'})
     ref = SecretRef(path="db/1")
-    with pytest.raises(CoreError, match="not valid") as exc_info:
+    with pytest.raises(exc.internal, match="not valid") as exc_info:
         await resolve_structured(sec, ref, _Sample)
 
     details = exc_info.value.details

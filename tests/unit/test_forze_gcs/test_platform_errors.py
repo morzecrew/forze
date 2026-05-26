@@ -7,7 +7,7 @@ pytest.importorskip("aiohttp")
 from aiohttp import ClientResponseError, RequestInfo
 from yarl import URL
 
-from forze.base.errors import CoreError, InfrastructureError
+from forze.base.exceptions import InfrastructureError
 from forze_gcs.kernel.platform.errors import _gcs_eh
 
 
@@ -29,7 +29,7 @@ def _client_error(status: int) -> ClientResponseError:
 
 class TestGCSErrorHandler:
     def test_core_error_passthrough(self) -> None:
-        original = CoreError("x")
+        original = exc.internal("x")
         assert _gcs_eh(original, "op") is original
 
     def test_not_found(self) -> None:

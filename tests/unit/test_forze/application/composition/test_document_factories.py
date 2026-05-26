@@ -1,7 +1,5 @@
 """Tests for forze.application.composition.document.factories."""
 
-import pytest
-
 from forze.application.composition.document import (
     DocumentDTOs,
     DocumentKernelOp,
@@ -9,13 +7,12 @@ from forze.application.composition.document import (
 )
 from forze.application.contracts.document import DocumentSpec
 from forze.application.execution.registry import OperationRegistry
-from forze.base.errors import CoreError
+from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
 from forze_contrib.soft_deletion.composition import (
     SoftDeletionKernelOp,
     build_soft_deletion_registry,
 )
 from forze_contrib.soft_deletion.models import DocWithSoftDeletion
-from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
 
 from ..registry_helpers import registry_has_handler
 

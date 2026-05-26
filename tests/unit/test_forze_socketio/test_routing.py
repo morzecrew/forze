@@ -9,7 +9,6 @@ from pydantic import BaseModel
 from forze.application.contracts.execution import Handler
 from forze.application.execution import Deps, ExecutionContext
 from forze.application.execution.registry import OperationRegistry
-from forze.base.errors import CoreError
 from forze_socketio.routing import (
     ForzeSocketIOAdapter,
     SocketIONamespaceRouter,
@@ -103,7 +102,7 @@ class TestSocketIORouting:
             ack_type=EchoAck,
         )
 
-        with pytest.raises(CoreError, match="already registered"):
+        with pytest.raises(exc.internal, match="already registered"):
             router.command(
                 event="echo",
                 operation="chat.echo",

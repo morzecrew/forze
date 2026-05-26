@@ -14,7 +14,7 @@ from forze.application.contracts.authz import (
     RoleAssignmentDepKey,
 )
 from forze.application.execution import Deps, DepsModule
-from forze.base.errors import CoreError
+from forze.base.exceptions import exc
 
 from .configs import AuthzKernelConfig, build_authz_shared_services
 from .deps import (
@@ -59,7 +59,9 @@ class AuthzDepsModule[K: str | StrEnum](DepsModule[K]):
             return Deps[K]()
 
         if self.kernel is None:
-            raise CoreError("kernel is required when registering authz dependency routes")
+            raise exc.internal(
+                "kernel is required when registering authz dependency routes"
+            )
 
         shared = build_authz_shared_services(self.kernel)
 
@@ -103,7 +105,8 @@ class AuthzDepsModule[K: str | StrEnum](DepsModule[K]):
                 Deps[K].routed(
                     {
                         AuthzDecisionDepKey: {
-                            name: ConfigurableAuthzDecision(shared=shared) for name in dc
+                            name: ConfigurableAuthzDecision(shared=shared)
+                            for name in dc
                         },
                     },
                 ),

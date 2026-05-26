@@ -9,7 +9,7 @@ from typing import Any, Protocol, final
 import attrs
 from jwt import InvalidTokenError, PyJWKClient, PyJWKClientError
 
-from forze.base.errors import AuthenticationError
+from forze.base.exceptions import exc
 
 # ----------------------- #
 
@@ -95,8 +95,8 @@ class JwksKeyProvider(SigningKeyProviderPort):
         try:
             return c.get_signing_key_from_jwt(token).key
 
-        except (PyJWKClientError, InvalidTokenError) as exc:
-            raise AuthenticationError(
+        except (PyJWKClientError, InvalidTokenError) as e:
+            raise exc.authentication(
                 "Could not resolve OIDC signing key",
                 code="invalid_oidc_signing_key",
-            ) from exc
+            ) from e

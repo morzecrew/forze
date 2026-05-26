@@ -10,7 +10,6 @@ from pydantic import BaseModel, Field
 
 from forze.application.execution import Deps, ExecutionContext
 from forze.application.execution.registry import FrozenOperationRegistry
-from forze.base.errors import CoreError
 from forze.domain.models import BaseDTO
 from forze_fastapi.endpoints.http import BodyAsIsMapper, EmptyMapper
 from forze_fastapi.endpoints.http.composition.attach import (
@@ -118,7 +117,7 @@ class TestValidateHttpParamNameConflicts:
         class Q(BaseModel):
             item_id: str
 
-        with pytest.raises(CoreError, match="conflicts detected"):
+        with pytest.raises(exc.internal, match="conflicts detected"):
             validate_http_param_name_conflicts(
                 path_model=P,
                 query_model=Q,
@@ -129,7 +128,7 @@ class TestValidateHttpParamNameConflicts:
         class P(BaseModel):
             request: str
 
-        with pytest.raises(CoreError, match="reserved"):
+        with pytest.raises(exc.internal, match="reserved"):
             validate_http_param_name_conflicts(
                 path_model=P,
                 query_model=None,
@@ -143,7 +142,7 @@ class TestValidateHttpParamNameConflicts:
         class B(BaseModel):
             name: str
 
-        with pytest.raises(CoreError, match="conflicts detected"):
+        with pytest.raises(exc.internal, match="conflicts detected"):
             validate_http_param_name_conflicts(
                 path_model=P,
                 query_model=None,
@@ -262,7 +261,7 @@ class TestAttachHttpEndpoint:
         def ctx_dep() -> ExecutionContext:
             return ExecutionContext(deps=Deps())
 
-        with pytest.raises(CoreError, match="Route already exists"):
+        with pytest.raises(exc.internal, match="Route already exists"):
             attach_http_endpoint(
                 router,
                 spec=spec,

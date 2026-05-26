@@ -6,7 +6,7 @@ from typing import final
 import attrs
 
 from forze.application.contracts.secrets import SecretRef
-from forze.base.errors import CoreError, SecretNotFoundError
+from forze.base.exceptions import exc
 
 # ----------------------- #
 
@@ -30,7 +30,7 @@ class DirectorySecrets:
         candidate = (root / ref.path).resolve()
 
         if not candidate.is_relative_to(root):
-            raise CoreError(
+            raise exc.internal(
                 f"Secret path {ref.path!r} escapes configured root",
                 code="secret_path_invalid",
                 details={"ref": ref.path},
@@ -44,7 +44,7 @@ class DirectorySecrets:
         path = self._resolve_path(ref)
 
         if not path.is_file():
-            raise SecretNotFoundError(
+            raise exc.not_found(
                 f"No secret for {ref.path!r}",
                 details={"ref": ref.path},
             )
@@ -57,7 +57,7 @@ class DirectorySecrets:
         try:
             path = self._resolve_path(ref)
 
-        except CoreError:
+        except exc:
             return False
 
         return path.is_file()

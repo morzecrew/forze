@@ -3,7 +3,6 @@
 import pytest
 from pydantic import BaseModel
 
-from forze.base.errors import CoreError
 from forze.domain.models import BaseDTO
 from forze_fastapi.endpoints.http.contracts import HttpRequestDTO
 from forze_fastapi.endpoints.http.mapping import (
@@ -52,7 +51,7 @@ async def test_query_as_is_mapper_success() -> None:
 @pytest.mark.asyncio
 async def test_query_as_is_mapper_requires_query() -> None:
     m = QueryAsIsMapper(out=_Q)
-    with pytest.raises(CoreError, match="Query is required"):
+    with pytest.raises(exc.internal, match="Query is required"):
         await m(HttpRequestDTO())
 
 
@@ -72,12 +71,12 @@ async def test_body_as_is_mapper_success() -> None:
 @pytest.mark.asyncio
 async def test_body_as_is_mapper_requires_body() -> None:
     m = BodyAsIsMapper(out=_B)
-    with pytest.raises(CoreError, match="Body is required"):
+    with pytest.raises(exc.internal, match="Body is required"):
         await m(HttpRequestDTO())
 
 
 def test_query_body_assign_rejects_unknown_body_key() -> None:
-    with pytest.raises(CoreError, match="Body key"):
+    with pytest.raises(exc.internal, match="Body key"):
         QueryAsIsBodyAssignMapper(out=_Out, body_key="missing")
 
 
@@ -99,7 +98,7 @@ async def test_query_body_assign_merges_query_and_body() -> None:
 @pytest.mark.asyncio
 async def test_query_body_assign_requires_both() -> None:
     m = QueryAsIsBodyAssignMapper(out=_Out, body_key="body")
-    with pytest.raises(CoreError, match="Query and body are required"):
+    with pytest.raises(exc.internal, match="Query and body are required"):
         await m(
             HttpRequestDTO(
                 query=_Q(n=1),

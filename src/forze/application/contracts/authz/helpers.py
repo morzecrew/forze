@@ -1,7 +1,7 @@
 from uuid import UUID
 
 from forze.application.contracts.authn import AuthnIdentity
-from forze.base.errors import CoreError
+from forze.base.exceptions import exc
 
 from .specs import AuthzSpec
 from .value_objects import AuthzScope, AuthzSubject, PrincipalRef
@@ -19,24 +19,26 @@ def resolve_policy_scope(
 
     if explicit is not None and explicit.tenant_id is not None:
         scope = explicit
+
     elif invocation_tenant_id is not None:
         scope = AuthzScope(tenant_id=invocation_tenant_id)
+
     else:
         scope = AuthzScope()
 
     if spec.tenancy_mode == "require_invocation_tenant":
         if invocation_tenant_id is None:
-            raise CoreError(
+            raise exc.internal(
                 "AuthzSpec requires a bound tenant on the invocation context",
             )
 
         if scope.tenant_id is None:
-            raise CoreError(
+            raise exc.internal(
                 "AuthzSpec requires tenant_id on AuthzScope for this route",
             )
 
         if scope.tenant_id != invocation_tenant_id:
-            raise CoreError(
+            raise exc.internal(
                 "AuthzScope.tenant_id disagrees with invocation tenant",
             )
 

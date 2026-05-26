@@ -5,7 +5,6 @@ import warnings
 import pytest
 from pydantic import BaseModel
 
-from forze.base.errors import CoreError
 from forze.base.primitives import JsonDict
 from forze.domain.validation import collect_update_validators, update_validator
 from forze.domain.validation.updates import (
@@ -53,14 +52,14 @@ class TestUpdateValidatorDecorator:
         assert calls == [(1, 2, diff)]
 
     def test_zero_params_raises(self) -> None:
-        with pytest.raises(CoreError, match="at least one parameter"):
+        with pytest.raises(exc.internal, match="at least one parameter"):
 
             @update_validator
             def v() -> None:  # type: ignore[arg-type]
                 pass
 
     def test_four_params_raises(self) -> None:
-        with pytest.raises(CoreError, match="at most three parameters"):
+        with pytest.raises(exc.internal, match="at most three parameters"):
 
             @update_validator
             def v(a: Model, b: Model, c: JsonDict, d: int) -> None:  # type: ignore[arg-type]
@@ -147,7 +146,7 @@ class TestCollectUpdateValidators:
             def shared(self) -> None:
                 pass
 
-        with pytest.raises(CoreError, match="overrides"):
+        with pytest.raises(exc.internal, match="overrides"):
             collect_update_validators(Child, on_conflict="error")
 
     def test_override_conflict_overwrite_silently(self) -> None:

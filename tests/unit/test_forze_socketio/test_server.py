@@ -2,7 +2,6 @@
 
 import pytest
 
-from forze.base.errors import CoreError
 from forze_socketio import server as server_module
 
 # ----------------------- #
@@ -54,7 +53,9 @@ class TestSocketIOServerBuilders:
         assert server.kwargs["cors_allowed_origins"] == "*"
 
     def test_build_server_rejects_conflicting_manager_config(self) -> None:
-        with pytest.raises(CoreError, match="either `redis_url` or `client_manager`"):
+        with pytest.raises(
+            exc.internal, match="either `redis_url` or `client_manager`"
+        ):
             server_module.build_socketio_server(
                 redis_url="redis://localhost:6379/0",
                 client_manager=object(),  # type: ignore[arg-type]

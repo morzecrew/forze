@@ -3,9 +3,7 @@
 import pytest
 
 from forze.application.contracts.execution import BeforeStep
-from forze.application.execution.planning import OperationPlan
 from forze.application.execution.registry import OperationRegistry
-from forze.base.errors import CoreError
 
 
 def _noop_before_factory(_ctx):
@@ -29,5 +27,5 @@ class TestRegistryPlanBinding:
         assert len(plans["op"]._outer.before.items) == 1
 
     def test_finish_without_ops_raises(self) -> None:
-        with pytest.raises(CoreError, match="No operations"):
+        with pytest.raises(exc.internal, match="No operations"):
             OperationRegistry().bind()

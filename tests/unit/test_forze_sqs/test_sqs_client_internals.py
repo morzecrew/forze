@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock
 import pytest
 from pydantic import SecretStr
 
-from forze.base.errors import CoreError, InfrastructureError
+from forze.base.exceptions import InfrastructureError
 from forze_sqs.kernel.platform.client import SQSClient
 
 # ----------------------- #
@@ -44,13 +44,13 @@ def test_is_fifo_target() -> None:
 
 def test_require_session_raises_when_uninitialized() -> None:
     client = SQSClient()
-    with pytest.raises(CoreError, match="session is not initialized"):
+    with pytest.raises(exc.internal, match="session is not initialized"):
         client._SQSClient__require_session()
 
 
 def test_require_client_raises_when_no_context() -> None:
     client = SQSClient()
-    with pytest.raises(CoreError, match="client is not initialized"):
+    with pytest.raises(exc.internal, match="client is not initialized"):
         client._SQSClient__require_client()
 
 
@@ -289,7 +289,9 @@ async def test_enqueue_many_parallel_batches_respects_concurrency_cap() -> None:
     tok_d = client._SQSClient__ctx_depth.set(1)
     try:
         bodies = [b"x"] * 25
-        ids = await client.enqueue_many("q", bodies, message_ids=[f"id{i}" for i in range(25)])
+        ids = await client.enqueue_many(
+            "q", bodies, message_ids=[f"id{i}" for i in range(25)]
+        )
         assert len(ids) == 25
         assert fake.send_message_batch.await_count == 3
         assert max_in_flight == 2

@@ -37,7 +37,7 @@ def sanitize_pydantic_errors(
 
 
 def dump_for_error_context(obj: BaseModel) -> dict[str, Any]:
-    """Dump a Pydantic model for :attr:`~forze.base.errors.CoreError.details`.
+    """Dump a Pydantic model for :attr:`~forze.base.errors.exc.internal.details`.
 
     Uses JSON mode (masks :class:`~pydantic.SecretStr`) and applies
     :func:`~forze.base.scrubbing.sanitize` for plain-string fields with sensitive names.

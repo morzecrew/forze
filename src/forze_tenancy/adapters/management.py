@@ -5,7 +5,7 @@ import attrs
 
 from forze.application.contracts.document import DocumentCommandPort, DocumentQueryPort
 from forze.application.contracts.tenancy import TenantIdentity, TenantManagementPort
-from forze.base.errors import CoreError
+from forze.base.exceptions import exc
 
 from ..application.specs import principal_tenant_binding_spec, tenant_spec
 from ..domain.models.principal_tenant_binding import (
@@ -44,16 +44,20 @@ class TenantManagementAdapter(TenantManagementPort):
 
     def __attrs_post_init__(self) -> None:
         if self.tenant_qry.spec.name != tenant_spec.name:
-            raise CoreError("tenant_qry spec must match tenant_spec")
+            raise exc.internal("tenant_qry spec must match tenant_spec")
 
         if self.tenant_cmd.spec.name != tenant_spec.name:
-            raise CoreError("tenant_cmd spec must match tenant_spec")
+            raise exc.internal("tenant_cmd spec must match tenant_spec")
 
         if self.binding_qry.spec.name != principal_tenant_binding_spec.name:
-            raise CoreError("binding_qry spec must match principal_tenant_binding_spec")
+            raise exc.internal(
+                "binding_qry spec must match principal_tenant_binding_spec"
+            )
 
         if self.binding_cmd.spec.name != principal_tenant_binding_spec.name:
-            raise CoreError("binding_cmd spec must match principal_tenant_binding_spec")
+            raise exc.internal(
+                "binding_cmd spec must match principal_tenant_binding_spec"
+            )
 
     # ....................... #
 

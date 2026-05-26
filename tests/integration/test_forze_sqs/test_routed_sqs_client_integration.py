@@ -16,7 +16,7 @@ pytest.importorskip("testcontainers.localstack")
 from testcontainers.localstack import LocalStackContainer
 
 from forze.application.contracts.secrets import SecretRef
-from forze.base.errors import CoreError, InfrastructureError, SecretNotFoundError
+from forze.base.exceptions import InfrastructureError, SecretNotFoundError
 from forze_sqs.kernel.platform import RoutedSQSClient, SQSClient
 
 
@@ -220,7 +220,7 @@ async def test_routed_sqs_requires_startup_and_tenant(
     await routed.startup()
     try:
         tenant_set(None)
-        with pytest.raises(CoreError, match="Tenant ID"):
+        with pytest.raises(exc.internal, match="Tenant ID"):
             await routed.health()
     finally:
         await routed.close()
@@ -288,7 +288,7 @@ async def test_routed_sqs_invalid_json_raises_core_error(
     await routed.startup()
 
     try:
-        with pytest.raises(CoreError, match="SQSRoutingCredentials"):
+        with pytest.raises(exc.internal, match="SQSRoutingCredentials"):
             await routed.health()
 
     finally:

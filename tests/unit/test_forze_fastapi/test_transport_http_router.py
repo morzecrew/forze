@@ -22,7 +22,6 @@ from forze.application.contracts.execution import Handler
 from forze.application.execution import Deps, ExecutionContext
 from forze.application.execution.registry import OperationRegistry
 from forze.application.execution.running import run_operation
-from forze.base.errors import CoreError
 from forze_fastapi.middlewares.context import HeaderTokenAuthnIdentityResolver
 from forze_fastapi.middlewares.context.middleware import ContextBindingMiddleware
 from forze_fastapi.transport.http import (
@@ -88,7 +87,7 @@ class TestAuthnRequirementTransport:
         assert req.scheme_name == "forze_authn__main__bearer"
 
     def test_mutually_exclusive_transports_raises(self) -> None:
-        with pytest.raises(CoreError, match="exactly one of"):
+        with pytest.raises(exc.internal, match="exactly one of"):
             AuthnRequirement(
                 authn_route="main",
                 token_header="Authorization",

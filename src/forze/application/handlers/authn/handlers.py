@@ -12,7 +12,7 @@ from forze.application.contracts.authn import (
     TokenLifecyclePort,
 )
 from forze.application.contracts.execution import Handler
-from forze.base.errors import AuthenticationError
+from forze.base.exceptions import exc
 
 from ._utils import token_response_from_issued_tokens
 from .dto import (
@@ -77,7 +77,7 @@ class AuthnLogout(Handler[None, None]):
         identity = self.resolver()
 
         if identity is None:
-            raise AuthenticationError(
+            raise exc.authentication(
                 "Authentication required",
                 code="auth_required",
             )
@@ -124,7 +124,7 @@ class AuthnChangePassword(Handler[AuthnChangePasswordRequestDTO, None]):
         identity = self.resolver()
 
         if identity is None:
-            raise AuthenticationError(
+            raise exc.authentication(
                 "Authentication required",
                 code="auth_required",
             )

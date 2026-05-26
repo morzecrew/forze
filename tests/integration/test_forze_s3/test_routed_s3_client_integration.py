@@ -13,8 +13,7 @@ pytest.importorskip("aioboto3")
 pytest.importorskip("testcontainers")
 
 from forze.application.contracts.secrets import SecretRef
-from forze.base.errors import CoreError, InfrastructureError, SecretNotFoundError
-
+from forze.base.exceptions import InfrastructureError, SecretNotFoundError
 from forze_s3.kernel.platform import RoutedS3Client, S3Client, S3Config
 
 MINIO_ROOT_USER = "minioadmin"
@@ -76,7 +75,8 @@ class _MemSecretsTenantJson(_MemSecretsJson):
         broken_tenant: UUID | None = None,
     ) -> None:
         paths = {
-            f"tenants/{tid}/s3": json.dumps(payload) for tid, payload in payloads.items()
+            f"tenants/{tid}/s3": json.dumps(payload)
+            for tid, payload in payloads.items()
         }
         mp = f"tenants/{missing_tenant}/s3" if missing_tenant else None
         bp = f"tenants/{broken_tenant}/s3" if broken_tenant else None
@@ -149,7 +149,9 @@ async def test_routed_s3_health_and_object_crud(minio_container) -> None:
         assert head["metadata"]["filename"] == "readme.txt"
         assert await routed.download_bytes(bucket, key) == data
 
-        items, total = await routed.list_objects(bucket, prefix="docs", limit=10, offset=0)
+        items, total = await routed.list_objects(
+            bucket, prefix="docs", limit=10, offset=0
+        )
         assert total == 1 and len(items) == 1
         assert items[0]["Key"] == key
 
@@ -205,7 +207,7 @@ async def test_routed_s3_requires_startup_and_tenant(minio_container) -> None:
     await routed.startup()
     try:
         tenant_set(None)
-        with pytest.raises(CoreError, match="Tenant ID"):
+        with pytest.raises(exc.internal, match="Tenant ID"):
             await routed.health()
     finally:
         await routed.close()
@@ -268,7 +270,7 @@ async def test_routed_s3_invalid_json_raises_core_error(minio_container) -> None
     tenant_set(t1)
     await routed.startup()
     try:
-        with pytest.raises(CoreError, match="S3RoutingCredentials"):
+        with pytest.raises(exc.internal, match="S3RoutingCredentials"):
             await routed.health()
     finally:
         await routed.close()

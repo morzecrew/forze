@@ -7,7 +7,6 @@ import msgspec
 import pytest
 from pydantic import BaseModel
 
-from forze.base.errors import CoreError
 from forze.base.serialization.msgspec import (
     msgspec_dump,
     msgspec_dump_many,
@@ -101,7 +100,9 @@ def test_msgspec_validate_ignores_unknown_fields_by_default() -> None:
 
 
 def test_msgspec_validate_forbid_extra_rejects_top_level_unknown_fields() -> None:
-    with pytest.raises(msgspec.ValidationError, match="Object contains unknown field `extra`"):
+    with pytest.raises(
+        msgspec.ValidationError, match="Object contains unknown field `extra`"
+    ):
         msgspec_validate(SampleStruct, {"a": 1, "extra": 2}, forbid_extra=True)
 
 
@@ -170,7 +171,7 @@ def test_msgspec_dump_accepts_computed_fields_option_as_noop() -> None:
 
 def test_msgspec_dump_rejects_unset_exclusion() -> None:
     with pytest.raises(
-        CoreError,
+        exc.internal,
         match="msgspec codec does not support exclude=\\{'unset': True\\}",
     ):
         msgspec_dump(SampleStruct(a=1), exclude={"unset": True})
@@ -223,7 +224,7 @@ def test_msgspec_transform_from_pydantic_source() -> None:
 
 def test_msgspec_transform_rejects_unset_exclusion_for_msgspec_source() -> None:
     with pytest.raises(
-        CoreError,
+        exc.internal,
         match="msgspec codec does not support exclude=\\{'unset': True\\}",
     ):
         msgspec_transform(
@@ -235,7 +236,7 @@ def test_msgspec_transform_rejects_unset_exclusion_for_msgspec_source() -> None:
 
 def test_msgspec_transform_rejects_unset_exclusion_for_pydantic_source() -> None:
     with pytest.raises(
-        CoreError,
+        exc.internal,
         match="msgspec codec does not support exclude=\\{'unset': True\\}",
     ):
         msgspec_transform(

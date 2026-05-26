@@ -13,7 +13,6 @@ from forze.application.contracts.search import (
     SearchSpec,
 )
 from forze.application.execution import Deps, ExecutionContext
-from forze.base.errors import CoreError
 from forze_postgres.adapters.search import PostgresPGroongaSearchAdapter
 from forze_postgres.execution.deps.configs import PostgresHubSearchConfig
 from forze_postgres.execution.deps.deps import (
@@ -1554,10 +1553,10 @@ async def test_postgres_pgroonga_v2_search_with_cursor_filter_only(
         index_field_map={"title": "doc_title", "content": "doc_body"},
     )
 
-    with pytest.raises(CoreError, match="at most one"):
+    with pytest.raises(exc.internal, match="at most one"):
         await adapter.search_cursor("", cursor={"after": "x", "before": "y"})
 
-    with pytest.raises(CoreError, match="positive"):
+    with pytest.raises(exc.internal, match="positive"):
         await adapter.search_cursor("", cursor={"limit": 0})
 
     p0 = await adapter.project_search_cursor(
@@ -2042,13 +2041,13 @@ async def test_postgres_hub_search_with_cursor(
     )
     adapter = ConfigurablePostgresHubSearch(config=hub_cfg)(ctx, hub_spec)
 
-    with pytest.raises(CoreError, match="at most one"):
+    with pytest.raises(exc.internal, match="at most one"):
         await adapter.search_cursor(
             "",
             cursor={"after": "x", "before": "y"},
         )
 
-    with pytest.raises(CoreError, match="positive"):
+    with pytest.raises(exc.internal, match="positive"):
         await adapter.search_cursor("", cursor={"limit": 0})
 
     p0 = await adapter.project_search_cursor(

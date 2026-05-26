@@ -2,7 +2,6 @@
 
 import pytest
 
-from forze.base.errors import CoreError
 from forze.base.primitives import StrKeyNamespace
 
 
@@ -23,12 +22,12 @@ def test_key_accepts_str_enum_value() -> None:
 
 def test_segment_with_dot_raises() -> None:
     s = StrKeyNamespace(prefix="document")
-    with pytest.raises(CoreError, match=r"must not contain"):
+    with pytest.raises(exc.internal, match=r"must not contain"):
         s.key("bad.kernel")
 
 
 def test_empty_prefix_raises() -> None:
-    with pytest.raises(CoreError, match="must be non-empty"):
+    with pytest.raises(exc.internal, match="must be non-empty"):
         StrKeyNamespace(prefix="")
 
 

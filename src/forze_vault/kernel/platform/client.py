@@ -16,7 +16,7 @@ from hvac.exceptions import InvalidPath, VaultError
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
-from forze.base.errors import InfrastructureError, SecretNotFoundError
+from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
 
 from .port import VaultClientPort
@@ -69,7 +69,7 @@ class VaultClient(VaultClientPort):
         )
 
         if not client.is_authenticated():
-            raise InfrastructureError("Vault client is not authenticated")
+            raise exc.infrastructure("Vault client is not authenticated")
 
         return client
 
@@ -77,7 +77,7 @@ class VaultClient(VaultClientPort):
 
     def _require_client(self) -> Any:
         if self._client is None:
-            raise InfrastructureError("Vault client is not initialized")
+            raise exc.infrastructure("Vault client is not initialized")
 
         return self._client
 
@@ -93,21 +93,21 @@ class VaultClient(VaultClientPort):
             )
 
         except InvalidPath as e:
-            raise SecretNotFoundError(
+            raise exc.not_found(
                 f"No secret for {path!r}",
                 details={"ref": path},
             ) from e
 
         except VaultError as e:
-            raise InfrastructureError(f"Vault read failed for {path!r}: {e}") from e
+            raise exc.infrastructure(f"Vault read failed for {path!r}: {e}") from e
 
         except Exception as e:
-            raise InfrastructureError(f"Vault read failed for {path!r}: {e}") from e
+            raise exc.infrastructure(f"Vault read failed for {path!r}: {e}") from e
 
         data = response.get("data", {}).get("data")
 
         if not isinstance(data, dict):
-            raise InfrastructureError(
+            raise exc.infrastructure(
                 f"Vault secret at {path!r} has unexpected payload shape",
             )
 
@@ -135,12 +135,12 @@ class VaultClient(VaultClientPort):
             return False
 
         except VaultError as e:
-            raise InfrastructureError(
+            raise exc.infrastructure(
                 f"Vault exists check failed for {path!r}: {e}"
             ) from e
 
         except Exception as e:
-            raise InfrastructureError(
+            raise exc.infrastructure(
                 f"Vault exists check failed for {path!r}: {e}"
             ) from e
 

@@ -3,7 +3,7 @@ from typing import final
 
 import attrs
 
-from forze.base.errors import CoreError
+from forze.base.exceptions import exc
 
 from .._logger import logger
 from .types import IsolationLevel
@@ -19,7 +19,7 @@ class PostgresTransactionOptions:
     read_only: bool = False
     """If ``True``, transaction is read-only. Omitted means read-write."""
 
-    isolation: IsolationLevel = "read committed"
+    isolation: IsolationLevel = "read_committed"
     """Transaction isolation level. Omitted means default (read committed)."""
 
 
@@ -74,22 +74,26 @@ class PostgresConfig:
 
     def __attrs_post_init__(self) -> None:
         if self.min_size > self.max_size:
-            raise CoreError("Minimum size must be less than or equal to maximum size")
+            raise exc.configuration(
+                "Minimum size must be less than or equal to maximum size"
+            )
 
         if self.min_size < 0:
-            raise CoreError("Minimum size must be greater than 0")
+            raise exc.configuration("Minimum size must be greater than 0")
 
         if self.max_size < 0:
-            raise CoreError("Maximum size must be greater than 0")
+            raise exc.configuration("Maximum size must be greater than 0")
 
         if self.num_workers < 0:
-            raise CoreError("Number of workers must be greater than 0")
+            raise exc.configuration("Number of workers must be greater than 0")
 
         if self.pool_headroom < 0:
-            raise CoreError("pool_headroom must be greater than or equal to 0")
+            raise exc.configuration("pool_headroom must be greater than or equal to 0")
 
         if self.max_concurrent_queries is not None and self.max_concurrent_queries < 1:
-            raise CoreError("max_concurrent_queries must be at least 1 when set")
+            raise exc.configuration(
+                "max_concurrent_queries must be at least 1 when set"
+            )
 
         if self.min_size > 10:
             logger.warning(
@@ -104,6 +108,6 @@ class PostgresConfig:
             )
 
         if self.application_name is not None and len(self.application_name) > 63:
-            raise CoreError(
+            raise exc.configuration(
                 "application_name must be at most 63 characters for Postgres"
             )

@@ -13,7 +13,6 @@ from forze.application.contracts.search import (
     prepare_hub_search_options,
     search_options_for_simple_adapter,
 )
-from forze.base.errors import CoreError
 
 # ----------------------- #
 
@@ -59,7 +58,7 @@ def test_prepare_hub_member_weights_out_of_range() -> None:
         model_type=_M,
         members=(_leg("a"), _leg("b")),
     )
-    with pytest.raises(CoreError, match="0.0 and 1.0"):
+    with pytest.raises(exc.internal, match="0.0 and 1.0"):
         prepare_hub_search_options(
             hub,
             {"member_weights": {"a": 2.0, "b": 0.5}},

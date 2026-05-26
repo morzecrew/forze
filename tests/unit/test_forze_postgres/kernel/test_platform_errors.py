@@ -8,7 +8,7 @@ from psycopg import errors
 from forze.base.errors import (
     ConcurrencyError,
     ConflictError,
-    CoreError,
+    exc.internal,
     InfrastructureError,
     NotFoundError,
     ValidationError,
@@ -79,8 +79,8 @@ class TestPsycopgErrorHandlerBranches:
     """Broad coverage of :func:`_psycopg_eh` ``match`` arms."""
 
     def test_core_error_returned_unchanged(self) -> None:
-        """``CoreError`` instances pass through unchanged."""
-        original = CoreError(message="boundary", code="x")
+        """``exc.internal`` instances pass through unchanged."""
+        original = exc.internal(message="boundary", code="x")
         out = platform_errors._psycopg_eh(original, "op")
         assert out is original
 
@@ -132,7 +132,7 @@ class TestPsycopgErrorHandlerBranches:
     def test_maps_exception_to_domain_type(
         self,
         exc_factory: object,
-        expected_cls: type[CoreError],
+        expected_cls: type[exc.internal],
     ) -> None:
         exc = exc_factory()  # type: ignore[misc]
         out = platform_errors._psycopg_eh(exc, "test_op")

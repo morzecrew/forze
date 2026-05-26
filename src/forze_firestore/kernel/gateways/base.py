@@ -23,7 +23,7 @@ from forze.application.contracts.querying import (
 )
 from forze.application.contracts.tenancy import TENANT_ID_FIELD
 from forze.application.contracts.tenancy.mixins import TenancyMixin
-from forze.base.errors import CoreError
+from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
 from forze.base.serialization import pydantic_field_names
 from forze.domain.constants import ID_FIELD
@@ -117,12 +117,12 @@ class FirestoreGateway[M: BaseModel](TenancyMixin):
             return base
 
         if self.tenant_provider is None:
-            raise CoreError("Tenant provider is required for the gateway")
+            raise exc.internal("Tenant provider is required for the gateway")
 
         tenant_id = self.tenant_provider()
 
         if tenant_id is None:
-            raise CoreError("Tenant ID is required for the gateway")
+            raise exc.internal("Tenant ID is required for the gateway")
 
         tenant_filter = FieldFilter(TENANT_ID_FIELD, "==", tenant_id)
 
@@ -140,12 +140,12 @@ class FirestoreGateway[M: BaseModel](TenancyMixin):
 
         if self.tenant_aware:
             if self.tenant_provider is None:
-                raise CoreError("Tenant provider is required for the gateway")
+                raise exc.internal("Tenant provider is required for the gateway")
 
             tenant_id = self.tenant_provider()
 
             if tenant_id is None:
-                raise CoreError("Tenant ID is required for the gateway")
+                raise exc.internal("Tenant ID is required for the gateway")
 
             out[TENANT_ID_FIELD] = tenant_id
 

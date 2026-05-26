@@ -6,7 +6,7 @@ from uuid import UUID
 
 from pydantic import Field
 
-from forze.base.errors import ValidationError
+from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict, utcnow, uuid7
 from forze.base.serialization import (
     apply_dict_patch,
@@ -86,14 +86,12 @@ class Document(CoreModel):
         for k, v in data.items():
             if k in fields:
                 if fields[k].frozen:
-                    raise ValidationError(
-                        f"Field {k} is frozen and not allowed for update."
-                    )
+                    raise exc.domain(f"Field {k} is frozen and not allowed for update.")
 
                 valid[k] = v
 
             else:
-                raise ValidationError(f"Field {k} is not found in the model.")
+                raise exc.domain(f"Field {k} is not found in the model.")
 
         return valid
 

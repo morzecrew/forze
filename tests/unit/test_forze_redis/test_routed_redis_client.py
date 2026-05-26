@@ -6,8 +6,7 @@ from uuid import UUID
 import pytest
 
 from forze.application.contracts.secrets import SecretRef
-from forze.base.errors import CoreError, InfrastructureError
-
+from forze.base.exceptions import InfrastructureError
 from forze_redis.kernel.platform import RoutedRedisClient
 
 # ----------------------- #
@@ -95,7 +94,7 @@ async def test_routed_redis_eviction() -> None:
 
 def test_routed_redis_rejects_zero_max_cached_tenants() -> None:
     secrets = _MemSecrets({_T1: "redis://localhost:6379/0"})
-    with pytest.raises(CoreError, match="max_cached_tenants"):
+    with pytest.raises(exc.internal, match="max_cached_tenants"):
         RoutedRedisClient(
             secrets=secrets,
             secret_ref_for_tenant=_ref,
@@ -114,5 +113,5 @@ async def test_routed_redis_requires_tenant() -> None:
         max_cached_tenants=4,
     )
     await routed.startup()
-    with pytest.raises(CoreError, match="Tenant ID"):
+    with pytest.raises(exc.internal, match="Tenant ID"):
         await routed.health()

@@ -10,7 +10,6 @@ from forze.application.contracts.document import (
     DocumentSpec,
 )
 from forze.application.execution import Deps, ExecutionContext
-from forze.base.errors import CoreError
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
 from forze_mongo.execution.deps.deps import ConfigurableMongoDocument
 from forze_mongo.execution.deps.keys import MongoClientDepKey
@@ -118,7 +117,7 @@ async def test_mongo_adapter_find_cursor_tokens(
     assert len(proj.hits) == 3
     assert set(proj.hits[0].keys()) <= {"id", "label"}
 
-    with pytest.raises(CoreError, match="projection must include"):
+    with pytest.raises(exc.internal, match="projection must include"):
         await q.project_cursor(
             ["label"],
             None,
@@ -126,7 +125,7 @@ async def test_mongo_adapter_find_cursor_tokens(
             sorts=None,
         )
 
-    with pytest.raises(CoreError, match="primary key"):
+    with pytest.raises(exc.internal, match="primary key"):
         await q.find_cursor(
             None,
             cursor={"limit": 2},

@@ -14,7 +14,7 @@ from forze.application.contracts.authn import (
     PrincipalResolverPort,
     TokenVerifierPort,
 )
-from forze.base.errors import AuthenticationError, CoreError
+from forze.base.exceptions import exc
 
 # ----------------------- #
 
@@ -49,17 +49,17 @@ class AuthnOrchestrator(AuthnPort):
 
     def __attrs_post_init__(self) -> None:
         if "password" in self.enabled_methods and self.password_verifier is None:
-            raise CoreError(
+            raise exc.internal(
                 "AuthnOrchestrator: 'password' is enabled but no PasswordVerifierPort was wired",
             )
 
         if "token" in self.enabled_methods and self.token_verifier is None:
-            raise CoreError(
+            raise exc.internal(
                 "AuthnOrchestrator: 'token' is enabled but no TokenVerifierPort was wired",
             )
 
         if "api_key" in self.enabled_methods and self.api_key_verifier is None:
-            raise CoreError(
+            raise exc.internal(
                 "AuthnOrchestrator: 'api_key' is enabled but no ApiKeyVerifierPort was wired",
             )
 
@@ -92,7 +92,7 @@ class AuthnOrchestrator(AuthnPort):
         credentials: PasswordCredentials,
     ) -> AuthnResult:
         if "password" not in self.enabled_methods or self.password_verifier is None:
-            raise AuthenticationError(
+            raise exc.authentication(
                 "Password authentication is not enabled for this route",
                 code="method_disabled",
             )
@@ -112,7 +112,7 @@ class AuthnOrchestrator(AuthnPort):
         credentials: AccessTokenCredentials,
     ) -> AuthnResult:
         if "token" not in self.enabled_methods or self.token_verifier is None:
-            raise AuthenticationError(
+            raise exc.authentication(
                 "Token authentication is not enabled for this route",
                 code="method_disabled",
             )
@@ -132,7 +132,7 @@ class AuthnOrchestrator(AuthnPort):
         credentials: ApiKeyCredentials,
     ) -> AuthnResult:
         if "api_key" not in self.enabled_methods or self.api_key_verifier is None:
-            raise AuthenticationError(
+            raise exc.authentication(
                 "API key authentication is not enabled for this route",
                 code="method_disabled",
             )

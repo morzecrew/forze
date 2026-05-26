@@ -8,7 +8,6 @@ pytest.importorskip("psycopg")
 
 from psycopg import sql
 
-from forze.base.errors import CoreError
 from forze_postgres.adapters.search._pipeline_sql import (
     PipelineAliases,
     build_filtered_cte,
@@ -29,7 +28,7 @@ _ALIASES = PipelineAliases(rank_column="_fts_rank")
 
 
 def test_validate_join_pairs_rejects_duplicate_projection_keys() -> None:
-    with pytest.raises(CoreError, match="unique projection"):
+    with pytest.raises(exc.internal, match="unique projection"):
         validate_join_pairs((("id", "a"), ("id", "b")))
 
 

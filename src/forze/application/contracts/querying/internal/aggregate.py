@@ -6,7 +6,7 @@ from typing import Any, Literal, cast, get_args
 
 import attrs
 
-from forze.base.errors import CoreError
+from forze.base.exceptions import exc
 
 from ..expressions import AggregateFunction, AggregatesExpression, QueryFilterExpression
 from .nodes import QueryExpr
@@ -124,7 +124,7 @@ class AggregatesExpressionParser:
         raw_computed_obj: object = expr.get("$computed", {})
 
         if not isinstance(raw_computed_obj, Mapping):
-            raise CoreError(f"Invalid aggregate $computed: {raw_computed_obj!r}")
+            raise exc.internal(f"Invalid aggregate $computed: {raw_computed_obj!r}")
 
         raw_computed = cast(Mapping[Any, Any], raw_computed_obj)  # type: ignore[redundant-cast]
 
@@ -135,7 +135,7 @@ class AggregatesExpressionParser:
         )
 
         if not computed_fields:
-            raise CoreError("Aggregates expression requires $computed")
+            raise exc.internal("Aggregates expression requires $computed")
 
         aliases = [group.alias for group in groups] + [
             field.alias for field in computed_fields
@@ -143,7 +143,7 @@ class AggregatesExpressionParser:
         duplicates = sorted({alias for alias in aliases if aliases.count(alias) > 1})
 
         if duplicates:
-            raise CoreError(f"Duplicate aggregate aliases: {duplicates}")
+            raise exc.internal(f"Duplicate aggregate aliases: {duplicates}")
 
         return ParsedAggregates(
             groups=groups,
@@ -176,7 +176,7 @@ class AggregatesExpressionParser:
                 for name in seq
             )
 
-        raise CoreError(f"Invalid aggregate $groups: {raw!r}")
+        raise exc.internal(f"Invalid aggregate $groups: {raw!r}")
 
     # ....................... #
 
@@ -186,53 +186,53 @@ class AggregatesExpressionParser:
             return GroupRef(field=cls._field(raw))
 
         if not isinstance(raw, Mapping):
-            raise CoreError(f"Invalid $groups map value: {raw!r}")
+            raise exc.internal(f"Invalid $groups map value: {raw!r}")
 
         spec = cast(Mapping[Any, Any], raw)  # type: ignore[redundant-cast]
 
         if len(spec) != 1:
-            raise CoreError(
+            raise exc.internal(
                 f"$groups map value must declare exactly one operator, got {list(spec)!r}",
             )
 
         op, inner = next(iter(spec.items()))
 
         if op not in _GROUP_OPS:
-            raise CoreError(f"Invalid $groups operator: {op!r}")
+            raise exc.internal(f"Invalid $groups operator: {op!r}")
 
         if op == "$trunc":
             return cls._parse_trunc(inner)
 
-        raise CoreError(f"Invalid $groups operator: {op!r}")
+        raise exc.internal(f"Invalid $groups operator: {op!r}")
 
     # ....................... #
 
     @classmethod
     def _parse_trunc(cls, raw: object) -> GroupTrunc:
         if not isinstance(raw, Mapping):
-            raise CoreError(f"Invalid $trunc spec: {raw!r}")
+            raise exc.internal(f"Invalid $trunc spec: {raw!r}")
 
         spec = cast(Mapping[Any, Any], raw)  # type: ignore[redundant-cast]
         allowed = {"field", "unit", "timezone"}
         extra = set(spec) - allowed
 
         if extra:
-            raise CoreError(f"Invalid $trunc keys: {sorted(extra)}")
+            raise exc.internal(f"Invalid $trunc keys: {sorted(extra)}")
 
         field = spec.get("field")
         unit = spec.get("unit")
 
         if not isinstance(field, str) or not field.strip():
-            raise CoreError("$trunc.field must be a non-empty string")
+            raise exc.internal("$trunc.field must be a non-empty string")
 
         if not isinstance(unit, str) or unit not in _UNITS:
-            raise CoreError(
+            raise exc.internal(
                 f"$trunc.unit must be one of {sorted(_UNITS)}",
             )
 
         tz_raw = spec.get("timezone")
         if tz_raw is not None and not isinstance(tz_raw, str):
-            raise CoreError(f"$trunc.timezone must be a string, got {tz_raw!r}")
+            raise exc.internal(f"$trunc.timezone must be a string, got {tz_raw!r}")
 
         resolved = parse_aggregate_timezone(tz_raw)
 
@@ -247,7 +247,7 @@ class AggregatesExpressionParser:
     @staticmethod
     def _alias(alias: object) -> str:
         if not isinstance(alias, str) or not _ALIAS_RE.fullmatch(alias):
-            raise CoreError(f"Invalid aggregate alias: {alias!r}")
+            raise exc.internal(f"Invalid aggregate alias: {alias!r}")
 
         return alias
 
@@ -256,7 +256,7 @@ class AggregatesExpressionParser:
     @staticmethod
     def _field(field: object) -> str:
         if not isinstance(field, str) or not field.strip():
-            raise CoreError(f"Invalid aggregate field path: {field!r}")
+            raise exc.internal(f"Invalid aggregate field path: {field!r}")
 
         return field
 
@@ -267,25 +267,25 @@ class AggregatesExpressionParser:
         alias = cls._alias(alias)
 
         if not isinstance(spec, Mapping):
-            raise CoreError(f"Invalid aggregate computed field spec: {spec!r}")
+            raise exc.internal(f"Invalid aggregate computed field spec: {spec!r}")
 
         raw_spec: Mapping[Any, Any] = spec  # type: ignore[assignment]
 
         if len(raw_spec) != 1:
-            raise CoreError(
+            raise exc.internal(
                 f"Aggregate computed field {alias!r} must declare exactly one function",
             )
 
         function, field = next(iter(raw_spec.items()))
 
         if function not in _FUNCTIONS:
-            raise CoreError(f"Invalid aggregate function: {function!r}")
+            raise exc.internal(f"Invalid aggregate function: {function!r}")
 
         field_path, filter_expr, parsed_filter = cls._function_arg(function, field)
 
         if function == "$count":
             if field_path is not None:
-                raise CoreError("$count aggregate expects no field")
+                raise exc.internal("$count aggregate expects no field")
 
             return AggregateComputedField(
                 alias=alias,
@@ -321,13 +321,13 @@ class AggregatesExpressionParser:
         extra = sorted(str(key) for key in set(raw_spec) - allowed)
 
         if extra:
-            raise CoreError(f"Invalid aggregate function keys: {extra}")
+            raise exc.internal(f"Invalid aggregate function keys: {extra}")
 
         if function == "$count" and field is not None:
-            raise CoreError("$count aggregate expects no field")
+            raise exc.internal("$count aggregate expects no field")
 
         if function != "$count" and field is None:
-            raise CoreError(f"{function} aggregate requires a field")
+            raise exc.internal(f"{function} aggregate requires a field")
 
         parsed_filter: QueryExpr | None = None
         if filter_expr is not None:

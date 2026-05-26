@@ -14,7 +14,7 @@ from forze.application.contracts.base import (
     page_from_limit_offset,
 )
 from forze.application.contracts.querying import PaginationExpression
-from forze.base.errors import CoreError
+from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
 from forze.base.serialization import pydantic_validate, pydantic_validate_many
 
@@ -35,8 +35,8 @@ def validated_params(
     try:
         defn = spec.queries[query_key]
 
-    except KeyError as exc:
-        raise CoreError(f"Unknown analytics query key: {query_key!r}") from exc
+    except KeyError as e:
+        raise exc.configuration(f"Unknown analytics query key: {query_key!r}") from e
 
     if isinstance(params, defn.params):
         return params
@@ -44,7 +44,7 @@ def validated_params(
     if isinstance(params, BaseModel):  # pyright: ignore[reportUnnecessaryIsInstance]
         return pydantic_validate(defn.params, params.model_dump())
 
-    raise CoreError("Analytics params must be a Pydantic model instance.")
+    raise exc.configuration("Analytics params must be a Pydantic model instance.")
 
 
 # ....................... #

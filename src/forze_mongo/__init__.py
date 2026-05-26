@@ -19,7 +19,6 @@ from .kernel.platform import (
     MongoClientPort,
     MongoConfig,
     RoutedMongoClient,
-    mongo_handled,
 )
 
 # ----------------------- #
@@ -33,7 +32,6 @@ __all__ = [
     "MongoClientDepKey",
     "mongo_lifecycle_step",
     "routed_mongo_lifecycle_step",
-    "mongo_handled",
     "MongoDocumentConfig",
     "MongoReadOnlyDocumentConfig",
 ]

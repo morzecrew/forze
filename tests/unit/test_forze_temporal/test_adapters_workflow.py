@@ -7,6 +7,7 @@ from pydantic import BaseModel
 
 pytest.importorskip("temporalio")
 
+from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.contracts.workflow import (
     WorkflowHandle,
     WorkflowQuerySpec,
@@ -15,9 +16,10 @@ from forze.application.contracts.workflow import (
     WorkflowUpdateSpec,
 )
 from forze.application.contracts.workflow.specs import WorkflowInvokeSpec
-from forze.application.contracts.tenancy import TenantIdentity
-from forze.base.errors import CoreError
-from forze_temporal.adapters.workflow import TemporalWorkflowCommandAdapter, TemporalWorkflowQueryAdapter
+from forze_temporal.adapters.workflow import (
+    TemporalWorkflowCommandAdapter,
+    TemporalWorkflowQueryAdapter,
+)
 from forze_temporal.kernel.platform.client import TemporalClient
 
 
@@ -55,7 +57,9 @@ def _spec() -> WorkflowSpec[_In, _Out]:
         run=WorkflowInvokeSpec(args_type=_In, return_type=_Out),
         signals={"sig": WorkflowSignalSpec(name="sig", args_type=_Sig)},
         queries={"q": WorkflowQuerySpec(name="q", args_type=_QIn, return_type=_QOut)},
-        updates={"up": WorkflowUpdateSpec(name="up", args_type=_UpIn, return_type=_UpOut)},
+        updates={
+            "up": WorkflowUpdateSpec(name="up", args_type=_UpIn, return_type=_UpOut)
+        },
     )
 
 
@@ -183,10 +187,7 @@ class TestTemporalBaseAdapterWorkflowId:
             tenant_aware=True,
             tenant_provider=lambda: TenantIdentity(tenant_id=tid),
         )
-        assert (
-            adapter.construct_workflow_id("job-1")
-            == f"tenant:{tid}:job-1"
-        )
+        assert adapter.construct_workflow_id("job-1") == f"tenant:{tid}:job-1"
 
     def test_tenant_aware_without_provider_raises(self) -> None:
         spec = _spec()
@@ -197,5 +198,5 @@ class TestTemporalBaseAdapterWorkflowId:
             tenant_aware=True,
             tenant_provider=None,
         )
-        with pytest.raises(CoreError, match="Tenant provider"):
+        with pytest.raises(exc.internal, match="Tenant provider"):
             adapter.construct_workflow_id("x")

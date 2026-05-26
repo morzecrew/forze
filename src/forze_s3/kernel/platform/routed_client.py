@@ -16,7 +16,7 @@ from forze.application.contracts.secrets import (
     SecretsPort,
     resolve_structured,
 )
-from forze.base.errors import CoreError, InfrastructureError, SecretNotFoundError
+from forze.base.exceptions import exc
 
 from .client import S3Client
 from .port import S3ClientPort
@@ -58,7 +58,7 @@ class RoutedS3Client(S3ClientPort):
 
     def __attrs_post_init__(self) -> None:
         if self.max_cached_tenants < 1:
-            raise CoreError("max_cached_tenants must be at least 1")
+            raise exc.internal("max_cached_tenants must be at least 1")
 
     # ....................... #
 
@@ -100,7 +100,7 @@ class RoutedS3Client(S3ClientPort):
         tid = self.tenant_provider()
 
         if tid is None:
-            raise CoreError(
+            raise exc.internal(
                 "Tenant ID is required for routed S3 access",
                 code="tenant_required",
             )
@@ -111,7 +111,7 @@ class RoutedS3Client(S3ClientPort):
 
     async def _get_client(self) -> S3Client:
         if not self._started:
-            raise InfrastructureError("Routed S3 client is not started")
+            raise exc.internal("Routed S3 client is not started")
 
         tid = self._require_tenant_id()
 
@@ -130,14 +130,11 @@ class RoutedS3Client(S3ClientPort):
                     S3RoutingCredentials,
                 )
 
-            except SecretNotFoundError:
-                raise
-
-            except CoreError:
+            except exc:
                 raise
 
             except Exception as e:
-                raise InfrastructureError(
+                raise exc.internal(
                     f"Failed to resolve S3 secret for tenant {tid}: {e}",
                 ) from e
 

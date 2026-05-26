@@ -87,7 +87,6 @@ class DepsPlan:
             When ``None`` (default), enable if ``FORZE_RUNTIME_TRACE`` is set to a
             truthy value (``1``, ``true``, ``yes``).
         :returns: Merged :class:`Deps` instance.
-        :raises CoreError: If any module registers a conflicting key.
         """
 
         logger.trace(
@@ -99,9 +98,7 @@ class DepsPlan:
             _trace_from_env() if trace_resolution is None else trace_resolution
         )
         enable_runtime_trace = (
-            _runtime_trace_from_env()
-            if trace_runtime is None
-            else trace_runtime
+            _runtime_trace_from_env() if trace_runtime is None else trace_runtime
         )
 
         if not self.modules:

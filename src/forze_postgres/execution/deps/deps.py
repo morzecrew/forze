@@ -35,7 +35,7 @@ from forze.application.coordinators import (
     SearchResultSnapshotCoordinator,
 )
 from forze.application.execution import ExecutionContext
-from forze.base.errors import CoreError
+from forze.base.exceptions import exc
 from forze.base.serialization import pydantic_field_names
 from forze.domain.constants import ID_FIELD
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document
@@ -183,7 +183,9 @@ class ConfigurablePostgresDocument(DocumentCommandDepPort[R, D, C, U]):
         tenant_aware = self.config.get("tenant_aware", False)
 
         if spec.write is None:
-            raise CoreError("Write relation is required for non read-only documents.")
+            raise exc.internal(
+                "Write relation is required for non read-only documents."
+            )
 
         read = read_gw(
             ctx,
@@ -295,7 +297,7 @@ class ConfigurablePostgresHubSearch(HubSearchQueryDepPort):
             c = self.config["members"].get(m.name)
 
             if c is None:
-                raise CoreError(
+                raise exc.internal(
                     f"Member '{m.name}' not found in PostgresHubSearchConfig['members']."
                 )
 
@@ -310,7 +312,7 @@ class ConfigurablePostgresHubSearch(HubSearchQueryDepPort):
                 fts_groups = c.get("fts_groups")
 
                 if fts_groups is None:
-                    raise CoreError("FTS groups are required for FTS hub leg.")
+                    raise exc.internal("FTS groups are required for FTS hub leg.")
 
                 validate_fts_groups_for_search_spec(m, fts_groups)
 
@@ -320,7 +322,7 @@ class ConfigurablePostgresHubSearch(HubSearchQueryDepPort):
                 e_name = c.get("embeddings_name")
 
                 if v_col is None or v_dim is None or e_name is None:
-                    raise CoreError(
+                    raise exc.internal(
                         "vector hub leg requires vector_column, embedding_dimensions, and embeddings_name.",
                     )
 
@@ -332,7 +334,7 @@ class ConfigurablePostgresHubSearch(HubSearchQueryDepPort):
                 )
 
             elif engine != "pgroonga":
-                raise CoreError(
+                raise exc.internal(
                     f"Hub search leg engine {engine!r} is not supported; "
                     "use 'pgroonga', 'fts', or 'vector'."
                 )
@@ -342,7 +344,7 @@ class ConfigurablePostgresHubSearch(HubSearchQueryDepPort):
 
                 for field in m.fields:
                     if field not in hub_fields:
-                        raise CoreError(
+                        raise exc.internal(
                             f"same_heap_as_hub member {m.name!r}: search field {field!r} must "
                             "be a field on the hub SearchSpec model_type (hub row shape).",
                         )
@@ -353,7 +355,7 @@ class ConfigurablePostgresHubSearch(HubSearchQueryDepPort):
                 pg_sv = c.get("pgroonga_score_version", "v2")
 
                 if pg_sv not in ("v1", "v2"):
-                    raise CoreError("pgroonga_score_version must be 'v1' or 'v2'.")
+                    raise exc.internal("pgroonga_score_version must be 'v1' or 'v2'.")
 
             rt = HubLegRuntime(
                 search=m,
@@ -435,7 +437,7 @@ def _postgres_search_port_for_config(
             fts_groups = c.get("fts_groups")
 
             if fts_groups is None:
-                raise CoreError("FTS groups are required for FTS engine.")
+                raise exc.internal("FTS groups are required for FTS engine.")
 
             validate_fts_groups_for_search_spec(member_spec, fts_groups)
 
@@ -462,7 +464,7 @@ def _postgres_search_port_for_config(
             ed = c.get("embedding_dimensions")
             vcol = c.get("vector_column")
             if en is None or ed is None or vcol is None:
-                raise CoreError(
+                raise exc.internal(
                     "vector engine requires embeddings_name, embedding_dimensions, and vector_column.",
                 )
             es = EmbeddingsSpec(
@@ -517,13 +519,13 @@ class ConfigurablePostgresFederatedSearch(FederatedSearchQueryDepPort):
             c = self.config["members"].get(m.name)
 
             if c is None:
-                raise CoreError(
+                raise exc.internal(
                     f"Member '{m.name}' not found in PostgresFederatedSearchConfig['members'].",
                 )
 
             if isinstance(m, HubSearchSpec):
                 if not is_postgres_federated_embedded_hub_config(c):
-                    raise CoreError(
+                    raise exc.internal(
                         f"Federated hub member {m.name!r} must use a Postgres config with "
                         "'hub' and 'members' (embedded PostgresHubSearchConfig).",
                     )
@@ -542,13 +544,13 @@ class ConfigurablePostgresFederatedSearch(FederatedSearchQueryDepPort):
             engine = c.get("engine", "pgroonga")
 
             if is_postgres_federated_embedded_hub_config(c):
-                raise CoreError(
+                raise exc.internal(
                     f"Federated search member {m.name!r} is a SearchSpec but its Postgres "
                     "config looks like an embedded hub (has 'hub' and 'members').",
                 )
 
             if engine not in ("pgroonga", "fts", "vector"):
-                raise CoreError(
+                raise exc.internal(
                     f"Federated search member engine {engine!r} is not supported; "
                     "use 'pgroonga', 'fts', or 'vector'.",
                 )
@@ -557,7 +559,9 @@ class ConfigurablePostgresFederatedSearch(FederatedSearchQueryDepPort):
                 fts_groups = c.get("fts_groups")
 
                 if fts_groups is None:
-                    raise CoreError("FTS groups are required for FTS federated member.")
+                    raise exc.internal(
+                        "FTS groups are required for FTS federated member."
+                    )
 
                 validate_fts_groups_for_search_spec(m, fts_groups)  # type: ignore[arg-type]
 

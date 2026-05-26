@@ -7,7 +7,6 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from forze.application.coordinators import DistributedLockCoordinator
-from forze.base.errors import CoreError
 
 
 @pytest.mark.asyncio
@@ -40,13 +39,15 @@ async def test_scope_raises_when_acquire_fails_without_wait() -> None:
         wait_timeout=None,
     )
 
-    with pytest.raises(CoreError, match="Failed to acquire distributed lock"):
+    with pytest.raises(exc.internal, match="Failed to acquire distributed lock"):
         async with coord.scope("k"):
             pass
 
 
 @pytest.mark.asyncio
-async def test_scope_raises_when_acquire_times_out(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_scope_raises_when_acquire_times_out(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setattr(asyncio, "sleep", AsyncMock())
 
     cmd = MagicMock()
@@ -60,7 +61,7 @@ async def test_scope_raises_when_acquire_times_out(monkeypatch: pytest.MonkeyPat
         retry_jitter=timedelta(0),
     )
 
-    with pytest.raises(CoreError, match="Failed to acquire distributed lock"):
+    with pytest.raises(exc.internal, match="Failed to acquire distributed lock"):
         async with coord.scope("k"):
             pass
 

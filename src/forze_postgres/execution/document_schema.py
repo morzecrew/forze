@@ -9,15 +9,15 @@ from forze.application._logger import logger
 from forze.application.contracts.document import DocumentSpec
 from forze.application.contracts.execution import LifecycleHook, LifecycleStep
 from forze.application.execution import ExecutionContext
-from forze.base.errors import CoreError
+from forze.base.exceptions import exc
 
-from ..kernel.validate_schema import (
-    PostgresDocumentSchemaSpec,
-    validate_postgres_document_schemas,
-)
 from ..kernel.validate_bookkeeping import (
     PostgresDocumentBookkeepingSpec,
     validate_postgres_document_bookkeeping,
+)
+from ..kernel.validate_schema import (
+    PostgresDocumentSchemaSpec,
+    validate_postgres_document_schemas,
 )
 from .deps.configs import PostgresDocumentConfig, PostgresReadOnlyDocumentConfig
 from .deps.keys import PostgresIntrospectorDepKey
@@ -45,7 +45,7 @@ def postgres_document_schema_spec_for_binding(
         )
 
     if "write" not in config:
-        raise CoreError(
+        raise exc.internal(
             f"Document {name!r} has write spec but config is not a Postgres document config "
             "(missing 'write' relation).",
         )
@@ -58,7 +58,7 @@ def postgres_document_schema_spec_for_binding(
             hist = config["history"]  # type: ignore[typeddict-item]
 
         if hist is None:
-            raise CoreError(
+            raise exc.internal(
                 f"Document {name!r}: history_enabled but PostgresDocumentConfig "
                 "has no 'history' relation.",
             )
@@ -113,7 +113,7 @@ class PostgresDocumentSchemaValidationHook(LifecycleHook):
                     bookkeeping_specs,
                 )
 
-        except CoreError as e:
+        except exc as e:
             if getattr(e, "code", None) == "introspection_partition_required":
                 logger.trace(
                     "Postgres document schema validation skipped "

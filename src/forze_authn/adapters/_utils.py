@@ -2,7 +2,7 @@ from uuid import UUID
 
 from forze.application.contracts.authn import AuthnIdentity
 from forze.application.contracts.document import DocumentQueryPort
-from forze.base.errors import AuthenticationError
+from forze.base.exceptions import exc
 
 from ..domain.models.account import (
     ReadApiKeyAccount,
@@ -92,4 +92,4 @@ async def validate_principal(
     )
 
     if principal is None or not principal.is_active:
-        raise AuthenticationError("Principal not found")
+        raise exc.authentication("Principal not found")

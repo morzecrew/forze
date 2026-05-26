@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 
 from psycopg import sql
 
-from forze.base.errors import CoreError
+from forze.base.exceptions import exc
 
 from .types import IsolationLevel
 
@@ -24,14 +24,14 @@ def isolation_level_psycopg(isolation: IsolationLevel) -> "PsycopgIsolationLevel
     from psycopg import IsolationLevel as IL
 
     levels: dict[IsolationLevel, IL] = {
-        "read committed": IL.READ_COMMITTED,
-        "repeatable read": IL.REPEATABLE_READ,
+        "read_committed": IL.READ_COMMITTED,
+        "repeatable_read": IL.REPEATABLE_READ,
         "serializable": IL.SERIALIZABLE,
     }
     out = levels.get(isolation)
 
     if out is None:
-        raise CoreError(
+        raise exc.internal(
             f"Unsupported transaction isolation level {isolation!r}; "
             f"expected one of: {', '.join(sorted(levels))}",
         )
@@ -43,14 +43,14 @@ def isolation_level_sql_fragment(isolation: IsolationLevel) -> sql.Composable:
     """Return an SQL fragment for ``SET TRANSACTION ISOLATION LEVEL …`` (keyword, not quoted)."""
 
     levels: dict[IsolationLevel, sql.SQL] = {
-        "read committed": sql.SQL("READ COMMITTED"),
-        "repeatable read": sql.SQL("REPEATABLE READ"),
+        "read_committed": sql.SQL("READ COMMITTED"),
+        "repeatable_read": sql.SQL("REPEATABLE READ"),
         "serializable": sql.SQL("SERIALIZABLE"),
     }
     frag = levels.get(isolation)
 
     if frag is None:
-        raise CoreError(
+        raise exc.internal(
             f"Unsupported transaction isolation level {isolation!r}; "
             f"expected one of: {', '.join(sorted(levels))}",
         )

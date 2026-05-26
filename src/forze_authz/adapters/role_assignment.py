@@ -5,8 +5,8 @@ import attrs
 
 from forze.application.contracts.authn import AuthnIdentity
 from forze.application.contracts.authz import (
-    AuthzSubject,
     AuthzScope,
+    AuthzSubject,
     PrincipalRef,
     RoleAssignmentPort,
     RoleRef,
@@ -15,7 +15,7 @@ from forze.application.contracts.authz import (
 )
 from forze.application.contracts.authz.specs import AuthzSpec
 from forze.application.contracts.document import DocumentCommandPort, DocumentQueryPort
-from forze.base.errors import CoreError
+from forze.base.exceptions import exc
 
 from ..domain.models.bindings import (
     CreatePrincipalRoleBindingCmd,
@@ -84,14 +84,14 @@ class RoleAssignmentAdapter(RoleAssignmentPort):
         principal_row = await find_policy_principal_by_id(self.principal_qry, pid)
 
         if principal_row is None:
-            raise CoreError("Policy principal not found for role assignment")
+            raise exc.internal("Policy principal not found for role assignment")
 
         role = await self.role_qry.find(
             filters={"$values": {"role_key": role_key}},
         )
 
         if role is None:
-            raise CoreError(f"Unknown role key: {role_key!r}")
+            raise exc.internal(f"Unknown role key: {role_key!r}")
 
         existing = await self._find_principal_role_binding(pid, role.id)
 
@@ -121,14 +121,14 @@ class RoleAssignmentAdapter(RoleAssignmentPort):
         principal_row = await find_policy_principal_by_id(self.principal_qry, pid)
 
         if principal_row is None:
-            raise CoreError("Policy principal not found for role revocation")
+            raise exc.internal("Policy principal not found for role revocation")
 
         role = await self.role_qry.find(
             filters={"$values": {"role_key": role_key}},
         )
 
         if role is None:
-            raise CoreError(f"Unknown role key: {role_key!r}")
+            raise exc.internal(f"Unknown role key: {role_key!r}")
 
         binding = await self._find_principal_role_binding(pid, role.id)
 
@@ -154,7 +154,7 @@ class RoleAssignmentAdapter(RoleAssignmentPort):
         principal_row = await find_policy_principal_by_id(self.principal_qry, pid)
 
         if principal_row is None:
-            raise CoreError("Policy principal not found when listing roles")
+            raise exc.internal("Policy principal not found when listing roles")
 
         return await self.resolver.list_assigned_roles(pid, scope=resolved)
 

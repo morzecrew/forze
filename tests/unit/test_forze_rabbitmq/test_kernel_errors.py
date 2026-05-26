@@ -1,7 +1,7 @@
 import pytest
 from aio_pika import exceptions as aio_pika_errors
 
-from forze.base.errors import CoreError, InfrastructureError
+from forze.base.exceptions import InfrastructureError
 from forze_rabbitmq.kernel.platform.errors import rabbitmq_handled
 
 
@@ -32,8 +32,8 @@ async def test_rabbitmq_error_handler_maps_known_exceptions(
 
 @pytest.mark.asyncio
 async def test_rabbitmq_error_handler_passthrough_core_error() -> None:
-    with pytest.raises(CoreError, match="already_core"):
-        await _raise(CoreError("already_core"))
+    with pytest.raises(exc.internal, match="already_core"):
+        await _raise(exc.internal("already_core"))
 
 
 @pytest.mark.asyncio

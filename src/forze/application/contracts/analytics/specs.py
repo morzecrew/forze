@@ -7,7 +7,7 @@ from typing import Any, Generic, Mapping, TypeVar, final
 import attrs
 from pydantic import BaseModel
 
-from forze.base.errors import CoreError
+from forze.base.exceptions import exc
 
 from ..base import BaseSpec
 
@@ -58,34 +58,40 @@ class AnalyticsSpec(BaseSpec, Generic[R, Ing]):
 
 
 def validate_analytics_spec(spec: AnalyticsSpec[Any, Any]) -> None:
-    """Check internal consistency; raise :class:`~forze.base.errors.CoreError` on violation.
+    """Check internal consistency; raise exception on violation.
 
     :param spec: Analytics surface to validate.
-    :raises CoreError: empty queries, duplicate keys, or invalid model types.
     """
 
     if not spec.queries:
-        raise CoreError("AnalyticsSpec.queries must contain at least one named query.")
+        raise exc.configuration(
+            "AnalyticsSpec.queries must contain at least one named query."
+        )
 
     if not issubclass(spec.read, BaseModel):
-        raise CoreError("AnalyticsSpec.read must be a Pydantic BaseModel subclass.")
+        raise exc.configuration(
+            "AnalyticsSpec.read must be a Pydantic BaseModel subclass."
+        )
 
     if spec.ingest is not None and not issubclass(spec.ingest, BaseModel):
-        raise CoreError("AnalyticsSpec.ingest must be a Pydantic BaseModel subclass.")
+        raise exc.configuration(
+            "AnalyticsSpec.ingest must be a Pydantic BaseModel subclass."
+        )
 
     seen: set[str] = set()
 
     for key, definition in spec.queries.items():
         if not key:
-            raise CoreError("Analytics query keys must be non-empty strings.")
+            raise exc.configuration("Analytics query keys must be non-empty strings.")
 
         if key in seen:
-            raise CoreError(f"Duplicate analytics query key: {key!r}.")
+            raise exc.configuration(f"Duplicate analytics query key: {key!r}.")
+
         seen.add(key)
 
         if not issubclass(
             definition.params, BaseModel
         ):  # pyright: ignore[reportUnnecessaryIsInstance]
-            raise CoreError(
+            raise exc.configuration(
                 f"Analytics query {key!r}: params must be a Pydantic BaseModel subclass."
             )

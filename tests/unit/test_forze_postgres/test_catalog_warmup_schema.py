@@ -7,9 +7,7 @@ from pydantic import BaseModel
 
 pytest.importorskip("psycopg")
 
-from forze.application.execution import ExecutionContext, Deps
-from forze.base.errors import CoreError
-
+from forze.application.execution import Deps, ExecutionContext
 from forze_postgres.execution.catalog_warmup import (
     postgres_catalog_warmup_lifecycle_step,
     warm_postgres_catalog,
@@ -94,7 +92,7 @@ async def test_warm_postgres_catalog_vector_skips_index_info() -> None:
 async def test_warm_postgres_catalog_skips_on_partition_error() -> None:
     intro = MagicMock(spec=PostgresIntrospector)
     intro.get_column_types = AsyncMock(
-        side_effect=CoreError(
+        side_effect=exc.internal(
             "partition",
             code="introspection_partition_required",
         ),
@@ -160,7 +158,7 @@ async def test_validate_postgres_document_schemas_missing_column() -> None:
         return_value={"a": PostgresType(base="int4", is_array=False, not_null=True)},
     )
 
-    with pytest.raises(CoreError, match="missing columns"):
+    with pytest.raises(exc.internal, match="missing columns"):
         await validate_postgres_document_schemas(
             intro,
             [

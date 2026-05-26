@@ -8,7 +8,7 @@ from forze.application.contracts.authn import (
     PrincipalResolverPort,
     VerifiedAssertion,
 )
-from forze.base.errors import AuthenticationError
+from forze.base.exceptions import exc
 from forze.base.primitives import uuid4
 
 # ----------------------- #
@@ -41,6 +41,6 @@ def derive_principal_id(issuer: str, subject: str) -> UUID:
     """Public helper for tests / migrations to compute the same UUID this resolver emits."""
 
     if not issuer or not subject:
-        raise AuthenticationError("issuer and subject must be non-empty")
+        raise exc.authentication("issuer and subject must be non-empty")
 
     return uuid4({"iss": issuer, "sub": subject})

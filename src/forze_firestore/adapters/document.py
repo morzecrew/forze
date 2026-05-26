@@ -13,7 +13,7 @@ from pydantic import BaseModel
 
 from forze.application.contracts.document import DocumentSpec
 from forze.application.coordinators import DocumentCacheCoordinator, DocumentCoordinator
-from forze.base.errors import CoreError
+from forze.base.exceptions import exc
 from forze.base.serialization import (
     pydantic_dump,
     pydantic_dump_many,
@@ -61,10 +61,10 @@ class FirestoreDocumentAdapter(DocumentCoordinator[R, D, C, U]):
 
         if self.write_gw is not None:
             if self.write_gw.client is not self.read_gw.client:
-                raise CoreError("Write and read gateways must use the same client")
+                raise exc.internal("Write and read gateways must use the same client")
 
             if self.write_gw.tenant_aware != self.read_gw.tenant_aware:
-                raise CoreError(
+                raise exc.internal(
                     "Write and read gateways must have the same tenant awareness."
                 )
 

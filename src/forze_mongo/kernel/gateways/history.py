@@ -12,7 +12,7 @@ from uuid import UUID
 
 import attrs
 
-from forze.base.errors import NotFoundError, ValidationError
+from forze.base.exceptions import exc
 from forze.base.serialization import (
     pydantic_dump,
     pydantic_dump_many,
@@ -74,11 +74,11 @@ class MongoHistoryGateway[D: Document](MongoGateway[D]):
         )
 
         if raw is None:
-            raise NotFoundError(f"History not found: {pk}, {rev}")
+            raise exc.not_found(f"History not found: {pk}, {rev}")
 
         payload = raw.get(HISTORY_DATA_FIELD)
         if payload is None:
-            raise NotFoundError(f"History payload not found: {pk}, {rev}")
+            raise exc.not_found(f"History payload not found: {pk}, {rev}")
 
         return pydantic_validate(self.model_type, payload)
 
@@ -96,7 +96,7 @@ class MongoHistoryGateway[D: Document](MongoGateway[D]):
         """
 
         if len(pks) != len(revs):
-            raise ValidationError("Length of pks and revs must be the same")
+            raise exc.precondition("Length of pks and revs must be the same")
 
         if not pks:
             return []

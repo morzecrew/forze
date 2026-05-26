@@ -4,11 +4,11 @@ from collections.abc import Sequence
 
 import attrs
 
-from forze.base.errors import CoreError
+from forze.base.exceptions import exc
 
+from ._logger import logger
 from .gateways.types import PostgresBookkeepingStrategy
 from .introspect import PostgresIntrospector
-from ._logger import logger
 
 # ----------------------- #
 
@@ -49,7 +49,7 @@ async def validate_postgres_document_bookkeeping(
 
         if spec.bookkeeping_strategy == "database":
             if not triggers:
-                raise CoreError(
+                raise exc.internal(
                     f"Postgres bookkeeping validation failed for {label!r}: "
                     f"bookkeeping_strategy='database' requires at least one user "
                     "UPDATE trigger on the write relation (for example "

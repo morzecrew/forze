@@ -1,10 +1,9 @@
 """Tests for :mod:`forze_postgres.pagination.seek_sql`."""
 
 import pytest
-
-from forze.base.errors import CoreError
-from forze_postgres.pagination.seek_sql import build_order_by_sql, build_seek_condition
 from psycopg import sql
+
+from forze_postgres.pagination.seek_sql import build_order_by_sql, build_seek_condition
 
 
 def test_build_seek_after_asc() -> None:
@@ -48,9 +47,9 @@ def test_build_seek_multi_column_or_chain() -> None:
 
 def test_build_seek_invalid_shape_raises() -> None:
     a = sql.Identifier("h", "a")
-    with pytest.raises(CoreError, match="Invalid keyset shape"):
+    with pytest.raises(exc.internal, match="Invalid keyset shape"):
         build_seek_condition([a], ["asc"], [], "after")
-    with pytest.raises(CoreError, match="Invalid keyset shape"):
+    with pytest.raises(exc.internal, match="Invalid keyset shape"):
         build_seek_condition([], [], [], "after")
 
 

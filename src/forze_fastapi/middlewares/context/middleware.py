@@ -16,7 +16,7 @@ from forze.application.execution.context import (
     ExecutionContext,
     ExecutionContextFactory,
 )
-from forze.base.errors import AuthenticationError, CoreError
+from forze.base.exceptions import exc
 from forze.base.validators import NoneValidator
 
 from .invocation import HeaderInvocationMetadataCodec
@@ -94,7 +94,7 @@ class ContextBindingMiddleware:
             self.tenant_identity_resolver,
             self.tenant_identity_codec,
         ):
-            raise CoreError(
+            raise exc.internal(
                 "Only one of tenant_identity_resolver or tenant_identity_codec must be provided"
             )
 
@@ -128,7 +128,7 @@ class ContextBindingMiddleware:
             return None
 
         if self.when_multiple_credentials == "reject" and len(results) > 1:
-            raise AuthenticationError(
+            raise exc.authentication(
                 "Multiple authentication credentials present",
                 code="ambiguous_credentials",
             )

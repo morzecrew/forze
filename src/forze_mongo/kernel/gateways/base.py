@@ -23,7 +23,7 @@ from forze.application.contracts.querying import (
 )
 from forze.application.contracts.tenancy import TENANT_ID_FIELD
 from forze.application.contracts.tenancy.mixins import TenancyMixin
-from forze.base.errors import CoreError
+from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
 from forze.base.serialization import pydantic_field_names
 from forze.domain.constants import ID_FIELD
@@ -68,7 +68,11 @@ class MongoGateway[M: BaseModel](TenancyMixin):
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
-        limits = self.filter_limits if self.filter_limits is not None else QueryFilterLimits()
+        limits = (
+            self.filter_limits
+            if self.filter_limits is not None
+            else QueryFilterLimits()
+        )
         object.__setattr__(
             self,
             "filter_parser",
@@ -152,12 +156,12 @@ class MongoGateway[M: BaseModel](TenancyMixin):
 
         if self.tenant_aware:
             if self.tenant_provider is None:
-                raise CoreError("Tenant provider is required for the gateway")
+                raise exc.internal("Tenant provider is required for the gateway")
 
             tenant_id = self.tenant_provider()
 
             if tenant_id is None:
-                raise CoreError("Tenant ID is required for the gateway")
+                raise exc.internal("Tenant ID is required for the gateway")
 
             cp[TENANT_ID_FIELD] = tenant_id
 
@@ -170,12 +174,12 @@ class MongoGateway[M: BaseModel](TenancyMixin):
 
         if self.tenant_aware:
             if self.tenant_provider is None:
-                raise CoreError("Tenant provider is required for the gateway")
+                raise exc.internal("Tenant provider is required for the gateway")
 
             tenant_id = self.tenant_provider()
 
             if tenant_id is None:
-                raise CoreError("Tenant ID is required for the gateway")
+                raise exc.internal("Tenant ID is required for the gateway")
 
             out[TENANT_ID_FIELD] = tenant_id
 

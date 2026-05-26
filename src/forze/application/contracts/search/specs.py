@@ -1,12 +1,10 @@
-from __future__ import annotations
-
 from datetime import timedelta
 from typing import Any, Mapping, Sequence, TypeAlias, TypedDict
 
 import attrs
 from pydantic import BaseModel
 
-from forze.base.errors import CoreError
+from forze.base.exceptions import exc
 
 from ..base import BaseSpec
 
@@ -69,22 +67,26 @@ class SearchSpec[M: BaseModel](BaseSpec):
 
     def __attrs_post_init__(self) -> None:
         if len(self.fields) != len(set(self.fields)):
-            raise CoreError("Search fields must be unique.")
+            raise exc.configuration("Search fields must be unique.")
 
         if not self.default_weights:
             return
 
         for f, w in self.default_weights.items():
             if f not in self.fields:
-                raise CoreError(f"Default weight for unknown search field '{f}'.")
+                raise exc.configuration(
+                    f"Default weight for unknown search field '{f}'."
+                )
 
             if w < 0 or w > 1:
-                raise CoreError(
+                raise exc.configuration(
                     f"Default weight for search field '{f}' should be between 0.0 and 1.0."
                 )
 
         if not all(f in self.default_weights for f in self.fields):
-            raise CoreError("Default weights must be provided for all search fields.")
+            raise exc.configuration(
+                "Default weights must be provided for all search fields."
+            )
 
 
 # ....................... #
@@ -114,21 +116,21 @@ class HubSearchSpec[M: BaseModel](BaseSpec):
         names = [member.name for member in self.members]
 
         if len(names) != len(set(names)):
-            raise CoreError(
+            raise exc.configuration(
                 "Each hub search member must use a SearchSpec with a distinct name."
             )
 
         if self.default_member_weights:
             for member in self.members:
                 if member.name not in self.default_member_weights:
-                    raise CoreError(
+                    raise exc.configuration(
                         f"Default weight for unknown search field '{member.name}'."
                     )
 
                 w = self.default_member_weights[member.name]
 
                 if w < 0 or w > 1:
-                    raise CoreError(
+                    raise exc.configuration(
                         f"Default weight for search field '{member.name}' should be between 0.0 and 1.0."
                     )
 
@@ -157,7 +159,7 @@ class FederatedSearchSpec[X: BaseModel](BaseSpec):
         names = [member.name for member in self.members]
 
         if len(names) != len(set(names)):
-            raise CoreError(
+            raise exc.configuration(
                 "Each federated search member must use a distinct name "
                 "(the SearchSpec or HubSearchSpec name)."
             )

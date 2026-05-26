@@ -17,7 +17,7 @@ from typing import (
 import attrs
 from pydantic import BaseModel
 
-from forze.base.errors import CoreError
+from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
 
 from .._logger import logger
@@ -112,7 +112,7 @@ def update_validator(
         logger.trace("Validator fields: %s", tuple(fields) if fields else None)
 
         if not params:
-            raise CoreError(
+            raise exc.internal(
                 "Update validator must have at least one parameter (state before update)"
             )
 
@@ -138,7 +138,7 @@ def update_validator(
                 return cast(Callable[[M, M, JsonDict], None], f)(before, after, diff)
 
         else:
-            raise CoreError(
+            raise exc.internal(
                 "Update validator must have at most three parameters (state before update, state after update, diff)"
             )
 
@@ -209,7 +209,7 @@ def collect_update_validators(
                 )
 
                 if on_conflict == "error":
-                    raise CoreError(msg)
+                    raise exc.internal(msg)
 
                 elif on_conflict == "warn":
                     warnings.warn(msg, RuntimeWarning, stacklevel=2)

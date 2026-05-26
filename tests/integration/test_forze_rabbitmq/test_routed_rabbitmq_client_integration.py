@@ -15,7 +15,7 @@ pytest.importorskip("aio_pika")
 from testcontainers.rabbitmq import RabbitMqContainer
 
 from forze.application.contracts.secrets import SecretRef
-from forze.base.errors import CoreError, InfrastructureError, SecretNotFoundError
+from forze.base.exceptions import InfrastructureError, SecretNotFoundError
 from forze_rabbitmq.kernel.platform import (
     RabbitMQClient,
     RabbitMQConfig,
@@ -247,7 +247,7 @@ async def test_routed_rabbitmq_startup_and_tenant_guards(
     await routed.startup()
     try:
         tenant_set(None)
-        with pytest.raises(CoreError, match="Tenant ID"):
+        with pytest.raises(exc.internal, match="Tenant ID"):
             await routed.health()
     finally:
         await routed.close()

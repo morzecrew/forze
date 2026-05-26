@@ -4,7 +4,7 @@ import attrs
 
 from forze.application.contracts.analytics import AnalyticsSpec
 from forze.application.execution import ExecutionContext
-from forze.base.errors import CoreError
+from forze.base.exceptions import exc
 
 from ...adapters import ClickHouseAnalyticsAdapter
 from .configs import ClickHouseAnalyticsConfig
@@ -24,20 +24,20 @@ def validate_clickhouse_analytics_config(
 
     missing = spec_keys - config_keys
     if missing:
-        raise CoreError(
+        raise exc.configuration(
             f"ClickHouse analytics config for route {spec.name!r} is missing query keys: "
             f"{sorted(missing)!r}."
         )
 
     extra = config_keys - spec_keys
     if extra:
-        raise CoreError(
+        raise exc.configuration(
             f"ClickHouse analytics config for route {spec.name!r} has unknown query keys: "
             f"{sorted(extra)!r}."
         )
 
     if spec.ingest is not None and not config.get("ingest_table"):
-        raise CoreError(
+        raise exc.configuration(
             f"ClickHouse analytics config for route {spec.name!r} requires ingest_table "
             "when AnalyticsSpec.ingest is set."
         )

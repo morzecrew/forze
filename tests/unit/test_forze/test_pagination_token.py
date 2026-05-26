@@ -9,7 +9,6 @@ from forze.application.contracts.querying import (
     encode_keyset_v1,
     normalize_sorts_with_id,
 )
-from forze.base.errors import CoreError
 from forze.domain.constants import ID_FIELD
 
 
@@ -31,5 +30,5 @@ def test_normalize_sorts_with_id_appends_tiebreak() -> None:
 
 
 def test_normalize_rejects_mixed_directions() -> None:
-    with pytest.raises(CoreError, match="all sort directions"):
+    with pytest.raises(exc.internal, match="all sort directions"):
         normalize_sorts_with_id({ID_FIELD: "asc", "m": "desc"})

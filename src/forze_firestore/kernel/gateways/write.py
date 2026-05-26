@@ -12,19 +12,13 @@ from uuid import UUID
 import attrs
 from tenacity import (
     retry,
-    retry_if_exception_type,
+    retry_if_exception,
     stop_after_attempt,
     wait_exponential,
 )
 
 from forze.application.contracts.querying import QueryFilterExpression
-from forze.base.errors import (
-    ConcurrencyError,
-    ConflictError,
-    CoreError,
-    NotFoundError,
-    ValidationError,
-)
+from forze.base.exceptions import CoreException, ExceptionKind, exc
 from forze.base.primitives import JsonDict
 from forze.base.serialization import (
     pydantic_dump,
@@ -44,7 +38,10 @@ from .read import FirestoreReadGateway
 
 def optimistic_retry(*, attempts: int = 3):  # type: ignore[no-untyped-def]
     return retry(
-        retry=retry_if_exception_type(ConcurrencyError),
+        retry=retry_if_exception(
+            predicate=lambda e: isinstance(e, CoreException)
+            and e.kind is ExceptionKind.CONCURRENCY
+        ),
         stop=stop_after_attempt(attempts),
         wait=wait_exponential(multiplier=0.01, min=0.01, max=0.2),
         reraise=True,
@@ -70,18 +67,18 @@ class FirestoreWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
 
     def __attrs_post_init__(self) -> None:
         if self.collection != self.read_gw.collection:
-            raise CoreError(
+            raise exc.internal(
                 "Collection mismatch. Write gateway and nested read gateway must match."
             )
 
         if self.client is not self.read_gw.client:
-            raise CoreError("Client mismatch between write and read gateways.")
+            raise exc.internal("Client mismatch between write and read gateways.")
 
         if self.database != self.read_gw.database:
-            raise CoreError("Database mismatch between write and read gateways.")
+            raise exc.internal("Database mismatch between write and read gateways.")
 
         if self.tenant_aware != self.read_gw.tenant_aware:
-            raise CoreError(
+            raise exc.internal(
                 "Tenant awareness mismatch between write and read gateways."
             )
 
@@ -89,7 +86,7 @@ class FirestoreWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
 
     def _require_update_cmd(self) -> None:
         if self.update_cmd_type is None:
-            raise CoreError("Update command type is not supported for this model")
+            raise exc.internal("Update command type is not supported for this model")
 
     # ....................... #
 
@@ -120,7 +117,9 @@ class FirestoreWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
         if self.history_gw is None:
             for current, rev, _ in data:
                 if rev != current.rev:
-                    raise ConflictError("Revision mismatch", code="revision_mismatch")
+                    raise exc.precondition(
+                        "Revision mismatch", code="revision_mismatch"
+                    )
 
             return
 
@@ -132,7 +131,7 @@ class FirestoreWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
         bad_records = [rev for current, rev, _ in to_check if rev > current.rev]
 
         if bad_records:
-            raise ValidationError("Invalid revision number")
+            raise exc.precondition("Invalid revision number")
 
         if to_check:
             pks_to_check = [current.id for current, _, _ in to_check]
@@ -140,7 +139,7 @@ class FirestoreWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
             hist_records = await self.history_gw.read_many(pks_to_check, revs_to_check)
 
             if len(hist_records) != len(to_check):
-                raise NotFoundError(
+                raise exc.not_found(
                     "History records not found. Please retry with actual revision number."
                 )
 
@@ -148,7 +147,7 @@ class FirestoreWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
                 to_check, hist_records, strict=True
             ):
                 if not current.validate_historical_consistency(historical, update):
-                    raise ConflictError(
+                    raise exc.conflict(
                         "Historical consistency violation during update",
                         code="historical_consistency_violation",
                     )
@@ -280,13 +279,13 @@ class FirestoreWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
         self._require_update_cmd()
 
         if len(pks) != len(dtos):
-            raise CoreError("Length mismatch between primary keys and updates")
+            raise exc.internal("Length mismatch between primary keys and updates")
 
         if len(pks) != len(set(pks)):
-            raise ValidationError("Primary keys must be unique")
+            raise exc.precondition("Primary keys must be unique")
 
         if revs is not None and len(revs) != len(pks):
-            raise CoreError("Length mismatch between primary keys and revisions")
+            raise exc.internal("Length mismatch between primary keys and revisions")
 
         results: list[D] = []
         diffs: list[JsonDict] = []
@@ -311,8 +310,12 @@ class FirestoreWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
 
         try:
             return await self.read_gw.get(model.id)
-        except NotFoundError:
-            return await self.create(dto)
+
+        except CoreException:
+            if exc.kind is ExceptionKind.NOT_FOUND:
+                return await self.create(dto)
+
+            raise
 
     # ....................... #
 
@@ -343,8 +346,12 @@ class FirestoreWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
 
         try:
             current = await self.read_gw.get(model.id)
-        except NotFoundError:
-            return await self.create(create_dto)
+
+        except CoreException:
+            if exc.kind is ExceptionKind.NOT_FOUND:
+                return await self.create(create_dto)
+
+            raise
 
         updated, _ = await self.update(current.id, update_dto, rev=current.rev)
         return updated
@@ -375,7 +382,7 @@ class FirestoreWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
         batch_size: int = 200,
     ) -> tuple[int, Sequence[D]]:
         _ = filters, dto, batch_size
-        raise CoreError("Firestore adapter does not support update_matching in MVP")
+        raise exc.internal("Firestore adapter does not support update_matching in MVP")
 
     # ....................... #
 
@@ -394,7 +401,7 @@ class FirestoreWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
         _ = batch_size
 
         if len(pks) != len(set(pks)):
-            raise ValidationError("Primary keys must be unique")
+            raise exc.precondition("Primary keys must be unique")
 
         out: list[D] = []
 
@@ -418,7 +425,7 @@ class FirestoreWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
             return
 
         if len(pks) != len(set(pks)):
-            raise ValidationError("Primary keys must be unique")
+            raise exc.precondition("Primary keys must be unique")
 
         for pk in pks:
             await self.kill(pk)

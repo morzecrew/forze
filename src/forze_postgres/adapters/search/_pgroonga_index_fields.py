@@ -7,7 +7,7 @@ from typing import Any, Mapping
 
 from forze.application._logger import logger
 from forze.application.contracts.search import SearchSpec
-from forze.base.errors import CoreError
+from forze.base.exceptions import exc
 
 from ...kernel.gateways import PostgresQualifiedName
 from ...kernel.introspect.types import PostgresIndexInfo
@@ -37,7 +37,7 @@ def parse_pgroonga_index_heap_columns(
 
     Supports ``ARRAY[col1, col2]``, a single parenthesized column reference
     (e.g. ``(title)``), or ``columns`` from ``pg_index`` when the index is
-    column-based. Exotic expressions raise :class:`CoreError`.
+    column-based. Exotic expressions raise :class:`exc.internal`.
     """
 
     qn = index_qname.string()
@@ -47,7 +47,9 @@ def parse_pgroonga_index_heap_columns(
         if pgroonga_index_uses_array_expr(expr_stripped):
             match = _ARRAY_RE.search(expr_stripped)
             if match is not None:
-                return _split_pgroonga_array_inner(match.group(1), index_qname=index_qname)
+                return _split_pgroonga_array_inner(
+                    match.group(1), index_qname=index_qname
+                )
 
         inner = expr_stripped.strip()
         while inner.startswith("(") and inner.endswith(")"):
@@ -59,7 +61,7 @@ def parse_pgroonga_index_heap_columns(
     if columns:
         return columns
 
-    raise CoreError(
+    raise exc.internal(
         f"Cannot resolve PGroonga index columns from {qn}; "
         "index expression must be ARRAY[...] or a single column reference.",
     )
@@ -81,14 +83,14 @@ def _split_pgroonga_array_inner(
         if not name:
             continue
         if not _IDENT_RE.match(name):
-            raise CoreError(
+            raise exc.internal(
                 f"Cannot resolve PGroonga index columns from {qn}; "
                 f"unsupported ARRAY element {name!r}.",
             )
         parts.append(name)
 
     if not parts:
-        raise CoreError(
+        raise exc.internal(
             f"Cannot resolve PGroonga index columns from {qn}; "
             "ARRAY[...] index expression is empty.",
         )
@@ -113,7 +115,7 @@ def heap_columns_to_logical(
     for logical_field, physical_col in field_map.items():
         prev = physical_to_logical.get(physical_col)
         if prev is not None and prev != logical_field:
-            raise CoreError(
+            raise exc.internal(
                 f"Ambiguous field_map: heap column {physical_col!r} maps to "
                 f"{prev!r} and {logical_field!r}.",
             )
@@ -149,7 +151,7 @@ def align_pgroonga_search_columns(
     for logical in index_logical_fields:
         if logical not in spec_fields:
             heap = field_map.get(logical, logical) if field_map else logical
-            raise CoreError(
+            raise exc.internal(
                 f"PGroonga index {qn} includes column {heap!r} "
                 f"(logical {logical!r}); add it to SearchSpec.fields.",
             )

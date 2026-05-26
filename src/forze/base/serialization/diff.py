@@ -4,7 +4,7 @@ from copy import deepcopy
 from typing import Any, Iterable, cast
 
 from .._logger import logger
-from ..errors import CoreError
+from ..exceptions import exc
 from ..primitives.types import JsonDict
 
 # ----------------------- #
@@ -22,14 +22,14 @@ def _set_nested(
 
     for p in parts[:-1]:
         if isinstance(p, int):
-            raise CoreError("List indexes are not supported in merge patch")
+            raise exc.internal("List indexes are not supported in merge patch")
 
         cur = cur.setdefault(p, {})
 
     last = parts[-1]
 
     if isinstance(last, int):
-        raise CoreError("List indexes are not supported in merge patch")
+        raise exc.internal("List indexes are not supported in merge patch")
 
     cur[last] = value
 
@@ -139,6 +139,9 @@ def _diff_recursive(
             path,
             deepcopy(after) if isinstance(after, (dict, list, set, tuple)) else after,  # type: ignore[arg-type]
         )
+
+
+# ....................... #
 
 
 def calculate_dict_difference(

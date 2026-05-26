@@ -7,7 +7,7 @@ from typing import Any, AsyncIterator, Callable
 
 import attrs
 
-from forze.base.errors import CoreError
+from forze.base.exceptions import exc
 
 from .._logger import logger
 from ..contracts.dlock import DistributedLockCommandPort
@@ -93,7 +93,7 @@ class DistributedLockCoordinator:
         acquired = await try_acquire_until_deadline()
 
         if not acquired:
-            raise CoreError("Failed to acquire distributed lock")
+            raise exc.internal("Failed to acquire distributed lock")
 
         extend_task: asyncio.Task[Any] | None = None
         stop_event = asyncio.Event()
@@ -151,7 +151,7 @@ class DistributedLockCoordinator:
                 pass
 
             if extend_errors:
-                raise CoreError(
+                raise exc.internal(
                     "Failed to extend distributed lock",
                     details={"error": str(extend_errors[0])},
                 )

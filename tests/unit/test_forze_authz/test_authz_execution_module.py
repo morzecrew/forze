@@ -12,7 +12,6 @@ from forze.application.contracts.authz import (
     GrantQueryDepKey,
 )
 from forze.application.execution import Deps, ExecutionContext
-from forze.base.errors import CoreError
 from forze_authz.execution import (
     AuthzDepsModule,
     AuthzKernelConfig,
@@ -28,7 +27,7 @@ class TestAuthzDepsModule:
         assert isinstance(deps, Deps)
 
     def test_requires_kernel_when_routes_registered(self) -> None:
-        with pytest.raises(CoreError, match="kernel"):
+        with pytest.raises(exc.internal, match="kernel"):
             AuthzDepsModule(decision={"main"})()
 
     def test_registers_decision_and_scope_routes(self) -> None:

@@ -11,7 +11,7 @@ pytest.importorskip("temporalio")
 from temporalio.worker import Worker
 
 from forze.application.contracts.secrets import SecretRef
-from forze.base.errors import CoreError, InfrastructureError, SecretNotFoundError
+from forze.base.exceptions import InfrastructureError, SecretNotFoundError
 from forze_temporal.kernel.platform import RoutedTemporalClient, TemporalClient
 
 from ._workflow_defs import ItSumWorkflow, SumIn, SumOut, it_sum_pair
@@ -208,7 +208,7 @@ async def test_routed_temporal_startup_tenant_and_handle_guards(
     await routed.startup()
     try:
         tenant_set(None)
-        with pytest.raises(CoreError, match="Tenant ID"):
+        with pytest.raises(exc.internal, match="Tenant ID"):
             routed.get_workflow_handle("any")
 
         tenant_set(t1)

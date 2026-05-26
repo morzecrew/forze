@@ -8,11 +8,10 @@ import attrs
 
 from forze.application._logger import logger
 from forze.application.contracts.base import DepKey
-from forze.base.descriptors import hybridmethod
-from forze.base.errors import CoreError
-from forze.base.primitives import StrKey
-
 from forze.application.execution.tracing.buffer import RuntimeTrace
+from forze.base.descriptors import hybridmethod
+from forze.base.exceptions import exc
+from forze.base.primitives import StrKey
 
 from .resolution import ResolutionFrame, format_cycle_error, frame_for
 from .trace import DepsResolutionTrace
@@ -88,7 +87,7 @@ class Deps[K: StrKey]:
     def __attrs_post_init__(self) -> None:
         for key, routes in (self.routed_deps or {}).items():
             if not routes:
-                raise CoreError(f"Routed dependency {key.name} has no routes")
+                raise exc.configuration(f"Routed dependency {key.name} has no routes")
 
     # ....................... #
 
@@ -141,7 +140,7 @@ class Deps[K: StrKey]:
         """
 
         if not routes:
-            raise CoreError("Routes must not be empty")
+            raise exc.precondition("Routes must not be empty")
 
         expanded: RoutedDeps[X] = {
             key: {name: dep for name in routes} for key, dep in deps.items()
@@ -221,7 +220,7 @@ class Deps[K: StrKey]:
         stack = self._resolution_stack_get()
 
         if frame in stack:
-            raise CoreError(format_cycle_error(stack, frame))
+            raise exc.internal(format_cycle_error(stack, frame))
 
         if stack:
             self._record_edge(stack[-1], frame)
@@ -239,7 +238,7 @@ class Deps[K: StrKey]:
         stack = self._resolution_stack_get()
 
         if frame in stack:
-            raise CoreError(format_cycle_error(stack, frame))
+            raise exc.internal(format_cycle_error(stack, frame))
 
     # ....................... #
 
@@ -256,7 +255,7 @@ class Deps[K: StrKey]:
             dep = self.plain_deps.get(key)
 
             if not dep:
-                raise CoreError(f"Plain dependency '{key.name}' not found")
+                raise exc.internal(f"Plain dependency '{key.name}' not found")
 
         else:
             routes = self.routed_deps.get(key)
@@ -265,7 +264,7 @@ class Deps[K: StrKey]:
                 if fallback_to_plain:
                     return self._lookup(key, route=None, fallback_to_plain=False)
 
-                raise CoreError(
+                raise exc.internal(
                     f"Routed dependency '{key.name}' not found for route '{route}'"
                 )
 
@@ -275,7 +274,7 @@ class Deps[K: StrKey]:
                 if fallback_to_plain:
                     return self._lookup(key, route=None, fallback_to_plain=False)
 
-                raise CoreError(
+                raise exc.internal(
                     f"Dependency '{key.name}' not found for route '{route}'"
                 )
 
@@ -296,7 +295,6 @@ class Deps[K: StrKey]:
         :param route: Optional route for routed dependencies.
         :param fallback_to_plain: If True, fallback to plain dependencies if the routed dependency is not found.
         :returns: Registered provider or instance for the key.
-        :raises CoreError: If the dependency is not registered or resolution would cycle.
         """
 
         frame = frame_for(key, route)
@@ -476,7 +474,6 @@ class Deps[K: StrKey]:
 
         :param deps: Containers to merge.
         :returns: New container with all dependencies.
-        :raises CoreError: If any key is registered in more than one container.
         """
 
         logger.trace("Merging %s dependency container(s)", len(deps))
@@ -492,14 +489,16 @@ class Deps[K: StrKey]:
 
             if plain_overlap:
                 names = ", ".join(sorted(k.name for k in plain_overlap))
-                raise CoreError(f"Conflicting plain dependencies: {names}")
+
+                raise exc.internal(f"Conflicting plain dependencies: {names}")
 
             # 2. plain vs routed conflicts
             cross_overlap_left = set(plain_acc).intersection(d.routed_deps)
 
             if cross_overlap_left:
                 names = ", ".join(sorted(k.name for k in cross_overlap_left))
-                raise CoreError(
+
+                raise exc.internal(
                     f"Dependency keys registered both as plain and routed: {names}"
                 )
 
@@ -507,7 +506,8 @@ class Deps[K: StrKey]:
 
             if cross_overlap_right:
                 names = ", ".join(sorted(k.name for k in cross_overlap_right))
-                raise CoreError(
+
+                raise exc.internal(
                     f"Dependency keys registered both as plain and routed: {names}"
                 )
 
@@ -526,7 +526,8 @@ class Deps[K: StrKey]:
 
                 if routing_key_overlap:
                     names = ", ".join(sorted(routing_key_overlap))
-                    raise CoreError(
+
+                    raise exc.internal(
                         f"Conflicting routed dependencies for '{key.name}': {names}"
                     )
 
@@ -548,7 +549,6 @@ class Deps[K: StrKey]:
 
         :param deps: Containers to merge.
         :returns: New container with all dependencies.
-        :raises CoreError: If any key is registered in more than one container.
         """
 
         return type(self).merge(self, *deps)

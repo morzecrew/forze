@@ -16,19 +16,13 @@ import attrs
 from psycopg import sql
 from tenacity import (
     retry,
-    retry_if_exception_type,
+    retry_if_exception,
     stop_after_attempt,
     wait_random_exponential,
 )
 
 from forze.application.contracts.querying import QueryFilterExpression
-from forze.base.errors import (
-    ConcurrencyError,
-    ConflictError,
-    CoreError,
-    NotFoundError,
-    ValidationError,
-)
+from forze.base.exceptions import CoreException, ExceptionKind, exc
 from forze.base.primitives import JsonDict
 from forze.base.serialization import (
     pydantic_dump,
@@ -60,7 +54,10 @@ def optimistic_retry(*, attempts: int = 3):  # type: ignore[no-untyped-def]
     """
 
     return retry(
-        retry=retry_if_exception_type(ConcurrencyError),
+        retry=retry_if_exception(
+            lambda e: isinstance(e, CoreException)
+            and e.kind is ExceptionKind.CONCURRENCY
+        ),
         stop=stop_after_attempt(attempts),
         wait=wait_random_exponential(multiplier=0.05, max=2.0),
         reraise=True,
@@ -139,38 +136,38 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
         super().__attrs_post_init__()
 
         if self.source_qname != self.read_gw.source_qname:
-            raise CoreError(
+            raise exc.internal(
                 f"Table specification mismatch. Write gateway and nested read gateway must have the same specification. Write: {self.source_qname}, Read: {self.read_gw.source_qname}"
             )
 
         if self.client is not self.read_gw.client:
-            raise CoreError(
+            raise exc.internal(
                 "Client mismatch. Write gateway and nested read gateway must use the same client."
             )
 
         if self.tenant_aware != self.read_gw.tenant_aware:
-            raise CoreError(
+            raise exc.internal(
                 "Tenant awareness mismatch. Write gateway and nested read gateway must have the same tenant awareness."
             )
 
         if self.history_gw is not None:
             if self.client is not self.history_gw.client:
-                raise CoreError(
+                raise exc.internal(
                     "Client mismatch. Write gateway and nested history gateway must use the same client."
                 )
 
             if self.source_qname != self.history_gw.target_qname:
-                raise CoreError(
+                raise exc.internal(
                     f"Table specification mismatch. Write gateway and nested history gateway must have the same specification. Write: {self.source_qname}, History: {self.history_gw.target_qname}"
                 )
 
             if self.tenant_aware != self.history_gw.tenant_aware:
-                raise CoreError(
+                raise exc.internal(
                     "Tenant awareness mismatch. Write gateway and nested history gateway must have the same tenant awareness."
                 )
 
         if self.strategy not in get_args(PostgresBookkeepingStrategy):
-            raise CoreError(f"Invalid bookkeeping strategy: {self.strategy}")
+            raise exc.internal(f"Invalid bookkeeping strategy: {self.strategy}")
 
     # ....................... #
 
@@ -189,7 +186,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
 
     def _require_update_cmd(self) -> None:
         if self.update_cmd_type is None:
-            raise CoreError("Update command type is not supported for this model")
+            raise exc.internal("Update command type is not supported for this model")
 
     # ....................... #
 
@@ -203,7 +200,9 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
         if self.history_gw is None:
             for current, rev, _ in data:
                 if rev != current.rev:
-                    raise ConflictError("Revision mismatch", code="revision_mismatch")
+                    raise exc.precondition(
+                        "Revision mismatch", code="revision_mismatch"
+                    )
 
             return
 
@@ -215,7 +214,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
         bad_records = [rev for current, rev, _ in to_check if rev > current.rev]
 
         if bad_records:
-            raise ValidationError("Invalid revision number")
+            raise exc.precondition("Invalid revision number")
 
         if to_check:
             pks_to_check = [c.id for c, _, _ in to_check]
@@ -223,14 +222,14 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
             hist_records = await self.history_gw.read_many(pks_to_check, revs_to_check)
 
             if len(hist_records) != len(to_check):
-                raise ConcurrencyError(
+                raise exc.precondition(
                     "History records not found. Please retry with actual revision number.",
                     code="history_not_found_retry",
                 )
 
             for (c, _, u), h in zip(to_check, hist_records, strict=True):
                 if not c.validate_historical_consistency(h, u):
-                    raise ConflictError(
+                    raise exc.conflict(
                         "Historical consistency violation during update",
                         code="historical_consistency_violation",
                     )
@@ -279,8 +278,8 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
             )
 
             if row is None:
-                raise ConcurrencyError(
-                    message="Failed to create a record",
+                raise exc.concurrency(
+                    "Failed to create a record",
                     code="create_failed",
                 )
 
@@ -311,7 +310,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
                 nonlocal keys, col_idents, row_template
 
                 if keys is None or col_idents is None or row_template is None:
-                    raise CoreError("insert_batch: missing required state")
+                    raise exc.internal("insert_batch: missing required state")
 
                 value_parts = [row_template] * len(batch)
                 params = [b[k] for b in batch for k in keys]
@@ -333,8 +332,8 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
                 )
 
                 if len(rows) != len(batch):
-                    raise ConcurrencyError(
-                        message="Failed to create records (mismatch in number of rows)",
+                    raise exc.concurrency(
+                        "Failed to create records (mismatch in number of rows)",
                         code="create_many_mismatch",
                     )
 
@@ -359,7 +358,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
                     )
 
                 elif list(insert_data[0].keys()) != keys:
-                    raise CoreError(
+                    raise exc.internal(
                         "create_many: adapted payload keys differ between batches",
                     )
 
@@ -375,7 +374,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
                 result.extend(pydantic_validate_many(self.model_type, rows))
 
             if len(result) != len(dtos):
-                raise CoreError("Failed to create all records")
+                raise exc.internal("Failed to create all records")
 
             await self._write_history(*result)
 
@@ -454,8 +453,10 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
 
             def _pk_from_row(r: JsonDict) -> UUID:
                 v = r[ID_FIELD]
+
                 if isinstance(v, UUID):
                     return v
+
                 return UUID(str(v))
 
             async def _ensure_batch(
@@ -465,7 +466,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
                 nonlocal keys, col_idents, row_template
 
                 if keys is None or col_idents is None or row_template is None:
-                    raise CoreError("ensure_batch: missing required state")
+                    raise exc.internal("ensure_batch: missing required state")
 
                 value_parts = [row_template] * len(batch)
                 params = [b[k] for b in batch for k in keys]
@@ -491,26 +492,33 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
 
                 by_returned: dict[UUID, JsonDict] = {_pk_from_row(r): r for r in rows}
                 need = [m.id for m in model_batch if m.id not in by_returned]
+
                 if need:
                     fetched = await self._fetch_domains_by_pks(need)
                     by_existing = {d.id: d for d in fetched}
+
                 else:
                     by_existing = {}
 
                 ordered: list[D] = []
                 inserted: list[D] = []
+
                 for m in model_batch:
                     rj = by_returned.get(m.id)
+
                     if rj is not None:
                         dom = pydantic_validate(self.model_type, rj)
                         inserted.append(dom)
                         ordered.append(dom)
+
                     else:
                         ex = by_existing.get(m.id)
+
                         if ex is None:
-                            raise NotFoundError(
+                            raise exc.not_found(
                                 f"Record not found after ensure_many conflict: {m.id!s}",
                             )
+
                         ordered.append(ex)
 
                 if inserted:
@@ -519,6 +527,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
                 return ordered
 
             out: list[D] = []
+
             for offset in range(0, len(dtos), batch_size):
                 dto_batch = dtos[offset : offset + batch_size]
                 models = pydantic_transform_many(self.model_type, dto_batch)
@@ -538,14 +547,14 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
                     )
 
                 elif list(insert_data[0].keys()) != keys:
-                    raise CoreError(
+                    raise exc.internal(
                         "ensure_many: adapted payload keys differ between batches",
                     )
 
                 out.extend(await _ensure_batch(insert_data, models))
 
             if len(out) != len(dtos):
-                raise CoreError("ensure_many result length does not match input")
+                raise exc.internal("ensure_many result length does not match input")
 
             return out
 
@@ -592,10 +601,12 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
             if row is not None:
                 res = pydantic_validate(self.model_type, row)
                 await self._write_history(res)
+
                 return res
 
             current = await self._fetch_domain_by_pk(model.id, for_update=True)
             res, _ = await self.update(model.id, update_dto, rev=current.rev)
+
             return res
 
     # ....................... #
@@ -633,7 +644,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
                 nonlocal keys, col_idents, row_template
 
                 if keys is None or col_idents is None or row_template is None:
-                    raise CoreError("upsert_batch: missing required state")
+                    raise exc.internal("upsert_batch: missing required state")
 
                 value_parts = [row_template] * len(batch)
                 params_in = [b[k] for b in batch for k in keys]
@@ -703,7 +714,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
                         u_one = by_updated.get(m.id)
 
                         if u_one is None:
-                            raise NotFoundError(
+                            raise exc.not_found(
                                 f"Record not found after upsert_many conflict: {m.id!s}",
                             )
 
@@ -712,6 +723,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
                 return ordered
 
             out: list[D] = []
+
             for offset in range(0, len(pairs), batch_size):
                 batch_pairs = pairs[offset : offset + batch_size]
                 creates = [c for c, _ in batch_pairs]
@@ -732,7 +744,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
                     )
 
                 elif list(insert_data[0].keys()) != keys:
-                    raise CoreError(
+                    raise exc.internal(
                         "upsert_many: adapted payload keys differ between batches",
                     )
 
@@ -740,7 +752,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
                 out.extend(await _upsert_batch(insert_data, models, u_seq))
 
             if len(out) != len(pairs):
-                raise CoreError("upsert_many result length does not match input")
+                raise exc.internal("upsert_many result length does not match input")
 
             return out
 
@@ -809,7 +821,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
             )
 
             if row is None:
-                raise ConcurrencyError("Failed to update record")
+                raise exc.concurrency("Failed to update record")
 
             res = pydantic_validate(self.model_type, row)
             await self._write_history(res)
@@ -928,7 +940,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
         missing = expected_ids - updated_ids
 
         if missing:
-            raise ConcurrencyError("Failed to update records")
+            raise exc.concurrency("Failed to update records")
 
         return pydantic_validate_many(self.model_type, rows)
 
@@ -946,10 +958,10 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
             return [], []
 
         if updates is not None and len(pks) != len(updates):
-            raise CoreError("Length mismatch between primary keys and updates")
+            raise exc.internal("Length mismatch between primary keys and updates")
 
         if len(pks) != len(set(pks)):
-            raise ValidationError("Primary keys must be unique")
+            raise exc.precondition("Primary keys must be unique")
 
         async with self._write_tx():
             currents = await self.read_gw.get_many(pks)
@@ -1028,8 +1040,8 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
 
             updated_models: dict[UUID, D] = {}
             update_diffs: dict[UUID, JsonDict] = {}
-
             work: list[tuple[tuple[str, ...], list[tuple[UUID, int, JsonDict]]]] = []
+
             for fields_key, rows in groups.items():
                 for start in range(0, len(rows), batch_size):
                     work.append((fields_key, rows[start : start + batch_size]))
@@ -1069,6 +1081,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
         revs: Sequence[int] | None = None,
         batch_size: int = 200,
     ) -> tuple[Sequence[D], Sequence[JsonDict]]:
+
         self._require_update_cmd()
 
         updates: list[JsonDict] = []
@@ -1191,7 +1204,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
             n = await self.client.execute(stmt, params, return_rowcount=True)
 
             if n == 0:
-                raise NotFoundError(f"Record not found: {pk}")
+                raise exc.not_found(f"Record not found: {pk}")
 
         else:
             await self.client.execute(stmt, params)
@@ -1208,7 +1221,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
             return
 
         if len(pks) != len(set(pks)):
-            raise ValidationError("Primary keys must be unique")
+            raise exc.precondition("Primary keys must be unique")
 
         async with self._write_tx():
             where_sql = sql.SQL("{pk} = ANY({ids})").format(
@@ -1233,7 +1246,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
                     n = await self.client.execute(stmt, params, return_rowcount=True)
 
                     if n != len(batch):
-                        raise NotFoundError(
+                        raise exc.not_found(
                             "Some records not found or not accessible in this tenant scope"
                         )
                 else:

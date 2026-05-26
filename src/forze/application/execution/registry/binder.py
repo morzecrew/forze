@@ -2,7 +2,7 @@ from typing import TYPE_CHECKING, Self
 
 import attrs
 
-from forze.base.errors import CoreError
+from forze.base.exceptions import exc
 from forze.base.primitives import StrKey, StrKeySelector
 
 from ..planning.binders import ScopeBinder, TransactionScopeBinder
@@ -43,7 +43,7 @@ class OperationRegistryBinder:
             return self._parent.commit_patch(self._patch_selector, self._acc)
 
         if not self._ops:
-            raise CoreError("No operations provided")
+            raise exc.internal("No operations provided")
 
         plans = self._parent.get_plans()
 

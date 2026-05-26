@@ -20,12 +20,12 @@ from redis.commands.core import AsyncScript
 from redis.exceptions import ConnectionError as RedisConnectionError
 from redis.exceptions import TimeoutError as RedisTimeoutError
 
-from forze.base.errors import CoreError, InfrastructureError
+from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
 from forze_redis.kernel._logger import logger
 from forze_redis.kernel.scripts import MSET_BULK_SET
 
-from .errors import redis_handled
+from .errors import exc_interceptor
 from .port import RedisClientPort
 from .types import RedisPubSubMessage, RedisStreamResponse
 from .utils import parse_pubsub_message, parse_stream_entries
@@ -170,7 +170,7 @@ class RedisClient(RedisClientPort):
                 await asyncio.sleep(base * (2**i))
 
         if last is None:
-            raise CoreError("Last exception is None")
+            raise exc.internal("Last exception is None")
 
         raise last
 
@@ -195,7 +195,7 @@ class RedisClient(RedisClientPort):
 
     def __require_client(self) -> Redis:
         if self.__client is None:
-            raise InfrastructureError("Redis client is not initialized")
+            raise exc.internal("Redis client is not initialized")
 
         return self.__client
 
@@ -223,7 +223,7 @@ class RedisClient(RedisClientPort):
     # ....................... #
     # Pipeline API
 
-    @redis_handled("redis.pipeline")  # type: ignore[untyped-decorator]
+    @exc_interceptor.asynccontextmanager("redis.pipeline")  # type: ignore[untyped-decorator]
     @asynccontextmanager
     async def pipeline(self, *, transaction: bool = True) -> AsyncIterator[Pipeline]:
         depth = self.__ctx_depth.get()
@@ -256,7 +256,7 @@ class RedisClient(RedisClientPort):
     # ....................... #
     # Canonical methods
 
-    @redis_handled("redis.exists")  # type: ignore[untyped-decorator]
+    @exc_interceptor.coroutine("redis.exists")  # type: ignore[untyped-decorator]
     async def exists(self, key: str) -> bool:
         async def _call() -> bool:
             res = await self.__executor().exists(key)
@@ -267,7 +267,7 @@ class RedisClient(RedisClientPort):
 
     # ....................... #
 
-    @redis_handled("redis.pttl")  # type: ignore[untyped-decorator]
+    @exc_interceptor.coroutine("redis.pttl")  # type: ignore[untyped-decorator]
     async def pttl(self, key: str) -> int | None:
         """Milliseconds until expiry, or ``None`` if the key is missing or has no TTL."""
 
@@ -277,7 +277,7 @@ class RedisClient(RedisClientPort):
 
     # ....................... #
 
-    @redis_handled("redis.pttl")  # type: ignore[untyped-decorator]
+    @exc_interceptor.coroutine("redis.pttl")  # type: ignore[untyped-decorator]
     async def pttl_raw_ms(self, key: str) -> int:
         """Return the raw Redis ``PTTL`` value in milliseconds (``>= 0`` time left, ``-1`` persistent, ``-2`` missing)."""
 
@@ -290,7 +290,7 @@ class RedisClient(RedisClientPort):
 
     # ....................... #
 
-    @redis_handled("redis.run_script")  # type: ignore[untyped-decorator]
+    @exc_interceptor.coroutine("redis.run_script")  # type: ignore[untyped-decorator]
     async def run_script(
         self,
         script: str,
@@ -338,7 +338,7 @@ class RedisClient(RedisClientPort):
 
     # ....................... #
 
-    @redis_handled("redis.get")  # type: ignore[untyped-decorator]
+    @exc_interceptor.coroutine("redis.get")  # type: ignore[untyped-decorator]
     async def get(self, key: str) -> bytes | None:
         async def _call() -> bytes | None:
             return _bytes_or_none(await self.__executor().get(key))
@@ -347,7 +347,7 @@ class RedisClient(RedisClientPort):
 
     # ....................... #
 
-    @redis_handled("redis.mget")  # type: ignore[untyped-decorator]
+    @exc_interceptor.coroutine("redis.mget")  # type: ignore[untyped-decorator]
     async def mget(self, keys: Sequence[str]) -> list[bytes | None]:
         if not keys:
             return []
@@ -372,7 +372,7 @@ class RedisClient(RedisClientPort):
 
     # ....................... #
 
-    @redis_handled("redis.set")  # type: ignore[untyped-decorator]
+    @exc_interceptor.coroutine("redis.set")  # type: ignore[untyped-decorator]
     async def set(
         self,
         key: str,
@@ -389,7 +389,7 @@ class RedisClient(RedisClientPort):
 
     # ....................... #
 
-    @redis_handled("redis.mset")  # type: ignore[untyped-decorator]
+    @exc_interceptor.coroutine("redis.mset")  # type: ignore[untyped-decorator]
     async def mset(
         self,
         mapping: Mapping[str, bytes | str],
@@ -409,7 +409,7 @@ class RedisClient(RedisClientPort):
             return True
 
         if nx and xx:
-            raise CoreError("Redis mset does not allow nx and xx together")
+            raise exc.internal("Redis mset does not allow nx and xx together")
 
         keys_list = list(mapping.keys())
         argv: list[Any] = [
@@ -431,7 +431,7 @@ class RedisClient(RedisClientPort):
 
     # ....................... #
 
-    @redis_handled("redis.delete")  # type: ignore[untyped-decorator]
+    @exc_interceptor.coroutine("redis.delete")  # type: ignore[untyped-decorator]
     async def delete(self, *keys: str) -> int:
         if not keys:
             return 0
@@ -442,7 +442,7 @@ class RedisClient(RedisClientPort):
 
     # ....................... #
 
-    @redis_handled("redis.unlink")  # type: ignore[untyped-decorator]
+    @exc_interceptor.coroutine("redis.unlink")  # type: ignore[untyped-decorator]
     async def unlink(self, *keys: str) -> int:
         if not keys:
             return 0
@@ -453,7 +453,7 @@ class RedisClient(RedisClientPort):
 
     # ....................... #
 
-    @redis_handled("redis.expire")  # type: ignore[untyped-decorator]
+    @exc_interceptor.coroutine("redis.expire")  # type: ignore[untyped-decorator]
     async def expire(self, key: str, seconds: int) -> bool:
         res = await self.__executor().expire(key, seconds)
 
@@ -462,7 +462,7 @@ class RedisClient(RedisClientPort):
     # ....................... #
     # Counter methods
 
-    @redis_handled("redis.incr")  # type: ignore[untyped-decorator]
+    @exc_interceptor.coroutine("redis.incr")  # type: ignore[untyped-decorator]
     async def incr(self, key: str, by: int = 1) -> int:
         res = await self.__executor().incrby(key, by)
 
@@ -470,7 +470,7 @@ class RedisClient(RedisClientPort):
 
     # ....................... #
 
-    @redis_handled("redis.decr")  # type: ignore[untyped-decorator]
+    @exc_interceptor.coroutine("redis.decr")  # type: ignore[untyped-decorator]
     async def decr(self, key: str, by: int = 1) -> int:
         res = await self.__executor().decrby(key, by)
 
@@ -478,7 +478,7 @@ class RedisClient(RedisClientPort):
 
     # ....................... #
 
-    @redis_handled("redis.reset")  # type: ignore[untyped-decorator]
+    @exc_interceptor.coroutine("redis.reset")  # type: ignore[untyped-decorator]
     async def reset(self, key: str, value: int) -> int:
         res = await self.__executor().getset(key, value)
 
@@ -487,7 +487,7 @@ class RedisClient(RedisClientPort):
     # ....................... #
     # PubSub methods
 
-    @redis_handled("redis.publish")  # type: ignore[untyped-decorator]
+    @exc_interceptor.coroutine("redis.publish")  # type: ignore[untyped-decorator]
     async def publish(self, channel: str, message: bytes | str) -> int:
         res = (
             await self.__executor().publish(  # pyright: ignore[reportUnknownMemberType]
@@ -499,7 +499,7 @@ class RedisClient(RedisClientPort):
 
     # ....................... #
 
-    @redis_handled("redis.subscribe")  # type: ignore[untyped-decorator]
+    @exc_interceptor.asyncgenerator("redis.subscribe")  # type: ignore[untyped-decorator]
     async def subscribe(
         self,
         channels: Sequence[str],
@@ -610,7 +610,7 @@ class RedisClient(RedisClientPort):
     # ....................... #
     # Stream methods
 
-    @redis_handled("redis.xadd")  # type: ignore[untyped-decorator]
+    @exc_interceptor.coroutine("redis.xadd")  # type: ignore[untyped-decorator]
     async def xadd(
         self,
         stream: str,
@@ -641,7 +641,7 @@ class RedisClient(RedisClientPort):
 
     # ....................... #
 
-    @redis_handled("redis.xread")  # type: ignore[untyped-decorator]
+    @exc_interceptor.coroutine("redis.xread")  # type: ignore[untyped-decorator]
     async def xread(
         self,
         streams: dict[str, str],
@@ -659,7 +659,7 @@ class RedisClient(RedisClientPort):
 
     # ....................... #
 
-    @redis_handled("redis.xdel")  # type: ignore[untyped-decorator]
+    @exc_interceptor.coroutine("redis.xdel")  # type: ignore[untyped-decorator]
     async def xdel(self, stream: str, ids: Sequence[str]) -> int:
         if not ids:
             return 0
@@ -670,7 +670,7 @@ class RedisClient(RedisClientPort):
 
     # ....................... #
 
-    @redis_handled("redis.xtrim_maxlen")  # type: ignore[untyped-decorator]
+    @exc_interceptor.coroutine("redis.xtrim_maxlen")  # type: ignore[untyped-decorator]
     async def xtrim_maxlen(
         self,
         stream: str,
@@ -690,7 +690,7 @@ class RedisClient(RedisClientPort):
 
     # ....................... #
 
-    @redis_handled("redis.xtrim_minid")  # type: ignore[untyped-decorator]
+    @exc_interceptor.coroutine("redis.xtrim_minid")  # type: ignore[untyped-decorator]
     async def xtrim_minid(
         self,
         stream: str,
@@ -710,7 +710,7 @@ class RedisClient(RedisClientPort):
 
     # ....................... #
 
-    @redis_handled("redis.xgroup_create")  # type: ignore[untyped-decorator]
+    @exc_interceptor.coroutine("redis.xgroup_create")  # type: ignore[untyped-decorator]
     async def xgroup_create(
         self,
         stream: str,
@@ -730,7 +730,7 @@ class RedisClient(RedisClientPort):
 
     # ....................... #
 
-    @redis_handled("redis.xgroup_read")  # type: ignore[untyped-decorator]
+    @exc_interceptor.coroutine("redis.xgroup_read")  # type: ignore[untyped-decorator]
     async def xgroup_read(
         self,
         group: str,
@@ -754,7 +754,7 @@ class RedisClient(RedisClientPort):
 
     # ....................... #
 
-    @redis_handled("redis.xack")  # type: ignore[untyped-decorator]
+    @exc_interceptor.coroutine("redis.xack")  # type: ignore[untyped-decorator]
     async def xack(self, stream: str, group: str, ids: Sequence[str]) -> int:
         if not ids:
             return 0

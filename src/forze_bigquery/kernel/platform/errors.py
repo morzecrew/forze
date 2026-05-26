@@ -4,12 +4,17 @@ require_bigquery()
 
 # ....................... #
 
-from functools import partial
-from typing import Any
+from typing import Any, Mapping
 
 import aiohttp
 
-from forze.base.errors import CoreError, InfrastructureError, error_handler, handled
+from forze.base.conformity import static_fn_conformity
+from forze.base.exceptions import (
+    CoreException,
+    ExceptionInterceptor,
+    ExceptionMapper,
+    default_chain_exc_mapper,
+)
 
 # ----------------------- #
 
@@ -28,30 +33,56 @@ def _response_status(exc: BaseException) -> int | None:
     return None
 
 
-@error_handler
-def _bigquery_eh(e: Exception, op: str, **kwargs: Any) -> CoreError:
+# ....................... #
+
+
+@static_fn_conformity(ExceptionMapper)  # type: ignore[type-abstract]
+def _bigquery_eh(
+    exc: BaseException,
+    *,
+    site: str,
+    details: Mapping[str, Any] | None = None,
+) -> CoreException | None:
     """Normalize gcloud-aio / aiohttp BigQuery errors."""
 
-    match e:
-        case CoreError():
-            return e
+    match exc:
+        case CoreException():
+            return exc
 
         case aiohttp.ClientResponseError() as cre:
             status = _response_status(cre)
 
             if status == 404:
-                return InfrastructureError("BigQuery resource not found.")
+                return CoreException.infrastructure(
+                    "BigQuery resource not found.",
+                    details=details,
+                )
 
             if status in {401, 403}:
-                return InfrastructureError("BigQuery access denied.")
+                return CoreException.infrastructure(
+                    "BigQuery access denied.",
+                    details=details,
+                )
 
             if status == 429:
-                return InfrastructureError("BigQuery request throttled.")
+                return CoreException.infrastructure(
+                    "BigQuery request throttled.",
+                    details=details,
+                )
 
-            return InfrastructureError(f"BigQuery request failed ({status}).")
+            return CoreException.infrastructure(
+                f"BigQuery request failed ({status}).",
+                details=details,
+            )
 
         case _:
-            return InfrastructureError(f"BigQuery error during {op}.")
+            return CoreException.infrastructure(
+                f"BigQuery error during {site}.",
+                details=details,
+            )
 
 
-bigquery_handled = partial(handled, _bigquery_eh)
+# ....................... #
+
+_bq_chain = default_chain_exc_mapper.chain(_bigquery_eh)
+exc_interceptor = ExceptionInterceptor(mapper=_bq_chain)

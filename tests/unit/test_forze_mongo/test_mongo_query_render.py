@@ -19,7 +19,6 @@ from forze.application.contracts.querying import (
     QueryNot,
     QueryOr,
 )
-from forze.base.errors import CoreError
 from forze_mongo.kernel.query.render import MongoQueryRenderer
 
 
@@ -59,7 +58,7 @@ class TestMongoQueryRenderer:
 
     def test_unknown_expression_raises(self) -> None:
         r = MongoQueryRenderer()
-        with pytest.raises(CoreError, match="Unknown expression"):
+        with pytest.raises(exc.internal, match="Unknown expression"):
             r.render(_UnknownExpr())
 
     def test_compare_renders_expr(self) -> None:
@@ -124,7 +123,9 @@ class TestMongoQueryRenderer:
         r = MongoQueryRenderer()
         out = r.render(expr)
         match = out["$or"][1]["$and"][1]
-        assert match == {"items": {"$elemMatch": {"status": "open", "qty": {"$gte": 1}}}}
+        assert match == {
+            "items": {"$elemMatch": {"status": "open", "qty": {"$gte": 1}}}
+        }
 
     def test_element_all_scalar_eq_uses_min_max_expr(self) -> None:
         expr = QueryFilterExpressionParser.parse(
@@ -161,7 +162,11 @@ class TestMongoQueryRenderer:
         r = MongoQueryRenderer()
         match = r.render(
             QueryElem("items", "$all", inner),
-        )["$or"][1]["$and"][1]
+        )[
+            "$or"
+        ][1][
+            "$and"
+        ][1]
         assert "items" in match
         assert "$not" in match["items"]
         assert "$elemMatch" in match["items"]["$not"]
@@ -199,7 +204,7 @@ class TestMongoQueryRenderer:
 
     def test_unknown_operator_raises(self) -> None:
         r = MongoQueryRenderer()
-        with pytest.raises(CoreError, match="Unknown operator"):
+        with pytest.raises(exc.internal, match="Unknown operator"):
             r.render(QueryField("f", "$bogus", 1))  # type: ignore[arg-type]
 
     def test_eq_neq_ord(self) -> None:
@@ -220,7 +225,7 @@ class TestMongoQueryRenderer:
 
     def test_membership_scalar_raises(self) -> None:
         r = MongoQueryRenderer()
-        with pytest.raises(CoreError, match="expects list"):
+        with pytest.raises(exc.internal, match="expects list"):
             r.render(QueryField("t", "$in", 1))
 
     def test_set_relations(self) -> None:
@@ -235,7 +240,7 @@ class TestMongoQueryRenderer:
 
     def test_set_rel_scalar_raises(self) -> None:
         r = MongoQueryRenderer()
-        with pytest.raises(CoreError, match="expects list"):
+        with pytest.raises(exc.internal, match="expects list"):
             r.render(QueryField("s", "$subset", 1))
 
     def test_null_default_matches_missing(self) -> None:
@@ -412,7 +417,7 @@ class TestMongoAggregateRendering:
     def test_rejects_unknown_aggregate_sort_alias(self) -> None:
         renderer = MongoQueryRenderer()
 
-        with pytest.raises(CoreError, match="Invalid aggregate sort fields"):
+        with pytest.raises(exc.internal, match="Invalid aggregate sort fields"):
             renderer.render_aggregates(
                 {"$computed": {"orders": {"$count": None}}},
                 sorts={"missing": "asc"},
@@ -548,5 +553,5 @@ class TestMongoQueryRendererExprPredicate:
         assert r.render_expr_predicate(QueryField("s", "$disjoint", [1])) == {
             "$eq": [{"$size": {"$setIntersection": ["$s", [1]]}}, 0],
         }
-        with pytest.raises(CoreError, match="expects list"):
+        with pytest.raises(exc.internal, match="expects list"):
             r.render_expr_predicate(QueryField("t", "$in", 1))

@@ -28,7 +28,7 @@ def sanitize(
     *text_scrub* is true (default for ``log``).
 
     :param value: Arbitrary value (mappings, sequences, models, scalars).
-    :param context: ``egress`` for clients and :class:`~forze.base.errors.CoreError`
+    :param context: ``egress`` for clients and :class:`~forze.base.errors.exc.internal`
         details; ``log`` for structlog extras.
     :param depth: Current recursion depth (internal).
     :param max_depth: Maximum nesting depth before values are replaced with a sentinel.

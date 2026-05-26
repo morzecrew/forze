@@ -4,7 +4,7 @@ import attrs
 
 from forze.application.contracts.analytics import AnalyticsSpec
 from forze.application.execution import ExecutionContext
-from forze.base.errors import CoreError
+from forze.base.exceptions import exc
 
 from ...adapters import BigQueryAnalyticsAdapter
 from .configs import BigQueryAnalyticsConfig
@@ -23,21 +23,23 @@ def validate_bigquery_analytics_config(
     config_keys = set(config["queries"].keys())
 
     missing = spec_keys - config_keys
+
     if missing:
-        raise CoreError(
+        raise exc.configuration(
             f"BigQuery analytics config for route {spec.name!r} is missing query keys: "
             f"{sorted(missing)!r}."
         )
 
     extra = config_keys - spec_keys
+
     if extra:
-        raise CoreError(
+        raise exc.configuration(
             f"BigQuery analytics config for route {spec.name!r} has unknown query keys: "
             f"{sorted(extra)!r}."
         )
 
     if spec.ingest is not None and not config.get("ingest_table"):
-        raise CoreError(
+        raise exc.configuration(
             f"BigQuery analytics config for route {spec.name!r} requires ingest_table "
             "when AnalyticsSpec.ingest is set."
         )
@@ -63,6 +65,7 @@ class ConfigurableBigQueryAnalytics:
     ) -> BigQueryAnalyticsAdapter[Any, Any]:
         validate_bigquery_analytics_config(spec, self.config)
         client = ctx.deps.provide(BigQueryClientDepKey)
+
         return BigQueryAnalyticsAdapter(
             client=client,
             spec=spec,

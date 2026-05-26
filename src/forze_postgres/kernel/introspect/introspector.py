@@ -6,16 +6,16 @@ require_psycopg()
 
 # ....................... #
 
+import asyncio
 from collections.abc import Callable, Coroutine
 from datetime import timedelta
 from time import monotonic
 from typing import Any, TypeVar, cast, final
 
-import asyncio
 import attrs
 from psycopg import sql
 
-from forze.base.errors import CoreError
+from forze.base.exceptions import exc
 
 from ..platform import PostgresClientPort
 from .types import (
@@ -59,7 +59,7 @@ class PostgresIntrospector:
 
     Use with database-per-tenant routing so relation and index metadata cached
     for one tenant are not reused for another. If this is set and the callable
-    returns ``None``, introspection raises :class:`CoreError`.
+    returns ``None``, introspection raises :class:`exc.internal`.
     """
 
     cache_ttl: timedelta | None = None
@@ -111,7 +111,7 @@ class PostgresIntrospector:
         mx = self.max_cache_entries_per_kind
 
         if mx is not None and mx < 1:
-            raise CoreError("max_cache_entries_per_kind must be at least 1 when set")
+            raise exc.internal("max_cache_entries_per_kind must be at least 1 when set")
 
     # ....................... #
 
@@ -151,7 +151,7 @@ class PostgresIntrospector:
         p = self.cache_partition_key()
 
         if p is None:
-            raise CoreError(
+            raise exc.internal(
                 "Postgres introspection requires a cache partition (e.g. tenant id)",
                 code="introspection_partition_required",
             )
@@ -187,7 +187,9 @@ class PostgresIntrospector:
 
         return monotonic() - t0 >= ttl
 
-    def _relation_store(self, key: tuple[str, str, str], kind: PostgresRelationKind) -> None:
+    def _relation_store(
+        self, key: tuple[str, str, str], kind: PostgresRelationKind
+    ) -> None:
         self.__relation_cache[key] = kind
 
         if self._ttl_seconds() is not None:
@@ -235,7 +237,9 @@ class PostgresIntrospector:
 
         return monotonic() - t0 >= ttl
 
-    def _column_store(self, key: tuple[str, str, str], cols: PostgresColumnTypes) -> None:
+    def _column_store(
+        self, key: tuple[str, str, str], cols: PostgresColumnTypes
+    ) -> None:
         self.__column_cache[key] = cols
 
         if self._ttl_seconds() is not None:
@@ -289,7 +293,7 @@ class PostgresIntrospector:
         rk = await self.client.fetch_value(stmt, [schema, relation], default=None)
 
         if rk is None:
-            raise CoreError(f"Relation not found: {schema}.{relation}")
+            raise exc.internal(f"Relation not found: {schema}.{relation}")
 
         kind: PostgresRelationKind = "other"
 
@@ -326,7 +330,7 @@ class PostgresIntrospector:
         :param schema: Schema name (defaults to ``"public"`` when ``None``).
         :param relation: Relation (table/view) name.
         :returns: Classified relation kind.
-        :raises CoreError: If the relation does not exist.
+        :raises exc.internal: If the relation does not exist.
         """
 
         schema = self.__normalize_schema(schema)
@@ -365,7 +369,7 @@ class PostgresIntrospector:
         :param relation: Relation name.
         :param allow: Acceptable relation kinds.
         :returns: The validated relation kind.
-        :raises CoreError: If the relation kind is not in *allow*.
+        :raises exc.internal: If the relation kind is not in *allow*.
         """
 
         kind = await self.get_relation(schema=schema, relation=relation)
@@ -373,7 +377,7 @@ class PostgresIntrospector:
         if kind not in allow:
             schema = self.__normalize_schema(schema)
 
-            raise CoreError(
+            raise exc.internal(
                 f"Unsupported relation kind for {schema}.{relation}: {kind} (allowed: {allow})"
             )
 
@@ -426,7 +430,7 @@ class PostgresIntrospector:
         )
 
         if not rows:
-            raise CoreError(f"Relation has no columns: {schema}.{relation}")
+            raise exc.internal(f"Relation has no columns: {schema}.{relation}")
 
         out: dict[str, PostgresType] = {}
 
@@ -465,7 +469,7 @@ class PostgresIntrospector:
         :param schema: Schema name (defaults to ``"public"`` when ``None``).
         :param relation: Relation name.
         :returns: Mapping of column names to :class:`PostgresType`.
-        :raises CoreError: If the relation does not exist or has no columns.
+        :raises exc.internal: If the relation does not exist or has no columns.
         """
 
         schema = self.__normalize_schema(schema)
@@ -590,7 +594,7 @@ class PostgresIntrospector:
         row = await self.client.fetch_one(stmt, [schema, index], row_factory="dict")
 
         if row is None or not row.get("indexdef"):
-            raise CoreError(f"Cannot load indexdef for index: {schema}.{index}")
+            raise exc.internal(f"Cannot load indexdef for index: {schema}.{index}")
 
         indexdef = str(row["indexdef"])
         self.__index_def_cache[key] = indexdef
@@ -606,7 +610,7 @@ class PostgresIntrospector:
         :param index: Index name.
         :param schema: Schema name (defaults to ``"public"`` when ``None``).
         :returns: The full index definition string.
-        :raises CoreError: If the index does not exist.
+        :raises exc.internal: If the index does not exist.
         """
 
         schema = self.__normalize_schema(schema)
@@ -664,7 +668,7 @@ class PostgresIntrospector:
         )
 
         if row is None:
-            raise CoreError(f"Index not found: {schema}.{index}")
+            raise exc.internal(f"Index not found: {schema}.{index}")
 
         amname = str(row.get("amname") or "")
         indexdef = str(row.get("indexdef") or "")
@@ -733,7 +737,7 @@ class PostgresIntrospector:
         :param index: Index name.
         :param schema: Schema name (defaults to ``"public"`` when ``None``).
         :returns: Index metadata with classified engine.
-        :raises CoreError: If the index does not exist.
+        :raises exc.internal: If the index does not exist.
         """
 
         schema = self.__normalize_schema(schema)

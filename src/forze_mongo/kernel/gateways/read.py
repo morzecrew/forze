@@ -26,7 +26,7 @@ from forze.application.contracts.querying import (
     decode_keyset_v1,
     normalize_sorts_with_id,
 )
-from forze.base.errors import CoreError, NotFoundError, ValidationError
+from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
 from forze.base.serialization import pydantic_validate, pydantic_validate_many
 from forze.domain.constants import ID_FIELD
@@ -89,7 +89,7 @@ class MongoReadGateway[M: BaseModel](MongoGateway[M]):
         )
 
         if raw is None:
-            raise NotFoundError(f"Record not found: {pk}")
+            raise exc.not_found(f"Record not found: {pk}")
 
         data = self._from_storage_doc(raw)
 
@@ -126,7 +126,7 @@ class MongoReadGateway[M: BaseModel](MongoGateway[M]):
         missing = [pk for pk in pks if self._storage_pk(pk) not in by_pk]
 
         if missing:
-            raise NotFoundError(f"Some records not found: {missing}")
+            raise exc.not_found(f"Some records not found: {missing}")
 
         ordered = [by_pk[self._storage_pk(pk)] for pk in pks]
 
@@ -362,7 +362,7 @@ class MongoReadGateway[M: BaseModel](MongoGateway[M]):
             )
 
         if not filters and limit is None:
-            raise ValidationError("Filters or limit must be provided")
+            raise exc.precondition("Filters or limit must be provided")
 
         query = self.render_filters(filters, parsed=parsed)
         rows = await self.client.find_many(
@@ -400,7 +400,7 @@ class MongoReadGateway[M: BaseModel](MongoGateway[M]):
         """Find aggregate rows."""
 
         if return_fields is not None:
-            raise CoreError("Aggregates cannot be combined with return_fields")
+            raise exc.internal("Aggregates cannot be combined with return_fields")
 
         match = self.render_filters(filters, parsed=parsed)
         parsed_, pipeline = self.renderer.render_aggregates(
@@ -512,7 +512,7 @@ class MongoReadGateway[M: BaseModel](MongoGateway[M]):
         c = dict(cursor or {})
 
         if c.get("after") and c.get("before"):
-            raise CoreError(
+            raise exc.internal(
                 "Cursor pagination: pass at most one of 'after' or 'before'"
             )
 
@@ -520,7 +520,7 @@ class MongoReadGateway[M: BaseModel](MongoGateway[M]):
         lim: int = 10 if limit_raw is None else int(cast(Any, limit_raw))  # type: ignore[has-type, assignment]
 
         if lim < 1:
-            raise CoreError("Cursor pagination 'limit' must be positive")
+            raise exc.internal("Cursor pagination 'limit' must be positive")
 
         use_before = c.get("before") is not None
         use_after = c.get("after") is not None
@@ -528,7 +528,7 @@ class MongoReadGateway[M: BaseModel](MongoGateway[M]):
         normalized = normalize_sorts_with_id(sorts)
 
         if [k for k, _ in normalized] != [ID_FIELD] or len(normalized) != 1:
-            raise CoreError(
+            raise exc.internal(
                 "Mongo find_many_with_cursor (v1) requires sorting only by primary key: "
                 "omit ``sorts`` or pass a single {id: asc|desc}.",
             )
@@ -549,15 +549,15 @@ class MongoReadGateway[M: BaseModel](MongoGateway[M]):
                     "desc",
                 )
             ):
-                raise CoreError("Invalid cursor for current sort")
+                raise exc.internal("Invalid cursor for current sort")
 
             if str(td[0]).lower() != ("asc" if _id_asc else "desc"):
-                raise CoreError("Cursor does not match current sort order")
+                raise exc.internal("Cursor does not match current sort order")
 
             _rid = str(tv[0]) if len(tv) == 1 else None
 
             if not _rid:
-                raise CoreError("Invalid cursor for current sort")
+                raise exc.internal("Invalid cursor for current sort")
 
             if use_after and _id_asc:
                 seek = {"_id": {"$gt": _rid}}

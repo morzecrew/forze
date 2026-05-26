@@ -4,12 +4,17 @@ require_clickhouse()
 
 # ....................... #
 
-from functools import partial
-from typing import Any
+from typing import Any, Mapping
 
 import aiohttp
 
-from forze.base.errors import CoreError, InfrastructureError, error_handler, handled
+from forze.base.conformity import static_fn_conformity
+from forze.base.exceptions import (
+    CoreException,
+    ExceptionInterceptor,
+    ExceptionMapper,
+    default_chain_exc_mapper,
+)
 
 # ----------------------- #
 
@@ -28,35 +33,64 @@ def _response_status(exc: BaseException) -> int | None:
     return None
 
 
-@error_handler
-def _clickhouse_eh(e: Exception, op: str, **kwargs: Any) -> CoreError:
+# ....................... #
+
+
+@static_fn_conformity(ExceptionMapper)  # type: ignore[type-abstract]
+def _clickhouse_eh(
+    exc: BaseException,
+    *,
+    site: str,
+    details: Mapping[str, Any] | None = None,
+) -> CoreException | None:
     """Normalize clickhouse-connect / aiohttp errors."""
 
-    match e:
-        case CoreError():
-            return e
+    match exc:
+        case CoreException():
+            return exc
 
         case aiohttp.ClientResponseError() as cre:
             status = _response_status(cre)
 
             if status == 404:
-                return InfrastructureError("ClickHouse resource not found.")
+                return CoreException.infrastructure(
+                    "ClickHouse resource not found.",
+                    details=details,
+                )
 
             if status in {401, 403}:
-                return InfrastructureError("ClickHouse access denied.")
+                return CoreException.infrastructure(
+                    "ClickHouse access denied.",
+                    details=details,
+                )
 
             if status == 429:
-                return InfrastructureError("ClickHouse request throttled.")
+                return CoreException.infrastructure(
+                    "ClickHouse request throttled.",
+                    details=details,
+                )
 
-            return InfrastructureError(f"ClickHouse request failed ({status}).")
+            return CoreException.infrastructure(
+                f"ClickHouse request failed ({status}).",
+                details=details,
+            )
 
         case _:
-            msg = str(e).lower()
+            msg = str(exc).lower()
 
             if "authentication" in msg or "password" in msg:
-                return InfrastructureError("ClickHouse access denied.")
+                return CoreException.infrastructure(
+                    "ClickHouse access denied.",
+                    details=details,
+                )
 
-            return InfrastructureError(f"ClickHouse error during {op}.")
+            return CoreException.infrastructure(
+                f"ClickHouse error during {site}.",
+                details=details,
+            )
 
 
-clickhouse_handled = partial(handled, _clickhouse_eh)
+# ....................... #
+
+_clickhouse_chain = default_chain_exc_mapper.chain(_clickhouse_eh)
+exc_interceptor = ExceptionInterceptor(mapper=_clickhouse_chain)

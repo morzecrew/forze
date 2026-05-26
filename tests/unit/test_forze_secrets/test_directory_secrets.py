@@ -6,7 +6,7 @@ import pytest
 from pydantic import BaseModel
 
 from forze.application.contracts.secrets import SecretRef, resolve_structured
-from forze.base.errors import CoreError, SecretNotFoundError
+from forze.base.exceptions import SecretNotFoundError
 from forze_secrets import DirectorySecrets
 
 # ----------------------- #
@@ -19,10 +19,15 @@ class _Sample(BaseModel):
 @pytest.mark.asyncio
 async def test_resolve_str_from_file(tmp_path: Path) -> None:
     (tmp_path / "tenants").mkdir()
-    (tmp_path / "tenants" / "dsn.txt").write_text("postgresql://localhost/x", encoding="utf-8")
+    (tmp_path / "tenants" / "dsn.txt").write_text(
+        "postgresql://localhost/x", encoding="utf-8"
+    )
 
     sec = DirectorySecrets(root=tmp_path)
-    assert await sec.resolve_str(SecretRef(path="tenants/dsn.txt")) == "postgresql://localhost/x"
+    assert (
+        await sec.resolve_str(SecretRef(path="tenants/dsn.txt"))
+        == "postgresql://localhost/x"
+    )
 
 
 @pytest.mark.asyncio
@@ -47,7 +52,7 @@ async def test_missing_file(tmp_path: Path) -> None:
 @pytest.mark.asyncio
 async def test_path_traversal_rejected(tmp_path: Path) -> None:
     sec = DirectorySecrets(root=tmp_path)
-    with pytest.raises(CoreError, match="escapes"):
+    with pytest.raises(exc.internal, match="escapes"):
         await sec.resolve_str(SecretRef(path="../outside.txt"))
 
 

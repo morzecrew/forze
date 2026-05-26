@@ -6,7 +6,7 @@ import attrs
 from forze.application.contracts.pubsub import PubSubMessage
 from forze.application.contracts.stream import StreamMessage
 from forze.base.codecs import JsonCodec, TextCodec
-from forze.base.errors import CoreError
+from forze.base.exceptions import exc
 from forze.base.serialization import RecordMappingCodec
 
 # ----------------------- #
@@ -107,14 +107,14 @@ class RedisPubSubCodec[M]:
         decoded = default_json_codec.loads(raw_data)
 
         if not isinstance(decoded, dict):
-            raise CoreError(f"Redis pubsub message in '{topic}' has invalid payload")
+            raise exc.internal(f"Redis pubsub message in '{topic}' has invalid payload")
 
         payload_raw = decoded.get(  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
             _F_PAYLOAD
         )
 
         if not isinstance(payload_raw, str):
-            raise CoreError(f"Redis pubsub message in '{topic}' has no payload")
+            raise exc.internal(f"Redis pubsub message in '{topic}' has no payload")
 
         type_raw = decoded.get(  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
             _F_TYPE
@@ -193,7 +193,9 @@ class RedisStreamCodec[M]:
         payload_raw = decoded.get(_F_PAYLOAD)
 
         if payload_raw is None:
-            raise CoreError(f"Redis stream message '{id}' in '{stream}' has no payload")
+            raise exc.internal(
+                f"Redis stream message '{id}' in '{stream}' has no payload"
+            )
 
         timestamp_raw = decoded.get(_F_TIMESTAMP)
 

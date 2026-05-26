@@ -5,7 +5,7 @@ from typing import Literal
 
 import attrs
 
-from forze.base.errors import CoreError
+from forze.base.exceptions import exc
 
 from ._logger import logger
 
@@ -69,7 +69,7 @@ def validate_postgres_tenancy_wiring(
     """Fail or warn when Postgres client routing and ``tenant_aware`` flags disagree."""
 
     if client_is_routed and not introspector_cache_partition_key_set:
-        raise CoreError(
+        raise exc.internal(
             "Postgres tenancy validation failed: RoutedPostgresClient requires "
             "PostgresDepsModule.introspector_cache_partition_key so catalog caches "
             "are partitioned by tenant.",

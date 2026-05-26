@@ -11,7 +11,7 @@ from uuid import UUID
 from psycopg import sql
 from pydantic import BaseModel
 
-from forze.base.errors import CoreError
+from forze.base.exceptions import exc
 
 from ..introspect import PostgresColumnTypes, PostgresType
 from ..type_cast import cast_sql_for_column_type
@@ -20,6 +20,7 @@ from ..type_cast import cast_sql_for_column_type
 
 try:
     from types import UnionType
+
 except ImportError:  # pragma: no cover
     UnionType = type(Union[int, str])  # type: ignore[misc,assignment]
 
@@ -58,7 +59,7 @@ def _is_str_like_mapping_key(key_ann: Any) -> bool:
 
 def _mapping_key_must_be_str_for_json_path(*, filter_path: str, key_ann: Any) -> None:
     if not _is_str_like_mapping_key(key_ann):
-        raise CoreError(
+        raise exc.internal(
             f"Nested filter path {filter_path!r}: mapping key type {key_ann!r} is not "
             "supported; dot-separated JSON paths assume string object keys.",
         )
@@ -212,7 +213,7 @@ def resolve_leaf_python_type(
     root = segments[0]
 
     if root not in model_type.model_fields:
-        raise CoreError(
+        raise exc.internal(
             f"Filter path {path!r}: root field {root!r} is not defined on "
             f"{model_type.__name__}.",
         )
@@ -226,7 +227,7 @@ def resolve_leaf_python_type(
 
     if walked is not None and not _is_any_like(walked):
         if _is_basemodel_type(walked):
-            raise CoreError(
+            raise exc.internal(
                 f"Nested filter path {path!r}: leaf field is a nested Pydantic model; "
                 "filter on a scalar leaf inside it.",
             )
@@ -234,13 +235,13 @@ def resolve_leaf_python_type(
         origin = get_origin(walked)
 
         if origin is list:
-            raise CoreError(
+            raise exc.internal(
                 f"Nested filter path {path!r}: array-typed leaves in JSON columns are "
                 "not supported yet; use a top-level Postgres array column.",
             )
 
         if origin is dict or origin is MappingABC:
-            raise CoreError(
+            raise exc.internal(
                 f"Nested filter path {path!r}: cannot infer scalar type from mapping "
                 f"annotation on {model_type.__name__}. Set nested_field_hints[{path!r}].",
             )
@@ -248,7 +249,7 @@ def resolve_leaf_python_type(
         return walked
 
     if walked is None:
-        raise CoreError(
+        raise exc.internal(
             f"Nested filter path {path!r}: not found under {model_type.__name__}. "
             f"Intermediate fields must be nested Pydantic models or parameterized "
             f"``dict[str, ...]`` / ``Mapping[str, ...]`` with a dynamic key segment. "
@@ -258,7 +259,7 @@ def resolve_leaf_python_type(
             f"Fix the path or set nested_field_hints[{path!r}].",
         )
 
-    raise CoreError(
+    raise exc.internal(
         f"Nested filter path {path!r}: ambiguous type on {model_type.__name__}. "
         f"Set nested_field_hints[{path!r}] to a concrete Python type.",
     )
@@ -349,25 +350,25 @@ def build_nested_json_scalar_expr(
     col_t = column_types.get(root)
 
     if col_t is None:
-        raise CoreError(
+        raise exc.internal(
             f"Unknown column {root!r} for nested filter path {path!r}.",
         )
 
     if col_t.base not in {"json", "jsonb"}:
-        raise CoreError(
+        raise exc.internal(
             f"Nested filter path {path!r} requires column {root!r} to be json or jsonb; "
             f"got {col_t.base!r}.",
         )
 
     if col_t.is_array:
-        raise CoreError(
+        raise exc.internal(
             f"Nested filter path {path!r}: root column {root!r} must not be a Postgres array.",
         )
 
     inner = segments[1:]
 
     if not inner:
-        raise CoreError(
+        raise exc.internal(
             f"Nested filter path {path!r} must contain at least one segment after the column.",
         )
 

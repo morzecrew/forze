@@ -13,7 +13,7 @@ from uuid import UUID
 import attrs
 from google.cloud.firestore_v1.base_query import And, FieldFilter
 
-from forze.base.errors import NotFoundError, ValidationError
+from forze.base.exceptions import CoreException, ExceptionKind, exc
 from forze.base.primitives import JsonDict
 from forze.base.serialization import (
     pydantic_dump,
@@ -63,12 +63,12 @@ class FirestoreHistoryGateway[D: Document](FirestoreGateway[D]):
         rows = await self.client.query_stream(await self.coll(), filters=flt, limit=1)
 
         if not rows:
-            raise NotFoundError(f"History not found: {pk}, {rev}")
+            raise exc.not_found(f"History not found: {pk}, {rev}")
 
         payload = rows[0].get(HISTORY_DATA_FIELD)
 
         if payload is None:
-            raise NotFoundError(f"History payload not found: {pk}, {rev}")
+            raise exc.not_found(f"History payload not found: {pk}, {rev}")
 
         return pydantic_validate(self.model_type, payload)
 
@@ -76,7 +76,7 @@ class FirestoreHistoryGateway[D: Document](FirestoreGateway[D]):
 
     async def read_many(self, pks: Sequence[UUID], revs: Sequence[int]) -> Sequence[D]:
         if len(pks) != len(revs):
-            raise ValidationError("Length of pks and revs must be the same")
+            raise exc.validation("Length of pks and revs must be the same")
 
         if not pks:
             return []
@@ -87,8 +87,12 @@ class FirestoreHistoryGateway[D: Document](FirestoreGateway[D]):
         for pk, rev in zip(pks, revs, strict=True):
             try:
                 ordered.append(await self.read(pk, rev))
-            except NotFoundError:
-                continue
+
+            except CoreException:
+                if exc.kind is ExceptionKind.NOT_FOUND:
+                    continue
+
+                raise
 
         return ordered
 

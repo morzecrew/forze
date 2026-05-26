@@ -1,4 +1,4 @@
-"""Mongo error handler that maps PyMongo exceptions to :class:`~forze.base.errors.CoreError` subtypes."""
+"""Mongo error handler that maps PyMongo exceptions to :class:`~forze.base.errors.exc.internal` subtypes."""
 
 from forze_mongo._compat import require_mongo
 
@@ -6,8 +6,7 @@ require_mongo()
 
 # ....................... #
 
-from functools import partial
-from typing import Any
+from typing import Any, Mapping
 
 from pymongo.errors import (
     AutoReconnect,
@@ -24,105 +23,151 @@ from pymongo.errors import (
     WTimeoutError,
 )
 
-from forze.base.errors import (
-    ConcurrencyError,
-    ConflictError,
-    CoreError,
-    InfrastructureError,
-    error_handler,
-    handled,
+from forze.base.conformity import static_fn_conformity
+from forze.base.exceptions import (
+    CoreException,
+    ExceptionInterceptor,
+    ExceptionMapper,
+    default_chain_exc_mapper,
 )
 
 # ----------------------- #
 
 
-@error_handler
-def _mongo_eh(e: Exception, op: str, **kwargs: Any) -> CoreError:
-    """Convert a PyMongo exception into a :class:`~forze.base.errors.CoreError` subtype."""
+@static_fn_conformity(ExceptionMapper)  # type: ignore[type-abstract]
+def _mongo_eh(
+    exc: BaseException,
+    *,
+    site: str,
+    details: Mapping[str, Any] | None = None,
+) -> CoreException | None:
+    """Convert a PyMongo exception into an :class:`~forze.base.exceptions.CoreException`."""
 
-    match e:
-        case CoreError():
-            return e
+    match exc:
+        case CoreException():
+            return exc
 
         # --- write conflicts (must precede OperationFailure/WriteError) ---
 
         case DuplicateKeyError():
-            return ConflictError("Duplicate key violation.")
+            return CoreException.conflict(
+                "Duplicate key violation.",
+                details=details,
+            )
 
         case BulkWriteError():
-            details: dict[str, Any] = getattr(e, "details", None) or {}
-            write_errors = details.get("writeErrors", [])
+            det: dict[str, Any] = getattr(exc, "details", None) or {}
+            write_errors = det.get("writeErrors", [])
 
             if any(err.get("code") == 11000 for err in write_errors):
-                return ConflictError("Bulk write duplicate key violation.")
+                return CoreException.conflict(
+                    "Bulk write duplicate key violation.",
+                    details=details,
+                )
 
-            return InfrastructureError(f"Bulk write error during {op}.")
+            return CoreException.infrastructure(
+                f"Bulk write error during {site}.",
+                details=details,
+            )
 
         case WriteError():
-            code = getattr(e, "code", None)
+            code = getattr(exc, "code", None)
+
             if code == 11000:
-                return ConflictError("Duplicate key violation.")
-            return InfrastructureError(f"Write error during {op}.")
+                return CoreException.conflict(
+                    "Duplicate key violation.",
+                    details=details,
+                )
+
+            return CoreException.infrastructure(
+                f"Write error during {site}.",
+                details=details,
+            )
 
         case WTimeoutError():
-            return ConcurrencyError(
-                message="Write concern timeout. Please retry.",
-                code="write_concern_timeout",
+            return CoreException.concurrency(
+                "Write concern timeout. Please retry.",
+                details=details,
             )
 
         # --- connection/topology (most-specific subclasses first) ---
 
         case NotPrimaryError():
-            return ConcurrencyError(
-                message="Not primary node. Please retry.",
-                code="not_primary",
+            return CoreException.concurrency(
+                "Not primary node. Please retry.",
+                details=details,
             )
 
         case ServerSelectionTimeoutError():
-            return InfrastructureError("Mongo server selection timed out.")
+            return CoreException.infrastructure(
+                "Mongo server selection timed out.",
+                details=details,
+            )
 
         case NetworkTimeout() | ExecutionTimeout():
-            return InfrastructureError("Mongo operation timed out.")
+            return CoreException.infrastructure(
+                "Mongo operation timed out.",
+                details=details,
+            )
 
         case AutoReconnect():
-            return ConcurrencyError(
-                message="Connection lost, automatic reconnect pending. Please retry.",
-                code="auto_reconnect",
+            return CoreException.concurrency(
+                "Connection lost, automatic reconnect pending. Please retry.",
+                details=details,
             )
 
         case ConnectionFailure():
-            return InfrastructureError("Mongo connection failure.")
+            return CoreException.infrastructure(
+                "Mongo connection failure.",
+                details=details,
+            )
 
         case ConfigurationError():
-            return InfrastructureError("Mongo configuration error.")
+            return CoreException.infrastructure(
+                "Mongo configuration error.",
+                details=details,
+            )
 
         # --- operation failures (must come after DuplicateKeyError/WTimeoutError) ---
 
         case OperationFailure():
-            code = getattr(e, "code", None)
+            code = getattr(exc, "code", None)
+
             if code == 11600:
-                return ConcurrencyError(
-                    message="Interrupted due to replica set state change. Please retry.",
-                    code="interrupted",
+                return CoreException.concurrency(
+                    "Interrupted due to replica set state change. Please retry.",
+                    details=details,
                 )
+
             if code == 251:
-                return ConcurrencyError(
-                    message="Transaction aborted due to conflict. Please retry.",
-                    code="transaction_conflict",
+                return CoreException.concurrency(
+                    "Transaction aborted due to conflict. Please retry.",
+                    details=details,
                 )
-            msg = str(e)
+
+            msg = str(exc)
+
             if "not authorized" in msg.lower() or "unauthorized" in msg.lower():
-                return InfrastructureError("Mongo authorization error.")
-            return InfrastructureError(f"Mongo operation failure during {op}: {msg}")
+                return CoreException.infrastructure(
+                    "Mongo authorization error.",
+                    details=details,
+                )
+
+            return CoreException.infrastructure(
+                f"Mongo operation failure during {site}: {msg}",
+                details=details,
+            )
 
         # --- fallback ---
 
         case _:
-            return InfrastructureError(
-                message=f"An error occurred while executing Mongo operation {op}: {e}"
+            return CoreException.infrastructure(
+                f"An error occurred while executing Mongo operation {site}: {exc}",
+                details=details,
             )
 
 
-# ----------------------- #
+# ....................... #
 
-mongo_handled = partial(handled, _mongo_eh)
+_mongo_chain = default_chain_exc_mapper.chain(_mongo_eh)
+exc_interceptor = ExceptionInterceptor(mapper=_mongo_chain)

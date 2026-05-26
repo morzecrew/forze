@@ -5,17 +5,17 @@ import attrs
 
 from forze.application.contracts.authn import AuthnIdentity
 from forze.application.contracts.authz import (
+    AuthzScope,
     AuthzSubject,
     EffectiveGrants,
     GrantQueryPort,
-    AuthzScope,
     PrincipalRef,
     resolve_policy_scope,
     subject_for_grant_query,
 )
 from forze.application.contracts.authz.specs import AuthzSpec
 from forze.application.contracts.document import DocumentQueryPort
-from forze.base.errors import CoreError
+from forze.base.exceptions import exc
 
 from ..domain.models.policy_principal import ReadPolicyPrincipal
 from ..services.grants import AuthzGrantResolver
@@ -68,7 +68,7 @@ class GrantQueryAdapter(GrantQueryPort):
         row = await find_policy_principal_by_id(self.principal_qry, pid)
 
         if row is None:
-            raise CoreError("Policy principal not found when resolving grants")
+            raise exc.internal("Policy principal not found when resolving grants")
 
         return await self.resolver.resolve_effective_grants(pid, scope=resolved_scope)
 

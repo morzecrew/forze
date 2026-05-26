@@ -2,7 +2,7 @@ from typing import final
 
 import attrs
 
-from forze.base.errors import CoreError
+from forze.base.exceptions import exc
 
 from ..base import BaseSpec
 
@@ -21,4 +21,4 @@ class EmbeddingsSpec(BaseSpec):
 
     def __attrs_post_init__(self) -> None:
         if self.dimensions < 1:
-            raise CoreError("Embeddings dimensions must be a positive integer.")
+            raise exc.configuration("Embeddings dimensions must be a positive integer.")

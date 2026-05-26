@@ -6,7 +6,7 @@ from typing import Any
 import pytest
 from pydantic import BaseModel
 
-from forze.base.errors import CoreError, handled
+from forze.base.exceptions import handled
 from forze.base.serialization.pydantic import pydantic_field_names, pydantic_model_hash
 
 # ----------------------- #
@@ -34,8 +34,8 @@ class TestHandledDecoratorPerf:
         name resolved once at decoration time.
         """
 
-        def _handler(e: Exception, op: str, **kwargs: Any) -> CoreError:
-            return CoreError(message=str(e))
+        def _handler(e: Exception, op: str, **kwargs: Any) -> exc.internal:
+            return exc.internal(message=str(e))
 
         @handled(_handler, op="bench_op")
         def decorated_fn(x: int, y: str) -> int:

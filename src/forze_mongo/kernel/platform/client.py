@@ -25,10 +25,10 @@ from pymongo.asynchronous.collection import AsyncCollection
 from pymongo.asynchronous.database import AsyncDatabase
 from pymongo.asynchronous.mongo_client import AsyncMongoClient
 
-from forze.base.errors import InfrastructureError
+from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
 
-from .errors import mongo_handled
+from .errors import exc_interceptor
 from .port import MongoClientPort
 from .value_objects import MongoConfig, MongoTransactionOptions
 
@@ -119,7 +119,7 @@ class MongoClient(MongoClientPort):
         """Return the active client. Raises :exc:`InfrastructureError` if not initialized."""
 
         if self.__client is None:
-            raise InfrastructureError("Mongo client is not initialized")
+            raise exc.internal("Mongo client is not initialized")
 
         return self.__client
 
@@ -150,7 +150,7 @@ class MongoClient(MongoClientPort):
         db_name = name or self.__db_name
 
         if not db_name:
-            raise InfrastructureError("Mongo database name is not configured")
+            raise exc.configuration("Mongo database name is not configured")
 
         return self.__require_client().get_database(db_name)
 
@@ -188,7 +188,7 @@ class MongoClient(MongoClientPort):
         """Raise :exc:`InfrastructureError` if not inside a transaction scope."""
 
         if not self.is_in_transaction():
-            raise InfrastructureError("Transactional context is required")
+            raise exc.internal("Transactional context is required")
 
     # ....................... #
 
@@ -213,7 +213,7 @@ class MongoClient(MongoClientPort):
     # ....................... #
     # Transaction API
 
-    @mongo_handled("mongo.transaction")  # type: ignore[untyped-decorator]
+    @exc_interceptor.asynccontextmanager("mongo.transaction")  # type: ignore[untyped-decorator]
     @asynccontextmanager
     async def transaction(
         self,
@@ -267,7 +267,7 @@ class MongoClient(MongoClientPort):
     # ....................... #
     # Query API (minimal)
 
-    @mongo_handled("mongo.find_one")  # type: ignore[untyped-decorator]
+    @exc_interceptor.coroutine("mongo.find_one")  # type: ignore[untyped-decorator]
     async def find_one(
         self,
         coll: AsyncCollection[JsonDict],
@@ -292,7 +292,7 @@ class MongoClient(MongoClientPort):
 
     # ....................... #
 
-    @mongo_handled("mongo.find_many")  # type: ignore[untyped-decorator]
+    @exc_interceptor.coroutine("mongo.find_many")  # type: ignore[untyped-decorator]
     async def find_many(
         self,
         coll: AsyncCollection[JsonDict],
@@ -319,7 +319,7 @@ class MongoClient(MongoClientPort):
 
     # ....................... #
 
-    @mongo_handled("mongo.aggregate")  # type: ignore[untyped-decorator]
+    @exc_interceptor.coroutine("mongo.aggregate")  # type: ignore[untyped-decorator]
     async def aggregate(
         self,
         coll: AsyncCollection[JsonDict],
@@ -336,7 +336,7 @@ class MongoClient(MongoClientPort):
 
     # ....................... #
 
-    @mongo_handled("mongo.insert_one")  # type: ignore[untyped-decorator]
+    @exc_interceptor.coroutine("mongo.insert_one")  # type: ignore[untyped-decorator]
     async def insert_one(
         self,
         coll: AsyncCollection[Any],
@@ -350,7 +350,7 @@ class MongoClient(MongoClientPort):
 
     # ....................... #
 
-    @mongo_handled("mongo.insert_many")  # type: ignore[untyped-decorator]
+    @exc_interceptor.coroutine("mongo.insert_many")  # type: ignore[untyped-decorator]
     async def insert_many(
         self,
         coll: AsyncCollection[Any],
@@ -381,7 +381,7 @@ class MongoClient(MongoClientPort):
 
     # ....................... #
 
-    @mongo_handled("mongo.bulk_write")  # type: ignore[untyped-decorator]
+    @exc_interceptor.coroutine("mongo.bulk_write")  # type: ignore[untyped-decorator]
     async def bulk_write(
         self,
         coll: AsyncCollection[Any],
@@ -396,7 +396,7 @@ class MongoClient(MongoClientPort):
 
     # ....................... #
 
-    @mongo_handled("mongo.update_one_upsert")  # type: ignore[untyped-decorator]
+    @exc_interceptor.coroutine("mongo.update_one_upsert")  # type: ignore[untyped-decorator]
     async def update_one_upsert(
         self,
         coll: AsyncCollection[Any],
@@ -415,7 +415,7 @@ class MongoClient(MongoClientPort):
 
     # ....................... #
 
-    @mongo_handled("mongo.update_one")  # type: ignore[untyped-decorator]
+    @exc_interceptor.coroutine("mongo.update_one")  # type: ignore[untyped-decorator]
     async def update_one(
         self,
         coll: AsyncCollection[Any],
@@ -432,7 +432,7 @@ class MongoClient(MongoClientPort):
 
     # ....................... #
 
-    @mongo_handled("mongo.bulk_update")  # type: ignore[untyped-decorator]
+    @exc_interceptor.coroutine("mongo.bulk_update")  # type: ignore[untyped-decorator]
     async def bulk_update(
         self,
         coll: AsyncCollection[Any],
@@ -466,7 +466,7 @@ class MongoClient(MongoClientPort):
 
     # ....................... #
 
-    @mongo_handled("mongo.update_many")  # type: ignore[untyped-decorator]
+    @exc_interceptor.coroutine("mongo.update_many")  # type: ignore[untyped-decorator]
     async def update_many(
         self,
         coll: AsyncCollection[Any],
@@ -483,7 +483,7 @@ class MongoClient(MongoClientPort):
 
     # ....................... #
 
-    @mongo_handled("mongo.delete_one")  # type: ignore[untyped-decorator]
+    @exc_interceptor.coroutine("mongo.delete_one")  # type: ignore[untyped-decorator]
     async def delete_one(
         self,
         coll: AsyncCollection[Any],
@@ -498,7 +498,7 @@ class MongoClient(MongoClientPort):
 
     # ....................... #
 
-    @mongo_handled("mongo.delete_many")  # type: ignore[untyped-decorator]
+    @exc_interceptor.coroutine("mongo.delete_many")  # type: ignore[untyped-decorator]
     async def delete_many(
         self,
         coll: AsyncCollection[Any],
@@ -517,7 +517,7 @@ class MongoClient(MongoClientPort):
 
     # ....................... #
 
-    @mongo_handled("mongo.count")  # type: ignore[untyped-decorator]
+    @exc_interceptor.coroutine("mongo.count")  # type: ignore[untyped-decorator]
     async def count(
         self,
         coll: AsyncCollection[Any],

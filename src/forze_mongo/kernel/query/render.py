@@ -30,7 +30,7 @@ from forze.application.contracts.querying import (
 from forze.application.contracts.querying.internal.text_pattern import (
     like_pattern_to_regex,
 )
-from forze.base.errors import CoreError
+from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
 
 # ----------------------- #
@@ -136,7 +136,7 @@ class MongoQueryRenderer:
         bad = [field for field in sorts if field not in aliases]
 
         if bad:
-            raise CoreError(f"Invalid aggregate sort fields: {bad}")
+            raise exc.internal(f"Invalid aggregate sort fields: {bad}")
 
         return [
             (field, 1 if direction == "asc" else -1)
@@ -189,7 +189,7 @@ class MongoQueryRenderer:
             return {"$sum": self._conditional_value(computed, value, 0)}
 
         if computed.field is None:
-            raise CoreError("Computed field has no field path")
+            raise exc.internal("Computed field has no field path")
 
         field_ref = f"${computed.field}"
 
@@ -259,7 +259,7 @@ class MongoQueryRenderer:
                 return {"$expr": {op: [left_ref, right_ref]}}
 
             case _:  # pyright: ignore[reportUnnecessaryComparison]
-                raise CoreError(f"Unknown compare operator: {op!r}")
+                raise exc.internal(f"Unknown compare operator: {op!r}")
 
     # ....................... #
 
@@ -292,7 +292,7 @@ class MongoQueryRenderer:
                 return self._render_elem_predicate(path, quantifier, inner)
 
             case _:
-                raise CoreError(f"Unknown expression: {expr!r}")
+                raise exc.internal(f"Unknown expression: {expr!r}")
 
     # ....................... #
 
@@ -330,13 +330,13 @@ class MongoQueryRenderer:
 
             case "$in":
                 if isinstance(value, QueryValue.Scalar | None):
-                    raise CoreError(f"{field}: {op} expects list")
+                    raise exc.internal(f"{field}: {op} expects list")
                 values = [self.caster.pass_through(v) for v in value]
                 return {"$in": [ref, values]}
 
             case "$nin":
                 if isinstance(value, QueryValue.Scalar | None):
-                    raise CoreError(f"{field}: {op} expects list")
+                    raise exc.internal(f"{field}: {op} expects list")
                 values = [self.caster.pass_through(v) for v in value]
                 return {
                     "$not": [
@@ -346,19 +346,19 @@ class MongoQueryRenderer:
 
             case "$superset":
                 if isinstance(value, QueryValue.Scalar | None):
-                    raise CoreError(f"{field}: {op} expects list")
+                    raise exc.internal(f"{field}: {op} expects list")
                 values = [self.caster.pass_through(v) for v in value]
                 return {"$setIsSubset": [values, ref]}
 
             case "$subset":
                 if isinstance(value, QueryValue.Scalar | None):
-                    raise CoreError(f"{field}: {op} expects list")
+                    raise exc.internal(f"{field}: {op} expects list")
                 values = [self.caster.pass_through(v) for v in value]
                 return {"$setIsSubset": [ref, values]}
 
             case "$overlaps":
                 if isinstance(value, QueryValue.Scalar | None):
-                    raise CoreError(f"{field}: {op} expects list")
+                    raise exc.internal(f"{field}: {op} expects list")
                 return {
                     "$gt": [
                         {
@@ -375,7 +375,7 @@ class MongoQueryRenderer:
 
             case "$disjoint":
                 if isinstance(value, QueryValue.Scalar | None):
-                    raise CoreError(f"{field}: {op} expects list")
+                    raise exc.internal(f"{field}: {op} expects list")
                 return {
                     "$eq": [
                         {
@@ -405,7 +405,7 @@ class MongoQueryRenderer:
             case "$regex":
                 return pattern, ""
             case _:
-                raise CoreError(f"Unknown text operator: {op!r}")
+                raise exc.internal(f"Unknown text operator: {op!r}")
 
     def _render_text_predicate(
         self,
@@ -478,7 +478,7 @@ class MongoQueryRenderer:
                 return self._render_elem(path, quantifier, inner)
 
             case _:
-                raise CoreError(f"Unknown expression: {expr!r}")
+                raise exc.internal(f"Unknown expression: {expr!r}")
 
     # ....................... #
 
@@ -564,9 +564,7 @@ class MongoQueryRenderer:
                 )
 
             case QueryOr(items):
-                return all(
-                    MongoQueryRenderer._elem_inner_is_scalar(i) for i in items
-                )
+                return all(MongoQueryRenderer._elem_inner_is_scalar(i) for i in items)
 
             case _:
                 return False
@@ -588,8 +586,7 @@ class MongoQueryRenderer:
 
             case QueryOr(items):
                 parts = [
-                    self._render_elem_scalar_match(path, quantifier, i)
-                    for i in items
+                    self._render_elem_scalar_match(path, quantifier, i) for i in items
                 ]
                 if len(parts) == 1:
                     return parts[0]
@@ -599,10 +596,10 @@ class MongoQueryRenderer:
                 return {key: parts}
 
             case _:
-                raise CoreError(f"Invalid scalar element inner: {inner!r}")
+                raise exc.internal(f"Invalid scalar element inner: {inner!r}")
 
         if len(fields) != 1:
-            raise CoreError("Scalar element quantifier supports one comparison only")
+            raise exc.internal("Scalar element quantifier supports one comparison only")
 
         field = fields[0]
         op = field.op
@@ -679,7 +676,7 @@ class MongoQueryRenderer:
                     },
                 }
 
-            raise CoreError(f"Unsupported scalar element operator {op!r}")
+            raise exc.internal(f"Unsupported scalar element operator {op!r}")
 
         return {"$expr": {cmp_op: [{agg: ref}, val]}}
 
@@ -699,7 +696,7 @@ class MongoQueryRenderer:
                 }
 
             case _:
-                raise CoreError(f"Invalid object element inner: {inner!r}")
+                raise exc.internal(f"Invalid object element inner: {inner!r}")
 
         out: JsonDict = {}
 
@@ -759,7 +756,7 @@ class MongoQueryRenderer:
                 return self._render_text_field(field, op, value)
 
             case _:  # pyright: ignore[reportUnnecessaryComparison]
-                raise CoreError(f"Unknown operator: {op!r}")
+                raise exc.internal(f"Unknown operator: {op!r}")
 
     # ....................... #
 
@@ -823,7 +820,7 @@ class MongoQueryRenderer:
 
     def _render_memb(self, field: str, op: QueryOp.Memb, value: Any) -> JsonDict:  # type: ignore[valid-type]
         if isinstance(value, QueryValue.Scalar | None):
-            raise CoreError(f"{field}: {op} expects list")
+            raise exc.internal(f"{field}: {op} expects list")
 
         vs = [self.caster.pass_through(v) for v in value]
 
@@ -838,7 +835,7 @@ class MongoQueryRenderer:
 
     def _render_set_rel(self, field: str, op: QueryOp.SetRel, value: Any) -> JsonDict:  # type: ignore[valid-type]
         if isinstance(value, QueryValue.Scalar | None):
-            raise CoreError(f"{field}: {op} expects list")
+            raise exc.internal(f"{field}: {op} expects list")
 
         vs = [self.caster.pass_through(v) for v in value]
 

@@ -6,7 +6,7 @@ from datetime import date, datetime, timedelta, timezone
 from typing import Literal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from forze.base.errors import CoreError
+from forze.base.exceptions import exc
 
 # ----------------------- #
 
@@ -51,7 +51,7 @@ def parse_aggregate_timezone(wire: str | None) -> ResolvedTimeBucketTimezone:
         h = int(m.group(2))
         mm = int(m.group(3) or 0)
         if h > 14 or mm > 59:
-            raise CoreError(f"Timezone offset out of range: {wire!r}")
+            raise exc.internal(f"Timezone offset out of range: {wire!r}")
 
         total_min = sign * (h * 60 + mm)
         return ResolvedTimeBucketTimezone(
@@ -63,7 +63,7 @@ def parse_aggregate_timezone(wire: str | None) -> ResolvedTimeBucketTimezone:
     try:
         ZoneInfo(s)
     except ZoneInfoNotFoundError as e:
-        raise CoreError(f"Unknown timezone: {wire!r}") from e
+        raise exc.internal(f"Unknown timezone: {wire!r}") from e
 
     return ResolvedTimeBucketTimezone(mode="iana", iana=s, offset=None)
 
@@ -127,4 +127,4 @@ def floor_to_time_bucket(
             tzinfo=tz,
         )
 
-    raise CoreError(f"Invalid time bucket unit: {unit!r}")
+    raise exc.internal(f"Invalid time bucket unit: {unit!r}")

@@ -5,7 +5,7 @@ from threading import RLock
 import attrs
 
 from .._logger import logger
-from ..errors import CoreError
+from ..exceptions import exc
 
 # ----------------------- #
 
@@ -16,7 +16,7 @@ class RuntimeVar[T: object]:
 
     Used to store application-wide runtime values (e.g. an ``AppContext``)
     initialized during startup and accessed throughout the application lifecycle.
-    Raises :exc:`~forze.base.errors.CoreError` on invalid operations.
+    Raises :exc:`~forze.base.errors.exc.internal` on invalid operations.
     """
 
     name: str
@@ -32,10 +32,10 @@ class RuntimeVar[T: object]:
     # ....................... #
 
     def set_once(self, value: T) -> None:
-        """Set the runtime value once. Thread-safe; subsequent calls raise :exc:`CoreError`."""
+        """Set the runtime value once. Thread-safe; subsequent calls raise :exc:`exc.internal`."""
 
         if value is None:
-            raise CoreError(f"Value cannot be None for '{self.name}'")
+            raise exc.internal(f"Value cannot be None for '{self.name}'")
 
         logger.trace(
             "Setting runtime variable '%s' with value type %s",
@@ -45,7 +45,7 @@ class RuntimeVar[T: object]:
 
         with self.__lock:
             if self.__value is not None:
-                raise CoreError(
+                raise exc.internal(
                     f"Value is already set for runtime variable '{self.name}'"
                 )
 
@@ -54,10 +54,10 @@ class RuntimeVar[T: object]:
     # ....................... #
 
     def get(self) -> T:
-        """Return the stored value. Raises :exc:`CoreError` if not yet set."""
+        """Return the stored value. Raises :exc:`exc.internal` if not yet set."""
 
         if self.__value is None:
-            raise CoreError(f"Value is not set for '{self.name}'")
+            raise exc.internal(f"Value is not set for '{self.name}'")
 
         return self.__value
 

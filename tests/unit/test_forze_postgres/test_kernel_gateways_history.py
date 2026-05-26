@@ -6,7 +6,7 @@ from uuid import UUID, uuid4
 
 import pytest
 
-from forze.base.errors import CoreError, NotFoundError, ValidationError
+from forze.base.exceptions import NotFoundError, ValidationError
 from forze.domain.constants import HISTORY_DATA_FIELD
 from forze.domain.models import Document
 from forze_postgres.kernel.gateways import PostgresHistoryGateway, PostgresQualifiedName
@@ -72,7 +72,7 @@ class TestPostgresHistoryGatewayInit:
         intro = MagicMock(spec=PostgresIntrospector)
         intro.get_column_types = AsyncMock(return_value=_history_column_types())
 
-        with pytest.raises(CoreError, match="Invalid bookkeeping strategy"):
+        with pytest.raises(exc.internal, match="Invalid bookkeeping strategy"):
             PostgresHistoryGateway(
                 source_qname=PostgresQualifiedName(schema="public", name="h"),
                 target_qname=PostgresQualifiedName(schema="public", name="m"),

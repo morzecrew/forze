@@ -7,7 +7,7 @@ from typing import Literal, Sequence
 from psycopg import sql
 
 from forze.application.contracts.search import PhraseCombine
-from forze.base.errors import CoreError
+from forze.base.exceptions import exc
 
 # ----------------------- #
 
@@ -29,7 +29,7 @@ def vector_distance_op_sql(kind: VectorDistanceKind) -> sql.SQL:
     if kind == "inner_product":
         return sql.SQL("<#>")
 
-    raise CoreError(f"Unknown vector distance kind: {kind!r}.")
+    raise exc.internal(f"Unknown vector distance kind: {kind!r}.")
 
 
 # ....................... #
@@ -48,7 +48,7 @@ def vector_param_literal(values: Sequence[float]) -> str:
 
 def assert_embedding_shape(values: Sequence[float], *, expect_dim: int) -> None:
     if len(values) != expect_dim:
-        raise CoreError(
+        raise exc.internal(
             f"Embedding length {len(values)} does not match expected {expect_dim} dimensions.",
         )
 
@@ -93,7 +93,7 @@ def vector_knn_multi_score_expr(
     """``GREATEST`` (``any``) or ``LEAST`` (``all``) of per-query KNN negated distances."""
 
     if n_queries < 1:
-        raise CoreError("n_queries must be at least 1.")
+        raise exc.internal("n_queries must be at least 1.")
 
     heap_col = sql.SQL("{}.{}").format(
         sql.Identifier(index_alias),

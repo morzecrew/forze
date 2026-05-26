@@ -16,7 +16,7 @@ from forze.application.contracts.secrets import (
     SecretsPort,
     resolve_structured,
 )
-from forze.base.errors import CoreError, InfrastructureError, SecretNotFoundError
+from forze.base.exceptions import exc
 
 from .client import SQSClient
 from .port import SQSClientPort
@@ -59,7 +59,7 @@ class RoutedSQSClient(SQSClientPort):
 
     def __attrs_post_init__(self) -> None:
         if self.max_cached_tenants < 1:
-            raise CoreError("max_cached_tenants must be at least 1")
+            raise exc.internal("max_cached_tenants must be at least 1")
 
     # ....................... #
 
@@ -101,7 +101,7 @@ class RoutedSQSClient(SQSClientPort):
         tid = self.tenant_provider()
 
         if tid is None:
-            raise CoreError(
+            raise exc.internal(
                 "Tenant ID is required for routed SQS access",
                 code="tenant_required",
             )
@@ -112,7 +112,7 @@ class RoutedSQSClient(SQSClientPort):
 
     async def _get_client(self) -> SQSClient:
         if not self._started:
-            raise InfrastructureError("Routed SQS client is not started")
+            raise exc.internal("Routed SQS client is not started")
 
         tid = self._require_tenant_id()
 
@@ -131,18 +131,16 @@ class RoutedSQSClient(SQSClientPort):
                     SQSRoutingCredentials,
                 )
 
-            except SecretNotFoundError:
-                raise
-
-            except CoreError:
+            except exc:
                 raise
 
             except Exception as e:
-                raise InfrastructureError(
+                raise exc.internal(
                     f"Failed to resolve SQS secret for tenant {tid}: {e}",
                 ) from e
 
             client = SQSClient()
+
             await client.initialize(
                 creds.endpoint,
                 creds.access_key_id,
@@ -150,6 +148,7 @@ class RoutedSQSClient(SQSClientPort):
                 region_name=creds.region_name,
                 config=self.botocore_config,
             )
+
             self._clients[tid] = client
             self._clients.move_to_end(tid)
 

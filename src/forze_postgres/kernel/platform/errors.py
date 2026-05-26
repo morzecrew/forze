@@ -5,20 +5,16 @@ require_psycopg()
 # ....................... #
 
 import re
-from functools import partial
-from typing import Any
+from typing import Any, Mapping
 
 from psycopg import errors
 
-from forze.base.errors import (
-    ConcurrencyError,
-    ConflictError,
-    CoreError,
-    InfrastructureError,
-    NotFoundError,
-    ValidationError,
-    error_handler,
-    handled,
+from forze.base.conformity import static_fn_conformity
+from forze.base.exceptions import (
+    CoreException,
+    ExceptionInterceptor,
+    ExceptionMapper,
+    default_chain_exc_mapper,
 )
 
 # ----------------------- #
@@ -30,18 +26,23 @@ FK_pattern = re.compile(
 # ....................... #
 
 
-@error_handler
-def _psycopg_eh(e: Exception, op: str, **kwargs: Any) -> CoreError:
-    """Translate psycopg exceptions into domain :class:`~forze.base.errors.CoreError` subtypes."""
+@static_fn_conformity(ExceptionMapper)  # type: ignore[type-abstract]
+def _psycopg_eh(
+    exc: BaseException,
+    *,
+    site: str,
+    details: Mapping[str, Any] | None = None,
+) -> CoreException | None:
+    """Translate psycopg exceptions into domain :class:`~forze.base.errors.exc.internal` subtypes."""
 
-    match e:
-        case CoreError():
-            return e
+    match exc:
+        case CoreException():
+            return exc
 
         # Integrity / constraints
 
         case errors.ForeignKeyViolation():
-            msg = str(e.diag.message_detail)
+            msg = str(exc.diag.message_detail)
             match = FK_pattern.match(msg)
 
             if match:
@@ -52,114 +53,171 @@ def _psycopg_eh(e: Exception, op: str, **kwargs: Any) -> CoreError:
             else:
                 details = {"raw": msg}
 
-            return NotFoundError(
-                message="Reference document not found.",
+            return CoreException.not_found(
+                "Reference document not found.",
                 details=details,
             )
 
         case errors.UniqueViolation():
-            return ConflictError("Unique violation.")
+            return CoreException.conflict(
+                "Unique violation.",
+                details=details,
+            )
 
         case errors.ExclusionViolation():
             # e.g. gist exclusion constraints (overlaps, etc.)
-            return ConflictError("Constraint violation (exclusion).")
+            return CoreException.precondition(
+                "Constraint violation (exclusion).",
+                details=details,
+            )
 
         case errors.CheckViolation():
-            return ValidationError("Invalid value (check constraint).")
+            return CoreException.precondition(
+                "Invalid value (check constraint).",
+                details=details,
+            )
 
         case errors.NotNullViolation():
-            return ValidationError("Missing required value (not-null constraint).")
+            return CoreException.precondition(
+                "Missing required value (not-null constraint).",
+                details=details,
+            )
 
         case errors.StringDataRightTruncation() | errors.DataError():
             # too long for varchar/char etc.
-            return ValidationError("Invalid value (data too long or invalid format).")
+            return CoreException.precondition(
+                "Invalid value (data too long or invalid format).",
+                details=details,
+            )
 
         case errors.NumericValueOutOfRange():
-            return ValidationError("Invalid value (number out of range).")
+            return CoreException.precondition(
+                "Invalid value (number out of range).",
+                details=details,
+            )
 
         case errors.InvalidTextRepresentation():
             # e.g. invalid uuid, invalid int, etc.
-            return ValidationError("Invalid value (text representation).")
+            return CoreException.precondition(
+                "Invalid value (text representation).",
+                details=details,
+            )
 
         case errors.DatetimeFieldOverflow() | errors.InvalidDatetimeFormat():
-            return ValidationError("Invalid datetime value.")
+            return CoreException.precondition(
+                "Invalid datetime value.",
+                details=details,
+            )
 
         # Concurrency / retryable
 
         case errors.DeadlockDetected():
             # usually safe to retry
-            return ConcurrencyError(
-                message="Deadlock detected. Please retry.",
-                code="deadlock",
+            return CoreException.concurrency(
+                "Deadlock detected. Please retry.",
+                details=details,
             )
 
         case errors.SerializationFailure():
             # SERIALIZABLE / REPEATABLE READ conflicts
-            return ConcurrencyError(
-                message="Transaction serialization failure. Please retry.",
-                code="serialization_failure",
+            return CoreException.concurrency(
+                "Transaction serialization failure. Please retry.",
+                details=details,
             )
 
         # Connection / availability
 
         case errors.LockNotAvailable():
             # NOWAIT lock couldn't be acquired
-            return ConcurrencyError(
-                message="Lock not available. Please retry.",
-                code="lock_not_available",
+            return CoreException.concurrency(
+                "Lock not available. Please retry.",
+                details=details,
             )
 
         case (
             errors.AdminShutdown() | errors.CrashShutdown() | errors.CannotConnectNow()
         ):
-            return InfrastructureError("Database is not available (shutdown/starting).")
+            return CoreException.infrastructure(
+                "Database is not available (shutdown/starting).",
+                details=details,
+            )
 
         case errors.ConnectionException() | errors.ConnectionDoesNotExist():
-            return InfrastructureError("Database connection error.")
+            return CoreException.infrastructure(
+                "Database connection error.",
+                details=details,
+            )
 
         case (
             errors.SqlclientUnableToEstablishSqlconnection()
             | errors.SqlserverRejectedEstablishmentOfSqlconnection()
         ):
-            return InfrastructureError("Unable to establish database connection.")
+            return CoreException.infrastructure(
+                "Unable to establish database connection.",
+                details=details,
+            )
 
         # Programming / schema issues #! Should be InfrastructureError ?
 
         case errors.UndefinedTable():
-            return InfrastructureError("Database schema error (undefined table).")
+            return CoreException.infrastructure(
+                "Database schema error (undefined table).",
+                details=details,
+            )
 
         case errors.UndefinedColumn():
-            return InfrastructureError("Database schema error (undefined column).")
+            return CoreException.infrastructure(
+                "Database schema error (undefined column).",
+                details=details,
+            )
 
         case errors.UndefinedFunction():
-            return InfrastructureError("Database schema error (undefined function).")
+            return CoreException.infrastructure(
+                "Database schema error (undefined function).",
+                details=details,
+            )
 
         case errors.SyntaxError() | errors.InvalidSqlStatementName():
-            return InfrastructureError("Database query syntax error.")
+            return CoreException.infrastructure(
+                "Database query syntax error.",
+                details=details,
+            )
 
         case errors.InsufficientPrivilege():
-            return InfrastructureError("Database permission error.")
+            return CoreException.infrastructure(
+                "Database permission error.",
+                details=details,
+            )
 
         # Timeouts / resource limits
 
         case errors.QueryCanceled():
             # statement_timeout / user cancel
-            return InfrastructureError("Database query canceled (timeout).")
+            return CoreException.infrastructure(
+                "Database query canceled (timeout).",
+                details=details,
+            )
 
         case errors.TooManyConnections():
-            return ConcurrencyError(
-                message="Database is overloaded (too many connections). Please retry.",
-                code="too_many_connections",
+            return CoreException.concurrency(
+                "Database is overloaded (too many connections). Please retry.",
+                details=details,
             )
 
         case errors.OutOfMemory() | errors.DiskFull():
-            return InfrastructureError("Database resource exhaustion.")
+            return CoreException.infrastructure(
+                "Database resource exhaustion.",
+                details=details,
+            )
 
         # Fallbacks by broad class
 
         case errors.IntegrityError():
             # any other constraint-ish problem
-            return ConflictError("Integrity constraint violation.")
+            return CoreException.conflict(
+                "Integrity constraint violation.",
+                details=details,
+            )
 
         case errors.OperationalError() as oe:
             msg = str(oe).lower()
@@ -174,26 +232,38 @@ def _psycopg_eh(e: Exception, op: str, **kwargs: Any) -> CoreError:
                 "could not receive",
                 "could not send",
             )
+
             if any(s in msg for s in transient_markers):
-                return ConcurrencyError(
-                    message="Transient database connectivity issue. Please retry.",
-                    code="transient_operational",
+                return CoreException.concurrency(
+                    "Transient database connectivity issue. Please retry.",
+                    details=details,
                 )
 
-            return InfrastructureError("Database operational error.")
+            return CoreException.infrastructure(
+                "Database operational error.",
+                details=details,
+            )
 
         case errors.ProgrammingError():
-            return InfrastructureError("Database programming error.")
+            return CoreException.infrastructure(
+                "Database programming error.",
+                details=details,
+            )
 
         case errors.GroupingError():
-            return InfrastructureError("Database grouping error")
+            return CoreException.infrastructure(
+                "Database grouping error",
+                details=details,
+            )
 
         case _:
-            return InfrastructureError(
-                f"An error occurred while executing the operation {op}: {e}"
+            return CoreException.infrastructure(
+                f"An error occurred while executing the operation {site}: {exc}",
+                details=details,
             )
 
 
 # ....................... #
 
-psycopg_handled = partial(handled, _psycopg_eh)
+_pg_chain = default_chain_exc_mapper.chain(_psycopg_eh)
+exc_interceptor = ExceptionInterceptor(mapper=_pg_chain)

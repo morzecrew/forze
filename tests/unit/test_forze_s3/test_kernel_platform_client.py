@@ -5,7 +5,7 @@ import pytest
 from pydantic import SecretStr
 
 import forze_s3.kernel.platform.client as s3_client_module
-from forze.base.errors import CoreError, NotFoundError
+from forze.base.exceptions import NotFoundError
 from forze_s3.kernel.platform.client import S3Client, S3Config
 
 
@@ -120,11 +120,13 @@ async def test_list_objects_stops_after_collecting_requested_window() -> None:
     assert paginator.kwargs == {"Bucket": "bucket", "Prefix": "docs/"}
     assert api_client.paginator_requests == ["list_objects_v2"]
 
+
 @pytest.mark.asyncio
 async def test_initialize_converts_timedelta_to_float(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from datetime import timedelta
+
     client = S3Client()
     fake_session = object()
 
@@ -220,9 +222,7 @@ class _FakeS3Api:
         Key: str,
         ExtraArgs: dict[str, Any] | None = None,
     ) -> None:
-        self.upload_calls.append(
-            {"Bucket": Bucket, "Key": Key, "ExtraArgs": ExtraArgs}
-        )
+        self.upload_calls.append({"Bucket": Bucket, "Key": Key, "ExtraArgs": ExtraArgs})
 
     def get_paginator(self, name: str) -> Any:
         raise AssertionError("not used in these tests")
@@ -257,7 +257,9 @@ async def test_client_nested_reuses_context_client(
 
 
 @pytest.mark.asyncio
-async def test_client_unwraps_secret_access_key(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_client_unwraps_secret_access_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     created: list[dict[str, Any]] = []
 
     class _Sess:
@@ -374,9 +376,9 @@ async def test_list_objects_rejects_invalid_limit_or_offset() -> None:
     api_client = _FakeS3ApiClient(paginator)
     tok = client._S3Client__ctx_client.set(api_client)  # type: ignore[arg-type]
     try:
-        with pytest.raises(CoreError, match="limit"):
+        with pytest.raises(exc.internal, match="limit"):
             await client.list_objects("b", limit=0)
-        with pytest.raises(CoreError, match="offset"):
+        with pytest.raises(exc.internal, match="offset"):
             await client.list_objects("b", offset=-1)
     finally:
         client._S3Client__ctx_client.reset(tok)

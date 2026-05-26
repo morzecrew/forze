@@ -7,7 +7,7 @@ from typing import final
 
 import attrs
 
-from forze.base.errors import CoreError
+from forze.base.exceptions import exc
 
 from .buffer import RuntimeTrace
 from .events import TracingEvent
@@ -51,10 +51,19 @@ def _event_matches(event: TracingEvent, expectation: TraceExpectation) -> bool:
     return True
 
 
-def _events_from(trace: RuntimeTrace | Sequence[TracingEvent]) -> Sequence[TracingEvent]:
+# ....................... #
+
+
+def _events_from(
+    trace: RuntimeTrace | Sequence[TracingEvent],
+) -> Sequence[TracingEvent]:
     if isinstance(trace, RuntimeTrace):
         return trace.events
+
     return trace
+
+
+# ....................... #
 
 
 def assert_trace_contains(
@@ -65,6 +74,7 @@ def assert_trace_contains(
 
     if trace is None:
         events: Sequence[TracingEvent] = ()
+
     else:
         events = _events_from(trace)
 
@@ -85,7 +95,10 @@ def assert_trace_contains(
                 f"Expected trace to contain {expectation!r} "
                 f"after index {index - 1}; trace has {len(events)} event(s)"
             )
-            raise CoreError(msg)
+            raise exc.internal(msg)
+
+
+# ....................... #
 
 
 def assert_trace_equals(
@@ -96,16 +109,17 @@ def assert_trace_equals(
 
     if trace is None:
         events: list[TracingEvent] = []
+
     else:
         events = list(_events_from(trace))
 
     if len(events) != len(expectations):
-        msg = (
-            f"Expected {len(expectations)} trace event(s), got {len(events)}"
-        )
-        raise CoreError(msg)
+        msg = f"Expected {len(expectations)} trace event(s), got {len(events)}"
+
+        raise exc.internal(msg)
 
     for event, expectation in zip(events, expectations, strict=True):
         if not _event_matches(event, expectation):
             msg = f"Event {event!r} does not match expectation {expectation!r}"
-            raise CoreError(msg)
+
+            raise exc.internal(msg)

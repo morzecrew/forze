@@ -11,7 +11,6 @@ from forze.application.contracts.document import DocumentSpec
 from forze.application.contracts.search import SearchSpec
 from forze.application.contracts.storage import StorageDepKey, StorageSpec
 from forze.application.execution import Deps, ExecutionContext
-from forze.base.errors import CoreError
 from forze.domain.models import CreateDocumentCmd, Document, ReadDocument
 from forze_mock import MockDepsModule, MockState
 from forze_mock.adapters import MockCounterAdapter, MockStorageAdapter
@@ -128,9 +127,7 @@ class TestExecutionContextTransaction:
         assert order == ["a", "b"]
 
     @pytest.mark.asyncio
-    async def test_run_or_defer_skipped_on_error(
-        self, ctx: ExecutionContext
-    ) -> None:
+    async def test_run_or_defer_skipped_on_error(self, ctx: ExecutionContext) -> None:
         ran: list[int] = []
 
         async def _cb() -> None:

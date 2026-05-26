@@ -12,10 +12,10 @@ from google.cloud.firestore_v1 import (
 )
 from google.cloud.firestore_v1.base_query import BaseFilter
 
-from forze.base.errors import InfrastructureError
+from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
 
-from .errors import firestore_handled
+from .errors import exc_interceptor
 from .port import FirestoreClientPort
 
 # ----------------------- #
@@ -83,7 +83,7 @@ class FirestoreClient(FirestoreClientPort):
 
     def __require_client(self) -> AsyncClient:
         if self.__client is None:
-            raise InfrastructureError("Firestore client is not initialized")
+            raise exc.internal("Firestore client is not initialized")
 
         return self.__client
 
@@ -121,11 +121,11 @@ class FirestoreClient(FirestoreClientPort):
 
     def require_transaction(self) -> None:
         if not self.is_in_transaction():
-            raise InfrastructureError("Transactional context is required")
+            raise exc.internal("Transactional context is required")
 
     # ....................... #
 
-    @firestore_handled("firestore.transaction")  # type: ignore[untyped-decorator]
+    @exc_interceptor.asynccontextmanager("firestore.transaction")  # type: ignore[untyped-decorator]
     @asynccontextmanager
     async def transaction(self) -> AsyncIterator[AsyncTransaction]:
         depth = self.__ctx_depth.get()
@@ -164,7 +164,7 @@ class FirestoreClient(FirestoreClientPort):
 
     # ....................... #
 
-    @firestore_handled("firestore.get_document")  # type: ignore[untyped-decorator]
+    @exc_interceptor.coroutine("firestore.get_document")  # type: ignore[untyped-decorator]
     async def get_document(
         self,
         coll: AsyncCollectionReference,
@@ -181,7 +181,7 @@ class FirestoreClient(FirestoreClientPort):
 
     # ....................... #
 
-    @firestore_handled("firestore.set_document")  # type: ignore[untyped-decorator]
+    @exc_interceptor.coroutine("firestore.set_document")  # type: ignore[untyped-decorator]
     async def set_document(
         self,
         coll: AsyncCollectionReference,
@@ -208,7 +208,7 @@ class FirestoreClient(FirestoreClientPort):
 
     # ....................... #
 
-    @firestore_handled("firestore.delete_document")  # type: ignore[untyped-decorator]
+    @exc_interceptor.coroutine("firestore.delete_document")  # type: ignore[untyped-decorator]
     async def delete_document(
         self,
         coll: AsyncCollectionReference,
@@ -264,7 +264,7 @@ class FirestoreClient(FirestoreClientPort):
 
     # ....................... #
 
-    @firestore_handled("firestore.query_stream")  # type: ignore[untyped-decorator]
+    @exc_interceptor.coroutine("firestore.query_stream")  # type: ignore[untyped-decorator]
     async def query_stream(
         self,
         coll: AsyncCollectionReference,
@@ -293,7 +293,7 @@ class FirestoreClient(FirestoreClientPort):
 
     # ....................... #
 
-    @firestore_handled("firestore.count_documents")  # type: ignore[untyped-decorator]
+    @exc_interceptor.coroutine("firestore.count_documents")  # type: ignore[untyped-decorator]
     async def count_documents(
         self,
         coll: AsyncCollectionReference,
@@ -310,7 +310,7 @@ class FirestoreClient(FirestoreClientPort):
 
     # ....................... #
 
-    @firestore_handled("firestore.insert_many")  # type: ignore[untyped-decorator]
+    @exc_interceptor.coroutine("firestore.insert_many")  # type: ignore[untyped-decorator]
     async def insert_many(
         self,
         coll: AsyncCollectionReference,

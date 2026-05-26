@@ -16,9 +16,9 @@ import aiohttp
 import attrs
 from gcloud.aio.storage import Storage
 
-from forze.base.errors import CoreError
+from forze.base.exceptions import exc
 
-from .errors import gcs_handled
+from .errors import exc_interceptor
 from .port import GCSClientPort
 from .value_objects import DEFAULT_TIMEOUT, GCSConfig, GCSHead, GCSListedObject
 
@@ -98,13 +98,13 @@ class GCSClient(GCSClientPort):
 
     def __require_storage(self) -> Storage:
         if self.__storage is None:
-            raise CoreError("GCS client is not initialized")
+            raise exc.internal("GCS client is not initialized")
 
         return self.__storage
 
     def __require_project_id(self) -> str:
         if self.__project_id is None:
-            raise CoreError("GCS project id is not configured")
+            raise exc.internal("GCS project id is not configured")
 
         return self.__project_id
 
@@ -164,7 +164,7 @@ class GCSClient(GCSClientPort):
 
     # ....................... #
 
-    @gcs_handled("gcs.bucket_exists")  # type: ignore[untyped-decorator]
+    @exc_interceptor.coroutine("gcs.bucket_exists")  # type: ignore[untyped-decorator]
     async def bucket_exists(self, bucket: str) -> bool:
         storage = self.__require_storage()
 
@@ -183,20 +183,20 @@ class GCSClient(GCSClientPort):
 
     # ....................... #
 
-    @gcs_handled("gcs.create_bucket")  # type: ignore[untyped-decorator]
+    @exc_interceptor.coroutine("gcs.create_bucket")  # type: ignore[untyped-decorator]
     async def create_bucket(self, bucket: str) -> None:
         await self._insert_bucket(bucket)
 
     # ....................... #
 
-    @gcs_handled("gcs.ensure_bucket")  # type: ignore[untyped-decorator]
+    @exc_interceptor.coroutine("gcs.ensure_bucket")  # type: ignore[untyped-decorator]
     async def ensure_bucket(self, bucket: str) -> None:
         if not await self.bucket_exists(bucket):
             await self.create_bucket(bucket)
 
     # ....................... #
 
-    @gcs_handled("gcs.object_exists")  # type: ignore[untyped-decorator]
+    @exc_interceptor.coroutine("gcs.object_exists")  # type: ignore[untyped-decorator]
     async def object_exists(self, bucket: str, key: str) -> bool:
         storage = self.__require_storage()
         bucket_ref = storage.get_bucket(bucket)
@@ -205,7 +205,7 @@ class GCSClient(GCSClientPort):
 
     # ....................... #
 
-    @gcs_handled("gcs.upload_bytes")  # type: ignore[untyped-decorator]
+    @exc_interceptor.coroutine("gcs.upload_bytes")  # type: ignore[untyped-decorator]
     async def upload_bytes(
         self,
         bucket: str,
@@ -232,7 +232,7 @@ class GCSClient(GCSClientPort):
 
     # ....................... #
 
-    @gcs_handled("gcs.download_bytes")  # type: ignore[untyped-decorator]
+    @exc_interceptor.coroutine("gcs.download_bytes")  # type: ignore[untyped-decorator]
     async def download_bytes(self, bucket: str, key: str) -> bytes:
         storage = self.__require_storage()
 
@@ -244,7 +244,7 @@ class GCSClient(GCSClientPort):
 
     # ....................... #
 
-    @gcs_handled("gcs.delete_object")  # type: ignore[untyped-decorator]
+    @exc_interceptor.coroutine("gcs.delete_object")  # type: ignore[untyped-decorator]
     async def delete_object(self, bucket: str, key: str) -> None:
         storage = self.__require_storage()
 
@@ -256,7 +256,7 @@ class GCSClient(GCSClientPort):
 
     # ....................... #
 
-    @gcs_handled("gcs.list_objects")  # type: ignore[untyped-decorator]
+    @exc_interceptor.coroutine("gcs.list_objects")  # type: ignore[untyped-decorator]
     async def list_objects(
         self,
         bucket: str,
@@ -266,10 +266,10 @@ class GCSClient(GCSClientPort):
         offset: int | None = None,
     ) -> tuple[list[GCSListedObject], int]:
         if limit is not None and limit <= 0:
-            raise CoreError("limit must be > 0")
+            raise exc.internal("limit must be > 0")
 
         if offset is not None and offset < 0:
-            raise CoreError("offset must be >= 0")
+            raise exc.internal("offset must be >= 0")
 
         _prefix = prefix or ""
         _limit = limit if limit is not None else 10_000_000
@@ -289,7 +289,7 @@ class GCSClient(GCSClientPort):
 
     # ....................... #
 
-    @gcs_handled("gcs.head_object")  # type: ignore[untyped-decorator]
+    @exc_interceptor.coroutine("gcs.head_object")  # type: ignore[untyped-decorator]
     async def head_object(self, bucket: str, key: str) -> GCSHead:
         storage = self.__require_storage()
         raw = await storage.download_metadata(

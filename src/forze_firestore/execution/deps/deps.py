@@ -16,7 +16,7 @@ from forze.application.contracts.transaction import (
 )
 from forze.application.coordinators import DocumentCacheCoordinator
 from forze.application.execution import ExecutionContext
-from forze.base.errors import CoreError
+from forze.base.exceptions import exc
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document
 
 from ...adapters import FirestoreDocumentAdapter, FirestoreTxManagerAdapter
@@ -25,10 +25,14 @@ from .configs import FirestoreDocumentConfig, FirestoreReadOnlyDocumentConfig
 from .keys import FirestoreClientDepKey
 from .utils import doc_write_gw, read_gw
 
+# ----------------------- #
+
 R = TypeVar("R", bound=BaseModel)
 D = TypeVar("D", bound=Document)
 C = TypeVar("C", bound=CreateDocumentCmd)
 U = TypeVar("U", bound=BaseDTO)
+
+# ....................... #
 
 
 @final
@@ -71,6 +75,9 @@ class ConfigurableFirestoreReadOnlyDocument(DocumentQueryDepPort[R]):
         )
 
 
+# ....................... #
+
+
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class ConfigurableFirestoreDocument(DocumentCommandDepPort[R, D, C, U]):
@@ -86,7 +93,9 @@ class ConfigurableFirestoreDocument(DocumentCommandDepPort[R, D, C, U]):
         tenant_aware = config.get("tenant_aware", False)
 
         if spec.write is None:
-            raise CoreError("Write relation is required for non read-only documents.")
+            raise exc.internal(
+                "Write relation is required for non read-only documents."
+            )
 
         read = read_gw(
             ctx,
@@ -137,6 +146,10 @@ class ConfigurableFirestoreDocument(DocumentCommandDepPort[R, D, C, U]):
         )
 
 
+# ....................... #
+
+
 def firestore_txmanager(context: ExecutionContext) -> TransactionManagerPort:
     client = context.deps.provide(FirestoreClientDepKey)
+
     return FirestoreTxManagerAdapter(client=client)

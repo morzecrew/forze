@@ -26,12 +26,7 @@ from forze.application.contracts.querying import (
     decode_keyset_v1,
     normalize_sorts_with_id,
 )
-from forze.base.errors import (
-    CoreError,
-    InvalidOperationError,
-    NotFoundError,
-    ValidationError,
-)
+from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
 from forze.base.serialization import pydantic_validate, pydantic_validate_many
 from forze.domain.constants import ID_FIELD
@@ -61,7 +56,7 @@ class FirestoreReadGateway[M: BaseModel](FirestoreGateway[M]):
         )
 
         if raw is None:
-            raise NotFoundError(f"Record not found: {pk}")
+            raise exc.not_found(f"Record not found: {pk}")
 
         data = self._from_storage_doc(raw)
 
@@ -88,7 +83,7 @@ class FirestoreReadGateway[M: BaseModel](FirestoreGateway[M]):
         missing = [pk for pk in pks if str(pk) not in by_pk]
 
         if missing:
-            raise NotFoundError(f"Some records not found: {missing}")
+            raise exc.not_found(f"Some records not found: {missing}")
 
         ordered = [by_pk[str(pk)] for pk in pks]
 
@@ -283,15 +278,15 @@ class FirestoreReadGateway[M: BaseModel](FirestoreGateway[M]):
         parsed: QueryExpr | None = None,
     ) -> list[M] | list[T] | list[JsonDict]:
         if aggregates is not None:
-            raise CoreError("Firestore adapter does not support aggregates in MVP")
+            raise exc.internal("Firestore adapter does not support aggregates in MVP")
 
         if offset is not None and offset > 0:
-            raise InvalidOperationError(
+            raise exc.precondition(
                 "Firestore adapter does not support offset pagination; use cursor pagination"
             )
 
         if not filters and limit is None:
-            raise ValidationError("Filters or limit must be provided")
+            raise exc.precondition("Filters or limit must be provided")
 
         flt = self.render_filters(filters, parsed=parsed)
         rows = await self.client.query_stream(
@@ -368,7 +363,7 @@ class FirestoreReadGateway[M: BaseModel](FirestoreGateway[M]):
         c = dict(cursor or {})
 
         if c.get("after") and c.get("before"):
-            raise CoreError(
+            raise exc.internal(
                 "Cursor pagination: pass at most one of 'after' or 'before'"
             )
 
@@ -376,14 +371,14 @@ class FirestoreReadGateway[M: BaseModel](FirestoreGateway[M]):
         lim: int = 10 if limit_raw is None else int(cast(Any, limit_raw))  # type: ignore[has-type, assignment]
 
         if lim < 1:
-            raise CoreError("Cursor pagination 'limit' must be positive")
+            raise exc.internal("Cursor pagination 'limit' must be positive")
 
         use_before = c.get("before") is not None
         use_after = c.get("after") is not None
         normalized = normalize_sorts_with_id(sorts)
 
         if [k for k, _ in normalized] != [ID_FIELD] or len(normalized) != 1:
-            raise CoreError(
+            raise exc.internal(
                 "Firestore find_many_with_cursor (v1) requires sorting only by primary key: "
                 "omit ``sorts`` or pass a single {id: asc|desc}."
             )
@@ -401,15 +396,15 @@ class FirestoreReadGateway[M: BaseModel](FirestoreGateway[M]):
                 or len(td) != 1
                 or str(td[0]).lower() not in ("asc", "desc")
             ):
-                raise CoreError("Invalid cursor for current sort")
+                raise exc.internal("Invalid cursor for current sort")
 
             if str(td[0]).lower() != ("asc" if _id_asc else "desc"):
-                raise CoreError("Cursor does not match current sort order")
+                raise exc.internal("Cursor does not match current sort order")
 
             rid = str(tv[0]) if len(tv) == 1 else None
 
             if not rid:
-                raise CoreError("Invalid cursor for current sort")
+                raise exc.internal("Invalid cursor for current sort")
 
             if use_after:
                 start_after = rid
@@ -472,7 +467,7 @@ class FirestoreReadGateway[M: BaseModel](FirestoreGateway[M]):
     ) -> list[T] | list[JsonDict]:
         _ = filters, limit, offset, sorts, return_model, return_fields, parsed
         self.renderer.render_aggregates(aggregates)
-        raise CoreError(
+        raise exc.internal(
             "Firestore adapter does not support aggregates in MVP"
         )  # pragma: no cover
 
@@ -487,6 +482,6 @@ class FirestoreReadGateway[M: BaseModel](FirestoreGateway[M]):
     ) -> int:
         _ = filters, parsed
         self.renderer.render_aggregates(aggregates)
-        raise CoreError(
+        raise exc.internal(
             "Firestore adapter does not support aggregates in MVP"
         )  # pragma: no cover

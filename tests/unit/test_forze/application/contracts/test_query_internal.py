@@ -21,7 +21,7 @@ from forze.application.contracts.querying.internal import (
     QueryOr,
     QueryValueCaster,
 )
-from forze.base.errors import CoreError, ValidationError
+from forze.base.exceptions import ValidationError
 
 # ----------------------- #
 
@@ -54,7 +54,7 @@ class TestAggregatesExpressionParser:
         assert [g.expr.field for g in parsed.groups] == ["detail_id", "warehouse_id"]
 
     def test_rejects_invalid_count_argument(self) -> None:
-        with pytest.raises(CoreError, match="expects no field"):
+        with pytest.raises(exc.internal, match="expects no field"):
             AggregatesExpressionParser.parse(
                 {"$computed": {"rows": {"$count": "id"}}},
             )
@@ -90,7 +90,7 @@ class TestAggregatesExpressionParser:
         }
 
     def test_rejects_conditional_value_aggregate_without_field(self) -> None:
-        with pytest.raises(CoreError, match="requires a field"):
+        with pytest.raises(exc.internal, match="requires a field"):
             AggregatesExpressionParser.parse(
                 {
                     "$computed": {
@@ -102,7 +102,7 @@ class TestAggregatesExpressionParser:
             )
 
     def test_rejects_duplicate_aliases(self) -> None:
-        with pytest.raises(CoreError, match="Duplicate aggregate aliases"):
+        with pytest.raises(exc.internal, match="Duplicate aggregate aliases"):
             AggregatesExpressionParser.parse(
                 {
                     "$groups": {"total": "category"},
@@ -111,7 +111,7 @@ class TestAggregatesExpressionParser:
             )
 
     def test_rejects_invalid_group_keys_type(self) -> None:
-        with pytest.raises(CoreError, match=r"Invalid aggregate \$groups"):
+        with pytest.raises(exc.internal, match=r"Invalid aggregate \$groups"):
             AggregatesExpressionParser.parse(
                 {
                     "$groups": "category",
@@ -158,7 +158,7 @@ class TestAggregatesExpressionParser:
         assert all(isinstance(g.expr, GroupTrunc) for g in parsed.groups)
 
     def test_rejects_duplicate_trunc_alias(self) -> None:
-        with pytest.raises(CoreError, match="Duplicate aggregate aliases"):
+        with pytest.raises(exc.internal, match="Duplicate aggregate aliases"):
             AggregatesExpressionParser.parse(
                 {
                     "$groups": {
@@ -170,7 +170,7 @@ class TestAggregatesExpressionParser:
             )
 
     def test_rejects_unknown_group_operator(self) -> None:
-        with pytest.raises(CoreError, match="Invalid \\$groups operator"):
+        with pytest.raises(exc.internal, match="Invalid \\$groups operator"):
             AggregatesExpressionParser.parse(
                 {
                     "$groups": {"x": {"$unknown": {"field": "ts"}}},
@@ -179,7 +179,7 @@ class TestAggregatesExpressionParser:
             )
 
     def test_rejects_bare_trunc_spec_without_operator(self) -> None:
-        with pytest.raises(CoreError, match="exactly one operator"):
+        with pytest.raises(exc.internal, match="exactly one operator"):
             AggregatesExpressionParser.parse(
                 {
                     "$groups": {"day": {"field": "ts", "unit": "day"}},
@@ -524,7 +524,9 @@ class TestQueryFilterExpressionParser:
         or_node = result.items[0]
         assert isinstance(or_node, QueryOr)
         assert len(or_node.items) == 2
-        assert all(isinstance(i, QueryField) and i.op == "$ilike" for i in or_node.items)
+        assert all(
+            isinstance(i, QueryField) and i.op == "$ilike" for i in or_node.items
+        )
 
     def test_parse_element_any_ilike(self) -> None:
         result = QueryFilterExpressionParser.parse(

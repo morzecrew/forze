@@ -23,7 +23,7 @@ from forze.application.contracts.querying import (
     QuerySortExpression,
 )
 from forze.application.contracts.tenancy import TENANT_ID_FIELD, TenancyMixin
-from forze.base.errors import CoreError, NotFoundError
+from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
 from forze.base.serialization import pydantic_field_names, pydantic_validate
 from forze.domain.constants import ID_FIELD
@@ -87,11 +87,11 @@ class PostgresQualifiedName:
 
         :param x: Qualified name string.
         :returns: Qualified name.
-        :raises: :class:`CoreError` if the string is not in the correct format.
+        :raises: :class:`exc.internal` if the string is not in the correct format.
         """
 
         if "." not in x:
-            raise CoreError(f"Invalid qualified name: {x}")
+            raise exc.internal(f"Invalid qualified name: {x}")
 
         schema, name = x.split(".", 1)
         return cls(schema=schema, name=name)
@@ -141,7 +141,7 @@ class PostgresGateway[M: BaseModel](TenancyMixin):
         cap = self.find_many_implicit_limit
 
         if cap is not None and cap < 1:
-            raise CoreError("find_many_implicit_limit must be at least 1 when set")
+            raise exc.internal("find_many_implicit_limit must be at least 1 when set")
 
         limits = (
             self.filter_limits
@@ -302,7 +302,7 @@ class PostgresGateway[M: BaseModel](TenancyMixin):
         """Build a SQL expression for selecting fields from a table."""
 
         if return_fields is not None and return_type is not None:
-            raise CoreError(
+            raise exc.internal(
                 "Fields and model for mapping cannot be specified simultaneously"
             )
 
@@ -319,7 +319,7 @@ class PostgresGateway[M: BaseModel](TenancyMixin):
 
         #!? explicitly exclude bad fields or not ?!
         if bad:
-            raise CoreError(f"Invalid fields: {bad}")
+            raise exc.internal(f"Invalid fields: {bad}")
 
         return sql.SQL(", ").join(
             sql.Identifier(f) if table_alias is None else sql.Identifier(table_alias, f)
@@ -433,7 +433,7 @@ class PostgresGateway[M: BaseModel](TenancyMixin):
         )
 
         if row is None:
-            raise NotFoundError(f"Record not found: {pk!s}")
+            raise exc.not_found(f"Record not found: {pk!s}")
 
         return pydantic_validate(self.model_type, row)
 
@@ -485,7 +485,7 @@ class PostgresGateway[M: BaseModel](TenancyMixin):
             row_by_id = by_id.get(pk)
 
             if row_by_id is None:
-                raise NotFoundError(f"Record not found: {pk!s}")
+                raise exc.not_found(f"Record not found: {pk!s}")
 
             out.append(pydantic_validate(self.model_type, row_by_id))
 

@@ -11,21 +11,10 @@ from uuid import UUID
 
 import attrs
 from pymongo import UpdateOne
-from tenacity import (
-    retry,
-    retry_if_exception_type,
-    stop_after_attempt,
-    wait_exponential,
-)
+from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
 
 from forze.application.contracts.querying import QueryFilterExpression
-from forze.base.errors import (
-    ConcurrencyError,
-    ConflictError,
-    CoreError,
-    NotFoundError,
-    ValidationError,
-)
+from forze.base.exceptions import CoreException, ExceptionKind, exc
 from forze.base.primitives import JsonDict
 from forze.base.serialization import (
     pydantic_dump,
@@ -53,7 +42,10 @@ def optimistic_retry(*, attempts: int = 3):  # type: ignore[no-untyped-def]
     """
 
     return retry(
-        retry=retry_if_exception_type(ConcurrencyError),
+        retry=retry_if_exception(
+            lambda e: isinstance(e, CoreException)
+            and e.kind is ExceptionKind.CONCURRENCY
+        ),
         stop=stop_after_attempt(attempts),
         wait=wait_exponential(multiplier=0.01, min=0.01, max=0.2),
         reraise=True,
@@ -91,43 +83,43 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](MongoGate
 
     def __attrs_post_init__(self) -> None:
         if self.collection != self.read_gw.collection:
-            raise CoreError(
+            raise exc.configuration(
                 "Collection mismatch. Write gateway and nested read gateway must have the same collection."
             )
 
         if self.client is not self.read_gw.client:
-            raise CoreError(
+            raise exc.configuration(
                 "Client mismatch. Write gateway and nested read gateway must use the same client."
             )
 
         if self.database != self.read_gw.database:
-            raise CoreError(
+            raise exc.configuration(
                 "Database mismatch. Write gateway and nested read gateway must use the same database."
             )
 
         if self.tenant_aware != self.read_gw.tenant_aware:
-            raise CoreError(
+            raise exc.configuration(
                 "Tenant awareness mismatch. Write gateway and nested read gateway must have the same tenant awareness."
             )
 
         if self.history_gw is not None:
             if self.client is not self.history_gw.client:
-                raise CoreError(
+                raise exc.configuration(
                     "Client mismatch. Write gateway and nested history gateway must use the same client."
                 )
 
             if self.collection != self.history_gw.target_collection:
-                raise CoreError(
+                raise exc.configuration(
                     "Collection mismatch. Write gateway and nested history gateway must point to the same collection."
                 )
 
             if self.database != self.history_gw.target_database:
-                raise CoreError(
+                raise exc.configuration(
                     "Database mismatch. Write gateway and nested history gateway must point to the same database."
                 )
 
             if self.tenant_aware != self.history_gw.tenant_aware:
-                raise CoreError(
+                raise exc.configuration(
                     "Tenant awareness mismatch. Write gateway and nested history gateway must have the same tenant awareness."
                 )
 
@@ -135,7 +127,9 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](MongoGate
 
     def _require_update_cmd(self) -> None:
         if self.update_cmd_type is None:
-            raise CoreError("Update command type is not supported for this model")
+            raise exc.configuration(
+                "Update command type is not supported for this model"
+            )
 
     # ....................... #
 
@@ -149,7 +143,9 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](MongoGate
         if self.history_gw is None:
             for current, rev, _ in data:
                 if rev != current.rev:
-                    raise ConflictError("Revision mismatch", code="revision_mismatch")
+                    raise exc.precondition(
+                        "Revision mismatch", code="revision_mismatch"
+                    )
 
             return
 
@@ -161,7 +157,7 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](MongoGate
         bad_records = [rev for current, rev, _ in to_check if rev > current.rev]
 
         if bad_records:
-            raise ValidationError("Invalid revision number")
+            raise exc.precondition("Invalid revision number")
 
         if to_check:
             pks_to_check = [current.id for current, _, _ in to_check]
@@ -169,7 +165,7 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](MongoGate
             hist_records = await self.history_gw.read_many(pks_to_check, revs_to_check)
 
             if len(hist_records) != len(to_check):
-                raise NotFoundError(
+                raise exc.not_found(
                     "History records not found. Please retry with actual revision number."
                 )
 
@@ -177,7 +173,7 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](MongoGate
                 to_check, hist_records, strict=True
             ):
                 if not current.validate_historical_consistency(historical, update):
-                    raise ConflictError(
+                    raise exc.conflict(
                         "Historical consistency violation during update",
                         code="historical_consistency_violation",
                     )
@@ -485,7 +481,7 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](MongoGate
         )
 
         if matched != 1:
-            raise ConcurrencyError("Failed to update record")
+            raise exc.concurrency("Failed to update record")
 
         updated = await self.read_gw.get(pk)
         await self._write_history(updated)
@@ -554,7 +550,7 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](MongoGate
             await self.coll(), operations, batch_size=batch_size
         )
         if matched != len(to_patch):
-            raise ConcurrencyError("Failed to update one or more records")
+            raise exc.concurrency("Failed to update one or more records")
 
         updated = await self.read_gw.get_many(pks)
         await self._write_history(*updated)
@@ -597,20 +593,20 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](MongoGate
         :param dtos: Update payloads matching *pks* by position.
         :param revs: Optional expected revisions for history validation.
         :returns: Updated documents and per-document adapted write payloads (diffs).
-        :raises CoreError: If lengths of *pks* and *dtos* (or *revs*) differ.
+        :raises exc.internal: If lengths of *pks* and *dtos* (or *revs*) differ.
         :raises ValidationError: If *pks* contains duplicates.
         """
 
         self._require_update_cmd()
 
         if len(pks) != len(dtos):
-            raise CoreError("Length mismatch between primary keys and updates")
+            raise exc.precondition("Length mismatch between primary keys and updates")
 
         if len(pks) != len(set(pks)):
-            raise ValidationError("Primary keys must be unique")
+            raise exc.precondition("Primary keys must be unique")
 
         if revs is not None and len(revs) != len(pks):
-            raise CoreError("Length mismatch between primary keys and revisions")
+            raise exc.precondition("Length mismatch between primary keys and revisions")
 
         updates = pydantic_dump_many(dtos, exclude={"unset": True})
         return await self._patch_many(pks, updates, revs=revs, batch_size=batch_size)
@@ -723,7 +719,7 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](MongoGate
         """
 
         if len(pks) != len(set(pks)):
-            raise ValidationError("Primary keys must be unique")
+            raise exc.precondition("Primary keys must be unique")
 
         res, _ = await self._patch_many(pks, batch_size=batch_size)
 
@@ -755,7 +751,7 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](MongoGate
             return
 
         if len(pks) != len(set(pks)):
-            raise ValidationError("Primary keys must be unique")
+            raise exc.precondition("Primary keys must be unique")
 
         await self.client.delete_many(
             await self.coll(),

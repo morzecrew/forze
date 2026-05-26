@@ -1,7 +1,5 @@
 """Unit tests for SearchKernelOp and SearchFacade."""
 
-from unittest.mock import AsyncMock, MagicMock
-
 import attrs
 import pytest
 
@@ -37,7 +35,9 @@ class TestSearchFacade:
     def mock_raw_registry(self) -> OperationRegistry:
         return OperationRegistry(
             handlers={
-                _SEARCH_KEYS.key(SearchKernelOp.RAW): lambda _ctx: StubProjectedSearch(),
+                _SEARCH_KEYS.key(
+                    SearchKernelOp.RAW
+                ): lambda _ctx: StubProjectedSearch(),
             }
         )
 
@@ -59,7 +59,6 @@ class TestSearchFacade:
         stub_ctx,
         mock_raw_registry: OperationRegistry,
     ) -> None:
-        from forze.base.errors import CoreError
 
         frozen = mock_raw_registry.freeze()
         facade = SearchFacade(
@@ -67,5 +66,5 @@ class TestSearchFacade:
             registry=frozen,
             namespace=_SEARCH_KEYS,
         )
-        with pytest.raises(CoreError, match="Handler factory not found"):
+        with pytest.raises(exc.internal, match="Handler factory not found"):
             _ = facade.search

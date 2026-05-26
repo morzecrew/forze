@@ -9,7 +9,7 @@ from forze.application.contracts.transaction import (
     TransactionManagerPort,
 )
 from forze.application.execution.tracing import record
-from forze.base.errors import CoreError
+from forze.base.exceptions import exc
 from forze.base.primitives import StrKey
 
 # ----------------------- #
@@ -57,7 +57,7 @@ class TransactionContext:
         """Lock the transaction context."""
 
         if self._locked:
-            raise CoreError("Transaction context already locked")
+            raise exc.internal("Transaction context already locked")
 
         self._locked = True
         self.resolver = resolver
@@ -77,7 +77,7 @@ class TransactionContext:
         q = self.__cb_stack.get()
 
         if q is None:
-            raise CoreError(
+            raise exc.internal(
                 "defer_callback requires an active TransactionContext.scope scope"
             )
 
@@ -101,7 +101,7 @@ class TransactionContext:
         """Enter a transaction scope"""
 
         if self.resolver is None:
-            raise CoreError("Transaction resolver is not set")
+            raise exc.internal("Transaction resolver is not set")
 
         tx = self.resolver(route)
 
@@ -110,7 +110,7 @@ class TransactionContext:
 
         if depth > 0:
             if cur_scope is None or cur_scope.scope != tx.scope_key:
-                raise CoreError(
+                raise exc.internal(
                     f"Nested tx scope mismatch: active={cur_scope.scope.name if cur_scope else None} "
                     f"requested={tx.scope_key.name}"
                 )

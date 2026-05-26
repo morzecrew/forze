@@ -4,9 +4,13 @@ from typing import Any, Literal
 
 from psycopg import sql
 
-from forze.base.errors import CoreError
+from forze.base.exceptions import exc
+
+# ----------------------- #
 
 Nav = Literal["after", "before"]
+
+# ....................... #
 
 
 def build_seek_condition(
@@ -19,7 +23,7 @@ def build_seek_condition(
     n = len(exprs)
 
     if n != len(values) or n != len(directions) or n < 1:
-        raise CoreError("Invalid keyset shape")
+        raise exc.precondition("Invalid keyset shape")
 
     after = nav == "after"
     parts: list[sql.Composable] = []

@@ -1,1 +1,0 @@
-IDEMPOTENCY_KEY_HEADER = "Idempotency-Key"

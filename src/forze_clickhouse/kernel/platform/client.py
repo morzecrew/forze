@@ -17,10 +17,10 @@ from clickhouse_connect.driver.asyncclient import (  # pyright: ignore[reportMis
 )
 from pydantic import BaseModel
 
-from forze.base.errors import CoreError, InfrastructureError
+from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
 
-from .errors import clickhouse_handled
+from .errors import exc_interceptor
 from .port import ClickHouseClientPort
 from .query import apply_limit_offset, parameters_from_model
 from .value_objects import (
@@ -34,7 +34,7 @@ from .value_objects import (
 # ----------------------- #
 
 T = TypeVar("T")
-_READ_RETRY_EXC = (InfrastructureError, TimeoutError, OSError, ConnectionError)
+_READ_RETRY_EXC = (TimeoutError, OSError, ConnectionError)
 
 # ....................... #
 
@@ -86,7 +86,7 @@ class ClickHouseClient(ClickHouseClientPort):
 
     def __require_client(self) -> AsyncClient:
         if self.__client is None:
-            raise CoreError("ClickHouse client is not initialized")
+            raise exc.internal("ClickHouse client is not initialized")
 
         return self.__client
 
@@ -94,7 +94,7 @@ class ClickHouseClient(ClickHouseClientPort):
 
     def __require_config(self) -> ClickHouseConfig:
         if self.__config is None:
-            raise CoreError("ClickHouse client is not initialized")
+            raise exc.internal("ClickHouse client is not initialized")
 
         return self.__config
 
@@ -158,7 +158,7 @@ class ClickHouseClient(ClickHouseClientPort):
                 await asyncio.sleep(base * (2**i))
 
         if last is None:
-            raise CoreError("Last exception is None")
+            raise exc.internal("Last exception is None")
 
         raise last
 
@@ -184,7 +184,7 @@ class ClickHouseClient(ClickHouseClientPort):
 
     # ....................... #
 
-    @clickhouse_handled("clickhouse.run_query")  # type: ignore[untyped-decorator]
+    @exc_interceptor.coroutine("clickhouse.run_query")  # type: ignore[untyped-decorator]
     async def run_query(
         self,
         sql: str,
@@ -233,7 +233,7 @@ class ClickHouseClient(ClickHouseClientPort):
 
     # ....................... #
 
-    @clickhouse_handled("clickhouse.run_query_all_pages")  # type: ignore[untyped-decorator]
+    @exc_interceptor.coroutine("clickhouse.run_query_all_pages")  # type: ignore[untyped-decorator]
     async def run_query_all_pages(
         self,
         sql: str,
@@ -245,7 +245,7 @@ class ClickHouseClient(ClickHouseClientPort):
         fetch_batch_size: int = 2000,
     ) -> list[JsonDict]:
         if fetch_batch_size < 1:
-            raise CoreError("fetch_batch_size must be >= 1")
+            raise exc.internal("fetch_batch_size must be >= 1")
 
         async def _run() -> list[JsonDict]:
             all_rows: list[JsonDict] = []
@@ -283,7 +283,7 @@ class ClickHouseClient(ClickHouseClientPort):
 
     # ....................... #
 
-    @clickhouse_handled("clickhouse.insert_rows")  # type: ignore[untyped-decorator]
+    @exc_interceptor.coroutine("clickhouse.insert_rows")  # type: ignore[untyped-decorator]
     async def insert_rows(
         self,
         database: str,
@@ -319,7 +319,7 @@ class ClickHouseClient(ClickHouseClientPort):
 
     # ....................... #
 
-    @clickhouse_handled("clickhouse.run_command")  # type: ignore[untyped-decorator]
+    @exc_interceptor.coroutine("clickhouse.run_command")  # type: ignore[untyped-decorator]
     async def run_command(
         self,
         command: str,

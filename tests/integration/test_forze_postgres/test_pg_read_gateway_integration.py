@@ -7,7 +7,7 @@ from pydantic import BaseModel
 
 from forze.application.contracts.querying import encode_keyset_v1
 from forze.application.execution import Deps, ExecutionContext
-from forze.base.errors import CoreError, InfrastructureError, NotFoundError
+from forze.base.exceptions import InfrastructureError, NotFoundError
 from forze.domain.models import Document
 from forze_postgres.execution.deps.keys import (
     PostgresClientDepKey,
@@ -344,13 +344,13 @@ async def test_postgres_read_gateway_find_many_with_cursor(
     )
     assert len(before_page) >= 1
 
-    with pytest.raises(CoreError, match="at most one"):
+    with pytest.raises(exc.internal, match="at most one"):
         await gw.find_many_with_cursor(
             None,
             cursor={"after": tok, "before": tok},
         )
 
-    with pytest.raises(CoreError, match="positive"):
+    with pytest.raises(exc.internal, match="positive"):
         await gw.find_many_with_cursor(None, cursor={"limit": 0})
 
     bad = encode_keyset_v1(
@@ -358,7 +358,7 @@ async def test_postgres_read_gateway_find_many_with_cursor(
         directions=["asc"],
         values=["x"],
     )
-    with pytest.raises(CoreError, match="sort keys"):
+    with pytest.raises(exc.internal, match="sort keys"):
         await gw.find_many_with_cursor(
             None,
             cursor={"after": bad},
@@ -609,7 +609,7 @@ async def test_postgres_read_gateway_aggregates_reject_return_fields(
         read_relation=("public", table),
         tenant_aware=False,
     )
-    with pytest.raises(CoreError, match="Aggregates cannot be combined"):
+    with pytest.raises(exc.internal, match="Aggregates cannot be combined"):
         await gw.find_many_aggregates(
             aggregates={
                 "$groups": {"c": "category"},

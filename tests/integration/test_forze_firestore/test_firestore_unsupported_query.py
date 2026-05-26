@@ -10,7 +10,7 @@ from forze.application.contracts.document import (
     DocumentSpec,
 )
 from forze.application.execution import Deps, ExecutionContext
-from forze.base.errors import CoreError, InvalidOperationError
+from forze.base.exceptions import InvalidOperationError
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
 from forze_firestore.execution.deps.deps import ConfigurableFirestoreDocument
 from forze_firestore.execution.deps.keys import FirestoreClientDepKey
@@ -67,7 +67,7 @@ async def test_aggregate_raises(firestore_client: FirestoreClient) -> None:
         )
     ).create(QCreate(tag="x"))
 
-    with pytest.raises(CoreError, match="aggregates"):
+    with pytest.raises(exc.internal, match="aggregates"):
         await query.aggregate_page(
             aggregates={"$count": {}},
             pagination={"limit": 10},
@@ -86,7 +86,7 @@ async def test_element_quantifier_raises(firestore_client: FirestoreClient) -> N
     await ctx.document.command(spec).create(QCreate(tag="x"))
     query = ctx.document.query(spec)
 
-    with pytest.raises(CoreError, match="quantifiers"):
+    with pytest.raises(exc.internal, match="quantifiers"):
         await query.find_many(
             filters={"$values": {"tag": {"$any": "x"}}},
             pagination={"limit": 10},

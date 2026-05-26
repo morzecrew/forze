@@ -12,7 +12,6 @@ from forze.application.contracts.analytics import (
     AnalyticsSpec,
     validate_analytics_spec,
 )
-from forze.base.errors import CoreError
 
 # ----------------------- #
 
@@ -47,7 +46,7 @@ class TestAnalyticsSpec:
         assert "daily" in spec.queries
 
     def test_empty_queries_raise(self) -> None:
-        with pytest.raises(CoreError, match="at least one"):
+        with pytest.raises(exc.internal, match="at least one"):
             AnalyticsSpec(
                 name="m",
                 read=_Row,
@@ -67,11 +66,11 @@ class TestAnalyticsSpec:
             def __len__(self) -> int:
                 return 2
 
-        with pytest.raises(CoreError, match="Duplicate"):
+        with pytest.raises(exc.internal, match="Duplicate"):
             AnalyticsSpec(name="m", read=_Row, queries=_DupKeys())
 
     def test_invalid_params_type_raises(self) -> None:
-        with pytest.raises(CoreError, match="BaseModel"):
+        with pytest.raises(exc.internal, match="BaseModel"):
             AnalyticsSpec(
                 name="m",
                 read=_Row,
@@ -79,7 +78,7 @@ class TestAnalyticsSpec:
             )
 
     def test_invalid_ingest_type_raises(self) -> None:
-        with pytest.raises(CoreError, match="ingest"):
+        with pytest.raises(exc.internal, match="ingest"):
             AnalyticsSpec(
                 name="m",
                 read=_Row,

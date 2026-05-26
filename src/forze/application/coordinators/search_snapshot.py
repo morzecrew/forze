@@ -34,7 +34,7 @@ from forze.application.contracts.search import (
     SearchResultSnapshotSpec,
     SearchSpec,
 )
-from forze.base.errors import CoreError
+from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
 from forze.base.serialization import pydantic_validate_many
 
@@ -267,7 +267,7 @@ class SearchResultSnapshotCoordinator:
         federated_spec: FederatedSearchSpec[M_co],
     ) -> FederatedSearchReadModel[M_co]:
         if "\0" not in key:
-            raise CoreError(
+            raise exc.internal(
                 "Invalid federated snapshot record key (missing partition)."
             )
 
@@ -283,7 +283,7 @@ class SearchResultSnapshotCoordinator:
 
             return FederatedSearchReadModel(hit=hit, member=member)
 
-        raise CoreError(f"Unknown federated member in snapshot key: {member!r}.")
+        raise exc.internal(f"Unknown federated member in snapshot key: {member!r}.")
 
     # ....................... #
     # Federated RRF (merge ranked leg lists; keys match :meth:`federated_record_key_string`)

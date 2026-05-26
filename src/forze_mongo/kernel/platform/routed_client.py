@@ -16,7 +16,7 @@ from pymongo.asynchronous.collection import AsyncCollection
 from pymongo.asynchronous.database import AsyncDatabase
 
 from forze.application.contracts.secrets import SecretRef, SecretsPort
-from forze.base.errors import CoreError, InfrastructureError, SecretNotFoundError
+from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
 
 from .client import MongoClient
@@ -59,7 +59,7 @@ class RoutedMongoClient(MongoClientPort):
 
     def __attrs_post_init__(self) -> None:
         if self.max_cached_tenants < 1:
-            raise CoreError("max_cached_tenants must be at least 1")
+            raise exc.internal("max_cached_tenants must be at least 1")
 
     # ....................... #
 
@@ -97,7 +97,7 @@ class RoutedMongoClient(MongoClientPort):
         tid = self.tenant_provider()
 
         if tid is None:
-            raise CoreError(
+            raise exc.internal(
                 "Tenant ID is required for routed Mongo access",
                 code="tenant_required",
             )
@@ -108,7 +108,7 @@ class RoutedMongoClient(MongoClientPort):
 
     async def _get_client(self) -> MongoClient:
         if not self._started:
-            raise InfrastructureError("Routed Mongo client is not started")
+            raise exc.internal("Routed Mongo client is not started")
 
         tid = self._require_tenant_id()
 
@@ -123,21 +123,23 @@ class RoutedMongoClient(MongoClientPort):
             try:
                 uri = await self.secrets.resolve_str(ref)
 
-            except SecretNotFoundError:
+            except exc:
                 raise
 
             except Exception as e:
-                raise InfrastructureError(
+                raise exc.internal(
                     f"Failed to resolve Mongo secret for tenant {tid}: {e}",
                 ) from e
 
             db_name = self.database_name_for_tenant(tid)
             client = MongoClient()
+
             await client.initialize(
                 uri,
                 db_name=db_name,
                 config=self.mongo_config,
             )
+
             self._clients[tid] = client
             self._clients.move_to_end(tid)
 
@@ -191,12 +193,12 @@ class RoutedMongoClient(MongoClientPort):
         tid = self.tenant_provider()
 
         if tid is None:
-            raise InfrastructureError("Transactional context is required")
+            raise exc.internal("Transactional context is required")
 
         inner = self._clients.get(tid)
 
         if inner is None:
-            raise InfrastructureError("Transactional context is required")
+            raise exc.internal("Transactional context is required")
 
         inner.require_transaction()
 

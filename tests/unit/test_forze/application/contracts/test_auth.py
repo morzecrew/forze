@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from datetime import timedelta
-from typing import Any
 from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 
 import pytest
@@ -11,40 +9,28 @@ import pytest
 from forze.application.contracts.authn import (
     AccessTokenCredentials,
     ApiKeyCredentials,
-    ApiKeyLifecycleDepKey,
-    ApiKeyLifecyclePort,
     AuthnDepKey,
     AuthnIdentity,
     AuthnSpec,
     IssuedAccessToken,
     IssuedApiKey,
-    IssuedRefreshToken,
     IssuedTokens,
     PasswordCredentials,
     RefreshTokenCredentials,
-    TokenLifecycleDepKey,
-    TokenLifecyclePort,
 )
 from forze.application.contracts.authn.ports import AuthnPort
-from forze.application.contracts.authn.value_objects import CredentialLifetime
 from forze.application.contracts.authz import (
     AuthzDecision,
-    AuthzRequest,
     AuthzDecisionDepKey,
+    AuthzRequest,
+    AuthzScope,
     AuthzSubject,
     GrantQueryDepKey,
-    AuthzScope,
-    AuthzResource,
     resolve_policy_scope,
     subject_for_grant_query,
     subject_from_authn,
 )
 from forze.application.contracts.authz.specs import AuthzSpec
-from forze.application.contracts.authz.value_objects import (
-    EffectiveGrants,
-    PermissionRef,
-)
-from forze.base.errors import CoreError
 
 # ----------------------- #
 
@@ -90,7 +76,7 @@ class TestResolveAuthzScope:
     def test_conflict_raises(self) -> None:
         spec = AuthzSpec(name="z", tenancy_mode="require_invocation_tenant")
 
-        with pytest.raises(CoreError, match="disagree"):
+        with pytest.raises(exc.internal, match="disagree"):
             resolve_policy_scope(
                 spec=spec,
                 explicit=AuthzScope(tenant_id=uuid4()),

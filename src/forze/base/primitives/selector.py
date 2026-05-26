@@ -8,7 +8,7 @@ from typing import TypeAlias, final
 
 import attrs
 
-from ..errors import CoreError
+from ..exceptions import exc
 from .types import StrKey
 
 # ----------------------- #
@@ -20,7 +20,7 @@ def _normalize_key(key: StrKey) -> str:
 
 def _require_non_empty(value: str, *, label: str) -> None:
     if not value:
-        raise CoreError(f"{label} must be non-empty")
+        raise exc.internal(f"{label} must be non-empty")
 
 
 # ....................... #
@@ -48,7 +48,7 @@ class _ExactKeys:
 
     def __attrs_post_init__(self) -> None:
         if not self.keys:
-            raise CoreError("ExactKeys.keys must be non-empty")
+            raise exc.internal("ExactKeys.keys must be non-empty")
 
 
 # ....................... #
@@ -141,7 +141,7 @@ class StrKeySelector:
         """Build a selector that matches the given literal keys."""
 
         if not keys:
-            raise CoreError("exact() requires at least one key")
+            raise exc.internal("exact() requires at least one key")
 
         return _ExactKeys(keys=frozenset(map(_normalize_key, keys)))
 

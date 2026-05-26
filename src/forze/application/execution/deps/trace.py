@@ -48,10 +48,7 @@ class DepsResolutionTrace:
     # ....................... #
 
     def to_dag(self) -> DirectedAcyclicGraph[ResolutionFrame]:
-        """Build an immutable DAG from observed edges.
-
-        :raises CoreError: If the observed graph contains a cycle.
-        """
+        """Build an immutable DAG from observed edges."""
 
         return DirectedAcyclicGraph.from_edges(self.nodes(), self.edges)
 

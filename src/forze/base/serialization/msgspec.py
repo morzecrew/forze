@@ -12,7 +12,7 @@ import msgspec
 from pydantic import BaseModel
 
 from .._logger import logger
-from ..errors import CoreError
+from ..exceptions import exc
 from ..primitives import JsonDict
 from .model_codec import EncodeMode, RecordMappingDumpExcludeOptions
 from .pydantic import pydantic_dump
@@ -261,7 +261,7 @@ def _validate_no_unknown_fields(
 
 def _ensure_unset_not_requested(exclude: RecordMappingDumpExcludeOptions) -> None:
     if exclude.get("unset", False):
-        raise CoreError(
+        raise exc.internal(
             "msgspec codec does not support exclude={'unset': True}; strip unset fields before crossing the application boundary",
         )
 
@@ -417,11 +417,13 @@ def msgspec_validate_many_batched[T: msgspec.Struct](
         raise ValueError(msg)
 
     seq = _sequence_as_list(data)
+
     if not seq:
         return
 
     for start in range(0, len(seq), batch_size):
         chunk = seq[start : start + batch_size]
+
         yield msgspec_validate_many(
             cls,
             chunk,
@@ -496,11 +498,13 @@ def msgspec_dump_many_batched(
         raise ValueError(msg)
 
     seq = _sequence_as_list(objs)
+
     if not seq:
         return
 
     for start in range(0, len(seq), batch_size):
         chunk = seq[start : start + batch_size]
+
         yield msgspec_dump_many(chunk, mode=mode, exclude=exclude)
 
 

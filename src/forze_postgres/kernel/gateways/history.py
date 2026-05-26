@@ -12,7 +12,7 @@ from uuid import UUID
 import attrs
 from psycopg import sql
 
-from forze.base.errors import CoreError, NotFoundError, ValidationError
+from forze.base.exceptions import exc
 from forze.base.serialization import (
     pydantic_dump,
     pydantic_dump_many,
@@ -50,7 +50,7 @@ class PostgresHistoryGateway[D: Document](PostgresGateway[D]):
         super().__attrs_post_init__()
 
         if self.strategy not in get_args(PostgresBookkeepingStrategy):
-            raise CoreError(f"Invalid bookkeeping strategy: {self.strategy}")
+            raise exc.internal(f"Invalid bookkeeping strategy: {self.strategy}")
 
     # ....................... #
 
@@ -77,7 +77,7 @@ class PostgresHistoryGateway[D: Document](PostgresGateway[D]):
         row = await self.client.fetch_one(stmt, where_params, row_factory="dict")
 
         if row is None:
-            raise NotFoundError(f"History not found: {pk}, {rev}")
+            raise exc.not_found(f"History not found: {pk}, {rev}")
 
         return pydantic_validate(self.model_type, row[HISTORY_DATA_FIELD])
 
@@ -85,7 +85,7 @@ class PostgresHistoryGateway[D: Document](PostgresGateway[D]):
 
     async def read_many(self, pks: Sequence[UUID], revs: Sequence[int]) -> Sequence[D]:
         if len(pks) != len(revs):
-            raise ValidationError("Length of pks and revs must be the same")
+            raise exc.precondition("Length of pks and revs must be the same")
 
         # ⚡ Bolt: Precompute the row template to avoid repeatedly instantiating
         # sql.SQL and parsing it for every record in the batch, improving CPU bound performance

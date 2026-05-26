@@ -3,7 +3,7 @@
 from forze.base.errors import (
     ConcurrencyError,
     ConflictError,
-    CoreError,
+    exc.internal,
     InfrastructureError,
 )
 from forze_mongo.kernel.platform.errors import _mongo_eh
@@ -11,7 +11,7 @@ from forze_mongo.kernel.platform.errors import _mongo_eh
 
 class TestMongoErrorHandler:
     def test_core_error_passthrough(self) -> None:
-        original = CoreError("original")
+        original = exc.internal("original")
         result = _mongo_eh(original, "op")
         assert result is original
 

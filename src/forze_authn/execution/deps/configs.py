@@ -7,7 +7,7 @@ from typing import final
 import attrs
 
 from forze.application.contracts.authn import AuthnMethod
-from forze.base.errors import CoreError
+from forze.base.exceptions import exc
 
 from ...services import (
     AccessTokenConfig,
@@ -134,19 +134,19 @@ def validate_route_methods(
 
     if not methods:
         msg = "AuthnSpec.enabled_methods must contain at least one credential family"
-        raise CoreError(msg)
+        raise exc.internal(msg)
 
     if "password" in methods and shared.password_svc is None:
         msg = "'password' method requires kernel.password"
-        raise CoreError(msg)
+        raise exc.internal(msg)
 
     if "api_key" in methods and shared.api_key_svc is None:
         msg = "'api_key' method requires kernel.api_key_pepper"
-        raise CoreError(msg)
+        raise exc.internal(msg)
 
     if "token" in methods and shared.access_svc is None:
         msg = "'token' method requires kernel.access_token_secret"
-        raise CoreError(msg)
+        raise exc.internal(msg)
 
 
 # ....................... #
@@ -170,12 +170,12 @@ def validate_shared_matches_route_sets[K: str | StrEnum](
         if shared.access_svc is None:
             msg = "token_lifecycle routes require kernel.access_token_secret"
 
-            raise CoreError(msg)
+            raise exc.internal(msg)
 
         if shared.refresh_svc is None:
             msg = "token_lifecycle routes require kernel.refresh_token_pepper"
 
-            raise CoreError(msg)
+            raise exc.internal(msg)
 
     if password_lifecycle or password_account_provisioning:
         if shared.password_svc is None:
@@ -184,10 +184,10 @@ def validate_shared_matches_route_sets[K: str | StrEnum](
                 "kernel.password"
             )
 
-            raise CoreError(msg)
+            raise exc.internal(msg)
 
     if api_key_lifecycle:
         if shared.api_key_svc is None:
             msg = "api_key_lifecycle routes require kernel.api_key_pepper"
 
-            raise CoreError(msg)
+            raise exc.internal(msg)

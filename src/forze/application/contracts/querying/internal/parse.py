@@ -2,7 +2,7 @@ from typing import Any, cast, get_args
 
 import attrs
 
-from forze.base.errors import ValidationError
+from forze.base.exceptions import exc
 
 from ..expressions import (
     QueryConstraintPredicate,
@@ -128,7 +128,7 @@ class QueryFilterExpressionParser:
         keys = expr.keys()  # type: ignore[attr-defined]
 
         if _COMBINATOR_KEYS & keys and _CONSTRAINT_KEYS & keys:
-            raise ValidationError(
+            raise exc.precondition(
                 "Filter expression cannot mix $and/$or/$not with $values/$fields",
             )
 
@@ -155,13 +155,13 @@ class QueryFilterExpressionParser:
             if not isinstance(  # pyright: ignore[reportUnnecessaryIsInstance]
                 child, dict
             ):
-                raise ValidationError("$not requires a filter expression object")
+                raise exc.precondition("$not requires a filter expression object")
 
             self._enter_combinator(ctx, 1)
 
             return QueryNot(self._parse(child, ctx))  # type: ignore[arg-type]
 
-        raise ValidationError(f"Invalid filter expression: {expr!r}")
+        raise exc.precondition(f"Invalid filter expression: {expr!r}")
 
     # ....................... #
 
@@ -169,7 +169,7 @@ class QueryFilterExpressionParser:
         next_depth = ctx.depth + 1
 
         if next_depth > self.limits.max_depth:
-            raise ValidationError(
+            raise exc.precondition(
                 f"Filter expression exceeds maximum depth of {self.limits.max_depth}",
             )
         ctx.depth = next_depth
@@ -185,7 +185,7 @@ class QueryFilterExpressionParser:
         ctx.clause_count += count
 
         if ctx.clause_count > self.limits.max_clauses:
-            raise ValidationError(
+            raise exc.precondition(
                 f"Filter expression exceeds maximum clause count of "
                 f"{self.limits.max_clauses}",
             )
@@ -203,7 +203,7 @@ class QueryFilterExpressionParser:
             values_map = expr["$values"]
 
             if not values_map:
-                raise ValidationError("Empty $values map is not allowed")
+                raise exc.precondition("Empty $values map is not allowed")
 
             self._add_clauses(ctx, len(values_map))
             nodes.extend(self._parse_values_map(values_map, ctx))
@@ -212,13 +212,13 @@ class QueryFilterExpressionParser:
             fields_map = expr["$fields"]
 
             if not fields_map:
-                raise ValidationError("Empty $fields map is not allowed")
+                raise exc.precondition("Empty $fields map is not allowed")
 
             self._add_clauses(ctx, len(fields_map))
             nodes.extend(self._parse_fields_map(fields_map, ctx))
 
         if not nodes:
-            raise ValidationError(
+            raise exc.precondition(
                 "Constraint expression requires at least one of $values or $fields",
             )
 
@@ -265,7 +265,7 @@ class QueryFilterExpressionParser:
 
         if is_query_fields_conjunction(raw):
             if not raw:
-                raise ValidationError("Empty $fields compare map is not allowed")
+                raise exc.precondition("Empty $fields compare map is not allowed")
 
             self._add_clauses(ctx, len(raw))
 
@@ -273,17 +273,17 @@ class QueryFilterExpressionParser:
                 self._validate_fields_op(left, op, right) for op, right in raw.items()
             ]
 
-        raise ValidationError(f"Invalid $fields map value: {raw!r}")
+        raise exc.precondition(f"Invalid $fields map value: {raw!r}")
 
     # ....................... #
 
     @staticmethod
     def _validate_fields_op(left: str, op: str, right: Any) -> QueryCompare:
         if op not in _COMPARE_OPS:
-            raise ValidationError(f"Invalid field compare operator: {op!r}")
+            raise exc.precondition(f"Invalid field compare operator: {op!r}")
 
         if not isinstance(right, str) or not right.strip():
-            raise ValidationError(
+            raise exc.precondition(
                 f"Field compare operator {op!r} requires a non-empty field path "
                 f"string, got {right!r}",
             )
@@ -314,7 +314,7 @@ class QueryFilterExpressionParser:
 
         if is_query_value_conjunction(raw):
             if not raw:
-                raise ValidationError("Empty $values field map is not allowed")
+                raise exc.precondition("Empty $values field map is not allowed")
 
             self._add_clauses(ctx, len(raw))
             field_nodes: list[QueryExpr] = []
@@ -326,7 +326,7 @@ class QueryFilterExpressionParser:
 
             return field_nodes
 
-        raise ValidationError(f"Invalid $values map entry: {raw!r}")
+        raise exc.precondition(f"Invalid $values map entry: {raw!r}")
 
     # ....................... #
 
@@ -339,7 +339,7 @@ class QueryFilterExpressionParser:
         op, inner_raw = next(iter(raw.items()))
 
         if op not in _QUANTIFIER_OPS:
-            raise ValidationError(f"Invalid element quantifier: {op!r}")
+            raise exc.precondition(f"Invalid element quantifier: {op!r}")
 
         self._add_clauses(ctx, 1)
         inner = self._parse_element_constraint(inner_raw, ctx)
@@ -361,13 +361,13 @@ class QueryFilterExpressionParser:
             return QueryField(ELEM_SCALAR_FIELD, "$eq", raw)
 
         if not isinstance(raw, dict):  # pyright: ignore[reportUnnecessaryIsInstance]
-            raise ValidationError(f"Invalid element constraint: {raw!r}")
+            raise exc.precondition(f"Invalid element constraint: {raw!r}")
 
         if "$values" in raw:
             values_map = raw["$values"]  # type: ignore[typeddict-item]
 
             if not values_map:
-                raise ValidationError("Empty $values map in element constraint")
+                raise exc.precondition("Empty $values map in element constraint")
 
             self._add_clauses(ctx, len(values_map))
             nodes: list[QueryExpr] = []
@@ -383,14 +383,14 @@ class QueryFilterExpressionParser:
             return QueryAnd(tuple(nodes))
 
         if not raw:
-            raise ValidationError("Empty element constraint map is not allowed")
+            raise exc.precondition("Empty element constraint map is not allowed")
 
         if _QUANTIFIER_OPS & raw.keys():
-            raise ValidationError("Nested element quantifiers are not allowed")
+            raise exc.precondition("Nested element quantifiers are not allowed")
 
         if all(k in _ELEMENT_OPS for k in raw):
             if len(raw) != 1:
-                raise ValidationError(
+                raise exc.precondition(
                     "Scalar element constraint must declare exactly one operator",
                 )
 
@@ -398,7 +398,7 @@ class QueryFilterExpressionParser:
 
             return self._validate_element_op(ELEM_SCALAR_FIELD, op, value, ctx)
 
-        raise ValidationError(
+        raise exc.precondition(
             "Element constraint must be a scalar shortcut, an operator map "
             '($eq/$neq/$gt/.../$like/...), or {"$values": {...}} for object arrays',
         )
@@ -412,33 +412,33 @@ class QueryFilterExpressionParser:
         ctx: _ParseCtx,
     ) -> list[QueryExpr]:
         if is_query_element_quantifier(raw):
-            raise ValidationError(
+            raise exc.precondition(
                 f"Field {rel_field} cannot use element quantifiers inside $values",
             )
 
         if is_query_value_shortcut(raw):
             if raw is None:
-                raise ValidationError(
+                raise exc.precondition(
                     f"Field {rel_field} cannot use null shortcut in element $values",
                 )
 
             if isinstance(raw, Scalar):
                 return [QueryField(rel_field, "$eq", raw)]
 
-            raise ValidationError(
+            raise exc.precondition(
                 f"Field {rel_field} cannot use array shortcut in element $values",
             )
 
         if is_query_value_conjunction(raw):
             if not raw:
-                raise ValidationError("Empty element $values field map is not allowed")
+                raise exc.precondition("Empty element $values field map is not allowed")
 
             if _QUANTIFIER_OPS & raw.keys():
-                raise ValidationError("Nested element quantifiers are not allowed")
+                raise exc.precondition("Nested element quantifiers are not allowed")
 
             if all(k in _ELEMENT_OPS for k in raw):
                 if len(raw) != 1:
-                    raise ValidationError(
+                    raise exc.precondition(
                         f"Field {rel_field} element constraint must declare exactly "
                         "one operator",
                     )
@@ -454,7 +454,7 @@ class QueryFilterExpressionParser:
                 for op, value in raw.items()
             ]
 
-        raise ValidationError(f"Invalid element $values entry: {raw!r}")
+        raise exc.precondition(f"Invalid element $values entry: {raw!r}")
 
     # ....................... #
 
@@ -466,7 +466,7 @@ class QueryFilterExpressionParser:
         ctx: _ParseCtx,
     ) -> QueryExpr:
         if op not in _ELEMENT_OPS:
-            raise ValidationError(f"Invalid element operator: {op!r}")
+            raise exc.precondition(f"Invalid element operator: {op!r}")
 
         if op in _TEXT_OPS:
             expanded = self._expand_text_op(field, op, value)
@@ -476,11 +476,11 @@ class QueryFilterExpressionParser:
 
         if op in _EQ_OPS:
             if not isinstance(value, Scalar):
-                raise ValidationError(f"Invalid value for {op} operator: {value!r}")
+                raise exc.precondition(f"Invalid value for {op} operator: {value!r}")
 
         elif op in _ORD_OPS:
             if not isinstance(value, Numeric):
-                raise ValidationError(f"Invalid value for {op} operator: {value!r}")
+                raise exc.precondition(f"Invalid value for {op} operator: {value!r}")
 
         return QueryField(field, op, value)  # type: ignore[arg-type]
 
@@ -504,7 +504,7 @@ class QueryFilterExpressionParser:
     def _validate_value_field(field: str, nodes: list[QueryExpr]) -> None:
         if any(isinstance(n, QueryElem) for n in nodes):
             if len(nodes) > 1:
-                raise ValidationError(
+                raise exc.precondition(
                     f"Field {field} cannot combine element quantifier with other operators",
                 )
             return
@@ -517,7 +517,7 @@ class QueryFilterExpressionParser:
             )
 
             if null_node.value is True and len(ops) > 1:
-                raise ValidationError(
+                raise exc.precondition(
                     f"Field {field} cannot be null and have other operators"
                 )
 
@@ -527,7 +527,7 @@ class QueryFilterExpressionParser:
             )
 
             if empty_node.value is True and len(ops) > 1:
-                raise ValidationError(
+                raise exc.precondition(
                     f"Field {field} cannot be empty and have other operators"
                 )
 
@@ -543,7 +543,7 @@ class QueryFilterExpressionParser:
         size = len(value)  # type: ignore[arg-type]
 
         if size > self.limits.max_in_size:
-            raise ValidationError(
+            raise exc.precondition(
                 f"Field {field} {op} operand exceeds maximum size of "
                 f"{self.limits.max_in_size} (got {size})",
             )
@@ -582,28 +582,28 @@ class QueryFilterExpressionParser:
 
         if op in _EQ_OPS:
             if not isinstance(value, Scalar):
-                raise ValidationError(f"Invalid value for {op} operator: {value!r}")
+                raise exc.precondition(f"Invalid value for {op} operator: {value!r}")
 
         elif op in _ORD_OPS:
             if not isinstance(value, Numeric):
-                raise ValidationError(f"Invalid value for {op} operator: {value!r}")
+                raise exc.precondition(f"Invalid value for {op} operator: {value!r}")
 
         elif op in _MEMB_OPS:
             if not isinstance(value, list | tuple | set):
-                raise ValidationError(f"Invalid value for {op} operator: {value!r}")
+                raise exc.precondition(f"Invalid value for {op} operator: {value!r}")
             self._check_in_size(field, op, value)
 
         elif op in _UNARY_OPS:
             if not isinstance(value, bool):
-                raise ValidationError(f"Invalid value for {op} operator: {value!r}")
+                raise exc.precondition(f"Invalid value for {op} operator: {value!r}")
 
         elif op in _SET_REL_OPS:
             if not isinstance(value, list | tuple | set):
-                raise ValidationError(f"Invalid value for {op} operator: {value!r}")
+                raise exc.precondition(f"Invalid value for {op} operator: {value!r}")
             self._check_in_size(field, op, value)
 
         else:
-            raise ValidationError(f"Invalid operator: {op!r}")
+            raise exc.precondition(f"Invalid operator: {op!r}")
 
         return QueryField(field, op, value)  # type: ignore[arg-type]
 

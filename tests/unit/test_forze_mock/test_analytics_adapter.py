@@ -10,7 +10,6 @@ from forze.application.contracts.analytics import (
     AnalyticsSpec,
 )
 from forze.application.execution import ExecutionContext
-from forze.base.errors import CoreError
 from forze_mock import MockDepsModule, MockState
 from forze_mock.execution import MockStateDepKey
 
@@ -70,5 +69,5 @@ async def test_ingest_via_ctx_analytics(ctx: ExecutionContext) -> None:
 async def test_unknown_query_key_raises(ctx: ExecutionContext) -> None:
     spec = _spec()
     port = ctx.analytics.query(spec)
-    with pytest.raises(CoreError, match="Unknown analytics query"):
+    with pytest.raises(exc.internal, match="Unknown analytics query"):
         await port.run("missing", _Params())

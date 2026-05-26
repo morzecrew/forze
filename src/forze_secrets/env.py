@@ -6,7 +6,7 @@ from typing import final
 import attrs
 
 from forze.application.contracts.secrets import SecretRef
-from forze.base.errors import SecretNotFoundError
+from forze.base.exceptions import exc
 
 # ----------------------- #
 
@@ -23,7 +23,7 @@ class EnvSecrets:
         value = os.environ.get(ref.path)
 
         if value is None:
-            raise SecretNotFoundError(
+            raise exc.not_found(
                 f"No secret for {ref.path!r}",
                 details={"ref": ref.path},
             )

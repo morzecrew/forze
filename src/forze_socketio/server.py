@@ -11,7 +11,7 @@ from socketio.async_manager import AsyncManager
 from socketio.async_redis_manager import AsyncRedisManager
 from socketio.async_server import AsyncServer
 
-from forze.base.errors import CoreError
+from forze.base.exceptions import exc
 
 # ----------------------- #
 
@@ -34,11 +34,11 @@ def build_socketio_server(
     :param client_manager: Optional prebuilt client manager.
     :param kwargs: Additional arguments passed to :class:`socketio.AsyncServer`.
     :returns: Configured Socket.IO server instance.
-    :raises CoreError: If both ``redis_url`` and ``client_manager`` are provided.
+    :raises exc.internal: If both ``redis_url`` and ``client_manager`` are provided.
     """
 
     if redis_url is not None and client_manager is not None:
-        raise CoreError("Pass either `redis_url` or `client_manager`, not both")
+        raise exc.internal("Pass either `redis_url` or `client_manager`, not both")
 
     if redis_url is not None:
         client_manager = AsyncRedisManager(

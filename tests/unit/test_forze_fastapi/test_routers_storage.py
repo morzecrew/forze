@@ -2,13 +2,12 @@
 
 import pytest
 from fastapi import APIRouter, FastAPI
+from registry_helpers import freeze_registry
 from starlette.testclient import TestClient
 
 from forze.application.composition.storage import build_storage_registry
 from forze.application.contracts.storage import StorageSpec
 from forze.application.execution.registry import OperationRegistry
-from registry_helpers import freeze_registry
-from forze.base.errors import CoreError
 from forze_fastapi.endpoints.storage import attach_storage_endpoints
 from forze_fastapi.exceptions import register_exception_handlers
 
@@ -132,7 +131,7 @@ class TestAttachStorageEndpoints:
             return composition_ctx
 
         router = APIRouter(prefix="/store")
-        with pytest.raises(CoreError, match="attach_storage_endpoints requires"):
+        with pytest.raises(exc.internal, match="attach_storage_endpoints requires"):
             attach_storage_endpoints(
                 router,
                 registry=reg,

@@ -10,7 +10,7 @@ from forze.application.contracts.authn import (
     IssuedApiKey,
 )
 from forze.application.contracts.document import DocumentCommandPort, DocumentQueryPort
-from forze.base.errors import AuthenticationError, CoreError
+from forze.base.exceptions import exc
 
 from ..domain.models.account import (
     ApiKeyAccount,
@@ -56,22 +56,30 @@ class ApiKeyLifecycleAdapter(ApiKeyLifecyclePort):
         principal_spec = self.principal_qry.spec
 
         if qry_spec.cache is not None:
-            raise CoreError("API key account caching is forbidden by security reasons")
+            raise exc.internal(
+                "API key account caching is forbidden by security reasons"
+            )
 
         if cmd_spec.cache is not None:
-            raise CoreError("API key account caching is forbidden by security reasons")
+            raise exc.internal(
+                "API key account caching is forbidden by security reasons"
+            )
 
         if qry_spec.history_enabled:
-            raise CoreError("API key account history is forbidden by security reasons")
+            raise exc.internal(
+                "API key account history is forbidden by security reasons"
+            )
 
         if cmd_spec.history_enabled:
-            raise CoreError("API key account history is forbidden by security reasons")
+            raise exc.internal(
+                "API key account history is forbidden by security reasons"
+            )
 
         if principal_spec.cache is not None:
-            raise CoreError("Principal caching is forbidden by security reasons")
+            raise exc.internal("Principal caching is forbidden by security reasons")
 
         if principal_spec.history_enabled:
-            raise CoreError("Principal history is forbidden by security reasons")
+            raise exc.internal("Principal history is forbidden by security reasons")
 
     # ....................... #
 
@@ -79,7 +87,7 @@ class ApiKeyLifecycleAdapter(ApiKeyLifecyclePort):
         ak = await find_api_key_account_by_authn_identity(self.ak_qry, identity)
 
         if ak is None or not ak.is_active:
-            raise AuthenticationError("API key account not found")
+            raise exc.authentication("API key account not found")
 
         res = self.api_key_svc.generate_key()
 

@@ -8,8 +8,8 @@ Adapters use opaque tokens in :class:`~forze.application.contracts.querying.Curs
 (typically engine page tokens). Use offset methods such as :meth:`~AnalyticsQueryPort.run` when
 cursors are unsupported.
 
-**Total counts (``run_page``):** Adapters may raise :class:`~forze.base.errors.CoreError` when
-the engine cannot provide a cheap total count.
+**Total counts (``run_page``):** Adapters may raise exceptions when the engine cannot provide a
+cheap total count.
 """
 
 from __future__ import annotations

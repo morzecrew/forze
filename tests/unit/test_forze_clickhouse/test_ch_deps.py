@@ -5,9 +5,11 @@ from __future__ import annotations
 import pytest
 from pydantic import BaseModel
 
-from forze.application.contracts.analytics import AnalyticsQueryDefinition, AnalyticsSpec
+from forze.application.contracts.analytics import (
+    AnalyticsQueryDefinition,
+    AnalyticsSpec,
+)
 from forze.application.execution import ExecutionContext
-from forze.base.errors import CoreError
 from forze_clickhouse.execution.deps import (
     ClickHouseDepsModule,
     validate_clickhouse_analytics_config,
@@ -39,7 +41,7 @@ def test_validate_missing_query_key() -> None:
         "queries": {},
         "ingest_table": "t",
     }
-    with pytest.raises(CoreError, match="missing query keys"):
+    with pytest.raises(exc.internal, match="missing query keys"):
         validate_clickhouse_analytics_config(spec, config)
 
 

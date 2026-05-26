@@ -33,7 +33,7 @@ from forze.application.contracts.querying import (
     PaginationExpression,
 )
 from forze.base.codecs import B64UrlJsonCodec
-from forze.base.errors import CoreError
+from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
 from forze.base.serialization import (
     pydantic_dump,
@@ -80,8 +80,8 @@ class ClickHouseAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
         try:
             return self.config["queries"][query_key]
 
-        except KeyError as exc:
-            raise CoreError(f"Unknown analytics query key: {query_key!r}") from exc
+        except KeyError as e:
+            raise exc.precondition(f"Unknown analytics query key: {query_key!r}") from e
 
     # ....................... #
 
@@ -131,10 +131,10 @@ class ClickHouseAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
         lim = int(cast(Any, lim_raw)) if lim_raw is not None else 10
 
         if lim < 1:
-            raise CoreError("Cursor pagination 'limit' must be positive")
+            raise exc.internal("Cursor pagination 'limit' must be positive")
 
         if c.get("after") and c.get("before"):
-            raise CoreError(
+            raise exc.internal(
                 "Cursor pagination: pass at most one of 'after' or 'before'"
             )
 
@@ -143,18 +143,20 @@ class ClickHouseAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
                 payload = _CURSOR_CODEC.loads(str(c["after"]))
 
                 if not isinstance(payload, dict):
-                    raise CoreError("Invalid analytics cursor token")
+                    raise exc.internal("Invalid analytics cursor token")
 
                 if "kc" in payload:
-                    raise CoreError("Offset cursor token passed to offset-based query.")
+                    raise exc.internal(
+                        "Offset cursor token passed to offset-based query."
+                    )
 
                 return int(payload["o"]), lim  # type: ignore[arg-type]
 
             except (ValueError, KeyError, TypeError) as e:
-                raise CoreError("Invalid analytics cursor token") from e
+                raise exc.internal("Invalid analytics cursor token") from e
 
         if c.get("before"):
-            raise CoreError(
+            raise exc.internal(
                 "Backward analytics cursors are not supported on ClickHouse."
             )
 
@@ -171,10 +173,10 @@ class ClickHouseAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
         lim = int(cast(Any, lim_raw)) if lim_raw is not None else 10
 
         if lim < 1:
-            raise CoreError("Cursor pagination 'limit' must be positive")
+            raise exc.internal("Cursor pagination 'limit' must be positive")
 
         if c.get("before"):
-            raise CoreError(
+            raise exc.internal(
                 "Backward analytics cursors are not supported on ClickHouse."
             )
 
@@ -185,12 +187,12 @@ class ClickHouseAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
             payload = _CURSOR_CODEC.loads(str(c["after"]))
 
             if not isinstance(payload, dict) or "kv" not in payload:
-                raise CoreError("Invalid analytics keyset cursor token")
+                raise exc.internal("Invalid analytics keyset cursor token")
 
             return payload["kv"], lim  # type: ignore[return-value]
 
         except (ValueError, KeyError, TypeError) as e:
-            raise CoreError("Invalid analytics keyset cursor token") from e
+            raise exc.internal("Invalid analytics keyset cursor token") from e
 
     # ....................... #
 
@@ -685,14 +687,14 @@ class ClickHouseAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
 
     async def append(self, rows: Sequence[Ing]) -> AnalyticsAppendResult | None:
         if self.spec.ingest is None:
-            raise CoreError(
+            raise exc.internal(
                 f"Analytics ingest is not configured for route {self.spec.name!r}."
             )
 
         table = self.config.get("ingest_table")
 
         if not table:
-            raise CoreError(
+            raise exc.internal(
                 f"ClickHouse ingest_table is required for route {self.spec.name!r}."
             )
 
@@ -702,7 +704,7 @@ class ClickHouseAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
         max_append = self._max_append_rows()
 
         if len(rows) > max_append:
-            raise CoreError(
+            raise exc.internal(
                 f"Analytics append batch exceeds max_append_rows ({max_append})."
             )
 
@@ -721,7 +723,7 @@ class ClickHouseAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
                 )
 
             else:
-                raise CoreError(
+                raise exc.internal(
                     "Analytics ingest rows must be Pydantic model instances."
                 )
 

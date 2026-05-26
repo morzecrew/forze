@@ -6,13 +6,13 @@ import attrs
 from pydantic import BaseModel
 
 from forze.application.contracts.tenancy import TENANT_ID_FIELD
-from forze.base.errors import CoreError
+from forze.base.exceptions import exc
 from forze.base.serialization import pydantic_field_names
 from forze.domain.models import DocumentHistory
 
-from .introspect import PostgresIntrospector, PostgresType
 from ._logger import logger
 from .gateways.types import PostgresBookkeepingStrategy
+from .introspect import PostgresIntrospector, PostgresType
 from .validate_schema_types import (
     validate_field_nullability,
     validate_field_type_compatibility,
@@ -84,13 +84,13 @@ class PostgresDocumentSchemaSpec:
 
     def __attrs_post_init__(self) -> None:
         if self.history_enabled and self.history_relation is None:
-            raise CoreError(
+            raise exc.internal(
                 f"Document {self.name!r}: history_enabled requires history_relation.",
             )
 
         if self.write_relation is not None:
             if self.write_domain_model is None or self.write_create_model is None:
-                raise CoreError(
+                raise exc.internal(
                     f"Document {self.name!r}: write_relation requires "
                     "write_domain_model and write_create_model.",
                 )
@@ -112,7 +112,7 @@ async def _require_columns(
     missing = required - have
 
     if missing:
-        raise CoreError(
+        raise exc.internal(
             f"Postgres schema validation failed for {label!r} ({schema}.{relation}): "
             f"missing columns {sorted(missing)}.",
             code="postgres_schema_validation_failed",
@@ -160,7 +160,7 @@ async def _validate_tenant_column(
     pg_t = types.get(TENANT_ID_FIELD)
 
     if pg_t is None:
-        raise CoreError(
+        raise exc.internal(
             f"Postgres schema validation failed for {label!r}: "
             f"tenant-aware document requires column {TENANT_ID_FIELD!r}.",
             code="postgres_schema_validation_failed",
@@ -168,7 +168,7 @@ async def _validate_tenant_column(
         )
 
     if pg_t.base != "uuid" or pg_t.is_array:
-        raise CoreError(
+        raise exc.internal(
             f"Postgres schema validation failed for {label!r}: "
             f"{TENANT_ID_FIELD!r} must be type uuid.",
             code="postgres_schema_validation_failed",
@@ -180,7 +180,7 @@ async def _validate_tenant_column(
         )
 
     if not pg_t.not_null:
-        raise CoreError(
+        raise exc.internal(
             f"Postgres schema validation failed for {label!r}: "
             f"{TENANT_ID_FIELD!r} must be NOT NULL.",
             code="postgres_schema_validation_failed",
@@ -274,7 +274,7 @@ async def validate_postgres_document_schemas(
 
         if spec.write_relation is not None:
             if spec.write_domain_model is None or spec.write_create_model is None:
-                raise CoreError(
+                raise exc.internal(
                     f"Document {spec.name!r}: write_relation requires "
                     "write_domain_model and write_create_model.",
                 )

@@ -6,60 +6,75 @@ require_firestore()
 
 # ....................... #
 
-from functools import partial
-from typing import Any
+from typing import Any, Mapping
 
 from google.api_core import exceptions as gax_exceptions
 
-from forze.base.errors import (
-    ConcurrencyError,
-    ConflictError,
-    CoreError,
-    InfrastructureError,
-    NotFoundError,
-    ValidationError,
-    error_handler,
-    handled,
+from forze.base.conformity import static_fn_conformity
+from forze.base.exceptions import (
+    CoreException,
+    ExceptionInterceptor,
+    ExceptionMapper,
+    default_chain_exc_mapper,
 )
 
 # ----------------------- #
 
 
-@error_handler
-def _firestore_eh(e: Exception, op: str, **kwargs: Any) -> CoreError:
-    """Convert a Firestore/Google API exception into a :class:`~forze.base.errors.CoreError`."""
+@static_fn_conformity(ExceptionMapper)  # type: ignore[type-abstract]
+def _firestore_eh(
+    exc: BaseException,
+    *,
+    site: str,
+    details: Mapping[str, Any] | None = None,
+) -> CoreException | None:
+    """Convert a Firestore/Google API exception into a :class:`~forze.base.errors.exc.internal`."""
 
-    match e:
-        case CoreError():
-            return e
+    match exc:
+        case CoreException():
+            return exc
 
         case gax_exceptions.NotFound():
-            return NotFoundError(str(e))
+            return CoreException.not_found(
+                str(exc),
+                details=details,
+            )
 
         case gax_exceptions.AlreadyExists():
-            return ConflictError("Document already exists.")
+            return CoreException.conflict(
+                "Document already exists.",
+                details=details,
+            )
 
         case gax_exceptions.Aborted() | gax_exceptions.FailedPrecondition():
-            return ConcurrencyError(
-                message="Firestore transaction conflict. Please retry.",
-                code="transaction_conflict",
+            return CoreException.concurrency(
+                "Firestore transaction conflict. Please retry.",
+                details=details,
             )
 
         case gax_exceptions.InvalidArgument():
-            return ValidationError(str(e))
+            return CoreException.validation(str(exc))
 
         case gax_exceptions.DeadlineExceeded() | gax_exceptions.ServiceUnavailable():
-            return InfrastructureError(f"Firestore operation timed out or unavailable: {op}")
+            return CoreException.infrastructure(
+                f"Firestore operation timed out or unavailable: {site}",
+                details=details,
+            )
 
         case gax_exceptions.PermissionDenied() | gax_exceptions.Unauthenticated():
-            return InfrastructureError("Firestore authorization error.")
+            return CoreException.authentication(
+                "Firestore authorization error.",
+                details=details,
+            )
 
         case _:
-            return InfrastructureError(
-                message=f"An error occurred while executing Firestore operation {op}: {e}"
+            return CoreException.infrastructure(
+                f"An error occurred while executing Firestore operation {site}: {exc}",
+                details=details,
             )
 
 
-# ----------------------- #
+# ....................... #
 
-firestore_handled = partial(handled, _firestore_eh)
+_fs_chain = default_chain_exc_mapper.chain(_firestore_eh)
+exc_interceptor = ExceptionInterceptor(mapper=_fs_chain)

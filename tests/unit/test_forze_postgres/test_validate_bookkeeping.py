@@ -6,7 +6,6 @@ import pytest
 
 pytest.importorskip("psycopg")
 
-from forze.base.errors import CoreError
 
 from forze_postgres.kernel.introspect import PostgresIntrospector
 from forze_postgres.kernel.validate_bookkeeping import (
@@ -20,7 +19,7 @@ async def test_bookkeeping_database_strategy_requires_update_trigger() -> None:
     intro = MagicMock(spec=PostgresIntrospector)
     intro.get_relation_update_triggers = AsyncMock(return_value=frozenset())
 
-    with pytest.raises(CoreError, match="postgres_bookkeeping_validation_failed"):
+    with pytest.raises(exc.internal, match="postgres_bookkeeping_validation_failed"):
         await validate_postgres_document_bookkeeping(
             intro,
             [

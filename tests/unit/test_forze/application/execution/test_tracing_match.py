@@ -10,7 +10,6 @@ from forze.application.execution import (
     assert_trace_contains,
     assert_trace_equals,
 )
-from forze.base.errors import CoreError
 
 # ----------------------- #
 
@@ -19,7 +18,9 @@ class TestAssertTraceContains:
     def test_subsequence_match(self) -> None:
         trace = RuntimeTrace()
         trace.next_event(domain="tx", op="enter", tx_depth=1)
-        trace.next_event(domain="document", op="get", surface="document_query", tx_depth=0)
+        trace.next_event(
+            domain="document", op="get", surface="document_query", tx_depth=0
+        )
         trace.next_event(domain="tx", op="exit", tx_depth=1)
 
         assert_trace_contains(
@@ -34,7 +35,7 @@ class TestAssertTraceContains:
         trace = RuntimeTrace()
         trace.next_event(domain="tx", op="enter", tx_depth=1)
 
-        with pytest.raises(CoreError, match="Expected trace to contain"):
+        with pytest.raises(exc.internal, match="Expected trace to contain"):
             assert_trace_contains(
                 trace,
                 [TraceExpectation(domain="document", op="create")],
@@ -59,7 +60,7 @@ class TestAssertTraceEquals:
         trace = RuntimeTrace()
         trace.next_event(domain="tx", op="enter", tx_depth=1)
 
-        with pytest.raises(CoreError, match="Expected 2 trace event"):
+        with pytest.raises(exc.internal, match="Expected 2 trace event"):
             assert_trace_equals(
                 trace,
                 [

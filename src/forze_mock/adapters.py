@@ -117,7 +117,7 @@ from forze.application.contracts.transaction import (
     TransactionManagerPort,
     TransactionScopeKey,
 )
-from forze.base.errors import ConcurrencyError, ConflictError, CoreError, NotFoundError
+from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict, utcnow, uuid7
 from forze.base.serialization import (
     RecordMappingCodec,
@@ -522,7 +522,7 @@ def _match_expr(doc: JsonDict, expr: QueryExpr) -> bool:
             return _match_elem(doc, expr)
 
         case _:
-            raise CoreError(f"Unknown query expression: {expr!r}")
+            raise exc.internal(f"Unknown query expression: {expr!r}")
 
 
 def _match_filters(doc: JsonDict, filters: QueryFilterExpression | None) -> bool:  # type: ignore[valid-type]
@@ -568,7 +568,7 @@ def _sort_docs(
 
 def _require_numeric(value: Any, *, function: str, field: str) -> int | float:
     if isinstance(value, bool) or not isinstance(value, int | float):
-        raise CoreError(
+        raise exc.internal(
             f"Aggregate {function} expects numeric values for field {field!r}",
         )
     return value
@@ -586,7 +586,7 @@ def _coerce_datetime_for_bucket(raw: Any) -> datetime:
     if isinstance(raw, (int, float)):
         return datetime.fromtimestamp(float(raw), tz=timezone.utc)
 
-    raise CoreError(f"Invalid timestamp for $trunc: {raw!r}")
+    raise exc.internal(f"Invalid timestamp for $trunc: {raw!r}")
 
 
 def _group_key_part(doc: JsonDict, expr: object) -> Any:
@@ -608,7 +608,7 @@ def _group_key_part(doc: JsonDict, expr: object) -> Any:
             )
             return floored.isoformat()
         case _:
-            raise CoreError(f"Unsupported group expression: {expr!r}")
+            raise exc.internal(f"Unsupported group expression: {expr!r}")
 
 
 def _aggregate_docs(
@@ -643,7 +643,7 @@ def _aggregate_docs(
                 continue
 
             if computed.field is None:
-                raise CoreError("Computed field has no field path")
+                raise exc.internal("Computed field has no field path")
 
             raw_values = [_path_get(doc, computed.field) for doc in computed_items]
             values = [
@@ -730,13 +730,13 @@ def _mock_cursor_start_and_limit(
     c = dict(cursor or {})
 
     if c.get("after") and c.get("before"):
-        raise CoreError("Cursor pagination: pass at most one of 'after' or 'before'")
+        raise exc.internal("Cursor pagination: pass at most one of 'after' or 'before'")
 
     lim_raw = c.get("limit")
     lim: int = default_limit if lim_raw is None else int(cast(Any, lim_raw))
 
     if lim < 1:
-        raise CoreError("Cursor pagination 'limit' must be positive")
+        raise exc.internal("Cursor pagination 'limit' must be positive")
 
     start = 0
 
@@ -745,7 +745,7 @@ def _mock_cursor_start_and_limit(
             payload = _b64url_json_loads_dict(str(c["after"]))
 
         except (ValueError, KeyError, json.JSONDecodeError) as e:
-            raise CoreError("Invalid cursor token") from e
+            raise exc.internal("Invalid cursor token") from e
 
         start = int(payload["s"])
 
@@ -754,7 +754,7 @@ def _mock_cursor_start_and_limit(
             payload = _b64url_json_loads_dict(str(c["before"]))
 
         except (ValueError, KeyError, json.JSONDecodeError) as e:
-            raise CoreError("Invalid cursor token") from e
+            raise exc.internal("Invalid cursor token") from e
 
         page_start = int(payload["s"])
         start = max(0, page_start - lim)
@@ -813,7 +813,7 @@ class MockDocumentAdapter(
 
     def _require_domain_model(self) -> type[D]:
         if self.domain_model is None:
-            raise CoreError("Write support requires a domain model")
+            raise exc.internal("Write support requires a domain model")
         return self.domain_model
 
     # ....................... #
@@ -826,8 +826,10 @@ class MockDocumentAdapter(
 
     def _ensure_exists(self, pk: UUID) -> JsonDict:
         store = self._store()
+
         if pk not in store:
-            raise NotFoundError(f"Document not found: {pk}")
+            raise exc.not_found(f"Document not found: {pk}")
+
         return store[pk]
 
     # ....................... #
@@ -835,8 +837,9 @@ class MockDocumentAdapter(
     def _check_rev(self, current_rev: int, expected_rev: int | None) -> None:
         if expected_rev is None:
             return
+
         if expected_rev != current_rev:
-            raise ConcurrencyError("Revision conflict")
+            raise exc.concurrency("Revision conflict")
 
     # ....................... #
 
@@ -872,11 +875,14 @@ class MockDocumentAdapter(
         skip_cache: bool = False,
     ) -> Sequence[R]:
         del skip_cache
+
         with self.state.lock:
             store = self._store()
             missing = [pk for pk in pks if pk not in store]
+
             if missing:
-                raise NotFoundError(f"Documents not found: {missing}")
+                raise exc.not_found(f"Documents not found: {missing}")
+
             docs = [dict(store[pk]) for pk in pks]
 
         return [self._to_read(doc) for doc in docs]
@@ -1085,7 +1091,7 @@ class MockDocumentAdapter(
         return_fields: Sequence[str] | None,
     ) -> Any:
         if aggregates is not None and return_fields is not None:
-            raise CoreError("Aggregates cannot be combined with return_fields")
+            raise exc.internal("Aggregates cannot be combined with return_fields")
 
         with self.state.lock:
             docs = [dict(doc) for doc in self._store().values()]
@@ -1847,7 +1853,7 @@ class MockDocumentAdapter(
 
         pks = [u[0] for u in updates]
         if len(set(pks)) != len(pks):
-            raise CoreError("Primary keys must be unique")
+            raise exc.internal("Primary keys must be unique")
 
         if return_new:
             if return_diff:
@@ -1900,7 +1906,7 @@ class MockDocumentAdapter(
         return_new: bool = True,
     ) -> Sequence[R] | int:
         if not self.spec.supports_update():
-            raise CoreError("Update command type is not supported for this model")
+            raise exc.internal("Update command type is not supported for this model")
 
         patch = pydantic_dump(dto, exclude={"unset": True})
 
@@ -1966,11 +1972,11 @@ class MockDocumentAdapter(
         chunk_size: int | None = None,
     ) -> Sequence[R] | int:
         if not self.spec.supports_update():
-            raise CoreError("Update command type is not supported for this model")
+            raise exc.internal("Update command type is not supported for this model")
 
         eff = 200 if chunk_size is None else chunk_size
         if eff < 1:
-            raise CoreError("chunk_size must be positive")
+            raise exc.internal("chunk_size must be positive")
 
         n_total = 0
         out: list[R] = []
@@ -2068,7 +2074,7 @@ class MockDocumentAdapter(
 
             return []
         if len(set(pks)) != len(pks):
-            raise CoreError("Primary keys must be unique")
+            raise exc.internal("Primary keys must be unique")
         if return_new:
             return [await self.touch(pk, return_new=True) for pk in pks]
         for pk in pks:
@@ -2086,7 +2092,7 @@ class MockDocumentAdapter(
 
     async def kill_many(self, pks: Sequence[UUID]) -> None:
         if len(set(pks)) != len(pks):
-            raise CoreError("Primary keys must be unique")
+            raise exc.internal("Primary keys must be unique")
         for pk in pks:
             await self.kill(pk)
 
@@ -2119,7 +2125,7 @@ class MockDocumentAdapter(
 
     async def delete(self, pk: UUID, rev: int, *, return_new: bool = True) -> R | None:
         if not self._supports_soft_delete():
-            raise CoreError("Soft deletion is not supported for this model")
+            raise exc.internal("Soft deletion is not supported for this model")
 
         with self.state.lock:
             current_raw = dict(self._ensure_exists(pk))
@@ -2169,7 +2175,7 @@ class MockDocumentAdapter(
         return_new: bool = True,
     ) -> Sequence[R] | None:
         if not self._supports_soft_delete():
-            raise CoreError("Soft deletion is not supported for this model")
+            raise exc.internal("Soft deletion is not supported for this model")
         if not deletes:
             if not return_new:
                 return None
@@ -2203,7 +2209,7 @@ class MockDocumentAdapter(
 
     async def restore(self, pk: UUID, rev: int, *, return_new: bool = True) -> R | None:
         if not self._supports_soft_delete():
-            raise CoreError("Soft deletion is not supported for this model")
+            raise exc.internal("Soft deletion is not supported for this model")
         with self.state.lock:
             current_raw = dict(self._ensure_exists(pk))
             current = self._to_domain(current_raw)
@@ -2252,7 +2258,7 @@ class MockDocumentAdapter(
         return_new: bool = True,
     ) -> Sequence[R] | None:
         if not self._supports_soft_delete():
-            raise CoreError("Soft deletion is not supported for this model")
+            raise exc.internal("Soft deletion is not supported for this model")
         if not restores:
             if not return_new:
                 return None
@@ -2871,7 +2877,7 @@ class MockCounterAdapter(CounterPort):
         suffix: str | None = None,
     ) -> list[int]:
         if size <= 1:
-            raise CoreError("Size must be greater than 1")
+            raise exc.internal("Size must be greater than 1")
         with self.state.lock:
             key = self._key(suffix)
             prev = self.state.counters.get(key, 0)
@@ -3026,15 +3032,19 @@ class MockIdempotencyAdapter(IdempotencyPort):
         with self.state.lock:
             k = self._key(op, key)
             current = self.state.idempotency.get(k)
+
             if current is None:
                 self.state.idempotency[k] = ("pending", payload_hash, None)
                 return None
 
             status, existing_hash, snapshot = current
+
             if existing_hash != payload_hash:
-                raise ConflictError("Payload hash mismatch")
+                raise exc.conflict("Payload hash mismatch")
+
             if status != "done" or snapshot is None:
-                raise ConflictError("Idempotency is in progress")
+                raise exc.conflict("Idempotency is in progress")
+
             return snapshot
 
     # ....................... #
@@ -3054,12 +3064,12 @@ class MockIdempotencyAdapter(IdempotencyPort):
             current = self.state.idempotency.get(k)
 
             if current is None:
-                raise ConflictError("Idempotency commit failed (missing key)")
+                raise exc.conflict("Idempotency commit failed (missing key)")
 
             _, existing_hash, _ = current
 
             if existing_hash != payload_hash:
-                raise ConflictError("Payload hash mismatch")
+                raise exc.conflict("Payload hash mismatch")
 
             self.state.idempotency[k] = (  # type: ignore[assignment]
                 "done",
@@ -3113,9 +3123,11 @@ class MockStorageAdapter(StoragePort):
     async def download(self, key: str) -> DownloadedObject:
         with self.state.lock:
             if key not in self._objects() or key not in self._payloads():
-                raise NotFoundError(f"Object not found: {key}")
+                raise exc.not_found(f"Object not found: {key}")
+
             obj = self._objects()[key]
             payload = self._payloads()[key]
+
         return DownloadedObject(
             data=payload,
             content_type=obj.content_type,
@@ -3562,8 +3574,8 @@ class MockAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
     def _definition(self, query_key: str) -> AnalyticsQueryDefinition:
         try:
             return self.spec.queries[query_key]
-        except KeyError as exc:
-            raise CoreError(f"Unknown analytics query key: {query_key!r}") from exc
+        except KeyError as e:
+            raise exc.internal(f"Unknown analytics query key: {query_key!r}") from e
 
     # ....................... #
 
@@ -3575,7 +3587,7 @@ class MockAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
             params, BaseModel
         ):  # pyright: ignore[reportUnnecessaryIsInstance]
             return pydantic_validate(defn.params, params.model_dump())
-        raise CoreError("Analytics params must be a Pydantic model instance.")
+        raise exc.internal("Analytics params must be a Pydantic model instance.")
 
     # ....................... #
 
@@ -3718,7 +3730,7 @@ class MockAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
         )
         hits = page.hits
         if fetch_batch_size < 1:
-            raise CoreError("fetch_batch_size must be >= 1")
+            raise exc.internal("fetch_batch_size must be >= 1")
         for offset in range(0, len(hits), fetch_batch_size):
             yield hits[offset : offset + fetch_batch_size]
 
@@ -3955,7 +3967,7 @@ class MockAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
 
     async def append(self, rows: Sequence[Ing]) -> AnalyticsAppendResult | None:
         if self.spec.ingest is None:
-            raise CoreError(
+            raise exc.internal(
                 f"Analytics ingest is not configured for route {self._route()!r}."
             )
         if not rows:
@@ -3975,7 +3987,7 @@ class MockAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
                     pydantic_dump(pydantic_validate(ingest_type, row.model_dump()))
                 )
             else:
-                raise CoreError(
+                raise exc.internal(
                     "Analytics ingest rows must be Pydantic model instances."
                 )
             accepted += 1

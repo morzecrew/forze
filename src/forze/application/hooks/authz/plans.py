@@ -23,7 +23,7 @@ from forze.application.contracts.execution import (
 )
 from forze.application.contracts.querying import QueryFilterExpression
 from forze.application.execution.context import ExecutionContext
-from forze.base.errors import AuthorizationError
+from forze.base.exceptions import exc
 from forze.base.primitives import StrKey
 from forze.domain.models import BaseDTO
 
@@ -83,7 +83,7 @@ class AuthzBeforeAuthorize(BeforeFactory):
             identity = ctx.inv.get_authn()
 
             if identity is None:
-                raise AuthorizationError(
+                raise exc.authorization(
                     "Authentication required",
                     code="auth_required",
                 )
@@ -103,7 +103,7 @@ class AuthzBeforeAuthorize(BeforeFactory):
             result = await decision_port.authorize(request)
 
             if not result.allowed:
-                raise AuthorizationError(
+                raise exc.authorization(
                     result.reason or f"Permission denied: {self.action!r}",
                     code="permission_denied",
                 )
@@ -157,7 +157,7 @@ class AuthzDocumentScopeWrap(MiddlewareFactory):
             identity = ctx.inv.get_authn()
 
             if identity is None:
-                raise AuthorizationError(
+                raise exc.authorization(
                     "Authentication required",
                     code="auth_required",
                 )
@@ -173,7 +173,7 @@ class AuthzDocumentScopeWrap(MiddlewareFactory):
             doc_scope = await scope_port.scope_document(scope_req)
 
             if doc_scope.deny_all:
-                raise AuthorizationError(
+                raise exc.authorization(
                     doc_scope.reason or "Access denied by policy scope",
                     code="scope_denied",
                 )

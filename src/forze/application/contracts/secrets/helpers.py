@@ -4,7 +4,7 @@ from typing import TypeVar
 
 from pydantic import BaseModel, ValidationError
 
-from forze.base.errors import CoreError
+from forze.base.exceptions import exc
 from forze.base.scrubbing import sanitize_pydantic_errors
 
 from .ports import SecretsPort
@@ -28,7 +28,6 @@ async def resolve_structured(
     :param ref: Secret reference.
     :param model_type: Pydantic model type.
     :returns: Validated model instance.
-    :raises CoreError: On invalid JSON or validation failure.
     """
 
     raw = await secrets.resolve_str(ref)
@@ -37,7 +36,7 @@ async def resolve_structured(
         return model_type.model_validate_json(raw)
 
     except ValidationError as e:
-        raise CoreError(
+        raise exc.internal(
             f"Secret at {ref.path!r} is not valid for {model_type.__name__}: {e}",
             code="secret_invalid",
             details={"errors": sanitize_pydantic_errors(e.errors())},

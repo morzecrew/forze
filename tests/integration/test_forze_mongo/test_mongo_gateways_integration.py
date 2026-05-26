@@ -9,7 +9,7 @@ from forze.application.contracts.document import DocumentWriteTypes
 from forze.application.contracts.querying import encode_keyset_v1
 from forze.application.execution import Deps, ExecutionContext
 from forze.base.errors import (
-    CoreError,
+    exc.internal,
     InfrastructureError,
     NotFoundError,
     ValidationError,
@@ -423,16 +423,16 @@ async def test_mongo_read_gateway_find_many_with_cursor(
     assert len(desc_page) == 3
     assert desc_page[0].name == "a"
 
-    with pytest.raises(CoreError, match="at most one"):
+    with pytest.raises(exc.internal, match="at most one"):
         await read.find_many_with_cursor(
             None,
             cursor={"after": tok, "before": tok},
         )
 
-    with pytest.raises(CoreError, match="positive"):
+    with pytest.raises(exc.internal, match="positive"):
         await read.find_many_with_cursor(None, cursor={"limit": 0})
 
-    with pytest.raises(CoreError, match="primary key"):
+    with pytest.raises(exc.internal, match="primary key"):
         await read.find_many_with_cursor(
             None,
             sorts={"name": "asc"},
@@ -485,5 +485,5 @@ async def test_mongo_write_gateway_create_ensure_and_batch_validation(
     with pytest.raises(ValidationError, match="unique"):
         await write.update_many([out[0].id, out[0].id], [GwUpdate(), GwUpdate()])
 
-    with pytest.raises(CoreError, match="Length mismatch"):
+    with pytest.raises(exc.internal, match="Length mismatch"):
         await write.update_many([out[0].id], [GwUpdate(name="x"), GwUpdate(name="y")])

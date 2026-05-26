@@ -29,7 +29,7 @@ from forze.application.contracts.querying import (
     QueryFilterExpression,
     QuerySortExpression,
 )
-from forze.base.errors import CoreError, NotFoundError
+from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
 from forze.base.serialization import pydantic_validate, pydantic_validate_many
 from forze.domain.constants import ID_FIELD
@@ -60,7 +60,7 @@ def _for_update_sql(mode: RowLockMode) -> sql.SQL | None:
     if mode == "skip_locked":
         return sql.SQL(" FOR UPDATE SKIP LOCKED")
 
-    raise CoreError(f"Invalid for_update mode: {mode!r}")
+    raise exc.internal(f"Invalid for_update mode: {mode!r}")
 
 
 # ----------------------- #
@@ -113,7 +113,7 @@ class PostgresReadGateway[M: BaseModel](PostgresGateway[M]):
         row = await self.client.fetch_one(stmt, where_params, row_factory="dict")
 
         if row is None:
-            raise NotFoundError(f"Record not found: {pk}")
+            raise exc.not_found(f"Record not found: {pk}")
 
         return pydantic_validate(self.model_type, row)
 
@@ -144,7 +144,7 @@ class PostgresReadGateway[M: BaseModel](PostgresGateway[M]):
         missing = [x for x in pks if x not in m]
 
         if missing:
-            raise NotFoundError(f"Some records not found: {missing}")
+            raise exc.not_found(f"Some records not found: {missing}")
 
         return pydantic_validate_many(self.model_type, ordered)
 
@@ -390,7 +390,7 @@ class PostgresReadGateway[M: BaseModel](PostgresGateway[M]):
         """
 
         if return_model is not None and return_fields is not None:
-            raise CoreError("return_model and return_fields cannot be combined")
+            raise exc.internal("return_model and return_fields cannot be combined")
 
         where, params = await self.where_clause(filters)
         sort_clause = await self.order_by_clause(sorts)
@@ -452,7 +452,7 @@ class PostgresReadGateway[M: BaseModel](PostgresGateway[M]):
         """Find aggregate rows."""
 
         if return_fields is not None:
-            raise CoreError("Aggregates cannot be combined with return_fields")
+            raise exc.internal("Aggregates cannot be combined with return_fields")
 
         where, params = await self.where_clause(filters, parsed=parsed)
         types = await self.column_types()
@@ -595,7 +595,7 @@ class PostgresReadGateway[M: BaseModel](PostgresGateway[M]):
         c = dict(cursor or {})
 
         if c.get("after") and c.get("before"):
-            raise CoreError(
+            raise exc.internal(
                 "Cursor pagination: pass at most one of 'after' or 'before'"
             )
 
@@ -604,7 +604,7 @@ class PostgresReadGateway[M: BaseModel](PostgresGateway[M]):
         lim: int = 10 if limit_raw is None else int(limit_raw)  # type: ignore[call-overload]
 
         if lim < 1:
-            raise CoreError("Cursor pagination 'limit' must be positive")
+            raise exc.internal("Cursor pagination 'limit' must be positive")
 
         use_before = c.get("before") is not None
         use_after = c.get("after") is not None
@@ -635,11 +635,11 @@ class PostgresReadGateway[M: BaseModel](PostgresGateway[M]):
             tk, td, tv = decode_keyset_v1(token)
 
             if tk != sort_keys or len(td) != len(directions):
-                raise CoreError("Cursor does not match current sort keys")
+                raise exc.internal("Cursor does not match current sort keys")
 
             for i in range(len(directions)):
                 if (td[i] or "").lower() != (directions[i] or "").lower():
-                    raise CoreError("Cursor does not match current sort order")
+                    raise exc.internal("Cursor does not match current sort order")
 
             seek_sql, seek_params = build_seek_condition(
                 exprs,

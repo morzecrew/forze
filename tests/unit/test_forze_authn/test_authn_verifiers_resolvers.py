@@ -26,7 +26,7 @@ from forze.application.contracts.authn import (
     AuthnIdentity,
     VerifiedAssertion,
 )
-from forze.base.errors import AuthenticationError, CoreError
+from forze.base.errors import AuthenticationError, exc.internal
 from forze.base.primitives import uuid4 as deterministic_uuid4
 from forze_authn import (
     AuthnOrchestrator,
@@ -209,13 +209,13 @@ class TestAuthnOrchestrator:
         )
 
     def test_post_init_requires_verifier_for_each_enabled_method(self) -> None:
-        with pytest.raises(CoreError, match="TokenVerifierPort"):
+        with pytest.raises(exc.internal, match="TokenVerifierPort"):
             self._orch(frozenset({"token"}))
 
-        with pytest.raises(CoreError, match="PasswordVerifierPort"):
+        with pytest.raises(exc.internal, match="PasswordVerifierPort"):
             self._orch(frozenset({"password"}))
 
-        with pytest.raises(CoreError, match="ApiKeyVerifierPort"):
+        with pytest.raises(exc.internal, match="ApiKeyVerifierPort"):
             self._orch(frozenset({"api_key"}))
 
     @pytest.mark.asyncio

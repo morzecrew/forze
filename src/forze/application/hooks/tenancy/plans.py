@@ -6,7 +6,7 @@ import attrs
 
 from forze.application.contracts.execution import Before, BeforeFactory, BeforeStep
 from forze.application.execution.context import ExecutionContext
-from forze.base.errors import AuthenticationError
+from forze.base.exceptions import exc
 from forze.base.primitives import StrKey
 
 # ----------------------- #
@@ -22,7 +22,7 @@ class TenantRequired(BeforeFactory):
             _ = args
 
             if ctx.inv.get_tenant() is None:
-                raise AuthenticationError(
+                raise exc.authentication(
                     "Tenant identity is required",
                     code="tenant_required",
                 )

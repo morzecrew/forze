@@ -3,7 +3,7 @@
 import re
 from typing import Sequence
 
-from forze.base.errors import ValidationError
+from forze.base.exceptions import exc
 
 # ----------------------- #
 
@@ -32,7 +32,7 @@ def validate_text_pattern(
     :param op: ``$like``, ``$ilike``, or ``$regex``.
     :param value: Single pattern or sequence (OR semantics).
     :returns: Non-empty tuple of validated pattern strings.
-    :raises ValidationError: On empty, oversized, or unsafe patterns.
+    :raises exc.precondition: On empty, oversized, or unsafe patterns.
     """
 
     if isinstance(value, str):
@@ -41,10 +41,10 @@ def validate_text_pattern(
         patterns = tuple(value)
 
     if not patterns:
-        raise ValidationError(f"{op} operand requires at least one pattern")
+        raise exc.precondition(f"{op} operand requires at least one pattern")
 
     if len(patterns) > max_pattern_or_branches:
-        raise ValidationError(
+        raise exc.precondition(
             f"{op} operand exceeds maximum branch count of "
             f"{max_pattern_or_branches} (got {len(patterns)})",
         )
@@ -54,17 +54,17 @@ def validate_text_pattern(
     for i, raw in enumerate(patterns):
         # extra runtime check (just in case)
         if not isinstance(raw, str):  # pyright: ignore[reportUnnecessaryIsInstance]
-            raise ValidationError(
+            raise exc.precondition(
                 f"{op} pattern at index {i} must be a string, got {raw!r}",
             )
 
         pattern = raw.strip()
 
         if not pattern:
-            raise ValidationError(f"{op} pattern at index {i} must be non-empty")
+            raise exc.precondition(f"{op} pattern at index {i} must be non-empty")
 
         if len(pattern) > max_pattern_length:
-            raise ValidationError(
+            raise exc.precondition(
                 f"{op} pattern at index {i} exceeds maximum length of "
                 f"{max_pattern_length} (got {len(pattern)})",
             )
@@ -84,18 +84,18 @@ def _validate_regex_safe(pattern: str) -> None:
     """Reject regex patterns with known catastrophic backtracking shapes."""
 
     if _NESTED_QUANTIFIER.search(pattern):
-        raise ValidationError(
+        raise exc.precondition(
             f"$regex pattern {pattern!r} uses nested quantifiers that are not allowed",
         )
 
     large = _LARGE_REPEAT.search(pattern)
     if large is not None:
-        raise ValidationError(
+        raise exc.precondition(
             f"$regex pattern {pattern!r} uses a repeat upper bound that is too large",
         )
 
     if pattern.count("|") >= _MAX_ALTERNATION_BRANCHES:
-        raise ValidationError(
+        raise exc.precondition(
             f"$regex pattern {pattern!r} has too many alternation branches",
         )
 

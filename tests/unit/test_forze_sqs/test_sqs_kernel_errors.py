@@ -7,7 +7,7 @@ from botocore.exceptions import (
     NoCredentialsError,
 )
 
-from forze.base.errors import CoreError, InfrastructureError
+from forze.base.exceptions import InfrastructureError
 from forze_sqs.kernel.platform.errors import _sqs_eh, sqs_handled
 
 
@@ -57,8 +57,8 @@ async def test_sqs_error_handler_maps_known_exceptions(
 
 @pytest.mark.asyncio
 async def test_sqs_error_handler_passthrough_core_error() -> None:
-    with pytest.raises(CoreError, match="already_core"):
-        await _raise(CoreError("already_core"))
+    with pytest.raises(exc.internal, match="already_core"):
+        await _raise(exc.internal("already_core"))
 
 
 @pytest.mark.asyncio
@@ -71,7 +71,7 @@ class TestSqsErrorHandlerDirect:
     """Direct tests for :func:`_sqs_eh` (branch coverage)."""
 
     def test_core_error_passthrough(self) -> None:
-        original = CoreError("x")
+        original = exc.internal("x")
         assert _sqs_eh(original, "op") is original
 
     def test_read_timeout_maps(self) -> None:
@@ -117,7 +117,7 @@ class TestSqsErrorHandlerDirect:
         assert needle in r.message.lower()
 
     def test_botocore_fallback(self) -> None:
-        r = _sqs_eh(sqs_errors.BotoCoreError(), "op")
+        r = _sqs_eh(sqs_errors.Botoexc.internal(), "op")
         assert "core error" in r.message.lower()
 
     def test_generic_fallback(self) -> None:

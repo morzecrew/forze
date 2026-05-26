@@ -20,7 +20,7 @@ from forze.application.contracts.querying import (
     QueryValue,
     QueryValueCaster,
 )
-from forze.base.errors import CoreError
+from forze.base.exceptions import exc
 
 # ----------------------- #
 
@@ -62,14 +62,15 @@ class FirestoreQueryRenderer:
         """Aggregates are not supported in the Firestore MVP adapter."""
 
         _ = aggregates, kwargs
-        raise CoreError("Firestore adapter does not support aggregates in MVP")
+
+        raise exc.internal("Firestore adapter does not support aggregates in MVP")
 
     # ....................... #
 
     def _render_expr(self, expr: QueryExpr) -> BaseFilter | None:
         match expr:
             case QueryCompare():
-                raise CoreError(
+                raise exc.internal(
                     "Firestore adapter does not support field-to-field comparisons ($fields)"
                 )
 
@@ -77,7 +78,9 @@ class FirestoreQueryRenderer:
                 return self._render_field(name, op, value)
 
             case QueryAnd(items):
-                parts = [p for p in (self._render_expr(i) for i in items) if p is not None]
+                parts = [
+                    p for p in (self._render_expr(i) for i in items) if p is not None
+                ]
 
                 if not parts:
                     return None
@@ -88,10 +91,12 @@ class FirestoreQueryRenderer:
                 return And(filters=parts)
 
             case QueryOr(items):
-                parts = [p for p in (self._render_expr(i) for i in items) if p is not None]
+                parts = [
+                    p for p in (self._render_expr(i) for i in items) if p is not None
+                ]
 
                 if not parts:
-                    raise CoreError("Empty $or filter is not supported on Firestore")
+                    raise exc.internal("Empty $or filter is not supported on Firestore")
 
                 if len(parts) == 1:
                     return parts[0]
@@ -99,15 +104,17 @@ class FirestoreQueryRenderer:
                 return Or(filters=parts)
 
             case QueryNot():
-                raise CoreError("Firestore adapter does not support $not filters in MVP")
+                raise exc.internal(
+                    "Firestore adapter does not support $not filters in MVP"
+                )
 
             case QueryElem():
-                raise CoreError(
+                raise exc.internal(
                     "Firestore adapter does not support array element quantifiers ($any/$all/$none)"
                 )
 
             case _:
-                raise CoreError(f"Unknown expression: {expr!r}")
+                raise exc.internal(f"Unknown expression: {expr!r}")
 
     # ....................... #
 
@@ -139,7 +146,7 @@ class FirestoreQueryRenderer:
 
             case "$in":
                 if isinstance(value, QueryValue.Scalar | None):
-                    raise CoreError(f"{field}: {op} expects list")
+                    raise exc.internal(f"{field}: {op} expects list")
                 return FieldFilter(
                     field,
                     "in",
@@ -148,7 +155,7 @@ class FirestoreQueryRenderer:
 
             case "$nin":
                 if isinstance(value, QueryValue.Scalar | None):
-                    raise CoreError(f"{field}: {op} expects list")
+                    raise exc.internal(f"{field}: {op} expects list")
                 return FieldFilter(
                     field,
                     "not-in",
@@ -156,12 +163,14 @@ class FirestoreQueryRenderer:
                 )
 
             case "$superset" | "$subset" | "$overlaps" | "$disjoint":
-                raise CoreError(f"Firestore adapter does not support set operator {op!r} in MVP")
+                raise exc.internal(
+                    f"Firestore adapter does not support set operator {op!r} in MVP"
+                )
 
             case "$like" | "$ilike" | "$regex":
-                raise CoreError(
+                raise exc.internal(
                     f"Firestore adapter does not support text pattern operator {op!r} in MVP"
                 )
 
             case _:  # pyright: ignore[reportUnnecessaryComparison]
-                raise CoreError(f"Unknown operator: {op!r}")
+                raise exc.internal(f"Unknown operator: {op!r}")

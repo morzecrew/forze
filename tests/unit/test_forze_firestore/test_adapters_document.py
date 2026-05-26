@@ -6,7 +6,6 @@ import pytest
 
 from forze.application.contracts.document import DocumentSpec
 from forze.application.coordinators import DocumentCacheCoordinator
-from forze.base.errors import CoreError
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
 from forze_firestore.adapters.document import FirestoreDocumentAdapter
 from forze_firestore.kernel.gateways import FirestoreReadGateway, FirestoreWriteGateway
@@ -57,7 +56,7 @@ def test_write_gateway_requires_same_client() -> None:
         cache=None,
     )
 
-    with pytest.raises(CoreError, match="same client"):
+    with pytest.raises(exc.internal, match="same client"):
         FirestoreDocumentAdapter(
             spec=spec,
             read_gw=read_gw,

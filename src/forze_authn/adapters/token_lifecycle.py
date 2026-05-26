@@ -15,7 +15,7 @@ from forze.application.contracts.authn import (
     TokenLifecyclePort,
 )
 from forze.application.contracts.document import DocumentCommandPort, DocumentQueryPort
-from forze.base.errors import AuthenticationError, CoreError
+from forze.base.exceptions import exc
 from forze.base.primitives import utcnow
 
 from ..domain.constants import ACCESS_TOKEN_SCHEME
@@ -65,22 +65,22 @@ class TokenLifecycleAdapter(TokenLifecyclePort):
         principal_spec = self.principal_qry.spec
 
         if qry_spec.cache is not None:
-            raise CoreError("Session caching is forbidden by security reasons")
+            raise exc.internal("Session caching is forbidden by security reasons")
 
         if cmd_spec.cache is not None:
-            raise CoreError("Session caching is forbidden by security reasons")
+            raise exc.internal("Session caching is forbidden by security reasons")
 
         if qry_spec.history_enabled:
-            raise CoreError("Session history is forbidden by security reasons")
+            raise exc.internal("Session history is forbidden by security reasons")
 
         if cmd_spec.history_enabled:
-            raise CoreError("Session history is forbidden by security reasons")
+            raise exc.internal("Session history is forbidden by security reasons")
 
         if principal_spec.cache is not None:
-            raise CoreError("Principal caching is forbidden by security reasons")
+            raise exc.internal("Principal caching is forbidden by security reasons")
 
         if principal_spec.history_enabled:
-            raise CoreError("Principal history is forbidden by security reasons")
+            raise exc.internal("Principal history is forbidden by security reasons")
 
     # ....................... #
 
@@ -188,7 +188,7 @@ class TokenLifecycleAdapter(TokenLifecyclePort):
         refresh_token: RefreshTokenCredentials,
     ) -> IssuedTokens:
         if not refresh_token.token:
-            raise AuthenticationError("Refresh token is required")
+            raise exc.authentication("Refresh token is required")
 
         refresh_digest = self.refresh_svc.calculate_token_digest(refresh_token.token)
 
@@ -201,7 +201,7 @@ class TokenLifecycleAdapter(TokenLifecyclePort):
         )
 
         if old_session is None or old_session.revoked_at is not None:
-            raise AuthenticationError("Invalid refresh token")
+            raise exc.authentication("Invalid refresh token")
 
         # Detect reuse of already rotated refresh token and revoke entire chain
         if old_session.rotated_at is not None:
@@ -209,10 +209,10 @@ class TokenLifecycleAdapter(TokenLifecyclePort):
                 old_session.principal_id, old_session.family_id
             )
             # Raise common error to avoid leaking information about token reuse
-            raise AuthenticationError("Invalid refresh token")
+            raise exc.authentication("Invalid refresh token")
 
         if old_session.expires_at <= utcnow():
-            raise AuthenticationError("Refresh token expired")
+            raise exc.authentication("Refresh token expired")
 
         # validate principal
         await validate_principal(self.principal_qry, old_session.principal_id)

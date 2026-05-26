@@ -26,7 +26,7 @@ from forze.application.contracts.storage import (
     UploadedObject,
 )
 from forze.application.contracts.tenancy import TenancyMixin
-from forze.base.errors import CoreError, ValidationError
+from forze.base.exceptions import CoreException, exc
 from forze.base.primitives import JsonDict, utcnow, uuid7
 
 from ..kernel.platform import GCSClientPort
@@ -42,11 +42,12 @@ def _object_metadata_from_gcs_custom(meta: Mapping[str, str]) -> ObjectMetadata:
         filename = meta["filename"]
         size = int(meta["size"])
         created_at_raw = meta["created_at"]
+
     except KeyError as e:
-        raise CoreError("Invalid object metadata") from e
+        raise exc.internal("Invalid object metadata") from e
 
     except ValueError as e:
-        raise CoreError("Invalid object metadata") from e
+        raise exc.internal("Invalid object metadata") from e
 
     if created_at_raw.endswith("Z"):
         created_at_raw = f"{created_at_raw[:-1]}+00:00"
@@ -127,7 +128,7 @@ class GCSStorageAdapter(StoragePort, TenancyMixin):
             return
 
         if not re.match(r"^[a-zA-Z0-9!\-_.*'()/]*$", prefix):
-            raise ValidationError(f"Invalid GCS prefix: {prefix}")
+            raise exc.precondition(f"Invalid GCS prefix: {prefix}")
 
     # ....................... #
 
@@ -182,16 +183,16 @@ class GCSStorageAdapter(StoragePort, TenancyMixin):
             h = await self.client.head_object(bucket=self.bucket, key=key)
 
             if "metadata" not in h:
-                raise CoreError("Invalid object metadata")
+                raise exc.internal("Invalid object metadata")
 
             try:
                 meta = _object_metadata_from_gcs_custom(h["metadata"])
 
-            except CoreError:
+            except CoreException:
                 raise
 
             except Exception as e:
-                raise CoreError("Invalid object metadata") from e
+                raise exc.internal("Invalid object metadata") from e
 
             data = await self.client.download_bytes(bucket=self.bucket, key=key)
 
@@ -233,7 +234,7 @@ class GCSStorageAdapter(StoragePort, TenancyMixin):
 
             for o in objects:
                 if "Key" not in o:
-                    raise CoreError("Invalid object key")
+                    raise exc.internal("Invalid object key")
 
             heads = await asyncio.gather(
                 *(
@@ -246,16 +247,16 @@ class GCSStorageAdapter(StoragePort, TenancyMixin):
 
             for o, h in zip(objects, heads, strict=True):
                 if "metadata" not in h:
-                    raise CoreError("Invalid object metadata")
+                    raise exc.internal("Invalid object metadata")
 
                 try:
                     meta = _object_metadata_from_gcs_custom(h["metadata"])
 
-                except CoreError:
+                except CoreException:
                     raise
 
                 except Exception as e:
-                    raise CoreError("Invalid object metadata") from e
+                    raise exc.internal("Invalid object metadata") from e
 
                 out.append(
                     StoredObject(

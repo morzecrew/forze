@@ -2,20 +2,20 @@
 
 from __future__ import annotations
 
-import pytest
 from uuid import UUID, uuid4
 
+import pytest
 from pydantic import Field
 
+from forze.application.contracts.authn import AuthnIdentity
 from forze.application.contracts.document import (
     DocumentCommandDepKey,
     DocumentQueryDepKey,
     DocumentSpec,
 )
-from forze.application.contracts.authn import AuthnIdentity
 from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.execution import Deps, ExecutionContext, InvocationMetadata
-from forze.base.errors import CoreError, NotFoundError
+from forze.base.exceptions import NotFoundError
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
 from forze_postgres.execution.deps.deps import ConfigurablePostgresDocument
 from forze_postgres.execution.deps.keys import (
@@ -46,9 +46,7 @@ class TenantReadDoc(ReadDocument):
     name: str
 
 
-def _tenant_table_context(
-    pg_client: PostgresClient, table: str
-) -> ExecutionContext:
+def _tenant_table_context(pg_client: PostgresClient, table: str) -> ExecutionContext:
     configurable = ConfigurablePostgresDocument(
         config={
             "read": ("public", table),
@@ -111,7 +109,7 @@ async def test_tenant_aware_requires_tenant_in_identity(
         metadata=_metadata(),
         authn=AuthnIdentity(principal_id=uuid4()),
     ):
-        with pytest.raises(CoreError, match="Tenant ID is required"):
+        with pytest.raises(exc.internal, match="Tenant ID is required"):
             await adapter.create(TenantCreateDoc(name="orphan"))
 
 

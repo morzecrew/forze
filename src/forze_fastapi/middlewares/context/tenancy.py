@@ -13,7 +13,7 @@ from fastapi import Request
 from forze.application.contracts.authn import AuthnResult
 from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.execution import ExecutionContext
-from forze.base.errors import AuthenticationError
+from forze.base.exceptions import exc
 
 from .ports import TenantIdentityCodecPort, TenantIdentityResolverPort
 
@@ -78,7 +78,7 @@ class TenantIdentityResolver(TenantIdentityResolverPort):
             and issuer_hint_id is not None
             and hint.tenant_id != issuer_hint_id
         ):
-            raise AuthenticationError(
+            raise exc.authentication(
                 "Conflicting tenant identities from issuer and request hint",
                 code="tenant_conflict",
             )
@@ -94,13 +94,13 @@ class TenantIdentityResolver(TenantIdentityResolverPort):
             )
 
             if requested_tenant_id is not None and resolved is None:
-                raise AuthenticationError(
+                raise exc.authentication(
                     "Requested tenant is not available for the authenticated principal",
                     code="tenant_conflict",
                 )
 
         if self.required and resolved is None:
-            raise AuthenticationError(
+            raise exc.authentication(
                 "Tenant identity is required",
                 code="tenant_required",
             )
@@ -115,11 +115,11 @@ def _coerce_tenant_hint(raw: str, *, source: str) -> UUID:
     try:
         return UUID(raw.strip())
 
-    except ValueError as exc:
-        raise AuthenticationError(
+    except ValueError as e:
+        raise exc.authentication(
             f"Invalid tenant hint from {source}",
             code="invalid_tenant_hint",
-        ) from exc
+        ) from e
 
 
 def _coerce_issuer_tenant_hint(authn: AuthnResult | None) -> UUID | None:

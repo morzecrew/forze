@@ -3,7 +3,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, Self, overload
 import attrs
 
 from forze.application.contracts.execution import Handler
-from forze.base.errors import CoreError
+from forze.base.exceptions import exc
 from forze.base.primitives import StrKey, StrKeyNamespace
 
 if TYPE_CHECKING:
@@ -36,7 +36,7 @@ class OperationFacade:
 
     def __attrs_post_init__(self) -> None:
         if type(self).namespace_required and self.namespace is None:
-            raise CoreError(
+            raise exc.configuration(
                 f"{type(self).__name__} requires namespace=... at runtime",
             )
 
@@ -125,7 +125,9 @@ class OperationFacadeFactory[F: OperationFacade]:
 
     def __call__(self) -> F:
         if self.type.namespace_required and self.ns is None:
-            raise CoreError(f"{self.type.__name__} requires namespace at runtime")
+            raise exc.configuration(
+                f"{self.type.__name__} requires namespace at runtime"
+            )
 
         return self.type(
             ctx=self.ctx_factory(),

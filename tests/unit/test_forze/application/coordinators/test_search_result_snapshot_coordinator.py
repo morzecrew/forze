@@ -13,7 +13,6 @@ from forze.application.contracts.search import (
     SearchSpec,
 )
 from forze.application.coordinators import SearchResultSnapshotCoordinator
-from forze.base.errors import CoreError
 
 
 class _Row(BaseModel):
@@ -393,12 +392,12 @@ def test_hydrate_federated_record_key_ok() -> None:
 
 
 def test_hydrate_federated_record_key_errors() -> None:
-    with pytest.raises(CoreError, match="partition"):
+    with pytest.raises(exc.internal, match="partition"):
         SearchResultSnapshotCoordinator.hydrate_federated_record_key(
             "no-null-byte", _fed()
         )
 
-    with pytest.raises(CoreError, match="Unknown federated member"):
+    with pytest.raises(exc.internal, match="Unknown federated member"):
         SearchResultSnapshotCoordinator.hydrate_federated_record_key(
             'unknown\0{"id":1,"t":""}',
             _fed(),

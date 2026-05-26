@@ -1,6 +1,6 @@
 import attrs
 
-from ..errors import CoreError
+from ..exceptions import exc
 from .types import StrKey
 
 # ----------------------- #
@@ -28,16 +28,16 @@ class StrKeyNamespace:
             x = str(p)
 
             if not x:
-                raise CoreError("Key part must be non-empty")
+                raise exc.internal("Key part must be non-empty")
 
             if self.sep in x:
-                raise CoreError(f"Key part must not contain separator '{self.sep}'")
+                raise exc.internal(f"Key part must not contain separator '{self.sep}'")
 
     # ....................... #
 
     def key(self, *parts: StrKey) -> str:
         if not parts:
-            raise CoreError("No parts provided")
+            raise exc.internal("No parts provided")
 
         self.__validate_parts(self.prefix, *parts)
 

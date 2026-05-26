@@ -4,12 +4,17 @@ require_gcs()
 
 # ....................... #
 
-from functools import partial
-from typing import Any
+from typing import Any, Mapping
 
 import aiohttp
 
-from forze.base.errors import CoreError, InfrastructureError, error_handler, handled
+from forze.base.conformity import static_fn_conformity
+from forze.base.exceptions import (
+    CoreException,
+    ExceptionInterceptor,
+    ExceptionMapper,
+    default_chain_exc_mapper,
+)
 
 # ----------------------- #
 
@@ -28,37 +33,58 @@ def _response_status(exc: BaseException) -> int | None:
     return None
 
 
-@error_handler
-def _gcs_eh(e: Exception, op: str, **kwargs: Any) -> CoreError:
-    """Normalize gcloud-aio / aiohttp GCS errors into :class:`CoreError` hierarchy."""
+# ....................... #
 
-    match e:
-        case CoreError():
-            return e
+
+@static_fn_conformity(ExceptionMapper)  # type: ignore[type-abstract]
+def _gcs_eh(
+    exc: BaseException,
+    *,
+    site: str,
+    details: Mapping[str, Any] | None = None,
+) -> CoreException | None:
+    """Normalize gcloud-aio / aiohttp GCS errors into :class:`exc.internal` hierarchy."""
+
+    match exc:
+        case CoreException():
+            return exc
 
         case aiohttp.ClientResponseError() as cre:
             status = _response_status(cre)
 
             if status == 404:
-                return InfrastructureError("GCS resource not found.")
+                return CoreException.infrastructure(
+                    "GCS resource not found.",
+                    details=details,
+                )
 
             if status in {401, 403}:
-                return InfrastructureError("GCS access denied.")
+                return CoreException.infrastructure(
+                    "GCS access denied.", details=details
+                )
 
             if status == 429:
-                return InfrastructureError("GCS request throttled.")
+                return CoreException.infrastructure(
+                    "GCS request throttled.", details=details
+                )
 
             if status is not None and status >= 500:
-                return InfrastructureError("GCS internal error.")
+                return CoreException.infrastructure(
+                    "GCS internal error.", details=details
+                )
 
-            return InfrastructureError(f"GCS client error ({status}).")
+            return CoreException.infrastructure(
+                f"GCS client error ({status}).", details=details
+            )
 
         case _:
-            return InfrastructureError(
-                f"An error occurred while executing GCS operation {op}: {e}"
+            return CoreException.infrastructure(
+                f"An error occurred while executing GCS operation {site}: {exc}",
+                details=details,
             )
 
 
-# ----------------------- #
+# ....................... #
 
-gcs_handled = partial(handled, _gcs_eh)
+_gcs_chain = default_chain_exc_mapper.chain(_gcs_eh)
+exc_interceptor = ExceptionInterceptor(mapper=_gcs_chain)

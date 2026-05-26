@@ -15,9 +15,8 @@ from forze.application.contracts.search import (
     SearchResultSnapshotMeta,
     SearchResultSnapshotPort,
 )
-from forze.base.errors import CoreError
+from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
-
 from forze_redis.kernel.scripts import APPEND_SNAPSHOT_CHUNK
 
 from .base import RedisBaseAdapter
@@ -34,13 +33,13 @@ _CHUNK: Final[str] = "chunk"
 
 def _validate_chunk_size(chunk_size: int) -> None:
     if chunk_size < 1:
-        raise CoreError("chunk_size must be at least 1.")
+        raise exc.internal("chunk_size must be at least 1.")
 
 
 def _ex_seconds(ttl: timedelta) -> int:
     sec = int(ttl.total_seconds())
     if sec < 1:
-        raise CoreError("ttl must be at least one second for Redis key expiry.")
+        raise exc.internal("ttl must be at least one second for Redis key expiry.")
     return sec
 
 
@@ -100,7 +99,9 @@ class RedisSearchResultSnapshotAdapter(
 
         return data
 
-    async def __load_meta_raw(self, run_id: str) -> tuple[bytes | None, JsonDict | None]:
+    async def __load_meta_raw(
+        self, run_id: str
+    ) -> tuple[bytes | None, JsonDict | None]:
         raw = await self.client.get(self.__key_meta(run_id))
 
         if raw is None:
@@ -217,13 +218,15 @@ class RedisSearchResultSnapshotAdapter(
         raw_meta, meta = await self.__load_meta_raw(run_id)
 
         if meta is None or raw_meta is None:
-            raise CoreError("begin_run is required before append_chunk (missing meta).")
+            raise exc.internal(
+                "begin_run is required before append_chunk (missing meta)."
+            )
 
         if meta.get("complete"):
-            raise CoreError("Cannot append_chunk to a completed snapshot run.")
+            raise exc.internal("Cannot append_chunk to a completed snapshot run.")
 
         if chunk_index != int(meta.get("next_chunk_index", 0)):
-            raise CoreError(
+            raise exc.internal(
                 f"append_chunk expected chunk_index {meta.get('next_chunk_index')!r}, got {chunk_index!r}."
             )
 
@@ -231,10 +234,12 @@ class RedisSearchResultSnapshotAdapter(
         ex = int(meta["ttl_seconds"])
 
         if len(ids) > chunk_size:
-            raise CoreError(f"Chunk has {len(ids)} ids; chunk_size is {chunk_size!r}.")
+            raise exc.internal(
+                f"Chunk has {len(ids)} ids; chunk_size is {chunk_size!r}."
+            )
 
         if not is_last and len(ids) != chunk_size:
-            raise CoreError(
+            raise exc.internal(
                 "All non-final chunks must contain exactly ``chunk_size`` ids."
             )
 
@@ -272,7 +277,7 @@ class RedisSearchResultSnapshotAdapter(
         )
 
         if str(raw).strip() != "1":
-            raise CoreError(
+            raise exc.internal(
                 "Concurrent snapshot append detected (meta changed); retry append_chunk."
             )
 
@@ -287,7 +292,7 @@ class RedisSearchResultSnapshotAdapter(
         expected_fingerprint: str | None = None,
     ) -> list[str] | None:
         if offset < 0 or limit < 1:
-            raise CoreError("get_id_range requires offset >= 0 and limit >= 1.")
+            raise exc.internal("get_id_range requires offset >= 0 and limit >= 1.")
 
         meta = await self.__load_meta(run_id)
 

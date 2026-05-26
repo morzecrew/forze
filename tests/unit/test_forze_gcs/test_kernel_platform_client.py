@@ -4,7 +4,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from forze.base.errors import CoreError
 from forze_gcs.kernel.platform.client import GCSClient
 from forze_gcs.kernel.platform.value_objects import GCSConfig
 
@@ -86,7 +85,7 @@ async def test_list_objects_rejects_invalid_limit() -> None:
     client = GCSClient()
     client._GCSClient__storage = MagicMock()
 
-    with pytest.raises(CoreError, match="limit must be > 0"):
+    with pytest.raises(exc.internal, match="limit must be > 0"):
         await client.list_objects(bucket="b", limit=0)
 
 
