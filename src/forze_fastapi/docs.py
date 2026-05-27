@@ -64,6 +64,20 @@ def _is_valid_dns(address: str) -> bool:
 
 # ....................... #
 
+DownloadType = Literal["json", "yaml", "both", "none"]
+ThemeType = Literal[
+    "default",
+    "purple",
+    "solarized",
+    "laserwave",
+    "bluePlanet",
+    "saturn",
+    "kepler",
+    "mars",
+    "deepSpace",
+    "none",
+]
+
 
 def scalar_docs(
     request: Request,
@@ -76,8 +90,8 @@ def scalar_docs(
     agent_key: str | SecretStr | None = None,
     show_devtools: Literal["always", "never", "localhost"] = "never",
     hide_download_button: bool = True,
-    download_type: DocumentDownloadType = DocumentDownloadType.BOTH,
-    theme: Theme = Theme.PURPLE,
+    download_type: DownloadType = "both",
+    theme: ThemeType = "purple",
 ) -> HTMLResponse:
     """Return a Scalar API reference HTML page for the current OpenAPI spec."""
 
@@ -103,18 +117,21 @@ def scalar_docs(
     if isinstance(agent_key, SecretStr):
         agent_key = agent_key.get_secret_value()
 
+    document_download_type = DocumentDownloadType(download_type)
+    theme_ = Theme(theme)
+
     return get_scalar_api_reference(
         title=title,
         openapi_url=f"{root_path}/openapi.json",
         hide_download_button=hide_download_button,
         hide_models=True,
-        document_download_type=download_type,
+        document_download_type=document_download_type,
         servers=servers,
         scalar_favicon_url=favicon_url,
         scalar_js_url=f"https://cdn.jsdelivr.net/npm/@scalar/api-reference@{version}",
         show_developer_tools=show_devtools,
         telemetry=telemetry,
-        theme=theme,
+        theme=theme_,
         hide_dark_mode_toggle=True,
         hidden_clients=True,
         hide_client_button=True,
@@ -142,8 +159,8 @@ def register_scalar_docs(
     agent_key: str | SecretStr | None = None,
     show_devtools: Literal["always", "never", "localhost"] = "never",
     hide_download_button: bool = True,
-    download_type: DocumentDownloadType = DocumentDownloadType.BOTH,
-    theme: Theme = Theme.PURPLE,
+    download_type: DownloadType = "both",
+    theme: ThemeType = "purple",
 ) -> None:
     """Register a Scalar docs route on *app* at *path*."""
 
