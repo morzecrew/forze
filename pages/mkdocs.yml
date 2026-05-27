@@ -64,6 +64,7 @@ nav:
     - CRUD with FastAPI, Postgres, and Redis: recipes/crud-fastapi-postgres-redis.md
     - Authn, authz, and tenancy (FastAPI): recipes/authn-authz-tenancy-fastapi.md
     - External IdPs over OIDC: recipes/external-idp-oidc.md
+    - Local identity (demo / MVP): recipes/local-identity.md
     - Read-only Document API: recipes/read-only-document-api.md
     - Add Caching: recipes/add-caching.md
     - Add Idempotency: recipes/add-idempotency.md

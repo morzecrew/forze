@@ -1,6 +1,6 @@
 """Tenancy dependency module for the application kernel."""
 
-from collections.abc import Collection
+from collections.abc import Collection, Mapping
 from enum import StrEnum
 from typing import final
 
@@ -9,10 +9,14 @@ import attrs
 from forze.application.contracts.tenancy import (
     TenantManagementDepKey,
     TenantResolverDepKey,
+    TenantResolverDepPort,
 )
 from forze.application.execution import Deps, DepsModule
 
-from .deps import ConfigurableTenantManagement, ConfigurableTenantResolver
+from .deps import (
+    ConfigurableTenantManagement,
+    ConfigurableTenantResolver,
+)
 
 # ----------------------- #
 
@@ -40,6 +44,11 @@ class TenancyDepsModule[K: str | StrEnum](DepsModule[K]):
     verify_tenant_active: bool = attrs.field(default=True)
     """Forwarded to :class:`~forze_tenancy.execution.deps.deps.ConfigurableTenantResolver`."""
 
+    tenant_resolvers: Mapping[K, TenantResolverDepPort] | None = attrs.field(
+        default=None,
+    )
+    """Optional per-route tenant resolver overrides (e.g. local file/env backend)."""
+
     # ....................... #
 
     def __call__(self) -> Deps[K]:
@@ -52,14 +61,18 @@ class TenancyDepsModule[K: str | StrEnum](DepsModule[K]):
         merged: Deps[K] = Deps[K]()
 
         if tr:
-            factory = ConfigurableTenantResolver(
+            resolver_overrides = dict(self.tenant_resolvers or {})
+            default_factory = ConfigurableTenantResolver(
                 verify_tenant_active=self.verify_tenant_active,
             )
 
             merged = merged.merge(
                 Deps[K].routed(
                     {
-                        TenantResolverDepKey: {name: factory for name in tr},
+                        TenantResolverDepKey: {
+                            name: resolver_overrides.get(name, default_factory)
+                            for name in tr
+                        },
                     },
                 ),
             )

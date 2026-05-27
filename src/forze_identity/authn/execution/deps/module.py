@@ -9,16 +9,18 @@ import attrs
 from forze.application.contracts.authn import (
     ApiKeyLifecycleDepKey,
     ApiKeyVerifierDepKey,
+    ApiKeyVerifierDepPort,
     AuthnDepKey,
-    AuthnDepPort,
     AuthnMethod,
     PasswordAccountProvisioningDepKey,
     PasswordLifecycleDepKey,
     PasswordVerifierDepKey,
+    PasswordVerifierDepPort,
     PrincipalResolverDepKey,
     PrincipalResolverDepPort,
     TokenLifecycleDepKey,
     TokenVerifierDepKey,
+    TokenVerifierDepPort,
 )
 from forze.application.execution import Deps, DepsModule
 from forze.base.exceptions import exc
@@ -77,13 +79,17 @@ class AuthnDepsModule[K: str | StrEnum](DepsModule[K]):
     resolvers: Mapping[K, PrincipalResolverDepPort] | None = attrs.field(default=None)
     """Optional per-route principal resolver overrides; routes without an entry get :class:`JwtNativeUuidResolver`."""
 
-    token_verifiers: Mapping[K, AuthnDepPort] | None = attrs.field(default=None)  # type: ignore[type-arg]
+    token_verifiers: Mapping[K, TokenVerifierDepPort] | None = attrs.field(default=None)
     """Optional per-route token verifier overrides; routes without an entry get :class:`ForzeJwtTokenVerifier`."""
 
-    password_verifiers: Mapping[K, AuthnDepPort] | None = attrs.field(default=None)  # type: ignore[type-arg]
+    password_verifiers: Mapping[K, PasswordVerifierDepPort] | None = attrs.field(
+        default=None
+    )
     """Optional per-route password verifier overrides; routes without an entry get :class:`Argon2PasswordVerifier`."""
 
-    api_key_verifiers: Mapping[K, AuthnDepPort] | None = attrs.field(default=None)  # type: ignore[type-arg]
+    api_key_verifiers: Mapping[K, ApiKeyVerifierDepPort] | None = attrs.field(
+        default=None
+    )
     """Optional per-route API key verifier overrides; routes without an entry get :class:`HmacApiKeyVerifier`."""
 
     token_lifecycle: Collection[K] | None = attrs.field(default=None)
@@ -119,6 +125,8 @@ class AuthnDepsModule[K: str | StrEnum](DepsModule[K]):
 
         shared = build_authn_shared_services(self.kernel)
 
+        api_key_overrides_keys = frozenset((self.api_key_verifiers or {}).keys())
+
         validate_shared_matches_route_sets(
             shared=shared,
             authn=authn_map,
@@ -126,6 +134,7 @@ class AuthnDepsModule[K: str | StrEnum](DepsModule[K]):
             password_lifecycle=pl,
             api_key_lifecycle=akl,
             password_account_provisioning=pap,
+            api_key_verifier_overrides=api_key_overrides_keys,
         )
 
         merged: Deps[K] = Deps[K]()

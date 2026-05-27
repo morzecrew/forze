@@ -13,6 +13,8 @@ from forze.application.contracts.tenancy import (
 from forze.application.execution import ExecutionContext
 
 from ...adapters import TenantManagementAdapter, TenantResolverAdapter
+from ...adapters.local_resolver import LocalTenantResolver
+from forze_identity.local.config import LocalIdentityConfig
 from ...application.specs import principal_tenant_binding_spec, tenant_spec
 
 # ----------------------- #
@@ -37,6 +39,24 @@ class ConfigurableTenantResolver(TenantResolverDepPort):
             binding_qry=ctx.document.query(principal_tenant_binding_spec),
             tenant_qry=tenant_qry,
         )
+
+
+# ....................... #
+
+
+@final
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class ConfigurableLocalTenantResolver(TenantResolverDepPort):
+    """Build :class:`LocalTenantResolver` from a frozen local identity config."""
+
+    config: LocalIdentityConfig
+    """Static principal → tenant mapping."""
+
+    # ....................... #
+
+    def __call__(self, ctx: ExecutionContext) -> TenantResolverPort:
+        _ = ctx
+        return LocalTenantResolver(config=self.config)
 
 
 # ....................... #

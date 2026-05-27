@@ -90,6 +90,7 @@ Use them for:
 - `src/forze/`: core framework layers (application/domain/utils/base).
 - `src/forze_patterns/`: optional domain mixins and helpers (soft deletion, metadata, number id, creator id).
 - `src/forze_identity/`: identity plane (`authn/`, `authz/`, `tenancy/`, `oidc/` subpackages; import as `forze_identity.authn`, etc.).
+- `src/forze_identity/local/`: file/env API-key identity for demos (`LocalIdentityConfig`, `local_identity_deps`); not for production.
 - `src/forze_fastapi/`: FastAPI integration package.
 - `src/forze_postgres/`: Postgres integration package.
 - `src/forze_redis/`: Redis integration package.

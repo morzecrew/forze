@@ -972,7 +972,7 @@ dev = [
     { name = "dirty-equals" },
     { name = "hypothesis" },
     { name = "import-linter" },
-    { name = "mypy" },
+    { name = "mypy", extra = ["faster-cache"] },
     { name = "polyfactory" },
     { name = "pre-commit" },
     { name = "pytest" },
@@ -1066,7 +1066,7 @@ dev = [
     { name = "dirty-equals", specifier = ">=0.11" },
     { name = "hypothesis", specifier = ">=6.153.0" },
     { name = "import-linter", specifier = ">=2.10" },
-    { name = "mypy", specifier = ">=1.19.1" },
+    { name = "mypy", extras = ["faster-cache"], specifier = ">=1.19.1" },
     { name = "polyfactory", specifier = ">=3.3.0" },
     { name = "pre-commit", specifier = ">=4.5.1" },
     { name = "pytest", specifier = ">=9.0.3" },
@@ -2119,6 +2119,11 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/0f/4c/215a4eeb63cacc5f17f516691ea7285d11e249802b942476bff15922a314/mypy-2.1.0-cp314-cp314t-win_amd64.whl", hash = "sha256:b33b6cd332695bba180d55e717a79d3038e479a2c49cc5eb3d53603409b9a5d7", size = 12866622, upload-time = "2026-05-11T18:34:39.945Z" },
     { url = "https://files.pythonhosted.org/packages/4b/50/1043e1db5f455ffe4c9ab22747cd8ca2bc492b1e4f4e21b130a44ee2b217/mypy-2.1.0-cp314-cp314t-win_arm64.whl", hash = "sha256:4f910fe825376a7b66ef7ca8c98e5a149e8cd64c19ae71d84047a74ee060d4e6", size = 10610798, upload-time = "2026-05-11T18:36:31.444Z" },
     { url = "https://files.pythonhosted.org/packages/0d/2a/13ca1f292f6db1b98ff495ef3467736b331621c5917cad984b7043e7348d/mypy-2.1.0-py3-none-any.whl", hash = "sha256:a663814603a5c563fb87a4f96fb473eeb30d1f5a4885afcf44f9db000a366289", size = 2693302, upload-time = "2026-05-11T18:31:29.246Z" },
+]
+
+[package.optional-dependencies]
+faster-cache = [
+    { name = "orjson" },
 ]
 
 [[package]]

@@ -33,3 +33,5 @@ Access tokens issued by `forze_identity.authn` may include optional claim ``tid`
 ## Reference package
 
 `forze_identity.tenancy` provides example aggregates (`tenant_spec`, `principal_tenant_binding_spec`), `TenantResolverAdapter`, `TenantManagementAdapter`, `ConfigurableTenantResolver` / `ConfigurableTenantManagement`, and `TenancyDepsModule` to register resolver/management routes on the kernel `Deps`. Applications register matching document routes and wire `TenantResolverDepKey` / `TenantManagementDepKey` as needed.
+
+For demos without a tenant document store, use [`LocalTenantResolver`](../recipes/local-identity.md) with a shared [`LocalIdentityConfig`](../recipes/local-identity.md) (not for production).

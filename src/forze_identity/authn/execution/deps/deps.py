@@ -42,11 +42,13 @@ from ...resolvers import (
     JwtNativeUuidResolver,
     MappingTableResolver,
 )
+from forze_identity.local.config import LocalIdentityConfig
 from ...verifiers import (
     Argon2PasswordVerifier,
     ForzeJwtTokenVerifier,
     HmacApiKeyVerifier,
 )
+from ...verifiers.local_api_key import LocalApiKeyVerifier
 from .configs import AuthnSharedServices
 
 # ----------------------- #
@@ -135,6 +137,28 @@ class ConfigurableHmacApiKeyVerifier:
             api_key_svc=self.shared.api_key_svc,
             ak_qry=ctx.doc.query(api_key_account_spec),
         )
+
+
+# ....................... #
+
+
+@final
+@attrs.define(slots=True, frozen=True, kw_only=True)
+class ConfigurableLocalApiKeyVerifier:
+    """Build :class:`LocalApiKeyVerifier` from a frozen local identity config."""
+
+    config: LocalIdentityConfig
+    """Static API key mapping."""
+
+    # ....................... #
+
+    def __call__(
+        self,
+        ctx: ExecutionContext,
+        spec: AuthnSpec,
+    ) -> ApiKeyVerifierPort:
+        _ = ctx, spec
+        return LocalApiKeyVerifier(config=self.config)
 
 
 # ....................... #

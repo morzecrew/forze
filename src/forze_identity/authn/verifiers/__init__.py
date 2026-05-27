@@ -7,6 +7,7 @@ verifiers and reuse the resolvers from :mod:`forze_authn.resolvers`.
 from .argon2_password import Argon2PasswordVerifier
 from .forze_jwt_token import ForzeJwtTokenVerifier
 from .hmac_api_key import HmacApiKeyVerifier
+from .local_api_key import LocalApiKeyVerifier
 
 # ----------------------- #
 
@@ -14,4 +15,5 @@ __all__ = [
     "Argon2PasswordVerifier",
     "ForzeJwtTokenVerifier",
     "HmacApiKeyVerifier",
+    "LocalApiKeyVerifier",
 ]

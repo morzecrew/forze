@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Local identity (demo / MVP):** `forze_identity.local` (`LocalIdentityConfig`, JSON/env loaders), `LocalApiKeyVerifier`, `LocalTenantResolver`, `local_identity_deps()`, and `TenancyDepsModule.tenant_resolvers` overrides for file-backed API-key auth without document stores or kernel peppers. See [local identity recipe](pages/docs/recipes/local-identity.md).
 - **Document contracts:** `RowLockMode` (`False`, `True`, `"nowait"`, `"skip_locked"`) on query `for_update`; `select_cursor`; keyset stream methods `find_stream`, `project_stream`, and `select_stream`; coordinator post-write hydration (`hydrate_from_write`) when read and write share the same physical source and read fields are a subset of the domain model.
 - **Postgres document schema validation (tier 1):** startup checks for Pydantic↔column type compatibility, required-field nullability, tenant column presence/type/nullability when `tenant_aware`, and a warning when read-model fields are not on the write relation (read/write split).
 - **Postgres bookkeeping validation:** startup checks that `bookkeeping_strategy="database"` documents have UPDATE triggers on the write table; warns when `application` strategy coexists with bump triggers or when `history_enabled` relies on DB triggers.

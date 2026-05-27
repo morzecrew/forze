@@ -16,3 +16,6 @@ ISSUER_FORZE_PASSWORD: Final[str] = "forze:password_account"
 
 ISSUER_FORZE_API_KEY: Final[str] = "forze:api_key"
 """Stable issuer label for assertions produced by the HMAC API-key verifier."""
+
+ISSUER_FORZE_LOCAL_API_KEY: Final[str] = "forze:local_api_key"
+"""Stable issuer label for assertions produced by the local file/env API-key verifier."""

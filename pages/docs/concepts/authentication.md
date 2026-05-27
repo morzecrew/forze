@@ -95,5 +95,6 @@ Each seam has its own `DepKey` (`AuthnDepKey`, `PasswordVerifierDepKey`, `TokenV
 
 - [Recipe — Authn, authz, and tenancy with FastAPI](../recipes/authn-authz-tenancy-fastapi.md): boundary middleware, request binding, and OpenAPI alignment.
 - [Recipe — External IdPs over OIDC](../recipes/external-idp-oidc.md): wiring a generic OIDC verifier alongside a Forze resolver.
+- [Recipe — Local identity (demo / MVP)](../recipes/local-identity.md): file/env API keys for local development (not production).
 - [Integration — OIDC (`forze_identity.oidc`)](../integrations/oidc.md): JWKS, claim mappers, and key providers.
 - [Concept — Multi-tenancy](multi-tenancy.md): how `tenant_id` flows through the same pipeline.
