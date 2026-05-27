@@ -1,4 +1,4 @@
-"""Unit tests for ``forze_authn.execution`` dependency module and factories."""
+"""Unit tests for ``forze_identity.authn.execution`` dependency module and factories."""
 
 from __future__ import annotations
 
@@ -30,21 +30,21 @@ from forze.application.contracts.document import (
     DocumentQueryDepKey,
 )
 from forze.application.execution import Deps, ExecutionContext
-from forze_authn import (
+from forze_identity.authn import (
     Argon2PasswordVerifier,
     AuthnOrchestrator,
     ForzeJwtTokenVerifier,
     HmacApiKeyVerifier,
     JwtNativeUuidResolver,
 )
-from forze_authn.adapters import (
+from forze_identity.authn.adapters import (
     ApiKeyLifecycleAdapter,
     PasswordAccountProvisioningAdapter,
     PasswordLifecycleAdapter,
     TokenLifecycleAdapter,
 )
-from forze_authn.application.constants import AuthnResourceName
-from forze_authn.execution import (
+from forze_identity.authn.application.constants import AuthnResourceName
+from forze_identity.authn.execution import (
     AuthnDepsModule,
     AuthnKernelConfig,
     AuthnSharedServices,
@@ -59,7 +59,7 @@ from forze_authn.execution import (
     ConfigurableTokenLifecycle,
     build_authn_shared_services,
 )
-from forze_authn.services import PasswordConfig
+from forze_identity.authn.services import PasswordConfig
 
 # ----------------------- #
 

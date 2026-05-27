@@ -32,6 +32,6 @@ Skills are automatically available once installed. The agent will use them when 
 | **forze-storage-s3** | `StorageSpec`, `StoragePort`, `S3DepsModule`, tenant-aware buckets, lifecycle, and storage tests. |
 | **forze-messaging-streaming** | Queue, pub/sub, stream contracts, SQS/RabbitMQ wiring, Redis adapters, and mock messaging tests. |
 | **forze-temporal-workflows** | `WorkflowSpec`, Temporal deps, workflow command/query ports, lifecycle, context propagation, and tests. |
-| **forze-auth-tenancy-secrets** | Authn (verify-then-resolve, `AuthnSpec`, `AuthnDepsModule`), authz contracts, `TenancyDepsModule` and tenant ports, identity binding, tenant-aware routing, secrets, FastAPI resolvers, and external IdP wiring (`forze_oidc`). |
+| **forze-auth-tenancy-secrets** | Authn (verify-then-resolve, `AuthnSpec`, `AuthnDepsModule`), authz contracts, `TenancyDepsModule` and tenant ports, identity binding, tenant-aware routing, secrets, FastAPI resolvers, and external IdP wiring (`forze_identity.oidc`). |
 | **forze-graph-contracts** | Graph module/node/edge specs, graph refs, query/command ports, and custom graph adapter wiring. |
 | **forze-observability-errors** | Structured `CoreError` handling, adapter exception mapping, logging, call context, and FastAPI error responses. |

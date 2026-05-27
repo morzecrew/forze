@@ -13,7 +13,7 @@ import pytest
 pytestmark = pytest.mark.unit
 
 from forze.base.primitives import utcnow
-from forze_authn.services import (
+from forze_identity.authn.services import (
     AccessTokenConfig,
     AccessTokenService,
     ApiKeyConfig,

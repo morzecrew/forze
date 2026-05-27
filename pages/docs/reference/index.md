@@ -29,7 +29,7 @@ Start here to understand the building blocks:
 These pages cover the orchestration layer:
 
 - [Contracts](contracts.md) — protocol ports, specs, and dependency keys for all infrastructure concerns
-- [Authentication](authentication.md) — full authn contract surface (verifiers, resolvers, lifecycle, dep keys), `forze_authn` first-party stack, and `forze_oidc` integration surface
+- [Authentication](authentication.md) — full authn contract surface (verifiers, resolvers, lifecycle, dep keys), `forze_identity.authn` first-party stack, and `forze_identity.oidc` integration surface
 - [Execution](execution.md) — `ExecutionContext`, dependency injection, runtime lifecycle
 - [Middleware & Plans](middleware-plans.md) — stage hooks, transaction wrapping, operation plans, and the registry
 - [Composition & Mapping](composition.md) — facades, providers, DTO mapping pipelines, and paginated responses
@@ -49,7 +49,7 @@ A minimal aggregate definition using the core package:
         ReadDocument,
         BaseDTO,
     )
-    from forze_contrib.soft_deletion import SoftDeletionMixin
+    from forze_patterns.soft_deletion import SoftDeletionMixin
     from forze.application.contracts.cache import CacheSpec
     from forze.application.contracts.document import DocumentSpec
 

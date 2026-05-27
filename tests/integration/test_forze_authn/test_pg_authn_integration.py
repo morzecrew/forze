@@ -25,36 +25,36 @@ from forze.application.contracts.document import (
     DocumentQueryDepKey,
 )
 from forze.application.execution import Deps, ExecutionContext, InvocationMetadata
-from forze_authn import (
+from forze_identity.authn import (
     Argon2PasswordVerifier,
     AuthnOrchestrator,
     ForzeJwtTokenVerifier,
     HmacApiKeyVerifier,
     JwtNativeUuidResolver,
 )
-from forze_authn.adapters import (
+from forze_identity.authn.adapters import (
     ApiKeyLifecycleAdapter,
     PasswordAccountProvisioningAdapter,
     PasswordLifecycleAdapter,
     TokenLifecycleAdapter,
 )
-from forze_authn.application.constants import AuthnResourceName
-from forze_authn.application.specs import (
+from forze_identity.authn.application.constants import AuthnResourceName
+from forze_identity.authn.application.specs import (
     api_key_account_spec,
     password_account_spec,
     principal_spec,
     session_spec,
 )
-from forze_authn.domain.models.account import (
+from forze_identity.authn.domain.models.account import (
     CreateApiKeyAccountCmd,
     CreatePasswordAccountCmd,
 )
-from forze_authn.execution import (
+from forze_identity.authn.execution import (
     AuthnDepsModule,
     AuthnKernelConfig,
     build_authn_shared_services,
 )
-from forze_authn.services import (
+from forze_identity.authn.services import (
     AccessTokenService,
     ApiKeyConfig,
     ApiKeyService,

@@ -16,7 +16,7 @@ Read this when you wire authentication for a new route, integrate an external Id
 </div>
 
 1. **Boundary** — one or more single-source resolvers (`HeaderTokenAuthnIdentityResolver` / `HeaderApiKeyAuthnIdentityResolver` / `CookieTokenAuthnIdentityResolver`) extract raw credentials from the request and ask the configured `AuthnPort` to authenticate them. `ContextBindingMiddleware` accepts a `Sequence` of resolvers plus a `when_multiple_credentials` policy to fail closed on ambiguous credentials.
-2. **Orchestration** — `AuthnPort` (default implementation: `AuthnOrchestrator` from `forze_authn`) dispatches by credential family (`password`, `token`, `api_key`).
+2. **Orchestration** — `AuthnPort` (default implementation: `AuthnOrchestrator` from `forze_identity.authn`) dispatches by credential family (`password`, `token`, `api_key`).
 3. **Verification** — A `*VerifierPort` proves the credential is valid against its issuer (signature, hash, JWKS, etc.) and emits a `VerifiedAssertion` carrying `(issuer, subject, audience, issuer_tenant_hint, claims)`.
 4. **Resolution** — A `PrincipalResolverPort` maps the assertion to a canonical, principal-only `AuthnIdentity` with `UUID` `principal_id`.
 5. **Binding** — The boundary keeps the optional `issuer_tenant_hint` beside the identity long enough for tenancy resolution, then binds only the resolved `AuthnIdentity` onto `ExecutionContext` so handlers, document/tenancy ports, and authz checks read it via `ctx.inv.get_authn()`.
@@ -36,19 +36,19 @@ A `VerifiedAssertion` (see [`src/forze/application/contracts/authn/value_objects
 | `issued_at` / `expires_at` | Optional timestamps. |
 | `claims` | Opaque snapshot of all claims for resolvers and audit trails (not consumed by domain code). |
 
-`forze_authn` defines stable issuer labels for first-party sources (`ISSUER_FORZE_JWT`, `ISSUER_FORZE_PASSWORD`, `ISSUER_FORZE_API_KEY`); external IdPs use whatever the verifier received in `iss` (or another well-known field).
+`forze_identity.authn` defines stable issuer labels for first-party sources (`ISSUER_FORZE_JWT`, `ISSUER_FORZE_PASSWORD`, `ISSUER_FORZE_API_KEY`); external IdPs use whatever the verifier received in `iss` (or another well-known field).
 
 Verifiers never invent UUIDs and resolvers never re-validate signatures — keeping each side honest.
 
 ## Three resolver flavors
 
-`forze_authn` ships three first-party `PrincipalResolverPort` implementations that cover the common deployment shapes:
+`forze_identity.authn` ships three first-party `PrincipalResolverPort` implementations that cover the common deployment shapes:
 
 | Resolver | Best fit | Storage | Trust model |
 |----------|----------|---------|-------------|
-| [`JwtNativeUuidResolver`](https://github.com/morzecrew/forze/blob/main/src/forze_authn/resolvers/jwt_native_uuid.py) | First-party Forze JWTs (`ForzeJwtTokenVerifier`) and any token whose `subject` is already a UUID string. | None | Trusts the verifier's subject as the canonical principal id. |
-| [`DeterministicUuidResolver`](https://github.com/morzecrew/forze/blob/main/src/forze_authn/resolvers/deterministic_uuid.py) | Stateless mapping of an external subject to a stable Forze UUID; prototyping, read-only deployments. | None | Derives `principal_id = uuid4({"iss": issuer, "sub": subject})` via the deterministic helper in `forze.base.primitives`. |
-| [`MappingTableResolver`](https://github.com/morzecrew/forze/blob/main/src/forze_authn/resolvers/mapping_table.py) | Production SSO with admin overrides, account merging, or invitation-only flows. | `IdentityMapping` document spec | Looks up `(issuer, subject) -> principal_id`; optional just-in-time provisioning when `provision_on_first_sight=True`. |
+| [`JwtNativeUuidResolver`](https://github.com/morzecrew/forze/blob/main/src/forze_identity/authn/resolvers/jwt_native_uuid.py) | First-party Forze JWTs (`ForzeJwtTokenVerifier`) and any token whose `subject` is already a UUID string. | None | Trusts the verifier's subject as the canonical principal id. |
+| [`DeterministicUuidResolver`](https://github.com/morzecrew/forze/blob/main/src/forze_identity/authn/resolvers/deterministic_uuid.py) | Stateless mapping of an external subject to a stable Forze UUID; prototyping, read-only deployments. | None | Derives `principal_id = uuid4({"iss": issuer, "sub": subject})` via the deterministic helper in `forze.base.primitives`. |
+| [`MappingTableResolver`](https://github.com/morzecrew/forze/blob/main/src/forze_identity/authn/resolvers/mapping_table.py) | Production SSO with admin overrides, account merging, or invitation-only flows. | `IdentityMapping` document spec | Looks up `(issuer, subject) -> principal_id`; optional just-in-time provisioning when `provision_on_first_sight=True`. |
 
 Multiple resolvers can co-exist behind the same orchestrator on a per-route basis (selected via `AuthnSpec.resolver_profile` and the `resolvers` mapping on `AuthnDepsModule`).
 
@@ -57,7 +57,7 @@ Multiple resolvers can co-exist behind the same orchestrator on a per-route basi
 Internal `principal_id` and `tenant_id` are always `UUID`s, not opaque strings, for three reasons:
 
 1. **No vendor lock-in.** Domain, tenancy, and authz code never sees a Firebase UID or an OIDC URL — switching IdPs only means rewiring a verifier/resolver pair.
-2. **Stable cross-system references.** `AuthnIdentity.principal_id` aligns with `forze.application.contracts.authz.PrincipalRef` and any `forze_tenancy` binding row, so bindings outlive the IdP choice.
+2. **Stable cross-system references.** `AuthnIdentity.principal_id` aligns with `forze.application.contracts.authz.PrincipalRef` and any `forze_identity.tenancy` binding row, so bindings outlive the IdP choice.
 3. **Deterministic mapping when needed.** [`forze.base.primitives.uuid4`](https://github.com/morzecrew/forze/blob/main/src/forze/base/primitives/uuid.py) is **deterministic** when fed the same input — same string in, same UUID out. `DeterministicUuidResolver` uses this to convert any external subject into a stable internal id without a database round-trip; `MappingTableResolver` mints a fresh UUID once and stores it for explicit account ownership.
 
 External IdPs that expose UUID subjects (e.g. internal SSO that already uses UUIDs) can use `JwtNativeUuidResolver` directly; everything else picks `DeterministicUuidResolver` or `MappingTableResolver` based on whether account management needs persistent rows.
@@ -89,11 +89,11 @@ api_authn = AuthnSpec(
 
 ## Routing and dependency keys
 
-Each seam has its own `DepKey` (`AuthnDepKey`, `PasswordVerifierDepKey`, `TokenVerifierDepKey`, `ApiKeyVerifierDepKey`, `PrincipalResolverDepKey`). `AuthnDepsModule` from `forze_authn` registers a default first-party stack per route, plus optional overrides for verifiers and resolvers. See [Reference: Authentication contracts](../reference/authentication.md) for the full surface and [Recipe: External IdPs over OIDC](../recipes/external-idp-oidc.md) for an end-to-end wiring example.
+Each seam has its own `DepKey` (`AuthnDepKey`, `PasswordVerifierDepKey`, `TokenVerifierDepKey`, `ApiKeyVerifierDepKey`, `PrincipalResolverDepKey`). `AuthnDepsModule` from `forze_identity.authn` registers a default first-party stack per route, plus optional overrides for verifiers and resolvers. See [Reference: Authentication contracts](../reference/authentication.md) for the full surface and [Recipe: External IdPs over OIDC](../recipes/external-idp-oidc.md) for an end-to-end wiring example.
 
 ## Cross-links
 
 - [Recipe — Authn, authz, and tenancy with FastAPI](../recipes/authn-authz-tenancy-fastapi.md): boundary middleware, request binding, and OpenAPI alignment.
 - [Recipe — External IdPs over OIDC](../recipes/external-idp-oidc.md): wiring a generic OIDC verifier alongside a Forze resolver.
-- [Integration — OIDC (`forze_oidc`)](../integrations/oidc.md): JWKS, claim mappers, and key providers.
+- [Integration — OIDC (`forze_identity.oidc`)](../integrations/oidc.md): JWKS, claim mappers, and key providers.
 - [Concept — Multi-tenancy](multi-tenancy.md): how `tenant_id` flows through the same pipeline.

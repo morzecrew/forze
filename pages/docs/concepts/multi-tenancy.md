@@ -10,7 +10,7 @@ Typical HTTP flow:
 2. Resolve `TenantIdentity` via `TenantIdentityResolver`: validate optional issuer and header tenant hints against `TenantResolverPort.resolve_from_principal` when registered. The resolver is authoritative; hints never outrank principal membership.
 3. `ExecutionContext.inv.bind` attaches both so adapters can call `ctx.inv.get_tenant()`.
 
-If credential validation reads **tenant-scoped** document ports (`tenant_aware=True`) before step 2 completes, bootstrap can deadlock. Keep **authentication document routes** (`AUTHN_TENANT_UNAWARE_DOCUMENT_SPEC_NAMES` in `forze_authn.application`) on **tenant-unaware** stores or global registry clients.
+If credential validation reads **tenant-scoped** document ports (`tenant_aware=True`) before step 2 completes, bootstrap can deadlock. Keep **authentication document routes** (`AUTHN_TENANT_UNAWARE_DOCUMENT_SPEC_NAMES` in `forze_identity.authn.application`) on **tenant-unaware** stores or global registry clients.
 
 ## Postgres isolation modes
 
@@ -28,8 +28,8 @@ See [Postgres integration](../integrations/postgres.md) for wiring and troublesh
 
 ## Optional JWT tenant claim
 
-Access tokens issued by `forze_authn` may include optional claim ``tid`` (UUID string). On verification it becomes `issuer_tenant_hint` on the boundary authn result; it does not become canonical tenant context by itself. When tokens are explicitly issued with tenant metadata, refresh sessions persist that `tenant_id`.
+Access tokens issued by `forze_identity.authn` may include optional claim ``tid`` (UUID string). On verification it becomes `issuer_tenant_hint` on the boundary authn result; it does not become canonical tenant context by itself. When tokens are explicitly issued with tenant metadata, refresh sessions persist that `tenant_id`.
 
 ## Reference package
 
-`forze_tenancy` provides example aggregates (`tenant_spec`, `principal_tenant_binding_spec`), `TenantResolverAdapter`, `TenantManagementAdapter`, `ConfigurableTenantResolver` / `ConfigurableTenantManagement`, and `TenancyDepsModule` to register resolver/management routes on the kernel `Deps`. Applications register matching document routes and wire `TenantResolverDepKey` / `TenantManagementDepKey` as needed.
+`forze_identity.tenancy` provides example aggregates (`tenant_spec`, `principal_tenant_binding_spec`), `TenantResolverAdapter`, `TenantManagementAdapter`, `ConfigurableTenantResolver` / `ConfigurableTenantManagement`, and `TenancyDepsModule` to register resolver/management routes on the kernel `Deps`. Applications register matching document routes and wire `TenantResolverDepKey` / `TenantManagementDepKey` as needed.

@@ -1,7 +1,7 @@
 from pydantic import field_validator
 
 from forze.domain.models import BaseDTO, CoreModel
-from forze_contrib.base.types import LongString, String
+from forze_patterns.base.types import LongString, String
 
 # ----------------------- #
 

@@ -25,7 +25,7 @@ Every document aggregate typically defines four model types:
 | **Read model** | `ReadDocument` | Frozen projection for queries |
 
 ```python
-from forze_contrib.soft_deletion import SoftDeletionMixin
+from forze_patterns.soft_deletion import SoftDeletionMixin
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
 
 class Project(SoftDeletionMixin, Document):
@@ -56,11 +56,11 @@ class ProjectReadModel(ReadDocument):
 |-------|------|----------|
 | `SoftDeletionMixin` | `is_deleted` | Soft-delete support |
 | `NumberIdMixin` | `number_id` | Human-readable IDs (combine with `NumberIdStep` in mapping) |
-| `CreatorIdMixin` (`forze_contrib.creator_id`) | `creator_id` | Audit (`CreatorIdMappingStep`) |
-| `MetadataMixin` (`forze_contrib.metadata`) | `name`, `display_name`, … | Named entities |
+| `CreatorIdMixin` (`forze_patterns.creator_id`) | `creator_id` | Audit (`CreatorIdMappingStep`) |
+| `MetadataMixin` (`forze_patterns.metadata`) | `name`, `display_name`, … | Named entities |
 
 ```python
-from forze_contrib.number_id import NumberIdCreateCmdMixin, NumberIdMixin, SoftDeletionMixin
+from forze_patterns.number_id import NumberIdCreateCmdMixin, NumberIdMixin, SoftDeletionMixin
 from forze.domain.models import CreateDocumentCmd, Document
 
 class Ticket(NumberIdMixin, SoftDeletionMixin, Document):

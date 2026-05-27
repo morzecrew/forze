@@ -164,7 +164,7 @@ include = [
 [tool.hatch.build.targets.wheel]
 packages = [
     "src/forze",
-    "src/forze_contrib",
+    "src/forze_patterns",
     "src/forze_fastapi",
     "src/forze_mock",
     "src/forze_mongo",
@@ -176,10 +176,7 @@ packages = [
     "src/forze_gcs",
     "src/forze_bigquery",
     "src/forze_clickhouse",
-    "src/forze_authn",
-    "src/forze_authz",
-    "src/forze_oidc",
-    "src/forze_tenancy",
+    "src/forze_identity",
     "src/forze_socketio",
     "src/forze_sqs",
     "src/forze_temporal",
@@ -286,7 +283,7 @@ disable_error_code = ["import-untyped"]
 [tool.importlinter]
 root_packages = [
     "forze",
-    "forze_contrib",
+    "forze_patterns",
     "forze_fastapi",
     "forze_mock",
     "forze_postgres",
@@ -301,10 +298,7 @@ root_packages = [
     "forze_firestore",
     "forze_rabbitmq",
     "forze_sqs",
-    "forze_authn",
-    "forze_authz",
-    "forze_oidc",
-    "forze_tenancy",
+    "forze_identity",
     "forze_secrets",
     "forze_vault",
 ]
@@ -368,7 +362,7 @@ as_packages = true
 [tool.vulture]
 paths = [
     "src/forze",
-    "src/forze_contrib",
+    "src/forze_patterns",
     "src/forze_fastapi",
     "src/forze_mock",
     "src/forze_postgres",
@@ -383,10 +377,7 @@ paths = [
     "src/forze_firestore",
     "src/forze_rabbitmq",
     "src/forze_sqs",
-    "src/forze_authn",
-    "src/forze_authz",
-    "src/forze_oidc",
-    "src/forze_tenancy",
+    "src/forze_identity",
     "src/forze_secrets",
     "src/forze_vault",
 ]
@@ -407,7 +398,7 @@ mi_min = "B"
 [tool.deptry]
 known_first_party = [
     "forze",
-    "forze_contrib",
+    "forze_patterns",
     "forze_fastapi",
     "forze_mock",
     "forze_postgres",
@@ -422,10 +413,7 @@ known_first_party = [
     "forze_firestore",
     "forze_rabbitmq",
     "forze_sqs",
-    "forze_authn",
-    "forze_authz",
-    "forze_oidc",
-    "forze_tenancy",
+    "forze_identity",
     "forze_secrets",
     "forze_vault",
 ]

@@ -1,4 +1,4 @@
-"""Pytest configuration for ``forze_authz`` integration tests."""
+"""Pytest configuration for ``forze_identity.authz`` integration tests."""
 
 import pytest
 import pytest_asyncio
@@ -25,7 +25,7 @@ def _ensure_docker_available() -> None:
 
 @pytest.fixture(scope="session")
 def postgres_container():
-    """Postgres container (same pattern as ``test_forze_authn``)."""
+    """Postgres container (same pattern as ``test_forze_identity.authn``)."""
     _ensure_docker_available()
     with PostgresContainer(
         image="ghcr.io/morzecrew/postgres:18", driver="psycopg"

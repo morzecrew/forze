@@ -1,4 +1,4 @@
-from forze_oidc._compat import require_oidc
+from ._compat import require_oidc
 
 require_oidc()
 

@@ -1,4 +1,4 @@
-"""Unit tests for ``forze_authz.execution`` dependency wiring."""
+"""Unit tests for ``forze_identity.authz.execution`` dependency wiring."""
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ from forze.application.contracts.authz import (
     GrantQueryDepKey,
 )
 from forze.application.execution import Deps, ExecutionContext
-from forze_authz.execution import (
+from forze_identity.authz.execution import (
     AuthzDepsModule,
     AuthzKernelConfig,
     ConfigurableAuthzDecision,
@@ -61,8 +61,8 @@ class TestConfigurableRuntimeFactory:
             DocumentCommandDepKey,
             DocumentQueryDepKey,
         )
-        from forze_authz.adapters.authorization import AuthzDecisionAdapter
-        from forze_authz.application.constants import AuthzResourceName
+        from forze_identity.authz.adapters.authorization import AuthzDecisionAdapter
+        from forze_identity.authz.application.constants import AuthzResourceName
 
         def factory(ctx: object, spec: object) -> MagicMock:
             port = MagicMock()

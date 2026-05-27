@@ -59,10 +59,10 @@ deps_plan = DepsPlan.from_modules(
 
 Alternatively, a single callable module may return `Deps.merge(...)` — see [`pages/docs/getting-started.md`](../../pages/docs/getting-started.md).
 
-Merge optional integration modules the same way — for example `TenancyDepsModule` from `forze_tenancy.execution` registers `TenantResolverDepKey` / `TenantManagementDepKey` routes for document-backed tenant resolution (see [`pages/docs/concepts/multi-tenancy.md`](../../pages/docs/concepts/multi-tenancy.md)):
+Merge optional integration modules the same way — for example `TenancyDepsModule` from `forze_identity.tenancy.execution` registers `TenantResolverDepKey` / `TenantManagementDepKey` routes for document-backed tenant resolution (see [`pages/docs/concepts/multi-tenancy.md`](../../pages/docs/concepts/multi-tenancy.md)):
 
 ```python
-from forze_tenancy.execution import TenancyDepsModule
+from forze_identity.tenancy.execution import TenancyDepsModule
 
 deps_plan = DepsPlan.from_modules(
     PostgresDepsModule(...),

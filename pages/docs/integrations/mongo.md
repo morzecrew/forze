@@ -86,7 +86,7 @@ Kernel `DocumentSpec` names must match keys in `MongoDepsModule.rw_documents` / 
 
     :::python
     from forze.application.contracts.document import DocumentSpec
-    from forze_contrib.soft_deletion import SoftDeletionMixin
+    from forze_patterns.soft_deletion import SoftDeletionMixin
     from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
 
 

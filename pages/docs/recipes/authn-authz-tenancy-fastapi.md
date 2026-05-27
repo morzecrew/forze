@@ -25,7 +25,7 @@ flowchart TB
 ## With tenancy
 
 - Resolve tenant with `TenantIdentityResolver` (validates optional issuer `tid` and optional header hint against `TenantResolverPort`; the resolver is authoritative and hints never outrank it).
-- Keep **authentication document routes** on **tenant-unaware** document clients until `TenantIdentity` is known (see `AUTHN_TENANT_UNAWARE_DOCUMENT_SPEC_NAMES` in `forze_authn.application` and [Multi-tenancy](../concepts/multi-tenancy.md)).
+- Keep **authentication document routes** on **tenant-unaware** document clients until `TenantIdentity` is known (see `AUTHN_TENANT_UNAWARE_DOCUMENT_SPEC_NAMES` in `forze_identity.authn.application` and [Multi-tenancy](../concepts/multi-tenancy.md)).
 - Pass `AuthzScope(tenant_id=ctx.inv.get_tenant().tenant_id)` into decision and scoping requests when your policy store is partitioned.
 
 ## Credential sources on the boundary
@@ -111,7 +111,7 @@ metadata = {
 # Pass metadata into build_http_endpoint_spec(..., metadata=metadata) for custom routes.
 ```
 
-Wire `forze_authz` via `AuthzDepsModule` (`decision`, `scope`, `grant_query` routes) and document-backed policy stores — see [Authorization reference](../reference/authorization.md) and [Authentication reference](../reference/authentication.md).
+Wire `forze_identity.authz` via `AuthzDepsModule` (`decision`, `scope`, `grant_query` routes) and document-backed policy stores — see [Authorization reference](../reference/authorization.md) and [Authentication reference](../reference/authentication.md).
 
 ## Generated routes and default features
 
@@ -231,7 +231,7 @@ attach_authn_endpoints(
 
 Password login uses `application/x-www-form-urlencoded` so first-party login forms post directly. The matching `TokenTransportInputFeature` reads the refresh token from the configured transport on `/refresh`; the `TokenTransportOutputFeature` sets cookies on issue and clears them on logout.
 
-Logout and change-password are auto-protected by an `AuthnRequirement` derived from the access transport unless the caller explicitly supplies one in the `SimpleHttpEndpointSpec` for the endpoint. The password-login handler wired by `forze_authn` uses `AuthnOrchestrator`, which composes credential-family verifiers with a principal resolver — see [Authentication pipeline](../concepts/authentication.md). Treat the pre-built routes as a **starter kit**: add rate limiting, abuse protection, and logging in your application.
+Logout and change-password are auto-protected by an `AuthnRequirement` derived from the access transport unless the caller explicitly supplies one in the `SimpleHttpEndpointSpec` for the endpoint. The password-login handler wired by `forze_identity.authn` uses `AuthnOrchestrator`, which composes credential-family verifiers with a principal resolver — see [Authentication pipeline](../concepts/authentication.md). Treat the pre-built routes as a **starter kit**: add rate limiting, abuse protection, and logging in your application.
 
 The `ctx_dep` callable must be annotated with a concrete return type (for example `def get_ctx() -> ExecutionContext:`) so FastAPI treats it as a dependency rather than trying to parse `ExecutionContext` from the request.
 

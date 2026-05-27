@@ -1,4 +1,4 @@
-"""Unit tests for ``forze_tenancy.execution`` dependency wiring."""
+"""Unit tests for ``forze_identity.tenancy.execution`` dependency wiring."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ from forze.application.contracts.tenancy import (
     TenantResolverDepKey,
 )
 from forze.application.execution import Deps
-from forze_tenancy.execution import TenancyDepsModule
+from forze_identity.tenancy.execution import TenancyDepsModule
 
 
 class TestTenancyDepsModule:

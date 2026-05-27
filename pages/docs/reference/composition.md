@@ -105,4 +105,4 @@ Hub and federated search use `build_hub_search_registry` and `build_federated_se
 
 ## DTO mapping
 
-The mapping pipeline transforms incoming DTOs before they reach the handler. `PydanticPipelineMapperFactory` maps a Pydantic source model to an output DTO; optional `MappingStep`s inject computed fields such as `number_id` or `creator_id` from `forze_contrib`.
+The mapping pipeline transforms incoming DTOs before they reach the handler. `PydanticPipelineMapperFactory` maps a Pydantic source model to an output DTO; optional `MappingStep`s inject computed fields such as `number_id` or `creator_id` from `forze_patterns`.

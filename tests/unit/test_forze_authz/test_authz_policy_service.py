@@ -1,4 +1,4 @@
-"""Unit tests for :class:`~forze_authz.services.policy.AuthzPolicyService`."""
+"""Unit tests for :class:`~forze_identity.authz.services.policy.AuthzPolicyService`."""
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ from forze.application.contracts.authz import (
 
 pytestmark = pytest.mark.unit
 
-from forze_authz.services.policy import AuthzPolicyService
+from forze_identity.authz.services.policy import AuthzPolicyService
 
 
 def test_decide_matches_permission_key() -> None:

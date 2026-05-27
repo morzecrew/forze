@@ -5,8 +5,8 @@ Use this recipe when an external identity provider (Casdoor, Firebase Auth, Auth
 ## Ingredients
 
 - The [authentication pipeline](../concepts/authentication.md) (verify-then-resolve seam).
-- `forze_authn` for `AuthnDepsModule`, `AuthnKernelConfig`, the document specs, and the resolver factories.
-- `forze_oidc` for the generic OIDC `TokenVerifierPort` (`pip install forze[oidc]`).
+- `forze_identity.authn` for `AuthnDepsModule`, `AuthnKernelConfig`, the document specs, and the resolver factories.
+- `forze_identity.oidc` for the generic OIDC `TokenVerifierPort` (`pip install forze[oidc]`).
 - A document storage integration that exposes `identity_mapping_spec` (any `forze` document adapter; the spec must be wired to a tenant-unaware store).
 - A FastAPI app with `ContextBindingMiddleware` (or any other boundary that resolves credentials).
 
@@ -21,7 +21,7 @@ Use this recipe when an external identity provider (Casdoor, Firebase Auth, Auth
 
 ## Configurable factories
 
-Wrap `OidcTokenVerifier` and the resolver in `Configurable*` factories the same way `forze_authn` does:
+Wrap `OidcTokenVerifier` and the resolver in `Configurable*` factories the same way `forze_identity.authn` does:
 
 ```python
 from typing import final
@@ -30,7 +30,7 @@ import attrs
 
 from forze.application.contracts.authn import AuthnSpec, TokenVerifierPort
 from forze.application.execution import ExecutionContext
-from forze_oidc import JwksKeyProvider, OidcClaimMapper, OidcTokenVerifier
+from forze_identity.oidc import JwksKeyProvider, OidcClaimMapper, OidcTokenVerifier
 
 
 @final
@@ -55,7 +55,7 @@ class ConfigurableOidcTokenVerifier:
         )
 ```
 
-`forze_authn` already ships `ConfigurableMappingTableResolver` and `ConfigurableDeterministicUuidResolver`; reuse them directly.
+`forze_identity.authn` already ships `ConfigurableMappingTableResolver` and `ConfigurableDeterministicUuidResolver`; reuse them directly.
 
 When `tenant_claim` is set, the mapped claim becomes `issuer_tenant_hint` on the boundary authn result. Combine it with `TenantIdentityResolver` plus a registered `TenantResolverPort` if you want authoritative tenant scoping; the hint alone does not define the effective tenant.
 
@@ -63,12 +63,12 @@ When `tenant_claim` is set, the mapped claim becomes `issuer_tenant_hint` on the
 
 ```python
 from forze.application.execution import DepsPlan
-from forze_authn import (
+from forze_identity.authn import (
     AuthnDepsModule,
     AuthnKernelConfig,
     ConfigurableMappingTableResolver,
 )
-from forze_oidc import JwksKeyProvider
+from forze_identity.oidc import JwksKeyProvider
 
 ROUTE = "api"
 

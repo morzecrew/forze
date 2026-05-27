@@ -1,6 +1,6 @@
 import pytest
 
-from forze_contrib.number_id import (
+from forze_patterns.number_id import (
     NumberIdCreateCmdMixin,
     NumberIdMixin,
     NumberIdUpdateCmdMixin,

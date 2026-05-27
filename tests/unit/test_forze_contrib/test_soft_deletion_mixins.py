@@ -3,8 +3,8 @@ import pytest
 
 
 from forze.base.primitives import JsonDict
-from forze_contrib.soft_deletion import SoftDeletionMixin
-from forze_contrib.soft_deletion.constants import SOFT_DELETE_FIELD
+from forze_patterns.soft_deletion import SoftDeletionMixin
+from forze_patterns.soft_deletion.constants import SOFT_DELETE_FIELD
 
 class SoftDoc(SoftDeletionMixin): ...
 

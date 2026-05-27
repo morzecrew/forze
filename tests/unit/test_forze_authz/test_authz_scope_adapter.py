@@ -22,10 +22,10 @@ from forze.application.contracts.document import DocumentSpec
 from forze.application.contracts.authn import AuthnIdentity
 from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.execution import Deps, ExecutionContext, InvocationMetadata
-from forze_authz.adapters.scoping import AuthzScopeAdapter
-from forze_authz.domain.models.policy_principal import ReadPolicyPrincipal
-from forze_authz.services.grants import AuthzGrantResolver
-from forze_authz.services.policy import AuthzPolicyService
+from forze_identity.authz.adapters.scoping import AuthzScopeAdapter
+from forze_identity.authz.domain.models.policy_principal import ReadPolicyPrincipal
+from forze_identity.authz.services.grants import AuthzGrantResolver
+from forze_identity.authz.services.policy import AuthzPolicyService
 
 pytestmark = pytest.mark.unit
 

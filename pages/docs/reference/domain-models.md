@@ -210,7 +210,7 @@ Reusable domain concerns composed via multiple inheritance. Each mixin adds a fo
 Adds an `is_deleted` boolean and a validator that blocks updates to soft-deleted documents (except toggling the flag itself):
 
     :::python
-    from forze_contrib.soft_deletion import SoftDeletionMixin
+    from forze_patterns.soft_deletion import SoftDeletionMixin
 
     class Project(SoftDeletionMixin, Document):
         title: str
@@ -221,12 +221,12 @@ Once `is_deleted` is `True`, updating any field other than `is_deleted` raises `
 |-------|------|---------|
 | `is_deleted` | `bool` | `False` |
 
-### MetadataMixin (`forze_contrib.metadata`)
+### MetadataMixin (`forze_patterns.metadata`)
 
 Adds a required `name` and optional `display_name` and `description`:
 
     :::python
-    from forze_contrib.metadata import (
+    from forze_patterns.metadata import (
         MetadataCreateCmdMixin,
         MetadataMixin,
         MetadataUpdateCmdMixin,
@@ -241,12 +241,12 @@ Adds a required `name` and optional `display_name` and `description`:
     class UpdateWorkspaceCmd(MetadataUpdateCmdMixin, BaseDTO):
         pass
 
-### NumberIdMixin (`forze_contrib.number_id`)
+### NumberIdMixin (`forze_patterns.number_id`)
 
 Adds a required positive integer `number_id` for human-readable identification. Typically populated by a counter adapter during the create mapping step:
 
     :::python
-    from forze_contrib.number_id import NumberIdCreateCmdMixin, NumberIdMixin
+    from forze_patterns.number_id import NumberIdCreateCmdMixin, NumberIdMixin
 
     class Ticket(NumberIdMixin, Document):
         title: str
@@ -254,12 +254,12 @@ Adds a required positive integer `number_id` for human-readable identification. 
     class CreateTicketCmd(NumberIdCreateCmdMixin, CreateDocumentCmd):
         title: str
 
-### CreatorIdMixin (`forze_contrib.creator_id`)
+### CreatorIdMixin (`forze_patterns.creator_id`)
 
 Adds a frozen `creator_id` field (UUID). Typically injected by a mapping step that reads the current actor context:
 
     :::python
-    from forze_contrib.creator_id import CreatorIdCreateCmdMixin, CreatorIdMixin
+    from forze_patterns.creator_id import CreatorIdCreateCmdMixin, CreatorIdMixin
 
     class Comment(CreatorIdMixin, Document):
         body: str

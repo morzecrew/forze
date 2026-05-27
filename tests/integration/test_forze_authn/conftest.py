@@ -1,4 +1,4 @@
-"""Pytest configuration for ``forze_authn`` integration tests."""
+"""Pytest configuration for ``forze_identity.authn`` integration tests."""
 
 import pytest
 import pytest_asyncio

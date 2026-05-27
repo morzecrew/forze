@@ -35,15 +35,15 @@ Authentication is split into two seams:
 1. **Verifier** (`PasswordVerifierPort`, `TokenVerifierPort`, `ApiKeyVerifierPort`) — vendor-specific; proves the credential and emits a `VerifiedAssertion(issuer, subject, aud, tenant_hint, claims)`.
 2. **Resolver** (`PrincipalResolverPort`) — vendor-agnostic; turns the assertion into a canonical `AuthnIdentity(principal_id: UUID, tenant_id: UUID | None)`.
 
-`AuthnPort` (`AuthnOrchestrator` from `forze_authn`) composes them per credential family and gates each `authenticate_with_*` call by `AuthnSpec.enabled_methods`.
+`AuthnPort` (`AuthnOrchestrator` from `forze_identity.authn`) composes them per credential family and gates each `authenticate_with_*` call by `AuthnSpec.enabled_methods`.
 
-`forze_authn` ships:
+`forze_identity.authn` ships:
 
 - Verifiers — `Argon2PasswordVerifier`, `ForzeJwtTokenVerifier`, `HmacApiKeyVerifier`.
 - Resolvers — `JwtNativeUuidResolver` (subject is already a UUID), `DeterministicUuidResolver` (`uuid4({"iss": ..., "sub": ...})`), `MappingTableResolver` (document-backed registry with optional just-in-time provisioning).
 - `AuthnOrchestrator` and the `Configurable*` factories that compose them through the dep keys.
 
-External IdPs (`forze_oidc`, `forze_firebase_auth`, …) implement only `TokenVerifierPort` and reuse a Forze resolver — no core contract changes.
+External IdPs (`forze_identity.oidc`, `forze_firebase_auth`, …) implement only `TokenVerifierPort` and reuse a Forze resolver — no core contract changes.
 
 See [`pages/docs/concepts/authentication.md`](../../pages/docs/concepts/authentication.md) for the full architectural rationale.
 
@@ -101,7 +101,7 @@ identity = await authn.authenticate_with_password(
 ## AuthnDepsModule wiring
 
 ```python
-from forze_authn import (
+from forze_identity.authn import (
     AuthnDepsModule,
     AuthnKernelConfig,
     ConfigurableMappingTableResolver,
@@ -127,14 +127,14 @@ authn_module = AuthnDepsModule(
 
 Routes without verifier/resolver overrides fall back to the first-party defaults (`ForzeJwtTokenVerifier` + `JwtNativeUuidResolver`). Lifecycle / provisioning sets are independent of `authn` and may be empty.
 
-## External IdPs (forze_oidc)
+## External IdPs (forze_identity.oidc)
 
-`forze_oidc` (extra `forze[oidc]`) provides `OidcTokenVerifier`, `JwksKeyProvider`, `StaticKeyProvider`, and `OidcClaimMapper`. Wrap the verifier in a routed factory and register it under `TokenVerifierDepKey` for the relevant routes; pair with `MappingTableResolver` (production SSO) or `DeterministicUuidResolver` (stateless prototyping).
+`forze_identity.oidc` (extra `forze[oidc]`) provides `OidcTokenVerifier`, `JwksKeyProvider`, `StaticKeyProvider`, and `OidcClaimMapper`. Wrap the verifier in a routed factory and register it under `TokenVerifierDepKey` for the relevant routes; pair with `MappingTableResolver` (production SSO) or `DeterministicUuidResolver` (stateless prototyping).
 
 ```python
 from forze.application.contracts.authn import AuthnSpec, TokenVerifierPort
 from forze.application.execution import ExecutionContext
-from forze_oidc import JwksKeyProvider, OidcClaimMapper, OidcTokenVerifier
+from forze_identity.oidc import JwksKeyProvider, OidcClaimMapper, OidcTokenVerifier
 
 
 @final
@@ -162,11 +162,11 @@ See [`pages/docs/recipes/external-idp-oidc.md`](../../pages/docs/recipes/externa
 
 ## Authn document specs
 
-`forze_authn` exposes five `DocumentSpec`s (`principal_spec`, `password_account_spec`, `api_key_account_spec`, `session_spec`, `identity_mapping_spec`). All five are members of `AUTHN_TENANT_UNAWARE_DOCUMENT_SPEC_NAMES` and must be wired to **tenant-unaware** document stores so authentication can run before `TenantIdentity` is bound. `MappingTableResolver` additionally forbids cache and history on `identity_mapping_spec`.
+`forze_identity.authn` exposes five `DocumentSpec`s (`principal_spec`, `password_account_spec`, `api_key_account_spec`, `session_spec`, `identity_mapping_spec`). All five are members of `AUTHN_TENANT_UNAWARE_DOCUMENT_SPEC_NAMES` and must be wired to **tenant-unaware** document stores so authentication can run before `TenantIdentity` is bound. `MappingTableResolver` additionally forbids cache and history on `identity_mapping_spec`.
 
 ## Authz
 
-`forze_authz` provides document-backed authorization (catalog, bindings, adapters for authz ports). `PrincipalRef` shares the `principal_id` UUID with `AuthnIdentity`, so authz bindings outlive the IdP choice.
+`forze_identity.authz` provides document-backed authorization (catalog, bindings, adapters for authz ports). `PrincipalRef` shares the `principal_id` UUID with `AuthnIdentity`, so authz bindings outlive the IdP choice.
 
 ## Tenancy and routed clients
 
@@ -178,10 +178,10 @@ For database-per-tenant Postgres routing, set `PostgresDepsModule.introspector_c
 
 ## Tenancy deps module
 
-`TenancyDepsModule` (`from forze_tenancy.execution import TenancyDepsModule`) registers `TenantResolverDepKey` and/or `TenantManagementDepKey` factories (`ConfigurableTenantResolver`, `ConfigurableTenantManagement`) for the route names you pass. Merge it into `DepsPlan.from_modules` alongside Postgres/Mongo and auth modules when tenant catalog documents drive `TenantResolverPort` / `TenantManagementPort`.
+`TenancyDepsModule` (`from forze_identity.tenancy.execution import TenancyDepsModule`) registers `TenantResolverDepKey` and/or `TenantManagementDepKey` factories (`ConfigurableTenantResolver`, `ConfigurableTenantManagement`) for the route names you pass. Merge it into `DepsPlan.from_modules` alongside Postgres/Mongo and auth modules when tenant catalog documents drive `TenantResolverPort` / `TenantManagementPort`.
 
 ```python
-from forze_tenancy.execution import TenancyDepsModule
+from forze_identity.tenancy.execution import TenancyDepsModule
 
 TenancyDepsModule(
     tenant_resolver={"main"},
@@ -211,7 +211,7 @@ Use secrets for credentials and routed client configuration; avoid putting secre
 2. **Passing tenant ids through every DTO for routing** — bind `TenantIdentity` and use tenant-aware adapters.
 3. **Hard-coding credentials in deps modules** — resolve via secrets/config.
 4. **Treating authz as domain-only state** — use authz ports for policy decisions that depend on external grants.
-5. **Forgetting authn document specs need storage wiring** — `forze_authn` and `forze_authz` specs are still `DocumentSpec`s; `identity_mapping_spec` must allow neither cache nor history.
+5. **Forgetting authn document specs need storage wiring** — `forze_identity.authn` and `forze_identity.authz` specs are still `DocumentSpec`s; `identity_mapping_spec` must allow neither cache nor history.
 6. **Storing external IdP subject strings as principal ids** — always go through a `PrincipalResolverPort` so internal identifiers stay UUID.
 7. **Re-validating tokens inside resolvers** — verification is the verifier's job; resolvers only translate `(issuer, subject, tenant_hint)`.
 8. **Using `AccessTokenCredentials.scheme` / `profile` as a security gate** — they are routing hints; the verifier's signature/claim checks are the boundary.
@@ -229,7 +229,7 @@ Use secrets for credentials and routed client configuration; avoid putting secre
 - [`src/forze/application/contracts/authz`](../../src/forze/application/contracts/authz)
 - [`src/forze/application/contracts/tenancy`](../../src/forze/application/contracts/tenancy)
 - [`src/forze/application/contracts/secrets`](../../src/forze/application/contracts/secrets)
-- [`src/forze_authn`](../../src/forze_authn)
-- [`src/forze_authz`](../../src/forze_authz)
-- [`src/forze_oidc`](../../src/forze_oidc)
-- [`src/forze_tenancy`](../../src/forze_tenancy)
+- [`src/forze_identity.authn`](../../src/forze_identity.authn)
+- [`src/forze_identity.authz`](../../src/forze_identity.authz)
+- [`src/forze_identity.oidc`](../../src/forze_identity.oidc)
+- [`src/forze_identity.tenancy`](../../src/forze_identity.tenancy)

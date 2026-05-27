@@ -8,8 +8,8 @@ from forze.application.handlers.document import GetDocument
 from forze.application.handlers.document.dto import DocumentIdDTO, DocumentIdRevDTO
 from pydantic import PositiveInt
 
-from forze_contrib.soft_deletion import DeleteDocument, RestoreDocument
-from forze_contrib.soft_deletion.models import (
+from forze_patterns.soft_deletion import DeleteDocument, RestoreDocument
+from forze_patterns.soft_deletion.models import (
     DocWithSoftDeletion,
     UpdateCmdWithSoftDeletion,
 )

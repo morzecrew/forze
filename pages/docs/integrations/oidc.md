@@ -1,13 +1,13 @@
-# OIDC Integration (`forze_oidc`)
+# OIDC Integration (`forze_identity.oidc`)
 
 ## Page opening
 
-`forze_oidc` is a generic OpenID Connect verifier package that implements the `TokenVerifierPort` seam introduced by the [authentication pipeline](../concepts/authentication.md). It is the reference for plugging external IdPs (generic OIDC providers, Casdoor, Firebase Auth, Auth0, internal SSO with a JWKS endpoint, etc.) into Forze without changing core contracts.
+`forze_identity.oidc` is a generic OpenID Connect verifier package that implements the `TokenVerifierPort` seam introduced by the [authentication pipeline](../concepts/authentication.md). It is the reference for plugging external IdPs (generic OIDC providers, Casdoor, Firebase Auth, Auth0, internal SSO with a JWKS endpoint, etc.) into Forze without changing core contracts.
 
 | Topic | Details |
 |------|---------|
 | What it provides | A generic `TokenVerifierPort` implementation (`OidcTokenVerifier`), a configurable `OidcClaimMapper`, and pluggable `SigningKeyProviderPort` implementations (`JwksKeyProvider`, `StaticKeyProvider`). |
-| Supported Forze contracts | `TokenVerifierDepKey` from `forze.application.contracts.authn`. Pairs with any `PrincipalResolverPort` (typically `MappingTableResolver` or `DeterministicUuidResolver` from `forze_authn`). |
+| Supported Forze contracts | `TokenVerifierDepKey` from `forze.application.contracts.authn`. Pairs with any `PrincipalResolverPort` (typically `MappingTableResolver` or `DeterministicUuidResolver` from `forze_identity.authn`). |
 | When to use it | Use when an external IdP issues OIDC-style JWTs (RS256/ES256/HS256) and you want Forze to consume them without leaking vendor specifics into domain or application code. |
 
 ## Installation
@@ -22,7 +22,7 @@ uv add 'forze[oidc]'
 | Required service | The IdP (issuer URL + JWKS URI). No local service runs. |
 | Local development dependency | None beyond the extra; tests use `StaticKeyProvider` to avoid network. |
 
-Importing any module from `forze_oidc` calls `require_oidc()` and raises a clear `RuntimeError("forze_oidc requires 'forze[oidc]' extra")` when the extra is missing.
+Importing any module from `forze_identity.oidc` calls `require_oidc()` and raises a clear `RuntimeError("forze_identity.oidc requires 'forze[oidc]' extra")` when the extra is missing.
 
 ## Minimal setup
 
@@ -31,7 +31,7 @@ Importing any module from `forze_oidc` calls `require_oidc()` and raises a clear
 `OidcTokenVerifier` accepts any `SigningKeyProviderPort`:
 
 ```python
-from forze_oidc import JwksKeyProvider, StaticKeyProvider
+from forze_identity.oidc import JwksKeyProvider, StaticKeyProvider
 
 jwks = JwksKeyProvider(
     jwks_uri="https://idp.example.com/.well-known/jwks.json",
@@ -50,7 +50,7 @@ hs_keys = StaticKeyProvider(key=b"some-shared-secret")
 `OidcClaimMapper` defaults follow the OIDC core spec (`iss`, `sub`, `aud`, `iat`, `exp`). Override the claim names when an IdP uses non-standard keys or to enable tenant resolution:
 
 ```python
-from forze_oidc import OidcClaimMapper
+from forze_identity.oidc import OidcClaimMapper
 
 # Default: issuer_tenant_hint stays None.
 default_mapper = OidcClaimMapper()
@@ -77,7 +77,7 @@ casdoor_mapper = OidcClaimMapper(tenant_claim="organization")
 ```python
 from datetime import timedelta
 
-from forze_oidc import OidcTokenVerifier
+from forze_identity.oidc import OidcTokenVerifier
 
 oidc_verifier = OidcTokenVerifier(
     key_provider=jwks,
@@ -113,7 +113,7 @@ import attrs
 from forze.application.contracts.authn import AuthnSpec, TokenVerifierPort
 from forze.application.execution import ExecutionContext
 
-from forze_oidc import JwksKeyProvider, OidcTokenVerifier
+from forze_identity.oidc import JwksKeyProvider, OidcTokenVerifier
 
 
 @final
@@ -162,7 +162,7 @@ Pass the mapping into `AuthnDepsModule(..., token_verifiers=token_verifiers)`. E
 Override the resolver per route via `AuthnDepsModule.resolvers`:
 
 ```python
-from forze_authn import ConfigurableMappingTableResolver
+from forze_identity.authn import ConfigurableMappingTableResolver
 
 resolvers = {
     "api": ConfigurableMappingTableResolver(provision_on_first_sight=True),
@@ -179,7 +179,7 @@ resolvers = {
 
 ## Testing
 
-`StaticKeyProvider` and `OidcClaimMapper` are inert; combined with `pyjwt`'s in-memory signing they cover unit tests without network access. See `tests/unit/test_forze_oidc/` for working examples.
+`StaticKeyProvider` and `OidcClaimMapper` are inert; combined with `pyjwt`'s in-memory signing they cover unit tests without network access. See `tests/unit/test_forze_identity.oidc/` for working examples.
 
 ## Cross-links
 

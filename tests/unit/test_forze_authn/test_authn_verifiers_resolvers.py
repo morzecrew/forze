@@ -28,12 +28,12 @@ from forze.application.contracts.authn import (
     VerifiedAssertion,
 )
 from forze.base.primitives import uuid4 as deterministic_uuid4
-from forze_authn import (
+from forze_identity.authn import (
     AuthnOrchestrator,
     DeterministicUuidResolver,
     JwtNativeUuidResolver,
 )
-from forze_authn.resolvers.deterministic_uuid import derive_principal_id
+from forze_identity.authn.resolvers.deterministic_uuid import derive_principal_id
 
 # ----------------------- #
 

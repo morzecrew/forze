@@ -22,7 +22,7 @@ This guide walks through building a working CRUD service with Forze from scratch
 Every aggregate starts with four model types: a **domain model**, a **read model**, a **create command**, and an **update command**.
 
     :::python
-    from forze_contrib.soft_deletion import SoftDeletionMixin
+    from forze_patterns.soft_deletion import SoftDeletionMixin
     from forze.domain.models import (
         BaseDTO,
         CreateDocumentCmd,
@@ -282,7 +282,7 @@ Optionally add a history table for audit trails:
         ExecutionRuntime,
         LifecyclePlan,
     )
-    from forze_contrib.soft_deletion import SoftDeletionMixin
+    from forze_patterns.soft_deletion import SoftDeletionMixin
     from forze.domain.models import (
         BaseDTO,
         CreateDocumentCmd,

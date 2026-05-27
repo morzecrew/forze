@@ -1,4 +1,4 @@
-"""Unit tests for the :mod:`forze_oidc` skeleton (claim mapper, key provider, verifier).
+"""Unit tests for the :mod:`forze_identity.oidc` skeleton (claim mapper, key provider, verifier).
 
 Demonstrates that the seam introduced by the strategic authn refactor lets a third-party
 IdP integration plug into the same dependency keys without touching core contracts.
@@ -21,8 +21,8 @@ import jwt
 
 from forze.application.contracts.authn import AccessTokenCredentials, VerifiedAssertion
 from forze.base.primitives import utcnow
-from forze_authn import DeterministicUuidResolver, MappingTableResolver
-from forze_oidc import (
+from forze_identity.authn import DeterministicUuidResolver, MappingTableResolver
+from forze_identity.oidc import (
     OidcClaimMapper,
     OidcTokenVerifier,
     StaticKeyProvider,

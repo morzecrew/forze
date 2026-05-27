@@ -1,4 +1,4 @@
-from forze_contrib.metadata import (
+from forze_patterns.metadata import (
     MetadataCreateCmdMixin,
     MetadataMixin,
     MetadataUpdateCmdMixin,

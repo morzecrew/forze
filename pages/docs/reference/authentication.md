@@ -1,6 +1,6 @@
 # Authentication contracts
 
-Reference for the authentication contract group (`forze.application.contracts.authn`) and the first-party document-backed implementation in `forze_authn`. For the architectural rationale, see [Authentication pipeline](../concepts/authentication.md). For an end-to-end OIDC example, see [External IdPs over OIDC](../recipes/external-idp-oidc.md).
+Reference for the authentication contract group (`forze.application.contracts.authn`) and the first-party document-backed implementation in `forze_identity.authn`. For the architectural rationale, see [Authentication pipeline](../concepts/authentication.md). For an end-to-end OIDC example, see [External IdPs over OIDC](../recipes/external-idp-oidc.md).
 
 ## Layout
 
@@ -15,8 +15,8 @@ Reference for the authentication contract group (`forze.application.contracts.au
 | `forze.application.contracts.authn.ports.provisioning` | `PasswordAccountProvisioningPort`. |
 | `forze.application.contracts.authn.specs` | `AuthnSpec`, `AuthnMethod`. |
 | `forze.application.contracts.authn.deps` | All dep keys (`AuthnDepKey`, verifier keys, resolver key, lifecycle keys, provisioning key). |
-| `forze_authn` | First-party orchestrator, verifiers, resolvers, configurable factories, `AuthnDepsModule`, `AuthnKernelConfig`, document specs. |
-| `forze_oidc` | Generic OIDC `TokenVerifierPort`, JWKS / claim helpers (separate package). |
+| `forze_identity.authn` | First-party orchestrator, verifiers, resolvers, configurable factories, `AuthnDepsModule`, `AuthnKernelConfig`, document specs. |
+| `forze_identity.oidc` | Generic OIDC `TokenVerifierPort`, JWKS / claim helpers (separate package). |
 
 All names continue to be importable from the package root (`from forze.application.contracts.authn import ...`); the submodule layout is informational.
 
@@ -77,7 +77,7 @@ Raw credential value objects accepted by the orchestrator:
 
 ### AuthnPort
 
-Orchestration facade; one method per credential family. Default implementation: `forze_authn.AuthnOrchestrator`. Each method returns `AuthnResult`, not bare `AuthnIdentity`, so the boundary can carry issuer-originated tenant hints into tenancy resolution without storing them on the canonical authenticated principal.
+Orchestration facade; one method per credential family. Default implementation: `forze_identity.authn.AuthnOrchestrator`. Each method returns `AuthnResult`, not bare `AuthnIdentity`, so the boundary can carry issuer-originated tenant hints into tenancy resolution without storing them on the canonical authenticated principal.
 
 | Method | Returns |
 |--------|---------|
@@ -165,7 +165,7 @@ All dep keys live in `forze.application.contracts.authn` (re-exported from `.dep
 
 Resolve from `ExecutionContext` with `ctx.deps.resolve_configurable(ctx, KEY, spec, route=spec.name)`.
 
-## forze_authn surface
+## forze_identity.authn surface
 
 ### AuthnOrchestrator
 
@@ -275,7 +275,7 @@ Stable issuer labels for first-party `VerifiedAssertion` outputs:
 
 External IdP integrations expose their own issuer labels (typically the verified `iss` claim).
 
-## forze_oidc surface
+## forze_identity.oidc surface
 
 See [Integration: OIDC](../integrations/oidc.md) for the wiring guide.
 

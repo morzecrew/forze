@@ -132,7 +132,7 @@ Kernel specification: model types, logical `name`, optional `history_enabled`, o
 
 Helper methods:
 
-- `supports_soft_delete()` — `True` when the domain model inherits from `forze_contrib.soft_deletion.SoftDeletionMixin`
+- `supports_soft_delete()` — `True` when the domain model inherits from `forze_patterns.soft_deletion.SoftDeletionMixin`
 - `supports_update()` — `True` when the update command has writable fields
 
 ### Dependency keys
@@ -535,7 +535,7 @@ Workflows are typed with **`WorkflowSpec`** (logical **`name`**, **`run`** invoc
 Execution identity is represented by `InvocationMetadata`, optional `AuthnIdentity`, and optional `TenantIdentity` on `ExecutionContext`.
 `AuthnPort` returns `AuthnResult` at the boundary, but only its principal-only `AuthnIdentity` is bound onto `ExecutionContext`; `TenantIdentity` carries the current `tenant_id`. Bind them via `ctx.inv.bind(metadata=..., authn=..., tenant=...)`.
 
-The full authentication contract surface — `AuthnPort`, the verifier and resolver ports, `AuthnSpec`, `VerifiedAssertion`, all dep keys, the `forze_authn` first-party stack, and `forze_oidc` — is documented on the dedicated [Authentication contracts](authentication.md) page. `forze_authz` provides catalog-backed RBAC helpers (`AuthzDepsModule`, policy principal and binding specs) on top of the same identity model. Both providers use regular document ports, so storage is selected by the existing document adapter wiring.
+The full authentication contract surface — `AuthnPort`, the verifier and resolver ports, `AuthnSpec`, `VerifiedAssertion`, all dep keys, the `forze_identity.authn` first-party stack, and `forze_identity.oidc` — is documented on the dedicated [Authentication contracts](authentication.md) page. `forze_identity.authz` provides catalog-backed RBAC helpers (`AuthzDepsModule`, policy principal and binding specs) on top of the same identity model. Both providers use regular document ports, so storage is selected by the existing document adapter wiring.
 
 ## Resolving ports
 

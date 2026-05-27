@@ -73,9 +73,9 @@ registry = (
 - **Sensitive reads** must call `AuthzScopePort.authorize_sensitive_resource` (or a dedicated guarded helper) before loading nested documents by id.
 - **Nested dispatch** inherits protection when child operations are covered by the same `OperationRegistry.patch(selector)` authz steps; parent permission alone is not enough.
 
-## Built-in backend (`forze_authz`)
+## Built-in backend (`forze_identity.authz`)
 
-`forze_authz` implements the contracts with document-backed catalogs (roles, permissions, groups, bindings) and `AuthzPolicyService` (permission-key match plus optional owner checks on `AuthzResource.attributes["owner_id"]`).
+`forze_identity.authz` implements the contracts with document-backed catalogs (roles, permissions, groups, bindings) and `AuthzPolicyService` (permission-key match plus optional owner checks on `AuthzResource.attributes["owner_id"]`).
 
 Wire with `AuthzDepsModule(kernel=AuthzKernelConfig(), decision={"main"}, scope={"main"}, …)` merged into kernel `Deps`, plus Postgres/Mongo document routes for authz resource names.
 

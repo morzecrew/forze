@@ -11,11 +11,11 @@ from forze.application.composition.document import (
 from forze.application.contracts.document import DocumentSpec
 from forze.application.execution.registry import OperationRegistry
 from forze.base.primitives import StrKeyNamespace
-from forze_contrib.soft_deletion.composition import (
+from forze_patterns.soft_deletion.composition import (
     SoftDeletionKernelOp,
     build_soft_deletion_registry,
 )
-from forze_contrib.soft_deletion.models import DocWithSoftDeletion
+from forze_patterns.soft_deletion.models import DocWithSoftDeletion
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
 
 from ..registry_helpers import handler_at, registry_has_handler

@@ -20,7 +20,7 @@ from forze.application.contracts.transaction.deps import TransactionManagerDepKe
 from forze.application.execution import Deps, ExecutionContext
 from forze.domain.constants import ID_FIELD
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
-from forze_contrib.soft_deletion.models import (
+from forze_patterns.soft_deletion.models import (
     DocWithSoftDeletion,
     UpdateCmdWithSoftDeletion,
 )
