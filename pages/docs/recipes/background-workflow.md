@@ -26,4 +26,4 @@ Use this recipe when a request should start long-running work and return before 
 
 ## Learn more
 
-See [Contracts and Adapters](../concepts/contracts-adapters.md) for workflow and queue ports, then read the integration page for the backend you choose.
+See [Contracts and Adapters](../concepts/contracts-adapters.md) for workflow and queue ports, then read the integration page for the backend you choose. For cron-style or delayed enqueue patterns, see [Scheduled queue jobs](scheduled-queue-jobs.md).

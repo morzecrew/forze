@@ -42,6 +42,7 @@ class ConfigurableRabbitMQQueueRead(QueueQueryDepPort):
             namespace=self.config.get("namespace"),
             tenant_aware=self.config.get("tenant_aware", False),
             tenant_provider=ctx.inv.get_tenant,
+            delayed_delivery=self.config.get("delayed_delivery", False),
         )
 
 
@@ -72,4 +73,5 @@ class ConfigurableRabbitMQQueueWrite(QueueCommandDepPort):
             namespace=self.config.get("namespace"),
             tenant_aware=self.config.get("tenant_aware", False),
             tenant_provider=ctx.inv.get_tenant,
+            delayed_delivery=self.config.get("delayed_delivery", False),
         )

@@ -39,11 +39,24 @@ acknowledge, and optionally requeue messages.
 | Import path | `from forze.application.contracts.queue import QueueCommandPort` |
 | Type parameters | `M`, the message payload model. |
 | Required methods | `enqueue`, `enqueue_many`. |
+| Optional enqueue kwargs | `type`, `key`, `enqueued_at` (metadata), `delay`, `not_before` (visibility). |
 | Returned values | Message id string or list of message ids. |
 | Common implementations | Mock, SQS, RabbitMQ. |
 | Related dependency keys | `QueueCommandDepKey`. |
 | Minimal example | `message_id = await queue.enqueue("orders", payload)` |
-| Related pages | [Contracts overview](../contracts.md). |
+| Related pages | [Contracts overview](../contracts.md), [Scheduled queue jobs](../../recipes/scheduled-queue-jobs.md). |
+
+### Delayed delivery
+
+`delay` and `not_before` control when a message becomes visible to consumers. They are mutually exclusive. `enqueued_at` is separate metadata stored on the message, not the visibility time.
+
+| Backend | Behavior | Limits |
+|---------|----------|--------|
+| Mock | In-memory `visible_at` filter on `receive` | None |
+| SQS | `DelaySeconds` on send | Max 15 minutes (`SQS_MAX_DELAY`) |
+| RabbitMQ | DLX delay queue + per-message TTL | Requires `delayed_delivery=True` on writer config |
+
+Use [`resolve_delivery_delay`](../../reference/contracts.md) in adapters; handlers pass kwargs on `enqueue` / `enqueue_many` only.
 
 ## `QueueMessage[M]`
 

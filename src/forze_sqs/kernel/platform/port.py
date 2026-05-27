@@ -37,6 +37,8 @@ class SQSClientPort(Protocol):
         key: str | None = None,
         enqueued_at: datetime | None = None,
         message_id: str | None = None,
+        delay: timedelta | None = None,
+        not_before: datetime | None = None,
     ) -> Awaitable[str]: ...  # pragma: no cover
 
     def enqueue_many(
@@ -48,6 +50,8 @@ class SQSClientPort(Protocol):
         key: str | None = None,
         enqueued_at: datetime | None = None,
         message_ids: Sequence[str] | None = None,
+        delay: timedelta | None = None,
+        not_before: datetime | None = None,
     ) -> Awaitable[list[str]]: ...  # pragma: no cover
 
     def receive(

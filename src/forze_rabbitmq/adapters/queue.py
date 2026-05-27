@@ -41,6 +41,9 @@ class RabbitMQQueueAdapter[M: BaseModel](
     namespace: str | None = attrs.field(default=None)
     """RabbitMQ queue namespace."""
 
+    delayed_delivery: bool = attrs.field(default=False)
+    """Whether delayed enqueue uses the DLX delay-queue topology."""
+
     # ....................... #
 
     def __queue_name(self, queue: str) -> str:
@@ -70,6 +73,8 @@ class RabbitMQQueueAdapter[M: BaseModel](
         type: str | None = None,
         key: str | None = None,
         enqueued_at: datetime | None = None,
+        delay: timedelta | None = None,
+        not_before: datetime | None = None,
     ) -> str:
         physical_queue = self.__queue_name(queue)
         body = self.codec.encode(payload)
@@ -80,6 +85,9 @@ class RabbitMQQueueAdapter[M: BaseModel](
             type=type,
             key=key,
             enqueued_at=enqueued_at,
+            delay=delay,
+            not_before=not_before,
+            delayed_delivery=self.delayed_delivery,
         )
 
     # ....................... #
@@ -92,6 +100,8 @@ class RabbitMQQueueAdapter[M: BaseModel](
         type: str | None = None,
         key: str | None = None,
         enqueued_at: datetime | None = None,
+        delay: timedelta | None = None,
+        not_before: datetime | None = None,
     ) -> list[str]:
         if not payloads:
             return []
@@ -105,6 +115,9 @@ class RabbitMQQueueAdapter[M: BaseModel](
             type=type,
             key=key,
             enqueued_at=enqueued_at,
+            delay=delay,
+            not_before=not_before,
+            delayed_delivery=self.delayed_delivery,
         )
 
     # ....................... #

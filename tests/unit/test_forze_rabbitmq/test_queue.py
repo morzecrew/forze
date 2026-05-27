@@ -40,6 +40,27 @@ def test_queue_codec_encode_decode_roundtrip() -> None:
 
 
 @pytest.mark.asyncio
+async def test_queue_adapter_enqueue_forwards_delayed_delivery() -> None:
+    client = Mock(spec=RabbitMQClient)
+    client.enqueue = AsyncMock(return_value="msg-1")
+    adapter = RabbitMQQueueAdapter(
+        client=client,
+        codec=RabbitMQQueueCodec(payload_codec=PydanticRecordMappingCodec(_Payload)),
+        namespace="ns",
+        delayed_delivery=True,
+    )
+
+    await adapter.enqueue(
+        "jobs",
+        _Payload(value="hello"),
+        delay=timedelta(seconds=5),
+    )
+
+    assert client.enqueue.await_args.kwargs["delayed_delivery"] is True
+    assert client.enqueue.await_args.kwargs["delay"] == timedelta(seconds=5)
+
+
+@pytest.mark.asyncio
 async def test_queue_adapter_enqueue_uses_namespaced_queue() -> None:
     client = Mock(spec=RabbitMQClient)
     client.enqueue = AsyncMock(return_value="msg-1")

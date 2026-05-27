@@ -153,3 +153,24 @@ async def test_queue_adapter_nack_requeues(
     assert second.payload.value == "retry-me"
 
     assert await rabbitmq_queue.ack(queue, [second.id]) == 1
+
+
+@pytest.mark.asyncio
+async def test_queue_adapter_delayed_enqueue(
+    rabbitmq_delayed_queue: RabbitMQQueueAdapter,
+    queue_payload_cls,
+) -> None:
+    queue = f"jobs-delay-{uuid4().hex[:8]}"
+
+    await rabbitmq_delayed_queue.enqueue(
+        queue,
+        queue_payload_cls(value="delayed"),
+        delay=timedelta(seconds=2),
+    )
+
+    immediate = await rabbitmq_delayed_queue.receive(queue, limit=1)
+    assert immediate == []
+
+    message = await _receive_until(rabbitmq_delayed_queue, queue, attempts=15)
+    assert message.payload.value == "delayed"
+    assert await rabbitmq_delayed_queue.ack(queue, [message.id]) == 1

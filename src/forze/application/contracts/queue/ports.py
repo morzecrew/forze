@@ -71,8 +71,16 @@ class QueueCommandPort[M](Protocol):
         type: str | None = None,
         key: str | None = None,
         enqueued_at: datetime | None = None,
+        delay: timedelta | None = None,
+        not_before: datetime | None = None,
     ) -> Awaitable[str]:
-        """Enqueue a single message and return its identifier."""
+        """Enqueue a single message and return its identifier.
+
+        :param enqueued_at: Logical enqueue timestamp stored on the message (metadata).
+        :param delay: Relative delay before the message is visible to consumers.
+        :param not_before: Absolute UTC instant before which the message is not visible.
+        """
+
         ...  # pragma: no cover
 
     # ....................... #
@@ -85,6 +93,12 @@ class QueueCommandPort[M](Protocol):
         type: str | None = None,
         key: str | None = None,
         enqueued_at: datetime | None = None,
+        delay: timedelta | None = None,
+        not_before: datetime | None = None,
     ) -> Awaitable[list[str]]:
-        """Enqueue multiple messages and return their identifiers."""
+        """Enqueue multiple messages and return their identifiers.
+
+        The same *delay* or *not_before* applies to every message in the batch.
+        """
+
         ...  # pragma: no cover

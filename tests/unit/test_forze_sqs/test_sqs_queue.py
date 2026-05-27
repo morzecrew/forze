@@ -40,6 +40,24 @@ def test_queue_codec_encode_decode_roundtrip() -> None:
 
 
 @pytest.mark.asyncio
+async def test_queue_adapter_enqueue_forwards_delay() -> None:
+    client = Mock(spec=SQSClient)
+    client.client = MagicMock(return_value=AsyncMock())
+    client.enqueue = AsyncMock(return_value="msg-1")
+    adapter = SQSQueueAdapter(
+        client=client,
+        codec=SQSQueueCodec(payload_codec=PydanticRecordMappingCodec(_Payload)),
+        namespace="ns",
+    )
+    delay = timedelta(seconds=30)
+
+    await adapter.enqueue("jobs", _Payload(value="hello"), delay=delay)
+
+    assert client.enqueue.await_args.kwargs["delay"] == delay
+    assert client.enqueue.await_args.kwargs["not_before"] is None
+
+
+@pytest.mark.asyncio
 async def test_queue_adapter_enqueue_uses_namespaced_queue() -> None:
     client = Mock(spec=SQSClient)
     client.client = MagicMock(return_value=AsyncMock())

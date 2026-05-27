@@ -28,6 +28,9 @@ class RabbitMQClientPort(Protocol):
         key: str | None = None,
         enqueued_at: datetime | None = None,
         message_id: str | None = None,
+        delay: timedelta | None = None,
+        not_before: datetime | None = None,
+        delayed_delivery: bool = False,
     ) -> Awaitable[str]: ...  # pragma: no cover
 
     def enqueue_many(
@@ -39,6 +42,9 @@ class RabbitMQClientPort(Protocol):
         key: str | None = None,
         enqueued_at: datetime | None = None,
         message_ids: Sequence[str] | None = None,
+        delay: timedelta | None = None,
+        not_before: datetime | None = None,
+        delayed_delivery: bool = False,
     ) -> Awaitable[list[str]]: ...  # pragma: no cover
 
     def receive(

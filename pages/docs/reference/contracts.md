@@ -357,12 +357,14 @@ S3-style blob storage:
 | `ack(queue, ids)` | Acknowledge processed messages |
 | `nack(queue, ids, *, requeue?)` | Reject messages, optionally re-queue |
 
-### QueueWritePort[M]
+### QueueCommandPort[M]
 
 | Method | Purpose |
 |--------|---------|
-| `enqueue(queue, payload, *, type?, key?, enqueued_at?)` | Send a single message |
-| `enqueue_many(queue, payloads, *, type?, key?, enqueued_at?)` | Send a batch |
+| `enqueue(queue, payload, *, type?, key?, enqueued_at?, delay?, not_before?)` | Send a single message |
+| `enqueue_many(queue, payloads, *, type?, key?, enqueued_at?, delay?, not_before?)` | Send a batch (same delay applies to all) |
+
+`enqueued_at` is message metadata. `delay` / `not_before` control visibility (mutually exclusive). See `resolve_delivery_delay` and `SQS_MAX_DELAY` in `forze.application.contracts.queue`.
 
 ### QueueMessage[M]
 
@@ -378,8 +380,8 @@ S3-style blob storage:
 
 | Key | Purpose |
 |-----|---------|
-| `QueueReadDepKey` | Read port |
-| `QueueWriteDepKey` | Write port |
+| `QueueQueryDepKey` | Query port |
+| `QueueCommandDepKey` | Command port |
 
 ## Pub/Sub
 

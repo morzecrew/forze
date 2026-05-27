@@ -40,9 +40,14 @@ Use `RoutedRabbitMQClient` when tenant or route identity selects a broker connec
 from forze_rabbitmq import RabbitMQQueueConfig
 
 orders_queue = RabbitMQQueueConfig(namespace="orders", tenant_aware=True)
+delayed_orders = RabbitMQQueueConfig(
+    namespace="orders",
+    tenant_aware=True,
+    delayed_delivery=True,
+)
 ```
 
-The namespace prefixes queue names and can include tenant identity when `tenant_aware=True`.
+The namespace prefixes queue names and can include tenant identity when `tenant_aware=True`. Set `delayed_delivery=True` on **writer** config when handlers use `delay` / `not_before` on enqueue.
 
 ### Deps module
 
@@ -85,9 +90,23 @@ Use `routed_rabbitmq_lifecycle_step(client=routed_rabbit)` with `RoutedRabbitMQC
 | Queue writes | `ConfigurableRabbitMQQueueWrite` / `RabbitMQQueueAdapter`. | `QueueCommandDepKey`, route usually equal to `QueueSpec.name`. | Publisher confirms and persistence depend on `RabbitMQConfig` and broker policy. |
 | Raw client | `RabbitMQClient` or `RoutedRabbitMQClient`. | `RabbitMQClientDepKey`. | Prefer queue contracts in handlers unless broker-specific operations are required. |
 
+## Delayed delivery
+
+When `delayed_delivery=True`, Forze declares a sibling queue `{work_queue}.__forze_delay` with dead-letter routing back to the work queue. Delayed publishes set per-message TTL (`expiration`); after TTL elapses, RabbitMQ dead-letters the message to the work queue for normal consumption.
+
+```python
+await writer.enqueue(
+    "orders",
+    OrderPayload(order_id="A-1"),
+    delay=timedelta(minutes=30),
+)
+```
+
+Enqueue with `delay` / `not_before` without `delayed_delivery=True` on the writer config raises a precondition error.
+
 ## Complete recipe link
 
-See [Background Workflow](../recipes/background-workflow.md) for the long-form background-processing recipe pattern. Use this page for RabbitMQ-specific adapter and operations reference.
+See [Background Workflow](../recipes/background-workflow.md) and [Scheduled queue jobs](../recipes/scheduled-queue-jobs.md). Use this page for RabbitMQ-specific adapter and operations reference.
 
 ## Configuration reference
 

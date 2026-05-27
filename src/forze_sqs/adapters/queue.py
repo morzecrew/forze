@@ -79,6 +79,8 @@ class SQSQueueAdapter[M: BaseModel](
         type: str | None = None,
         key: str | None = None,
         enqueued_at: datetime | None = None,
+        delay: timedelta | None = None,
+        not_before: datetime | None = None,
     ) -> str:
         physical_queue = self.__queue_name(queue)
         body = self.codec.encode(payload)
@@ -90,6 +92,8 @@ class SQSQueueAdapter[M: BaseModel](
                 type=type,
                 key=key,
                 enqueued_at=enqueued_at,
+                delay=delay,
+                not_before=not_before,
             )
 
     # ....................... #
@@ -102,6 +106,8 @@ class SQSQueueAdapter[M: BaseModel](
         type: str | None = None,
         key: str | None = None,
         enqueued_at: datetime | None = None,
+        delay: timedelta | None = None,
+        not_before: datetime | None = None,
     ) -> list[str]:
         if not payloads:
             return []
@@ -116,6 +122,8 @@ class SQSQueueAdapter[M: BaseModel](
                 type=type,
                 key=key,
                 enqueued_at=enqueued_at,
+                delay=delay,
+                not_before=not_before,
             )
 
     # ....................... #

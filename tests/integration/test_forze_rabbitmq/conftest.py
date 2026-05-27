@@ -87,6 +87,22 @@ async def rabbitmq_queue(
     )
 
 
+@pytest_asyncio.fixture(scope="function")
+async def rabbitmq_delayed_queue(
+    rabbitmq_client: RabbitMQClient,
+) -> RabbitMQQueueAdapter[_QueuePayload]:
+    """Queue adapter with DLX delayed delivery enabled."""
+
+    namespace = f"it:rabbitmq-delay:{uuid4().hex[:12]}"
+
+    return RabbitMQQueueAdapter(
+        client=rabbitmq_client,
+        codec=RabbitMQQueueCodec(payload_codec=PydanticRecordMappingCodec(_QueuePayload)),
+        namespace=namespace,
+        delayed_delivery=True,
+    )
+
+
 @pytest.fixture(scope="function")
 def queue_payload_cls() -> type[_QueuePayload]:
     """Provide the queue payload model for constructing test messages."""

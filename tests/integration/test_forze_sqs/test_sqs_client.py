@@ -69,3 +69,23 @@ async def test_client_nack_requeue_then_ack(
         second = (await _receive_until(sqs_client, sqs_queue_url))[0]
         assert second["body"] == b'{"value":"requeue"}'
         assert await sqs_client.ack(sqs_queue_url, [second["id"]]) == 1
+
+
+@pytest.mark.asyncio
+async def test_client_delayed_enqueue_not_visible_until_delay_elapses(
+    sqs_client: SQSClient,
+    sqs_queue_url: str,
+) -> None:
+    async with sqs_client.client():
+        await sqs_client.enqueue(
+            sqs_queue_url,
+            b'{"value":"delayed"}',
+            delay=timedelta(seconds=2),
+        )
+
+        immediate = await sqs_client.receive(sqs_queue_url, limit=1)
+        assert immediate == []
+
+        messages = await _receive_until(sqs_client, sqs_queue_url, attempts=12)
+        assert messages[0]["body"] == b'{"value":"delayed"}'
+        await sqs_client.ack(sqs_queue_url, [messages[0]["id"]])

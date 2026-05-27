@@ -69,6 +69,7 @@ nav:
     - Add Caching: recipes/add-caching.md
     - Add Idempotency: recipes/add-idempotency.md
     - Background Workflow: recipes/background-workflow.md
+    - Scheduled Queue Jobs: recipes/scheduled-queue-jobs.md
 
   - Reference:
     - Overview: reference/index.md

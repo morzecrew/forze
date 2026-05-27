@@ -22,6 +22,7 @@ from aio_pika.abc import (
     AbstractRobustConnection,
 )
 
+from forze.application.contracts.queue import resolve_delivery_delay
 from forze.base.exceptions import exc
 
 from .errors import exc_interceptor
@@ -32,6 +33,11 @@ from .value_objects import RabbitMQConfig
 # ----------------------- #
 
 _KEY_HEADER = "forze_key"
+_DELAY_QUEUE_SUFFIX = ".__forze_delay"
+"""Suffix for the DLX delay queue paired with a work queue."""
+
+_RABBITMQ_MAX_EXPIRATION_MS = 2**32 - 1
+"""Upper bound for per-message ``expiration`` (milliseconds) on the wire."""
 
 # ....................... #
 
@@ -66,6 +72,7 @@ class RabbitMQClient(RabbitMQClientPort):
         factory=asyncio.Lock,
         init=False,
     )
+    __delay_queues_ready: set[str] = attrs.field(factory=set, init=False)
 
     # ....................... #
     # Lifecycle
@@ -179,6 +186,69 @@ class RabbitMQClient(RabbitMQClientPort):
             queue,
             durable=self.__config.queue_durable,
         )
+
+    # ....................... #
+
+    @staticmethod
+    def _delay_queue_name(work_queue: str) -> str:
+        return f"{work_queue}{_DELAY_QUEUE_SUFFIX}"
+
+    # ....................... #
+
+    async def __ensure_delay_queue(
+        self,
+        channel: AbstractChannel,
+        work_queue: str,
+    ) -> str:
+        delay_queue = self._delay_queue_name(work_queue)
+
+        if delay_queue in self.__delay_queues_ready:
+            return delay_queue
+
+        await self.__declare_queue(channel, work_queue)
+        await channel.declare_queue(
+            delay_queue,
+            durable=self.__config.queue_durable,
+            arguments={
+                "x-dead-letter-exchange": "",
+                "x-dead-letter-routing-key": work_queue,
+            },
+        )
+        self.__delay_queues_ready.add(delay_queue)
+
+        return delay_queue
+
+    # ....................... #
+
+    @staticmethod
+    def _resolve_message_expiration(
+        *,
+        delay: timedelta | None,
+        not_before: datetime | None,
+        delayed_delivery: bool,
+    ) -> timedelta | None:
+        resolved = resolve_delivery_delay(delay=delay, not_before=not_before)
+
+        if resolved is None:
+            return None
+
+        if not delayed_delivery:
+            raise exc.precondition(
+                "RabbitMQ delayed enqueue requires delayed_delivery=True on the "
+                "queue writer configuration"
+            )
+
+        milliseconds = int(resolved.total_seconds() * 1000)
+
+        if milliseconds <= 0:
+            return None
+
+        if milliseconds > _RABBITMQ_MAX_EXPIRATION_MS:
+            raise exc.precondition(
+                "RabbitMQ enqueue delay exceeds the maximum message expiration"
+            )
+
+        return timedelta(milliseconds=milliseconds)
 
     # ....................... #
 
@@ -341,6 +411,9 @@ class RabbitMQClient(RabbitMQClientPort):
         key: str | None = None,
         enqueued_at: datetime | None = None,
         message_id: str | None = None,
+        delay: timedelta | None = None,
+        not_before: datetime | None = None,
+        delayed_delivery: bool = False,
     ) -> str:
         return (
             await self.enqueue_many(
@@ -350,6 +423,9 @@ class RabbitMQClient(RabbitMQClientPort):
                 key=key,
                 enqueued_at=enqueued_at,
                 message_ids=[message_id] if message_id is not None else None,
+                delay=delay,
+                not_before=not_before,
+                delayed_delivery=delayed_delivery,
             )
         )[0]
 
@@ -365,6 +441,9 @@ class RabbitMQClient(RabbitMQClientPort):
         key: str | None = None,
         enqueued_at: datetime | None = None,
         message_ids: Sequence[str] | None = None,
+        delay: timedelta | None = None,
+        not_before: datetime | None = None,
+        delayed_delivery: bool = False,
     ) -> list[str]:
         if not bodies:
             return []
@@ -390,6 +469,11 @@ class RabbitMQClient(RabbitMQClientPort):
             else DeliveryMode.NOT_PERSISTENT
         )
 
+        expiration = self._resolve_message_expiration(
+            delay=delay,
+            not_before=not_before,
+            delayed_delivery=delayed_delivery,
+        )
         messages: list[Message] = []
 
         for body, resolved_message_id in zip(bodies, resolved_ids, strict=True):
@@ -401,15 +485,24 @@ class RabbitMQClient(RabbitMQClientPort):
                 timestamp=enqueued_at,
                 type=type,
                 headers=headers,  # type: ignore[arg-type]
+                expiration=expiration,
             )
             messages.append(message)
 
         async with self.channel() as channel:
-            await self.__declare_queue(channel, queue)
+            publish_queue = queue
+
+            if expiration is not None:
+                publish_queue = await self.__ensure_delay_queue(channel, queue)
+            else:
+                await self.__declare_queue(channel, queue)
 
             await asyncio.gather(
                 *(
-                    channel.default_exchange.publish(message, routing_key=queue)
+                    channel.default_exchange.publish(
+                        message,
+                        routing_key=publish_queue,
+                    )
                     for message in messages
                 )
             )

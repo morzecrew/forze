@@ -90,6 +90,7 @@ from forze.application.contracts.queue import (
     QueueCommandPort,
     QueueMessage,
     QueueQueryPort,
+    resolve_delivery_delay,
 )
 from forze.application.contracts.search import (
     PhraseCombine,
@@ -3195,6 +3196,15 @@ def _sleep_interval(timeout: timedelta | None) -> float:
 
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
+class _MockQueueEntry[M]:
+    """In-memory queue slot with visibility time."""
+
+    visible_at: datetime
+    message: QueueMessage[M]
+
+
+@final
+@attrs.define(slots=True, kw_only=True, frozen=True)
 class MockQueueAdapter[M](QueueQueryPort[M], QueueCommandPort[M]):
     """In-memory queue adapter with ack/nack support."""
 
@@ -3204,9 +3214,9 @@ class MockQueueAdapter[M](QueueQueryPort[M], QueueCommandPort[M]):
 
     # ....................... #
 
-    def _queue_store(self) -> dict[str, list[QueueMessage[M]]]:
+    def _queue_store(self) -> dict[str, list[_MockQueueEntry[M]]]:
         return cast(
-            dict[str, list[QueueMessage[M]]],
+            dict[str, list[_MockQueueEntry[M]]],
             self.state.queues.setdefault(self.namespace, {}),
         )
 
@@ -3228,7 +3238,12 @@ class MockQueueAdapter[M](QueueQueryPort[M], QueueCommandPort[M]):
         type: str | None = None,
         key: str | None = None,
         enqueued_at: datetime | None = None,
+        delay: timedelta | None = None,
+        not_before: datetime | None = None,
     ) -> str:
+        now = utcnow()
+        resolved_delay = resolve_delivery_delay(delay=delay, not_before=not_before)
+        visible_at = now if resolved_delay is None else now + resolved_delay
         message_id = self.state.next_id("queue")
         message = QueueMessage(
             queue=queue,
@@ -3236,10 +3251,11 @@ class MockQueueAdapter[M](QueueQueryPort[M], QueueCommandPort[M]):
             payload=payload,
             type=type,
             key=key,
-            enqueued_at=enqueued_at or utcnow(),
+            enqueued_at=enqueued_at or now,
         )
+        entry = _MockQueueEntry(visible_at=visible_at, message=message)
         with self.state.lock:
-            self._queue_store().setdefault(queue, []).append(message)
+            self._queue_store().setdefault(queue, []).append(entry)
         return message_id
 
     # ....................... #
@@ -3252,6 +3268,8 @@ class MockQueueAdapter[M](QueueQueryPort[M], QueueCommandPort[M]):
         type: str | None = None,
         key: str | None = None,
         enqueued_at: datetime | None = None,
+        delay: timedelta | None = None,
+        not_before: datetime | None = None,
     ) -> list[str]:
         out: list[str] = []
         for payload in payloads:
@@ -3262,6 +3280,8 @@ class MockQueueAdapter[M](QueueQueryPort[M], QueueCommandPort[M]):
                     type=type,
                     key=key,
                     enqueued_at=enqueued_at,
+                    delay=delay,
+                    not_before=not_before,
                 )
             )
         return out
@@ -3276,12 +3296,22 @@ class MockQueueAdapter[M](QueueQueryPort[M], QueueCommandPort[M]):
         timeout: timedelta | None = None,
     ) -> list[QueueMessage[M]]:
         del timeout
+        now = utcnow()
         with self.state.lock:
-            messages = self._queue_store().setdefault(queue, [])
+            entries = self._queue_store().setdefault(queue, [])
             pending = self._pending_store().setdefault(queue, {})
-            count = limit if limit is not None else len(messages)
-            batch = messages[:count]
-            del messages[:count]
+            ready: list[_MockQueueEntry[M]] = []
+            deferred: list[_MockQueueEntry[M]] = []
+            for entry in entries:
+                if entry.visible_at <= now:
+                    ready.append(entry)
+                else:
+                    deferred.append(entry)
+            count = limit if limit is not None else len(ready)
+            batch_entries = ready[:count]
+            remaining_ready = ready[count:]
+            self._queue_store()[queue] = remaining_ready + deferred
+            batch = [entry.message for entry in batch_entries]
             for msg in batch:
                 pending[msg.id] = msg
             return list(batch)
@@ -3326,13 +3356,14 @@ class MockQueueAdapter[M](QueueQueryPort[M], QueueCommandPort[M]):
             pending = self._pending_store().setdefault(queue, {})
             queued = self._queue_store().setdefault(queue, [])
             nacked = 0
+            now = utcnow()
             for item_id in ids:
                 msg = pending.pop(item_id, None)
                 if msg is None:
                     continue
                 nacked += 1
                 if requeue:
-                    queued.append(msg)
+                    queued.append(_MockQueueEntry(visible_at=now, message=msg))
             return nacked
 
 

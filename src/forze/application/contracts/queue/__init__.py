@@ -1,3 +1,4 @@
+from .delivery import SQS_MAX_DELAY, resolve_delivery_delay
 from .deps import (
     QueueCommandDepKey,
     QueueCommandDepPort,
@@ -19,4 +20,6 @@ __all__ = [
     "QueueCommandDepKey",
     "QueueQueryDepPort",
     "QueueCommandDepPort",
+    "SQS_MAX_DELAY",
+    "resolve_delivery_delay",
 ]

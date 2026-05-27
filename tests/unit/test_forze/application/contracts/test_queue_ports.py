@@ -64,6 +64,8 @@ class _StubQueueCommand:
         type: str | None = None,
         key: str | None = None,
         enqueued_at: datetime | None = None,
+        delay: timedelta | None = None,
+        not_before: datetime | None = None,
     ) -> str:
         return "id-1"
 
@@ -75,6 +77,8 @@ class _StubQueueCommand:
         type: str | None = None,
         key: str | None = None,
         enqueued_at: datetime | None = None,
+        delay: timedelta | None = None,
+        not_before: datetime | None = None,
     ) -> list[str]:
         return [f"id-{i}" for i in range(len(payloads))]
 

@@ -20,6 +20,7 @@ from botocore.config import Config as AioConfig
 from pydantic import SecretStr
 from types_aiobotocore_sqs.client import SQSClient as AsyncSQSClient
 
+from forze.application.contracts.queue import SQS_MAX_DELAY, resolve_delivery_delay
 from forze.base.exceptions import exc
 
 from .errors import exc_interceptor
@@ -411,6 +412,32 @@ class SQSClient(SQSClientPort):
 
     # ....................... #
 
+    @staticmethod
+    def _resolve_sqs_delay_seconds(
+        *,
+        delay: timedelta | None,
+        not_before: datetime | None,
+    ) -> int | None:
+        resolved = resolve_delivery_delay(delay=delay, not_before=not_before)
+
+        if resolved is None:
+            return None
+
+        if resolved > SQS_MAX_DELAY:
+            raise exc.precondition(
+                "SQS enqueue delay exceeds 900 seconds; use an external scheduler, "
+                "database outbox, or Temporal schedules for longer deferrals"
+            )
+
+        seconds = int(resolved.total_seconds())
+
+        if seconds <= 0:
+            return None
+
+        return seconds
+
+    # ....................... #
+
     @exc_interceptor.coroutine("sqs.enqueue")  # type: ignore[untyped-decorator]
     async def enqueue(
         self,
@@ -421,6 +448,8 @@ class SQSClient(SQSClientPort):
         key: str | None = None,
         enqueued_at: datetime | None = None,
         message_id: str | None = None,
+        delay: timedelta | None = None,
+        not_before: datetime | None = None,
     ) -> str:
         """Send a single message and return its message identifier."""
         return (
@@ -431,6 +460,8 @@ class SQSClient(SQSClientPort):
                 key=key,
                 enqueued_at=enqueued_at,
                 message_ids=[message_id] if message_id is not None else None,
+                delay=delay,
+                not_before=not_before,
             )
         )[0]
 
@@ -446,6 +477,8 @@ class SQSClient(SQSClientPort):
         key: str | None = None,
         enqueued_at: datetime | None = None,
         message_ids: Sequence[str] | None = None,
+        delay: timedelta | None = None,
+        not_before: datetime | None = None,
     ) -> list[str]:
         """Send a batch of messages and return resolved message identifiers.
 
@@ -474,6 +507,7 @@ class SQSClient(SQSClientPort):
         )
         is_fifo = self.__is_fifo_target(queue, queue_url)
         c = self.__require_client()
+        delay_seconds = self._resolve_sqs_delay_seconds(delay=delay, not_before=not_before)
 
         def _entries_for_chunk(
             chunk: list[bytes],
@@ -489,6 +523,9 @@ class SQSClient(SQSClientPort):
                     "MessageBody": self.__encode_body(body),
                     "MessageAttributes": msg_attrs,
                 }
+
+                if delay_seconds is not None:
+                    entry["DelaySeconds"] = delay_seconds
 
                 if is_fifo:
                     entry["MessageGroupId"] = key or "forze"

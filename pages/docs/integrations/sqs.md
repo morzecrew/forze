@@ -115,6 +115,18 @@ See [Background Workflow](../recipes/background-workflow.md) for the long-form b
 
 The adapter encodes message bodies safely for SQS and stores message metadata in SQS message attributes. Bind a `RecordMappingCodec` on `QueueSpec` (for example `PydanticRecordMappingCodec`) to validate payloads after receive.
 
+### Delayed delivery
+
+Handlers may pass `delay` or `not_before` on `enqueue` / `enqueue_many`. The adapter maps these to SQS `DelaySeconds` (maximum 15 minutes). For longer deferrals, use an external scheduler, a database outbox, or [Temporal schedules](temporal.md).
+
+```python
+await writer.enqueue(
+    "orders",
+    OrderPayload(order_id="A-1"),
+    delay=timedelta(minutes=10),
+)
+```
+
 ### Retry/timeout behavior
 
 `SQSConfig` controls `connect_timeout` and `read_timeout`. `receive(timeout=...)` enables long polling up to the SQS service limit. Visibility timeout, redrive policy, and DLQ settings are queue attributes managed outside Forze.

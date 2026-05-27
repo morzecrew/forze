@@ -15,6 +15,7 @@ Use when adding asynchronous messages, event publication, or stream processing. 
 `QueueSpec.name` is the logical route. Resolve query/command ports with `ctx.deps.resolve_configurable`.
 
 ```python
+from datetime import timedelta
 from enum import StrEnum
 
 from pydantic import BaseModel
@@ -45,6 +46,11 @@ writer = ctx.deps.resolve_configurable(
     ctx, QueueCommandDepKey, order_queue, route=order_queue.name
 )
 await writer.enqueue("orders", OrderPayload(order_id="o-1", customer_id="c-1"))
+await writer.enqueue(
+    "reminders",
+    ReminderPayload(user_id="u-1"),
+    delay=timedelta(minutes=10),
+)
 
 reader = ctx.deps.resolve_configurable(
     ctx, QueueQueryDepKey, order_queue, route=order_queue.name

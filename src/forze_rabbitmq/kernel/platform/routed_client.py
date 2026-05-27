@@ -163,6 +163,9 @@ class RoutedRabbitMQClient(RabbitMQClientPort):
         key: str | None = None,
         enqueued_at: datetime | None = None,
         message_id: str | None = None,
+        delay: timedelta | None = None,
+        not_before: datetime | None = None,
+        delayed_delivery: bool = False,
     ) -> str:
         inner = await self._get_client()
         return await inner.enqueue(
@@ -172,6 +175,9 @@ class RoutedRabbitMQClient(RabbitMQClientPort):
             key=key,
             enqueued_at=enqueued_at,
             message_id=message_id,
+            delay=delay,
+            not_before=not_before,
+            delayed_delivery=delayed_delivery,
         )
 
     async def enqueue_many(
@@ -183,6 +189,9 @@ class RoutedRabbitMQClient(RabbitMQClientPort):
         key: str | None = None,
         enqueued_at: datetime | None = None,
         message_ids: Sequence[str] | None = None,
+        delay: timedelta | None = None,
+        not_before: datetime | None = None,
+        delayed_delivery: bool = False,
     ) -> list[str]:
         inner = await self._get_client()
         return await inner.enqueue_many(
@@ -192,6 +201,9 @@ class RoutedRabbitMQClient(RabbitMQClientPort):
             key=key,
             enqueued_at=enqueued_at,
             message_ids=message_ids,
+            delay=delay,
+            not_before=not_before,
+            delayed_delivery=delayed_delivery,
         )
 
     async def receive(

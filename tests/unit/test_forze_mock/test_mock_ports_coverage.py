@@ -104,6 +104,25 @@ async def test_mock_queue_receive_ack_nack_requeue() -> None:
     assert again[0].id == mid2
 
 @pytest.mark.asyncio
+async def test_mock_queue_delayed_enqueue_not_visible_until_delay() -> None:
+    st = MockState()
+    q = MockQueueAdapter(
+        state=st,
+        namespace="q-delay",
+        codec=QueueSpec(
+            name="q-delay", codec=PydanticRecordMappingCodec(model_type=_Msg)
+        ).codec,
+    )
+    mid = await q.enqueue("jobs", _Msg(body="later"), delay=timedelta(hours=1))
+    assert await q.receive("jobs", limit=1) == []
+    with st.lock:
+        entry = st.queues["q-delay"]["jobs"][0]
+        object.__setattr__(entry, "visible_at", entry.visible_at - timedelta(hours=2))
+    batch = await q.receive("jobs", limit=1)
+    assert batch[0].id == mid
+
+
+@pytest.mark.asyncio
 async def test_mock_queue_enqueue_many() -> None:
     st = MockState()
     q = MockQueueAdapter(

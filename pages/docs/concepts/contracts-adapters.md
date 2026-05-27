@@ -134,8 +134,8 @@ Both ports also have `*_many` batch variants for all applicable operations.
 
 | Method | Purpose |
 |--------|---------|
-| `enqueue(queue, payload, *, type?, key?, enqueued_at?)` | Send a single message |
-| `enqueue_many(queue, payloads, *, type?, key?, enqueued_at?)` | Send a batch |
+| `enqueue(queue, payload, *, type?, key?, enqueued_at?, delay?, not_before?)` | Send a single message |
+| `enqueue_many(queue, payloads, *, type?, key?, enqueued_at?, delay?, not_before?)` | Send a batch |
 
 ### Pub/Sub
 
