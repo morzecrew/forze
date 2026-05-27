@@ -26,10 +26,13 @@ def _write_field_names_union(
     create: type[BaseModel],
     update: type[BaseModel] | None,
 ) -> frozenset[str]:
-    names = pydantic_field_names(domain) | pydantic_field_names(create)
+    names = pydantic_field_names(domain, include_computed=False) | pydantic_field_names(
+        create,
+        include_computed=False,
+    )
 
     if update is not None:
-        names |= pydantic_field_names(update)
+        names |= pydantic_field_names(update, include_computed=False)
 
     return frozenset(names)
 

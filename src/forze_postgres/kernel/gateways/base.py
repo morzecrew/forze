@@ -160,7 +160,9 @@ class PostgresGateway[M: BaseModel](TenancyMixin):
     def read_fields(self) -> frozenset[str]:
         """Pydantic field names for :attr:`model_type` (safe for frozen attrs subclasses)."""
 
-        return frozenset(pydantic_field_names(self.model_type))
+        return frozenset(
+            pydantic_field_names(self.model_type, include_computed=False),
+        )
 
     # ....................... #
 
@@ -310,7 +312,9 @@ class PostgresGateway[M: BaseModel](TenancyMixin):
             use = list(return_fields)
 
         elif return_type is not None:
-            use = list(pydantic_field_names(return_type))
+            use = list(
+                pydantic_field_names(return_type, include_computed=False),
+            )
 
         else:
             use = list(self.read_fields)

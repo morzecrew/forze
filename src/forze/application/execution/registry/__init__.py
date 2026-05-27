@@ -1,4 +1,5 @@
-from .registries import FrozenOperationRegistry, OperationRegistry, PlanPatch
+from .patch import PlanPatch
+from .registries import FrozenOperationRegistry, OperationRegistry
 
 # ----------------------- #
 

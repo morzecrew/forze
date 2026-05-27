@@ -64,7 +64,7 @@ class FirestoreGateway[M: BaseModel](TenancyMixin):
 
     @cached_property
     def read_fields(self) -> frozenset[str]:
-        return pydantic_field_names(self.model_type)
+        return pydantic_field_names(self.model_type, include_computed=False)
 
     # ....................... #
 

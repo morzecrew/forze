@@ -298,9 +298,32 @@ Ordered sequence of lifecycle steps:
 
 Startup behavior: if a hook fails, all previously started steps are shut down in reverse order before re-raising. Shutdown behavior: exceptions are swallowed so all steps are attempted.
 
+## Three execution plans
+
+Forze uses three declarative plans in the execution layer. They are siblings: only `DepsPlan` and `LifecyclePlan` are held by `ExecutionRuntime`; `OperationRegistry` is built and frozen separately (facades, HTTP attach, workers).
+
+| Plan | Collects | Terminal step | Typical enablement |
+|------|----------|-----------------|-------------------|
+| `DepsPlan` | modules, pre-built `Deps` | `build()` → `Deps` | `DepsPlan.from_modules(...).with_tracing(...)`; env `FORZE_DEPS_TRACE` |
+| `LifecyclePlan` | `LifecycleStep` | `startup` / `shutdown` | `LifecyclePlan.from_steps(pg_step, ...)` in app lifespan |
+| `OperationRegistry` | handlers, plans, `PlanPatch` | `freeze()` → `FrozenOperationRegistry` | `.patch(selector)` / `.bind(...)` / `OperationRegistry.merge` |
+
+**Where do I enable X?**
+
+- Port and dependency wiring → `DepsPlan` + `DepsModule`
+- Database and client startup → `LifecyclePlan`
+- Middleware, transaction routes, dispatch → `OperationRegistry` (then `.freeze()`)
+
+<div class="d2-diagram">
+  <img class="d2-light" src="/forze/assets/diagrams/light/operation-registry.svg" alt="Operation registry freeze and facade resolution">
+  <img class="d2-dark" src="/forze/assets/diagrams/dark/operation-registry.svg" alt="Operation registry freeze and facade resolution">
+</div>
+
+See [Operation composition](../concepts/operation-composition.md) for registry authoring.
+
 ## ExecutionRuntime
 
-Combines the dependency plan, lifecycle plan, and context into a scoped runtime:
+Combines the dependency plan and lifecycle plan into a scoped runtime (operation registry is separate; see [Three execution plans](#three-execution-plans)):
 
     :::python
     from forze.application.execution import ExecutionRuntime
@@ -371,7 +394,7 @@ See [Middleware & Plans](middleware-plans.md) for stage authoring and [Compositi
 
 ## Putting it together
 
-A complete wiring example showing deps, lifecycle, and runtime:
+A complete wiring example showing deps, lifecycle, runtime, and operation registry:
 
     :::python
     from forze.application.execution import (
@@ -380,7 +403,9 @@ A complete wiring example showing deps, lifecycle, and runtime:
         ExecutionRuntime,
         LifecyclePlan,
         LifecycleStep,
+        OperationRegistry,
     )
+    from forze.base.primitives import str_key_selector
 
     # 1. Define dep modules
     def infra_module() -> Deps:
@@ -405,18 +430,29 @@ A complete wiring example showing deps, lifecycle, and runtime:
         ),
     )
 
-    # 3. Create runtime
+    # 3. Operation registry (separate from ExecutionRuntime)
+    registry = (
+        OperationRegistry(handlers={"projects.list": lambda ctx: ...})
+        .patch(str_key_selector.all_keys())
+        .bind_tx()
+        .set_route("default")
+        .finish(deep=True)
+        .freeze()
+    )
+
+    # 4. Create runtime
     runtime = ExecutionRuntime(
         deps=deps_plan,
         lifecycle=lifecycle_plan,
     )
 
-    # 4. Use in application
+    # 5. Use in application
     async with runtime.scope():
         ctx = runtime.get_context()
         doc = ctx.document.query(project_spec)
         page = await doc.find_page(pagination={"limit": 10, "offset": 0})
         projects = page.hits
+        # resolved = registry.resolve("projects.list", ctx)
 
 ## Troubleshooting
 

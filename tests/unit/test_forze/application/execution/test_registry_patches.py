@@ -197,26 +197,6 @@ def test_dispatch_in_patch_validates_at_freeze() -> None:
         reg.freeze()
 
 
-def test_merge_detects_patch_selector_conflict() -> None:
-    left = (
-        OperationRegistry(handlers={"op": lambda _ctx: None})
-        .patch(str_key_selector.all_keys())
-        .bind_tx()
-        .set_route("a")
-        .finish(deep=True)
-    )
-    right = (
-        OperationRegistry(handlers={"other": lambda _ctx: None})
-        .patch(str_key_selector.all_keys())
-        .bind_tx()
-        .set_route("b")
-        .finish(deep=True)
-    )
-
-    with pytest.raises(CoreException, match="Conflicting operation plan patches"):
-        OperationRegistry.merge(left, right)
-
-
 # ....................... #
 # Selector-specific patch resolution
 

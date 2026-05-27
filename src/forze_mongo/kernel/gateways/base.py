@@ -85,7 +85,7 @@ class MongoGateway[M: BaseModel](TenancyMixin):
     def read_fields(self) -> frozenset[str]:
         """Field names exposed by the model, cached for repeated access."""
 
-        return pydantic_field_names(self.model_type)
+        return pydantic_field_names(self.model_type, include_computed=False)
 
     # ....................... #
 

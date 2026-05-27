@@ -16,7 +16,7 @@ from google.cloud.firestore_v1.base_query import And, FieldFilter
 from forze.base.exceptions import CoreException, ExceptionKind, exc
 from forze.base.primitives import JsonDict
 from forze.base.serialization import (
-    pydantic_dump,
+    pydantic_persistence_dump,
     pydantic_validate,
 )
 from forze.domain.constants import (
@@ -110,7 +110,7 @@ class FirestoreHistoryGateway[D: Document](FirestoreGateway[D]):
 
     async def write(self, data: D) -> None:
         record = self._from_data(data)
-        raw_payload = pydantic_dump(record)
+        raw_payload = pydantic_persistence_dump(record)
         raw_payload = self.adapt_payload_for_write(raw_payload)
 
         await self.client.set_document(
@@ -129,7 +129,7 @@ class FirestoreHistoryGateway[D: Document](FirestoreGateway[D]):
 
         for item in data:
             record = self._from_data(item)
-            raw_payload = pydantic_dump(record)
+            raw_payload = pydantic_persistence_dump(record)
             raw_payload = self.adapt_payload_for_write(raw_payload)
             documents.append((f"{self._storage_pk(item.id)}_{item.rev}", raw_payload))
 

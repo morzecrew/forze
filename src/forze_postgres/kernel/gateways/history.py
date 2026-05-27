@@ -14,8 +14,8 @@ from psycopg import sql
 
 from forze.base.exceptions import exc
 from forze.base.serialization import (
-    pydantic_dump,
-    pydantic_dump_many,
+    pydantic_persistence_dump,
+    pydantic_persistence_dump_many,
     pydantic_validate,
     pydantic_validate_many,
 )
@@ -136,7 +136,7 @@ class PostgresHistoryGateway[D: Document](PostgresGateway[D]):
             return
 
         record = self._from_data(data)
-        insert_data_raw = pydantic_dump(record)
+        insert_data_raw = pydantic_persistence_dump(record)
         insert_data = await self.adapt_payload_for_write(insert_data_raw)
 
         cols = [sql.Identifier(k) for k in insert_data.keys()]
@@ -158,7 +158,7 @@ class PostgresHistoryGateway[D: Document](PostgresGateway[D]):
             return
 
         records = list(map(self._from_data, data))
-        insert_data_raw = pydantic_dump_many(records)
+        insert_data_raw = pydantic_persistence_dump_many(records)
         insert_data = await self.adapt_many_payload_for_write(insert_data_raw)
 
         keys = list(insert_data[0].keys())

@@ -23,6 +23,8 @@ from forze.base.primitives import JsonDict
 from forze.base.serialization import (
     pydantic_dump,
     pydantic_dump_many,
+    pydantic_persistence_dump,
+    pydantic_persistence_dump_many,
     pydantic_validate,
     pydantic_validate_many,
 )
@@ -169,7 +171,7 @@ class FirestoreWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
     @optimistic_retry()  # type: ignore[untyped-decorator]
     async def create(self, dto: C) -> D:
         model = self._from_cdto(dto)
-        data = pydantic_dump(model)
+        data = pydantic_persistence_dump(model)
         data = self.adapt_payload_for_write(data, create=True)
         coll = await self.coll()
         await self.client.set_document(coll, self._storage_pk(model.id), data)
@@ -193,7 +195,7 @@ class FirestoreWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
             return []
 
         models = self._from_cdto_many(dtos)
-        raw_payloads = pydantic_dump_many(models)
+        raw_payloads = pydantic_persistence_dump_many(models)
         payloads = self.adapt_many_payload_for_write(raw_payloads, create=True)
         documents = [
             (self._storage_pk(m.id), dict(p))
@@ -240,7 +242,7 @@ class FirestoreWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
             return current, diff
 
         diff = self._bump_rev(current, diff)
-        merged = pydantic_dump(current)
+        merged = pydantic_persistence_dump(current)
         merged.update(self.adapt_payload_for_write(diff, create=False))
 
         coll = await self.coll()
@@ -261,7 +263,7 @@ class FirestoreWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
         rev: int | None = None,
     ) -> tuple[D, JsonDict]:
         self._require_update_cmd()
-        update_data = pydantic_dump(dto, exclude={"unset": True})
+        update_data = pydantic_persistence_dump(dto, exclude={"unset": True})
 
         return await self._patch(pk, update_data, rev=rev)
 

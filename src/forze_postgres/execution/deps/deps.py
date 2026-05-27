@@ -340,7 +340,10 @@ class ConfigurablePostgresHubSearch(HubSearchQueryDepPort):
                 )
 
             if c.get("same_heap_as_hub"):
-                hub_fields = pydantic_field_names(spec.model_type)
+                hub_fields = pydantic_field_names(
+                    spec.model_type,
+                    include_computed=False,
+                )
 
                 for field in m.fields:
                     if field not in hub_fields:

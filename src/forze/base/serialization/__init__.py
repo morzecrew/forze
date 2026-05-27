@@ -24,6 +24,8 @@ from .msgspec_model_codec import MsgspecRecordMappingCodec
 from .pydantic import (
     pydantic_cache_dump,
     pydantic_cache_dump_many,
+    pydantic_persistence_dump,
+    pydantic_persistence_dump_many,
     pydantic_decode_json_bytes,
     pydantic_dump,
     pydantic_dump_many,
@@ -65,6 +67,8 @@ __all__ = [
     "pydantic_encode_json_bytes",
     "pydantic_cache_dump",
     "pydantic_cache_dump_many",
+    "pydantic_persistence_dump",
+    "pydantic_persistence_dump_many",
     "pydantic_field_names",
     "pydantic_validate",
     "pydantic_model_hash",

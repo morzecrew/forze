@@ -47,8 +47,8 @@ from forze.application.contracts.querying import (
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
 from forze.base.serialization import (
-    pydantic_dump,
-    pydantic_dump_many,
+    pydantic_persistence_dump,
+    pydantic_persistence_dump_many,
     pydantic_validate,
     pydantic_validate_many,
 )
@@ -495,7 +495,10 @@ class DocumentCoordinator(
 
     async def _to_read(self, domain: D | None, *, pk: UUID | None = None) -> R:
         if self.hydrate_from_write and domain is not None:
-            return pydantic_validate(self.read_gw.model_type, pydantic_dump(domain))
+            return pydantic_validate(
+                self.read_gw.model_type,
+                pydantic_persistence_dump(domain),
+            )
 
         doc_pk = domain.id if domain is not None else pk
 
@@ -524,7 +527,7 @@ class DocumentCoordinator(
         if self.hydrate_from_write and all(d is not None for d in domains):
             return pydantic_validate_many(
                 self.read_gw.model_type,
-                pydantic_dump_many(domains),  # type: ignore[arg-type]
+                pydantic_persistence_dump_many(domains),  # type: ignore[arg-type]
             )
 
         if pks is not None and len(pks) != len(domains):

@@ -11,6 +11,8 @@ description: >-
 
 Use when setting up the Forze runtime, dependency plan, lifecycle, operation composition, and interface layer. For logical spec names, routes, and `StrEnum` wiring, see [`forze-specs-infrastructure`](../forze-specs-infrastructure/SKILL.md). For custom dependency modules, see [`forze-deps-modules`](../forze-deps-modules/SKILL.md). For HTTP details, see [`forze-fastapi-interface`](../forze-fastapi-interface/SKILL.md). For day-to-day handler code, see [`forze-framework-usage`](../forze-framework-usage/SKILL.md).
 
+For which plan enables deps, lifecycle hooks, or operation stages, see [Three execution plans](../../pages/docs/reference/execution.md#three-execution-plans) (`DepsPlan`, `LifecyclePlan`, `OperationRegistry`).
+
 ## Runtime setup
 
 Kernel **specs** (`DocumentSpec`, `SearchSpec`, `CacheSpec`, …) declare model types and logical `name` only—no DSNs, table names, collection paths, or index DDL. **Deps modules** (`PostgresDepsModule`, `MongoDepsModule`, `RedisDepsModule`, …) map that same `name` to physical configs (read/write relations, Redis namespaces, `PostgresSearchConfig`, …). **`DepsPlan.from_modules(...)`** merges those modules so `ExecutionContext` resolves factories by route `spec.name` (for example `DocumentQueryDepKey` / `DocumentCommandDepKey`). See [`pages/docs/concepts/specs-and-wiring.md`](../../pages/docs/concepts/specs-and-wiring.md).

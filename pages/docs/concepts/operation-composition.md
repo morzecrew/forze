@@ -8,7 +8,7 @@ Repeated stage hooks, transaction setup, follow-up work, and operation wiring be
 
 Forze composition has three parts:
 
-1. `OperationRegistry`: maps operation keys to handler factories and owns per-operation `OperationPlan` instances.
+1. `OperationRegistry`: maps operation keys to handler factories and owns per-operation `OperationPlan` instances (one of the [three execution plans](../reference/execution.md#three-execution-plans); dependency wiring and startup hooks use `DepsPlan` and `LifecyclePlan` on `ExecutionRuntime` instead).
 2. `StrKeyNamespace` / `facade_op(...)`: keep facade operation names suffix-based while producing stable full keys.
 3. `OperationFacade`: resolves handlers from a frozen registry through a namespace-aware facade.
 

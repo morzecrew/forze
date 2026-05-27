@@ -14,8 +14,8 @@ import attrs
 
 from forze.base.exceptions import exc
 from forze.base.serialization import (
-    pydantic_dump,
-    pydantic_dump_many,
+    pydantic_persistence_dump,
+    pydantic_persistence_dump_many,
     pydantic_validate,
     pydantic_validate_many,
 )
@@ -155,7 +155,7 @@ class MongoHistoryGateway[D: Document](MongoGateway[D]):
         """
 
         record = self._from_data(data)
-        raw_payload = pydantic_dump(record)
+        raw_payload = pydantic_persistence_dump(record)
         raw_payload = self.adapt_payload_for_write(raw_payload)
 
         payload = self._coerce_query_value(raw_payload)
@@ -174,7 +174,7 @@ class MongoHistoryGateway[D: Document](MongoGateway[D]):
             return
 
         records = list(map(self._from_data, data))
-        raw_payloads = pydantic_dump_many(records)
+        raw_payloads = pydantic_persistence_dump_many(records)
         raw_payloads = list(map(self.adapt_payload_for_write, raw_payloads))
 
         payloads = list(map(self._coerce_query_value, raw_payloads))

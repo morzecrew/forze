@@ -15,8 +15,8 @@ from forze.application.contracts.document import DocumentSpec
 from forze.application.coordinators import DocumentCacheCoordinator, DocumentCoordinator
 from forze.base.exceptions import exc
 from forze.base.serialization import (
-    pydantic_dump,
-    pydantic_dump_many,
+    pydantic_persistence_dump,
+    pydantic_persistence_dump_many,
     pydantic_validate,
     pydantic_validate_many,
 )
@@ -91,7 +91,7 @@ class FirestoreDocumentAdapter(DocumentCoordinator[R, D, C, U]):
         domain = await write_gw.create(dto)
         await self.cache_coord.invalidate_keys_now(domain.id)
 
-        res = pydantic_validate(self.spec.read, pydantic_dump(domain))
+        res = pydantic_validate(self.spec.read, pydantic_persistence_dump(domain))
 
         await self.cache_coord.after_commit_or_now(
             lambda: self.cache_coord.set_one(res)
@@ -139,7 +139,10 @@ class FirestoreDocumentAdapter(DocumentCoordinator[R, D, C, U]):
         pks_new = [doc.id for doc in domains]
         await self.cache_coord.invalidate_keys_now(*pks_new)
 
-        res = pydantic_validate_many(self.spec.read, pydantic_dump_many(domains))
+        res = pydantic_validate_many(
+            self.spec.read,
+            pydantic_persistence_dump_many(domains),
+        )
 
         await self.cache_coord.after_commit_or_now(
             lambda: self.cache_coord.set_many(res)

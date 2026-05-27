@@ -5,7 +5,7 @@ from __future__ import annotations
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from pydantic import BaseModel
+from pydantic import BaseModel, computed_field
 
 from forze.application.contracts.tenancy import TENANT_ID_FIELD
 from forze.base.exceptions import CoreException
@@ -70,6 +70,42 @@ async def test_validate_write_and_history_relations() -> None:
         ],
     )
     assert intro.get_column_types.await_count >= 2
+
+
+class _DomainWithComputed(BaseModel):
+    id: str
+    name: str
+    rev: int = 1
+
+    @computed_field
+    @property
+    def label(self) -> str:
+        return f"name:{self.name}"
+
+
+@pytest.mark.asyncio
+async def test_validate_write_domain_computed_field_does_not_require_column() -> None:
+    intro = MagicMock(spec=PostgresIntrospector)
+    cols = {
+        "id": _col("id"),
+        "name": _col("name"),
+        "rev": PostgresType(base="int4", is_array=False, not_null=True),
+    }
+    intro.get_column_types = AsyncMock(return_value=cols)
+
+    await validate_postgres_document_schemas(
+        intro,
+        [
+            PostgresDocumentSchemaSpec(
+                name="doc",
+                read_model=_Read,
+                read_relation=("public", "t"),
+                write_domain_model=_DomainWithComputed,
+                write_create_model=_Create,
+                write_relation=("public", "t"),
+            ),
+        ],
+    )
 
 
 @pytest.mark.asyncio

@@ -399,6 +399,52 @@ def pydantic_cache_dump_many(objs: Sequence[BaseModel]) -> list[JsonDict]:
 
 # ....................... #
 
+_PERSISTENCE_EXCLUDE_OPTS: Final[RecordMappingDumpExcludeOptions] = (
+    RecordMappingDumpExcludeOptions(
+        computed_fields=True,
+    )
+)
+
+
+def _merge_dump_exclude(
+    exclude: RecordMappingDumpExcludeOptions,
+    base: RecordMappingDumpExcludeOptions,
+) -> RecordMappingDumpExcludeOptions:
+    return RecordMappingDumpExcludeOptions({**base, **exclude})
+
+
+def pydantic_persistence_dump(
+    obj: BaseModel,
+    *,
+    mode: Literal["json", "python"] = "python",
+    exclude: RecordMappingDumpExcludeOptions = {},
+) -> JsonDict:
+    """Dump a Pydantic model for document store read/write (omits computed fields)."""
+
+    return pydantic_dump(
+        obj,
+        mode=mode,
+        exclude=_merge_dump_exclude(exclude, _PERSISTENCE_EXCLUDE_OPTS),
+    )
+
+
+def pydantic_persistence_dump_many(
+    objs: Sequence[BaseModel],
+    *,
+    mode: Literal["json", "python"] = "python",
+    exclude: RecordMappingDumpExcludeOptions = {},
+) -> list[JsonDict]:
+    """Dump models for document store bulk operations (omits computed fields)."""
+
+    return pydantic_dump_many(
+        objs,
+        mode=mode,
+        exclude=_merge_dump_exclude(exclude, _PERSISTENCE_EXCLUDE_OPTS),
+    )
+
+
+# ....................... #
+
 
 def pydantic_transform[Out: BaseModel](
     cls: type[Out],

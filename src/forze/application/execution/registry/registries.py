@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from collections import defaultdict
 from typing import TYPE_CHECKING, Any, Mapping, Self
 
 import attrs
@@ -8,36 +7,20 @@ import attrs
 from forze.application.contracts.execution import DispatchStep, HandlerFactory
 from forze.base.descriptors import hybridmethod
 from forze.base.exceptions import exc
-from forze.base.primitives import (
-    DirectedAcyclicGraph,
-    StrKey,
-    StrKeyNamespace,
-    StrKeySelector,
-    str_key_selector,
-)
+from forze.base.primitives import StrKey, StrKeyNamespace, StrKeySelector
 
 from ..planning import FrozenOperationPlan, OperationPlan
 from ..running import DispatchedOperation, OperationRunner, ResolvedOperation
 from .binder import OperationRegistryBinder
+from .merge import RegistryMerge
+from .patch import PlanPatch
+from .resolution import PlanResolution
+from .validation import RegistryFreezeValidator
 
 if TYPE_CHECKING:
     from ..context import ExecutionContext
 
 # ----------------------- #
-
-
-@attrs.define(slots=True, kw_only=True, frozen=True)
-class PlanPatch:
-    """Plan patch keyed by a string key selector."""
-
-    selector: StrKeySelector.Spec
-    """Selector matching registered operation keys."""
-
-    plan: OperationPlan
-    """Partial plan merged for matching operations at freeze."""
-
-
-# ....................... #
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
@@ -175,40 +158,15 @@ class OperationRegistry:
 
     # ....................... #
 
-    def _patch_indices_by_specificity(self) -> tuple[int, ...]:
-        """Patch indices ordered by ascending specificity, then registration order."""
-
-        indices = tuple(range(len(self._patches)))
-
-        return tuple(
-            sorted(
-                indices,
-                key=lambda i: (
-                    str_key_selector.specificity(self._patches[i].selector),
-                    i,
-                ),
-            ),
-        )
+    def _resolution(self) -> PlanResolution:
+        return PlanResolution(plans=self._plans, patches=self._patches)
 
     # ....................... #
 
     def _resolve_plan(self, op: str) -> OperationPlan:
         """Resolve the effective plan for an operation key."""
 
-        plan = OperationPlan()
-
-        for index in self._patch_indices_by_specificity():
-            patch = self._patches[index]
-
-            if str_key_selector.matches(patch.selector, op):
-                plan = plan.merge(patch.plan)
-
-        explicit = self._plans.get(op)
-
-        if explicit is not None:
-            plan = plan.merge(explicit)
-
-        return plan
+        return self._resolution().resolve(op)
 
     # ....................... #
 
@@ -258,43 +216,21 @@ class OperationRegistry:
     def merge(cls: type[Self], *registries: Self) -> Self:  # type: ignore[misc, override]
         """Merge multiple operation registries into a single registry."""
 
-        merged_handlers: dict[StrKey, HandlerFactory] = {}
-        merged_plans: dict[StrKey, OperationPlan] = {}
-        merged_patches: list[PlanPatch] = []
-
-        for reg in registries:
-            handler_conflicts = set(map(str, merged_handlers.keys())) & set(
-                map(str, reg._handlers.keys())
-            )
-            plan_conflicts = set(map(str, merged_plans.keys())) & set(
-                map(str, reg._plans.keys())
-            )
-
-            if handler_conflicts:
-                raise exc.internal(
-                    f"Conflicting handler factories: {handler_conflicts}"
+        merged = RegistryMerge.merge(
+            *(
+                RegistryMerge(
+                    handlers=reg._handlers,
+                    plans=reg._plans,
+                    patches=reg._patches,
                 )
-
-            if plan_conflicts:
-                raise exc.internal(f"Conflicting operation plans: {plan_conflicts}")
-
-            for patch in reg._patches:
-                if any(
-                    existing.selector == patch.selector for existing in merged_patches
-                ):
-                    raise exc.internal(
-                        f"Conflicting operation plan patches: {patch.selector!r}"
-                    )
-
-                merged_patches.append(patch)
-
-            merged_handlers.update(reg._handlers)
-            merged_plans.update(reg._plans)
+                for reg in registries
+            ),
+        )
 
         return cls(
-            handlers=merged_handlers,
-            plans=merged_plans,
-            patches=tuple(merged_patches),
+            handlers=merged.handlers,
+            plans=merged.plans,
+            patches=merged.patches,
         )
 
     # ....................... #
@@ -305,121 +241,17 @@ class OperationRegistry:
 
     # ....................... #
 
-    def _validate_patches(self) -> None:
-        """Validate plan patches before freeze."""
-
-        self._validate_orphan_patches()
-        self._validate_patch_specificity_conflicts()
-
-    # ....................... #
-
-    def _validate_orphan_patches(self) -> None:
-        """Reject patches whose selector matches no registered operation."""
-
-        if not self._patches:
-            return
-
-        for patch in self._patches:
-            if not any(
-                str_key_selector.matches(patch.selector, op) for op in self._handlers
-            ):
-                raise exc.internal(
-                    "Orphan plan patch: selector "
-                    f"{patch.selector!r} matches no registered operations"
-                )
-
-    # ....................... #
-
-    def _validate_patch_specificity_conflicts(self) -> None:
-        """Reject equal-specificity patches that cannot merge for the same operation."""
-
-        if len(self._patches) < 2 or not self._handlers:
-            return
-
-        for op in self._handlers:
-            by_specificity: dict[int, list[int]] = defaultdict(list)
-
-            for index in self._patch_indices_by_specificity():
-                patch = self._patches[index]
-
-                if not str_key_selector.matches(patch.selector, str(op)):
-                    continue
-
-                spec = str_key_selector.specificity(patch.selector)
-                by_specificity[spec].append(index)
-
-            for spec, indices in by_specificity.items():
-                if len(indices) < 2:
-                    continue
-
-                merged = OperationPlan()
-
-                try:
-                    for index in indices:
-                        merged = merged.merge(self._patches[index].plan)
-
-                except Exception as e:
-                    selectors = tuple(self._patches[i].selector for i in indices)
-
-                    raise exc.internal(
-                        "Conflicting plan patches for operation "
-                        f"{op!r} at equal specificity {spec}: "
-                        f"selectors {selectors!r}: {e}"
-                    ) from e
-
-    # ....................... #
-
-    def _validate_resolved_plans(self) -> None:
-        """Reject resolved plans with transaction stages but no route."""
-
-        for op in self._handlers:
-            plan = self._resolve_plan(str(op))
-
-            if plan.tx_requires_route() and plan.tx_route() is None:
-                raise exc.internal(
-                    f"Operation {op!r} has transaction stages or dispatch "
-                    "but no transaction route"
-                )
-
-    # ....................... #
-
-    def _validate_dispatch_graph(self) -> None:
-        """Validate the dispatch graph of the operation registry.
-
-        Method ensures that there are no dispatch loops or deadends.
-        """
-
-        nodes = set(self._handlers.keys())
-        edges: set[tuple[StrKey, StrKey]] = set()
-
-        for op in nodes:
-            p = self._resolve_plan(str(op))
-
-            for d in p.iter_dispatch():
-                if d not in nodes:
-                    raise exc.internal(
-                        f"Dispatch target {d} not found for operation {op}"
-                    )
-
-                edges.add((op, d))
-
-        g = DirectedAcyclicGraph.from_edges(nodes, edges)
-        g.validate()
-
-    # ....................... #
-
     def freeze(self) -> FrozenOperationRegistry:
         """Freeze the operation registry."""
 
-        self._validate_patches()
-        self._validate_resolved_plans()
-        self._validate_dispatch_graph()
+        resolution = self._resolution()
+        RegistryFreezeValidator.validate_all(self._handlers, resolution)
 
         frozen_handlers = dict(self._handlers)
         frozen_plans: dict[StrKey, FrozenOperationPlan] = {}
 
         for op in frozen_handlers:
-            frozen_plans[op] = self._resolve_plan(str(op)).freeze()
+            frozen_plans[op] = resolution.resolve(str(op)).freeze()
 
         return FrozenOperationRegistry(handlers=frozen_handlers, plans=frozen_plans)
 
