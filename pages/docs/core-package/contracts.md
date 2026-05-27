@@ -15,8 +15,9 @@ well-known dependency keys.
 | Broadcast messages to subscribers | [Pub/Sub](contracts/pubsub.md) | `PubSubSpec`, `PubSubCommandPort`, `PubSubQueryPort` | Mock, Redis / Valkey | `PubSubCommandDepKey`, `PubSubQueryDepKey` |
 | Append ordered events and consume by stream or group | [Stream](contracts/stream.md) | `StreamSpec`, stream ports | Mock, Redis / Valkey | `StreamQueryDepKey`, `StreamCommandDepKey`, `StreamGroupQueryDepKey` |
 | Store and retrieve binary objects | [Storage](contracts/storage.md) | `StorageSpec`, `StoragePort` | Mock, S3-compatible storage | `StorageDepKey` |
-| Start and interact with long-running processes | [Workflow](contracts/workflow.md) | `WorkflowSpec`, workflow ports | Temporal | `WorkflowCommandDepKey`, `WorkflowQueryDepKey` |
-| Manage recurring workflow starts | [Workflow schedule](contracts/workflow-schedule.md) | `WorkflowScheduleTiming`, schedule ports | Temporal | `WorkflowScheduleCommandDepKey`, `WorkflowScheduleQueryDepKey` |
+| Long-running orchestration (Temporal-style) | [Durable workflow](contracts/durable-workflow.md) | `DurableWorkflowSpec`, workflow ports | Temporal | `DurableWorkflowCommandDepKey`, `DurableWorkflowQueryDepKey` |
+| Recurring durable workflow starts | [Durable workflow schedule](contracts/durable-workflow-schedule.md) | `DurableWorkflowScheduleTiming`, schedule ports | Temporal | `DurableWorkflowScheduleCommandDepKey`, `DurableWorkflowScheduleQueryDepKey` |
+| Event-driven durable functions (steps) | [Durable function](contracts/durable-function.md) | `DurableFunctionEventSpec`, `DurableFunctionSpec`, event/step ports | Future: Inngest | `DurableFunctionEventCommandDepKey`, `DurableFunctionStepDepKey` |
 | Replay duplicate HTTP-style requests safely | [Idempotency](contracts/idempotency.md) | `IdempotencySpec`, `IdempotencyPort` | Mock, Redis / Valkey | `IdempotencyDepKey` |
 | Query warehouse tables or append analytics rows | [Analytics](contracts/analytics.md) | `AnalyticsSpec`, `AnalyticsQueryPort`, `AnalyticsIngestPort` | Mock, BigQuery, ClickHouse | `AnalyticsQueryDepKey`, `AnalyticsIngestDepKey` |
 

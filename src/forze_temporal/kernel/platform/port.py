@@ -2,12 +2,13 @@
 
 from typing import Any, Awaitable, Protocol
 
-from forze.application.contracts.workflow import (
-    WorkflowScheduleDescription,
-    WorkflowScheduleTiming,
-)
 from pydantic import BaseModel
 from temporalio.client import WorkflowHandle
+
+from forze.application.contracts.durable.workflow import (
+    DurableWorkflowScheduleDescription,
+    DurableWorkflowScheduleTiming,
+)
 
 from .schedule_types import TemporalScheduleListPage
 
@@ -91,7 +92,7 @@ class TemporalClientPort(Protocol):
         workflow_name: str,
         queue: str,
         arg: BaseModel,
-        timing: WorkflowScheduleTiming,
+        timing: DurableWorkflowScheduleTiming,
         workflow_id: str,
         trigger_immediately: bool = False,
         note: str | None = None,
@@ -104,12 +105,14 @@ class TemporalClientPort(Protocol):
         workflow_name: str,
         queue: str,
         arg: BaseModel | None,
-        timing: WorkflowScheduleTiming | None,
+        timing: DurableWorkflowScheduleTiming | None,
         workflow_id: str | None,
         note: str | None,
     ) -> Awaitable[None]: ...  # pragma: no cover
 
-    def delete_schedule(self, schedule_id: str) -> Awaitable[None]: ...  # pragma: no cover
+    def delete_schedule(
+        self, schedule_id: str
+    ) -> Awaitable[None]: ...  # pragma: no cover
 
     def pause_schedule(
         self,
@@ -125,12 +128,14 @@ class TemporalClientPort(Protocol):
         note: str | None = None,
     ) -> Awaitable[None]: ...  # pragma: no cover
 
-    def trigger_schedule(self, schedule_id: str) -> Awaitable[None]: ...  # pragma: no cover
+    def trigger_schedule(
+        self, schedule_id: str
+    ) -> Awaitable[None]: ...  # pragma: no cover
 
     def describe_schedule(
         self,
         schedule_id: str,
-    ) -> Awaitable[WorkflowScheduleDescription]: ...  # pragma: no cover
+    ) -> Awaitable[DurableWorkflowScheduleDescription]: ...  # pragma: no cover
 
     def list_schedules(
         self,

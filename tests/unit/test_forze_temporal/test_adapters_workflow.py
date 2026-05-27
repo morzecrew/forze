@@ -10,14 +10,14 @@ from pydantic import BaseModel
 pytest.importorskip("temporalio")
 
 from forze.application.contracts.tenancy import TenantIdentity
-from forze.application.contracts.workflow import (
-    WorkflowHandle,
-    WorkflowQuerySpec,
-    WorkflowSignalSpec,
-    WorkflowSpec,
-    WorkflowUpdateSpec,
+from forze.application.contracts.durable.workflow import (
+    DurableWorkflowHandle,
+    DurableWorkflowQuerySpec,
+    DurableWorkflowSignalSpec,
+    DurableWorkflowSpec,
+    DurableWorkflowUpdateSpec,
 )
-from forze.application.contracts.workflow.specs import WorkflowInvokeSpec
+from forze.application.contracts.durable.workflow.specs import DurableWorkflowInvokeSpec
 from forze_temporal.adapters.workflow import (
     TemporalWorkflowCommandAdapter,
     TemporalWorkflowQueryAdapter,
@@ -53,14 +53,14 @@ class _UpOut(BaseModel):
     v: int = 4
 
 
-def _spec() -> WorkflowSpec[_In, _Out]:
-    return WorkflowSpec(
+def _spec() -> DurableWorkflowSpec[_In, _Out]:
+    return DurableWorkflowSpec(
         name="Wf",
-        run=WorkflowInvokeSpec(args_type=_In, return_type=_Out),
-        signals={"sig": WorkflowSignalSpec(name="sig", args_type=_Sig)},
-        queries={"q": WorkflowQuerySpec(name="q", args_type=_QIn, return_type=_QOut)},
+        run=DurableWorkflowInvokeSpec(args_type=_In, return_type=_Out),
+        signals={"sig": DurableWorkflowSignalSpec(name="sig", args_type=_Sig)},
+        queries={"q": DurableWorkflowQuerySpec(name="q", args_type=_QIn, return_type=_QOut)},
         updates={
-            "up": WorkflowUpdateSpec(name="up", args_type=_UpIn, return_type=_UpOut)
+            "up": DurableWorkflowUpdateSpec(name="up", args_type=_UpIn, return_type=_UpOut)
         },
     )
 
@@ -93,7 +93,7 @@ class TestTemporalWorkflowCommandAdapter:
 
         handle = await adapter.start(arg, workflow_id="custom-1")
 
-        assert handle == WorkflowHandle(workflow_id="wid-1", run_id="run-9")
+        assert handle == DurableWorkflowHandle(workflow_id="wid-1", run_id="run-9")
         backend.start_workflow.assert_awaited_once_with(
             workflow="Wf",
             id="custom-1",
@@ -120,7 +120,7 @@ class TestTemporalWorkflowCommandAdapter:
             spec=spec,
             tenant_aware=False,
         )
-        h = WorkflowHandle(workflow_id="w1", run_id="r1")
+        h = DurableWorkflowHandle(workflow_id="w1", run_id="r1")
         await adapter.signal(h, signal=spec.signals["sig"], args=_Sig(s=2))
         out = await adapter.update(h, update=spec.updates["up"], args=_UpIn(u=3))
         await adapter.cancel(h)
@@ -152,7 +152,7 @@ class TestTemporalWorkflowQueryAdapter:
             spec=spec,
             tenant_aware=False,
         )
-        h = WorkflowHandle(workflow_id="w2", run_id="r2")
+        h = DurableWorkflowHandle(workflow_id="w2", run_id="r2")
 
         qo = await adapter.query(h, query=spec.queries["q"], args=_QIn(q=1))
         res = await adapter.result(h)

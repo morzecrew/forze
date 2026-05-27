@@ -93,7 +93,7 @@ For FastAPI idempotency, either register a plain `idempotency` config or use a r
 ```python
 from forze.application.contracts.queue import QueueSpec
 from forze.application.contracts.storage import StorageSpec
-from forze.application.contracts.workflow import WorkflowSpec
+from forze.application.contracts.durable.workflow import DurableWorkflowSpec
 from forze.base.serialization import PydanticRecordMappingCodec
 
 attachments = StorageSpec(name=ResourceName.PROJECT_ATTACHMENTS)
@@ -101,7 +101,7 @@ orders = QueueSpec(
     name=ResourceName.ORDERS,
     codec=PydanticRecordMappingCodec(OrderPayload),
 )
-workflow_spec: WorkflowSpec[StartOrderIn, OrderResult] = ...
+workflow_spec: DurableWorkflowSpec[StartOrderIn, OrderResult] = ...
 
 s3_module = S3DepsModule(
     client=s3_client,

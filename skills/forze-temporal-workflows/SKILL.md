@@ -1,25 +1,25 @@
 ---
 name: forze-temporal-workflows
 description: >-
-  Wires and uses Forze workflow contracts with WorkflowSpec,
-  WorkflowCommandDepKey, WorkflowQueryDepKey, TemporalDepsModule, lifecycle,
-  context propagation, tenant-aware workflow IDs, and Temporal tests. Use when
-  orchestrating long-running workflows.
+  Wires and uses Forze durable workflow contracts with DurableWorkflowSpec,
+  DurableWorkflowCommandDepKey, DurableWorkflowQueryDepKey, TemporalDepsModule,
+  lifecycle, context propagation, tenant-aware workflow IDs, and Temporal tests.
+  Use when orchestrating long-running workflows.
 ---
 
 # Forze Temporal workflows
 
-Use when starting, signaling, updating, querying, or testing workflow-backed handlers. The core application depends on workflow contracts; `forze_temporal` supplies the Temporal adapter.
+Use when starting, signaling, updating, querying, or testing workflow-backed handlers. The core application depends on durable workflow contracts; `forze_temporal` supplies the Temporal adapter.
 
 ## Workflow spec
 
 ```python
 from enum import StrEnum
 
-from forze.application.contracts.workflow import (
-    WorkflowInvokeSpec,
-    WorkflowSignalSpec,
-    WorkflowSpec,
+from forze.application.contracts.durable.workflow import (
+    DurableWorkflowInvokeSpec,
+    DurableWorkflowSignalSpec,
+    DurableWorkflowSpec,
 )
 
 
@@ -27,11 +27,11 @@ class WorkflowName(StrEnum):
     PROJECT_ONBOARDING = "project-onboarding"
 
 
-project_onboarding = WorkflowSpec(
+project_onboarding = DurableWorkflowSpec(
     name=WorkflowName.PROJECT_ONBOARDING,
-    run=WorkflowInvokeSpec(args_type=StartOnboarding, return_type=OnboardingResult),
+    run=DurableWorkflowInvokeSpec(args_type=StartOnboarding, return_type=OnboardingResult),
     signals={
-        "step_completed": WorkflowSignalSpec(
+        "step_completed": DurableWorkflowSignalSpec(
             name="step_completed",
             args_type=StepCompleted,
         )
@@ -81,15 +81,21 @@ There is no `ctx.workflow_command(...)` helper. Resolve workflow ports with `ctx
 ```python
 import attrs
 
+from forze.application.contracts.durable.workflow import (
+    DurableWorkflowCommandDepKey,
+    DurableWorkflowCommandPort,
+    DurableWorkflowHandle,
+    DurableWorkflowQueryDepKey,
+    DurableWorkflowQueryPort,
+)
 from forze.application.contracts.execution import Handler
-from forze.application.contracts.workflow import WorkflowCommandDepKey, WorkflowQueryDepKey
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class StartProjectOnboarding(Handler[StartOnboarding, WorkflowHandle]):
-    commands: WorkflowCommandPort
+class StartProjectOnboarding(Handler[StartOnboarding, DurableWorkflowHandle]):
+    commands: DurableWorkflowCommandPort
 
-    async def __call__(self, args: StartOnboarding) -> WorkflowHandle:
+    async def __call__(self, args: StartOnboarding) -> DurableWorkflowHandle:
         return await self.commands.start(
             args,
             workflow_id=f"project:{args.project_id}",
@@ -97,17 +103,17 @@ class StartProjectOnboarding(Handler[StartOnboarding, WorkflowHandle]):
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class GetOnboardingResult(Handler[WorkflowHandle, OnboardingResult]):
-    queries: WorkflowQueryPort
+class GetOnboardingResult(Handler[DurableWorkflowHandle, OnboardingResult]):
+    queries: DurableWorkflowQueryPort
 
-    async def __call__(self, args: WorkflowHandle) -> OnboardingResult:
+    async def __call__(self, args: DurableWorkflowHandle) -> OnboardingResult:
         return await self.queries.result(args)
 
 
 # Register on OperationRegistry:
 # lambda ctx: StartProjectOnboarding(
 #     commands=ctx.deps.resolve_configurable(
-#         ctx, WorkflowCommandDepKey, project_onboarding, route=project_onboarding.name
+#         ctx, DurableWorkflowCommandDepKey, project_onboarding, route=project_onboarding.name
 #     ),
 # )
 ```
@@ -123,38 +129,38 @@ Resolve schedule ports the same way as workflow command/query ports:
 ```python
 from datetime import timedelta
 
-from forze.application.contracts.workflow import (
-    WorkflowScheduleCommandDepKey,
-    WorkflowScheduleTiming,
+from forze.application.contracts.durable.workflow import (
+    DurableWorkflowScheduleCommandDepKey,
+    DurableWorkflowScheduleTiming,
 )
 
 schedules = ctx.deps.resolve_configurable(
     ctx,
-    WorkflowScheduleCommandDepKey,
+    DurableWorkflowScheduleCommandDepKey,
     project_onboarding,
     route=project_onboarding.name,
 )
 await schedules.upsert(
     "nightly-onboarding",
     StartOnboarding(project_id="p1"),
-    WorkflowScheduleTiming(cron_expressions=("0 2 * * *",)),
+    DurableWorkflowScheduleTiming(cron_expressions=("0 2 * * *",)),
 )
 ```
 
 Declarative bootstrap on deploy:
 
 ```python
-from forze.application.contracts.workflow import WorkflowScheduleBootstrap
+from forze.application.contracts.durable.workflow import DurableWorkflowScheduleBootstrap
 
 TemporalDepsModule(
     client=client,
     workflows={WorkflowName.PROJECT_ONBOARDING: {"queue": "project-tasks"}},
     schedule_bootstraps=[
-        WorkflowScheduleBootstrap(
+        DurableWorkflowScheduleBootstrap(
             workflow_name=WorkflowName.PROJECT_ONBOARDING,
             schedule_id="nightly",
             default_args=StartOnboarding(project_id="default"),
-            timing=WorkflowScheduleTiming(interval=timedelta(hours=24)),
+            timing=DurableWorkflowScheduleTiming(interval=timedelta(hours=24)),
         ),
     ],
 )
@@ -167,19 +173,19 @@ Schedules require a Temporal server with the Schedules API (not the time-skippin
 
 ## Testing
 
-Use the repository’s Temporal testing patterns when workflow code itself is under test. For handlers that only need to verify a workflow command was issued, register fake `WorkflowCommandDepKey` / `WorkflowQueryDepKey` factories in `Deps`. Schedule handlers can use fake `WorkflowScheduleCommandDepKey` / `WorkflowScheduleQueryDepKey` factories similarly.
+Use the repository’s Temporal testing patterns when workflow code itself is under test. For handlers that only need to verify a workflow command was issued, register fake `DurableWorkflowCommandDepKey` / `DurableWorkflowQueryDepKey` factories in `Deps`. Schedule handlers can use fake `DurableWorkflowScheduleCommandDepKey` / `DurableWorkflowScheduleQueryDepKey` factories similarly.
 
 ## Anti-patterns
 
-1. **Looking for `ctx.workflow_*` helpers** — use `ctx.deps.resolve_configurable(ctx, WorkflowCommandDepKey, spec, route=spec.name)`.
-2. **Putting Temporal task queues in `WorkflowSpec`** — queues belong in `TemporalWorkflowConfig`.
-3. **Using raw Temporal SDK types in handlers** — keep handlers on `WorkflowSpec`, ports, and Pydantic DTOs.
+1. **Looking for `ctx.workflow_*` helpers** — use `ctx.deps.resolve_configurable(ctx, DurableWorkflowCommandDepKey, spec, route=spec.name)`.
+2. **Putting Temporal task queues in `DurableWorkflowSpec`** — queues belong in `TemporalWorkflowConfig`.
+3. **Using raw Temporal SDK types in handlers** — keep handlers on `DurableWorkflowSpec`, ports, and Pydantic DTOs.
 4. **Skipping lifecycle** — the client connects through `temporal_lifecycle_step`.
 5. **Ignoring context propagation in workers** — register interceptors on both client and worker when identity/correlation matters.
 
 ## Reference
 
 - [`pages/docs/integrations/temporal.md`](../../pages/docs/integrations/temporal.md)
-- [`src/forze/application/contracts/workflow`](../../src/forze/application/contracts/workflow)
+- [`src/forze/application/contracts/durable/workflow`](../../src/forze/application/contracts/durable/workflow)
 - [`src/forze_temporal/execution/deps/module.py`](../../src/forze_temporal/execution/deps/module.py)
 - [`tests/unit/test_forze_temporal`](../../tests/unit/test_forze_temporal)

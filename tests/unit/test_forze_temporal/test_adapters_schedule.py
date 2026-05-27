@@ -10,12 +10,12 @@ from pydantic import BaseModel
 pytest.importorskip("temporalio")
 
 from forze.application.contracts.tenancy import TenantIdentity
-from forze.application.contracts.workflow import (
-    WorkflowScheduleHandle,
-    WorkflowScheduleTiming,
-    WorkflowSpec,
+from forze.application.contracts.durable.workflow import (
+    DurableWorkflowScheduleHandle,
+    DurableWorkflowScheduleTiming,
+    DurableWorkflowSpec,
 )
-from forze.application.contracts.workflow.specs import WorkflowInvokeSpec
+from forze.application.contracts.durable.workflow.specs import DurableWorkflowInvokeSpec
 from forze_temporal.adapters.schedule import (
     TemporalWorkflowScheduleCommandAdapter,
     TemporalWorkflowScheduleQueryAdapter,
@@ -27,15 +27,15 @@ class _In(BaseModel):
     x: int = 0
 
 
-def _spec() -> WorkflowSpec[_In, BaseModel]:
-    return WorkflowSpec(
+def _spec() -> DurableWorkflowSpec[_In, BaseModel]:
+    return DurableWorkflowSpec(
         name="ItSumWorkflow",
-        run=WorkflowInvokeSpec(args_type=_In, return_type=None),
+        run=DurableWorkflowInvokeSpec(args_type=_In, return_type=None),
     )
 
 
-def _timing() -> WorkflowScheduleTiming:
-    return WorkflowScheduleTiming(interval=timedelta(seconds=30))
+def _timing() -> DurableWorkflowScheduleTiming:
+    return DurableWorkflowScheduleTiming(interval=timedelta(seconds=30))
 
 
 class TestTemporalWorkflowScheduleCommandAdapter:
@@ -58,7 +58,7 @@ class TestTemporalWorkflowScheduleCommandAdapter:
             workflow_id_template="run-{date}",
         )
 
-        assert handle == WorkflowScheduleHandle(schedule_id="nightly")
+        assert handle == DurableWorkflowScheduleHandle(schedule_id="nightly")
         client.create_schedule.assert_awaited_once()
         call = client.create_schedule.await_args
         assert call.args[0] == "nightly"
@@ -88,10 +88,10 @@ class TestTemporalWorkflowScheduleCommandAdapter:
 class TestTemporalWorkflowScheduleQueryAdapter:
     @pytest.mark.asyncio
     async def test_list_delegates_to_client(self) -> None:
-        from forze.application.contracts.workflow import WorkflowScheduleDescription
+        from forze.application.contracts.durable.workflow import DurableWorkflowScheduleDescription
 
         client = MagicMock(spec=TemporalClient)
-        desc = WorkflowScheduleDescription(
+        desc = DurableWorkflowScheduleDescription(
             schedule_id="s1",
             workflow_name="ItSumWorkflow",
             paused=False,

@@ -504,21 +504,21 @@ Deduplicate operations by caching responses keyed by operation name, idempotency
 |-----|---------|
 | `IdempotencyDepKey` | Idempotency port |
 
-## Workflow
+## Durable workflow
 
-Workflows are typed with **`WorkflowSpec`** (logical **`name`**, **`run`** invocation, optional **`signals`**, **`queries`**, **`updates`**). Ports are split between commands and queries.
+Workflows are typed with **`DurableWorkflowSpec`** (logical **`name`**, **`run`** invocation, optional **`signals`**, **`queries`**, **`updates`**). Ports are split between commands and queries. See [Durable workflow contracts](../core-package/contracts/durable-workflow.md).
 
-### WorkflowCommandPort
+### DurableWorkflowCommandPort
 
 | Method | Purpose |
 |--------|---------|
-| `start(args, *, workflow_id?, raise_on_already_started?)` | Start a run; returns **`WorkflowHandle`** |
+| `start(args, *, workflow_id?, raise_on_already_started?)` | Start a run; returns **`DurableWorkflowHandle`** |
 | `signal(handle, *, signal, args)` | Send a signal |
 | `update(handle, *, update, args)` | Run a workflow update |
 | `cancel(handle)` | Request cancellation |
 | `terminate(handle, *, reason?)` | Terminate the run |
 
-### WorkflowQueryPort
+### DurableWorkflowQueryPort
 
 | Method | Purpose |
 |--------|---------|
@@ -529,14 +529,14 @@ Workflows are typed with **`WorkflowSpec`** (logical **`name`**, **`run`** invoc
 
 | Key | Purpose |
 |-----|---------|
-| `WorkflowCommandDepKey` | Routed factory → **`WorkflowCommandPort`** (route = **`WorkflowSpec.name`**) |
-| `WorkflowQueryDepKey` | Routed factory → **`WorkflowQueryPort`** (route = **`WorkflowSpec.name`**) |
+| `DurableWorkflowCommandDepKey` | Routed factory → **`DurableWorkflowCommandPort`** (route = **`DurableWorkflowSpec.name`**) |
+| `DurableWorkflowQueryDepKey` | Routed factory → **`DurableWorkflowQueryPort`** (route = **`DurableWorkflowSpec.name`**) |
 
-## Workflow schedule
+## Durable workflow schedule
 
-Schedule resources are typed with **`WorkflowScheduleTiming`** and managed through schedule command/query ports (separate from run handles).
+Schedule resources are typed with **`DurableWorkflowScheduleTiming`** and managed through schedule command/query ports (separate from run handles).
 
-### WorkflowScheduleCommandPort
+### DurableWorkflowScheduleCommandPort
 
 | Method | Purpose |
 |--------|---------|
@@ -547,21 +547,44 @@ Schedule resources are typed with **`WorkflowScheduleTiming`** and managed throu
 | `pause(handle, *, note?)` / `unpause(handle, *, note?)` | Pause or resume |
 | `trigger(handle)` | Fire immediately |
 
-### WorkflowScheduleQueryPort
+### DurableWorkflowScheduleQueryPort
 
 | Method | Purpose |
 |--------|---------|
-| `describe(handle)` | Return **`WorkflowScheduleDescription`** |
+| `describe(handle)` | Return **`DurableWorkflowScheduleDescription`** |
 | `list(*, limit?, next_page_token?)` | Paginated schedules for this workflow |
 
 ### Dependency keys
 
 | Key | Purpose |
 |-----|---------|
-| `WorkflowScheduleCommandDepKey` | Routed factory → **`WorkflowScheduleCommandPort`** |
-| `WorkflowScheduleQueryDepKey` | Routed factory → **`WorkflowScheduleQueryPort`** |
+| `DurableWorkflowScheduleCommandDepKey` | Routed factory → **`DurableWorkflowScheduleCommandPort`** |
+| `DurableWorkflowScheduleQueryDepKey` | Routed factory → **`DurableWorkflowScheduleQueryPort`** |
 
-Declarative **`WorkflowScheduleBootstrap`** entries on **`TemporalDepsModule`** are upserted on lifecycle startup when **`workflow_configs`** is passed to **`temporal_lifecycle_step`**.
+Declarative **`DurableWorkflowScheduleBootstrap`** entries on **`TemporalDepsModule`** are upserted on lifecycle startup when **`workflow_configs`** is passed to **`temporal_lifecycle_step`**.
+
+## Durable function
+
+Event emit and step execution for platform-managed functions. See [Durable function contracts](../core-package/contracts/durable-function.md).
+
+### DurableFunctionEventCommandPort
+
+| Method | Purpose |
+|--------|---------|
+| `send(payload, *, event_id?, occurred_at?)` | Emit an event; returns event id |
+
+### DurableFunctionStepPort
+
+| Method | Purpose |
+|--------|---------|
+| `run(step_id, fn)` | Run a memoized, retriable step |
+
+### Dependency keys
+
+| Key | Purpose |
+|-----|---------|
+| `DurableFunctionEventCommandDepKey` | Routed factory → **`DurableFunctionEventCommandPort`** |
+| `DurableFunctionStepDepKey` | Simple factory → **`DurableFunctionStepPort`** |
 
 ## Context handling
 

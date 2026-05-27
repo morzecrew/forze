@@ -6,11 +6,11 @@ import pytest
 
 pytest.importorskip("temporalio")
 
-from forze.application.contracts.workflow import (
-    WorkflowCommandDepKey,
-    WorkflowQueryDepKey,
-    WorkflowScheduleCommandDepKey,
-    WorkflowScheduleQueryDepKey,
+from forze.application.contracts.durable.workflow import (
+    DurableWorkflowCommandDepKey,
+    DurableWorkflowQueryDepKey,
+    DurableWorkflowScheduleCommandDepKey,
+    DurableWorkflowScheduleQueryDepKey,
 )
 from forze.application.execution import ExecutionContext
 from forze_temporal.execution.deps import TemporalClientDepKey, TemporalDepsModule
@@ -71,8 +71,8 @@ def test_temporal_deps_module_registers_client_and_empty_workflow_routes() -> No
     deps = module()
 
     assert deps.plain_deps[TemporalClientDepKey] is client
-    assert WorkflowCommandDepKey not in (deps.routed_deps or {})
-    assert WorkflowQueryDepKey not in (deps.routed_deps or {})
+    assert DurableWorkflowCommandDepKey not in (deps.routed_deps or {})
+    assert DurableWorkflowQueryDepKey not in (deps.routed_deps or {})
 
 
 def test_temporal_deps_module_merges_workflow_configs() -> None:
@@ -88,11 +88,11 @@ def test_temporal_deps_module_merges_workflow_configs() -> None:
     deps = module()
     routed_deps = deps.routed_deps or {}
 
-    assert WorkflowCommandDepKey in routed_deps
-    assert WorkflowQueryDepKey in routed_deps
-    assert WorkflowScheduleCommandDepKey in routed_deps
-    assert WorkflowScheduleQueryDepKey in routed_deps
-    assert "MyWorkflow" in routed_deps[WorkflowCommandDepKey]
-    assert "MyWorkflow" in routed_deps[WorkflowQueryDepKey]
-    assert "MyWorkflow" in routed_deps[WorkflowScheduleCommandDepKey]
-    assert "MyWorkflow" in routed_deps[WorkflowScheduleQueryDepKey]
+    assert DurableWorkflowCommandDepKey in routed_deps
+    assert DurableWorkflowQueryDepKey in routed_deps
+    assert DurableWorkflowScheduleCommandDepKey in routed_deps
+    assert DurableWorkflowScheduleQueryDepKey in routed_deps
+    assert "MyWorkflow" in routed_deps[DurableWorkflowCommandDepKey]
+    assert "MyWorkflow" in routed_deps[DurableWorkflowQueryDepKey]
+    assert "MyWorkflow" in routed_deps[DurableWorkflowScheduleCommandDepKey]
+    assert "MyWorkflow" in routed_deps[DurableWorkflowScheduleQueryDepKey]

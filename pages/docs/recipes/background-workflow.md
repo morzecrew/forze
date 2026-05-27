@@ -4,7 +4,7 @@ Use this recipe when a request should start long-running work and return before 
 
 ## Ingredients
 
-- A workflow spec from the workflow contracts
+- A durable workflow spec from [durable workflow contracts](../core-package/contracts/durable-workflow.md)
 - [Temporal Integration](../integrations/temporal.md) for durable workflows, or a queue integration such as [RabbitMQ](../integrations/rabbitmq.md) or [SQS](../integrations/sqs.md)
 - A handler that resolves workflow or queue ports from `ExecutionContext`
 
@@ -26,4 +26,4 @@ Use this recipe when a request should start long-running work and return before 
 
 ## Learn more
 
-See [Contracts and Adapters](../concepts/contracts-adapters.md) for workflow and queue ports, then read the integration page for the backend you choose. For cron-style or delayed enqueue patterns, see [Scheduled queue jobs](scheduled-queue-jobs.md).
+See [Durable contracts](../core-package/contracts/durable.md), [Contracts and Adapters](../concepts/contracts-adapters.md), and the integration page for the backend you choose. For cron-style or delayed enqueue patterns, see [Scheduled queue jobs](scheduled-queue-jobs.md).

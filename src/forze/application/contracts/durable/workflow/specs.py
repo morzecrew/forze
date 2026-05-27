@@ -4,9 +4,9 @@ from typing import Any, Generic, TypeVar, final
 import attrs
 from pydantic import BaseModel
 
+from forze.application.contracts.base import BaseSpec
 from forze.base.exceptions import exc
-
-from ..base import BaseSpec
+from forze.base.primitives import StrKey
 
 # ----------------------- #
 
@@ -17,7 +17,7 @@ Out = TypeVar("Out", bound=BaseModel)
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class WorkflowInvokeSpec(Generic[In, Out]):
+class DurableWorkflowInvokeSpec(Generic[In, Out]):
     """Specification for abstract invocation within a workflow."""
 
     args_type: type[In]
@@ -32,10 +32,10 @@ class WorkflowInvokeSpec(Generic[In, Out]):
 
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class WorkflowSignalSpec(WorkflowInvokeSpec[In, Any], Generic[In]):
+class DurableWorkflowSignalSpec(DurableWorkflowInvokeSpec[In, Any], Generic[In]):
     """Specification for a signal invocation within a workflow."""
 
-    name: str
+    name: StrKey
     """The name of the signal."""
 
     return_type: None = attrs.field(default=None, init=False)
@@ -47,10 +47,10 @@ class WorkflowSignalSpec(WorkflowInvokeSpec[In, Any], Generic[In]):
 
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class WorkflowQuerySpec(WorkflowInvokeSpec[In, Out], Generic[In, Out]):
+class DurableWorkflowQuerySpec(DurableWorkflowInvokeSpec[In, Out], Generic[In, Out]):
     """Specification for a query invocation within a workflow."""
 
-    name: str
+    name: StrKey
     """The name of the query."""
 
 
@@ -59,10 +59,10 @@ class WorkflowQuerySpec(WorkflowInvokeSpec[In, Out], Generic[In, Out]):
 
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class WorkflowUpdateSpec(WorkflowInvokeSpec[In, Out], Generic[In, Out]):
+class DurableWorkflowUpdateSpec(DurableWorkflowInvokeSpec[In, Out], Generic[In, Out]):
     """Specification for an update invocation within a workflow."""
 
-    name: str
+    name: StrKey
     """The name of the update."""
 
 
@@ -71,19 +71,23 @@ class WorkflowUpdateSpec(WorkflowInvokeSpec[In, Out], Generic[In, Out]):
 
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class WorkflowSpec(Generic[In, Out], BaseSpec):
+class DurableWorkflowSpec(Generic[In, Out], BaseSpec):
     """Specification for a workflow."""
 
-    run: WorkflowInvokeSpec[In, Out]
+    run: DurableWorkflowInvokeSpec[In, Out]
     """The main invocation of the workflow."""
 
-    signals: dict[str, WorkflowSignalSpec[Any]] = attrs.field(factory=dict)
+    signals: dict[StrKey, DurableWorkflowSignalSpec[Any]] = attrs.field(factory=dict)
     """Signal invocations within the workflow."""
 
-    queries: dict[str, WorkflowQuerySpec[Any, Any]] = attrs.field(factory=dict)
+    queries: dict[StrKey, DurableWorkflowQuerySpec[Any, Any]] = attrs.field(
+        factory=dict
+    )
     """Query invocations within the workflow."""
 
-    updates: dict[str, WorkflowUpdateSpec[Any, Any]] = attrs.field(factory=dict)
+    updates: dict[StrKey, DurableWorkflowUpdateSpec[Any, Any]] = attrs.field(
+        factory=dict
+    )
     """Update invocations within the workflow."""
 
 
@@ -92,7 +96,7 @@ class WorkflowSpec(Generic[In, Out], BaseSpec):
 
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class WorkflowHandle:
+class DurableWorkflowHandle:
     """Handle for a workflow run."""
 
     workflow_id: str
@@ -107,7 +111,7 @@ class WorkflowHandle:
 
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class WorkflowScheduleHandle:
+class DurableWorkflowScheduleHandle:
     """Handle for a workflow schedule resource."""
 
     schedule_id: str
@@ -119,7 +123,7 @@ class WorkflowScheduleHandle:
 
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class WorkflowScheduleTiming:
+class DurableWorkflowScheduleTiming:
     """Provider-agnostic schedule timing specification."""
 
     cron_expressions: tuple[str, ...] = ()
@@ -140,10 +144,12 @@ class WorkflowScheduleTiming:
     timezone: str | None = None
     """Reserved for providers that support named timezones."""
 
+    # ....................... #
+
     def __attrs_post_init__(self) -> None:
         if not self.cron_expressions and self.interval is None:
             raise exc.validation(
-                "WorkflowScheduleTiming requires cron_expressions or interval",
+                "DurableWorkflowScheduleTiming requires cron_expressions or interval",
             )
 
 
@@ -152,19 +158,19 @@ class WorkflowScheduleTiming:
 
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class WorkflowScheduleDescription:
+class DurableWorkflowScheduleDescription:
     """Description of a workflow schedule returned by query ports."""
 
     schedule_id: str
     """Schedule identifier."""
 
-    workflow_name: str
-    """Logical workflow name (``WorkflowSpec.name``)."""
+    workflow_name: StrKey
+    """Logical workflow name (``DurableWorkflowSpec.name``)."""
 
     paused: bool
     """Whether the schedule is paused."""
 
-    timing: WorkflowScheduleTiming
+    timing: DurableWorkflowScheduleTiming
     """Normalized timing specification."""
 
     note: str | None = None
@@ -179,11 +185,11 @@ class WorkflowScheduleDescription:
 
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class WorkflowScheduleBootstrap(Generic[In]):
+class DurableWorkflowScheduleBootstrap(Generic[In]):
     """Declarative schedule registered at application startup."""
 
-    workflow_name: str
-    """Route key matching ``WorkflowSpec.name``."""
+    workflow_name: StrKey
+    """Route key matching ``DurableWorkflowSpec.name``."""
 
     schedule_id: str
     """Stable schedule identifier."""
@@ -191,10 +197,10 @@ class WorkflowScheduleBootstrap(Generic[In]):
     default_args: In
     """Default workflow run arguments."""
 
-    timing: WorkflowScheduleTiming
+    timing: DurableWorkflowScheduleTiming
     """When the schedule fires."""
 
-    workflow_id_template: str | None = None
+    workflow_id_template: str | None = None  #! very questionable thing
     """Optional workflow id template for each fired run."""
 
     trigger_immediately: bool = False

@@ -1,19 +1,19 @@
 from typing import Any, Awaitable, Generic, Protocol, runtime_checkable
 
-from .ports import BaseWorkflowPort
+from .ports import BaseDurableWorkflowPort
 from .specs import (
+    DurableWorkflowScheduleDescription,
+    DurableWorkflowScheduleHandle,
+    DurableWorkflowScheduleTiming,
     In,
-    WorkflowScheduleDescription,
-    WorkflowScheduleHandle,
-    WorkflowScheduleTiming,
 )
 
 # ----------------------- #
 
 
 @runtime_checkable
-class WorkflowScheduleCommandPort(
-    BaseWorkflowPort[In, Any],
+class DurableWorkflowScheduleCommandPort(
+    BaseDurableWorkflowPort[In, Any],
     Generic[In],
     Protocol,
 ):
@@ -23,12 +23,12 @@ class WorkflowScheduleCommandPort(
         self,
         schedule_id: str,
         args: In,
-        timing: WorkflowScheduleTiming,
+        timing: DurableWorkflowScheduleTiming,
         *,
         workflow_id_template: str | None = None,
         trigger_immediately: bool = False,
         note: str | None = None,
-    ) -> Awaitable[WorkflowScheduleHandle]:
+    ) -> Awaitable[DurableWorkflowScheduleHandle]:
         """Create a schedule; raise if it already exists."""
         ...  # pragma: no cover
 
@@ -38,12 +38,12 @@ class WorkflowScheduleCommandPort(
         self,
         schedule_id: str,
         args: In,
-        timing: WorkflowScheduleTiming,
+        timing: DurableWorkflowScheduleTiming,
         *,
         workflow_id_template: str | None = None,
         trigger_immediately: bool = False,
         note: str | None = None,
-    ) -> Awaitable[WorkflowScheduleHandle]:
+    ) -> Awaitable[DurableWorkflowScheduleHandle]:
         """Create a schedule or update it when it already exists."""
         ...  # pragma: no cover
 
@@ -51,9 +51,9 @@ class WorkflowScheduleCommandPort(
 
     def update(
         self,
-        handle: WorkflowScheduleHandle,
+        handle: DurableWorkflowScheduleHandle,
         *,
-        timing: WorkflowScheduleTiming | None = None,
+        timing: DurableWorkflowScheduleTiming | None = None,
         args: In | None = None,
         workflow_id_template: str | None = None,
         note: str | None = None,
@@ -63,7 +63,7 @@ class WorkflowScheduleCommandPort(
 
     # ....................... #
 
-    def delete(self, handle: WorkflowScheduleHandle) -> Awaitable[None]:
+    def delete(self, handle: DurableWorkflowScheduleHandle) -> Awaitable[None]:
         """Delete a schedule."""
         ...  # pragma: no cover
 
@@ -71,7 +71,7 @@ class WorkflowScheduleCommandPort(
 
     def pause(
         self,
-        handle: WorkflowScheduleHandle,
+        handle: DurableWorkflowScheduleHandle,
         *,
         note: str | None = None,
     ) -> Awaitable[None]:
@@ -82,7 +82,7 @@ class WorkflowScheduleCommandPort(
 
     def unpause(
         self,
-        handle: WorkflowScheduleHandle,
+        handle: DurableWorkflowScheduleHandle,
         *,
         note: str | None = None,
     ) -> Awaitable[None]:
@@ -91,7 +91,7 @@ class WorkflowScheduleCommandPort(
 
     # ....................... #
 
-    def trigger(self, handle: WorkflowScheduleHandle) -> Awaitable[None]:
+    def trigger(self, handle: DurableWorkflowScheduleHandle) -> Awaitable[None]:
         """Trigger a schedule to fire immediately."""
         ...  # pragma: no cover
 
@@ -100,8 +100,8 @@ class WorkflowScheduleCommandPort(
 
 
 @runtime_checkable
-class WorkflowScheduleQueryPort(
-    BaseWorkflowPort[In, Any],
+class DurableWorkflowScheduleQueryPort(
+    BaseDurableWorkflowPort[In, Any],
     Generic[In],
     Protocol,
 ):
@@ -109,8 +109,8 @@ class WorkflowScheduleQueryPort(
 
     def describe(
         self,
-        handle: WorkflowScheduleHandle,
-    ) -> Awaitable[WorkflowScheduleDescription]:
+        handle: DurableWorkflowScheduleHandle,
+    ) -> Awaitable[DurableWorkflowScheduleDescription]:
         """Describe a schedule."""
         ...  # pragma: no cover
 
@@ -121,6 +121,6 @@ class WorkflowScheduleQueryPort(
         *,
         limit: int | None = None,
         next_page_token: str | None = None,
-    ) -> Awaitable[tuple[tuple[WorkflowScheduleDescription, ...], str | None]]:
+    ) -> Awaitable[tuple[tuple[DurableWorkflowScheduleDescription, ...], str | None]]:
         """List schedules whose action targets this port's workflow spec."""
         ...  # pragma: no cover

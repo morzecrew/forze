@@ -9,13 +9,13 @@ from typing import final
 import attrs
 from pydantic import BaseModel
 
-from forze.application.contracts.workflow import (
-    WorkflowScheduleCommandPort,
-    WorkflowScheduleDescription,
-    WorkflowScheduleHandle,
-    WorkflowScheduleQueryPort,
-    WorkflowScheduleTiming,
-    WorkflowSpec,
+from forze.application.contracts.durable.workflow import (
+    DurableWorkflowScheduleCommandPort,
+    DurableWorkflowScheduleDescription,
+    DurableWorkflowScheduleHandle,
+    DurableWorkflowScheduleQueryPort,
+    DurableWorkflowScheduleTiming,
+    DurableWorkflowSpec,
 )
 from forze.base.exceptions import exc
 from forze.base.exceptions.model import CoreException, ExceptionKind
@@ -30,14 +30,14 @@ from .base import TemporalBaseAdapter
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class TemporalWorkflowScheduleCommandAdapter[In: BaseModel](
     TemporalBaseAdapter,
-    WorkflowScheduleCommandPort[In],
+    DurableWorkflowScheduleCommandPort[In],
 ):
-    """Temporal-backed implementation of :class:`WorkflowScheduleCommandPort`."""
+    """Temporal-backed implementation of :class:`DurableWorkflowScheduleCommandPort`."""
 
     queue: str
     """Temporal task queue name."""
 
-    spec: WorkflowSpec[In, BaseModel]
+    spec: DurableWorkflowSpec[In, BaseModel]
     """Workflow specification."""
 
     # ....................... #
@@ -59,12 +59,12 @@ class TemporalWorkflowScheduleCommandAdapter[In: BaseModel](
         self,
         schedule_id: str,
         args: In,
-        timing: WorkflowScheduleTiming,
+        timing: DurableWorkflowScheduleTiming,
         *,
         workflow_id_template: str | None = None,
         trigger_immediately: bool = False,
         note: str | None = None,
-    ) -> WorkflowScheduleHandle:
+    ) -> DurableWorkflowScheduleHandle:
         sid = self.construct_schedule_id(schedule_id)
         workflow_id = self._workflow_id(
             sid,
@@ -82,7 +82,7 @@ class TemporalWorkflowScheduleCommandAdapter[In: BaseModel](
             note=note,
         )
 
-        return WorkflowScheduleHandle(schedule_id=sid)
+        return DurableWorkflowScheduleHandle(schedule_id=sid)
 
     # ....................... #
 
@@ -90,12 +90,12 @@ class TemporalWorkflowScheduleCommandAdapter[In: BaseModel](
         self,
         schedule_id: str,
         args: In,
-        timing: WorkflowScheduleTiming,
+        timing: DurableWorkflowScheduleTiming,
         *,
         workflow_id_template: str | None = None,
         trigger_immediately: bool = False,
         note: str | None = None,
-    ) -> WorkflowScheduleHandle:
+    ) -> DurableWorkflowScheduleHandle:
         sid = self.construct_schedule_id(schedule_id)
 
         try:
@@ -130,21 +130,23 @@ class TemporalWorkflowScheduleCommandAdapter[In: BaseModel](
         if trigger_immediately:
             await self.client.trigger_schedule(sid)
 
-        return WorkflowScheduleHandle(schedule_id=sid)
+        return DurableWorkflowScheduleHandle(schedule_id=sid)
 
     # ....................... #
 
     async def update(
         self,
-        handle: WorkflowScheduleHandle,
+        handle: DurableWorkflowScheduleHandle,
         *,
-        timing: WorkflowScheduleTiming | None = None,
+        timing: DurableWorkflowScheduleTiming | None = None,
         args: In | None = None,
         workflow_id_template: str | None = None,
         note: str | None = None,
     ) -> None:
         workflow_id = (
-            self._workflow_id(handle.schedule_id, workflow_id_template=workflow_id_template)
+            self._workflow_id(
+                handle.schedule_id, workflow_id_template=workflow_id_template
+            )
             if workflow_id_template is not None
             else None
         )
@@ -161,14 +163,14 @@ class TemporalWorkflowScheduleCommandAdapter[In: BaseModel](
 
     # ....................... #
 
-    async def delete(self, handle: WorkflowScheduleHandle) -> None:
+    async def delete(self, handle: DurableWorkflowScheduleHandle) -> None:
         await self.client.delete_schedule(handle.schedule_id)
 
     # ....................... #
 
     async def pause(
         self,
-        handle: WorkflowScheduleHandle,
+        handle: DurableWorkflowScheduleHandle,
         *,
         note: str | None = None,
     ) -> None:
@@ -178,7 +180,7 @@ class TemporalWorkflowScheduleCommandAdapter[In: BaseModel](
 
     async def unpause(
         self,
-        handle: WorkflowScheduleHandle,
+        handle: DurableWorkflowScheduleHandle,
         *,
         note: str | None = None,
     ) -> None:
@@ -186,7 +188,7 @@ class TemporalWorkflowScheduleCommandAdapter[In: BaseModel](
 
     # ....................... #
 
-    async def trigger(self, handle: WorkflowScheduleHandle) -> None:
+    async def trigger(self, handle: DurableWorkflowScheduleHandle) -> None:
         await self.client.trigger_schedule(handle.schedule_id)
 
 
@@ -197,22 +199,22 @@ class TemporalWorkflowScheduleCommandAdapter[In: BaseModel](
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class TemporalWorkflowScheduleQueryAdapter[In: BaseModel](
     TemporalBaseAdapter,
-    WorkflowScheduleQueryPort[In],
+    DurableWorkflowScheduleQueryPort[In],
 ):
-    """Temporal-backed implementation of :class:`WorkflowScheduleQueryPort`."""
+    """Temporal-backed implementation of :class:`DurableWorkflowScheduleQueryPort`."""
 
     queue: str
     """Temporal task queue name."""
 
-    spec: WorkflowSpec[In, BaseModel]
+    spec: DurableWorkflowSpec[In, BaseModel]
     """Workflow specification."""
 
     # ....................... #
 
     async def describe(
         self,
-        handle: WorkflowScheduleHandle,
-    ) -> WorkflowScheduleDescription:
+        handle: DurableWorkflowScheduleHandle,
+    ) -> DurableWorkflowScheduleDescription:
         desc = await self.client.describe_schedule(handle.schedule_id)
 
         if desc.workflow_name != self.spec.name:
@@ -229,7 +231,7 @@ class TemporalWorkflowScheduleQueryAdapter[In: BaseModel](
         *,
         limit: int | None = None,
         next_page_token: str | None = None,
-    ) -> tuple[tuple[WorkflowScheduleDescription, ...], str | None]:
+    ) -> tuple[tuple[DurableWorkflowScheduleDescription, ...], str | None]:
         page = await self.client.list_schedules(
             workflow_name=self.spec.name,
             limit=limit,

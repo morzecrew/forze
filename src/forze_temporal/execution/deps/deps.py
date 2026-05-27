@@ -2,12 +2,12 @@ from typing import Any, final
 
 import attrs
 
-from forze.application.contracts.workflow import (
-    WorkflowCommandDepPort,
-    WorkflowQueryDepPort,
-    WorkflowScheduleCommandDepPort,
-    WorkflowScheduleQueryDepPort,
-    WorkflowSpec,
+from forze.application.contracts.durable.workflow import (
+    DurableWorkflowCommandDepPort,
+    DurableWorkflowQueryDepPort,
+    DurableWorkflowScheduleCommandDepPort,
+    DurableWorkflowScheduleQueryDepPort,
+    DurableWorkflowSpec,
 )
 from forze.application.execution import ExecutionContext
 
@@ -25,7 +25,7 @@ from .keys import TemporalClientDepKey
 
 @final
 @attrs.define(slots=True, frozen=True, kw_only=True)
-class ConfigurableTemporalWorkflowQuery(WorkflowQueryDepPort):
+class ConfigurableTemporalWorkflowQuery(DurableWorkflowQueryDepPort):
     """Configurable Temporal workflow query adapter."""
 
     config: TemporalWorkflowConfig
@@ -36,7 +36,7 @@ class ConfigurableTemporalWorkflowQuery(WorkflowQueryDepPort):
     def __call__(
         self,
         ctx: ExecutionContext,
-        spec: WorkflowSpec[Any, Any],
+        spec: DurableWorkflowSpec[Any, Any],
     ) -> TemporalWorkflowQueryAdapter[Any, Any]:
         client = ctx.deps.provide(TemporalClientDepKey)
 
@@ -54,7 +54,7 @@ class ConfigurableTemporalWorkflowQuery(WorkflowQueryDepPort):
 
 @final
 @attrs.define(slots=True, frozen=True, kw_only=True)
-class ConfigurableTemporalWorkflowCommand(WorkflowCommandDepPort):
+class ConfigurableTemporalWorkflowCommand(DurableWorkflowCommandDepPort):
     """Configurable Temporal workflow command adapter."""
 
     config: TemporalWorkflowConfig
@@ -65,7 +65,7 @@ class ConfigurableTemporalWorkflowCommand(WorkflowCommandDepPort):
     def __call__(
         self,
         ctx: ExecutionContext,
-        spec: WorkflowSpec[Any, Any],
+        spec: DurableWorkflowSpec[Any, Any],
     ) -> TemporalWorkflowCommandAdapter[Any, Any]:
         client = ctx.deps.provide(TemporalClientDepKey)
 
@@ -83,7 +83,7 @@ class ConfigurableTemporalWorkflowCommand(WorkflowCommandDepPort):
 
 @final
 @attrs.define(slots=True, frozen=True, kw_only=True)
-class ConfigurableTemporalWorkflowScheduleQuery(WorkflowScheduleQueryDepPort):
+class ConfigurableTemporalWorkflowScheduleQuery(DurableWorkflowScheduleQueryDepPort):
     """Configurable Temporal workflow schedule query adapter."""
 
     config: TemporalWorkflowConfig
@@ -94,7 +94,7 @@ class ConfigurableTemporalWorkflowScheduleQuery(WorkflowScheduleQueryDepPort):
     def __call__(
         self,
         ctx: ExecutionContext,
-        spec: WorkflowSpec[Any, Any],
+        spec: DurableWorkflowSpec[Any, Any],
     ) -> TemporalWorkflowScheduleQueryAdapter[Any]:
         client = ctx.deps.provide(TemporalClientDepKey)
 
@@ -112,7 +112,9 @@ class ConfigurableTemporalWorkflowScheduleQuery(WorkflowScheduleQueryDepPort):
 
 @final
 @attrs.define(slots=True, frozen=True, kw_only=True)
-class ConfigurableTemporalWorkflowScheduleCommand(WorkflowScheduleCommandDepPort):
+class ConfigurableTemporalWorkflowScheduleCommand(
+    DurableWorkflowScheduleCommandDepPort
+):
     """Configurable Temporal workflow schedule command adapter."""
 
     config: TemporalWorkflowConfig
@@ -123,7 +125,7 @@ class ConfigurableTemporalWorkflowScheduleCommand(WorkflowScheduleCommandDepPort
     def __call__(
         self,
         ctx: ExecutionContext,
-        spec: WorkflowSpec[Any, Any],
+        spec: DurableWorkflowSpec[Any, Any],
     ) -> TemporalWorkflowScheduleCommandAdapter[Any]:
         client = ctx.deps.provide(TemporalClientDepKey)
 

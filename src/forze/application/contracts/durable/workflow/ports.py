@@ -3,22 +3,22 @@ from typing import Awaitable, Generic, Protocol, runtime_checkable
 from pydantic import BaseModel
 
 from .specs import (
+    DurableWorkflowHandle,
+    DurableWorkflowQuerySpec,
+    DurableWorkflowSignalSpec,
+    DurableWorkflowSpec,
+    DurableWorkflowUpdateSpec,
     In,
     Out,
-    WorkflowHandle,
-    WorkflowQuerySpec,
-    WorkflowSignalSpec,
-    WorkflowSpec,
-    WorkflowUpdateSpec,
 )
 
 # ----------------------- #
 
 
-class BaseWorkflowPort(Protocol, Generic[In, Out]):
+class BaseDurableWorkflowPort(Protocol, Generic[In, Out]):
     """Base port for long-running workflow orchestration engines."""
 
-    spec: WorkflowSpec[In, Out]
+    spec: DurableWorkflowSpec[In, Out]
     """The specification of the workflow."""
 
 
@@ -26,7 +26,9 @@ class BaseWorkflowPort(Protocol, Generic[In, Out]):
 
 
 @runtime_checkable
-class WorkflowCommandPort(BaseWorkflowPort[In, Out], Generic[In, Out], Protocol):
+class DurableWorkflowCommandPort(
+    BaseDurableWorkflowPort[In, Out], Generic[In, Out], Protocol
+):
     """Port for commands on long-running workflow orchestration engines."""
 
     def start(
@@ -35,7 +37,7 @@ class WorkflowCommandPort(BaseWorkflowPort[In, Out], Generic[In, Out], Protocol)
         *,
         workflow_id: str | None = None,
         raise_on_already_started: bool = True,
-    ) -> Awaitable[WorkflowHandle]:
+    ) -> Awaitable[DurableWorkflowHandle]:
         """Start a new workflow run."""
         ...  # pragma: no cover
 
@@ -43,9 +45,9 @@ class WorkflowCommandPort(BaseWorkflowPort[In, Out], Generic[In, Out], Protocol)
 
     def signal[S: BaseModel](
         self,
-        handle: WorkflowHandle,
+        handle: DurableWorkflowHandle,
         *,
-        signal: WorkflowSignalSpec[S],
+        signal: DurableWorkflowSignalSpec[S],
         args: S,
     ) -> Awaitable[None]:
         """Send a signal to an existing workflow instance."""
@@ -55,9 +57,9 @@ class WorkflowCommandPort(BaseWorkflowPort[In, Out], Generic[In, Out], Protocol)
 
     def update[U: BaseModel, Res: BaseModel](
         self,
-        handle: WorkflowHandle,
+        handle: DurableWorkflowHandle,
         *,
-        update: WorkflowUpdateSpec[U, Res],
+        update: DurableWorkflowUpdateSpec[U, Res],
         args: U,
     ) -> Awaitable[Res]:
         """Update an existing workflow instance."""
@@ -65,7 +67,7 @@ class WorkflowCommandPort(BaseWorkflowPort[In, Out], Generic[In, Out], Protocol)
 
     # ....................... #
 
-    def cancel(self, handle: WorkflowHandle) -> Awaitable[None]:
+    def cancel(self, handle: DurableWorkflowHandle) -> Awaitable[None]:
         """Cancel a running workflow instance."""
         ...  # pragma: no cover
 
@@ -73,7 +75,7 @@ class WorkflowCommandPort(BaseWorkflowPort[In, Out], Generic[In, Out], Protocol)
 
     def terminate(
         self,
-        handle: WorkflowHandle,
+        handle: DurableWorkflowHandle,
         *,
         reason: str | None = None,
     ) -> Awaitable[None]:
@@ -85,14 +87,16 @@ class WorkflowCommandPort(BaseWorkflowPort[In, Out], Generic[In, Out], Protocol)
 
 
 @runtime_checkable
-class WorkflowQueryPort(BaseWorkflowPort[In, Out], Generic[In, Out], Protocol):
+class DurableWorkflowQueryPort(
+    BaseDurableWorkflowPort[In, Out], Generic[In, Out], Protocol
+):
     """Port for queries on long-running workflow orchestration engines."""
 
     def query[Q: BaseModel, Res: BaseModel](
         self,
-        handle: WorkflowHandle,
+        handle: DurableWorkflowHandle,
         *,
-        query: WorkflowQuerySpec[Q, Res],
+        query: DurableWorkflowQuerySpec[Q, Res],
         args: Q,
     ) -> Awaitable[Res]:
         """Query an existing workflow instance."""
@@ -100,6 +104,6 @@ class WorkflowQueryPort(BaseWorkflowPort[In, Out], Generic[In, Out], Protocol):
 
     # ....................... #
 
-    def result(self, handle: WorkflowHandle) -> Awaitable[Out]:
+    def result(self, handle: DurableWorkflowHandle) -> Awaitable[Out]:
         """Get the result of a workflow run."""
         ...  # pragma: no cover

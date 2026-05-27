@@ -9,14 +9,14 @@ from typing import final
 import attrs
 from pydantic import BaseModel
 
-from forze.application.contracts.workflow import (
-    WorkflowCommandPort,
-    WorkflowHandle,
-    WorkflowQueryPort,
-    WorkflowQuerySpec,
-    WorkflowSignalSpec,
-    WorkflowSpec,
-    WorkflowUpdateSpec,
+from forze.application.contracts.durable.workflow import (
+    DurableWorkflowCommandPort,
+    DurableWorkflowHandle,
+    DurableWorkflowQueryPort,
+    DurableWorkflowQuerySpec,
+    DurableWorkflowSignalSpec,
+    DurableWorkflowSpec,
+    DurableWorkflowUpdateSpec,
 )
 
 from .base import TemporalBaseAdapter
@@ -29,14 +29,14 @@ from .base import TemporalBaseAdapter
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class TemporalWorkflowCommandAdapter[In: BaseModel, Out: BaseModel](
     TemporalBaseAdapter,
-    WorkflowCommandPort[In, Out],
+    DurableWorkflowCommandPort[In, Out],
 ):
-    """Temporal-backed implementation of :class:`WorkflowCommandPort`."""
+    """Temporal-backed implementation of :class:`DurableWorkflowCommandPort`."""
 
     queue: str
     """Temporal task queue name."""
 
-    spec: WorkflowSpec[In, Out]
+    spec: DurableWorkflowSpec[In, Out]
     """Workflow specification."""
 
     # ....................... #
@@ -47,7 +47,7 @@ class TemporalWorkflowCommandAdapter[In: BaseModel, Out: BaseModel](
         *,
         workflow_id: str | None = None,
         raise_on_already_started: bool = True,
-    ) -> WorkflowHandle:
+    ) -> DurableWorkflowHandle:
         wid = self.construct_workflow_id(workflow_id)
 
         res = await self.client.start_workflow(
@@ -58,15 +58,15 @@ class TemporalWorkflowCommandAdapter[In: BaseModel, Out: BaseModel](
             raise_on_already_started=raise_on_already_started,
         )
 
-        return WorkflowHandle(workflow_id=res.id, run_id=res.run_id)
+        return DurableWorkflowHandle(workflow_id=res.id, run_id=res.run_id)
 
     # ....................... #
 
     async def signal[S: BaseModel](
         self,
-        handle: WorkflowHandle,
+        handle: DurableWorkflowHandle,
         *,
-        signal: WorkflowSignalSpec[S],
+        signal: DurableWorkflowSignalSpec[S],
         args: S,
     ) -> None:
         await self.client.signal_workflow(
@@ -80,9 +80,9 @@ class TemporalWorkflowCommandAdapter[In: BaseModel, Out: BaseModel](
 
     async def update[U: BaseModel, Res: BaseModel](
         self,
-        handle: WorkflowHandle,
+        handle: DurableWorkflowHandle,
         *,
-        update: WorkflowUpdateSpec[U, Res],
+        update: DurableWorkflowUpdateSpec[U, Res],
         args: U,
     ) -> Res:
         res = await self.client.update_workflow(
@@ -96,7 +96,7 @@ class TemporalWorkflowCommandAdapter[In: BaseModel, Out: BaseModel](
 
     # ....................... #
 
-    async def cancel(self, handle: WorkflowHandle) -> None:
+    async def cancel(self, handle: DurableWorkflowHandle) -> None:
         await self.client.cancel_workflow(
             workflow_id=handle.workflow_id,
             run_id=handle.run_id,
@@ -106,7 +106,7 @@ class TemporalWorkflowCommandAdapter[In: BaseModel, Out: BaseModel](
 
     async def terminate(
         self,
-        handle: WorkflowHandle,
+        handle: DurableWorkflowHandle,
         *,
         reason: str | None = None,
     ) -> None:
@@ -124,23 +124,23 @@ class TemporalWorkflowCommandAdapter[In: BaseModel, Out: BaseModel](
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class TemporalWorkflowQueryAdapter[In: BaseModel, Out: BaseModel](
     TemporalBaseAdapter,
-    WorkflowQueryPort[In, Out],
+    DurableWorkflowQueryPort[In, Out],
 ):
-    """Temporal-backed implementation of :class:`WorkflowQueryPort`."""
+    """Temporal-backed implementation of :class:`DurableWorkflowQueryPort`."""
 
     queue: str
     """Temporal task queue name."""
 
-    spec: WorkflowSpec[In, Out]
+    spec: DurableWorkflowSpec[In, Out]
     """Workflow specification."""
 
     # ....................... #
 
     async def query[Q: BaseModel, Res: BaseModel](
         self,
-        handle: WorkflowHandle,
+        handle: DurableWorkflowHandle,
         *,
-        query: WorkflowQuerySpec[Q, Res],
+        query: DurableWorkflowQuerySpec[Q, Res],
         args: Q,
     ) -> Res:
         res = await self.client.query_workflow(
@@ -154,7 +154,7 @@ class TemporalWorkflowQueryAdapter[In: BaseModel, Out: BaseModel](
 
     # ....................... #
 
-    async def result(self, handle: WorkflowHandle) -> Out:
+    async def result(self, handle: DurableWorkflowHandle) -> Out:
         return await self.client.get_workflow_result(
             workflow_id=handle.workflow_id,
             run_id=handle.run_id,

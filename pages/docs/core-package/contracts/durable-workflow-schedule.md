@@ -1,9 +1,10 @@
-# Workflow schedule contracts
+# Durable workflow schedule contracts
 
-Workflow schedule contracts manage **recurring or timed workflow starts** as
-first-class resources, separate from individual workflow runs (`WorkflowHandle`).
+Durable workflow schedule contracts manage **recurring or timed workflow starts** as
+first-class resources, separate from individual workflow runs (`DurableWorkflowHandle`).
+They apply to the [durable workflow](durable-workflow.md) kind (Temporal Schedules today).
 
-## `WorkflowScheduleTiming`
+## `DurableWorkflowScheduleTiming`
 
 | Field | Purpose |
 |-------|---------|
@@ -18,21 +19,21 @@ At least one of `cron_expressions` or `interval` is required.
 Import path:
 
     :::python
-    from forze.application.contracts.workflow import WorkflowScheduleTiming
+    from forze.application.contracts.durable.workflow import DurableWorkflowScheduleTiming
 
-## `WorkflowScheduleHandle`
+## `DurableWorkflowScheduleHandle`
 
 Identifies a schedule resource (`schedule_id`). Tenant-aware adapters may
 prefix ids with `tenant:{tenant_id}:`.
 
-## `WorkflowScheduleBootstrap`
+## `DurableWorkflowScheduleBootstrap`
 
 Declarative schedule registered on application startup (see
 [Temporal integration](../../integrations/temporal.md#schedule-bootstrap)).
 
 | Field | Purpose |
 |-------|---------|
-| `workflow_name` | Route key matching `WorkflowSpec.name`. |
+| `workflow_name` | Route key matching `DurableWorkflowSpec.name`. |
 | `schedule_id` | Stable schedule id. |
 | `default_args` | Pydantic model instance for each fired run. |
 | `timing` | When the schedule fires. |
@@ -40,7 +41,7 @@ Declarative schedule registered on application startup (see
 | `trigger_immediately` | Fire once right after create/upsert. |
 | `note` | Optional operator note. |
 
-## `WorkflowScheduleCommandPort[In]`
+## `DurableWorkflowScheduleCommandPort[In]`
 
 | Method | Purpose |
 |--------|---------|
@@ -51,42 +52,43 @@ Declarative schedule registered on application startup (see
 | `pause` / `unpause` | Pause or resume firing. |
 | `trigger` | Fire immediately. |
 
-## `WorkflowScheduleQueryPort[In]`
+## `DurableWorkflowScheduleQueryPort[In]`
 
 | Method | Purpose |
 |--------|---------|
-| `describe` | Return `WorkflowScheduleDescription` (paused, timing, next runs). |
+| `describe` | Return `DurableWorkflowScheduleDescription` (paused, timing, next runs). |
 | `list` | Paginated schedules for this workflow (`limit`, `next_page_token`). |
 
 ## Dependency keys
 
 | Key | Purpose |
 |-----|---------|
-| `WorkflowScheduleCommandDepKey` | Routed factory → command port (`route=spec.name`). |
-| `WorkflowScheduleQueryDepKey` | Routed factory → query port (`route=spec.name`). |
+| `DurableWorkflowScheduleCommandDepKey` | Routed factory → command port (`route=spec.name`). |
+| `DurableWorkflowScheduleQueryDepKey` | Routed factory → query port (`route=spec.name`). |
 
 ## Handler resolution
 
     :::python
-    from forze.application.contracts.workflow import (
-        WorkflowScheduleCommandDepKey,
-        WorkflowScheduleQueryDepKey,
+    from forze.application.contracts.durable.workflow import (
+        DurableWorkflowScheduleCommandDepKey,
+        DurableWorkflowScheduleQueryDepKey,
     )
 
     schedules = ctx.deps.resolve_configurable(
         ctx,
-        WorkflowScheduleCommandDepKey,
+        DurableWorkflowScheduleCommandDepKey,
         workflow_spec,
         route=workflow_spec.name,
     )
     handle = await schedules.upsert(
         "nightly-sync",
         StartArgs(...),
-        WorkflowScheduleTiming(cron_expressions=("0 2 * * *",)),
+        DurableWorkflowScheduleTiming(cron_expressions=("0 2 * * *",)),
     )
 
 ## Related pages
 
-- [Workflow](workflow.md)
+- [Durable workflow](durable-workflow.md)
+- [Durable](durable.md)
 - [Temporal](../../integrations/temporal.md)
 - [Background Workflow](../../recipes/background-workflow.md)

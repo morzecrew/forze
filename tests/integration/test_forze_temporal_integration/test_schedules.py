@@ -11,8 +11,8 @@ pytest.importorskip("temporalio")
 
 from temporalio.worker import Worker
 
-from forze.application.contracts.workflow import WorkflowScheduleTiming, WorkflowSpec
-from forze.application.contracts.workflow.specs import WorkflowInvokeSpec
+from forze.application.contracts.durable.workflow import DurableWorkflowScheduleTiming, DurableWorkflowSpec
+from forze.application.contracts.durable.workflow.specs import DurableWorkflowInvokeSpec
 from forze_temporal.adapters.schedule import (
     TemporalWorkflowScheduleCommandAdapter,
     TemporalWorkflowScheduleQueryAdapter,
@@ -60,9 +60,9 @@ async def test_schedule_trigger_starts_workflow(temporal_dev_env) -> None:
     forze_client = temporal_dev_env.forze_client
 
     task_queue = "it-forze-schedule"
-    spec = WorkflowSpec(
+    spec = DurableWorkflowSpec(
         name="ItSumWorkflow",
-        run=WorkflowInvokeSpec(args_type=SumIn, return_type=SumOut),
+        run=DurableWorkflowInvokeSpec(args_type=SumIn, return_type=SumOut),
     )
 
     cmd = TemporalWorkflowScheduleCommandAdapter(
@@ -84,7 +84,7 @@ async def test_schedule_trigger_starts_workflow(temporal_dev_env) -> None:
         workflows=[ItSumWorkflow],
         activities=[it_sum_pair],
     ):
-        timing = WorkflowScheduleTiming(interval=timedelta(hours=1))
+        timing = DurableWorkflowScheduleTiming(interval=timedelta(hours=1))
         handle = await cmd.create(
             "it-sum-hourly",
             SumIn(a=2, b=3),

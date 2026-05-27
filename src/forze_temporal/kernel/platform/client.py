@@ -20,9 +20,9 @@ from temporalio.client import (
 from temporalio.contrib.pydantic import pydantic_data_converter
 from temporalio.exceptions import WorkflowAlreadyStartedError
 
-from forze.application.contracts.workflow import (
-    WorkflowScheduleDescription,
-    WorkflowScheduleTiming,
+from forze.application.contracts.durable.workflow import (
+    DurableWorkflowScheduleDescription,
+    DurableWorkflowScheduleTiming,
 )
 from forze.base.exceptions import exc
 
@@ -223,7 +223,7 @@ class TemporalClient(TemporalClientPort):
         workflow_name: str,
         queue: str,
         arg: BaseModel,
-        timing: WorkflowScheduleTiming,
+        timing: DurableWorkflowScheduleTiming,
         workflow_id: str,
         trigger_immediately: bool = False,
         note: str | None = None,
@@ -257,7 +257,7 @@ class TemporalClient(TemporalClientPort):
         workflow_name: str,
         queue: str,
         arg: BaseModel | None,
-        timing: WorkflowScheduleTiming | None,
+        timing: DurableWorkflowScheduleTiming | None,
         workflow_id: str | None,
         note: str | None,
     ) -> None:
@@ -330,7 +330,9 @@ class TemporalClient(TemporalClientPort):
 
     # ....................... #
 
-    async def describe_schedule(self, schedule_id: str) -> WorkflowScheduleDescription:
+    async def describe_schedule(
+        self, schedule_id: str
+    ) -> DurableWorkflowScheduleDescription:
         c = self.__require_client()
 
         handle = c.get_schedule_handle(schedule_id)
@@ -360,7 +362,8 @@ class TemporalClient(TemporalClientPort):
             else None
         )
 
-        descriptions: list[WorkflowScheduleDescription] = []
+        descriptions: list[DurableWorkflowScheduleDescription] = []
+
         iterator = await c.list_schedules(
             page_size=page_size,
             next_page_token=token_bytes,

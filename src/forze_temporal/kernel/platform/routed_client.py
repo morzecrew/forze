@@ -10,11 +10,11 @@ import attrs
 from pydantic import BaseModel
 from temporalio.client import WorkflowHandle
 
-from forze.application.contracts.secrets import SecretRef, SecretsPort
-from forze.application.contracts.workflow import (
-    WorkflowScheduleDescription,
-    WorkflowScheduleTiming,
+from forze.application.contracts.durable.workflow import (
+    DurableWorkflowScheduleDescription,
+    DurableWorkflowScheduleTiming,
 )
+from forze.application.contracts.secrets import SecretRef, SecretsPort
 from forze.base.exceptions import exc
 
 from .client import TemporalClient
@@ -298,7 +298,7 @@ class RoutedTemporalClient(TemporalClientPort):
         workflow_name: str,
         queue: str,
         arg: BaseModel,
-        timing: WorkflowScheduleTiming,
+        timing: DurableWorkflowScheduleTiming,
         workflow_id: str,
         trigger_immediately: bool = False,
         note: str | None = None,
@@ -324,7 +324,7 @@ class RoutedTemporalClient(TemporalClientPort):
         workflow_name: str,
         queue: str,
         arg: BaseModel | None,
-        timing: WorkflowScheduleTiming | None,
+        timing: DurableWorkflowScheduleTiming | None,
         workflow_id: str | None,
         note: str | None,
     ) -> None:
@@ -378,7 +378,7 @@ class RoutedTemporalClient(TemporalClientPort):
     async def describe_schedule(
         self,
         schedule_id: str,
-    ) -> WorkflowScheduleDescription:
+    ) -> DurableWorkflowScheduleDescription:
         inner = await self._get_client()
         return await inner.describe_schedule(schedule_id)
 

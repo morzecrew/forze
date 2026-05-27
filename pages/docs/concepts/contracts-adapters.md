@@ -194,11 +194,15 @@ Both ports also have `*_many` batch variants for all applicable operations.
 | `begin(op, key, payload_hash)` | Check for cached response |
 | `commit(op, key, payload_hash, snapshot)` | Store response for future dedup |
 
-### Workflow
+### Durable orchestration
 
-**`WorkflowCommandPort`** / **`WorkflowQueryPort`**: orchestrate long-running processes with **`WorkflowSpec`** (Pydantic-typed **`run`**, **`signals`**, **`queries`**, **`updates`**). Commands cover **`start`**, **`signal`**, **`update`**, **`cancel`**, **`terminate`**; queries cover **`query`** and **`result`**. Resolve routed factories with **`WorkflowCommandDepKey`** / **`WorkflowQueryDepKey`** and **`route=spec.name`** (see [Temporal integration](../integrations/temporal.md)).
+See the [Durable contracts](../core-package/contracts/durable.md) overview.
 
-**`WorkflowScheduleCommandPort`** / **`WorkflowScheduleQueryPort`**: manage recurring workflow starts (Temporal Schedules) with **`WorkflowScheduleTiming`**. Resolve with **`WorkflowScheduleCommandDepKey`** / **`WorkflowScheduleQueryDepKey`** (see [Workflow schedule contracts](../core-package/contracts/workflow-schedule.md)).
+**`DurableWorkflowCommandPort`** / **`DurableWorkflowQueryPort`**: orchestrate long-running processes with **`DurableWorkflowSpec`** (Pydantic-typed **`run`**, **`signals`**, **`queries`**, **`updates`**). Commands cover **`start`**, **`signal`**, **`update`**, **`cancel`**, **`terminate`**; queries cover **`query`** and **`result`**. Resolve routed factories with **`DurableWorkflowCommandDepKey`** / **`DurableWorkflowQueryDepKey`** and **`route=spec.name`** (see [Temporal integration](../integrations/temporal.md)).
+
+**`DurableWorkflowScheduleCommandPort`** / **`DurableWorkflowScheduleQueryPort`**: manage recurring workflow starts (Temporal Schedules) with **`DurableWorkflowScheduleTiming`**. Resolve with **`DurableWorkflowScheduleCommandDepKey`** / **`DurableWorkflowScheduleQueryDepKey`** (see [Durable workflow schedule contracts](../core-package/contracts/durable-workflow-schedule.md)).
+
+**`DurableFunctionEventCommandPort`** / **`DurableFunctionStepPort`**: emit events that trigger durable functions and run memoized steps inside function workers. See [Durable function contracts](../core-package/contracts/durable-function.md).
 
 ### Context handling
 

@@ -5,9 +5,11 @@ from typing import Any, cast, final
 
 import attrs
 
+from forze.application.contracts.durable.workflow import (
+    DurableWorkflowInvokeSpec,
+    DurableWorkflowSpec,
+)
 from forze.application.contracts.execution import LifecycleHook, LifecycleStep
-from forze.application.contracts.workflow import WorkflowSpec
-from forze.application.contracts.workflow.specs import WorkflowInvokeSpec
 from forze.application.execution import ExecutionContext
 from forze.base.exceptions import exc
 
@@ -141,9 +143,9 @@ async def _bootstrap_schedules(
                 f"{bootstrap.workflow_name!r}",
             )
 
-        spec = WorkflowSpec[Any, Any](
+        spec = DurableWorkflowSpec[Any, Any](
             name=bootstrap.workflow_name,
-            run=WorkflowInvokeSpec(
+            run=DurableWorkflowInvokeSpec(
                 args_type=cast(type[Any], type(bootstrap.default_args)),  # type: ignore[redundant-cast]
                 return_type=None,
             ),

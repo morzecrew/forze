@@ -54,7 +54,7 @@ await writer.enqueue(
 
 | Need | Prefer |
 |------|--------|
-| Recurring **workflow** with pause/backfill | Temporal Schedules (future) or cron → `workflow.start` |
+| Recurring **workflow** with pause/backfill | [Durable workflow schedule](../core-package/contracts/durable-workflow-schedule.md) or cron → `DurableWorkflowCommandPort.start` |
 | Delay longer than 15 minutes on SQS | External scheduler, DB outbox, or RabbitMQ with `delayed_delivery` |
 | Complex DAG / step UI | Temporal or a dedicated orchestrator |
 

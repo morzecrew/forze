@@ -2,7 +2,9 @@
 
 from dataclasses import dataclass
 
-from forze.application.contracts.workflow import WorkflowScheduleDescription
+from forze.application.contracts.durable.workflow import (
+    DurableWorkflowScheduleDescription,
+)
 
 # ----------------------- #
 
@@ -11,5 +13,5 @@ from forze.application.contracts.workflow import WorkflowScheduleDescription
 class TemporalScheduleListPage:
     """One page of schedule list results."""
 
-    descriptions: tuple[WorkflowScheduleDescription, ...]
+    descriptions: tuple[DurableWorkflowScheduleDescription, ...]
     next_page_token: str | None

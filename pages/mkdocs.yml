@@ -85,8 +85,10 @@ nav:
       - Pub/Sub: core-package/contracts/pubsub.md
       - Stream: core-package/contracts/stream.md
       - Storage: core-package/contracts/storage.md
-      - Workflow: core-package/contracts/workflow.md
-      - Workflow schedule: core-package/contracts/workflow-schedule.md
+      - Durable: core-package/contracts/durable.md
+      - Durable workflow: core-package/contracts/durable-workflow.md
+      - Durable workflow schedule: core-package/contracts/durable-workflow-schedule.md
+      - Durable function: core-package/contracts/durable-function.md
       - Idempotency: core-package/contracts/idempotency.md
       - Analytics: core-package/contracts/analytics.md
     - Execution: reference/execution.md

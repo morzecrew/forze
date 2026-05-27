@@ -8,8 +8,8 @@ from temporalio.contrib.pydantic import pydantic_data_converter
 from temporalio.testing import WorkflowEnvironment
 from temporalio.worker import Worker
 
-from forze.application.contracts.workflow import WorkflowHandle, WorkflowSpec
-from forze.application.contracts.workflow.specs import WorkflowInvokeSpec
+from forze.application.contracts.durable.workflow import DurableWorkflowHandle, DurableWorkflowSpec
+from forze.application.contracts.durable.workflow.specs import DurableWorkflowInvokeSpec
 from forze.application.contracts.authn import AuthnIdentity
 from forze.application.execution import ExecutionContext, InvocationMetadata
 from forze.application.execution.deps import Deps
@@ -95,9 +95,9 @@ async def test_temporal_workflow_adapters_end_to_end() -> None:
             temporal = TemporalClient()
             object.__setattr__(temporal, "_TemporalClient__client", env.client)
 
-            spec = WorkflowSpec(
+            spec = DurableWorkflowSpec(
                 name="ItSumWorkflow",
-                run=WorkflowInvokeSpec(args_type=SumIn, return_type=SumOut),
+                run=DurableWorkflowInvokeSpec(args_type=SumIn, return_type=SumOut),
             )
             task_queue = "it-forze-adapter-sum"
             cmd = TemporalWorkflowCommandAdapter(
@@ -122,7 +122,7 @@ async def test_temporal_workflow_adapters_end_to_end() -> None:
                 with exec_ctx.inv.bind(
                     metadata=InvocationMetadata(execution_id=uuid7(), correlation_id=uuid7(), causation_id=None),
                 ):
-                    handle: WorkflowHandle = await cmd.start(SumIn(a=40, b=2))
+                    handle: DurableWorkflowHandle = await cmd.start(SumIn(a=40, b=2))
                     out = await qry.result(handle)
 
             validated = SumOut.model_validate(out)

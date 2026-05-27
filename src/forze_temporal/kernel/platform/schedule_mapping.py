@@ -2,10 +2,6 @@
 
 from datetime import datetime, timezone
 
-from forze.application.contracts.workflow import (
-    WorkflowScheduleDescription,
-    WorkflowScheduleTiming,
-)
 from temporalio.client import (
     Schedule,
     ScheduleActionStartWorkflow,
@@ -14,10 +10,15 @@ from temporalio.client import (
     ScheduleState,
 )
 
+from forze.application.contracts.durable.workflow import (
+    DurableWorkflowScheduleDescription,
+    DurableWorkflowScheduleTiming,
+)
+
 # ----------------------- #
 
 
-def timing_to_schedule_spec(timing: WorkflowScheduleTiming) -> ScheduleSpec:
+def timing_to_schedule_spec(timing: DurableWorkflowScheduleTiming) -> ScheduleSpec:
     """Convert a :class:`WorkflowScheduleTiming` to Temporal ``ScheduleSpec``."""
 
     intervals: list[ScheduleIntervalSpec] = []
@@ -37,12 +38,12 @@ def timing_to_schedule_spec(timing: WorkflowScheduleTiming) -> ScheduleSpec:
 # ....................... #
 
 
-def schedule_spec_to_timing(spec: ScheduleSpec) -> WorkflowScheduleTiming:
+def schedule_spec_to_timing(spec: ScheduleSpec) -> DurableWorkflowScheduleTiming:
     """Convert Temporal ``ScheduleSpec`` to :class:`WorkflowScheduleTiming`."""
 
     interval = spec.intervals[0].every if spec.intervals else None
 
-    return WorkflowScheduleTiming(
+    return DurableWorkflowScheduleTiming(
         cron_expressions=tuple(spec.cron_expressions),
         interval=interval,
         start_at=spec.start_at,
@@ -81,7 +82,7 @@ def build_schedule(
     queue: str,
     arg: object,
     workflow_id: str,
-    timing: WorkflowScheduleTiming,
+    timing: DurableWorkflowScheduleTiming,
     note: str | None = None,
 ) -> Schedule:
     """Build a Temporal :class:`Schedule` from Forze inputs."""
@@ -121,7 +122,7 @@ def description_from_temporal(
     desc: object,
     *,
     workflow_name: str,
-) -> WorkflowScheduleDescription:
+) -> DurableWorkflowScheduleDescription:
     """Convert a Temporal :class:`ScheduleDescription` to Forze form."""
 
     from temporalio.client import ScheduleDescription
@@ -140,7 +141,7 @@ def description_from_temporal(
         for t in desc.info.next_action_times
     )
 
-    return WorkflowScheduleDescription(
+    return DurableWorkflowScheduleDescription(
         schedule_id=desc.id,
         workflow_name=workflow_name or action.workflow,
         paused=desc.schedule.state.paused,
@@ -155,7 +156,7 @@ def description_from_temporal(
 
 def description_from_list_entry(
     entry: object,
-) -> WorkflowScheduleDescription | None:
+) -> DurableWorkflowScheduleDescription | None:
     """Convert a Temporal :class:`ScheduleListDescription` to Forze form."""
 
     from temporalio.client import (
@@ -181,7 +182,7 @@ def description_from_list_entry(
             for t in entry.info.next_action_times
         )
 
-    return WorkflowScheduleDescription(
+    return DurableWorkflowScheduleDescription(
         schedule_id=entry.id,
         workflow_name=action.workflow,
         paused=entry.schedule.state.paused,

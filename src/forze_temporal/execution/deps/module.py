@@ -5,12 +5,12 @@ from typing import Any, Mapping, final
 import attrs
 
 from forze.application.contracts.deps import DepKey
-from forze.application.contracts.workflow import (
-    WorkflowCommandDepKey,
-    WorkflowQueryDepKey,
-    WorkflowScheduleBootstrap,
-    WorkflowScheduleCommandDepKey,
-    WorkflowScheduleQueryDepKey,
+from forze.application.contracts.durable.workflow import (
+    DurableWorkflowCommandDepKey,
+    DurableWorkflowQueryDepKey,
+    DurableWorkflowScheduleBootstrap,
+    DurableWorkflowScheduleCommandDepKey,
+    DurableWorkflowScheduleQueryDepKey,
 )
 from forze.application.execution import Deps, DepsModule
 
@@ -38,8 +38,10 @@ class TemporalDepsModule[K: str | StrEnum](DepsModule[K]):
     workflows: Mapping[K, TemporalWorkflowConfig] | None = attrs.field(default=None)
     """Mapping from workflow names to their Temporal-specific configurations."""
 
-    schedule_bootstraps: Sequence[WorkflowScheduleBootstrap[Any]] | None = attrs.field(
-        default=None,
+    schedule_bootstraps: Sequence[DurableWorkflowScheduleBootstrap[Any]] | None = (
+        attrs.field(
+            default=None,
+        )
     )
     """Declarative schedules upserted on Temporal lifecycle startup."""
 
@@ -60,21 +62,21 @@ class TemporalDepsModule[K: str | StrEnum](DepsModule[K]):
             workflow_deps = workflow_deps.merge(
                 Deps[K].routed(
                     {
-                        WorkflowQueryDepKey: {
+                        DurableWorkflowQueryDepKey: {
                             name: ConfigurableTemporalWorkflowQuery(config=config)
                             for name, config in self.workflows.items()
                         },
-                        WorkflowCommandDepKey: {
+                        DurableWorkflowCommandDepKey: {
                             name: ConfigurableTemporalWorkflowCommand(config=config)
                             for name, config in self.workflows.items()
                         },
-                        WorkflowScheduleQueryDepKey: {
+                        DurableWorkflowScheduleQueryDepKey: {
                             name: ConfigurableTemporalWorkflowScheduleQuery(
                                 config=config
                             )
                             for name, config in self.workflows.items()
                         },
-                        WorkflowScheduleCommandDepKey: {
+                        DurableWorkflowScheduleCommandDepKey: {
                             name: ConfigurableTemporalWorkflowScheduleCommand(
                                 config=config,
                             )
