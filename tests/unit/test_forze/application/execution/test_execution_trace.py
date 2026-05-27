@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import attrs
 import pytest
 
 from forze.application.contracts.deps import DepKey
@@ -14,6 +13,7 @@ from forze.application.execution import (
     RuntimeTrace,
     TracingEvent,
     TracingViolation,
+    runtime_tracer_from_flag,
     validate_runtime_trace,
 )
 from forze.application.execution.tracing import bind_active_deps, record
@@ -58,7 +58,9 @@ def ctx(mock_state: MockState) -> ExecutionContext:
 
 @pytest.fixture
 def traced_ctx(mock_state: MockState) -> ExecutionContext:
-    deps = attrs.evolve(MockDepsModule(state=mock_state)(), trace_runtime=True)
+    deps = DepsPlan.from_modules(
+        lambda: MockDepsModule(state=mock_state)(),
+    ).with_tracing(runtime=True).build()
     return ExecutionContext(deps=deps)
 
 
@@ -91,11 +93,18 @@ class TestRuntimeTracingEnabled:
         built = DepsPlan.from_modules(lambda: MockDepsModule(state=mock_state)()).build()
         assert built.trace_runtime is True
 
-    def test_merge_propagates_trace_runtime(self) -> None:
+    def test_merge_does_not_propagate_trace_runtime(self) -> None:
         _k = DepKey[str]("only")
         a = Deps.plain({_k: 1}, trace_runtime=True)
         b = Deps.plain({DepKey[str]("other"): 2})
         merged = Deps.merge(a, b)
+        assert merged.trace_runtime is False
+
+    def test_merge_accepts_explicit_runtime_tracer(self) -> None:
+        _k = DepKey[str]("only")
+        a = Deps.plain({_k: 1}, trace_runtime=True)
+        b = Deps.plain({DepKey[str]("other"): 2})
+        merged = Deps.merge(a, b, runtime_tracer=runtime_tracer_from_flag(True))
         assert merged.trace_runtime is True
 
     def test_query_port_wrapped_when_enabled(self, traced_ctx: ExecutionContext) -> None:
@@ -133,7 +142,9 @@ class TestRuntimeTracingRecording:
 
     @pytest.mark.asyncio
     async def test_proxy_passes_through_return_value(self, mock_state: MockState) -> None:
-        deps = attrs.evolve(MockDepsModule(state=mock_state)(), trace_runtime=True)
+        deps = DepsPlan.from_modules(
+            lambda: MockDepsModule(state=mock_state)(),
+        ).with_tracing(runtime=True).build()
 
         class _Inner:
             async def get(self) -> int:

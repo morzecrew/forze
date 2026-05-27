@@ -85,6 +85,7 @@ nav:
       - Stream: core-package/contracts/stream.md
       - Storage: core-package/contracts/storage.md
       - Workflow: core-package/contracts/workflow.md
+      - Workflow schedule: core-package/contracts/workflow-schedule.md
       - Idempotency: core-package/contracts/idempotency.md
       - Analytics: core-package/contracts/analytics.md
     - Execution: reference/execution.md

@@ -1,3 +1,7 @@
+from .schedule import (
+    TemporalWorkflowScheduleCommandAdapter,
+    TemporalWorkflowScheduleQueryAdapter,
+)
 from .workflow import TemporalWorkflowCommandAdapter, TemporalWorkflowQueryAdapter
 
 # ----------------------- #
@@ -5,4 +9,6 @@ from .workflow import TemporalWorkflowCommandAdapter, TemporalWorkflowQueryAdapt
 __all__ = [
     "TemporalWorkflowCommandAdapter",
     "TemporalWorkflowQueryAdapter",
+    "TemporalWorkflowScheduleCommandAdapter",
+    "TemporalWorkflowScheduleQueryAdapter",
 ]

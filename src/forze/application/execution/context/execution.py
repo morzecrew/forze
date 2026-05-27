@@ -88,7 +88,7 @@ class ExecutionContext:
     def __attrs_post_init__(self) -> None:
         def _tx_resolver(route: StrKey) -> TransactionManagerPort:
             with self.deps.resolution_scope(TransactionManagerDepKey, route=route):
-                dep = self.deps._lookup(  # pyright: ignore[reportPrivateUsage]
+                dep = self.deps.get_provider(
                     TransactionManagerDepKey,
                     route=route,
                 )

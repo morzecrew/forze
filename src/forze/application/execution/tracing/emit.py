@@ -4,19 +4,20 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from .session import active_deps
+from .session import active_runtime_tracer
 
 if TYPE_CHECKING:
     from ..deps.container import Deps
+    from ..deps.runtime_tracer import RuntimeTracer
 
 # ----------------------- #
 
 
 def init_runtime_tracing(deps: Deps[Any]) -> None:
-    """Ensure an empty :class:`~forze.application.execution.tracing.buffer.RuntimeTrace` exists when tracing is enabled."""
+    """Ensure an empty runtime trace buffer exists when tracing is enabled."""
 
-    if deps.trace_runtime:
-        deps._runtime_trace_get_or_create()  # pyright: ignore[reportPrivateUsage]
+    if deps.runtime_tracer.enabled:
+        deps.runtime_tracer.init_task()
 
 
 # ....................... #
@@ -35,12 +36,17 @@ def record(
 ) -> None:
     """Append a runtime event when tracing is enabled on the active or given *deps*."""
 
-    container = deps if deps is not None else active_deps()
+    tracer: RuntimeTracer | None
 
-    if container is None or not container.trace_runtime:
+    if deps is not None:
+        tracer = deps.runtime_tracer if deps.runtime_tracer.enabled else None
+    else:
+        tracer = active_runtime_tracer()
+
+    if tracer is None or not tracer.enabled:
         return
 
-    container.record_runtime_event(
+    tracer.record(
         domain=domain,
         op=op,
         surface=surface,

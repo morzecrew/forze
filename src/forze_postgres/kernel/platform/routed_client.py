@@ -71,6 +71,7 @@ class _TenantPoolSlot:
 
         finally:
             do_finish_drain = False
+
             async with self.condition:
                 self.refcount -= 1
                 do_finish_drain = self.refcount == 0 and self.drain_after_idle
@@ -80,6 +81,7 @@ class _TenantPoolSlot:
                 await self.client.close()
                 self.drain_after_idle = False
                 await self.router.deregister_draining_tenant_pool(self.tenant_id)
+
                 async with self.condition:
                     self.condition.notify_all()
 
@@ -91,7 +93,7 @@ class _TenantPoolSlot:
         await self.draining_barrier.wait()
 
 
-# ----------------------- #
+# ....................... #
 
 
 @attrs.define(slots=True)
@@ -188,15 +190,18 @@ class RoutedPostgresClient(PostgresClientPort):
         """Close and remove the pool for one tenant (e.g. after credential rotation)."""
 
         immediate: PostgresClient | None = None
+
         async with self._registry_lock:
             self._tenant_init_locks.pop(tenant_id, None)
             slot = self._slots.pop(tenant_id, None)
+
             if slot is None:
                 slot = self._draining.pop(tenant_id, None)
 
             if slot is not None:
                 if slot.refcount == 0:
                     immediate = slot.client
+
                 else:
                     slot.mark_entered_draining_registry()
                     slot.drain_after_idle = True
@@ -211,12 +216,14 @@ class RoutedPostgresClient(PostgresClientPort):
         """Remove *tenant_id* from the draining map and wake waiters (internal hook for slots)."""
 
         slot: _TenantPoolSlot | None = None
+
         async with self._registry_lock:
             slot = self._draining.pop(tenant_id, None)
 
         if slot is not None:
             async with slot.condition:
                 slot.condition.notify_all()
+
             slot.draining_barrier.set()
 
     # ....................... #
@@ -237,6 +244,7 @@ class RoutedPostgresClient(PostgresClientPort):
     async def _lock_for_tenant_init(self, tid: UUID) -> asyncio.Lock:
         async with self._registry_lock:
             lock = self._tenant_init_locks.get(tid)
+
             if lock is None:
                 lock = asyncio.Lock()
                 self._tenant_init_locks[tid] = lock
@@ -277,6 +285,7 @@ class RoutedPostgresClient(PostgresClientPort):
         await self._await_not_draining(tid)
 
         slot: _TenantPoolSlot | None = None
+
         async with self._registry_lock:
             if tid in self._slots:
                 slot = self._slots[tid]
@@ -289,10 +298,12 @@ class RoutedPostgresClient(PostgresClientPort):
             return
 
         tlock = await self._lock_for_tenant_init(tid)
+
         async with tlock:
             await self._await_not_draining(tid)
 
             slot = None
+
             async with self._registry_lock:
                 if tid in self._slots:
                     slot = self._slots[tid]
@@ -332,6 +343,7 @@ class RoutedPostgresClient(PostgresClientPort):
                     await client.close()
                     existing_slot = self._slots[tid]
                     self._slots.move_to_end(tid)
+
                 else:
                     existing_slot = None
 
@@ -351,6 +363,7 @@ class RoutedPostgresClient(PostgresClientPort):
 
                     if old_slot.refcount == 0:
                         immediate_close.append(old_slot.client)
+
                     else:
                         old_slot.mark_entered_draining_registry()
                         old_slot.drain_after_idle = True

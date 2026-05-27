@@ -198,6 +198,8 @@ Both ports also have `*_many` batch variants for all applicable operations.
 
 **`WorkflowCommandPort`** / **`WorkflowQueryPort`**: orchestrate long-running processes with **`WorkflowSpec`** (Pydantic-typed **`run`**, **`signals`**, **`queries`**, **`updates`**). Commands cover **`start`**, **`signal`**, **`update`**, **`cancel`**, **`terminate`**; queries cover **`query`** and **`result`**. Resolve routed factories with **`WorkflowCommandDepKey`** / **`WorkflowQueryDepKey`** and **`route=spec.name`** (see [Temporal integration](../integrations/temporal.md)).
 
+**`WorkflowScheduleCommandPort`** / **`WorkflowScheduleQueryPort`**: manage recurring workflow starts (Temporal Schedules) with **`WorkflowScheduleTiming`**. Resolve with **`WorkflowScheduleCommandDepKey`** / **`WorkflowScheduleQueryDepKey`** (see [Workflow schedule contracts](../core-package/contracts/workflow-schedule.md)).
+
 ### Context handling
 
 Forze tracks request identity through `ExecutionContext`:

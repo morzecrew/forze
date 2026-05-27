@@ -1,7 +1,17 @@
 """Execution kernel, dependency injection, and lifecycle."""
 
 from .context import ExecutionContext, InvocationMetadata
-from .deps import Deps, DepsModule, DepsPlan
+from .deps import (
+    Deps,
+    DepsModule,
+    DepsPlan,
+    DepsRegistry,
+    ResolutionContext,
+    ResolutionTracer,
+    RuntimeTracer,
+    resolution_tracer_from_flag,
+    runtime_tracer_from_flag,
+)
 from .lifecycle import LifecyclePlan
 from .planning import OperationPlan
 from .registry import FrozenOperationRegistry, OperationRegistry
@@ -29,6 +39,12 @@ __all__ = [
     "Deps",
     "DepsModule",
     "DepsPlan",
+    "DepsRegistry",
+    "ResolutionContext",
+    "ResolutionTracer",
+    "RuntimeTracer",
+    "resolution_tracer_from_flag",
+    "runtime_tracer_from_flag",
     "ExecutionContext",
     "ExecutionRuntime",
     "FrozenOperationRegistry",

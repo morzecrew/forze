@@ -530,6 +530,37 @@ Workflows are typed with **`WorkflowSpec`** (logical **`name`**, **`run`** invoc
 | `WorkflowCommandDepKey` | Routed factory → **`WorkflowCommandPort`** (route = **`WorkflowSpec.name`**) |
 | `WorkflowQueryDepKey` | Routed factory → **`WorkflowQueryPort`** (route = **`WorkflowSpec.name`**) |
 
+## Workflow schedule
+
+Schedule resources are typed with **`WorkflowScheduleTiming`** and managed through schedule command/query ports (separate from run handles).
+
+### WorkflowScheduleCommandPort
+
+| Method | Purpose |
+|--------|---------|
+| `create(schedule_id, args, timing, ...)` | Create a schedule |
+| `upsert(...)` | Create or update |
+| `update(handle, *, timing?, args?, ...)` | Partial update |
+| `delete(handle)` | Delete the schedule |
+| `pause(handle, *, note?)` / `unpause(handle, *, note?)` | Pause or resume |
+| `trigger(handle)` | Fire immediately |
+
+### WorkflowScheduleQueryPort
+
+| Method | Purpose |
+|--------|---------|
+| `describe(handle)` | Return **`WorkflowScheduleDescription`** |
+| `list(*, limit?, next_page_token?)` | Paginated schedules for this workflow |
+
+### Dependency keys
+
+| Key | Purpose |
+|-----|---------|
+| `WorkflowScheduleCommandDepKey` | Routed factory → **`WorkflowScheduleCommandPort`** |
+| `WorkflowScheduleQueryDepKey` | Routed factory → **`WorkflowScheduleQueryPort`** |
+
+Declarative **`WorkflowScheduleBootstrap`** entries on **`TemporalDepsModule`** are upserted on lifecycle startup when **`workflow_configs`** is passed to **`temporal_lifecycle_step`**.
+
 ## Context handling
 
 Execution identity is represented by `InvocationMetadata`, optional `AuthnIdentity`, and optional `TenantIdentity` on `ExecutionContext`.

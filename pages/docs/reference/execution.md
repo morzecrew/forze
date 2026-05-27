@@ -111,13 +111,29 @@ Plain singleton lookups (lifecycle hooks fetching a shared client) use `provide(
 
 #### Observed resolution graph (development)
 
-Enable tracing on a container with `Deps(trace_resolution=True)` or set `FORZE_DEPS_TRACE=1` (or `true` / `yes`) before `DepsPlan.build()` (unless `build(trace_resolution=False)` overrides it). While resolving, Forze records directed edges `(parent, child)` where the child depends on the parent — on scope push and on `provide()` under an active stack.
+Enable resolution tracing on the **plan** (preferred) or a one-off container:
 
-Read the current task's trace with `deps.resolution_trace()` and export a snapshot via `trace.to_dag()` (`DirectedAcyclicGraph` for topological order). `registered_frames()` lists all statically registered frames. Tracing is diagnostic only; runtime stack checks remain the production guard.
+    :::python
+    plan = DepsPlan.from_modules(postgres_module).with_tracing(resolution=True)
+    deps = plan.build()
+
+Or set `FORZE_DEPS_TRACE=1` (or `true` / `yes`) and call `plan.build()` (unless `build(trace_resolution=False)` overrides env). `Deps.plain(..., trace_resolution=True)` still works for tests.
+
+While resolving, Forze records directed edges `(parent, child)` where the child depends on the parent — on scope push and on `provide()` under an active stack. Recording is handled by `ResolutionTracer` on `Deps` (`resolution_tracer`); cycle detection stays on the container stack regardless of tracing.
+
+Read the current task's trace with `deps.resolution_trace()` and export via `trace.to_dag()` (routed frames) or `trace.to_key_dag()` (canonical key-level graph with routes collapsed). `registered_frames()` lists all statically registered frames. `Deps.merge()` combines registries only — it does not enable tracing from partial containers unless you pass `resolution_tracer=` explicitly.
 
 #### Runtime tracing (development)
 
-Enable tracing with `Deps(trace_runtime=True)` or set `FORZE_RUNTIME_TRACE=1` (or `true` / `yes`) before `DepsPlan.build()` (unless `build(trace_runtime=False)` overrides it). While a handler runs, Forze records transaction scope boundaries and **configurable port** calls (via `Deps.resolve_configurable`) at the coordinator boundary — internal gateway reads after writes are not traced.
+Enable runtime tracing on the plan:
+
+    :::python
+    plan = DepsPlan.from_modules(mock_module).with_tracing(runtime=True)
+    deps = plan.build()
+
+Or set `FORZE_RUNTIME_TRACE=1` (or `true` / `yes`) before `plan.build()` (unless `build(trace_runtime=False)` overrides env). Recording is handled by `RuntimeTracer` on `Deps` (`runtime_tracer`).
+
+While a handler runs, Forze records transaction scope boundaries and **configurable port** calls (via `Deps.resolve_configurable`) at the coordinator boundary — internal gateway reads after writes are not traced.
 
 Read the current task's sequence with `deps.runtime_trace()` and log-friendly lines via `trace.format_lines()`. Pass an integration-specific validator to `validate_runtime_trace(trace, validator=...)` — for example Firestore's `validate_reads_before_writes_in_tx` from `forze_firestore.execution.trace_validation`, which flags `document_query` reads after `document_command` writes in the same transaction segment (reads after `tx.exit` are allowed). Use `on_violation="raise"` or `assert_runtime_trace_valid(trace, validator)` for test failures with a full report.
 
@@ -130,7 +146,7 @@ Read the current task's sequence with `deps.runtime_trace()` and log-friendly li
 | `FORZE_RUNTIME_TRACE_LOG=1` | Log full trace at DEBUG after `run_traced_operation` (or call `log_runtime_trace(deps)`) |
 | `tests.support.runtime_tracing` | `traced_deps`, `traced_ctx`, `assert_deps_runtime_trace_valid` for pytest |
 
-`ExecutionRuntime` picks up tracing when `FORZE_RUNTIME_TRACE` is set before `DepsPlan.build()`, or pass `DepsPlan(...).build(trace_runtime=True)` on a custom plan.
+`ExecutionRuntime` picks up tracing when `FORZE_RUNTIME_TRACE` is set before `DepsPlan.build()`, or use `DepsPlan(...).with_tracing(runtime=True).build()`.
 
 **Limitations:** port/coordinator boundary only (not gateway internals); `resolve_simple` records `op=resolve` (dependency lookup, not port methods); sync and async port methods are traced; buffer capped at `RuntimeTrace.MAX_EVENTS` (10_000) with a `tracing truncated` marker. Tracing is diagnostic only; production code should not rely on it.
 
@@ -155,7 +171,10 @@ A typed key identifying a dependency. Used for both registration (in dep modules
 
 ### Deps
 
-In-memory dependency container implementing `DepsPort`:
+In-memory dependency container implementing `DepsPort`. Internally composes a
+:class:`~forze.application.execution.deps.registry.DepsRegistry` (static wiring),
+a :class:`~forze.application.execution.deps.resolution_context.ResolutionContext`
+(cycle stack), and optional tracers; the public surface remains `Deps`.
 
     :::python
     from forze.application.execution import Deps
@@ -167,6 +186,7 @@ In-memory dependency container implementing `DepsPort`:
 
 | Method | Purpose |
 |--------|---------|
+| `get_provider(key, route=...)` | Look up a registered factory or instance without cycle checks |
 | `provide(key, route=...)` | Look up a registered provider or instance; cycle-check only |
 | `resolve_configurable(ctx, key, spec, route=...)` | Resolve a configurable port under a scope |
 | `resolve_simple(ctx, key, route=...)` | Resolve a simple port under a scope |
@@ -175,7 +195,9 @@ In-memory dependency container implementing `DepsPort`:
 | `runtime_trace()` | Observed runtime sequence for the current task when runtime tracing is enabled |
 | `registered_frames()` | Static inventory of registered frames |
 | `exists(key, route=...)` | Check registration |
-| `merge(*deps)` | Combine containers; raises `CoreError` on key conflicts |
+| `merge(*deps, resolution_tracer=..., runtime_tracer=...)` | Combine registries; optional tracers on the result |
+| `resolution_tracer` / `runtime_tracer` | Composable recorders (`Noop*` default; `Recording*` when enabled) |
+| `trace_resolution` / `trace_runtime` | Read-only: whether the corresponding tracer is recording |
 | `without(key)` | Return a container without the given key |
 | `empty()` | Check if the container is empty |
 
@@ -215,9 +237,11 @@ Declarative plan that collects `DepsModule` callables and merges them into a sin
 |--------|---------|
 | `from_modules(*modules)` | Create a plan from modules |
 | `with_modules(*modules)` | Return a new plan with additional modules |
-| `build()` | Invoke all modules and merge into a single `Deps` |
+| `with_deps(*deps)` | Append pre-built registry fragments |
+| `with_tracing(resolution=..., runtime=...)` | Attach tracers when `build()` runs (`bool` or tracer instance) |
+| `build(trace_resolution=..., trace_runtime=...)` | Merge modules; apply tracers (plan fields override env/kwargs) |
 
-When `build()` is called, each module callable is invoked and the results are merged via `Deps.merge()`.
+When `build()` is called, each module callable is invoked, registries are merged via `Deps.merge()`, and tracing policy is applied once on the final container.
 
 ## Lifecycle
 

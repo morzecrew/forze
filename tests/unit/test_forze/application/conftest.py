@@ -6,7 +6,7 @@ from forze.application.contracts.counter import CounterDepKey, CounterPort, Coun
 from forze.application.contracts.document import DocumentSpec
 from forze.application.contracts.search import SearchSpec
 from forze.application.contracts.storage import StorageDepKey, StorageSpec
-from forze.application.execution import Deps, ExecutionContext
+from forze.application.execution import Deps, DepsPlan, ExecutionContext
 from forze.domain.models import CreateDocumentCmd, Document, ReadDocument
 
 from forze_mock import MockDepsModule, MockState
@@ -61,9 +61,9 @@ def stub_ctx(stub_deps: Deps) -> ExecutionContext:
 @pytest.fixture
 def traced_deps(mock_state: MockState) -> Deps:
     """Mock deps with runtime tracing enabled."""
-    import attrs
-
-    return attrs.evolve(MockDepsModule(state=mock_state)(), trace_runtime=True)
+    return DepsPlan.from_modules(
+        lambda: MockDepsModule(state=mock_state)(),
+    ).with_tracing(runtime=True).build()
 
 
 @pytest.fixture

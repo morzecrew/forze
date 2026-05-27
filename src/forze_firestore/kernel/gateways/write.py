@@ -311,8 +311,8 @@ class FirestoreWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
         try:
             return await self.read_gw.get(model.id)
 
-        except CoreException:
-            if exc.kind is ExceptionKind.NOT_FOUND:
+        except CoreException as err:
+            if err.kind is ExceptionKind.NOT_FOUND:
                 return await self.create(dto)
 
             raise
@@ -347,8 +347,8 @@ class FirestoreWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
         try:
             current = await self.read_gw.get(model.id)
 
-        except CoreException:
-            if exc.kind is ExceptionKind.NOT_FOUND:
+        except CoreException as err:
+            if err.kind is ExceptionKind.NOT_FOUND:
                 return await self.create(create_dto)
 
             raise

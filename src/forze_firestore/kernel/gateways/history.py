@@ -88,8 +88,8 @@ class FirestoreHistoryGateway[D: Document](FirestoreGateway[D]):
             try:
                 ordered.append(await self.read(pk, rev))
 
-            except CoreException:
-                if exc.kind is ExceptionKind.NOT_FOUND:
+            except CoreException as err:
+                if err.kind is ExceptionKind.NOT_FOUND:
                     continue
 
                 raise

@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from ..deps.container import Deps
+    from ..deps.runtime_tracer import RuntimeTracer
 
 # ----------------------- #
 
@@ -22,6 +23,20 @@ def active_deps() -> Deps[Any] | None:
     """Return the :class:`~forze.application.execution.deps.container.Deps` bound for the current task."""
 
     return _active_deps.get()
+
+
+# ....................... #
+
+
+def active_runtime_tracer() -> RuntimeTracer | None:
+    """Return the runtime tracer from the active deps when recording is enabled."""
+
+    deps = _active_deps.get()
+
+    if deps is None or not deps.runtime_tracer.enabled:
+        return None
+
+    return deps.runtime_tracer
 
 
 # ....................... #

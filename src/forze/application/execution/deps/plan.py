@@ -7,6 +7,11 @@ from forze.application._logger import logger
 
 from .container import Deps
 from .module import DepsModule
+from .resolution_tracer import (
+    ResolutionTracer,
+    resolution_tracer_from_flag,
+)
+from .runtime_tracer import RuntimeTracer, runtime_tracer_from_flag
 
 # ----------------------- #
 
@@ -25,6 +30,32 @@ def _runtime_trace_from_env() -> bool:
     return value in _TRUTHY_ENV
 
 
+def _resolve_resolution_tracer(
+    plan_value: ResolutionTracer | None,
+    build_kw: bool | None,
+) -> ResolutionTracer:
+    if plan_value is not None:
+        return plan_value
+
+    if build_kw is not None:
+        return resolution_tracer_from_flag(build_kw)
+
+    return resolution_tracer_from_flag(_trace_from_env())
+
+
+def _resolve_runtime_tracer(
+    plan_value: RuntimeTracer | None,
+    build_kw: bool | None,
+) -> RuntimeTracer:
+    if plan_value is not None:
+        return plan_value
+
+    if build_kw is not None:
+        return runtime_tracer_from_flag(build_kw)
+
+    return runtime_tracer_from_flag(_runtime_trace_from_env())
+
+
 # ....................... #
 
 
@@ -36,6 +67,9 @@ class DepsPlan:
     Collects :class:`DepsModule` callables and merges them into a single
     :class:`Deps` instance on :meth:`build`. Merging fails if any module
     registers a conflicting dependency key.
+
+    Tracing policy (resolution and runtime recorders) is applied once on the
+    final merged container via :meth:`with_tracing` and :meth:`build`.
     """
 
     modules: tuple[DepsModule[Any], ...] = attrs.field(factory=tuple)
@@ -43,6 +77,12 @@ class DepsPlan:
 
     deps: tuple[Deps[Any], ...] = attrs.field(factory=tuple)
     """Deps to include in the plan."""
+
+    resolution_tracer: ResolutionTracer | None = attrs.field(default=None)
+    """When set, used for the built container (overrides env and build kwargs)."""
+
+    runtime_tracer: RuntimeTracer | None = attrs.field(default=None)
+    """When set, used for the built container (overrides env and build kwargs)."""
 
     # ....................... #
 
@@ -104,6 +144,38 @@ class DepsPlan:
 
     # ....................... #
 
+    def with_tracing(
+        self,
+        *,
+        resolution: bool | ResolutionTracer | None = None,
+        runtime: bool | RuntimeTracer | None = None,
+    ) -> Self:
+        """Return a plan that attaches tracers when :meth:`build` runs.
+
+        :param resolution: ``True``/``False`` for recording/noop, or a tracer instance.
+        :param runtime: ``True``/``False`` for recording/noop, or a tracer instance.
+        """
+
+        updates: dict[str, ResolutionTracer | RuntimeTracer] = {}
+
+        if resolution is not None:
+            updates["resolution_tracer"] = (
+                resolution
+                if isinstance(resolution, ResolutionTracer)
+                else resolution_tracer_from_flag(resolution)
+            )
+
+        if runtime is not None:
+            updates["runtime_tracer"] = (
+                runtime
+                if isinstance(runtime, RuntimeTracer)
+                else runtime_tracer_from_flag(runtime)
+            )
+
+        return attrs.evolve(self, **updates)  # type: ignore[arg-type]
+
+    # ....................... #
+
     def build(
         self,
         *,
@@ -114,10 +186,12 @@ class DepsPlan:
 
         :param trace_resolution: When ``True``, enable observed resolution tracing.
             When ``None`` (default), enable if ``FORZE_DEPS_TRACE`` is set to a
-            truthy value (``1``, ``true``, ``yes``).
+            truthy value (``1``, ``true``, ``yes``), unless :attr:`resolution_tracer`
+            is set on the plan.
         :param trace_runtime: When ``True``, enable runtime tracing.
             When ``None`` (default), enable if ``FORZE_RUNTIME_TRACE`` is set to a
-            truthy value (``1``, ``true``, ``yes``).
+            truthy value (``1``, ``true``, ``yes``), unless :attr:`runtime_tracer`
+            is set on the plan.
         :returns: Merged :class:`Deps` instance.
         """
 
@@ -126,18 +200,21 @@ class DepsPlan:
             len(self.modules),
         )
 
-        enable_trace = (
-            _trace_from_env() if trace_resolution is None else trace_resolution
+        resolution_tracer = _resolve_resolution_tracer(
+            self.resolution_tracer,
+            trace_resolution,
         )
-        enable_runtime_trace = (
-            _runtime_trace_from_env() if trace_runtime is None else trace_runtime
+        runtime_tracer = _resolve_runtime_tracer(
+            self.runtime_tracer,
+            trace_runtime,
         )
 
-        if not self.modules:
+        if not self.modules and not self.deps:
             logger.trace("Deps plan is empty; returning empty container")
+
             return Deps[Any](
-                trace_resolution=enable_trace,
-                trace_runtime=enable_runtime_trace,
+                resolution_tracer=resolution_tracer,
+                runtime_tracer=runtime_tracer,
             )
 
         built: list[Deps[Any]] = []
@@ -161,12 +238,10 @@ class DepsPlan:
             )
             built.append(dep)
 
-        merged = Deps[Any].merge(*built)
-
-        if enable_trace and not merged.trace_resolution:
-            merged = attrs.evolve(merged, trace_resolution=True)
-
-        if enable_runtime_trace and not merged.trace_runtime:
-            merged = attrs.evolve(merged, trace_runtime=True)
+        merged = Deps[Any].merge(
+            *built,
+            resolution_tracer=resolution_tracer,
+            runtime_tracer=runtime_tracer,
+        )
 
         return merged

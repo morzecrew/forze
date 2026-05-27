@@ -4,7 +4,10 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
-from forze.application.contracts.document import DocumentCommandDepKey, DocumentQueryDepKey
+from forze.application.contracts.document import (
+    DocumentCommandDepKey,
+    DocumentQueryDepKey,
+)
 from forze.application.contracts.transaction import TransactionManagerDepKey
 from forze_firestore.execution.deps.keys import FirestoreClientDepKey
 from forze_firestore.execution.deps.module import FirestoreDepsModule

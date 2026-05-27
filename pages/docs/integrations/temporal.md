@@ -2,12 +2,12 @@
 
 ## Page opening
 
-`forze_temporal` connects Forze workflow contracts to Temporal. It provides a Temporal client, dependency module, lifecycle hooks, workflow command/query adapters, and context propagation interceptors so application code can schedule or inspect workflows through Forze ports.
+`forze_temporal` connects Forze workflow contracts to Temporal. It provides a Temporal client, dependency module, lifecycle hooks, workflow and workflow-schedule adapters, and context propagation interceptors so application code can start, schedule, or inspect workflows through Forze ports.
 
 | Topic | Details |
 |------|---------|
 | What it provides | `TemporalClient`, optional routed client, workflow adapters, lifecycle hooks, and `ExecutionContextInterceptor`. |
-| Supported Forze contracts | `WorkflowCommandDepKey` and `WorkflowQueryDepKey`, plus `TemporalClientDepKey` for infrastructure access. |
+| Supported Forze contracts | `WorkflowCommandDepKey`, `WorkflowQueryDepKey`, `WorkflowScheduleCommandDepKey`, `WorkflowScheduleQueryDepKey`, plus `TemporalClientDepKey` for infrastructure access. |
 | When to use it | Use this integration for durable background workflows, long-running orchestration, retries managed by Temporal, and task-queue based worker execution. |
 
 ## Installation
@@ -73,11 +73,57 @@ lifecycle = LifecyclePlan.from_steps(
     temporal_lifecycle_step(
         host="localhost:7233",
         config=TemporalConfig(namespace="default"),
+        workflow_configs={"project-workflow": workflow_config},
     )
 )
 ```
 
 Use `routed_temporal_lifecycle_step(client=routed_temporal)` with `RoutedTemporalClient` and do not combine routed and non-routed lifecycle steps for the same client.
+
+### Schedule bootstrap
+
+Register declarative schedules on `TemporalDepsModule` and pass the same workflow
+config map to the lifecycle step so schedules are upserted after the client connects:
+
+```python
+from datetime import timedelta
+
+from forze.application.contracts.workflow import (
+    WorkflowScheduleBootstrap,
+    WorkflowScheduleTiming,
+)
+from forze_temporal import TemporalDepsModule, temporal_lifecycle_step
+
+bootstrap = WorkflowScheduleBootstrap(
+    workflow_name="project-workflow",
+    schedule_id="project-nightly",
+    default_args=StartProjectSync(project_id="default"),
+    timing=WorkflowScheduleTiming(cron_expressions=("0 2 * * *",)),
+)
+
+temporal_module = TemporalDepsModule(
+    client=client,
+    workflows={"project-workflow": workflow_config},
+    schedule_bootstraps=[bootstrap],
+)
+
+lifecycle = LifecyclePlan.from_steps(
+    temporal_lifecycle_step(
+        host="localhost:7233",
+        workflow_configs={"project-workflow": workflow_config},
+    )
+)
+```
+
+Runtime schedule management uses `WorkflowScheduleCommandDepKey` /
+`WorkflowScheduleQueryDepKey` (see [Workflow schedule contracts](../core-package/contracts/workflow-schedule.md)).
+Temporal **Schedules** require a server that implements the Schedules API (not the
+time-skipping test environment). Schedule integration tests use a Docker
+``temporalio/temporal`` dev server (``server start-dev``) via testcontainers.
+
+When a schedule fires, Temporal typically **suffixes** the configured workflow id
+with the scheduled time (for example ``my-run-2026-05-27T16:49:42Z``). Use
+``describe`` on the schedule handle (or workflow search) to resolve the actual run id.
 
 ## Contract coverage table
 
@@ -85,6 +131,8 @@ Use `routed_temporal_lifecycle_step(client=routed_temporal)` with `RoutedTempora
 |----------------|------------------------|--------------------------|-------------|
 | Workflow commands | `ConfigurableTemporalWorkflowCommand` / Temporal workflow command adapter. | `WorkflowCommandDepKey`, route usually equal to `WorkflowSpec.name`. | Requires a worker to register the workflow/activity implementation and poll the configured task queue. |
 | Workflow queries | `ConfigurableTemporalWorkflowQuery` / Temporal workflow query adapter. | `WorkflowQueryDepKey`, route usually equal to `WorkflowSpec.name`. | Query availability depends on Temporal workflow state and query handlers. |
+| Workflow schedule commands | `ConfigurableTemporalWorkflowScheduleCommand` / schedule command adapter. | `WorkflowScheduleCommandDepKey`, route usually equal to `WorkflowSpec.name`. | Uses Temporal Schedules API (`create_schedule`, pause, trigger, etc.). |
+| Workflow schedule queries | `ConfigurableTemporalWorkflowScheduleQuery` / schedule query adapter. | `WorkflowScheduleQueryDepKey`, route usually equal to `WorkflowSpec.name`. | `list()` filters to schedules whose action targets the workflow name. |
 | Raw Temporal client | `TemporalClient` or `RoutedTemporalClient`. | `TemporalClientDepKey`. | Prefer workflow contracts in handlers to keep Temporal details at the infrastructure edge. |
 | Context propagation | `ExecutionContextInterceptor`. | Configured in `TemporalConfig.interceptors`. | Only propagates context fields supported by the interceptor and Temporal payload/headers. |
 
@@ -108,7 +156,7 @@ Temporal payload serialization is controlled by the Temporal SDK and any interce
 
 ### Retry/timeout behavior
 
-Temporal workflow/activity retry policies and timeouts belong to workflow and activity definitions. Forze schedules and queries workflows through ports; Temporal owns durable retries after a workflow starts.
+Temporal workflow/activity retry policies and timeouts belong to workflow and activity definitions. Forze **starts** workflows and **manages schedule resources** through ports; Temporal owns durable retries after a workflow starts.
 
 ## Operational notes
 

@@ -8,7 +8,7 @@ Canonical entry point
 ---------------------
 
 Use :func:`~forze.application.execution.tracing.harness.run_traced_operation` with
-``MockDepsModule``, ``trace_runtime=True``, and integration validators.
+``MockDepsModule``, ``DepsPlan.with_tracing(runtime=True)``, and integration validators.
 
 Other strategies
 ----------------

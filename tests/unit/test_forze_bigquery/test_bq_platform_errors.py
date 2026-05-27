@@ -36,3 +36,17 @@ class TestBigQueryErrorHandler:
         r = _bigquery_eh(_client_error(404), site="get")
         assert isinstance(r, CoreException) and r.kind == ExceptionKind.INFRASTRUCTURE
         assert "not found" in r.summary.lower()
+
+    @pytest.mark.parametrize(
+        ("status", "needle"),
+        [(401, "access denied"), (403, "access denied"), (429, "throttled"), (500, "failed")],
+    )
+    def test_client_response_status_mapping(self, status: int, needle: str) -> None:
+        r = _bigquery_eh(_client_error(status), site="query")
+        assert isinstance(r, CoreException)
+        assert needle in r.summary.lower()
+
+    def test_generic_exception_maps_to_infrastructure(self) -> None:
+        r = _bigquery_eh(RuntimeError("boom"), site="connect")
+        assert isinstance(r, CoreException) and r.kind == ExceptionKind.INFRASTRUCTURE
+        assert "connect" in r.summary

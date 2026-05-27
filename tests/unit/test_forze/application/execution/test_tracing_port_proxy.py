@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-import attrs
 import pytest
 
+from forze.application.execution import DepsPlan
 from forze.application.execution.tracing.port_proxy import wrap_port
 from forze_mock import MockDepsModule, MockState
 
@@ -14,7 +14,9 @@ from forze_mock import MockDepsModule, MockState
 class TestTracingPortProxySyncAsync:
     @pytest.mark.asyncio
     async def test_records_sync_and_async_calls(self, mock_state: MockState) -> None:
-        deps = attrs.evolve(MockDepsModule(state=mock_state)(), trace_runtime=True)
+        deps = DepsPlan.from_modules(
+            lambda: MockDepsModule(state=mock_state)(),
+        ).with_tracing(runtime=True).build()
 
         class _Inner:
             def ping(self) -> str:

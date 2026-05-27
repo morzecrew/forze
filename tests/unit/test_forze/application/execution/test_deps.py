@@ -7,6 +7,7 @@ from forze.base.exceptions import CoreException
 from forze.application.contracts.deps import DepKey
 from forze.application.execution import Deps, DepsPlan, ExecutionContext
 from forze.application.execution.deps import DepsResolutionTrace
+from forze.application.execution.deps.registry import DepsRegistry
 from forze.application.execution.deps.resolution import frame_for
 
 _A = DepKey[str]("a")
@@ -31,7 +32,7 @@ _SPEC_B = _NamedSpec("b")
 class TestDepsConstruction:
     def test_routed_map_must_not_be_empty(self) -> None:
         with pytest.raises(CoreException, match="no routes"):
-            Deps(routed_deps={_R: {}})
+            Deps(registry=DepsRegistry(routed_deps={_R: {}}))
 
     def test_routed_group_requires_non_empty_routes(self) -> None:
         with pytest.raises(CoreException, match="Routes must not be empty"):
@@ -56,7 +57,12 @@ class TestDepsProvide:
 
     def test_routed_route_missing_falls_back_to_plain_when_same_key(self) -> None:
         # Same key may appear in both maps only when assembled in one container (merge forbids it).
-        d = Deps(plain_deps={_A: "plain"}, routed_deps={_A: {"z": "routed"}})
+        d = Deps(
+            registry=DepsRegistry(
+                plain_deps={_A: "plain"},
+                routed_deps={_A: {"z": "routed"}},
+            ),
+        )
 
         assert d.provide(_A, route="missing", fallback_to_plain=True) == "plain"
 
@@ -229,7 +235,12 @@ class TestDepsCycleDetection:
         assert deps.provide(_CLIENT) == "singleton"
 
     def test_fallback_routing_under_outer_scope_different_frame(self) -> None:
-        deps = Deps(plain_deps={_A: "plain"}, routed_deps={_A: {"z": "routed"}})
+        deps = Deps(
+            registry=DepsRegistry(
+                plain_deps={_A: "plain"},
+                routed_deps={_A: {"z": "routed"}},
+            ),
+        )
 
         with deps.resolution_scope(_B):
             assert deps.provide(_A, route="missing", fallback_to_plain=True) == "plain"
@@ -255,7 +266,7 @@ class TestDepsResolutionTrace:
         assert deps.resolution_trace() is None
 
     def test_trace_records_scope_and_provide_edges(self) -> None:
-        deps = Deps(plain_deps={_A: "outer", _B: "inner"}, trace_resolution=True)
+        deps = Deps.plain({_A: "outer", _B: "inner"}, trace_resolution=True)
         frame_a = frame_for(_A, None)
         frame_b = frame_for(_B, None)
 
@@ -284,7 +295,7 @@ class TestDepsResolutionTrace:
             trace.to_dag()
 
     def test_two_deps_traces_isolated(self) -> None:
-        deps_a = Deps(plain_deps={_A: "a", _B: "b"}, trace_resolution=True)
+        deps_a = Deps.plain({_A: "a", _B: "b"}, trace_resolution=True)
         deps_b = Deps.plain({_A: "x"}, trace_resolution=True)
         frame_a = frame_for(_A, None)
         frame_b = frame_for(_B, None)
@@ -301,7 +312,7 @@ class TestDepsResolutionTrace:
         assert trace_b is None
 
     def test_registered_frames_inventory(self) -> None:
-        deps = Deps(plain_deps={_A: 1}).merge(
+        deps = Deps.plain({_A: 1}).merge(
             Deps.routed({_R: {"u": 2, "v": 3}}),
         )
         frames = deps.registered_frames()
@@ -310,12 +321,47 @@ class TestDepsResolutionTrace:
         assert frame_for(_R, "u") in frames
         assert frame_for(_R, "v") in frames
 
+    def test_canonical_edges_collapse_routes(self) -> None:
+        trace = DepsResolutionTrace()
+        frame_cmd_a = frame_for(_R, "route_a")
+        frame_cmd_b = frame_for(_R, "route_b")
+        frame_client = frame_for(_A, None)
+        trace.add_edge(frame_cmd_a, frame_client)
+        trace.add_edge(frame_cmd_b, frame_client)
+
+        assert trace.canonical_edges() == frozenset({(_R.name, _A.name)})
+
+        order = trace.to_key_dag().static_order()
+
+        assert order.index(_R.name) < order.index(_A.name)
+
+    def test_format_canonical_edges(self) -> None:
+        trace = DepsResolutionTrace()
+        frame_a = frame_for(_A, None)
+        frame_b = frame_for(_B, None)
+        trace.add_edge(frame_a, frame_b)
+
+        assert trace.format_canonical_edges() == f"{_A.name} -> {_B.name}"
+
 
 class TestDepsTraceResolutionFlag:
-    def test_merge_propagates_trace_resolution(self) -> None:
+    def test_merge_does_not_propagate_trace_resolution(self) -> None:
         a = Deps.plain({_A: 1}, trace_resolution=True)
         b = Deps.plain({_B: 2})
         merged = Deps.merge(a, b)
+
+        assert merged.trace_resolution is False
+
+    def test_merge_accepts_explicit_resolution_tracer(self) -> None:
+        from forze.application.execution.deps import resolution_tracer_from_flag
+
+        a = Deps.plain({_A: 1}, trace_resolution=True)
+        b = Deps.plain({_B: 2})
+        merged = Deps.merge(
+            a,
+            b,
+            resolution_tracer=resolution_tracer_from_flag(True),
+        )
 
         assert merged.trace_resolution is True
 
@@ -349,3 +395,19 @@ class TestDepsTraceResolutionFlag:
 
         monkeypatch.setenv("FORZE_DEPS_TRACE", "yes")
         assert DepsPlan().build().trace_resolution is True
+
+    def test_with_tracing_on_plan(self) -> None:
+        built = DepsPlan.from_modules(lambda: Deps.plain({_A: 1})).with_tracing(
+            resolution=True,
+            runtime=False,
+        ).build(trace_resolution=False)
+
+        assert built.trace_resolution is True
+        assert built.trace_runtime is False
+
+    def test_with_tracing_overrides_build_kwargs(self) -> None:
+        built = DepsPlan.from_modules(lambda: Deps.plain({_A: 1})).with_tracing(
+            runtime=True,
+        ).build(trace_runtime=False)
+
+        assert built.trace_runtime is True

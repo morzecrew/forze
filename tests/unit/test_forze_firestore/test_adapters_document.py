@@ -1,6 +1,8 @@
 """Unit tests for ``forze_firestore.adapters.document``."""
 
-from unittest.mock import MagicMock
+from datetime import datetime, timezone
+from unittest.mock import AsyncMock, MagicMock
+from uuid import uuid4
 
 import pytest
 
@@ -65,3 +67,112 @@ def test_write_gateway_requires_same_client() -> None:
             write_gw=write_gw,
             cache_coord=cc,
         )
+
+
+def test_write_gateway_requires_matching_tenant_awareness() -> None:
+    read_gw = MagicMock(spec=FirestoreReadGateway)
+    read_gw.model_type = MyReadDoc
+    client = object()
+    read_gw.client = client
+    read_gw.tenant_aware = False
+
+    write_gw = MagicMock(spec=FirestoreWriteGateway)
+    write_gw.client = client
+    write_gw.tenant_aware = True
+
+    spec = _doc_spec()
+    cc = DocumentCacheCoordinator(
+        read_model_type=MyReadDoc,
+        document_name=spec.name,
+        cache=None,
+    )
+
+    with pytest.raises(CoreException, match="tenant awareness"):
+        FirestoreDocumentAdapter(
+            spec=spec,
+            read_gw=read_gw,
+            write_gw=write_gw,
+            cache_coord=cc,
+        )
+
+
+def _domain_doc(name: str) -> MyDoc:
+    now = datetime.now(tz=timezone.utc)
+    return MyDoc(
+        id=uuid4(),
+        rev=1,
+        created_at=now,
+        last_update_at=now,
+        name=name,
+    )
+
+
+@pytest.mark.asyncio
+async def test_create_in_transaction_uses_write_gateway_directly() -> None:
+    read_gw = MagicMock(spec=FirestoreReadGateway)
+    read_gw.model_type = MyReadDoc
+    read_gw.client = MagicMock()
+    read_gw.client.is_in_transaction.return_value = True
+    read_gw.tenant_aware = False
+
+    write_gw = MagicMock(spec=FirestoreWriteGateway)
+    write_gw.client = read_gw.client
+    write_gw.tenant_aware = False
+    domain = _domain_doc("tx")
+    write_gw.create = AsyncMock(return_value=domain)
+
+    spec = _doc_spec()
+    cache_coord = DocumentCacheCoordinator(
+        read_model_type=MyReadDoc,
+        document_name=spec.name,
+        cache=None,
+    )
+
+    adapter = FirestoreDocumentAdapter(
+        spec=spec,
+        read_gw=read_gw,
+        write_gw=write_gw,
+        cache_coord=cache_coord,
+    )
+
+    out = await adapter.create(MyCreateDoc(name="tx"))
+    assert out is not None
+    assert out.name == "tx"
+    write_gw.create.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_create_many_in_transaction_returns_validated_reads() -> None:
+    read_gw = MagicMock(spec=FirestoreReadGateway)
+    read_gw.model_type = MyReadDoc
+    read_gw.client = MagicMock()
+    read_gw.client.is_in_transaction.return_value = True
+    read_gw.tenant_aware = False
+
+    write_gw = MagicMock(spec=FirestoreWriteGateway)
+    write_gw.client = read_gw.client
+    write_gw.tenant_aware = False
+    domains = [_domain_doc("a"), _domain_doc("b")]
+    write_gw.create_many = AsyncMock(return_value=domains)
+
+    spec = _doc_spec()
+    cache_coord = DocumentCacheCoordinator(
+        read_model_type=MyReadDoc,
+        document_name=spec.name,
+        cache=None,
+    )
+
+    adapter = FirestoreDocumentAdapter(
+        spec=spec,
+        read_gw=read_gw,
+        write_gw=write_gw,
+        cache_coord=cache_coord,
+        batch_size=50,
+    )
+
+    out = await adapter.create_many(
+        [MyCreateDoc(name="a"), MyCreateDoc(name="b")],
+    )
+    assert out is not None
+    assert len(out) == 2
+    write_gw.create_many.assert_awaited_once()

@@ -16,6 +16,7 @@ well-known dependency keys.
 | Append ordered events and consume by stream or group | [Stream](contracts/stream.md) | `StreamSpec`, stream ports | Mock, Redis / Valkey | `StreamQueryDepKey`, `StreamCommandDepKey`, `StreamGroupQueryDepKey` |
 | Store and retrieve binary objects | [Storage](contracts/storage.md) | `StorageSpec`, `StoragePort` | Mock, S3-compatible storage | `StorageDepKey` |
 | Start and interact with long-running processes | [Workflow](contracts/workflow.md) | `WorkflowSpec`, workflow ports | Temporal | `WorkflowCommandDepKey`, `WorkflowQueryDepKey` |
+| Manage recurring workflow starts | [Workflow schedule](contracts/workflow-schedule.md) | `WorkflowScheduleTiming`, schedule ports | Temporal | `WorkflowScheduleCommandDepKey`, `WorkflowScheduleQueryDepKey` |
 | Replay duplicate HTTP-style requests safely | [Idempotency](contracts/idempotency.md) | `IdempotencySpec`, `IdempotencyPort` | Mock, Redis / Valkey | `IdempotencyDepKey` |
 | Query warehouse tables or append analytics rows | [Analytics](contracts/analytics.md) | `AnalyticsSpec`, `AnalyticsQueryPort`, `AnalyticsIngestPort` | Mock, BigQuery, ClickHouse | `AnalyticsQueryDepKey`, `AnalyticsIngestDepKey` |
 

@@ -104,3 +104,44 @@ async def test_document_create_rolls_back_on_error(
             raise RuntimeError("boom")
 
     assert await ctx.document.query(spec).count() == 0
+
+
+@pytest.mark.asyncio
+async def test_document_create_many_in_transaction(
+    firestore_client: FirestoreClient,
+) -> None:
+    collection = f"tx_many_{uuid4().hex[:8]}"
+    spec = DocumentSpec(
+        name="tx_many",
+        read=TxRead,
+        write={
+            "domain": TxDoc,
+            "create_cmd": TxCreate,
+            "update_cmd": TxUpdate,
+        },
+    )
+    fac = ConfigurableFirestoreDocument(
+        config={"read": ("(default)", collection), "write": ("(default)", collection)}
+    )
+    plain = Deps.plain(
+        {
+            FirestoreClientDepKey: firestore_client,
+            DocumentQueryDepKey: fac,
+            DocumentCommandDepKey: fac,
+        }
+    )
+    routed = Deps.routed({TransactionManagerDepKey: {"firestore": firestore_txmanager}})
+    ctx = ExecutionContext(deps=plain.merge(routed))
+
+    async with ctx.tx.scope("firestore"):
+        created = await ctx.document.command(spec).create_many(
+            [
+                TxCreate(title="one"),
+                TxCreate(title="two"),
+            ],
+        )
+        assert len(created) == 2
+
+    page = await ctx.document.query(spec).find_many(None)
+    titles = {row.title for row in page.hits}
+    assert titles == {"one", "two"}

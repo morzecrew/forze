@@ -18,8 +18,9 @@ from .resolution import ResolutionFrame
 class DepsResolutionTrace:
     """Mutable accumulator of observed resolution edges for one container and task.
 
-    Built during resolution when :attr:`~forze.application.execution.deps.container.Deps.trace_resolution`
-    is enabled. Export via :meth:`to_dag` for topological inspection.
+    Built during resolution when a recording :class:`~forze.application.execution.deps.resolution_tracer.ResolutionTracer`
+    is enabled on :class:`~forze.application.execution.deps.container.Deps`.
+    Export via :meth:`to_dag` or :meth:`to_key_dag` for topological inspection.
     """
 
     edges: set[tuple[ResolutionFrame, ResolutionFrame]] = attrs.field(factory=set)
@@ -60,5 +61,33 @@ class DepsResolutionTrace:
         lines = sorted(
             f"{parent.label()} -> {child.label()}" for parent, child in self.edges
         )
+
+        return "\n".join(lines)
+
+    # ....................... #
+
+    def canonical_edges(self) -> frozenset[tuple[str, str]]:
+        """Return edges with routes collapsed to dependency key names only."""
+
+        return frozenset(
+            (parent.key_name, child.key_name) for parent, child in self.edges
+        )
+
+    # ....................... #
+
+    def to_key_dag(self) -> DirectedAcyclicGraph[str]:
+        """Build an immutable DAG from canonical key-level edges."""
+
+        edges = self.canonical_edges()
+        nodes = {name for pair in edges for name in pair}
+
+        return DirectedAcyclicGraph.from_edges(nodes, edges)
+
+    # ....................... #
+
+    def format_canonical_edges(self) -> str:
+        """Return human-readable canonical edge lines for logging."""
+
+        lines = sorted(f"{parent} -> {child}" for parent, child in self.canonical_edges())
 
         return "\n".join(lines)

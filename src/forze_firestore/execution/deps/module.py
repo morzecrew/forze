@@ -48,6 +48,8 @@ class FirestoreDepsModule[K: str | StrEnum](DepsModule[K]):
     rw_documents: Mapping[K, FirestoreDocumentConfig] | None = attrs.field(default=None)
     tx: set[K] | None = attrs.field(default=None)
 
+    # ....................... #
+
     def __call__(self) -> Deps[K]:
         plain_deps = Deps[K].plain({FirestoreClientDepKey: self.client})
         doc_deps = Deps[K]()

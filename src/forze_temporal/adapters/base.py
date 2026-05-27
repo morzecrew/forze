@@ -38,3 +38,16 @@ class TemporalBaseAdapter(TenancyMixin):
             return f"tenant:{tenant_id}:{workflow_id}"
 
         return workflow_id
+
+    # ....................... #
+
+    def construct_schedule_id(self, schedule_id: str | None = None) -> str:
+        """Construct a schedule ID from the attached tenant ID if any."""
+
+        tenant_id = self.require_tenant_if_aware()
+        schedule_id = schedule_id or self.workflow_id_factory()
+
+        if tenant_id is not None:
+            return f"tenant:{tenant_id}:{schedule_id}"
+
+        return schedule_id

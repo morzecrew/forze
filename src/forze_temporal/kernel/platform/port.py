@@ -2,8 +2,14 @@
 
 from typing import Any, Awaitable, Protocol
 
+from forze.application.contracts.workflow import (
+    WorkflowScheduleDescription,
+    WorkflowScheduleTiming,
+)
 from pydantic import BaseModel
 from temporalio.client import WorkflowHandle
+
+from .schedule_types import TemporalScheduleListPage
 
 # ----------------------- #
 
@@ -77,3 +83,59 @@ class TemporalClientPort(Protocol):
         reason: str | None = None,
         run_id: str | None = None,
     ) -> Awaitable[None]: ...  # pragma: no cover
+
+    def create_schedule(
+        self,
+        schedule_id: str,
+        *,
+        workflow_name: str,
+        queue: str,
+        arg: BaseModel,
+        timing: WorkflowScheduleTiming,
+        workflow_id: str,
+        trigger_immediately: bool = False,
+        note: str | None = None,
+    ) -> Awaitable[None]: ...  # pragma: no cover
+
+    def update_schedule(
+        self,
+        schedule_id: str,
+        *,
+        workflow_name: str,
+        queue: str,
+        arg: BaseModel | None,
+        timing: WorkflowScheduleTiming | None,
+        workflow_id: str | None,
+        note: str | None,
+    ) -> Awaitable[None]: ...  # pragma: no cover
+
+    def delete_schedule(self, schedule_id: str) -> Awaitable[None]: ...  # pragma: no cover
+
+    def pause_schedule(
+        self,
+        schedule_id: str,
+        *,
+        note: str | None = None,
+    ) -> Awaitable[None]: ...  # pragma: no cover
+
+    def unpause_schedule(
+        self,
+        schedule_id: str,
+        *,
+        note: str | None = None,
+    ) -> Awaitable[None]: ...  # pragma: no cover
+
+    def trigger_schedule(self, schedule_id: str) -> Awaitable[None]: ...  # pragma: no cover
+
+    def describe_schedule(
+        self,
+        schedule_id: str,
+    ) -> Awaitable[WorkflowScheduleDescription]: ...  # pragma: no cover
+
+    def list_schedules(
+        self,
+        *,
+        workflow_name: str | None = None,
+        limit: int | None = None,
+        next_page_token: str | None = None,
+    ) -> Awaitable[TemporalScheduleListPage]: ...  # pragma: no cover

@@ -11,10 +11,15 @@ from pydantic import BaseModel
 from temporalio.client import WorkflowHandle
 
 from forze.application.contracts.secrets import SecretRef, SecretsPort
+from forze.application.contracts.workflow import (
+    WorkflowScheduleDescription,
+    WorkflowScheduleTiming,
+)
 from forze.base.exceptions import exc
 
 from .client import TemporalClient
 from .port import TemporalClientPort
+from .schedule_types import TemporalScheduleListPage
 from .value_objects import TemporalConfig
 
 # ----------------------- #
@@ -282,4 +287,113 @@ class RoutedTemporalClient(TemporalClientPort):
             workflow_id,
             reason=reason,
             run_id=run_id,
+        )
+
+    # ....................... #
+
+    async def create_schedule(
+        self,
+        schedule_id: str,
+        *,
+        workflow_name: str,
+        queue: str,
+        arg: BaseModel,
+        timing: WorkflowScheduleTiming,
+        workflow_id: str,
+        trigger_immediately: bool = False,
+        note: str | None = None,
+    ) -> None:
+        inner = await self._get_client()
+        await inner.create_schedule(
+            schedule_id,
+            workflow_name=workflow_name,
+            queue=queue,
+            arg=arg,
+            timing=timing,
+            workflow_id=workflow_id,
+            trigger_immediately=trigger_immediately,
+            note=note,
+        )
+
+    # ....................... #
+
+    async def update_schedule(
+        self,
+        schedule_id: str,
+        *,
+        workflow_name: str,
+        queue: str,
+        arg: BaseModel | None,
+        timing: WorkflowScheduleTiming | None,
+        workflow_id: str | None,
+        note: str | None,
+    ) -> None:
+        inner = await self._get_client()
+        await inner.update_schedule(
+            schedule_id,
+            workflow_name=workflow_name,
+            queue=queue,
+            arg=arg,
+            timing=timing,
+            workflow_id=workflow_id,
+            note=note,
+        )
+
+    # ....................... #
+
+    async def delete_schedule(self, schedule_id: str) -> None:
+        inner = await self._get_client()
+        await inner.delete_schedule(schedule_id)
+
+    # ....................... #
+
+    async def pause_schedule(
+        self,
+        schedule_id: str,
+        *,
+        note: str | None = None,
+    ) -> None:
+        inner = await self._get_client()
+        await inner.pause_schedule(schedule_id, note=note)
+
+    # ....................... #
+
+    async def unpause_schedule(
+        self,
+        schedule_id: str,
+        *,
+        note: str | None = None,
+    ) -> None:
+        inner = await self._get_client()
+        await inner.unpause_schedule(schedule_id, note=note)
+
+    # ....................... #
+
+    async def trigger_schedule(self, schedule_id: str) -> None:
+        inner = await self._get_client()
+        await inner.trigger_schedule(schedule_id)
+
+    # ....................... #
+
+    async def describe_schedule(
+        self,
+        schedule_id: str,
+    ) -> WorkflowScheduleDescription:
+        inner = await self._get_client()
+        return await inner.describe_schedule(schedule_id)
+
+    # ....................... #
+
+    async def list_schedules(
+        self,
+        *,
+        workflow_name: str | None = None,
+        limit: int | None = None,
+        next_page_token: str | None = None,
+    ) -> TemporalScheduleListPage:
+        inner = await self._get_client()
+        return await inner.list_schedules(
+            workflow_name=workflow_name,
+            limit=limit,
+            next_page_token=next_page_token,
         )

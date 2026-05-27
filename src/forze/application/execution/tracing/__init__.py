@@ -6,7 +6,7 @@ from .events import TracingEvent, TracingViolation
 from .harness import TracedOperationResult, run_traced_operation
 from .match import TraceExpectation, assert_trace_contains, assert_trace_equals
 from .report import format_runtime_trace_report, format_violation, format_violations
-from .session import active_deps, bind_active_deps
+from .session import active_deps, active_runtime_tracer, bind_active_deps
 from .validate import (
     RuntimeTraceValidationError,
     RuntimeTraceValidator,
@@ -23,6 +23,7 @@ __all__ = [
     "TracingEvent",
     "TracingViolation",
     "active_deps",
+    "active_runtime_tracer",
     "assert_runtime_trace_valid",
     "assert_trace_contains",
     "assert_trace_equals",

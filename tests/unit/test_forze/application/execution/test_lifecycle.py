@@ -57,3 +57,44 @@ class TestLifecyclePlan:
         await plan.startup(ctx)
         await plan.shutdown(ctx)
         assert order == ["up", "down"]
+
+    def test_with_steps_appends(self) -> None:
+        plan = LifecyclePlan.from_steps(LifecycleStep(id="a"))
+        extended = plan.with_steps(LifecycleStep(id="b"))
+
+        assert tuple(s.id for s in extended.steps) == ("a", "b")
+
+    @pytest.mark.asyncio
+    async def test_startup_failure_runs_shutdown_in_reverse(self, ctx: ExecutionContext) -> None:
+        order: list[str] = []
+
+        async def up_ok(_ctx: ExecutionContext) -> None:
+            order.append("up1")
+
+        async def up_fail(_ctx: ExecutionContext) -> None:
+            raise RuntimeError("startup failed")
+
+        async def down(_ctx: ExecutionContext) -> None:
+            order.append("down1")
+
+        plan = LifecyclePlan.from_steps(
+            LifecycleStep(id="first", startup=up_ok, shutdown=down),
+            LifecycleStep(id="second", startup=up_fail, shutdown=down),
+        )
+
+        with pytest.raises(RuntimeError, match="startup failed"):
+            await plan.startup(ctx)
+
+        assert order == ["up1", "down1"]
+
+    @pytest.mark.asyncio
+    async def test_shutdown_swallows_step_errors(self, ctx: ExecutionContext) -> None:
+        async def down_fail(_ctx: ExecutionContext) -> None:
+            raise RuntimeError("shutdown failed")
+
+        plan = LifecyclePlan.from_steps(
+            LifecycleStep(id="bad", shutdown=down_fail),
+            LifecycleStep(id="ok"),
+        )
+
+        await plan.shutdown(ctx)

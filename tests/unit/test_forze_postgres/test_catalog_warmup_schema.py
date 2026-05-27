@@ -117,9 +117,124 @@ async def test_warm_postgres_catalog_skips_on_partition_error() -> None:
 
 
 @pytest.mark.asyncio
-async def test_catalog_warmup_lifecycle_step_builds() -> None:
-    step = postgres_catalog_warmup_lifecycle_step(searches=None)
+async def test_warm_postgres_catalog_hub_members() -> None:
+    intro = MagicMock(spec=PostgresIntrospector)
+    intro.get_column_types = AsyncMock(return_value={})
+    intro.get_index_info = AsyncMock(
+        return_value=MagicMock(
+            schema="public",
+            name="ix",
+            amname="gin",
+            engine="fts",
+            indexdef="",
+            expr="x",
+            columns=(),
+            has_tsvector_col=True,
+        ),
+    )
+
+    ctx = ExecutionContext(
+        deps=Deps.plain({PostgresIntrospectorDepKey: intro}),
+    )
+
+    await warm_postgres_catalog(
+        ctx,
+        hub_searches={
+            "hub": {
+                "hub": ("public", "hub_v"),
+                "members": {
+                    "m": {
+                        "engine": "fts",
+                        "index": ("public", "ix"),
+                        "read": ("public", "v"),
+                        "fts_groups": {"A": ("title",)},
+                    },
+                },
+            },
+        },
+    )
+
+    intro.get_column_types.assert_any_await(schema="public", relation="hub_v")
+    assert intro.get_column_types.await_count >= 2
+
+
+@pytest.mark.asyncio
+async def test_warm_postgres_catalog_federated_embedded_hub() -> None:
+    intro = MagicMock(spec=PostgresIntrospector)
+    intro.get_column_types = AsyncMock(return_value={})
+    intro.get_index_info = AsyncMock(
+        return_value=MagicMock(
+            schema="public",
+            name="ix",
+            amname="gin",
+            engine="fts",
+            indexdef="",
+            expr="x",
+            columns=(),
+            has_tsvector_col=True,
+        ),
+    )
+
+    ctx = ExecutionContext(
+        deps=Deps.plain({PostgresIntrospectorDepKey: intro}),
+    )
+
+    await warm_postgres_catalog(
+        ctx,
+        federated_searches={
+            "fed": {
+                "members": {
+                    "hub_member": {
+                        "hub": ("public", "hub_v"),
+                        "members": {
+                            "m": {
+                                "engine": "fts",
+                                "index": ("public", "ix"),
+                                "read": ("public", "v"),
+                                "fts_groups": {"A": ("title",)},
+                            },
+                        },
+                    },
+                },
+            },
+        },
+    )
+
+    assert intro.get_column_types.await_count >= 2
+
+
+@pytest.mark.asyncio
+async def test_catalog_warmup_lifecycle_step_runs_hook() -> None:
+    intro = MagicMock(spec=PostgresIntrospector)
+    intro.get_column_types = AsyncMock(return_value={})
+    intro.get_index_info = AsyncMock(
+        return_value=MagicMock(
+            schema="public",
+            name="ix",
+            amname="gin",
+            engine="fts",
+            indexdef="",
+            expr="x",
+            columns=(),
+            has_tsvector_col=True,
+        ),
+    )
+    ctx = ExecutionContext(
+        deps=Deps.plain({PostgresIntrospectorDepKey: intro}),
+    )
+    step = postgres_catalog_warmup_lifecycle_step(
+        searches={
+            "s": {
+                "engine": "fts",
+                "index": ("public", "ix"),
+                "read": ("public", "v"),
+                "fts_groups": {"A": ("title",)},
+            },
+        },
+    )
     assert step.id == "postgres_catalog_warmup"
+    await step.startup(ctx)
+    intro.get_column_types.assert_awaited()
 
 
 class _Read(BaseModel):

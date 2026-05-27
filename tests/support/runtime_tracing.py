@@ -8,9 +8,7 @@ Prefer ``traced_deps`` / ``traced_ctx`` fixtures in
 
 from __future__ import annotations
 
-import attrs
-
-from forze.application.execution import Deps, ExecutionContext
+from forze.application.execution import Deps, DepsPlan, ExecutionContext
 from forze.application.execution.tracing import (
     RuntimeTraceValidator,
     assert_runtime_trace_valid,
@@ -25,15 +23,17 @@ def build_traced_deps(
     *,
     extra_plain: dict | None = None,
 ) -> Deps:
-    """Build mock deps with ``trace_runtime=True``."""
+    """Build mock deps with runtime tracing enabled via :class:`DepsPlan`."""
 
-    base = attrs.evolve(MockDepsModule(state=mock_state)(), trace_runtime=True)
+    base = DepsPlan.from_modules(
+        lambda: MockDepsModule(state=mock_state)(),
+    ).with_tracing(runtime=True).build()
 
     if not extra_plain:
         return base
 
-    overlay = Deps.plain(extra_plain, trace_runtime=True)
-    return Deps.merge(base, overlay)
+    overlay = DepsPlan.from_deps(Deps.plain(extra_plain)).with_tracing(runtime=True).build()
+    return Deps.merge(base, overlay, runtime_tracer=base.runtime_tracer)
 
 
 def build_traced_ctx(deps: Deps) -> ExecutionContext:

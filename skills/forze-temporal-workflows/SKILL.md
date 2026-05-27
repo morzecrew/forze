@@ -116,9 +116,58 @@ class GetOnboardingResult(Handler[WorkflowHandle, OnboardingResult]):
 
 Use `ExecutionContextInterceptor` and `TemporalContextCodec` when `InvocationMetadata`, `AuthnIdentity`, or `TenantIdentity` must cross Temporal client/worker boundaries. For tenant-aware workflow config, bind `TenantIdentity` before starting workflows so generated IDs can include tenant scope.
 
+## Workflow schedules (Temporal Schedules API)
+
+Resolve schedule ports the same way as workflow command/query ports:
+
+```python
+from datetime import timedelta
+
+from forze.application.contracts.workflow import (
+    WorkflowScheduleCommandDepKey,
+    WorkflowScheduleTiming,
+)
+
+schedules = ctx.deps.resolve_configurable(
+    ctx,
+    WorkflowScheduleCommandDepKey,
+    project_onboarding,
+    route=project_onboarding.name,
+)
+await schedules.upsert(
+    "nightly-onboarding",
+    StartOnboarding(project_id="p1"),
+    WorkflowScheduleTiming(cron_expressions=("0 2 * * *",)),
+)
+```
+
+Declarative bootstrap on deploy:
+
+```python
+from forze.application.contracts.workflow import WorkflowScheduleBootstrap
+
+TemporalDepsModule(
+    client=client,
+    workflows={WorkflowName.PROJECT_ONBOARDING: {"queue": "project-tasks"}},
+    schedule_bootstraps=[
+        WorkflowScheduleBootstrap(
+            workflow_name=WorkflowName.PROJECT_ONBOARDING,
+            schedule_id="nightly",
+            default_args=StartOnboarding(project_id="default"),
+            timing=WorkflowScheduleTiming(interval=timedelta(hours=24)),
+        ),
+    ],
+)
+
+# Pass the same workflow config map to lifecycle:
+temporal_lifecycle_step(host="...", workflow_configs={...})
+```
+
+Schedules require a Temporal server with the Schedules API (not the time-skipping test environment).
+
 ## Testing
 
-Use the repository’s Temporal testing patterns when workflow code itself is under test. For handlers that only need to verify a workflow command was issued, register fake `WorkflowCommandDepKey` / `WorkflowQueryDepKey` factories in `Deps`.
+Use the repository’s Temporal testing patterns when workflow code itself is under test. For handlers that only need to verify a workflow command was issued, register fake `WorkflowCommandDepKey` / `WorkflowQueryDepKey` factories in `Deps`. Schedule handlers can use fake `WorkflowScheduleCommandDepKey` / `WorkflowScheduleQueryDepKey` factories similarly.
 
 ## Anti-patterns
 

@@ -127,6 +127,21 @@ class TestExceptionInterceptor:
         with pytest.raises(CoreException):
             bad()
 
+    def test_contextmanager_intercepts_enter_failure(self) -> None:
+        from contextlib import contextmanager
+
+        interceptor = ExceptionInterceptor(mapper=default_chain_exc_mapper)
+
+        @interceptor.contextmanager(site="cm")
+        @contextmanager
+        def broken() -> __import__("typing").Generator[None, None, None]:
+            raise ValueError("enter")
+            yield
+
+        with pytest.raises(CoreException):
+            with broken():
+                pass
+
 
 class TestExceptionEgressPolicy:
     def test_not_found_exposes_details(self) -> None:

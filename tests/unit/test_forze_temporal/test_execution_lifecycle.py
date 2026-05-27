@@ -9,6 +9,8 @@ pytest.importorskip("temporalio")
 from forze.application.contracts.workflow import (
     WorkflowCommandDepKey,
     WorkflowQueryDepKey,
+    WorkflowScheduleCommandDepKey,
+    WorkflowScheduleQueryDepKey,
 )
 from forze.application.execution import ExecutionContext
 from forze_temporal.execution.deps import TemporalClientDepKey, TemporalDepsModule
@@ -26,10 +28,13 @@ async def test_temporal_startup_hook_initializes_client() -> None:
     client.initialize = AsyncMock()
 
     hook = TemporalStartupHook(
-        host="localhost:7233", config=TemporalConfig(namespace="default")
+        host="localhost:7233",
+        config=TemporalConfig(namespace="default"),
+        bootstrap_schedules=False,
     )
     ctx = MagicMock(spec=ExecutionContext)
     ctx.deps.provide = MagicMock(return_value=client)
+    ctx.deps.exists = MagicMock(return_value=False)
 
     await hook(ctx)
 
@@ -85,5 +90,9 @@ def test_temporal_deps_module_merges_workflow_configs() -> None:
 
     assert WorkflowCommandDepKey in routed_deps
     assert WorkflowQueryDepKey in routed_deps
+    assert WorkflowScheduleCommandDepKey in routed_deps
+    assert WorkflowScheduleQueryDepKey in routed_deps
     assert "MyWorkflow" in routed_deps[WorkflowCommandDepKey]
     assert "MyWorkflow" in routed_deps[WorkflowQueryDepKey]
+    assert "MyWorkflow" in routed_deps[WorkflowScheduleCommandDepKey]
+    assert "MyWorkflow" in routed_deps[WorkflowScheduleQueryDepKey]
