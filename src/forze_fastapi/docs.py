@@ -47,8 +47,15 @@ RESPONSE_WRAP_CUSTOM_CSS = """
 }
 """
 
+DISABLE_MCP_CUSTOM_CSS = """
+.scalar-mcp-layer {
+  display: none !important;
+}
+"""
+
 CUSTOM_CSS = f"""
 {RESPONSE_WRAP_CUSTOM_CSS}
+{DISABLE_MCP_CUSTOM_CSS}
 """
 
 # ....................... #
