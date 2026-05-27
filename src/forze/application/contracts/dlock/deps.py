@@ -1,4 +1,4 @@
-from ..base import ConfigurableDepPort, ConvenientDeps, DepKey
+from ..deps import ConfigurableDepPort, ConvenientDeps, DepKey
 from .ports import DistributedLockCommandPort, DistributedLockQueryPort
 from .specs import DistributedLockSpec
 

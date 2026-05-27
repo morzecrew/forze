@@ -4,7 +4,7 @@ from typing import Any, TypeVar
 
 from pydantic import BaseModel
 
-from ..base import ConfigurableDepPort, ConvenientDeps, DepKey
+from ..deps import ConfigurableDepPort, ConvenientDeps, DepKey
 from .models import FederatedSearchReadModel
 from .ports import SearchCommandPort, SearchQueryPort, SearchResultSnapshotPort
 from .specs import (

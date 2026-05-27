@@ -1,4 +1,4 @@
-from ..base import ConfigurableDepPort, ConvenientDeps, DepKey
+from ..deps import ConfigurableDepPort, ConvenientDeps, DepKey
 from .ports import (
     AuthzDecisionPort,
     AuthzScopePort,

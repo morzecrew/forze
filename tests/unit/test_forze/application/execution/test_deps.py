@@ -4,7 +4,7 @@ import pytest
 
 from forze.base.exceptions import CoreException
 
-from forze.application.contracts.base import DepKey
+from forze.application.contracts.deps import DepKey
 from forze.application.execution import Deps, DepsPlan, ExecutionContext
 from forze.application.execution.deps import DepsResolutionTrace
 from forze.application.execution.deps.resolution import frame_for

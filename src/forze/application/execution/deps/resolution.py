@@ -6,7 +6,7 @@ from typing import final
 
 import attrs
 
-from forze.application.contracts.base import DepKey
+from forze.application.contracts.deps import DepKey
 from forze.base.primitives import StrKey
 
 # ----------------------- #

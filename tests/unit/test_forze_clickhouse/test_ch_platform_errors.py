@@ -36,3 +36,23 @@ class TestClickHouseErrorHandler:
         r = _clickhouse_eh(_client_error(404), site="get")
         assert isinstance(r, CoreException) and r.kind == ExceptionKind.INFRASTRUCTURE
         assert "not found" in r.summary.lower()
+
+    def test_access_denied_status(self) -> None:
+        r = _clickhouse_eh(_client_error(403), site="query")
+        assert isinstance(r, CoreException) and r.kind == ExceptionKind.INFRASTRUCTURE
+        assert "access denied" in r.summary.lower()
+
+    def test_throttled(self) -> None:
+        r = _clickhouse_eh(_client_error(429), site="query")
+        assert isinstance(r, CoreException) and r.kind == ExceptionKind.INFRASTRUCTURE
+        assert "throttled" in r.summary.lower()
+
+    def test_generic_client_error_status(self) -> None:
+        r = _clickhouse_eh(_client_error(500), site="query")
+        assert isinstance(r, CoreException) and r.kind == ExceptionKind.INFRASTRUCTURE
+        assert "500" in r.summary
+
+    def test_authentication_message_fallback(self) -> None:
+        r = _clickhouse_eh(RuntimeError("authentication failed"), site="query")
+        assert isinstance(r, CoreException) and r.kind == ExceptionKind.INFRASTRUCTURE
+        assert "access denied" in r.summary.lower()

@@ -41,6 +41,9 @@ class DepsPlan:
     modules: tuple[DepsModule[Any], ...] = attrs.field(factory=tuple)
     """Modules to invoke and merge when building."""
 
+    deps: tuple[Deps[Any], ...] = attrs.field(factory=tuple)
+    """Deps to include in the plan."""
+
     # ....................... #
 
     @classmethod
@@ -52,6 +55,18 @@ class DepsPlan:
         """
 
         return cls(modules=modules)
+
+    # ....................... #
+
+    @classmethod
+    def from_deps(cls, *deps: Deps[Any]) -> Self:
+        """Create a plan from deps.
+
+        :param deps: Deps to include.
+        :returns: New plan instance.
+        """
+
+        return cls(deps=deps)
 
     # ....................... #
 
@@ -69,6 +84,23 @@ class DepsPlan:
         )
 
         return attrs.evolve(self, modules=(*self.modules, *modules))
+
+    # ....................... #
+
+    def with_deps(self, *deps: Deps[Any]) -> Self:
+        """Return a new plan with additional deps appended.
+
+        :param deps: Deps to append.
+        :returns: New plan instance.
+        """
+
+        logger.trace(
+            "Appending %s deps to deps plan with %s existing deps",
+            len(deps),
+            len(self.deps),
+        )
+
+        return attrs.evolve(self, deps=(*self.deps, *deps))
 
     # ....................... #
 
@@ -110,6 +142,7 @@ class DepsPlan:
 
         built: list[Deps[Any]] = []
 
+        # 1. build modules
         for i, module in enumerate(self.modules, 1):
             deps = module()
             logger.trace(
@@ -118,6 +151,15 @@ class DepsPlan:
                 deps.count(),
             )
             built.append(deps)
+
+        # 2. add pre-built deps
+        for i, dep in enumerate(self.deps, 1):
+            logger.trace(
+                "Adding deps #%s with %s dependency(ies)",
+                i,
+                dep.count(),
+            )
+            built.append(dep)
 
         merged = Deps[Any].merge(*built)
 

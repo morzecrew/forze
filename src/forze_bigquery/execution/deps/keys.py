@@ -1,4 +1,4 @@
-from forze.application.contracts.base import DepKey
+from forze.application.contracts.deps import DepKey
 
 from ...kernel.platform import BigQueryClientPort
 

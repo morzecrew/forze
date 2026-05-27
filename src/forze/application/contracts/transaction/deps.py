@@ -1,6 +1,6 @@
 """Transaction manager dependency keys and routers."""
 
-from ..base import DepKey, SimpleDepPort
+from ..deps import DepKey, SimpleDepPort
 from .ports import TransactionManagerPort
 
 # ----------------------- #

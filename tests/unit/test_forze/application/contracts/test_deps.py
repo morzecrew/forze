@@ -6,7 +6,7 @@ import pytest
 
 from forze.base.exceptions import CoreException
 
-from forze.application.contracts.base import DepKey
+from forze.application.contracts.deps import DepKey
 from forze.application.execution import Deps
 
 # ----------------------- #

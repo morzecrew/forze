@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from forze.application.contracts.base import DepKey
+from forze.application.contracts.deps import DepKey
 from forze.application.execution.tracing.metadata import infer_port_metadata
 
 # ----------------------- #

@@ -10,6 +10,7 @@ from forze.application.contracts.analytics import (
     AnalyticsSpec,
 )
 from forze.application.execution import ExecutionContext
+from forze.base.exceptions import CoreException, ExceptionKind
 from forze_bigquery.adapters import BigQueryAnalyticsAdapter
 from forze_bigquery.execution import BigQueryDepsModule
 
@@ -116,6 +117,64 @@ async def test_run_cursor_round_trip(bigquery_client, analytics_dataset) -> None
             cursor={"limit": 1, "after": first.next_cursor},
         )
         assert len(second.hits) >= 0
+
+
+@pytest.mark.asyncio
+async def test_run_chunked_reads_batches(bigquery_client, analytics_dataset) -> None:
+    dataset_id, table_id = analytics_dataset
+    adapter = BigQueryAnalyticsAdapter(
+        client=bigquery_client,
+        spec=_spec(),
+        config={
+            "dataset": dataset_id,
+            "queries": {
+                "all": {"sql": f"SELECT event, value FROM {dataset_id}.{table_id}"},
+            },
+            "ingest_table": table_id,
+        },
+    )
+
+    await adapter.append([_Ingest(event=f"chunk_{i}", value=i) for i in range(3)])
+
+    batches = [
+        batch
+        async for batch in adapter.run_chunked(
+            "all",
+            _Params(),
+            fetch_batch_size=2,
+        )
+    ]
+    total = sum(len(batch) for batch in batches)
+    assert total >= 3
+
+
+@pytest.mark.asyncio
+async def test_invalid_query_surfaces_infrastructure_error(
+    bigquery_client,
+    analytics_dataset,
+) -> None:
+    dataset_id, table_id = analytics_dataset
+    adapter = BigQueryAnalyticsAdapter(
+        client=bigquery_client,
+        spec=_spec(),
+        config={
+            "dataset": dataset_id,
+            "queries": {
+                "all": {
+                    "sql": f"SELECT definitely_not_a_column FROM {dataset_id}.{table_id}",
+                },
+            },
+            "ingest_table": table_id,
+        },
+    )
+
+    with pytest.raises(CoreException) as exc_info:
+        await adapter.run_page("all", _Params())
+
+    err = exc_info.value
+    assert err.details is not None
+    assert err.details.get("site") == "bigquery.run_query"
+    assert err.kind in (ExceptionKind.INFRASTRUCTURE, ExceptionKind.INTERNAL)
 
 
 @pytest.mark.asyncio

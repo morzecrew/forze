@@ -1,6 +1,6 @@
 """Dependency keys for secrets resolution."""
 
-from ..base import DepKey
+from ..deps import DepKey
 from .ports import SecretsPort
 
 # ----------------------- #

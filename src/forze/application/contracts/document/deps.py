@@ -6,7 +6,7 @@ from pydantic import BaseModel
 
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document
 
-from ..base import ConfigurableDepPort, ConvenientDeps, DepKey
+from ..deps import ConfigurableDepPort, ConvenientDeps, DepKey
 from .ports import DocumentCommandPort, DocumentQueryPort
 from .specs import DocumentSpec
 

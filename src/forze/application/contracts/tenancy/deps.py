@@ -1,4 +1,4 @@
-from ..base import ConvenientDeps, DepKey, SimpleDepPort
+from ..deps import ConvenientDeps, DepKey, SimpleDepPort
 from .ports import TenantManagementPort, TenantResolverPort
 
 # ----------------------- #

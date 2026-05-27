@@ -1,6 +1,6 @@
 """Dependency keys and factory protocols for graph module ports."""
 
-from ..base import ConfigurableDepPort, DepKey
+from ..deps import ConfigurableDepPort, DepKey
 from .ports import GraphCommandPort, GraphQueryPort
 from .specs import GraphModuleSpec
 

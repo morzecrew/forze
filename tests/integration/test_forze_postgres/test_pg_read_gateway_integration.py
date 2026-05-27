@@ -82,12 +82,14 @@ async def test_postgres_read_gateway_get_find_and_projections(
 
     alpha_id = id_a
 
+    from tests.support import IsPartialDict, IsUUID, document_partial
+
     full = await gw.get(alpha_id)
-    assert full.name == "alpha"
+    assert full.model_dump() == document_partial(name="alpha", id=IsUUID)
 
     one = await gw.find({"$values": {"name": "beta"}}, return_fields=["id", "name"])
     assert one is not None
-    assert one["name"] == "beta"
+    assert one == IsPartialDict({"name": "beta", "id": IsUUID})
 
     many = await gw.find_many(
         None,
@@ -604,3 +606,38 @@ async def test_postgres_read_gateway_aggregates_reject_return_fields(
             },
             return_fields=["c"],
         )
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_postgres_read_gateway_get_missing_raises(
+    pg_client: PostgresClient,
+) -> None:
+    table = f"pg_rd_miss_{uuid4().hex[:10]}"
+    await pg_client.execute(
+        f"""
+        CREATE TABLE public.{table} (
+            id uuid PRIMARY KEY,
+            rev integer NOT NULL,
+            created_at timestamptz NOT NULL,
+            last_update_at timestamptz NOT NULL,
+            name text NOT NULL
+        );
+        """,
+    )
+    ctx = ExecutionContext(
+        deps=Deps.plain(
+            {
+                PostgresClientDepKey: pg_client,
+                PostgresIntrospectorDepKey: PostgresIntrospector(client=pg_client),
+            },
+        ),
+    )
+    gw = read_gw(
+        ctx,
+        read_type=RdDoc,
+        read_relation=("public", table),
+        tenant_aware=False,
+    )
+    with pytest.raises(CoreException, match="not found"):
+        await gw.get(uuid4())

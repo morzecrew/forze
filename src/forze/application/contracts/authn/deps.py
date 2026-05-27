@@ -1,4 +1,4 @@
-from ..base import ConfigurableDepPort, DepKey
+from ..deps import ConfigurableDepPort, DepKey
 from .ports import (
     ApiKeyLifecyclePort,
     ApiKeyVerifierPort,

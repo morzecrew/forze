@@ -5,7 +5,7 @@ import attrs
 from forze.base.exceptions import exc
 from forze.base.primitives import StrKey
 
-from .specs import BaseSpec
+from .base.specs import BaseSpec
 
 if TYPE_CHECKING:
     from forze.application.execution import ExecutionContext

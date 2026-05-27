@@ -124,7 +124,6 @@ authn = [
     "email-validator>=2.3.0",
     "pyjwt[crypto]>=2.12.1",
 ]
-authz = [] #! redundant
 oidc = ["pyjwt[crypto]>=2.12.1"]
 casbin = ["pycasbin>=2.8.0"]
 vault = [
@@ -201,7 +200,7 @@ testpaths = ["tests"]
 python_files = "test_*.py"
 python_classes = "Test*"
 python_functions = "test_*"
-pythonpath = ["src"]
+pythonpath = ["src", "tests"]
 addopts = ["--tb=short", "--strict-markers", "--strict-config"]
 asyncio_mode = "auto"
 markers = [

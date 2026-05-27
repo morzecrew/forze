@@ -6,9 +6,14 @@ from typing import Any, final
 
 import attrs
 
-from forze.application.contracts.base import DepKey
+from forze.application.contracts.analytics import (
+    AnalyticsIngestDepKey,
+    AnalyticsQueryDepKey,
+    AnalyticsSpec,
+)
 from forze.application.contracts.cache import CacheDepKey, CachePort, CacheSpec
 from forze.application.contracts.counter import CounterDepKey, CounterPort, CounterSpec
+from forze.application.contracts.deps import DepKey
 from forze.application.contracts.document import (
     DocumentCommandDepKey,
     DocumentQueryDepKey,
@@ -28,11 +33,6 @@ from forze.application.contracts.queue import (
     QueueCommandDepKey,
     QueueQueryDepKey,
     QueueSpec,
-)
-from forze.application.contracts.analytics import (
-    AnalyticsIngestDepKey,
-    AnalyticsQueryDepKey,
-    AnalyticsSpec,
 )
 from forze.application.contracts.search import SearchQueryDepKey, SearchSpec
 from forze.application.contracts.storage import StorageDepKey, StoragePort, StorageSpec

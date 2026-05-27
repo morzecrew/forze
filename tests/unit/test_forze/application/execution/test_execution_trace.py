@@ -5,7 +5,7 @@ from __future__ import annotations
 import attrs
 import pytest
 
-from forze.application.contracts.base import DepKey
+from forze.application.contracts.deps import DepKey
 from forze.application.contracts.document import DocumentSpec
 from forze.application.execution import (
     Deps,

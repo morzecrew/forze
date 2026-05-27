@@ -7,7 +7,8 @@ from typing import TYPE_CHECKING, Any, Iterator, Mapping, Self, cast, final
 import attrs
 
 from forze.application._logger import logger
-from forze.application.contracts.base import DepKey, BaseSpec
+from forze.application.contracts.base import BaseSpec
+from forze.application.contracts.deps import DepKey
 from forze.application.execution.tracing import RuntimeTrace
 from forze.base.descriptors import hybridmethod
 from forze.base.exceptions import exc

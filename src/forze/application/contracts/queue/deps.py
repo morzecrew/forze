@@ -1,6 +1,6 @@
 from typing import Any
 
-from ..base import ConfigurableDepPort, DepKey
+from ..deps import ConfigurableDepPort, DepKey
 from .ports import QueueCommandPort, QueueQueryPort
 from .specs import QueueSpec
 
