@@ -9,7 +9,6 @@ from typing import Literal
 
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse
-from pydantic import SecretStr
 from scalar_fastapi import (
     AgentScalarConfig,
     DocumentDownloadType,
@@ -19,32 +18,41 @@ from scalar_fastapi import (
 
 # ----------------------- #
 
-RESPONSE_WRAP_CUSTOM_CSS = """
-/* Target response body — several Scalar versions / layouts */
-[data-testid="response-body-raw"] .cm-editor,
-[data-testid="response-body-raw"] .cm-scroller,
-[data-testid="response-body-raw"] .cm-content,
-.body-raw-scroller .cm-editor,
-.body-raw-scroller .cm-scroller,
-.body-raw-scroller .cm-content {
-  min-width: 0 !important;
-  max-width: 100% !important;
-  box-sizing: border-box !important;
-}
-[data-testid="response-body-raw"] .cm-scroller,
-.body-raw-scroller .cm-scroller {
-  overflow-x: hidden !important;
-}
-[data-testid="response-body-raw"] .cm-content,
-[data-testid="response-body-raw"] .cm-line,
-[data-testid="response-body-raw"] .cm-line > span,
-.body-raw-scroller .cm-content,
-.body-raw-scroller .cm-line,
-.body-raw-scroller .cm-line > span {
-  white-space: pre-wrap !important;
-  overflow-wrap: anywhere !important;
-  word-break: break-word !important;
-}
+RESPONSE_WRAP_SCRIPT = """
+<script>
+(function () {
+  function patchEditors(root) {
+    root.querySelectorAll('.cm-editor').forEach(function (editor) {
+      var content = editor.querySelector('.cm-content');
+      var scroller = editor.querySelector('.cm-scroller');
+      if (!content) return;
+      content.classList.add('cm-lineWrapping');
+      content.style.setProperty('white-space', 'pre-wrap', 'important');
+      content.style.setProperty('overflow-wrap', 'anywhere', 'important');
+      content.style.setProperty('word-break', 'break-word', 'important');
+      if (scroller) {
+        scroller.style.setProperty('min-width', '0', 'important');
+        scroller.style.setProperty('overflow-x', 'auto', 'important');
+        scroller.style.setProperty('padding-right', '16px', 'important');
+      }
+      // Unclip flex parents above the editor (common in the client modal)
+      var node = editor.parentElement;
+      for (var i = 0; i < 8 && node; i++, node = node.parentElement) {
+        var cs = getComputedStyle(node);
+        if (cs.overflowX === 'hidden' || cs.overflow === 'hidden') {
+          node.style.setProperty('overflow-x', 'auto', 'important');
+        }
+        if (cs.minWidth === 'auto' || cs.minWidth === '100%') {
+          node.style.setProperty('min-width', '0', 'important');
+        }
+      }
+    });
+  }
+  var obs = new MutationObserver(function () { patchEditors(document); });
+  obs.observe(document.documentElement, { childList: true, subtree: true });
+  patchEditors(document);
+})();
+</script>
 """
 
 DISABLE_MCP_CUSTOM_CSS = """
@@ -54,7 +62,6 @@ DISABLE_MCP_CUSTOM_CSS = """
 """
 
 CUSTOM_CSS = f"""
-{RESPONSE_WRAP_CUSTOM_CSS}
 {DISABLE_MCP_CUSTOM_CSS}
 """
 
@@ -67,6 +74,21 @@ def _is_valid_dns(address: str) -> bool:
     dns_pattern = re.compile(r"^([a-zA-Z0-9-]+\.)+[a-zA-Z]{2,}$")
 
     return bool(dns_pattern.match(address))
+
+
+# ....................... #
+
+
+def _apply_response_wrap_script(response: HTMLResponse) -> HTMLResponse:
+    body = response.body
+
+    if not isinstance(body, bytes):
+        return response
+
+    html = body.decode("utf-8")
+    html = html.replace("<body>", RESPONSE_WRAP_SCRIPT + "\n</body>")
+
+    return HTMLResponse(html)
 
 
 # ....................... #
@@ -93,12 +115,11 @@ def scalar_docs(
     version: str = "1.41.0",
     custom_css: str | None = None,
     telemetry: bool = False,
-    agent_enabled: bool = False,
-    agent_key: str | SecretStr | None = None,
     show_devtools: Literal["always", "never", "localhost"] = "never",
     hide_download_button: bool = True,
     download_type: DownloadType = "both",
     theme: ThemeType = "purple",
+    response_wrap: bool = True,
 ) -> HTMLResponse:
     """Return a Scalar API reference HTML page for the current OpenAPI spec."""
 
@@ -121,13 +142,10 @@ def scalar_docs(
     if len(favicon_host_split) == 1:
         favicon_url = f"{root_path}/{favicon_url.lstrip('/')}"
 
-    if isinstance(agent_key, SecretStr):
-        agent_key = agent_key.get_secret_value()
-
     document_download_type = DocumentDownloadType(download_type)
     theme_ = Theme(theme)
 
-    return get_scalar_api_reference(
+    res = get_scalar_api_reference(
         title=title,
         openapi_url=f"{root_path}/openapi.json",
         hide_download_button=hide_download_button,
@@ -144,11 +162,13 @@ def scalar_docs(
         hide_client_button=True,
         persist_auth=True,
         custom_css=custom_css or CUSTOM_CSS,
-        agent=AgentScalarConfig(
-            disabled=not agent_enabled,
-            key=agent_key,
-        ),
+        agent=AgentScalarConfig(disabled=True),
     )
+
+    if response_wrap:
+        res = _apply_response_wrap_script(res)
+
+    return res
 
 
 # ....................... #
@@ -162,12 +182,11 @@ def register_scalar_docs(
     scalar_version: str = "1.57.0",
     custom_css: str | None = None,
     telemetry: bool = False,
-    agent_enabled: bool = False,
-    agent_key: str | SecretStr | None = None,
     show_devtools: Literal["always", "never", "localhost"] = "never",
     hide_download_button: bool = True,
     download_type: DownloadType = "both",
     theme: ThemeType = "purple",
+    response_wrap: bool = True,
 ) -> None:
     """Register a Scalar docs route on *app* at *path*."""
 
@@ -182,10 +201,9 @@ def register_scalar_docs(
             version=scalar_version,
             custom_css=custom_css,
             telemetry=telemetry,
-            agent_enabled=agent_enabled,
-            agent_key=agent_key,
             show_devtools=show_devtools,
             hide_download_button=hide_download_button,
             download_type=download_type,
             theme=theme,
+            response_wrap=response_wrap,
         )
