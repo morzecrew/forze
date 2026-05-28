@@ -165,7 +165,7 @@ class TestInvocationMetadataMiddleware:
         captured: dict[str, InvocationMetadata | None] = {}
 
         async def _capture_app(scope, receive, send):  # type: ignore[no-untyped-def]
-            captured["metadata"] = ctx.inv.get_metadata()
+            captured["metadata"] = ctx.inv_ctx.get_metadata()
             await send({"type": "http.response.start", "status": 200, "headers": []})
             await send({"type": "http.response.body", "body": b"ok"})
 
@@ -281,7 +281,7 @@ class TestSecurityContextMiddleware:
         captured: dict[str, object] = {}
 
         async def _capture_app(scope, receive, send):  # type: ignore[no-untyped-def]
-            captured["authn"] = ctx.inv.get_authn()
+            captured["authn"] = ctx.inv_ctx.get_authn()
             await send({"type": "http.response.start", "status": 200, "headers": []})
             await send({"type": "http.response.body", "body": b"ok"})
 
@@ -318,7 +318,7 @@ class TestSecurityContextMiddleware:
         captured: dict[str, object] = {}
 
         async def _capture_app(scope, receive, send):  # type: ignore[no-untyped-def]
-            captured["tenant"] = ctx.inv.get_tenant()
+            captured["tenant"] = ctx.inv_ctx.get_tenant()
             await send({"type": "http.response.start", "status": 200, "headers": []})
             await send({"type": "http.response.body", "body": b"ok"})
 

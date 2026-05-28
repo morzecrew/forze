@@ -153,7 +153,7 @@ async def test_wrap_document_scope_merges_filters_on_ctx() -> None:
     args = _ListArgs(filters={"$values": {"status": "open"}})
 
     with patch.object(ctx.authz, "scope", return_value=adapter):
-        with ctx.inv.bind(
+        with ctx.inv_ctx.bind(
             metadata=metadata,
             authn=ident,
             tenant=TenantIdentity(tenant_id=tid),

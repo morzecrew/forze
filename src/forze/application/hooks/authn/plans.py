@@ -21,7 +21,7 @@ class AuthnRequired(BeforeFactory):
         async def _before(args: Any) -> None:
             _ = args
 
-            if ctx.inv.get_authn() is None:
+            if ctx.inv_ctx.get_authn() is None:
                 raise exc.authentication(
                     "Authentication required",
                     code="auth_required",

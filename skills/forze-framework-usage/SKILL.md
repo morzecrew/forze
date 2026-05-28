@@ -52,8 +52,8 @@ from forze_postgres.adapters.document import PostgresDocumentAdapter  # Never in
 | `ctx.search.query(spec)` | `SearchQueryPort` | Full-text search |
 | `ctx.search.hub(spec)` | `SearchQueryPort` | Hub search |
 | `ctx.search.federated(spec)` | `SearchQueryPort` | Federated search |
-| `ctx.tx.resolver(route)` | `TransactionManagerPort` | Transaction route (e.g. `"default"`) |
-| `ctx.tx.scope(route)` | async context manager | Transaction scope |
+| `ctx.tx_ctx.resolver(route)` | `TransactionManagerPort` | Transaction route (e.g. `"default"`) |
+| `ctx.tx_ctx.scope(route)` | async context manager | Transaction scope |
 
 For configurable keys without a convenience wrapper, use `ctx.deps.resolve_configurable(ctx, DepKey, spec, route=spec.name)`.
 
@@ -77,16 +77,16 @@ Factories receive `ExecutionContext` and inject ports: `lambda ctx: GetProject(d
 
 ### Transactions
 
-`ctx.tx.scope(route)` is an **async context manager**. Pass the **same route** registered on your deps module (prefer a shared `StrEnum`, e.g. `TxRoute.DEFAULT`). Nested calls reuse the active transaction (savepoints when supported).
+`ctx.tx_ctx.scope(route)` is an **async context manager**. Pass the **same route** registered on your deps module (prefer a shared `StrEnum`, e.g. `TxRoute.DEFAULT`). Nested calls reuse the active transaction (savepoints when supported).
 
 ```python
-async with ctx.tx.scope(TxRoute.DEFAULT):
+async with ctx.tx_ctx.scope(TxRoute.DEFAULT):
     doc_c = ctx.document.command(project_spec)
     await doc_c.create(cmd1)
     await doc_c.create(cmd2)
 ```
 
-Use `ctx.tx.defer_after_commit()` for side effects that must run only after the root transaction commits.
+Use `ctx.tx_ctx.defer_after_commit()` for side effects that must run only after the root transaction commits.
 
 Stage hooks use `BeforeStep` / `OnSuccessStep` on `OperationRegistry.bind(...)` — see [`pages/docs/reference/middleware-plans.md`](../../pages/docs/reference/middleware-plans.md).
 
@@ -95,11 +95,11 @@ Stage hooks use `BeforeStep` / `OnSuccessStep` on `OperationRegistry.bind(...)` 
 Bind `AuthnIdentity` / `TenantIdentity` at the HTTP, Socket.IO, queue worker, or Temporal worker boundary:
 
 ```python
-with ctx.inv.bind(metadata=metadata, authn=identity, tenant=tenant):
+with ctx.inv_ctx.bind(metadata=metadata, authn=identity, tenant=tenant):
     ...
 ```
 
-Handlers read `ctx.inv.get_authn()` / `ctx.inv.get_tenant()`; they should not call `inv.bind` themselves. See [`forze-auth-tenancy-secrets`](../forze-auth-tenancy-secrets/SKILL.md).
+Handlers read `ctx.inv_ctx.get_authn()` / `ctx.inv_ctx.get_tenant()`; they should not call `inv_ctx.bind` themselves. See [`forze-auth-tenancy-secrets`](../forze-auth-tenancy-secrets/SKILL.md).
 
 ## Query syntax
 
@@ -186,7 +186,7 @@ See [`forze-messaging-streaming`](../forze-messaging-streaming/SKILL.md) and [`f
 
 - **`ctx.doc_query` / `ctx.doc_command` are removed** — use `ctx.document.query` / `ctx.document.command`.
 - **`ctx.dep(...)` on context is removed** — use `ctx.deps.provide` or `ctx.deps.resolve_configurable`.
-- **`ctx.transaction()` is removed** — use `ctx.tx.scope(route)`.
+- **`ctx.transaction()` is removed** — use `ctx.tx_ctx.scope(route)`.
 - **`ctx.counter("name")` is wrong** — pass `CounterSpec(name=...)`.
 - **`UsecaseRegistry` is removed** — use `OperationRegistry` + `.freeze()`.
 - **Do not nest incompatible tx backends** (e.g. Postgres + Mongo in one scope).

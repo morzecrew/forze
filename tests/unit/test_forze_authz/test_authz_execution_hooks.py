@@ -36,7 +36,7 @@ async def test_before_authorize_allows() -> None:
     metadata = InvocationMetadata(execution_id=uuid4(), correlation_id=uuid4())
 
     with patch.object(ctx.authz, "decision", return_value=_AllowDecision()):
-        with ctx.inv.bind(metadata=metadata, authn=ident):
+        with ctx.inv_ctx.bind(metadata=metadata, authn=ident):
             hook = AuthzBeforeAuthorize(spec=AuthzSpec(name="z"), action="x.read")(ctx)
             await hook(None)
 
@@ -47,7 +47,7 @@ async def test_before_authorize_denies() -> None:
     metadata = InvocationMetadata(execution_id=uuid4(), correlation_id=uuid4())
 
     with patch.object(ctx.authz, "decision", return_value=_DenyDecision()):
-        with ctx.inv.bind(metadata=metadata, authn=ident):
+        with ctx.inv_ctx.bind(metadata=metadata, authn=ident):
             hook = AuthzBeforeAuthorize(spec=AuthzSpec(name="z"), action="x.read")(ctx)
 
             with pytest.raises(CoreException) as exc_info:

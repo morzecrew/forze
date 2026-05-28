@@ -57,9 +57,9 @@ class InngestEventCommandAdapter[M: BaseModel](DurableFunctionEventCommandPort[M
 
             data = merge_envelope(
                 data,
-                metadata=ctx.inv.get_metadata(),
-                authn=ctx.inv.get_authn(),
-                tenant=ctx.inv.get_tenant(),
+                metadata=ctx.inv_ctx.get_metadata(),
+                authn=ctx.inv_ctx.get_authn(),
+                tenant=ctx.inv_ctx.get_tenant(),
             )
 
         ts_ms = 0

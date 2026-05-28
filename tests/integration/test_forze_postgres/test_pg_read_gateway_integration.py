@@ -8,6 +8,7 @@ from pydantic import BaseModel
 
 from forze.application.contracts.querying import encode_keyset_v1
 from forze.application.execution import Deps, ExecutionContext
+from forze.domain.constants import ID_FIELD
 from forze.domain.models import Document
 from forze_postgres.execution.deps.keys import (
     PostgresClientDepKey,
@@ -313,20 +314,20 @@ async def test_postgres_read_gateway_find_many_with_cursor(
     first = await gw.find_many_with_cursor(
         None,
         cursor={"limit": 2},
-        sorts=None,
+        sorts={ID_FIELD: "asc"},
     )
     assert len(first) == 3
 
     last_row = first[1]
     tok = encode_keyset_v1(
-        sort_keys=["id"],
+        sort_keys=[ID_FIELD],
         directions=["asc"],
         values=[last_row.id],
     )
     second = await gw.find_many_with_cursor(
         None,
         cursor={"limit": 2, "after": tok},
-        sorts=None,
+        sorts={ID_FIELD: "asc"},
     )
     assert len(second) >= 1
     assert second[0].id != first[0].id
@@ -334,7 +335,7 @@ async def test_postgres_read_gateway_find_many_with_cursor(
     before_page = await gw.find_many_with_cursor(
         None,
         cursor={"limit": 2, "before": tok},
-        sorts=None,
+        sorts={ID_FIELD: "asc"},
     )
     assert len(before_page) >= 1
 
@@ -342,6 +343,7 @@ async def test_postgres_read_gateway_find_many_with_cursor(
         await gw.find_many_with_cursor(
             None,
             cursor={"after": tok, "before": tok},
+            sorts={ID_FIELD: "asc"},
         )
 
     with pytest.raises(CoreException, match="positive"):
@@ -356,7 +358,7 @@ async def test_postgres_read_gateway_find_many_with_cursor(
         await gw.find_many_with_cursor(
             None,
             cursor={"after": bad},
-            sorts=None,
+            sorts={ID_FIELD: "asc"},
         )
 
     dict_rows = await gw.find_many_with_cursor(

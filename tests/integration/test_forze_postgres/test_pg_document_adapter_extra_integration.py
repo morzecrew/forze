@@ -118,7 +118,7 @@ def _ctx_cached_tx(
     pg_client: PostgresClient,
     table: str,
 ) -> tuple[ExecutionContext, DocumentSpec]:
-    """Like :func:`_ctx_cached` but registers ``TransactionManagerDepKey`` route ``main`` for :meth:`ExecutionContext.tx.scope`."""
+    """Like :func:`_ctx_cached` but registers ``TransactionManagerDepKey`` route ``main`` for :meth:`ExecutionContext.tx_ctx.scope`."""
 
     cache_spec = CacheSpec(name=f"cache_{table}")
     spec = DocumentSpec(
@@ -836,7 +836,7 @@ async def test_pg_adapter_cache_tx_commit_deferred_warm(
     doc = await cmd.create(_CxCreate(sku="baseline"))
     await q.get(doc.id)
 
-    async with ctx.tx.scope("main"):
+    async with ctx.tx_ctx.scope("main"):
         patched = await cmd.update(doc.id, doc.rev, _CxUpdate(sku="committed"))
         assert patched.sku == "committed"
         in_tx = await q.get(doc.id)
@@ -868,7 +868,7 @@ async def test_pg_adapter_cache_tx_rollback_eager_evict_skips_deferred_warm(
     assert str(doc.id) in pointers
 
     with pytest.raises(RuntimeError, match="intentional rollback"):
-        async with ctx.tx.scope("main"):
+        async with ctx.tx_ctx.scope("main"):
             upd = await cmd.update(doc.id, doc.rev, _CxUpdate(sku="lost"))
             assert upd.sku == "lost"
             in_tx = await q.get(doc.id)

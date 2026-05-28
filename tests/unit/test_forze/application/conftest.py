@@ -117,7 +117,7 @@ def stub_storage_port(stub_ctx: ExecutionContext) -> MockStorageAdapter:
 @pytest.fixture
 def stub_tx_manager(stub_ctx: ExecutionContext):
     """Transaction manager for usecase tests."""
-    return stub_ctx.tx.resolver("mock")
+    return stub_ctx.tx_ctx.resolver("mock")
 
 
 @pytest.fixture

@@ -72,7 +72,7 @@ async def test_creator_id_mapping_step_without_identity() -> None:
 
 
 def test_creator_id_mapping_step_factory() -> None:
-    ctx = SimpleNamespace(inv=SimpleNamespace(get_authn=lambda: None))
+    ctx = SimpleNamespace(inv_ctx=SimpleNamespace(get_authn=lambda: None))
     factory = CreatorIdMappingStepFactory()
     step = factory(ctx)  # type: ignore[arg-type]
     assert isinstance(step, CreatorIdMappingStep)

@@ -22,11 +22,11 @@ metadata = InvocationMetadata(
     execution_id=execution_id,
     correlation_id=correlation_id,
 )
-with ctx.inv.bind(metadata=metadata, authn=authn_identity, tenant=tenant_identity):
+with ctx.inv_ctx.bind(metadata=metadata, authn=authn_identity, tenant=tenant_identity):
     await handler(args)
 ```
 
-Handlers call `ctx.inv.get_authn()` / `ctx.inv.get_tenant()` and never call `inv.bind(...)` themselves.
+Handlers call `ctx.inv_ctx.get_authn()` / `ctx.inv_ctx.get_tenant()` and never call `inv_ctx.bind(...)` themselves.
 
 ## Verify-then-resolve pipeline
 

@@ -68,7 +68,7 @@ async def test_send_merges_execution_context_from_resolved_adapter() -> None:
 
     adapter = factory(ctx, spec)
 
-    with ctx.inv.bind_metadata(metadata=metadata):
+    with ctx.inv_ctx.bind_metadata(metadata=metadata):
         await adapter.send(_Payload(value="y"))
 
     assert "_forze" in client.sent[0].data

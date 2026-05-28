@@ -3,6 +3,7 @@ from typing import Any, Callable, final
 import attrs
 
 from forze.application.contracts.analytics import AnalyticsDeps
+from forze.application.contracts.authz import AuthzDeps
 from forze.application.contracts.cache import CacheDeps
 from forze.application.contracts.counter import CounterDeps
 from forze.application.contracts.dlock import DistributedLockDeps
@@ -10,13 +11,8 @@ from forze.application.contracts.document import DocumentDeps
 from forze.application.contracts.embeddings import EmbeddingsDeps
 from forze.application.contracts.search import SearchDeps
 from forze.application.contracts.storage import StorageDeps
-from forze.application.contracts.authz import AuthzDeps
 from forze.application.contracts.tenancy import TenancyDeps
-from forze.application.contracts.transaction import (
-    TransactionManagerDepKey,
-    TransactionManagerPort,
-)
-from forze.base.primitives import StrKey
+from forze.application.contracts.transaction import TransactionDeps
 
 from ..deps import Deps
 from ..deps.tx_tracer import tx_tracer_from_runtime
@@ -37,10 +33,10 @@ class ExecutionContext:
 
     # ....................... #
 
-    tx: TransactionContext = attrs.field(factory=TransactionContext, init=False)
+    tx_ctx: TransactionContext = attrs.field(factory=TransactionContext, init=False)
     """Transaction context."""
 
-    inv: InvocationContext = attrs.field(factory=InvocationContext, init=False)
+    inv_ctx: InvocationContext = attrs.field(factory=InvocationContext, init=False)
     """Invocation context."""
 
     # ....................... #
@@ -76,6 +72,9 @@ class ExecutionContext:
     authz: AuthzDeps = attrs.field(factory=AuthzDeps, init=False)
     """Authorization dependencies."""
 
+    transaction: TransactionDeps = attrs.field(factory=TransactionDeps, init=False)
+    """Transaction dependencies."""
+
     # ....................... #
 
     @property
@@ -87,21 +86,9 @@ class ExecutionContext:
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
-        def _tx_resolver(route: StrKey) -> TransactionManagerPort:
-            with self.deps.resolution_scope(TransactionManagerDepKey, route=route):
-                dep = self.deps.get_provider(
-                    TransactionManagerDepKey,
-                    route=route,
-                )
-                return dep(self)
-
         bind_active_deps(self.deps)
         init_runtime_tracing(self.deps)
 
-        self.tx.lock(
-            _tx_resolver,
-            tx_tracer=tx_tracer_from_runtime(self.deps.runtime_tracer),
-        )
         self.document.lock(self)
         self.search.lock(self)
         self.analytics.lock(self)
@@ -112,6 +99,12 @@ class ExecutionContext:
         self.dlock.lock(self)
         self.tenancy.lock(self)
         self.authz.lock(self)
+        self.transaction.lock(self)
+
+        self.tx_ctx.lock(
+            self.transaction,
+            tx_tracer=tx_tracer_from_runtime(self.deps.runtime_tracer),
+        )
 
 
 # ....................... #

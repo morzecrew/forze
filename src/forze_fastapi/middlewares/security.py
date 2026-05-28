@@ -81,5 +81,5 @@ class SecurityContextMiddleware:
         authn = authn_res.identity if authn_res is not None else None
         tenant = await resolve_tenant_identity(authn_res, request=request, ctx=ctx)
 
-        with ctx.inv.bind_identity(authn=authn, tenant=tenant):
+        with ctx.inv_ctx.bind_identity(authn=authn, tenant=tenant):
             await self.app(scope, receive, send)

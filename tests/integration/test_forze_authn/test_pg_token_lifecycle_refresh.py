@@ -69,13 +69,13 @@ async def test_refresh_tokens_rotates_session_and_bearer_auth(
     adapter, access_svc = _token_services(ctx, pepper=pepper)
     identity = AuthnIdentity(principal_id=pid)
 
-    with ctx.inv.bind(metadata=_invocation_metadata()):
+    with ctx.inv_ctx.bind(metadata=_invocation_metadata()):
         issued = await adapter.issue_tokens(identity)
 
     assert issued.refresh is not None
     old_refresh = issued.refresh.token
 
-    with ctx.inv.bind(metadata=_invocation_metadata()):
+    with ctx.inv_ctx.bind(metadata=_invocation_metadata()):
         rotated = await adapter.refresh_tokens(old_refresh)
 
     assert rotated.refresh is not None
@@ -85,7 +85,7 @@ async def test_refresh_tokens_rotates_session_and_bearer_auth(
         access_svc=access_svc,
         methods=frozenset({"token"}),
     )
-    with ctx.inv.bind(metadata=_invocation_metadata()):
+    with ctx.inv_ctx.bind(metadata=_invocation_metadata()):
         bearer = await authn.authenticate_with_token(
             AccessTokenCredentials(
                 token=rotated.access.token.token,
@@ -94,7 +94,7 @@ async def test_refresh_tokens_rotates_session_and_bearer_auth(
         )
     assert bearer.identity.principal_id == pid
 
-    with ctx.inv.bind(metadata=_invocation_metadata()):
+    with ctx.inv_ctx.bind(metadata=_invocation_metadata()):
         sessions = await ctx.document.query(session_spec).find_many(
             filters={"$values": {"principal_id": pid}},
         )
@@ -115,15 +115,15 @@ async def test_revoke_tokens_blocks_refresh(pg_client: PostgresClient) -> None:
     adapter, _access_svc = _token_services(ctx, pepper=pepper)
     identity = AuthnIdentity(principal_id=pid)
 
-    with ctx.inv.bind(metadata=_invocation_metadata()):
+    with ctx.inv_ctx.bind(metadata=_invocation_metadata()):
         issued = await adapter.issue_tokens(identity)
 
     assert issued.refresh is not None
 
-    with ctx.inv.bind(metadata=_invocation_metadata()):
+    with ctx.inv_ctx.bind(metadata=_invocation_metadata()):
         await adapter.revoke_tokens(identity)
 
-    with ctx.inv.bind(metadata=_invocation_metadata()):
+    with ctx.inv_ctx.bind(metadata=_invocation_metadata()):
         with pytest.raises(CoreException) as exc_info:
             await adapter.refresh_tokens(issued.refresh.token)
 
@@ -142,22 +142,22 @@ async def test_refresh_reuse_revokes_token_family(pg_client: PostgresClient) -> 
     adapter, _access_svc = _token_services(ctx, pepper=pepper)
     identity = AuthnIdentity(principal_id=pid)
 
-    with ctx.inv.bind(metadata=_invocation_metadata()):
+    with ctx.inv_ctx.bind(metadata=_invocation_metadata()):
         issued = await adapter.issue_tokens(identity)
 
     assert issued.refresh is not None
     stale_refresh = issued.refresh.token
 
-    with ctx.inv.bind(metadata=_invocation_metadata()):
+    with ctx.inv_ctx.bind(metadata=_invocation_metadata()):
         await adapter.refresh_tokens(stale_refresh)
 
-    with ctx.inv.bind(metadata=_invocation_metadata()):
+    with ctx.inv_ctx.bind(metadata=_invocation_metadata()):
         with pytest.raises(CoreException) as exc_info:
             await adapter.refresh_tokens(stale_refresh)
 
     assert exc_info.value.kind is ExceptionKind.AUTHENTICATION
 
-    with ctx.inv.bind(metadata=_invocation_metadata()):
+    with ctx.inv_ctx.bind(metadata=_invocation_metadata()):
         sessions = await ctx.document.query(session_spec).find_many(
             filters={"$values": {"principal_id": pid}},
         )

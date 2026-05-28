@@ -46,7 +46,7 @@ It does **not** embed SQL table names or Mongo collections. Those belong in `Pos
 - `rw_documents: dict[str, PostgresDocumentConfig]` — read/write documents
 - `ro_documents: dict[str, PostgresReadOnlyDocumentConfig]` — read-only
 - `searches: dict[str, PostgresSearchConfig]` — full-text search per `SearchSpec.name`
-- `tx: set[str]` — transaction manager routes for `ctx.tx.resolver(route)` and `ctx.tx.scope(route)`
+- `tx: set[str]` — transaction manager routes for `ctx.tx_ctx.resolver(route)` and `ctx.tx_ctx.scope(route)`
 
 Each `PostgresDocumentConfig` supplies `(schema, table)` tuples for `read`, `write`, optional `history`, `bookkeeping_strategy` (`"database"` \| `"application"`), and optional `batch_size`.
 

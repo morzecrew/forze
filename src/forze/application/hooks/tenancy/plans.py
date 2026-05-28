@@ -21,7 +21,7 @@ class TenantRequired(BeforeFactory):
         async def _before(args: Any) -> None:
             _ = args
 
-            if ctx.inv.get_tenant() is None:
+            if ctx.inv_ctx.get_tenant() is None:
                 raise exc.authentication(
                     "Tenant identity is required",
                     code="tenant_required",

@@ -101,7 +101,7 @@ tasks = SocketIONamespaceRouter(namespace="/tasks").command(
 adapter.include_routers(chat, tasks)
 ```
 
-Bind `InvocationMetadata`, authn, and tenant identity in `context_factory` (or middleware around it) — handlers read `ctx.inv`, they do not bind at the socket layer themselves.
+Bind `InvocationMetadata`, authn, and tenant identity in `context_factory` (or middleware around it) — handlers read `ctx.inv_ctx`, they do not bind at the socket layer themselves.
 
 ## Server events
 

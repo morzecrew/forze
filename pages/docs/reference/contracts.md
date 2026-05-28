@@ -165,7 +165,7 @@ Value object holding the active transaction's scope key. Used internally to dete
 
 | Key | Resolved via |
 |-----|-------------|
-| `TxManagerDepKey` | `ctx.tx.resolver()` |
+| `TxManagerDepKey` | `ctx.tx_ctx.resolver()` |
 
 ## Cache
 
@@ -589,7 +589,7 @@ Event emit and step execution for platform-managed functions. See [Durable funct
 ## Context handling
 
 Execution identity is represented by `InvocationMetadata`, optional `AuthnIdentity`, and optional `TenantIdentity` on `ExecutionContext`.
-`AuthnPort` returns `AuthnResult` at the boundary, but only its principal-only `AuthnIdentity` is bound onto `ExecutionContext`; `TenantIdentity` carries the current `tenant_id`. Bind them via `ctx.inv.bind(metadata=..., authn=..., tenant=...)`.
+`AuthnPort` returns `AuthnResult` at the boundary, but only its principal-only `AuthnIdentity` is bound onto `ExecutionContext`; `TenantIdentity` carries the current `tenant_id`. Bind them via `ctx.inv_ctx.bind(metadata=..., authn=..., tenant=...)`.
 
 The full authentication contract surface — `AuthnPort`, the verifier and resolver ports, `AuthnSpec`, `VerifiedAssertion`, all dep keys, the `forze_identity.authn` first-party stack, and `forze_identity.oidc` — is documented on the dedicated [Authentication contracts](authentication.md) page. `forze_identity.authz` provides catalog-backed RBAC helpers (`AuthzDepsModule`, policy principal and binding specs) on top of the same identity model. Both providers use regular document ports, so storage is selected by the existing document adapter wiring.
 
@@ -607,7 +607,7 @@ All ports are resolved through `ExecutionContext`. Contracts with convenience me
     counter = ctx.counter(CounterSpec(name="tickets"))
     storage = ctx.storage(StorageSpec(name="attachments"))
     search = ctx.search.query(search_spec)
-    tx = ctx.tx.resolver("default")
+    tx = ctx.tx_ctx.resolver("default")
 
 For contracts without a convenience method, use `dep()` with the dep key:
 

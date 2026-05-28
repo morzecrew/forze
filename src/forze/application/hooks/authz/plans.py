@@ -33,7 +33,7 @@ from forze.domain.models import BaseDTO
 def policy_scope_from_invocation(ctx: ExecutionContext) -> AuthzScope:
     """Build :class:`AuthzScope` from the bound invocation tenant, if any."""
 
-    tenant = ctx.inv.get_tenant()
+    tenant = ctx.inv_ctx.get_tenant()
 
     if tenant is None:
         return AuthzScope()
@@ -80,7 +80,7 @@ class AuthzBeforeAuthorize(BeforeFactory):
         decision_port = ctx.authz.decision(self.spec)
 
         async def _before(args: Any) -> None:
-            identity = ctx.inv.get_authn()
+            identity = ctx.inv_ctx.get_authn()
 
             if identity is None:
                 raise exc.authorization(
@@ -154,7 +154,7 @@ class AuthzDocumentScopeWrap(MiddlewareFactory):
             next: Callable[[Any], Awaitable[Any]],
             args: Any,
         ) -> Any:
-            identity = ctx.inv.get_authn()
+            identity = ctx.inv_ctx.get_authn()
 
             if identity is None:
                 raise exc.authorization(

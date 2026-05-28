@@ -38,14 +38,14 @@ Together these ensure that business logic remains independent of infrastructure 
 | `ctx.document.command(spec)` | `DocumentCommandPort` | Read-write document port |
 | `ctx.cache(spec)` | `CachePort` | Cache port (`CacheSpec`) |
 | `ctx.counter(spec)` | `CounterPort` | Namespace-scoped counter (`CounterSpec`) |
-| `ctx.tx.resolver(route)` | `TransactionManagerPort` | Transaction manager |
+| `ctx.tx_ctx.resolver(route)` | `TransactionManagerPort` | Transaction manager |
 | `ctx.storage(spec)` | `StoragePort` | Object storage (`StorageSpec`) |
 | `ctx.search.query(spec)` | `SearchQueryPort` | Full-text search port |
-| `ctx.tx.scope(route)` | async context manager | Enter a transaction scope |
+| `ctx.tx_ctx.scope(route)` | async context manager | Enter a transaction scope |
 
 When `DocumentSpec.cache` is set, the registered document query/command factory resolves `ctx.cache(spec.cache)` while building the adapter.
 
-Nested `ctx.tx.scope()` calls reuse the same transaction with savepoints when the backend supports them.
+Nested `ctx.tx_ctx.scope()` calls reuse the same transaction with savepoints when the backend supports them.
 
 ## Handlers
 

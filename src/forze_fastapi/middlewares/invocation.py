@@ -105,5 +105,5 @@ class InvocationMetadataMiddleware:
 
             await send(message)
 
-        with ctx.inv.bind_metadata(metadata=metadata):
+        with ctx.inv_ctx.bind_metadata(metadata=metadata):
             await self.app(scope, receive, send_wrapper)

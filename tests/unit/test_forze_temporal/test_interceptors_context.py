@@ -47,7 +47,7 @@ class TestExecutionContextInterceptorChains:
         cid = uuid7()
         pid = uuid7()
         tid = uuid7()
-        with ctx.inv.bind(
+        with ctx.inv_ctx.bind(
             metadata=InvocationMetadata(
                 execution_id=eid,
                 correlation_id=cid,
@@ -92,7 +92,7 @@ class TestExecutionContextInterceptorChains:
         captured: list[InvocationMetadata | None] = []
 
         async def inner_exec(_inp: ExecuteActivityInput) -> str:
-            captured.append(ctx.inv.get_metadata())
+            captured.append(ctx.inv_ctx.get_metadata())
             return "ok"
 
         inner = MagicMock(spec=ActivityInboundInterceptor)
@@ -142,7 +142,7 @@ class TestWorkflowContextOutboundInterceptor:
         ctx = _exec_ctx()
         eid = uuid7()
         cid = uuid7()
-        with ctx.inv.bind(
+        with ctx.inv_ctx.bind(
             metadata=InvocationMetadata(
                 execution_id=eid,
                 correlation_id=cid,

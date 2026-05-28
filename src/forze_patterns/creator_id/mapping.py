@@ -42,4 +42,4 @@ class CreatorIdMappingStepFactory(PydanticPipelineMapperStepFactory[BaseModel]):
     """Factory that builds a creator ID mapping step."""
 
     def __call__(self, ctx: "ExecutionContext") -> CreatorIdMappingStep:
-        return CreatorIdMappingStep(resolver=ctx.inv.get_authn)
+        return CreatorIdMappingStep(resolver=ctx.inv_ctx.get_authn)

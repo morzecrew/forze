@@ -41,7 +41,7 @@ class ConfigurableSQSQueueRead(QueueQueryDepPort):
             codec=codec,
             namespace=self.config.get("namespace"),
             tenant_aware=self.config.get("tenant_aware", False),
-            tenant_provider=ctx.inv.get_tenant,
+            tenant_provider=ctx.inv_ctx.get_tenant,
         )
 
 
@@ -71,5 +71,5 @@ class ConfigurableSQSQueueWrite(QueueCommandDepPort):
             codec=codec,
             namespace=self.config.get("namespace"),
             tenant_aware=self.config.get("tenant_aware", False),
-            tenant_provider=ctx.inv.get_tenant,
+            tenant_provider=ctx.inv_ctx.get_tenant,
         )

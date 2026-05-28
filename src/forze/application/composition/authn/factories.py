@@ -55,7 +55,7 @@ def build_authn_registry(
 
     def _logout(ctx: ExecutionContext) -> AuthnLogout:
         return AuthnLogout(
-            resolver=ctx.inv.get_authn,
+            resolver=ctx.inv_ctx.get_authn,
             token_lifecycle=ctx.deps.resolve_configurable(
                 ctx,
                 TokenLifecycleDepKey,
@@ -66,7 +66,7 @@ def build_authn_registry(
 
     def _change_password(ctx: ExecutionContext) -> AuthnChangePassword:
         return AuthnChangePassword(
-            resolver=ctx.inv.get_authn,
+            resolver=ctx.inv_ctx.get_authn,
             password_lifecycle=ctx.deps.resolve_configurable(
                 ctx,
                 PasswordLifecycleDepKey,

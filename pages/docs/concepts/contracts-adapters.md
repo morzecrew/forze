@@ -212,7 +212,7 @@ Forze tracks request identity through `ExecutionContext`:
 - `AuthnIdentity` (authenticated `principal_id`)
 - `TenantIdentity` (current `tenant_id`)
 
-These are bound at the application boundary (for example, in HTTP middleware) via `ctx.inv.bind(metadata=..., authn=..., tenant=...)`.
+These are bound at the application boundary (for example, in HTTP middleware) via `ctx.inv_ctx.bind(metadata=..., authn=..., tenant=...)`.
 
 ## Dependency keys
 

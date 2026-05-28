@@ -42,7 +42,7 @@ def maybe_wrap_configurable(
         surface=surface,
         route=route_name,
         phase=phase,
-        tx_depth_getter=ctx.tx.depth,
+        tx_depth_getter=ctx.tx_ctx.depth,
     )
 
 
@@ -73,5 +73,5 @@ def record_simple_resolve(
         surface=surface,
         route=route_name,
         phase=phase,
-        tx_depth=ctx.tx.depth(),
+        tx_depth=ctx.tx_ctx.depth(),
     )

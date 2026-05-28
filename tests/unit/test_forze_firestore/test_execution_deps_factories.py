@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -82,23 +82,25 @@ class TestConfigurableFirestoreDocument:
         with pytest.raises(CoreException, match="Write relation"):
             factory(_ctx(), spec)
 
-    def test_warns_when_history_enabled_without_relation(
-        self,
-        capsys: pytest.CaptureFixture[str],
-    ) -> None:
+    def test_warns_when_history_enabled_without_relation(self) -> None:
         factory = ConfigurableFirestoreDocument(
             config={
                 "read": ("(default)", "r"),
                 "write": ("(default)", "w"),
             },
         )
-        factory(_ctx(), _rw_spec(history_enabled=True))
-        assert "History relation not found" in capsys.readouterr().out
+        mock_logger = MagicMock()
 
-    def test_warns_when_history_relation_but_disabled(
-        self,
-        capsys: pytest.CaptureFixture[str],
-    ) -> None:
+        with patch(
+            "forze_firestore.execution.deps.deps.logger",
+            mock_logger,
+        ):
+            factory(_ctx(), _rw_spec(history_enabled=True))
+
+        joined = " ".join(str(c) for c in mock_logger.warning.call_args_list)
+        assert "History relation not found" in joined
+
+    def test_warns_when_history_relation_but_disabled(self) -> None:
         factory = ConfigurableFirestoreDocument(
             config={
                 "read": ("(default)", "r"),
@@ -106,8 +108,16 @@ class TestConfigurableFirestoreDocument:
                 "history": ("(default)", "h"),
             },
         )
-        factory(_ctx(), _rw_spec(history_enabled=False))
-        assert "history is disabled" in capsys.readouterr().out
+        mock_logger = MagicMock()
+
+        with patch(
+            "forze_firestore.execution.deps.deps.logger",
+            mock_logger,
+        ):
+            factory(_ctx(), _rw_spec(history_enabled=False))
+
+        joined = " ".join(str(c) for c in mock_logger.warning.call_args_list)
+        assert "history is disabled" in joined
 
 
 class TestFirestoreTxManager:

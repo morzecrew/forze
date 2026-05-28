@@ -112,7 +112,7 @@ async def test_get_for_update_succeeds_inside_transaction(
     )
     created = await ctx.document.command(spec).create(_Create(title="locked"))
 
-    async with ctx.tx.scope("main"):
+    async with ctx.tx_ctx.scope("main"):
         query = ctx.document.query(spec)
         row = await query.get(created.id, for_update=True)
         assert row.id == created.id
@@ -143,7 +143,7 @@ async def test_find_for_update_with_projection_inside_transaction(
     )
     await ctx.document.command(spec).create(_Create(title="unique-find-title"))
 
-    async with ctx.tx.scope("main"):
+    async with ctx.tx_ctx.scope("main"):
         query = ctx.document.query(spec)
         proj = await query.project(
             {"$values": {"title": "unique-find-title"}},

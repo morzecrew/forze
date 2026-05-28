@@ -25,7 +25,7 @@ Attach steps on a scope binder:
 
     def principal_factory(ctx):
         async def _before(_args) -> None:
-            if ctx.inv.get_authn() is None:
+            if ctx.inv_ctx.get_authn() is None:
                 raise PermissionError("principal required")
         return _before
 

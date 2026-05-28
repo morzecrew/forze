@@ -193,7 +193,7 @@ async def test_authorize_via_role_lineage(pg_client: PostgresClient) -> None:
     ident = AuthnIdentity(principal_id=pid)
     metadata = InvocationMetadata(execution_id=uuid4(), correlation_id=uuid4())
 
-    with ctx.inv.bind(metadata=metadata, authn=ident):
+    with ctx.inv_ctx.bind(metadata=metadata, authn=ident):
         decision = await ctx.authz.decision(_AUTHZ_SPEC).authorize(
             AuthzRequest(
                 subject=subject_from_authn(ident),
@@ -232,7 +232,7 @@ async def test_assign_role_and_list_roles(pg_client: PostgresClient) -> None:
     metadata = InvocationMetadata(execution_id=uuid4(), correlation_id=uuid4())
     ra = ctx.authz.role_assignment(_AUTHZ_SPEC)
 
-    with ctx.inv.bind(metadata=metadata, authn=ident):
+    with ctx.inv_ctx.bind(metadata=metadata, authn=ident):
         await ra.assign_role(ident, "viewer")
         roles = await ra.list_roles(ident)
 
@@ -255,7 +255,7 @@ async def test_authorize_via_group_permission(pg_client: PostgresClient) -> None
     ident = AuthnIdentity(principal_id=pid)
     metadata = InvocationMetadata(execution_id=uuid4(), correlation_id=uuid4())
 
-    with ctx.inv.bind(metadata=metadata, authn=ident):
+    with ctx.inv_ctx.bind(metadata=metadata, authn=ident):
         decision = await ctx.authz.decision(_AUTHZ_SPEC).authorize(
             AuthzRequest(
                 subject=subject_from_authn(ident),

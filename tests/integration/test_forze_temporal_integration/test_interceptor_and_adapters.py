@@ -55,7 +55,7 @@ async def test_execution_context_interceptor_propagates_correlation_to_activity(
                 workflows=[ItContextProbeWorkflow],
                 activities=[it_read_correlation],
             ):
-                with exec_ctx.inv.bind(
+                with exec_ctx.inv_ctx.bind(
                     metadata=InvocationMetadata(
                         execution_id=uuid7(),
                         correlation_id=fixed,
@@ -119,7 +119,7 @@ async def test_temporal_workflow_adapters_end_to_end() -> None:
                 workflows=[ItSumWorkflow],
                 activities=[it_sum_pair],
             ):
-                with exec_ctx.inv.bind(
+                with exec_ctx.inv_ctx.bind(
                     metadata=InvocationMetadata(execution_id=uuid7(), correlation_id=uuid7(), causation_id=None),
                 ):
                     handle: DurableWorkflowHandle = await cmd.start(SumIn(a=40, b=2))

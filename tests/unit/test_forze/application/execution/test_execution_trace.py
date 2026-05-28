@@ -118,7 +118,7 @@ class TestRuntimeTracingRecording:
         spec = _doc_spec()
         port = traced_ctx.document.query(spec)
 
-        async with traced_ctx.tx.scope("mock"):
+        async with traced_ctx.tx_ctx.scope("mock"):
             await port.count()
 
         trace = traced_ctx.deps.runtime_trace()

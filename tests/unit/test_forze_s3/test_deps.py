@@ -36,7 +36,7 @@ def test_s3_storage_factory_resolves_tenant_from_context() -> None:
     )
 
     metadata = InvocationMetadata(execution_id=uuid4(), correlation_id=uuid4())
-    with context.inv.bind(
+    with context.inv_ctx.bind(
         metadata=metadata,
         authn=AuthnIdentity(principal_id=uuid4()),
         tenant=TenantIdentity(tenant_id=tid),

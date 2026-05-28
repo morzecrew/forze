@@ -6,14 +6,15 @@ from uuid import UUID
 
 import pytest
 
-from forze.base.exceptions import CoreException
-
 from forze.application.contracts.querying.pagination.cursor_token import (
     decode_keyset_v1,
     encode_keyset_v1,
-    normalize_sorts_with_id,
     row_value_for_sort_key,
 )
+from forze.application.contracts.querying.sort_resolution import (
+    normalize_sorts_with_id,
+)
+from forze.base.exceptions import CoreException
 from forze.domain.constants import ID_FIELD
 
 

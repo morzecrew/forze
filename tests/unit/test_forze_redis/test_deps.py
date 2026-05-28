@@ -47,7 +47,7 @@ def test_redis_counter_factory_tenant_aware_uses_context() -> None:
     metadata = InvocationMetadata(execution_id=uuid4(), correlation_id=uuid4())
     ident = AuthnIdentity(principal_id=uuid4())
 
-    with context.inv.bind(
+    with context.inv_ctx.bind(
         metadata=metadata,
         authn=ident,
         tenant=TenantIdentity(tenant_id=tid),

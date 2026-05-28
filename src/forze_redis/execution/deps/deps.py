@@ -58,7 +58,7 @@ class ConfigurableRedisCache(CacheDepPort):
             ttl_body=spec.ttl,
             ttl_kv=spec.ttl,
             tenant_aware=self.config.get("tenant_aware", False),
-            tenant_provider=ctx.inv.get_tenant,
+            tenant_provider=ctx.inv_ctx.get_tenant,
         )
 
 
@@ -87,7 +87,7 @@ class ConfigurableRedisCounter(CounterDepPort):
             client=client,
             key_codec=key_codec,
             tenant_aware=self.config.get("tenant_aware", False),
-            tenant_provider=ctx.inv.get_tenant,
+            tenant_provider=ctx.inv_ctx.get_tenant,
         )
 
 
@@ -117,7 +117,7 @@ class ConfigurableRedisIdempotency(IdempotencyDepPort):
             key_codec=key_codec,
             ttl=spec.ttl,
             tenant_aware=self.config.get("tenant_aware", False),
-            tenant_provider=ctx.inv.get_tenant,
+            tenant_provider=ctx.inv_ctx.get_tenant,
         )
 
 
@@ -149,7 +149,7 @@ class ConfigurableRedisSearchResultSnapshot:
             default_max_ids=spec.max_ids,
             default_chunk_size=spec.chunk_size,
             tenant_aware=self.config.get("tenant_aware", False),
-            tenant_provider=ctx.inv.get_tenant,
+            tenant_provider=ctx.inv_ctx.get_tenant,
         )
 
 
@@ -179,5 +179,5 @@ class ConfigurableRedisDistributedLock:
             key_codec=key_codec,
             spec=spec,
             tenant_aware=self.config.get("tenant_aware", False),
-            tenant_provider=ctx.inv.get_tenant,
+            tenant_provider=ctx.inv_ctx.get_tenant,
         )

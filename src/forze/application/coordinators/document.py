@@ -6,6 +6,7 @@ from typing import (
     Any,
     AsyncGenerator,
     Awaitable,
+    Generic,
     Literal,
     Never,
     Protocol,
@@ -68,10 +69,16 @@ C = TypeVar("C", bound=CreateDocumentCmd)
 U = TypeVar("U", bound=BaseDTO)
 T = TypeVar("T", bound=BaseModel)
 
+# Added only to avoid CodeQL syntax parsing errors
+M = TypeVar("M", bound=BaseModel)
+D_co = TypeVar("D_co", bound=Document, covariant=True)
+C_co = TypeVar("C_co", bound=CreateDocumentCmd, contravariant=True)
+U_co = TypeVar("U_co", bound=BaseDTO, contravariant=True)
+
 # ....................... #
 
 
-class DocumentReadGatewayPort[M: BaseModel](Protocol):
+class DocumentReadGatewayPort(Protocol, Generic[M]):
     """Read gateway operations required by :class:`DocumentCoordinator`."""
 
     @property
@@ -343,11 +350,7 @@ class DocumentReadGatewayPort[M: BaseModel](Protocol):
 # ....................... #
 
 
-class DocumentWriteGatewayPort[
-    D_co: Document,
-    C_co: CreateDocumentCmd,
-    U_co: BaseDTO,
-](Protocol):
+class DocumentWriteGatewayPort(Protocol, Generic[D_co, C_co, U_co]):
     """Write gateway operations required by :class:`DocumentCoordinator`."""
 
     async def create(self, dto: C_co) -> D_co: ...

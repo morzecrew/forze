@@ -29,5 +29,5 @@ class ConfigurableGCSStorage(StorageDepPort):
             client=client,
             bucket=self.config["bucket"],
             tenant_aware=self.config.get("tenant_aware", False),
-            tenant_provider=ctx.inv.get_tenant,
+            tenant_provider=ctx.inv_ctx.get_tenant,
         )

@@ -156,7 +156,7 @@ async def _bootstrap_schedules(
             queue=config["queue"],
             spec=spec,
             tenant_aware=config.get("tenant_aware", False),
-            tenant_provider=ctx.inv.get_tenant,
+            tenant_provider=ctx.inv_ctx.get_tenant,
         )
 
         await adapter.upsert(

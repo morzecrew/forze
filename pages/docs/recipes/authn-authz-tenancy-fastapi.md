@@ -4,13 +4,13 @@ This recipe describes how Forze separates **boundary authentication** (who is ca
 
 ## Two trust boundaries
 
-1. **ASGI / FastAPI boundary** — `ContextBindingMiddleware` resolves boundary authentication (`AuthnResult`), derives optional `TenantIdentity`, then `ctx.inv.bind(...)` stores the principal-only `AuthnIdentity` plus tenant for the request. Downstream code should read `ctx.inv.get_authn()` / `ctx.inv.get_tenant()`, not re-parse headers everywhere.
+1. **ASGI / FastAPI boundary** — `ContextBindingMiddleware` resolves boundary authentication (`AuthnResult`), derives optional `TenantIdentity`, then `ctx.inv_ctx.bind(...)` stores the principal-only `AuthnIdentity` plus tenant for the request. Downstream code should read `ctx.inv_ctx.get_authn()` / `ctx.inv_ctx.get_tenant()`, not re-parse headers everywhere.
 2. **Route / handler boundary** — Optional `HttpEndpointFeaturePort` wrappers (for example `RequireAuthnFeature`, `RequireTenantFeature`) can enforce policy **after** the execution context exists but **before** the handler runs (fast-fail at the HTTP edge). Prefer **authoritative** checks on the operation plan: `authn_required_before_step` and `tenant_required_before_step` from `forze.application.hooks.authn` / `hooks.tenancy`, plus `authorize_before_step` / `document_scope_wrap_step` from `forze.application.hooks.authz`, so non-HTTP callers hit the same rules. Align OpenAPI with `HttpMetadataSpec` (`dependencies`, `openapi_extra`) on `build_http_endpoint_spec` / `attach_http_endpoint` (see below).
 
 ```mermaid
 flowchart TB
   MW[ContextBindingMiddleware]
-  MW --> bind[inv.bind]
+  MW --> bind[inv_ctx.bind]
   bind --> feats[HttpEndpointFeature chain]
   feats --> uc[Handler]
 ```
@@ -20,13 +20,13 @@ flowchart TB
 - Register **authn** and **authz** dep routes on the kernel `Deps` (`AuthnDepsModule`, `AuthzDepsModule`, document stores for auth specs).
 - Use one or more of `HeaderTokenAuthnIdentityResolver` / `HeaderApiKeyAuthnIdentityResolver` / `CookieTokenAuthnIdentityResolver` for credentials.
 - For tenant, you must still configure **exactly one** tenant strategy on the middleware: for example `TenantIdentityResolver(required=False)` with **no** `TenantResolverDepKey` registered, so `TenantIdentity` stays `None` even if request or issuer hints are present.
-- Build `AuthzScope` from `ctx.inv.get_tenant()` (or pass `AuthzScope()` when policy is global). Use `ctx.authz.decision(spec).authorize(...)` on the operation plan — see [Authorization reference](../reference/authorization.md).
+- Build `AuthzScope` from `ctx.inv_ctx.get_tenant()` (or pass `AuthzScope()` when policy is global). Use `ctx.authz.decision(spec).authorize(...)` on the operation plan — see [Authorization reference](../reference/authorization.md).
 
 ## With tenancy
 
 - Resolve tenant with `TenantIdentityResolver` (validates optional issuer `tid` and optional header hint against `TenantResolverPort`; the resolver is authoritative and hints never outrank it).
 - Keep **authentication document routes** on **tenant-unaware** document clients until `TenantIdentity` is known (see `AUTHN_TENANT_UNAWARE_DOCUMENT_SPEC_NAMES` in `forze_identity.authn.application` and [Multi-tenancy](../concepts/multi-tenancy.md)).
-- Pass `AuthzScope(tenant_id=ctx.inv.get_tenant().tenant_id)` into decision and scoping requests when your policy store is partitioned.
+- Pass `AuthzScope(tenant_id=ctx.inv_ctx.get_tenant().tenant_id)` into decision and scoping requests when your policy store is partitioned.
 
 ## Credential sources on the boundary
 
@@ -74,7 +74,7 @@ app.add_middleware(
 
 ## Operation-plan authz and OpenAPI alignment
 
-Register **authorization** on the frozen registry with `authorize_before_step` (uses `ctx.authz.decision` and `ctx.inv`). Add `document_scope_wrap_step` on list/search operations to merge tenant or policy filters. See [Authorization reference](../reference/authorization.md) and [Capability execution](../reference/capability-execution.md).
+Register **authorization** on the frozen registry with `authorize_before_step` (uses `ctx.authz.decision` and `ctx.inv_ctx`). Add `document_scope_wrap_step` on list/search operations to merge tenant or policy filters. See [Authorization reference](../reference/authorization.md) and [Capability execution](../reference/capability-execution.md).
 
 ```python
 from forze.application.contracts.authz import AuthzSpec

@@ -222,7 +222,7 @@ class TestTransactionScope:
         def _tx_before_factory(_ctx):
             async def _before(_args) -> None:
                 order.append("tx_before")
-                depth_at_before.append(ctx.tx.depth())
+                depth_at_before.append(ctx.tx_ctx.depth())
 
             return _before
 

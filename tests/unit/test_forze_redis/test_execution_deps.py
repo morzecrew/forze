@@ -76,7 +76,7 @@ class TestRedisDepsModule:
         )
         ctx = _ctx()
         tid = uuid4()
-        with ctx.inv.bind(
+        with ctx.inv_ctx.bind(
             metadata=InvocationMetadata(
                 execution_id=uuid4(),
                 correlation_id=uuid4(),

@@ -221,7 +221,7 @@ register_exception_handlers(app)
 register_scalar_docs(app, path="/docs")
 ```
 
-`ContextBindingMiddleware` binds `InvocationMetadata`, `AuthnIdentity`, and `TenantIdentity` at the boundary. Use resolvers/codecs there; handlers should only read identity from `ExecutionContext.inv`.
+`ContextBindingMiddleware` binds `InvocationMetadata`, `AuthnIdentity`, and `TenantIdentity` at the boundary. Use resolvers/codecs there; handlers should only read identity from `ExecutionContext.inv_ctx`.
 
 `CustomHeadersMiddleware` adds response headers from `static_headers` and/or `dynamic_headers` (callables may be sync or async). It raises `CoreError` if the response already defines any of the same header names.
 

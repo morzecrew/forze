@@ -62,7 +62,7 @@ class ConfigurableMongoReadOnlyDocument(DocumentQueryDepPort[R]):
         after_commit: AfterCommitPort | None = None
 
         if cache is not None:
-            after_commit = ctx.tx.run_or_defer
+            after_commit = ctx.tx_ctx.run_or_defer
 
         cc = DocumentCacheCoordinator[R](
             read_model_type=read.model_type,
@@ -140,7 +140,7 @@ class ConfigurableMongoDocument(DocumentCommandDepPort[R, D, C, U]):
         after_commit: AfterCommitPort | None = None
 
         if cache is not None:
-            after_commit = ctx.tx.run_or_defer
+            after_commit = ctx.tx_ctx.run_or_defer
 
         cc = DocumentCacheCoordinator[R](
             read_model_type=read.model_type,

@@ -19,7 +19,7 @@ async def test_authn_before_required_allows_when_bound() -> None:
     metadata = InvocationMetadata(execution_id=uuid4(), correlation_id=uuid4())
     ident = AuthnIdentity(principal_id=uuid4())
 
-    with ctx.inv.bind(metadata=metadata, authn=ident):
+    with ctx.inv_ctx.bind(metadata=metadata, authn=ident):
         hook = AuthnRequired()(ctx)
         await hook(None)
 
@@ -28,7 +28,7 @@ async def test_authn_before_required_denies_when_missing() -> None:
     ctx = ExecutionContext(deps=Deps())
     metadata = InvocationMetadata(execution_id=uuid4(), correlation_id=uuid4())
 
-    with ctx.inv.bind(metadata=metadata):
+    with ctx.inv_ctx.bind(metadata=metadata):
         hook = AuthnRequired()(ctx)
 
         with pytest.raises(CoreException) as exc_info:

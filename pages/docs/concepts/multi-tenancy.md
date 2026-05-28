@@ -8,7 +8,7 @@ Typical HTTP flow:
 
 1. Authenticate the request into a principal-only `AuthnIdentity` plus optional issuer metadata (for example JWT `tid` surfaced as `issuer_tenant_hint`).
 2. Resolve `TenantIdentity` via `TenantIdentityResolver`: validate optional issuer and header tenant hints against `TenantResolverPort.resolve_from_principal` when registered. The resolver is authoritative; hints never outrank principal membership.
-3. `ExecutionContext.inv.bind` attaches both so adapters can call `ctx.inv.get_tenant()`.
+3. `ExecutionContext.inv_ctx.bind` attaches both so adapters can call `ctx.inv_ctx.get_tenant()`.
 
 If credential validation reads **tenant-scoped** document ports (`tenant_aware=True`) before step 2 completes, bootstrap can deadlock. Keep **authentication document routes** (`AUTHN_TENANT_UNAWARE_DOCUMENT_SPEC_NAMES` in `forze_identity.authn.application`) on **tenant-unaware** stores or global registry clients.
 

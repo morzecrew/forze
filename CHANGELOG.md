@@ -7,125 +7,92 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Fixed
-
-- **`forze_fastapi`:** `register_exception_handlers` now CRITICAL-logs tracebacks for unhandled exceptions and for 5xx `CoreException` with a chained cause; deliberate 5xx `CoreException` without a cause logs at ERROR with structured fields only.
-
-### Changed
-
-- **`forze_fastapi`:** Unhandled route exceptions return Forze generic JSON 500 (`{"detail":"Internal server error"}`) instead of Starlette plain text when `register_exception_handlers(app)` is used.
-
 ### Added
 
-- **Sort defaults on specs:** `DocumentSpec.default_sort`, `SearchSpec.default_sort`, and `HubSearchSpec.default_sort` for stable pagination on read models without ``id`` (SQL views). Shared helpers `resolve_effective_sorts`, `normalize_sorts_for_keyset`, and `validate_sort_fields` in `forze.application.contracts.querying`.
+- ...
 
 ### Changed
 
-- **Document/search pagination:** Omitting ``sorts`` no longer emits ``ORDER BY id`` when the read model has no ``id`` field; configure ``default_sort`` or pass explicit ``sorts``. Keyset tie-breaker on ``id`` is applied only when ``id`` is a read-model field.
-
-### Added
-
-- **Durable function contracts:** `DurableFunctionEventSpec`, `DurableFunctionEventCommandPort`, `DurableFunctionSpec`, triggers (`DurableFunctionEventTrigger`, `DurableFunctionCronTrigger`), `DurableFunctionStepPort`, and `DurableFunctionEventCommandDepKey` / `DurableFunctionStepDepKey` under `forze.application.contracts.durable.function`. Docs: [Durable](pages/docs/core-package/contracts/durable.md), [Durable function](pages/docs/core-package/contracts/durable-function.md).
-- **`forze_inngest`:** Inngest adapter for durable function contracts (`InngestClient`, `InngestDepsModule`, `InngestEventCommandAdapter`, `InngestStepAdapter`, `register_functions`, `InngestFunctionBinding`, `inngest_lifecycle_step`, FastAPI `serve`). Optional extra `inngest`. Docker integration tests in `tests/integration/test_forze_inngest_integration/`. Docs: [Inngest integration](pages/docs/integrations/inngest.md). Skill: `forze-inngest-durable-functions`.
-- **Durable function ↔ registry operations:** optional `DurableFunctionSpec.operation`; `handler_for_registry_operation` and `run_durable_function` in `forze.application.execution.running`; `register_functions(..., registry=)` and `InngestFunctionBinding.for_registry_operation` for cron/event runs via frozen `OperationRegistry` (custom `handler_factory` remains when `operation` is unset).
-- **Queue delayed delivery:** `QueueCommandPort.enqueue` / `enqueue_many` accept `delay` and `not_before` (mutually exclusive); `resolve_delivery_delay` and `SQS_MAX_DELAY` in `forze.application.contracts.queue`. SQS uses `DelaySeconds`; Mock filters by `visible_at`; RabbitMQ uses DLX delay queues when `delayed_delivery=True` on `RabbitMQQueueConfig`. Recipe: [scheduled queue jobs](pages/docs/recipes/scheduled-queue-jobs.md).
-- **Workflow schedule contracts:** `WorkflowScheduleTiming`, `WorkflowScheduleHandle`, `WorkflowScheduleDescription`, `WorkflowScheduleBootstrap`, `WorkflowScheduleCommandPort`, `WorkflowScheduleQueryPort`, and `WorkflowScheduleCommandDepKey` / `WorkflowScheduleQueryDepKey`. `forze_temporal` implements Temporal Schedules (create/upsert/update/delete/pause/unpause/trigger/describe/list), declarative bootstrap via `TemporalDepsModule.schedule_bootstraps`, and lifecycle upsert when `workflow_configs` is passed to `temporal_lifecycle_step`. Schedule integration tests use a Docker `temporalio/temporal` dev server (`server start-dev`) via testcontainers. See [workflow schedule contracts](pages/docs/core-package/contracts/workflow-schedule.md).
-- **Dependency tracing decomposition:** `ResolutionTracer` and `RuntimeTracer` composable recorders on `Deps`; `DepsPlan.with_tracing()` as the preferred enablement point; `DepsResolutionTrace.to_key_dag()` / `canonical_edges()` for key-level wiring graphs (routes collapsed).
-- **`Deps` internal split:** `DepsRegistry` (static providers), `ResolutionContext` (cycle stack), and `port_instrumentation` for runtime wraps; public `Deps.get_provider()` for factory lookup; `Deps._lookup` deprecated alias.
-- **`OperationRegistry` internal split:** `RegistryMerge` (handlers/plans/patches merge), `PlanResolution` (patch specificity and per-op plan resolution), and `RegistryFreezeValidator` (orphan patches, equal-specificity conflicts, tx-route and dispatch graph checks); public `OperationRegistry` API unchanged.
-- **`TxTracer`:** Optional transaction scope observer on `TransactionContext` (noop by default); `ExecutionContext` wires `tx_tracer_from_runtime(deps.runtime_tracer)` so root `tx enter` / `tx exit` events use the same enablement as runtime tracing without importing the tracing package from `transaction.py`.
-- **Local identity (demo / MVP):** `forze_identity.local` (`LocalIdentityConfig`, JSON/env loaders), `LocalApiKeyVerifier`, `LocalTenantResolver`, `local_identity_deps()`, and `TenancyDepsModule.tenant_resolvers` overrides for file-backed API-key auth without document stores or kernel peppers. See [local identity recipe](pages/docs/recipes/local-identity.md).
-- **Document contracts:** `RowLockMode` (`False`, `True`, `"nowait"`, `"skip_locked"`) on query `for_update`; `select_cursor`; keyset stream methods `find_stream`, `project_stream`, and `select_stream`; coordinator post-write hydration (`hydrate_from_write`) when read and write share the same physical source and read fields are a subset of the domain model.
-- **Postgres document schema validation (tier 1):** startup checks for Pydantic↔column type compatibility, required-field nullability, tenant column presence/type/nullability when `tenant_aware`, and a warning when read-model fields are not on the write relation (read/write split).
-- **Postgres bookkeeping validation:** startup checks that `bookkeeping_strategy="database"` documents have UPDATE triggers on the write table; warns when `application` strategy coexists with bump triggers or when `history_enabled` relies on DB triggers.
-- **Postgres tenancy wiring validation:** `PostgresDepsModule` fails when `RoutedPostgresClient` is used without `introspector_cache_partition_key`; warns on redundant `tenant_aware=True` with routed clients; schema validation warns when `tenant_id` exists on the write table but row isolation is disabled.
-- **Analytics glue hardening:** `AnalyticsAppendResult` now includes optional `rejected` and `errors`; BigQuery and ClickHouse clients expose `health()`, configurable read retries, and insert batching; query config supports `skip_total` (cheaper `run_page`) and ClickHouse `cursor_column` (keyset cursors with `{forze_after:Type}` in SQL); shared adapter helpers in `forze.application.contracts.analytics._adapter_common`; ClickHouse per-request `database` via query settings (no shared-client mutation); `ClickHouseConfig` HTTP pool and `SecretStr` password.
-- **Postgres analytics:** `PostgresAnalyticsAdapter`, `PostgresAnalyticsConfig` / `PostgresQueryConfig`, and `PostgresDepsModule.analytics` wire `AnalyticsQueryDepKey` and `AnalyticsIngestDepKey` (psycopg `%(name)s` SQL, optional `skip_total` and keyset `cursor_column`, batch `append`). Docs: [PostgreSQL integration](pages/docs/integrations/postgres.md#analytics), [Analytics contracts](pages/docs/core-package/contracts/analytics.md).
-- **Runtime tracing (development):** Opt-in per-task sequence of transaction boundaries and configurable port calls under `forze.application.execution.tracing` (`RuntimeTrace`, `TracingEvent`, `FORZE_RUNTIME_TRACE`, `Deps.trace_runtime` / `deps.runtime_trace()`); `validate_runtime_trace(..., validator=...)`, `assert_runtime_trace_valid`, `run_traced_operation` harness; `TraceExpectation` / `assert_trace_contains`; violation reports; sync+async port proxy; `resolve_simple` resolve events; trace buffer max 10k events; `FORZE_RUNTIME_TRACE_LOG`; Firestore validator `validate_reads_before_writes_in_tx`; pytest helpers in `tests.support.runtime_tracing`.
-- **`forze.application.hooks.authz`:** Operation-plan helpers (`authorize_before_step`, `document_scope_wrap_step`, `policy_scope_from_invocation`, …) moved out of `forze.application.contracts.authz` so contracts stay port-only.
-- **`forze.application.hooks.authn` / `hooks.tenancy`:** `authn_required_before_step` and `tenant_required_before_step` (and `AuthnBeforeRequired` / `TenancyBeforeRequired` factories) enforce bound `ctx.inv` principal and tenant on operation plans.
-- **Query DSL:** Text pattern filter operators `$like`, `$ilike`, and `$regex` on `$values` (and inside array element quantifiers). Operands accept a single pattern string or a sequence (OR at parse time). Parse-time limits `max_pattern_length` and `max_pattern_or_branches`; `$regex` rejects known catastrophic patterns. Postgres and Mongo renderers support all three; Firestore MVP raises `CoreError`.
-- **Console logging:** `ForzeConsoleRenderer.max_traceback_frames` controls Rich traceback frame collapsing in console mode (default `20`; `0` = show all frames). Pass via `configure_logging(..., custom_console_renderer=ForzeConsoleRenderer(max_traceback_frames=0))`.
-
-### Changed
-
-- **Console logging:** default Rich traceback visibility increased from 8 to 20 frames before middle collapse.
-- **Durable workflow contracts (breaking):** Workflow contracts moved from `forze.application.contracts.workflow` to `forze.application.contracts.durable.workflow`. Public types renamed to `DurableWorkflow*` (for example `WorkflowSpec` → `DurableWorkflowSpec`, `WorkflowCommandDepKey` → `DurableWorkflowCommandDepKey` with dep key names `durable_workflow_command`, `durable_workflow_query`, `durable_workflow_schedule_command`, `durable_workflow_schedule_query`). Docs renamed to [durable-workflow](pages/docs/core-package/contracts/durable-workflow.md) and [durable-workflow-schedule](pages/docs/core-package/contracts/durable-workflow-schedule.md).
-- **Dependency tracing (breaking):** `Deps.merge()` no longer propagates `trace_resolution` / `trace_runtime` from partial containers; pass `resolution_tracer` / `runtime_tracer` on merge or configure tracing via `DepsPlan.with_tracing()`. `Deps` stores `resolution_tracer` and `runtime_tracer` instead of boolean flags (`trace_resolution` / `trace_runtime` remain read-only properties).
-- **Errors (breaking):** `forze.base.errors` removed in favor of `forze.base.exceptions` (`CoreException`, `exc.*` factories, `ExceptionKind`, `ExceptionInterceptor`, `map_pydantic`). HTTP `X-Error-Code` defaults are now `core.<kind>` (for example `core.not_found`). FastAPI integration no longer ships `endpoints/` or `transport.http/`; tests for those modules were dropped and remaining FastAPI tests target middleware, OpenAPI, and exception handlers only.
-- **Document gateways (Postgres/Mongo/Firestore/Mock):** Pydantic `@computed_field` names are excluded from store reads and writes (`pydantic_persistence_dump`, `read_fields` with `include_computed=False`). Postgres write schema validation no longer requires columns for computed names. **`ensure` / `upsert`** write paths skip redundant read-gateway round-trips on insert (Mongo hydrates from write payload; Postgres conflict paths use in-transaction `SELECT` on the write table). **`update_matching`** contract docs clarify bulk-patch semantics vs `update_matching_strict`; Postgres `RETURNING` rows hydrate to read models via the coordinator when sources align.
-- **Runtime tracing API (breaking):** Package `forze.application.execution.trace` renamed to `tracing`; `ExecutionEvent`/`ExecutionTrace` → `TracingEvent`/`RuntimeTrace`; `trace_execution`/`FORZE_EXEC_TRACE` → `trace_runtime`/`FORZE_RUNTIME_TRACE`; `execution_trace()` → `runtime_trace()`; `validate_trace` → `validate_runtime_trace`; events are contract-agnostic (`domain`, `surface`, `route`, `phase`); trace buffer uses per-`Deps` `ContextVar` (not a module-global buffer); port recording centralized in `Deps.resolve_configurable`.
-- **Authorization layering:** `contracts.authz` no longer imports `contracts.execution` or exports registry wiring helpers; import hooks from `forze.application.hooks.authz` instead.
-- **Authorization naming:** Contract types use the `Authz*` prefix (`AuthzSubject`, `AuthzScope`, `AuthzRequest`, `AuthzDecision`, …). Ports: `AuthzDecisionPort`, `AuthzScopePort`. Value objects grouped under `contracts.authz.value_objects` (`catalog`, `decision`, `scoping`, `grants`). `ctx.authz.decision(spec)` is the only decision accessor; dep key `authz_decision` (`AuthzDecisionDepKey`). `AuthzDepsModule` registers `decision=` routes (no `runtime=` / `authz=` kwargs). Hooks: typed `AuthzBeforeAuthorize` / `AuthzDocumentScopeWrap` factories with `to_before_step()` / `to_middleware_step()`. Removed backward-compatible aliases (`Authorization*`, `PolicyScope`, `ProtectedResource`, `AuthorizationRuntimePort`, …).
-
-### Added
-
-- **Authorization (vNext):** Split authz contracts into decision (`AuthorizationDecisionPort.authorize`, `AuthorizationRequest` / `AuthorizationDecision`), data scoping (`AuthorizationScopePort`), and grant management ports. `AuthzDeps` on `ExecutionContext` (`ctx.authz`). Dedicated [authorization reference](pages/docs/reference/authorization.md). `forze_authz` adapters implement the new ports; owner-aware ABAC hints on `ProtectedResource.attributes`. Integration tests under `tests/integration/test_forze_authz/`.
-- **Analytics contracts:** `AnalyticsSpec`, `AnalyticsQueryDefinition`, `AnalyticsQueryPort` (named `run*` / `project_run*` / `select_run*` / cursor / chunked), optional `AnalyticsIngestPort`, `AnalyticsDeps` on `ExecutionContext` (`ctx.analytics`), and `MockAnalyticsAdapter` with seeded query hits and ingest log.
-- **`forze_clickhouse` (`clickhouse` extra):** ClickHouse analytics integration (`ClickHouseDepsModule`, `ClickHouseClient`, `ClickHouseAnalyticsAdapter` implementing `AnalyticsQueryPort` / `AnalyticsIngestPort`, `clickhouse_lifecycle_step`, COUNT wrapper for `run_page`, offset cursor tokens, chunked reads, insert ingest, integration tests with Docker ClickHouse) backed by `clickhouse-connect[async]`.
-- **`forze_bigquery` (`bigquery` extra):** Google BigQuery analytics integration (`BigQueryDepsModule`, `BigQueryClient`, `BigQueryAnalyticsAdapter` implementing `AnalyticsQueryPort` / `AnalyticsIngestPort`, `bigquery_lifecycle_step`, COUNT wrapper for `run_page`, cursor `pageToken` encoding, chunked reads, streaming insert ingest, integration tests with goccy/bigquery-emulator) backed by `gcloud-aio-bigquery`.
-- **`forze_gcs` (`gcs` extra):** Google Cloud Storage integration (`GCSDepsModule`, `GCSClient`, `GCSStorageAdapter` implementing `StoragePort`, `gcs_lifecycle_step`, tenant-aware key prefixes, integration tests with fake-gcs-server) backed by `gcloud-aio-storage`.
-- **`forze_firestore` (`firestore` extra):** Cloud Firestore document integration (`FirestoreDepsModule`, `FirestoreClient`, optimistic `rev`, optional history collection, MVP query renderer, transactions via `FirestoreTxManagerAdapter`, Docker-based emulator integration tests).
-- **`forze_secrets`:** canonical `SecretsPort` adapters for in-memory mappings, environment variables, and directory-backed secret files; `SecretsDepsModule` registers backends under `SecretsDepKey`.
-- **`forze_vault` (`vault` extra):** HashiCorp Vault KV v2 + token-auth integration (`VaultClient`, `VaultKvSecrets`, `VaultDepsModule`, `vault_lifecycle_step`) for runtime secret resolution via `SecretsPort`.
-- **`forze_fastapi.transport.http` (experimental):** function-first HTTP transport with `run_operation`, `make_facade_dep`, `ForzeRouter`, `forze_route`, `RequirePrincipal`, and `AuthnRequirement`; `attach_document_routes`, `attach_search_routes`, `attach_storage_routes`, and `attach_authn_routes` on plain `APIRouter`; `register_route` / `RouteRegistration`; `IdempotentPolicy`, `ETagPolicy`, `run_idempotent`, and `document_etag` (rewritten from legacy `endpoints.http.features`, no imports from `forze_fastapi.endpoints`).
-- **Composition operation catalogs:** `DOCUMENT_OPERATIONS`, `SEARCH_OPERATIONS`, `STORAGE_OPERATIONS`, and `AUTHN_OPERATIONS` with presets and capability checks under `forze.application.composition.*.catalog` for protocol-agnostic attach; `forze.application.execution.run_operation` for registry invocation.
-- **Deprecation (soft):** prefer `forze_fastapi.transport.http.attach_*_routes` over legacy `forze_fastapi.endpoints.*.attach_*_endpoints`; legacy `endpoints.http.features` idempotency/ETag remain until a later removal PR.
-- **Query DSL:** Filter combinator `$not` (single child expression). Array element quantifiers `$any`, `$all`, and `$none` under `$values` with equality/ordering inner predicates (scalar shortcuts, operator maps, or element-relative `$values` for object arrays). Vacuous `$all` / `$none` on missing or empty arrays.
-- **Scrubbing:** `forze.base.scrubbing` with `sanitize(value, context="egress"|"log")`, Pydantic error helpers, and default structlog field scrubbing via `configure_logging(sanitize_logs=True)`.
-- **Execution:** `OperationRegistry.freeze()` rejects orphan plan patches, equal-specificity patch merge conflicts, and operations with transaction-scoped stages or dispatch but no `set_route`.
-- **Query DSL:** Configurable filter abuse limits (`QueryFilterLimits`: `max_depth`, `max_clauses`, `max_in_size`) enforced at parse time; `QueryFilterExpressionParser` is an attrs instance (`parse_filter`) with a classmethod `parse` shim; gateways expose `compile_filters` and accept pre-parsed `QueryExpr` on `where_clause` / `render_filters`; aggregate computed fields store `parsed_filter` to avoid re-parsing; `DocumentCoordinator` offset pages compile filters once and pass `parsed` through `count` / `find_many` gateway calls.
-- **Execution:** Registry-centered composition with `OperationRegistry`, `FrozenOperationRegistry`, `Handler` implementations, and stage hooks as `BeforeStep` / `OnSuccessStep` on `bind_outer()` / `bind_tx()`; `make_registry_operation_resolver` for FastAPI and Socket.IO; `facade_op` descriptors on `DocumentFacade`, `SearchFacade`, `StorageFacade`, and `AuthnFacade`; `StrKeyNamespace` on specs (`default_namespace`); optional `DepsResolutionTrace` (`FORZE_DEPS_TRACE`); cyclic dependency detection on `Deps`.
-- **Execution context:** Nested resolvers — `ctx.document` / `ctx.doc`, `ctx.search` (including hub and federated), `ctx.deps`, `ctx.tx`, `ctx.inv` (`InvocationMetadata`, authn, tenant binding).
-- **Query DSL:** Literal filters `{"$values": ...}`, field compares `{"$fields": ...}`, aggregate `$computed` and calendar grouping via `"$groups"` / `"$trunc"`; UUID operands on range operators; keyset helpers in `forze.pagination`.
-- **Document & search:** `DocumentCoordinator`, `DocumentCacheCoordinator`, and `SearchResultSnapshotCoordinator`; `update_matching` / `ensure` on document commands; Postgres/Mongo hub and federated search (FTS/PGroonga v2, weighted RRF); method-specific search/document ports (`find_page`, `find_cursor`, `search_page`, `project_*`, `select_*`, …).
-- **Authn & authz:** Packages `forze_authn`, `forze_authz`, and `forze_oidc` (`oidc` extra); verify-then-resolve ports (`*VerifierPort`, `PrincipalResolverPort`, `VerifiedAssertion`); `AuthnOrchestrator` and configurable `AuthnDepsModule`; document-backed grant catalogs and `AuthzPolicyService`; FastAPI `attach_authn_endpoints`, `AuthnRequirement`, token transport features, and single-source identity resolvers; optional `forze_casbin` (`authnz-casbin` extra).
-- **Tenancy & secrets:** `forze_tenancy` (`TenancyDepsModule`, tenant resolver/management adapters); `AsyncSecretsPort` and routed DSN/URI/credential clients for Postgres, Mongo, Redis, S3, RabbitMQ, SQS, and Temporal.
-- **Integrations:** `attach_storage_endpoints`; Redis distributed locks; record-mapping codecs (`PydanticRecordMappingCodec`, `MsgspecRecordMappingCodec`); `StrKeySelector` in `forze.base.primitives`; `OperationRegistry.patch(selector)` and `PlanPatch` entries resolved at `freeze()` via `str_key_selector`; optional domain mixins in `forze_contrib` (soft deletion, metadata, number id, creator id).
-
-### Changed
-
-- **`forze_gcs`:** `GCSClient` now uses native async [`gcloud-aio-storage`](https://pypi.org/project/gcloud-aio-storage/) instead of `google-cloud-storage` with `asyncio.to_thread`; optional `service_file` on `gcs_lifecycle_step`.
-- **Transport HTTP clarity:** Documented catalog → bindings → options → attach layers in FastAPI integration docs and module docstrings; honest `forze_fastapi.transport` package boundary (HTTP under `transport.http`, Socket.IO under `forze_socketio`). Shared attach helpers in `transport.http.attach._loop` (`resolve_route_path`, `resolve_include_in_schema`, `iter_catalog_operations`). Document bindings aligned with search (`document_binding_for`, `make_facade_body_endpoint`). No public API breaks on `attach_*_routes`.
-- **Breaking — authn & tenancy split:** `AuthnIdentity` is now principal-only, `AuthnPort` returns `AuthnResult`, and FastAPI tenant resolution validates issuer/request tenant hints against `TenantResolverPort` instead of treating them as canonical tenant context.
-- **Postgres PGroonga search:** Match and `weights` arrays follow index declaration order from catalog metadata; `SearchSpec.fields` order is ignored. Every indexed column must appear in `SearchSpec.fields` (via `field_map` when heap names differ); extra spec fields are ignored. Unparseable index expressions fail at query time with `CoreError`.
-- **Transport HTTP layout:** `transport.http.specs` replaced by `transport.http.options` (config + `RouteOpts`); route tables split into application catalogs and `transport.http.bindings` (HTTP method/path/response). Presets (`DocumentPreset`, etc.) are defined in composition catalogs and re-exported from `transport.http`. Removed unused `*EndpointsSpec` from the transport public API (legacy `endpoints.*` specs unchanged).
-- **Documentation:** Site docs and agent skills aligned with current terminology (`Handler`, `OperationRegistry`, stage hooks, `ctx.deps.*`); removed references to deleted `Usecase` / `ctx.dep` / plan-bucket APIs; renamed operation composition page to `operation-composition.md`; removed legacy `core-concepts/` redirect stubs; distilled Socket.IO integration guide.
-- **Socket.IO:** `ForzeSocketIOAdapter` and `SocketIONamespaceRouter.bind` take `operation_resolver` (not `usecase_resolver`); `make_registry_usecase_resolver` removed — import `make_registry_operation_resolver` from `forze_socketio` or `forze.application.execution`.
-- **Record mapping:** `RecordMappingCodec` adds `encode_json_bytes` / `decode_json_bytes` with fast-path Pydantic (`model_dump_json` / `model_validate_json`) and msgspec (`msgspec.json.encode` / `decode`) implementations.
-- **Messaging contracts:** `QueueMessage`, `PubSubMessage`, and `StreamMessage` are frozen attrs value objects (replacing `TypedDict`). `QueueSpec`, `PubSubSpec`, and `StreamSpec` require a `codec: RecordMappingCodec[...]` (for example `PydanticRecordMappingCodec(model)`). Integration queue/pubsub/stream adapters take `payload_codec` from the spec.
-- **Scrubbing:** log-context string scrub uses `**********` and Logfire-aligned substring rules (email, Bearer, `key=value` assignments, secrets in free text) instead of scrubadub `{{TYPE}}` placeholders.
-- **Postgres search:** Internal refactor of FTS, PGroonga, vector, and hub search adapters — shared projection-index CTE builders (`_pipeline_sql`), leg scorers (`_leg_*`), and offset/snapshot execution (`_offset_run`); no public API change.
-- **Execution:** `ResolvedOperationPlan` now drives operation runtime: stage hooks (`before`, `wrap`, `on_success`, `on_failure`, `finally_`, `dispatch`), transaction scopes, and `after_commit` / `dispatch_after_commit` deferral run in documented order when calling `FrozenOperationRegistry.resolve(...)(args)` (previously only the bare handler ran).
-- **Breaking — execution & composition:** `Usecase` / `UsecaseRegistry` replaced by `Handler` + `OperationRegistry`. Register handlers with `set_handler`, author shared plans with `.patch(str_key_selector.all_keys())` (or other selectors) and per-operation overlays with `.bind(...)`, then `.bind_outer() / .bind_tx().finish(deep=True).freeze()`; resolve with `registry.resolve(operation, ctx)`. Stage hooks use explicit step types; handler results are owned by `__call__`, not replaced by hooks. Capability keys on graph steps are plain `str` (`requires` / `provides` on `BeforeStep`, etc.). Inter-operation dispatch is declared on the registry plan only.
-- **Breaking — `ExecutionContext`:** `ctx.doc_query` / `ctx.doc_command` → `ctx.document.query` / `ctx.document.command`; `ctx.dep(...)` → `ctx.deps.provide` or `ctx.deps.resolve_configurable`; `ctx.transaction(...)` → `ctx.tx.scope(...)`; `ctx.txmanager(...)` → `ctx.tx.resolver(...)`; `CallContext` / `bind_call` / `get_authn_identity()` → `InvocationMetadata` / `ctx.inv.bind` / `ctx.inv.get_authn()` (and `get_tenant()`). Document dep factories are `factory(ctx, spec)`; resolve cache inside factories via `ctx.cache(spec.cache)` when `DocumentSpec.cache` is set.
-- **Breaking — document & search ports:** Result shape and pagination mode are chosen by **method name**, not `return_type` / `return_fields` / `return_count` flags. Examples: `find_page` vs `find_many` vs `find_cursor`; `search_page` vs `search` vs `search_cursor`; `project_*` and `select_*` variants mirror the same pattern. `find_many_with_cursor` is removed (use `find_cursor`).
-- **Breaking — query DSL:** Filter literals use `"$values"` (old `"$fields"`). Field-to-field compare uses `"$fields"` (old `"$compare"`). Aggregate grouping uses `"$groups"`; calendar buckets use `"$groups": { "<alias>": { "$trunc": … } }` (top-level `"$time_bucket"` removed).
-- **Breaking — authn & authz:** `forze_authnz` split into `forze_authn` and `forze_authz` (`authn` / `authz` extras; `authnz` extra kept for install compatibility). `AuthnPort` orchestrates verifiers + `PrincipalResolverPort`; credential types split (`AccessTokenCredentials`, `RefreshTokenCredentials`, `IssuedTokens`, …); `OAuth2Tokens` removed. `ContextBindingMiddleware` takes ordered `authn_identity_resolvers` and `when_multiple_credentials`. Grants use `RoleRef` / `PermissionRef` keys.
-- **Breaking — authorization vNext:** `AuthzPort.permits(principal, action, tenant_id=…, resource=…, context=…)` removed in favor of `AuthorizationRuntimePort.authorize(AuthorizationRequest)` with `AuthorizationSubject`, `PolicyScope`, and `ProtectedResource`. `PrincipalRef` no longer includes `tenant_id`. Dep keys renamed (`AuthorizationRuntimeDepKey`, `AuthorizationScopeDepKey`, `GrantQueryDepKey`; legacy aliases retained). `AuthzSpec` now carries `tenancy_mode` and `enforce_principal_active`. Use `ctx.authz` instead of resolving authz only via `ctx.deps`.
-- **Breaking — FastAPI:** `attach_*_endpoints` require a **frozen** registry (`.freeze()` after binding tx routes). `HttpEndpointSpec` uses `operation: StrKey`; handlers resolve via `registry.resolve(operation, ctx)` (no `facade_type` / facade dependencies on routes).
-- **Breaking — Mongo:** `MongoClient.db` / `collection` and `MongoGateway.coll` are async.
-- **Postgres:** Safer batched writes (single transaction when caller has none), implicit `LIMIT` on unbounded reads (default `10_000`), chunked coordinator reads, stricter array filter rendering, routed pool init locking, and catalog/introspection caching improvements.
-- **Redis:** `get` / `mget` return `bytes | None`; atomic `mset` with `NX`/`XX`; optional read retry and pub/sub reconnect hooks; cache adapter writes/deletes are concurrent; search snapshot chunks use Lua CAS.
-- **Search snapshots:** Postgres adapters take `SearchResultSnapshotCoordinator`; private snapshot helper modules under `forze_postgres.adapters.search` are removed (use the coordinator API).
+- ...
 
 ### Removed
 
-- **Execution:** `Usecase`, `UsecaseRegistry`, `UsecasePlan`, `bucket` module, `facade_call`, `FacadeOpRef`, `OpKeySpace` / `op_key_space_for`, `GuardSkip`, `SchedulableCapabilitySpec`, `UsecaseDelegate`, `delegated_usecase_hook`, and public `registry.graph` / `RegistryGraph` introspection types.
-- **FastAPI:** `facade_dependency`, `HTTP_FACADE_KEY`, `facade_type` / `facade_init_kwargs` on attach helpers; `OperationRef` on `HttpEndpointSpec`.
-- **Authn:** `forze_authn` monolithic `AuthnAdapter`; `HeaderAuthnIdentityResolver` (use `HeaderTokenAuthnIdentityResolver` + `HeaderApiKeyAuthnIdentityResolver`); `OAuth2Tokens`; `ACCESS_TOKEN_KIND` / `REFRESH_TOKEN_KIND` constants.
-- **Identity:** `PrincipalContext`, `ExecutionContext.get_principal_ctx`, and principal codec ports.
-- **Query:** Deprecated predicate aliases (`QueryPredicate`, `is_query_predicate`, …) — use `QueryValuesPredicate`, `QueryFieldsPredicate`, `has_query_values`, etc.
-- **Postgres search:** Legacy `PostgresFTSSearchAdapter` / `PostgresPGroongaSearchAdapter` and `hub_pgroonga` module (use v2 or hub adapters).
-- **Domain:** `forze.domain.mixins` — use `forze_contrib` mixins instead.
+- ...
 
 ### Fixed
 
-- **Errors:** `CoreError.details` and FastAPI `context` responses no longer expose raw credentials or Pydantic validation `input`; egress uses `forze.base.scrubbing.sanitize`, producers use `sanitize_pydantic_errors`, and `handled()` passes scrubbed bound arguments to error handlers.
-- **Postgres:** Batched `UPDATE … FROM (VALUES …)` casts nullable cells correctly; write gateway no longer duplicates `rev` in `VALUES` (fixes ambiguous column); `read_only` set before opening psycopg transactions; document array coercion for `text[]` columns.
-- **Postgres search:** Hub/PGroonga empty queries no longer emit invalid rank SQL; offset snapshot pages reuse validated rows when possible.
-- **Redis:** Script result normalization avoids rare `isinstance` failures on union types; platform errors map subclass exceptions before generic redis bases.
-- **S3:** User metadata decoding on download/list; upload persists optional `description`; default object keys use fresh UUID v7 per call.
+- ...
+
+## [0.2.0] - 2026-05-28
+
+### Added
+
+- **Execution:** `OperationRegistry`, `FrozenOperationRegistry`, `Handler`, stage hooks, `OperationRegistry.patch()` / `PlanPatch`, `make_registry_operation_resolver`, `run_operation`, and `facade_op` on document/search/storage/authn facades. `ResolvedOperationPlan` drives runtime hooks, transaction scopes, and after-commit dispatch.
+- **Execution context:** Nested resolvers — `ctx.document`, `ctx.search`, `ctx.deps`, `ctx.tx_ctx`, `ctx.inv_ctx`, `ctx.authz`, and `ctx.analytics`.
+- **Dependency tracing:** `ResolutionTracer`, `RuntimeTracer`, `DepsPlan.with_tracing()`, and `DepsResolutionTrace.to_key_dag()` / `canonical_edges()`.
+- **Runtime tracing (development):** `forze.application.execution.tracing` with `RuntimeTrace`, `FORZE_RUNTIME_TRACE`, `validate_runtime_trace`, and port recording via `Deps.resolve_configurable`.
+- **TxTracer:** Optional transaction scope observer on `TransactionContext`.
+- **Composition catalogs:** `DOCUMENT_OPERATIONS`, `SEARCH_OPERATIONS`, `STORAGE_OPERATIONS`, and `AUTHN_OPERATIONS` under `forze.application.composition.*.catalog`.
+- **Hooks:** `forze.application.hooks.authz`, `hooks.authn`, and `hooks.tenancy` for operation-plan authz, principal, and tenant enforcement.
+- **Query DSL:** Literal `$values` / field `$fields` filters, `$not`, array quantifiers (`$any`, `$all`, `$none`), text patterns (`$like`, `$ilike`, `$regex`), aggregate `$computed` / `$groups` / `$trunc`, configurable `QueryFilterLimits`, and pre-parsed `QueryExpr` support on gateways.
+- **Document & search:** `DocumentCoordinator`, `DocumentCacheCoordinator`, and `SearchResultSnapshotCoordinator`; `update_matching` / `ensure`; method-specific ports (`find_page`, `find_cursor`, `search_page`, `project_*`, `select_*`, …); hub and federated search (FTS/PGroonga v2, weighted RRF).
+- **Document contracts:** `RowLockMode` on `for_update`; `select_cursor`; stream methods `find_stream`, `project_stream`, and `select_stream`; post-write `hydrate_from_write` when read/write sources align.
+- **Sort defaults:** `DocumentSpec.default_sort`, `SearchSpec.default_sort`, and `HubSearchSpec.default_sort`; shared helpers `resolve_effective_sorts`, `normalize_sorts_for_keyset`, and `validate_sort_fields` in `forze.application.contracts.querying`.
+- **Durable functions:** contracts under `forze.application.contracts.durable.function`; optional `DurableFunctionSpec.operation`; `handler_for_registry_operation` and `run_durable_function` in `forze.application.execution.running`.
+- **`forze_inngest` (`inngest` extra):** Inngest adapter (`InngestClient`, `InngestDepsModule`, `register_functions`, `InngestFunctionBinding`, `inngest_lifecycle_step`, FastAPI `serve`) with registry-backed cron/event runs via `register_functions(..., registry=)`.
+- **Workflow schedules:** schedule contracts and `forze_temporal` Temporal Schedules support (create/upsert/update/delete/pause/unpause/trigger/describe/list) with declarative bootstrap via `TemporalDepsModule.schedule_bootstraps`.
+- **Queue delayed delivery:** `QueueCommandPort.enqueue` / `enqueue_many` accept `delay` and `not_before`; SQS `DelaySeconds`, Mock `visible_at` filtering, and RabbitMQ DLX delay queues when `delayed_delivery=True`.
+- **`forze_identity`:** consolidated authn, authz, tenancy, and OIDC (`oidc` extra) with verify-then-resolve ports, `AuthnOrchestrator`, and `AuthzPolicyService`.
+- **`forze_identity.local` (demo / MVP):** file/env API-key identity (`LocalIdentityConfig`, `LocalApiKeyVerifier`, `LocalTenantResolver`, `local_identity_deps()`).
+- **Analytics:** `AnalyticsSpec`, `AnalyticsQueryPort`, optional `AnalyticsIngestPort`, and adapters for Postgres, ClickHouse (`clickhouse` extra), and BigQuery (`bigquery` extra).
+- **`forze_firestore` (`firestore` extra), `forze_gcs` (`gcs` extra), `forze_secrets`, and `forze_vault` (`vault` extra):** document, object storage, and secrets integrations with routed clients and lifecycle steps.
+- **Postgres startup validation:** Pydantic↔column compatibility, bookkeeping triggers, and tenancy wiring checks on `PostgresDepsModule`.
+- **Scrubbing:** `forze.base.scrubbing` with `sanitize(value, context="egress"|"log")` and default structlog field scrubbing via `configure_logging(sanitize_logs=True)`.
+- **Console logging:** `ForzeConsoleRenderer.max_traceback_frames` for Rich traceback frame collapsing (default `20`; `0` shows all frames).
+- **Integrations:** Redis distributed locks; `PydanticRecordMappingCodec` and `MsgspecRecordMappingCodec`; `StrKeySelector` and `StrKeyNamespace`; optional domain mixins in `forze_patterns`.
+
+### Changed
+
+- **Breaking — execution & composition:** `Usecase` / `UsecaseRegistry` replaced by `Handler` + `OperationRegistry`. Register with `set_handler`, compose plans via `.patch()` / `.bind()` / `.bind_outer()` / `.bind_tx()`, then `.freeze()`; resolve with `registry.resolve(operation, ctx)`.
+- **Breaking — `ExecutionContext`:** `ctx.doc_query` / `ctx.doc_command` → `ctx.document.query` / `ctx.document.command`; `ctx.dep(...)` → `ctx.deps.provide` or `ctx.deps.resolve_configurable`; `ctx.transaction(...)` → `ctx.tx_ctx.scope(...)`; `CallContext` → `InvocationMetadata` via `ctx.inv_ctx`.
+- **Breaking — document & search ports:** result shape and pagination mode are chosen by method name (`find_page` vs `find_cursor`, `search_page` vs `search_cursor`, …); `find_many_with_cursor` removed.
+- **Breaking — query DSL:** filter literals use `"$values"` (was `"$fields"`); field compares use `"$fields"` (was `"$compare"`); grouping uses `"$groups"` / `"$trunc"` (top-level `"$time_bucket"` removed).
+- **Breaking — identity:** legacy `forze_authnz` consolidated into `forze_identity` (`authn`, `authz`, `tenancy`, `oidc` subpackages). `AuthnIdentity` is principal-only; `AuthnPort` returns `AuthnResult`; tenant hints are validated via `TenantResolverPort`.
+- **Breaking — authorization:** `AuthzPort.permits(...)` removed; use `AuthzDecisionPort.authorize(AuthzRequest)` with `Authz*` types (`AuthzSubject`, `AuthzScope`, `AuthzDecision`, …). Import operation-plan helpers from `forze.application.hooks.authz`.
+- **Breaking — durable workflows:** contracts moved to `forze.application.contracts.durable.workflow` with `DurableWorkflow*` public types and renamed dep keys (`durable_workflow_command`, …).
+- **Breaking — errors:** `forze.base.errors` removed in favor of `forze.base.exceptions`; HTTP `X-Error-Code` defaults are `core.<kind>`.
+- **Breaking — runtime tracing:** package renamed to `forze.application.execution.tracing`; `ExecutionTrace` → `RuntimeTrace`, `trace_execution` → `trace_runtime`, `validate_trace` → `validate_runtime_trace`.
+- **Breaking — dependency tracing:** `Deps.merge()` no longer propagates tracer flags; pass `resolution_tracer` / `runtime_tracer` or use `DepsPlan.with_tracing()`.
+- **Breaking — FastAPI:** `forze_fastapi.endpoints/` and `forze_fastapi.transport.http/` removed; package now ships middleware, exception handlers, OpenAPI helpers, and security resolvers only.
+- **Breaking — Mongo:** `MongoClient.db` / `collection` and `MongoGateway.coll` are async.
+- **Document/search pagination:** omitting `sorts` no longer emits `ORDER BY id` when the read model has no `id` field; configure `default_sort` or pass explicit `sorts`.
+- **Document gateways (Postgres/Mongo/Firestore/Mock):** Pydantic `@computed_field` names excluded from persistence; `ensure` / `upsert` skip redundant read round-trips on insert.
+- **Messaging contracts:** `QueueMessage`, `PubSubMessage`, and `StreamMessage` are frozen attrs value objects; queue/pubsub/stream specs require a `RecordMappingCodec`.
+- **`forze_gcs`:** native async `gcloud-aio-storage` instead of threaded `google-cloud-storage`.
+- **Postgres PGroonga search:** match and `weights` follow index declaration order; every indexed column must appear in `SearchSpec.fields`.
+- **Postgres & Redis:** safer batched writes, implicit read limits, routed pool locking, `get`/`mget` returning `bytes | None`, atomic `mset` with `NX`/`XX`, and concurrent cache adapter I/O.
+- **Scrubbing:** log-context scrub uses `**********` and Logfire-aligned substring rules instead of scrubadub placeholders.
+- **Console logging:** default Rich traceback visibility increased from 8 to 20 frames before middle collapse.
+- **Socket.IO:** `ForzeSocketIOAdapter.bind` takes `operation_resolver`; use `make_registry_operation_resolver`.
+- **`forze_fastapi`:** unhandled route exceptions return Forze generic JSON 500 (`{"detail":"Internal server error"}`) when `register_exception_handlers(app)` is used.
+
+### Removed
+
+- **Execution:** `Usecase`, `UsecaseRegistry`, `UsecasePlan`, `bucket` module, `facade_call`, `FacadeOpRef`, `OpKeySpace`, `GuardSkip`, and registry graph introspection types.
+- **FastAPI:** `endpoints/` package, `transport.http/`, `ForzeAPIRouter`, `facade_dependency`, and attach-based route helpers.
+- **Authn & identity:** monolithic `AuthnAdapter`, `HeaderAuthnIdentityResolver`, `OAuth2Tokens`, `PrincipalContext`, and principal codec ports.
+- **Query:** deprecated predicate aliases (`QueryPredicate`, `is_query_predicate`, …).
+- **Postgres search:** legacy `PostgresFTSSearchAdapter` / `PostgresPGroongaSearchAdapter` and `hub_pgroonga` module.
+- **Domain:** `forze.domain.mixins` — use `forze_patterns` mixins instead.
+
+### Fixed
+
+- **`forze_fastapi`:** `register_exception_handlers` CRITICAL-logs tracebacks for unhandled exceptions and for 5xx `CoreException` with a chained cause; deliberate 5xx without a cause logs at ERROR with structured fields only.
+- **Errors:** `CoreError.details` and FastAPI `context` responses no longer expose raw credentials or Pydantic validation `input`.
+- **Postgres:** batched `UPDATE … FROM (VALUES …)` casts nullable cells correctly; write gateway no longer duplicates `rev` in `VALUES`; `read_only` set before opening transactions; array coercion for `text[]` columns.
+- **Postgres search:** hub/PGroonga empty queries no longer emit invalid rank SQL; offset snapshot pages reuse validated rows when possible.
+- **Redis:** script result normalization avoids rare `isinstance` failures on union types.
+- **S3:** user metadata decoding on download/list; upload persists optional `description`; default object keys use fresh UUID v7 per call.
 - **Authn:** API key lifecycle unpacks `(prefix, secret)` from key generation in the correct order.
 
 ## [0.1.14] - 2026-04-08
@@ -448,7 +415,8 @@ Execution and mapping refactor, middleware-first approach for usecases, split se
 
 - Packaging metadata for PyOCI classifiers.
 
-[unreleased]: https://github.com/morzecrew/forze/compare/v0.1.14...HEAD
+[unreleased]: https://github.com/morzecrew/forze/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/morzecrew/forze/compare/v0.1.14...v0.2.0
 [0.1.14]: https://github.com/morzecrew/forze/compare/v0.1.13...v0.1.14
 [0.1.13]: https://github.com/morzecrew/forze/compare/v0.1.12...v0.1.13
 [0.1.12]: https://github.com/morzecrew/forze/compare/v0.1.11...v0.1.12

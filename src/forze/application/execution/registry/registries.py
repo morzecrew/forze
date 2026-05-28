@@ -301,8 +301,8 @@ class FrozenOperationRegistry:
         runner = OperationRunner(
             op=op,
             plan=resolved_plan,
-            tx_runner=ctx.tx.scope,
-            defer_after_commit=ctx.tx.run_or_defer,
+            tx_runner=ctx.tx_ctx.scope,
+            defer_after_commit=ctx.tx_ctx.run_or_defer,
         )
 
         return ResolvedOperation(op=op, handler=handler(ctx), runner=runner)

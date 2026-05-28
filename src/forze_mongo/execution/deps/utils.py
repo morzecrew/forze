@@ -30,7 +30,7 @@ def read_gw(
         collection=read_relation[1],
         client=client,
         model_type=read_type,
-        tenant_provider=ctx.inv.get_tenant,
+        tenant_provider=ctx.inv_ctx.get_tenant,
         tenant_aware=tenant_aware,
     )
 
@@ -57,7 +57,7 @@ def _doc_history_gw(
         target_collection=write_relation[1],
         client=client,
         model_type=domain_type,
-        tenant_provider=ctx.inv.get_tenant,
+        tenant_provider=ctx.inv_ctx.get_tenant,
         tenant_aware=tenant_aware,
     )
 
@@ -103,6 +103,6 @@ def doc_write_gw(
         update_cmd_type=write_types.get("update_cmd"),
         read_gw=read,
         history_gw=hist,
-        tenant_provider=ctx.inv.get_tenant,
+        tenant_provider=ctx.inv_ctx.get_tenant,
         tenant_aware=tenant_aware,
     )

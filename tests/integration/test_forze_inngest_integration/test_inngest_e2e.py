@@ -135,7 +135,7 @@ async def test_inngest_event_command_adapter_triggers_function(
             correlation_id=uuid7(),
         )
 
-        with ctx.inv.bind_metadata(metadata=metadata):
+        with ctx.inv_ctx.bind_metadata(metadata=metadata):
             events = ctx.deps.resolve_configurable(
                 ctx,
                 DurableFunctionEventCommandDepKey,
@@ -172,7 +172,7 @@ async def test_execution_context_envelope_restored_in_function(
     )
 
     async def _handler(ctx: ExecutionContext, args: _FnIn) -> _CorrelationOut:
-        meta = ctx.inv.get_metadata()
+        meta = ctx.inv_ctx.get_metadata()
         assert meta is not None
         outcomes.append(_CorrelationOut(correlation_id=str(meta.correlation_id)))
         return outcomes[-1]
@@ -202,7 +202,7 @@ async def test_execution_context_envelope_restored_in_function(
             correlation_id=correlation,
         )
 
-        with ctx.inv.bind_metadata(metadata=metadata):
+        with ctx.inv_ctx.bind_metadata(metadata=metadata):
             events = ctx.deps.resolve_configurable(
                 ctx,
                 DurableFunctionEventCommandDepKey,

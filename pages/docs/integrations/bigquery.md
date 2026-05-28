@@ -134,7 +134,7 @@ v1 uses a single `project_id` per `BigQueryClient`. For multiple tenants, either
 - Register separate `AnalyticsSpec` routes per tenant with distinct `dataset` values in `BigQueryDepsModule.analytics`, or
 - Resolve the dataset in application code and pass tenant-specific specs/config at deploy time.
 
-A future `RoutedBigQueryClient` may resolve dataset from `ctx.inv` tenant identity; not included in v1.
+A future `RoutedBigQueryClient` may resolve dataset from `ctx.inv_ctx` tenant identity; not included in v1.
 
 ## Client health
 

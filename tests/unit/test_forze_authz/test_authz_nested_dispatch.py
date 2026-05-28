@@ -65,7 +65,7 @@ async def test_patch_inherits_authz_before_on_child_operation() -> None:
     ident = AuthnIdentity(principal_id=uuid4())
 
     with patch.object(ctx.authz, "decision", return_value=_AllowRuntime()):
-        with ctx.inv.bind(metadata=metadata, authn=ident):
+        with ctx.inv_ctx.bind(metadata=metadata, authn=ident):
             run = reg.resolve("child.read", ctx)
             assert await run(None) == "ok"
 
@@ -96,7 +96,7 @@ async def test_patch_authz_denies_child_without_grant() -> None:
     ident = AuthnIdentity(principal_id=uuid4())
 
     with patch.object(ctx.authz, "decision", return_value=_DenyRuntime()):
-        with ctx.inv.bind(metadata=metadata, authn=ident):
+        with ctx.inv_ctx.bind(metadata=metadata, authn=ident):
             run = reg.resolve("child.read", ctx)
 
             with pytest.raises(CoreException) as exc_info:

@@ -180,10 +180,10 @@ See [Query Syntax](../reference/query-syntax.md).
 
 ## Transactions
 
-MongoDB transactions require a replica set or sharded cluster. Within `ctx.tx.scope("default")`, operations share a session when using the registered tx route.
+MongoDB transactions require a replica set or sharded cluster. Within `ctx.tx_ctx.scope("default")`, operations share a session when using the registered tx route.
 
     :::python
-    async with ctx.tx.scope("default"):
+    async with ctx.tx_ctx.scope("default"):
         await doc_c.create(CreateProjectCmd(title="In transaction"))
         existing = await doc_q.get(existing_id)
         await doc_c.update(existing.id, existing.rev, UpdateProjectCmd(title="Also in tx"))

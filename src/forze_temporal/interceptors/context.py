@@ -119,9 +119,9 @@ class BaseContextInterceptor:
     def inject_headers(self, input: InputWithHeaders) -> None:
         ctx = self.ctx_dep()
         context_headers = self.codec.encode(
-            metadata=ctx.inv.get_metadata(),
-            authn=ctx.inv.get_authn(),
-            tenant=ctx.inv.get_tenant(),
+            metadata=ctx.inv_ctx.get_metadata(),
+            authn=ctx.inv_ctx.get_authn(),
+            tenant=ctx.inv_ctx.get_tenant(),
         )
         headers = dict(input.headers or {})
 
@@ -150,7 +150,7 @@ class BaseContextInterceptor:
         ctx = self.ctx_dep()
         metadata, authn, tenant = self.bind_headers(headers)
 
-        with ctx.inv.bind(metadata=metadata, authn=authn, tenant=tenant):
+        with ctx.inv_ctx.bind(metadata=metadata, authn=authn, tenant=tenant):
             return await next()
 
     # ....................... #
@@ -163,7 +163,7 @@ class BaseContextInterceptor:
         ctx = self.ctx_dep()
         metadata, authn, tenant = self.bind_headers(headers)
 
-        with ctx.inv.bind(metadata=metadata, authn=authn, tenant=tenant):
+        with ctx.inv_ctx.bind(metadata=metadata, authn=authn, tenant=tenant):
             return next()
 
 

@@ -33,7 +33,7 @@ Authoritative enforcement belongs on the **operation plan**, not in generic `Doc
 1. **`BeforeStep`** — operation-level allow/deny (`authorize_before_step` or `AuthzBeforeAuthorize(...).to_before_step()`).
 2. **`wrap`** — inject policy filters into list/search DTOs (`document_scope_wrap_step` or `AuthzDocumentScopeWrap(...).to_middleware_step()`).
 
-Helpers read `ctx.inv.get_authn()` and `ctx.inv.get_tenant()` to build `AuthzSubject` and `AuthzScope` (`policy_scope_from_invocation`).
+Helpers read `ctx.inv_ctx.get_authn()` and `ctx.inv_ctx.get_tenant()` to build `AuthzSubject` and `AuthzScope` (`policy_scope_from_invocation`).
 
 ```python
 from forze.application.contracts.authz import AuthzSpec
@@ -83,6 +83,6 @@ Wire with `AuthzDepsModule(kernel=AuthzKernelConfig(), decision={"main"}, scope=
 
 ## Transport boundary
 
-FastAPI `ContextBindingMiddleware` binds `AuthnIdentity` and optional `TenantIdentity` into `ctx.inv`. HTTP features (`RequireAuthnFeature`, `RequireTenantFeature`) may fast-fail at the edge; kernel `BeforeStep` / `wrap` hooks remain authoritative for non-HTTP callers.
+FastAPI `ContextBindingMiddleware` binds `AuthnIdentity` and optional `TenantIdentity` into `ctx.inv_ctx`. HTTP features (`RequireAuthnFeature`, `RequireTenantFeature`) may fast-fail at the edge; kernel `BeforeStep` / `wrap` hooks remain authoritative for non-HTTP callers.
 
 See also: [Authentication](authentication.md), [Middleware & Plans](middleware-plans.md), [Capability execution](capability-execution.md), [Authn, authz, and tenancy (FastAPI)](../recipes/authn-authz-tenancy-fastapi.md).

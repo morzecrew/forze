@@ -81,19 +81,19 @@ class TestExecutionContextDep:
 class TestExecutionContextTransaction:
     @pytest.mark.asyncio
     async def test_basic_transaction(self, ctx: ExecutionContext) -> None:
-        async with ctx.tx.scope("mock"):
+        async with ctx.tx_ctx.scope("mock"):
             pass
 
     @pytest.mark.asyncio
     async def test_nested_transaction(self, ctx: ExecutionContext) -> None:
-        async with ctx.tx.scope("mock"):
-            async with ctx.tx.scope("mock"):
+        async with ctx.tx_ctx.scope("mock"):
+            async with ctx.tx_ctx.scope("mock"):
                 pass
 
     @pytest.mark.asyncio
     async def test_transaction_cleanup_on_error(self, ctx: ExecutionContext) -> None:
         with pytest.raises(RuntimeError):
-            async with ctx.tx.scope("mock"):
+            async with ctx.tx_ctx.scope("mock"):
                 raise RuntimeError("fail")
 
     @pytest.mark.asyncio
@@ -105,7 +105,7 @@ class TestExecutionContextTransaction:
         async def _cb() -> None:
             ran.append(1)
 
-        await ctx.tx.run_or_defer(_cb)
+        await ctx.tx_ctx.run_or_defer(_cb)
         assert ran == [1]
 
     @pytest.mark.asyncio
@@ -120,9 +120,9 @@ class TestExecutionContextTransaction:
         async def _b() -> None:
             order.append("b")
 
-        async with ctx.tx.scope("mock"):
-            await ctx.tx.run_or_defer(_a)
-            await ctx.tx.run_or_defer(_b)
+        async with ctx.tx_ctx.scope("mock"):
+            await ctx.tx_ctx.run_or_defer(_a)
+            await ctx.tx_ctx.run_or_defer(_b)
 
         assert order == ["a", "b"]
 
@@ -134,8 +134,8 @@ class TestExecutionContextTransaction:
             ran.append(1)
 
         with pytest.raises(RuntimeError, match="fail"):
-            async with ctx.tx.scope("mock"):
-                await ctx.tx.run_or_defer(_cb)
+            async with ctx.tx_ctx.scope("mock"):
+                await ctx.tx_ctx.run_or_defer(_cb)
                 raise RuntimeError("fail")
 
         assert ran == []
@@ -152,10 +152,10 @@ class TestExecutionContextTransaction:
         async def _inner() -> None:
             order.append("inner")
 
-        async with ctx.tx.scope("mock"):
-            await ctx.tx.run_or_defer(_outer)
-            async with ctx.tx.scope("mock"):
-                await ctx.tx.run_or_defer(_inner)
+        async with ctx.tx_ctx.scope("mock"):
+            await ctx.tx_ctx.run_or_defer(_outer)
+            async with ctx.tx_ctx.scope("mock"):
+                await ctx.tx_ctx.run_or_defer(_inner)
 
         assert order == ["outer", "inner"]
 
@@ -196,14 +196,14 @@ class TestExecutionContextPorts:
         assert port is not None
 
     def test_tx_resolver(self, ctx: ExecutionContext) -> None:
-        port = ctx.tx.resolver("mock")
+        port = ctx.tx_ctx.resolver("mock")
         assert port is not None
 
     def test_tx_resolver_accepts_str_enum_route(self, ctx: ExecutionContext) -> None:
         class TxRoute(StrEnum):
             MOCK = "mock"
 
-        port = ctx.tx.resolver(TxRoute.MOCK)
+        port = ctx.tx_ctx.resolver(TxRoute.MOCK)
         assert port is not None
 
     def test_storage(self, ctx: ExecutionContext) -> None:
@@ -260,5 +260,5 @@ class TestExecutionContextStrEnumTransactionRoute:
         class TxRoute(StrEnum):
             MOCK = "mock"
 
-        async with ctx.tx.scope(TxRoute.MOCK):
+        async with ctx.tx_ctx.scope(TxRoute.MOCK):
             pass

@@ -26,8 +26,8 @@ The central dependency resolution point. Every handler factory and lifecycle hoo
 | `search` | Search, hub search, federated search, and snapshot ports |
 | `cache`, `counter`, `storage`, `embeddings`, `dlock` | Other configurable ports |
 | `tenancy` | Tenant resolver and management ports |
-| `tx` | Transaction scope and manager resolution |
-| `inv` | Invocation metadata, authn, and tenant binding |
+| `tx_ctx` | Transaction scope and manager resolution |
+| `inv_ctx` | Invocation metadata, authn, and tenant binding |
 
 ### Port resolution
 
@@ -43,16 +43,16 @@ The central dependency resolution point. Every handler factory and lifecycle hoo
 | `ctx.search.query(spec)` | `SearchQueryPort` | Full-text search port |
 | `ctx.search.hub(spec)` | `SearchQueryPort` | Hub (multi-leg) search |
 | `ctx.search.federated(spec)` | `SearchQueryPort` | Federated search |
-| `ctx.tx.resolver(route)` | `TransactionManagerPort` | Transaction manager for a registered route |
+| `ctx.tx_ctx.resolver(route)` | `TransactionManagerPort` | Transaction manager for a registered route |
 
 When `DocumentSpec.cache` is set, the document dep factory resolves `ctx.cache(spec.cache)` while building the adapter. TTL defaults come from `CacheSpec`.
 
 ### Transactions
 
-Use `ctx.tx.scope(route)` as an async context manager:
+Use `ctx.tx_ctx.scope(route)` as an async context manager:
 
     :::python
-    async with ctx.tx.scope("default"):
+    async with ctx.tx_ctx.scope("default"):
         doc = ctx.document.command(project_spec)
         await doc.create(CreateProjectCmd(title="New"))
         await doc.create(CreateProjectCmd(title="Another"))
@@ -61,14 +61,14 @@ Use `ctx.tx.scope(route)` as an async context manager:
 Nested scopes reuse the same transaction. Savepoints are used when the backend supports them:
 
     :::python
-    async with ctx.tx.scope("default"):
+    async with ctx.tx_ctx.scope("default"):
         # outer transaction
-        async with ctx.tx.scope("default"):
+        async with ctx.tx_ctx.scope("default"):
             # nested: same transaction, savepoint
 
 The context validates that ports resolved inside a transaction match the active transaction scope — mixing different transaction managers (e.g. Postgres and Mongo) raises `CoreError`.
 
-Queue work to run after a successful root commit with `ctx.tx.defer_after_commit(callback)` (see transaction context helpers in source).
+Queue work to run after a successful root commit with `ctx.tx_ctx.defer_after_commit(callback)` (see transaction context helpers in source).
 
 ### Invocation metadata
 
@@ -82,17 +82,17 @@ Bind per-request metadata, authn, and tenant context for the duration of a call:
         correlation_id=...,
         causation_id=...,
     )
-    with ctx.inv.bind(metadata=metadata, authn=identity, tenant=tenant):
+    with ctx.inv_ctx.bind(metadata=metadata, authn=identity, tenant=tenant):
         # handlers and ports see bound identity / tenant
-        principal = ctx.inv.get_authn()
-        tenant_ctx = ctx.inv.get_tenant()
+        principal = ctx.inv_ctx.get_authn()
+        tenant_ctx = ctx.inv_ctx.get_tenant()
 
 | Method | Purpose |
 |--------|---------|
-| `ctx.inv.bind(metadata=..., authn=..., tenant=...)` | Context manager; merges structlog context vars |
-| `ctx.inv.get_metadata()` | Current `InvocationMetadata` or `None` |
-| `ctx.inv.get_authn()` | Current `AuthnIdentity` or `None` |
-| `ctx.inv.get_tenant()` | Current `TenantIdentity` or `None` |
+| `ctx.inv_ctx.bind(metadata=..., authn=..., tenant=...)` | Context manager; merges structlog context vars |
+| `ctx.inv_ctx.get_metadata()` | Current `InvocationMetadata` or `None` |
+| `ctx.inv_ctx.get_authn()` | Current `AuthnIdentity` or `None` |
+| `ctx.inv_ctx.get_tenant()` | Current `TenantIdentity` or `None` |
 
 ### Cycle detection
 
@@ -133,7 +133,7 @@ Enable runtime tracing on the plan:
 
 Or set `FORZE_RUNTIME_TRACE=1` (or `true` / `yes`) before `plan.build()` (unless `build(trace_runtime=False)` overrides env). Recording is handled by `RuntimeTracer` on `Deps` (`runtime_tracer`).
 
-Root transaction scope boundaries use `TxTracer` on `TransactionContext`, wired from `ExecutionContext` via `tx_tracer_from_runtime(deps.runtime_tracer)` when runtime tracing is enabled — no separate flag. Only root `ctx.tx.scope(...)` enter/exit is recorded (nested scopes do not emit extra tx events).
+Root transaction scope boundaries use `TxTracer` on `TransactionContext`, wired from `ExecutionContext` via `tx_tracer_from_runtime(deps.runtime_tracer)` when runtime tracing is enabled — no separate flag. Only root `ctx.tx_ctx.scope(...)` enter/exit is recorded (nested scopes do not emit extra tx events).
 
 While a handler runs, Forze records transaction scope boundaries and **configurable port** calls (via `Deps.resolve_configurable`) at the coordinator boundary — internal gateway reads after writes are not traced.
 

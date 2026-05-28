@@ -63,7 +63,7 @@ async def test_document_create_commits_in_transaction(
     routed = Deps.routed({TransactionManagerDepKey: {"firestore": firestore_txmanager}})
     ctx = ExecutionContext(deps=plain.merge(routed))
 
-    async with ctx.tx.scope("firestore"):
+    async with ctx.tx_ctx.scope("firestore"):
         created = await ctx.document.command(spec).create(TxCreate(title="in-tx"))
         assert created.title == "in-tx"
 
@@ -99,7 +99,7 @@ async def test_document_create_rolls_back_on_error(
     ctx = ExecutionContext(deps=plain.merge(routed))
 
     with pytest.raises(RuntimeError, match="boom"):
-        async with ctx.tx.scope("firestore"):
+        async with ctx.tx_ctx.scope("firestore"):
             await ctx.document.command(spec).create(TxCreate(title="lost"))
             raise RuntimeError("boom")
 
@@ -133,7 +133,7 @@ async def test_document_create_many_in_transaction(
     routed = Deps.routed({TransactionManagerDepKey: {"firestore": firestore_txmanager}})
     ctx = ExecutionContext(deps=plain.merge(routed))
 
-    async with ctx.tx.scope("firestore"):
+    async with ctx.tx_ctx.scope("firestore"):
         created = await ctx.document.command(spec).create_many(
             [
                 TxCreate(title="one"),

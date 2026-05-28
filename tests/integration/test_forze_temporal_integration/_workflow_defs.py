@@ -39,7 +39,7 @@ async def it_read_correlation() -> str:
     if ctx is None:
         return "none"
 
-    meta = ctx.inv.get_metadata()
+    meta = ctx.inv_ctx.get_metadata()
     return str(meta.correlation_id) if meta else "none"
 
 

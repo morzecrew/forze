@@ -97,7 +97,7 @@ async def test_tenant_aware_requires_tenant_in_identity(
     spec = _spec()
     adapter = execution_context.document.command(spec)
 
-    with execution_context.inv.bind(
+    with execution_context.inv_ctx.bind(
         metadata=_metadata(),
         authn=AuthnIdentity(principal_id=uuid4()),
     ):
@@ -125,7 +125,7 @@ async def test_rows_are_isolated_by_tenant(pg_client: PostgresClient) -> None:
     tenant_b = uuid4()
     spec = _spec()
 
-    with execution_context.inv.bind(
+    with execution_context.inv_ctx.bind(
         metadata=_metadata(),
         authn=AuthnIdentity(principal_id=uuid4()),
         tenant=TenantIdentity(tenant_id=tenant_a),
@@ -142,7 +142,7 @@ async def test_rows_are_isolated_by_tenant(pg_client: PostgresClient) -> None:
     assert row is not None
     assert row["tenant_id"] == tenant_a
 
-    with execution_context.inv.bind(
+    with execution_context.inv_ctx.bind(
         metadata=_metadata(),
         authn=AuthnIdentity(principal_id=uuid4()),
         tenant=TenantIdentity(tenant_id=tenant_b),
@@ -150,7 +150,7 @@ async def test_rows_are_isolated_by_tenant(pg_client: PostgresClient) -> None:
         adapter = execution_context.document.command(spec)
         doc_b = await adapter.create(TenantCreateDoc(name="beta"))
 
-    with execution_context.inv.bind(
+    with execution_context.inv_ctx.bind(
         metadata=_metadata(),
         authn=AuthnIdentity(principal_id=uuid4()),
         tenant=TenantIdentity(tenant_id=tenant_b),
@@ -163,7 +163,7 @@ async def test_rows_are_isolated_by_tenant(pg_client: PostgresClient) -> None:
         assert got_b.id == doc_b.id
         assert (await adapter.count({})) == 1
 
-    with execution_context.inv.bind(
+    with execution_context.inv_ctx.bind(
         metadata=_metadata(),
         authn=AuthnIdentity(principal_id=uuid4()),
         tenant=TenantIdentity(tenant_id=tenant_a),
@@ -195,7 +195,7 @@ async def test_kill_respects_tenant_scope(pg_client: PostgresClient) -> None:
     tenant_b = uuid4()
     spec = _spec()
 
-    with execution_context.inv.bind(
+    with execution_context.inv_ctx.bind(
         metadata=_metadata(),
         authn=AuthnIdentity(principal_id=uuid4()),
         tenant=TenantIdentity(tenant_id=tenant_a),
@@ -204,7 +204,7 @@ async def test_kill_respects_tenant_scope(pg_client: PostgresClient) -> None:
         doc_a = await adapter.create(TenantCreateDoc(name="kill-me"))
         pk_a = doc_a.id
 
-    with execution_context.inv.bind(
+    with execution_context.inv_ctx.bind(
         metadata=_metadata(),
         authn=AuthnIdentity(principal_id=uuid4()),
         tenant=TenantIdentity(tenant_id=tenant_b),
@@ -220,7 +220,7 @@ async def test_kill_respects_tenant_scope(pg_client: PostgresClient) -> None:
     )
     assert int(n_before) == 1
 
-    with execution_context.inv.bind(
+    with execution_context.inv_ctx.bind(
         metadata=_metadata(),
         authn=AuthnIdentity(principal_id=uuid4()),
         tenant=TenantIdentity(tenant_id=tenant_a),
@@ -256,7 +256,7 @@ async def test_update_cross_tenant_is_not_found(pg_client: PostgresClient) -> No
     tenant_b = uuid4()
     spec = _spec()
 
-    with execution_context.inv.bind(
+    with execution_context.inv_ctx.bind(
         metadata=_metadata(),
         authn=AuthnIdentity(principal_id=uuid4()),
         tenant=TenantIdentity(tenant_id=tenant_a),
@@ -264,7 +264,7 @@ async def test_update_cross_tenant_is_not_found(pg_client: PostgresClient) -> No
         adapter = execution_context.document.command(spec)
         doc_a = await adapter.create(TenantCreateDoc(name="u"))
 
-    with execution_context.inv.bind(
+    with execution_context.inv_ctx.bind(
         metadata=_metadata(),
         authn=AuthnIdentity(principal_id=uuid4()),
         tenant=TenantIdentity(tenant_id=tenant_b),

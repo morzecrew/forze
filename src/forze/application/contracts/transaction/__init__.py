@@ -1,6 +1,6 @@
 """Contracts for transactional execution boundaries."""
 
-from .deps import TransactionManagerDepKey, TransactionManagerDepPort
+from .deps import TransactionDeps, TransactionManagerDepKey, TransactionManagerDepPort
 from .ports import (
     AfterCommitPort,
     TransactionHandle,
@@ -14,6 +14,7 @@ __all__ = [
     "AfterCommitPort",
     "TransactionManagerPort",
     "TransactionScopeKey",
+    "TransactionDeps",
     "TransactionManagerDepKey",
     "TransactionManagerDepPort",
     "TransactionHandle",

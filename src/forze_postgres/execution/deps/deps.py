@@ -146,7 +146,7 @@ class ConfigurablePostgresReadOnlyDocument(DocumentQueryDepPort[R]):
         after_commit: AfterCommitPort | None = None
 
         if cache is not None:
-            after_commit = ctx.tx.run_or_defer
+            after_commit = ctx.tx_ctx.run_or_defer
 
         cc = DocumentCacheCoordinator[R](
             read_model_type=read.model_type,
@@ -227,7 +227,7 @@ class ConfigurablePostgresDocument(DocumentCommandDepPort[R, D, C, U]):
         after_commit: AfterCommitPort | None = None
 
         if cache is not None:
-            after_commit = ctx.tx.run_or_defer
+            after_commit = ctx.tx_ctx.run_or_defer
 
         cc = DocumentCacheCoordinator[R](
             read_model_type=read.model_type,
@@ -390,7 +390,7 @@ class ConfigurablePostgresHubSearch(HubSearchQueryDepPort):
             client=context.deps.provide(PostgresClientDepKey),
             model_type=spec.model_type,
             introspector=context.deps.provide(PostgresIntrospectorDepKey),
-            tenant_provider=context.inv.get_tenant,
+            tenant_provider=context.inv_ctx.get_tenant,
             tenant_aware=tenant_aware,
             filter_table_alias="h",
             nested_field_hints=self.config.get("nested_field_hints"),
@@ -432,7 +432,7 @@ def _postgres_search_port_for_config(
                 client=context.deps.provide(PostgresClientDepKey),
                 model_type=member_spec.model_type,
                 introspector=context.deps.provide(PostgresIntrospectorDepKey),
-                tenant_provider=context.inv.get_tenant,
+                tenant_provider=context.inv_ctx.get_tenant,
                 tenant_aware=tenant_aware,
                 filter_table_alias="v",
                 nested_field_hints=c.get("nested_field_hints"),
@@ -458,7 +458,7 @@ def _postgres_search_port_for_config(
                 client=context.deps.provide(PostgresClientDepKey),
                 model_type=member_spec.model_type,
                 introspector=context.deps.provide(PostgresIntrospectorDepKey),
-                tenant_provider=context.inv.get_tenant,
+                tenant_provider=context.inv_ctx.get_tenant,
                 tenant_aware=tenant_aware,
                 filter_table_alias="v",
                 nested_field_hints=c.get("nested_field_hints"),
@@ -491,7 +491,7 @@ def _postgres_search_port_for_config(
                 client=context.deps.provide(PostgresClientDepKey),
                 model_type=member_spec.model_type,
                 introspector=context.deps.provide(PostgresIntrospectorDepKey),
-                tenant_provider=context.inv.get_tenant,
+                tenant_provider=context.inv_ctx.get_tenant,
                 tenant_aware=tenant_aware,
                 filter_table_alias="v",
                 nested_field_hints=c.get("nested_field_hints"),

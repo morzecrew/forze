@@ -209,7 +209,7 @@ async def test_kernel_authz_uses_bound_authn_and_tenant(pg_client: PostgresClien
     metadata = InvocationMetadata(execution_id=uuid4(), correlation_id=uuid4())
     ident = AuthnIdentity(principal_id=pid)
 
-    with ctx.inv.bind(
+    with ctx.inv_ctx.bind(
         metadata=metadata,
         authn=ident,
         tenant=TenantIdentity(tenant_id=tid),
@@ -242,7 +242,7 @@ async def test_kernel_authz_denies_unknown_permission(pg_client: PostgresClient)
     metadata = InvocationMetadata(execution_id=uuid4(), correlation_id=uuid4())
     ident = AuthnIdentity(principal_id=pid)
 
-    with ctx.inv.bind(metadata=metadata, authn=ident):
+    with ctx.inv_ctx.bind(metadata=metadata, authn=ident):
         decision_port = ctx.authz.decision(_AUTHZ_SPEC)
         decision = await decision_port.authorize(
             AuthzRequest(

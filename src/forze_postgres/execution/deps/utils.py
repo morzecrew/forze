@@ -46,7 +46,7 @@ def read_gw(
         client=client,
         model_type=read_type,
         introspector=introspector,
-        tenant_provider=ctx.inv.get_tenant,
+        tenant_provider=ctx.inv_ctx.get_tenant,
         tenant_aware=tenant_aware,
         nested_field_hints=nested_field_hints,
     )
@@ -85,7 +85,7 @@ def _doc_history_gw(
         client=client,
         model_type=domain_type,
         introspector=introspector,
-        tenant_provider=ctx.inv.get_tenant,
+        tenant_provider=ctx.inv_ctx.get_tenant,
         tenant_aware=tenant_aware,
     )
 
@@ -148,6 +148,6 @@ def doc_write_gw(
         update_cmd_type=write_types.get("update_cmd"),
         history_gw=hist,
         strategy=bookkeeping_strategy,
-        tenant_provider=ctx.inv.get_tenant,
+        tenant_provider=ctx.inv_ctx.get_tenant,
         tenant_aware=tenant_aware,
     )

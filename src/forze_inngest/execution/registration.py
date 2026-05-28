@@ -25,8 +25,8 @@ from forze.application.execution.context import (
     ExecutionContext,
     ExecutionContextFactory,
 )
-from forze.application.execution.running import handler_for_registry_operation
 from forze.application.execution.registry import FrozenOperationRegistry
+from forze.application.execution.running import handler_for_registry_operation
 from forze.base.exceptions import exc
 
 from ..adapters.context import (
@@ -107,7 +107,7 @@ def _bind_invocation(
     envelope: InngestDecodedContext,
 ) -> Iterator[None]:
     if envelope.metadata is not None:
-        with ctx.inv.bind(
+        with ctx.inv_ctx.bind(
             metadata=envelope.metadata,
             authn=envelope.authn,
             tenant=envelope.tenant,
@@ -115,7 +115,7 @@ def _bind_invocation(
             yield
 
     else:
-        with ctx.inv.bind_identity(
+        with ctx.inv_ctx.bind_identity(
             authn=envelope.authn,
             tenant=envelope.tenant,
         ):

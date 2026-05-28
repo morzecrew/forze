@@ -120,7 +120,7 @@ temporal_module = TemporalDepsModule(
 
 ## Transaction routes
 
-Register routes on the backend module (e.g. `PostgresDepsModule(tx={TxRoute.DEFAULT})`). Application code uses `async with ctx.tx.scope(TxRoute.DEFAULT):` and `registry.bind(...).bind_tx().set_route(TxRoute.DEFAULT).finish(deep=True).freeze()`.
+Register routes on the backend module (e.g. `PostgresDepsModule(tx={TxRoute.DEFAULT})`). Application code uses `async with ctx.tx_ctx.scope(TxRoute.DEFAULT):` and `registry.bind(...).bind_tx().set_route(TxRoute.DEFAULT).finish(deep=True).freeze()`.
 
 ## Gotchas
 

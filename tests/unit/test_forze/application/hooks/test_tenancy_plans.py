@@ -19,7 +19,7 @@ async def test_tenancy_before_required_allows_when_bound() -> None:
     metadata = InvocationMetadata(execution_id=uuid4(), correlation_id=uuid4())
     tenant = TenantIdentity(tenant_id=uuid4())
 
-    with ctx.inv.bind(metadata=metadata, tenant=tenant):
+    with ctx.inv_ctx.bind(metadata=metadata, tenant=tenant):
         hook = TenantRequired()(ctx)
         await hook(None)
 
@@ -28,7 +28,7 @@ async def test_tenancy_before_required_denies_when_missing() -> None:
     ctx = ExecutionContext(deps=Deps())
     metadata = InvocationMetadata(execution_id=uuid4(), correlation_id=uuid4())
 
-    with ctx.inv.bind(metadata=metadata):
+    with ctx.inv_ctx.bind(metadata=metadata):
         hook = TenantRequired()(ctx)
 
         with pytest.raises(CoreException) as exc_info:

@@ -38,7 +38,7 @@ class _TraceProbeHandler(Handler[None, str]):
     ctx: object
 
     async def __call__(self, _args: None) -> str:
-        async with self.ctx.tx.scope("mock"):  # type: ignore[attr-defined]
+        async with self.ctx.tx_ctx.scope("mock"):  # type: ignore[attr-defined]
             port = self.ctx.document.query(_doc_spec())  # type: ignore[attr-defined]
             await port.count()
         return "ok"
