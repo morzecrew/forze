@@ -5,6 +5,7 @@ from typing import Any, Literal, Sequence, TypeVar, cast, final
 import attrs
 from pydantic import BaseModel
 
+from forze.application.contracts.analytics import AnalyticsSpec
 from forze.application.contracts.document import (
     DocumentCommandDepPort,
     DocumentQueryDepPort,
@@ -51,9 +52,11 @@ from ...adapters import (
     PostgresTxManagerAdapter,
     PostgresVectorSearchAdapter,
 )
+from ...adapters.analytics import PostgresAnalyticsAdapter
 from ...kernel.gateways import PostgresQualifiedName
 from .._logger import logger
 from .configs import (
+    PostgresAnalyticsConfig,
     PostgresDocumentConfig,
     PostgresFederatedSearchConfig,
     PostgresHubSearchConfig,
@@ -582,6 +585,66 @@ class ConfigurablePostgresFederatedSearch(FederatedSearchQueryDepPort):
             rrf_per_leg_limit=int(self.config.get("rrf_per_leg_limit", 5000)),
             postgres_client=context.deps.provide(PostgresClientDepKey),
             snapshot_coord=_snapshot_coord(context, spec.snapshot),
+        )
+
+
+# ....................... #
+
+
+def validate_postgres_analytics_config(
+    spec: AnalyticsSpec[Any, Any],
+    config: PostgresAnalyticsConfig,
+) -> None:
+    """Ensure integration config aligns with the kernel :class:`AnalyticsSpec`."""
+
+    spec_keys = set(spec.queries.keys())
+    config_keys = set(config["queries"].keys())
+
+    missing = spec_keys - config_keys
+    if missing:
+        raise exc.configuration(
+            f"Postgres analytics config for route {spec.name!r} is missing query keys: "
+            f"{sorted(missing)!r}."
+        )
+
+    extra = config_keys - spec_keys
+    if extra:
+        raise exc.configuration(
+            f"Postgres analytics config for route {spec.name!r} has unknown query keys: "
+            f"{sorted(extra)!r}."
+        )
+
+    if spec.ingest is not None and not config.get("ingest_table"):
+        raise exc.configuration(
+            f"Postgres analytics config for route {spec.name!r} requires ingest_table "
+            "when AnalyticsSpec.ingest is set."
+        )
+
+
+# ....................... #
+
+
+@final
+@attrs.define(slots=True, frozen=True, kw_only=True)
+class ConfigurablePostgresAnalytics:
+    """Build a :class:`PostgresAnalyticsAdapter` for an analytics spec route."""
+
+    config: PostgresAnalyticsConfig
+    """Postgres-specific configuration for the route."""
+
+    # ....................... #
+
+    def __call__(
+        self,
+        ctx: ExecutionContext,
+        spec: AnalyticsSpec[Any, Any],
+    ) -> PostgresAnalyticsAdapter[Any, Any]:
+        validate_postgres_analytics_config(spec, self.config)
+        client = ctx.deps.provide(PostgresClientDepKey)
+        return PostgresAnalyticsAdapter(
+            client=client,
+            spec=spec,
+            config=self.config,
         )
 
 

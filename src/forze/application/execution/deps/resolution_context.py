@@ -1,7 +1,5 @@
 """Per-container dependency resolution stack and cycle detection."""
 
-from __future__ import annotations
-
 from contextvars import ContextVar, Token
 from typing import final
 

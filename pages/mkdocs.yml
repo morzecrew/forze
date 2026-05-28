@@ -109,6 +109,7 @@ nav:
     - MongoDB: integrations/mongo.md
     - Cloud Firestore: integrations/firestore.md
     - Temporal: integrations/temporal.md
+    - Inngest: integrations/inngest.md
     - SQS: integrations/sqs.md
     - RabbitMQ: integrations/rabbitmq.md
     - OIDC: integrations/oidc.md

@@ -19,6 +19,13 @@ from .runtime_tracer import (
     runtime_tracer_from_flag,
 )
 from .trace import DepsResolutionTrace
+from .tx_tracer import (
+    NOOP_TX_TRACER,
+    NoopTxTracer,
+    RuntimeBackedTxTracer,
+    TxTracer,
+    tx_tracer_from_runtime,
+)
 
 # ----------------------- #
 
@@ -30,16 +37,21 @@ __all__ = [
     "DepsResolutionTrace",
     "NOOP_RESOLUTION_TRACER",
     "NOOP_RUNTIME_TRACER",
+    "NOOP_TX_TRACER",
     "NoopResolutionTracer",
     "NoopRuntimeTracer",
+    "NoopTxTracer",
     "PlainDepsMap",
     "RecordingResolutionTracer",
     "RecordingRuntimeTracer",
+    "RuntimeBackedTxTracer",
     "ResolutionContext",
     "ResolutionFrame",
     "ResolutionTracer",
     "RoutedDeps",
     "RuntimeTracer",
+    "TxTracer",
     "resolution_tracer_from_flag",
     "runtime_tracer_from_flag",
+    "tx_tracer_from_runtime",
 ]

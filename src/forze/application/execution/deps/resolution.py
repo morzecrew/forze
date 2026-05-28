@@ -1,7 +1,5 @@
 """Resolution frame types and cycle error formatting."""
 
-from __future__ import annotations
-
 from typing import final
 
 import attrs

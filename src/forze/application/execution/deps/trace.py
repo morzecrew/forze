@@ -1,7 +1,5 @@
 """Observed dependency resolution graph for development diagnostics."""
 
-from __future__ import annotations
-
 from typing import final
 
 import attrs
@@ -88,6 +86,8 @@ class DepsResolutionTrace:
     def format_canonical_edges(self) -> str:
         """Return human-readable canonical edge lines for logging."""
 
-        lines = sorted(f"{parent} -> {child}" for parent, child in self.canonical_edges())
+        lines = sorted(
+            f"{parent} -> {child}" for parent, child in self.canonical_edges()
+        )
 
         return "\n".join(lines)

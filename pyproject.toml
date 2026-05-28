@@ -132,6 +132,9 @@ vault = [
     "types-hvac>=2.4.0.20260518",
     "urllib3>=2.7.0",
 ]
+inngest = [
+    "inngest>=0.5.18",
+]
 
 # ....................... #
 
@@ -179,6 +182,7 @@ packages = [
     "src/forze_socketio",
     "src/forze_sqs",
     "src/forze_temporal",
+    "src/forze_inngest",
     "src/forze_secrets",
     "src/forze_vault",
 ]
@@ -231,6 +235,7 @@ omit = [
     "*/forze_rabbitmq/execution/lifecycle.py",
     "*/forze_sqs/execution/lifecycle.py",
     "*/forze_temporal/execution/lifecycle.py",
+    "*/forze_inngest/execution/lifecycle.py",
     "*/forze_vault/execution/lifecycle.py",
     # Temporal worker interceptors are exercised with a full SDK runtime.
     "*/forze_temporal/interceptors/*",
@@ -276,6 +281,11 @@ module = ["forze_clickhouse", "forze_clickhouse.*"]
 ignore_missing_imports = true
 disable_error_code = ["import-untyped"]
 
+[[tool.mypy.overrides]]
+module = ["forze_inngest", "forze_inngest.*", "inngest", "inngest.*"]
+ignore_missing_imports = true
+disable_error_code = ["import-untyped"]
+
 # ....................... #
 # Import contracts
 
@@ -293,6 +303,7 @@ root_packages = [
     "forze_clickhouse",
     "forze_socketio",
     "forze_temporal",
+    "forze_inngest",
     "forze_mongo",
     "forze_firestore",
     "forze_rabbitmq",
@@ -345,6 +356,7 @@ protected_modules = [
     "forze_clickhouse",
     "forze_socketio",
     "forze_temporal",
+    "forze_inngest",
     "forze_mongo",
     "forze_firestore",
     "forze_rabbitmq",
@@ -372,6 +384,7 @@ paths = [
     "src/forze_clickhouse",
     "src/forze_socketio",
     "src/forze_temporal",
+    "src/forze_inngest",
     "src/forze_mongo",
     "src/forze_firestore",
     "src/forze_rabbitmq",
@@ -408,6 +421,7 @@ known_first_party = [
     "forze_clickhouse",
     "forze_socketio",
     "forze_temporal",
+    "forze_inngest",
     "forze_mongo",
     "forze_firestore",
     "forze_rabbitmq",

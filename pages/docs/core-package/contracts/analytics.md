@@ -14,7 +14,7 @@ synchronous append (Lane B).
 | Named, parameterized reads (`run`, `run_page`, `run_chunked`, …) | OLTP aggregates (`DocumentQueryPort`) |
 | Optional `append` ingest rows | Airflow-style DAGs, CDC, sink topology |
 | `ctx.analytics.query` / `ctx.analytics.ingest` | Raw SQL strings on application ports |
-| BigQuery (`forze_bigquery`), ClickHouse (`forze_clickhouse`), future RisingWave | RisingWave used as Postgres OLTP (`Document*`) |
+| BigQuery (`forze_bigquery`), ClickHouse (`forze_clickhouse`), Postgres (`forze_postgres` analytics routes), future RisingWave | RisingWave used as Postgres OLTP (`Document*`) |
 
 ```mermaid
 flowchart LR
@@ -72,11 +72,11 @@ Pass `AnalyticsRunOptions` (`dry_run`, `max_rows`, `timeout`) per request; adapt
 
 ### `AnalyticsRunOptions` by engine
 
-| Option | BigQuery | ClickHouse |
-|--------|----------|------------|
-| `timeout` | HTTP / job poll budget | `max_execution_time` (seconds) |
-| `max_rows` | Caps rows returned | Caps rows returned |
-| `dry_run` | BigQuery API dry-run (bytes on client result) | Skips execution (empty pages; no cost estimate) |
+| Option | BigQuery | ClickHouse | Postgres |
+|--------|----------|------------|----------|
+| `timeout` | HTTP / job poll budget | `max_execution_time` (seconds) | `SET LOCAL statement_timeout` (seconds) |
+| `max_rows` | Caps rows returned | Caps rows returned | Caps rows returned |
+| `dry_run` | BigQuery API dry-run (bytes on client result) | Skips execution (empty pages; no cost estimate) | Skips execution (empty pages) |
 
 Prefer `run` or `run_cursor` for large scans; `run_page` runs an extra COUNT unless `skip_total: true` is set on the query config.
 
@@ -125,6 +125,7 @@ is unset.
 | `forze_mock` | `MockAnalyticsAdapter` — seeded query hits and ingest log in `MockState` |
 | `forze_bigquery` | `BigQueryAnalyticsAdapter` — Standard SQL, streaming insert, emulator support |
 | `forze_clickhouse` | `ClickHouseAnalyticsAdapter` — server-side `{name:Type}` params, offset cursors, insert ingest |
+| `forze_postgres` | `PostgresAnalyticsAdapter` — psycopg `%(name)s` params, offset/keyset cursors, batch insert ingest |
 
 ### Mock adapter
 
@@ -142,6 +143,11 @@ and writes ingest payloads to `MockState.analytics_ingest_log[route]`. See
 `ClickHouseDepsModule` maps each `AnalyticsSpec` route to database, SQL templates, and optional
 `ingest_table`. See [ClickHouse integration](../../integrations/clickhouse.md).
 
+### Postgres adapter
+
+`PostgresDepsModule.analytics` maps each `AnalyticsSpec` route to schema, SQL templates with
+`%(param)s` placeholders, and optional `ingest_table`. See [PostgreSQL integration](../../integrations/postgres.md#analytics).
+
 ## Related pages
 
 - [Contracts overview](../contracts.md)
@@ -149,3 +155,4 @@ and writes ingest payloads to `MockState.analytics_ingest_log[route]`. See
 - [Stream contracts](stream.md) — ordered append log
 - [BigQuery integration](../../integrations/bigquery.md)
 - [ClickHouse integration](../../integrations/clickhouse.md)
+- [PostgreSQL integration](../../integrations/postgres.md#analytics)

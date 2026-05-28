@@ -110,6 +110,22 @@ async def redis_client(redis_container: RedisContainer) -> RedisClient:
 
 
 @pytest_asyncio.fixture(scope="function")
+async def pg_analytics_table(pg_client: PostgresClient) -> str:
+    """Create a table for analytics integration tests."""
+
+    table_id = f"analytics_events_{uuid4().hex[:12]}"
+    await pg_client.execute(
+        f"""
+        CREATE TABLE public.{table_id} (
+            event TEXT NOT NULL,
+            value INTEGER NOT NULL DEFAULT 1
+        )
+        """,
+    )
+    return table_id
+
+
+@pytest_asyncio.fixture(scope="function")
 async def redis_search_snapshot(
     redis_client: RedisClient,
 ) -> RedisSearchResultSnapshotAdapter:

@@ -417,3 +417,40 @@ def validate_pg_search_conf(cfg: PostgresSearchConfig) -> None:
             v = cfg.get("pgroonga_score_version", "v2")
             if v not in ("v1", "v2"):
                 raise exc.internal("pgroonga_score_version must be 'v1' or 'v2'.")
+
+
+# ....................... #
+
+
+@final
+class PostgresQueryConfig(TypedDict):
+    """SQL for one named analytics query."""
+
+    sql: str
+    """PostgreSQL SQL with psycopg named placeholders ``%(field)s``."""
+
+    skip_total: NotRequired[bool]
+    """When ``True``, ``run_page`` skips the COUNT wrapper (``Page.total`` is ``None``)."""
+
+    cursor_column: NotRequired[str]
+    """When set, ``run_cursor`` uses keyset pagination on this column (SQL must include ``%(forze_after)s``)."""
+
+
+# ....................... #
+
+
+@final
+class PostgresAnalyticsConfig(TypedDict):
+    """Physical Postgres mapping for one :class:`~forze.application.contracts.analytics.AnalyticsSpec` route."""
+
+    schema: NotRequired[str]
+    """PostgreSQL schema for ``ingest_table`` (default ``public``)."""
+
+    queries: Mapping[str, PostgresQueryConfig]
+    """Named queries; keys must match ``AnalyticsSpec.queries``."""
+
+    ingest_table: NotRequired[str]
+    """Table name for :class:`~forze.application.contracts.analytics.AnalyticsIngestPort` append."""
+
+    max_append_rows: NotRequired[int]
+    """Maximum rows per ``append`` call (raises when exceeded)."""

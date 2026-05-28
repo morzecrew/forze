@@ -1,3 +1,4 @@
+from .analytics_query import apply_limit_offset, build_count_sql, parameters_from_model
 from .client import PostgresClient
 from .port import PostgresClientPort
 from .routed_client import RoutedPostgresClient
@@ -11,4 +12,7 @@ __all__ = [
     "PostgresConfig",
     "PostgresTransactionOptions",
     "RoutedPostgresClient",
+    "apply_limit_offset",
+    "build_count_sql",
+    "parameters_from_model",
 ]

@@ -26,7 +26,7 @@ from .runtime_tracer import NOOP_RUNTIME_TRACER, RuntimeTracer, runtime_tracer_f
 from .trace import DepsResolutionTrace
 
 if TYPE_CHECKING:
-    from forze.application.execution.context import ExecutionContext
+    from ..context import ExecutionContext
 
 # ----------------------- #
 

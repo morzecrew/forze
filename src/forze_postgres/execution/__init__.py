@@ -6,10 +6,14 @@ from ..kernel.validate_schema import (
 )
 from .catalog_warmup import postgres_catalog_warmup_lifecycle_step
 from .deps import (
+    ConfigurablePostgresAnalytics,
     PgroongaScoreVersion,
+    PostgresAnalyticsConfig,
     PostgresClientDepKey,
     PostgresDepsModule,
     PostgresDocumentConfig,
+    PostgresQueryConfig,
+    validate_postgres_analytics_config,
     PostgresFederatedSearchConfig,
     PostgresHubSearchConfig,
     PostgresHubSearchMemberConfig,
@@ -24,6 +28,10 @@ from .lifecycle import postgres_lifecycle_step, routed_postgres_lifecycle_step
 __all__ = [
     "PostgresDepsModule",
     "PostgresClientDepKey",
+    "PostgresAnalyticsConfig",
+    "PostgresQueryConfig",
+    "ConfigurablePostgresAnalytics",
+    "validate_postgres_analytics_config",
     "postgres_lifecycle_step",
     "routed_postgres_lifecycle_step",
     "postgres_catalog_warmup_lifecycle_step",

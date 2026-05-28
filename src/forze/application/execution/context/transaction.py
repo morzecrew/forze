@@ -8,9 +8,10 @@ from forze.application.contracts.transaction import (
     TransactionHandle,
     TransactionManagerPort,
 )
-from forze.application.execution.tracing import record
 from forze.base.exceptions import exc
 from forze.base.primitives import StrKey
+
+from ..deps.tx_tracer import NOOP_TX_TRACER, TxTracer
 
 # ----------------------- #
 
@@ -21,6 +22,9 @@ class TransactionContext:
 
     resolver: Callable[[StrKey], TransactionManagerPort] | None = None
     """Callable to resolve the transaction manager port."""
+
+    _tx_tracer: TxTracer = attrs.field(default=NOOP_TX_TRACER, init=False)
+    """Optional observer for root scope enter/exit (noop by default)."""
 
     # ....................... #
 
@@ -53,7 +57,12 @@ class TransactionContext:
 
     # ....................... #
 
-    def lock(self, resolver: Callable[[StrKey], TransactionManagerPort]) -> None:
+    def lock(
+        self,
+        resolver: Callable[[StrKey], TransactionManagerPort],
+        *,
+        tx_tracer: TxTracer | None = None,
+    ) -> None:
         """Lock the transaction context."""
 
         if self._locked:
@@ -61,6 +70,7 @@ class TransactionContext:
 
         self._locked = True
         self.resolver = resolver
+        self._tx_tracer = tx_tracer if tx_tracer is not None else NOOP_TX_TRACER
 
     # ....................... #
 
@@ -131,13 +141,7 @@ class TransactionContext:
         token_cb = self.__cb_stack.set([])
         route_name = str(getattr(route, "value", route))
 
-        record(
-            domain="tx",
-            op="enter",
-            route=route_name,
-            tx_route=route_name,
-            tx_depth=1,
-        )
+        self._tx_tracer.on_scope_enter(route=route_name, depth=1)
 
         deferred: list[Callable[[], Awaitable[None]]] | None = None
 
@@ -152,12 +156,9 @@ class TransactionContext:
             deferred = self.__cb_stack.get()
 
         finally:
-            record(
-                domain="tx",
-                op="exit",
+            self._tx_tracer.on_scope_exit(
                 route=route_name,
-                tx_route=route_name,
-                tx_depth=self.__tx_depth.get(),
+                depth=self.__tx_depth.get(),
             )
             self.__cb_stack.reset(token_cb)
             self.__tx_handle.reset(token_h)

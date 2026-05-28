@@ -19,6 +19,7 @@ from forze.application.contracts.transaction import (
 from forze.base.primitives import StrKey
 
 from ..deps import Deps
+from ..deps.tx_tracer import tx_tracer_from_runtime
 from ..tracing import bind_active_deps, init_runtime_tracing
 from .invocation import InvocationContext
 from .transaction import TransactionContext
@@ -97,7 +98,10 @@ class ExecutionContext:
         bind_active_deps(self.deps)
         init_runtime_tracing(self.deps)
 
-        self.tx.lock(_tx_resolver)
+        self.tx.lock(
+            _tx_resolver,
+            tx_tracer=tx_tracer_from_runtime(self.deps.runtime_tracer),
+        )
         self.document.lock(self)
         self.search.lock(self)
         self.analytics.lock(self)

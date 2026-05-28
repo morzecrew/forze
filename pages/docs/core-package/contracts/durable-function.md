@@ -1,8 +1,8 @@
 # Durable function contracts
 
 Durable function contracts cover **event-driven durable execution**: emit events from
-handlers, run registered functions with memoized steps on a platform worker (future:
-`forze_inngest`). They live under the [Durable](durable.md) family alongside
+handlers, run registered functions with memoized steps on a platform worker
+([`forze_inngest`](../../integrations/inngest.md)). They live under the [Durable](durable.md) family alongside
 [durable workflow](durable-workflow.md) (Temporal).
 
 There is no `start()` command port—runs are triggered by **events** or **cron**
@@ -15,7 +15,7 @@ declared on `DurableFunctionSpec`.
 | Purpose | Names a logical event and its payload model (e.g. `app/invoice.paid`). |
 | Import path | `from forze.application.contracts.durable.function import DurableFunctionEventSpec` |
 | Required fields | `name`, `codec`. |
-| Common implementations | Future: Inngest client adapter. |
+| Common implementations | [`forze_inngest`](../../integrations/inngest.md) event adapter. |
 | Related dependency keys | `DurableFunctionEventCommandDepKey`. |
 
 ## `DurableFunctionEventCommandPort[M]`
@@ -78,3 +78,4 @@ Resolve via `DurableFunctionStepDepKey` (simple dep, not spec-routed).
 - [Durable workflow](durable-workflow.md)
 - [Queue](queue.md) — fire-and-forget messages without step memo
 - [Scheduled queue jobs](../../recipes/scheduled-queue-jobs.md)
+- [Inngest integration](../../integrations/inngest.md)

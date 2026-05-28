@@ -916,6 +916,9 @@ gcs = [
     { name = "gcloud-aio-storage" },
     { name = "python-magic" },
 ]
+inngest = [
+    { name = "inngest" },
+]
 mongo = [
     { name = "pymongo" },
 ]
@@ -1019,6 +1022,7 @@ requires-dist = [
     { name = "google-cloud-firestore", marker = "extra == 'firestore'", specifier = ">=2.21.0" },
     { name = "httpx", marker = "extra == 'fastapi'", specifier = ">=0.28.0" },
     { name = "hvac", extras = ["parser"], marker = "extra == 'vault'", specifier = ">=2.4.0" },
+    { name = "inngest", marker = "extra == 'inngest'", specifier = ">=0.5.18" },
     { name = "msgspec", specifier = ">=0.21.1" },
     { name = "neo4j", marker = "extra == 'neo4j'", specifier = ">=6.1.0" },
     { name = "opentelemetry-api", specifier = ">=1.39.0" },
@@ -1056,7 +1060,7 @@ requires-dist = [
     { name = "urllib3", marker = "extra == 'vault'", specifier = ">=2.7.0" },
     { name = "uvicorn", extras = ["standard"], marker = "extra == 'fastapi'", specifier = ">=0.42.0" },
 ]
-provides-extras = ["arango", "authn", "bigquery", "casbin", "clickhouse", "fastapi", "firestore", "gcs", "mongo", "neo4j", "oidc", "postgres", "rabbitmq", "redis", "s3", "socketio", "sqs", "temporal", "vault"]
+provides-extras = ["arango", "authn", "bigquery", "casbin", "clickhouse", "fastapi", "firestore", "gcs", "inngest", "mongo", "neo4j", "oidc", "postgres", "rabbitmq", "redis", "s3", "socketio", "sqs", "temporal", "vault"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -1621,6 +1625,30 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/72/34/14ca021ce8e5dfedc35312d08ba8bf51fdd999c576889fc2c24cb97f4f10/iniconfig-2.3.0.tar.gz", hash = "sha256:c76315c77db068650d49c5b56314774a7804df16fee4402c1f19d6d15d8c4730", size = 20503, upload-time = "2025-10-18T21:55:43.219Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/cb/b1/3846dd7f199d53cb17f49cba7e651e9ce294d8497c8c150530ed11865bb8/iniconfig-2.3.0-py3-none-any.whl", hash = "sha256:f631c04d2c48c52b84d0d0549c99ff3859c98df65b3101406327ecc7d53fbf12", size = 7484, upload-time = "2025-10-18T21:55:41.639Z" },
+]
+
+[[package]]
+name = "inngest"
+version = "0.5.18"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "httpx" },
+    { name = "jcs" },
+    { name = "pydantic" },
+    { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/c5/ce/56283a2f9d0ce80e47a37d4f66784f04b0067b668578205a4d09c206ccea/inngest-0.5.18.tar.gz", hash = "sha256:b41104ecd5bf3b733766db8107355f0edfbde42cff4b6196f1b6958f54155c88", size = 95297, upload-time = "2026-03-11T17:42:57.013Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/58/46/ffe9355a03da71b5a85f817da57f058fe98f33b883d8b201316a948e7c9e/inngest-0.5.18-py3-none-any.whl", hash = "sha256:7a584cb36448adfaa37e66192e545a30bad1bb5ec0ffd145b1126a8c72e4a0a6", size = 143711, upload-time = "2026-03-11T17:42:55.155Z" },
+]
+
+[[package]]
+name = "jcs"
+version = "0.2.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/47/e5/9d547f0d42ba00f68eec773aa7b2145e0c0335eb632cbaf519f480a429af/jcs-0.2.1.tar.gz", hash = "sha256:9f20360b2f3b0a410d65493b448f96306d80e37fb46283f3f4aa5db2c7c1472b", size = 6886, upload-time = "2022-04-10T14:41:24.904Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/c0/d4/9a99bc15266a842bd14a1913afdb05182888ebab035666c1ce8a64537ca2/jcs-0.2.1-py3-none-any.whl", hash = "sha256:e23a3e1de60f832d33cd811bb9c3b3be79219cdf95f63b88f0972732c3fa8476", size = 7603, upload-time = "2022-04-10T14:41:23.207Z" },
 ]
 
 [[package]]

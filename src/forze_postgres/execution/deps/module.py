@@ -7,6 +7,10 @@ from typing import Mapping, final
 
 import attrs
 
+from forze.application.contracts.analytics import (
+    AnalyticsIngestDepKey,
+    AnalyticsQueryDepKey,
+)
 from forze.application.contracts.document import (
     DocumentCommandDepKey,
     DocumentQueryDepKey,
@@ -26,6 +30,7 @@ from ...kernel.validate_tenancy import (
     validate_postgres_tenancy_wiring,
 )
 from .configs import (
+    PostgresAnalyticsConfig,
     PostgresDocumentConfig,
     PostgresFederatedSearchConfig,
     PostgresHubSearchConfig,
@@ -35,6 +40,7 @@ from .configs import (
     validate_postgres_federated_search_conf,
 )
 from .deps import (
+    ConfigurablePostgresAnalytics,
     ConfigurablePostgresDocument,
     ConfigurablePostgresFederatedSearch,
     ConfigurablePostgresHubSearch,
@@ -87,6 +93,9 @@ class PostgresDepsModule[K: str | StrEnum](DepsModule[K]):
 
     tx: set[K] | None = attrs.field(default=None)
     """Set of transaction routes to register."""
+
+    analytics: Mapping[K, PostgresAnalyticsConfig] | None = attrs.field(default=None)
+    """Mapping from analytics route names to their Postgres-specific configurations."""
 
     # ....................... #
 
@@ -172,6 +181,7 @@ class PostgresDepsModule[K: str | StrEnum](DepsModule[K]):
         hub_search_deps = Deps[K]()
         federated_search_deps = Deps[K]()
         tx_deps = Deps[K]()
+        analytics_deps = Deps[K]()
 
         if self.ro_documents:
             doc_deps = doc_deps.merge(
@@ -255,10 +265,28 @@ class PostgresDepsModule[K: str | StrEnum](DepsModule[K]):
                 )
             )
 
+        if self.analytics:
+            factory = ConfigurablePostgresAnalytics
+            analytics_deps = analytics_deps.merge(
+                Deps[K].routed(
+                    {
+                        AnalyticsQueryDepKey: {
+                            name: factory(config=config)
+                            for name, config in self.analytics.items()
+                        },
+                        AnalyticsIngestDepKey: {
+                            name: factory(config=config)
+                            for name, config in self.analytics.items()
+                        },
+                    }
+                )
+            )
+
         return plain_deps.merge(
             doc_deps,
             search_deps,
             tx_deps,
             hub_search_deps,
             federated_search_deps,
+            analytics_deps,
         )

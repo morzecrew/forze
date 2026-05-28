@@ -1,13 +1,11 @@
 """Optional recorder for runtime port and transaction events."""
 
-from __future__ import annotations
-
 from contextvars import ContextVar
 from typing import Protocol, final, runtime_checkable
 
 import attrs
 
-from forze.application.execution.tracing.buffer import RuntimeTrace
+from ..tracing import RuntimeTrace
 
 # ----------------------- #
 

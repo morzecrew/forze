@@ -2,13 +2,13 @@
 
 ## Page opening
 
-`forze_postgres` provides PostgreSQL-backed adapters for document storage, read-only projections, full-text/vector search, federated search, hub search, and transaction management. It keeps persistence code behind Forze contracts while using PostgreSQL tables, views, indexes, and connection pools at the infrastructure edge.
+`forze_postgres` provides PostgreSQL-backed adapters for document storage, read-only projections, full-text/vector search, federated search, hub search, transaction management, and optional analytics (warehouse-style named SQL). It keeps persistence code behind Forze contracts while using PostgreSQL tables, views, indexes, and connection pools at the infrastructure edge.
 
 | Topic | Details |
 |------|---------|
-| What it provides | A `PostgresClient`, lifecycle hooks, dependency module, document adapters, search adapters, an introspector, and a transaction manager. |
-| Supported Forze contracts | `DocumentQueryDepKey`, `DocumentCommandDepKey`, `SearchQueryDepKey`, `HubSearchQueryDepKey`, `FederatedSearchQueryDepKey`, and `TxManagerDepKey`. |
-| When to use it | Use this integration when PostgreSQL is the system of record, when projections/search indexes live in PostgreSQL, or when handlers need transaction boundaries around Postgres-backed adapters. |
+| What it provides | A `PostgresClient`, lifecycle hooks, dependency module, document adapters, search adapters, an introspector, a transaction manager, and optional `PostgresAnalyticsAdapter`. |
+| Supported Forze contracts | `DocumentQueryDepKey`, `DocumentCommandDepKey`, `SearchQueryDepKey`, `HubSearchQueryDepKey`, `FederatedSearchQueryDepKey`, `TxManagerDepKey`, and (when configured) `AnalyticsQueryDepKey` / `AnalyticsIngestDepKey`. |
+| When to use it | Use this integration when PostgreSQL is the system of record, when projections/search indexes live in PostgreSQL, when handlers need transaction boundaries around Postgres-backed adapters, or when pre-provisioned analytics tables/views are queried via `AnalyticsSpec` (not OLTP document aggregates). |
 
 <div class="d2-diagram">
   <img class="d2-light" src="/forze/assets/diagrams/light/document-cache-flow.svg" alt="Document read path with cache hit, cache miss, and database fallback">
@@ -178,6 +178,54 @@ Filters that drill into JSON/JSONB with nested `->` / `->>` paths are rendered a
 ### Retry/timeout behavior
 
 Connection recovery is bounded by `reconnect_timeout`. Query-level retries should be handled at handler or adapter-call boundaries only when the operation is safe to repeat. Use transactions for multi-step writes that must commit atomically.
+
+## Analytics
+
+Use analytics when handlers need **named, parameterized SQL** against pre-provisioned tables or materialized views (warehouse-style reads and optional small batch append). This is separate from `DocumentQueryPort` OLTP aggregates.
+
+1. Declare `AnalyticsSpec` routes and named queries in application code.
+2. Map each route in `PostgresDepsModule.analytics` to SQL templates and optional `ingest_table`.
+3. Resolve ports from `ExecutionContext`; do not import adapters in handlers.
+
+`PostgresAnalyticsAdapter` implements `AnalyticsQueryPort` and, when configured, `AnalyticsIngestPort` on the same adapter instance.
+
+### Analytics configuration
+
+Physical mapping lives on `PostgresDepsModule.analytics`, keyed by `AnalyticsSpec.name`:
+
+| Field | Purpose |
+|-------|---------|
+| `schema` | Schema for `ingest_table` (default `public`). Query SQL should use qualified `schema.table` names as needed. |
+| `queries` | Map of `query_key` → `{ "sql": "...", "skip_total"?: bool, "cursor_column"?: str }`. Keys must match `AnalyticsSpec.queries`. |
+| `ingest_table` | Table name for `append` (required when `AnalyticsSpec.ingest` is set). |
+| `max_append_rows` | Cap per `append` call (default 10_000). |
+
+### SQL templates
+
+Use **psycopg named placeholders** `%(param)s` bound from each query’s Pydantic params model (`model_dump()`). For keyset cursors, set `cursor_column` on the query config and include `%(forze_after)s` in the SQL predicate.
+
+    :::python
+    PostgresDepsModule(
+        client=pg,
+        analytics={
+            "events": {
+                "schema": "public",
+                "queries": {
+                    "daily": {
+                        "sql": (
+                            "SELECT event, value FROM public.metrics "
+                            "WHERE day = %(day)s"
+                        ),
+                    },
+                },
+                "ingest_table": "metrics_raw",
+            },
+        },
+    )
+
+Pass `AnalyticsRunOptions` (`dry_run`, `max_rows`, `timeout`) per request. When `timeout` is set, the adapter applies `SET LOCAL statement_timeout` for that query. `dry_run` returns empty pages without executing SQL.
+
+See [Analytics contracts](../core-package/contracts/analytics.md).
 
 ## Operational notes
 

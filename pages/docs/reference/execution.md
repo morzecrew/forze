@@ -133,6 +133,8 @@ Enable runtime tracing on the plan:
 
 Or set `FORZE_RUNTIME_TRACE=1` (or `true` / `yes`) before `plan.build()` (unless `build(trace_runtime=False)` overrides env). Recording is handled by `RuntimeTracer` on `Deps` (`runtime_tracer`).
 
+Root transaction scope boundaries use `TxTracer` on `TransactionContext`, wired from `ExecutionContext` via `tx_tracer_from_runtime(deps.runtime_tracer)` when runtime tracing is enabled — no separate flag. Only root `ctx.tx.scope(...)` enter/exit is recorded (nested scopes do not emit extra tx events).
+
 While a handler runs, Forze records transaction scope boundaries and **configurable port** calls (via `Deps.resolve_configurable`) at the coordinator boundary — internal gateway reads after writes are not traced.
 
 Read the current task's sequence with `deps.runtime_trace()` and log-friendly lines via `trace.format_lines()`. Pass an integration-specific validator to `validate_runtime_trace(trace, validator=...)` — for example Firestore's `validate_reads_before_writes_in_tx` from `forze_firestore.execution.trace_validation`, which flags `document_query` reads after `document_command` writes in the same transaction segment (reads after `tx.exit` are allowed). Use `on_violation="raise"` or `assert_runtime_trace_valid(trace, validator)` for test failures with a full report.

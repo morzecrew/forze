@@ -1,7 +1,5 @@
 """Optional recorder for observed dependency resolution edges."""
 
-from __future__ import annotations
-
 from contextvars import ContextVar
 from typing import Protocol, final, runtime_checkable
 
