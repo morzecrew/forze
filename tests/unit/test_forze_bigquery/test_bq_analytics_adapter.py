@@ -13,7 +13,10 @@ from forze.application.contracts.analytics import (
 )
 from forze.application.contracts.base import CountlessPage, Page
 from forze_bigquery.adapters import BigQueryAnalyticsAdapter
-from forze_bigquery.execution.deps.configs import BigQueryAnalyticsConfig
+from forze_bigquery.execution.deps.configs import (
+    BigQueryAnalyticsConfig,
+    BigQueryQueryConfig,
+)
 from forze_bigquery.kernel.platform.value_objects import (
     BigQueryInsertResult,
     BigQueryQueryResult,
@@ -39,11 +42,15 @@ def _adapter(mock: Any) -> BigQueryAnalyticsAdapter[_Row, _Ingest]:
         queries={"counts": AnalyticsQueryDefinition(params=_Params)},
         ingest=_Ingest,
     )
-    config: BigQueryAnalyticsConfig = {
-        "dataset": "analytics",
-        "queries": {"counts": {"sql": "SELECT value FROM t WHERE day = @day"}},
-        "ingest_table": "events_raw",
-    }
+    config = BigQueryAnalyticsConfig(
+        dataset="analytics",
+        queries={
+            "counts": BigQueryQueryConfig(
+                sql="SELECT value FROM t WHERE day = @day",
+            ),
+        },
+        ingest_table="events_raw",
+    )
     return BigQueryAnalyticsAdapter(client=mock, spec=spec, config=config)
 
 
@@ -132,16 +139,16 @@ async def test_run_cursor_exposes_next_token() -> None:
 @pytest.mark.asyncio
 async def test_run_page_skip_total_skips_count_query() -> None:
     mock = _MockClient()
-    config: BigQueryAnalyticsConfig = {
-        "dataset": "analytics",
-        "queries": {
-            "counts": {
-                "sql": "SELECT value FROM t WHERE day = @day",
-                "skip_total": True,
-            },
+    config = BigQueryAnalyticsConfig(
+        dataset="analytics",
+        queries={
+            "counts": BigQueryQueryConfig(
+                sql="SELECT value FROM t WHERE day = @day",
+                skip_total=True,
+            ),
         },
-        "ingest_table": "events_raw",
-    }
+        ingest_table="events_raw",
+    )
     spec = AnalyticsSpec(
         name="events",
         read=_Row,

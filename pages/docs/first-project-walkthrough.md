@@ -101,6 +101,7 @@ The runtime has two parts: a **dependency plan** that assembles the container an
         PostgresClient,
         PostgresConfig,
         PostgresDepsModule,
+        PostgresDocumentConfig,
         postgres_lifecycle_step,
     )
     from forze_redis import (
@@ -117,12 +118,12 @@ The runtime has two parts: a **dependency plan** that assembles the container an
     postgres_module = PostgresDepsModule(
         client=postgres_client,
         rw_documents={
-            "projects": {
-                "read": ("public", "projects"),
-                "write": ("public", "projects"),
-                "bookkeeping_strategy": "database",
-                "history": ("public", "projects_history"),
-            },
+            "projects": PostgresDocumentConfig(
+                read=("public", "projects"),
+                write=("public", "projects"),
+                bookkeeping_strategy="database",
+                history=("public", "projects_history"),
+            ),
         },
         tx={"default"},
     )
@@ -294,6 +295,7 @@ Optionally add a history table for audit trails:
         PostgresClient,
         PostgresConfig,
         PostgresDepsModule,
+        PostgresDocumentConfig,
         postgres_lifecycle_step,
     )
     from forze_redis import (
@@ -346,12 +348,12 @@ Optionally add a history table for audit trails:
                 PostgresDepsModule(
                     client=pg,
                     rw_documents={
-                        "projects": {
-                            "read": ("public", "projects"),
-                            "write": ("public", "projects"),
-                            "bookkeeping_strategy": "database",
-                            "history": ("public", "projects_history"),
-                        },
+                        "projects": PostgresDocumentConfig(
+                            read=("public", "projects"),
+                            write=("public", "projects"),
+                            bookkeeping_strategy="database",
+                            history=("public", "projects_history"),
+                        ),
                     },
                     tx={"default"},
                 )(),

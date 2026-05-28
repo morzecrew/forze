@@ -15,7 +15,7 @@ from forze.application.contracts.document import (
 from forze.application.contracts.transaction.deps import TransactionManagerDepKey
 from forze.application.execution import Deps, ExecutionContext
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
-from forze_postgres.execution.deps.deps import (
+from forze_postgres.execution.deps import (
     ConfigurablePostgresDocument,
     postgres_txmanager,
 )
@@ -25,6 +25,7 @@ from forze_postgres.execution.deps.keys import (
 )
 from forze_postgres.kernel.catalog.introspect import PostgresIntrospector
 from forze_postgres.kernel.client.client import PostgresClient
+from forze_postgres.execution.deps.configs import PostgresDocumentConfig
 
 class _Doc(Document):
     title: str
@@ -40,11 +41,11 @@ class _Read(ReadDocument):
 
 def _execution_context(pg_client: PostgresClient, table: str) -> ExecutionContext:
     doc = ConfigurablePostgresDocument(
-        config={
-            "read": ("public", table),
-            "write": ("public", table),
-            "bookkeeping_strategy": "application",
-        }
+        config=PostgresDocumentConfig(
+            read=("public", table),
+            write=("public", table),
+            bookkeeping_strategy="application",
+        )
     )
     plain = Deps.plain(
         {

@@ -12,6 +12,10 @@ from forze.application.contracts.document import (
 from forze.application.execution import Deps, ExecutionContext
 from forze.base.exceptions import CoreException
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
+from forze_firestore.execution.deps.configs import (
+    FirestoreDocumentConfig,
+    FirestoreReadOnlyDocumentConfig,
+)
 from forze_firestore.execution.deps.deps import (
     ConfigurableFirestoreDocument,
     ConfigurableFirestoreReadOnlyDocument,
@@ -53,7 +57,7 @@ async def test_read_only_document_query_without_writes(
         },
     )
     factory = ConfigurableFirestoreReadOnlyDocument(
-        config={"read": ("(default)", collection)},
+        config=FirestoreReadOnlyDocumentConfig(read=("(default)", collection)),
     )
     ctx = ExecutionContext(
         deps=Deps.plain(
@@ -65,10 +69,10 @@ async def test_read_only_document_query_without_writes(
     )
 
     writable = ConfigurableFirestoreDocument(
-        config={
-            "read": ("(default)", collection),
-            "write": ("(default)", collection),
-        },
+        config=FirestoreDocumentConfig(
+            read=("(default)", collection),
+            write=("(default)", collection),
+        ),
     )
     seed_ctx = ExecutionContext(
         deps=Deps.plain(

@@ -22,9 +22,14 @@ from forze_postgres.adapters.search.federated import (
     PostgresFederatedSearchAdapter,
 )
 from forze_postgres.execution.deps.configs import (
-    validate_postgres_federated_search_conf,
+    PostgresFederatedSearchConfig,
+    PostgresFederatedSearchLegHub,
+    PostgresFederatedSearchLegSearch,
+    PostgresHubSearchConfig,
+    PostgresHubSearchMemberConfig,
+    PostgresSearchConfig,
 )
-from forze_postgres.execution.deps.deps import ConfigurablePostgresFederatedSearch
+from forze_postgres.execution.deps import ConfigurablePostgresFederatedSearch
 
 # ----------------------- #
 
@@ -86,48 +91,50 @@ def test_weighted_rrf_skips_non_positive_weight_leg() -> None:
     assert only[0][0].member == "b"
 
 
-def test_validate_postgres_federated_search_conf_requires_two_members() -> None:
+def test_postgres_federated_search_config_requires_two_members() -> None:
     with pytest.raises(CoreException, match="at least two"):
-        validate_postgres_federated_search_conf(
-            {
-                "members": {
-                    "a": {
-                        "index": ("public", "i"),
-                        "read": ("public", "r"),
-                        "engine": "pgroonga",
-                    },
-                },
+        PostgresFederatedSearchConfig(
+            members={
+                "a": PostgresFederatedSearchLegSearch(
+                    search=PostgresSearchConfig(
+                        index=("public", "i"),
+                        read=("public", "r"),
+                        engine="pgroonga",
+                    ),
+                ),
             },
         )
 
 
-def test_validate_postgres_federated_search_conf_accepts_embedded_hub_member() -> None:
-    validate_postgres_federated_search_conf(
-        {
-            "members": {
-                "hub": {
-                    "hub": ("public", "hub_v"),
-                    "members": {
-                        "in_a": {
-                            "index": ("public", "i_a"),
-                            "read": ("public", "r_a"),
-                            "engine": "pgroonga",
-                            "hub_fk": "a_id",
-                        },
-                        "in_b": {
-                            "index": ("public", "i_b"),
-                            "read": ("public", "r_b"),
-                            "engine": "pgroonga",
-                            "hub_fk": "b_id",
-                        },
+def test_postgres_federated_search_config_accepts_embedded_hub_member() -> None:
+    PostgresFederatedSearchConfig(
+        members={
+            "hub": PostgresFederatedSearchLegHub(
+                hub=PostgresHubSearchConfig(
+                    hub=("public", "hub_v"),
+                    members={
+                        "in_a": PostgresHubSearchMemberConfig(
+                            index=("public", "i_a"),
+                            read=("public", "r_a"),
+                            engine="pgroonga",
+                            hub_fk="a_id",
+                        ),
+                        "in_b": PostgresHubSearchMemberConfig(
+                            index=("public", "i_b"),
+                            read=("public", "r_b"),
+                            engine="pgroonga",
+                            hub_fk="b_id",
+                        ),
                     },
-                },
-                "flat": {
-                    "index": ("public", "i_f"),
-                    "read": ("public", "r_f"),
-                    "engine": "pgroonga",
-                },
-            },
+                ),
+            ),
+            "flat": PostgresFederatedSearchLegSearch(
+                search=PostgresSearchConfig(
+                    index=("public", "i_f"),
+                    read=("public", "r_f"),
+                    engine="pgroonga",
+                ),
+            ),
         },
     )
 
@@ -420,21 +427,25 @@ async def test_federated_search_applies_sorts_on_merged_field() -> None:
     assert {row.hit.id for row in page.hits} == {1, 2, 3}
 
 
-def _two_member_pgroonga_config() -> dict[str, object]:
-    return {
-        "members": {
-            "a": {
-                "index": ("public", "i_a"),
-                "read": ("public", "r_a"),
-                "engine": "pgroonga",
-            },
-            "b": {
-                "index": ("public", "i_b"),
-                "read": ("public", "r_b"),
-                "engine": "pgroonga",
-            },
+def _two_member_pgroonga_config() -> PostgresFederatedSearchConfig:
+    return PostgresFederatedSearchConfig(
+        members={
+            "a": PostgresFederatedSearchLegSearch(
+                search=PostgresSearchConfig(
+                    index=("public", "i_a"),
+                    read=("public", "r_a"),
+                    engine="pgroonga",
+                ),
+            ),
+            "b": PostgresFederatedSearchLegSearch(
+                search=PostgresSearchConfig(
+                    index=("public", "i_b"),
+                    read=("public", "r_b"),
+                    engine="pgroonga",
+                ),
+            ),
         },
-    }
+    )
 
 
 def _federated_exec_context() -> MagicMock:
@@ -455,40 +466,49 @@ def test_configurable_federated_search_resolves_members() -> None:
 
 def test_configurable_federated_search_member_missing_in_config() -> None:
     factory = ConfigurablePostgresFederatedSearch(
-        config={
-            "members": {
-                "x": {
-                    "index": ("public", "i_x"),
-                    "read": ("public", "r_x"),
-                    "engine": "pgroonga",
-                },
-                "y": {
-                    "index": ("public", "i_y"),
-                    "read": ("public", "r_y"),
-                    "engine": "pgroonga",
-                },
+        config=PostgresFederatedSearchConfig(
+            members={
+                "x": PostgresFederatedSearchLegSearch(
+                    search=PostgresSearchConfig(
+                        index=("public", "i_x"),
+                        read=("public", "r_x"),
+                        engine="pgroonga",
+                    ),
+                ),
+                "y": PostgresFederatedSearchLegSearch(
+                    search=PostgresSearchConfig(
+                        index=("public", "i_y"),
+                        read=("public", "r_y"),
+                        engine="pgroonga",
+                    ),
+                ),
             },
-        },
+        ),
     )
     with pytest.raises(CoreException, match="Member 'a' not found"):
         factory(_federated_exec_context(), _fed())
 
 
-def test_configurable_federated_search_rejects_unknown_engine() -> None:
-    cfg = _two_member_pgroonga_config()
-    members = dict(cfg["members"])
-    members["a"] = {**members["a"], "engine": "unknown"}
-    factory = ConfigurablePostgresFederatedSearch(config={"members": members})
-    with pytest.raises(CoreException, match="not supported"):
-        factory(_federated_exec_context(), _fed())
-
-
 def test_configurable_federated_search_fts_requires_groups() -> None:
-    cfg = _two_member_pgroonga_config()
-    members = {k: {**v, "engine": "fts"} for k, v in dict(cfg["members"]).items()}
-    factory = ConfigurablePostgresFederatedSearch(config={"members": members})
-    with pytest.raises(CoreException, match="fts_groups"):
-        factory(_federated_exec_context(), _fed())
+    with pytest.raises(CoreException, match="FTS groups are required"):
+        PostgresFederatedSearchConfig(
+            members={
+                "a": PostgresFederatedSearchLegSearch(
+                    search=PostgresSearchConfig(
+                        index=("public", "i_a"),
+                        read=("public", "r_a"),
+                        engine="fts",
+                    ),
+                ),
+                "b": PostgresFederatedSearchLegSearch(
+                    search=PostgresSearchConfig(
+                        index=("public", "i_b"),
+                        read=("public", "r_b"),
+                        engine="fts",
+                    ),
+                ),
+            },
+        )
 
 
 def _fed_hub_and_flat() -> FederatedSearchSpec[_Hit]:
@@ -508,33 +528,37 @@ def _fed_hub_and_flat() -> FederatedSearchSpec[_Hit]:
     )
 
 
-def _federated_config_hub_and_flat() -> dict[str, object]:
-    return {
-        "members": {
-            "hub": {
-                "hub": ("public", "hub_v"),
-                "members": {
-                    "in_a": {
-                        "index": ("public", "i_a"),
-                        "read": ("public", "r_a"),
-                        "engine": "pgroonga",
-                        "hub_fk": "a_id",
+def _federated_config_hub_and_flat() -> PostgresFederatedSearchConfig:
+    return PostgresFederatedSearchConfig(
+        members={
+            "hub": PostgresFederatedSearchLegHub(
+                hub=PostgresHubSearchConfig(
+                    hub=("public", "hub_v"),
+                    members={
+                        "in_a": PostgresHubSearchMemberConfig(
+                            index=("public", "i_a"),
+                            read=("public", "r_a"),
+                            engine="pgroonga",
+                            hub_fk="a_id",
+                        ),
+                        "in_b": PostgresHubSearchMemberConfig(
+                            index=("public", "i_b"),
+                            read=("public", "r_b"),
+                            engine="pgroonga",
+                            hub_fk="b_id",
+                        ),
                     },
-                    "in_b": {
-                        "index": ("public", "i_b"),
-                        "read": ("public", "r_b"),
-                        "engine": "pgroonga",
-                        "hub_fk": "b_id",
-                    },
-                },
-            },
-            "flat": {
-                "index": ("public", "i_f"),
-                "read": ("public", "r_f"),
-                "engine": "pgroonga",
-            },
+                ),
+            ),
+            "flat": PostgresFederatedSearchLegSearch(
+                search=PostgresSearchConfig(
+                    index=("public", "i_f"),
+                    read=("public", "r_f"),
+                    engine="pgroonga",
+                ),
+            ),
         },
-    }
+    )
 
 
 def test_configurable_federated_search_resolves_hub_member() -> None:
@@ -549,46 +573,51 @@ def test_configurable_federated_search_hub_member_requires_embedded_hub_config()
     None
 ):
     cfg = _two_member_pgroonga_config()
-    members = dict(cfg["members"])
+    members = dict(cfg.members)
     factory = ConfigurablePostgresFederatedSearch(
-        config={
-            "members": {
+        config=PostgresFederatedSearchConfig(
+            members={
                 "hub": members["a"],
                 "flat": members["b"],
             },
-        },
+        ),
     )
-    with pytest.raises(CoreException, match="'hub' and 'members'"):
+    with pytest.raises(CoreException, match="PostgresFederatedSearchLegHub"):
         factory(_federated_exec_context(), _fed_hub_and_flat())
 
 
 def test_configurable_federated_search_searchspec_rejects_hub_shaped_config() -> None:
-    cfg = {
-        "members": {
-            "a": {
-                "hub": ("public", "hub_v"),
-                "members": {
-                    "in_a": {
-                        "index": ("public", "i_a"),
-                        "read": ("public", "r_a"),
-                        "engine": "pgroonga",
-                        "hub_fk": "x",
-                    },
-                    "in_b": {
-                        "index": ("public", "i_b"),
-                        "read": ("public", "r_b"),
-                        "engine": "pgroonga",
-                        "hub_fk": "y",
-                    },
-                },
+    factory = ConfigurablePostgresFederatedSearch(
+        config=PostgresFederatedSearchConfig(
+            members={
+                "a": PostgresFederatedSearchLegHub(
+                    hub=PostgresHubSearchConfig(
+                        hub=("public", "hub_v"),
+                        members={
+                            "in_a": PostgresHubSearchMemberConfig(
+                                index=("public", "i_a"),
+                                read=("public", "r_a"),
+                                engine="pgroonga",
+                                hub_fk="x",
+                            ),
+                            "in_b": PostgresHubSearchMemberConfig(
+                                index=("public", "i_b"),
+                                read=("public", "r_b"),
+                                engine="pgroonga",
+                                hub_fk="y",
+                            ),
+                        },
+                    ),
+                ),
+                "b": PostgresFederatedSearchLegSearch(
+                    search=PostgresSearchConfig(
+                        index=("public", "i_b"),
+                        read=("public", "r_b"),
+                        engine="pgroonga",
+                    ),
+                ),
             },
-            "b": {
-                "index": ("public", "i_b"),
-                "read": ("public", "r_b"),
-                "engine": "pgroonga",
-            },
-        },
-    }
-    factory = ConfigurablePostgresFederatedSearch(config=cfg)
-    with pytest.raises(CoreException, match="looks like an embedded hub"):
+        ),
+    )
+    with pytest.raises(CoreException, match="not a HubSearchSpec"):
         factory(_federated_exec_context(), _fed())

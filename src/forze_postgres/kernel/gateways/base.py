@@ -27,13 +27,17 @@ from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
 from forze.base.serialization import pydantic_field_names, pydantic_validate
 from forze.domain.constants import ID_FIELD
-
 from forze_postgres.kernel.catalog.introspect import (
     PostgresColumnTypes,
     PostgresIntrospector,
     PostgresType,
 )
 from forze_postgres.kernel.client import PostgresClientPort
+from forze_postgres.kernel.relation import (
+    RelationSpec,
+    is_static_relation,
+    resolve_postgres_qname,
+)
 from forze_postgres.kernel.sql.query import PsycopgQueryRenderer
 from forze_postgres.kernel.sql.query.nested import sort_key_expr
 from forze_postgres.kernel.sql.query.render import PsycopgValueCoercer
@@ -108,8 +112,15 @@ class PostgresQualifiedName:
 class PostgresGateway[M: BaseModel](TenancyMixin):
     """Base gateway providing shared query-building helpers for a single Postgres relation."""
 
-    source_qname: PostgresQualifiedName
-    """Source Postgres qualified name (schema, relation)."""
+    relation: RelationSpec
+    """Static ``(schema, relation)`` or tenant-scoped resolver."""
+
+    _qname_resolved: PostgresQualifiedName | None = attrs.field(
+        default=None,
+        init=False,
+        eq=False,
+        repr=False,
+    )
 
     client: PostgresClientPort
     """Shared :class:`~forze_postgres.kernel.client.PostgresClientPort` instance."""
@@ -177,6 +188,56 @@ class PostgresGateway[M: BaseModel](TenancyMixin):
 
     def ident_tenant_id(self) -> sql.Composable:
         return sql.Identifier(TENANT_ID_FIELD)
+
+    # ....................... #
+
+    def _tenant_id_for_resolve(self) -> UUID | None:
+        if self.tenant_provider is None:
+            return None
+
+        tenant = self.tenant_provider()
+
+        if tenant is None:
+            if self.tenant_aware:
+                return self.require_tenant_if_aware()
+
+            return None
+
+        return tenant.tenant_id
+
+    # ....................... #
+
+    async def _qname(self) -> PostgresQualifiedName:
+        if self._qname_resolved is not None:
+            return self._qname_resolved
+
+        resolved = await resolve_postgres_qname(
+            self.relation,
+            self._tenant_id_for_resolve(),
+        )
+        object.__setattr__(self, "_qname_resolved", resolved)
+
+        return resolved
+
+    # ....................... #
+
+    @property
+    def source_qname(self) -> PostgresQualifiedName:
+        """Best-effort sync access when :attr:`relation` is a static tuple.
+
+        Search adapters and legacy call sites use this for static configs. Dynamic
+        resolvers require :meth:`_qname` on async paths.
+        """
+
+        if self._qname_resolved is not None:
+            return self._qname_resolved
+
+        if is_static_relation(self.relation):
+            return PostgresQualifiedName(*self.relation)
+
+        raise exc.internal(
+            "source_qname is only available for static relations; use await _qname()",
+        )
 
     # ....................... #
     #! We need introspection to make sure of tenancy compatibility
@@ -337,9 +398,11 @@ class PostgresGateway[M: BaseModel](TenancyMixin):
     # ....................... #
 
     async def column_types(self) -> PostgresColumnTypes:
+        qname = await self._qname()
+
         return await self.introspector.get_column_types(
-            schema=self.source_qname.schema,
-            relation=self.source_qname.name,
+            schema=qname.schema,
+            relation=qname.name,
         )
 
     # ....................... #
@@ -426,9 +489,10 @@ class PostgresGateway[M: BaseModel](TenancyMixin):
         where, params = self._add_tenant_where(where, params)  # type: ignore[assignment]
         lock_sql = sql.SQL(" FOR UPDATE") if for_update else sql.SQL("")
 
+        qname = await self._qname()
         stmt = sql.SQL("SELECT {ret} FROM {table} WHERE {where}{lock}").format(
             ret=self.return_clause(),
-            table=self.source_qname.ident(),
+            table=qname.ident(),
             where=where,
             lock=lock_sql,
         )
@@ -466,9 +530,10 @@ class PostgresGateway[M: BaseModel](TenancyMixin):
         where, params = self._add_tenant_where(where, params)  # type: ignore[assignment]
         lock_sql = sql.SQL(" FOR UPDATE") if for_update else sql.SQL("")
 
+        qname = await self._qname()
         stmt = sql.SQL("SELECT {ret} FROM {table} WHERE {where}{lock}").format(
             ret=self.return_clause(),
-            table=self.source_qname.ident(),
+            table=qname.ident(),
             where=where,
             lock=lock_sql,
         )

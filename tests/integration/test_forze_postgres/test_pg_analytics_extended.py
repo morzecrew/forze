@@ -11,6 +11,7 @@ from forze.application.contracts.analytics import (
 )
 from forze.application.contracts.base import CountlessPage, Page
 from forze_postgres.adapters.analytics import PostgresAnalyticsAdapter
+from forze_postgres.execution.deps.configs import PostgresAnalyticsConfig, PostgresQueryConfig
 from forze_postgres.kernel.client import PostgresClient
 
 pytestmark = pytest.mark.integration
@@ -53,21 +54,21 @@ def _adapter(
         "WHERE value >= %(min_value)s"
     )
     ordered_sql = f"SELECT event, value FROM public.{table_id} ORDER BY event"
-    queries: dict[str, dict[str, object]] = {
-        "filtered": {"sql": filtered_sql},
-        "ordered": {"sql": ordered_sql},
-    }
-    if skip_total:
-        queries["filtered"]["skip_total"] = True
 
     return PostgresAnalyticsAdapter(
         client=client,
         spec=_spec(),
-        config={
-            "schema": "public",
-            "queries": queries,
-            "ingest_table": table_id,
-        },
+        config=PostgresAnalyticsConfig(
+            schema="public",
+            queries={
+                "filtered": PostgresQueryConfig(
+                    sql=filtered_sql,
+                    skip_total=skip_total,
+                ),
+                "ordered": PostgresQueryConfig(sql=ordered_sql),
+            },
+            ingest_table=table_id,
+        ),
     )
 
 

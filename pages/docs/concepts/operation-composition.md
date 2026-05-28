@@ -132,3 +132,5 @@ Custom handlers plug into the same registry:
         lambda ctx: ArchiveProject(doc=ctx.document.command(project_spec)),
         override=True,
     )
+
+Kernel document operations use `DocumentKernelOp` suffixes (`GET`, `CREATE`, `LIST_CURSOR`, …). See [Application layer — Document operations](application-layer.md#document-operations) for the full table. Lifecycle and dependency wiring for the runtime scope are documented in [Application layer — Lifecycle plan](application-layer.md#lifecycle-plan) and [Execution](../reference/execution.md#lifecycle).

@@ -11,6 +11,7 @@ from forze.application.execution import Deps, ExecutionContext
 from forze.base.serialization import PydanticRecordMappingCodec
 from forze_sqs.adapters import SQSQueueAdapter
 from forze_sqs.execution.deps import SQSClientDepKey, SQSDepsModule
+from forze_sqs.execution.deps.configs import SQSQueueConfig
 from forze_sqs.execution.deps.deps import (
     ConfigurableSQSQueueRead,
     ConfigurableSQSQueueWrite,
@@ -32,7 +33,7 @@ def test_sqs_queue_factory_builds_adapter() -> None:
     )
 
     reader = ConfigurableSQSQueueRead(
-        config={"namespace": "events", "tenant_aware": False},
+        config=SQSQueueConfig(namespace="events", tenant_aware=False),
     )
     queue = reader(context, spec)
 
@@ -42,7 +43,7 @@ def test_sqs_queue_factory_builds_adapter() -> None:
     assert queue.namespace == "events"
 
     writer = ConfigurableSQSQueueWrite(
-        config={"namespace": "events", "tenant_aware": False},
+        config=SQSQueueConfig(namespace="events", tenant_aware=False),
     )
     assert isinstance(writer(context, spec), SQSQueueAdapter)
 
@@ -51,8 +52,8 @@ def test_sqs_deps_module_registers_expected_keys() -> None:
     client = Mock(spec=SQSClient)
     module = SQSDepsModule(
         client=client,
-        queue_readers={"events": {"namespace": "ns"}},
-        queue_writers={"events": {"namespace": "ns"}},
+        queue_readers={"events": SQSQueueConfig(namespace="ns")},
+        queue_writers={"events": SQSQueueConfig(namespace="ns")},
     )
 
     deps = module()

@@ -33,7 +33,7 @@ class MeilisearchSearchCommandAdapter[M: BaseModel](
 
     @property
     def _wait_tasks(self) -> bool:
-        return bool(self.config.get("wait_for_tasks", True))
+        return self.config.wait_for_tasks
 
     # ....................... #
 
@@ -47,7 +47,7 @@ class MeilisearchSearchCommandAdapter[M: BaseModel](
     # ....................... #
 
     def _searchable_attributes(self) -> list[str]:
-        configured = self.config.get("searchable_attributes")
+        configured = self.config.searchable_attributes
 
         if configured is not None:
             return [self.physical_path(f) for f in configured]
@@ -55,7 +55,7 @@ class MeilisearchSearchCommandAdapter[M: BaseModel](
         return self.physical_paths(self.spec.fields)
 
     def _filterable_attributes(self) -> list[str]:
-        configured = self.config.get("filterable_attributes")
+        configured = self.config.filterable_attributes
 
         attrs_list = (
             [self.physical_path(f) for f in configured]
@@ -78,7 +78,7 @@ class MeilisearchSearchCommandAdapter[M: BaseModel](
         return attrs_list
 
     def _sortable_attributes(self) -> list[str]:
-        configured = self.config.get("sortable_attributes")
+        configured = self.config.sortable_attributes
 
         if configured is not None:
             return [self.physical_path(f) for f in configured]
@@ -100,7 +100,7 @@ class MeilisearchSearchCommandAdapter[M: BaseModel](
             primary_key=self.primary_key,
         )
 
-        rules = self.config.get("ranking_rules")
+        rules = self.config.ranking_rules
 
         settings = MeilisearchSettings(
             searchable_attributes=self._searchable_attributes(),

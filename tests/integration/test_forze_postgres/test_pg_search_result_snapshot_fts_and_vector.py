@@ -25,13 +25,15 @@ from forze_postgres.adapters.search import (
     PostgresVectorSearchAdapter,
 )
 from forze_postgres.adapters.search._vector_sql import vector_param_literal
-from forze_postgres.execution.deps.deps import ConfigurablePostgresSearch
+from forze_postgres.execution.deps import ConfigurablePostgresSearch
+from forze_postgres.execution.deps.configs import PostgresSearchConfig
 from forze_postgres.execution.deps.keys import (
     PostgresClientDepKey,
     PostgresIntrospectorDepKey,
 )
 from forze_postgres.kernel.catalog.introspect import PostgresIntrospector
 from forze_postgres.kernel.client.client import PostgresClient
+from forze_redis.execution.deps.configs import RedisSearchResultSnapshotConfig
 from forze_redis.execution.deps.deps import ConfigurableRedisSearchResultSnapshot
 from forze_redis.execution.deps.keys import RedisClientDepKey
 from forze_redis.kernel.platform.client import RedisClient
@@ -70,19 +72,19 @@ def _exec_fts(
                 PostgresIntrospectorDepKey: PostgresIntrospector(client=pg_client),
                 RedisClientDepKey: redis_client,
                 SearchResultSnapshotDepKey: ConfigurableRedisSearchResultSnapshot(
-                    config={"namespace": ns},
+                    config=RedisSearchResultSnapshotConfig(namespace=ns),
                 ),
                 SearchQueryDepKey: ConfigurablePostgresSearch(
-                    config={
-                        "index": ("public", index_name),
-                        "read": ("public", table),
-                        "heap": ("public", table),
-                        "engine": "fts",
-                        "fts_groups": {
+                    config=PostgresSearchConfig(
+                        index=("public", index_name),
+                        read=("public", table),
+                        heap=("public", table),
+                        engine="fts",
+                        fts_groups={
                             "A": ("title",),
                             "B": ("content",),
                         },
-                    }
+                    )
                 ),
             }
         )
@@ -192,20 +194,20 @@ async def test_vector_v2_result_snapshot_reread(
                 ),
                 RedisClientDepKey: redis_client,
                 SearchResultSnapshotDepKey: ConfigurableRedisSearchResultSnapshot(
-                    config={"namespace": ns},
+                    config=RedisSearchResultSnapshotConfig(namespace=ns),
                 ),
                 EmbeddingsProviderDepKey: _embeddings_factory,
                 SearchQueryDepKey: ConfigurablePostgresSearch(
-                    config={
-                        "index": ("public", index_name),
-                        "read": ("public", table),
-                        "heap": ("public", table),
-                        "engine": "vector",
-                        "vector_column": "emb",
-                        "vector_distance": "l2",
-                        "embeddings_name": "vec_rss",
-                        "embedding_dimensions": 3,
-                    }
+                    config=PostgresSearchConfig(
+                        index=("public", index_name),
+                        read=("public", table),
+                        heap=("public", table),
+                        engine="vector",
+                        vector_column="emb",
+                        vector_distance="l2",
+                        embeddings_name="vec_rss",
+                        embedding_dimensions=3,
+                    )
                 ),
             }
         )

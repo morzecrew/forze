@@ -15,6 +15,7 @@ from forze.application.execution import Deps, ExecutionContext
 from forze.domain.constants import ID_FIELD
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
 from forze_mock import MockCacheAdapter, MockState, MockStateDepKey
+from forze_mongo.execution.deps import MongoDocumentConfig
 from forze_mongo.execution.deps.deps import ConfigurableMongoDocument, mongo_txmanager
 from forze_mongo.execution.deps.keys import MongoClientDepKey
 from forze_mongo.kernel.platform import MongoClient
@@ -53,7 +54,7 @@ async def _ctx_cached(
         cache=cache_spec,
     )
     fac = ConfigurableMongoDocument(
-        config={"read": (db, collection), "write": (db, collection)}
+        config=MongoDocumentConfig(read=(db, collection), write=(db, collection))
     )
     state = MockState()
 
@@ -93,7 +94,7 @@ async def _ctx_cached_tx(
         cache=cache_spec,
     )
     fac = ConfigurableMongoDocument(
-        config={"read": (db, collection), "write": (db, collection)}
+        config=MongoDocumentConfig(read=(db, collection), write=(db, collection))
     )
     state = MockState()
 
@@ -131,7 +132,9 @@ async def test_mongo_adapter_cursor_prev_next_and_desc(
             "update_cmd": _CxUpdate,
         },
     )
-    fac = ConfigurableMongoDocument(config={"read": (db, col), "write": (db, col)})
+    fac = ConfigurableMongoDocument(
+        config=MongoDocumentConfig(read=(db, col), write=(db, col))
+    )
     ctx = ExecutionContext(
         deps=Deps.plain(
             {
@@ -197,7 +200,9 @@ async def test_mongo_adapter_find_and_find_many_projections_with_count(
             "update_cmd": _CxUpdate,
         },
     )
-    fac = ConfigurableMongoDocument(config={"read": (db, col), "write": (db, col)})
+    fac = ConfigurableMongoDocument(
+        config=MongoDocumentConfig(read=(db, col), write=(db, col))
+    )
     ctx = ExecutionContext(
         deps=Deps.plain(
             {

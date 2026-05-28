@@ -143,6 +143,7 @@ Use `ExecutionContext` helpers — names on specs must match routed infra config
     doc_q = ctx.document.query(project_spec)
     doc_c = ctx.document.command(project_spec)
     search = ctx.search.query(project_search_spec)
+    search_index = ctx.search.command(project_search_spec)  # when SearchCommandDepKey is wired
     cache = ctx.cache(cache_spec)
     counter = ctx.counter(counter_spec)
     storage = ctx.storage(storage_spec)

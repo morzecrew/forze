@@ -11,7 +11,6 @@ from forze.application.contracts.search import (
     SearchQueryDepKey,
 )
 from forze.application.execution import Deps, DepsModule
-from forze.base.exceptions import exc
 from forze_meilisearch.execution.deps.configs import (
     MeilisearchFederatedSearchConfig,
     MeilisearchSearchConfig,
@@ -37,21 +36,6 @@ class MeilisearchDepsModule[K: str | StrEnum](DepsModule[K]):
     federated_searches: Mapping[K, MeilisearchFederatedSearchConfig] | None = attrs.field(
         default=None,
     )
-
-    def __attrs_post_init__(self) -> None:
-        if self.searches:
-            for search_cfg in self.searches.values():
-                if not search_cfg.get("index_uid"):
-                    raise exc.configuration(
-                        "Meilisearch search config requires index_uid.",
-                    )
-
-        if self.federated_searches:
-            for fed_cfg in self.federated_searches.values():
-                if len(fed_cfg["members"]) < 2:
-                    raise exc.configuration(
-                        "Federated Meilisearch search requires at least two members.",
-                    )
 
     def __call__(self) -> Deps[K]:
         plain = Deps[K].plain({MeilisearchClientDepKey: self.client})

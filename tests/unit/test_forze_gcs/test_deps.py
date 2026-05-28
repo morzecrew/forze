@@ -7,6 +7,7 @@ from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.execution import Deps, ExecutionContext, InvocationMetadata
 from forze_gcs.adapters.storage import GCSStorageAdapter
 from forze_gcs.execution.deps import GCSClientDepKey, GCSDepsModule
+from forze_gcs.execution.deps.configs import GCSStorageConfig
 from forze_gcs.execution.deps.deps import ConfigurableGCSStorage
 from forze_gcs.kernel.platform import GCSClient
 
@@ -16,7 +17,7 @@ def test_gcs_storage_factory_builds_adapter_without_tenant() -> None:
     deps = Deps.plain({GCSClientDepKey: gcs_mock})
     context = ExecutionContext(deps=deps)
 
-    factory = ConfigurableGCSStorage(config={"bucket": "test-bucket"})
+    factory = ConfigurableGCSStorage(config=GCSStorageConfig(bucket="test-bucket"))
     storage = factory(context, StorageSpec(name="route"))
 
     assert isinstance(storage, GCSStorageAdapter)
@@ -32,7 +33,7 @@ def test_gcs_storage_factory_resolves_tenant_from_context() -> None:
     tid = uuid4()
 
     factory = ConfigurableGCSStorage(
-        config={"bucket": "tenant-bucket", "tenant_aware": True},
+        config=GCSStorageConfig(bucket="tenant-bucket", tenant_aware=True),
     )
 
     metadata = InvocationMetadata(execution_id=uuid4(), correlation_id=uuid4())
@@ -49,7 +50,9 @@ def test_gcs_deps_module_registers_expected_keys() -> None:
     gcs_mock = Mock(spec=GCSClient)
     module = GCSDepsModule(
         client=gcs_mock,
-        storages={"module-bucket": {"bucket": "module-bucket"}},
+        storages={
+            "module-bucket": GCSStorageConfig(bucket="module-bucket"),
+        },
     )
 
     deps = module()

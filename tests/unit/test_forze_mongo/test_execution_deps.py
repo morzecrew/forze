@@ -17,7 +17,12 @@ from forze.application.contracts.transaction.deps import TransactionManagerDepKe
 from forze.application.execution import Deps, ExecutionContext
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
 from forze_mongo.adapters import MongoDocumentAdapter, MongoTxManagerAdapter
-from forze_mongo.execution.deps import MongoClientDepKey, MongoDepsModule
+from forze_mongo.execution.deps import (
+    MongoClientDepKey,
+    MongoDepsModule,
+    MongoDocumentConfig,
+    MongoReadOnlyDocumentConfig,
+)
 from forze_mongo.execution.deps.deps import (
     ConfigurableMongoDocument,
     ConfigurableMongoReadOnlyDocument,
@@ -74,10 +79,7 @@ def test_mongo_deps_module_rw_registers_query_and_command() -> None:
     module = MongoDepsModule(
         client=client,
         rw_documents={
-            "doc": {
-                "read": ("db", "col"),
-                "write": ("db", "col"),
-            },
+            "doc": MongoDocumentConfig(read=("db", "col"), write=("db", "col")),
         },
         tx={"session"},
     )
@@ -93,7 +95,7 @@ def test_mongo_deps_module_ro_only() -> None:
     client = MagicMock(spec=MongoClient)
     module = MongoDepsModule(
         client=client,
-        ro_documents={"view": {"read": ("db", "v")}},
+        ro_documents={"view": MongoReadOnlyDocumentConfig(read=("db", "v"))},
     )
 
     deps = module()
@@ -103,7 +105,9 @@ def test_mongo_deps_module_ro_only() -> None:
 
 
 def test_configurable_mongo_read_only_builds_adapter() -> None:
-    factory = ConfigurableMongoReadOnlyDocument(config={"read": ("db", "c")})
+    factory = ConfigurableMongoReadOnlyDocument(
+        config=MongoReadOnlyDocumentConfig(read=("db", "c"))
+    )
     ctx = _ctx()
     adapter = factory(ctx, DocumentSpec(name="x", read=_R))
 
@@ -113,7 +117,7 @@ def test_configurable_mongo_read_only_builds_adapter() -> None:
 
 def test_configurable_mongo_document_requires_write_spec() -> None:
     factory = ConfigurableMongoDocument(
-        config={"read": ("db", "c"), "write": ("db", "c")},
+        config=MongoDocumentConfig(read=("db", "c"), write=("db", "c")),
     )
     ctx = _ctx()
 
@@ -123,11 +127,11 @@ def test_configurable_mongo_document_requires_write_spec() -> None:
 
 def test_configurable_mongo_document_batch_size() -> None:
     factory = ConfigurableMongoDocument(
-        config={
-            "read": ("db", "c"),
-            "write": ("db", "c"),
-            "batch_size": 444,
-        },
+        config=MongoDocumentConfig(
+            read=("db", "c"),
+            write=("db", "c"),
+            batch_size=444,
+        ),
     )
     ctx = _ctx()
     adapter = factory(ctx, _rw_spec())
@@ -138,10 +142,7 @@ def test_configurable_mongo_document_batch_size() -> None:
 
 def test_configurable_mongo_read_only_document_batch_size() -> None:
     factory = ConfigurableMongoReadOnlyDocument(
-        config={
-            "read": ("db", "c"),
-            "batch_size": 555,
-        },
+        config=MongoReadOnlyDocumentConfig(read=("db", "c"), batch_size=555),
     )
     ctx = _ctx()
     adapter = factory(ctx, DocumentSpec(name="ro", read=_R))
@@ -153,15 +154,15 @@ def test_configurable_mongo_read_only_document_batch_size() -> None:
 def test_document_config_to_read_only_preserves_batch_size() -> None:
     from forze_mongo.execution.deps.module import _document_config_to_read_only
 
-    rw: dict = {
-        "read": ("db", "c"),
-        "write": ("db", "c"),
-        "batch_size": 999,
-    }
-    ro = _document_config_to_read_only(rw)  # type: ignore[arg-type]
+    rw = MongoDocumentConfig(
+        read=("db", "c"),
+        write=("db", "c"),
+        batch_size=999,
+    )
+    ro = _document_config_to_read_only(rw)
 
-    assert ro["read"] == ("db", "c")
-    assert ro.get("batch_size") == 999
+    assert ro.read == ("db", "c")
+    assert ro.batch_size == 999
 
 
 def test_mongo_txmanager() -> None:

@@ -129,6 +129,10 @@ class HubSearchSqlMixin[M: BaseModel]:
         member_weights_list: Sequence[float],
     ) -> tuple[sql.Composable, list[Any], bool]:
         fw, fp = await self._hub_host.where_clause(filters)
+        tenant_id = (
+            self._hub_host._tenant_id_for_resolve()  # pyright: ignore[reportPrivateUsage]
+        )
+        hub_qn = await self._hub_host._qname()  # pyright: ignore[reportPrivateUsage]
 
         active = [
             (i, leg, member_weights_list[i])
@@ -152,7 +156,7 @@ class HubSearchSqlMixin[M: BaseModel]:
         ).format(
             hub_cte=sql.Identifier(HUB_CTE),
             hub_cols=self._hub_select_list(include_groonga_sys=need_groonga_sys),
-            hub_rel=self._hub_host.source_qname.ident(),
+            hub_rel=hub_qn.ident(),
             ha=sql.Identifier(HUB_ROW_ALIAS),
             fw=fw,
         )
@@ -176,6 +180,7 @@ class HubSearchSqlMixin[M: BaseModel]:
                     vector_embedder=v_emb,
                 ).build_leg(
                     leg,
+                    tenant_id=tenant_id,
                     introspector=self._hub_host.introspector,
                     index_alias=t_alias,
                     queries=query_terms,
@@ -221,6 +226,7 @@ class HubSearchSqlMixin[M: BaseModel]:
                     )
 
                 else:
+                    heap_qn = await leg.resolve_index_heap_qname(tenant_id)
                     cand_sub = leg.candidate_subquery(csub_alias=f"csub{i}")
                     join_on = sql.SQL("{} = {}").format(
                         sql.Identifier(t_alias, leg.heap_pk_column),
@@ -240,7 +246,7 @@ class HubSearchSqlMixin[M: BaseModel]:
                         lr=sql.Identifier(lr_alias),
                         sel_pk=sel_pk,
                         rank_expr=rank_expr,
-                        heap=leg.index_heap_qname.ident(),
+                        heap=heap_qn.ident(),
                         t=sql.Identifier(t_alias),
                         sw=sw,
                         cand=cand_sub,

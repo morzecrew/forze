@@ -34,9 +34,9 @@ async def test_pgroonga_v2_match_combined_empty_string_is_true_predicate() -> No
     """Empty match text skips PGroonga clause construction (filter-only path uses ``TRUE`` elsewhere)."""
     adapter = PostgresPGroongaSearchAdapter(
         spec=_spec(),
-        source_qname=PostgresQualifiedName("public", "v"),
-        index_qname=PostgresQualifiedName("public", "i"),
-        index_heap_qname=PostgresQualifiedName("public", "h"),
+        relation=("public", "v"),
+        index_relation=("public", "i"),
+        index_heap_relation=("public", "h"),
         client=MagicMock(),
         model_type=_Entity,
         introspector=MagicMock(),
@@ -45,7 +45,7 @@ async def test_pgroonga_v2_match_combined_empty_string_is_true_predicate() -> No
     )
     sw, _rank, params = await build_pgroonga_leg(
         introspector=adapter.introspector,
-        index_qname=adapter.index_qname,
+        index_qname=await adapter._index_qname(),
         search=adapter.spec,
         index_field_map=adapter.index_field_map,
         index_alias="t",
@@ -62,9 +62,9 @@ def test_pgroonga_v2_rejects_duplicate_projection_join_columns() -> None:
     with pytest.raises(CoreException, match="unique"):
         PostgresPGroongaSearchAdapter(
             spec=_spec(),
-            source_qname=PostgresQualifiedName("public", "v"),
-            index_qname=PostgresQualifiedName("public", "i"),
-            index_heap_qname=PostgresQualifiedName("public", "h"),
+            relation=("public", "v"),
+            index_relation=("public", "i"),
+            index_heap_relation=("public", "h"),
             client=MagicMock(),
             model_type=_Entity,
             introspector=MagicMock(),
@@ -78,9 +78,9 @@ def test_fts_v2_rejects_duplicate_projection_join_columns() -> None:
     with pytest.raises(CoreException, match="unique"):
         PostgresFTSSearchAdapter(
             spec=_spec(),
-            index_qname=PostgresQualifiedName("public", "i"),
-            source_qname=PostgresQualifiedName("public", "v"),
-            index_heap_qname=PostgresQualifiedName("public", "h"),
+            index_relation=("public", "i"),
+            relation=("public", "v"),
+            index_heap_relation=("public", "h"),
             fts_groups={"A": ("a",), "B": ("b",)},
             client=MagicMock(),
             model_type=_Entity,

@@ -25,15 +25,11 @@ from .keys import FirestoreClientDepKey
 def _document_config_to_read_only(
     config: FirestoreDocumentConfig,
 ) -> FirestoreReadOnlyDocumentConfig:
-    ro: FirestoreReadOnlyDocumentConfig = {"read": config["read"]}
-
-    if "tenant_aware" in config:
-        ro["tenant_aware"] = config["tenant_aware"]
-
-    if "batch_size" in config:
-        ro["batch_size"] = config["batch_size"]
-
-    return ro
+    return FirestoreReadOnlyDocumentConfig(
+        read=config.read,
+        tenant_aware=config.tenant_aware,
+        batch_size=config.batch_size,
+    )
 
 
 @final

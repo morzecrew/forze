@@ -9,17 +9,14 @@ Architecture can feel abstract when you only want to ship a backend feature. Thi
 
 ## When you need this
 
-Read these pages when you are choosing where code belongs, wiring adapters, or extending execution behavior.
+Read these pages when you are choosing where code belongs, wiring adapters, or extending execution behavior. This section explains the architectural model behind Forze: layered boundaries, domain primitives, the execution runtime, and port/adapter composition.
 
+Typical reasons to open Concepts:
 
-This section explains the architectural model behind Forze: layered boundaries, domain primitives, the execution runtime, and port/adapter composition.
-
-## When to read this section
-
-- You need to understand where business logic should live
-- You want to decide how to wire adapters and runtime hooks
-- You are adding integrations without coupling domain logic to infrastructure
-- You want to extend operations with stage hooks or transaction scopes on `OperationRegistry`
+- Understand where business logic should live
+- Decide how to wire adapters, lifecycle hooks, and routed clients
+- Add integrations without coupling domain logic to infrastructure
+- Extend operations with stage hooks or transaction scopes on `OperationRegistry`
 
 ## Terminology
 
@@ -31,6 +28,8 @@ This section explains the architectural model behind Forze: layered boundaries, 
 | **Integration config** | Physical mapping on a deps module (table, collection, bucket, queue, …) keyed by the same `name` |
 | **Facade** | Typed helper (`DocumentFacade`, …) over a **frozen** registry for in-process calls |
 | **HTTP resolve** | `registry.resolve(operation, ctx)` from FastAPI/Socket.IO — not a facade dependency |
+| **Search command** | `SearchCommandPort` via `ctx.search.command(spec)` — external index maintenance (Meilisearch, Mongo, …) |
+| **Routed lifecycle** | `routed_client_lifecycle_step` — startup/shutdown for tenant-routed integration clients |
 
 ## Architectural guarantees
 

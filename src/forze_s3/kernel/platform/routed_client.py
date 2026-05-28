@@ -16,6 +16,7 @@ from forze.application.contracts.secrets import (
 )
 from forze.application.contracts.tenancy import require_tenant_id
 from forze.base.exceptions import exc
+from forze.base.primitives.fingerprint import stable_fingerprint
 from forze.base.primitives.lru_registry import SimpleLruRegistry
 
 from .client import S3Client
@@ -48,6 +49,7 @@ class RoutedS3Client(S3ClientPort):
     max_cached_tenants: int = 100
 
     _registry: SimpleLruRegistry[UUID, S3Client] = attrs.field(init=False)
+    _fingerprints: dict[UUID, str] = attrs.field(factory=dict, init=False, repr=False)
     _started: bool = attrs.field(default=False, init=False)
 
     # ....................... #
@@ -60,6 +62,7 @@ class RoutedS3Client(S3ClientPort):
             max_entries=self.max_cached_tenants,
             create=self._create_client,
             dispose=lambda client: client.close(),
+            dedup_key=lambda tid: self._fingerprints[tid],
         )
 
     # ....................... #
@@ -76,7 +79,38 @@ class RoutedS3Client(S3ClientPort):
     # ....................... #
 
     async def evict_tenant(self, tenant_id: UUID) -> None:
+        self._fingerprints.pop(tenant_id, None)
         await self._registry.evict(tenant_id)
+
+    # ....................... #
+
+    async def _ensure_fingerprint(self, tenant_id: UUID) -> str:
+        cached = self._fingerprints.get(tenant_id)
+
+        if cached is not None:
+            return cached
+
+        ref = secret_ref_for_tenant(self.secret_ref_for_tenant, tenant_id)
+
+        try:
+            creds = await resolve_structured(
+                self.secrets,
+                ref,
+                S3RoutingCredentials,
+            )
+
+        except exc:
+            raise
+
+        except Exception as e:
+            raise exc.internal(
+                f"Failed to resolve S3 secret for tenant {tenant_id}: {e}",
+            ) from e
+
+        fingerprint = stable_fingerprint(creds.endpoint, creds.access_key_id)
+        self._fingerprints[tenant_id] = fingerprint
+
+        return fingerprint
 
     # ....................... #
 
@@ -114,12 +148,13 @@ class RoutedS3Client(S3ClientPort):
         if not self._started:
             raise exc.internal("Routed S3 client is not started")
 
-        return await self._registry.get_or_create(
-            require_tenant_id(
-                self.tenant_provider,
-                message="Tenant ID is required for routed S3 access",
-            ),
+        tenant_id = require_tenant_id(
+            self.tenant_provider,
+            message="Tenant ID is required for routed S3 access",
         )
+        await self._ensure_fingerprint(tenant_id)
+
+        return await self._registry.get_or_create(tenant_id)
 
     # ....................... #
 

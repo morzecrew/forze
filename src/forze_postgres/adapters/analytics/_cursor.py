@@ -18,6 +18,7 @@ from forze.application.contracts.analytics._adapter_common import (
 )
 from forze.application.contracts.base import CursorPage
 from forze.application.contracts.querying import CursorPaginationExpression
+from forze.base.primitives import StrKey
 
 from ._mixin_base import PostgresAnalyticsMixinBase
 
@@ -40,7 +41,7 @@ class PostgresAnalyticsCursorMixin[R: BaseModel, Ing: BaseModel](
 
     async def _cursor_page(
         self,
-        query_key: str,
+        query_key: StrKey,
         params: BaseModel,
         cursor: CursorPaginationExpression | None,
         *,

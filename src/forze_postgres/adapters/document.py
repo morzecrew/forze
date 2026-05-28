@@ -18,6 +18,7 @@ from forze.base.exceptions import exc
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document
 
 from ..kernel.gateways import PostgresReadGateway, PostgresWriteGateway
+from ..kernel.relation import RelationSpec, is_static_relation
 
 # ----------------------- #
 
@@ -25,6 +26,16 @@ R = TypeVar("R", bound=BaseModel)
 D = TypeVar("D", bound=Document)
 C = TypeVar("C", bound=CreateDocumentCmd)
 U = TypeVar("U", bound=BaseDTO)
+
+# ....................... #
+
+
+def _relation_cache_key(relation: RelationSpec) -> str:
+    if is_static_relation(relation):
+        return f"{relation[0]}.{relation[1]}"
+
+    return repr(relation)
+
 
 # ....................... #
 
@@ -67,7 +78,7 @@ class PostgresDocumentAdapter(DocumentCoordinator[R, D, C, U]):
                 hydrate = can_hydrate_read_from_write_domain(
                     read_model=self.read_gw.model_type,
                     domain_model=self.spec.write["domain"],
-                    read_source_key=self.read_gw.source_qname.string(),
-                    write_source_key=self.write_gw.source_qname.string(),
+                    read_source_key=_relation_cache_key(self.read_gw.relation),
+                    write_source_key=_relation_cache_key(self.write_gw.relation),
                 )
                 object.__setattr__(self, "hydrate_from_write", hydrate)

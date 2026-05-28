@@ -33,7 +33,7 @@ class PostgresAnalyticsIngestMixin[R: BaseModel, Ing: BaseModel](
                 f"Analytics ingest is not configured for route {host.spec.name!r}."
             )
 
-        table = host.config.get("ingest_table")
+        table = host.config.ingest_table
 
         if not table:
             raise exc.internal(

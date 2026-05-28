@@ -10,7 +10,7 @@ pytest.importorskip("psycopg")
 
 from forze.application.contracts.search import SearchQueryDepKey, SearchSpec
 from forze.application.execution import Deps, ExecutionContext
-from forze_postgres.execution.deps.deps import ConfigurablePostgresSearch
+from forze_postgres.execution.deps import ConfigurablePostgresSearch
 from forze_postgres.execution.deps.keys import (
     PostgresClientDepKey,
     PostgresIntrospectorDepKey,

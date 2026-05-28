@@ -13,7 +13,6 @@ from typing import Any, final
 
 import attrs
 from meilisearch_python_sdk import AsyncClient
-from meilisearch_python_sdk._client._common import build_multi_search_payload
 from meilisearch_python_sdk.models.search import Federation, SearchParams
 from pydantic import SecretStr
 
@@ -106,25 +105,11 @@ class MeilisearchClient(MeilisearchClientPort):
     @exc_interceptor.coroutine("meilisearch.multi_search")  # type: ignore[untyped-decorator]
     async def multi_search(
         self,
-        queries: list[Any],
+        queries: list[SearchParams],
         *,
         federation: JsonDict | None = None,
     ) -> Any:
-
         client = self._require_client()
-
-        params_list: list[SearchParams] = []
-        federation_options: list[JsonDict | None] = []
-
-        for item in queries:
-            if isinstance(item, tuple) and len(item) == 2:  # type: ignore[arg-type]
-                params, fed_opts = item  # type: ignore[arg-type]
-                params_list.append(params)  # type: ignore[arg-type]
-                federation_options.append(fed_opts)  # type: ignore[arg-type]
-
-            else:
-                params_list.append(item)  # type: ignore[arg-type]
-                federation_options.append(None)
 
         fed_model: Federation | None = None
 
@@ -134,33 +119,7 @@ class MeilisearchClient(MeilisearchClientPort):
                 limit=int(federation.get("limit", 20)),
             )
 
-        processed, federation_payload = build_multi_search_payload(
-            params_list, fed_model
-        )
-
-        for payload, fed_opts in zip(processed, federation_options, strict=True):
-            if fed_opts:
-                payload["federationOptions"] = fed_opts
-
-        response = await client._http_requests.post(  # type: ignore[attr-defined]
-            "multi-search",
-            body={
-                "federation": federation_payload,
-                "queries": processed,
-            },
-        )
-
-        if fed_model:
-            from meilisearch_python_sdk.models.search import SearchResultsFederated
-
-            return SearchResultsFederated(**client._http_requests.parse_json(response))  # type: ignore[attr-defined]
-
-        from meilisearch_python_sdk.models.search import SearchResultsWithUID
-
-        return [
-            SearchResultsWithUID(**x)
-            for x in client._http_requests.parse_json(response)["results"]  # type: ignore[attr-defined]
-        ]
+        return await client.multi_search(queries, federation=fed_model)  # type: ignore[return-value]
 
     # ....................... #
 

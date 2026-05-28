@@ -46,15 +46,15 @@ class MeilisearchSearchGateway[M: BaseModel](TenancyMixin):
 
     @property
     def index_uid(self) -> str:
-        return self.config["index_uid"]
+        return self.config.index_uid
 
     @property
     def primary_key(self) -> str:
-        return str(self.config.get("primary_key", ID_FIELD))
+        return self.config.primary_key
 
     @property
     def field_map(self) -> dict[str, str]:
-        return dict(self.config.get("field_map") or {})
+        return dict(self.config.field_map or {})
 
     @property
     def filter_renderer(self) -> MeilisearchFilterRenderer:

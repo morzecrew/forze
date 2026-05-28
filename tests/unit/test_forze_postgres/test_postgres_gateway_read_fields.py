@@ -16,7 +16,7 @@ def test_read_fields_is_frozenset_and_stable() -> None:
     intro = MagicMock(spec=PostgresIntrospector)
     intro.cache_partition_key = None
     gw = PostgresGateway(
-        source_qname=PostgresQualifiedName("public", "items"),
+        relation=("public", "items"),
         client=MagicMock(),
         model_type=_Doc,
         introspector=intro,

@@ -16,6 +16,7 @@ from forze.application.contracts.secrets import (
 )
 from forze.application.contracts.tenancy import require_tenant_id
 from forze.base.exceptions import exc
+from forze.base.primitives.fingerprint import stable_fingerprint
 from forze.base.primitives.lru_registry import SimpleLruRegistry
 
 from .client import SQSClient
@@ -49,6 +50,7 @@ class RoutedSQSClient(SQSClientPort):
     max_cached_tenants: int = 100
 
     _registry: SimpleLruRegistry[UUID, SQSClient] = attrs.field(init=False)
+    _fingerprints: dict[UUID, str] = attrs.field(factory=dict, init=False, repr=False)
     _started: bool = attrs.field(default=False, init=False)
 
     # ....................... #
@@ -61,6 +63,7 @@ class RoutedSQSClient(SQSClientPort):
             max_entries=self.max_cached_tenants,
             create=self._create_client,
             dispose=lambda client: client.close(),
+            dedup_key=lambda tid: self._fingerprints[tid],
         )
 
     # ....................... #
@@ -77,7 +80,42 @@ class RoutedSQSClient(SQSClientPort):
     # ....................... #
 
     async def evict_tenant(self, tenant_id: UUID) -> None:
+        self._fingerprints.pop(tenant_id, None)
         await self._registry.evict(tenant_id)
+
+    # ....................... #
+
+    async def _ensure_fingerprint(self, tenant_id: UUID) -> str:
+        cached = self._fingerprints.get(tenant_id)
+
+        if cached is not None:
+            return cached
+
+        ref = secret_ref_for_tenant(self.secret_ref_for_tenant, tenant_id)
+
+        try:
+            creds = await resolve_structured(
+                self.secrets,
+                ref,
+                SQSRoutingCredentials,
+            )
+
+        except exc:
+            raise
+
+        except Exception as e:
+            raise exc.internal(
+                f"Failed to resolve SQS secret for tenant {tenant_id}: {e}",
+            ) from e
+
+        fingerprint = stable_fingerprint(
+            creds.endpoint,
+            creds.region_name,
+            creds.access_key_id,
+        )
+        self._fingerprints[tenant_id] = fingerprint
+
+        return fingerprint
 
     # ....................... #
 
@@ -117,12 +155,13 @@ class RoutedSQSClient(SQSClientPort):
         if not self._started:
             raise exc.internal("Routed SQS client is not started")
 
-        return await self._registry.get_or_create(
-            require_tenant_id(
-                self.tenant_provider,
-                message="Tenant ID is required for routed SQS access",
-            ),
+        tenant_id = require_tenant_id(
+            self.tenant_provider,
+            message="Tenant ID is required for routed SQS access",
         )
+        await self._ensure_fingerprint(tenant_id)
+
+        return await self._registry.get_or_create(tenant_id)
 
     # ....................... #
 

@@ -7,19 +7,21 @@ import attrs
 from forze.application._logger import logger
 from forze.application.contracts.document import DocumentSpec
 from forze.application.contracts.execution import LifecycleHook, LifecycleStep
-from forze.application.execution import ExecutionContext
+from forze.application.execution.context import ExecutionContext
 from forze.base.exceptions import exc
 
-from ..kernel.catalog.validation.validate_bookkeeping import (
+from ...kernel.catalog.validation.validate_bookkeeping import (
     PostgresDocumentBookkeepingSpec,
     validate_postgres_document_bookkeeping,
 )
-from ..kernel.catalog.validation.validate_schema import (
+from ...kernel.catalog.validation.validate_schema import (
     PostgresDocumentSchemaSpec,
     validate_postgres_document_schemas,
 )
-from .deps.configs import PostgresDocumentConfig, PostgresReadOnlyDocumentConfig
-from .deps.keys import PostgresIntrospectorDepKey
+from ...kernel.relation import require_static_relation
+from ..deps.configs import PostgresDocumentConfig, PostgresReadOnlyDocumentConfig
+from ..deps.keys import PostgresIntrospectorDepKey
+from .capabilities import POSTGRES_CLIENT_CAPABILITY
 
 # ----------------------- #
 
@@ -30,10 +32,19 @@ def postgres_document_schema_spec_for_binding(
     spec: DocumentSpec[Any, Any, Any, Any],
     config: PostgresReadOnlyDocumentConfig | PostgresDocumentConfig,
 ) -> PostgresDocumentSchemaSpec:
-    """Build a :class:`~forze_postgres.kernel.catalog.validation.validate_schema.PostgresDocumentSchemaSpec` from kernel wiring."""
+    """Build a :class:`~forze_postgres.kernel.catalog.validation.validate_schema.PostgresDocumentSchemaSpec` from kernel wiring.
 
-    read_rel = config["read"]
-    tenant_aware = config.get("tenant_aware", False)
+    Dynamic :class:`~forze_postgres.kernel.relation.RelationSpec` resolvers are rejected
+    (see :func:`~forze_postgres.kernel.relation.require_static_relation`) because startup
+    validation introspects fixed relation names.
+    """
+
+    read_rel = require_static_relation(
+        config.read,
+        document_name=name,
+        field="read",
+    )
+    tenant_aware = config.tenant_aware
 
     if spec.write is None:
         return PostgresDocumentSchemaSpec(
@@ -43,18 +54,23 @@ def postgres_document_schema_spec_for_binding(
             tenant_aware=tenant_aware,
         )
 
-    if "write" not in config:
+    if not isinstance(config, PostgresDocumentConfig):
         raise exc.internal(
-            f"Document {name!r} has write spec but config is not a Postgres document config "
-            "(missing 'write' relation).",
+            f"Document {name!r} has write spec but config is not a PostgresDocumentConfig.",
         )
 
     w = spec.write
     hist: tuple[str, str] | None = None
 
     if spec.history_enabled:
-        if "history" in config:
-            hist = config["history"]  # type: ignore[typeddict-item]
+        if config.history is None:
+            hist = None
+        else:
+            hist = require_static_relation(
+                config.history,
+                document_name=name,
+                field="history",
+            )
 
         if hist is None:
             raise exc.internal(
@@ -70,11 +86,15 @@ def postgres_document_schema_spec_for_binding(
         write_domain_model=w["domain"],
         write_create_model=w["create_cmd"],
         write_update_model=w.get("update_cmd"),
-        write_relation=config.get("write"),  # type: ignore[arg-type]
+        write_relation=require_static_relation(
+            config.write,
+            document_name=name,
+            field="write",
+        ),
         history_enabled=spec.history_enabled,
         history_relation=hist,
-        bookkeeping_strategy=config.get("bookkeeping_strategy"),  # type: ignore[arg-type]
-        conflict_target=config.get("conflict_target"),  # type: ignore[arg-type]
+        bookkeeping_strategy=config.bookkeeping_strategy,
+        conflict_target=config.conflict_target,
     )
 
 
@@ -134,9 +154,9 @@ def postgres_document_schema_validation_lifecycle_step(
 ) -> LifecycleStep:
     """Build a lifecycle step that validates document read/write/history columns.
 
-    Run after the Postgres client lifecycle step (and typically after catalog
-    warmup). With ``introspector_cache_partition_key`` set and no tenant during
-    startup, validation is skipped (trace log only).
+    Requires :data:`~forze_postgres.execution.lifecycle.capabilities.POSTGRES_CLIENT_CAPABILITY`.
+    With ``introspector_cache_partition_key`` set and no tenant during startup,
+    validation is skipped (trace log only).
 
     :param name: Unique step name.
     :param specs: One spec per document to validate (see
@@ -147,4 +167,5 @@ def postgres_document_schema_validation_lifecycle_step(
     return LifecycleStep(
         id=name,
         startup=PostgresDocumentSchemaValidationHook(specs=tuple(specs)),
+        requires=(POSTGRES_CLIENT_CAPABILITY,),
     )

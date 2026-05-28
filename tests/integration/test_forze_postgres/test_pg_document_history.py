@@ -13,7 +13,8 @@ from forze.application.contracts.document import (
 )
 from forze.application.execution import Deps, ExecutionContext
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
-from forze_postgres.execution.deps.deps import ConfigurablePostgresDocument
+from forze_postgres.execution.deps.configs import PostgresDocumentConfig
+from forze_postgres.execution.deps import ConfigurablePostgresDocument
 from forze_postgres.execution.deps.keys import (
     PostgresClientDepKey,
     PostgresIntrospectorDepKey,
@@ -51,20 +52,20 @@ def _deps(
                 PostgresClientDepKey: pg_client,
                 PostgresIntrospectorDepKey: PostgresIntrospector(client=pg_client),
                 DocumentQueryDepKey: ConfigurablePostgresDocument(
-                    config={
-                        "read": ("public", main_table),
-                        "write": ("public", main_table),
-                        "history": ("public", history_table),
-                        "bookkeeping_strategy": bookkeeping_strategy,
-                    }
+                    config=PostgresDocumentConfig(
+                        read=("public", main_table),
+                        write=("public", main_table),
+                        history=("public", history_table),
+                        bookkeeping_strategy=bookkeeping_strategy,
+                    )
                 ),
                 DocumentCommandDepKey: ConfigurablePostgresDocument(
-                    config={
-                        "read": ("public", main_table),
-                        "write": ("public", main_table),
-                        "history": ("public", history_table),
-                        "bookkeeping_strategy": bookkeeping_strategy,
-                    }
+                    config=PostgresDocumentConfig(
+                        read=("public", main_table),
+                        write=("public", main_table),
+                        history=("public", history_table),
+                        bookkeeping_strategy=bookkeeping_strategy,
+                    )
                 ),
             }
         )

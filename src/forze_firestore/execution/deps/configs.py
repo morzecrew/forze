@@ -1,21 +1,26 @@
-"""Typed configuration for Firestore document routes."""
+"""Firestore dependency integration configs (frozen attrs)."""
 
-from typing import NotRequired, TypedDict
+import attrs
+
+from forze.application.contracts.tenancy import TenantAwareIntegrationConfig
+
+# ----------------------- #
 
 
-class _BaseFirestoreConfig(TypedDict):
-    tenant_aware: NotRequired[bool]
-
-
-class FirestoreReadOnlyDocumentConfig(_BaseFirestoreConfig):
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class FirestoreReadOnlyDocumentConfig(TenantAwareIntegrationConfig):
     """Read-only document mapping: ``(database_id, collection_id)``."""
 
     read: tuple[str, str]
-    batch_size: NotRequired[int]
+    batch_size: int = 200
 
 
+# ....................... #
+
+
+@attrs.define(slots=True, kw_only=True, frozen=True)
 class FirestoreDocumentConfig(FirestoreReadOnlyDocumentConfig):
     """Read-write document mapping with optional history collection."""
 
     write: tuple[str, str]
-    history: NotRequired[tuple[str, str]]
+    history: tuple[str, str] | None = None

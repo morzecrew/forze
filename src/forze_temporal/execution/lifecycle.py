@@ -109,9 +109,9 @@ async def _bootstrap_schedules(
 
         adapter = TemporalWorkflowScheduleCommandAdapter(
             client=client,
-            queue=config["queue"],
+            queue=config.queue,
             spec=spec,
-            tenant_aware=config.get("tenant_aware", False),
+            tenant_aware=config.tenant_aware,
             tenant_provider=ctx.inv_ctx.get_tenant,
         )
 

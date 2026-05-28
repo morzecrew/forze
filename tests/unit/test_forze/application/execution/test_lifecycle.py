@@ -104,3 +104,40 @@ class TestLifecyclePlan:
         )
 
         await plan.shutdown(ctx)
+
+    def test_from_modules_build_resolves_order(self) -> None:
+        pool = LifecycleStep(id="pool", provides=("db",))
+        warmup = LifecycleStep(id="warmup", requires=("db",))
+
+        class _Module:
+            def __call__(self) -> tuple[LifecycleStep, ...]:
+                return (warmup, pool)
+
+        built = LifecyclePlan.from_modules(_Module()).build()
+
+        assert tuple(s.id for s in built.steps) == ("pool", "warmup")
+        assert built.modules == ()
+
+    def test_build_merges_modules_and_steps(self) -> None:
+        extra = LifecycleStep(id="extra")
+
+        class _Module:
+            def __call__(self) -> tuple[LifecycleStep, ...]:
+                return (LifecycleStep(id="from_module"),)
+
+        built = LifecyclePlan.from_modules(_Module()).with_steps(extra).build()
+
+        assert tuple(s.id for s in built.steps) == ("from_module", "extra")
+
+    def test_with_modules_appends(self) -> None:
+        class _A:
+            def __call__(self) -> tuple[LifecycleStep, ...]:
+                return (LifecycleStep(id="a"),)
+
+        class _B:
+            def __call__(self) -> tuple[LifecycleStep, ...]:
+                return (LifecycleStep(id="b"),)
+
+        plan = LifecyclePlan.from_modules(_A()).with_modules(_B())
+
+        assert len(plan.modules) == 2

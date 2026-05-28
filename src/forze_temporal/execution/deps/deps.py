@@ -42,9 +42,9 @@ class ConfigurableTemporalWorkflowQuery(DurableWorkflowQueryDepPort):
 
         return TemporalWorkflowQueryAdapter(
             client=client,
-            queue=self.config["queue"],
+            queue=self.config.queue,
             spec=spec,
-            tenant_aware=self.config.get("tenant_aware", False),
+            tenant_aware=self.config.tenant_aware,
             tenant_provider=ctx.inv_ctx.get_tenant,
         )
 
@@ -71,9 +71,9 @@ class ConfigurableTemporalWorkflowCommand(DurableWorkflowCommandDepPort):
 
         return TemporalWorkflowCommandAdapter(
             client=client,
-            queue=self.config["queue"],
+            queue=self.config.queue,
             spec=spec,
-            tenant_aware=self.config.get("tenant_aware", False),
+            tenant_aware=self.config.tenant_aware,
             tenant_provider=ctx.inv_ctx.get_tenant,
         )
 
@@ -100,9 +100,9 @@ class ConfigurableTemporalWorkflowScheduleQuery(DurableWorkflowScheduleQueryDepP
 
         return TemporalWorkflowScheduleQueryAdapter(
             client=client,
-            queue=self.config["queue"],
+            queue=self.config.queue,
             spec=spec,
-            tenant_aware=self.config.get("tenant_aware", False),
+            tenant_aware=self.config.tenant_aware,
             tenant_provider=ctx.inv_ctx.get_tenant,
         )
 
@@ -131,8 +131,8 @@ class ConfigurableTemporalWorkflowScheduleCommand(
 
         return TemporalWorkflowScheduleCommandAdapter(
             client=client,
-            queue=self.config["queue"],
+            queue=self.config.queue,
             spec=spec,
-            tenant_aware=self.config.get("tenant_aware", False),
+            tenant_aware=self.config.tenant_aware,
             tenant_provider=ctx.inv_ctx.get_tenant,
         )

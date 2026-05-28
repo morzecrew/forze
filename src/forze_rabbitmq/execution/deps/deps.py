@@ -39,10 +39,10 @@ class ConfigurableRabbitMQQueueRead(QueueQueryDepPort):
         return RabbitMQQueueAdapter(
             client=client,
             codec=codec,
-            namespace=self.config.get("namespace"),
-            tenant_aware=self.config.get("tenant_aware", False),
+            namespace=self.config.namespace,
+            tenant_aware=self.config.tenant_aware,
             tenant_provider=ctx.inv_ctx.get_tenant,
-            delayed_delivery=self.config.get("delayed_delivery", False),
+            delayed_delivery=self.config.delayed_delivery,
         )
 
 
@@ -70,8 +70,8 @@ class ConfigurableRabbitMQQueueWrite(QueueCommandDepPort):
         return RabbitMQQueueAdapter(
             client=client,
             codec=codec,
-            namespace=self.config.get("namespace"),
-            tenant_aware=self.config.get("tenant_aware", False),
+            namespace=self.config.namespace,
+            tenant_aware=self.config.tenant_aware,
             tenant_provider=ctx.inv_ctx.get_tenant,
-            delayed_delivery=self.config.get("delayed_delivery", False),
+            delayed_delivery=self.config.delayed_delivery,
         )

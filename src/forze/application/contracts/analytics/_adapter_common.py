@@ -16,7 +16,7 @@ from forze.application.contracts.querying import (
 )
 from forze.base.codecs import B64UrlJsonCodec
 from forze.base.exceptions import exc
-from forze.base.primitives import JsonDict
+from forze.base.primitives import JsonDict, StrKey
 from forze.base.serialization import pydantic_validate, pydantic_validate_many
 
 # ----------------------- #
@@ -30,7 +30,7 @@ _ANALYTICS_CURSOR_CODEC = B64UrlJsonCodec()
 
 def validated_params(
     spec: AnalyticsSpec[Any, Any],
-    query_key: str,
+    query_key: StrKey,
     params: BaseModel | JsonDict,
 ) -> BaseModel:
     """Validate *params* against the spec query definition."""

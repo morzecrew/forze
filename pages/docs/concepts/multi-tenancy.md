@@ -20,9 +20,18 @@ Postgres does not use a separate `tenant_isolation` config field. Effective mode
 |------|--------|------------------------|---------|
 | **none** | `PostgresClient` (shared DSN) | `False` (default) | Single database; no row filter |
 | **row** | `PostgresClient` | `True` on documents/searches | Shared DB; `tenant_id` column + gateway filter |
+| **relation** | `PostgresClient` or `RoutedPostgresClient` | usually `False` | Shared or routed connection; per-tenant schema via `RelationSpec` resolver on document routes |
 | **database** | `RoutedPostgresClient` | usually `False` | Per-tenant connection pool / database |
 
+Document routes accept a static `(schema, table)` tuple or a `ValueResolver` from `forze.application.contracts.resolution` (resolved on each async gateway call from `TenantIdentity`). Use relation mode for schema-per-tenant layouts; avoid combining it with `tenant_aware=True` on the same route unless you want defense-in-depth.
+
+`RoutedPostgresClient` (and other routed integration clients) deduplicate LRU pools by connection fingerprint when several tenants resolve to the same DSN or endpoint.
+
 When using `RoutedPostgresClient`, set `PostgresDepsModule.introspector_cache_partition_key` to the same tenant identity used for routing (startup validation **fails** if it is missing). Optional schema validation warns when a write table has a `tenant_id` column but `tenant_aware=False`, or when `tenant_aware=True` on a routed client (redundant row filter — defense-in-depth is acceptable).
+
+Use the integration lifecycle step for routed clients (for example `postgres_lifecycle_step` with `RoutedPostgresClient`). It wraps `routed_client_lifecycle_step` so pools start and close with the application scope. See [Application layer — Lifecycle plan](application-layer.md#lifecycle-plan).
+
+Routed adapters and lifecycle hooks may call `require_tenant_id` from `forze.application.contracts.tenancy` when a bound `TenantIdentity` is mandatory, and `secret_ref_for_tenant` / `resolve_str_for_tenant` from `forze.application.contracts.secrets` when DSNs or API keys are stored per tenant.
 
 See [Postgres integration](../integrations/postgres.md) for wiring and troubleshooting.
 

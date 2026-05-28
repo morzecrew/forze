@@ -8,10 +8,10 @@ from forze.application.execution import ExecutionContext
 from ...kernel.gateways import (
     PostgresBookkeepingStrategy,
     PostgresHistoryGateway,
-    PostgresQualifiedName,
     PostgresReadGateway,
     PostgresWriteGateway,
 )
+from forze_postgres.kernel.relation import RelationSpec
 from .keys import PostgresClientDepKey, PostgresIntrospectorDepKey
 
 # ----------------------- #
@@ -25,7 +25,7 @@ def read_gw(
     ctx: ExecutionContext,
     *,
     read_type: type[Any],
-    read_relation: tuple[str, str],
+    read_relation: RelationSpec,
     tenant_aware: bool,
     nested_field_hints: Mapping[str, type[Any]] | None = None,
 ) -> PostgresReadGateway[Any]:
@@ -33,7 +33,7 @@ def read_gw(
 
     :param ctx: Execution context for resolving client and types provider.
     :param read_type: Read type.
-    :param read_relation: Read table name.
+    :param read_relation: Read table name or resolver.
     :param tenant_aware: Whether the document is tenant-aware.
     :returns: Postgres read gateway.
     """
@@ -42,7 +42,7 @@ def read_gw(
     introspector = ctx.deps.provide(PostgresIntrospectorDepKey)
 
     return PostgresReadGateway(
-        source_qname=PostgresQualifiedName(*read_relation),
+        relation=read_relation,
         client=client,
         model_type=read_type,
         introspector=introspector,
@@ -59,8 +59,8 @@ def _doc_history_gw(
     ctx: ExecutionContext,
     *,
     domain_type: type[Any],
-    history_relation: tuple[str, str],
-    write_relation: tuple[str, str],
+    history_relation: RelationSpec,
+    write_relation: RelationSpec,
     bookkeeping_strategy: PostgresBookkeepingStrategy,
     tenant_aware: bool,
 ) -> PostgresHistoryGateway[Any]:
@@ -68,8 +68,8 @@ def _doc_history_gw(
 
     :param ctx: Execution context.
     :param domain_type: Domain type.
-    :param history_relation: History table name.
-    :param write_relation: Write table name.
+    :param history_relation: History table name or resolver.
+    :param write_relation: Write table name or resolver.
     :param bookkeeping_strategy: Bookkeeping strategy.
     :param tenant_aware: Whether the document is tenant-aware.
     :returns: Postgres history gateway.
@@ -79,8 +79,8 @@ def _doc_history_gw(
     introspector = ctx.deps.provide(PostgresIntrospectorDepKey)
 
     return PostgresHistoryGateway(
-        source_qname=PostgresQualifiedName(*history_relation),
-        target_qname=PostgresQualifiedName(*write_relation),
+        relation=history_relation,
+        target_relation=write_relation,
         strategy=bookkeeping_strategy,
         client=client,
         model_type=domain_type,
@@ -97,8 +97,8 @@ def doc_write_gw(
     ctx: ExecutionContext,
     *,
     write_types: DocWriteTypes,
-    write_relation: tuple[str, str],
-    history_relation: tuple[str, str] | None = None,
+    write_relation: RelationSpec,
+    history_relation: RelationSpec | None = None,
     history_enabled: bool = False,
     bookkeeping_strategy: PostgresBookkeepingStrategy,
     tenant_aware: bool,
@@ -109,8 +109,8 @@ def doc_write_gw(
 
     :param ctx: Execution context.
     :param write_types: Write types (domain, create_cmd, update_cmd).
-    :param write_relation: Write table (schema, name).
-    :param history_relation: Optional history table (schema, name).
+    :param write_relation: Write table (schema, name) or resolver.
+    :param history_relation: Optional history table (schema, name) or resolver.
     :param history_enabled: Whether to enable history.
     :param bookkeeping_strategy: Bookkeeping strategy.
     :param tenant_aware: Whether the document is tenant-aware.
@@ -141,7 +141,7 @@ def doc_write_gw(
         )
 
     return PostgresWriteGateway(
-        source_qname=PostgresQualifiedName(*write_relation),
+        relation=write_relation,
         client=client,
         introspector=introspector,
         read_gw=read,

@@ -30,7 +30,6 @@ from forze.application.coordinators import SearchResultSnapshotCoordinator
 from forze.base.serialization import pydantic_validate_many
 from forze.domain.constants import ID_FIELD
 
-from ...kernel.gateways import PostgresQualifiedName
 from ._engine import RankedPipelineSql
 from ._leg_pgroonga import build_pgroonga_leg
 from ._materialize_hits import materialize_search_page
@@ -67,12 +66,6 @@ class PostgresPGroongaSearchAdapter[M: BaseModel](
 
     spec: SearchSpec[M]
     """Search specification."""
-
-    index_qname: PostgresQualifiedName
-    """Index qualified name."""
-
-    index_heap_qname: PostgresQualifiedName
-    """Index heap qualified name (relation which index is built on)."""
 
     join_pairs: Sequence[tuple[str, str]] | None = attrs.field(default=None)
     """Join pairs (projection column, index heap column)."""
@@ -208,12 +201,13 @@ class PostgresPGroongaSearchAdapter[M: BaseModel](
             ]
         )
         order_sql = sql.SQL(", ").join(order_parts)
+        proj_qname = await self._qname()
         count_stmt = sql.SQL(
             """
             SELECT COUNT(*) FROM {proj} {pa} WHERE {fw}
             """
         ).format(
-            proj=self.source_qname.ident(),
+            proj=proj_qname.ident(),
             pa=sql.Identifier(self.projection_alias),
             fw=fw,
         )
@@ -244,7 +238,7 @@ class PostgresPGroongaSearchAdapter[M: BaseModel](
             """
         ).format(
             cols=cols,
-            proj=self.source_qname.ident(),
+            proj=proj_qname.ident(),
             pa=sql.Identifier(self.projection_alias),
             fw=fw,
             order=order_sql,
@@ -337,10 +331,13 @@ class PostgresPGroongaSearchAdapter[M: BaseModel](
     ) -> RankedPipelineSql:
         _ = query, filters
         join = self._safe_join_pairs
+        index_qname = await self._index_qname()
+        index_heap_qname = await self._index_heap_qname()
+        proj_qname = await self._qname()
 
         sw, scored_rank, leg_params = await build_pgroonga_leg(
             introspector=self.introspector,
-            index_qname=self.index_qname,
+            index_qname=index_qname,
             search=self.spec,
             index_field_map=self.index_field_map,
             index_alias=self.pipeline.index,
@@ -359,7 +356,7 @@ class PostgresPGroongaSearchAdapter[M: BaseModel](
         filtered_cte = build_filtered_cte(
             aliases=self.pipeline,
             key_sel=key_sel,
-            proj_ident=self.source_qname.ident(),
+            proj_ident=proj_qname.ident(),
             fw=fw,
         )
         join_sf = scored_join_on_filtered(
@@ -371,7 +368,7 @@ class PostgresPGroongaSearchAdapter[M: BaseModel](
             aliases=self.pipeline,
             scored_keys=scored_keys,
             scored_rank=scored_rank,
-            heap_ident=self.index_heap_qname.ident(),
+            heap_ident=index_heap_qname.ident(),
             join_sf=join_sf,
             sw=sw,
         )
@@ -382,7 +379,7 @@ class PostgresPGroongaSearchAdapter[M: BaseModel](
         )
         from_outer = build_outer_from(
             aliases=self.pipeline,
-            proj_ident=self.source_qname.ident(),
+            proj_ident=proj_qname.ident(),
             join_vs=join_vs,
         )
         with_clause = build_pipeline_with_clause(filtered_cte, scored_cte)

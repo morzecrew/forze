@@ -10,6 +10,7 @@ from forze.application.contracts.document import (
     DocumentSpec,
 )
 from forze.application.execution import Deps, ExecutionContext
+from forze_mongo.execution.deps import MongoDocumentConfig
 from forze_mongo.execution.deps.deps import ConfigurableMongoDocument
 from forze_mongo.execution.deps.keys import MongoClientDepKey
 from forze_mongo.kernel.platform import MongoClient
@@ -41,10 +42,10 @@ async def test_mongo_document_computed_field_roundtrip_not_persisted(
     )
 
     configurable = ConfigurableMongoDocument(
-        config={
-            "read": (db_name, collection),
-            "write": (db_name, collection),
-        }
+        config=MongoDocumentConfig(
+            read=(db_name, collection),
+            write=(db_name, collection),
+        )
     )
     ctx = ExecutionContext(
         deps=Deps.plain(

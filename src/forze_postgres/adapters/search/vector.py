@@ -23,7 +23,6 @@ from forze.application.contracts.search import (
 )
 from forze.domain.constants import ID_FIELD
 
-from ...kernel.gateways import PostgresQualifiedName
 from ._engine import RankedPipelineSql
 from ._leg_vector import build_vector_leg
 from ._pipeline_sql import (
@@ -59,12 +58,6 @@ class PostgresVectorSearchAdapter[M: BaseModel](PostgresRankedPipelineSearchAdap
     spec: SearchSpec[M]
     """Search specification."""
 
-    index_qname: PostgresQualifiedName
-    """Qualified name for configuration symmetry (index object); not read at query time."""
-
-    index_heap_qname: PostgresQualifiedName
-    """Heap that holds the ``vector`` column used for distance scoring."""
-
     embedder: EmbeddingsProviderPort
     """Text-to-vector (query string encoding)."""
 
@@ -98,7 +91,6 @@ class PostgresVectorSearchAdapter[M: BaseModel](PostgresRankedPipelineSearchAdap
 
     def __attrs_post_init__(self) -> None:
         super().__attrs_post_init__()
-        _ = self.index_qname, self.index_field_map
         validate_join_pairs(self._safe_join_pairs)
 
     # ....................... #
@@ -129,6 +121,8 @@ class PostgresVectorSearchAdapter[M: BaseModel](PostgresRankedPipelineSearchAdap
     ) -> RankedPipelineSql:
         _ = query, filters
         join = self._safe_join_pairs
+        proj_qname = await self._qname()
+        index_heap_qname = await self._index_heap_qname()
 
         sw, scored_rank, leg_params = await build_vector_leg(
             embedder=self.embedder,
@@ -151,7 +145,7 @@ class PostgresVectorSearchAdapter[M: BaseModel](PostgresRankedPipelineSearchAdap
         filtered_cte = build_filtered_cte(
             aliases=self.pipeline,
             key_sel=key_sel,
-            proj_ident=self.source_qname.ident(),
+            proj_ident=proj_qname.ident(),
             fw=fw,
         )
         join_sf = scored_join_on_filtered(
@@ -163,7 +157,7 @@ class PostgresVectorSearchAdapter[M: BaseModel](PostgresRankedPipelineSearchAdap
             aliases=self.pipeline,
             scored_keys=scored_keys,
             scored_rank=scored_rank,
-            heap_ident=self.index_heap_qname.ident(),
+            heap_ident=index_heap_qname.ident(),
             join_sf=join_sf,
             sw=sw,
         )
@@ -174,7 +168,7 @@ class PostgresVectorSearchAdapter[M: BaseModel](PostgresRankedPipelineSearchAdap
         )
         from_outer = build_outer_from(
             aliases=self.pipeline,
-            proj_ident=self.source_qname.ident(),
+            proj_ident=proj_qname.ident(),
             join_vs=join_vs,
         )
         with_clause = build_pipeline_with_clause(filtered_cte, scored_cte)

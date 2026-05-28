@@ -2,103 +2,105 @@
 
 from __future__ import annotations
 
-from typing import Any, Literal, Mapping, NotRequired, Sequence, TypedDict, final
+from typing import TYPE_CHECKING, Any, Literal, Mapping, Sequence
 
-from forze.application.contracts.search import (
-    FederatedSearchSpec,
-    HubSearchSpec,
-    SearchSpec,
-)
+import attrs
+
+from forze.application.contracts.tenancy import TenantAwareIntegrationConfig
 from forze.base.exceptions import exc
+from forze.base.primitives import frozen_mapping
+
+if TYPE_CHECKING:
+    from forze.application.contracts.search import FederatedSearchSpec
 
 # ----------------------- #
 
 MeilisearchFederatedMerge = Literal["federation", "rrf"]
 
 
-class _BaseMeilisearchConfig(TypedDict, total=False):
-    tenant_aware: bool
-
-
-@final
-class MeilisearchSearchConfig(_BaseMeilisearchConfig):
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class MeilisearchSearchConfig(TenantAwareIntegrationConfig):
     """Physical Meilisearch mapping for one :class:`~forze.application.contracts.search.SearchSpec`."""
 
     index_uid: str
     """Meilisearch index UID."""
 
-    primary_key: NotRequired[str]
-    """Document primary key attribute (default ``id``)."""
+    primary_key: str = "id"
+    """Document primary key attribute."""
 
-    field_map: NotRequired[Mapping[str, str]]
+    field_map: Mapping[str, str] | None = None
     """Maps logical :class:`SearchSpec` field names to index attribute names."""
 
-    searchable_attributes: NotRequired[Sequence[str]]
-    """Override searchable attributes for :meth:`~forze.application.contracts.search.SearchCommandPort.ensure_index`."""
+    searchable_attributes: Sequence[str] | None = None
+    """Override searchable attributes for ensure_index."""
 
-    filterable_attributes: NotRequired[Sequence[str]]
+    filterable_attributes: Sequence[str] | None = None
     """Override filterable attributes for ensure_index."""
 
-    sortable_attributes: NotRequired[Sequence[str]]
+    sortable_attributes: Sequence[str] | None = None
     """Override sortable attributes for ensure_index."""
 
-    ranking_rules: NotRequired[Sequence[str]]
+    ranking_rules: Sequence[str] | None = None
     """Optional Meilisearch ranking rules."""
 
-    wait_for_tasks: NotRequired[bool]
-    """When ``True`` (default), await Meilisearch task completion after writes."""
+    wait_for_tasks: bool = True
+    """When True, await Meilisearch task completion after writes."""
+
+    # ....................... #
+
+    def __attrs_post_init__(self) -> None:
+        if not self.index_uid:
+            raise exc.configuration("Meilisearch search config requires index_uid.")
 
 
-@final
-class MeilisearchFederatedSearchConfig(_BaseMeilisearchConfig):
-    """Configuration for :class:`~forze_meilisearch.adapters.search.federated.MeilisearchFederatedSearchAdapter`."""
+# ....................... #
 
-    members: Mapping[str, MeilisearchSearchConfig]
+
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class MeilisearchFederatedSearchConfig(TenantAwareIntegrationConfig):
+    """Configuration for federated Meilisearch search."""
+
+    members: Mapping[str, MeilisearchSearchConfig] = attrs.field(
+        converter=frozen_mapping,
+    )
     """Per-member index configuration (keys are :class:`SearchSpec` names)."""
 
-    merge: NotRequired[MeilisearchFederatedMerge]
-    """``federation`` (default) uses Meilisearch multi-search federation; ``rrf`` uses coordinator RRF."""
+    merge: MeilisearchFederatedMerge = "federation"
+    """``federation`` uses Meilisearch multi-search; ``rrf`` uses coordinator RRF."""
 
-    rrf_k: NotRequired[int]
-    """RRF smoothing constant when ``merge`` is ``rrf`` (default 60)."""
+    rrf_k: int = 60
+    """RRF smoothing constant when ``merge`` is ``rrf``."""
 
-    rrf_per_leg_limit: NotRequired[int]
-    """Max hits per leg when ``merge`` is ``rrf`` (default 5000)."""
+    rrf_per_leg_limit: int = 5000
+    """Max hits per leg when ``merge`` is ``rrf``."""
 
+    # ....................... #
 
-def validate_meilisearch_search_conf(
-    cfg: MeilisearchSearchConfig,
-    spec: SearchSpec[Any],
-) -> None:
-    if not cfg.get("index_uid"):
-        raise exc.configuration("Meilisearch search config requires index_uid.")
-
-
-def validate_meilisearch_federated_search_conf(
-    cfg: MeilisearchFederatedSearchConfig,
-    spec: FederatedSearchSpec[Any],
-) -> None:
-    if len(cfg["members"]) < 2:
-        raise exc.configuration(
-            "Federated Meilisearch search requires at least two member configurations.",
-        )
-
-    merge = cfg.get("merge", "federation")
-
-    if merge not in ("federation", "rrf"):
-        raise exc.configuration(
-            f"Meilisearch federated merge {merge!r} must be 'federation' or 'rrf'.",
-        )
-
-    for member in spec.members:
-        if isinstance(member, HubSearchSpec):
+    def __attrs_post_init__(self) -> None:
+        if len(self.members) < 2:
             raise exc.configuration(
-                f"Federated Meilisearch search does not support hub member {member.name!r}.",
+                "Federated Meilisearch search requires at least two member configurations.",
             )
 
-        if member.name not in cfg["members"]:
+        if self.merge not in ("federation", "rrf"):
             raise exc.configuration(
-                f"Federated member {member.name!r} missing from MeilisearchFederatedSearchConfig['members'].",
+                f"Meilisearch federated merge {self.merge!r} must be 'federation' or 'rrf'.",
             )
 
-        validate_meilisearch_search_conf(cfg["members"][member.name], member)
+    # ....................... #
+
+    def validate_against_spec(self, spec: "FederatedSearchSpec[Any]") -> None:
+        from forze.application.contracts.search import HubSearchSpec
+
+        for member in spec.members:
+            if isinstance(member, HubSearchSpec):
+                raise exc.configuration(
+                    f"Federated Meilisearch search does not support hub member {member.name!r}.",
+                )
+
+            if member.name not in self.members:
+                raise exc.configuration(
+                    f"Federated member {member.name!r} missing from MeilisearchFederatedSearchConfig.members.",
+                )
+
+            pass

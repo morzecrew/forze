@@ -49,6 +49,22 @@ class TestExecutionRuntime:
         assert order == ["start", "shut"]
 
     @pytest.mark.asyncio
+    async def test_scope_builds_lifecycle_from_modules(self) -> None:
+        order: list[str] = []
+
+        async def start(_ctx) -> None:
+            order.append("start")
+
+        class _Module:
+            def __call__(self) -> tuple[LifecycleStep, ...]:
+                return (LifecycleStep(id="s", startup=start),)
+
+        rt = ExecutionRuntime(lifecycle=LifecyclePlan.from_modules(_Module()))
+
+        async with rt.scope():
+            assert order == ["start"]
+
+    @pytest.mark.asyncio
     async def test_scope_resets_context_on_exit(self) -> None:
 
         rt = ExecutionRuntime(deps=DepsPlan.from_modules(Deps))

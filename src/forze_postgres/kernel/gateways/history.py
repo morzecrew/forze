@@ -26,6 +26,7 @@ from forze.domain.constants import (
     REV_FIELD,
 )
 from forze.domain.models import Document, DocumentHistory
+from forze_postgres.kernel.relation import RelationSpec, resolve_postgres_qname
 
 from .base import PostgresGateway, PostgresQualifiedName
 from .types import PostgresBookkeepingStrategy
@@ -41,8 +42,15 @@ class PostgresHistoryGateway[D: Document](PostgresGateway[D]):
     strategy: PostgresBookkeepingStrategy
     """Bookkeeping strategy."""
 
-    target_qname: PostgresQualifiedName
-    """Target table qualified name."""
+    target_relation: RelationSpec
+    """Write-table relation (schema, name) or resolver for ``HISTORY_SOURCE_FIELD``."""
+
+    _target_qname_resolved: PostgresQualifiedName | None = attrs.field(
+        default=None,
+        init=False,
+        eq=False,
+        repr=False,
+    )
 
     # ....................... #
 
@@ -54,10 +62,25 @@ class PostgresHistoryGateway[D: Document](PostgresGateway[D]):
 
     # ....................... #
 
+    async def _target_qname(self) -> PostgresQualifiedName:
+        if self._target_qname_resolved is not None:
+            return self._target_qname_resolved
+
+        resolved = await resolve_postgres_qname(
+            self.target_relation,
+            self._tenant_id_for_resolve(),
+        )
+        object.__setattr__(self, "_target_qname_resolved", resolved)
+
+        return resolved
+
+    # ....................... #
+
     async def read(self, pk: UUID, rev: int) -> D:
+        target = await self._target_qname()
         where = sql.SQL("{h} = {h_v} AND {pk} = {pk_v} AND {rev} = {rev_v}").format(
             h=sql.Identifier(HISTORY_SOURCE_FIELD),
-            h_v=self.target_qname.literal(),
+            h_v=target.literal(),
             pk=sql.Identifier(ID_FIELD),
             pk_v=sql.Placeholder(),
             rev=sql.Identifier(REV_FIELD),
@@ -70,7 +93,7 @@ class PostgresHistoryGateway[D: Document](PostgresGateway[D]):
 
         stmt = sql.SQL("SELECT {data} FROM {table} WHERE {where}").format(
             data=sql.Identifier(HISTORY_DATA_FIELD),
-            table=self.source_qname.ident(),
+            table=(await self._qname()).ident(),
             where=where,
         )
 
@@ -87,6 +110,8 @@ class PostgresHistoryGateway[D: Document](PostgresGateway[D]):
         if len(pks) != len(revs):
             raise exc.precondition("Length of pks and revs must be the same")
 
+        target = await self._target_qname()
+
         # ⚡ Bolt: Precompute the row template to avoid repeatedly instantiating
         # sql.SQL and parsing it for every record in the batch, improving CPU bound performance
         row_template = sql.SQL("({}, {})").format(sql.Placeholder(), sql.Placeholder())
@@ -94,7 +119,7 @@ class PostgresHistoryGateway[D: Document](PostgresGateway[D]):
 
         where = sql.SQL("{h} = {h_v} AND ({pk}, {rev}) IN ({vals})").format(
             h=sql.Identifier(HISTORY_SOURCE_FIELD),
-            h_v=self.target_qname.literal(),
+            h_v=target.literal(),
             pk=sql.Identifier(ID_FIELD),
             rev=sql.Identifier(REV_FIELD),
             vals=values_sql,
@@ -108,7 +133,7 @@ class PostgresHistoryGateway[D: Document](PostgresGateway[D]):
 
         stmt = sql.SQL("SELECT {data} FROM {table} WHERE {where}").format(
             data=sql.Identifier(HISTORY_DATA_FIELD),
-            table=self.source_qname.ident(),
+            table=(await self._qname()).ident(),
             where=where,
         )
 
@@ -121,9 +146,11 @@ class PostgresHistoryGateway[D: Document](PostgresGateway[D]):
 
     # ....................... #
 
-    def _from_data(self, data: D) -> DocumentHistory[D]:
+    async def _from_data(self, data: D) -> DocumentHistory[D]:
+        target = await self._target_qname()
+
         return DocumentHistory(
-            source=self.target_qname.string(),
+            source=target.string(),
             id=data.id,
             rev=data.rev,
             data=data,
@@ -135,7 +162,7 @@ class PostgresHistoryGateway[D: Document](PostgresGateway[D]):
         if self.strategy == "database":
             return
 
-        record = self._from_data(data)
+        record = await self._from_data(data)
         insert_data_raw = pydantic_persistence_dump(record)
         insert_data = await self.adapt_payload_for_write(insert_data_raw)
 
@@ -144,7 +171,7 @@ class PostgresHistoryGateway[D: Document](PostgresGateway[D]):
         params = list(insert_data.values())
 
         stmt = sql.SQL("INSERT INTO {table} ({cols}) VALUES ({vals})").format(
-            table=self.source_qname.ident(),
+            table=(await self._qname()).ident(),
             cols=sql.SQL(", ").join(cols),
             vals=sql.SQL(", ").join(vals),
         )
@@ -157,7 +184,7 @@ class PostgresHistoryGateway[D: Document](PostgresGateway[D]):
         if self.strategy == "database":
             return
 
-        records = list(map(self._from_data, data))
+        records = [await self._from_data(item) for item in data]
         insert_data_raw = pydantic_persistence_dump_many(records)
         insert_data = await self.adapt_many_payload_for_write(insert_data_raw)
 
@@ -185,7 +212,7 @@ class PostgresHistoryGateway[D: Document](PostgresGateway[D]):
             value_parts = [row_template] * len(batch)
 
             stmt = sql.SQL("INSERT INTO {table} ({cols}) VALUES {vals}").format(
-                table=self.source_qname.ident(),
+                table=(await self._qname()).ident(),
                 cols=sql.SQL(", ").join(col_idents),
                 vals=sql.SQL(", ").join(value_parts),
             )

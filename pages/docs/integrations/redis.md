@@ -54,14 +54,22 @@ Each Redis resource needs a namespace. Set `tenant_aware=True` when keys must in
 
 ```python
 from forze.application.execution import DepsPlan
-from forze_redis import RedisDepsModule
+from forze_redis import (
+    RedisCacheConfig,
+    RedisDepsModule,
+    RedisDistributedLockConfig,
+    RedisIdempotencyConfig,
+    RedisSearchResultSnapshotConfig,
+)
 
 redis_module = RedisDepsModule(
     client=redis,
-    caches={"projects": cache_config},
-    idempotency=idempotency_config,
-    search_snapshots={"projects": {"namespace": "project-search"}},
-    dlocks={"project-locks": {"namespace": "locks"}},
+    caches={"projects": RedisCacheConfig(namespace="app:projects")},
+    idempotency=RedisIdempotencyConfig(namespace="app:idempotency"),
+    search_snapshots={
+        "projects": RedisSearchResultSnapshotConfig(namespace="project-search"),
+    },
+    dlocks={"project-locks": RedisDistributedLockConfig(namespace="locks")},
 )
 
 deps_plan = DepsPlan.from_modules(redis_module)

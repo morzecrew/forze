@@ -33,6 +33,7 @@ Kernel `DocumentSpec` names must match keys in `FirestoreDepsModule.rw_documents
         FirestoreClient,
         FirestoreConfig,
         FirestoreDepsModule,
+        FirestoreDocumentConfig,
         firestore_lifecycle_step,
     )
 
@@ -40,11 +41,11 @@ Kernel `DocumentSpec` names must match keys in `FirestoreDepsModule.rw_documents
     module = FirestoreDepsModule(
         client=client,
         rw_documents={
-            "projects": {
-                "read": ("(default)", "projects"),
-                "write": ("(default)", "projects"),
-                "history": ("(default)", "projects_history"),
-            },
+            "projects": FirestoreDocumentConfig(
+                read=("(default)", "projects"),
+                write=("(default)", "projects"),
+                history=("(default)", "projects_history"),
+            ),
         },
         tx={"default"},
     )

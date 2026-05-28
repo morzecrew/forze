@@ -11,8 +11,11 @@ from forze.application.contracts.embeddings import EmbeddingsProviderDepKey, Emb
 from forze.application.contracts.search import HubSearchSpec, SearchSpec
 from forze.application.execution import Deps, ExecutionContext
 from forze_postgres.adapters.search._vector_sql import vector_param_literal
-from forze_postgres.execution.deps.configs import PostgresHubSearchConfig
-from forze_postgres.execution.deps.deps import ConfigurablePostgresHubSearch
+from forze_postgres.execution.deps.configs import (
+    PostgresHubSearchConfig,
+    PostgresHubSearchMemberConfig,
+)
+from forze_postgres.execution.deps import ConfigurablePostgresHubSearch
 from forze_postgres.execution.deps.keys import (
     PostgresClientDepKey,
     PostgresIntrospectorDepKey,
@@ -95,20 +98,20 @@ async def test_hub_vector_leg_knn_single_and_multi_query(
         model_type=VecHubLink,
         members=(leg_spec,),
     )
-    hub_cfg: PostgresHubSearchConfig = {
-        "hub": ("public", links),
-        "members": {
-            leg_name: {
-                "index": ("public", idx),
-                "read": ("public", items),
-                "hub_fk": "item_id",
-                "engine": "vector",
-                "vector_column": "emb",
-                "embedding_dimensions": 3,
-                "embeddings_name": "hub_vec_emb",
-            },
+    hub_cfg = PostgresHubSearchConfig(
+        hub=("public", links),
+        members={
+            leg_name: PostgresHubSearchMemberConfig(
+                index=("public", idx),
+                read=("public", items),
+                hub_fk="item_id",
+                engine="vector",
+                vector_column="emb",
+                embedding_dimensions=3,
+                embeddings_name="hub_vec_emb",
+            ),
         },
-    }
+    )
 
     ctx = ExecutionContext(
         deps=Deps.plain(

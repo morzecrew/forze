@@ -1,9 +1,12 @@
 """Structural protocol for the Meilisearch async client."""
 
 from datetime import timedelta
-from typing import Any, Awaitable, Protocol
+from typing import TYPE_CHECKING, Any, Awaitable, Protocol
 
 from forze.base.primitives import JsonDict
+
+if TYPE_CHECKING:
+    from meilisearch_python_sdk.models.search import SearchParams
 
 # ----------------------- #
 
@@ -26,7 +29,7 @@ class MeilisearchClientPort(Protocol):
 
     def multi_search(
         self,
-        queries: list[Any],
+        queries: list["SearchParams"],
         *,
         federation: JsonDict | None = None,
     ) -> Awaitable[Any]: ...  # pragma: no cover

@@ -34,13 +34,14 @@ Together these ensure that business logic remains independent of infrastructure 
 | API | Returns | Purpose |
 |-----|---------|---------|
 | `ctx.deps.provide(key, route=...)` | `T` | Resolve a registered simple dependency |
-| `ctx.document.query(spec)` | `DocumentQueryPort` | Read-only document port |
-| `ctx.document.command(spec)` | `DocumentCommandPort` | Read-write document port |
+| `ctx.document.query(spec)` / `ctx.doc.query(spec)` | `DocumentQueryPort` | Read-only document port (`doc` is an alias) |
+| `ctx.document.command(spec)` / `ctx.doc.command(spec)` | `DocumentCommandPort` | Read-write document port |
 | `ctx.cache(spec)` | `CachePort` | Cache port (`CacheSpec`) |
 | `ctx.counter(spec)` | `CounterPort` | Namespace-scoped counter (`CounterSpec`) |
 | `ctx.tx_ctx.resolver(route)` | `TransactionManagerPort` | Transaction manager |
 | `ctx.storage(spec)` | `StoragePort` | Object storage (`StorageSpec`) |
 | `ctx.search.query(spec)` | `SearchQueryPort` | Full-text search port |
+| `ctx.search.command(spec)` | `SearchCommandPort` | External index maintenance (when wired) |
 | `ctx.tx_ctx.scope(route)` | async context manager | Enter a transaction scope |
 
 When `DocumentSpec.cache` is set, the registered document query/command factory resolves `ctx.cache(spec.cache)` while building the adapter.
@@ -52,52 +53,50 @@ Nested `ctx.tx_ctx.scope()` calls reuse the same transaction with savepoints whe
 A **handler** is a single, well-defined business action. Built-in document handlers are attrs classes that take ports in `__init__` and implement `async def __call__(self, args) -> R`:
 
     :::python
-    from uuid import UUID
-
     from forze.application.contracts.document import DocumentQueryPort
     from forze.application.contracts.execution import Handler
+    from forze.application.handlers.document import DocumentIdDTO, GetDocument
 
-    class GetProject(Handler[UUID, ProjectReadModel]):
-        doc: DocumentQueryPort[ProjectReadModel]
+    # Factory registered on OperationRegistry (see build_document_registry)
+    handler_factory = lambda ctx: GetDocument(doc=ctx.document.query(project_spec))
 
-        async def __call__(self, args: UUID) -> ProjectReadModel:
-            return await self.doc.get(args)
-
-Register handlers on `OperationRegistry` and resolve them through a frozen registry (see [Middleware & Plans](../reference/middleware-plans.md)).
+Register handlers on `OperationRegistry` and resolve them through a frozen registry (see [Middleware & Plans](../reference/middleware-plans.md)). Kernel handlers such as `GetDocument` take `DocumentIdDTO` (not a bare UUID) as args.
 
 ## Stage hooks
 
 Stage hooks are authored as `BeforeStep`, `OnSuccessStep`, and related types on `OperationRegistry.bind(...)`. They run before, around, or after the handler without replacing the domain result.
 
-Example precondition as `BeforeStep`:
+Example precondition as `BeforeStep` on an outer scope:
 
     :::python
+    from forze.application.composition.document import build_document_registry
     from forze.application.contracts.execution import BeforeStep
+    from forze.application.handlers.document import DocumentIdDTO
     from forze.base.errors import ValidationError
 
     def require_active_project_factory(ctx):
-        async def _before(args: UUID) -> None:
+        async def _before(args: DocumentIdDTO) -> None:
             doc = ctx.document.query(project_spec)
-            project = await doc.get(args)
+            project = await doc.get(args.id)
             if project.is_deleted:
                 raise ValidationError("Project is archived.")
         return _before
 
-    step = BeforeStep(id="active_check", factory=require_active_project_factory)
+    active_check = BeforeStep(id="active_check", factory=require_active_project_factory)
 
-Bind transaction routes and stages when building the registry:
-
-    :::python
     registry = (
         build_document_registry(project_spec, dtos)
-        .bind(*write_ops)
+        .bind(project_spec.default_namespace.key("update"))
         .bind_tx()
         .set_route("default")
+        .finish(deep=False)
+        .bind_outer()
+        .before(active_check)
         .finish(deep=True)
         .freeze()
     )
 
-See [Capability execution](../reference/capability-execution.md) for `requires` / `provides` on graph steps.
+See [Capability execution](../reference/capability-execution.md) for `requires` / `provides` on graph steps and [Middleware & Plans](../reference/middleware-plans.md) for the full binder flow.
 
 ## Execution runtime
 
@@ -152,19 +151,24 @@ You can also build plans incrementally:
 
 ## Lifecycle plan
 
-The `LifecyclePlan` manages startup and shutdown hooks for infrastructure clients:
+The `LifecyclePlan` manages startup and shutdown hooks for infrastructure clients. Canonical API details live in [Execution](../reference/execution.md#lifecycle).
 
     :::python
     from forze.application.execution import LifecyclePlan
+    from forze_postgres import PostgresLifecycleModule, PostgresDepsModule
+    from forze_redis.execution.lifecycle import redis_lifecycle_step
 
-    lifecycle = LifecyclePlan.from_steps(
-        postgres_lifecycle_step(dsn="postgresql://..."),
-        redis_lifecycle_step(dsn="redis://..."),
-    )
+    lifecycle = LifecyclePlan.from_modules(
+        PostgresLifecycleModule(client=pg, dsn="postgresql://..."),
+    ).with_steps(redis_lifecycle_step(dsn="redis://..."))
 
-Each `LifecycleStep` has a unique name, a startup hook, and a shutdown hook. Steps run in order at startup and in reverse order at shutdown. Name collisions raise `CoreError`.
+Each `LifecycleStep` is a `GraphStep` with `requires`, `provides`, and `depends_on` for declarative ordering at `LifecyclePlan.build()`. Steps run in resolved order at startup and in reverse at shutdown. If startup fails, already-executed steps are shut down in reverse before the exception propagates.
 
-Integration packages provide factory functions (e.g. `postgres_lifecycle_step()`) that create pre-configured steps.
+Use `LifecycleModule` implementations (for example `PostgresLifecycleModule`) or step factories (`postgres_lifecycle_step()`, …). Deps registration stays on `DepsModule`; lifecycle stays separate.
+
+### Routed clients
+
+When using tenant-routed clients (`RoutedPostgresClient`, `RoutedRedisClient`, and similar), prefer the integration lifecycle step for that client. Those steps call `routed_client_lifecycle_step` internally, which runs `startup` / `close` on the routed client pool. Do not hand-roll connect/disconnect on a shared non-routed client when routing is enabled. See [Multi-tenancy](multi-tenancy.md) and [Postgres integration](../integrations/postgres.md#operational-notes).
 
 ## Document operations
 
@@ -178,6 +182,11 @@ Forze ships built-in handlers for standard document CRUD:
 | `KILL` | `KillDocument` | `DocumentIdDTO` | `None` |
 | `LIST` | `ListDocuments` | list request DTO | `Paginated[R]` |
 | `RAW_LIST` | `ProjectedListDocuments` | projected list request | projected page |
+| `LIST_CURSOR` | `CursorListDocuments` | cursor list request DTO | cursor page |
+| `RAW_LIST_CURSOR` | `ProjectedCursorListDocuments` | projected cursor list request | projected cursor page |
+| `AGG_LIST` | `AggregatedListDocuments` | aggregated list request | aggregated page |
+
+Soft delete and restore use separate registry builders (`build_soft_deletion_registry`), not `DocumentKernelOp` suffixes.
 
 See [Composition & Mapping](../reference/composition.md) for `build_document_registry`.
 
@@ -205,4 +214,4 @@ See [Composition & Mapping](../reference/composition.md) for `build_document_reg
 
 The facade exposes typed attributes: `get`, `create`, `update`, `kill`, and others depending on the spec.
 
-Similarly, `SearchFacade` provides `search` and related operations for full-text search.
+Similarly, `SearchFacade` exposes `search`, `projected_search`, `cursor_search`, and `projected_cursor_search` for full-text search.

@@ -14,13 +14,14 @@ from forze.application.contracts.document import (
 from forze.application.execution import Deps, ExecutionContext
 from forze_patterns.soft_deletion.models import DocWithSoftDeletion, UpdateCmdWithSoftDeletion
 from forze.domain.models import CreateDocumentCmd, ReadDocument
-from forze_postgres.execution.deps.deps import ConfigurablePostgresDocument
+from forze_postgres.execution.deps import ConfigurablePostgresDocument
 from forze_postgres.execution.deps.keys import (
     PostgresClientDepKey,
     PostgresIntrospectorDepKey,
 )
 from forze_postgres.kernel.catalog.introspect import PostgresIntrospector
 from forze_postgres.kernel.client.client import PostgresClient
+from forze_postgres.execution.deps.configs import PostgresDocumentConfig
 
 # ----------------------- #
 
@@ -44,11 +45,11 @@ class SoftRead(ReadDocument):
 
 def _ctx(pg_client: PostgresClient, table: str) -> ExecutionContext:
     configurable = ConfigurablePostgresDocument(
-        config={
-            "read": ("public", table),
-            "write": ("public", table),
-            "bookkeeping_strategy": "application",
-        }
+        config=PostgresDocumentConfig(
+            read=("public", table),
+            write=("public", table),
+            bookkeeping_strategy="application",
+        )
     )
     return ExecutionContext(
         deps=Deps.plain(

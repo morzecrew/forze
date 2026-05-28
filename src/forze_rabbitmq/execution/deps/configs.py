@@ -1,16 +1,18 @@
-from typing import TypedDict
+"""RabbitMQ queue execution configs."""
+
+import attrs
+
+from forze.application.contracts.tenancy import TenantAwareIntegrationConfig
 
 # ----------------------- #
 
 
-class RabbitMQQueueConfig(TypedDict, total=False):
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class RabbitMQQueueConfig(TenantAwareIntegrationConfig):
     """Configuration for a RabbitMQ queue."""
 
-    namespace: str
+    namespace: str = ""
     """Base namespace for queues."""
 
-    tenant_aware: bool
-    """Whether the queue is tenant-aware."""
-
-    delayed_delivery: bool
-    """When ``True``, enable DLX delay-queue publishing for ``delay`` / ``not_before`` enqueues."""
+    delayed_delivery: bool = False
+    """When True, enable DLX delay-queue publishing for delayed enqueues."""

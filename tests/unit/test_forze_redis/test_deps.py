@@ -9,6 +9,7 @@ from forze.application.execution import Deps, ExecutionContext
 from forze_redis.adapters import RedisPubSubAdapter, RedisPubSubCodec
 from forze_redis.adapters.counter import RedisCounterAdapter
 from forze_redis.adapters.codecs import RedisKeyCodec
+from forze_redis.execution.deps.configs import RedisCounterConfig
 from forze_redis.execution.deps.deps import ConfigurableRedisCounter
 from forze_redis.execution.deps.keys import RedisClientDepKey
 from forze_redis.kernel.platform.client import RedisClient
@@ -20,7 +21,9 @@ def test_redis_counter_factory_builds_adapter() -> None:
     deps = Deps.plain({RedisClientDepKey: redis_mock})
     context = ExecutionContext(deps=deps)
 
-    factory = ConfigurableRedisCounter(config={"namespace": "test-namespace"})
+    factory = ConfigurableRedisCounter(
+        config=RedisCounterConfig(namespace="test-namespace"),
+    )
     counter = factory(context, CounterSpec(name="test-namespace"))
 
     assert isinstance(counter, RedisCounterAdapter)
@@ -36,7 +39,7 @@ def test_redis_counter_factory_tenant_aware_uses_context() -> None:
     tid = uuid4()
 
     factory = ConfigurableRedisCounter(
-        config={"namespace": "ns", "tenant_aware": True},
+        config=RedisCounterConfig(namespace="ns", tenant_aware=True),
     )
     counter = factory(context, CounterSpec(name="ns"))
 

@@ -19,7 +19,6 @@ from forze.application.contracts.search import (
 )
 from forze.domain.constants import ID_FIELD
 
-from ...kernel.gateways import PostgresQualifiedName
 from ._engine import RankedPipelineSql
 from ._fts_sql import FtsGroupLetter
 from ._leg_fts import build_fts_leg
@@ -54,19 +53,13 @@ class PostgresFTSSearchAdapter[M: BaseModel](PostgresRankedPipelineSearchAdapter
 
     Structured filters (and tenant scope) apply on the **projection** relation
     (:attr:`~PostgresGateway.qname`), typically a view. Matching and
-    ``ts_rank_cd`` use the **index heap** (:attr:`index_heap_qname`) and the
-    ``tsvector`` expression from :attr:`index_qname`, mirroring
-    :class:`PostgresPGroongaSearchAdapter`.
+    ``ts_rank_cd`` use the **index heap** (``await _index_heap_qname()``) and the
+    ``tsvector`` expression from the index relation (``await _index_qname()``),
+    mirroring :class:`PostgresPGroongaSearchAdapter`.
     """
 
     spec: SearchSpec[M]
     """Search specification."""
-
-    index_qname: PostgresQualifiedName
-    """Qualified name of the FTS index (resolves the ``tsvector`` expression)."""
-
-    index_heap_qname: PostgresQualifiedName
-    """Index heap qualified name (relation the index is built on)."""
 
     fts_groups: dict[FtsGroupLetter, Sequence[str]]
     """Mapping of FTS weight letters to field names."""
@@ -116,10 +109,13 @@ class PostgresFTSSearchAdapter[M: BaseModel](PostgresRankedPipelineSearchAdapter
     ) -> RankedPipelineSql:
         _ = query, filters
         join = self._safe_join_pairs
+        index_qname = await self._index_qname()
+        index_heap_qname = await self._index_heap_qname()
+        proj_qname = await self._qname()
 
         sw, scored_rank, leg_params = await build_fts_leg(
             introspector=self.introspector,
-            index_qname=self.index_qname,
+            index_qname=index_qname,
             search=self.spec,
             fts_groups=self.fts_groups,
             index_alias=self.pipeline.index,
@@ -137,7 +133,7 @@ class PostgresFTSSearchAdapter[M: BaseModel](PostgresRankedPipelineSearchAdapter
         filtered_cte = build_filtered_cte(
             aliases=self.pipeline,
             key_sel=key_sel,
-            proj_ident=self.source_qname.ident(),
+            proj_ident=proj_qname.ident(),
             fw=fw,
         )
         join_sf = scored_join_on_filtered(
@@ -149,7 +145,7 @@ class PostgresFTSSearchAdapter[M: BaseModel](PostgresRankedPipelineSearchAdapter
             aliases=self.pipeline,
             scored_keys=scored_keys,
             scored_rank=scored_rank,
-            heap_ident=self.index_heap_qname.ident(),
+            heap_ident=index_heap_qname.ident(),
             join_sf=join_sf,
             sw=sw,
         )
@@ -160,7 +156,7 @@ class PostgresFTSSearchAdapter[M: BaseModel](PostgresRankedPipelineSearchAdapter
         )
         from_outer = build_outer_from(
             aliases=self.pipeline,
-            proj_ident=self.source_qname.ident(),
+            proj_ident=proj_qname.ident(),
             join_vs=join_vs,
         )
         with_clause = build_pipeline_with_clause(filtered_cte, scored_cte)

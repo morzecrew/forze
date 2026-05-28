@@ -15,7 +15,7 @@ from forze_postgres.execution.deps.configs import (
     PostgresReadOnlyDocumentConfig,
 )
 from forze_postgres.execution.deps.keys import PostgresIntrospectorDepKey
-from forze_postgres.execution.document_schema import (
+from forze_postgres.execution.lifecycle import (
     PostgresDocumentSchemaValidationHook,
     postgres_document_schema_spec_for_binding,
     postgres_document_schema_validation_lifecycle_step,
@@ -40,10 +40,10 @@ class _Create(BaseModel):
 
 def test_postgres_document_schema_spec_read_only() -> None:
     spec = DocumentSpec(name="doc", read=_Read)
-    config: PostgresReadOnlyDocumentConfig = {
-        "read": ("public", "items"),
-        "tenant_aware": True,
-    }
+    config = PostgresReadOnlyDocumentConfig(
+        read=("public", "items"),
+        tenant_aware=True,
+    )
     out = postgres_document_schema_spec_for_binding(
         "doc",
         spec=spec,
@@ -60,8 +60,20 @@ def test_postgres_document_schema_spec_write_requires_write_config() -> None:
         read=_Read,
         write={"domain": _Domain, "create_cmd": _Create},
     )
-    config: PostgresReadOnlyDocumentConfig = {"read": ("public", "items")}
-    with pytest.raises(CoreException, match="missing 'write' relation"):
+    config = PostgresReadOnlyDocumentConfig(read=("public", "items"))
+    with pytest.raises(CoreException, match="not a PostgresDocumentConfig"):
+        postgres_document_schema_spec_for_binding("doc", spec=spec, config=config)
+
+
+def test_postgres_document_schema_spec_rejects_dynamic_read_relation() -> None:
+    spec = DocumentSpec(name="doc", read=_Read)
+    config = PostgresReadOnlyDocumentConfig(
+        read=lambda _: ("public", "items"),  # type: ignore[arg-type]
+    )
+    with pytest.raises(
+        CoreException,
+        match="dynamic RelationSpec resolver",
+    ):
         postgres_document_schema_spec_for_binding("doc", spec=spec, config=config)
 
 
@@ -72,10 +84,11 @@ def test_postgres_document_schema_spec_history_requires_relation() -> None:
         write={"domain": _Domain, "create_cmd": _Create},
         history_enabled=True,
     )
-    config: PostgresDocumentConfig = {
-        "read": ("public", "items"),
-        "write": ("public", "items"),
-    }
+    config = PostgresDocumentConfig(
+        read=("public", "items"),
+        write=("public", "items"),
+        bookkeeping_strategy="application",
+    )
     with pytest.raises(CoreException, match="no 'history' relation"):
         postgres_document_schema_spec_for_binding("doc", spec=spec, config=config)
 

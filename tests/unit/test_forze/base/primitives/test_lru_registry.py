@@ -84,6 +84,40 @@ class TestSimpleLruRegistry:
         assert r1 == r2 == "v-x"
         assert calls == 1
 
+    @pytest.mark.asyncio
+    async def test_dedup_key_shares_slot(self) -> None:
+        create = AsyncMock(side_effect=lambda k: f"v-{k}")
+        dispose = AsyncMock()
+        reg = SimpleLruRegistry(
+            max_entries=4,
+            create=create,
+            dispose=dispose,
+            dedup_key=lambda k: "shared",
+        )
+
+        assert await reg.get_or_create("a") == "v-a"
+        assert await reg.get_or_create("b") == "v-a"
+        create.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_dedup_evict_one_logical_keeps_shared_slot(self) -> None:
+        create = AsyncMock(side_effect=lambda k: f"v-{k}")
+        dispose = AsyncMock()
+        reg = SimpleLruRegistry(
+            max_entries=4,
+            create=create,
+            dispose=dispose,
+            dedup_key=lambda k: "shared",
+        )
+
+        await reg.get_or_create("a")
+        await reg.get_or_create("b")
+        await reg.evict("a")
+        dispose.assert_not_awaited()
+        assert await reg.get_or_create("b") == "v-a"
+        await reg.evict("b")
+        dispose.assert_awaited_once_with("v-a")
+
 
 class TestGuardedLruRegistry:
     def test_rejects_zero_max_entries(self) -> None:
@@ -211,3 +245,20 @@ class TestGuardedLruRegistry:
 
         gate.set()
         await t1
+
+    @pytest.mark.asyncio
+    async def test_dedup_key_shares_slot_under_use(self) -> None:
+        create = AsyncMock(side_effect=lambda k: f"v-{k}")
+        dispose = AsyncMock()
+        reg = GuardedLruRegistry(
+            max_entries=4,
+            create=create,
+            dispose=dispose,
+            dedup_key=lambda k: "shared",
+        )
+
+        async with reg.use("a") as v1:
+            async with reg.use("b") as v2:
+                assert v1 == v2 == "v-a"
+
+        create.assert_awaited_once()

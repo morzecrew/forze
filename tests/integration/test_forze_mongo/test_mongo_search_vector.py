@@ -12,6 +12,7 @@ from forze.application.contracts.search import SearchQueryDepKey, SearchSpec
 from forze.application.execution import Deps, ExecutionContext
 from forze_mock import MockHashEmbeddingsProvider
 from forze_mongo.adapters.search import MongoVectorSearchAdapter
+from forze_mongo.execution.deps.configs import MongoSearchConfig
 from forze_mongo.execution.deps.deps import ConfigurableMongoSearch
 from forze_mongo.execution.deps.keys import MongoClientDepKey
 from forze_mongo.kernel.platform import MongoClient
@@ -89,14 +90,14 @@ async def test_mongo_vector_search_knn(mongo_atlas_client: MongoClient) -> None:
             {
                 MongoClientDepKey: mongo_atlas_client,
                 SearchQueryDepKey: ConfigurableMongoSearch(
-                    config={
-                        "read": (db_name, collection),
-                        "engine": "vector",
-                        "vector_path": path,
-                        "index_name": index_name,
-                        "embeddings_name": "vec_test",
-                        "embedding_dimensions": 3,
-                    }
+                    config=MongoSearchConfig(
+                        read=(db_name, collection),
+                        engine="vector",
+                        vector_path=path,
+                        index_name=index_name,
+                        embeddings_name="vec_test",
+                        embedding_dimensions=3,
+                    )
                 ),
                 EmbeddingsProviderDepKey: _embeddings_factory,
             }

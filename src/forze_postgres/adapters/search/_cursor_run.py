@@ -80,6 +80,7 @@ async def execute_projection_keyset_cursor[M: BaseModel](
 
     lim, use_after, use_before = parse_search_cursor(cursor)
     c = dict(cursor or {})
+    proj_qn = await gw._qname()  # pyright: ignore[reportPrivateUsage]
 
     effective = resolve_effective_sorts(
         sorts=sorts,
@@ -157,7 +158,7 @@ async def execute_projection_keyset_cursor[M: BaseModel](
         """
     ).format(
         cols=cols,
-        proj=gw.source_qname.ident(),
+        proj=proj_qn.ident(),
         pa=sql.Identifier(projection_alias),
         w=where_fin,
         order=order_sql,

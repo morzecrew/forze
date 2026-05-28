@@ -59,15 +59,17 @@ project_spec = DocumentSpec(
     cache=CacheSpec(name=ResourceName.PROJECTS, ttl=timedelta(minutes=5)),
 )
 
+from forze_postgres import PostgresDocumentConfig
+
 pg_module = PostgresDepsModule(
     client=pg_client,
     rw_documents={
-        ResourceName.PROJECTS: {
-            "read": ("public", "projects"),
-            "write": ("public", "projects"),
-            "bookkeeping_strategy": "database",
-            "history": ("public", "projects_history"),
-        },
+        ResourceName.PROJECTS: PostgresDocumentConfig(
+            read=("public", "projects"),
+            write=("public", "projects"),
+            bookkeeping_strategy="database",
+            history=("public", "projects_history"),
+        ),
     },
     tx={TxRoute.DEFAULT},
 )

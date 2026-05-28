@@ -15,6 +15,7 @@ from forze.application.execution import Deps, ExecutionContext
 from forze.domain.constants import ID_FIELD
 from forze_patterns.soft_deletion.models import DocWithSoftDeletion, UpdateCmdWithSoftDeletion
 from forze.domain.models import CreateDocumentCmd, ReadDocument
+from forze_mongo.execution.deps import MongoDocumentConfig
 from forze_mongo.execution.deps.deps import ConfigurableMongoDocument
 from forze_mongo.execution.deps.keys import MongoClientDepKey
 from forze_mongo.kernel.platform import MongoClient
@@ -59,11 +60,11 @@ async def _setup(
         history_enabled=True,
     )
     configurable = ConfigurableMongoDocument(
-        config={
-            "read": (db_name, collection),
-            "write": (db_name, collection),
-            "history": (db_name, history_collection),
-        }
+        config=MongoDocumentConfig(
+            read=(db_name, collection),
+            write=(db_name, collection),
+            history=(db_name, history_collection),
+        )
     )
     ctx = ExecutionContext(
         deps=Deps.plain(

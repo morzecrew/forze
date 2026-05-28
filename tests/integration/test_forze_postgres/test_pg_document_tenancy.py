@@ -17,7 +17,8 @@ from forze.application.contracts.document import (
 from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.execution import Deps, ExecutionContext, InvocationMetadata
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
-from forze_postgres.execution.deps.deps import ConfigurablePostgresDocument
+from forze_postgres.execution.deps.configs import PostgresDocumentConfig
+from forze_postgres.execution.deps import ConfigurablePostgresDocument
 from forze_postgres.execution.deps.keys import (
     PostgresClientDepKey,
     PostgresIntrospectorDepKey,
@@ -43,12 +44,12 @@ class TenantReadDoc(ReadDocument):
 
 def _tenant_table_context(pg_client: PostgresClient, table: str) -> ExecutionContext:
     configurable = ConfigurablePostgresDocument(
-        config={
-            "read": ("public", table),
-            "write": ("public", table),
-            "bookkeeping_strategy": "application",
-            "tenant_aware": True,
-        }
+        config=PostgresDocumentConfig(
+            read=("public", table),
+            write=("public", table),
+            bookkeeping_strategy="application",
+            tenant_aware=True,
+        )
     )
     return ExecutionContext(
         deps=Deps.plain(
@@ -272,3 +273,88 @@ async def test_update_cross_tenant_is_not_found(pg_client: PostgresClient) -> No
         adapter = execution_context.document.command(spec)
         with pytest.raises(CoreException):
             await adapter.update(doc_a.id, doc_a.rev, TenantUpdateDoc(name="hijack"))
+
+
+@pytest.mark.asyncio
+async def test_schema_resolver_isolates_tenants(pg_client: PostgresClient) -> None:
+    """Per-tenant schemas via ``RelationSpec`` resolver (relation-level isolation)."""
+
+    table = f"schema_rel_{uuid4().hex[:12]}"
+    tenant_a = uuid4()
+    tenant_b = uuid4()
+    schema_a = f"tenant_{tenant_a.hex[:8]}"
+    schema_b = f"tenant_{tenant_b.hex[:8]}"
+
+    for schema in (schema_a, schema_b):
+        await pg_client.execute(f'CREATE SCHEMA IF NOT EXISTS "{schema}"')
+        await pg_client.execute(
+            f"""
+            CREATE TABLE "{schema}"."{table}" (
+                id uuid PRIMARY KEY,
+                rev integer NOT NULL,
+                created_at timestamptz NOT NULL,
+                last_update_at timestamptz NOT NULL,
+                name text NOT NULL
+            );
+            """
+        )
+
+    def relation(tenant_id: UUID | None) -> tuple[str, str]:
+        assert tenant_id is not None
+        return (f"tenant_{tenant_id.hex[:8]}", table)
+
+    configurable = ConfigurablePostgresDocument(
+        config=PostgresDocumentConfig(
+            read=relation,
+            write=relation,
+            bookkeeping_strategy="application",
+            tenant_aware=False,
+        )
+    )
+    execution_context = ExecutionContext(
+        deps=Deps.plain(
+            {
+                PostgresClientDepKey: pg_client,
+                PostgresIntrospectorDepKey: PostgresIntrospector(client=pg_client),
+                DocumentQueryDepKey: configurable,
+                DocumentCommandDepKey: configurable,
+            }
+        )
+    )
+    class SchemaDoc(Document):
+        name: str
+
+    class SchemaReadDoc(ReadDocument):
+        name: str
+
+    spec = DocumentSpec(
+        name="schema_rel_docs",
+        read=SchemaReadDoc,
+        write={
+            "domain": SchemaDoc,
+            "create_cmd": TenantCreateDoc,
+            "update_cmd": TenantUpdateDoc,
+        },
+    )
+
+    with execution_context.inv_ctx.bind(
+        metadata=_metadata(),
+        authn=AuthnIdentity(principal_id=uuid4()),
+        tenant=TenantIdentity(tenant_id=tenant_a),
+    ):
+        adapter = execution_context.document.command(spec)
+        doc_a = await adapter.create(TenantCreateDoc(name="alpha"))
+        pk_a = doc_a.id
+
+    with execution_context.inv_ctx.bind(
+        metadata=_metadata(),
+        authn=AuthnIdentity(principal_id=uuid4()),
+        tenant=TenantIdentity(tenant_id=tenant_b),
+    ):
+        adapter = execution_context.document.command(spec)
+        with pytest.raises(CoreException):
+            await adapter.get(pk_a)
+
+        doc_b = await adapter.create(TenantCreateDoc(name="beta"))
+        assert (await adapter.count({})) == 1
+        assert doc_b.name == "beta"

@@ -5,6 +5,7 @@ import socket
 import threading
 import time
 from dataclasses import dataclass, field
+from collections.abc import Mapping
 from typing import Any, Sequence
 
 import httpx
@@ -15,6 +16,7 @@ from forze.application.execution import Deps, ExecutionContext
 from forze.application.execution.context import ExecutionContextFactory
 from forze_inngest import InngestFunctionBinding
 from forze_inngest.execution.deps import InngestDepsModule
+from forze_inngest.execution.deps.configs import InngestEventConfig
 from forze_inngest.fastapi import serve
 from forze_inngest.kernel.platform import InngestClient, InngestClientPort
 
@@ -84,7 +86,7 @@ def start_forze_inngest_app(
     target: InngestDevTarget,
     *,
     bindings: Sequence[InngestFunctionBinding[Any, Any]],
-    events: dict[str, dict[str, object]] | None = None,
+    events: Mapping[str, InngestEventConfig] | None = None,
     app_id: str = "forze-it",
     extra_plain_deps: dict[Any, Any] | None = None,
 ) -> InngestAppHarness:

@@ -12,7 +12,8 @@ from forze.application.contracts.analytics import (
 from forze.application.execution import ExecutionContext
 from forze.base.exceptions import CoreException
 from forze_clickhouse.adapters import ClickHouseAnalyticsAdapter
-from forze_clickhouse.execution import ClickHouseDepsModule
+from forze_clickhouse.execution import ClickHouseAnalyticsConfig, ClickHouseDepsModule
+from forze_clickhouse.execution.deps.configs import ClickHouseQueryConfig
 
 pytestmark = pytest.mark.integration
 
@@ -42,23 +43,28 @@ def _spec() -> AnalyticsSpec[_Row, _Ingest]:
     )
 
 
+def _config(
+    database_id: str,
+    table_id: str,
+    *,
+    sql: str | None = None,
+) -> ClickHouseAnalyticsConfig:
+    query_sql = sql or f"SELECT event, value FROM {database_id}.{table_id}"
+    return ClickHouseAnalyticsConfig(
+        database=database_id,
+        queries={"all": ClickHouseQueryConfig(sql=query_sql)},
+        ingest_table=table_id,
+    )
+
+
 @pytest.mark.asyncio
 async def test_append_and_query(clickhouse_client, analytics_table) -> None:
     database_id, table_id = analytics_table
     spec = _spec()
-    config = {
-        "database": database_id,
-        "queries": {
-            "all": {
-                "sql": f"SELECT event, value FROM {database_id}.{table_id}",
-            },
-        },
-        "ingest_table": table_id,
-    }
     adapter = ClickHouseAnalyticsAdapter(
         client=clickhouse_client,
         spec=spec,
-        config=config,
+        config=_config(database_id, table_id),
     )
 
     await adapter.append([_Ingest(event="signup", value=42)])
@@ -74,17 +80,7 @@ async def test_deps_module_wiring(clickhouse_client, analytics_table) -> None:
     spec = _spec()
     module = ClickHouseDepsModule(
         client=clickhouse_client,
-        analytics={
-            "events": {
-                "database": database_id,
-                "queries": {
-                    "all": {
-                        "sql": f"SELECT event, value FROM {database_id}.{table_id}",
-                    },
-                },
-                "ingest_table": table_id,
-            },
-        },
+        analytics={"events": _config(database_id, table_id)},
     )
     ctx = ExecutionContext(deps=module())
     port = ctx.analytics.query(spec)
@@ -105,15 +101,7 @@ async def test_run_chunked_reads_batches(clickhouse_client, analytics_table) -> 
     adapter = ClickHouseAnalyticsAdapter(
         client=clickhouse_client,
         spec=spec,
-        config={
-            "database": database_id,
-            "queries": {
-                "all": {
-                    "sql": f"SELECT event, value FROM {database_id}.{table_id}",
-                },
-            },
-            "ingest_table": table_id,
-        },
+        config=_config(database_id, table_id),
     )
 
     await adapter.append([_Ingest(event=f"evt_{i}", value=i) for i in range(3)])
@@ -140,15 +128,7 @@ async def test_run_cursor_offset_pagination(
     adapter = ClickHouseAnalyticsAdapter(
         client=clickhouse_client,
         spec=spec,
-        config={
-            "database": database_id,
-            "queries": {
-                "all": {
-                    "sql": f"SELECT event, value FROM {database_id}.{table_id}",
-                },
-            },
-            "ingest_table": table_id,
-        },
+        config=_config(database_id, table_id),
     )
 
     await adapter.append([_Ingest(event=f"page_{i}", value=i) for i in range(5)])
@@ -177,15 +157,7 @@ async def test_run_cursor_rejects_before_cursor(
     adapter = ClickHouseAnalyticsAdapter(
         client=clickhouse_client,
         spec=_spec(),
-        config={
-            "database": database_id,
-            "queries": {
-                "all": {
-                    "sql": f"SELECT event, value FROM {database_id}.{table_id}",
-                },
-            },
-            "ingest_table": table_id,
-        },
+        config=_config(database_id, table_id),
     )
 
     with pytest.raises(CoreException, match="Backward analytics cursors"):

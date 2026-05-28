@@ -29,6 +29,7 @@ from forze.application.contracts.secrets import (
 from forze.application.contracts.tenancy import require_tenant_id
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
+from forze.base.primitives.fingerprint import connection_string_fingerprint, stable_fingerprint
 from forze.base.primitives.lru_registry import SimpleLruRegistry
 
 from .client import MongoClient
@@ -61,6 +62,7 @@ class RoutedMongoClient(MongoClientPort):
     max_cached_tenants: int = 100
 
     _registry: SimpleLruRegistry[UUID, MongoClient] = attrs.field(init=False)
+    _fingerprints: dict[UUID, str] = attrs.field(factory=dict, init=False, repr=False)
     _started: bool = attrs.field(default=False, init=False)
 
     # ....................... #
@@ -73,6 +75,7 @@ class RoutedMongoClient(MongoClientPort):
             max_entries=self.max_cached_tenants,
             create=self._create_client,
             dispose=lambda client: client.close(),
+            dedup_key=lambda tid: self._fingerprints[tid],
         )
 
     # ....................... #
@@ -93,7 +96,31 @@ class RoutedMongoClient(MongoClientPort):
     async def evict_tenant(self, tenant_id: UUID) -> None:
         """Close and remove the client for one tenant."""
 
+        self._fingerprints.pop(tenant_id, None)
         await self._registry.evict(tenant_id)
+
+    # ....................... #
+
+    async def _ensure_fingerprint(self, tenant_id: UUID) -> str:
+        cached = self._fingerprints.get(tenant_id)
+
+        if cached is not None:
+            return cached
+
+        ref = secret_ref_for_tenant(self.secret_ref_for_tenant, tenant_id)
+        uri = await resolve_str_for_tenant(
+            self.secrets,
+            ref,
+            tenant_id=tenant_id,
+            backend="Mongo",
+        )
+        fingerprint = stable_fingerprint(
+            connection_string_fingerprint(uri),
+            self.database_name_for_tenant(tenant_id),
+        )
+        self._fingerprints[tenant_id] = fingerprint
+
+        return fingerprint
 
     # ....................... #
 
@@ -123,12 +150,13 @@ class RoutedMongoClient(MongoClientPort):
         if not self._started:
             raise exc.internal("Routed Mongo client is not started")
 
-        return await self._registry.get_or_create(
-            require_tenant_id(
-                self.tenant_provider,
-                message="Tenant ID is required for routed Mongo access",
-            ),
+        tenant_id = require_tenant_id(
+            self.tenant_provider,
+            message="Tenant ID is required for routed Mongo access",
         )
+        await self._ensure_fingerprint(tenant_id)
+
+        return await self._registry.get_or_create(tenant_id)
 
     # ....................... #
 

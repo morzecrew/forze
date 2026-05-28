@@ -10,8 +10,9 @@ from forze.application.execution.context import ExecutionContext
 from forze.application.execution.lifecycle.builtin import routed_client_lifecycle_step
 from forze.base.serialization import pydantic_secret_converter
 
-from ..kernel.client import PostgresClient, PostgresConfig, RoutedPostgresClient
-from .deps import PostgresClientDepKey
+from ...kernel.client import PostgresClient, PostgresConfig, RoutedPostgresClient
+from ..deps import PostgresClientDepKey
+from .capabilities import POSTGRES_CLIENT_CAPABILITY
 
 # ----------------------- #
 
@@ -70,7 +71,12 @@ def postgres_lifecycle_step(
     startup_hook = PostgresStartupHook(dsn=dsn, config=config)
     shutdown_hook = PostgresShutdownHook()
 
-    return LifecycleStep(id=name, startup=startup_hook, shutdown=shutdown_hook)
+    return LifecycleStep(
+        id=name,
+        startup=startup_hook,
+        shutdown=shutdown_hook,
+        provides=(POSTGRES_CLIENT_CAPABILITY,),
+    )
 
 
 # ....................... #
@@ -91,4 +97,7 @@ def routed_postgres_lifecycle_step(
     :returns: Lifecycle step with startup and shutdown hooks.
     """
 
-    return routed_client_lifecycle_step(name, client=client)
+    return attrs.evolve(
+        routed_client_lifecycle_step(name, client=client),
+        provides=(POSTGRES_CLIENT_CAPABILITY,),
+    )

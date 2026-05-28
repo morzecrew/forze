@@ -18,7 +18,6 @@ from .configs import (
     MongoDocumentConfig,
     MongoReadOnlyDocumentConfig,
     MongoSearchConfig,
-    validate_mongo_search_conf,
 )
 from .deps import (
     ConfigurableMongoDocument,
@@ -36,15 +35,11 @@ def _document_config_to_read_only(
 ) -> MongoReadOnlyDocumentConfig:
     """Derive a read-only config from a read-write document config (same ``read`` mapping)."""
 
-    ro: MongoReadOnlyDocumentConfig = {"read": config["read"]}
-
-    if "tenant_aware" in config:
-        ro["tenant_aware"] = config["tenant_aware"]
-
-    if "batch_size" in config:
-        ro["batch_size"] = config["batch_size"]
-
-    return ro
+    return MongoReadOnlyDocumentConfig(
+        read=config.read,
+        tenant_aware=config.tenant_aware,
+        batch_size=config.batch_size,
+    )
 
 
 # ....................... #
@@ -73,11 +68,6 @@ class MongoDepsModule[K: str | StrEnum](DepsModule[K]):
     """Mapping from search spec names to Mongo-specific search configurations."""
 
     # ....................... #
-
-    def __attrs_post_init__(self) -> None:
-        if self.searches:
-            for search_cfg in self.searches.values():
-                validate_mongo_search_conf(search_cfg)
 
     # ....................... #
 

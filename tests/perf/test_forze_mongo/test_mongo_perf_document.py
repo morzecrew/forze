@@ -14,6 +14,7 @@ from forze.application.contracts.document import (
 )
 from forze.application.execution import Deps, ExecutionContext
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
+from forze_mongo.execution.deps import MongoDocumentConfig
 from forze_mongo.execution.deps.deps import ConfigurableMongoDocument
 from forze_mongo.execution.deps.keys import MongoClientDepKey
 from forze_mongo.kernel.platform import MongoClient
@@ -52,11 +53,11 @@ async def execution_context(mongo_client: MongoClient) -> ExecutionContext:
     """Build execution context with Mongo deps."""
     db_name = (await mongo_client.db()).name
     configurable = ConfigurableMongoDocument(
-        config={
-            "read": (db_name, "perf_docs"),
-            "write": (db_name, "perf_docs"),
-            "history": (db_name, "perf_docs_history"),
-        }
+        config=MongoDocumentConfig(
+            read=(db_name, "perf_docs"),
+            write=(db_name, "perf_docs"),
+            history=(db_name, "perf_docs_history"),
+        )
     )
     deps = Deps.plain(
         {

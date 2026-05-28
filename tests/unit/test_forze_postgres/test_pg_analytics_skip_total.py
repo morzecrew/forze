@@ -13,7 +13,7 @@ from forze.application.contracts.analytics import (
 )
 from forze.application.contracts.base import CountlessPage, Page
 from forze_postgres.adapters.analytics import PostgresAnalyticsAdapter
-from forze_postgres.execution.deps.configs import PostgresAnalyticsConfig
+from forze_postgres.execution.deps.configs import PostgresAnalyticsConfig, PostgresQueryConfig
 
 
 class _Row(BaseModel):
@@ -44,14 +44,14 @@ class _MockClient:
 @pytest.mark.asyncio
 async def test_run_page_skip_total_skips_count_query() -> None:
     mock = _MockClient()
-    config: PostgresAnalyticsConfig = {
-        "queries": {
-            "counts": {
-                "sql": "SELECT value FROM t",
-                "skip_total": True,
-            },
+    config = PostgresAnalyticsConfig(
+        queries={
+            "counts": PostgresQueryConfig(
+                sql="SELECT value FROM t",
+                skip_total=True,
+            ),
         },
-    }
+    )
     spec = AnalyticsSpec(
         name="events",
         read=_Row,

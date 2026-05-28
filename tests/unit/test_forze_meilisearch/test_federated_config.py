@@ -7,7 +7,8 @@ from forze.base.exceptions import CoreException
 from pydantic import BaseModel
 
 from forze_meilisearch.execution.deps.configs import (
-    validate_meilisearch_federated_search_conf,
+    MeilisearchFederatedSearchConfig,
+    MeilisearchSearchConfig,
 )
 
 
@@ -21,12 +22,9 @@ def _mem(name: str) -> SearchSpec[_Hit]:
 
 
 def test_federated_requires_two_members() -> None:
-    spec = FederatedSearchSpec(name="fed", members=(_mem("a"), _mem("b")))
-
     with pytest.raises(CoreException):
-        validate_meilisearch_federated_search_conf(
-            {"members": {"a": {"index_uid": "a"}}},
-            spec,
+        MeilisearchFederatedSearchConfig(
+            members={"a": MeilisearchSearchConfig(index_uid="a")},
         )
 
 
@@ -37,14 +35,12 @@ def test_federated_rejects_hub_member() -> None:
         members=[_mem("leg")],
     )
     spec = FederatedSearchSpec(name="fed", members=(_mem("a"), hub))
+    config = MeilisearchFederatedSearchConfig(
+        members={
+            "a": MeilisearchSearchConfig(index_uid="idx_a"),
+            "hub": MeilisearchSearchConfig(index_uid="idx_hub"),
+        },
+    )
 
     with pytest.raises(CoreException):
-        validate_meilisearch_federated_search_conf(
-            {
-                "members": {
-                    "a": {"index_uid": "idx_a"},
-                    "hub": {"index_uid": "idx_hub"},
-                }
-            },
-            spec,
-        )
+        config.validate_against_spec(spec)

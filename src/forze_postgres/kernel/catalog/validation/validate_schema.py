@@ -132,6 +132,9 @@ async def _require_columns(
         )
 
 
+# ....................... #
+
+
 async def _validate_relation_models(
     introspector: PostgresIntrospector,
     *,
@@ -154,6 +157,9 @@ async def _validate_relation_models(
             omit_fields=omit_fields,
             label=label,
         )
+
+
+# ....................... #
 
 
 async def _validate_tenant_column(
@@ -195,6 +201,9 @@ async def _validate_tenant_column(
         )
 
 
+# ....................... #
+
+
 def _warn_read_not_subset_of_write(
     *,
     spec: PostgresDocumentSchemaSpec,
@@ -224,6 +233,9 @@ def _warn_read_not_subset_of_write(
         )
 
 
+# ....................... #
+
+
 def _warn_unused_tenant_column(
     *,
     spec: PostgresDocumentSchemaSpec,
@@ -245,6 +257,9 @@ def _warn_unused_tenant_column(
         relation,
         TENANT_ID_FIELD,
     )
+
+
+# ....................... #
 
 
 async def validate_postgres_document_schemas(

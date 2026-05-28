@@ -146,11 +146,6 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
     def __attrs_post_init__(self) -> None:
         super().__attrs_post_init__()
 
-        if self.source_qname != self.read_gw.source_qname:
-            raise exc.internal(
-                f"Table specification mismatch. Write gateway and nested read gateway must have the same specification. Write: {self.source_qname}, Read: {self.read_gw.source_qname}"
-            )
-
         if self.client is not self.read_gw.client:
             raise exc.internal(
                 "Client mismatch. Write gateway and nested read gateway must use the same client."
@@ -165,11 +160,6 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
             if self.client is not self.history_gw.client:
                 raise exc.internal(
                     "Client mismatch. Write gateway and nested history gateway must use the same client."
-                )
-
-            if self.source_qname != self.history_gw.target_qname:
-                raise exc.internal(
-                    f"Table specification mismatch. Write gateway and nested history gateway must have the same specification. Write: {self.source_qname}, History: {self.history_gw.target_qname}"
                 )
 
             if self.tenant_aware != self.history_gw.tenant_aware:
@@ -270,8 +260,8 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
 
         resolved = await resolve_write_conflict_target(
             self.introspector,
-            schema=self.source_qname.schema,
-            relation=self.source_qname.name,
+            schema=(await self._qname()).schema,
+            relation=(await self._qname()).name,
             configured=self.conflict_target,
         )
         object.__setattr__(self, "_conflict_target_resolved", resolved)
@@ -301,7 +291,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
             stmt = sql.SQL(
                 "INSERT INTO {table} ({cols}) VALUES ({vals}) RETURNING {ret}"
             ).format(
-                table=self.source_qname.ident(),
+                table=(await self._qname()).ident(),
                 cols=sql.SQL(", ").join(cols),
                 vals=sql.SQL(", ").join(vals),
                 ret=self.return_clause(),
@@ -352,7 +342,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
                 stmt = sql.SQL(
                     "INSERT INTO {table} ({cols}) VALUES {vals} RETURNING {ret}"
                 ).format(
-                    table=self.source_qname.ident(),
+                    table=(await self._qname()).ident(),
                     cols=sql.SQL(", ").join(col_idents),
                     vals=sql.SQL(", ").join(value_parts),
                     ret=self.return_clause(),
@@ -442,7 +432,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
                 "ON CONFLICT ({conflict}) DO NOTHING "
                 "RETURNING {ret}"
             ).format(
-                table=self.source_qname.ident(),
+                table=(await self._qname()).ident(),
                 cols=sql.SQL(", ").join(cols),
                 vals=sql.SQL(", ").join(vals),
                 conflict=conflict,
@@ -512,7 +502,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
                     "ON CONFLICT ({conflict}) DO NOTHING "
                     "RETURNING {ret}"
                 ).format(
-                    table=self.source_qname.ident(),
+                    table=(await self._qname()).ident(),
                     cols=sql.SQL(", ").join(col_idents),
                     vals=sql.SQL(", ").join(value_parts),
                     conflict=conflict,
@@ -624,7 +614,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
                 "ON CONFLICT ({conflict}) DO NOTHING "
                 "RETURNING {ret}"
             ).format(
-                table=self.source_qname.ident(),
+                table=(await self._qname()).ident(),
                 cols=sql.SQL(", ").join(cols),
                 vals=sql.SQL(", ").join(vals),
                 conflict=conflict,
@@ -692,7 +682,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
                     "ON CONFLICT ({conflict}) DO NOTHING "
                     "RETURNING {ret}"
                 ).format(
-                    table=self.source_qname.ident(),
+                    table=(await self._qname()).ident(),
                     cols=sql.SQL(", ").join(col_idents),
                     vals=sql.SQL(", ").join(value_parts),
                     conflict=conflict,
@@ -849,7 +839,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
             stmt = sql.SQL(
                 "UPDATE {table} SET {sets} WHERE {where} RETURNING {ret}"
             ).format(
-                table=self.source_qname.ident(),
+                table=(await self._qname()).ident(),
                 sets=sql.SQL(", ").join(set_parts),
                 where=where_sql,
                 ret=self.return_clause(),
@@ -959,7 +949,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
             RETURNING {ret}
             """
         ).format(
-            table=self.source_qname.ident(),
+            table=(await self._qname()).ident(),
             sets=sql.SQL(", ").join(set_parts),
             vals=sql.SQL(", ").join(values_rows),
             cols=sql.SQL(", ").join(v_col_idents),
@@ -1194,7 +1184,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
             stmt = sql.SQL(
                 "UPDATE {table} SET {sets} WHERE {where} RETURNING {ret}"
             ).format(
-                table=self.source_qname.ident(),
+                table=(await self._qname()).ident(),
                 sets=sql.SQL(", ").join(set_parts),
                 where=where_sql,
                 ret=self.return_clause(),
@@ -1235,7 +1225,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
         where_sql, params = self._add_tenant_where(where_sql, params)  # type: ignore[assignment]
 
         stmt = sql.SQL("DELETE FROM {table} WHERE {where}").format(
-            table=self.source_qname.ident(),
+            table=(await self._qname()).ident(),
             where=where_sql,
         )
 
@@ -1274,7 +1264,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
             )
 
             stmt = sql.SQL("DELETE FROM {table} WHERE {where}").format(
-                table=self.source_qname.ident(),
+                table=(await self._qname()).ident(),
                 where=where_sql,
             )
 

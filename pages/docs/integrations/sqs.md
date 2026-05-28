@@ -55,9 +55,9 @@ Queue-level config uses `SQSQueueConfig` with `namespace` and optional `tenant_a
 
 ```python
 from forze.application.execution import DepsPlan
-from forze_sqs import SQSDepsModule
+from forze_sqs import SQSDepsModule, SQSQueueConfig
 
-queue_config = {"namespace": "orders", "tenant_aware": True}
+queue_config = SQSQueueConfig(namespace="orders", tenant_aware=True)
 
 sqs_module = SQSDepsModule(
     client=sqs,

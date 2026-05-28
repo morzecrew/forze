@@ -9,6 +9,7 @@ from pydantic import BaseModel
 from forze.application.contracts.analytics import AnalyticsRunOptions
 from forze.application.contracts.analytics._adapter_common import dry_run_enabled
 from forze.application.contracts.querying import PaginationExpression
+from forze.base.primitives import StrKey
 from forze.base.serialization import pydantic_validate_many
 
 from ._mixin_base import PostgresAnalyticsMixinBase
@@ -29,7 +30,7 @@ class PostgresAnalyticsChunkedMixin[R: BaseModel, Ing: BaseModel](
 
     async def _chunked_scan(
         self,
-        query_key: str,
+        query_key: StrKey,
         params: BaseModel,
         *,
         options: AnalyticsRunOptions | None,
@@ -88,7 +89,7 @@ class PostgresAnalyticsChunkedMixin[R: BaseModel, Ing: BaseModel](
 
     async def run_chunked(
         self,
-        query_key: str,
+        query_key: StrKey,
         params: BaseModel,
         pagination: PaginationExpression | None = None,
         *,
@@ -111,7 +112,7 @@ class PostgresAnalyticsChunkedMixin[R: BaseModel, Ing: BaseModel](
     async def select_run_chunked(
         self,
         return_type: type[T],
-        query_key: str,
+        query_key: StrKey,
         params: BaseModel,
         pagination: PaginationExpression | None = None,
         *,

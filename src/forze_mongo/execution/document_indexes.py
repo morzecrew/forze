@@ -30,12 +30,12 @@ def mongo_document_index_spec_for_binding(
     if spec.write is None:
         return None
 
-    if "write" not in config:
+    if not isinstance(config, MongoDocumentConfig):
         return None
 
     return MongoDocumentIndexSpec(
         name=name,
-        write_relation=config["write"],  # type: ignore[typeddict-item]
+        write_relation=config.write,
     )
 
 

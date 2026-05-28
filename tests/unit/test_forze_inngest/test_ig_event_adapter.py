@@ -49,13 +49,14 @@ async def test_send_merges_execution_context_from_resolved_adapter() -> None:
     from uuid import uuid4
 
     from forze.application.execution import InvocationMetadata
+    from forze_inngest.execution.deps.configs import InngestEventConfig
     from forze_inngest.execution.deps.deps import ConfigurableInngestEventCommand
 
     client = RecordingInngestClient()
     deps = Deps.plain({InngestClientDepKey: client})
     ctx = ExecutionContext(deps=deps)
 
-    factory = ConfigurableInngestEventCommand(config={})
+    factory = ConfigurableInngestEventCommand(config=InngestEventConfig())
     spec = DurableFunctionEventSpec(
         name="app/test",
         codec=PydanticRecordMappingCodec(model_type=_Payload),

@@ -1,7 +1,5 @@
 """Query execution helpers for Postgres analytics."""
 
-from __future__ import annotations
-
 from typing import Any, Awaitable, Callable, Sequence, TypeVar, cast
 
 from psycopg import sql
@@ -21,7 +19,7 @@ from forze.application.contracts.analytics._adapter_common import (
 from forze.application.contracts.base import CountlessPage, Page, page_from_limit_offset
 from forze.application.contracts.querying import PaginationExpression
 from forze.base.exceptions import exc
-from forze.base.primitives import JsonDict
+from forze.base.primitives import JsonDict, StrKey
 from forze_postgres.execution.deps.configs import (
     PostgresAnalyticsConfig,
     PostgresQueryConfig,
@@ -39,6 +37,8 @@ R = TypeVar("R", bound=BaseModel)
 Ing = TypeVar("Ing", bound=BaseModel)
 T = TypeVar("T", bound=BaseModel)
 
+# ....................... #
+
 
 class PostgresAnalyticsQueryMixin[R: BaseModel, Ing: BaseModel]:
     """Config accessors, fetch, and offset pagination for analytics queries."""
@@ -49,27 +49,27 @@ class PostgresAnalyticsQueryMixin[R: BaseModel, Ing: BaseModel]:
 
     # ....................... #
 
-    def _query_config(self, query_key: str) -> PostgresQueryConfig:
+    def _query_config(self, query_key: StrKey) -> PostgresQueryConfig:
         try:
-            return self.config["queries"][query_key]
+            return self.config.queries[query_key]
 
         except KeyError as e:
             raise exc.precondition(f"Unknown analytics query key: {query_key!r}") from e
 
     # ....................... #
 
-    def _validated_params(self, query_key: str, params: BaseModel) -> BaseModel:
+    def _validated_params(self, query_key: StrKey, params: BaseModel) -> BaseModel:
         return validated_params(self.spec, query_key, params)
 
     # ....................... #
 
-    def _sql(self, query_key: str) -> str:
-        return self._query_config(query_key)["sql"]
+    def _sql(self, query_key: StrKey) -> str:
+        return self._query_config(query_key).sql
 
     # ....................... #
 
     def _schema(self) -> str:
-        return self.config.get("schema", "public")
+        return self.config.schema
 
     # ....................... #
 
@@ -78,20 +78,18 @@ class PostgresAnalyticsQueryMixin[R: BaseModel, Ing: BaseModel]:
 
     # ....................... #
 
-    def _skip_total(self, query_key: str) -> bool:
-        return bool(self._query_config(query_key).get("skip_total"))
+    def _skip_total(self, query_key: StrKey) -> bool:
+        return self._query_config(query_key).skip_total
 
     # ....................... #
 
     def _max_append_rows(self) -> int:
-        return int(self.config.get("max_append_rows", 10_000))
+        return self.config.max_append_rows
 
     # ....................... #
 
-    def _cursor_column(self, query_key: str) -> str | None:
-        col = self._query_config(query_key).get("cursor_column")
-
-        return str(col) if col else None
+    def _cursor_column(self, query_key: StrKey) -> str | None:
+        return self._query_config(query_key).cursor_column
 
     # ....................... #
 
@@ -144,7 +142,7 @@ class PostgresAnalyticsQueryMixin[R: BaseModel, Ing: BaseModel]:
 
     async def _fetch_rows(
         self,
-        query_key: str,
+        query_key: StrKey,
         params: BaseModel | JsonDict,
         *,
         options: AnalyticsRunOptions | None,
@@ -168,7 +166,7 @@ class PostgresAnalyticsQueryMixin[R: BaseModel, Ing: BaseModel]:
 
     async def _total_count(
         self,
-        query_key: str,
+        query_key: StrKey,
         params: BaseModel,
         *,
         options: AnalyticsRunOptions | None,
@@ -186,7 +184,7 @@ class PostgresAnalyticsQueryMixin[R: BaseModel, Ing: BaseModel]:
 
     async def _offset_page(
         self,
-        query_key: str,
+        query_key: StrKey,
         params: BaseModel,
         pagination: PaginationExpression | None,
         *,
@@ -201,6 +199,7 @@ class PostgresAnalyticsQueryMixin[R: BaseModel, Ing: BaseModel]:
             return dry_run_offset_page(pagination, return_count=return_count)
 
         limit, offset = pagination_window(pagination)
+
         rows = await self._fetch_rows(
             query_key,
             params,

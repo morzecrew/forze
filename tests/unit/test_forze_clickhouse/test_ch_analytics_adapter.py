@@ -12,7 +12,10 @@ from forze.application.contracts.analytics import (
     AnalyticsSpec,
 )
 from forze_clickhouse.adapters import ClickHouseAnalyticsAdapter
-from forze_clickhouse.execution.deps.configs import ClickHouseAnalyticsConfig
+from forze_clickhouse.execution.deps.configs import (
+    ClickHouseAnalyticsConfig,
+    ClickHouseQueryConfig,
+)
 from forze_clickhouse.kernel.platform.value_objects import (
     ClickHouseInsertResult,
     ClickHouseQueryResult,
@@ -38,13 +41,15 @@ def _adapter(mock: Any) -> ClickHouseAnalyticsAdapter[_Row, _Ingest]:
         queries={"counts": AnalyticsQueryDefinition(params=_Params)},
         ingest=_Ingest,
     )
-    config: ClickHouseAnalyticsConfig = {
-        "database": "analytics",
-        "queries": {
-            "counts": {"sql": "SELECT value FROM t WHERE day = {day:String}"},
+    config = ClickHouseAnalyticsConfig(
+        database="analytics",
+        queries={
+            "counts": ClickHouseQueryConfig(
+                sql="SELECT value FROM t WHERE day = {day:String}",
+            ),
         },
-        "ingest_table": "events_raw",
-    }
+        ingest_table="events_raw",
+    )
     return ClickHouseAnalyticsAdapter(client=mock, spec=spec, config=config)
 
 

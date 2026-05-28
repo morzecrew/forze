@@ -48,8 +48,8 @@ def _gw(
     intro.get_column_types = AsyncMock(return_value=_history_column_types())
 
     return PostgresHistoryGateway(
-        source_qname=PostgresQualifiedName(schema="public", name="hist_t"),
-        target_qname=PostgresQualifiedName(schema="public", name="main_t"),
+        relation=("public", "hist_t"),
+        target_relation=("public", "main_t"),
         strategy=strategy,  # type: ignore[arg-type]
         client=client,  # type: ignore[arg-type]
         model_type=_HDom,
@@ -69,8 +69,8 @@ class TestPostgresHistoryGatewayInit:
 
         with pytest.raises(CoreException, match="Invalid bookkeeping strategy"):
             PostgresHistoryGateway(
-                source_qname=PostgresQualifiedName(schema="public", name="h"),
-                target_qname=PostgresQualifiedName(schema="public", name="m"),
+                relation=("public", "h"),
+                target_relation=("public", "m"),
                 strategy="invalid",  # type: ignore[arg-type]
                 client=client,
                 model_type=_HDom,

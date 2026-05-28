@@ -1,6 +1,15 @@
 """Parsing utilities that normalise raw ``redis-py`` responses into typed structures."""
 
-from typing import Any, Iterable
+from collections.abc import Iterable
+from typing import Any, cast
+
+from redis.typing import (
+    StreamEntry,
+    StreamRangeResponse,
+    XReadGroupResponse,
+    XReadGroupStreamResponse,
+    XReadResponse,
+)
 
 from .types import (
     RawRedisPubSubMessage,
@@ -21,6 +30,9 @@ def parse_stream_entries(raw: RawRedisStreamResponse) -> RedisStreamResponse:
     keys and values to ``bytes``.  Returns an empty list when *raw* is
     ``None`` or empty.
 
+    Accepts both legacy RESP2 list batches and redis-py v8 unified dict
+    responses (``XReadResponse`` / ``XReadGroupResponse``).
+
     :param raw: Raw response from ``redis-py``.
     :returns: Parsed list of stream batches.
     """
@@ -28,7 +40,10 @@ def parse_stream_entries(raw: RawRedisStreamResponse) -> RedisStreamResponse:
     if raw is None or not raw:
         return []
 
-    return [(_to_str(s), _parse_stream_messages(m)) for s, m in raw]
+    return [
+        (_to_str(stream), _parse_stream_messages(_flatten_stream_messages(messages)))
+        for stream, messages in _iter_stream_batches(raw)
+    ]
 
 
 # ....................... #
@@ -63,27 +78,66 @@ def parse_pubsub_message(raw: RawRedisPubSubMessage) -> RedisPubSubMessage | Non
 # Internals
 
 
-def _parse_stream_messages(
-    messages: list[tuple[str | bytes, object]],
-) -> list[RedisStreamEntry]:
+def _iter_stream_batches(
+    raw: XReadResponse | XReadGroupResponse,
+) -> Iterable[tuple[str | bytes, StreamRangeResponse | list[StreamRangeResponse]]]:
+    """Yield ``(stream_name, messages)`` from any redis-py XREAD wire shape."""
+
+    if isinstance(raw, dict):
+        yield from raw.items()  # type: ignore[misc]
+        return
+
+    for stream, messages in raw:
+        yield stream, messages
+
+
+# ....................... #
+
+
+def _flatten_stream_messages(
+    messages: (
+        StreamRangeResponse | list[StreamRangeResponse] | XReadGroupStreamResponse
+    ),
+) -> list[StreamEntry]:
+    """Flatten per-stream message containers to a single entry list."""
+
+    if not messages:
+        return []
+
+    if isinstance(messages[0], list):
+        flattened: list[StreamEntry] = []
+
+        for batch in messages:
+            flattened.extend(cast(StreamRangeResponse, batch))  # type: ignore[redundant-cast]
+
+        return flattened
+
+    return cast(StreamRangeResponse, messages)  # type: ignore[redundant-cast]
+
+
+# ....................... #
+
+
+def _parse_stream_messages(messages: list[StreamEntry]) -> list[RedisStreamEntry]:
     """Parse a list of raw stream messages into normalized entries."""
 
     out: list[RedisStreamEntry] = []
 
     for msg_id_raw, data_raw in messages:
+        if msg_id_raw is None or data_raw is None:
+            continue
+
         msg_id = _to_str(msg_id_raw)
 
-        if isinstance(data_raw, dict):
-            data_dict: Iterable[  # pyright: ignore[reportUnknownVariableType]
-                tuple[Any, Any]
-            ] = data_raw.items()
-
+        if hasattr(data_raw, "items"):
+            data_dict: Iterable[tuple[Any, Any]] = (
+                data_raw.items()
+            )  # pyright: ignore[reportAttributeAccessIssue]
         else:
-            data_dict = data_raw  # type: ignore[assignment]
+            data_dict = cast(Iterable[tuple[Any, Any]], data_raw)
 
         normalized: RedisStreamFields = {
-            _to_bytes(k): _to_bytes(v)  # pyright: ignore[reportUnknownArgumentType]
-            for k, v in data_dict  # pyright: ignore[reportUnknownVariableType]
+            _to_bytes(k): _to_bytes(v) for k, v in data_dict
         }
 
         out.append((msg_id, normalized))

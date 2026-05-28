@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, cast, final
+from typing import Any, final
 
 import attrs
 from pydantic import BaseModel
@@ -28,8 +28,6 @@ from forze_meilisearch.adapters.search.federated import MeilisearchFederatedSear
 from forze_meilisearch.execution.deps.configs import (
     MeilisearchFederatedSearchConfig,
     MeilisearchSearchConfig,
-    validate_meilisearch_federated_search_conf,
-    validate_meilisearch_search_conf,
 )
 from forze_meilisearch.execution.deps.keys import MeilisearchClientDepKey
 
@@ -72,9 +70,8 @@ def _meilisearch_search_adapter[M: BaseModel](
     member_spec: SearchSpec[M],
     c: MeilisearchSearchConfig,
 ) -> MeilisearchSimpleSearchAdapter[M]:
-    validate_meilisearch_search_conf(c, member_spec)
     client = context.deps.provide(MeilisearchClientDepKey)
-    tenant_aware = c.get("tenant_aware", False)
+    tenant_aware = c.tenant_aware
 
     return MeilisearchSimpleSearchAdapter(
         spec=member_spec,
@@ -113,9 +110,8 @@ class ConfigurableMeilisearchSearchCommand(SearchCommandDepPort):
         context: ExecutionContext,
         spec: SearchSpec[Any],
     ) -> SearchCommandPort[Any]:
-        validate_meilisearch_search_conf(self.config, spec)
         client = context.deps.provide(MeilisearchClientDepKey)
-        tenant_aware = self.config.get("tenant_aware", False)
+        tenant_aware = self.config.tenant_aware
 
         return MeilisearchSearchCommandAdapter(
             spec=spec,
@@ -138,7 +134,7 @@ class ConfigurableMeilisearchFederatedSearch(FederatedSearchQueryDepPort):
         context: ExecutionContext,
         spec: FederatedSearchSpec[Any],
     ) -> SearchQueryPort[Any]:
-        validate_meilisearch_federated_search_conf(self.config, spec)
+        self.config.validate_against_spec(spec)
         client = context.deps.provide(MeilisearchClientDepKey)
 
         legs: list[tuple[str, MeilisearchSimpleSearchAdapter[Any]]] = []
@@ -147,17 +143,17 @@ class ConfigurableMeilisearchFederatedSearch(FederatedSearchQueryDepPort):
             if isinstance(m, HubSearchSpec):
                 raise exc.internal("Hub members are not supported for Meilisearch federation.")
 
-            c = self.config["members"].get(m.name)
+            c = self.config.members.get(m.name)
 
             if c is None:
                 raise exc.internal(
-                    f"Member {m.name!r} not found in MeilisearchFederatedSearchConfig['members'].",
+                    f"Member {m.name!r} not found in MeilisearchFederatedSearchConfig.members.",
                 )
 
-            leg_cfg = cast(MeilisearchSearchConfig, dict(c))
+            leg_cfg = c
 
-            if "tenant_aware" not in leg_cfg:
-                leg_cfg["tenant_aware"] = self.config.get("tenant_aware", False)
+            if not leg_cfg.tenant_aware and self.config.tenant_aware:
+                leg_cfg = attrs.evolve(leg_cfg, tenant_aware=True)
 
             port = _meilisearch_search_adapter(context, m, leg_cfg)
             legs.append((m.name, port))
@@ -166,8 +162,8 @@ class ConfigurableMeilisearchFederatedSearch(FederatedSearchQueryDepPort):
             federated_spec=spec,
             legs=tuple(legs),
             client=client,
-            merge=self.config.get("merge", "federation"),
-            rrf_k=int(self.config.get("rrf_k", 60)),
-            rrf_per_leg_limit=int(self.config.get("rrf_per_leg_limit", 5000)),
+            merge=self.config.merge,
+            rrf_k=self.config.rrf_k,
+            rrf_per_leg_limit=self.config.rrf_per_leg_limit,
             snapshot_coord=_snapshot_coord(context, spec.snapshot),
         )

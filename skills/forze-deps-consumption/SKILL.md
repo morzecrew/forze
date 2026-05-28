@@ -42,7 +42,7 @@ port = ctx.deps.resolve_configurable(
 
 ## Lifecycle vs deps
 
-Built-in `DepsModule.__call__` should only register providers. Connection pools and clients start in `LifecycleStep` functions (`postgres_lifecycle_step`, `s3_lifecycle_step`, …) on your `LifecyclePlan`. See [`forze-wiring`](../forze-wiring/SKILL.md).
+Built-in `DepsModule.__call__` should only register providers. Connection pools and clients start via `LifecycleModule` or `LifecycleStep` factories on your `LifecyclePlan` (`PostgresLifecycleModule`, `postgres_lifecycle_step`, `s3_lifecycle_step`, …). Keep deps and lifecycle as separate plans. See [`forze-wiring`](../forze-wiring/SKILL.md).
 
 ## Anti-patterns
 

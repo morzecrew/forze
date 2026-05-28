@@ -1,13 +1,15 @@
-from typing import TypedDict
+"""SQS queue execution configs."""
+
+import attrs
+
+from forze.application.contracts.tenancy import TenantAwareIntegrationConfig
 
 # ----------------------- #
 
 
-class SQSQueueConfig(TypedDict, total=False):
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class SQSQueueConfig(TenantAwareIntegrationConfig):
     """Configuration for an SQS queue."""
 
-    namespace: str
+    namespace: str = ""
     """Base namespace for queues."""
-
-    tenant_aware: bool
-    """Whether the queue is tenant-aware."""

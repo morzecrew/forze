@@ -14,13 +14,14 @@ from forze.application.contracts.document import (
 )
 from forze.application.execution import Deps, ExecutionContext
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
-from forze_postgres.execution.deps.deps import ConfigurablePostgresDocument
+from forze_postgres.execution.deps import ConfigurablePostgresDocument
 from forze_postgres.execution.deps.keys import (
     PostgresClientDepKey,
     PostgresIntrospectorDepKey,
 )
 from forze_postgres.kernel.catalog.introspect import PostgresIntrospector
 from forze_postgres.kernel.client.client import PostgresClient
+from forze_postgres.execution.deps.configs import PostgresDocumentConfig
 
 
 class Meta(BaseModel):
@@ -52,11 +53,11 @@ class RowRead(ReadDocument):
 
 def _ctx(pg_client: PostgresClient, table: str) -> ExecutionContext:
     doc = ConfigurablePostgresDocument(
-        config={
-            "read": ("public", table),
-            "write": ("public", table),
-            "bookkeeping_strategy": "application",
-        }
+        config=PostgresDocumentConfig(
+            read=("public", table),
+            write=("public", table),
+            bookkeeping_strategy="application",
+        )
     )
     return ExecutionContext(
         deps=Deps.plain(

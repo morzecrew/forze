@@ -163,6 +163,44 @@ def test_routed_postgres_rejects_zero_max_cached_tenants() -> None:
         )
 
 @pytest.mark.asyncio
+async def test_routed_dedup_shares_pool_for_same_dsn() -> None:
+    shared_dsn = "postgresql://localhost/shared"
+    secrets = _MemSecrets({_T1: shared_dsn, _T2: shared_dsn})
+    cur: UUID | None = None
+
+    routed = RoutedPostgresClient(
+        secrets=secrets,
+        secret_ref_for_tenant=_ref,
+        tenant_provider=lambda: cur,
+        max_cached_tenants=4,
+    )
+    await routed.startup()
+
+    instances: list[MagicMock] = []
+
+    def _make_client() -> MagicMock:
+        inst = MagicMock()
+        inst.initialize = AsyncMock()
+        inst.close = AsyncMock()
+        inst.health = AsyncMock(return_value=("ok", True))
+        instances.append(inst)
+        return inst
+
+    with patch(
+        "forze_postgres.kernel.client.routed_client.PostgresClient",
+        side_effect=_make_client,
+    ):
+        cur = _T1
+        await routed.health()
+        cur = _T2
+        await routed.health()
+
+    assert len(instances) == 1
+
+    await routed.close()
+
+
+@pytest.mark.asyncio
 async def test_routed_requires_tenant() -> None:
     secrets = _MemSecrets({_T1: "postgresql://localhost/db1"})
     routed = RoutedPostgresClient(

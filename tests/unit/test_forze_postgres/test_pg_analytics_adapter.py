@@ -13,7 +13,7 @@ from forze.application.contracts.analytics import (
 )
 from forze.base.exceptions import CoreException
 from forze_postgres.adapters.analytics import PostgresAnalyticsAdapter
-from forze_postgres.execution.deps.configs import PostgresAnalyticsConfig
+from forze_postgres.execution.deps.configs import PostgresAnalyticsConfig, PostgresQueryConfig
 
 
 class _Row(BaseModel):
@@ -35,13 +35,15 @@ def _adapter(mock: Any) -> PostgresAnalyticsAdapter[_Row, _Ingest]:
         queries={"counts": AnalyticsQueryDefinition(params=_Params)},
         ingest=_Ingest,
     )
-    config: PostgresAnalyticsConfig = {
-        "schema": "public",
-        "queries": {
-            "counts": {"sql": "SELECT value FROM t WHERE day = %(day)s"},
+    config = PostgresAnalyticsConfig(
+        schema="public",
+        queries={
+            "counts": PostgresQueryConfig(
+                sql="SELECT value FROM t WHERE day = %(day)s",
+            ),
         },
-        "ingest_table": "events_raw",
-    }
+        ingest_table="events_raw",
+    )
     return PostgresAnalyticsAdapter(client=mock, spec=spec, config=config)
 
 

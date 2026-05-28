@@ -101,6 +101,17 @@ just pages diagrams
 - Follow markdownlint rules (see `.markdownlint.yaml`) for style consistency.
 - API docs are generated from docstrings via mkdocstrings; use Sphinx/reST roles in Python docstrings.
 
+### Integration dependency configs
+
+Integration packages (`forze_postgres`, `forze_mongo`, `forze_redis`, etc.) declare **frozen `attrs` classes** for `*DepsModule` route maps—not `TypedDict` or plain dict literals. Shared conventions:
+
+- `@attrs.define(slots=True, kw_only=True, frozen=True)`
+- Inherit [`TenantAwareIntegrationConfig`](src/forze/application/contracts/tenancy/integration_config.py) when a route supports `tenant_aware`
+- Nested member maps: use [`frozen_mapping`](src/forze/base/primitives/mapping.py) as an `attrs` field converter
+- Validation on the type (`__attrs_post_init__`, `.validate()`, or `.validate_against_spec(spec)`); avoid exporting free-standing `validate_*` helpers from package `__all__`
+
+App authors and tests construct configs explicitly, e.g. `MongoDocumentConfig(read=(...), write=(...), ...)`.
+
 ## Commit Messages
 
 Commits follow **Conventional Commits** with a **gitmoji** prefix:

@@ -19,6 +19,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`forze.base`:** `InflightLane` in `forze.base.primitives` — asyncio singleflight coalescing for concurrent cache misses.
 - **Application contracts:** `require_tenant_id` in `forze.application.contracts.tenancy`; `secret_ref_for_tenant` and `resolve_str_for_tenant` in `forze.application.contracts.secrets`.
 - **Application execution:** `routed_client_lifecycle_step` and `RoutedClientLifecycle` protocol for tenant-routed integration clients.
+- **Application execution:** `LifecycleModule`, `LifecyclePlan.from_modules` / `with_modules` / `build()` — merge lifecycle modules and topologically order steps via `requires`, `provides`, and `depends_on` (same graph model as operation hooks; ordering only, no capability skip).
+- **Postgres:** `PostgresLifecycleModule` (pool, optional catalog warmup, optional document schema validation); lifecycle step factories set `postgres.client` capability metadata for declarative ordering.
+- **Application contracts:** `TenantAwareIntegrationConfig` in `forze.application.contracts.tenancy` — shared frozen `tenant_aware` flag for integration wiring configs (distinct from runtime `TenancyMixin`).
+- **Application contracts:** `forze.application.contracts.resolution` — `ValueResolver`, `MaybeAwaitable`, and `resolve_value` for static or tenant-scoped async/sync resolution.
+- **`forze.base`:** `stable_fingerprint` and `connection_string_fingerprint` in `forze.base.primitives.fingerprint`; optional `dedup_key` on `SimpleLruRegistry` / `GuardedLruRegistry` to share slots across logical keys.
+- **Postgres:** `RelationSpec` on document (`read` / `write` / `history`), search (`index` / `read` / `heap`), and hub (`hub` plus leg `index` / `read` / `heap`) configs; gateways and search adapters resolve relations per request via `forze.application.contracts.resolution`.
+- **Postgres:** `require_static_relation` — explicit error when startup document schema validation is wired for a route that uses a dynamic `RelationSpec` resolver.
 
 ### Changed
 
@@ -28,17 +35,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Redis, Mongo, SQS, S3, Temporal, RabbitMQ:** routed clients use `SimpleLruRegistry` internally (no public API change).
 - **Postgres:** `PostgresIntrospector` uses `InflightLane` for catalog singleflight (no public API change).
 - **Postgres, Redis, Mongo, SQS, S3, Temporal, RabbitMQ:** routed clients and lifecycle steps use shared tenancy/secrets helpers and generic routed lifecycle hooks internally (no public API change).
+- **Postgres, Redis, Mongo, SQS, S3, Temporal, RabbitMQ:** routed clients deduplicate LRU pools by connection fingerprint when multiple tenants resolve to the same backend target.
 - **Postgres:** internal reorganisation of `forze_postgres.adapters.search` (shared port/cursor/offset base for FTS, vector, and PGroonga; `hub` subpackage). Public imports from `forze_postgres.adapters.search` are unchanged.
 - **Postgres:** internal reorganisation of `forze_postgres.adapters.analytics` (package split with shared port/query/cursor/chunked modules); analytics SQL helpers moved from `forze_postgres.kernel.client` to `forze_postgres.kernel.sql`. Public import `forze_postgres.adapters.analytics.PostgresAnalyticsAdapter` is unchanged.
 - **Analytics:** shared offset/keyset cursor token helpers in `forze.application.contracts.analytics._adapter_common` (used by Postgres and ClickHouse adapters).
+- **Postgres:** internal reorganisation of `forze_postgres.execution` (`lifecycle/` subpackage; `execution.deps.configs` and `execution.deps.factories` subpackages). Public imports from `forze_postgres` are unchanged. Direct imports of removed modules (`forze_postgres.execution.deps.deps`, `forze_postgres.execution.deps.configs` as a single file, top-level `forze_postgres.execution.catalog_warmup`, `forze_postgres.execution.document_schema`, and `forze_postgres.execution.lifecycle` as a module file) must use `forze_postgres.execution.deps`, `forze_postgres.execution.lifecycle`, or the `forze_postgres` package root instead.
+- **Postgres:** `Postgres*Config` integration wiring is now frozen `attrs` classes (constructors required; dict literals no longer accepted). `tenant_aware` is inherited from `TenantAwareIntegrationConfig`. Federated members use `PostgresFederatedSearchLegSearch` / `PostgresFederatedSearchLegHub` instead of embedded dict shape detection. Removed module-level `validate_pg_search_conf`, `validate_postgres_hub_search_conf`, and `validate_postgres_federated_search_conf` (validation runs at config construction or via `.validate()` / `validate_against_spec`).
+- **Integrations:** `Mongo*Config`, `Firestore*Config`, `Meilisearch*Config`, `ClickHouse*Config`, `BigQuery*Config`, `Redis*Config`, `S3StorageConfig`, `GCSStorageConfig`, `TemporalWorkflowConfig`, `RabbitMQQueueConfig`, `SQSQueueConfig`, and `InngestEventConfig` are frozen `attrs` classes (constructors required; dict literals no longer accepted). `tenant_aware` uses `TenantAwareIntegrationConfig` where applicable. Removed `validate_mongo_search_conf`, `validate_meilisearch_search_conf`, `validate_meilisearch_federated_search_conf`, `validate_clickhouse_analytics_config`, and `validate_bigquery_analytics_config` from public exports (validation on config types).
+- **`forze.base`:** `frozen_mapping` in `forze.base.primitives` for immutable nested maps on integration configs.
 
 ### Removed
 
-- ...
+- **Postgres:** `validate_pg_search_conf`, `validate_postgres_hub_search_conf`, `validate_postgres_federated_search_conf`, and `is_postgres_federated_embedded_hub_config` from the public API (use config constructors and instance validation instead).
+- **Integrations:** `validate_mongo_search_conf`, `validate_meilisearch_search_conf`, `validate_meilisearch_federated_search_conf`, `validate_clickhouse_analytics_config`, and `validate_bigquery_analytics_config` from public exports.
+
+### Documentation
+
+- **Concepts and execution reference:** align lifecycle (`LifecycleStep.id`, routed client lifecycle), handler examples (`DocumentIdDTO`, `GetDocument`), `SearchCommandPort` / `ctx.search.command`, document kernel ops table, multi-tenancy helpers, and layered-architecture package examples with current APIs.
 
 ### Fixed
 
-- **Meilisearch:** federated search awaits snapshot finalization; `ensure_index` and multi-search federation payloads match `meilisearch-python-sdk` v7 models.
+- **Meilisearch:** federated search awaits snapshot finalization; `ensure_index` and multi-search use `meilisearch-python-sdk` models (`SearchParams.federation_options`, `Federation`). Requires `meilisearch-python-sdk>=7.2.1`.
 - **Postgres:** `ensure`, `ensure_many`, `upsert`, and `upsert_many` build `ON CONFLICT` from `PostgresDocumentConfig.conflict_target` or inferred primary-key columns (fixes composite PKs and tables with additional UNIQUE indexes).
 - **Mongo:** `ensure_many` and `upsert_many` classify bulk `$setOnInsert` upserts safely; missing rows after bulk upsert raise `mongo_ensure_bulk_miss` conflict instead of a generic not-found.
 

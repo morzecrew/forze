@@ -1,7 +1,5 @@
 """Shared :class:`~forze.application.contracts.analytics.AnalyticsQueryPort` methods."""
 
-from __future__ import annotations
-
 from typing import Any, AsyncGenerator, Sequence, TypeVar, cast
 
 from pydantic import BaseModel
@@ -12,7 +10,7 @@ from forze.application.contracts.querying import (
     CursorPaginationExpression,
     PaginationExpression,
 )
-from forze.base.primitives import JsonDict
+from forze.base.primitives import JsonDict, StrKey
 
 from ._mixin_base import PostgresAnalyticsMixinBase
 
@@ -32,9 +30,11 @@ class PostgresAnalyticsPortMixin[R: BaseModel, Ing: BaseModel](
 
     spec: Any
 
+    # ....................... #
+
     async def run(
         self,
-        query_key: str,
+        query_key: StrKey,
         params: BaseModel,
         pagination: PaginationExpression | None = None,
         *,
@@ -50,9 +50,11 @@ class PostgresAnalyticsPortMixin[R: BaseModel, Ing: BaseModel](
             return_fields=None,
         )
 
+    # ....................... #
+
     async def run_page(
         self,
-        query_key: str,
+        query_key: StrKey,
         params: BaseModel,
         pagination: PaginationExpression | None = None,
         *,
@@ -71,10 +73,12 @@ class PostgresAnalyticsPortMixin[R: BaseModel, Ing: BaseModel](
             ),
         )
 
+    # ....................... #
+
     async def project_run(
         self,
         fields: Sequence[str],
-        query_key: str,
+        query_key: StrKey,
         params: BaseModel,
         pagination: PaginationExpression | None = None,
         *,
@@ -90,10 +94,12 @@ class PostgresAnalyticsPortMixin[R: BaseModel, Ing: BaseModel](
             return_fields=fields,
         )
 
+    # ....................... #
+
     async def project_run_page(
         self,
         fields: Sequence[str],
-        query_key: str,
+        query_key: StrKey,
         params: BaseModel,
         pagination: PaginationExpression | None = None,
         *,
@@ -112,10 +118,12 @@ class PostgresAnalyticsPortMixin[R: BaseModel, Ing: BaseModel](
             ),
         )
 
+    # ....................... #
+
     async def project_run_chunked(
         self,
         fields: Sequence[str],
-        query_key: str,
+        query_key: StrKey,
         params: BaseModel,
         pagination: PaginationExpression | None = None,
         *,
@@ -131,10 +139,12 @@ class PostgresAnalyticsPortMixin[R: BaseModel, Ing: BaseModel](
         ):
             yield [{k: row.model_dump().get(k) for k in fields} for row in chunk]
 
+    # ....................... #
+
     async def select_run(
         self,
         return_type: type[T],
-        query_key: str,
+        query_key: StrKey,
         params: BaseModel,
         pagination: PaginationExpression | None = None,
         *,
@@ -150,10 +160,12 @@ class PostgresAnalyticsPortMixin[R: BaseModel, Ing: BaseModel](
             return_fields=None,
         )
 
+    # ....................... #
+
     async def select_run_page(
         self,
         return_type: type[T],
-        query_key: str,
+        query_key: StrKey,
         params: BaseModel,
         pagination: PaginationExpression | None = None,
         *,
@@ -172,9 +184,11 @@ class PostgresAnalyticsPortMixin[R: BaseModel, Ing: BaseModel](
             ),
         )
 
+    # ....................... #
+
     async def run_cursor(
         self,
-        query_key: str,
+        query_key: StrKey,
         params: BaseModel,
         cursor: CursorPaginationExpression | None = None,
         *,
@@ -189,10 +203,12 @@ class PostgresAnalyticsPortMixin[R: BaseModel, Ing: BaseModel](
             return_fields=None,
         )
 
+    # ....................... #
+
     async def project_run_cursor(
         self,
         fields: Sequence[str],
-        query_key: str,
+        query_key: StrKey,
         params: BaseModel,
         cursor: CursorPaginationExpression | None = None,
         *,
@@ -207,10 +223,12 @@ class PostgresAnalyticsPortMixin[R: BaseModel, Ing: BaseModel](
             return_fields=fields,
         )
 
+    # ....................... #
+
     async def select_run_cursor(
         self,
         return_type: type[T],
-        query_key: str,
+        query_key: StrKey,
         params: BaseModel,
         cursor: CursorPaginationExpression | None = None,
         *,

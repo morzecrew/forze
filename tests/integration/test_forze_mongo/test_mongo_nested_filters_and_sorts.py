@@ -14,6 +14,7 @@ from forze.application.contracts.document import (
 )
 from forze.application.execution import Deps, ExecutionContext
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
+from forze_mongo.execution.deps import MongoDocumentConfig
 from forze_mongo.execution.deps.deps import ConfigurableMongoDocument
 from forze_mongo.execution.deps.keys import MongoClientDepKey
 from forze_mongo.kernel.platform import MongoClient
@@ -54,7 +55,7 @@ async def _setup(
         write={"domain": RowDoc, "create_cmd": RowCreate, "update_cmd": RowUpdate},
     )
     fac = ConfigurableMongoDocument(
-        config={"read": (db, collection), "write": (db, collection)}
+        config=MongoDocumentConfig(read=(db, collection), write=(db, collection))
     )
     ctx = ExecutionContext(
         deps=Deps.plain(

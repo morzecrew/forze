@@ -3,6 +3,7 @@
 import asyncio
 from contextlib import asynccontextmanager
 from typing import (
+    Any,
     AsyncGenerator,
     Awaitable,
     Callable,
@@ -21,16 +22,77 @@ from forze.base.exceptions import exc
 
 K = TypeVar("K", bound=Hashable)
 V = TypeVar("V")
+R = TypeVar("R", bound=Hashable, default=Any)
+
+# ....................... #
+
+
+@attrs.define(slots=True)
+class _DedupIndex(Generic[K, R]):
+    """Maps logical keys to deduplicated slot keys with refcounting."""
+
+    dedup_key: Callable[[K], R] | None = None
+
+    logical_to_resource: dict[K, R] = attrs.field(factory=dict)
+    resource_refcount: dict[R, int] = attrs.field(factory=dict)
+
+    # ....................... #
+
+    def slot_for(self, key: K) -> R:
+        if self.dedup_key is None:
+            return key  # type: ignore[return-value]
+
+        existing = self.logical_to_resource.get(key)
+
+        if existing is not None:
+            return existing
+
+        slot = self.dedup_key(key)
+        self.logical_to_resource[key] = slot
+        self.resource_refcount[slot] = self.resource_refcount.get(slot, 0) + 1
+
+        return slot
+
+    # ....................... #
+
+    def release(self, key: K) -> R | None:
+        """Drop *key*; return slot to evict when refcount reaches zero."""
+
+        if self.dedup_key is None:
+            return key  # type: ignore[return-value]
+
+        slot = self.logical_to_resource.pop(key, None)
+
+        if slot is None:
+            return None
+
+        self.resource_refcount[slot] -= 1
+
+        if self.resource_refcount[slot] <= 0:
+            del self.resource_refcount[slot]
+            return slot
+
+        return None
+
+    # ....................... #
+
+    def clear(self) -> None:
+        self.logical_to_resource.clear()
+        self.resource_refcount.clear()
+
 
 # ....................... #
 
 
 @final
 @attrs.define(slots=True)
-class SimpleLruRegistry(Generic[K, V]):
+class SimpleLruRegistry(Generic[K, V, R]):
     """LRU map with async create/dispose; evicts oldest entry when over capacity.
 
-    Eviction calls ``dispose`` immediately, including while other keys are in use.
+      Eviction calls ``dispose`` immediately, including while other keys are in use.
+
+      When ``dedup_key`` is set, LRU slots are keyed by ``dedup_key(logical_key)`` while
+    ``create`` still receives the logical key. Multiple logical keys may share one slot.
     """
 
     max_entries: int
@@ -42,6 +104,9 @@ class SimpleLruRegistry(Generic[K, V]):
     dispose: Callable[[V], Awaitable[None]] = attrs.field(repr=False, eq=False)
     """Function to dispose a value."""
 
+    dedup_key: Callable[[K], R] | None = attrs.field(default=None, repr=False, eq=False)
+    """When set, LRU slots are keyed by ``dedup_key(logical_key)``."""
+
     # ....................... #
 
     _lock: asyncio.Lock = attrs.field(
@@ -49,16 +114,17 @@ class SimpleLruRegistry(Generic[K, V]):
         init=False,
         repr=False,
     )
-    _entries: OrderedDict[K, V] = attrs.field(
+    _entries: OrderedDict[R, V] = attrs.field(
         factory=OrderedDict,
         init=False,
         repr=False,
     )
-    _init_locks: dict[K, asyncio.Lock] = attrs.field(
+    _init_locks: dict[R, asyncio.Lock] = attrs.field(
         factory=dict,
         init=False,
         repr=False,
     )
+    _dedup: _DedupIndex[K, R] = attrs.field(init=False, repr=False)
 
     # ....................... #
 
@@ -66,22 +132,33 @@ class SimpleLruRegistry(Generic[K, V]):
         if self.max_entries < 1:
             raise exc.internal("max_entries must be at least 1")
 
+        self._dedup = _DedupIndex(dedup_key=self.dedup_key)
+
     # ....................... #
 
     def peek(self, key: K) -> V | None:
         """Return a cached value without LRU touch (best-effort, no lock)."""
 
-        return self._entries.get(key)
+        if self.dedup_key is not None:
+            slot = self._dedup.logical_to_resource.get(key)
+
+            if slot is None:
+                return None
+
+        else:
+            slot = key  # type: ignore[assignment]
+
+        return self._entries.get(slot)  # type: ignore[arg-type]
 
     # ....................... #
 
-    async def _lock_for_init(self, key: K) -> asyncio.Lock:
+    async def _lock_for_init(self, slot: R) -> asyncio.Lock:
         async with self._lock:
-            init_lock = self._init_locks.get(key)
+            init_lock = self._init_locks.get(slot)
 
             if init_lock is None:
                 init_lock = asyncio.Lock()
-                self._init_locks[key] = init_lock
+                self._init_locks[slot] = init_lock
 
             return init_lock
 
@@ -91,18 +168,20 @@ class SimpleLruRegistry(Generic[K, V]):
         """Return an existing value or create, register, and LRU-evict overflow."""
 
         async with self._lock:
-            if key in self._entries:
-                value = self._entries[key]
-                self._entries.move_to_end(key)
+            slot = self._dedup.slot_for(key)
+
+            if slot in self._entries:
+                value = self._entries[slot]
+                self._entries.move_to_end(slot)
                 return value
 
-        init_lock = await self._lock_for_init(key)
+        init_lock = await self._lock_for_init(slot)
 
         async with init_lock:
             async with self._lock:
-                if key in self._entries:
-                    value = self._entries[key]
-                    self._entries.move_to_end(key)
+                if slot in self._entries:
+                    value = self._entries[slot]
+                    self._entries.move_to_end(slot)
                     return value
 
             value = await self.create(key)
@@ -110,14 +189,14 @@ class SimpleLruRegistry(Generic[K, V]):
             evicted: list[V] = []
 
             async with self._lock:
-                if key in self._entries:
+                if slot in self._entries:
                     await self.dispose(value)
-                    existing = self._entries[key]
-                    self._entries.move_to_end(key)
+                    existing = self._entries[slot]
+                    self._entries.move_to_end(slot)
                     return existing
 
-                self._entries[key] = value
-                self._entries.move_to_end(key)
+                self._entries[slot] = value
+                self._entries.move_to_end(slot)
 
                 while len(self._entries) > self.max_entries:
                     _, old = self._entries.popitem(last=False)
@@ -131,11 +210,16 @@ class SimpleLruRegistry(Generic[K, V]):
     # ....................... #
 
     async def evict(self, key: K) -> None:
-        """Remove *key* and dispose its value if present."""
+        """Remove *key* and dispose its value when the deduplicated slot is unused."""
 
         async with self._lock:
-            self._init_locks.pop(key, None)
-            value = self._entries.pop(key, None)
+            slot = self._dedup.release(key)
+
+            if slot is None:
+                return
+
+            self._init_locks.pop(slot, None)
+            value = self._entries.pop(slot, None)
 
         if value is not None:
             await self.dispose(value)
@@ -149,6 +233,7 @@ class SimpleLruRegistry(Generic[K, V]):
             values = list(self._entries.values())
             self._entries.clear()
             self._init_locks.clear()
+            self._dedup.clear()
 
         for value in values:
             await self.dispose(value)
@@ -158,16 +243,16 @@ class SimpleLruRegistry(Generic[K, V]):
 
 
 @attrs.define
-class _GuardedEntry(Generic[K, V]):
+class _GuardedEntry(Generic[V, R]):
     """Registry slot with in-flight refcount for safe LRU eviction."""
 
-    key: K
-    """Key for the entry."""
+    key: R
+    """Slot key for the entry."""
 
     value: V
     """Value for the entry."""
 
-    on_finish_drain: Callable[[K], Awaitable[None]]
+    on_finish_drain: Callable[[R], Awaitable[None]]
     """Function to finish the drain."""
 
     dispose: Callable[[V], Awaitable[None]]
@@ -238,11 +323,14 @@ class _GuardedEntry(Generic[K, V]):
 
 @final
 @attrs.define(slots=True)
-class GuardedLruRegistry(Generic[K, V]):
+class GuardedLruRegistry(Generic[K, V, R]):
     """LRU map that defers ``dispose`` until in-flight ``use`` scopes complete.
 
     When capacity is exceeded or :meth:`evict` is called on an in-use entry, the
     entry moves to an internal draining set until the last ``use`` scope exits.
+
+    When ``dedup_key`` is set, LRU slots are keyed by ``dedup_key(logical_key)`` while
+    ``create`` still receives the logical key.
     """
 
     max_entries: int
@@ -254,6 +342,9 @@ class GuardedLruRegistry(Generic[K, V]):
     dispose: Callable[[V], Awaitable[None]] = attrs.field(repr=False, eq=False)
     """Function to dispose a value."""
 
+    dedup_key: Callable[[K], R] | None = attrs.field(default=None, repr=False, eq=False)
+    """When set, LRU slots are keyed by ``dedup_key(logical_key)``."""
+
     # ....................... #
 
     _registry_lock: asyncio.Lock = attrs.field(
@@ -261,21 +352,22 @@ class GuardedLruRegistry(Generic[K, V]):
         init=False,
         repr=False,
     )
-    _slots: OrderedDict[K, _GuardedEntry[K, V]] = attrs.field(
+    _slots: OrderedDict[R, _GuardedEntry[V, R]] = attrs.field(
         factory=OrderedDict,
         init=False,
         repr=False,
     )
-    _draining: dict[K, _GuardedEntry[K, V]] = attrs.field(
+    _draining: dict[R, _GuardedEntry[V, R]] = attrs.field(
         factory=dict,
         init=False,
         repr=False,
     )
-    _init_locks: dict[K, asyncio.Lock] = attrs.field(
+    _init_locks: dict[R, asyncio.Lock] = attrs.field(
         factory=dict,
         init=False,
         repr=False,
     )
+    _dedup: _DedupIndex[K, R] = attrs.field(init=False, repr=False)
 
     # ....................... #
 
@@ -283,17 +375,28 @@ class GuardedLruRegistry(Generic[K, V]):
         if self.max_entries < 1:
             raise exc.internal("max_entries must be at least 1")
 
+        self._dedup = _DedupIndex(dedup_key=self.dedup_key)
+
     # ....................... #
 
     def peek(self, key: K) -> V | None:
         """Best-effort value lookup from active or draining maps (no lock)."""
 
-        entry = self._slots.get(key)
+        if self.dedup_key is not None:
+            slot = self._dedup.logical_to_resource.get(key)
+
+            if slot is None:
+                return None
+
+        else:
+            slot = key  # type: ignore[assignment]
+
+        entry = self._slots.get(slot)  # type: ignore[arg-type]
 
         if entry is not None:
             return entry.value
 
-        draining = self._draining.get(key)
+        draining = self._draining.get(slot)  # type: ignore[arg-type]
 
         if draining is not None:
             return draining.value
@@ -302,11 +405,11 @@ class GuardedLruRegistry(Generic[K, V]):
 
     # ....................... #
 
-    async def _finish_drain(self, key: K) -> None:
-        entry: _GuardedEntry[K, V] | None = None
+    async def _finish_drain(self, slot: R) -> None:
+        entry: _GuardedEntry[V, R] | None = None
 
         async with self._registry_lock:
-            entry = self._draining.pop(key, None)
+            entry = self._draining.pop(slot, None)
 
         if entry is not None:
             async with entry.condition:
@@ -316,22 +419,22 @@ class GuardedLruRegistry(Generic[K, V]):
 
     # ....................... #
 
-    async def _lock_for_init(self, key: K) -> asyncio.Lock:
+    async def _lock_for_init(self, slot: R) -> asyncio.Lock:
         async with self._registry_lock:
-            lock = self._init_locks.get(key)
+            lock = self._init_locks.get(slot)
 
             if lock is None:
                 lock = asyncio.Lock()
-                self._init_locks[key] = lock
+                self._init_locks[slot] = lock
 
             return lock
 
     # ....................... #
 
-    async def _await_not_draining(self, key: K) -> None:
+    async def _await_not_draining(self, slot: R) -> None:
         while True:
             async with self._registry_lock:
-                entry = self._draining.get(key)
+                entry = self._draining.get(slot)
 
                 if entry is None:
                     return
@@ -340,9 +443,9 @@ class GuardedLruRegistry(Generic[K, V]):
 
     # ....................... #
 
-    def _make_entry(self, key: K, value: V) -> _GuardedEntry[K, V]:
+    def _make_entry(self, slot: R, value: V) -> _GuardedEntry[V, R]:
         return _GuardedEntry(
-            key=key,
+            key=slot,
             value=value,
             on_finish_drain=self._finish_drain,
             dispose=self.dispose,
@@ -373,14 +476,17 @@ class GuardedLruRegistry(Generic[K, V]):
     async def use(self, key: K) -> AsyncGenerator[V]:
         """Resolve *key*, LRU-touch, create if needed, and yield with refcount guard."""
 
-        await self._await_not_draining(key)
+        async with self._registry_lock:
+            slot = self._dedup.slot_for(key)
 
-        entry: _GuardedEntry[K, V] | None = None
+        await self._await_not_draining(slot)
+
+        entry: _GuardedEntry[V, R] | None = None
 
         async with self._registry_lock:
-            if key in self._slots:
-                entry = self._slots[key]
-                self._slots.move_to_end(key)
+            if slot in self._slots:
+                entry = self._slots[slot]
+                self._slots.move_to_end(slot)
 
         if entry is not None:
             async with entry.use():
@@ -388,17 +494,17 @@ class GuardedLruRegistry(Generic[K, V]):
 
             return
 
-        init_lock = await self._lock_for_init(key)
+        init_lock = await self._lock_for_init(slot)
 
         async with init_lock:
-            await self._await_not_draining(key)
+            await self._await_not_draining(slot)
 
             entry = None
 
             async with self._registry_lock:
-                if key in self._slots:
-                    entry = self._slots[key]
-                    self._slots.move_to_end(key)
+                if slot in self._slots:
+                    entry = self._slots[slot]
+                    self._slots.move_to_end(slot)
 
             if entry is not None:
                 async with entry.use():
@@ -409,10 +515,10 @@ class GuardedLruRegistry(Generic[K, V]):
             value = await self.create(key)
 
             async with self._registry_lock:
-                if key in self._slots:
+                if slot in self._slots:
                     await self.dispose(value)
-                    existing = self._slots[key]
-                    self._slots.move_to_end(key)
+                    existing = self._slots[slot]
+                    self._slots.move_to_end(slot)
 
                 else:
                     existing = None
@@ -423,11 +529,11 @@ class GuardedLruRegistry(Generic[K, V]):
 
                 return
 
-            new_entry = self._make_entry(key, value)
+            new_entry = self._make_entry(slot, value)
 
             async with self._registry_lock:
-                self._slots[key] = new_entry
-                self._slots.move_to_end(key)
+                self._slots[slot] = new_entry
+                self._slots.move_to_end(slot)
 
             immediate_close = await self._evict_overflow()
 
@@ -442,14 +548,17 @@ class GuardedLruRegistry(Generic[K, V]):
     async def evict(self, key: K) -> None:
         """Remove *key*; dispose immediately if idle, else drain when last use ends."""
 
-        immediate: V | None = None
-
         async with self._registry_lock:
-            self._init_locks.pop(key, None)
-            entry = self._slots.pop(key, None)
+            slot = self._dedup.release(key)
+
+            if slot is None:
+                return
+
+            self._init_locks.pop(slot, None)
+            entry = self._slots.pop(slot, None)
 
             if entry is None:
-                entry = self._draining.pop(key, None)
+                entry = self._draining.pop(slot, None)
 
             if entry is not None:
                 if entry.refcount == 0:
@@ -458,7 +567,11 @@ class GuardedLruRegistry(Generic[K, V]):
                 else:
                     entry.mark_draining()
                     entry.drain_after_idle = True
-                    self._draining[key] = entry
+                    self._draining[slot] = entry
+                    immediate = None
+
+            else:
+                immediate = None
 
         if immediate is not None:
             await self.dispose(immediate)
@@ -475,6 +588,7 @@ class GuardedLruRegistry(Generic[K, V]):
             self._slots.clear()
             self._draining.clear()
             self._init_locks.clear()
+            self._dedup.clear()
 
         for value in to_close:
             await self.dispose(value)

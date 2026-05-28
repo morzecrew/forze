@@ -13,6 +13,7 @@ from forze.application.contracts.document import (
 )
 from forze.application.execution import Deps, ExecutionContext
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
+from forze_firestore.execution.deps.configs import FirestoreDocumentConfig
 from forze_firestore.execution.deps.deps import ConfigurableFirestoreDocument
 from forze_firestore.execution.deps.keys import FirestoreClientDepKey
 from forze_firestore.kernel.platform import FirestoreClient
@@ -36,7 +37,10 @@ class QRead(ReadDocument):
 
 def _ctx(client: FirestoreClient, collection: str) -> ExecutionContext:
     fac = ConfigurableFirestoreDocument(
-        config={"read": ("(default)", collection), "write": ("(default)", collection)}
+        config=FirestoreDocumentConfig(
+            read=("(default)", collection),
+            write=("(default)", collection),
+        ),
     )
     return ExecutionContext(
         deps=Deps.plain(

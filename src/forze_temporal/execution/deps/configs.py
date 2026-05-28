@@ -1,13 +1,15 @@
-from typing import NotRequired, TypedDict
+"""Temporal workflow execution configs."""
+
+import attrs
+
+from forze.application.contracts.tenancy import TenantAwareIntegrationConfig
 
 # ----------------------- #
 
 
-class TemporalWorkflowConfig(TypedDict):
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class TemporalWorkflowConfig(TenantAwareIntegrationConfig):
     """Configuration for a Temporal workflow."""
 
     queue: str
     """Temporal task queue name."""
-
-    tenant_aware: NotRequired[bool]
-    """Whether the workflow is tenant-aware."""

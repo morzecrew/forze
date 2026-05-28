@@ -18,7 +18,7 @@ class _M(BaseModel):
 class _Adapter(MeilisearchSearchPortMixin[_M]):
     spec = SearchSpec(name="s", model_type=_M, fields=["title"])
     model_type = _M
-    config: MeilisearchSearchConfig = {"index_uid": "items"}
+    config: MeilisearchSearchConfig = MeilisearchSearchConfig(index_uid="items")
 
 
 @pytest.mark.asyncio

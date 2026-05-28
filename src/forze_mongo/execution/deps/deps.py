@@ -42,7 +42,6 @@ from .configs import (
     MongoDocumentConfig,
     MongoReadOnlyDocumentConfig,
     MongoSearchConfig,
-    validate_mongo_search_conf,
 )
 from .keys import MongoClientDepKey
 from .utils import doc_write_gw, read_gw
@@ -77,8 +76,8 @@ class ConfigurableMongoReadOnlyDocument(DocumentQueryDepPort[R]):
         read = read_gw(
             ctx,
             read_type=spec.read,
-            read_relation=self.config["read"],
-            tenant_aware=self.config.get("tenant_aware", False),
+            read_relation=self.config.read,
+            tenant_aware=self.config.tenant_aware,
         )
 
         after_commit: AfterCommitPort | None = None
@@ -98,7 +97,7 @@ class ConfigurableMongoReadOnlyDocument(DocumentQueryDepPort[R]):
             read_gw=read,
             write_gw=None,
             cache_coord=cc,
-            batch_size=self.config.get("batch_size", 200),
+            batch_size=self.config.batch_size,
         )
 
 
@@ -122,7 +121,7 @@ class ConfigurableMongoDocument(DocumentCommandDepPort[R, D, C, U]):
     ) -> MongoDocumentAdapter[R, D, C, U]:
         cache = ctx.cache(spec.cache) if spec.cache is not None else None
         config = self.config
-        tenant_aware = config.get("tenant_aware", False)
+        tenant_aware = config.tenant_aware
 
         if spec.write is None:
             raise exc.internal(
@@ -132,12 +131,12 @@ class ConfigurableMongoDocument(DocumentCommandDepPort[R, D, C, U]):
         read = read_gw(
             ctx,
             read_type=spec.read,
-            read_relation=config["read"],
+            read_relation=config.read,
             tenant_aware=tenant_aware,
         )
 
-        write_relation = config["write"]
-        history_relation = config.get("history")
+        write_relation = config.write
+        history_relation = config.history
 
         # We only log a warning here because skipping history gateway is not critical.
         if history_relation is None and spec.history_enabled:
@@ -176,7 +175,7 @@ class ConfigurableMongoDocument(DocumentCommandDepPort[R, D, C, U]):
             read_gw=read,
             write_gw=write,
             cache_coord=cc,
-            batch_size=config.get("batch_size", 200),
+            batch_size=config.batch_size,
         )
 
 
@@ -229,15 +228,15 @@ def _mongo_search_port_for_config(
     | MongoAtlasSearchAdapter[Any]
     | MongoVectorSearchAdapter[Any]
 ):
-    validate_mongo_search_conf(c, member_spec)
+    c.validate_against_spec(member_spec)
 
-    db_name, coll_name = c["read"]
-    field_map = dict(c.get("field_map") or {})
+    db_name, coll_name = c.read
+    field_map = dict(c.field_map or {})
     snapshot_coord = _snapshot_coord(context, member_spec.snapshot)
     client = context.deps.provide(MongoClientDepKey)
-    tenant_aware = c.get("tenant_aware", False)
+    tenant_aware = c.tenant_aware
 
-    match c["engine"]:
+    match c.engine:
         case "text":
             return MongoTextSearchAdapter(
                 spec=member_spec,
@@ -252,10 +251,7 @@ def _mongo_search_port_for_config(
             )
 
         case "atlas":
-            index_name = c.get("index_name")
-
-            if not index_name:
-                raise exc.configuration("index_name is required for atlas engine.")
+            index_name = c.index_name
 
             return MongoAtlasSearchAdapter(
                 spec=member_spec,
@@ -271,10 +267,10 @@ def _mongo_search_port_for_config(
             )
 
         case "vector":
-            en = c.get("embeddings_name")
-            ed = c.get("embedding_dimensions")
-            vpath = c.get("vector_path")
-            index_name = c.get("index_name")
+            en = c.embeddings_name
+            ed = c.embedding_dimensions
+            vpath = c.vector_path
+            index_name = c.index_name
 
             if en is None or ed is None or vpath is None or index_name is None:
                 raise exc.internal(
@@ -282,7 +278,7 @@ def _mongo_search_port_for_config(
                     "vector_path, and index_name.",
                 )
 
-            es = EmbeddingsSpec(name=str(en), dimensions=int(ed))
+            es = EmbeddingsSpec(name=en, dimensions=ed)
 
             return MongoVectorSearchAdapter(
                 spec=member_spec,
@@ -295,13 +291,13 @@ def _mongo_search_port_for_config(
                 tenant_aware=tenant_aware,
                 snapshot_coord=snapshot_coord,
                 embedder=context.embeddings.provider(es),
-                embedding_dimensions=int(ed),
-                vector_path=str(vpath),
-                index_name=str(index_name),
+                embedding_dimensions=ed,
+                vector_path=vpath,
+                index_name=index_name,
             )
 
         case _:  # pyright: ignore[reportUnnecessaryComparison]
-            raise exc.internal(f"Unsupported Mongo search engine: {c['engine']!r}.")
+            raise exc.internal(f"Unsupported Mongo search engine: {c.engine!r}.")
 
 
 # ....................... #

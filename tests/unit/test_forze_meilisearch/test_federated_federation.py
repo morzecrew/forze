@@ -61,6 +61,6 @@ async def test_federation_skips_zero_weight_legs() -> None:
     assert page.hits[0].member == "a"
     queries = client.multi_search.await_args.args[0]
     assert len(queries) == 1
-    params, fed_opts = queries[0]
-    assert params.index_uid == "idx_a"
-    assert fed_opts == {"weight": 1.0}
+    assert queries[0].index_uid == "idx_a"
+    assert queries[0].federation_options is not None
+    assert queries[0].federation_options.weight == 1.0

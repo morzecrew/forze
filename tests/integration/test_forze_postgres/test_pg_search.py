@@ -16,8 +16,36 @@ from forze.application.contracts.search import (
 )
 from forze.application.execution import Deps, ExecutionContext
 from forze_postgres.adapters.search import PostgresPGroongaSearchAdapter
-from forze_postgres.execution.deps.configs import PostgresHubSearchConfig
-from forze_postgres.execution.deps.deps import (
+from forze_postgres.execution.deps.configs import (
+    PostgresHubSearchConfig,
+    PostgresHubSearchMemberConfig,
+    PostgresSearchConfig,
+)
+import attrs
+
+
+def _hub_member(**kwargs: object) -> PostgresHubSearchMemberConfig:
+    if "engine" not in kwargs:
+        kwargs["engine"] = "pgroonga"
+    return PostgresHubSearchMemberConfig(**kwargs)  # type: ignore[misc]
+
+
+def _hub_config(
+    *,
+    hub: tuple[str, str],
+    members: dict[object, PostgresHubSearchMemberConfig],
+    combine_strategy: str = "or",
+    merge_strategy: str = "max",
+) -> PostgresHubSearchConfig:
+    return PostgresHubSearchConfig(
+        hub=hub,
+        members=members,
+        combine_strategy=combine_strategy,  # type: ignore[arg-type]
+        merge_strategy=merge_strategy,  # type: ignore[arg-type]
+    )
+
+
+from forze_postgres.execution.deps import (
     ConfigurablePostgresHubSearch,
     ConfigurablePostgresSearch,
 )
@@ -43,11 +71,11 @@ def execution_context(pg_client: PostgresClient):
             PostgresClientDepKey: pg_client,
             PostgresIntrospectorDepKey: PostgresIntrospector(client=pg_client),
             SearchQueryDepKey: ConfigurablePostgresSearch(
-                config={
-                    "index": ("public", "idx_search_items_pgroonga"),
-                    "read": ("public", "search_items"),
-                    "engine": "pgroonga",
-                }
+                config=PostgresSearchConfig(
+                    index=("public", "idx_search_items_pgroonga"),
+                    read=("public", "search_items"),
+                    engine="pgroonga",
+                )
             ),
         }
     )
@@ -82,11 +110,11 @@ async def test_postgres_pgroonga_single_column_index(
                 PostgresClientDepKey: pg_client,
                 PostgresIntrospectorDepKey: PostgresIntrospector(client=pg_client),
                 SearchQueryDepKey: ConfigurablePostgresSearch(
-                    config={
-                        "index": ("public", "idx_pg1col_title"),
-                        "read": ("public", "pg1col_docs"),
-                        "engine": "pgroonga",
-                    }
+                    config=PostgresSearchConfig(
+                        index=("public", "idx_pg1col_title"),
+                        read=("public", "pg1col_docs"),
+                        engine="pgroonga",
+                    )
                 ),
             }
         )
@@ -274,11 +302,11 @@ async def test_pgroonga_search_spec_field_order_does_not_change_ranking(
                 PostgresClientDepKey: pg_client,
                 PostgresIntrospectorDepKey: PostgresIntrospector(client=pg_client),
                 SearchQueryDepKey: ConfigurablePostgresSearch(
-                    config={
-                        "index": ("public", index_name),
-                        "read": ("public", table),
-                        "engine": "pgroonga",
-                    }
+                    config=PostgresSearchConfig(
+                        index=("public", index_name),
+                        read=("public", table),
+                        engine="pgroonga",
+                    )
                 ),
             }
         )
@@ -374,12 +402,9 @@ async def test_postgres_pgroonga_search_adapter_v2_projection_vs_heap(
 
     adapter = PostgresPGroongaSearchAdapter(
         spec=spec,
-        source_qname=PostgresQualifiedName(schema="public", name="search_projection"),
-        index_qname=PostgresQualifiedName(
-            schema="public",
-            name="idx_search_heap_pgroonga",
-        ),
-        index_heap_qname=PostgresQualifiedName(schema="public", name="search_heap"),
+        relation=("public", "search_projection"),
+        index_relation=("public", "idx_search_heap_pgroonga"),
+        index_heap_relation=("public", "search_heap"),
         client=pg_client,
         model_type=SearchableModel,
         introspector=introspector,
@@ -431,13 +456,13 @@ async def test_postgres_search_configurable_uses_heap_and_field_map(
                 PostgresClientDepKey: pg_client,
                 PostgresIntrospectorDepKey: PostgresIntrospector(client=pg_client),
                 SearchQueryDepKey: ConfigurablePostgresSearch(
-                    config={
-                        "index": ("public", "idx_cfg_pg"),
-                        "read": ("public", "cfg_proj"),
-                        "heap": ("public", "cfg_heap"),
-                        "engine": "pgroonga",
-                        "field_map": {"title": "t1", "content": "t2"},
-                    }
+                    config=PostgresSearchConfig(
+                        index=("public", "idx_cfg_pg"),
+                        read=("public", "cfg_proj"),
+                        heap=("public", "cfg_heap"),
+                        engine="pgroonga",
+                        field_map={"title": "t1", "content": "t2"},
+                    )
                 ),
             }
         )
@@ -557,23 +582,20 @@ async def test_postgres_hub_pgroonga_search_links_or_legs(pg_client: PostgresCli
         members=(detail_txt, spec_txt),
     )
 
-    hub_pg: PostgresHubSearchConfig = {
-        "hub": ("public", "hub_links"),
-        "members": {
-            det_name: {
-                "index": ("public", "idx_hub_details_pg"),
-                "read": ("public", "hub_details"),
-                "hub_fk": "detail_id",
-            },
-            spec_name: {
-                "index": ("public", "idx_hub_specs_pg"),
-                "read": ("public", "hub_specs"),
-                "hub_fk": "spec_id",
-            },
-        },
-        "combine": "or",
-        "score_merge": "max",
-    }
+
+    hub_pg = _hub_config(
+        hub=("public", "hub_links"),
+        members={
+            det_name: _hub_member(index=("public", "idx_hub_details_pg"),
+                read=("public", "hub_details"),
+                hub_fk="detail_id",
+                engine="pgroonga"),
+            spec_name: _hub_member(index=("public", "idx_hub_specs_pg"),
+                read=("public", "hub_specs"),
+                hub_fk="spec_id",
+                engine="pgroonga"),
+        }, combine_strategy="or", merge_strategy="max",
+    )
 
     introspector = PostgresIntrospector(client=pg_client)
     ctx_hub = ExecutionContext(
@@ -624,7 +646,8 @@ async def test_postgres_hub_pgroonga_search_links_or_legs(pg_client: PostgresCli
     assert cnt_raw == 2
     assert {r["id"] for r in raw_links} == {lid1, lid3}
 
-    hub_pg_sum: PostgresHubSearchConfig = {**hub_pg, "score_merge": "sum"}
+
+    hub_pg_sum = attrs.evolve(hub_pg, merge_strategy="sum")
     adapter_sum = ConfigurablePostgresHubSearch(config=hub_pg_sum)(ctx_hub, hub_spec)
     __p = await adapter_sum.search_page("alpha")
     sum_hits = __p.hits
@@ -772,27 +795,22 @@ async def test_postgres_hub_fts_search_links_or_legs(pg_client: PostgresClient) 
         members=(detail_txt, spec_txt),
     )
 
-    hub_fts_cfg: PostgresHubSearchConfig = {
-        "hub": ("public", "hub_fts_links"),
-        "members": {
-            det_name: {
-                "index": ("public", "idx_hub_fts_details_gin"),
-                "read": ("public", "hub_fts_details"),
-                "hub_fk": "detail_id",
-                "engine": "fts",
-                "fts_groups": fts_groups,
-            },
-            spec_name: {
-                "index": ("public", "idx_hub_fts_specs_gin"),
-                "read": ("public", "hub_fts_specs"),
-                "hub_fk": "spec_id",
-                "engine": "fts",
-                "fts_groups": fts_groups,
-            },
-        },
-        "combine": "or",
-        "score_merge": "max",
-    }
+
+    hub_fts_cfg = _hub_config(
+        hub=("public", "hub_fts_links"),
+        members={
+            det_name: _hub_member(index=("public", "idx_hub_fts_details_gin"),
+                read=("public", "hub_fts_details"),
+                hub_fk="detail_id",
+                engine="fts",
+                fts_groups=fts_groups,),
+            spec_name: _hub_member(index=("public", "idx_hub_fts_specs_gin"),
+                read=("public", "hub_fts_specs"),
+                hub_fk="spec_id",
+                engine="fts",
+                fts_groups=fts_groups,),
+        }, combine_strategy="or", merge_strategy="max",
+    )
 
     introspector = PostgresIntrospector(client=pg_client)
     ctx_hub = ExecutionContext(
@@ -906,22 +924,20 @@ async def test_postgres_hub_pgroonga_combine_or_vs_and(
         members=(detail_txt, spec_txt),
     )
 
-    base_members: PostgresHubSearchConfig = {
-        "hub": ("public", "hub_and_link"),
-        "members": {
-            det_name: {
-                "index": ("public", "idx_hub_and_d"),
-                "read": ("public", "hub_and_detail"),
-                "hub_fk": "detail_id",
-            },
-            spec_name: {
-                "index": ("public", "idx_hub_and_s"),
-                "read": ("public", "hub_and_spec"),
-                "hub_fk": "spec_id",
-            },
-        },
-        "score_merge": "max",
-    }
+
+    base_members = _hub_config(
+        hub=("public", "hub_and_link"),
+        members={
+            det_name: _hub_member(index=("public", "idx_hub_and_d"),
+                read=("public", "hub_and_detail"),
+                hub_fk="detail_id",
+                engine="pgroonga"),
+            spec_name: _hub_member(index=("public", "idx_hub_and_s"),
+                read=("public", "hub_and_spec"),
+                hub_fk="spec_id",
+                engine="pgroonga"),
+        }, merge_strategy="max",
+    )
 
     introspector = PostgresIntrospector(client=pg_client)
     ctx = ExecutionContext(
@@ -934,7 +950,7 @@ async def test_postgres_hub_pgroonga_combine_or_vs_and(
     )
 
     adapter_or = ConfigurablePostgresHubSearch(
-        config={**base_members, "combine_strategy": "or"}
+        config=attrs.evolve(base_members, combine_strategy="or")
     )(ctx, hub_spec)
     __p = await adapter_or.search_page("findme")
     hits_or = __p.hits
@@ -943,7 +959,7 @@ async def test_postgres_hub_pgroonga_combine_or_vs_and(
     assert {h.id for h in hits_or} == {lid_or, lid_and}
 
     adapter_and = ConfigurablePostgresHubSearch(
-        config={**base_members, "combine_strategy": "and"}
+        config=attrs.evolve(base_members, combine_strategy="and")
     )(ctx, hub_spec)
     __p = await adapter_and.search_page("findme")
     hits_and = __p.hits
@@ -1035,26 +1051,21 @@ async def test_postgres_hub_mixed_pgroonga_and_fts_legs(
         members=(detail_txt, spec_txt),
     )
 
-    hub_mix_cfg: PostgresHubSearchConfig = {
-        "hub": ("public", "hub_mix_link"),
-        "members": {
-            det_name: {
-                "index": ("public", "idx_hub_mix_d_pg"),
-                "read": ("public", "hub_mix_detail"),
-                "hub_fk": "detail_id",
-                "engine": "pgroonga",
-            },
-            spec_name: {
-                "index": ("public", "idx_hub_mix_s_fts"),
-                "read": ("public", "hub_mix_spec"),
-                "hub_fk": "spec_id",
-                "engine": "fts",
-                "fts_groups": fts_groups,
-            },
-        },
-        "combine": "or",
-        "score_merge": "max",
-    }
+
+    hub_mix_cfg = _hub_config(
+        hub=("public", "hub_mix_link"),
+        members={
+            det_name: _hub_member(index=("public", "idx_hub_mix_d_pg"),
+                read=("public", "hub_mix_detail"),
+                hub_fk="detail_id",
+                engine="pgroonga",),
+            spec_name: _hub_member(index=("public", "idx_hub_mix_s_fts"),
+                read=("public", "hub_mix_spec"),
+                hub_fk="spec_id",
+                engine="fts",
+                fts_groups=fts_groups,),
+        }, combine_strategy="or", merge_strategy="max",
+    )
 
     introspector = PostgresIntrospector(client=pg_client)
     ctx_hub = ExecutionContext(
@@ -1162,23 +1173,20 @@ async def test_postgres_hub_pgroonga_multi_hub_fk_one_heap(
         members=(party_txt, label_txt),
     )
 
-    hub_pg: PostgresHubSearchConfig = {
-        "hub": ("public", "hub_mfk_contracts"),
-        "members": {
-            party_leg: {
-                "index": ("public", "idx_hub_mfk_parties_pg"),
-                "read": ("public", "hub_mfk_parties"),
-                "hub_fk": ["party_a_id", "party_b_id"],
-            },
-            label_leg: {
-                "index": ("public", "idx_hub_mfk_labels_pg"),
-                "read": ("public", "hub_mfk_labels"),
-                "hub_fk": "label_id",
-            },
-        },
-        "combine": "or",
-        "score_merge": "max",
-    }
+
+    hub_pg = _hub_config(
+        hub=("public", "hub_mfk_contracts"),
+        members={
+            party_leg: _hub_member(index=("public", "idx_hub_mfk_parties_pg"),
+                read=("public", "hub_mfk_parties"),
+                hub_fk=["party_a_id", "party_b_id"],
+                engine="pgroonga"),
+            label_leg: _hub_member(index=("public", "idx_hub_mfk_labels_pg"),
+                read=("public", "hub_mfk_labels"),
+                hub_fk="label_id",
+                engine="pgroonga"),
+        }, combine_strategy="or", merge_strategy="max",
+    )
 
     introspector = PostgresIntrospector(client=pg_client)
     ctx_hub = ExecutionContext(
@@ -1276,17 +1284,17 @@ async def test_postgres_hub_same_heap_as_hub_single_leg(
         model_type=_SameHeapHubRow,
         members=(doc_leg,),
     )
-    hub_pg: PostgresHubSearchConfig = {
-        "hub": ("public", "hub_same_heap"),
-        "members": {
-            leg_name: {
-                "index": ("public", "idx_hub_same_heap_pg"),
-                "read": ("public", "hub_same_heap"),
-                "hub_fk": "id",
-                "same_heap_as_hub": True,
-            },
+
+    hub_pg = _hub_config(
+        hub=("public", "hub_same_heap"),
+        members={
+            leg_name: _hub_member(index=("public", "idx_hub_same_heap_pg"),
+                read=("public", "hub_same_heap"),
+                hub_fk="id",
+                same_heap_as_hub=True,
+                engine="pgroonga"),
         },
-    }
+    )
     introspector = PostgresIntrospector(client=pg_client)
     ctx_hub = ExecutionContext(
         deps=Deps.plain(
@@ -1353,9 +1361,9 @@ async def test_postgres_pgroonga_v2_empty_query_filter_only_paths(
     )
     adapter = PostgresPGroongaSearchAdapter(
         spec=spec,
-        source_qname=PostgresQualifiedName(schema="public", name=proj),
-        index_qname=PostgresQualifiedName(schema="public", name=idx),
-        index_heap_qname=PostgresQualifiedName(schema="public", name=heap),
+        relation=("public", proj),
+        index_relation=("public", idx),
+        index_heap_relation=("public", heap),
         client=pg_client,
         model_type=SearchableModel,
         introspector=introspector,
@@ -1432,9 +1440,9 @@ async def test_postgres_pgroonga_v2_nonempty_query_count_zero_short_circuit(
     )
     adapter = PostgresPGroongaSearchAdapter(
         spec=spec,
-        source_qname=PostgresQualifiedName(schema="public", name=proj),
-        index_qname=PostgresQualifiedName(schema="public", name=idx),
-        index_heap_qname=PostgresQualifiedName(schema="public", name=heap),
+        relation=("public", proj),
+        index_relation=("public", idx),
+        index_heap_relation=("public", heap),
         client=pg_client,
         model_type=SearchableModel,
         introspector=introspector,
@@ -1487,9 +1495,9 @@ async def test_postgres_pgroonga_v2_ranked_search_uses_score_v1(
     )
     adapter = PostgresPGroongaSearchAdapter(
         spec=spec,
-        source_qname=PostgresQualifiedName(schema="public", name=proj),
-        index_qname=PostgresQualifiedName(schema="public", name=idx),
-        index_heap_qname=PostgresQualifiedName(schema="public", name=heap),
+        relation=("public", proj),
+        index_relation=("public", idx),
+        index_heap_relation=("public", heap),
         client=pg_client,
         model_type=SearchableModel,
         introspector=introspector,
@@ -1544,9 +1552,9 @@ async def test_postgres_pgroonga_v2_search_with_cursor_filter_only(
     )
     adapter = PostgresPGroongaSearchAdapter(
         spec=spec,
-        source_qname=PostgresQualifiedName(schema="public", name=proj),
-        index_qname=PostgresQualifiedName(schema="public", name=idx),
-        index_heap_qname=PostgresQualifiedName(schema="public", name=heap),
+        relation=("public", proj),
+        index_relation=("public", idx),
+        index_heap_relation=("public", heap),
         client=pg_client,
         model_type=SearchableModel,
         introspector=introspector,
@@ -1685,18 +1693,17 @@ async def test_postgres_hub_fts_leg_multi_query_phrase_combine(
         members=(body_spec,),
     )
     fts_groups = {"A": ("body",)}
-    hub_cfg: PostgresHubSearchConfig = {
-        "hub": ("public", link_t),
-        "members": {
-            leg_n: {
-                "index": ("public", idx),
-                "read": ("public", body_t),
-                "hub_fk": "body_id",
-                "engine": "fts",
-                "fts_groups": fts_groups,
-            },
+
+    hub_cfg = _hub_config(
+        hub=("public", link_t),
+        members={
+            leg_n: _hub_member(index=("public", idx),
+                read=("public", body_t),
+                hub_fk="body_id",
+                engine="fts",
+                fts_groups=fts_groups,),
         },
-    }
+    )
 
     ctx = ExecutionContext(
         deps=Deps.plain(
@@ -1796,25 +1803,20 @@ async def test_postgres_hub_combine_and_with_score_merge_sum(
         model_type=LinkModel,
         members=(detail_txt, spec_txt),
     )
-    hub_cfg: PostgresHubSearchConfig = {
-        "hub": ("public", lt),
-        "members": {
-            det_name: {
-                "index": ("public", idx_d),
-                "read": ("public", dt),
-                "hub_fk": "detail_id",
-                "engine": "pgroonga",
-            },
-            spec_name: {
-                "index": ("public", idx_s),
-                "read": ("public", st),
-                "hub_fk": "spec_id",
-                "engine": "pgroonga",
-            },
+
+    hub_cfg = _hub_config(
+        hub=("public", lt),
+        members={
+            det_name: _hub_member(index=("public", idx_d),
+                read=("public", dt),
+                hub_fk="detail_id",
+                engine="pgroonga",),
+            spec_name: _hub_member(index=("public", idx_s),
+                read=("public", st),
+                hub_fk="spec_id",
+                engine="pgroonga",),
         },
-        "combine_strategy": "and",
-        "merge_strategy": "sum",
-    }
+    )
 
     ctx = ExecutionContext(
         deps=Deps.plain(
@@ -1874,17 +1876,17 @@ async def test_postgres_hub_return_count_zero_and_projections(
         model_type=_SameHeapHubRow,
         members=(doc_leg,),
     )
-    hub_cfg: PostgresHubSearchConfig = {
-        "hub": ("public", ht),
-        "members": {
-            leg_n: {
-                "index": ("public", f"idx_{suffix}_pg"),
-                "read": ("public", ht),
-                "hub_fk": "id",
-                "same_heap_as_hub": True,
-            },
+
+    hub_cfg = _hub_config(
+        hub=("public", ht),
+        members={
+            leg_n: _hub_member(index=("public", f"idx_{suffix}_pg"),
+                read=("public", ht),
+                hub_fk="id",
+                same_heap_as_hub=True,
+                engine="pgroonga"),
         },
-    }
+    )
 
     ctx = ExecutionContext(
         deps=Deps.plain(
@@ -1954,17 +1956,17 @@ async def test_postgres_hub_browse_empty_query_with_sorts(
         model_type=_SameHeapHubRow,
         members=(doc_leg,),
     )
-    hub_cfg: PostgresHubSearchConfig = {
-        "hub": ("public", ht),
-        "members": {
-            leg_n: {
-                "index": ("public", f"idx_{suffix}_br"),
-                "read": ("public", ht),
-                "hub_fk": "id",
-                "same_heap_as_hub": True,
-            },
+
+    hub_cfg = _hub_config(
+        hub=("public", ht),
+        members={
+            leg_n: _hub_member(index=("public", f"idx_{suffix}_br"),
+                read=("public", ht),
+                hub_fk="id",
+                same_heap_as_hub=True,
+                engine="pgroonga"),
         },
-    }
+    )
 
     ctx = ExecutionContext(
         deps=Deps.plain(
@@ -2021,17 +2023,17 @@ async def test_postgres_hub_search_with_cursor(
         model_type=_SameHeapHubRow,
         members=(doc_leg,),
     )
-    hub_cfg: PostgresHubSearchConfig = {
-        "hub": ("public", ht),
-        "members": {
-            leg_n: {
-                "index": ("public", f"idx_{suffix}_cur"),
-                "read": ("public", ht),
-                "hub_fk": "id",
-                "same_heap_as_hub": True,
-            },
+
+    hub_cfg = _hub_config(
+        hub=("public", ht),
+        members={
+            leg_n: _hub_member(index=("public", f"idx_{suffix}_cur"),
+                read=("public", ht),
+                hub_fk="id",
+                same_heap_as_hub=True,
+                engine="pgroonga"),
         },
-    }
+    )
 
     ctx = ExecutionContext(
         deps=Deps.plain(
@@ -2130,17 +2132,17 @@ async def test_postgres_hub_search_with_cursor_ranked_id_desc_chains(
         model_type=_SameHeapHubRow,
         members=(doc_leg,),
     )
-    hub_cfg: PostgresHubSearchConfig = {
-        "hub": ("public", ht),
-        "members": {
-            leg_n: {
-                "index": ("public", f"idx_{suffix}_idcur"),
-                "read": ("public", ht),
-                "hub_fk": "id",
-                "same_heap_as_hub": True,
-            },
+
+    hub_cfg = _hub_config(
+        hub=("public", ht),
+        members={
+            leg_n: _hub_member(index=("public", f"idx_{suffix}_idcur"),
+                read=("public", ht),
+                hub_fk="id",
+                same_heap_as_hub=True,
+                engine="pgroonga"),
         },
-    }
+    )
     ctx = ExecutionContext(
         deps=Deps.plain(
             {
@@ -2213,17 +2215,17 @@ async def test_postgres_hub_search_with_cursor_browse_no_sorts(
         model_type=_SameHeapHubRow,
         members=(doc_leg,),
     )
-    hub_cfg: PostgresHubSearchConfig = {
-        "hub": ("public", ht),
-        "members": {
-            leg_n: {
-                "index": ("public", f"idx_{suffix}_br"),
-                "read": ("public", ht),
-                "hub_fk": "id",
-                "same_heap_as_hub": True,
-            },
+
+    hub_cfg = _hub_config(
+        hub=("public", ht),
+        members={
+            leg_n: _hub_member(index=("public", f"idx_{suffix}_br"),
+                read=("public", ht),
+                hub_fk="id",
+                same_heap_as_hub=True,
+                engine="pgroonga"),
         },
-    }
+    )
     ctx = ExecutionContext(
         deps=Deps.plain(
             {

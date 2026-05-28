@@ -32,6 +32,7 @@ from forze.base.primitives import JsonDict
 from forze.base.primitives.lru_registry import GuardedLruRegistry
 
 from .client import PostgresClient
+from .fingerprint import postgres_connection_fingerprint
 from .port import PostgresClientPort
 from .types import RowFactory
 from .value_objects import PostgresConfig, PostgresTransactionOptions
@@ -49,7 +50,7 @@ class RoutedPostgresClient(PostgresClientPort):
     ``secret_ref_for_tenant``.
 
     Call :meth:`startup` during application startup (see
-    :func:`~forze_postgres.execution.lifecycle.routed_postgres_lifecycle_step`)
+    :func:`~forze_postgres.execution.lifecycle.pool.routed_postgres_lifecycle_step`)
     before use. Call :meth:`close` on shutdown to drain all per-tenant pools.
 
     LRU eviction never closes a pool that still has in-flight routed operations:
@@ -77,7 +78,8 @@ class RoutedPostgresClient(PostgresClientPort):
 
     # ....................... #
 
-    _registry: GuardedLruRegistry[UUID, PostgresClient] = attrs.field(init=False)
+    _registry: GuardedLruRegistry[UUID, PostgresClient, str] = attrs.field(init=False)
+    _fingerprints: dict[UUID, str] = attrs.field(factory=dict, init=False, repr=False)
     _started: bool = attrs.field(default=False, init=False)
     _gather_sem: asyncio.Semaphore | None = attrs.field(default=None, init=False)
 
@@ -91,6 +93,7 @@ class RoutedPostgresClient(PostgresClientPort):
             max_entries=self.max_cached_tenants,
             create=self._create_client,
             dispose=lambda client: client.close(),
+            dedup_key=lambda tid: self._fingerprints[tid],
         )
 
     # ....................... #
@@ -121,7 +124,28 @@ class RoutedPostgresClient(PostgresClientPort):
     async def evict_tenant(self, tenant_id: UUID) -> None:
         """Close and remove the pool for one tenant (e.g. after credential rotation)."""
 
+        self._fingerprints.pop(tenant_id, None)
         await self._registry.evict(tenant_id)
+
+    # ....................... #
+
+    async def _ensure_fingerprint(self, tenant_id: UUID) -> str:
+        cached = self._fingerprints.get(tenant_id)
+
+        if cached is not None:
+            return cached
+
+        ref = secret_ref_for_tenant(self.secret_ref_for_tenant, tenant_id)
+        dsn = await resolve_str_for_tenant(
+            self.secrets,
+            ref,
+            tenant_id=tenant_id,
+            backend="database",
+        )
+        fingerprint = postgres_connection_fingerprint(dsn)
+        self._fingerprints[tenant_id] = fingerprint
+
+        return fingerprint
 
     # ....................... #
 
@@ -152,12 +176,13 @@ class RoutedPostgresClient(PostgresClientPort):
         if not self._started:
             raise exc.internal("Routed Postgres client is not started")
 
-        async with self._registry.use(
-            require_tenant_id(
-                self.tenant_provider,
-                message="Tenant ID is required for routed Postgres access",
-            ),
-        ) as client:
+        tenant_id = require_tenant_id(
+            self.tenant_provider,
+            message="Tenant ID is required for routed Postgres access",
+        )
+        await self._ensure_fingerprint(tenant_id)
+
+        async with self._registry.use(tenant_id) as client:
             yield client
 
     # ....................... #

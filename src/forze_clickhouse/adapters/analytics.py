@@ -81,7 +81,7 @@ class ClickHouseAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
 
     def _query_config(self, query_key: str) -> ClickHouseQueryConfig:
         try:
-            return self.config["queries"][query_key]
+            return self.config.queries[query_key]
 
         except KeyError as e:
             raise exc.precondition(f"Unknown analytics query key: {query_key!r}") from e
@@ -94,12 +94,12 @@ class ClickHouseAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
     # ....................... #
 
     def _sql(self, query_key: str) -> str:
-        return self._query_config(query_key)["sql"]
+        return self._query_config(query_key).sql
 
     # ....................... #
 
     def _database(self) -> str:
-        return self.config["database"]
+        return self.config.database
 
     # ....................... #
 
@@ -109,17 +109,17 @@ class ClickHouseAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
     # ....................... #
 
     def _skip_total(self, query_key: str) -> bool:
-        return bool(self._query_config(query_key).get("skip_total"))
+        return self._query_config(query_key).skip_total
 
     # ....................... #
 
     def _max_append_rows(self) -> int:
-        return int(self.config.get("max_append_rows", 10_000))
+        return self.config.max_append_rows
 
     # ....................... #
 
     def _cursor_column(self, query_key: str) -> str | None:
-        col = self._query_config(query_key).get("cursor_column")
+        col = self._query_config(query_key).cursor_column
 
         return str(col) if col else None
 
@@ -577,7 +577,7 @@ class ClickHouseAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
                 f"Analytics ingest is not configured for route {self.spec.name!r}."
             )
 
-        table = self.config.get("ingest_table")
+        table = self.config.ingest_table
 
         if not table:
             raise exc.internal(

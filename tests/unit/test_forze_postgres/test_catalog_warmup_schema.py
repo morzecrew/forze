@@ -10,14 +10,20 @@ from pydantic import BaseModel
 pytest.importorskip("psycopg")
 
 from forze.application.execution import Deps, ExecutionContext
-from forze_postgres.execution.catalog_warmup import (
+from forze_postgres.execution.lifecycle import (
     postgres_catalog_warmup_lifecycle_step,
+    postgres_document_schema_validation_lifecycle_step,
     warm_postgres_catalog,
 )
-from forze_postgres.execution.deps.keys import PostgresIntrospectorDepKey
-from forze_postgres.execution.document_schema import (
-    postgres_document_schema_validation_lifecycle_step,
+from forze_postgres.execution.deps.configs import (
+    PostgresFederatedSearchConfig,
+    PostgresFederatedSearchLegHub,
+    PostgresFederatedSearchLegSearch,
+    PostgresHubSearchConfig,
+    PostgresHubSearchMemberConfig,
+    PostgresSearchConfig,
 )
+from forze_postgres.execution.deps.keys import PostgresIntrospectorDepKey
 from forze_postgres.kernel.catalog.introspect import PostgresIntrospector, PostgresType
 from forze_postgres.kernel.catalog.validation.validate_schema import (
     PostgresDocumentSchemaSpec,
@@ -49,12 +55,12 @@ async def test_warm_postgres_catalog_single_search() -> None:
     await warm_postgres_catalog(
         ctx,
         searches={
-            "s": {
-                "engine": "fts",
-                "index": ("public", "ix"),
-                "read": ("public", "v"),
-                "fts_groups": {"A": ("title",)},
-            },
+            "s": PostgresSearchConfig(
+                engine="fts",
+                index=("public", "ix"),
+                read=("public", "v"),
+                fts_groups={"A": ("title",)},
+            ),
         },
     )
 
@@ -74,15 +80,15 @@ async def test_warm_postgres_catalog_vector_skips_index_info() -> None:
     await warm_postgres_catalog(
         ctx,
         searches={
-            "s": {
-                "engine": "vector",
-                "index": ("public", "ix"),
-                "read": ("public", "v"),
-                "heap": ("public", "h"),
-                "vector_column": "emb",
-                "embedding_dimensions": 3,
-                "embeddings_name": "e",
-            },
+            "s": PostgresSearchConfig(
+                engine="vector",
+                index=("public", "ix"),
+                read=("public", "v"),
+                heap=("public", "h"),
+                vector_column="emb",
+                embedding_dimensions=3,
+                embeddings_name="e",
+            ),
         },
     )
 
@@ -107,11 +113,11 @@ async def test_warm_postgres_catalog_skips_on_partition_error() -> None:
     await warm_postgres_catalog(
         ctx,
         searches={
-            "s": {
-                "engine": "pgroonga",
-                "index": ("public", "ix"),
-                "read": ("public", "v"),
-            },
+            "s": PostgresSearchConfig(
+                engine="pgroonga",
+                index=("public", "ix"),
+                read=("public", "v"),
+            ),
         },
     )
 
@@ -140,17 +146,18 @@ async def test_warm_postgres_catalog_hub_members() -> None:
     await warm_postgres_catalog(
         ctx,
         hub_searches={
-            "hub": {
-                "hub": ("public", "hub_v"),
-                "members": {
-                    "m": {
-                        "engine": "fts",
-                        "index": ("public", "ix"),
-                        "read": ("public", "v"),
-                        "fts_groups": {"A": ("title",)},
-                    },
+            "hub": PostgresHubSearchConfig(
+                hub=("public", "hub_v"),
+                members={
+                    "m": PostgresHubSearchMemberConfig(
+                        engine="fts",
+                        index=("public", "ix"),
+                        read=("public", "v"),
+                        fts_groups={"A": ("title",)},
+                        hub_fk="hub_id",
+                    ),
                 },
-            },
+            ),
         },
     )
 
@@ -182,21 +189,31 @@ async def test_warm_postgres_catalog_federated_embedded_hub() -> None:
     await warm_postgres_catalog(
         ctx,
         federated_searches={
-            "fed": {
-                "members": {
-                    "hub_member": {
-                        "hub": ("public", "hub_v"),
-                        "members": {
-                            "m": {
-                                "engine": "fts",
-                                "index": ("public", "ix"),
-                                "read": ("public", "v"),
-                                "fts_groups": {"A": ("title",)},
+            "fed": PostgresFederatedSearchConfig(
+                members={
+                    "hub_member": PostgresFederatedSearchLegHub(
+                        hub=PostgresHubSearchConfig(
+                            hub=("public", "hub_v"),
+                            members={
+                                "m": PostgresHubSearchMemberConfig(
+                                    engine="fts",
+                                    index=("public", "ix"),
+                                    read=("public", "v"),
+                                    fts_groups={"A": ("title",)},
+                                    hub_fk="hub_id",
+                                ),
                             },
-                        },
-                    },
+                        ),
+                    ),
+                    "flat": PostgresFederatedSearchLegSearch(
+                        search=PostgresSearchConfig(
+                            engine="pgroonga",
+                            index=("public", "ix2"),
+                            read=("public", "v2"),
+                        ),
+                    ),
                 },
-            },
+            ),
         },
     )
 
@@ -224,12 +241,12 @@ async def test_catalog_warmup_lifecycle_step_runs_hook() -> None:
     )
     step = postgres_catalog_warmup_lifecycle_step(
         searches={
-            "s": {
-                "engine": "fts",
-                "index": ("public", "ix"),
-                "read": ("public", "v"),
-                "fts_groups": {"A": ("title",)},
-            },
+            "s": PostgresSearchConfig(
+                engine="fts",
+                index=("public", "ix"),
+                read=("public", "v"),
+                fts_groups={"A": ("title",)},
+            ),
         },
     )
     assert step.id == "postgres_catalog_warmup"

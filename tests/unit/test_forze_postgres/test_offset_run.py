@@ -39,9 +39,9 @@ def _gateway() -> PostgresFTSSearchAdapter[_M]:
     intro.get_column_types = AsyncMock(return_value={})
     return PostgresFTSSearchAdapter(
         spec=SearchSpec(name="t", model_type=_M, fields=["id", "label"]),
-        index_qname=PostgresQualifiedName("public", "idx"),
-        source_qname=PostgresQualifiedName("public", "v"),
-        index_heap_qname=PostgresQualifiedName("public", "h"),
+        index_relation=("public", "idx"),
+        relation=("public", "v"),
+        index_heap_relation=("public", "h"),
         fts_groups={"A": ("label",)},
         client=client,
         model_type=_M,

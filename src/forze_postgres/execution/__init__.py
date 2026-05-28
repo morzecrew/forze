@@ -4,7 +4,6 @@ from ..kernel.catalog.validation.validate_schema import (
     PostgresDocumentSchemaSpec,
     validate_postgres_document_schemas,
 )
-from .catalog_warmup import postgres_catalog_warmup_lifecycle_step
 from .deps import (
     ConfigurablePostgresAnalytics,
     PgroongaScoreVersion,
@@ -12,16 +11,26 @@ from .deps import (
     PostgresClientDepKey,
     PostgresDepsModule,
     PostgresDocumentConfig,
-    PostgresQueryConfig,
-    validate_postgres_analytics_config,
     PostgresFederatedSearchConfig,
+    PostgresFederatedSearchLeg,
+    PostgresFederatedSearchLegHub,
+    PostgresFederatedSearchLegSearch,
+    PostgresQueryConfig,
     PostgresHubSearchConfig,
     PostgresHubSearchMemberConfig,
     PostgresReadOnlyDocumentConfig,
     PostgresSearchConfig,
 )
-from .document_schema import postgres_document_schema_validation_lifecycle_step
-from .lifecycle import postgres_lifecycle_step, routed_postgres_lifecycle_step
+from .lifecycle import (
+    POSTGRES_CLIENT_CAPABILITY,
+    PostgresLifecycleModule,
+    postgres_catalog_warmup_lifecycle_step,
+    postgres_document_schema_spec_for_binding,
+    postgres_document_schema_validation_lifecycle_step,
+    postgres_lifecycle_step,
+    routed_postgres_lifecycle_step,
+    warm_postgres_catalog,
+)
 
 # ----------------------- #
 
@@ -31,11 +40,14 @@ __all__ = [
     "PostgresAnalyticsConfig",
     "PostgresQueryConfig",
     "ConfigurablePostgresAnalytics",
-    "validate_postgres_analytics_config",
+    "POSTGRES_CLIENT_CAPABILITY",
+    "PostgresLifecycleModule",
     "postgres_lifecycle_step",
     "routed_postgres_lifecycle_step",
     "postgres_catalog_warmup_lifecycle_step",
+    "postgres_document_schema_spec_for_binding",
     "postgres_document_schema_validation_lifecycle_step",
+    "warm_postgres_catalog",
     "PostgresDocumentSchemaSpec",
     "validate_postgres_document_schemas",
     "PgroongaScoreVersion",
@@ -43,6 +55,9 @@ __all__ = [
     "PostgresReadOnlyDocumentConfig",
     "PostgresSearchConfig",
     "PostgresFederatedSearchConfig",
+    "PostgresFederatedSearchLeg",
+    "PostgresFederatedSearchLegHub",
+    "PostgresFederatedSearchLegSearch",
     "PostgresHubSearchConfig",
     "PostgresHubSearchMemberConfig",
 ]

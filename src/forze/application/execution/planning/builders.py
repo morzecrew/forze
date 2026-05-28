@@ -1,7 +1,11 @@
+from collections.abc import Callable, Sequence
+from typing import Any
+
 from forze.application.contracts.execution import (
     ExecutionGraph,
     ExecutionPipeline,
     GraphStep,
+    LifecycleStep,
     Step,
 )
 from forze.base.exceptions import exc
@@ -10,7 +14,12 @@ from forze.base.primitives import AbstractSequence, DirectedAcyclicGraph, StrKey
 # ----------------------- #
 
 
-def graph_from_sequence[X: GraphStep](seq: AbstractSequence[X], /) -> ExecutionGraph[X]:
+def graph_from_sequence[X: GraphStep](
+    seq: AbstractSequence[X],
+    /,
+    *,
+    ready_sort_key: Callable[[StrKey], Any] | None = None,
+) -> ExecutionGraph[X]:
     """Build a graph from a sequence of steps."""
 
     step_list = tuple(seq.items)
@@ -62,9 +71,41 @@ def graph_from_sequence[X: GraphStep](seq: AbstractSequence[X], /) -> ExecutionG
         edges,
         u_before_v=True,
     )
-    waves = tuple(dag.topological_batches(ready_sort_key=lambda x: order[x]))
+    resolved_sort_key: Callable[[StrKey], Any] = (
+        ready_sort_key if ready_sort_key is not None else (lambda sid: order[sid])
+    )
+    waves = tuple(dag.topological_batches(ready_sort_key=resolved_sort_key))
 
     return ExecutionGraph(steps=steps, waves=waves)
+
+
+# ....................... #
+
+
+def lifecycle_steps_from_sequence(
+    steps: Sequence[LifecycleStep],
+) -> tuple[LifecycleStep, ...]:
+    """Topologically order lifecycle steps with stable registration tie-break.
+
+    Uses :func:`graph_from_sequence` on ``requires``, ``provides``, and
+    ``depends_on`` metadata. Within a wave, higher ``priority`` runs first;
+    equal priorities preserve input order.
+    """
+
+    step_list = tuple(steps)
+
+    if not step_list:
+        return ()
+
+    index = {s.id: i for i, s in enumerate(step_list)}
+    priorities = {s.id: s.priority for s in step_list}
+
+    graph = graph_from_sequence(
+        AbstractSequence(items=step_list),
+        ready_sort_key=lambda sid: (-priorities[sid], index[sid]),
+    )
+
+    return tuple(graph.steps[sid] for wave in graph.waves for sid in wave)
 
 
 # ....................... #

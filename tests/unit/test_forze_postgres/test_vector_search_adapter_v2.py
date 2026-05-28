@@ -32,9 +32,9 @@ def _minimal_vector_port(
     intro.get_column_types = AsyncMock(return_value={})
     return PostgresVectorSearchAdapter(
         spec=SearchSpec(name="t", model_type=_M, fields=["id", "label"]),
-        index_qname=PostgresQualifiedName("public", "idx"),
-        source_qname=PostgresQualifiedName("public", "heap"),
-        index_heap_qname=PostgresQualifiedName("public", "heap"),
+        index_relation=("public", "idx"),
+        relation=("public", "heap"),
+        index_heap_relation=("public", "heap"),
         embedder=MagicMock(),
         embeddings_spec=EmbeddingsSpec(name="e", dimensions=3),
         vector_column="emb",

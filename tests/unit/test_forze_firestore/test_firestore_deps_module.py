@@ -9,6 +9,10 @@ from forze.application.contracts.document import (
     DocumentQueryDepKey,
 )
 from forze.application.contracts.transaction import TransactionManagerDepKey
+from forze_firestore.execution.deps.configs import (
+    FirestoreDocumentConfig,
+    FirestoreReadOnlyDocumentConfig,
+)
 from forze_firestore.execution.deps.keys import FirestoreClientDepKey
 from forze_firestore.execution.deps.module import FirestoreDepsModule
 
@@ -18,14 +22,16 @@ def test_firestore_deps_module_registers_client_and_documents() -> None:
     module = FirestoreDepsModule(
         client=client,
         ro_documents={
-            "readonly": {"read": ("(default)", "ro_coll")},
+            "readonly": FirestoreReadOnlyDocumentConfig(
+                read=("(default)", "ro_coll"),
+            ),
         },
         rw_documents={
-            "writable": {
-                "read": ("(default)", "rw_coll"),
-                "write": ("(default)", "rw_coll"),
-                "history": ("(default)", "rw_hist"),
-            },
+            "writable": FirestoreDocumentConfig(
+                read=("(default)", "rw_coll"),
+                write=("(default)", "rw_coll"),
+                history=("(default)", "rw_hist"),
+            ),
         },
         tx={"writable"},
     )

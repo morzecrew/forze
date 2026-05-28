@@ -13,7 +13,10 @@ from forze.application.contracts.analytics import (
 )
 from forze.application.contracts.base import CountlessPage, Page
 from forze_clickhouse.adapters import ClickHouseAnalyticsAdapter
-from forze_clickhouse.execution.deps.configs import ClickHouseAnalyticsConfig
+from forze_clickhouse.execution.deps.configs import (
+    ClickHouseAnalyticsConfig,
+    ClickHouseQueryConfig,
+)
 from forze_clickhouse.kernel.platform.value_objects import (
     ClickHouseInsertResult,
     ClickHouseQueryResult,
@@ -47,15 +50,15 @@ class _MockClient:
 @pytest.mark.asyncio
 async def test_run_page_skip_total_skips_count_query() -> None:
     mock = _MockClient()
-    config: ClickHouseAnalyticsConfig = {
-        "database": "analytics",
-        "queries": {
-            "counts": {
-                "sql": "SELECT value FROM t WHERE day = {day:String}",
-                "skip_total": True,
-            },
+    config = ClickHouseAnalyticsConfig(
+        database="analytics",
+        queries={
+            "counts": ClickHouseQueryConfig(
+                sql="SELECT value FROM t WHERE day = {day:String}",
+                skip_total=True,
+            ),
         },
-    }
+    )
     spec = AnalyticsSpec(
         name="events",
         read=_Row,

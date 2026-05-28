@@ -7,6 +7,7 @@ require_psycopg()
 # ....................... #
 
 from typing import Any, Final, Literal, Mapping, Protocol, Sequence, final
+from uuid import UUID
 
 import attrs
 from psycopg import sql
@@ -17,6 +18,7 @@ from forze.base.exceptions import exc
 from forze_postgres.kernel.catalog.hub_fk_columns import normalize_hub_fk_columns
 from forze_postgres.kernel.catalog.introspect import PostgresIntrospector
 from forze_postgres.kernel.gateways import PostgresQualifiedName
+from forze_postgres.kernel.relation import RelationSpec, resolve_postgres_qname
 
 from .._fts_sql import FtsGroupLetter
 from .._leg_fts import build_fts_leg
@@ -39,11 +41,11 @@ class HubLegRuntime:
     search: SearchSpec[Any]
     """Search specification."""
 
-    index_qname: PostgresQualifiedName
-    """Qualified name for configuration symmetry (index object); not read at query time."""
+    index_relation: RelationSpec
+    """Index relation or tenant-scoped resolver."""
 
-    index_heap_qname: PostgresQualifiedName
-    """Heap that holds the ``vector`` column used for distance scoring."""
+    index_heap_relation: RelationSpec
+    """Heap relation the index is defined on or resolver."""
 
     hub_fk_columns: tuple[str, ...] = attrs.field(converter=normalize_hub_fk_columns)
     """Foreign key columns used to join the leg to the hub."""
@@ -83,6 +85,22 @@ class HubLegRuntime:
                 raise exc.internal(
                     "Vector hub leg requires vector_column and embedding_dimensions.",
                 )
+
+    # ....................... #
+
+    async def resolve_index_qname(
+        self,
+        tenant_id: UUID | None,
+    ) -> PostgresQualifiedName:
+        return await resolve_postgres_qname(self.index_relation, tenant_id)
+
+    # ....................... #
+
+    async def resolve_index_heap_qname(
+        self,
+        tenant_id: UUID | None,
+    ) -> PostgresQualifiedName:
+        return await resolve_postgres_qname(self.index_heap_relation, tenant_id)
 
     # ....................... #
 
@@ -263,6 +281,7 @@ class HubSearchLegEngine(Protocol):
         self,
         leg: HubLegRuntime,
         *,
+        tenant_id: UUID | None,
         introspector: PostgresIntrospector,
         index_alias: str,
         queries: tuple[str, ...],
@@ -286,6 +305,7 @@ class PgroongaHubLegEngine(HubSearchLegEngine):
         self,
         leg: HubLegRuntime,
         *,
+        tenant_id: UUID | None,
         introspector: PostgresIntrospector,
         index_alias: str,
         queries: tuple[str, ...],
@@ -294,7 +314,7 @@ class PgroongaHubLegEngine(HubSearchLegEngine):
     ) -> tuple[sql.Composable, sql.Composable, list[Any]]:
         return await build_pgroonga_leg(
             introspector=introspector,
-            index_qname=leg.index_qname,
+            index_qname=await leg.resolve_index_qname(tenant_id),
             search=leg.search,
             index_field_map=leg.index_field_map,
             index_alias=index_alias,
@@ -317,6 +337,7 @@ class FtsHubLegEngine(HubSearchLegEngine):
         self,
         leg: HubLegRuntime,
         *,
+        tenant_id: UUID | None,
         introspector: PostgresIntrospector,
         index_alias: str,
         queries: tuple[str, ...],
@@ -330,7 +351,7 @@ class FtsHubLegEngine(HubSearchLegEngine):
 
         return await build_fts_leg(
             introspector=introspector,
-            index_qname=leg.index_qname,
+            index_qname=await leg.resolve_index_qname(tenant_id),
             search=leg.search,
             fts_groups=groups,
             index_alias=index_alias,
@@ -357,12 +378,15 @@ class VectorHubLegEngine(HubSearchLegEngine):
         self,
         leg: HubLegRuntime,
         *,
+        tenant_id: UUID | None,
         introspector: PostgresIntrospector,
         index_alias: str,
         queries: tuple[str, ...],
         options: SearchOptions | None,
         score_column: str,
     ) -> tuple[sql.Composable, sql.Composable, list[Any]]:
+        _ = tenant_id
+
         if leg.engine != "vector" or leg.vector_column is None:
             raise exc.internal("VectorHubLegEngine requires a vector hub leg.")
 

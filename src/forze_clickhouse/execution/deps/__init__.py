@@ -1,5 +1,5 @@
 from .configs import ClickHouseAnalyticsConfig, ClickHouseQueryConfig
-from .deps import ConfigurableClickHouseAnalytics, validate_clickhouse_analytics_config
+from .deps import ConfigurableClickHouseAnalytics
 from .keys import ClickHouseClientDepKey
 from .module import ClickHouseDepsModule
 
@@ -11,5 +11,4 @@ __all__ = [
     "ClickHouseClientDepKey",
     "ClickHouseDepsModule",
     "ConfigurableClickHouseAnalytics",
-    "validate_clickhouse_analytics_config",
 ]

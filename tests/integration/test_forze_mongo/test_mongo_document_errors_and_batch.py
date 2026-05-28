@@ -15,6 +15,7 @@ from forze.application.contracts.document import (
 from forze.application.execution import Deps, ExecutionContext
 from forze_patterns.soft_deletion.models import DocWithSoftDeletion, UpdateCmdWithSoftDeletion
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
+from forze_mongo.execution.deps import MongoDocumentConfig
 from forze_mongo.execution.deps.deps import ConfigurableMongoDocument
 from forze_mongo.execution.deps.keys import MongoClientDepKey
 from forze_mongo.kernel.platform import MongoClient
@@ -49,9 +50,11 @@ async def _rw_ctx(
     history_enabled: bool = False,
 ) -> tuple[ExecutionContext, DocumentSpec]:
     db = (await mongo_client.db()).name
-    cfg: dict = {"read": (db, collection), "write": (db, collection)}
-    if history_collection is not None:
-        cfg["history"] = (db, history_collection)
+    cfg = MongoDocumentConfig(
+        read=(db, collection),
+        write=(db, collection),
+        history=(db, history_collection) if history_collection is not None else None,
+    )
 
     spec = DocumentSpec(
         name="mongo_err_ns",

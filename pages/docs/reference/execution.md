@@ -262,43 +262,61 @@ Protocol for startup/shutdown hooks. Receives the `ExecutionContext`:
 
 ### LifecycleStep
 
-Named pair of startup and shutdown hooks:
+Pair of startup and shutdown hooks identified by `id` (a `GraphStep`):
 
     :::python
-    from forze.application.execution import LifecycleStep
+    from forze.application.execution.lifecycle import LifecyclePlan, LifecycleStep
 
     pg_step = LifecycleStep(
-        name="postgres",
+        id="postgres",
         startup=startup_postgres,
         shutdown=shutdown_postgres,
     )
 
 | Field | Type | Default | Purpose |
 |-------|------|---------|---------|
-| `name` | `str` | — | Unique name for collision detection |
+| `id` | `StrKey` | — | Unique step identifier (used in logs and rollback traces) |
 | `startup` | `LifecycleHook` | no-op | Hook to run on startup |
 | `shutdown` | `LifecycleHook` | no-op | Hook to run on shutdown |
+| `requires` | `tuple[StrKey, ...]` | `()` | Capability keys that must be provided by an earlier step |
+| `provides` | `tuple[StrKey, ...]` | `()` | Capability keys this step provides after startup |
+| `depends_on` | `tuple[StrKey, ...]` | `()` | Step ids that must run before this step |
+| `priority` | `int` | `0` | Tie-break within a topological layer (higher runs first) |
 
-Integration packages typically provide factory functions that return pre-configured steps.
+`LifecycleStep` is defined in `forze.application.contracts.execution` and re-exported from `forze.application.execution.lifecycle`. Integration packages typically provide factory functions (e.g. `postgres_lifecycle_step()`) that return pre-configured steps.
+
+Capability metadata **orders** steps at plan build time only; it does not skip hooks when a capability is missing (unlike operation `before` hooks).
+
+#### Routed clients
+
+For tenant-routed integration clients, use the package lifecycle step (for example `postgres_lifecycle_step` with `RoutedPostgresClient`). Internally these call `routed_client_lifecycle_step` from `forze.application.execution.lifecycle.builtin`, which invokes `startup` / `close` on the client. See [Multi-tenancy](../concepts/multi-tenancy.md) and integration guides.
+
+### LifecycleModule
+
+Protocol for a callable that returns lifecycle steps (mirrors `DepsModule`). Integration packages may expose attrs classes (for example `PostgresLifecycleModule`) that register pool startup plus optional follow-up steps.
 
 ### LifecyclePlan
 
-Ordered sequence of lifecycle steps:
+Collects modules and/or steps, resolves order via capability and dependency metadata, then runs startup/shutdown:
 
     :::python
-    from forze.application.execution import LifecyclePlan
+    from forze.application.execution import LifecycleModule, LifecyclePlan
 
-    lifecycle = LifecyclePlan.from_steps(pg_step, redis_step)
-    lifecycle = lifecycle.with_steps(s3_step)
+    lifecycle = LifecyclePlan.from_modules(pg_lifecycle_module, redis_lifecycle_module)
+    lifecycle = lifecycle.with_steps(custom_step)
+    resolved = lifecycle.build()
 
 | Method | Purpose |
 |--------|---------|
-| `from_steps(*steps)` | Create a plan; raises on name collisions |
-| `with_steps(*steps)` | Append steps; raises on name collisions |
-| `startup(ctx)` | Run startup hooks in order |
-| `shutdown(ctx)` | Run shutdown hooks in reverse order |
+| `from_modules(*modules)` | Create a plan from lifecycle modules |
+| `from_steps(*steps)` | Create a plan from plain steps |
+| `with_modules(*modules)` | Append modules to a new plan instance |
+| `with_steps(*steps)` | Append steps to a new plan instance |
+| `build()` | Invoke modules, merge with steps, topologically order, return resolved plan |
+| `startup(ctx)` | Resolve (if needed), run startup hooks in order |
+| `shutdown(ctx)` | Resolve (if needed), run shutdown hooks in reverse order |
 
-Startup behavior: if a hook fails, all previously started steps are shut down in reverse order before re-raising. Shutdown behavior: exceptions are swallowed so all steps are attempted.
+`ExecutionRuntime` calls `lifecycle.build()` before startup and shutdown. Startup behavior: if a hook fails, all previously started steps are shut down in reverse order before re-raising. Shutdown behavior: exceptions are swallowed so all steps are attempted.
 
 ## Three execution plans
 
@@ -307,7 +325,7 @@ Forze uses three declarative plans in the execution layer. They are siblings: on
 | Plan | Collects | Terminal step | Typical enablement |
 |------|----------|-----------------|-------------------|
 | `DepsPlan` | modules, pre-built `Deps` | `build()` → `Deps` | `DepsPlan.from_modules(...).with_tracing(...)`; env `FORZE_DEPS_TRACE` |
-| `LifecyclePlan` | `LifecycleStep` | `startup` / `shutdown` | `LifecyclePlan.from_steps(pg_step, ...)` in app lifespan |
+| `LifecyclePlan` | modules, `LifecycleStep` | `build()` then `startup` / `shutdown` | `LifecyclePlan.from_modules(...)` or `from_steps(...)` in app lifespan |
 | `OperationRegistry` | handlers, plans, `PlanPatch` | `freeze()` → `FrozenOperationRegistry` | `.patch(selector)` / `.bind(...)` / `OperationRegistry.merge` |
 
 **Where do I enable X?**
@@ -381,7 +399,11 @@ Transport layers resolve handlers from a **frozen** `FrozenOperationRegistry`:
     from forze.application.execution import OperationRegistry, make_registry_operation_resolver
 
     registry = (
-        OperationRegistry(handlers={"projects.get": lambda ctx: GetProject(ctx.doc.query(spec))})
+        OperationRegistry(
+            handlers={
+                "projects.get": lambda ctx: GetDocument(doc=ctx.document.query(spec)),
+            },
+        )
         .bind("projects.get")
         .bind_outer()
         .before(before_step)
@@ -403,10 +425,9 @@ A complete wiring example showing deps, lifecycle, runtime, and operation regist
         Deps,
         DepsPlan,
         ExecutionRuntime,
-        LifecyclePlan,
-        LifecycleStep,
         OperationRegistry,
     )
+    from forze.application.execution.lifecycle import LifecyclePlan, LifecycleStep
     from forze.base.primitives import str_key_selector
 
     # 1. Define dep modules
@@ -421,12 +442,12 @@ A complete wiring example showing deps, lifecycle, runtime, and operation regist
 
     lifecycle_plan = LifecyclePlan.from_steps(
         LifecycleStep(
-            name="postgres",
+            id="postgres",
             startup=pg_startup,
             shutdown=pg_shutdown,
         ),
         LifecycleStep(
-            name="redis",
+            id="redis",
             startup=redis_startup,
             shutdown=redis_shutdown,
         ),

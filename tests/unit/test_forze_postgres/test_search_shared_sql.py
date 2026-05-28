@@ -67,8 +67,8 @@ def test_fts_effective_group_weights_respects_options_weights() -> None:
 def test_hub_leg_engine_for_pgroonga() -> None:
     leg = HubLegRuntime(
         search=_spec(),
-        index_qname=PostgresQualifiedName("public", "idx"),
-        index_heap_qname=PostgresQualifiedName("public", "heap"),
+        index_relation=("public", "idx"),
+        index_heap_relation=("public", "heap"),
         hub_fk_columns="fk",
         heap_pk_column="id",
         engine="pgroonga",
@@ -79,8 +79,8 @@ def test_hub_leg_engine_for_pgroonga() -> None:
 def test_hub_leg_engine_for_fts() -> None:
     leg = HubLegRuntime(
         search=_spec(),
-        index_qname=PostgresQualifiedName("public", "idx"),
-        index_heap_qname=PostgresQualifiedName("public", "heap"),
+        index_relation=("public", "idx"),
+        index_heap_relation=("public", "heap"),
         hub_fk_columns="fk",
         heap_pk_column="id",
         engine="fts",
@@ -92,8 +92,8 @@ def test_hub_leg_engine_for_fts() -> None:
 def test_hub_leg_engine_for_rejects_unknown_engine() -> None:
     leg = HubLegRuntime(
         search=_spec(),
-        index_qname=PostgresQualifiedName("public", "idx"),
-        index_heap_qname=PostgresQualifiedName("public", "heap"),
+        index_relation=("public", "idx"),
+        index_heap_relation=("public", "heap"),
         hub_fk_columns="fk",
         heap_pk_column="id",
         engine=cast(Any, "bogus"),
@@ -113,8 +113,8 @@ class _VecEmb:
 def test_hub_leg_engine_for_vector() -> None:
     leg = HubLegRuntime(
         search=_spec(),
-        index_qname=PostgresQualifiedName("public", "idx"),
-        index_heap_qname=PostgresQualifiedName("public", "heap"),
+        index_relation=("public", "idx"),
+        index_heap_relation=("public", "heap"),
         hub_fk_columns="fk",
         heap_pk_column="id",
         engine="vector",
@@ -130,8 +130,8 @@ def test_hub_leg_engine_for_vector() -> None:
 def test_hub_leg_engine_for_vector_without_embedder_raises() -> None:
     leg = HubLegRuntime(
         search=_spec(),
-        index_qname=PostgresQualifiedName("public", "idx"),
-        index_heap_qname=PostgresQualifiedName("public", "heap"),
+        index_relation=("public", "idx"),
+        index_heap_relation=("public", "heap"),
         hub_fk_columns="fk",
         heap_pk_column="id",
         engine="vector",
@@ -146,8 +146,8 @@ def test_hub_leg_engine_for_vector_without_embedder_raises() -> None:
 async def test_fts_hub_leg_engine_requires_fts_groups() -> None:
     leg = HubLegRuntime(
         search=_spec(),
-        index_qname=PostgresQualifiedName("public", "idx"),
-        index_heap_qname=PostgresQualifiedName("public", "heap"),
+        index_relation=("public", "idx"),
+        index_heap_relation=("public", "heap"),
         hub_fk_columns="fk",
         heap_pk_column="id",
         engine="fts",
@@ -157,6 +157,7 @@ async def test_fts_hub_leg_engine_requires_fts_groups() -> None:
     with pytest.raises(CoreException, match="FTS hub leg requires fts_groups"):
         await eng.build_leg(
             leg,
+            tenant_id=None,
             introspector=MagicMock(),
             index_alias="t",
             queries=("q",),

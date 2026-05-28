@@ -14,7 +14,7 @@ from forze.application.contracts.document import (
 )
 from forze.application.execution import Deps, ExecutionContext
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
-from forze_postgres.execution.deps.deps import ConfigurablePostgresDocument
+from forze_postgres.execution.deps import ConfigurablePostgresDocument
 from forze_postgres.execution.deps.keys import (
     PostgresClientDepKey,
     PostgresIntrospectorDepKey,

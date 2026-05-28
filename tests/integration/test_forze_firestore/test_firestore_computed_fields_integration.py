@@ -10,6 +10,7 @@ from forze.application.contracts.document import (
     DocumentSpec,
 )
 from forze.application.execution import Deps, ExecutionContext
+from forze_firestore.execution.deps.configs import FirestoreDocumentConfig
 from forze_firestore.execution.deps.deps import ConfigurableFirestoreDocument
 from forze_firestore.execution.deps.keys import FirestoreClientDepKey
 from forze_firestore.kernel.platform import FirestoreClient
@@ -40,10 +41,10 @@ async def test_firestore_document_computed_field_roundtrip_not_persisted(
     )
 
     configurable = ConfigurableFirestoreDocument(
-        config={
-            "read": ("(default)", collection),
-            "write": ("(default)", collection),
-        }
+        config=FirestoreDocumentConfig(
+            read=("(default)", collection),
+            write=("(default)", collection),
+        ),
     )
     ctx = ExecutionContext(
         deps=Deps.plain(

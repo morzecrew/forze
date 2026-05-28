@@ -19,6 +19,8 @@ from testcontainers.localstack import LocalStackContainer
 from forze.application.contracts.secrets import SecretRef
 from forze_sqs.kernel.platform import RoutedSQSClient, SQSClient
 
+from tests.integration._routed_lru_helpers import sqs_payloads_for_lru_eviction
+
 def _ref(tid: UUID) -> SecretRef:
     return SecretRef(path=f"tenants/{tid}/sqs")
 
@@ -291,7 +293,7 @@ async def test_routed_sqs_lru_and_evict(
     endpoint = localstack_container.get_url()
     p = _payload(endpoint)
     t1, t2, t3 = uuid4(), uuid4(), uuid4()
-    secrets = _MemSecretsTenantJson({t1: p, t2: p, t3: p})
+    secrets = _MemSecretsTenantJson(sqs_payloads_for_lru_eviction(p, t1, t2, t3))
     tenant_get, tenant_set = _tenant_holder()
 
     routed = RoutedSQSClient(

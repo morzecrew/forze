@@ -25,7 +25,7 @@ from forze_patterns.soft_deletion.models import (
     UpdateCmdWithSoftDeletion,
 )
 from forze_mock import MockCacheAdapter, MockState, MockStateDepKey
-from forze_postgres.execution.deps.deps import (
+from forze_postgres.execution.deps import (
     ConfigurablePostgresDocument,
     postgres_txmanager,
 )
@@ -35,6 +35,7 @@ from forze_postgres.execution.deps.keys import (
 )
 from forze_postgres.kernel.catalog.introspect import PostgresIntrospector
 from forze_postgres.kernel.client.client import PostgresClient
+from forze_postgres.execution.deps.configs import PostgresDocumentConfig
 
 
 class _CxDoc(Document):
@@ -86,11 +87,11 @@ def _ctx_cached(
         cache=cache_spec,
     )
     fac = ConfigurablePostgresDocument(
-        config={
-            "read": ("public", table),
-            "write": ("public", table),
-            "bookkeeping_strategy": "application",
-        }
+        config=PostgresDocumentConfig(
+            read=("public", table),
+            write=("public", table),
+            bookkeeping_strategy="application",
+        )
     )
     state = MockState()
 
@@ -132,11 +133,11 @@ def _ctx_cached_tx(
         cache=cache_spec,
     )
     fac = ConfigurablePostgresDocument(
-        config={
-            "read": ("public", table),
-            "write": ("public", table),
-            "bookkeeping_strategy": "application",
-        }
+        config=PostgresDocumentConfig(
+            read=("public", table),
+            write=("public", table),
+            bookkeeping_strategy="application",
+        )
     )
     state = MockState()
 
@@ -457,11 +458,11 @@ async def test_pg_adapter_soft_delete_restore_return_new_false(
         cache=cache_spec,
     )
     fac = ConfigurablePostgresDocument(
-        config={
-            "read": ("public", t),
-            "write": ("public", t),
-            "bookkeeping_strategy": "application",
-        }
+        config=PostgresDocumentConfig(
+            read=("public", t),
+            write=("public", t),
+            bookkeeping_strategy="application",
+        )
     )
     state = MockState()
 
@@ -702,11 +703,11 @@ async def test_pg_adapter_soft_delete_and_restore_many_return_new_true(
         cache=cache_spec,
     )
     fac = ConfigurablePostgresDocument(
-        config={
-            "read": ("public", t),
-            "write": ("public", t),
-            "bookkeeping_strategy": "application",
-        }
+        config=PostgresDocumentConfig(
+            read=("public", t),
+            write=("public", t),
+            bookkeeping_strategy="application",
+        )
     )
     state = MockState()
 
@@ -793,12 +794,12 @@ async def test_pg_adapter_uses_clamped_batch_size(
         },
     )
     fac = ConfigurablePostgresDocument(
-        config={
-            "read": ("public", t),
-            "write": ("public", t),
-            "bookkeeping_strategy": "application",
-            "batch_size": 3,
-        }
+        config=PostgresDocumentConfig(
+            read=("public", t),
+            write=("public", t),
+            bookkeeping_strategy="application",
+            batch_size=3,
+        )
     )
     ctx = ExecutionContext(
         deps=Deps.plain(

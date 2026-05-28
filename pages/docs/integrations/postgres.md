@@ -53,6 +53,17 @@ project_document_config = PostgresDocumentConfig(
 )
 ```
 
+Document `read`, `write`, and optional `history`, search `index` / `read` / `heap`, and hub `hub` (plus per-leg search relations) accept a static `(schema, relation)` tuple or a tenant resolver (`ValueResolver` from `forze.application.contracts.resolution`). Resolvers run on async I/O (not at deps wiring time). Startup document schema validation and catalog warmup require static tuples (or skip those lifecycle steps). Example schema-per-tenant document:
+
+```python
+PostgresDocumentConfig(
+    read=lambda tid: (f"tenant_{tid.hex[:8]}", "projects"),
+    write=lambda tid: (f"tenant_{tid.hex[:8]}", "projects"),
+    bookkeeping_strategy="application",
+    tenant_aware=False,
+)
+```
+
 `bookkeeping_strategy` controls who bumps `rev` and timestamps:
 
 | Strategy | Application | Database |
@@ -91,25 +102,51 @@ deps_plan = DepsPlan.from_modules(postgres_module)
 
 Routes such as `"projects"` should match the names used by your `DocumentSpec`, `SearchSpec`, and transaction wiring.
 
-### Lifecycle step
+For framework tests or advanced wiring, prefer `from forze_postgres.execution.deps import ConfigurablePostgresDocument` (and siblings) rather than removed `forze_postgres.execution.deps.deps` paths.
+
+Integration configs are frozen `attrs` classes (not dicts). Example:
 
 ```python
-from forze.application.execution import LifecyclePlan
-from forze_postgres import postgres_lifecycle_step
+from forze_postgres import PostgresDocumentConfig, PostgresSearchConfig
 
-lifecycle = LifecyclePlan.from_steps(
-    postgres_lifecycle_step(
-        dsn="postgresql://forze:forze@localhost:5432/forze",
-        config=PostgresConfig(min_size=1, max_size=10),
-    )
+PostgresDocumentConfig(
+    read=("public", "projects"),
+    write=("public", "projects"),
+    bookkeeping_strategy="database",
+    history=("public", "projects_history"),
+)
+
+PostgresSearchConfig(
+    index=("public", "projects_search_idx"),
+    read=("public", "projects"),
+    engine="pgroonga",
 )
 ```
 
-Use `routed_postgres_lifecycle_step(client=routed_pg)` with `RoutedPostgresClient` and do not combine routed and non-routed lifecycle steps for the same client.
+### Lifecycle plan
+
+Prefer `PostgresLifecycleModule` when wiring pool startup plus optional catalog warmup and schema validation (same `client` / search maps as `PostgresDepsModule`):
+
+```python
+from forze.application.execution import LifecyclePlan
+from forze_postgres import PostgresConfig, PostgresLifecycleModule
+
+lifecycle = LifecyclePlan.from_modules(
+    PostgresLifecycleModule(
+        client=pg,
+        dsn="postgresql://forze:forze@localhost:5432/forze",
+        config=PostgresConfig(min_size=1, max_size=10),
+        searches=search_configs_by_route,
+        schema_specs=(...),  # optional
+    ),
+)
+```
+
+For a pool only, use `postgres_lifecycle_step` or `LifecyclePlan.from_steps(...)`. Use `routed_postgres_lifecycle_step(client=routed_pg)` / `PostgresLifecycleModule(client=routed_pg)` with `RoutedPostgresClient` and do not combine routed and non-routed lifecycle steps for the same client.
 
 ### Catalog warmup, introspector TTL, and document schema checks
 
-Order lifecycle steps so the pool opens first, then optional warmup and validation:
+`PostgresLifecycleModule` registers follow-up steps when search maps or `schema_specs` are set. You can also compose step factories manually; capability metadata (`postgres.client`) orders the pool before warmup and validation:
 
 ```python
 from forze.application.execution import LifecyclePlan
@@ -140,9 +177,9 @@ lifecycle = LifecyclePlan.from_steps(
 )
 ```
 
-- **`warm_postgres_catalog` / `postgres_catalog_warmup_lifecycle_step`** prefetch relation column types and index catalog metadata used by FTS/PGroonga search (and vector read/heap relations). They are safe no-ops when `PostgresDepsModule.introspector_cache_partition_key` is set but no tenant is available during startup (trace log only).
+- **`warm_postgres_catalog` / `postgres_catalog_warmup_lifecycle_step`** prefetch relation column types and index catalog metadata used by FTS/PGroonga search (and vector read/heap relations). Dynamic `RelationSpec` resolvers are skipped at warmup (trace log per relation). They are safe no-ops when `PostgresDepsModule.introspector_cache_partition_key` is set but no tenant is available during startup (trace log only).
 - **`PostgresDepsModule.introspector_cache_ttl`** passes a TTL into `PostgresIntrospector` so cached catalog rows expire without a process restart (useful after migrations).
-- **`postgres_document_schema_spec_for_binding`** and **`postgres_document_schema_validation_lifecycle_step`** optionally assert that read (and write/history) relations expose the columns implied by your `DocumentSpec` and Pydantic models. Pydantic `@computed_field` values are derived in Python only (not selected or persisted). Use `read_omit_fields` / `write_omit_fields` / `history_omit_fields` on `PostgresDocumentSchemaSpec` when a **non-computed** model field is not stored as its own column (for example a read-view column supplied elsewhere).
+- **`postgres_document_schema_spec_for_binding`** and **`postgres_document_schema_validation_lifecycle_step`** optionally assert that read (and write/history) relations expose the columns implied by your `DocumentSpec` and Pydantic models. Relations must be **static** `("schema", "table")` tuples (or string literals coerced to tuples); dynamic `RelationSpec` resolvers raise at spec build time because startup validation cannot pick a tenant. Omit the schema validation lifecycle step for schema-per-tenant documents and validate relations in your own migration or deploy hook. Pydantic `@computed_field` values are derived in Python only (not selected or persisted). Use `read_omit_fields` / `write_omit_fields` / `history_omit_fields` on `PostgresDocumentSchemaSpec` when a **non-computed** model field is not stored as its own column (for example a read-view column supplied elsewhere).
 - **Tenancy wiring validation:** `PostgresDepsModule` fails at build time when `RoutedPostgresClient` is used without `introspector_cache_partition_key`. It warns when any route has `tenant_aware=True` on a routed client (redundant row filter). Schema validation warns when a write table has `tenant_id` but `tenant_aware=False`.
 
 ## Contract coverage table

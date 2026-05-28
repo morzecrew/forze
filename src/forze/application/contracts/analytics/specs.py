@@ -8,6 +8,7 @@ import attrs
 from pydantic import BaseModel
 
 from forze.base.exceptions import exc
+from forze.base.primitives import StrKey
 
 from ..base import BaseSpec
 
@@ -42,7 +43,7 @@ class AnalyticsSpec(BaseSpec, Generic[R, Ing]):
     read: type[R]
     """Default read model for query result rows."""
 
-    queries: Mapping[str, AnalyticsQueryDefinition]
+    queries: Mapping[StrKey, AnalyticsQueryDefinition]
     """Named queries; keys are ``query_key`` arguments on :class:`~.AnalyticsQueryPort`."""
 
     ingest: type[Ing] | None = attrs.field(default=None)

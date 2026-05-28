@@ -34,7 +34,7 @@ class ConfigurableInngestEventCommand(DurableFunctionEventCommandDepPort):
     ) -> InngestEventCommandAdapter[Any]:
         client = ctx.deps.provide(InngestClientDepKey)
 
-        include = self.config.get("include_execution_context", True)
+        include = self.config.include_execution_context
 
         return InngestEventCommandAdapter(
             client=client,

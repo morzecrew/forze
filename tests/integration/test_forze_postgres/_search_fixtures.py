@@ -8,13 +8,14 @@ from pydantic import BaseModel
 
 from forze.application.contracts.search import SearchQueryDepKey, SearchSpec
 from forze.application.execution import Deps, ExecutionContext
-from forze_postgres.execution.deps.deps import ConfigurablePostgresSearch
+from forze_postgres.execution.deps import ConfigurablePostgresSearch
 from forze_postgres.execution.deps.keys import (
     PostgresClientDepKey,
     PostgresIntrospectorDepKey,
 )
 from forze_postgres.kernel.catalog.introspect import PostgresIntrospector
 from forze_postgres.kernel.client.client import PostgresClient
+from forze_postgres.execution.deps.configs import PostgresSearchConfig
 from tests.support import IntegrationSearchHitFactory
 
 
@@ -121,11 +122,11 @@ def pgroonga_search_context(
                 PostgresClientDepKey: pg_client,
                 PostgresIntrospectorDepKey: PostgresIntrospector(client=pg_client),
                 SearchQueryDepKey: ConfigurablePostgresSearch(
-                    config={
-                        "index": ("public", index_name),
-                        "read": ("public", table),
-                        "engine": "pgroonga",
-                    },
+                    config=PostgresSearchConfig(
+                        index=("public", index_name),
+                        read=("public", table),
+                        engine="pgroonga",
+                    ),
                 ),
             },
         ),
@@ -144,15 +145,15 @@ def fts_search_context(
                 PostgresClientDepKey: pg_client,
                 PostgresIntrospectorDepKey: PostgresIntrospector(client=pg_client),
                 SearchQueryDepKey: ConfigurablePostgresSearch(
-                    config={
-                        "index": ("public", index_name),
-                        "read": ("public", table),
-                        "engine": "fts",
-                        "fts_groups": {
+                    config=PostgresSearchConfig(
+                        index=("public", index_name),
+                        read=("public", table),
+                        engine="fts",
+                        fts_groups={
                             "A": ("title",),
                             "B": ("content",),
                         },
-                    },
+                    ),
                 ),
             },
         ),

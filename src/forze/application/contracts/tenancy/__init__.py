@@ -7,6 +7,7 @@ from .deps import (
     TenantResolverDepKey,
     TenantResolverDepPort,
 )
+from .integration_config import TenantAwareIntegrationConfig
 from .mixins import TenancyMixin
 from .ports import TenantManagementPort, TenantProviderPort, TenantResolverPort
 from .value_objects import TenantIdentity
@@ -24,6 +25,7 @@ __all__ = [
     "TenantResolverDepKey",
     "TenantResolverDepPort",
     "TenantProviderPort",
+    "TenantAwareIntegrationConfig",
     "TenancyMixin",
     "require_tenant_id",
 ]

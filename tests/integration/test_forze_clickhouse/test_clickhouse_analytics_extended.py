@@ -12,6 +12,10 @@ from forze.application.contracts.analytics import (
 from forze.application.contracts.base import CountlessPage, Page
 from forze.base.exceptions import CoreException, ExceptionKind
 from forze_clickhouse.adapters import ClickHouseAnalyticsAdapter
+from forze_clickhouse.execution.deps.configs import (
+    ClickHouseAnalyticsConfig,
+    ClickHouseQueryConfig,
+)
 from forze_clickhouse.kernel.platform import ClickHouseClient
 
 pytestmark = pytest.mark.integration
@@ -57,21 +61,17 @@ def _adapter(
     ordered_sql = (
         f"SELECT event, value FROM {database_id}.{table_id} ORDER BY event"
     )
-    queries: dict[str, dict[str, object]] = {
-        "filtered": {"sql": filtered_sql},
-        "ordered": {"sql": ordered_sql},
-    }
-    if skip_total:
-        queries["filtered"]["skip_total"] = True
+    filtered_q = ClickHouseQueryConfig(sql=filtered_sql, skip_total=skip_total)
+    ordered_q = ClickHouseQueryConfig(sql=ordered_sql)
 
     return ClickHouseAnalyticsAdapter(
         client=client,
         spec=_spec(),
-        config={
-            "database": database_id,
-            "queries": queries,
-            "ingest_table": table_id,
-        },
+        config=ClickHouseAnalyticsConfig(
+            database=database_id,
+            queries={"filtered": filtered_q, "ordered": ordered_q},
+            ingest_table=table_id,
+        ),
     )
 
 
@@ -227,15 +227,18 @@ async def test_invalid_sql_surfaces_infrastructure_error(
     adapter = ClickHouseAnalyticsAdapter(
         client=clickhouse_client,
         spec=_spec(),
-        config={
-            "database": database_id,
-            "queries": {
-                "filtered": {
-                    "sql": f"SELECT not_a_column FROM {database_id}.{table_id}",
-                },
+        config=ClickHouseAnalyticsConfig(
+            database=database_id,
+            queries={
+                "filtered": ClickHouseQueryConfig(
+                    sql=f"SELECT not_a_column FROM {database_id}.{table_id}",
+                ),
+                "ordered": ClickHouseQueryConfig(
+                    sql=f"SELECT event, value FROM {database_id}.{table_id} ORDER BY event",
+                ),
             },
-            "ingest_table": table_id,
-        },
+            ingest_table=table_id,
+        ),
     )
 
     with pytest.raises(CoreException) as exc_info:

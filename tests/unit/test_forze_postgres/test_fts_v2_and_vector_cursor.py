@@ -31,9 +31,9 @@ def _fts() -> PostgresFTSSearchAdapter[_M]:
     intro.get_column_types = AsyncMock(return_value={})
     return PostgresFTSSearchAdapter(
         spec=SearchSpec(name="t", model_type=_M, fields=["id", "label"]),
-        index_qname=PostgresQualifiedName("public", "idx"),
-        source_qname=PostgresQualifiedName("public", "v"),
-        index_heap_qname=PostgresQualifiedName("public", "h"),
+        index_relation=("public", "idx"),
+        relation=("public", "v"),
+        index_heap_relation=("public", "h"),
         fts_groups={"A": ("label",)},
         client=MagicMock(),
         model_type=_M,
@@ -49,9 +49,9 @@ def _vec() -> PostgresVectorSearchAdapter[_M]:
     intro.get_column_types = AsyncMock(return_value={})
     return PostgresVectorSearchAdapter(
         spec=SearchSpec(name="t", model_type=_M, fields=["id", "label"]),
-        index_qname=PostgresQualifiedName("public", "idx"),
-        source_qname=PostgresQualifiedName("public", "h"),
-        index_heap_qname=PostgresQualifiedName("public", "h"),
+        index_relation=("public", "idx"),
+        relation=("public", "h"),
+        index_heap_relation=("public", "h"),
         embedder=MagicMock(),
         embeddings_spec=EmbeddingsSpec(name="e", dimensions=3),
         vector_column="emb",

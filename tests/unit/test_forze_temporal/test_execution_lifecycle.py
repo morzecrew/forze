@@ -79,7 +79,7 @@ def test_temporal_deps_module_merges_workflow_configs() -> None:
     from forze_temporal.execution.deps.configs import TemporalWorkflowConfig
 
     client = TemporalClient()
-    wf_cfg: TemporalWorkflowConfig = {"queue": "q1", "tenant_aware": True}
+    wf_cfg = TemporalWorkflowConfig(queue="q1", tenant_aware=True)
     module = TemporalDepsModule(
         client=client,
         workflows={"MyWorkflow": wf_cfg},

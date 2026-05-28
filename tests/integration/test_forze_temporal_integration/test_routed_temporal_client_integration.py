@@ -14,6 +14,8 @@ from temporalio.worker import Worker
 from forze.application.contracts.secrets import SecretRef
 from forze_temporal.kernel.platform import RoutedTemporalClient, TemporalClient
 
+from tests.integration._routed_lru_helpers import temporal_hosts_for_lru_eviction
+
 from ._workflow_defs import ItSumWorkflow, SumIn, SumOut, it_sum_pair
 
 def _sum_total(out: SumOut | dict[str, object]) -> int:
@@ -269,7 +271,9 @@ async def test_routed_temporal_lru_evict(workflow_env_with_host_target) -> None:
     env, host_target = workflow_env_with_host_target
     task_queue = f"forze-routed-temporal-lru-{uuid4().hex[:10]}"
     t1, t2, t3 = uuid4(), uuid4(), uuid4()
-    secrets = _MemSecretsTenantHost({t1: host_target, t2: host_target, t3: host_target})
+    secrets = _MemSecretsTenantHost(
+        temporal_hosts_for_lru_eviction(host_target, t1, t2, t3),
+    )
     tenant_get, tenant_set = _tenant_holder()
 
     routed = RoutedTemporalClient(

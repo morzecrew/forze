@@ -26,8 +26,10 @@ from forze.application.contracts.search import (
     search_options_for_simple_adapter,
 )
 from forze.application.coordinators import SearchResultSnapshotCoordinator
+from forze.base.exceptions import exc
+from forze_postgres.kernel.relation import RelationSpec, is_static_relation, resolve_postgres_qname
 
-from ...kernel.gateways import PostgresGateway
+from ...kernel.gateways import PostgresGateway, PostgresQualifiedName
 from ._cursor_run import (
     execute_projection_keyset_cursor,
     execute_ranked_pipeline_cursor,
@@ -49,6 +51,25 @@ class PostgresRankedPipelineSearchAdapter[M: BaseModel](
 ):
     """Shared offset/cursor execution for FTS, vector, and PGroonga search adapters."""
 
+    index_relation: RelationSpec
+    """FTS/PGroonga index or vector index relation."""
+
+    index_heap_relation: RelationSpec
+    """Heap relation the index is defined on."""
+
+    _index_qname_resolved: PostgresQualifiedName | None = attrs.field(
+        default=None,
+        init=False,
+        eq=False,
+        repr=False,
+    )
+    _index_heap_qname_resolved: PostgresQualifiedName | None = attrs.field(
+        default=None,
+        init=False,
+        eq=False,
+        repr=False,
+    )
+
     search_variant: str = attrs.field()
     """Snapshot fingerprint variant (e.g. ``fts``, ``vector``, ``pgroonga``)."""
 
@@ -63,6 +84,67 @@ class PostgresRankedPipelineSearchAdapter[M: BaseModel](
 
     snapshot_coord: SearchResultSnapshotCoordinator | None = attrs.field(default=None)
     """Optional result-ID snapshot coordinator."""
+
+    # ....................... #
+
+    async def _index_qname(self) -> PostgresQualifiedName:
+        if self._index_qname_resolved is not None:
+            return self._index_qname_resolved
+
+        resolved = await resolve_postgres_qname(
+            self.index_relation,
+            self._tenant_id_for_resolve(),
+        )
+        object.__setattr__(self, "_index_qname_resolved", resolved)
+
+        return resolved
+
+    # ....................... #
+
+    async def _index_heap_qname(self) -> PostgresQualifiedName:
+        if self._index_heap_qname_resolved is not None:
+            return self._index_heap_qname_resolved
+
+        resolved = await resolve_postgres_qname(
+            self.index_heap_relation,
+            self._tenant_id_for_resolve(),
+        )
+        object.__setattr__(self, "_index_heap_qname_resolved", resolved)
+
+        return resolved
+
+    # ....................... #
+
+    @property
+    def index_qname(self) -> PostgresQualifiedName:
+        """Best-effort sync access when :attr:`index_relation` is static."""
+
+        if self._index_qname_resolved is not None:
+            return self._index_qname_resolved
+
+        if is_static_relation(self.index_relation):
+            return PostgresQualifiedName(*self.index_relation)
+
+        raise exc.internal(
+            "index_qname is only available for static index_relation; use await _index_qname()",
+        )
+
+    # ....................... #
+
+    @property
+    def index_heap_qname(self) -> PostgresQualifiedName:
+        """Best-effort sync access when :attr:`index_heap_relation` is static."""
+
+        if self._index_heap_qname_resolved is not None:
+            return self._index_heap_qname_resolved
+
+        if is_static_relation(self.index_heap_relation):
+            return PostgresQualifiedName(*self.index_heap_relation)
+
+        raise exc.internal(
+            "index_heap_qname is only available for static index_heap_relation; "
+            "use await _index_heap_qname()",
+        )
 
     # ....................... #
 

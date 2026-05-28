@@ -1,6 +1,6 @@
 """Prefetch Postgres catalog metadata used by search adapters (introspection cache)."""
 
-from typing import Any, Mapping, cast, final
+from typing import Any, Mapping, final
 
 import attrs
 
@@ -8,33 +8,77 @@ from forze.application._logger import logger
 from forze.application.contracts.execution import LifecycleHook, LifecycleStep
 from forze.application.execution import ExecutionContext
 from forze.base.exceptions import exc
+from forze_postgres.kernel.relation import RelationSpec, is_static_relation
 
-from ..kernel.catalog.introspect import PostgresIntrospector
-from .deps.configs import (
+from ...kernel.catalog.introspect import PostgresIntrospector
+from ..deps.configs import (
     PostgresFederatedSearchConfig,
+    PostgresFederatedSearchLegHub,
     PostgresHubSearchConfig,
     PostgresSearchConfig,
-    is_postgres_federated_embedded_hub_config,
 )
-from .deps.keys import PostgresIntrospectorDepKey
+from ..deps.keys import PostgresIntrospectorDepKey
+from .capabilities import POSTGRES_CLIENT_CAPABILITY
 
 # ----------------------- #
+
+
+async def _warm_column_types(
+    introspector: PostgresIntrospector,
+    spec: RelationSpec,
+    *,
+    label: str,
+) -> None:
+    if not is_static_relation(spec):
+        logger.trace(
+            "Postgres catalog warmup skipped dynamic relation %s",
+            label,
+        )
+        return
+
+    schema, relation = spec
+    await introspector.get_column_types(schema=schema, relation=relation)
+
+
+# ....................... #
 
 
 async def _warm_postgres_search_config(
     introspector: PostgresIntrospector,
     cfg: PostgresSearchConfig,
 ) -> None:
-    read = cfg["read"]
-    await introspector.get_column_types(schema=read[0], relation=read[1])
+    read = cfg.read
+    await _warm_column_types(introspector, read, label="search.read")
 
-    heap = cfg.get("heap", read)
-    if heap[0] != read[0] or heap[1] != read[1]:
-        await introspector.get_column_types(schema=heap[0], relation=heap[1])
+    heap = cfg.heap_relation
+    if is_static_relation(read) and is_static_relation(heap):
+        if heap[0] != read[0] or heap[1] != read[1]:
+            await _warm_column_types(introspector, heap, label="search.heap")
+    else:
+        await _warm_column_types(introspector, heap, label="search.heap")
 
-    if cfg["engine"] in ("fts", "pgroonga"):
-        idx = cfg["index"]
-        await introspector.get_index_info(index=idx[1], schema=idx[0])
+    if cfg.engine in ("fts", "pgroonga"):
+        await _warm_index_info(introspector, cfg.index, label="search.index")
+
+
+# ....................... #
+
+
+async def _warm_index_info(
+    introspector: PostgresIntrospector,
+    spec: RelationSpec,
+    *,
+    label: str,
+) -> None:
+    if not is_static_relation(spec):
+        logger.trace(
+            "Postgres catalog warmup skipped dynamic index relation %s",
+            label,
+        )
+        return
+
+    schema, index = spec
+    await introspector.get_index_info(index=index, schema=schema)
 
 
 # ....................... #
@@ -44,10 +88,9 @@ async def _warm_postgres_hub_search_config(
     introspector: PostgresIntrospector,
     cfg: PostgresHubSearchConfig,
 ) -> None:
-    hub = cfg["hub"]
-    await introspector.get_column_types(schema=hub[0], relation=hub[1])
+    await _warm_column_types(introspector, cfg.hub, label="hub.hub")
 
-    for member_cfg in cfg["members"].values():
+    for member_cfg in cfg.members.values():
         await _warm_postgres_search_config(introspector, member_cfg)
 
 
@@ -70,6 +113,9 @@ async def warm_postgres_catalog(
     context; in that case this hook intentionally no-ops and you should rely on
     per-request catalog access (single-flight coalesces concurrent cold loads) or
     run a tenant-scoped warmup job after authentication.
+
+    Dynamic :class:`~forze_postgres.kernel.relation.RelationSpec` resolvers are skipped
+    at warmup (trace log per relation); catalog loads on first tenant-scoped query.
     """
 
     introspector = ctx.deps.provide(PostgresIntrospectorDepKey)
@@ -85,17 +131,17 @@ async def warm_postgres_catalog(
 
         if federated_searches:
             for fed in federated_searches.values():
-                for member_cfg in fed["members"].values():
-                    if is_postgres_federated_embedded_hub_config(member_cfg):
+                for member_cfg in fed.members.values():
+                    if isinstance(member_cfg, PostgresFederatedSearchLegHub):
                         await _warm_postgres_hub_search_config(
                             introspector,
-                            cast(PostgresHubSearchConfig, member_cfg),
+                            member_cfg.hub,
                         )
 
                     else:
                         await _warm_postgres_search_config(
                             introspector,
-                            cast(PostgresSearchConfig, member_cfg),
+                            member_cfg.search,
                         )
 
     except exc as e:
@@ -143,10 +189,9 @@ def postgres_catalog_warmup_lifecycle_step(
 ) -> LifecycleStep:
     """Build a lifecycle step that prefetches search-related catalog metadata.
 
-    Run after :func:`~forze_postgres.execution.lifecycle.postgres_lifecycle_step`
-    (or :func:`~forze_postgres.execution.lifecycle.routed_postgres_lifecycle_step`)
-    so the pool is initialized. With ``introspector_cache_partition_key`` set and
-    no tenant during startup, warmup is a no-op (trace log only).
+    Requires :data:`~forze_postgres.execution.lifecycle.capabilities.POSTGRES_CLIENT_CAPABILITY`.
+    With ``introspector_cache_partition_key`` set and no tenant during startup, warmup
+    is a no-op (trace log only).
 
     :param name: Unique step name.
     :param searches: Same mapping as :attr:`~forze_postgres.execution.deps.PostgresDepsModule.searches`.
@@ -163,4 +208,5 @@ def postgres_catalog_warmup_lifecycle_step(
             hub_searches=hub_searches,
             federated_searches=federated_searches,
         ),
+        requires=(POSTGRES_CLIENT_CAPABILITY,),
     )

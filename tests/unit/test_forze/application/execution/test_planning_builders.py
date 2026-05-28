@@ -4,8 +4,12 @@ from __future__ import annotations
 
 import pytest
 
-from forze.application.contracts.execution import GraphStep
-from forze.application.execution.planning.builders import graph_from_sequence, pipe_from_sequence
+from forze.application.contracts.execution import GraphStep, LifecycleStep
+from forze.application.execution.planning.builders import (
+    graph_from_sequence,
+    lifecycle_steps_from_sequence,
+    pipe_from_sequence,
+)
 from forze.base.exceptions import CoreException
 from forze.base.primitives import AbstractSequence
 
@@ -57,6 +61,32 @@ class TestGraphFromSequence:
 
         with pytest.raises(CoreException, match="no step provides"):
             graph_from_sequence(_graph_seq(step))
+
+
+class TestLifecycleStepsFromSequence:
+    def test_orders_by_required_capability(self) -> None:
+        pool = LifecycleStep(id="pool", provides=("postgres.client",))
+        warmup = LifecycleStep(id="warmup", requires=("postgres.client",))
+        ordered = lifecycle_steps_from_sequence((warmup, pool))
+
+        assert [s.id for s in ordered] == ["pool", "warmup"]
+
+    def test_preserves_registration_order_without_edges(self) -> None:
+        a = LifecycleStep(id="a")
+        b = LifecycleStep(id="b")
+        c = LifecycleStep(id="c")
+
+        ordered = lifecycle_steps_from_sequence((a, b, c))
+
+        assert [s.id for s in ordered] == ["a", "b", "c"]
+
+    def test_higher_priority_runs_first_within_wave(self) -> None:
+        low = LifecycleStep(id="low", priority=0)
+        high = LifecycleStep(id="high", priority=10)
+
+        ordered = lifecycle_steps_from_sequence((low, high))
+
+        assert [s.id for s in ordered] == ["high", "low"]
 
 
 class TestPipeFromSequence:

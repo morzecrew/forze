@@ -12,7 +12,11 @@ from forze.application.contracts.search import (
     SearchSpec,
 )
 from forze.application.execution import Deps, ExecutionContext
-from forze_meilisearch.execution.deps import MeilisearchClientDepKey
+from forze_meilisearch.execution.deps import (
+    MeilisearchClientDepKey,
+    MeilisearchFederatedSearchConfig,
+    MeilisearchSearchConfig,
+)
 from forze_meilisearch.execution.deps.deps import (
     ConfigurableMeilisearchFederatedSearch,
     ConfigurableMeilisearchSearchCommand,
@@ -39,16 +43,16 @@ async def test_federated_federation_merge(meilisearch_client) -> None:
             {
                 MeilisearchClientDepKey: meilisearch_client,
                 FederatedSearchQueryDepKey: ConfigurableMeilisearchFederatedSearch(
-                    config={
-                        "merge": "federation",
-                        "members": {
-                            "a": {"index_uid": "fed_a"},
-                            "b": {"index_uid": "fed_b"},
+                    config=MeilisearchFederatedSearchConfig(
+                        merge="federation",
+                        members={
+                            "a": MeilisearchSearchConfig(index_uid="fed_a"),
+                            "b": MeilisearchSearchConfig(index_uid="fed_b"),
                         },
-                    }
+                    ),
                 ),
                 SearchCommandDepKey: ConfigurableMeilisearchSearchCommand(
-                    config={"index_uid": "unused"},
+                    config=MeilisearchSearchConfig(index_uid="unused"),
                 ),
             }
         )
@@ -56,7 +60,7 @@ async def test_federated_federation_merge(meilisearch_client) -> None:
 
     for member, uid in (("a", "fed_a"), ("b", "fed_b")):
         cmd = ConfigurableMeilisearchSearchCommand(
-            config={"index_uid": uid},
+            config=MeilisearchSearchConfig(index_uid=uid),
         )(ctx, _mem(member))
         await cmd.ensure_index()
         await cmd.delete_all()
@@ -77,16 +81,16 @@ async def test_federated_rrf_merge(meilisearch_client) -> None:
             {
                 MeilisearchClientDepKey: meilisearch_client,
                 FederatedSearchQueryDepKey: ConfigurableMeilisearchFederatedSearch(
-                    config={
-                        "merge": "rrf",
-                        "members": {
-                            "a": {"index_uid": "rrf_a"},
-                            "b": {"index_uid": "rrf_b"},
+                    config=MeilisearchFederatedSearchConfig(
+                        merge="rrf",
+                        members={
+                            "a": MeilisearchSearchConfig(index_uid="rrf_a"),
+                            "b": MeilisearchSearchConfig(index_uid="rrf_b"),
                         },
-                    }
+                    ),
                 ),
                 SearchCommandDepKey: ConfigurableMeilisearchSearchCommand(
-                    config={"index_uid": "unused"},
+                    config=MeilisearchSearchConfig(index_uid="unused"),
                 ),
             }
         )
@@ -94,7 +98,7 @@ async def test_federated_rrf_merge(meilisearch_client) -> None:
 
     for member, uid in (("a", "rrf_a"), ("b", "rrf_b")):
         cmd = ConfigurableMeilisearchSearchCommand(
-            config={"index_uid": uid},
+            config=MeilisearchSearchConfig(index_uid=uid),
         )(ctx, _mem(member))
         await cmd.ensure_index()
         await cmd.delete_all()

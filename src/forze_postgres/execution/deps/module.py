@@ -35,10 +35,8 @@ from .configs import (
     PostgresHubSearchConfig,
     PostgresReadOnlyDocumentConfig,
     PostgresSearchConfig,
-    validate_pg_search_conf,
-    validate_postgres_federated_search_conf,
 )
-from .deps import (
+from .factories import (
     ConfigurablePostgresAnalytics,
     ConfigurablePostgresDocument,
     ConfigurablePostgresFederatedSearch,
@@ -106,7 +104,7 @@ class PostgresDepsModule[K: str | StrEnum](DepsModule[K]):
                 routes.append(
                     PostgresTenancyRouteSpec(
                         name=str(name),
-                        tenant_aware=cfg.get("tenant_aware", False),
+                        tenant_aware=cfg.tenant_aware,
                         kind="document",
                     ),
                 )
@@ -116,7 +114,7 @@ class PostgresDepsModule[K: str | StrEnum](DepsModule[K]):
                 routes.append(
                     PostgresTenancyRouteSpec(
                         name=str(name),
-                        tenant_aware=cfg.get("tenant_aware", False),
+                        tenant_aware=cfg.tenant_aware,
                         kind="document",
                     ),
                 )
@@ -126,7 +124,7 @@ class PostgresDepsModule[K: str | StrEnum](DepsModule[K]):
                 routes.append(
                     PostgresTenancyRouteSpec(
                         name=str(name),
-                        tenant_aware=search_cfg.get("tenant_aware", False),
+                        tenant_aware=search_cfg.tenant_aware,
                         kind="search",
                     ),
                 )
@@ -136,7 +134,7 @@ class PostgresDepsModule[K: str | StrEnum](DepsModule[K]):
                 routes.append(
                     PostgresTenancyRouteSpec(
                         name=str(name),
-                        tenant_aware=hub_search_cfg.get("tenant_aware", False),
+                        tenant_aware=hub_search_cfg.tenant_aware,
                         kind="hub_search",
                     ),
                 )
@@ -146,7 +144,7 @@ class PostgresDepsModule[K: str | StrEnum](DepsModule[K]):
                 routes.append(
                     PostgresTenancyRouteSpec(
                         name=str(name),
-                        tenant_aware=federated_search_cfg.get("tenant_aware", False),
+                        tenant_aware=federated_search_cfg.tenant_aware,
                         kind="federated_search",
                     ),
                 )
@@ -211,10 +209,6 @@ class PostgresDepsModule[K: str | StrEnum](DepsModule[K]):
             )
 
         if self.searches:
-            # fail fast on invalid configurations
-            for search_cfg in self.searches.values():
-                validate_pg_search_conf(search_cfg)
-
             search_deps = search_deps.merge(
                 Deps[K].routed(
                     {
@@ -239,9 +233,6 @@ class PostgresDepsModule[K: str | StrEnum](DepsModule[K]):
             )
 
         if self.federated_searches:
-            for federated_cfg in self.federated_searches.values():
-                validate_postgres_federated_search_conf(federated_cfg)
-
             federated_search_deps = federated_search_deps.merge(
                 Deps[K].routed(
                     {

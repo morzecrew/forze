@@ -16,6 +16,8 @@ pytest.importorskip("testcontainers")
 from forze.application.contracts.secrets import SecretRef
 from forze_s3.kernel.platform import RoutedS3Client, S3Client, S3Config
 
+from tests.integration._routed_lru_helpers import s3_payloads_for_lru_eviction
+
 MINIO_ROOT_USER = "minioadmin"
 MINIO_ROOT_PASSWORD = "minioadmin"
 
@@ -271,7 +273,9 @@ async def test_routed_s3_lru_and_evict(minio_container) -> None:
     _container, endpoint = minio_container
     t1, t2, t3 = uuid4(), uuid4(), uuid4()
     p = _payload(endpoint)
-    secrets = _MemSecretsTenantJson({t1: p, t2: p, t3: p})
+    secrets = _MemSecretsTenantJson(
+        s3_payloads_for_lru_eviction(endpoint, t1, t2, t3, base_payload=p),
+    )
     tenant_get, tenant_set = _tenant_holder()
     cfg: S3Config = {"s3": {"addressing_style": "path"}}
 

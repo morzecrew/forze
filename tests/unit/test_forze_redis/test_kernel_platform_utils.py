@@ -9,6 +9,7 @@ class TestParseStreamEntries:
     def test_none_and_empty_return_empty_list(self) -> None:
         assert parse_stream_entries(None) == []
         assert parse_stream_entries([]) == []
+        assert parse_stream_entries({}) == []
 
     def test_decodes_stream_and_message_ids(self) -> None:
         raw = [
@@ -48,6 +49,22 @@ class TestParseStreamEntries:
         fields = messages[0][1]
         assert fields[b"a"] == b"1"
         assert fields[b"b"] == b"x"
+
+    def test_unified_dict_response(self) -> None:
+        raw = {
+            b"stream-a": [(b"1-0", {b"field": b"value"})],
+            "stream-b": [(b"2-0", {b"k": b"v"})],
+        }
+        out = parse_stream_entries(raw)
+        assert out == [
+            ("stream-a", [("1-0", {b"field": b"value"})]),
+            ("stream-b", [("2-0", {b"k": b"v"})]),
+        ]
+
+    def test_resp3_dict_with_nested_stream_batches(self) -> None:
+        raw = {b"s": [[(b"1-0", {b"f": b"v"})]]}
+        out = parse_stream_entries(raw)
+        assert out == [("s", [("1-0", {b"f": b"v"})])]
 
 
 class TestParsePubsubMessage:

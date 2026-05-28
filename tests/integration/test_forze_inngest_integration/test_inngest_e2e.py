@@ -18,6 +18,7 @@ from forze.application.execution import ExecutionContext, InvocationMetadata
 from forze.base.primitives import uuid7
 from forze.base.serialization import PydanticRecordMappingCodec
 from forze_inngest import InngestFunctionBinding
+from forze_inngest.execution.deps.configs import InngestEventConfig
 
 from ._harness import start_forze_inngest_app, wait_for_outcome
 from .inngest_dev_server import InngestDevTarget
@@ -124,7 +125,7 @@ async def test_inngest_event_command_adapter_triggers_function(
     harness = start_forze_inngest_app(
         inngest_dev_env,
         bindings=[binding],
-        events={event_spec.name: {}},
+        events={event_spec.name: InngestEventConfig()},
         app_id="forze-it-emit",
     )
 
@@ -191,7 +192,7 @@ async def test_execution_context_envelope_restored_in_function(
     harness = start_forze_inngest_app(
         inngest_dev_env,
         bindings=[binding],
-        events={event_spec.name: {}},
+        events={event_spec.name: InngestEventConfig()},
         app_id="forze-it-envelope",
     )
 

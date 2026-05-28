@@ -10,7 +10,8 @@ from forze.application.contracts.querying import QueryFilterExpression
 from forze.application.contracts.search import SearchQueryDepKey, SearchSpec
 from forze.application.execution import Deps, ExecutionContext
 from forze_postgres.adapters.search import PostgresFTSSearchAdapter
-from forze_postgres.execution.deps.deps import ConfigurablePostgresSearch
+from forze_postgres.execution.deps import ConfigurablePostgresSearch
+from forze_postgres.execution.deps.configs import PostgresSearchConfig
 from forze_postgres.execution.deps.keys import (
     PostgresClientDepKey,
     PostgresIntrospectorDepKey,
@@ -38,15 +39,15 @@ def _fts_context(
                 PostgresClientDepKey: pg_client,
                 PostgresIntrospectorDepKey: PostgresIntrospector(client=pg_client),
                 SearchQueryDepKey: ConfigurablePostgresSearch(
-                    config={
-                        "index": ("public", index_name),
-                        "read": ("public", table),
-                        "engine": "fts",
-                        "fts_groups": {
+                    config=PostgresSearchConfig(
+                        index=("public", index_name),
+                        read=("public", table),
+                        engine="fts",
+                        fts_groups={
                             "A": ("title",),
                             "B": ("content",),
                         },
-                    }
+                    )
                 ),
             }
         )
@@ -261,16 +262,16 @@ async def test_fts_v2_projection_view_and_heap_split(pg_client: PostgresClient) 
                 PostgresClientDepKey: pg_client,
                 PostgresIntrospectorDepKey: PostgresIntrospector(client=pg_client),
                 SearchQueryDepKey: ConfigurablePostgresSearch(
-                    config={
-                        "index": ("public", index_name),
-                        "read": ("public", view),
-                        "heap": ("public", table),
-                        "engine": "fts",
-                        "fts_groups": {
+                    config=PostgresSearchConfig(
+                        index=("public", index_name),
+                        read=("public", view),
+                        heap=("public", table),
+                        engine="fts",
+                        fts_groups={
                             "A": ("title",),
                             "B": ("content",),
                         },
-                    }
+                    )
                 ),
             }
         )
@@ -330,9 +331,9 @@ async def test_fts_adapter_v2_direct_projection_heap_and_index_field_map(
     )
     adapter = PostgresFTSSearchAdapter(
         spec=spec,
-        index_qname=PostgresQualifiedName("public", idx),
-        source_qname=PostgresQualifiedName("public", proj),
-        index_heap_qname=PostgresQualifiedName("public", heap),
+        index_relation=("public", idx),
+        relation=("public", proj),
+        index_heap_relation=("public", heap),
         fts_groups={"A": ("title",), "B": ("content",)},
         index_field_map={"title": "c1", "content": "c2"},
         client=pg_client,

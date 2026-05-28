@@ -22,6 +22,8 @@ from forze_rabbitmq.kernel.platform import (
     RoutedRabbitMQClient,
 )
 
+from tests.integration._routed_lru_helpers import rabbitmq_dsns_for_lru_eviction
+
 def _ref(tid: UUID) -> SecretRef:
     return SecretRef(path=f"tenants/{tid}/rabbitmq")
 
@@ -289,7 +291,7 @@ async def test_routed_rabbitmq_lru_and_evict(
 ) -> None:
     dsn = _dsn(rabbitmq_container)
     t1, t2, t3 = uuid4(), uuid4(), uuid4()
-    secrets = _MemSecretsTenantDsn({t1: dsn, t2: dsn, t3: dsn})
+    secrets = _MemSecretsTenantDsn(rabbitmq_dsns_for_lru_eviction(dsn, t1, t2, t3))
     tenant_get, tenant_set = _tenant_holder()
 
     routed = RoutedRabbitMQClient(

@@ -27,7 +27,7 @@ class ConfigurableS3Storage(StorageDepPort):
 
         return S3StorageAdapter(
             client=client,
-            bucket=self.config["bucket"],
-            tenant_aware=self.config.get("tenant_aware", False),
+            bucket=self.config.bucket,
+            tenant_aware=self.config.tenant_aware,
             tenant_provider=ctx.inv_ctx.get_tenant,
         )

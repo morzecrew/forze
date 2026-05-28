@@ -12,7 +12,10 @@ from forze.application.contracts.search import (
 )
 from forze.application.execution import Deps, ExecutionContext
 from forze_meilisearch.adapters.search import MeilisearchSimpleSearchAdapter
-from forze_meilisearch.execution.deps import MeilisearchClientDepKey
+from forze_meilisearch.execution.deps import (
+    MeilisearchClientDepKey,
+    MeilisearchSearchConfig,
+)
 from forze_meilisearch.execution.deps.deps import (
     ConfigurableMeilisearchSearch,
     ConfigurableMeilisearchSearchCommand,
@@ -33,10 +36,10 @@ def _ctx(meilisearch_client, *, index_uid: str) -> ExecutionContext:
             {
                 MeilisearchClientDepKey: meilisearch_client,
                 SearchQueryDepKey: ConfigurableMeilisearchSearch(
-                    config={"index_uid": index_uid},
+                    config=MeilisearchSearchConfig(index_uid=index_uid),
                 ),
                 SearchCommandDepKey: ConfigurableMeilisearchSearchCommand(
-                    config={"index_uid": index_uid},
+                    config=MeilisearchSearchConfig(index_uid=index_uid),
                 ),
             }
         )

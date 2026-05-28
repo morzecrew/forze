@@ -63,7 +63,7 @@ from forze_identity.authn.services import (
     RefreshTokenConfig,
     RefreshTokenService,
 )
-from forze_postgres.execution.deps.deps import (
+from forze_postgres.execution.deps import (
     ConfigurablePostgresDocument,
     ConfigurablePostgresReadOnlyDocument,
 )

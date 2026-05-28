@@ -8,6 +8,7 @@ from pydantic import BaseModel
 from forze.application.contracts.base import CursorPage
 from forze.application.contracts.search import SearchQueryDepKey, SearchSpec
 from forze.application.execution import Deps, ExecutionContext
+from forze_mongo.execution.deps.configs import MongoSearchConfig
 from forze_mongo.execution.deps.deps import ConfigurableMongoSearch
 from forze_mongo.execution.deps.keys import MongoClientDepKey
 from forze_mongo.kernel.platform import MongoClient
@@ -26,10 +27,10 @@ def _search_ctx(
             {
                 MongoClientDepKey: mongo_client,
                 SearchQueryDepKey: ConfigurableMongoSearch(
-                    config={
-                        "read": (db_name, collection),
-                        "engine": "text",
-                    }
+                    config=MongoSearchConfig(
+                        read=(db_name, collection),
+                        engine="text",
+                    )
                 ),
             }
         )
@@ -111,11 +112,11 @@ async def test_mongo_atlas_search_cursor(mongo_atlas_client: MongoClient) -> Non
             {
                 MongoClientDepKey: mongo_atlas_client,
                 SearchQueryDepKey: ConfigurableMongoSearch(
-                    config={
-                        "read": (db_name, collection),
-                        "engine": "atlas",
-                        "index_name": index_name,
-                    }
+                    config=MongoSearchConfig(
+                        read=(db_name, collection),
+                        engine="atlas",
+                        index_name=index_name,
+                    )
                 ),
             }
         )

@@ -22,7 +22,7 @@ from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.execution import Deps, ExecutionContext, InvocationMetadata
 from forze_identity.authz.application.constants import AuthzResourceName
 from forze_identity.authz.execution import AuthzDepsModule, AuthzKernelConfig
-from forze_postgres.execution.deps.deps import (
+from forze_postgres.execution.deps import (
     ConfigurablePostgresDocument,
     ConfigurablePostgresReadOnlyDocument,
 )

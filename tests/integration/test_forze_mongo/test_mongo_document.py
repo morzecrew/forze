@@ -13,6 +13,7 @@ from forze.application.contracts.document import (
 from forze.application.contracts.querying import QueryFilterExpression
 from forze.application.execution import Deps, ExecutionContext
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
+from forze_mongo.execution.deps import MongoDocumentConfig
 from forze_mongo.execution.deps.deps import ConfigurableMongoDocument
 from forze_mongo.execution.deps.keys import MongoClientDepKey
 from forze_mongo.kernel.platform import MongoClient
@@ -48,11 +49,11 @@ async def test_mongo_document_adapter_roundtrip(mongo_client: MongoClient) -> No
     )
 
     configurable = ConfigurableMongoDocument(
-        config={
-            "read": (db_name, collection),
-            "write": (db_name, collection),
-            "history": (db_name, history_collection),
-        }
+        config=MongoDocumentConfig(
+            read=(db_name, collection),
+            write=(db_name, collection),
+            history=(db_name, history_collection),
+        )
     )
     deps = Deps.plain(
         {
@@ -144,11 +145,11 @@ async def test_mongo_document_find_many_sorted(mongo_client: MongoClient) -> Non
     )
 
     configurable = ConfigurableMongoDocument(
-        config={
-            "read": (db_name, collection),
-            "write": (db_name, collection),
-            "history": (db_name, history_collection),
-        }
+        config=MongoDocumentConfig(
+            read=(db_name, collection),
+            write=(db_name, collection),
+            history=(db_name, history_collection),
+        )
     )
     deps = Deps.plain(
         {

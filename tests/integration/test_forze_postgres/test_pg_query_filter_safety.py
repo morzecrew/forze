@@ -7,13 +7,14 @@ import pytest
 from forze.application.contracts.document import DocumentSpec, DocumentWriteTypes
 from forze.application.execution import Deps, ExecutionContext
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
-from forze_postgres.execution.deps.deps import ConfigurablePostgresDocument
+from forze_postgres.execution.deps import ConfigurablePostgresDocument
 from forze_postgres.execution.deps.keys import (
     PostgresClientDepKey,
     PostgresIntrospectorDepKey,
 )
 from forze_postgres.kernel.catalog.introspect import PostgresIntrospector
 from forze_postgres.kernel.client.client import PostgresClient
+from forze_postgres.execution.deps.configs import PostgresDocumentConfig
 
 # ----------------------- #
 
@@ -66,11 +67,11 @@ async def test_field_filter_with_sql_metacharacters_is_literal_match(
         )
 
     cfg = ConfigurablePostgresDocument(
-        config={
-            "read": ("public", t),
-            "write": ("public", t),
-            "bookkeeping_strategy": "application",
-        }
+        config=PostgresDocumentConfig(
+            read=("public", t),
+            write=("public", t),
+            bookkeeping_strategy="application",
+        )
     )
     ctx = ExecutionContext(
         deps=Deps.plain(

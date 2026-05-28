@@ -7,6 +7,7 @@ from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.execution import Deps, ExecutionContext, InvocationMetadata
 from forze_s3.adapters.storage import S3StorageAdapter
 from forze_s3.execution.deps import S3ClientDepKey, S3DepsModule
+from forze_s3.execution.deps.configs import S3StorageConfig
 from forze_s3.execution.deps.deps import ConfigurableS3Storage
 from forze_s3.kernel.platform import S3Client
 
@@ -16,7 +17,7 @@ def test_s3_storage_factory_builds_adapter_without_tenant() -> None:
     deps = Deps.plain({S3ClientDepKey: s3_mock})
     context = ExecutionContext(deps=deps)
 
-    factory = ConfigurableS3Storage(config={"bucket": "test-bucket"})
+    factory = ConfigurableS3Storage(config=S3StorageConfig(bucket="test-bucket"))
     storage = factory(context, StorageSpec(name="route"))
 
     assert isinstance(storage, S3StorageAdapter)
@@ -32,7 +33,7 @@ def test_s3_storage_factory_resolves_tenant_from_context() -> None:
     tid = uuid4()
 
     factory = ConfigurableS3Storage(
-        config={"bucket": "tenant-bucket", "tenant_aware": True},
+        config=S3StorageConfig(bucket="tenant-bucket", tenant_aware=True),
     )
 
     metadata = InvocationMetadata(execution_id=uuid4(), correlation_id=uuid4())
@@ -49,7 +50,9 @@ def test_s3_deps_module_registers_expected_keys() -> None:
     s3_mock = Mock(spec=S3Client)
     module = S3DepsModule(
         client=s3_mock,
-        storages={"module-bucket": {"bucket": "module-bucket"}},
+        storages={
+            "module-bucket": S3StorageConfig(bucket="module-bucket"),
+        },
     )
 
     deps = module()

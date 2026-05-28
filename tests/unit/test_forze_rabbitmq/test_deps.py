@@ -11,6 +11,7 @@ from forze.application.execution import Deps, ExecutionContext
 from forze.base.serialization import PydanticRecordMappingCodec
 from forze_rabbitmq.adapters import RabbitMQQueueAdapter
 from forze_rabbitmq.execution.deps import RabbitMQClientDepKey, RabbitMQDepsModule
+from forze_rabbitmq.execution.deps.configs import RabbitMQQueueConfig
 from forze_rabbitmq.execution.deps.deps import (
     ConfigurableRabbitMQQueueRead,
     ConfigurableRabbitMQQueueWrite,
@@ -31,7 +32,7 @@ def test_rabbitmq_queue_factory_builds_adapter() -> None:
     )
 
     reader = ConfigurableRabbitMQQueueRead(
-        config={"namespace": "events", "tenant_aware": False},
+        config=RabbitMQQueueConfig(namespace="events", tenant_aware=False),
     )
     queue = reader(context, spec)
 
@@ -41,7 +42,7 @@ def test_rabbitmq_queue_factory_builds_adapter() -> None:
     assert queue.namespace == "events"
 
     writer = ConfigurableRabbitMQQueueWrite(
-        config={"namespace": "events", "tenant_aware": False},
+        config=RabbitMQQueueConfig(namespace="events", tenant_aware=False),
     )
     queue_w = writer(context, spec)
     assert isinstance(queue_w, RabbitMQQueueAdapter)
@@ -51,8 +52,8 @@ def test_rabbitmq_deps_module_registers_expected_keys() -> None:
     client = Mock(spec=RabbitMQClient)
     module = RabbitMQDepsModule(
         client=client,
-        queue_readers={"q": {"namespace": "ns"}},
-        queue_writers={"q": {"namespace": "ns"}},
+        queue_readers={"q": RabbitMQQueueConfig(namespace="ns")},
+        queue_writers={"q": RabbitMQQueueConfig(namespace="ns")},
     )
 
     deps = module()

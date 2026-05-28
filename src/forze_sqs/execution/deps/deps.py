@@ -39,8 +39,8 @@ class ConfigurableSQSQueueRead(QueueQueryDepPort):
         return SQSQueueAdapter(
             client=client,
             codec=codec,
-            namespace=self.config.get("namespace"),
-            tenant_aware=self.config.get("tenant_aware", False),
+            namespace=self.config.namespace,
+            tenant_aware=self.config.tenant_aware,
             tenant_provider=ctx.inv_ctx.get_tenant,
         )
 
@@ -69,7 +69,7 @@ class ConfigurableSQSQueueWrite(QueueCommandDepPort):
         return SQSQueueAdapter(
             client=client,
             codec=codec,
-            namespace=self.config.get("namespace"),
-            tenant_aware=self.config.get("tenant_aware", False),
+            namespace=self.config.namespace,
+            tenant_aware=self.config.tenant_aware,
             tenant_provider=ctx.inv_ctx.get_tenant,
         )

@@ -10,14 +10,23 @@ from pydantic import BaseModel
 from forze.application.contracts.base import CountlessPage, Page
 from forze.application.contracts.search import HubSearchSpec, SearchSpec
 from forze.application.execution import Deps, ExecutionContext
-from forze_postgres.execution.deps.configs import PostgresHubSearchConfig
-from forze_postgres.execution.deps.deps import ConfigurablePostgresHubSearch
+from forze_postgres.execution.deps.configs import (
+    PostgresHubSearchConfig,
+    PostgresHubSearchMemberConfig,
+)
+from forze_postgres.execution.deps import ConfigurablePostgresHubSearch
 from forze_postgres.execution.deps.keys import (
     PostgresClientDepKey,
     PostgresIntrospectorDepKey,
 )
 from forze_postgres.kernel.catalog.introspect import PostgresIntrospector
 from forze_postgres.kernel.client.client import PostgresClient
+
+
+def _hub_member(**kwargs: object) -> PostgresHubSearchMemberConfig:
+    if "engine" not in kwargs:
+        kwargs["engine"] = "pgroonga"
+    return PostgresHubSearchMemberConfig(**kwargs)  # type: ignore[misc]
 
 
 class _HubRow(BaseModel):
@@ -66,17 +75,17 @@ async def test_hub_browse_empty_query_without_sorts(pg_client: PostgresClient) -
         model_type=_HubRow,
         members=(leg,),
     )
-    hub_cfg: PostgresHubSearchConfig = {
-        "hub": ("public", ht),
-        "members": {
-            leg_n: {
-                "index": ("public", f"idx_{suffix}_ns"),
-                "read": ("public", ht),
-                "hub_fk": "id",
-                "same_heap_as_hub": True,
-            },
+    hub_cfg = PostgresHubSearchConfig(
+        hub=("public", ht),
+        members={
+            leg_n: _hub_member(
+                index=("public", f"idx_{suffix}_ns"),
+                read=("public", ht),
+                hub_fk="id",
+                same_heap_as_hub=True,
+            ),
         },
-    }
+    )
 
     ctx = ExecutionContext(
         deps=Deps.plain(
@@ -182,21 +191,21 @@ async def test_hub_two_leg_or_with_distinct_field_maps(
         model_type=HubLink,
         members=(leg_a_spec, leg_b_spec),
     )
-    hub_cfg: PostgresHubSearchConfig = {
-        "hub": ("public", hub_t),
-        "members": {
-            leg_a_spec.name: {
-                "index": ("public", f"idx_a_{suffix}"),
-                "read": ("public", leg_a),
-                "hub_fk": "leg_a_id",
-            },
-            leg_b_spec.name: {
-                "index": ("public", f"idx_b_{suffix}"),
-                "read": ("public", leg_b),
-                "hub_fk": "leg_b_id",
-            },
+    hub_cfg = PostgresHubSearchConfig(
+        hub=("public", hub_t),
+        members={
+            leg_a_spec.name: _hub_member(
+                index=("public", f"idx_a_{suffix}"),
+                read=("public", leg_a),
+                hub_fk="leg_a_id",
+            ),
+            leg_b_spec.name: _hub_member(
+                index=("public", f"idx_b_{suffix}"),
+                read=("public", leg_b),
+                hub_fk="leg_b_id",
+            ),
         },
-    }
+    )
 
     ctx = ExecutionContext(
         deps=Deps.plain(

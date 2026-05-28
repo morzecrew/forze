@@ -25,6 +25,7 @@ from forze.application.contracts.secrets import (
 from forze.application.contracts.tenancy import require_tenant_id
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
+from forze.base.primitives.fingerprint import connection_string_fingerprint
 from forze.base.primitives.lru_registry import SimpleLruRegistry
 
 from .client import RedisClient
@@ -52,6 +53,7 @@ class RoutedRedisClient(RedisClientPort):
     max_cached_tenants: int = 100
 
     _registry: SimpleLruRegistry[UUID, RedisClient] = attrs.field(init=False)
+    _fingerprints: dict[UUID, str] = attrs.field(factory=dict, init=False, repr=False)
     _started: bool = attrs.field(default=False, init=False)
 
     # ....................... #
@@ -64,6 +66,7 @@ class RoutedRedisClient(RedisClientPort):
             max_entries=self.max_cached_tenants,
             create=self._create_client,
             dispose=lambda client: client.close(),
+            dedup_key=lambda tid: self._fingerprints[tid],
         )
 
     # ....................... #
@@ -80,7 +83,28 @@ class RoutedRedisClient(RedisClientPort):
     # ....................... #
 
     async def evict_tenant(self, tenant_id: UUID) -> None:
+        self._fingerprints.pop(tenant_id, None)
         await self._registry.evict(tenant_id)
+
+    # ....................... #
+
+    async def _ensure_fingerprint(self, tenant_id: UUID) -> str:
+        cached = self._fingerprints.get(tenant_id)
+
+        if cached is not None:
+            return cached
+
+        ref = secret_ref_for_tenant(self.secret_ref_for_tenant, tenant_id)
+        dsn = await resolve_str_for_tenant(
+            self.secrets,
+            ref,
+            tenant_id=tenant_id,
+            backend="Redis",
+        )
+        fingerprint = connection_string_fingerprint(dsn)
+        self._fingerprints[tenant_id] = fingerprint
+
+        return fingerprint
 
     # ....................... #
 
@@ -104,12 +128,13 @@ class RoutedRedisClient(RedisClientPort):
         if not self._started:
             raise exc.internal("Routed Redis client is not started")
 
-        return await self._registry.get_or_create(
-            require_tenant_id(
-                self.tenant_provider,
-                message="Tenant ID is required for routed Redis access",
-            ),
+        tenant_id = require_tenant_id(
+            self.tenant_provider,
+            message="Tenant ID is required for routed Redis access",
         )
+        await self._ensure_fingerprint(tenant_id)
+
+        return await self._registry.get_or_create(tenant_id)
 
     # ....................... #
 

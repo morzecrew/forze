@@ -4,6 +4,7 @@ from uuid import uuid4
 
 from forze.application.contracts.storage import StorageSpec, UploadedObject
 from forze.application.execution import ExecutionContext
+from forze_s3.execution.deps.configs import S3StorageConfig
 from forze_s3.execution.deps.module import S3DepsModule
 from forze_s3.kernel.platform.client import S3Client
 
@@ -14,7 +15,7 @@ async def test_s3_storage_adapter_upload_list_download_delete(
     ctx = ExecutionContext(
         deps=S3DepsModule(
             client=s3_client,
-            storages={s3_bucket: {"bucket": s3_bucket}},
+            storages={s3_bucket: S3StorageConfig(bucket=s3_bucket)},
         )()
     )
     storage = ctx.storage(StorageSpec(name=s3_bucket))
@@ -58,7 +59,7 @@ async def test_s3_storage_list_pagination(
     ctx = ExecutionContext(
         deps=S3DepsModule(
             client=s3_client,
-            storages={s3_bucket: {"bucket": s3_bucket}},
+            storages={s3_bucket: S3StorageConfig(bucket=s3_bucket)},
         )()
     )
     storage = ctx.storage(StorageSpec(name=s3_bucket))

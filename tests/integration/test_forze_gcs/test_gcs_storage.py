@@ -4,6 +4,7 @@ from uuid import uuid4
 
 from forze.application.contracts.storage import StorageSpec, UploadedObject
 from forze.application.execution import ExecutionContext
+from forze_gcs.execution.deps.configs import GCSStorageConfig
 from forze_gcs.execution.deps.module import GCSDepsModule
 from forze_gcs.kernel.platform.client import GCSClient
 
@@ -16,7 +17,7 @@ async def test_gcs_storage_adapter_upload_list_download_delete(
     ctx = ExecutionContext(
         deps=GCSDepsModule(
             client=gcs_client,
-            storages={gcs_bucket: {"bucket": gcs_bucket}},
+            storages={gcs_bucket: GCSStorageConfig(bucket=gcs_bucket)},
         )()
     )
     storage = ctx.storage(StorageSpec(name=gcs_bucket))
@@ -61,7 +62,7 @@ async def test_gcs_storage_list_pagination(
     ctx = ExecutionContext(
         deps=GCSDepsModule(
             client=gcs_client,
-            storages={gcs_bucket: {"bucket": gcs_bucket}},
+            storages={gcs_bucket: GCSStorageConfig(bucket=gcs_bucket)},
         )()
     )
     storage = ctx.storage(StorageSpec(name=gcs_bucket))

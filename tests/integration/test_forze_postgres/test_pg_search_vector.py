@@ -18,7 +18,8 @@ from forze.application.execution import Deps, ExecutionContext
 from forze_mock import MockHashEmbeddingsProvider
 from forze_postgres.adapters.search import PostgresVectorSearchAdapter
 from forze_postgres.adapters.search._vector_sql import vector_param_literal
-from forze_postgres.execution.deps.deps import ConfigurablePostgresSearch
+from forze_postgres.execution.deps import ConfigurablePostgresSearch
+from forze_postgres.execution.deps.configs import PostgresSearchConfig
 from forze_postgres.execution.deps.keys import (
     PostgresClientDepKey,
     PostgresIntrospectorDepKey,
@@ -62,16 +63,16 @@ def _vector_search_context(
                 PostgresClientDepKey: pg_client,
                 PostgresIntrospectorDepKey: PostgresIntrospector(client=pg_client),
                 SearchQueryDepKey: ConfigurablePostgresSearch(
-                    config={
-                        "index": ("public", index_name),
-                        "read": ("public", table),
-                        "heap": ("public", table),
-                        "engine": "vector",
-                        "vector_column": "emb",
-                        "vector_distance": vector_distance,
-                        "embeddings_name": "vec_test",
-                        "embedding_dimensions": 3,
-                    }
+                    config=PostgresSearchConfig(
+                        index=("public", index_name),
+                        read=("public", table),
+                        heap=("public", table),
+                        engine="vector",
+                        vector_column="emb",
+                        vector_distance=vector_distance,  # type: ignore[arg-type]
+                        embeddings_name="vec_test",
+                        embedding_dimensions=3,
+                    )
                 ),
                 EmbeddingsProviderDepKey: _embeddings_factory,
             }

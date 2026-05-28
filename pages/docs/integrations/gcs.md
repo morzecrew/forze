@@ -27,12 +27,12 @@ Use this when you run on GCP (or local fake-gcs-server) and want native GCS buck
 
     :::python
     from forze.application.execution import DepsPlan, ExecutionRuntime, LifecyclePlan
-    from forze_gcs import GCSClient, GCSDepsModule, gcs_lifecycle_step
+    from forze_gcs import GCSClient, GCSDepsModule, GCSStorageConfig, gcs_lifecycle_step
 
     client = GCSClient()
     module = GCSDepsModule(
         client=client,
-        storages={"app-assets": {"bucket": "my-project-assets"}},
+        storages={"app-assets": GCSStorageConfig(bucket="my-project-assets")},
     )
 
     runtime = ExecutionRuntime(

@@ -18,7 +18,6 @@ from typing import (
     Mapping,
     Sequence,
     TypeVar,
-    cast,
     final,
 )
 
@@ -293,7 +292,7 @@ class RedisClient(RedisClientPort):
         async def _call() -> int:
             raw_res = await self.__executor().pttl(key)
 
-            return int(cast(int, raw_res))
+            return raw_res
 
         return await self.__maybe_read_retry("pttl_raw_ms", _call)
 

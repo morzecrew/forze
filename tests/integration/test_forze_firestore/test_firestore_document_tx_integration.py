@@ -12,6 +12,7 @@ from forze.application.contracts.document import (
 from forze.application.contracts.transaction.deps import TransactionManagerDepKey
 from forze.application.execution import Deps, ExecutionContext
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
+from forze_firestore.execution.deps.configs import FirestoreDocumentConfig
 from forze_firestore.execution.deps.deps import (
     ConfigurableFirestoreDocument,
     firestore_txmanager,
@@ -51,7 +52,10 @@ async def test_document_create_commits_in_transaction(
         },
     )
     fac = ConfigurableFirestoreDocument(
-        config={"read": ("(default)", collection), "write": ("(default)", collection)}
+        config=FirestoreDocumentConfig(
+            read=("(default)", collection),
+            write=("(default)", collection),
+        ),
     )
     plain = Deps.plain(
         {
@@ -86,7 +90,10 @@ async def test_document_create_rolls_back_on_error(
         },
     )
     fac = ConfigurableFirestoreDocument(
-        config={"read": ("(default)", collection), "write": ("(default)", collection)}
+        config=FirestoreDocumentConfig(
+            read=("(default)", collection),
+            write=("(default)", collection),
+        ),
     )
     plain = Deps.plain(
         {
@@ -121,7 +128,10 @@ async def test_document_create_many_in_transaction(
         },
     )
     fac = ConfigurableFirestoreDocument(
-        config={"read": ("(default)", collection), "write": ("(default)", collection)}
+        config=FirestoreDocumentConfig(
+            read=("(default)", collection),
+            write=("(default)", collection),
+        ),
     )
     plain = Deps.plain(
         {

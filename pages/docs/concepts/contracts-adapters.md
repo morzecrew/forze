@@ -108,6 +108,17 @@ Both ports also have `*_many` batch variants for all applicable operations.
 | `select_search` / `select_search_page` | Each hit validated as `return_type` |
 | `search_cursor` / `project_search_cursor` / `select_search_cursor` | Keyset cursor pagination |
 
+**`SearchCommandPort[M]`**: maintain external search indexes (Meilisearch, Mongo text/Atlas/vector adapters, and similar) outside the system of record:
+
+| Method | Purpose |
+|--------|---------|
+| `ensure_index` | Create or update backing index settings |
+| `upsert` / `upsert_many` | Add or update documents in the index |
+| `delete` | Remove documents by primary key |
+| `delete_all` | Clear the index |
+
+Resolve with `ctx.search.command(search_spec)` when the integration registers `SearchCommandDepKey` for that route. See [Meilisearch integration](../integrations/meilisearch.md).
+
 ### Object storage
 
 **`StoragePort`**: S3-style blob storage:
@@ -226,6 +237,8 @@ Each contract has a corresponding `DepKey` for registration and resolution. Inte
     cache = self.ctx.cache(cache_spec)         # resolves CacheDepKey
     counter = self.ctx.counter(CounterSpec(name="tickets"))  # resolves CounterDepKey
     storage = self.ctx.storage(StorageSpec(name="attachments"))  # resolves StorageDepKey
+    search_q = self.ctx.search.query(search_spec)  # resolves SearchQueryDepKey
+    search_c = self.ctx.search.command(search_spec)  # resolves SearchCommandDepKey (when wired)
     metrics = self.ctx.analytics.query(metrics_spec)  # resolves AnalyticsQueryDepKey
 
 For contracts without convenience methods on `ExecutionContext`, use `ctx.deps.resolve_configurable`:

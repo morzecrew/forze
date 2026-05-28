@@ -50,8 +50,8 @@ class ConfigurableFirestoreReadOnlyDocument(DocumentQueryDepPort[R]):
         read = read_gw(
             ctx,
             read_type=spec.read,
-            read_relation=self.config["read"],
-            tenant_aware=self.config.get("tenant_aware", False),
+            read_relation=self.config.read,
+            tenant_aware=self.config.tenant_aware,
         )
 
         after_commit: AfterCommitPort | None = None
@@ -71,7 +71,7 @@ class ConfigurableFirestoreReadOnlyDocument(DocumentQueryDepPort[R]):
             read_gw=read,
             write_gw=None,
             cache_coord=cc,
-            batch_size=self.config.get("batch_size", 200),
+            batch_size=self.config.batch_size,
         )
 
 
@@ -90,7 +90,7 @@ class ConfigurableFirestoreDocument(DocumentCommandDepPort[R, D, C, U]):
     ) -> FirestoreDocumentAdapter[R, D, C, U]:
         cache = ctx.cache(spec.cache) if spec.cache is not None else None
         config = self.config
-        tenant_aware = config.get("tenant_aware", False)
+        tenant_aware = config.tenant_aware
 
         if spec.write is None:
             raise exc.internal(
@@ -100,11 +100,11 @@ class ConfigurableFirestoreDocument(DocumentCommandDepPort[R, D, C, U]):
         read = read_gw(
             ctx,
             read_type=spec.read,
-            read_relation=config["read"],
+            read_relation=config.read,
             tenant_aware=tenant_aware,
         )
 
-        history_relation = config.get("history")
+        history_relation = config.history
 
         if history_relation is None and spec.history_enabled:
             logger.warning(
@@ -119,7 +119,7 @@ class ConfigurableFirestoreDocument(DocumentCommandDepPort[R, D, C, U]):
         write = doc_write_gw(
             ctx,
             write_types=spec.write,
-            write_relation=config["write"],
+            write_relation=config.write,
             history_relation=history_relation,
             history_enabled=spec.history_enabled,
             tenant_aware=tenant_aware,
@@ -142,7 +142,7 @@ class ConfigurableFirestoreDocument(DocumentCommandDepPort[R, D, C, U]):
             read_gw=read,
             write_gw=write,
             cache_coord=cc,
-            batch_size=config.get("batch_size", 200),
+            batch_size=config.batch_size,
         )
 
 

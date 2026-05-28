@@ -12,7 +12,10 @@ from forze.application.contracts.analytics import (
 from forze.application.execution import ExecutionContext
 from forze.base.exceptions import CoreException
 from forze_postgres import PostgresClient, PostgresDepsModule
-from forze_postgres.execution.deps import validate_postgres_analytics_config
+from forze_postgres.execution.deps.configs import (
+    PostgresAnalyticsConfig,
+    PostgresQueryConfig,
+)
 
 
 class _Row(BaseModel):
@@ -34,12 +37,12 @@ def _spec() -> AnalyticsSpec[_Row, _Row]:
 
 def test_validate_missing_query_key() -> None:
     spec = _spec()
-    config = {
-        "queries": {},
-        "ingest_table": "t",
-    }
+    config = PostgresAnalyticsConfig(
+        queries={},
+        ingest_table="t",
+    )
     with pytest.raises(CoreException, match="missing query keys"):
-        validate_postgres_analytics_config(spec, config)
+        config.validate_against_spec(spec)
 
 
 def test_deps_module_registers_analytics_keys() -> None:
@@ -47,10 +50,10 @@ def test_deps_module_registers_analytics_keys() -> None:
     module = PostgresDepsModule(
         client=client,
         analytics={
-            "events": {
-                "queries": {"counts": {"sql": "SELECT 1 AS value"}},
-                "ingest_table": "events",
-            },
+            "events": PostgresAnalyticsConfig(
+                queries={"counts": PostgresQueryConfig(sql="SELECT 1 AS value")},
+                ingest_table="events",
+            ),
         },
     )
     deps = module()

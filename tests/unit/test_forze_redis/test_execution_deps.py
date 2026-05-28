@@ -25,6 +25,12 @@ from forze_redis.adapters import (
     RedisDistributedLockAdapter,
     RedisIdempotencyAdapter,
 )
+from forze_redis.execution.deps.configs import (
+    RedisCacheConfig,
+    RedisCounterConfig,
+    RedisDistributedLockConfig,
+    RedisIdempotencyConfig,
+)
 from forze_redis.execution.deps.deps import (
     ConfigurableRedisCache,
     ConfigurableRedisCounter,
@@ -45,10 +51,10 @@ class TestRedisDepsModule:
         client = MagicMock(spec=RedisClient)
         module = RedisDepsModule(
             client=client,
-            caches={"c1": {"namespace": "ns1"}},
-            counters={"n1": {"namespace": "ctr1"}},
-            idempotency={"idem1": {"namespace": "id1"}},
-            dlocks={"dl1": {"namespace": "dlock1"}},
+            caches={"c1": RedisCacheConfig(namespace="ns1")},
+            counters={"n1": RedisCounterConfig(namespace="ctr1")},
+            idempotency={"idem1": RedisIdempotencyConfig(namespace="id1")},
+            dlocks={"dl1": RedisDistributedLockConfig(namespace="dlock1")},
         )
 
         deps = module()
@@ -72,7 +78,7 @@ class TestRedisDepsModule:
         assert deps.provide(RedisBlockingClientDepKey) is blocking
     def test_cache_adapter(self) -> None:
         factory = ConfigurableRedisCache(
-            config={"namespace": "acme", "tenant_aware": True},
+            config=RedisCacheConfig(namespace="acme", tenant_aware=True),
         )
         ctx = _ctx()
         tid = uuid4()
@@ -95,7 +101,9 @@ class TestRedisDepsModule:
         assert adapter.ttl_kv == spec.ttl
 
     def test_counter_adapter(self) -> None:
-        factory = ConfigurableRedisCounter(config={"namespace": "ctr"})
+        factory = ConfigurableRedisCounter(
+            config=RedisCounterConfig(namespace="ctr"),
+        )
         ctx = _ctx()
         adapter = factory(ctx, CounterSpec(name="c"))
 
@@ -103,7 +111,9 @@ class TestRedisDepsModule:
         assert adapter.tenant_aware is False
 
     def test_idempotency_adapter(self) -> None:
-        factory = ConfigurableRedisIdempotency(config={"namespace": "idem"})
+        factory = ConfigurableRedisIdempotency(
+            config=RedisIdempotencyConfig(namespace="idem"),
+        )
         ctx = _ctx()
         adapter = factory(
             ctx,
@@ -114,7 +124,9 @@ class TestRedisDepsModule:
         assert adapter.ttl == timedelta(minutes=5)
 
     def test_distributed_lock_adapter(self) -> None:
-        factory = ConfigurableRedisDistributedLock(config={"namespace": "dl"})
+        factory = ConfigurableRedisDistributedLock(
+            config=RedisDistributedLockConfig(namespace="dl"),
+        )
         ctx = _ctx()
         spec = DistributedLockSpec(name="dl", ttl=timedelta(seconds=30))
         cmd = factory(ctx, spec)
@@ -125,7 +137,10 @@ class TestRedisDepsModule:
         assert cmd.spec is spec
         assert cmd.tenant_aware is False
 
-        deps = RedisDepsModule(client=MagicMock(spec=RedisClient), dlocks={"dl": {"namespace": "x"}})()
+        deps = RedisDepsModule(
+            client=MagicMock(spec=RedisClient),
+            dlocks={"dl": RedisDistributedLockConfig(namespace="x")},
+        )()
         ctx2 = ExecutionContext(deps=deps)
         q = ctx2.dlock.query(spec)
         c = ctx2.dlock.command(spec)

@@ -7,6 +7,7 @@ from pydantic import BaseModel
 
 from forze.application.contracts.search import SearchSpec
 from forze_meilisearch.adapters.search._command import MeilisearchSearchCommandAdapter
+from forze_meilisearch.execution.deps.configs import MeilisearchSearchConfig
 
 # ----------------------- #
 
@@ -30,7 +31,10 @@ async def test_upsert_calls_add_documents() -> None:
     spec = SearchSpec(name="items", model_type=_Doc, fields=["title"])
     adapter = MeilisearchSearchCommandAdapter(
         spec=spec,
-        config={"index_uid": "items_idx", "wait_for_tasks": False},
+        config=MeilisearchSearchConfig(
+            index_uid="items_idx",
+            wait_for_tasks=False,
+        ),
         client=client,
     )
 

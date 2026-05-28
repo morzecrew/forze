@@ -6,6 +6,7 @@ pytest.importorskip("aioboto3")
 
 from forze.application.contracts.storage import StorageSpec
 from forze.application.execution import ExecutionContext
+from forze_s3.execution.deps.configs import S3StorageConfig
 from forze_s3.execution.deps.module import S3DepsModule
 from forze_s3.kernel.platform.client import S3Client
 
@@ -14,7 +15,7 @@ def _s3_ctx(client: S3Client, bucket: str) -> ExecutionContext:
     return ExecutionContext(
         deps=S3DepsModule(
             client=client,
-            storages={bucket: {"bucket": bucket}},
+            storages={bucket: S3StorageConfig(bucket=bucket)},
         )()
     )
 

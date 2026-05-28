@@ -76,7 +76,7 @@ class ExecutionRuntime:
         logger.info("Starting execution runtime")
 
         ctx = self.__ctx.get()
-        await self.lifecycle.startup(ctx)
+        await self.lifecycle.build().startup(ctx)
 
         logger.info("Execution runtime startup completed")
 
@@ -92,7 +92,7 @@ class ExecutionRuntime:
         logger.info("Shutting down execution runtime")
 
         try:
-            await self.lifecycle.shutdown(self.__ctx.get())
+            await self.lifecycle.build().shutdown(self.__ctx.get())
 
         finally:
             self.__ctx.reset()

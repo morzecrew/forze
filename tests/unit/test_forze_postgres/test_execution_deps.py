@@ -30,11 +30,13 @@ from forze_postgres.adapters import (
 )
 from forze_postgres.adapters.txmanager import PostgresTxManagerAdapter
 from forze_postgres.execution.deps.configs import (
+    PostgresDocumentConfig,
     PostgresHubSearchConfig,
-    validate_pg_search_conf,
-    validate_postgres_hub_search_conf,
+    PostgresHubSearchMemberConfig,
+    PostgresReadOnlyDocumentConfig,
+    PostgresSearchConfig,
 )
-from forze_postgres.execution.deps.deps import (
+from forze_postgres.execution.deps import (
     ConfigurablePostgresDocument,
     ConfigurablePostgresReadOnlyDocument,
     ConfigurablePostgresSearch,
@@ -96,35 +98,29 @@ def _ctx() -> ExecutionContext:
     )
 
 
-class TestValidatePgSearchConf:
+class TestPostgresSearchConfigValidation:
     def test_pgroonga_skips_fts_validation(self) -> None:
-        validate_pg_search_conf(
-            {
-                "engine": "pgroonga",
-                "index": ("public", "idx"),
-                "read": ("public", "src"),
-            }
+        PostgresSearchConfig(
+            engine="pgroonga",
+            index=("public", "idx"),
+            read=("public", "src"),
         )
 
     def test_fts_requires_groups(self) -> None:
         with pytest.raises(CoreException, match="FTS groups are required"):
-            validate_pg_search_conf(
-                {
-                    "engine": "fts",
-                    "index": ("public", "idx"),
-                    "read": ("public", "src"),
-                }
+            PostgresSearchConfig(
+                engine="fts",
+                index=("public", "idx"),
+                read=("public", "src"),
             )
 
     def test_fts_rejects_duplicate_fields_across_groups(self) -> None:
         with pytest.raises(CoreException, match="duplicate"):
-            validate_pg_search_conf(
-                {
-                    "engine": "fts",
-                    "index": ("public", "idx"),
-                    "read": ("public", "src"),
-                    "fts_groups": {"A": ["a", "b"], "B": ["b"]},
-                }
+            PostgresSearchConfig(
+                engine="fts",
+                index=("public", "idx"),
+                read=("public", "src"),
+                fts_groups={"A": ["a", "b"], "B": ["b"]},
             )
 
 
@@ -154,7 +150,7 @@ class TestPostgresDepsModule:
         module = PostgresDepsModule(
             client=client,
             ro_documents={
-                "ro": {"read": ("public", "only_read")},
+                "ro": PostgresReadOnlyDocumentConfig(read=("public", "only_read")),
             },
         )
 
@@ -166,18 +162,18 @@ class TestPostgresDepsModule:
         module = PostgresDepsModule(
             client=client,
             rw_documents={
-                "rw_route": {
-                    "read": ("public", "docs"),
-                    "write": ("public", "docs"),
-                    "bookkeeping_strategy": "application",
-                },
+                "rw_route": PostgresDocumentConfig(
+                    read=("public", "docs"),
+                    write=("public", "docs"),
+                    bookkeeping_strategy="application",
+                ),
             },
             searches={
-                "find": {
-                    "engine": "pgroonga",
-                    "index": ("public", "idx_find"),
-                    "read": ("public", "src_find"),
-                },
+                "find": PostgresSearchConfig(
+                    engine="pgroonga",
+                    index=("public", "idx_find"),
+                    read=("public", "src_find"),
+                ),
             },
             tx={"main"},
         )
@@ -191,19 +187,17 @@ class TestPostgresDepsModule:
 
     def test_invalid_fts_search_config_fails_at_build_time(self) -> None:
         client = MagicMock(spec=PostgresClient)
-        module = PostgresDepsModule(
-            client=client,
-            searches={
-                "bad": {
-                    "engine": "fts",
-                    "index": ("public", "i"),
-                    "read": ("public", "s"),
-                },
-            },
-        )
-
         with pytest.raises(CoreException, match="FTS groups are required"):
-            module()
+            PostgresDepsModule(
+                client=client,
+                searches={
+                    "bad": PostgresSearchConfig(
+                        engine="fts",
+                        index=("public", "i"),
+                        read=("public", "s"),
+                    ),
+                },
+            )
 
     def test_routed_client_requires_introspector_partition_key(self) -> None:
         from uuid import UUID
@@ -241,7 +235,7 @@ class TestPostgresDepsModule:
 class TestConfigurablePostgresDocumentFactories:
     def test_read_only_builds_query_adapter_without_write_gateway(self) -> None:
         factory = ConfigurablePostgresReadOnlyDocument(
-            config={"read": ("public", "v_docs")},
+            config=PostgresReadOnlyDocumentConfig(read=("public", "v_docs")),
         )
         ctx = _ctx()
         spec = DocumentSpec(name="x", read=_R)
@@ -250,15 +244,14 @@ class TestConfigurablePostgresDocumentFactories:
 
         assert isinstance(adapter, PostgresDocumentAdapter)
         assert adapter.write_gw is None
-        assert adapter.read_gw.source_qname.schema == "public"
-        assert adapter.read_gw.source_qname.name == "v_docs"
+        assert adapter.read_gw.relation == ("public", "v_docs")
 
     def test_read_only_builds_adapter_with_batch_size(self) -> None:
         factory = ConfigurablePostgresReadOnlyDocument(
-            config={
-                "read": ("public", "v_docs"),
-                "batch_size": 321,
-            },
+            config=PostgresReadOnlyDocumentConfig(
+                read=("public", "v_docs"),
+                batch_size=321,
+            ),
         )
         ctx = _ctx()
         adapter = factory(ctx, DocumentSpec(name="x", read=_R))
@@ -268,11 +261,11 @@ class TestConfigurablePostgresDocumentFactories:
 
     def test_command_requires_write_spec(self) -> None:
         factory = ConfigurablePostgresDocument(
-            config={
-                "read": ("public", "t"),
-                "write": ("public", "t"),
-                "bookkeeping_strategy": "application",
-            }
+            config=PostgresDocumentConfig(
+                read=("public", "t"),
+                write=("public", "t"),
+                bookkeeping_strategy="application",
+            )
         )
         ctx = _ctx()
         spec = DocumentSpec(name="no_write", read=_R)
@@ -282,12 +275,12 @@ class TestConfigurablePostgresDocumentFactories:
 
     def test_command_builds_adapter_with_batch_size(self) -> None:
         factory = ConfigurablePostgresDocument(
-            config={
-                "read": ("public", "t"),
-                "write": ("public", "t"),
-                "bookkeeping_strategy": "application",
-                "batch_size": 333,
-            }
+            config=PostgresDocumentConfig(
+                read=("public", "t"),
+                write=("public", "t"),
+                bookkeeping_strategy="application",
+                batch_size=333,
+            )
         )
         ctx = _ctx()
         adapter = factory(ctx, _rw_spec())
@@ -298,11 +291,11 @@ class TestConfigurablePostgresDocumentFactories:
 
     def test_builds_when_history_enabled_but_no_history_relation(self) -> None:
         factory = ConfigurablePostgresDocument(
-            config={
-                "read": ("public", "t"),
-                "write": ("public", "t"),
-                "bookkeeping_strategy": "application",
-            }
+            config=PostgresDocumentConfig(
+                read=("public", "t"),
+                write=("public", "t"),
+                bookkeeping_strategy="application",
+            )
         )
         ctx = _ctx()
         adapter = factory(ctx, _rw_spec(history_enabled=True))
@@ -320,11 +313,11 @@ class TestConfigurablePostgresSearch:
 
     def test_pgroonga_branch(self) -> None:
         factory = ConfigurablePostgresSearch(
-            config={
-                "engine": "pgroonga",
-                "index": ("public", "gi"),
-                "read": ("public", "gs"),
-            }
+            config=PostgresSearchConfig(
+                engine="pgroonga",
+                index=("public", "gi"),
+                read=("public", "gs"),
+            )
         )
         ctx = _ctx()
         out = factory(ctx, self._search_spec())
@@ -333,12 +326,12 @@ class TestConfigurablePostgresSearch:
 
     def test_fts_branch(self) -> None:
         factory = ConfigurablePostgresSearch(
-            config={
-                "engine": "fts",
-                "index": ("public", "fi"),
-                "read": ("public", "fs"),
-                "fts_groups": {"A": ["title"]},
-            }
+            config=PostgresSearchConfig(
+                engine="fts",
+                index=("public", "fi"),
+                read=("public", "fs"),
+                fts_groups={"A": ["title"]},
+            )
         )
         ctx = _ctx()
         out = factory(ctx, self._search_spec())
@@ -347,14 +340,14 @@ class TestConfigurablePostgresSearch:
 
     def test_vector_branch(self) -> None:
         factory = ConfigurablePostgresSearch(
-            config={
-                "engine": "vector",
-                "index": ("public", "vi"),
-                "read": ("public", "vs"),
-                "vector_column": "vector_column",
-                "embedding_dimensions": 1234,
-                "embeddings_name": "embeddings_name",
-            }
+            config=PostgresSearchConfig(
+                engine="vector",
+                index=("public", "vi"),
+                read=("public", "vs"),
+                vector_column="vector_column",
+                embedding_dimensions=1234,
+                embeddings_name="embeddings_name",
+            )
         )
         ctx = _ctx()
         out = factory(ctx, self._search_spec())
@@ -362,17 +355,14 @@ class TestConfigurablePostgresSearch:
         assert isinstance(out, PostgresVectorSearchAdapter)
 
     def test_fts_missing_groups_in_call_raises(self) -> None:
-        factory = ConfigurablePostgresSearch(
-            config={
-                "engine": "fts",
-                "index": ("public", "fi"),
-                "read": ("public", "fs"),
-            }
-        )
-        ctx = _ctx()
-
         with pytest.raises(CoreException, match="FTS groups are required"):
-            factory(ctx, self._search_spec())
+            ConfigurablePostgresSearch(
+                config=PostgresSearchConfig(
+                    engine="fts",
+                    index=("public", "fi"),
+                    read=("public", "fs"),
+                )
+            )
 
     def test_fts_validate_groups_requires_all_search_fields(self) -> None:
         class M(BaseModel):
@@ -381,12 +371,12 @@ class TestConfigurablePostgresSearch:
 
         spec = SearchSpec(name="s", model_type=M, fields=["title", "body"])
         factory = ConfigurablePostgresSearch(
-            config={
-                "engine": "fts",
-                "index": ("public", "fi"),
-                "read": ("public", "fs"),
-                "fts_groups": {"A": ["title"]},
-            }
+            config=PostgresSearchConfig(
+                engine="fts",
+                index=("public", "fi"),
+                read=("public", "fs"),
+                fts_groups={"A": ["title"]},
+            )
         )
         ctx = _ctx()
 
@@ -394,26 +384,22 @@ class TestConfigurablePostgresSearch:
             factory(ctx, spec)
 
     def test_pgroonga_invalid_score_version_validates(self) -> None:
-        factory = ConfigurablePostgresSearch(
-            config={
-                "engine": "pgroonga",
-                "index": ("public", "gi"),
-                "read": ("public", "gs"),
-                "pgroonga_score_version": "bad",
-            }
-        )
-        ctx = _ctx()
         with pytest.raises(CoreException, match="pgroonga_score_version"):
-            factory(ctx, self._search_spec())
+            PostgresSearchConfig(
+                engine="pgroonga",
+                index=("public", "gi"),
+                read=("public", "gs"),
+                pgroonga_score_version="bad",  # type: ignore[arg-type]
+            )
 
     def test_pgroonga_score_version_v1_builds(self) -> None:
         factory = ConfigurablePostgresSearch(
-            config={
-                "engine": "pgroonga",
-                "index": ("public", "gi"),
-                "read": ("public", "gs"),
-                "pgroonga_score_version": "v1",
-            }
+            config=PostgresSearchConfig(
+                engine="pgroonga",
+                index=("public", "gi"),
+                read=("public", "gs"),
+                pgroonga_score_version="v1",
+            )
         )
         ctx = _ctx()
         out = factory(ctx, self._search_spec())
@@ -437,7 +423,7 @@ def test_read_gw_factory() -> None:
     )
 
     assert isinstance(gw, PostgresReadGateway)
-    assert gw.source_qname.string() == "public.rel_a"
+    assert gw.relation == ("public", "rel_a")
     assert gw.tenant_aware is True
 
 
@@ -470,7 +456,7 @@ def test_doc_write_gw_with_history() -> None:
     )
 
     assert gw.history_gw is not None
-    assert gw.history_gw.source_qname.name == "h"
+    assert gw.history_gw.relation == ("public", "h")
 
 
 def test_normalize_hub_fk_columns_str_and_sequence() -> None:
@@ -486,225 +472,215 @@ def test_normalize_hub_fk_columns_rejects_empty_and_dupes() -> None:
         normalize_hub_fk_columns(("p", "p"))
 
 
-def test_validate_postgres_hub_search_conf_accepts_single_leg() -> None:
-    cfg: PostgresHubSearchConfig = {
-        "hub": ("public", "h"),
-        "members": {
-            "m1": {
-                "index": ("public", "i1"),
-                "read": ("public", "t1"),
-                "hub_fk": "party_id",
-            },
+def test_postgres_hub_search_config_accepts_single_leg() -> None:
+    PostgresHubSearchConfig(
+        hub=("public", "h"),
+        members={
+            "m1": PostgresHubSearchMemberConfig(
+                index=("public", "i1"),
+                read=("public", "t1"),
+                engine="pgroonga",
+                hub_fk="party_id",
+            ),
         },
-    }
-    validate_postgres_hub_search_conf(cfg)
+    )
 
 
-def test_validate_postgres_hub_search_conf_rejects_empty_members() -> None:
-    cfg: PostgresHubSearchConfig = {
-        "hub": ("public", "h"),
-        "members": {},
-    }
+def test_postgres_hub_search_config_rejects_empty_members() -> None:
     with pytest.raises(CoreException, match="at least one leg"):
-        validate_postgres_hub_search_conf(cfg)
+        PostgresHubSearchConfig(
+            hub=("public", "h"),
+            members={},
+        )
 
 
-def test_validate_postgres_hub_search_conf_accepts_hub_fk_list() -> None:
-    cfg: PostgresHubSearchConfig = {
-        "hub": ("public", "h"),
-        "members": {
-            "m1": {
-                "index": ("public", "i1"),
-                "read": ("public", "t1"),
-                "hub_fk": ["a", "b"],
-            },
-            "m2": {
-                "index": ("public", "i2"),
-                "read": ("public", "t2"),
-                "hub_fk": "c",
-            },
+def test_postgres_hub_search_config_accepts_hub_fk_list() -> None:
+    PostgresHubSearchConfig(
+        hub=("public", "h"),
+        members={
+            "m1": PostgresHubSearchMemberConfig(
+                index=("public", "i1"),
+                read=("public", "t1"),
+                engine="pgroonga",
+                hub_fk=["a", "b"],
+            ),
+            "m2": PostgresHubSearchMemberConfig(
+                index=("public", "i2"),
+                read=("public", "t2"),
+                engine="pgroonga",
+                hub_fk="c",
+            ),
         },
-    }
-    validate_postgres_hub_search_conf(cfg)
+    )
 
 
-def test_validate_postgres_hub_search_conf_duplicate_hub_fk() -> None:
-    cfg: PostgresHubSearchConfig = {
-        "hub": ("public", "h"),
-        "members": {
-            "m1": {
-                "index": ("public", "i1"),
-                "read": ("public", "t1"),
-                "hub_fk": "x",
-            },
-            "m2": {
-                "index": ("public", "i2"),
-                "read": ("public", "t2"),
-                "hub_fk": "x",
-            },
-        },
-    }
+def test_postgres_hub_search_config_duplicate_hub_fk() -> None:
     with pytest.raises(CoreException, match="duplicate column across legs"):
-        validate_postgres_hub_search_conf(cfg)
+        PostgresHubSearchConfig(
+            hub=("public", "h"),
+            members={
+                "m1": PostgresHubSearchMemberConfig(
+                    index=("public", "i1"),
+                    read=("public", "t1"),
+                    engine="pgroonga",
+                    hub_fk="x",
+                ),
+                "m2": PostgresHubSearchMemberConfig(
+                    index=("public", "i2"),
+                    read=("public", "t2"),
+                    engine="pgroonga",
+                    hub_fk="x",
+                ),
+            },
+        )
 
 
-def test_validate_postgres_hub_search_conf_duplicate_hub_fk_within_leg() -> None:
-    cfg: PostgresHubSearchConfig = {
-        "hub": ("public", "h"),
-        "members": {
-            "m1": {
-                "index": ("public", "i1"),
-                "read": ("public", "t1"),
-                "hub_fk": ("x", "x"),
-            },
-            "m2": {
-                "index": ("public", "i2"),
-                "read": ("public", "t2"),
-                "hub_fk": "y",
-            },
-        },
-    }
+def test_postgres_hub_search_config_duplicate_hub_fk_within_leg() -> None:
     with pytest.raises(CoreException, match="unique within a leg"):
-        validate_postgres_hub_search_conf(cfg)
+        PostgresHubSearchConfig(
+            hub=("public", "h"),
+            members={
+                "m1": PostgresHubSearchMemberConfig(
+                    index=("public", "i1"),
+                    read=("public", "t1"),
+                    engine="pgroonga",
+                    hub_fk=("x", "x"),
+                ),
+                "m2": PostgresHubSearchMemberConfig(
+                    index=("public", "i2"),
+                    read=("public", "t2"),
+                    engine="pgroonga",
+                    hub_fk="y",
+                ),
+            },
+        )
 
 
-def test_validate_postgres_hub_search_conf_list_overlaps_other_leg() -> None:
-    cfg: PostgresHubSearchConfig = {
-        "hub": ("public", "h"),
-        "members": {
-            "m1": {
-                "index": ("public", "i1"),
-                "read": ("public", "t1"),
-                "hub_fk": ["a", "b"],
-            },
-            "m2": {
-                "index": ("public", "i2"),
-                "read": ("public", "t2"),
-                "hub_fk": "b",
-            },
-        },
-    }
+def test_postgres_hub_search_config_list_overlaps_other_leg() -> None:
     with pytest.raises(CoreException, match="duplicate column across legs"):
-        validate_postgres_hub_search_conf(cfg)
+        PostgresHubSearchConfig(
+            hub=("public", "h"),
+            members={
+                "m1": PostgresHubSearchMemberConfig(
+                    index=("public", "i1"),
+                    read=("public", "t1"),
+                    engine="pgroonga",
+                    hub_fk=["a", "b"],
+                ),
+                "m2": PostgresHubSearchMemberConfig(
+                    index=("public", "i2"),
+                    read=("public", "t2"),
+                    engine="pgroonga",
+                    hub_fk="b",
+                ),
+            },
+        )
 
 
-def test_validate_postgres_hub_search_conf_fts_requires_fts_groups() -> None:
-    cfg: PostgresHubSearchConfig = {
-        "hub": ("public", "h"),
-        "members": {
-            "m1": {
-                "index": ("public", "i1"),
-                "read": ("public", "t1"),
-                "hub_fk": "a",
-                "engine": "fts",
-            },
-            "m2": {
-                "index": ("public", "i2"),
-                "read": ("public", "t2"),
-                "hub_fk": "b",
-                "engine": "fts",
-            },
+def test_postgres_hub_search_config_fts_requires_fts_groups() -> None:
+    with pytest.raises(CoreException, match="FTS groups are required"):
+        PostgresHubSearchMemberConfig(
+            index=("public", "i1"),
+            read=("public", "t1"),
+            hub_fk="a",
+            engine="fts",
+        )
+
+
+def test_postgres_hub_search_config_same_heap_as_hub_ok() -> None:
+    PostgresHubSearchConfig(
+        hub=("public", "h"),
+        members={
+            "m1": PostgresHubSearchMemberConfig(
+                index=("public", "i1"),
+                read=("public", "h"),
+                engine="pgroonga",
+                hub_fk="id",
+                same_heap_as_hub=True,
+            ),
         },
-    }
-    with pytest.raises(CoreException, match="fts_groups"):
-        validate_postgres_hub_search_conf(cfg)
+    )
 
 
-def test_validate_postgres_hub_search_conf_same_heap_as_hub_ok() -> None:
-    cfg: PostgresHubSearchConfig = {
-        "hub": ("public", "h"),
-        "members": {
-            "m1": {
-                "index": ("public", "i1"),
-                "read": ("public", "h"),
-                "hub_fk": "id",
-                "same_heap_as_hub": True,
-            },
-        },
-    }
-    validate_postgres_hub_search_conf(cfg)
-
-
-def test_validate_postgres_hub_search_conf_same_heap_as_hub_mismatched_read() -> None:
-    cfg: PostgresHubSearchConfig = {
-        "hub": ("public", "h"),
-        "members": {
-            "m1": {
-                "index": ("public", "i1"),
-                "read": ("public", "other"),
-                "hub_fk": "id",
-                "same_heap_as_hub": True,
-            },
-        },
-    }
+def test_postgres_hub_search_config_same_heap_as_hub_mismatched_read() -> None:
     with pytest.raises(CoreException, match="same qualified relation"):
-        validate_postgres_hub_search_conf(cfg)
-
-
-def test_validate_postgres_hub_search_conf_same_heap_as_hub_fk_not_pk() -> None:
-    cfg: PostgresHubSearchConfig = {
-        "hub": ("public", "h"),
-        "members": {
-            "m1": {
-                "index": ("public", "i1"),
-                "read": ("public", "h"),
-                "hub_fk": "ref_id",
-                "heap_pk": "id",
-                "same_heap_as_hub": True,
+        PostgresHubSearchConfig(
+            hub=("public", "h"),
+            members={
+                "m1": PostgresHubSearchMemberConfig(
+                    index=("public", "i1"),
+                    read=("public", "other"),
+                    engine="pgroonga",
+                    hub_fk="id",
+                    same_heap_as_hub=True,
+                ),
             },
-        },
-    }
+        )
+
+
+def test_postgres_hub_search_config_same_heap_as_hub_fk_not_pk() -> None:
     with pytest.raises(CoreException, match="heap_pk"):
-        validate_postgres_hub_search_conf(cfg)
-
-
-def test_validate_postgres_hub_search_conf_same_heap_as_hub_fts() -> None:
-    cfg: PostgresHubSearchConfig = {
-        "hub": ("public", "h"),
-        "members": {
-            "m1": {
-                "index": ("public", "i1"),
-                "read": ("public", "h"),
-                "hub_fk": "id",
-                "engine": "fts",
-                "fts_groups": {"A": ("a",)},
-                "same_heap_as_hub": True,
+        PostgresHubSearchConfig(
+            hub=("public", "h"),
+            members={
+                "m1": PostgresHubSearchMemberConfig(
+                    index=("public", "i1"),
+                    read=("public", "h"),
+                    engine="pgroonga",
+                    hub_fk="ref_id",
+                    heap_pk="id",
+                    same_heap_as_hub=True,
+                ),
             },
-        },
-    }
+        )
+
+
+def test_postgres_hub_search_config_same_heap_as_hub_fts() -> None:
     with pytest.raises(CoreException, match="same_heap_as_hub with engine 'fts'"):
-        validate_postgres_hub_search_conf(cfg)
-
-
-def test_validate_postgres_hub_search_conf_same_heap_as_hub_field_map() -> None:
-    cfg: PostgresHubSearchConfig = {
-        "hub": ("public", "h"),
-        "members": {
-            "m1": {
-                "index": ("public", "i1"),
-                "read": ("public", "h"),
-                "hub_fk": "id",
-                "field_map": {"a": "b"},
-                "same_heap_as_hub": True,
+        PostgresHubSearchConfig(
+            hub=("public", "h"),
+            members={
+                "m1": PostgresHubSearchMemberConfig(
+                    index=("public", "i1"),
+                    read=("public", "h"),
+                    hub_fk="id",
+                    engine="fts",
+                    fts_groups={"A": ("a",)},
+                    same_heap_as_hub=True,
+                ),
             },
-        },
-    }
+        )
+
+
+def test_postgres_hub_search_config_same_heap_as_hub_field_map() -> None:
     with pytest.raises(CoreException, match="field_map"):
-        validate_postgres_hub_search_conf(cfg)
-
-
-def test_validate_postgres_hub_search_conf_same_heap_as_hub_pgroonga_v1() -> None:
-    cfg: PostgresHubSearchConfig = {
-        "hub": ("public", "h"),
-        "members": {
-            "m1": {
-                "index": ("public", "i1"),
-                "read": ("public", "h"),
-                "hub_fk": "id",
-                "pgroonga_score_version": "v1",
-                "same_heap_as_hub": True,
+        PostgresHubSearchConfig(
+            hub=("public", "h"),
+            members={
+                "m1": PostgresHubSearchMemberConfig(
+                    index=("public", "i1"),
+                    read=("public", "h"),
+                    engine="pgroonga",
+                    hub_fk="id",
+                    field_map={"a": "b"},
+                    same_heap_as_hub=True,
+                ),
             },
-        },
-    }
+        )
+
+
+def test_postgres_hub_search_config_same_heap_as_hub_pgroonga_v1() -> None:
     with pytest.raises(CoreException, match="v2"):
-        validate_postgres_hub_search_conf(cfg)
+        PostgresHubSearchConfig(
+            hub=("public", "h"),
+            members={
+                "m1": PostgresHubSearchMemberConfig(
+                    index=("public", "i1"),
+                    read=("public", "h"),
+                    engine="pgroonga",
+                    hub_fk="id",
+                    pgroonga_score_version="v1",
+                    same_heap_as_hub=True,
+                ),
+            },
+        )

@@ -9,16 +9,12 @@ For the conceptual overview, see [Application Layer](../concepts/application-lay
 `Handler[Args, R]` is a protocol for application operations. Built-in handlers in `forze.application.handlers` are attrs classes that receive ports in their constructor and implement `__call__(args) -> R`:
 
     :::python
-    from uuid import UUID
-
-    from forze.application.contracts.document import DocumentQueryPort
     from forze.application.contracts.execution import Handler
+    from forze.application.handlers.document import DocumentIdDTO, GetDocument
 
-    class GetProject(Handler[UUID, ProjectRead]):
-        doc: DocumentQueryPort[ProjectRead]
-
-        async def __call__(self, args: UUID) -> ProjectRead:
-            return await self.doc.get(args)
+    # Typical factory on OperationRegistry:
+    get_factory = lambda ctx: GetDocument(doc=ctx.document.query(project_spec))
+    # At runtime: await handler(DocumentIdDTO(id=some_uuid))
 
 Register handler factories on `OperationRegistry` with `set_handler` or the `handlers=` constructor dict. At runtime, `FrozenOperationRegistry.resolve(operation, ctx)` builds the handler and runs the compiled stage pipeline.
 
@@ -38,7 +34,7 @@ Register handler factories on `OperationRegistry` with `set_handler` or the `han
     registry = (
         OperationRegistry(
             handlers={
-                "projects.get": lambda ctx: GetProject(doc=ctx.document.query(project_spec)),
+                "projects.get": lambda ctx: GetDocument(doc=ctx.document.query(project_spec)),
                 "projects.create": lambda ctx: CreateProject(doc=ctx.document.command(project_spec)),
             },
         )

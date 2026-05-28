@@ -12,7 +12,8 @@ from forze.application.contracts.analytics import (
 from forze.application.execution import ExecutionContext
 from forze.base.exceptions import CoreException, ExceptionKind
 from forze_bigquery.adapters import BigQueryAnalyticsAdapter
-from forze_bigquery.execution import BigQueryDepsModule
+from forze_bigquery.execution import BigQueryAnalyticsConfig, BigQueryDepsModule
+from forze_bigquery.execution.deps.configs import BigQueryQueryConfig
 
 pytestmark = pytest.mark.integration
 
@@ -42,21 +43,25 @@ def _spec() -> AnalyticsSpec[_Row, _Ingest]:
     )
 
 
+def _config(dataset_id: str, table_id: str, *, sql: str | None = None) -> BigQueryAnalyticsConfig:
+    query_sql = sql or f"SELECT event, value FROM {dataset_id}.{table_id}"
+    return BigQueryAnalyticsConfig(
+        dataset=dataset_id,
+        queries={
+            "all": BigQueryQueryConfig(sql=query_sql),
+        },
+        ingest_table=table_id,
+    )
+
+
 @pytest.mark.asyncio
 async def test_append_and_query(bigquery_client, analytics_dataset) -> None:
     dataset_id, table_id = analytics_dataset
     spec = _spec()
-    config = {
-        "dataset": dataset_id,
-        "queries": {
-            "all": {"sql": f"SELECT event, value FROM {dataset_id}.{table_id}"},
-        },
-        "ingest_table": table_id,
-    }
     adapter = BigQueryAnalyticsAdapter(
         client=bigquery_client,
         spec=spec,
-        config=config,
+        config=_config(dataset_id, table_id),
     )
 
     await adapter.append([_Ingest(event="signup", value=42)])
@@ -72,17 +77,7 @@ async def test_deps_module_wiring(bigquery_client, analytics_dataset) -> None:
     spec = _spec()
     module = BigQueryDepsModule(
         client=bigquery_client,
-        analytics={
-            "events": {
-                "dataset": dataset_id,
-                "queries": {
-                    "all": {
-                        "sql": f"SELECT event, value FROM {dataset_id}.{table_id}",
-                    },
-                },
-                "ingest_table": table_id,
-            },
-        },
+        analytics={"events": _config(dataset_id, table_id)},
     )
     ctx = ExecutionContext(deps=module())
     port = ctx.analytics.query(spec)
@@ -97,13 +92,7 @@ async def test_run_cursor_round_trip(bigquery_client, analytics_dataset) -> None
     adapter = BigQueryAnalyticsAdapter(
         client=bigquery_client,
         spec=spec,
-        config={
-            "dataset": dataset_id,
-            "queries": {
-                "all": {"sql": f"SELECT event, value FROM {dataset_id}.{table_id}"},
-            },
-            "ingest_table": table_id,
-        },
+        config=_config(dataset_id, table_id),
     )
 
     await adapter.append([_Ingest(event="cursor_a", value=1)])
@@ -125,13 +114,7 @@ async def test_run_chunked_reads_batches(bigquery_client, analytics_dataset) -> 
     adapter = BigQueryAnalyticsAdapter(
         client=bigquery_client,
         spec=_spec(),
-        config={
-            "dataset": dataset_id,
-            "queries": {
-                "all": {"sql": f"SELECT event, value FROM {dataset_id}.{table_id}"},
-            },
-            "ingest_table": table_id,
-        },
+        config=_config(dataset_id, table_id),
     )
 
     await adapter.append([_Ingest(event=f"chunk_{i}", value=i) for i in range(3)])
@@ -157,15 +140,11 @@ async def test_invalid_query_surfaces_infrastructure_error(
     adapter = BigQueryAnalyticsAdapter(
         client=bigquery_client,
         spec=_spec(),
-        config={
-            "dataset": dataset_id,
-            "queries": {
-                "all": {
-                    "sql": f"SELECT definitely_not_a_column FROM {dataset_id}.{table_id}",
-                },
-            },
-            "ingest_table": table_id,
-        },
+        config=_config(
+            dataset_id,
+            table_id,
+            sql=f"SELECT definitely_not_a_column FROM {dataset_id}.{table_id}",
+        ),
     )
 
     with pytest.raises(CoreException) as exc_info:

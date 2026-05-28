@@ -13,6 +13,7 @@ from forze.application.contracts.document import (
 from forze.application.contracts.querying import QueryFilterExpression
 from forze.application.execution import Deps, ExecutionContext
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
+from forze_firestore.execution.deps.configs import FirestoreDocumentConfig
 from forze_firestore.execution.deps.deps import ConfigurableFirestoreDocument
 from forze_firestore.execution.deps.keys import FirestoreClientDepKey
 from forze_firestore.kernel.platform import FirestoreClient
@@ -48,11 +49,11 @@ async def test_firestore_document_adapter_roundtrip_with_history(
     )
 
     configurable = ConfigurableFirestoreDocument(
-        config={
-            "read": ("(default)", collection),
-            "write": ("(default)", collection),
-            "history": ("(default)", history_collection),
-        }
+        config=FirestoreDocumentConfig(
+            read=("(default)", collection),
+            write=("(default)", collection),
+            history=("(default)", history_collection),
+        ),
     )
     ctx = ExecutionContext(
         deps=Deps.plain(

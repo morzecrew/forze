@@ -25,7 +25,13 @@ Pass **`DepsModule` instances** to `DepsPlan.from_modules`. Each module’s `__c
 from enum import StrEnum
 
 from forze.application.execution import DepsPlan, ExecutionRuntime, LifecyclePlan
-from forze_postgres import PostgresDepsModule, postgres_lifecycle_step, PostgresClient, PostgresConfig
+from forze_postgres import (
+    PostgresClient,
+    PostgresConfig,
+    PostgresDepsModule,
+    PostgresDocumentConfig,
+    postgres_lifecycle_step,
+)
 from forze_redis import RedisDepsModule, redis_lifecycle_step, RedisClient, RedisConfig
 
 
@@ -44,11 +50,11 @@ deps_plan = DepsPlan.from_modules(
     PostgresDepsModule(
         client=postgres_client,
         rw_documents={
-            ResourceName.PROJECTS: {
-                "read": ("public", "projects"),
-                "write": ("public", "projects"),
-                "bookkeeping_strategy": "database",
-            },
+            ResourceName.PROJECTS: PostgresDocumentConfig(
+                read=("public", "projects"),
+                write=("public", "projects"),
+                bookkeeping_strategy="database",
+            ),
         },
         tx={TxRoute.DEFAULT},
     ),
@@ -74,14 +80,18 @@ deps_plan = DepsPlan.from_modules(
 
 ### Lifecycle plan
 
-Manages startup/shutdown of connection pools:
+Manages startup/shutdown of connection pools. Use `LifecyclePlan.from_modules(...)` for integration modules (for example `PostgresLifecycleModule`) or `from_steps(...)` for individual factories. `build()` topologically orders steps using `requires` / `provides` / `depends_on` on each `LifecycleStep`; `ExecutionRuntime` calls `build()` automatically.
 
 ```python
-lifecycle_plan = LifecyclePlan.from_steps(
-    postgres_lifecycle_step(
+from forze_postgres import PostgresLifecycleModule
+
+lifecycle_plan = LifecyclePlan.from_modules(
+    PostgresLifecycleModule(
+        client=pg,
         dsn="postgresql://app:app@localhost:5432/app",
         config=PostgresConfig(min_size=2, max_size=15),
     ),
+).with_steps(
     redis_lifecycle_step(
         dsn="redis://localhost:6379/0",
         config=RedisConfig(max_size=20),

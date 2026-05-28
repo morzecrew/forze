@@ -30,17 +30,23 @@ Kernel `DocumentSpec` names must match keys in `MongoDepsModule.rw_documents` / 
 
     :::python
     from forze.application.execution import DepsPlan, ExecutionRuntime, LifecyclePlan
-    from forze_mongo import MongoClient, MongoConfig, MongoDepsModule, mongo_lifecycle_step
+    from forze_mongo import (
+        MongoClient,
+        MongoConfig,
+        MongoDepsModule,
+        MongoDocumentConfig,
+        mongo_lifecycle_step,
+    )
 
     client = MongoClient()
     module = MongoDepsModule(
         client=client,
         rw_documents={
-            "projects": {
-                "read": ("app", "projects"),
-                "write": ("app", "projects"),
-                "history": ("app", "projects_history"),
-            },
+            "projects": MongoDocumentConfig(
+                read=("app", "projects"),
+                write=("app", "projects"),
+                history=("app", "projects_history"),
+            ),
         },
         tx={"default"},
     )
@@ -250,7 +256,7 @@ Register `SearchSpec.name` in `MongoDepsModule.searches` with a `MongoSearchConf
 
     :::python
     from forze.application.contracts.search import SearchSpec
-    from forze_mongo import MongoDepsModule
+    from forze_mongo import MongoDepsModule, MongoSearchConfig
 
     project_search = SearchSpec(
         name="projects",
@@ -262,11 +268,11 @@ Register `SearchSpec.name` in `MongoDepsModule.searches` with a `MongoSearchConf
         client=mongo,
         rw_documents={...},
         searches={
-            "projects": {
-                "read": ("app", "projects"),
-                "engine": "atlas",
-                "index_name": "default",  # required for atlas and vector
-            },
+            "projects": MongoSearchConfig(
+                read=("app", "projects"),
+                engine="atlas",
+                index_name="default",  # required for atlas and vector
+            ),
         },
     )
 

@@ -1,6 +1,8 @@
 """Low-level type aliases for Redis stream and pub/sub wire formats."""
 
-from typing import Mapping, Sequence
+from typing import Mapping
+
+from redis.typing import XReadGroupResponse, XReadResponse
 
 # ----------------------- #
 
@@ -16,15 +18,7 @@ RedisStreamBatch = tuple[str, list[RedisStreamEntry]]
 RedisStreamResponse = list[RedisStreamBatch]
 """Parsed response from ``XREAD`` or ``XREADGROUP``, one batch per stream."""
 
-RawRedisStreamResponse = (
-    Sequence[
-        tuple[
-            str | bytes,
-            list[tuple[str | bytes, object]],
-        ]
-    ]
-    | None
-)
+RawRedisStreamResponse = XReadResponse | XReadGroupResponse | None
 """Raw ``redis-py`` response before normalisation to :data:`RedisStreamResponse`."""
 
 # ....................... #

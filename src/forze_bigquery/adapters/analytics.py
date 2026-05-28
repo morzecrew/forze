@@ -76,7 +76,7 @@ class BigQueryAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
 
     def _query_config(self, query_key: str) -> BigQueryQueryConfig:
         try:
-            return self.config["queries"][query_key]
+            return self.config.queries[query_key]
 
         except KeyError as e:
             raise exc.precondition(f"Unknown analytics query key: {query_key!r}") from e
@@ -89,7 +89,7 @@ class BigQueryAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
     # ....................... #
 
     def _sql(self, query_key: str) -> str:
-        return self._query_config(query_key)["sql"]
+        return self._query_config(query_key).sql
 
     # ....................... #
 
@@ -100,7 +100,7 @@ class BigQueryAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
     ) -> int | None:
         qc = self._query_config(query_key)
 
-        return qc.get("maximum_bytes_billed")
+        return qc.maximum_bytes_billed
 
     # ....................... #
 
@@ -110,12 +110,12 @@ class BigQueryAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
     # ....................... #
 
     def _skip_total(self, query_key: str) -> bool:
-        return bool(self._query_config(query_key).get("skip_total"))
+        return self._query_config(query_key).skip_total
 
     # ....................... #
 
     def _max_append_rows(self) -> int:
-        return int(self.config.get("max_append_rows", 10_000))
+        return self.config.max_append_rows
 
     # ....................... #
 
@@ -583,7 +583,7 @@ class BigQueryAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
                 f"Analytics ingest is not configured for route {self.spec.name!r}."
             )
 
-        table = self.config.get("ingest_table")
+        table = self.config.ingest_table
 
         if not table:
             raise exc.internal(
@@ -620,10 +620,10 @@ class BigQueryAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
                 )
 
         insert_result = await self.client.insert_rows(
-            self.config["dataset"],
+            self.config.dataset,
             table,
             payloads,
-            insert_id_field=self.config.get("insert_id_field"),
+            insert_id_field=self.config.insert_id_field,
         )
 
         return AnalyticsAppendResult(

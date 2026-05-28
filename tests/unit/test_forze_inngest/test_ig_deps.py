@@ -7,6 +7,7 @@ from forze.application.contracts.durable.function import (
 from forze.application.execution import Deps
 from forze_inngest.adapters import InngestEventCommandAdapter, InngestStepAdapter
 from forze_inngest.execution.deps import InngestClientDepKey, InngestDepsModule
+from forze_inngest.execution.deps.configs import InngestEventConfig
 from forze_inngest.execution.deps.deps import ConfigurableInngestEventCommand
 from forze_inngest.kernel.platform import InngestClientPort
 
@@ -15,7 +16,9 @@ def test_inngest_deps_module_registers_keys() -> None:
     client = Mock(spec=InngestClientPort)
     module = InngestDepsModule(
         client=client,
-        events={"app/test": {"include_execution_context": False}},
+        events={
+            "app/test": InngestEventConfig(include_execution_context=False),
+        },
     )
 
     deps = module()
@@ -44,7 +47,7 @@ def test_configurable_event_command_builds_adapter() -> None:
     )
 
     factory = ConfigurableInngestEventCommand(
-        config={"include_execution_context": False},
+        config=InngestEventConfig(include_execution_context=False),
     )
     adapter = factory(ctx, spec)
 

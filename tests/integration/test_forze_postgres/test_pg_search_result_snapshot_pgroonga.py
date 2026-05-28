@@ -17,13 +17,15 @@ from forze.application.contracts.search import (
 )
 from forze.application.execution import Deps, ExecutionContext
 from forze_postgres.adapters.search import PostgresPGroongaSearchAdapter
-from forze_postgres.execution.deps.deps import ConfigurablePostgresSearch
+from forze_postgres.execution.deps import ConfigurablePostgresSearch
+from forze_postgres.execution.deps.configs import PostgresSearchConfig
 from forze_postgres.execution.deps.keys import (
     PostgresClientDepKey,
     PostgresIntrospectorDepKey,
 )
 from forze_postgres.kernel.catalog.introspect import PostgresIntrospector
 from forze_postgres.kernel.client.client import PostgresClient
+from forze_redis.execution.deps.configs import RedisSearchResultSnapshotConfig
 from forze_redis.execution.deps.deps import ConfigurableRedisSearchResultSnapshot
 from forze_redis.execution.deps.keys import RedisClientDepKey
 from forze_redis.kernel.platform.client import RedisClient
@@ -76,15 +78,15 @@ async def test_pgroonga_v2_result_snapshot_reread(
                 PostgresIntrospectorDepKey: PostgresIntrospector(client=pg_client),
                 RedisClientDepKey: redis_client,
                 SearchResultSnapshotDepKey: ConfigurableRedisSearchResultSnapshot(
-                    config={"namespace": ns},
+                    config=RedisSearchResultSnapshotConfig(namespace=ns),
                 ),
                 SearchQueryDepKey: ConfigurablePostgresSearch(
-                    config={
-                        "index": ("public", index_name),
-                        "read": ("public", table),
-                        "heap": ("public", table),
-                        "engine": "pgroonga",
-                    }
+                    config=PostgresSearchConfig(
+                        index=("public", index_name),
+                        read=("public", table),
+                        heap=("public", table),
+                        engine="pgroonga",
+                    )
                 ),
             }
         )
@@ -157,15 +159,15 @@ async def test_pgroonga_v2_filter_only_empty_query_snapshot_reread(
                 PostgresIntrospectorDepKey: PostgresIntrospector(client=pg_client),
                 RedisClientDepKey: redis_client,
                 SearchResultSnapshotDepKey: ConfigurableRedisSearchResultSnapshot(
-                    config={"namespace": ns},
+                    config=RedisSearchResultSnapshotConfig(namespace=ns),
                 ),
                 SearchQueryDepKey: ConfigurablePostgresSearch(
-                    config={
-                        "index": ("public", index_name),
-                        "read": ("public", table),
-                        "heap": ("public", table),
-                        "engine": "pgroonga",
-                    }
+                    config=PostgresSearchConfig(
+                        index=("public", index_name),
+                        read=("public", table),
+                        heap=("public", table),
+                        engine="pgroonga",
+                    )
                 ),
             }
         )

@@ -133,7 +133,7 @@ vault = [
     "urllib3>=2.7.0",
 ]
 inngest = ["inngest>=0.5.18"]
-meilisearch = ["meilisearch-python-sdk>=7.0.0"]
+meilisearch = ["meilisearch-python-sdk>=7.2.1"]
 
 # ....................... #
 
@@ -225,7 +225,7 @@ omit = [
     "*/_compat.py",
     "*/_logging.py",
     # DI lifecycle modules are integration/service wiring (containers, signals), not core library logic.
-    "*/forze_postgres/execution/lifecycle.py",
+    "*/forze_postgres/execution/lifecycle/pool.py",
     "*/forze_mongo/execution/lifecycle.py",
     "*/forze_firestore/execution/lifecycle.py",
     "*/forze_redis/execution/lifecycle.py",

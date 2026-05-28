@@ -11,6 +11,10 @@ from forze.application.execution import ExecutionContext
 from forze.base.exceptions import CoreException
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
 from forze_firestore.adapters.document import FirestoreDocumentAdapter
+from forze_firestore.execution.deps.configs import (
+    FirestoreDocumentConfig,
+    FirestoreReadOnlyDocumentConfig,
+)
 from forze_firestore.execution.deps.deps import (
     ConfigurableFirestoreDocument,
     ConfigurableFirestoreReadOnlyDocument,
@@ -62,7 +66,7 @@ def _ctx(client: object = object()) -> ExecutionContext:
 class TestConfigurableFirestoreReadOnlyDocument:
     def test_builds_read_only_adapter(self) -> None:
         factory = ConfigurableFirestoreReadOnlyDocument(
-            config={"read": ("(default)", "coll")},
+            config=FirestoreReadOnlyDocumentConfig(read=("(default)", "coll")),
         )
         adapter = factory(_ctx(), _rw_spec())
         assert isinstance(adapter, FirestoreDocumentAdapter)
@@ -72,10 +76,10 @@ class TestConfigurableFirestoreReadOnlyDocument:
 class TestConfigurableFirestoreDocument:
     def test_requires_write_spec(self) -> None:
         factory = ConfigurableFirestoreDocument(
-            config={
-                "read": ("(default)", "r"),
-                "write": ("(default)", "w"),
-            },
+            config=FirestoreDocumentConfig(
+                read=("(default)", "r"),
+                write=("(default)", "w"),
+            ),
         )
         spec = DocumentSpec(name="ro", read=_Read)
 
@@ -84,10 +88,10 @@ class TestConfigurableFirestoreDocument:
 
     def test_warns_when_history_enabled_without_relation(self) -> None:
         factory = ConfigurableFirestoreDocument(
-            config={
-                "read": ("(default)", "r"),
-                "write": ("(default)", "w"),
-            },
+            config=FirestoreDocumentConfig(
+                read=("(default)", "r"),
+                write=("(default)", "w"),
+            ),
         )
         mock_logger = MagicMock()
 
@@ -102,11 +106,11 @@ class TestConfigurableFirestoreDocument:
 
     def test_warns_when_history_relation_but_disabled(self) -> None:
         factory = ConfigurableFirestoreDocument(
-            config={
-                "read": ("(default)", "r"),
-                "write": ("(default)", "w"),
-                "history": ("(default)", "h"),
-            },
+            config=FirestoreDocumentConfig(
+                read=("(default)", "r"),
+                write=("(default)", "w"),
+                history=("(default)", "h"),
+            ),
         )
         mock_logger = MagicMock()
 

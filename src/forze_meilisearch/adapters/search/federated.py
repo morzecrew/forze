@@ -257,7 +257,7 @@ class MeilisearchFederatedSearchAdapter[M: BaseModel](
         return_count: bool,
         return_type: type[BaseModel] | None,
     ) -> Any:
-        from meilisearch_python_sdk.models.search import SearchParams
+        from meilisearch_python_sdk.models.search import FederationOptions, SearchParams
 
         leg_opts, member_weights = prepare_federated_search_options(
             self.federated_spec,
@@ -300,7 +300,7 @@ class MeilisearchFederatedSearchAdapter[M: BaseModel](
         q = build_search_query_string(terms, combine=combine)
         index_to_member = self._index_to_member()
 
-        queries: list[Any] = []
+        queries: list[SearchParams] = []
 
         for i, (name, adapter) in enumerate(self.legs):
             weight = member_weights[i]
@@ -332,9 +332,9 @@ class MeilisearchFederatedSearchAdapter[M: BaseModel](
                 params_kwargs["sort"] = sort_list
 
             queries.append(
-                (
-                    SearchParams(**params_kwargs),
-                    {"weight": float(weight)},
+                SearchParams(
+                    **params_kwargs,
+                    federation_options=FederationOptions(weight=float(weight)),
                 )
             )
 

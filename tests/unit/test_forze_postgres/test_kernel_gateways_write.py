@@ -43,14 +43,13 @@ def _build_gateway() -> (
     introspector.get_primary_key_columns = AsyncMock(return_value=(ID_FIELD,))
     introspector.constraint_exists_for_columns = AsyncMock(return_value=True)
 
-    qname = PostgresQualifiedName(schema="public", name="docs")
     read = MagicMock(spec=PostgresReadGateway)
-    read.source_qname = qname
+    read.relation = ("public", "docs")
     read.client = client
     read.tenant_aware = False
 
     gw = PostgresWriteGateway(
-        source_qname=qname,
+        relation=("public", "docs"),
         client=client,
         model_type=MyDoc,
         introspector=introspector,
@@ -292,14 +291,13 @@ def _build_tenant_aware_gateway() -> (
     introspector.get_primary_key_columns = AsyncMock(return_value=(ID_FIELD,))
     introspector.constraint_exists_for_columns = AsyncMock(return_value=True)
 
-    qname = PostgresQualifiedName(schema="public", name="docs")
     read = MagicMock(spec=PostgresReadGateway)
-    read.source_qname = qname
+    read.relation = ("public", "docs")
     read.client = client
     read.tenant_aware = True
 
     gw = PostgresWriteGateway(
-        source_qname=qname,
+        relation=("public", "docs"),
         client=client,
         model_type=MyDoc,
         introspector=introspector,

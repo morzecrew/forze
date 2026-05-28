@@ -8,6 +8,7 @@ from pydantic import BaseModel
 from forze.application.contracts.search import SearchCommandDepKey, SearchSpec
 from forze.application.execution import Deps, ExecutionContext
 from forze_meilisearch.execution.deps import MeilisearchClientDepKey
+from forze_meilisearch.execution.deps import MeilisearchSearchConfig
 from forze_meilisearch.execution.deps.deps import ConfigurableMeilisearchSearchCommand
 
 # ----------------------- #
@@ -28,7 +29,7 @@ async def test_command_delete_round_trip(meilisearch_client) -> None:
             {
                 MeilisearchClientDepKey: meilisearch_client,
                 SearchCommandDepKey: ConfigurableMeilisearchSearchCommand(
-                    config={"index_uid": index_uid},
+                    config=MeilisearchSearchConfig(index_uid=index_uid),
                 ),
             }
         )

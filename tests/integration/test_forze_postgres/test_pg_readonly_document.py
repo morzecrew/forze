@@ -8,13 +8,14 @@ import pytest
 from forze.application.contracts.document import DocumentQueryDepKey, DocumentSpec
 from forze.application.execution import Deps, ExecutionContext
 from forze.domain.models import ReadDocument
-from forze_postgres.execution.deps.deps import ConfigurablePostgresReadOnlyDocument
+from forze_postgres.execution.deps import ConfigurablePostgresReadOnlyDocument
 from forze_postgres.execution.deps.keys import (
     PostgresClientDepKey,
     PostgresIntrospectorDepKey,
 )
 from forze_postgres.kernel.catalog.introspect import PostgresIntrospector
 from forze_postgres.kernel.client.client import PostgresClient
+from forze_postgres.execution.deps.configs import PostgresReadOnlyDocumentConfig
 
 class _ReadOnlyRow(ReadDocument):
     title: str
@@ -45,7 +46,7 @@ async def test_readonly_get_after_sql_insert(pg_client: PostgresClient) -> None:
     )
 
     ro = ConfigurablePostgresReadOnlyDocument(
-        config={"read": ("public", t)},
+        config=PostgresReadOnlyDocumentConfig(read=("public", t)),
     )
     ctx = ExecutionContext(
         deps=Deps.plain(
@@ -90,7 +91,7 @@ async def test_readonly_find_many_sorts_and_count(pg_client: PostgresClient) -> 
             {"id": uuid4(), "title": title},
         )
 
-    ro = ConfigurablePostgresReadOnlyDocument(config={"read": ("public", t)})
+    ro = ConfigurablePostgresReadOnlyDocument(config=PostgresReadOnlyDocumentConfig(read=("public", t)))
     ctx = ExecutionContext(
         deps=Deps.plain(
             {
@@ -139,7 +140,7 @@ async def test_readonly_get_missing_raises(pg_client: PostgresClient) -> None:
         );
         """
     )
-    ro = ConfigurablePostgresReadOnlyDocument(config={"read": ("public", t)})
+    ro = ConfigurablePostgresReadOnlyDocument(config=PostgresReadOnlyDocumentConfig(read=("public", t)))
     ctx = ExecutionContext(
         deps=Deps.plain(
             {
@@ -175,7 +176,7 @@ async def test_readonly_get_many_partial_missing_raises(pg_client: PostgresClien
         """,
         {"id": doc_id, "title": "solo"},
     )
-    ro = ConfigurablePostgresReadOnlyDocument(config={"read": ("public", t)})
+    ro = ConfigurablePostgresReadOnlyDocument(config=PostgresReadOnlyDocumentConfig(read=("public", t)))
     ctx = ExecutionContext(
         deps=Deps.plain(
             {

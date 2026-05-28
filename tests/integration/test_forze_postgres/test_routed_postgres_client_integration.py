@@ -15,6 +15,8 @@ from forze.application.contracts.secrets import SecretRef
 
 from forze_postgres.kernel.client import PostgresClient, PostgresConfig, RoutedPostgresClient
 
+from tests.integration._routed_lru_helpers import postgres_dsns_for_lru_eviction
+
 def _ref(tid: UUID) -> SecretRef:
     return SecretRef(path=f"tenants/{tid}/dsn")
 
@@ -243,7 +245,7 @@ async def test_routed_postgres_transaction_bound_connection_require_tx(postgres_
 async def test_routed_postgres_lru_eviction(postgres_container) -> None:
     url = _normalize_postgres_url(postgres_container.get_connection_url())
     t1, t2, t3 = uuid4(), uuid4(), uuid4()
-    secrets = _MemSecretsCallableTenant({t1: url, t2: url, t3: url})
+    secrets = _MemSecretsCallableTenant(postgres_dsns_for_lru_eviction(url, t1, t2, t3))
     tenant_get, tenant_set = _tenant_holder()
 
     routed = RoutedPostgresClient(

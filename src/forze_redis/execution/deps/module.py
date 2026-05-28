@@ -37,13 +37,6 @@ from .keys import RedisBlockingClientDepKey, RedisClientDepKey
 # ----------------------- #
 
 
-def _idem_mapping_keys(config: Any) -> list[Any]:
-    if not isinstance(config, MappingABC):
-        return []
-
-    return list(config.keys())  # type: ignore[reportUnknownArgumentType]
-
-
 def _is_idem_routed(config: Any) -> TypeGuard[Mapping[Any, RedisIdempotencyConfig]]:
     if not isinstance(config, MappingABC):
         return False
@@ -53,20 +46,11 @@ def _is_idem_routed(config: Any) -> TypeGuard[Mapping[Any, RedisIdempotencyConfi
     if len(routes) < 1:
         return False
 
-    for v in routes.values():
-        if not isinstance(v, MappingABC) or "namespace" not in v:
-            return False
-
-    return True
+    return all(isinstance(v, RedisIdempotencyConfig) for v in routes.values())
 
 
 def _is_idem_plain(config: Any) -> TypeGuard[RedisIdempotencyConfig]:
-    keys = _idem_mapping_keys(config)
-
-    if not keys:
-        return False
-
-    return not isinstance(config[keys[0]], MappingABC)
+    return isinstance(config, RedisIdempotencyConfig)
 
 
 # ....................... #

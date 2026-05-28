@@ -50,12 +50,15 @@ The application layer imports from the domain layer but never from infrastructur
 
 ## Infrastructure layer
 
-The infrastructure layer provides concrete implementations of application contracts:
+The infrastructure layer provides concrete implementations of application contracts. Representative packages include:
 
-- `forze_postgres` implements document and search ports using PostgreSQL
-- `forze_redis` implements cache, counter, idempotency, pub/sub, and stream ports
-- `forze_s3` implements the storage port using S3-compatible services
-- `forze_mongo` implements document and transaction ports using MongoDB
+- `forze_postgres`, `forze_mongo`, `forze_firestore` — document, search, and transaction ports
+- `forze_redis` — cache, counter, idempotency, pub/sub, stream, and search snapshots
+- `forze_s3`, `forze_gcs` — object storage
+- `forze_meilisearch` — external search query and command ports
+- `forze_temporal`, `forze_inngest` — durable workflow and function ports
+- `forze_rabbitmq`, `forze_sqs` — queue ports
+- `forze_identity` — authentication, authorization, and tenancy adapters (among others)
 
 Infrastructure packages import from both application and domain layers to implement contracts and serialize domain models.
 
@@ -65,6 +68,7 @@ The interface layer is the outermost, user-facing boundary of the backend. It ha
 
 - `forze_fastapi` provides HTTP routing, idempotency handling, and OpenAPI integration
 - `forze_socketio` provides real-time WebSocket event routing and typed command dispatch
+- Integration-specific serve helpers (for example Inngest `serve`) attach workers to the same execution runtime
 
 Interface packages depend on the application layer (to resolve handlers and execution contexts) and on infrastructure (for runtime wiring and lifecycle management). They never contain business logic.
 

@@ -28,7 +28,7 @@ async def test_find_many_applies_implicit_limit_when_omitted() -> None:
     intro.cache_partition_key = None
 
     gw = PostgresReadGateway(
-        source_qname=PostgresQualifiedName("public", "t"),
+        relation=("public", "t"),
         client=client,
         model_type=_Row,
         introspector=intro,

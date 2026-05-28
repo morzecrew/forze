@@ -12,8 +12,6 @@ cursors are unsupported.
 cheap total count.
 """
 
-from __future__ import annotations
-
 from typing import (
     Any,
     AsyncGenerator,
@@ -26,7 +24,7 @@ from typing import (
 
 from pydantic import BaseModel
 
-from forze.base.primitives import JsonDict
+from forze.base.primitives import JsonDict, StrKey
 
 from ..base import CountlessPage, CursorPage, Page
 from ..querying import CursorPaginationExpression, PaginationExpression
@@ -67,7 +65,7 @@ class AnalyticsQueryPort[R: BaseModel](BaseAnalyticsPort, Protocol):
 
     def run(
         self,
-        query_key: str,
+        query_key: StrKey,
         params: BaseModel,
         pagination: PaginationExpression | None = None,
         *,
@@ -78,7 +76,7 @@ class AnalyticsQueryPort[R: BaseModel](BaseAnalyticsPort, Protocol):
 
     def run_page(
         self,
-        query_key: str,
+        query_key: StrKey,
         params: BaseModel,
         pagination: PaginationExpression | None = None,
         *,
@@ -89,7 +87,7 @@ class AnalyticsQueryPort[R: BaseModel](BaseAnalyticsPort, Protocol):
 
     def run_chunked(
         self,
-        query_key: str,
+        query_key: StrKey,
         params: BaseModel,
         pagination: PaginationExpression | None = None,
         *,
@@ -102,7 +100,7 @@ class AnalyticsQueryPort[R: BaseModel](BaseAnalyticsPort, Protocol):
     def project_run(
         self,
         fields: Sequence[str],
-        query_key: str,
+        query_key: StrKey,
         params: BaseModel,
         pagination: PaginationExpression | None = None,
         *,
@@ -114,7 +112,7 @@ class AnalyticsQueryPort[R: BaseModel](BaseAnalyticsPort, Protocol):
     def project_run_page(
         self,
         fields: Sequence[str],
-        query_key: str,
+        query_key: StrKey,
         params: BaseModel,
         pagination: PaginationExpression | None = None,
         *,
@@ -126,7 +124,7 @@ class AnalyticsQueryPort[R: BaseModel](BaseAnalyticsPort, Protocol):
     def project_run_chunked(
         self,
         fields: Sequence[str],
-        query_key: str,
+        query_key: StrKey,
         params: BaseModel,
         pagination: PaginationExpression | None = None,
         *,
@@ -139,7 +137,7 @@ class AnalyticsQueryPort[R: BaseModel](BaseAnalyticsPort, Protocol):
     def select_run(
         self,
         return_type: type[T],
-        query_key: str,
+        query_key: StrKey,
         params: BaseModel,
         pagination: PaginationExpression | None = None,
         *,
@@ -151,7 +149,7 @@ class AnalyticsQueryPort[R: BaseModel](BaseAnalyticsPort, Protocol):
     def select_run_page(
         self,
         return_type: type[T],
-        query_key: str,
+        query_key: StrKey,
         params: BaseModel,
         pagination: PaginationExpression | None = None,
         *,
@@ -163,7 +161,7 @@ class AnalyticsQueryPort[R: BaseModel](BaseAnalyticsPort, Protocol):
     def select_run_chunked(
         self,
         return_type: type[T],
-        query_key: str,
+        query_key: StrKey,
         params: BaseModel,
         pagination: PaginationExpression | None = None,
         *,
@@ -175,7 +173,7 @@ class AnalyticsQueryPort[R: BaseModel](BaseAnalyticsPort, Protocol):
 
     def run_cursor(
         self,
-        query_key: str,
+        query_key: StrKey,
         params: BaseModel,
         cursor: CursorPaginationExpression | None = None,
         *,
@@ -187,7 +185,7 @@ class AnalyticsQueryPort[R: BaseModel](BaseAnalyticsPort, Protocol):
     def project_run_cursor(
         self,
         fields: Sequence[str],
-        query_key: str,
+        query_key: StrKey,
         params: BaseModel,
         cursor: CursorPaginationExpression | None = None,
         *,
@@ -199,7 +197,7 @@ class AnalyticsQueryPort[R: BaseModel](BaseAnalyticsPort, Protocol):
     def select_run_cursor(
         self,
         return_type: type[T],
-        query_key: str,
+        query_key: StrKey,
         params: BaseModel,
         cursor: CursorPaginationExpression | None = None,
         *,

@@ -7,6 +7,7 @@ require_psycopg()
 # ....................... #
 
 from typing import Any, Literal, Mapping, Protocol, Sequence, TypeVar
+from uuid import UUID
 
 from psycopg import sql
 from pydantic import BaseModel
@@ -44,9 +45,16 @@ class HubSearchHost(Protocol[M]):
     read_fields: frozenset[str]
     model_type: type[M]
     nested_field_hints: Mapping[str, Any] | None
-    source_qname: PostgresQualifiedName
     introspector: PostgresIntrospector
     client: PostgresClientPort
+
+    # ....................... #
+
+    def _tenant_id_for_resolve(self) -> UUID | None: ...
+
+    # ....................... #
+
+    async def _qname(self) -> PostgresQualifiedName: ...
 
     # ....................... #
 

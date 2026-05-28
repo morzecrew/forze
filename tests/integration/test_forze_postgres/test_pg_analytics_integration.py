@@ -13,6 +13,7 @@ from forze.application.execution import ExecutionContext
 from forze.base.exceptions import CoreException
 from forze_postgres.adapters.analytics import PostgresAnalyticsAdapter
 from forze_postgres.execution import PostgresDepsModule
+from forze_postgres.execution.deps.configs import PostgresAnalyticsConfig, PostgresQueryConfig
 from forze_postgres.kernel.client import PostgresClient
 
 pytestmark = pytest.mark.integration
@@ -43,16 +44,16 @@ def _spec() -> AnalyticsSpec[_Row, _Ingest]:
     )
 
 
-def _config(table_id: str) -> dict[str, object]:
-    return {
-        "schema": "public",
-        "queries": {
-            "all": {
-                "sql": f"SELECT event, value FROM public.{table_id}",
-            },
+def _config(table_id: str) -> PostgresAnalyticsConfig:
+    return PostgresAnalyticsConfig(
+        schema="public",
+        queries={
+            "all": PostgresQueryConfig(
+                sql=f"SELECT event, value FROM public.{table_id}",
+            ),
         },
-        "ingest_table": table_id,
-    }
+        ingest_table=table_id,
+    )
 
 
 @pytest.mark.asyncio
@@ -62,7 +63,7 @@ async def test_append_and_query(pg_client: PostgresClient, pg_analytics_table: s
     adapter = PostgresAnalyticsAdapter(
         client=pg_client,
         spec=spec,
-        config=_config(table_id),  # type: ignore[arg-type]
+        config=_config(table_id),
     )
 
     await adapter.append([_Ingest(event="signup", value=42)])
@@ -79,7 +80,7 @@ async def test_deps_module_wiring(pg_client: PostgresClient, pg_analytics_table:
     module = PostgresDepsModule(
         client=pg_client,
         analytics={
-            "events": _config(table_id),  # type: ignore[dict-item]
+            "events": _config(table_id),
         },
     )
     ctx = ExecutionContext(deps=module())
@@ -98,7 +99,7 @@ async def test_run_chunked_reads_batches(
     adapter = PostgresAnalyticsAdapter(
         client=pg_client,
         spec=spec,
-        config=_config(table_id),  # type: ignore[arg-type]
+        config=_config(table_id),
     )
 
     await adapter.append([_Ingest(event=f"evt_{i}", value=i) for i in range(3)])
@@ -125,7 +126,7 @@ async def test_run_cursor_offset_pagination(
     adapter = PostgresAnalyticsAdapter(
         client=pg_client,
         spec=spec,
-        config=_config(table_id),  # type: ignore[arg-type]
+        config=_config(table_id),
     )
 
     await adapter.append([_Ingest(event=f"page_{i}", value=i) for i in range(5)])
@@ -154,7 +155,7 @@ async def test_run_cursor_rejects_before_cursor(
     adapter = PostgresAnalyticsAdapter(
         client=pg_client,
         spec=_spec(),
-        config=_config(table_id),  # type: ignore[arg-type]
+        config=_config(table_id),
     )
 
     with pytest.raises(CoreException, match="Backward analytics cursors"):
