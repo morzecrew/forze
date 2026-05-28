@@ -12,6 +12,7 @@ class ForzeFastAPILogger(StrEnum):
 
     ACCESS = "fastapi.access"
     ENDPOINTS = "fastapi.endpoints"
+    ERRORS = "fastapi.errors"
     MIDDLEWARES = "fastapi.middlewares"
 
 

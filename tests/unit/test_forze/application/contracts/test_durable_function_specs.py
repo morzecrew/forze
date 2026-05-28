@@ -57,3 +57,13 @@ class TestDurableFunctionSpec:
 
         assert spec.name == "fn"
         assert len(spec.triggers) == 2
+
+    def test_accepts_optional_operation_key(self) -> None:
+        spec = DurableFunctionSpec(
+            name="scan-inbox",
+            operation="jobs.scan_inbox",
+            run=DurableFunctionInvokeSpec(args_type=_In, return_type=_Out),
+            triggers=(DurableFunctionCronTrigger(expression="0 */3 * * *"),),
+        )
+
+        assert spec.operation == "jobs.scan_inbox"

@@ -42,7 +42,9 @@ from forze.application.contracts.querying import (
     QuerySortExpression,
     assemble_keyset_cursor_page,
     assert_cursor_projection_includes_sort_keys,
-    normalize_sorts_with_id,
+    normalize_sorts_for_keyset,
+    read_fields_for_model,
+    resolve_effective_sorts,
 )
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
@@ -465,6 +467,25 @@ class DocumentCoordinator(
     # ....................... #
 
     @cached_property
+    def _read_fields(self) -> frozenset[str]:
+        return read_fields_for_model(self.spec.read)
+
+    # ....................... #
+
+    def _resolve_sorts(
+        self,
+        sorts: QuerySortExpression | None,
+    ) -> QuerySortExpression:
+        return resolve_effective_sorts(
+            sorts=sorts,
+            default_sort=self.spec.default_sort,
+            read_fields=self._read_fields,
+            spec_name=self.spec.name,
+        )
+
+    # ....................... #
+
+    @cached_property
     def eff_batch_size(self) -> int:
         if self.batch_size < 10:
             logger.warning("Batch size is too small, using default value of 200")
@@ -839,7 +860,7 @@ class DocumentCoordinator(
         if limit is None:
             chunk = self.eff_batch_size
             off = 0 if offset is None else offset
-            sorts_for_scan: QuerySortExpression = sorts if sorts else {ID_FIELD: "asc"}
+            sorts_for_scan = self._resolve_sorts(sorts)
             res = []
 
             while True:
@@ -1248,7 +1269,11 @@ class DocumentCoordinator(
         if return_model is not None and return_fields is not None:
             raise exc.precondition("return_model and return_fields cannot be combined")
 
-        normalized = normalize_sorts_with_id(sorts)
+        effective = self._resolve_sorts(sorts)
+        normalized = normalize_sorts_for_keyset(
+            effective,
+            read_fields=self._read_fields,
+        )
 
         sort_keys = [k for k, _ in normalized]
         directions = [d for _, d in normalized]
@@ -1269,7 +1294,7 @@ class DocumentCoordinator(
         raw = await self.read_gw.find_many_with_cursor(  # type: ignore[call-overload, misc]
             filters,
             cursor=cursor,
-            sorts=sorts,
+            sorts=effective,
             return_model=return_model,  # type: ignore[arg-type]
             return_fields=return_fields,  # type: ignore[typeddict, arg-type, misc]
         )

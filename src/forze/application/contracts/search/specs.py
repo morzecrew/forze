@@ -7,6 +7,8 @@ from pydantic import BaseModel
 from forze.base.exceptions import exc
 
 from ..base import BaseSpec
+from ..querying import QuerySortExpression
+from ..querying.sort_resolution import read_fields_for_model, validate_sort_fields
 
 # ----------------------- #
 
@@ -63,9 +65,19 @@ class SearchSpec[M: BaseModel](BaseSpec):
     snapshot: SearchResultSnapshotSpec | None = attrs.field(default=None)
     """Optional defaults for result-ID snapshotting."""
 
+    default_sort: QuerySortExpression | None = attrs.field(default=None)
+    """Default ``sorts`` when callers omit them (required for models without ``id``)."""
+
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
+        if self.default_sort is not None:
+            validate_sort_fields(
+                self.default_sort,
+                read_fields=read_fields_for_model(self.model_type),
+                spec_name=self.name,
+            )
+
         if len(self.fields) != len(set(self.fields)):
             raise exc.configuration("Search fields must be unique.")
 
@@ -110,9 +122,19 @@ class HubSearchSpec[M: BaseModel](BaseSpec):
     snapshot: SearchResultSnapshotSpec | None = attrs.field(default=None)
     """Optional defaults for result-ID snapshotting (outer hub adapter)."""
 
+    default_sort: QuerySortExpression | None = attrs.field(default=None)
+    """Default ``sorts`` for hub browse/cursor when callers omit them."""
+
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
+        if self.default_sort is not None:
+            validate_sort_fields(
+                self.default_sort,
+                read_fields=read_fields_for_model(self.model_type),
+                spec_name=self.name,
+            )
+
         names = [member.name for member in self.members]
 
         if len(names) != len(set(names)):

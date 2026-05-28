@@ -3,7 +3,7 @@
 from collections.abc import Callable, Sequence
 from typing import TYPE_CHECKING, Any
 
-from forze.application.execution import ExecutionContext
+from forze.application.execution import ExecutionContext, FrozenOperationRegistry
 
 from .._compat import require_fastapi, require_inngest
 from ..execution.registration import InngestFunctionBinding, register_functions
@@ -24,6 +24,7 @@ def serve(
     bindings: Sequence[InngestFunctionBinding[Any, Any]],
     *,
     ctx_factory: Callable[[], ExecutionContext],
+    registry: FrozenOperationRegistry | None = None,
 ) -> None:
     """Register Inngest functions and mount the Inngest serve handler on ``app``."""
 
@@ -35,6 +36,7 @@ def serve(
         client,
         bindings,
         ctx_factory=ctx_factory,
+        registry=registry,
     )
 
     inngest_serve(app, client.native, functions)

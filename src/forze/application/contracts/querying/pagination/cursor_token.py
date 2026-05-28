@@ -4,9 +4,7 @@ import base64
 import json
 from typing import Any, Sequence
 
-from forze.application.contracts.querying import QuerySortExpression
 from forze.base.exceptions import exc
-from forze.domain.constants import ID_FIELD
 
 # ----------------------- #
 
@@ -40,6 +38,9 @@ def _jsonify_value(v: Any) -> Any:
     return str(v)
 
 
+# ....................... #
+
+
 def _parse_value(v: Any) -> Any:
     if v is None:
         return None
@@ -54,40 +55,6 @@ def _parse_value(v: Any) -> Any:
 
 
 # ....................... #
-
-
-def normalize_sorts_with_id(
-    sorts: QuerySortExpression | None,
-) -> list[tuple[str, str]]:
-    """Uniform-direction sorts with *id* as final tie-breaker."""
-    s = dict(sorts) if sorts else {}
-    if not s:
-        return [(ID_FIELD, "asc")]
-
-    dirs: set[str] = {s[k] for k in s}  # type: ignore[assignment, operator]
-
-    if len(dirs) != 1:
-        raise exc.internal(
-            "Keyset (cursor) pagination requires all sort directions to match "
-            "(all ``asc`` or all ``desc``).",
-        )
-    direction = next(iter(dirs))
-
-    if direction not in _DIRECTIONS:
-        raise exc.internal("Invalid sort direction in sorts expression")
-
-    order_keys: list[str] = [k for k in s if k != ID_FIELD]
-
-    if ID_FIELD in s:
-        order_keys.append(ID_FIELD)
-
-    else:
-        order_keys.append(ID_FIELD)
-
-    return [
-        (k, s[k] if k in s else direction)  # type: ignore[dict-item, misc]
-        for k in order_keys
-    ]
 
 
 def encode_keyset_v1(
@@ -120,6 +87,9 @@ def encode_keyset_v1(
     return base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii")
 
 
+# ....................... #
+
+
 def row_value_for_sort_key(row: dict[str, Any], key: str) -> Any:
     if "." not in key:
         return row.get(key)
@@ -130,6 +100,9 @@ def row_value_for_sort_key(row: dict[str, Any], key: str) -> Any:
         cur = cur.get(part)  # type: ignore[assignment, misc]
 
     return cur  # type: ignore[return-value]
+
+
+# ....................... #
 
 
 def decode_keyset_v1(token: str) -> tuple[list[str], list[str], list[Any]]:

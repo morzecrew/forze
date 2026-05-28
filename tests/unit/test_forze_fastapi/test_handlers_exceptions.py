@@ -1,5 +1,6 @@
 """Unit tests for forze_fastapi.exceptions."""
 
+import io
 import json
 
 import pytest
@@ -7,13 +8,39 @@ from fastapi import FastAPI
 from starlette.requests import Request
 from starlette.testclient import TestClient
 
-from forze.base.exceptions import CoreException, ExceptionKind, exc
+from forze.base.exceptions import CoreException, exc
+from forze.base.logging import configure_logging
 from forze.base.scrubbing import SECRET_PLACEHOLDER
+from forze_fastapi._logging import ForzeFastAPILogger
 from forze_fastapi.exceptions import (
     ERROR_CODE_HEADER,
     _forze_exception_handler,
     register_exception_handlers,
 )
+
+# ----------------------- #
+
+
+def _json_records(stream: io.StringIO) -> list[dict]:
+    out: list[dict] = []
+    for line in stream.getvalue().strip().split("\n"):
+        line = line.strip()
+        if line.startswith("{"):
+            out.append(json.loads(line))
+    return out
+
+
+@pytest.fixture
+def error_log_buf() -> io.StringIO:
+    buf = io.StringIO()
+    configure_logging(
+        level="info",
+        logger_names=[str(ForzeFastAPILogger.ERRORS)],
+        stream=buf,
+        render_mode="json",
+    )
+    return buf
+
 
 # ----------------------- #
 
@@ -27,6 +54,13 @@ class TestForzeExceptionHandler:
         assert response.status_code == 404
         assert response.body == b'{"detail":"Document not found"}'
         assert response.headers.get(ERROR_CODE_HEADER) == "core.not_found"
+
+    @pytest.mark.asyncio
+    async def test_not_found_does_not_log(self, error_log_buf: io.StringIO) -> None:
+        err = exc.not_found("Document not found")
+        request = Request(scope={"type": "http", "path": "/", "method": "GET"})
+        await _forze_exception_handler(request, err)
+        assert _json_records(error_log_buf) == []
 
     @pytest.mark.asyncio
     async def test_conflict_returns_409(self) -> None:
@@ -51,6 +85,46 @@ class TestForzeExceptionHandler:
         response = await _forze_exception_handler(request, err)
         assert response.status_code == 500
         assert response.headers.get(ERROR_CODE_HEADER) == "internal"
+
+    @pytest.mark.asyncio
+    async def test_internal_without_cause_logs_error_without_stack(
+        self,
+        error_log_buf: io.StringIO,
+    ) -> None:
+        err = exc.internal("Something went wrong", code="internal")
+        request = Request(scope={"type": "http", "path": "/", "method": "GET"})
+        await _forze_exception_handler(request, err)
+
+        records = _json_records(error_log_buf)
+        assert len(records) == 1
+        row = records[0]
+        assert row["level"] == "error"
+        assert row["event"] == "Server error"
+        assert row["error_code"] == "internal"
+        assert row["error_kind"] == "internal"
+        assert "error.stack" not in row
+
+    @pytest.mark.asyncio
+    async def test_internal_with_cause_logs_critical_with_stack(
+        self,
+        error_log_buf: io.StringIO,
+    ) -> None:
+        try:
+            raise ValueError("root cause")
+        except ValueError as cause:
+            err = exc.internal("Something went wrong", code="internal")
+            err.__cause__ = cause
+
+        request = Request(scope={"type": "http", "path": "/", "method": "GET"})
+        await _forze_exception_handler(request, err)
+
+        records = _json_records(error_log_buf)
+        assert len(records) == 1
+        row = records[0]
+        assert row["level"] == "critical"
+        assert row["event"] == "Server error"
+        assert row["error_code"] == "internal"
+        assert "ValueError" in row["error.stack"]
 
     @pytest.mark.asyncio
     async def test_includes_context_when_error_has_details(self) -> None:
@@ -114,7 +188,10 @@ class TestRegisterExceptionHandlers:
         assert response.json() == {"detail": "Not found"}
         assert response.headers.get(ERROR_CODE_HEADER) == "core.not_found"
 
-    def test_unhandled_exception_returns_500(self) -> None:
+    def test_unhandled_exception_returns_500_json(
+        self,
+        error_log_buf: io.StringIO,
+    ) -> None:
         app = FastAPI()
 
         @app.get("/raise")
@@ -126,5 +203,12 @@ class TestRegisterExceptionHandlers:
         client = TestClient(app, raise_server_exceptions=False)
         response = client.get("/raise")
         assert response.status_code == 500
-        assert response.headers.get("content-type", "").startswith("text/plain")
-        assert response.text == "Internal Server Error"
+        assert response.json() == {"detail": "Internal server error"}
+
+        records = _json_records(error_log_buf)
+        assert len(records) == 1
+        row = records[0]
+        assert row["level"] == "critical"
+        assert row["event"] == "Unhandled exception"
+        assert row["error.type"] == "ValueError"
+        assert "ValueError" in row["error.stack"]

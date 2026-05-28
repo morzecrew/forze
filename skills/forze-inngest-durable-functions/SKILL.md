@@ -74,16 +74,34 @@ await port.send(InvoicePaidPayload(invoice_id="inv-1"))
 
 ## Worker: register and serve
 
+**Canonical (frozen registry operation):** set `operation` on the spec and bind the
+same `frozen_registry` as HTTP routes.
+
 ```python
-from forze_inngest import InngestFunctionBinding
+from forze_inngest import InngestFunctionBinding, register_functions
 from forze_inngest.fastapi import serve
 
+scan_spec = DurableFunctionSpec(
+    name="scan-inbox",
+    operation="jobs.scan_inbox",
+    run=DurableFunctionInvokeSpec(args_type=CronTickArgs, return_type=None),
+    triggers=(DurableFunctionCronTrigger(expression="0 */3 * * *"),),
+)
+
+binding = InngestFunctionBinding.for_registry_operation(scan_spec, frozen_registry)
+
+register_functions(client, [binding], ctx_factory=make_execution_context)
+serve(app, client, [binding], ctx_factory=make_execution_context)
+```
+
+**Escape hatch:** `handler_factory` when `operation` is unset (custom handler, not a
+registry op).
+
+```python
 binding = InngestFunctionBinding(
     spec=on_invoice_paid,
     handler_factory=lambda ctx: OnInvoicePaidHandler(deps=ctx.deps),
 )
-
-serve(app, client, [binding], ctx_factory=make_execution_context)
 ```
 
 ## Steps

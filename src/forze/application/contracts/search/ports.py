@@ -2,8 +2,9 @@
 
 **Cursor search (``search_cursor`` / ``project_search_cursor`` / ``select_search_cursor``):**
 SQL and vector adapters must keyset within the same ranked ``ORDER BY`` (score columns +
-tie-breakers, typically ``id``). That implies declaring cursor columns in :class:`.SearchSpec` or
-Postgres search config, reusing the index heap primary key where applicable. Postgres hub and
+optional user sorts, then a tie-breaker when the read model has ``id``). Set
+:class:`.SearchSpec` ``default_sort`` (or pass ``sorts``) for read models without ``id``; use a
+stable composite key for SQL views. Postgres hub and
 simple adapters inject keyset columns into the query when using projection cursor methods, then
 return only the requested fields. Federated (RRF) search does not implement cursors yet; use
 offset methods such as :meth:`~SearchQueryPort.search` or :meth:`~SearchQueryPort.search_page`

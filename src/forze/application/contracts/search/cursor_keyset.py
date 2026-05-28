@@ -42,8 +42,10 @@ def ranked_search_cursor_key_spec(
     *,
     rank_field: str,
     sorts: QuerySortExpression | None,
+    read_fields: frozenset[str],
+    tiebreaker: str = ID_FIELD,
 ) -> list[tuple[str, str]]:
-    """``rank_field`` DESC, optional caller ``sorts``, then ``id`` tie-breaker."""
+    """``rank_field`` DESC, optional caller ``sorts``, then optional tie-breaker."""
 
     spec: list[tuple[str, str]] = [(rank_field, "desc")]
 
@@ -60,7 +62,7 @@ def ranked_search_cursor_key_spec(
 
     have = {k for k, _ in spec}
 
-    if ID_FIELD not in have:
+    if tiebreaker not in have and tiebreaker in read_fields:
         id_dir = "asc"
 
         if sorts:
@@ -69,6 +71,6 @@ def ranked_search_cursor_key_spec(
             if len(dirs) == 1:
                 id_dir = next(iter(dirs))
 
-        spec.append((ID_FIELD, id_dir))
+        spec.append((tiebreaker, id_dir))
 
     return spec

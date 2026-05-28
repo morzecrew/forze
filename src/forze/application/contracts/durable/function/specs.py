@@ -83,13 +83,21 @@ DurableFunctionTrigger = DurableFunctionEventTrigger | DurableFunctionCronTrigge
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class DurableFunctionSpec(Generic[In, Out], BaseSpec):
-    """Specification for an event-driven durable function."""
+    """Specification for an event-driven durable function.
+
+    When :attr:`operation` is set, runtimes resolve and execute that operation
+    from a frozen :class:`~forze.application.execution.registry.FrozenOperationRegistry`
+    (full operation plan). Otherwise integrations use a custom handler factory.
+    """
 
     run: DurableFunctionInvokeSpec[In, Out]
     """The main invocation of the function."""
 
     triggers: tuple[DurableFunctionTrigger, ...]
     """How the function may be started (events and/or cron)."""
+
+    operation: StrKey | None = None
+    """When set, run this operation key from a frozen registry at invoke time."""
 
     # ....................... #
 

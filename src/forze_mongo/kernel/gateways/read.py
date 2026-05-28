@@ -24,7 +24,7 @@ from forze.application.contracts.querying import (
     QueryFilterExpression,
     QuerySortExpression,
     decode_keyset_v1,
-    normalize_sorts_with_id,
+    normalize_sorts_for_keyset,
 )
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
@@ -525,7 +525,10 @@ class MongoReadGateway[M: BaseModel](MongoGateway[M]):
         use_before = c.get("before") is not None
         use_after = c.get("after") is not None
 
-        normalized = normalize_sorts_with_id(sorts)
+        normalized = normalize_sorts_for_keyset(
+            sorts,
+            read_fields=self.read_fields,
+        )
 
         if [k for k, _ in normalized] != [ID_FIELD] or len(normalized) != 1:
             raise exc.internal(

@@ -9,6 +9,8 @@ from forze.domain.models import BaseDTO, CreateDocumentCmd, Document
 
 from ..base import BaseSpec
 from ..cache import CacheSpec
+from ..querying import QuerySortExpression
+from ..querying.sort_resolution import read_fields_for_model, validate_sort_fields
 
 # ----------------------- #
 
@@ -55,6 +57,19 @@ class DocumentSpec(BaseSpec, Generic[R, D, C, U]):
 
     cache: CacheSpec | None = attrs.field(default=None)
     """Cache specification for the document aggregate."""
+
+    default_sort: QuerySortExpression | None = attrs.field(default=None)
+    """Default ``sorts`` when callers omit them (required for read models without ``id``)."""
+
+    # ....................... #
+
+    def __attrs_post_init__(self) -> None:
+        if self.default_sort is not None:
+            validate_sort_fields(
+                self.default_sort,
+                read_fields=read_fields_for_model(self.read),
+                spec_name=self.name,
+            )
 
     # ....................... #
 

@@ -32,6 +32,7 @@ Required fields:
 | `write` | `DocumentWriteTypes[D, C, U] | None` | Domain/write model mapping, or `None` for read-only resources. |
 | `history_enabled` | `bool` | Enables history when supported by the adapter. |
 | `cache` | `CacheSpec | None` | Resolves a cache port while building document ports. |
+| `default_sort` | `QuerySortExpression | None` | Sort map used when callers omit ``sorts`` (required for read models without ``id``, e.g. SQL views). |
 
 Helper methods:
 

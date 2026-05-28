@@ -181,6 +181,7 @@ def _render_error_group(
     ev: NormalizedEvent,
     *,
     traceback_supress: list[str | ModuleType] | None = None,
+    max_traceback_frames: int = 20,
 ) -> Group | None:
     parts: list[Any] = []
 
@@ -193,7 +194,7 @@ def _render_error_group(
                 exc,
                 tb,
                 show_locals=False,
-                max_frames=8,
+                max_frames=max_traceback_frames,
                 suppress=traceback_supress or [],
             )
         )
@@ -227,6 +228,7 @@ def render_event(
     aliases: dict[str, str] | None = None,
     transforms: dict[str, Callable[[Any], str]] | None = None,
     traceback_supress: list[str | ModuleType] | None = None,
+    max_traceback_frames: int = 20,
     dim_extra_keys: list[str] | None = None,
 ) -> str:
     width = max(logger_name_width + message_width + 80, 160)
@@ -249,7 +251,11 @@ def render_event(
         crop=False,
     )
 
-    err_group = _render_error_group(ev, traceback_supress=traceback_supress)
+    err_group = _render_error_group(
+        ev,
+        traceback_supress=traceback_supress,
+        max_traceback_frames=max_traceback_frames,
+    )
 
     if err_group is not None:
         console.print("\n", err_group)

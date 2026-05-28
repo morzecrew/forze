@@ -204,6 +204,8 @@ FastAPI endpoint idempotency is an HTTP feature for mutating routes. Enable it o
 
 Most services stack `ContextBindingMiddleware` (bind `InvocationMetadata`, `AuthnIdentity`, `TenantIdentity`), `LoggingMiddleware`, `register_exception_handlers`, and Scalar docs. See [Authn, authz, and tenancy with FastAPI](../recipes/authn-authz-tenancy-fastapi.md) for boundary wiring.
 
+`register_exception_handlers(app)` maps `CoreException` to JSON responses and logs server-side tracebacks for HTTP 500s (never in response bodies). Include `fastapi.errors` in `configure_logging(logger_names=...)`. With `render_mode="json"`, stacks appear in the structured `error.stack` field.
+
 `CustomHeadersMiddleware` (`from forze_fastapi.middlewares import CustomHeadersMiddleware`) injects **response** headers before the response is sent. Pass `static_headers` as a string-to-string map and/or `dynamic_headers` as a map of header names to zero-argument callables that return `str` or `Awaitable[str]`. If the outgoing response already includes any of the injected header names, the middleware raises `CoreError` with a duplicate-headers message.
 
 ## Complete recipe link

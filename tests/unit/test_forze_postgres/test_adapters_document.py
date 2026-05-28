@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID, uuid4
 
 import pytest
+from pydantic import BaseModel
 
 from forze.application.contracts.document import DocumentSpec
 from forze.application.coordinators import DocumentCacheCoordinator
@@ -200,6 +201,12 @@ class TestPostgresDocumentAdapter:
 
 class TRead(ReadDocument):
     title: str
+
+
+class TViewRow(BaseModel):
+    row_key: int
+    label: str
+
 
 class TDoc(Document):
     title: str
@@ -522,6 +529,33 @@ class TestPostgresDocumentAdapterQueryDelegation:
         assert c0.kwargs["sorts"] == {ID_FIELD: "asc"}
         assert c1.kwargs["limit"] == 10 and c1.kwargs["offset"] == 10
         assert c1.kwargs["sorts"] == {ID_FIELD: "asc"}
+
+    @pytest.mark.asyncio
+    async def test_find_many_unbounded_uses_spec_default_sort_without_id(self) -> None:
+        read_gw = MagicMock(spec=PostgresReadGateway)
+        read_gw.model_type = TViewRow
+        read_gw.client = object()
+        read_gw.tenant_aware = False
+        read_gw.find_many = AsyncMock(return_value=[])
+
+        spec = DocumentSpec(
+            name="view_doc",
+            read=TViewRow,
+            default_sort={"row_key": "asc", "label": "asc"},
+        )
+        adapter = PostgresDocumentAdapter(
+            spec=spec,
+            read_gw=read_gw,
+            cache_coord=_pg_cc(read_gw, spec),
+            batch_size=10,
+        )
+
+        await adapter.find_many(filters=None)
+
+        assert read_gw.find_many.await_args.kwargs["sorts"] == {
+            "row_key": "asc",
+            "label": "asc",
+        }
 
     @pytest.mark.asyncio
     async def test_find_many_unbounded_passes_explicit_sorts_each_chunk(self) -> None:

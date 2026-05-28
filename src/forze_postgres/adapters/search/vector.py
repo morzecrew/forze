@@ -28,7 +28,8 @@ from forze.application.contracts.querying import (
     QuerySortExpression,
     decode_keyset_v1,
     encode_keyset_v1,
-    normalize_sorts_with_id,
+    normalize_sorts_for_keyset,
+    resolve_effective_sorts,
     row_value_for_sort_key,
 )
 from forze.application.contracts.search import (
@@ -559,12 +560,18 @@ class PostgresVectorSearchAdapter[M: BaseModel](
         parsed_filters = self.compile_filters(filters)
 
         if not terms:
-            if sorts is None:
-                first = sorted(self.read_fields)[0]
-                key_spec: list[tuple[str, str]] = [(first, "asc"), (ID_FIELD, "asc")]
-
-            else:
-                key_spec = list(normalize_sorts_with_id(sorts))
+            effective = resolve_effective_sorts(
+                sorts=sorts,
+                default_sort=self.spec.default_sort,
+                read_fields=self.read_fields,
+                spec_name=self.spec.name,
+            )
+            key_spec = list(
+                normalize_sorts_for_keyset(
+                    effective,
+                    read_fields=self.read_fields,
+                )
+            )
 
             sort_keys = [k for k, _ in key_spec]
             directions = [d for _, d in key_spec]
@@ -718,9 +725,12 @@ class PostgresVectorSearchAdapter[M: BaseModel](
         key_cols_r = scored_key_columns(join_r, index_alias=_PIPELINE.index)
         params_base_r = [*fp_r, *leg_params_r]
 
+        user_sorts = sorts if sorts else self.spec.default_sort
+
         key_spec_r = ranked_search_cursor_key_spec(
             rank_field=_RANK_COLUMN,
-            sorts=sorts,
+            sorts=user_sorts,
+            read_fields=self.read_fields,
         )
         sort_keys_r = [k for k, _ in key_spec_r]
         directions_r = [d for _, d in key_spec_r]

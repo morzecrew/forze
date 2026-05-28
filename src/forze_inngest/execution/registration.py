@@ -8,7 +8,7 @@ require_inngest()
 
 from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
-from typing import Any, Generic, TypeVar, final
+from typing import Any, Generic, Self, TypeVar, final
 
 import attrs
 import inngest
@@ -25,6 +25,9 @@ from forze.application.execution.context import (
     ExecutionContext,
     ExecutionContextFactory,
 )
+from forze.application.execution.running import handler_for_registry_operation
+from forze.application.execution.registry import FrozenOperationRegistry
+from forze.base.exceptions import exc
 
 from ..adapters.context import (
     InngestDecodedContext,
@@ -45,13 +48,37 @@ Out = TypeVar("Out", bound=BaseModel)
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class InngestFunctionBinding(Generic[In, Out]):
-    """Binds a :class:`DurableFunctionSpec` to a Forze handler factory."""
+    """Binds a :class:`DurableFunctionSpec` to a handler or frozen registry."""
 
     spec: DurableFunctionSpec[In, Out]
     """Function specification (triggers and argument types)."""
 
-    handler_factory: Callable[[ExecutionContext], Handler[In, Out]]
-    """Factory that builds the handler given an :class:`ExecutionContext`."""
+    handler_factory: Callable[[ExecutionContext], Handler[In, Out]] | None = None
+    """Custom handler factory when :attr:`~DurableFunctionSpec.operation` is unset."""
+
+    registry: FrozenOperationRegistry | None = None
+    """Frozen registry for :attr:`~DurableFunctionSpec.operation` (optional if passed to :func:`register_functions`)."""
+
+    def __attrs_post_init__(self) -> None:
+        if self.spec.operation is not None and self.handler_factory is not None:
+            raise exc.configuration(
+                "InngestFunctionBinding cannot set both spec.operation and handler_factory",
+            )
+
+        if self.spec.operation is None and self.handler_factory is None:
+            raise exc.configuration(
+                "InngestFunctionBinding requires handler_factory when spec.operation is unset",
+            )
+
+    @classmethod
+    def for_registry_operation(
+        cls,
+        spec: DurableFunctionSpec[In, Out],
+        registry: FrozenOperationRegistry,
+    ) -> Self:
+        """Bind *spec* with :attr:`~DurableFunctionSpec.operation` to *registry*."""
+
+        return cls(spec=spec, registry=registry)
 
 
 # ....................... #
@@ -98,13 +125,44 @@ def _bind_invocation(
 # ....................... #
 
 
+def _resolve_handler_factory(
+    binding: InngestFunctionBinding[Any, Any],
+    *,
+    registry: FrozenOperationRegistry | None,
+) -> Callable[[ExecutionContext], Handler[Any, Any]]:
+    spec = binding.spec
+
+    if spec.operation is not None:
+        reg = binding.registry or registry
+
+        if reg is None:
+            raise exc.configuration(
+                "register_functions requires registry= when spec.operation is set "
+                "and InngestFunctionBinding.registry is unset",
+            )
+
+        return handler_for_registry_operation(reg, spec.operation)
+
+    if binding.handler_factory is None:
+        raise exc.configuration(
+            "InngestFunctionBinding.handler_factory is required when spec.operation is unset",
+        )
+
+    return binding.handler_factory
+
+
+# ....................... #
+
+
 def _register_one(
     sdk: inngest.Inngest,
     binding: InngestFunctionBinding[Any, Any],
     *,
     ctx_factory: ExecutionContextFactory,
+    registry: FrozenOperationRegistry | None,
 ) -> inngest.Function[Any]:
     spec = binding.spec
+    handler_factory = _resolve_handler_factory(binding, registry=registry)
     triggers = [_map_trigger(t) for t in spec.triggers]
 
     trigger: (
@@ -134,7 +192,7 @@ def _register_one(
 
         try:
             with _bind_invocation(execution_ctx, envelope):
-                handler = binding.handler_factory(execution_ctx)
+                handler = handler_factory(execution_ctx)
                 return await handler(args)
 
         finally:
@@ -151,11 +209,18 @@ def register_functions(
     bindings: Sequence[InngestFunctionBinding[Any, Any]],
     *,
     ctx_factory: ExecutionContextFactory,
+    registry: FrozenOperationRegistry | None = None,
 ) -> list[inngest.Function[Any]]:
     """Build Inngest SDK functions from Forze bindings."""
 
     sdk = client.native
 
     return [
-        _register_one(sdk, binding, ctx_factory=ctx_factory) for binding in bindings
+        _register_one(
+            sdk,
+            binding,
+            ctx_factory=ctx_factory,
+            registry=registry,
+        )
+        for binding in bindings
     ]

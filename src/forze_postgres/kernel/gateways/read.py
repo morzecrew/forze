@@ -35,11 +35,13 @@ from forze.base.serialization import pydantic_validate, pydantic_validate_many
 from forze.domain.constants import ID_FIELD
 from forze_postgres.kernel.query import PsycopgQueryRenderer
 from forze_postgres.kernel.query.nested import sort_key_expr
+from forze.application.contracts.querying.sort_resolution import (
+    normalize_sorts_for_keyset,
+)
 from forze_postgres.pagination import (
     build_order_by_sql,
     build_seek_condition,
     decode_keyset_v1,
-    normalize_sorts_with_id,
 )
 
 from .base import PostgresGateway
@@ -609,7 +611,10 @@ class PostgresReadGateway[M: BaseModel](PostgresGateway[M]):
         use_before = c.get("before") is not None
         use_after = c.get("after") is not None
 
-        normalized = normalize_sorts_with_id(sorts)
+        normalized = normalize_sorts_for_keyset(
+            sorts,
+            read_fields=self.read_fields,
+        )
         sort_keys = [k for k, _ in normalized]
         directions = [d for _, d in normalized]
 

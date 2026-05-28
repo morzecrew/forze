@@ -47,6 +47,17 @@ Resolve from HTTP handlers:
 | `name` | Function id / route key for registration. |
 | `run` | `DurableFunctionInvokeSpec` (`args_type`, optional `return_type`). |
 | `triggers` | One or more `DurableFunctionEventTrigger` and/or `DurableFunctionCronTrigger`. |
+| `operation` | Optional operation key on a frozen `OperationRegistry`; when set, the runtime runs that operation (full plan) instead of a custom handler factory. |
+
+### Registry-backed runs (`operation`)
+
+Declare the target operation on the spec; pass a frozen registry at worker registration
+([`forze_inngest`](../../integrations/inngest.md) `register_functions(..., registry=...)`).
+The integration resolves `registry.resolve(operation, ctx)` so cron/event paths match HTTP
+operation plans (middleware, transactions, dispatch).
+
+Use a **custom** `handler_factory` on `InngestFunctionBinding` only when the function is
+not backed by a registry operation (`operation` unset).
 
 Triggers:
 

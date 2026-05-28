@@ -37,7 +37,8 @@ from forze.application.contracts.querying import (
     QuerySortExpression,
     decode_keyset_v1,
     encode_keyset_v1,
-    normalize_sorts_with_id,
+    normalize_sorts_for_keyset,
+    resolve_effective_sorts,
     row_value_for_sort_key,
 )
 from forze.application.contracts.search import (
@@ -49,6 +50,7 @@ from forze.application.contracts.search import (
     cursor_return_fields_for_select,
     normalize_search_queries,
     prepare_hub_search_options,
+    ranked_search_cursor_key_spec,
 )
 from forze.application.coordinators import SearchResultSnapshotCoordinator
 from forze.base.exceptions import exc
@@ -821,41 +823,26 @@ class PostgresHubSearchAdapter[M: BaseModel](
         sorts: QuerySortExpression | None,  # type: ignore[valid-type]
     ) -> list[tuple[str, str]]:
         if not do_legs:
-            if not sorts:
-                if ID_FIELD in self.read_fields:
-                    return [(ID_FIELD, "asc")]
+            effective = resolve_effective_sorts(
+                sorts=sorts,
+                default_sort=self.hub_spec.default_sort,
+                read_fields=self.read_fields,
+                spec_name=self.hub_spec.name,
+            )
+            return list(
+                normalize_sorts_for_keyset(
+                    effective,
+                    read_fields=self.read_fields,
+                )
+            )
 
-                first = sorted(self.read_fields)[0]
-                return [(first, "asc")]
+        user_sorts = sorts if sorts else self.hub_spec.default_sort
 
-            return list(normalize_sorts_with_id(sorts))
-
-        spec: list[tuple[str, str]] = [(_RANK, "desc")]
-
-        if sorts:
-            for field, direction in sorts.items():
-                d = str(direction).lower()
-
-                if d not in ("asc", "desc"):
-                    raise exc.internal(
-                        f"Invalid sort direction in hub cursor: {direction!r}"
-                    )
-                spec.append((field, d))
-
-        have = {k for k, _ in spec}
-
-        if ID_FIELD not in have:
-            id_dir = "asc"
-
-            if sorts:
-                dirs = {str(v).lower() for v in sorts.values()}
-
-                if len(dirs) == 1:
-                    id_dir = next(iter(dirs))
-
-            spec.append((ID_FIELD, id_dir))
-
-        return spec
+        return ranked_search_cursor_key_spec(
+            rank_field=_RANK,
+            sorts=user_sorts,
+            read_fields=self.read_fields,
+        )
 
     # ....................... #
 

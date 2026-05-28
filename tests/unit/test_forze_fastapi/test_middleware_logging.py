@@ -1,16 +1,27 @@
 """Unit tests for :class:`forze_fastapi.middlewares.logging.LoggingMiddleware`."""
 
+import io
+import json
 from unittest.mock import AsyncMock
 
 import pytest
-
-from forze.base.exceptions import CoreException
 from starlette.testclient import TestClient
 
 from forze.base.exceptions import CoreException, exc
+from forze.base.logging import configure_logging
+from forze_fastapi._logging import ForzeFastAPILogger
 from forze_fastapi.middlewares.logging import LoggingMiddleware
 
 # ----------------------- #
+
+
+def _json_records(stream: io.StringIO) -> list[dict]:
+    out: list[dict] = []
+    for line in stream.getvalue().strip().split("\n"):
+        line = line.strip()
+        if line.startswith("{"):
+            out.append(json.loads(line))
+    return out
 
 
 class TestLoggingMiddleware:
@@ -70,3 +81,29 @@ class TestLoggingMiddleware:
 
         assert response.status_code == 500
         assert response.json() == {"detail": "Internal server error"}
+
+    def test_unhandled_exception_logs_traceback(self) -> None:
+        """Fallback path logs the exception with a traceback."""
+
+        buf = io.StringIO()
+        configure_logging(
+            level="info",
+            logger_names=[str(ForzeFastAPILogger.ACCESS)],
+            stream=buf,
+            render_mode="json",
+        )
+
+        async def boom(scope: object, receive: object, send: object) -> None:
+            raise RuntimeError("boom")
+
+        mw = LoggingMiddleware(boom)
+        client = TestClient(mw, raise_server_exceptions=False)
+        client.get("/")
+
+        records = _json_records(buf)
+        assert len(records) == 1
+        row = records[0]
+        assert row["level"] == "critical"
+        assert row["event"] == "Unhandled exception"
+        assert row["error.type"] == "RuntimeError"
+        assert "RuntimeError" in row["error.stack"]

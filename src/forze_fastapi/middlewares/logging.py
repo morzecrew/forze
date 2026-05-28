@@ -80,10 +80,10 @@ class LoggingMiddleware:
             # Pass through exc.internal to be handled by the exception handler
             raise
 
-        except Exception:
+        except Exception as exc:
             # fallback only for unhandled exceptions
             process_time_ms = int((time.perf_counter() - start_time) * 1000)
-            self._log_exception(request, scope, process_time_ms)
+            self._log_exception(request, scope, process_time_ms, exc)
 
             response = JSONResponse(
                 status_code=500,
@@ -145,9 +145,10 @@ class LoggingMiddleware:
         request: Request,
         scope: Scope,
         process_time_ms: int,
+        exc: BaseException,
     ) -> None:
         log_extra = self._prepare_log_extra(request, scope, 500, process_time_ms)
-        logger.critical_exception("Unhandled exception", **log_extra)
+        logger.critical_exception("Unhandled exception", exc=exc, **log_extra)
 
 
 # ....................... #

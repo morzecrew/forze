@@ -81,13 +81,13 @@ def resolved_op_factory(  #! TODO: remove or repurpose into class... but it's us
 # ....................... #
 
 
-async def run_operation(  #! TODO: remove
+async def run_operation(
     registry: "FrozenOperationRegistry",
     op: StrKey,
     args: Any,
     ctx: "ExecutionContext",
 ) -> Any:
-    """Run an operation."""
+    """Run an operation from a frozen registry (resolve + full plan)."""
 
     resolved = registry.resolve(op, ctx)
 

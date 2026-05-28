@@ -7,10 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`forze_fastapi`:** `register_exception_handlers` now CRITICAL-logs tracebacks for unhandled exceptions and for 5xx `CoreException` with a chained cause; deliberate 5xx `CoreException` without a cause logs at ERROR with structured fields only.
+
+### Changed
+
+- **`forze_fastapi`:** Unhandled route exceptions return Forze generic JSON 500 (`{"detail":"Internal server error"}`) instead of Starlette plain text when `register_exception_handlers(app)` is used.
+
+### Added
+
+- **Sort defaults on specs:** `DocumentSpec.default_sort`, `SearchSpec.default_sort`, and `HubSearchSpec.default_sort` for stable pagination on read models without ``id`` (SQL views). Shared helpers `resolve_effective_sorts`, `normalize_sorts_for_keyset`, and `validate_sort_fields` in `forze.application.contracts.querying`.
+
+### Changed
+
+- **Document/search pagination:** Omitting ``sorts`` no longer emits ``ORDER BY id`` when the read model has no ``id`` field; configure ``default_sort`` or pass explicit ``sorts``. Keyset tie-breaker on ``id`` is applied only when ``id`` is a read-model field.
+
 ### Added
 
 - **Durable function contracts:** `DurableFunctionEventSpec`, `DurableFunctionEventCommandPort`, `DurableFunctionSpec`, triggers (`DurableFunctionEventTrigger`, `DurableFunctionCronTrigger`), `DurableFunctionStepPort`, and `DurableFunctionEventCommandDepKey` / `DurableFunctionStepDepKey` under `forze.application.contracts.durable.function`. Docs: [Durable](pages/docs/core-package/contracts/durable.md), [Durable function](pages/docs/core-package/contracts/durable-function.md).
 - **`forze_inngest`:** Inngest adapter for durable function contracts (`InngestClient`, `InngestDepsModule`, `InngestEventCommandAdapter`, `InngestStepAdapter`, `register_functions`, `InngestFunctionBinding`, `inngest_lifecycle_step`, FastAPI `serve`). Optional extra `inngest`. Docker integration tests in `tests/integration/test_forze_inngest_integration/`. Docs: [Inngest integration](pages/docs/integrations/inngest.md). Skill: `forze-inngest-durable-functions`.
+- **Durable function ↔ registry operations:** optional `DurableFunctionSpec.operation`; `handler_for_registry_operation` and `run_durable_function` in `forze.application.execution.running`; `register_functions(..., registry=)` and `InngestFunctionBinding.for_registry_operation` for cron/event runs via frozen `OperationRegistry` (custom `handler_factory` remains when `operation` is unset).
 - **Queue delayed delivery:** `QueueCommandPort.enqueue` / `enqueue_many` accept `delay` and `not_before` (mutually exclusive); `resolve_delivery_delay` and `SQS_MAX_DELAY` in `forze.application.contracts.queue`. SQS uses `DelaySeconds`; Mock filters by `visible_at`; RabbitMQ uses DLX delay queues when `delayed_delivery=True` on `RabbitMQQueueConfig`. Recipe: [scheduled queue jobs](pages/docs/recipes/scheduled-queue-jobs.md).
 - **Workflow schedule contracts:** `WorkflowScheduleTiming`, `WorkflowScheduleHandle`, `WorkflowScheduleDescription`, `WorkflowScheduleBootstrap`, `WorkflowScheduleCommandPort`, `WorkflowScheduleQueryPort`, and `WorkflowScheduleCommandDepKey` / `WorkflowScheduleQueryDepKey`. `forze_temporal` implements Temporal Schedules (create/upsert/update/delete/pause/unpause/trigger/describe/list), declarative bootstrap via `TemporalDepsModule.schedule_bootstraps`, and lifecycle upsert when `workflow_configs` is passed to `temporal_lifecycle_step`. Schedule integration tests use a Docker `temporalio/temporal` dev server (`server start-dev`) via testcontainers. See [workflow schedule contracts](pages/docs/core-package/contracts/workflow-schedule.md).
 - **Dependency tracing decomposition:** `ResolutionTracer` and `RuntimeTracer` composable recorders on `Deps`; `DepsPlan.with_tracing()` as the preferred enablement point; `DepsResolutionTrace.to_key_dag()` / `canonical_edges()` for key-level wiring graphs (routes collapsed).
@@ -28,9 +45,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`forze.application.hooks.authz`:** Operation-plan helpers (`authorize_before_step`, `document_scope_wrap_step`, `policy_scope_from_invocation`, …) moved out of `forze.application.contracts.authz` so contracts stay port-only.
 - **`forze.application.hooks.authn` / `hooks.tenancy`:** `authn_required_before_step` and `tenant_required_before_step` (and `AuthnBeforeRequired` / `TenancyBeforeRequired` factories) enforce bound `ctx.inv` principal and tenant on operation plans.
 - **Query DSL:** Text pattern filter operators `$like`, `$ilike`, and `$regex` on `$values` (and inside array element quantifiers). Operands accept a single pattern string or a sequence (OR at parse time). Parse-time limits `max_pattern_length` and `max_pattern_or_branches`; `$regex` rejects known catastrophic patterns. Postgres and Mongo renderers support all three; Firestore MVP raises `CoreError`.
+- **Console logging:** `ForzeConsoleRenderer.max_traceback_frames` controls Rich traceback frame collapsing in console mode (default `20`; `0` = show all frames). Pass via `configure_logging(..., custom_console_renderer=ForzeConsoleRenderer(max_traceback_frames=0))`.
 
 ### Changed
 
+- **Console logging:** default Rich traceback visibility increased from 8 to 20 frames before middle collapse.
 - **Durable workflow contracts (breaking):** Workflow contracts moved from `forze.application.contracts.workflow` to `forze.application.contracts.durable.workflow`. Public types renamed to `DurableWorkflow*` (for example `WorkflowSpec` → `DurableWorkflowSpec`, `WorkflowCommandDepKey` → `DurableWorkflowCommandDepKey` with dep key names `durable_workflow_command`, `durable_workflow_query`, `durable_workflow_schedule_command`, `durable_workflow_schedule_query`). Docs renamed to [durable-workflow](pages/docs/core-package/contracts/durable-workflow.md) and [durable-workflow-schedule](pages/docs/core-package/contracts/durable-workflow-schedule.md).
 - **Dependency tracing (breaking):** `Deps.merge()` no longer propagates `trace_resolution` / `trace_runtime` from partial containers; pass `resolution_tracer` / `runtime_tracer` on merge or configure tracing via `DepsPlan.with_tracing()`. `Deps` stores `resolution_tracer` and `runtime_tracer` instead of boolean flags (`trace_resolution` / `trace_runtime` remain read-only properties).
 - **Errors (breaking):** `forze.base.errors` removed in favor of `forze.base.exceptions` (`CoreException`, `exc.*` factories, `ExceptionKind`, `ExceptionInterceptor`, `map_pydantic`). HTTP `X-Error-Code` defaults are now `core.<kind>` (for example `core.not_found`). FastAPI integration no longer ships `endpoints/` or `transport.http/`; tests for those modules were dropped and remaining FastAPI tests target middleware, OpenAPI, and exception handlers only.

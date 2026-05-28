@@ -3,16 +3,44 @@
 import io
 import json
 import logging
+import sys
 
 import pytest
 import structlog
 from structlog.contextvars import bound_contextvars
 
 from forze.base.logging import Logger, configure_logging
+from forze.base.logging.constants import RICH_EXC_INFO_KEY
 from forze.base.logging.renderers import ForzeConsoleRenderer
 
 # ----------------------- #
 # Helpers
+
+
+def _deep_stack_boom(depth: int) -> None:
+    if depth <= 0:
+        raise ValueError("deep boom")
+    _deep_stack_boom(depth - 1)
+
+
+def _render_deep_exc(render: ForzeConsoleRenderer, depth: int) -> str:
+    try:
+        _deep_stack_boom(depth)
+    except ValueError:
+        exc_info = sys.exc_info()
+    else:
+        raise AssertionError("expected ValueError from deep stack")
+    return render(
+        None,  # type: ignore[arg-type]
+        "error",
+        {
+            "timestamp": "t",
+            "level": "error",
+            "logger": "x",
+            "event": "boom",
+            RICH_EXC_INFO_KEY: exc_info,
+        },
+    )
 
 
 def _cleanup_logging() -> None:
@@ -423,6 +451,23 @@ class TestForzeConsoleRenderer:
         assert "ValueError" in line and ": x" in line
         assert "\x1b" in line
         assert "Traceback" in line
+
+    def test_default_max_traceback_frames_shows_deep_stack(self) -> None:
+        render = ForzeConsoleRenderer(colors=False)
+        line = _render_deep_exc(render, depth=14)
+        assert "frames hidden" not in line
+        assert "_deep_stack_boom" in line
+
+    def test_max_traceback_frames_zero_shows_all(self) -> None:
+        render = ForzeConsoleRenderer(colors=False, max_traceback_frames=0)
+        line = _render_deep_exc(render, depth=30)
+        assert "frames hidden" not in line
+        assert line.count("_deep_stack_boom") >= 20
+
+    def test_max_traceback_frames_low_collapses_middle(self) -> None:
+        render = ForzeConsoleRenderer(colors=False, max_traceback_frames=8)
+        line = _render_deep_exc(render, depth=30)
+        assert "frames hidden" in line
 
     def test_configure_console_uses_renderer(self) -> None:
         buf = io.StringIO()

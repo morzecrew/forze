@@ -24,7 +24,10 @@ class ForzeConsoleRenderer:
     """Width of the message (event)."""
 
     max_traceback_lines: int = 18
-    """Maximum number of traceback lines to render (option for fallback stack rendering)."""
+    """Maximum traceback lines for plain-text ``error.stack`` fallback (not Rich ``exc_info``)."""
+
+    max_traceback_frames: int = attrs.field(default=20, validator=attrs.validators.ge(0))
+    """Maximum Rich traceback frames before middle collapse (0 = unlimited)."""
 
     sep_width: int = attrs.field(default=1, validator=attrs.validators.ge(1))
     """Width of the separator between the parts."""
@@ -73,5 +76,6 @@ class ForzeConsoleRenderer:
             aliases=self.extra_aliases,
             transforms=self.extra_transforms,
             traceback_supress=self.traceback_supress,
+            max_traceback_frames=self.max_traceback_frames,
             dim_extra_keys=self.extra_dim,
         )

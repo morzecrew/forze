@@ -30,6 +30,10 @@ await writer.enqueue(
 
 For durable multi-step work, start a [Temporal workflow](../integrations/temporal.md) instead of a queue message, with a stable `workflow_id` per run day.
 
+Alternatively, use [Inngest](../integrations/inngest.md) cron triggers with
+`DurableFunctionSpec.operation` so the worker runs the same frozen registry operation as HTTP
+(no external cron hitting an internal route).
+
 ## Pattern B: defer after an event (delay)
 
 When a user action should trigger work later (for example a reminder in ten minutes), enqueue from the request handler:

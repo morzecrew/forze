@@ -12,6 +12,8 @@ from .cursor_token import encode_keyset_v1, row_value_for_sort_key
 
 _DEFAULT_CURSOR_LIMIT = 10
 
+# ....................... #
+
 
 def assert_cursor_projection_includes_sort_keys(
     *,
@@ -29,6 +31,9 @@ def assert_cursor_projection_includes_sort_keys(
     )
 
 
+# ....................... #
+
+
 def resolved_cursor_limit(cursor: Mapping[str, Any] | None) -> int:
     """Effective page size (default ``10`` when omitted)."""
     lim = dict(cursor or {}).get("limit")
@@ -36,6 +41,9 @@ def resolved_cursor_limit(cursor: Mapping[str, Any] | None) -> int:
         return _DEFAULT_CURSOR_LIMIT
 
     return int(lim)
+
+
+# ....................... #
 
 
 def assemble_keyset_cursor_page(
@@ -51,6 +59,7 @@ def assemble_keyset_cursor_page(
     Gateways commonly return ``limit + 1`` rows so callers can infer
     ``has_more`` without a separate count query.
     """
+
     c = dict(cursor or {})
     lim = resolved_cursor_limit(c)
 
@@ -67,6 +76,7 @@ def assemble_keyset_cursor_page(
             directions=directions,
             values=[row_value_for_sort_key(last, k) for k in sort_keys],
         )
+
     else:
         next_tok = None
 
@@ -77,6 +87,7 @@ def assemble_keyset_cursor_page(
             directions=directions,
             values=[row_value_for_sort_key(first, k) for k in sort_keys],
         )
+
     else:
         prev_tok = None
 

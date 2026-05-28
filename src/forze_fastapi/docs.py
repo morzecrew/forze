@@ -18,43 +18,6 @@ from scalar_fastapi import (
 
 # ----------------------- #
 
-RESPONSE_WRAP_SCRIPT = """
-<script>
-(function () {
-  function patchEditors(root) {
-    root.querySelectorAll('.cm-editor').forEach(function (editor) {
-      var content = editor.querySelector('.cm-content');
-      var scroller = editor.querySelector('.cm-scroller');
-      if (!content) return;
-      content.classList.add('cm-lineWrapping');
-      content.style.setProperty('white-space', 'pre-wrap', 'important');
-      content.style.setProperty('overflow-wrap', 'anywhere', 'important');
-      content.style.setProperty('word-break', 'break-word', 'important');
-      if (scroller) {
-        scroller.style.setProperty('min-width', '0', 'important');
-        scroller.style.setProperty('overflow-x', 'auto', 'important');
-        scroller.style.setProperty('padding-right', '16px', 'important');
-      }
-      // Unclip flex parents above the editor (common in the client modal)
-      var node = editor.parentElement;
-      for (var i = 0; i < 8 && node; i++, node = node.parentElement) {
-        var cs = getComputedStyle(node);
-        if (cs.overflowX === 'hidden' || cs.overflow === 'hidden') {
-          node.style.setProperty('overflow-x', 'auto', 'important');
-        }
-        if (cs.minWidth === 'auto' || cs.minWidth === '100%') {
-          node.style.setProperty('min-width', '0', 'important');
-        }
-      }
-    });
-  }
-  var obs = new MutationObserver(function () { patchEditors(document); });
-  obs.observe(document.documentElement, { childList: true, subtree: true });
-  patchEditors(document);
-})();
-</script>
-"""
-
 DISABLE_MCP_CUSTOM_CSS = """
 .scalar-mcp-layer {
   display: none !important;
@@ -74,21 +37,6 @@ def _is_valid_dns(address: str) -> bool:
     dns_pattern = re.compile(r"^([a-zA-Z0-9-]+\.)+[a-zA-Z]{2,}$")
 
     return bool(dns_pattern.match(address))
-
-
-# ....................... #
-
-
-def _apply_response_wrap_script(response: HTMLResponse) -> HTMLResponse:
-    body = response.body
-
-    if not isinstance(body, bytes):
-        return response
-
-    html = body.decode("utf-8")
-    html = html.replace("<body>", RESPONSE_WRAP_SCRIPT + "\n</body>")
-
-    return HTMLResponse(html)
 
 
 # ....................... #
@@ -119,7 +67,6 @@ def scalar_docs(
     hide_download_button: bool = True,
     download_type: DownloadType = "both",
     theme: ThemeType = "purple",
-    response_wrap: bool = True,
 ) -> HTMLResponse:
     """Return a Scalar API reference HTML page for the current OpenAPI spec."""
 
@@ -165,9 +112,6 @@ def scalar_docs(
         agent=AgentScalarConfig(disabled=True),
     )
 
-    if response_wrap:
-        res = _apply_response_wrap_script(res)
-
     return res
 
 
@@ -186,7 +130,6 @@ def register_scalar_docs(
     hide_download_button: bool = True,
     download_type: DownloadType = "both",
     theme: ThemeType = "purple",
-    response_wrap: bool = True,
 ) -> None:
     """Register a Scalar docs route on *app* at *path*."""
 
@@ -205,5 +148,4 @@ def register_scalar_docs(
             hide_download_button=hide_download_button,
             download_type=download_type,
             theme=theme,
-            response_wrap=response_wrap,
         )

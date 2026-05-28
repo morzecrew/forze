@@ -11,12 +11,20 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
 from forze.base.exceptions import CoreException, ExceptionKind, exception_egress_policy
+from forze.base.logging import Logger
 from forze.base.scrubbing import sanitize
+from forze_fastapi._logging import ForzeFastAPILogger
 
 # ----------------------- #
 
 ERROR_CODE_HEADER: Final[str] = "X-Error-Code"
 """Key of the header used for error code."""
+
+GENERIC_500_DETAIL: Final[str] = "Internal server error"
+"""Generic detail message for unhandled server errors."""
+
+error_logger = Logger(str(ForzeFastAPILogger.ERRORS))
+"""Logger for FastAPI server-side error diagnostics."""
 
 # ....................... #
 
@@ -53,11 +61,41 @@ def _status_code_mapper(kind: ExceptionKind) -> int:
 # ....................... #
 
 
+def _log_server_error(exc: BaseException, *, core: CoreException | None = None) -> None:
+    """Log a server-side error with appropriate severity and traceback policy."""
+
+    if core is not None and core.__cause__ is not None:
+        error_logger.critical_exception(
+            "Server error",
+            exc=core.__cause__,
+            error_code=core.code,
+            error_kind=core.kind.value,
+        )
+
+    elif core is not None:
+        error_logger.error(
+            "Server error",
+            error_code=core.code,
+            error_kind=core.kind.value,
+            detail=core.summary,
+        )
+
+    else:
+        error_logger.critical_exception("Unhandled exception", exc=exc)
+
+
+# ....................... #
+
+
 async def _forze_exception_handler(_: Request, exc: CoreException) -> JSONResponse:
     """FastAPI exception handler that converts :class:`exc.internal` to a JSON response."""
 
     policy = exception_egress_policy(exc.kind)
     status_code = _status_code_mapper(exc.kind)
+
+    if status_code >= 500:
+        _log_server_error(exc, core=exc)
+
     content: JsonDict = {"detail": exc.summary}
 
     if exc.details and policy.expose_details:
@@ -73,7 +111,22 @@ async def _forze_exception_handler(_: Request, exc: CoreException) -> JSONRespon
 # ....................... #
 
 
+async def _unhandled_exception_handler(_: Request, exc: Exception) -> JSONResponse:
+    """FastAPI exception handler for unhandled non-:class:`CoreException` errors."""
+
+    _log_server_error(exc)
+
+    return JSONResponse(
+        status_code=500,
+        content={"detail": GENERIC_500_DETAIL},
+    )
+
+
+# ....................... #
+
+
 def register_exception_handlers(app: FastAPI) -> None:
     """Register exception handlers on *app*."""
 
     app.exception_handler(CoreException)(_forze_exception_handler)
+    app.exception_handler(Exception)(_unhandled_exception_handler)

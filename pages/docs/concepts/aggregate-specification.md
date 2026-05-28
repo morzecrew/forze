@@ -83,6 +83,7 @@ Search is separate from `DocumentSpec`. It describes indexed fields and result s
 | `fields` | Non-empty sequence of searchable field names |
 | `default_weights` | Optional per-field weights (0.0–1.0), must cover all `fields` if provided |
 | `fuzzy` | Optional fuzzy matching (`SearchFuzzySpec`) |
+| `default_sort` | Optional sort map when callers omit `sorts` (use for read models / views without `id`) |
 
 ## Other specs
 

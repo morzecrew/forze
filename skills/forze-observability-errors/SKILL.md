@@ -63,11 +63,13 @@ class ProjectAdapter:
 Configure structlog once at application startup.
 
 ```python
-from forze.base.logging import attach_foreign_loggers, configure_logging
+from forze.base.logging import attach_foreign_loggers, configure_logging, ForzeConsoleRenderer
 
 configure_logging(level="info", render_mode="json", logger_names=["forze"])
 attach_foreign_loggers(["uvicorn", "fastapi"], render_mode="json")
 ```
+
+For console development output, tune traceback depth with `ForzeConsoleRenderer(max_traceback_frames=0)` (show all frames) or `traceback_supress=["uvicorn", "starlette"]`.
 
 Log event fields are scrubbed by default (`sanitize_logs=True`; Logfire-aligned log string rules when `text_scrub=True`, uniform `**********` placeholder). API/error payloads use `forze.base.scrubbing.sanitize(..., context="egress")`, not the log context.
 

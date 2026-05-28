@@ -49,6 +49,8 @@ Single entry point for safe copies destined for clients or logs:
 
 `configure_logging()` scrubs log event fields by default (`sanitize_logs=True`). Log string scrubbing uses the same `**********` placeholder as sensitive keys (Logfire-aligned substring patterns plus email and Bearer tokens). Innocent words inside log message fields may be redacted; set `text_scrub=False` to disable string rules. Use `context="egress"` for HTTP and errors; do not scrub payloads before persisting to storage.
 
+In console mode, Rich tracebacks collapse long stacks to the first and last *N* frames (`ForzeConsoleRenderer.max_traceback_frames`, default `20`; set `0` for no limit). Customize via `configure_logging(..., custom_console_renderer=ForzeConsoleRenderer(max_traceback_frames=0))`. Use `traceback_supress` to omit framework modules (for example `uvicorn`, `starlette`, `fastapi`).
+
 When logging a `CoreError`, prefer `sanitize(exc.details, context="egress")` or log `message` and `code` only. Inbound attrs configs use `pydantic_secret_converter` for `SecretStr` fields; outbound dumps use `dump_for_error_context` / `sanitize(..., context="egress")`.
 
 ### Error handling
