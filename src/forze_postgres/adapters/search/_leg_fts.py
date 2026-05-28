@@ -1,15 +1,23 @@
 """Shared FTS leg scoring for simple adapters and hub legs."""
 
-from __future__ import annotations
+from forze_postgres._compat import require_psycopg
+
+require_psycopg()
+
+# ....................... #
 
 from typing import Any, Sequence
 
 from psycopg import sql
 
-from forze.application.contracts.search import SearchOptions, SearchSpec, effective_phrase_combine
+from forze.application.contracts.search import (
+    SearchOptions,
+    SearchSpec,
+    effective_phrase_combine,
+)
 
-from ...kernel.gateways import PostgresQualifiedName
 from ...kernel.catalog.introspect import PostgresIntrospector
+from ...kernel.gateways import PostgresQualifiedName
 from ._fts_sql import (
     FtsGroupLetter,
     fts_effective_group_weights,

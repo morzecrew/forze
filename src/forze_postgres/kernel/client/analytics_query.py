@@ -14,6 +14,7 @@ def parameters_from_model(params: BaseModel) -> dict[str, object]:
 
 
 # ....................... #
+#! TODO: move to SQL folder
 
 
 def apply_limit_offset(
@@ -40,12 +41,11 @@ def apply_limit_offset(
 
 
 # ....................... #
+#! TODO: move to SQL folder
 
 
 def build_count_sql(inner_sql: str) -> str:
     """Wrap *inner_sql* in ``SELECT COUNT(*)`` for total row counts."""
 
     stripped = inner_sql.strip().rstrip(";")
-    return (
-        f"SELECT COUNT(*) AS forze_cnt FROM ({stripped}) AS forze_analytics_subq"  # nosec B608
-    )
+    return f"SELECT COUNT(*) AS forze_cnt FROM ({stripped}) AS forze_analytics_subq"  # nosec B608

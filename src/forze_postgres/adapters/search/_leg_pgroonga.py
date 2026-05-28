@@ -1,6 +1,10 @@
 """Shared PGroonga leg scoring for simple adapters and hub legs."""
 
-from __future__ import annotations
+from forze_postgres._compat import require_psycopg
+
+require_psycopg()
+
+# ....................... #
 
 from typing import Any, Literal, Mapping
 
@@ -11,8 +15,9 @@ from forze.application.contracts.search import (
     SearchSpec,
     effective_phrase_combine,
 )
-from ...kernel.gateways import PostgresQualifiedName
+
 from ...kernel.catalog.introspect import PostgresIntrospector
+from ...kernel.gateways import PostgresQualifiedName
 from ._pgroonga_sql import (
     pgroonga_match_clause,
     pgroonga_phrase_match_text,

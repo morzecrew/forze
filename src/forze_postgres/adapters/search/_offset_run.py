@@ -1,9 +1,12 @@
 """Shared offset pagination + snapshot execution for ranked Postgres search."""
 
-from __future__ import annotations
+from forze_postgres._compat import require_psycopg
 
-from collections.abc import Sequence
-from typing import Any, TypeVar
+require_psycopg()
+
+# ....................... #
+
+from typing import Any, Sequence, TypeVar
 
 import attrs
 from psycopg import sql
@@ -30,18 +33,28 @@ from ._materialize_hits import materialize_search_page
 
 M = TypeVar("M", bound=BaseModel)
 
+# ....................... #
+
 
 @attrs.define(frozen=True, slots=True, kw_only=True)
 class RankedOffsetPlan:
     """SQL fragments for one ranked offset search (count + data)."""
 
     with_clause: sql.Composable
+    """``WITH`` clause."""
+
     from_outer: sql.Composable
     """``FROM …`` fragment appended after ``SELECT cols``."""
+
     order_sql: sql.Composable
+    """ORDER BY clause."""
+
     params: list[Any]
+    """Parameters for the ``SELECT`` statement."""
+
     count_params: list[Any] | None = None
     """When set, used for ``COUNT(*)`` only (e.g. FTS empty-query uses filter params only)."""
+
     select_table_alias: str
     """Table alias passed to :meth:`~PostgresGateway.return_clause`."""
 

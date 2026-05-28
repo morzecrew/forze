@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Mongo:** `MongoSearchConfig` uses a single `index_name` (semantics depend on `engine`) instead of separate `atlas_index_name` / `vector_index_name` / `text_index_name` keys.
 - **Postgres:** reorganized `forze_postgres.kernel` into `kernel.client`, `kernel.catalog`, and `kernel.sql`; `PostgresIntrospector` uses `CacheLane`. Direct imports of `forze_postgres.kernel.platform`, `forze_postgres.kernel.introspect`, `forze_postgres.kernel.query`, `forze_postgres.pagination`, and related flat kernel modules must be updated to the new paths.
+- **Postgres:** internal reorganisation of `forze_postgres.adapters.search` (shared port/cursor/offset base for FTS, vector, and PGroonga; `hub` subpackage). Public imports from `forze_postgres.adapters.search` are unchanged.
 
 ### Removed
 

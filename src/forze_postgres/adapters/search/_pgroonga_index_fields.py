@@ -1,7 +1,5 @@
 """Resolve PGroonga index column order from catalog metadata (order-agnostic SearchSpec)."""
 
-from __future__ import annotations
-
 import re
 from typing import Any, Mapping
 
@@ -9,13 +7,15 @@ from forze.application._logger import logger
 from forze.application.contracts.search import SearchSpec
 from forze.base.exceptions import exc
 
-from ...kernel.gateways import PostgresQualifiedName
 from ...kernel.catalog.introspect.types import PostgresIndexInfo
+from ...kernel.gateways import PostgresQualifiedName
 
 # ----------------------- #
 
 _ARRAY_RE = re.compile(r"ARRAY\s*\[\s*(.*?)\s*\]", re.IGNORECASE | re.DOTALL)
 _IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+# ....................... #
 
 
 def pgroonga_index_uses_array_expr(expr: str | None) -> bool:

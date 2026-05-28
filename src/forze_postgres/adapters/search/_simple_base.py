@@ -1,0 +1,208 @@
+"""Base class for projection + index-heap Postgres search adapters."""
+
+from forze_postgres._compat import require_psycopg
+
+require_psycopg()
+
+# ....................... #
+
+from typing import Any, Sequence
+
+import attrs
+from psycopg import sql
+from pydantic import BaseModel
+
+from forze.application.contracts.querying import (
+    CursorPaginationExpression,
+    PaginationExpression,
+    QueryFilterExpression,
+    QuerySortExpression,
+)
+from forze.application.contracts.search import (
+    SearchOptions,
+    SearchQueryPort,
+    SearchResultSnapshotOptions,
+    normalize_search_queries,
+    search_options_for_simple_adapter,
+)
+from forze.application.coordinators import SearchResultSnapshotCoordinator
+
+from ...kernel.gateways import PostgresGateway
+from ._cursor_run import (
+    execute_projection_keyset_cursor,
+    execute_ranked_pipeline_cursor,
+    parse_search_cursor,
+)
+from ._engine import RankedPipelineSql
+from ._offset_run import RankedOffsetPlan, execute_simple_ranked_offset_search
+from ._pipeline_sql import PipelineAliases, build_rank_first_order
+from ._port import PostgresSearchPortMixin
+
+# ----------------------- #
+
+
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class PostgresRankedPipelineSearchAdapter[M: BaseModel](
+    PostgresGateway[M],
+    PostgresSearchPortMixin[M],
+    SearchQueryPort[M],
+):
+    """Shared offset/cursor execution for FTS, vector, and PGroonga search adapters."""
+
+    search_variant: str = attrs.field()
+    """Snapshot fingerprint variant (e.g. ``fts``, ``vector``, ``pgroonga``)."""
+
+    pipeline: PipelineAliases = attrs.field()
+    """CTE aliases for the filtered → scored → projection pipeline."""
+
+    search_rank_column: str = attrs.field()
+    """Rank column inside the scored CTE."""
+
+    projection_alias: str = "v"
+    """SQL alias for the read projection in outer queries."""
+
+    snapshot_coord: SearchResultSnapshotCoordinator | None = attrs.field(default=None)
+    """Optional result-ID snapshot coordinator."""
+
+    # ....................... #
+
+    async def _build_ranked_pipeline_sql(
+        self,
+        *,
+        query: str | Sequence[str],
+        filters: QueryFilterExpression | None,  # type: ignore[valid-type]
+        options: SearchOptions | None,
+        fw: sql.Composable,
+        fp: list[Any],
+        terms: tuple[str, ...],
+    ) -> RankedPipelineSql:
+        """Assemble pipeline CTEs; engine-specific leg SQL is built inside subclasses."""
+
+        raise NotImplementedError
+
+    # ....................... #
+
+    def _fingerprint_extras(
+        self,
+        options: SearchOptions | None,
+    ) -> dict[str, object] | None:
+        return None
+
+    # ....................... #
+
+    async def _projection_order_by_clause(
+        self,
+        sorts: QuerySortExpression | None,  # type: ignore[valid-type]
+    ) -> sql.Composable | None:
+        return await self.order_by_clause(sorts, table_alias=self.projection_alias)
+
+    # ....................... #
+
+    async def _offset_search_impl(  # type: ignore[override]
+        self,
+        query: str | Sequence[str],
+        filters: QueryFilterExpression | None = None,
+        pagination: PaginationExpression | None = None,
+        sorts: QuerySortExpression | None = None,
+        *,
+        options: SearchOptions | None = None,
+        snapshot: SearchResultSnapshotOptions | None = None,
+        return_count: bool = False,
+        return_type: type[BaseModel] | None = None,
+        return_fields: Sequence[str] | None = None,
+    ) -> Any:
+        options = search_options_for_simple_adapter(options)
+        fw, fp = await self.where_clause(filters)
+        terms = tuple(normalize_search_queries(query))
+        pipeline_sql = await self._build_ranked_pipeline_sql(
+            query=query,
+            filters=filters,
+            options=options,
+            fw=fw,
+            fp=fp,
+            terms=terms,
+        )
+        extra_ob = await self._projection_order_by_clause(sorts)
+        order_sql = build_rank_first_order(
+            aliases=self.pipeline,
+            extra_order=extra_ob,
+        )
+
+        plan = RankedOffsetPlan(
+            with_clause=pipeline_sql.with_clause,
+            from_outer=pipeline_sql.from_outer,
+            order_sql=order_sql,
+            params=pipeline_sql.params_body,
+            count_params=pipeline_sql.count_params,
+            select_table_alias=self.projection_alias,
+        )
+
+        return await execute_simple_ranked_offset_search(
+            self,
+            plan=plan,
+            query=query,
+            filters=filters,
+            sorts=sorts,
+            spec=self.spec,
+            variant=self.search_variant,
+            fingerprint_extras=self._fingerprint_extras(options),
+            pagination=pagination,
+            snapshot=snapshot,
+            return_count=return_count,
+            return_type=return_type,
+            return_fields=return_fields,
+            model_type=self.model_type,
+            snapshot_coord=self.snapshot_coord,
+        )
+
+    # ....................... #
+
+    async def _cursor_search_impl(  # type: ignore[override]
+        self,
+        query: str | Sequence[str],
+        filters: QueryFilterExpression | None = None,
+        cursor: CursorPaginationExpression | None = None,
+        sorts: QuerySortExpression | None = None,
+        *,
+        options: SearchOptions | None = None,
+        return_type: type[BaseModel] | None = None,
+        return_fields: Sequence[str] | None = None,
+    ) -> Any:
+        options = search_options_for_simple_adapter(options)
+        parse_search_cursor(cursor)
+        terms = tuple(normalize_search_queries(query))
+        parsed_filters = self.compile_filters(filters)
+
+        if not terms:
+            return await execute_projection_keyset_cursor(
+                self,
+                filters=filters,
+                cursor=cursor,
+                sorts=sorts,
+                spec=self.spec,
+                projection_alias=self.projection_alias,
+                parsed_filters=parsed_filters,
+                return_type=return_type,
+                return_fields=return_fields,
+            )
+
+        fw, fp = await self.where_clause(filters, parsed=parsed_filters)
+        pipeline_sql = await self._build_ranked_pipeline_sql(
+            query=query,
+            filters=filters,
+            options=options,
+            fw=fw,
+            fp=fp,
+            terms=terms,
+        )
+
+        return await execute_ranked_pipeline_cursor(
+            self,
+            pipeline_sql=pipeline_sql,
+            filters=filters,
+            cursor=cursor,
+            sorts=sorts,
+            spec=self.spec,
+            return_type=return_type,
+            return_fields=return_fields,
+        )

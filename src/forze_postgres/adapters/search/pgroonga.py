@@ -6,62 +6,39 @@ require_psycopg()
 
 # ....................... #
 
-from typing import Any, Final, Literal, Mapping, Sequence, TypeVar, final, overload
+from typing import Any, Final, Literal, Mapping, Sequence, final
 
 import attrs
 from psycopg import sql
 from pydantic import BaseModel
 
-from forze.application.contracts.base import (
-    CountlessPage,
-    CursorPage,
-    Page,
-    page_from_limit_offset,
-)
+from forze.application.contracts.base import page_from_limit_offset
 from forze.application.contracts.querying import (
-    CursorPaginationExpression,
     PaginationExpression,
     QueryFilterExpression,
     QuerySortExpression,
-    decode_keyset_v1,
-    encode_keyset_v1,
-    normalize_sorts_for_keyset,
-    resolve_effective_sorts,
-    row_value_for_sort_key,
 )
 from forze.application.contracts.search import (
     SearchOptions,
-    SearchQueryPort,
     SearchResultSnapshotOptions,
     SearchSpec,
-    cursor_return_fields_for_select,
     effective_phrase_combine,
     normalize_search_queries,
-    ranked_search_cursor_key_spec,
     search_options_for_simple_adapter,
 )
 from forze.application.coordinators import SearchResultSnapshotCoordinator
-from forze.base.exceptions import exc
-from forze.base.primitives import JsonDict
 from forze.base.serialization import pydantic_validate_many
 from forze.domain.constants import ID_FIELD
-from forze_postgres.kernel.sql.query.nested import sort_key_expr
-from forze_postgres.kernel.sql import (
-    build_order_by_sql,
-    build_ranked_cursor_order_by_sql,
-    build_seek_condition,
-)
 
-from ...kernel.gateways import PostgresGateway, PostgresQualifiedName
+from ...kernel.gateways import PostgresQualifiedName
+from ._engine import RankedPipelineSql
 from ._leg_pgroonga import build_pgroonga_leg
 from ._materialize_hits import materialize_search_page
-from ._offset_run import RankedOffsetPlan, execute_simple_ranked_offset_search
 from ._pipeline_sql import (
     PipelineAliases,
     build_filtered_cte,
     build_outer_from,
     build_pipeline_with_clause,
-    build_rank_first_order,
     build_scored_cte,
     filtered_select_list,
     outer_join_on_scored,
@@ -69,16 +46,12 @@ from ._pipeline_sql import (
     scored_key_columns,
     validate_join_pairs,
 )
+from ._simple_base import PostgresRankedPipelineSearchAdapter
 
 # ----------------------- #
 
-T = TypeVar("T", bound=BaseModel)
-
-# ....................... #
-
 _DEFAULT_JOIN: Final[tuple[tuple[str, str], ...]] = ((ID_FIELD, ID_FIELD),)
 
-_PROJECTION_ALIAS: Final[str] = "v"
 _RANK_COLUMN: Final[str] = "_pgroonga_rank"
 _PIPELINE: Final[PipelineAliases] = PipelineAliases(rank_column=_RANK_COLUMN)
 
@@ -88,32 +61,9 @@ _PIPELINE: Final[PipelineAliases] = PipelineAliases(rank_column=_RANK_COLUMN)
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class PostgresPGroongaSearchAdapter[M: BaseModel](
-    PostgresGateway[M],
-    SearchQueryPort[M],
+    PostgresRankedPipelineSearchAdapter[M],
 ):
-    """PGroonga :class:`SearchQueryPort` using a projection relation and index heap.
-
-    Structured filters (and tenant scope) apply on the **projection** relation
-    (:attr:`~PostgresGateway.qname`), typically a view. Full-text matching and
-    ``pgroonga_score`` run on the **index heap** (:attr:`index_heap_qname`) so the
-    index can live on a base table while rows are shaped by the view.
-
-    Query shape (simplified)::
-
-        WITH filtered AS (
-            SELECT v.<join keys> FROM <projection> v WHERE <filters>
-        ),
-        scored AS (
-            SELECT t.<heap cols> AS <proj keys>, <rank>
-            FROM <index heap> t
-            INNER JOIN filtered f ON <join>
-            WHERE <pgroonga match or TRUE>
-        )
-        SELECT v.<read fields>
-        FROM <projection> v
-        INNER JOIN scored s ON <join to projection keys>
-        ORDER BY s.<rank> DESC NULLS LAST, <user sorts on v>
-    """
+    """PGroonga :class:`SearchQueryPort` using a projection relation and index heap."""
 
     spec: SearchSpec[M]
     """Search specification."""
@@ -131,15 +81,12 @@ class PostgresPGroongaSearchAdapter[M: BaseModel](
     """Index field map (projection column -> index heap column)."""
 
     pgroonga_score_version: Literal["v1", "v2"] = "v2"
-    """
-    Which ``pgroonga_score`` form to emit (from :attr:`PostgresSearchConfig.pgroonga_score_version`).
+    """``pgroonga_score`` form (``v1`` heap alias vs ``v2`` tableoid/ctid)."""
 
-    ``v2``: ``pgroonga_score(tableoid, ctid)``. ``v1``: ``pgroonga_score(heap alias)`` when the heap
-    scan does not support the ``v2`` system columns.
-    """
-
-    snapshot_coord: SearchResultSnapshotCoordinator | None = None
-    """Coordinator for KV ordered-ID snapshots."""
+    search_variant: str = attrs.field(default="pgroonga", init=False)
+    pipeline: PipelineAliases = attrs.field(default=_PIPELINE, init=False)
+    search_rank_column: str = attrs.field(default=_RANK_COLUMN, init=False)
+    projection_alias: str = attrs.field(default="v", init=False)
 
     # ....................... #
 
@@ -155,304 +102,273 @@ class PostgresPGroongaSearchAdapter[M: BaseModel](
 
     # ....................... #
 
-    async def _projection_order_by_clause(
+    def _fingerprint_extras(
         self,
-        sorts: QuerySortExpression | None,  # type: ignore[valid-type]
-    ) -> sql.Composable | None:
-        return await self.order_by_clause(sorts, table_alias=_PROJECTION_ALIAS)
+        options: SearchOptions | None,
+    ) -> dict[str, object] | None:
+        return {"phrase_combine": str(effective_phrase_combine(options))}
 
     # ....................... #
 
-    @overload
-    async def _offset_search_impl(
+    async def _offset_search_impl(  # type: ignore[override]
         self,
         query: str | Sequence[str],
-        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        filters: QueryFilterExpression | None = None,
         pagination: PaginationExpression | None = None,
         sorts: QuerySortExpression | None = None,
         *,
         options: SearchOptions | None = None,
         snapshot: SearchResultSnapshotOptions | None = None,
-        return_count: Literal[False],
-        return_type: None = None,
-        return_fields: None = None,
-    ) -> CountlessPage[M]: ...
-
-    @overload
-    async def _offset_search_impl(
-        self,
-        query: str | Sequence[str],
-        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
-        pagination: PaginationExpression | None = None,
-        sorts: QuerySortExpression | None = None,
-        *,
-        options: SearchOptions | None = None,
-        snapshot: SearchResultSnapshotOptions | None = None,
-        return_count: Literal[True],
-        return_type: None = None,
-        return_fields: None = None,
-    ) -> Page[M]: ...
-
-    @overload
-    async def _offset_search_impl(
-        self,
-        query: str | Sequence[str],
-        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
-        pagination: PaginationExpression | None = None,
-        sorts: QuerySortExpression | None = None,
-        *,
-        options: SearchOptions | None = None,
-        snapshot: SearchResultSnapshotOptions | None = None,
-        return_count: Literal[False],
-        return_type: None = None,
-        return_fields: Sequence[str],
-    ) -> CountlessPage[JsonDict]: ...
-
-    @overload
-    async def _offset_search_impl(
-        self,
-        query: str | Sequence[str],
-        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
-        pagination: PaginationExpression | None = None,
-        sorts: QuerySortExpression | None = None,
-        *,
-        options: SearchOptions | None = None,
-        snapshot: SearchResultSnapshotOptions | None = None,
-        return_count: Literal[True],
-        return_type: None = None,
-        return_fields: Sequence[str],
-    ) -> Page[JsonDict]: ...
-
-    @overload
-    async def _offset_search_impl(
-        self,
-        query: str | Sequence[str],
-        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
-        pagination: PaginationExpression | None = None,
-        sorts: QuerySortExpression | None = None,
-        *,
-        options: SearchOptions | None = None,
-        snapshot: SearchResultSnapshotOptions | None = None,
-        return_count: Literal[False],
-        return_type: type[T],
-        return_fields: None = None,
-    ) -> CountlessPage[T]: ...
-
-    @overload
-    async def _offset_search_impl(
-        self,
-        query: str | Sequence[str],
-        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
-        pagination: PaginationExpression | None = None,
-        sorts: QuerySortExpression | None = None,
-        *,
-        options: SearchOptions | None = None,
-        snapshot: SearchResultSnapshotOptions | None = None,
-        return_count: Literal[True],
-        return_type: type[T],
-        return_fields: None = None,
-    ) -> Page[T]: ...
-
-    async def _offset_search_impl(
-        self,
-        query: str | Sequence[str],
-        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
-        pagination: PaginationExpression | None = None,
-        sorts: QuerySortExpression | None = None,
-        *,
-        options: SearchOptions | None = None,
-        snapshot: SearchResultSnapshotOptions | None = None,
-        return_count: bool,
+        return_count: bool = False,
         return_type: type[BaseModel] | None = None,
         return_fields: Sequence[str] | None = None,
     ) -> Any:
         options = search_options_for_simple_adapter(options)
-        fw, fp = await self.where_clause(filters)
         terms = normalize_search_queries(query)
 
         if not terms:
-            rs_spec = self.spec.snapshot
-            fp_fingerprint = SearchResultSnapshotCoordinator.simple_search_fingerprint(
-                query,
-                filters,
-                sorts,
-                spec_name=self.spec.name,
-                variant="pgroonga",
-                extras={"phrase_combine": str(effective_phrase_combine(options))},
-            )
-
-            if self.snapshot_coord is not None and rs_spec is not None:
-                maybe_snap: Any = await self.snapshot_coord.read_simple_result_snapshot(
-                    rs_spec=rs_spec,
-                    snap_opt=snapshot,
-                    fp_computed=fp_fingerprint,
-                    spec=self.spec,
-                    pagination=dict(pagination or {}),
-                    return_type=return_type,
-                    return_fields=return_fields,
-                    return_count=return_count,
-                )
-
-                if maybe_snap is not None:
-                    return maybe_snap
-
-            extra_ob = await self._projection_order_by_clause(sorts)
-            order_parts: list[sql.Composable] = (  # type: ignore[assignment]
-                [extra_ob]
-                if extra_ob is not None
-                else [
-                    sql.SQL("{} ASC").format(
-                        sql.Identifier(_PROJECTION_ALIAS, sorted(self.read_fields)[0]),
-                    ),
-                ]
-            )
-            order_sql = sql.SQL(", ").join(order_parts)
-            count_stmt = sql.SQL(
-                """
-                SELECT COUNT(*) FROM {proj} {pa} WHERE {fw}
-                """
-            ).format(
-                proj=self.source_qname.ident(),
-                pa=sql.Identifier(_PROJECTION_ALIAS),
-                fw=fw,
-            )
-
-            params_base = list(fp)
-            total = 0
-
-            if return_count:
-                total = int(
-                    await self.client.fetch_value(count_stmt, params_base, default=0),
-                )
-
-                if total == 0:
-                    return page_from_limit_offset(  # pyright: ignore[reportUnknownVariableType]
-                        [],
-                        pagination or {},
-                        total=0,
-                    )
-
-            cols = self.return_clause(
-                return_type,
-                return_fields,
-                table_alias=_PROJECTION_ALIAS,
-            )
-            data_stmt = sql.SQL(
-                """
-                SELECT {cols} FROM {proj} {pa} WHERE {fw} ORDER BY {order}
-                """
-            ).format(
-                cols=cols,
-                proj=self.source_qname.ident(),
-                pa=sql.Identifier(_PROJECTION_ALIAS),
-                fw=fw,
-                order=order_sql,
-            )
-
-            params = params_base
-            pagination = pagination or {}
-
-            want_sn = (
-                self.snapshot_coord is not None
-                and rs_spec is not None
-                and self.snapshot_coord.should_write_result_snapshot(snapshot, rs_spec)
-            )
-            max_n0 = (
-                self.snapshot_coord.effective_snapshot_max_ids(snapshot, rs_spec)
-                if want_sn and self.snapshot_coord is not None
-                else 0
-            )
-            sql_limit, sql_offset, page_limit = (
-                SearchResultSnapshotCoordinator.snapshot_pagination(
-                    want_sn, max_n0, dict(pagination)
-                )
-            )
-            if sql_limit is not None:
-                data_stmt += sql.SQL(" LIMIT {}").format(sql.Placeholder())
-                params.append(int(sql_limit))
-
-            if want_sn:
-                data_stmt += sql.SQL(" OFFSET {}").format(sql.Placeholder())
-                params.append(int(sql_offset))
-
-            elif pagination.get("offset") is not None:
-                data_stmt += sql.SQL(" OFFSET {}").format(sql.Placeholder())
-                params.append(int(pagination.get("offset") or 0))
-
-            rows = await self.client.fetch_all(data_stmt, params, row_factory="dict")
-
-            handle_no = None
-            pool_pg0: list[M] | None = None
-            u_ = int(pagination.get("offset") or 0)
-
-            if want_sn and self.snapshot_coord is not None and rs_spec is not None:
-                pool_len = len(rows)
-                pool_pg0 = pydantic_validate_many(self.model_type, rows)
-                handle_no = await self.snapshot_coord.put_simple_ordered_hits(
-                    pool_pg0,
-                    snap_opt=snapshot,
-                    rs_spec=rs_spec,
-                    fp_computed=fp_fingerprint,
-                    pool_len_before_cap=pool_len,
-                )
-                rows = rows[u_ : u_ + page_limit]
-
-            page = materialize_search_page(
-                page_rows=rows,
-                pool=pool_pg0,
-                u=u_,
-                page_limit=page_limit,
+            return await self._offset_empty_query_browse(
+                filters=filters,
+                pagination=pagination,
+                sorts=sorts,
+                options=options,
+                snapshot=snapshot,
+                query=query,
+                return_count=return_count,
                 return_type=return_type,
                 return_fields=return_fields,
-                model_type=self.model_type,
             )
 
-            if return_count:
-                return page_from_limit_offset(
-                    page,
-                    pagination,
-                    total=total,
-                    snapshot=handle_no,
+        return await super()._offset_search_impl(
+            query,
+            filters,
+            pagination,
+            sorts,
+            options=options,
+            snapshot=snapshot,
+            return_count=return_count,
+            return_type=return_type,
+            return_fields=return_fields,
+        )
+
+    # ....................... #
+
+    async def _offset_empty_query_browse(
+        self,
+        *,
+        query: str | Sequence[str],
+        filters: QueryFilterExpression | None,
+        pagination: PaginationExpression | None,
+        sorts: QuerySortExpression | None,
+        options: SearchOptions | None,
+        snapshot: SearchResultSnapshotOptions | None,
+        return_count: bool,
+        return_type: type[BaseModel] | None,
+        return_fields: Sequence[str] | None,
+    ) -> Any:
+        """Browse projection with filters only (PGroonga-specific snapshot fingerprint)."""
+
+        fw, fp = await self.where_clause(filters)
+        rs_spec = self.spec.snapshot
+        fp_fingerprint = SearchResultSnapshotCoordinator.simple_search_fingerprint(
+            query,
+            filters,
+            sorts,
+            spec_name=self.spec.name,
+            variant=self.search_variant,
+            extras=self._fingerprint_extras(options),
+        )
+
+        if self.snapshot_coord is not None and rs_spec is not None:
+            maybe_snap: Any = await self.snapshot_coord.read_simple_result_snapshot(
+                rs_spec=rs_spec,
+                snap_opt=snapshot,
+                fp_computed=fp_fingerprint,
+                spec=self.spec,
+                pagination=dict(pagination or {}),
+                return_type=return_type,
+                return_fields=return_fields,
+                return_count=return_count,
+            )
+
+            if maybe_snap is not None:
+                return maybe_snap
+
+        extra_ob = await self._projection_order_by_clause(sorts)
+        order_parts: list[sql.Composable] = (  # type: ignore[assignment]
+            [extra_ob]
+            if extra_ob is not None
+            else [
+                sql.SQL("{} ASC").format(
+                    sql.Identifier(
+                        self.projection_alias,
+                        sorted(self.read_fields)[0],
+                    ),
+                ),
+            ]
+        )
+        order_sql = sql.SQL(", ").join(order_parts)
+        count_stmt = sql.SQL(
+            """
+            SELECT COUNT(*) FROM {proj} {pa} WHERE {fw}
+            """
+        ).format(
+            proj=self.source_qname.ident(),
+            pa=sql.Identifier(self.projection_alias),
+            fw=fw,
+        )
+
+        params_base = list(fp)
+        total = 0
+
+        if return_count:
+            total = int(
+                await self.client.fetch_value(count_stmt, params_base, default=0),
+            )
+
+            if total == 0:
+                return page_from_limit_offset(  # pyright: ignore[reportUnknownVariableType]
+                    [],
+                    pagination or {},
+                    total=0,
                 )
 
+        cols = self.return_clause(
+            return_type,
+            return_fields,
+            table_alias=self.projection_alias,
+        )
+        data_stmt = sql.SQL(
+            """
+            SELECT {cols} FROM {proj} {pa} WHERE {fw} ORDER BY {order}
+            """
+        ).format(
+            cols=cols,
+            proj=self.source_qname.ident(),
+            pa=sql.Identifier(self.projection_alias),
+            fw=fw,
+            order=order_sql,
+        )
+
+        params = params_base
+        pagination = pagination or {}
+
+        want_sn = (
+            self.snapshot_coord is not None
+            and rs_spec is not None
+            and self.snapshot_coord.should_write_result_snapshot(snapshot, rs_spec)
+        )
+        max_n0 = (
+            self.snapshot_coord.effective_snapshot_max_ids(snapshot, rs_spec)
+            if want_sn and self.snapshot_coord is not None
+            else 0
+        )
+        sql_limit, sql_offset, page_limit = (
+            SearchResultSnapshotCoordinator.snapshot_pagination(
+                want_sn, max_n0, dict(pagination)
+            )
+        )
+        if sql_limit is not None:
+            data_stmt += sql.SQL(" LIMIT {}").format(sql.Placeholder())
+            params.append(int(sql_limit))
+
+        if want_sn:
+            data_stmt += sql.SQL(" OFFSET {}").format(sql.Placeholder())
+            params.append(int(sql_offset))
+
+        elif pagination.get("offset") is not None:
+            data_stmt += sql.SQL(" OFFSET {}").format(sql.Placeholder())
+            params.append(int(pagination.get("offset") or 0))
+
+        rows = await self.client.fetch_all(data_stmt, params, row_factory="dict")
+
+        handle_no = None
+        pool_pg0: list[M] | None = None
+        u_ = int(pagination.get("offset") or 0)
+
+        if want_sn and self.snapshot_coord is not None and rs_spec is not None:
+            pool_len = len(rows)
+            pool_pg0 = pydantic_validate_many(self.model_type, rows)
+            handle_no = await self.snapshot_coord.put_simple_ordered_hits(
+                pool_pg0,
+                snap_opt=snapshot,
+                rs_spec=rs_spec,
+                fp_computed=fp_fingerprint,
+                pool_len_before_cap=pool_len,
+            )
+            rows = rows[u_ : u_ + page_limit]
+
+        page = materialize_search_page(
+            page_rows=rows,
+            pool=pool_pg0,
+            u=u_,
+            page_limit=page_limit,
+            return_type=return_type,
+            return_fields=return_fields,
+            model_type=self.model_type,
+        )
+
+        if return_count:
             return page_from_limit_offset(
                 page,
                 pagination,
-                total=None,
+                total=total,
                 snapshot=handle_no,
             )
 
+        return page_from_limit_offset(
+            page,
+            pagination,
+            total=None,
+            snapshot=handle_no,
+        )
+
+    # ....................... #
+
+    async def _build_ranked_pipeline_sql(
+        self,
+        *,
+        query: str | Sequence[str],
+        filters: Any,
+        options: SearchOptions | None,
+        fw: sql.Composable,
+        fp: list[Any],
+        terms: tuple[str, ...],
+    ) -> RankedPipelineSql:
+        _ = query, filters
         join = self._safe_join_pairs
-        term_tuple = tuple(terms)
 
         sw, scored_rank, leg_params = await build_pgroonga_leg(
             introspector=self.introspector,
             index_qname=self.index_qname,
             search=self.spec,
             index_field_map=self.index_field_map,
-            index_alias=_PIPELINE.index,
-            queries=term_tuple,
+            index_alias=self.pipeline.index,
+            queries=terms,
             options=options,
-            score_column=_RANK_COLUMN,
+            score_column=self.search_rank_column,
             pgroonga_score_version=self.pgroonga_score_version,
         )
-        scored_keys = scored_key_columns(join, index_alias=_PIPELINE.index)
+        scored_keys = scored_key_columns(join, index_alias=self.pipeline.index)
         params_body = [*fp, *leg_params]
 
-        key_sel = filtered_select_list(join, projection_alias=_PIPELINE.projection)
+        key_sel = filtered_select_list(
+            join,
+            projection_alias=self.pipeline.projection,
+        )
         filtered_cte = build_filtered_cte(
-            aliases=_PIPELINE,
+            aliases=self.pipeline,
             key_sel=key_sel,
             proj_ident=self.source_qname.ident(),
             fw=fw,
         )
         join_sf = scored_join_on_filtered(
             join,
-            index_alias=_PIPELINE.index,
-            filtered_alias=_PIPELINE.filtered,
+            index_alias=self.pipeline.index,
+            filtered_alias=self.pipeline.filtered,
         )
         scored_cte = build_scored_cte(
-            aliases=_PIPELINE,
+            aliases=self.pipeline,
             scored_keys=scored_keys,
             scored_rank=scored_rank,
             heap_ident=self.index_heap_qname.ident(),
@@ -461,702 +377,22 @@ class PostgresPGroongaSearchAdapter[M: BaseModel](
         )
         join_vs = outer_join_on_scored(
             join,
-            projection_alias=_PIPELINE.projection,
-            scored_alias=_PIPELINE.scored,
+            projection_alias=self.pipeline.projection,
+            scored_alias=self.pipeline.scored,
         )
         from_outer = build_outer_from(
-            aliases=_PIPELINE,
+            aliases=self.pipeline,
             proj_ident=self.source_qname.ident(),
             join_vs=join_vs,
         )
-        extra_ob = await self._projection_order_by_clause(sorts)
-        ranked_order_sql = build_rank_first_order(
-            aliases=_PIPELINE,
-            extra_order=extra_ob,
-        )
         with_clause = build_pipeline_with_clause(filtered_cte, scored_cte)
 
-        plan = RankedOffsetPlan(
+        return RankedPipelineSql(
             with_clause=with_clause,
             from_outer=from_outer,
-            order_sql=ranked_order_sql,
-            params=params_body,
-            select_table_alias=_PROJECTION_ALIAS,
-        )
-
-        return await execute_simple_ranked_offset_search(
-            self,
-            plan=plan,
-            query=query,
-            filters=filters,
-            sorts=sorts,
-            spec=self.spec,
-            variant="pgroonga",
-            fingerprint_extras={
-                "phrase_combine": str(effective_phrase_combine(options)),
-            },
-            pagination=pagination,
-            snapshot=snapshot,
-            return_count=return_count,
-            return_type=return_type,
-            return_fields=return_fields,
-            model_type=self.model_type,
-            snapshot_coord=self.snapshot_coord,
-        )
-
-    # ....................... #
-
-    async def search(
-        self,
-        query: str | Sequence[str],
-        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
-        pagination: PaginationExpression | None = None,
-        sorts: QuerySortExpression | None = None,
-        *,
-        options: SearchOptions | None = None,
-        snapshot: SearchResultSnapshotOptions | None = None,
-    ) -> CountlessPage[M]:
-        return await self._offset_search_impl(
-            query,
-            filters,
-            pagination,
-            sorts,
-            options=options,
-            snapshot=snapshot,
-            return_count=False,
-            return_type=None,
-            return_fields=None,
-        )
-
-    # ....................... #
-
-    async def search_page(
-        self,
-        query: str | Sequence[str],
-        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
-        pagination: PaginationExpression | None = None,
-        sorts: QuerySortExpression | None = None,
-        *,
-        options: SearchOptions | None = None,
-        snapshot: SearchResultSnapshotOptions | None = None,
-    ) -> Page[M]:
-        return await self._offset_search_impl(
-            query,
-            filters,
-            pagination,
-            sorts,
-            options=options,
-            snapshot=snapshot,
-            return_count=True,
-            return_type=None,
-            return_fields=None,
-        )
-
-    # ....................... #
-
-    async def project_search(
-        self,
-        fields: Sequence[str],
-        query: str | Sequence[str],
-        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
-        pagination: PaginationExpression | None = None,
-        sorts: QuerySortExpression | None = None,
-        *,
-        options: SearchOptions | None = None,
-        snapshot: SearchResultSnapshotOptions | None = None,
-    ) -> CountlessPage[JsonDict]:
-        return await self._offset_search_impl(
-            query,
-            filters,
-            pagination,
-            sorts,
-            options=options,
-            snapshot=snapshot,
-            return_count=False,
-            return_type=None,
-            return_fields=tuple(fields),
-        )
-
-    # ....................... #
-
-    async def project_search_page(
-        self,
-        fields: Sequence[str],
-        query: str | Sequence[str],
-        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
-        pagination: PaginationExpression | None = None,
-        sorts: QuerySortExpression | None = None,
-        *,
-        options: SearchOptions | None = None,
-        snapshot: SearchResultSnapshotOptions | None = None,
-    ) -> Page[JsonDict]:
-        return await self._offset_search_impl(
-            query,
-            filters,
-            pagination,
-            sorts,
-            options=options,
-            snapshot=snapshot,
-            return_count=True,
-            return_type=None,
-            return_fields=tuple(fields),
-        )
-
-    # ....................... #
-
-    async def select_search(
-        self,
-        return_type: type[T],
-        query: str | Sequence[str],
-        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
-        pagination: PaginationExpression | None = None,
-        sorts: QuerySortExpression | None = None,
-        *,
-        options: SearchOptions | None = None,
-        snapshot: SearchResultSnapshotOptions | None = None,
-    ) -> CountlessPage[T]:
-        return await self._offset_search_impl(
-            query,
-            filters,
-            pagination,
-            sorts,
-            options=options,
-            snapshot=snapshot,
-            return_count=False,
-            return_type=return_type,
-            return_fields=None,
-        )
-
-    # ....................... #
-
-    async def select_search_page(
-        self,
-        return_type: type[T],
-        query: str | Sequence[str],
-        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
-        pagination: PaginationExpression | None = None,
-        sorts: QuerySortExpression | None = None,
-        *,
-        options: SearchOptions | None = None,
-        snapshot: SearchResultSnapshotOptions | None = None,
-    ) -> Page[T]:
-        return await self._offset_search_impl(
-            query,
-            filters,
-            pagination,
-            sorts,
-            options=options,
-            snapshot=snapshot,
-            return_count=True,
-            return_type=return_type,
-            return_fields=None,
-        )
-
-    # ....................... #
-
-    @overload
-    async def _cursor_search_impl(
-        self,
-        query: str | Sequence[str],
-        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
-        cursor: CursorPaginationExpression | None = None,
-        sorts: QuerySortExpression | None = None,
-        *,
-        options: SearchOptions | None = None,
-        return_type: None = None,
-        return_fields: None = None,
-    ) -> CursorPage[M]: ...
-
-    @overload
-    async def _cursor_search_impl(
-        self,
-        query: str | Sequence[str],
-        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
-        cursor: CursorPaginationExpression | None = None,
-        sorts: QuerySortExpression | None = None,
-        *,
-        options: SearchOptions | None = None,
-        return_type: None = None,
-        return_fields: Sequence[str],
-    ) -> CursorPage[JsonDict]: ...
-
-    @overload
-    async def _cursor_search_impl(
-        self,
-        query: str | Sequence[str],
-        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
-        cursor: CursorPaginationExpression | None = None,
-        sorts: QuerySortExpression | None = None,
-        *,
-        options: SearchOptions | None = None,
-        return_type: type[T],
-        return_fields: None = None,
-    ) -> CursorPage[T]: ...
-
-    async def _cursor_search_impl(
-        self,
-        query: str | Sequence[str],
-        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
-        cursor: CursorPaginationExpression | None = None,
-        sorts: QuerySortExpression | None = None,
-        *,
-        options: SearchOptions | None = None,
-        return_type: type[BaseModel] | None = None,
-        return_fields: Sequence[str] | None = None,
-    ) -> Any:
-        """Keyset pagination on the projection (empty query) or ranked PGroonga matches.
-
-        **Browse (empty query):** Same ordering rules as :meth:`search` without a query.
-
-        **Ranked:** Orders by ``_pgroonga_rank`` DESC NULLS LAST, optional ``sorts``, then
-        ``id``. With ``return_fields``, list only the columns you want in each hit; rank
-        and other keyset columns are selected internally and omitted from the response.
-        """
-
-        options = search_options_for_simple_adapter(options)
-        terms = normalize_search_queries(query)
-
-        c = dict(cursor or {})
-
-        if c.get("after") and c.get("before"):
-            raise exc.internal(
-                "Cursor pagination: pass at most one of 'after' or 'before'"
-            )
-
-        lim: int = 10 if c.get("limit") is None else int(c["limit"])  # type: ignore[arg-type, assignment, call-overload]
-
-        if lim < 1:
-            raise exc.internal("Cursor pagination 'limit' must be positive")
-
-        use_after = c.get("after") is not None
-        use_before = c.get("before") is not None
-
-        parsed_filters = self.compile_filters(filters)
-
-        if not terms:
-            effective = resolve_effective_sorts(
-                sorts=sorts,
-                default_sort=self.spec.default_sort,
-                read_fields=self.read_fields,
-                spec_name=self.spec.name,
-            )
-            key_spec = list(
-                normalize_sorts_for_keyset(
-                    effective,
-                    read_fields=self.read_fields,
-                )
-            )
-
-            sort_keys = [k for k, _ in key_spec]
-            directions = [d for _, d in key_spec]
-
-            if return_fields is not None:
-                select_rf = cursor_return_fields_for_select(
-                    sort_keys=sort_keys,
-                    rank_field=None,
-                    return_fields=return_fields,
-                )
-            else:
-                select_rf = None
-
-            fw, fp = await self.where_clause(filters, parsed=parsed_filters)
-            types = await self.column_types()
-
-            exprs = [
-                sort_key_expr(
-                    field=k,
-                    column_types=types,
-                    model_type=self.model_type,
-                    nested_field_hints=self.nested_field_hints,
-                    table_alias=_PROJECTION_ALIAS,
-                )
-                for k in sort_keys
-            ]
-
-            where_fin: sql.Composable = fw
-            params: list[Any] = list(fp)
-
-            if use_after or use_before:
-                token = str(c["after" if use_after else "before"])
-                tk, td, tv = decode_keyset_v1(token)
-
-                if tk != sort_keys or len(td) != len(directions):
-                    raise exc.internal("Cursor does not match current search sort")
-
-                for i, di in enumerate(directions):
-                    if (td[i] or "").lower() != di:
-                        raise exc.internal("Cursor does not match current search sort")
-
-                sk, sp_seek = build_seek_condition(
-                    exprs,
-                    directions,
-                    list(tv),
-                    "before" if use_before else "after",
-                )
-
-                where_fin = sql.SQL("({} AND ({}))").format(fw, sk)
-                params = params + sp_seek
-
-            order_sql = build_order_by_sql(exprs, directions, flip=use_before)
-            cols = self.return_clause(
-                return_type,
-                select_rf,
-                table_alias=_PROJECTION_ALIAS,
-            )
-            data_stmt = sql.SQL(
-                """
-                SELECT {cols} FROM {proj} {pa} WHERE {w} ORDER BY {order}
-                """
-            ).format(
-                cols=cols,
-                proj=self.source_qname.ident(),
-                pa=sql.Identifier(_PROJECTION_ALIAS),
-                w=where_fin,
-                order=order_sql,
-            )
-            data_stmt = sql.SQL("{} LIMIT {}").format(
-                data_stmt,
-                sql.Placeholder(),
-            )
-            params.append(lim + 1)
-
-            raw_rows = list(
-                await self.client.fetch_all(data_stmt, params, row_factory="dict")
-            )  # type: ignore[assignment, arg-type]
-
-            if use_before:
-                raw_rows = list(reversed(raw_rows))
-
-            has_more = len(raw_rows) > lim
-            rows = raw_rows[:lim]
-
-            def _row_token_vals_browse(row: JsonDict) -> list[Any]:
-                return [row_value_for_sort_key(row, k) for k in sort_keys]
-
-            if has_more and rows:
-                nxt = encode_keyset_v1(
-                    sort_keys=sort_keys,
-                    directions=directions,
-                    values=_row_token_vals_browse(rows[-1]),
-                )
-
-            else:
-                nxt = None
-
-            if rows and (use_after or (use_before and has_more)):
-                prv = encode_keyset_v1(
-                    sort_keys=sort_keys,
-                    directions=directions,
-                    values=_row_token_vals_browse(rows[0]),
-                )
-
-            else:
-                prv = None
-
-            if return_type is not None:
-                v = pydantic_validate_many(return_type, rows)
-
-                return CursorPage(
-                    hits=v,
-                    next_cursor=nxt,
-                    prev_cursor=prv,
-                    has_more=has_more,
-                )
-            if return_fields is not None:
-                rj = [{k: r.get(k, None) for k in return_fields} for r in rows]
-
-                return CursorPage(
-                    hits=rj,
-                    next_cursor=nxt,
-                    prev_cursor=prv,
-                    has_more=has_more,
-                )
-
-            m = pydantic_validate_many(self.model_type, rows)
-
-            return CursorPage(
-                hits=m,
-                next_cursor=nxt,
-                prev_cursor=prv,
-                has_more=has_more,
-            )
-
-        user_sorts = sorts if sorts else self.spec.default_sort
-
-        key_spec_r = ranked_search_cursor_key_spec(
-            rank_field=_RANK_COLUMN,
-            sorts=user_sorts,
-            read_fields=self.read_fields,
-        )
-        sort_keys_r = [k for k, _ in key_spec_r]
-        directions_r = [d for _, d in key_spec_r]
-
-        fw_r, fp_r = await self.where_clause(filters, parsed=parsed_filters)
-        join_r = self._safe_join_pairs
-        term_tuple = tuple(terms)
-
-        sw_r, scored_rank_r, leg_params_r = await build_pgroonga_leg(
-            introspector=self.introspector,
-            index_qname=self.index_qname,
-            search=self.spec,
-            index_field_map=self.index_field_map,
-            index_alias=_PIPELINE.index,
-            queries=term_tuple,
-            options=options,
-            score_column=_RANK_COLUMN,
-            pgroonga_score_version=self.pgroonga_score_version,
-        )
-        scored_keys_r = scored_key_columns(join_r, index_alias=_PIPELINE.index)
-        params_base_r = [*fp_r, *leg_params_r]
-
-        key_sel_r = filtered_select_list(join_r, projection_alias=_PIPELINE.projection)
-        filtered_cte_r = build_filtered_cte(
-            aliases=_PIPELINE,
-            key_sel=key_sel_r,
-            proj_ident=self.source_qname.ident(),
-            fw=fw_r,
-        )
-        join_sf_r = scored_join_on_filtered(
-            join_r,
-            index_alias=_PIPELINE.index,
-            filtered_alias=_PIPELINE.filtered,
-        )
-        scored_cte_r = build_scored_cte(
-            aliases=_PIPELINE,
-            scored_keys=scored_keys_r,
-            scored_rank=scored_rank_r,
-            heap_ident=self.index_heap_qname.ident(),
-            join_sf=join_sf_r,
-            sw=sw_r,
-        )
-        join_vs_r = outer_join_on_scored(
-            join_r,
-            projection_alias=_PIPELINE.projection,
-            scored_alias=_PIPELINE.scored,
-        )
-        from_outer_r = build_outer_from(
-            aliases=_PIPELINE,
-            proj_ident=self.source_qname.ident(),
-            join_vs=join_vs_r,
-        )
-
-        with_clause_r = build_pipeline_with_clause(filtered_cte_r, scored_cte_r)
-
-        types_r = await self.column_types()
-        exprs_r: list[sql.Composable] = []
-        for k in sort_keys_r:
-            if k == _RANK_COLUMN:
-                exprs_r.append(sql.Identifier(_PIPELINE.scored, _RANK_COLUMN))
-            else:
-                exprs_r.append(
-                    sort_key_expr(
-                        field=k,
-                        column_types=types_r,
-                        model_type=self.model_type,
-                        nested_field_hints=self.nested_field_hints,
-                        table_alias=_PROJECTION_ALIAS,
-                    )
-                )
-
-        where_fin_r: sql.Composable = sql.SQL("TRUE")
-        params_r: list[Any] = list(params_base_r)
-
-        if use_after or use_before:
-            token_r = str(c["after" if use_after else "before"])
-            tk_r, td_r, tv_r = decode_keyset_v1(token_r)
-
-            if tk_r != sort_keys_r or len(td_r) != len(directions_r):
-                raise exc.internal("Cursor does not match current search sort")
-
-            for i, di in enumerate(directions_r):
-                if (td_r[i] or "").lower() != di:
-                    raise exc.internal("Cursor does not match current search sort")
-
-            sk_r, sp_seek_r = build_seek_condition(
-                exprs_r,
-                directions_r,
-                list(tv_r),
-                "before" if use_before else "after",
-            )
-
-            where_fin_r = sk_r
-            params_r = params_r + sp_seek_r
-
-        order_sql_r = build_ranked_cursor_order_by_sql(
-            exprs_r,
-            sort_keys_r,
-            directions_r,
-            rank_key=_RANK_COLUMN,
-            flip=use_before,
-        )
-
-        return_fields_sql_r: Sequence[str] | None
-        if return_fields is not None:
-            return_fields_sql_r = cursor_return_fields_for_select(
-                sort_keys=sort_keys_r,
-                rank_field=_RANK_COLUMN,
-                return_fields=return_fields,
-            )
-            if not return_fields_sql_r:
-                return_fields_sql_r = None
-        else:
-            return_fields_sql_r = None
-
-        base_cols_r = self.return_clause(
-            return_type,
-            return_fields_sql_r,
-            table_alias=_PROJECTION_ALIAS,
-        )
-        cols_r = sql.SQL("{}, {}").format(
-            base_cols_r,
-            sql.SQL("{} AS {}").format(
-                sql.Identifier(_PIPELINE.scored, _RANK_COLUMN),
-                sql.Identifier(_RANK_COLUMN),
-            ),
-        )
-
-        data_stmt_r = sql.SQL(
-            """
-            {with_clause}
-            SELECT {cols} {from_outer}
-            WHERE {w}
-            ORDER BY {order}
-            """
-        ).format(
-            with_clause=with_clause_r,
-            cols=cols_r,
-            from_outer=from_outer_r,
-            w=where_fin_r,
-            order=order_sql_r,
-        )
-        data_stmt_r = sql.SQL("{} LIMIT {}").format(
-            data_stmt_r,
-            sql.Placeholder(),
-        )
-        params_r.append(lim + 1)
-
-        raw_rows_r = list(
-            await self.client.fetch_all(data_stmt_r, params_r, row_factory="dict")
-        )  # type: ignore[assignment, arg-type]
-
-        if use_before:
-            raw_rows_r = list(reversed(raw_rows_r))
-
-        has_more_r = len(raw_rows_r) > lim
-        rows_r = raw_rows_r[:lim]
-
-        def _row_token_vals_ranked(row: JsonDict) -> list[Any]:
-            return [row_value_for_sort_key(row, k) for k in sort_keys_r]
-
-        if has_more_r and rows_r:
-            nxt_r = encode_keyset_v1(
-                sort_keys=sort_keys_r,
-                directions=directions_r,
-                values=_row_token_vals_ranked(rows_r[-1]),
-            )
-
-        else:
-            nxt_r = None
-
-        if rows_r and (use_after or (use_before and has_more_r)):
-            prv_r = encode_keyset_v1(
-                sort_keys=sort_keys_r,
-                directions=directions_r,
-                values=_row_token_vals_ranked(rows_r[0]),
-            )
-
-        else:
-            prv_r = None
-
-        if return_type is not None:
-            v_r = pydantic_validate_many(return_type, rows_r)
-
-            return CursorPage(
-                hits=v_r,
-                next_cursor=nxt_r,
-                prev_cursor=prv_r,
-                has_more=has_more_r,
-            )
-        if return_fields is not None:
-            rj_r = [{k: r.get(k, None) for k in return_fields} for r in rows_r]
-
-            return CursorPage(
-                hits=rj_r,
-                next_cursor=nxt_r,
-                prev_cursor=prv_r,
-                has_more=has_more_r,
-            )
-
-        m_r = pydantic_validate_many(self.model_type, rows_r)
-
-        return CursorPage(
-            hits=m_r,
-            next_cursor=nxt_r,
-            prev_cursor=prv_r,
-            has_more=has_more_r,
-        )
-
-    # ....................... #
-
-    async def search_cursor(
-        self,
-        query: str | Sequence[str],
-        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
-        cursor: CursorPaginationExpression | None = None,
-        sorts: QuerySortExpression | None = None,
-        *,
-        options: SearchOptions | None = None,
-    ) -> CursorPage[M]:
-        return await self._cursor_search_impl(
-            query,
-            filters,
-            cursor,
-            sorts,
-            options=options,
-            return_type=None,
-            return_fields=None,
-        )
-
-    # ....................... #
-
-    async def project_search_cursor(
-        self,
-        fields: Sequence[str],
-        query: str | Sequence[str],
-        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
-        cursor: CursorPaginationExpression | None = None,
-        sorts: QuerySortExpression | None = None,
-        *,
-        options: SearchOptions | None = None,
-    ) -> CursorPage[JsonDict]:
-        return await self._cursor_search_impl(
-            query,
-            filters,
-            cursor,
-            sorts,
-            options=options,
-            return_type=None,
-            return_fields=tuple(fields),
-        )
-
-    # ....................... #
-
-    async def select_search_cursor(
-        self,
-        return_type: type[T],
-        query: str | Sequence[str],
-        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
-        cursor: CursorPaginationExpression | None = None,
-        sorts: QuerySortExpression | None = None,
-        *,
-        options: SearchOptions | None = None,
-    ) -> CursorPage[T]:
-        return await self._cursor_search_impl(
-            query,
-            filters,
-            cursor,
-            sorts,
-            options=options,
-            return_type=return_type,
-            return_fields=None,
+            params_body=params_body,
+            count_params=None,
+            pipeline=self.pipeline,
+            rank_column=self.search_rank_column,
+            projection_alias=self.projection_alias,
         )

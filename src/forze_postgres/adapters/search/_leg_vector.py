@@ -1,6 +1,10 @@
 """Shared vector leg scoring for simple adapters and hub legs."""
 
-from __future__ import annotations
+from forze_postgres._compat import require_psycopg
+
+require_psycopg()
+
+# ....................... #
 
 from typing import Any
 
