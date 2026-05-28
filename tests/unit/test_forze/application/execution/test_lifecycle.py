@@ -3,7 +3,7 @@
 import pytest
 
 from forze.application.contracts.execution import noop_lifecycle_hook
-from forze.application.execution import ExecutionContext
+from forze.application.execution.context import ExecutionContext
 from forze.application.execution.lifecycle import LifecyclePlan, LifecycleStep
 from forze_mock import MockDepsModule, MockState
 
@@ -17,7 +17,9 @@ def ctx() -> ExecutionContext:
 
 class TestNoopLifecycleHook:
     @pytest.mark.asyncio
-    async def test_noop_lifecycle_hook_returns_none(self, ctx: ExecutionContext) -> None:
+    async def test_noop_lifecycle_hook_returns_none(
+        self, ctx: ExecutionContext
+    ) -> None:
         result = await noop_lifecycle_hook(ctx)
         assert result is None
 
@@ -42,7 +44,9 @@ class TestLifecycleStep:
 
 class TestLifecyclePlan:
     @pytest.mark.asyncio
-    async def test_startup_and_shutdown_run_in_order(self, ctx: ExecutionContext) -> None:
+    async def test_startup_and_shutdown_run_in_order(
+        self, ctx: ExecutionContext
+    ) -> None:
         order: list[str] = []
 
         async def up(_ctx: ExecutionContext) -> None:
@@ -65,7 +69,9 @@ class TestLifecyclePlan:
         assert tuple(s.id for s in extended.steps) == ("a", "b")
 
     @pytest.mark.asyncio
-    async def test_startup_failure_runs_shutdown_in_reverse(self, ctx: ExecutionContext) -> None:
+    async def test_startup_failure_runs_shutdown_in_reverse(
+        self, ctx: ExecutionContext
+    ) -> None:
         order: list[str] = []
 
         async def up_ok(_ctx: ExecutionContext) -> None:

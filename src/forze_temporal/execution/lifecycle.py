@@ -9,7 +9,8 @@ from forze.application.contracts.durable.workflow import (
     DurableWorkflowSpec,
 )
 from forze.application.contracts.execution import LifecycleHook, LifecycleStep
-from forze.application.execution import ExecutionContext
+from forze.application.execution.context import ExecutionContext
+from forze.application.execution.lifecycle.builtin import routed_client_lifecycle_step
 from forze.base.exceptions import exc
 
 from ..adapters.schedule import TemporalWorkflowScheduleCommandAdapter
@@ -62,50 +63,6 @@ class TemporalShutdownHook(LifecycleHook):
     async def __call__(self, ctx: ExecutionContext) -> None:
         temporal_client = ctx.deps.provide(TemporalClientDepKey)
         await temporal_client.close()
-
-
-# ....................... #
-
-
-@final
-@attrs.define(slots=True, frozen=True, kw_only=True)
-class RoutedTemporalStartupHook(LifecycleHook):
-    """Startup hook that marks a :class:`RoutedTemporalClient` as ready."""
-
-    client: RoutedTemporalClient
-
-    bootstrap_schedules: bool = True
-    """Whether to upsert declarative schedules after startup."""
-
-    workflow_configs: Mapping[str, TemporalWorkflowConfig] | None = attrs.field(
-        default=None,
-        repr=False,
-    )
-    """Workflow route configs keyed by workflow name (for schedule bootstrap)."""
-
-    # ....................... #
-
-    async def __call__(self, ctx: ExecutionContext) -> None:
-        await self.client.startup()
-
-        if self.bootstrap_schedules:
-            await _bootstrap_schedules(ctx, workflow_configs=self.workflow_configs)
-
-
-# ....................... #
-
-
-@final
-@attrs.define(slots=True, frozen=True, kw_only=True)
-class RoutedTemporalShutdownHook(LifecycleHook):
-    """Shutdown hook that closes all per-tenant Temporal clients."""
-
-    client: RoutedTemporalClient
-
-    # ....................... #
-
-    async def __call__(self, ctx: ExecutionContext) -> None:
-        await self.client.close()
 
 
 # ....................... #
@@ -209,12 +166,20 @@ def routed_temporal_lifecycle_step(
     Do not combine with :func:`temporal_lifecycle_step` on the same instance.
     """
 
+    base = routed_client_lifecycle_step(name, client=client)
+
+    if not bootstrap_schedules:
+        return base
+
+    @final
+    @attrs.define(slots=True, frozen=True, kw_only=True)
+    class _RoutedTemporalStartupHook(LifecycleHook):
+        async def __call__(self, ctx: ExecutionContext) -> None:
+            await client.startup()
+            await _bootstrap_schedules(ctx, workflow_configs=workflow_configs)
+
     return LifecycleStep(
         id=name,
-        startup=RoutedTemporalStartupHook(
-            client=client,
-            bootstrap_schedules=bootstrap_schedules,
-            workflow_configs=workflow_configs,
-        ),
-        shutdown=RoutedTemporalShutdownHook(client=client),
+        startup=_RoutedTemporalStartupHook(),
+        shutdown=base.shutdown,
     )

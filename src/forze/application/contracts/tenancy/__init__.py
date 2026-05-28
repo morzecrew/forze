@@ -1,4 +1,5 @@
 from .constants import TENANT_ID_FIELD
+from .helpers import require_tenant_id
 from .deps import (
     TenancyDeps,
     TenantManagementDepKey,
@@ -24,4 +25,5 @@ __all__ = [
     "TenantResolverDepPort",
     "TenantProviderPort",
     "TenancyMixin",
+    "require_tenant_id",
 ]

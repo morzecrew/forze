@@ -8,7 +8,7 @@ from forze.application._logger import logger
 from forze.application.contracts.execution import LifecycleStep
 
 if TYPE_CHECKING:
-    from .context import ExecutionContext
+    from ..context import ExecutionContext
 
 # ----------------------- #
 

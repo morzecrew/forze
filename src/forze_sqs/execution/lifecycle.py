@@ -6,7 +6,8 @@ import attrs
 from pydantic import SecretStr
 
 from forze.application.contracts.execution import LifecycleHook, LifecycleStep
-from forze.application.execution import ExecutionContext
+from forze.application.execution.context import ExecutionContext
+from forze.application.execution.lifecycle.builtin import routed_client_lifecycle_step
 from forze.base.serialization import pydantic_secret_converter
 
 from ..kernel.platform import RoutedSQSClient, SQSClient, SQSConfig
@@ -40,38 +41,6 @@ class SQSStartupHook(LifecycleHook):
             secret_access_key=self.secret_access_key,
             config=self.config,
         )
-
-
-# ....................... #
-
-
-@final
-@attrs.define(slots=True, frozen=True, kw_only=True)
-class RoutedSQSStartupHook(LifecycleHook):
-    """Startup hook that marks a :class:`RoutedSQSClient` as ready."""
-
-    client: RoutedSQSClient
-
-    # ....................... #
-
-    async def __call__(self, ctx: ExecutionContext) -> None:
-        await self.client.startup()
-
-
-# ....................... #
-
-
-@final
-@attrs.define(slots=True, frozen=True, kw_only=True)
-class RoutedSQSShutdownHook(LifecycleHook):
-    """Shutdown hook that closes all per-tenant SQS sessions."""
-
-    client: RoutedSQSClient
-
-    # ....................... #
-
-    async def __call__(self, ctx: ExecutionContext) -> None:
-        await self.client.close()
 
 
 # ....................... #
@@ -125,8 +94,4 @@ def routed_sqs_lifecycle_step(
     Do not combine with :func:`sqs_lifecycle_step` on the same instance.
     """
 
-    return LifecycleStep(
-        id=name,
-        startup=RoutedSQSStartupHook(client=client),
-        shutdown=RoutedSQSShutdownHook(client=client),
-    )
+    return routed_client_lifecycle_step(name, client=client)

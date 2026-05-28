@@ -20,7 +20,13 @@ from pymongo.asynchronous.client_session import AsyncClientSession
 from pymongo.asynchronous.collection import AsyncCollection
 from pymongo.asynchronous.database import AsyncDatabase
 
-from forze.application.contracts.secrets import SecretRef, SecretsPort
+from forze.application.contracts.secrets import (
+    SecretRef,
+    SecretsPort,
+    resolve_str_for_tenant,
+    secret_ref_for_tenant,
+)
+from forze.application.contracts.tenancy import require_tenant_id
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
 from forze.base.primitives.lru_registry import SimpleLruRegistry
@@ -91,32 +97,14 @@ class RoutedMongoClient(MongoClientPort):
 
     # ....................... #
 
-    def _require_tenant_id(self) -> UUID:
-        tid = self.tenant_provider()
-
-        if tid is None:
-            raise exc.internal(
-                "Tenant ID is required for routed Mongo access",
-                code="tenant_required",
-            )
-
-        return tid
-
-    # ....................... #
-
     async def _create_client(self, tid: UUID) -> MongoClient:
-        ref = self.secret_ref_for_tenant(tid)
-
-        try:
-            uri = await self.secrets.resolve_str(ref)
-
-        except exc:
-            raise
-
-        except Exception as e:
-            raise exc.internal(
-                f"Failed to resolve Mongo secret for tenant {tid}: {e}",
-            ) from e
+        ref = secret_ref_for_tenant(self.secret_ref_for_tenant, tid)
+        uri = await resolve_str_for_tenant(
+            self.secrets,
+            ref,
+            tenant_id=tid,
+            backend="Mongo",
+        )
 
         db_name = self.database_name_for_tenant(tid)
         client = MongoClient()
@@ -135,7 +123,12 @@ class RoutedMongoClient(MongoClientPort):
         if not self._started:
             raise exc.internal("Routed Mongo client is not started")
 
-        return await self._registry.get_or_create(self._require_tenant_id())
+        return await self._registry.get_or_create(
+            require_tenant_id(
+                self.tenant_provider,
+                message="Tenant ID is required for routed Mongo access",
+            ),
+        )
 
     # ....................... #
 

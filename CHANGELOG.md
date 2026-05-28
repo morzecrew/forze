@@ -16,6 +16,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Mongo:** optional `mongo_document_index_validation_lifecycle_step` warns when write collections define secondary unique indexes used with `ensure` / `upsert`.
 - **`forze.base`:** `CacheLane` in `forze.base.primitives.cache` — reusable in-memory TTL/FIFO cache for catalog metadata.
 - **`forze.base`:** `SimpleLruRegistry` and `GuardedLruRegistry` in `forze.base.primitives.lru_registry` — async LRU resource caches with optional in-use guarded eviction.
+- **`forze.base`:** `InflightLane` in `forze.base.primitives` — asyncio singleflight coalescing for concurrent cache misses.
+- **Application contracts:** `require_tenant_id` in `forze.application.contracts.tenancy`; `secret_ref_for_tenant` and `resolve_str_for_tenant` in `forze.application.contracts.secrets`.
+- **Application execution:** `routed_client_lifecycle_step` and `RoutedClientLifecycle` protocol for tenant-routed integration clients.
 
 ### Changed
 
@@ -23,6 +26,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Postgres:** reorganized `forze_postgres.kernel` into `kernel.client`, `kernel.catalog`, and `kernel.sql`; `PostgresIntrospector` uses `CacheLane`. Direct imports of `forze_postgres.kernel.platform`, `forze_postgres.kernel.introspect`, `forze_postgres.kernel.query`, `forze_postgres.pagination`, and related flat kernel modules must be updated to the new paths.
 - **Postgres:** `RoutedPostgresClient` uses `GuardedLruRegistry` internally (no public API change).
 - **Redis, Mongo, SQS, S3, Temporal, RabbitMQ:** routed clients use `SimpleLruRegistry` internally (no public API change).
+- **Postgres:** `PostgresIntrospector` uses `InflightLane` for catalog singleflight (no public API change).
+- **Postgres, Redis, Mongo, SQS, S3, Temporal, RabbitMQ:** routed clients and lifecycle steps use shared tenancy/secrets helpers and generic routed lifecycle hooks internally (no public API change).
 - **Postgres:** internal reorganisation of `forze_postgres.adapters.search` (shared port/cursor/offset base for FTS, vector, and PGroonga; `hub` subpackage). Public imports from `forze_postgres.adapters.search` are unchanged.
 - **Postgres:** internal reorganisation of `forze_postgres.adapters.analytics` (package split with shared port/query/cursor/chunked modules); analytics SQL helpers moved from `forze_postgres.kernel.client` to `forze_postgres.kernel.sql`. Public import `forze_postgres.adapters.analytics.PostgresAnalyticsAdapter` is unchanged.
 - **Analytics:** shared offset/keyset cursor token helpers in `forze.application.contracts.analytics._adapter_common` (used by Postgres and ClickHouse adapters).

@@ -2,6 +2,7 @@
 
 from .buffer import ContextualBuffer
 from .cache import CacheLane
+from .inflight import InflightLane
 from .lru_registry import GuardedLruRegistry, SimpleLruRegistry
 from .datetime import utcnow
 from .graph import DirectedAcyclicGraph
@@ -18,6 +19,7 @@ from .uuid import uuid4, uuid7
 __all__ = [
     "utcnow",
     "CacheLane",
+    "InflightLane",
     "GuardedLruRegistry",
     "SimpleLruRegistry",
     "ContextualBuffer",

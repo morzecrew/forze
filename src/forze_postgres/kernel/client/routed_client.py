@@ -20,7 +20,13 @@ import attrs
 from psycopg import AsyncConnection
 from psycopg.abc import Params, QueryNoTemplate
 
-from forze.application.contracts.secrets import SecretRef, SecretsPort
+from forze.application.contracts.secrets import (
+    SecretRef,
+    SecretsPort,
+    resolve_str_for_tenant,
+    secret_ref_for_tenant,
+)
+from forze.application.contracts.tenancy import require_tenant_id
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
 from forze.base.primitives.lru_registry import GuardedLruRegistry
@@ -119,40 +125,14 @@ class RoutedPostgresClient(PostgresClientPort):
 
     # ....................... #
 
-    def _require_tenant_id(self) -> UUID:
-        tid = self.tenant_provider()
-
-        if tid is None:
-            raise exc.internal(
-                "Tenant ID is required for routed Postgres access",
-                code="tenant_required",
-            )
-
-        return tid
-
-    # ....................... #
-
-    def _get_secret_ref(self, tenant_id: UUID) -> SecretRef:
-        if callable(self.secret_ref_for_tenant):
-            return self.secret_ref_for_tenant(tenant_id)
-
-        return self.secret_ref_for_tenant[tenant_id]
-
-    # ....................... #
-
     async def _create_client(self, tid: UUID) -> PostgresClient:
-        ref = self._get_secret_ref(tid)
-
-        try:
-            dsn = await self.secrets.resolve_str(ref)
-
-        except exc:
-            raise
-
-        except Exception as e:
-            raise exc.internal(
-                f"Failed to resolve database secret for tenant {tid}: {e}",
-            ) from e
+        ref = secret_ref_for_tenant(self.secret_ref_for_tenant, tid)
+        dsn = await resolve_str_for_tenant(
+            self.secrets,
+            ref,
+            tenant_id=tid,
+            backend="database",
+        )
 
         client = PostgresClient()
         await client.initialize(
@@ -172,7 +152,12 @@ class RoutedPostgresClient(PostgresClientPort):
         if not self._started:
             raise exc.internal("Routed Postgres client is not started")
 
-        async with self._registry.use(self._require_tenant_id()) as client:
+        async with self._registry.use(
+            require_tenant_id(
+                self.tenant_provider,
+                message="Tenant ID is required for routed Postgres access",
+            ),
+        ) as client:
             yield client
 
     # ....................... #

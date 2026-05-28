@@ -12,7 +12,9 @@ from forze.application.contracts.secrets import (
     SecretRef,
     SecretsPort,
     resolve_structured,
+    secret_ref_for_tenant,
 )
+from forze.application.contracts.tenancy import require_tenant_id
 from forze.base.exceptions import exc
 from forze.base.primitives.lru_registry import SimpleLruRegistry
 
@@ -63,14 +65,6 @@ class RoutedSQSClient(SQSClientPort):
 
     # ....................... #
 
-    def _get_secret_ref(self, tenant_id: UUID) -> SecretRef:
-        if callable(self.secret_ref_for_tenant):
-            return self.secret_ref_for_tenant(tenant_id)
-
-        return self.secret_ref_for_tenant[tenant_id]
-
-    # ....................... #
-
     async def startup(self) -> None:
         self._started = True
 
@@ -87,21 +81,8 @@ class RoutedSQSClient(SQSClientPort):
 
     # ....................... #
 
-    def _require_tenant_id(self) -> UUID:
-        tid = self.tenant_provider()
-
-        if tid is None:
-            raise exc.internal(
-                "Tenant ID is required for routed SQS access",
-                code="tenant_required",
-            )
-
-        return tid
-
-    # ....................... #
-
     async def _create_client(self, tid: UUID) -> SQSClient:
-        ref = self._get_secret_ref(tid)
+        ref = secret_ref_for_tenant(self.secret_ref_for_tenant, tid)
 
         try:
             creds = await resolve_structured(
@@ -136,7 +117,12 @@ class RoutedSQSClient(SQSClientPort):
         if not self._started:
             raise exc.internal("Routed SQS client is not started")
 
-        return await self._registry.get_or_create(self._require_tenant_id())
+        return await self._registry.get_or_create(
+            require_tenant_id(
+                self.tenant_provider,
+                message="Tenant ID is required for routed SQS access",
+            ),
+        )
 
     # ....................... #
 

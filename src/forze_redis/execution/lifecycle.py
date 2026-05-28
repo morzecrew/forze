@@ -6,7 +6,8 @@ import attrs
 from pydantic import SecretStr
 
 from forze.application.contracts.execution import LifecycleHook, LifecycleStep
-from forze.application.execution import ExecutionContext
+from forze.application.execution.context import ExecutionContext
+from forze.application.execution.lifecycle.builtin import routed_client_lifecycle_step
 from forze.base.serialization import pydantic_secret_converter
 
 from ..kernel.platform import RedisClient, RedisConfig, RoutedRedisClient
@@ -56,38 +57,6 @@ class RedisShutdownHook(LifecycleHook):
 # ....................... #
 
 
-@final
-@attrs.define(slots=True, frozen=True, kw_only=True)
-class RoutedRedisStartupHook(LifecycleHook):
-    """Startup hook that marks a :class:`RoutedRedisClient` as ready."""
-
-    client: RoutedRedisClient
-
-    # ....................... #
-
-    async def __call__(self, ctx: ExecutionContext) -> None:
-        await self.client.startup()
-
-
-# ....................... #
-
-
-@final
-@attrs.define(slots=True, frozen=True, kw_only=True)
-class RoutedRedisShutdownHook(LifecycleHook):
-    """Shutdown hook that closes all per-tenant Redis clients."""
-
-    client: RoutedRedisClient
-
-    # ....................... #
-
-    async def __call__(self, ctx: ExecutionContext) -> None:
-        await self.client.close()
-
-
-# ....................... #
-
-
 def redis_lifecycle_step(
     name: str = "redis_lifecycle",
     *,
@@ -120,8 +89,4 @@ def routed_redis_lifecycle_step(
     Do not combine with :func:`redis_lifecycle_step` on the same instance.
     """
 
-    return LifecycleStep(
-        id=name,
-        startup=RoutedRedisStartupHook(client=client),
-        shutdown=RoutedRedisShutdownHook(client=client),
-    )
+    return routed_client_lifecycle_step(name, client=client)

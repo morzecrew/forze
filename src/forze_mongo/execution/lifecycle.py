@@ -6,7 +6,8 @@ import attrs
 from pydantic import SecretStr
 
 from forze.application.contracts.execution import LifecycleHook, LifecycleStep
-from forze.application.execution import ExecutionContext
+from forze.application.execution.context import ExecutionContext
+from forze.application.execution.lifecycle.builtin import routed_client_lifecycle_step
 from forze.base.serialization import pydantic_secret_converter
 
 from ..kernel.platform import MongoClient, MongoConfig, RoutedMongoClient
@@ -56,38 +57,6 @@ class MongoShutdownHook(LifecycleHook):
 # ....................... #
 
 
-@final
-@attrs.define(slots=True, frozen=True, kw_only=True)
-class RoutedMongoStartupHook(LifecycleHook):
-    """Startup hook that marks a :class:`RoutedMongoClient` as ready."""
-
-    client: RoutedMongoClient
-
-    # ....................... #
-
-    async def __call__(self, ctx: ExecutionContext) -> None:
-        await self.client.startup()
-
-
-# ....................... #
-
-
-@final
-@attrs.define(slots=True, frozen=True, kw_only=True)
-class RoutedMongoShutdownHook(LifecycleHook):
-    """Shutdown hook that closes all per-tenant Mongo clients."""
-
-    client: RoutedMongoClient
-
-    # ....................... #
-
-    async def __call__(self, ctx: ExecutionContext) -> None:
-        await self.client.close()
-
-
-# ....................... #
-
-
 def mongo_lifecycle_step(
     name: str = "mongo_lifecycle",
     *,
@@ -115,8 +84,4 @@ def routed_mongo_lifecycle_step(
     Do not combine with :func:`mongo_lifecycle_step` on the same client instance.
     """
 
-    return LifecycleStep(
-        id=name,
-        startup=RoutedMongoStartupHook(client=client),
-        shutdown=RoutedMongoShutdownHook(client=client),
-    )
+    return routed_client_lifecycle_step(name, client=client)

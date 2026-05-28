@@ -1,6 +1,8 @@
 """Helpers built on :class:`SecretsPort`."""
 
+from collections.abc import Callable, Mapping
 from typing import TypeVar
+from uuid import UUID
 
 from pydantic import BaseModel, ValidationError
 
@@ -13,6 +15,45 @@ from .value_objects import SecretRef
 # ----------------------- #
 
 T = TypeVar("T", bound=BaseModel)
+
+# ....................... #
+
+
+def secret_ref_for_tenant(
+    secret_ref_for_tenant: Callable[[UUID], SecretRef] | Mapping[UUID, SecretRef],
+    tenant_id: UUID,
+) -> SecretRef:
+    """Resolve a :class:`SecretRef` for *tenant_id* from a callable or mapping."""
+
+    if callable(secret_ref_for_tenant):
+        return secret_ref_for_tenant(tenant_id)
+
+    return secret_ref_for_tenant[tenant_id]
+
+
+# ....................... #
+
+
+async def resolve_str_for_tenant(
+    secrets: SecretsPort,
+    ref: SecretRef,
+    *,
+    tenant_id: UUID,
+    backend: str,
+) -> str:
+    """Resolve a string secret for *tenant_id*, wrapping unexpected errors."""
+
+    try:
+        return await secrets.resolve_str(ref)
+
+    except exc:
+        raise
+
+    except Exception as e:
+        raise exc.internal(
+            f"Failed to resolve {backend} secret for tenant {tenant_id}: {e}",
+        ) from e
+
 
 # ....................... #
 

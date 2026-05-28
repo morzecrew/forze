@@ -6,7 +6,8 @@ import attrs
 from pydantic import SecretStr
 
 from forze.application.contracts.execution import LifecycleHook, LifecycleStep
-from forze.application.execution import ExecutionContext
+from forze.application.execution.context import ExecutionContext
+from forze.application.execution.lifecycle.builtin import routed_client_lifecycle_step
 from forze.base.serialization import pydantic_secret_converter
 
 from ..kernel.platform import RoutedS3Client, S3Client, S3Config
@@ -73,38 +74,6 @@ class S3ShutdownHook(LifecycleHook):
 # ....................... #
 
 
-@final
-@attrs.define(slots=True, frozen=True, kw_only=True)
-class RoutedS3StartupHook(LifecycleHook):
-    """Startup hook that marks a :class:`RoutedS3Client` as ready."""
-
-    client: RoutedS3Client
-
-    # ....................... #
-
-    async def __call__(self, ctx: ExecutionContext) -> None:
-        await self.client.startup()
-
-
-# ....................... #
-
-
-@final
-@attrs.define(slots=True, frozen=True, kw_only=True)
-class RoutedS3ShutdownHook(LifecycleHook):
-    """Shutdown hook that closes all per-tenant S3 sessions."""
-
-    client: RoutedS3Client
-
-    # ....................... #
-
-    async def __call__(self, ctx: ExecutionContext) -> None:
-        await self.client.close()
-
-
-# ....................... #
-
-
 def s3_lifecycle_step(
     name: str = "s3_lifecycle",
     *,
@@ -145,8 +114,4 @@ def routed_s3_lifecycle_step(
     Do not combine with :func:`s3_lifecycle_step` on the same instance.
     """
 
-    return LifecycleStep(
-        id=name,
-        startup=RoutedS3StartupHook(client=client),
-        shutdown=RoutedS3ShutdownHook(client=client),
-    )
+    return routed_client_lifecycle_step(name, client=client)

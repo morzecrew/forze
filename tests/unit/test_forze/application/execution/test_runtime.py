@@ -2,11 +2,10 @@
 
 import pytest
 
-from forze.base.exceptions import CoreException
-
 from forze.application.execution import Deps, DepsPlan
 from forze.application.execution.lifecycle import LifecyclePlan, LifecycleStep
 from forze.application.execution.runtime import ExecutionRuntime
+from forze.base.exceptions import CoreException
 
 # ----------------------- #
 

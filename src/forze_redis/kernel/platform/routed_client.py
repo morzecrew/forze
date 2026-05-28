@@ -16,7 +16,13 @@ from uuid import UUID
 import attrs
 from redis.asyncio.client import Pipeline
 
-from forze.application.contracts.secrets import SecretRef, SecretsPort
+from forze.application.contracts.secrets import (
+    SecretRef,
+    SecretsPort,
+    resolve_str_for_tenant,
+    secret_ref_for_tenant,
+)
+from forze.application.contracts.tenancy import require_tenant_id
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
 from forze.base.primitives.lru_registry import SimpleLruRegistry
@@ -78,32 +84,14 @@ class RoutedRedisClient(RedisClientPort):
 
     # ....................... #
 
-    def _require_tenant_id(self) -> UUID:
-        tid = self.tenant_provider()
-
-        if tid is None:
-            raise exc.internal(
-                "Tenant ID is required for routed Redis access",
-                code="tenant_required",
-            )
-
-        return tid
-
-    # ....................... #
-
     async def _create_client(self, tid: UUID) -> RedisClient:
-        ref = self.secret_ref_for_tenant(tid)
-
-        try:
-            dsn = await self.secrets.resolve_str(ref)
-
-        except exc:
-            raise
-
-        except Exception as e:
-            raise exc.internal(
-                f"Failed to resolve Redis secret for tenant {tid}: {e}",
-            ) from e
+        ref = secret_ref_for_tenant(self.secret_ref_for_tenant, tid)
+        dsn = await resolve_str_for_tenant(
+            self.secrets,
+            ref,
+            tenant_id=tid,
+            backend="Redis",
+        )
 
         client = RedisClient()
         await client.initialize(dsn, config=self.pool_config)
@@ -116,7 +104,12 @@ class RoutedRedisClient(RedisClientPort):
         if not self._started:
             raise exc.internal("Routed Redis client is not started")
 
-        return await self._registry.get_or_create(self._require_tenant_id())
+        return await self._registry.get_or_create(
+            require_tenant_id(
+                self.tenant_provider,
+                message="Tenant ID is required for routed Redis access",
+            ),
+        )
 
     # ....................... #
 

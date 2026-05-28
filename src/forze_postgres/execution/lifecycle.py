@@ -6,7 +6,8 @@ import attrs
 from pydantic import SecretStr
 
 from forze.application.contracts.execution import LifecycleHook, LifecycleStep
-from forze.application.execution import ExecutionContext
+from forze.application.execution.context import ExecutionContext
+from forze.application.execution.lifecycle.builtin import routed_client_lifecycle_step
 from forze.base.serialization import pydantic_secret_converter
 
 from ..kernel.client import PostgresClient, PostgresConfig, RoutedPostgresClient
@@ -52,40 +53,6 @@ class PostgresShutdownHook(LifecycleHook):
 # ....................... #
 
 
-@final
-@attrs.define(slots=True, frozen=True, kw_only=True)
-class RoutedPostgresStartupHook(LifecycleHook):
-    """Startup hook that marks a :class:`RoutedPostgresClient` as ready."""
-
-    client: RoutedPostgresClient
-    """The same instance registered under :data:`PostgresClientDepKey`."""
-
-    # ....................... #
-
-    async def __call__(self, ctx: ExecutionContext) -> None:
-        await self.client.startup()
-
-
-# ....................... #
-
-
-@final
-@attrs.define(slots=True, frozen=True, kw_only=True)
-class RoutedPostgresShutdownHook(LifecycleHook):
-    """Shutdown hook that closes all per-tenant pools on a routed client."""
-
-    client: RoutedPostgresClient
-    """The same instance registered under :data:`PostgresClientDepKey`."""
-
-    # ....................... #
-
-    async def __call__(self, ctx: ExecutionContext) -> None:
-        await self.client.close()
-
-
-# ....................... #
-
-
 def postgres_lifecycle_step(
     name: str = "postgres_lifecycle",
     *,
@@ -124,8 +91,4 @@ def routed_postgres_lifecycle_step(
     :returns: Lifecycle step with startup and shutdown hooks.
     """
 
-    return LifecycleStep(
-        id=name,
-        startup=RoutedPostgresStartupHook(client=client),
-        shutdown=RoutedPostgresShutdownHook(client=client),
-    )
+    return routed_client_lifecycle_step(name, client=client)

@@ -6,7 +6,6 @@ require_psycopg()
 
 # ....................... #
 
-import asyncio
 from datetime import timedelta
 from time import monotonic
 from typing import Any, Callable, Coroutine, TypeVar, cast, final
@@ -16,6 +15,7 @@ from psycopg import sql
 
 from forze.base.exceptions import exc
 from forze.base.primitives.cache import CacheLane
+from forze.base.primitives.inflight import InflightLane
 from forze_postgres.kernel.client import PostgresClientPort
 
 from .types import (
@@ -80,11 +80,7 @@ class PostgresIntrospector:
     (FIFO by insertion order). ``None`` means unbounded per-kind growth.
     """
 
-    __inflight_guard: asyncio.Lock = attrs.field(factory=asyncio.Lock, init=False)
-    __inflight_tasks: dict[tuple[Any, ...], asyncio.Task[Any]] = attrs.field(
-        factory=dict,
-        init=False,
-    )
+    __inflight: InflightLane[Any] = attrs.field(factory=InflightLane, init=False)
 
     __relation_lane: CacheLane[CacheKey, PostgresRelationKind] = attrs.field(init=False)
     __column_lane: CacheLane[CacheKey, PostgresColumnTypes] = attrs.field(init=False)
@@ -127,30 +123,6 @@ class PostgresIntrospector:
 
     # ....................... #
 
-    async def _await_singleflight(
-        self,
-        inflight_key: tuple[Any, ...],
-        factory: Callable[[], Coroutine[Any, Any, T_co]],
-    ) -> T_co:
-        async with self.__inflight_guard:
-            existing = self.__inflight_tasks.get(inflight_key)
-
-            if existing is None:
-                existing = asyncio.create_task(factory())
-                self.__inflight_tasks[inflight_key] = existing
-
-            my_task = existing
-
-        try:
-            return await my_task
-
-        finally:
-            async with self.__inflight_guard:
-                if self.__inflight_tasks.get(inflight_key) is my_task:
-                    self.__inflight_tasks.pop(inflight_key, None)
-
-    # ....................... #
-
     async def _cached(
         self,
         *,
@@ -164,7 +136,7 @@ class PostgresIntrospector:
         if hit is not None:
             return hit
 
-        return await self._await_singleflight(inflight_key, factory)
+        return await self.__inflight.run(inflight_key, factory)
 
     # ....................... #
 
@@ -509,7 +481,7 @@ class PostgresIntrospector:
 
         self.__pk_lane.invalidate(key)
 
-        return await self._await_singleflight(
+        return await self.__inflight.run(
             ("pg_unique_sets", *key),
             lambda: self._fetch_unique_index_columns_uncached(schema, relation, key),
         )
@@ -693,7 +665,7 @@ class PostgresIntrospector:
         if hit is not None:
             return hit.indexdef
 
-        return await self._await_singleflight(
+        return await self.__inflight.run(
             ("pg_idxdef", *key),
             lambda: self._fetch_index_def_uncached(schema, index, key),
         )
@@ -810,7 +782,7 @@ class PostgresIntrospector:
         if hit is not None and hit.amname:
             return hit
 
-        return await self._await_singleflight(
+        return await self.__inflight.run(
             ("pg_idxinfo", *key),
             lambda: self._fetch_index_info_uncached(schema, index, key),
         )
@@ -847,4 +819,4 @@ class PostgresIntrospector:
         self.__pk_lane.clear()
         self.__unique_sets_lane.clear()
         self.__index_lane.clear()
-        self.__inflight_tasks.clear()
+        self.__inflight.clear()

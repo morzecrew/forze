@@ -6,7 +6,8 @@ import attrs
 from pydantic import SecretStr
 
 from forze.application.contracts.execution import LifecycleHook, LifecycleStep
-from forze.application.execution import ExecutionContext
+from forze.application.execution.context import ExecutionContext
+from forze.application.execution.lifecycle.builtin import routed_client_lifecycle_step
 from forze.base.serialization import pydantic_secret_converter
 
 from ..kernel.platform import RabbitMQClient, RabbitMQConfig, RoutedRabbitMQClient
@@ -46,38 +47,6 @@ class RabbitMQShutdownHook(LifecycleHook):
 # ....................... #
 
 
-@final
-@attrs.define(slots=True, frozen=True, kw_only=True)
-class RoutedRabbitMQStartupHook(LifecycleHook):
-    """Startup hook that marks a :class:`RoutedRabbitMQClient` as ready."""
-
-    client: RoutedRabbitMQClient
-
-    # ....................... #
-
-    async def __call__(self, ctx: ExecutionContext) -> None:
-        await self.client.startup()
-
-
-# ....................... #
-
-
-@final
-@attrs.define(slots=True, frozen=True, kw_only=True)
-class RoutedRabbitMQShutdownHook(LifecycleHook):
-    """Shutdown hook that closes all per-tenant RabbitMQ connections."""
-
-    client: RoutedRabbitMQClient
-
-    # ....................... #
-
-    async def __call__(self, ctx: ExecutionContext) -> None:
-        await self.client.close()
-
-
-# ....................... #
-
-
 def rabbitmq_lifecycle_step(
     name: str = "rabbitmq_lifecycle",
     *,
@@ -104,8 +73,4 @@ def routed_rabbitmq_lifecycle_step(
     Do not combine with :func:`rabbitmq_lifecycle_step` on the same instance.
     """
 
-    return LifecycleStep(
-        id=name,
-        startup=RoutedRabbitMQStartupHook(client=client),
-        shutdown=RoutedRabbitMQShutdownHook(client=client),
-    )
+    return routed_client_lifecycle_step(name, client=client)

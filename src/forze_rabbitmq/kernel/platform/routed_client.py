@@ -8,7 +8,13 @@ from uuid import UUID
 import attrs
 from aio_pika.abc import AbstractChannel
 
-from forze.application.contracts.secrets import SecretRef, SecretsPort
+from forze.application.contracts.secrets import (
+    SecretRef,
+    SecretsPort,
+    resolve_str_for_tenant,
+    secret_ref_for_tenant,
+)
+from forze.application.contracts.tenancy import require_tenant_id
 from forze.base.exceptions import exc
 from forze.base.primitives.lru_registry import SimpleLruRegistry
 
@@ -54,14 +60,6 @@ class RoutedRabbitMQClient(RabbitMQClientPort):
 
     # ....................... #
 
-    def _get_secret_ref(self, tenant_id: UUID) -> SecretRef:
-        if callable(self.secret_ref_for_tenant):
-            return self.secret_ref_for_tenant(tenant_id)
-
-        return self.secret_ref_for_tenant[tenant_id]
-
-    # ....................... #
-
     async def startup(self) -> None:
         self._started = True
 
@@ -78,32 +76,14 @@ class RoutedRabbitMQClient(RabbitMQClientPort):
 
     # ....................... #
 
-    def _require_tenant_id(self) -> UUID:
-        tid = self.tenant_provider()
-
-        if tid is None:
-            raise exc.internal(
-                "Tenant ID is required for routed RabbitMQ access",
-                code="tenant_required",
-            )
-
-        return tid
-
-    # ....................... #
-
     async def _create_client(self, tid: UUID) -> RabbitMQClient:
-        ref = self._get_secret_ref(tid)
-
-        try:
-            dsn = await self.secrets.resolve_str(ref)
-
-        except exc:
-            raise
-
-        except Exception as e:
-            raise exc.internal(
-                f"Failed to resolve RabbitMQ secret for tenant {tid}: {e}",
-            ) from e
+        ref = secret_ref_for_tenant(self.secret_ref_for_tenant, tid)
+        dsn = await resolve_str_for_tenant(
+            self.secrets,
+            ref,
+            tenant_id=tid,
+            backend="RabbitMQ",
+        )
 
         client = RabbitMQClient()
         await client.initialize(dsn, config=self.connection_config)
@@ -116,7 +96,12 @@ class RoutedRabbitMQClient(RabbitMQClientPort):
         if not self._started:
             raise exc.internal("Routed RabbitMQ client is not started")
 
-        return await self._registry.get_or_create(self._require_tenant_id())
+        return await self._registry.get_or_create(
+            require_tenant_id(
+                self.tenant_provider,
+                message="Tenant ID is required for routed RabbitMQ access",
+            ),
+        )
 
     # ....................... #
 
