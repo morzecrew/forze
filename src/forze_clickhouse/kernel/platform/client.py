@@ -8,10 +8,10 @@ import asyncio
 from typing import Any, Awaitable, Callable, Sequence, TypeVar, final
 
 import attrs
-from clickhouse_connect.driver import (  # pyright: ignore[reportMissingTypeStubs]
+from clickhouse_connect.driver import (  # type: ignore[import-untyped]
     create_async_client,  # pyright: ignore[reportUnknownVariableType]
 )
-from clickhouse_connect.driver.asyncclient import (  # pyright: ignore[reportMissingTypeStubs]
+from clickhouse_connect.driver.asyncclient import (  # type: ignore[import-untyped]
     AsyncClient,
 )
 from pydantic import BaseModel

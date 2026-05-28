@@ -132,12 +132,8 @@ vault = [
     "types-hvac>=2.4.0.20260518",
     "urllib3>=2.7.0",
 ]
-inngest = [
-    "inngest>=0.5.18",
-]
-meilisearch = [
-    "meilisearch-python-sdk>=7.0.0",
-]
+inngest = ["inngest>=0.5.18"]
+meilisearch = ["meilisearch-python-sdk>=7.0.0"]
 
 # ....................... #
 
@@ -272,31 +268,6 @@ exclude_lines = [
 strict = true
 warn_return_any = false
 warn_unused_ignores = false
-
-[[tool.mypy.overrides]]
-module = ["forze_gcs", "forze_gcs.*"]
-ignore_missing_imports = true
-disable_error_code = ["import-untyped"]
-
-[[tool.mypy.overrides]]
-module = ["forze_bigquery", "forze_bigquery.*"]
-ignore_missing_imports = true
-disable_error_code = ["import-untyped"]
-
-[[tool.mypy.overrides]]
-module = ["forze_clickhouse", "forze_clickhouse.*"]
-ignore_missing_imports = true
-disable_error_code = ["import-untyped"]
-
-[[tool.mypy.overrides]]
-module = ["forze_inngest", "forze_inngest.*", "inngest", "inngest.*"]
-ignore_missing_imports = true
-disable_error_code = ["import-untyped"]
-
-[[tool.mypy.overrides]]
-module = ["forze_meilisearch", "forze_meilisearch.*", "meilisearch_python_sdk", "meilisearch_python_sdk.*"]
-ignore_missing_imports = true
-disable_error_code = ["import-untyped"]
 
 # ....................... #
 # Import contracts
