@@ -51,9 +51,10 @@ async with runtime.session() as ctx:
 
 ## Local emulator
 
-Set `BIGQUERY_EMULATOR_HOST=http://localhost:9050` before startup. Run [goccy/bigquery-emulator](https://github.com/goccy/bigquery-emulator) (see integration tests); lifecycle does not accept an emulator URL.
+Set `BIGQUERY_EMULATOR_HOST=http://localhost:9050` before startup. Run [goccy/bigquery-emulator](https://github.com/goccy/bigquery-emulator) as described in the [BigQuery integration](https://morzecrew.github.io/forze/docs/integrations/bigquery/) doc; lifecycle does not accept an emulator URL.
 
-## Full reference
+## Reference
 
-- Integration doc: `pages/docs/integrations/bigquery.md`
-- Contracts: `pages/docs/core-package/contracts/analytics.md`
+- [BigQuery integration](https://morzecrew.github.io/forze/docs/integrations/bigquery/)
+- [Analytics contracts](https://morzecrew.github.io/forze/docs/core-package/contracts/analytics/)
+- [`forze-framework-usage`](../forze-framework-usage/SKILL.md)

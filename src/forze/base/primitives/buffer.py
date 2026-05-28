@@ -1,9 +1,4 @@
-"""Context-scoped buffer for collecting objects during a logical task.
-
-Uses :class:`contextvars.ContextVar` so each async task or thread has its own
-buffer. Use :meth:`ContextualBuffer.scope` to isolate buffers within nested
-operations.
-"""
+"""Context-scoped buffer for collecting objects during a logical task."""
 
 from contextlib import contextmanager
 from contextvars import ContextVar

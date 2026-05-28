@@ -1,4 +1,4 @@
-"""Unit tests for :class:`~forze_postgres.kernel.platform.RoutedPostgresClient`."""
+"""Unit tests for :class:`~forze_postgres.kernel.client.RoutedPostgresClient`."""
 
 from forze.base.exceptions import CoreException, exc
 import asyncio
@@ -8,7 +8,7 @@ from uuid import UUID
 import pytest
 
 from forze.application.contracts.secrets import SecretRef
-from forze_postgres.kernel.platform import RoutedPostgresClient
+from forze_postgres.kernel.client import RoutedPostgresClient
 
 # ----------------------- #
 
@@ -76,7 +76,7 @@ async def test_routed_eviction_closes_old_pool() -> None:
         return inst
 
     with patch(
-        "forze_postgres.kernel.platform.routed_client.PostgresClient",
+        "forze_postgres.kernel.client.routed_client.PostgresClient",
         side_effect=_make_client,
     ):
         cur = _T1
@@ -129,7 +129,7 @@ async def test_routed_lru_defers_close_while_tenant_pool_still_in_use() -> None:
         return inst
 
     with patch(
-        "forze_postgres.kernel.platform.routed_client.PostgresClient",
+        "forze_postgres.kernel.client.routed_client.PostgresClient",
         side_effect=_make_client,
     ):
         cur = _T1

@@ -6,8 +6,8 @@ import pytest
 
 from forze.base.exceptions import CoreException
 
-from forze_postgres.kernel.introspect import PostgresIntrospector
-from forze_postgres.kernel.platform.client import PostgresClient
+from forze_postgres.kernel.catalog.introspect import PostgresIntrospector
+from forze_postgres.kernel.client.client import PostgresClient
 
 
 @pytest.mark.asyncio
@@ -94,6 +94,39 @@ async def test_get_index_def_and_info_and_invalidate(
     assert info2.name == idx
 
     intro.clear()
+
+
+@pytest.mark.asyncio
+async def test_get_primary_key_columns_simple_and_composite(
+    pg_client: PostgresClient,
+) -> None:
+    """Primary-key column introspection for single- and multi-column PKs."""
+    simple = f"intro_pk1_{uuid4().hex[:12]}"
+    composite = f"intro_pk2_{uuid4().hex[:12]}"
+    await pg_client.execute(
+        f"""
+        CREATE TABLE {simple} (id uuid PRIMARY KEY);
+        CREATE TABLE {composite} (
+            tenant_id uuid NOT NULL,
+            id uuid NOT NULL,
+            PRIMARY KEY (tenant_id, id)
+        );
+        """
+    )
+
+    intro = PostgresIntrospector(client=pg_client)
+    assert await intro.get_primary_key_columns(schema="public", relation=simple) == (
+        "id",
+    )
+    assert await intro.get_primary_key_columns(
+        schema="public",
+        relation=composite,
+    ) == ("tenant_id", "id")
+    assert await intro.constraint_exists_for_columns(
+        schema="public",
+        relation=composite,
+        columns=("tenant_id", "id"),
+    )
 
 
 @pytest.mark.asyncio

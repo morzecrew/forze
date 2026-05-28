@@ -1,11 +1,11 @@
-"""Tests for :mod:`forze_postgres.pagination.seek_sql`."""
+"""Tests for :mod:`forze_postgres.kernel.sql.seek`."""
 
 import pytest
 
 from forze.base.exceptions import CoreException
 from psycopg import sql
 
-from forze_postgres.pagination.seek_sql import build_order_by_sql, build_seek_condition
+from forze_postgres.kernel.sql.seek import build_order_by_sql, build_seek_condition
 
 
 def test_build_seek_after_asc() -> None:

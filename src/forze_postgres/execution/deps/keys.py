@@ -2,8 +2,8 @@
 
 from forze.application.contracts.deps import DepKey
 
-from ...kernel.introspect import PostgresIntrospector
-from ...kernel.platform import PostgresClientPort
+from ...kernel.catalog.introspect import PostgresIntrospector
+from ...kernel.client import PostgresClientPort
 
 # ----------------------- #
 

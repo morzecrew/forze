@@ -528,3 +528,19 @@ class MongoClient(MongoClientPort):
         session = self.__current_session()
         res = await coll.count_documents(filter, session=session)
         return int(res)
+
+    # ....................... #
+
+    @exc_interceptor.coroutine("mongo.list_indexes")  # type: ignore[untyped-decorator]
+    async def list_indexes(
+        self,
+        *,
+        database: str,
+        collection: str,
+    ) -> list[JsonDict]:
+        """Return raw index specification documents for a collection."""
+
+        coll = await self.collection(collection, db_name=database)
+        session = self.__current_session()
+        cursor = await coll.list_indexes(session=session)
+        return [dict(doc) async for doc in cursor]

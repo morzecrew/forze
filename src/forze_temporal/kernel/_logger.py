@@ -3,5 +3,5 @@ from forze_temporal._logging import ForzeTemporalLogger
 
 # ----------------------- #
 
-logger = Logger(str(ForzeTemporalLogger.KERNEL))
+logger = Logger(ForzeTemporalLogger.KERNEL)
 """Temporal kernel logger."""

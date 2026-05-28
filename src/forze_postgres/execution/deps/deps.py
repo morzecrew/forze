@@ -222,6 +222,7 @@ class ConfigurablePostgresDocument(DocumentCommandDepPort[R, D, C, U]):
             bookkeeping_strategy=bookkeeping_strategy,
             tenant_aware=tenant_aware,
             nested_field_hints=self.config.get("nested_field_hints"),
+            conflict_target=self.config.get("conflict_target"),
         )
 
         after_commit: AfterCommitPort | None = None

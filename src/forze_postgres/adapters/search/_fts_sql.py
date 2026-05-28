@@ -19,7 +19,7 @@ from forze.application.contracts.search import (
 from forze.base.exceptions import exc
 
 from ...kernel.gateways import PostgresQualifiedName
-from ...kernel.introspect import PostgresIntrospector
+from ...kernel.catalog.introspect import PostgresIntrospector
 
 # ----------------------- #
 

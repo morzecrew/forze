@@ -4,14 +4,12 @@ description: >-
   Wires Forze durable function contracts with DurableFunctionEventSpec,
   DurableFunctionSpec, InngestDepsModule, event emit, function registration,
   DurableFunctionStepDepKey, and FastAPI serve. Use for event-driven durable
-  handlers with Inngest.
+  handlers with Inngest in applications using forze[inngest].
 ---
 
 # Forze Inngest durable functions
 
-Use when emitting events from HTTP handlers and running memoized steps in Inngest
-functions. Core contracts live in `forze.application.contracts.durable.function`;
-`forze_inngest` is the adapter package.
+Use when your application emits events from HTTP handlers and runs memoized steps in Inngest workers. Install `forze[inngest]` (and `forze[inngest,fastapi]` for `serve`). Contracts live in `forze.application.contracts.durable.function`; wire them with `forze_inngest`.
 
 ## Event spec
 
@@ -115,7 +113,13 @@ await step.run("notify", lambda: notifier.send(...))
 
 ## Anti-patterns
 
-- Do not use `DurableWorkflow*` types or `forze_temporal` from `forze_inngest`.
+- Do not use `DurableWorkflow*` types or `forze_temporal` in Inngest-based apps for the same work — pick Temporal **or** Inngest per use case.
 - Do not call `DurableFunctionStepDepKey` from ordinary HTTP handlers.
-- Do not add a `start()` command port—runs are event/cron-driven only.
-- Keep `create_function` / `inngest.fast_api.serve` inside `forze_inngest`, not in core contracts.
+- Do not expect a workflow-style `start()` command port — Inngest runs are event- or cron-driven.
+
+## Reference
+
+- [Inngest integration](https://morzecrew.github.io/forze/docs/integrations/inngest/)
+- [Durable function contracts](https://morzecrew.github.io/forze/docs/core-package/contracts/durable-function/)
+- [`forze-wiring`](../forze-wiring/SKILL.md)
+- [`forze-framework-usage`](../forze-framework-usage/SKILL.md)

@@ -153,3 +153,10 @@ class MongoClientPort(Protocol):
         coll: AsyncCollection[Any],
         filter: Mapping[str, Any],
     ) -> Awaitable[int]: ...  # pragma: no cover
+
+    def list_indexes(
+        self,
+        *,
+        database: str,
+        collection: str,
+    ) -> Awaitable[list[JsonDict]]: ...  # pragma: no cover

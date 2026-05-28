@@ -235,7 +235,6 @@ register_scalar_docs(app, path="/docs")
 
 ## Reference
 
-- [`pages/docs/integrations/fastapi.md`](../../pages/docs/integrations/fastapi.md)
-- [`src/forze_fastapi/endpoints/document`](../../src/forze_fastapi/endpoints/document)
-- [`src/forze_fastapi/endpoints/http`](../../src/forze_fastapi/endpoints/http)
-- [`src/forze_fastapi/middlewares`](../../src/forze_fastapi/middlewares)
+- [FastAPI integration](https://morzecrew.github.io/forze/docs/integrations/fastapi/)
+- [`forze-wiring`](../forze-wiring/SKILL.md)
+- [`forze-auth-tenancy-secrets`](../forze-auth-tenancy-secrets/SKILL.md)

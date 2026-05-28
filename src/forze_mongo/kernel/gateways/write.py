@@ -135,6 +135,67 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](MongoGate
 
     # ....................... #
 
+    def _upsert_filter_for_id(self, pk: UUID) -> JsonDict:
+        """Build the upsert filter for a document primary key."""
+
+        return self._add_tenant_filter({"_id": self._storage_pk(pk)})
+
+    def _bulk_upsert_set_on_insert_ops(
+        self,
+        models: Sequence[D],
+        payloads: Sequence[JsonDict],
+    ) -> list[UpdateOne]:
+        """Build ``UpdateOne`` upserts with ``$setOnInsert`` for a batch."""
+
+        return [
+            UpdateOne(
+                self._upsert_filter_for_id(m.id),
+                {"$setOnInsert": self._storage_doc(p)},
+                upsert=True,
+            )
+            for m, p in zip(models, payloads, strict=True)
+        ]
+
+    async def _run_bulk_upsert_set_on_insert(
+        self,
+        ops: list[UpdateOne],
+        *,
+        offset: int,
+    ) -> set[int]:
+        """Run bulk upserts; return global indices of newly inserted documents."""
+
+        bres: Any = await self.client.bulk_write(
+            await self.coll(),
+            ops,
+            ordered=False,
+        )
+        umap = cast(Mapping[int, Any], bres.upserted_ids or {})
+
+        return {offset + int(idx) for idx in umap}
+
+    async def _load_existing_by_ids(self, ids: Sequence[UUID]) -> dict[UUID, D]:
+        """Load documents by primary key after a bulk upsert did not insert them."""
+
+        if not ids:
+            return {}
+
+        try:
+            fetched = await self.read_gw.get_many(ids)
+
+        except CoreException as err:
+            if err.kind is ExceptionKind.NOT_FOUND:
+                raise exc.conflict(
+                    "Document not inserted and not found by primary key; "
+                    "possible unique index violation on insert.",
+                    code="mongo_ensure_bulk_miss",
+                ) from err
+
+            raise
+
+        return {d.id: d for d in fetched}
+
+    # ....................... #
+
     async def _write_history(self, *data: D) -> None:
         if self.history_gw is not None:
             await self.history_gw.write_many(data)
@@ -256,12 +317,9 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](MongoGate
         data = pydantic_persistence_dump(model)
         data = self.adapt_payload_for_write(data, create=True)
         storage = self._storage_doc(data)
-        flt: JsonDict = self._add_tenant_filter(
-            {"_id": self._storage_pk(model.id)},
-        )
         res: Any = await self.client.update_one_upsert(
             await self.coll(),
-            flt,
+            self._upsert_filter_for_id(model.id),
             {"$setOnInsert": storage},
         )
 
@@ -288,43 +346,24 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](MongoGate
         models = self._from_cdto_many(dtos)
         raw_payloads = pydantic_persistence_dump_many(models)
         payloads = self.adapt_many_payload_for_write(raw_payloads, create=True)
-        new_indices: list[int] = []
+
+        inserted_idx: set[int] = set()
 
         for offset in range(0, len(dtos), batch_size):
             chunk_payloads = payloads[offset : offset + batch_size]
             chunk_models = models[offset : offset + batch_size]
-
-            ops: list[UpdateOne] = [
-                UpdateOne(
-                    self._add_tenant_filter(
-                        {"_id": self._storage_pk(m.id)},
-                    ),
-                    {"$setOnInsert": self._storage_doc(p)},
-                    upsert=True,
-                )
-                for m, p in zip(chunk_models, chunk_payloads, strict=True)
-            ]
-            bres: Any = await self.client.bulk_write(
-                await self.coll(),
+            ops = self._bulk_upsert_set_on_insert_ops(chunk_models, chunk_payloads)
+            inserted_idx |= await self._run_bulk_upsert_set_on_insert(
                 ops,
-                ordered=False,
+                offset=offset,
             )
-            umap = cast(Mapping[int, Any], bres.upserted_ids or {})
-            for idx in umap:
-                new_indices.append(offset + int(idx))
-
-        inserted_idx: set[int] = set(new_indices)
 
         if inserted_idx:
             inserted = [models[i] for i in inserted_idx]
             await self._write_history(*inserted)
 
         conflict_ids = [m.id for i, m in enumerate(models) if i not in inserted_idx]
-        by_existing: dict[UUID, D] = {}
-
-        if conflict_ids:
-            fetched = await self.read_gw.get_many(conflict_ids)
-            by_existing = {d.id: d for d in fetched}
+        by_existing = await self._load_existing_by_ids(conflict_ids)
 
         return [
             models[i] if i in inserted_idx else by_existing[models[i].id]
@@ -344,13 +383,9 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](MongoGate
         data = self.adapt_payload_for_write(data, create=True)
         storage = self._storage_doc(data)
 
-        flt: JsonDict = self._add_tenant_filter(
-            {"_id": self._storage_pk(model.id)},
-        )
-
         res: Any = await self.client.update_one_upsert(
             await self.coll(),
-            flt,
+            self._upsert_filter_for_id(model.id),
             {"$setOnInsert": storage},
         )
         if res.upserted_id is not None:
@@ -381,34 +416,17 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](MongoGate
         raw_payloads = pydantic_persistence_dump_many(models)
         payloads = self.adapt_many_payload_for_write(raw_payloads, create=True)
         u_all = [u for _, u in pairs]
-        new_indices: list[int] = []
+
+        inserted_idx: set[int] = set()
 
         for offset in range(0, len(pairs), batch_size):
             chunk_payloads = payloads[offset : offset + batch_size]
             chunk_models = models[offset : offset + batch_size]
-
-            ops: list[UpdateOne] = [
-                UpdateOne(
-                    self._add_tenant_filter(
-                        {"_id": self._storage_pk(m.id)},
-                    ),
-                    {"$setOnInsert": self._storage_doc(p)},
-                    upsert=True,
-                )
-                for m, p in zip(chunk_models, chunk_payloads, strict=True)
-            ]
-            bres: Any = await self.client.bulk_write(
-                await self.coll(),
+            ops = self._bulk_upsert_set_on_insert_ops(chunk_models, chunk_payloads)
+            inserted_idx |= await self._run_bulk_upsert_set_on_insert(
                 ops,
-                ordered=False,
+                offset=offset,
             )
-
-            umap = cast(Mapping[int, Any], bres.upserted_ids or {})
-
-            for idx in umap:
-                new_indices.append(offset + int(idx))
-
-        inserted_idx: set[int] = set(new_indices)
 
         if inserted_idx:
             inserted = [models[i] for i in inserted_idx]
@@ -426,8 +444,7 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](MongoGate
         if to_update:
             pks = [a[0] for a in to_update]
             u_dtos = [a[1] for a in to_update]
-            currents = await self.read_gw.get_many(pks)
-            by_c = {c.id: c for c in currents}
+            by_c = await self._load_existing_by_ids(pks)
             revs = [by_c[pk].rev for pk in pks]
             updated, _ = await self.update_many(
                 pks, u_dtos, revs=revs, batch_size=batch_size

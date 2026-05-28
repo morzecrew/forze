@@ -31,7 +31,7 @@ from forze_postgres.adapters.search.hub import (
     hub_leg_engine_for,
 )
 from forze_postgres.kernel.gateways import PostgresQualifiedName
-from forze_postgres.kernel.introspect.types import PostgresIndexInfo
+from forze_postgres.kernel.catalog.introspect.types import PostgresIndexInfo
 
 
 class _Doc(BaseModel):

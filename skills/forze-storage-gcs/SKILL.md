@@ -74,6 +74,25 @@ class UploadAttachment(Handler[UploadAttachmentCmd, StoredObject]):
 
 Resolve storage in the factory: `storage=ctx.storage(attachments_spec)`.
 
+## Tenant-aware storage
+
+When `tenant_aware=True`, bind `TenantIdentity` at the HTTP/worker boundary before calling storage; do not pass tenant ids through domain DTOs solely for storage routing.
+
 ## Testing
 
-Use `MockStorageAdapter` from `forze_mock` for unit tests without GCS. Integration tests use fake-gcs-server via Docker testcontainers.
+Use `MockStorageAdapter` from `forze_mock` for unit tests without GCS. For integration-style checks, use fake-gcs-server as described in the [GCS integration](https://morzecrew.github.io/forze/docs/integrations/gcs/) doc.
+
+## Anti-patterns
+
+1. **Putting bucket names in `StorageSpec`** — specs carry logical names; deps config carries bucket names.
+2. **Skipping `GCSDepsModule.storages`** — no storage route is registered.
+3. **Using object storage as transactional state** — write document metadata in a transaction, then run storage side effects after commit when consistency matters.
+4. **Hard-coding service account JSON in application code** — use ADC, workload identity, or a secrets layer.
+5. **Assuming Forze creates buckets or IAM** — manage GCP resources with your infrastructure tooling.
+
+## Reference
+
+- [GCS integration](https://morzecrew.github.io/forze/docs/integrations/gcs/)
+- [Storage contracts](https://morzecrew.github.io/forze/docs/core-package/contracts/storage/)
+- [`forze-storage-s3`](../forze-storage-s3/SKILL.md)
+- [`forze-framework-usage`](../forze-framework-usage/SKILL.md)

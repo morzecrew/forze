@@ -9,7 +9,7 @@ from forze.application.contracts.execution import LifecycleHook, LifecycleStep
 from forze.application.execution import ExecutionContext
 from forze.base.serialization import pydantic_secret_converter
 
-from ..kernel.platform import PostgresClient, PostgresConfig, RoutedPostgresClient
+from ..kernel.client import PostgresClient, PostgresConfig, RoutedPostgresClient
 from .deps import PostgresClientDepKey
 
 # ----------------------- #

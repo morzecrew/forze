@@ -3,7 +3,7 @@
 import pytest
 
 from forze_postgres.adapters import PostgresTxManagerAdapter, PostgresTxScopeKey
-from forze_postgres.kernel.platform.client import PostgresClient
+from forze_postgres.kernel.client.client import PostgresClient
 
 
 @pytest.fixture

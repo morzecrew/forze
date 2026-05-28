@@ -12,7 +12,7 @@ __old_excepthook: (
     Callable[[type[BaseException], BaseException, TracebackType | None], None] | None
 ) = None
 
-uncaught_logger = Logger(str(ForzeLogger.UNCAUGHT))
+uncaught_logger = Logger(ForzeLogger.UNCAUGHT)
 
 # ....................... #
 

@@ -9,14 +9,21 @@ from forze.application.contracts.document import (
     DocumentCommandDepKey,
     DocumentQueryDepKey,
 )
+from forze.application.contracts.search import SearchQueryDepKey
 from forze.application.contracts.transaction import TransactionManagerDepKey
 from forze.application.execution import Deps, DepsModule
 
 from ...kernel.platform import MongoClientPort
-from .configs import MongoDocumentConfig, MongoReadOnlyDocumentConfig
+from .configs import (
+    MongoDocumentConfig,
+    MongoReadOnlyDocumentConfig,
+    MongoSearchConfig,
+    validate_mongo_search_conf,
+)
 from .deps import (
     ConfigurableMongoDocument,
     ConfigurableMongoReadOnlyDocument,
+    ConfigurableMongoSearch,
     mongo_txmanager,
 )
 from .keys import MongoClientDepKey
@@ -62,6 +69,16 @@ class MongoDepsModule[K: str | StrEnum](DepsModule[K]):
     tx: set[K] | None = attrs.field(default=None)
     """Set of transaction routes to register."""
 
+    searches: Mapping[K, MongoSearchConfig] | None = attrs.field(default=None)
+    """Mapping from search spec names to Mongo-specific search configurations."""
+
+    # ....................... #
+
+    def __attrs_post_init__(self) -> None:
+        if self.searches:
+            for search_cfg in self.searches.values():
+                validate_mongo_search_conf(search_cfg)
+
     # ....................... #
 
     def __call__(self) -> Deps[K]:
@@ -69,6 +86,7 @@ class MongoDepsModule[K: str | StrEnum](DepsModule[K]):
 
         plain_deps = Deps[K].plain({MongoClientDepKey: self.client})
         doc_deps = Deps[K]()
+        search_deps = Deps[K]()
         tx_deps = Deps[K]()
 
         if self.ro_documents:
@@ -101,6 +119,18 @@ class MongoDepsModule[K: str | StrEnum](DepsModule[K]):
                 )
             )
 
+        if self.searches:
+            search_deps = search_deps.merge(
+                Deps[K].routed(
+                    {
+                        SearchQueryDepKey: {
+                            name: ConfigurableMongoSearch(config=config)
+                            for name, config in self.searches.items()
+                        }
+                    }
+                )
+            )
+
         if self.tx:
             tx_deps = tx_deps.merge(
                 Deps[K].routed(
@@ -112,4 +142,4 @@ class MongoDepsModule[K: str | StrEnum](DepsModule[K]):
                 )
             )
 
-        return plain_deps.merge(doc_deps, tx_deps)
+        return plain_deps.merge(doc_deps, search_deps, tx_deps)

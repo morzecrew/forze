@@ -11,11 +11,11 @@ from forze.application.contracts.execution import LifecycleHook, LifecycleStep
 from forze.application.execution import ExecutionContext
 from forze.base.exceptions import exc
 
-from ..kernel.validate_bookkeeping import (
+from ..kernel.catalog.validation.validate_bookkeeping import (
     PostgresDocumentBookkeepingSpec,
     validate_postgres_document_bookkeeping,
 )
-from ..kernel.validate_schema import (
+from ..kernel.catalog.validation.validate_schema import (
     PostgresDocumentSchemaSpec,
     validate_postgres_document_schemas,
 )
@@ -31,7 +31,7 @@ def postgres_document_schema_spec_for_binding(
     spec: DocumentSpec[Any, Any, Any, Any],
     config: PostgresReadOnlyDocumentConfig | PostgresDocumentConfig,
 ) -> PostgresDocumentSchemaSpec:
-    """Build a :class:`~forze_postgres.kernel.validate_schema.PostgresDocumentSchemaSpec` from kernel wiring."""
+    """Build a :class:`~forze_postgres.kernel.catalog.validation.validate_schema.PostgresDocumentSchemaSpec` from kernel wiring."""
 
     read_rel = config["read"]
     tenant_aware = config.get("tenant_aware", False)
@@ -75,6 +75,7 @@ def postgres_document_schema_spec_for_binding(
         history_enabled=spec.history_enabled,
         history_relation=hist,
         bookkeeping_strategy=config.get("bookkeeping_strategy"),  # type: ignore[arg-type]
+        conflict_target=config.get("conflict_target"),  # type: ignore[arg-type]
     )
 
 

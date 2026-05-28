@@ -1,6 +1,7 @@
 """Primitive types and helpers shared across the application."""
 
 from .buffer import ContextualBuffer
+from .cache import CacheLane
 from .datetime import utcnow
 from .graph import DirectedAcyclicGraph
 from .namespace import StrKeyNamespace
@@ -15,6 +16,7 @@ from .uuid import uuid4, uuid7
 
 __all__ = [
     "utcnow",
+    "CacheLane",
     "ContextualBuffer",
     "normalize_string",
     "JsonDict",

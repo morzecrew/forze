@@ -43,9 +43,9 @@ Authentication is split into two seams:
 - Resolvers — `JwtNativeUuidResolver` (subject is already a UUID), `DeterministicUuidResolver` (`uuid4({"iss": ..., "sub": ...})`), `MappingTableResolver` (document-backed registry with optional just-in-time provisioning).
 - `AuthnOrchestrator` and the `Configurable*` factories that compose them through the dep keys.
 
-External IdPs (`forze_identity.oidc`, `forze_firebase_auth`, …) implement only `TokenVerifierPort` and reuse a Forze resolver — no core contract changes.
+External IdPs (`forze_identity.oidc`, `forze_firebase_auth`, …) plug in via `TokenVerifierPort` and reuse a Forze resolver — install the matching identity extra; handlers stay on existing authn ports.
 
-See [`pages/docs/concepts/authentication.md`](../../pages/docs/concepts/authentication.md) for the full architectural rationale.
+See [Authentication](https://morzecrew.github.io/forze/docs/concepts/authentication/) for the full architectural rationale.
 
 ## FastAPI identity
 
@@ -158,7 +158,7 @@ class ConfigurableOidcTokenVerifier:
 
 Forze stays UUID-native: external `subject` strings become canonical UUID `principal_id`s via the chosen resolver, so domain / authz / tenancy code never sees a vendor identifier.
 
-See [`pages/docs/recipes/external-idp-oidc.md`](../../pages/docs/recipes/external-idp-oidc.md) and [`pages/docs/integrations/oidc.md`](../../pages/docs/integrations/oidc.md).
+See [External IdP (OIDC) recipe](https://morzecrew.github.io/forze/docs/recipes/external-idp-oidc/) and [OIDC integration](https://morzecrew.github.io/forze/docs/integrations/oidc/).
 
 ## Authn document specs
 
@@ -190,7 +190,7 @@ TenancyDepsModule(
 )
 ```
 
-See [`pages/docs/concepts/multi-tenancy.md`](../../pages/docs/concepts/multi-tenancy.md) for aggregates, adapters, and FastAPI `TenantIdentityResolver` pairing.
+See [Multi-tenancy](https://morzecrew.github.io/forze/docs/concepts/multi-tenancy/) for aggregates, adapters, and FastAPI `TenantIdentityResolver` pairing.
 
 ## Secrets
 
@@ -218,18 +218,10 @@ Use secrets for credentials and routed client configuration; avoid putting secre
 
 ## Reference
 
-- [`pages/docs/concepts/authentication.md`](../../pages/docs/concepts/authentication.md)
-- [`pages/docs/reference/authentication.md`](../../pages/docs/reference/authentication.md)
-- [`pages/docs/recipes/authn-authz-tenancy-fastapi.md`](../../pages/docs/recipes/authn-authz-tenancy-fastapi.md)
-- [`pages/docs/recipes/external-idp-oidc.md`](../../pages/docs/recipes/external-idp-oidc.md)
-- [`pages/docs/integrations/oidc.md`](../../pages/docs/integrations/oidc.md)
-- [`pages/docs/integrations/fastapi.md`](../../pages/docs/integrations/fastapi.md)
-- [`pages/docs/concepts/multi-tenancy.md`](../../pages/docs/concepts/multi-tenancy.md)
-- [`src/forze/application/contracts/authn`](../../src/forze/application/contracts/authn)
-- [`src/forze/application/contracts/authz`](../../src/forze/application/contracts/authz)
-- [`src/forze/application/contracts/tenancy`](../../src/forze/application/contracts/tenancy)
-- [`src/forze/application/contracts/secrets`](../../src/forze/application/contracts/secrets)
-- [`src/forze_identity.authn`](../../src/forze_identity.authn)
-- [`src/forze_identity.authz`](../../src/forze_identity.authz)
-- [`src/forze_identity.oidc`](../../src/forze_identity.oidc)
-- [`src/forze_identity.tenancy`](../../src/forze_identity.tenancy)
+- [Authentication](https://morzecrew.github.io/forze/docs/concepts/authentication/)
+- [Authentication reference](https://morzecrew.github.io/forze/docs/reference/authentication/)
+- [Authn, authz, tenancy (FastAPI) recipe](https://morzecrew.github.io/forze/docs/recipes/authn-authz-tenancy-fastapi/)
+- [External IdP (OIDC) recipe](https://morzecrew.github.io/forze/docs/recipes/external-idp-oidc/)
+- [OIDC integration](https://morzecrew.github.io/forze/docs/integrations/oidc/)
+- [FastAPI integration](https://morzecrew.github.io/forze/docs/integrations/fastapi/)
+- [Multi-tenancy](https://morzecrew.github.io/forze/docs/concepts/multi-tenancy/)

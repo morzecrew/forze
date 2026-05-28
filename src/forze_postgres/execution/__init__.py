@@ -1,6 +1,6 @@
 """Postgres execution wiring for the application kernel."""
 
-from ..kernel.validate_schema import (
+from ..kernel.catalog.validation.validate_schema import (
     PostgresDocumentSchemaSpec,
     validate_postgres_document_schemas,
 )

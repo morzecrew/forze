@@ -28,11 +28,15 @@ from forze.base.primitives import JsonDict
 from forze.base.serialization import pydantic_field_names, pydantic_validate
 from forze.domain.constants import ID_FIELD
 
-from ..introspect import PostgresColumnTypes, PostgresIntrospector, PostgresType
-from ..platform import PostgresClientPort
-from ..query import PsycopgQueryRenderer
-from ..query.nested import sort_key_expr
-from ..query.render import PsycopgValueCoercer
+from forze_postgres.kernel.catalog.introspect import (
+    PostgresColumnTypes,
+    PostgresIntrospector,
+    PostgresType,
+)
+from forze_postgres.kernel.client import PostgresClientPort
+from forze_postgres.kernel.sql.query import PsycopgQueryRenderer
+from forze_postgres.kernel.sql.query.nested import sort_key_expr
+from forze_postgres.kernel.sql.query.render import PsycopgValueCoercer
 
 # ----------------------- #
 
@@ -108,7 +112,7 @@ class PostgresGateway[M: BaseModel](TenancyMixin):
     """Source Postgres qualified name (schema, relation)."""
 
     client: PostgresClientPort
-    """Shared :class:`~forze_postgres.kernel.platform.port.PostgresClientPort` instance."""
+    """Shared :class:`~forze_postgres.kernel.client.PostgresClientPort` instance."""
 
     model_type: type[M]
     """Pydantic model used for deserialization."""

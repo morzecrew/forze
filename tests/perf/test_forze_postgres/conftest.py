@@ -6,7 +6,7 @@ from testcontainers.postgres import PostgresContainer
 
 pytest.importorskip("psycopg")
 
-from forze_postgres.kernel.platform.client import PostgresClient, PostgresConfig
+from forze_postgres.kernel.client.client import PostgresClient, PostgresConfig
 
 
 @pytest.fixture(scope="session")

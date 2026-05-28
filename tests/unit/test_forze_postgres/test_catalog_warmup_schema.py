@@ -18,8 +18,8 @@ from forze_postgres.execution.deps.keys import PostgresIntrospectorDepKey
 from forze_postgres.execution.document_schema import (
     postgres_document_schema_validation_lifecycle_step,
 )
-from forze_postgres.kernel.introspect import PostgresIntrospector, PostgresType
-from forze_postgres.kernel.validate_schema import (
+from forze_postgres.kernel.catalog.introspect import PostgresIntrospector, PostgresType
+from forze_postgres.kernel.catalog.validation.validate_schema import (
     PostgresDocumentSchemaSpec,
     validate_postgres_document_schemas,
 )

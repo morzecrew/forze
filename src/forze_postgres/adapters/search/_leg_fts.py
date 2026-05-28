@@ -9,7 +9,7 @@ from psycopg import sql
 from forze.application.contracts.search import SearchOptions, SearchSpec, effective_phrase_combine
 
 from ...kernel.gateways import PostgresQualifiedName
-from ...kernel.introspect import PostgresIntrospector
+from ...kernel.catalog.introspect import PostgresIntrospector
 from ._fts_sql import (
     FtsGroupLetter,
     fts_effective_group_weights,

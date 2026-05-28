@@ -9,8 +9,8 @@ from pydantic import BaseModel, computed_field
 
 from forze.application.contracts.tenancy import TENANT_ID_FIELD
 from forze.base.exceptions import CoreException
-from forze_postgres.kernel.introspect import PostgresIntrospector, PostgresType
-from forze_postgres.kernel.validate_schema import (
+from forze_postgres.kernel.catalog.introspect import PostgresIntrospector, PostgresType
+from forze_postgres.kernel.catalog.validation.validate_schema import (
     PostgresDocumentSchemaSpec,
     validate_postgres_document_schemas,
 )

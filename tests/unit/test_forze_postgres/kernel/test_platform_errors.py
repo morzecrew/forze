@@ -1,4 +1,4 @@
-"""Unit tests for forze_postgres.kernel.platform.errors."""
+"""Unit tests for forze_postgres.kernel.client.errors."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ import pytest
 from psycopg import errors
 
 from forze.base.exceptions import CoreException, ExceptionKind, exc
-from forze_postgres.kernel.platform import errors as platform_errors
+from forze_postgres.kernel.client import errors as platform_errors
 
 # ----------------------- #
 

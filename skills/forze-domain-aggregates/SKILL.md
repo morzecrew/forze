@@ -2,14 +2,14 @@
 name: forze-domain-aggregates
 description: >-
   Defines Forze document aggregates (Document, commands, ReadDocument),
-  mixins, validators, kernel DocumentSpec and SearchSpec. Use when modeling
+  mixins, validators, logical DocumentSpec and SearchSpec. Use when modeling
   entities, DTOs, StrEnum-backed DocumentSpec, SearchSpec, CacheSpec, or
   aligning schemas with Forze domain and application contracts.
 ---
 
 # Forze Domain Aggregates
 
-Use when defining domain models, document aggregates, and **kernel** specifications. Physical tables, collections, Redis namespaces, buckets, and queues belong in integration configs — see [`forze-specs-infrastructure`](../forze-specs-infrastructure/SKILL.md) and [`pages/docs/concepts/specs-and-wiring.md`](../../pages/docs/concepts/specs-and-wiring.md).
+Use when defining domain models, document aggregates, and **logical** specifications. Physical tables, collections, Redis namespaces, buckets, and queues belong in integration configs — see [`forze-specs-infrastructure`](../forze-specs-infrastructure/SKILL.md) and [Specs and wiring](https://morzecrew.github.io/forze/docs/concepts/specs-and-wiring/).
 
 Pair with [`forze-framework-usage`](../forze-framework-usage/SKILL.md) for ports and [`forze-wiring`](../forze-wiring/SKILL.md) for composition and HTTP.
 
@@ -88,7 +88,7 @@ class Project(Document):
             raise ValidationError("Invalid status transition.")
 ```
 
-## DocumentSpec (kernel)
+## DocumentSpec (logical)
 
 `DocumentSpec` binds **model types** and logical `name`. It does **not** embed SQL `source` strings or Mongo collection names — those live on `PostgresDocumentConfig`, `MongoDocumentConfig`, etc., keyed by the same `name`.
 
@@ -117,7 +117,7 @@ project_spec = DocumentSpec(
 )
 ```
 
-Once a `DepsPlan` registers document adapters for that `name`, handlers obtain **`DocumentQueryPort`** / **`DocumentCommandPort`** via **`ctx.document.query(project_spec)`** / **`ctx.document.command(project_spec)`** — see [`forze-framework-usage`](../forze-framework-usage/SKILL.md) and [`pages/docs/core-package/contracts/document.md`](../../pages/docs/core-package/contracts/document.md).
+Once a `DepsPlan` registers document adapters for that `name`, handlers obtain **`DocumentQueryPort`** / **`DocumentCommandPort`** via **`ctx.document.query(project_spec)`** / **`ctx.document.command(project_spec)`** — see [`forze-framework-usage`](../forze-framework-usage/SKILL.md) and [Document contracts](https://morzecrew.github.io/forze/docs/core-package/contracts/document/).
 
 | Field | Purpose |
 |-------|---------|
@@ -129,7 +129,7 @@ Once a `DepsPlan` registers document adapters for that `name`, handlers obtain *
 
 Use `spec.supports_soft_delete()`, `supports_update()`, `supports_number_id()` when branching composition logic.
 
-## SearchSpec (kernel)
+## SearchSpec (logical)
 
 Search is separate from `DocumentSpec`:
 
@@ -183,10 +183,10 @@ project_dtos = DocumentDTOs(
 1. **Domain importing ports or adapters** — domain stays pure.
 2. **Update command with required fields** — use optional fields with `None` defaults for partial patches.
 3. **Mutable defaults on read models** — `ReadDocument` is frozen.
-4. **Putting physical `source` / table names on `DocumentSpec`** — keep specs kernel-only; wire tables in deps modules.
+4. **Putting physical `source` / table names on `DocumentSpec`** — keep specs logical-only; wire tables in deps modules.
 5. **Scattering literal spec names** — put resource names in a shared `StrEnum` and reuse it in specs and deps modules.
 
 ## Reference
 
-- [`pages/docs/concepts/aggregate-specification.md`](../../pages/docs/concepts/aggregate-specification.md)
-- [`pages/docs/concepts/specs-and-wiring.md`](../../pages/docs/concepts/specs-and-wiring.md)
+- [Aggregate specification](https://morzecrew.github.io/forze/docs/concepts/aggregate-specification/)
+- [Specs and wiring](https://morzecrew.github.io/forze/docs/concepts/specs-and-wiring/)

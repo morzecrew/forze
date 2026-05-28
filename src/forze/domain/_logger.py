@@ -3,4 +3,4 @@ from forze.base.logging import Logger
 
 # ----------------------- #
 
-logger = Logger(str(ForzeLogger.DOMAIN))
+logger = Logger(ForzeLogger.DOMAIN)

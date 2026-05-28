@@ -98,6 +98,8 @@ Revision-bearing commands check that the current revision matches before applyin
 
 `ensure` is insert-only on primary-key conflict (never mutates existing rows). `upsert` inserts or runs optimistic `update` on conflict (not a full document replace).
 
+On Postgres, `ensure` / `upsert` use `ON CONFLICT` on `PostgresDocumentConfig.conflict_target` or the inferred write-table primary key (see [Postgres integration](../integrations/postgres.md#conflict_target-ensure--upsert)). On MongoDB, the same operations upsert on `_id` only (see [Mongo integration](../integrations/mongo.md#ensure--upsert-and-unique-indexes)).
+
 Postgres `update_matching` uses `UPDATE … RETURNING`; the coordinator hydrates read models from returned domain rows when read and write share the same source. See [Postgres integration](../integrations/postgres.md) for `bookkeeping_strategy` (`"application"` vs `"database"` triggers).
 
 ### DocumentSpec

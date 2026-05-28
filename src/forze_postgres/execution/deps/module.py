@@ -23,9 +23,9 @@ from forze.application.contracts.search import (
 from forze.application.contracts.transaction import TransactionManagerDepKey
 from forze.application.execution import Deps, DepsModule
 
-from ...kernel.introspect import PostgresIntrospector
-from ...kernel.platform import PostgresClientPort, RoutedPostgresClient
-from ...kernel.validate_tenancy import (
+from ...kernel.catalog.introspect import PostgresIntrospector
+from ...kernel.client import PostgresClientPort, RoutedPostgresClient
+from ...kernel.catalog.validation.validate_tenancy import (
     PostgresTenancyRouteSpec,
     validate_postgres_tenancy_wiring,
 )
@@ -59,7 +59,7 @@ class PostgresDepsModule[K: str | StrEnum](DepsModule[K]):
     """Dependency module that registers Postgres clients and adapters."""
 
     client: PostgresClientPort
-    """Pre-constructed Postgres client (single-DSN or routed). For :class:`~forze_postgres.kernel.platform.RoutedPostgresClient`, set :attr:`introspector_cache_partition_key` to match tenant routing."""
+    """Pre-constructed Postgres client (single-DSN or routed). For :class:`~forze_postgres.kernel.client.RoutedPostgresClient`, set :attr:`introspector_cache_partition_key` to match tenant routing."""
 
     introspector_cache_partition_key: Callable[[], str | None] | None = attrs.field(
         default=None,

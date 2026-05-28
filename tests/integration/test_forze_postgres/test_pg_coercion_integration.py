@@ -23,8 +23,8 @@ from forze_postgres.execution.deps.keys import (
     PostgresIntrospectorDepKey,
 )
 from forze_postgres.execution.deps.utils import doc_write_gw
-from forze_postgres.kernel.introspect import PostgresIntrospector
-from forze_postgres.kernel.platform.client import PostgresClient
+from forze_postgres.kernel.catalog.introspect import PostgresIntrospector
+from forze_postgres.kernel.client.client import PostgresClient
 
 
 # ----------------------- #

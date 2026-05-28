@@ -1,8 +1,8 @@
-"""Unit tests for :mod:`forze_postgres.kernel.introspect.utils`."""
+"""Unit tests for :mod:`forze_postgres.kernel.catalog.introspect.utils`."""
 
 import pytest
 
-from forze_postgres.kernel.introspect.utils import (
+from forze_postgres.kernel.catalog.introspect.utils import (
     extract_index_expr_from_indexdef,
     normalize_pg_type,
 )

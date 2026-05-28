@@ -10,8 +10,8 @@ import pytest
 from pydantic import BaseModel
 
 from forze.base.exceptions import CoreException
-from forze_postgres.kernel.introspect.types import PostgresType
-from forze_postgres.kernel.validate_schema_types import (
+from forze_postgres.kernel.catalog.introspect.types import PostgresType
+from forze_postgres.kernel.catalog.validation.validate_schema_types import (
     expected_pg_bases_for_annotation,
     expected_pg_bases_for_field,
     validate_field_nullability,

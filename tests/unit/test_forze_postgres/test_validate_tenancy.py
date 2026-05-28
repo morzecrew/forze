@@ -4,7 +4,7 @@ import pytest
 
 from forze.base.exceptions import CoreException
 
-from forze_postgres.kernel.validate_tenancy import (
+from forze_postgres.kernel.catalog.validation.validate_tenancy import (
     PostgresTenancyRouteSpec,
     derive_postgres_tenant_isolation_mode,
     validate_postgres_tenancy_wiring,

@@ -3,12 +3,13 @@ name: forze-graph-contracts
 description: >-
   Models Forze graph contracts with GraphModuleSpec, GraphNodeSpec,
   GraphEdgeSpec, graph refs, query/command ports, and dependency keys. Use when
-  adding graph-shaped features or preparing Neo4j/Arango-style adapters.
+  adding graph-shaped features and wiring a Neo4j or Arango-style adapter in
+  your application.
 ---
 
 # Forze graph contracts
 
-Use when an application feature needs vertices, relationships, neighborhood expansion, or shortest-path style queries. This skill covers **core contracts**; this repository does not currently ship a concrete graph adapter package or mock graph adapter.
+Use when your application needs vertices, relationships, neighborhood expansion, or shortest-path style queries. Forze ships graph **contracts** in `forze.application.contracts.graph`; there is no official `forze_graph` integration package. Implement `GraphQueryDepKey` / `GraphCommandDepKey` in your app (see [`forze-custom-deps`](../forze-custom-deps/SKILL.md)) or use a vendor-specific adapter you maintain.
 
 ## Module, node, and edge specs
 
@@ -85,18 +86,18 @@ created = await command.create_vertex("project", CreateProjectNode(name="Demo"))
 
 ## Adapter guidance
 
-Keep Cypher, AQL, and engine-specific query strings inside adapters. Register graph providers as routed deps under `GraphQueryDepKey` and `GraphCommandDepKey`, keyed by `GraphModuleSpec.name`.
+Keep Cypher, AQL, and engine-specific query strings inside your adapter. Register graph providers as routed deps under `GraphQueryDepKey` and `GraphCommandDepKey`, keyed by `GraphModuleSpec.name`.
 
 ## Anti-patterns
 
 1. **Using graph contracts before validating the module spec** — duplicate or unknown kinds fail later.
 2. **Putting engine labels/collection names in specs** — specs hold logical kinds; adapters map physical layout.
-3. **Assuming a built-in graph adapter exists** — add a custom deps module for Neo4j/Arango-style backends.
+3. **Assuming a built-in graph integration package exists** — add a custom `DepsModule` for your engine.
 4. **Mixing node kind names with module route names** — module name routes deps; node/edge names identify graph kinds.
 5. **Using the document query DSL for graph traversals** — graph ports expose explicit traversal methods.
 
 ## Reference
 
-- [`src/forze/application/contracts/graph`](../../src/forze/application/contracts/graph)
-- [`src/forze/application/contracts/base/specs.py`](../../src/forze/application/contracts/base/specs.py)
-- [`src/forze/application/execution/deps.py`](../../src/forze/application/execution/deps.py)
+- [Graph contracts](https://morzecrew.github.io/forze/docs/core-package/contracts/graph/)
+- [Specs and wiring](https://morzecrew.github.io/forze/docs/concepts/specs-and-wiring/)
+- [`forze-custom-deps`](../forze-custom-deps/SKILL.md)

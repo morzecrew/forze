@@ -9,7 +9,7 @@ from psycopg import sql
 from forze.application.contracts.embeddings import EmbeddingsProviderPort
 from forze.application.contracts.search import SearchOptions, effective_phrase_combine
 
-from ...kernel.introspect import PostgresIntrospector
+from ...kernel.catalog.introspect import PostgresIntrospector
 from ._vector_sql import (
     VectorDistanceKind,
     assert_embedding_shape,

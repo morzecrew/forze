@@ -13,7 +13,7 @@ Use when implementing document persistence, filtered listings, cursor pagination
 
 ## Document ports (`DocumentQueryPort` / `DocumentCommandPort`)
 
-Kernel **`DocumentSpec`** carries model types and logical `name` only; **`PostgresDepsModule`** / **`MongoDepsModule`** (and related maps) supply tables, history relations, and bookkeeping. At runtime, `ctx.document.query(spec)` resolves the factory registered under **`DocumentQueryDepKey`** for route `spec.name` and returns **`DocumentQueryPort[read]`**; `ctx.document.command(spec)` does the same for **`DocumentCommandDepKey`** → **`DocumentCommandPort`**.
+Logical **`DocumentSpec`** carries model types and `name` only; **`PostgresDepsModule`** / **`MongoDepsModule`** (and related maps) supply tables, history relations, and bookkeeping. At runtime, `ctx.document.query(spec)` resolves the factory registered under **`DocumentQueryDepKey`** for route `spec.name` and returns **`DocumentQueryPort[read]`**; `ctx.document.command(spec)` does the same for **`DocumentCommandDepKey`** → **`DocumentCommandPort`**.
 
 ```python
 doc_q = self.ctx.document.query(project_spec)
@@ -90,6 +90,7 @@ Keep snapshot storage and cursor/keyset behavior in infrastructure config; use t
 ## Adapter boundaries
 
 - Postgres and Mongo implement document query/command gateways and history where configured.
+- Mongo implements `SearchQueryPort` when `MongoDepsModule.searches` is wired (`text`, `atlas`, `vector` engines).
 - Mock implements document/search behavior for unit tests.
 - Use adapters in integration tests or deps modules, not handlers.
 
@@ -103,10 +104,9 @@ Keep snapshot storage and cursor/keyset behavior in infrastructure config; use t
 
 ## Reference
 
-- [`pages/docs/concepts/specs-and-wiring.md`](../../pages/docs/concepts/specs-and-wiring.md)
-- [`pages/docs/core-package/contracts/document.md`](../../pages/docs/core-package/contracts/document.md)
-- [`pages/docs/core-package/query-syntax.md`](../../pages/docs/core-package/query-syntax.md)
-- [`pages/docs/core-package/contracts.md`](../../pages/docs/core-package/contracts.md)
-- [`pages/docs/integrations/postgres.md`](../../pages/docs/integrations/postgres.md)
-- [`pages/docs/integrations/mongo.md`](../../pages/docs/integrations/mongo.md)
-- [`src/forze/application/contracts/search`](../../src/forze/application/contracts/search)
+- [Specs and wiring](https://morzecrew.github.io/forze/docs/concepts/specs-and-wiring/)
+- [Document contracts](https://morzecrew.github.io/forze/docs/core-package/contracts/document/)
+- [Query syntax](https://morzecrew.github.io/forze/docs/core-package/query-syntax/)
+- [Contracts overview](https://morzecrew.github.io/forze/docs/core-package/contracts/)
+- [Postgres integration](https://morzecrew.github.io/forze/docs/integrations/postgres/)
+- [Mongo integration](https://morzecrew.github.io/forze/docs/integrations/mongo/)

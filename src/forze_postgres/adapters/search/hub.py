@@ -59,10 +59,10 @@ from forze.base.serialization import pydantic_validate_many
 from forze.domain.constants import ID_FIELD
 
 from ...kernel.gateways import PostgresGateway, PostgresQualifiedName
-from ...kernel.hub_fk_columns import normalize_hub_fk_columns
-from ...kernel.introspect import PostgresIntrospector
-from ...kernel.query.nested import sort_key_expr
-from ...pagination import build_seek_condition
+from ...kernel.catalog.hub_fk_columns import normalize_hub_fk_columns
+from ...kernel.catalog.introspect import PostgresIntrospector
+from ...kernel.sql.query.nested import sort_key_expr
+from ...kernel.sql import build_seek_condition
 from ._fts_sql import FtsGroupLetter
 from ._leg_fts import build_fts_leg
 from ._leg_pgroonga import build_pgroonga_leg

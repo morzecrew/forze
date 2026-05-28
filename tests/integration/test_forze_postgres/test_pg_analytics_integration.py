@@ -13,7 +13,7 @@ from forze.application.execution import ExecutionContext
 from forze.base.exceptions import CoreException
 from forze_postgres.adapters.analytics import PostgresAnalyticsAdapter
 from forze_postgres.execution import PostgresDepsModule
-from forze_postgres.kernel.platform import PostgresClient
+from forze_postgres.kernel.client import PostgresClient
 
 pytestmark = pytest.mark.integration
 

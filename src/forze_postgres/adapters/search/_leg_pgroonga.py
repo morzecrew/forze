@@ -12,7 +12,7 @@ from forze.application.contracts.search import (
     effective_phrase_combine,
 )
 from ...kernel.gateways import PostgresQualifiedName
-from ...kernel.introspect import PostgresIntrospector
+from ...kernel.catalog.introspect import PostgresIntrospector
 from ._pgroonga_sql import (
     pgroonga_match_clause,
     pgroonga_phrase_match_text,

@@ -1,4 +1,4 @@
-"""Integration tests for :class:`~forze_postgres.kernel.platform.RoutedPostgresClient`."""
+"""Integration tests for :class:`~forze_postgres.kernel.client.RoutedPostgresClient`."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ pytest.importorskip("psycopg")
 
 from forze.application.contracts.secrets import SecretRef
 
-from forze_postgres.kernel.platform import PostgresClient, PostgresConfig, RoutedPostgresClient
+from forze_postgres.kernel.client import PostgresClient, PostgresConfig, RoutedPostgresClient
 
 def _ref(tid: UUID) -> SecretRef:
     return SecretRef(path=f"tenants/{tid}/dsn")

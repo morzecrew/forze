@@ -6,7 +6,7 @@ import pytest
 
 from forze.base.exceptions import CoreException
 
-from forze_postgres.kernel.introspect import PostgresIntrospector
+from forze_postgres.kernel.catalog.introspect import PostgresIntrospector
 
 # ----------------------- #
 

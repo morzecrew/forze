@@ -20,7 +20,7 @@ from forze_postgres.execution.document_schema import (
     postgres_document_schema_spec_for_binding,
     postgres_document_schema_validation_lifecycle_step,
 )
-from forze_postgres.kernel.validate_schema import PostgresDocumentSchemaSpec
+from forze_postgres.kernel.catalog.validation.validate_schema import PostgresDocumentSchemaSpec
 
 
 class _Read(BaseModel):

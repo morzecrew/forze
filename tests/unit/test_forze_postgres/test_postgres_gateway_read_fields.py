@@ -5,7 +5,7 @@ from unittest.mock import MagicMock
 from forze.domain.models import Document
 
 from forze_postgres.kernel.gateways import PostgresGateway, PostgresQualifiedName
-from forze_postgres.kernel.introspect import PostgresIntrospector
+from forze_postgres.kernel.catalog.introspect import PostgresIntrospector
 
 
 class _Doc(Document):

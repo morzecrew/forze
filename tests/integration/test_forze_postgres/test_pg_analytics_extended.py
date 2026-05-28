@@ -11,7 +11,7 @@ from forze.application.contracts.analytics import (
 )
 from forze.application.contracts.base import CountlessPage, Page
 from forze_postgres.adapters.analytics import PostgresAnalyticsAdapter
-from forze_postgres.kernel.platform import PostgresClient
+from forze_postgres.kernel.client import PostgresClient
 
 pytestmark = pytest.mark.integration
 

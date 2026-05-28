@@ -4,4 +4,4 @@ from .logging import Logger
 
 # ----------------------- #
 
-logger = Logger(str(ForzeLogger.BASE))
+logger = Logger(ForzeLogger.BASE)

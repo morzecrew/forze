@@ -47,10 +47,10 @@ from forze_postgres.execution.deps.keys import (
 from forze_postgres.execution.deps.module import PostgresDepsModule
 from forze_postgres.execution.deps.utils import doc_write_gw, read_gw
 from forze_postgres.kernel.gateways import PostgresReadGateway, PostgresWriteGateway
-from forze_postgres.kernel.hub_fk_columns import normalize_hub_fk_columns
-from forze_postgres.kernel.introspect import PostgresIntrospector
-from forze_postgres.kernel.platform import RoutedPostgresClient
-from forze_postgres.kernel.platform.client import PostgresClient
+from forze_postgres.kernel.catalog.hub_fk_columns import normalize_hub_fk_columns
+from forze_postgres.kernel.catalog.introspect import PostgresIntrospector
+from forze_postgres.kernel.client import RoutedPostgresClient
+from forze_postgres.kernel.client.client import PostgresClient
 
 
 class _R(ReadDocument):

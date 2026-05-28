@@ -16,7 +16,7 @@ from forze.application.contracts.transaction import (
     TransactionScopeKey,
 )
 
-from ..kernel.platform import PostgresClientPort, PostgresTransactionOptions
+from ..kernel.client import PostgresClientPort, PostgresTransactionOptions
 from ._logger import logger
 
 # ----------------------- #

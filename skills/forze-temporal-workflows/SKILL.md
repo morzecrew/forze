@@ -173,7 +173,7 @@ Schedules require a Temporal server with the Schedules API (not the time-skippin
 
 ## Testing
 
-Use the repository’s Temporal testing patterns when workflow code itself is under test. For handlers that only need to verify a workflow command was issued, register fake `DurableWorkflowCommandDepKey` / `DurableWorkflowQueryDepKey` factories in `Deps`. Schedule handlers can use fake `DurableWorkflowScheduleCommandDepKey` / `DurableWorkflowScheduleQueryDepKey` factories similarly.
+For handlers that only need to verify a workflow command was issued, register fake `DurableWorkflowCommandDepKey` / `DurableWorkflowQueryDepKey` factories in `Deps` (for example via `MockDepsModule` or a test `DepsPlan`). Schedule handlers can use fake `DurableWorkflowScheduleCommandDepKey` / `DurableWorkflowScheduleQueryDepKey` factories similarly. For workflow definition tests, follow the [Temporal integration](https://morzecrew.github.io/forze/docs/integrations/temporal/) testing section.
 
 ## Anti-patterns
 
@@ -185,7 +185,6 @@ Use the repository’s Temporal testing patterns when workflow code itself is un
 
 ## Reference
 
-- [`pages/docs/integrations/temporal.md`](../../pages/docs/integrations/temporal.md)
-- [`src/forze/application/contracts/durable/workflow`](../../src/forze/application/contracts/durable/workflow)
-- [`src/forze_temporal/execution/deps/module.py`](../../src/forze_temporal/execution/deps/module.py)
-- [`tests/unit/test_forze_temporal`](../../tests/unit/test_forze_temporal)
+- [Temporal integration](https://morzecrew.github.io/forze/docs/integrations/temporal/)
+- [Durable workflow contracts](https://morzecrew.github.io/forze/docs/core-package/contracts/durable-workflow/)
+- [`forze-wiring`](../forze-wiring/SKILL.md)

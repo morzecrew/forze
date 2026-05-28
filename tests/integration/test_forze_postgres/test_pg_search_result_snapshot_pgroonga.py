@@ -22,8 +22,8 @@ from forze_postgres.execution.deps.keys import (
     PostgresClientDepKey,
     PostgresIntrospectorDepKey,
 )
-from forze_postgres.kernel.introspect import PostgresIntrospector
-from forze_postgres.kernel.platform.client import PostgresClient
+from forze_postgres.kernel.catalog.introspect import PostgresIntrospector
+from forze_postgres.kernel.client.client import PostgresClient
 from forze_redis.execution.deps.deps import ConfigurableRedisSearchResultSnapshot
 from forze_redis.execution.deps.keys import RedisClientDepKey
 from forze_redis.kernel.platform.client import RedisClient

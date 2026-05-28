@@ -1,6 +1,6 @@
 """Unit tests for ``forze_mongo.kernel.gateways.write``."""
 
-from forze.base.exceptions import CoreException, exc
+from forze.base.exceptions import CoreException, ExceptionKind, exc
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID, uuid4
@@ -199,6 +199,60 @@ class TestMongoWriteGateway:
         assert out[0].name == "existing"
         assert out[1].name == "new"
         read.get_many.assert_awaited_once_with([pk_existing])
+
+    @pytest.mark.asyncio
+    async def test_ensure_many_bulk_duplicate_key_raises_conflict(self) -> None:
+        pk = uuid4()
+        now = datetime.now(tz=UTC)
+        dtos = [MyCreateDoc(id=pk, created_at=now, name="dup")]
+        client = _build_client()
+        client.bulk_write = AsyncMock(
+            side_effect=CoreException.conflict("Duplicate key violation."),
+        )
+        read = _build_read(client)
+        gw = MongoWriteGateway(
+            model_type=MyDoc,
+            collection="docs",
+            database=None,
+            client=client,
+            read_gw=read,
+            create_cmd_type=MyCreateDoc,
+            update_cmd_type=MyUpdateDoc,
+        )
+
+        with pytest.raises(CoreException) as err:
+            await gw.ensure_many(dtos, batch_size=20)
+
+        assert err.value.kind is ExceptionKind.CONFLICT
+
+    @pytest.mark.asyncio
+    async def test_ensure_many_missing_after_bulk_raises_conflict(self) -> None:
+        pk = uuid4()
+        now = datetime.now(tz=UTC)
+        dtos = [MyCreateDoc(id=pk, created_at=now, name="ghost")]
+        client = _build_client()
+        bulk_result = MagicMock()
+        bulk_result.upserted_ids = {}
+        client.bulk_write = AsyncMock(return_value=bulk_result)
+        read = _build_read(client)
+        read.get_many = AsyncMock(
+            side_effect=CoreException.not_found("Some records not found"),
+        )
+        gw = MongoWriteGateway(
+            model_type=MyDoc,
+            collection="docs",
+            database=None,
+            client=client,
+            read_gw=read,
+            create_cmd_type=MyCreateDoc,
+            update_cmd_type=MyUpdateDoc,
+        )
+
+        with pytest.raises(CoreException) as err:
+            await gw.ensure_many(dtos, batch_size=20)
+
+        assert err.value.kind is ExceptionKind.CONFLICT
+        assert err.value.code == "mongo_ensure_bulk_miss"
 
 class TestOptimisticRetry:
     def test_optimistic_retry_returns_tenacity_decorator(self) -> None:

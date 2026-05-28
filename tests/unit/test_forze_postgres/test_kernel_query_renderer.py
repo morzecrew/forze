@@ -23,8 +23,8 @@ from forze.application.contracts.querying import (
     QueryNot,
     QueryOr,
 )
-from forze_postgres.kernel.introspect import PostgresColumnTypes, PostgresType
-from forze_postgres.kernel.query.render import PsycopgQueryRenderer
+from forze_postgres.kernel.catalog.introspect import PostgresColumnTypes, PostgresType
+from forze_postgres.kernel.sql.query.render import PsycopgQueryRenderer
 
 # ----------------------- #
 

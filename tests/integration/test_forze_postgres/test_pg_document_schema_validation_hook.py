@@ -11,9 +11,9 @@ from forze.application.execution import Deps, ExecutionContext
 from forze.domain.models import CreateDocumentCmd, Document
 from forze_postgres.execution.deps.keys import PostgresIntrospectorDepKey
 from forze_postgres.execution.document_schema import PostgresDocumentSchemaValidationHook
-from forze_postgres.kernel.introspect import PostgresIntrospector
-from forze_postgres.kernel.platform.client import PostgresClient
-from forze_postgres.kernel.validate_schema import PostgresDocumentSchemaSpec
+from forze_postgres.kernel.catalog.introspect import PostgresIntrospector
+from forze_postgres.kernel.client.client import PostgresClient
+from forze_postgres.kernel.catalog.validation.validate_schema import PostgresDocumentSchemaSpec
 
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
 

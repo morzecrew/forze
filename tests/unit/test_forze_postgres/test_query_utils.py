@@ -1,6 +1,6 @@
 from psycopg import sql
 
-from forze_postgres.kernel.query.utils import PsycopgPositionalBinder
+from forze_postgres.kernel.sql.query.utils import PsycopgPositionalBinder
 
 
 class TestPsycopgPositionalBinder:

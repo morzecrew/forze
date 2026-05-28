@@ -7,7 +7,7 @@ import pytest
 
 pytest.importorskip("psycopg")
 
-from forze_postgres.kernel.introspect import PostgresIntrospector
+from forze_postgres.kernel.catalog.introspect import PostgresIntrospector
 
 
 @pytest.mark.asyncio

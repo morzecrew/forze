@@ -93,11 +93,11 @@ When `tenant_aware=True`, the adapter derives tenant information from `Execution
 1. **Putting bucket names in `StorageSpec`** — specs carry logical names; deps config carries bucket names.
 2. **Skipping `S3DepsModule.storages`** — no storage route is registered.
 3. **Using object storage as transactional state** — write document metadata in a transaction, then run storage side effects after commit when consistency matters.
-4. **Hard-coding cloud credentials in code or skills examples** — use secrets/config outside the kernel.
+4. **Hard-coding cloud credentials in code or examples** — use secrets/config outside application specs.
 5. **Assuming Forze creates buckets/IAM/CORS** — manage provider resources with infrastructure tooling.
 
 ## Reference
 
-- [`pages/docs/integrations/s3.md`](../../pages/docs/integrations/s3.md)
-- [`src/forze/application/contracts/storage`](../../src/forze/application/contracts/storage)
-- [`src/forze_s3/execution/deps/module.py`](../../src/forze_s3/execution/deps/module.py)
+- [S3 integration](https://morzecrew.github.io/forze/docs/integrations/s3/)
+- [Storage contracts](https://morzecrew.github.io/forze/docs/core-package/contracts/storage/)
+- [`forze-framework-usage`](../forze-framework-usage/SKILL.md)

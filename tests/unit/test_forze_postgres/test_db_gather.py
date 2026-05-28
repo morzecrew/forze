@@ -1,4 +1,4 @@
-"""Unit tests for :func:`~forze_postgres.kernel.db_gather.gather_db_work`."""
+"""Unit tests for :func:`~forze_postgres.kernel.client.gather_db_work`."""
 
 import asyncio
 from unittest.mock import MagicMock
@@ -7,8 +7,8 @@ import pytest
 
 pytest.importorskip("psycopg")
 
-from forze_postgres.kernel.db_gather import gather_db_work
-from forze_postgres.kernel.platform.client import PostgresClient
+from forze_postgres.kernel.client import gather_db_work
+from forze_postgres.kernel.client.client import PostgresClient
 
 
 @pytest.mark.asyncio

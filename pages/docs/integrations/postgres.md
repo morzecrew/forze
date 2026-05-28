@@ -63,6 +63,14 @@ project_document_config = PostgresDocumentConfig(
 
 Example trigger name: `{table}_bump_rev` (see [First project walkthrough](../first-project-walkthrough.md)).
 
+#### `conflict_target` (ensure / upsert)
+
+Optional `conflict_target: tuple[str, ...]` on `PostgresDocumentConfig` sets the column list for `INSERT … ON CONFLICT (…) DO NOTHING` in `ensure`, `ensure_many`, `upsert`, and `upsert_many`. When omitted, the adapter infers the write table **PRIMARY KEY** from Postgres catalogs at runtime (and validates it during optional schema validation startup).
+
+- Use an explicit value when inference is insufficient (for example expression or partial primary indexes).
+- Additional **UNIQUE** constraints on the write table are supported: existing primary keys are detected via `ON CONFLICT`; a **new** primary key that violates another UNIQUE column still raises a conflict error.
+- Composite primary keys (for example `(tenant_id, id)`) are inferred automatically when all PK columns appear in the insert payload.
+
 For search, use `PostgresSearchConfig`, `PostgresHubSearchConfig`, or `PostgresFederatedSearchConfig` and choose `engine="pgroonga"`, `engine="fts"`, or `engine="vector"`.
 
 ### Deps module

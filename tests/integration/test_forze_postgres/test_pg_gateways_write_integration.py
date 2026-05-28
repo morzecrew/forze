@@ -7,14 +7,15 @@ import pytest
 
 from forze.application.contracts.document import DocumentWriteTypes
 from forze.application.execution import Deps, ExecutionContext
+from forze.base.exceptions import CoreException, ExceptionKind
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document
 from forze_postgres.execution.deps.keys import (
     PostgresClientDepKey,
     PostgresIntrospectorDepKey,
 )
 from forze_postgres.execution.deps.utils import doc_write_gw
-from forze_postgres.kernel.introspect import PostgresIntrospector
-from forze_postgres.kernel.platform.client import PostgresClient
+from forze_postgres.kernel.catalog.introspect import PostgresIntrospector
+from forze_postgres.kernel.client.client import PostgresClient
 
 
 class PgGwDoc(Document):
@@ -577,3 +578,119 @@ async def test_postgres_write_gateway_update_many_nullable_timestamptz_all_null(
     ra = await read.get(a.id)
     rb = await read.get(b.id)
     assert ra.deadline is None and rb.deadline is None
+
+
+class PgGwDocTenant(Document):
+    tenant_id: UUID
+    name: str
+    email: str
+
+
+class PgGwCreateTenant(CreateDocumentCmd):
+    tenant_id: UUID
+    name: str
+    email: str
+
+
+class PgGwUpdateTenant(BaseDTO):
+    name: str | None = None
+
+
+def _write_types_tenant() -> (
+    DocumentWriteTypes[PgGwDocTenant, PgGwCreateTenant, PgGwUpdateTenant]
+):
+    return DocumentWriteTypes(
+        domain=PgGwDocTenant,
+        create_cmd=PgGwCreateTenant,
+        update_cmd=PgGwUpdateTenant,
+    )
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_postgres_write_gateway_ensure_composite_pk_and_secondary_unique(
+    pg_client: PostgresClient,
+) -> None:
+    """``ensure``/``upsert`` use inferred composite PK; secondary UNIQUE still enforces."""
+    table = f"pg_gw_ct_{uuid4().hex[:8]}"
+    tenant_id = uuid4()
+    await pg_client.execute(
+        f"""
+        CREATE TABLE public.{table} (
+            tenant_id uuid NOT NULL,
+            id uuid NOT NULL,
+            rev integer NOT NULL,
+            created_at timestamptz NOT NULL,
+            last_update_at timestamptz NOT NULL,
+            name text NOT NULL,
+            email text NOT NULL,
+            PRIMARY KEY (tenant_id, id),
+            UNIQUE (email)
+        );
+        """
+    )
+
+    ctx = ExecutionContext(
+        deps=Deps.plain(
+            {
+                PostgresClientDepKey: pg_client,
+                PostgresIntrospectorDepKey: PostgresIntrospector(client=pg_client),
+            }
+        )
+    )
+    write = doc_write_gw(
+        ctx,
+        write_types=_write_types_tenant(),
+        write_relation=("public", table),
+        bookkeeping_strategy="application",
+        tenant_aware=False,
+    )
+
+    doc_id = uuid4()
+    seeded = await write.create(
+        PgGwCreateTenant(
+            id=doc_id,
+            tenant_id=tenant_id,
+            name="seeded",
+            email="a@example.com",
+        ),
+    )
+
+    second = await write.ensure(
+        PgGwCreateTenant(
+            id=doc_id,
+            tenant_id=tenant_id,
+            name="ignored",
+            email="other@example.com",
+        ),
+    )
+    assert second.id == doc_id
+    assert second.name == "seeded"
+    assert second.email == "a@example.com"
+    assert second.rev == seeded.rev
+
+    dup_email_id = uuid4()
+    with pytest.raises(CoreException) as err:
+        await write.ensure(
+            PgGwCreateTenant(
+                id=dup_email_id,
+                tenant_id=tenant_id,
+                name="dup",
+                email="a@example.com",
+            ),
+        )
+    assert err.value.kind == ExceptionKind.CONFLICT or (
+        err.value.details.get("exc_type") == "UniqueViolation"
+    )
+
+    patched = await write.upsert(
+        PgGwCreateTenant(
+            id=doc_id,
+            tenant_id=tenant_id,
+            name="ignored",
+            email="ignored",
+        ),
+        PgGwUpdateTenant(name="patched"),
+    )
+    assert patched.name == "patched"
+    assert patched.email == "a@example.com"

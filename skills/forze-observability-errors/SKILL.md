@@ -39,7 +39,7 @@ raise ConflictError(
 
 ## Adapter exception mapping
 
-Use `@handled(...)` on adapter methods to convert provider exceptions into `CoreError` subclasses. Let existing `CoreError` values pass through.
+When you implement a **custom adapter** in your application, use `@handled(...)` on adapter methods to convert provider exceptions into `CoreError` subclasses. Let existing `CoreError` values pass through. Shipped `forze_*` adapters already map common provider errors.
 
 ```python
 from forze.base.errors import ConflictError, CoreError, InfrastructureError, error_handler, handled
@@ -108,7 +108,5 @@ register_exception_handlers(app)
 
 ## Reference
 
-- [`pages/docs/core-package/base-layer.md`](../../pages/docs/core-package/base-layer.md)
-- [`src/forze/base/errors.py`](../../src/forze/base/errors.py)
-- [`src/forze/base/logging`](../../src/forze/base/logging)
-- [`src/forze_fastapi/exceptions.py`](../../src/forze_fastapi/exceptions.py)
+- [Base layer (errors and logging)](https://morzecrew.github.io/forze/docs/core-package/base-layer/)
+- [FastAPI integration](https://morzecrew.github.io/forze/docs/integrations/fastapi/)

@@ -23,7 +23,7 @@ from .execution import (
     routed_postgres_lifecycle_step,
     validate_postgres_document_schemas,
 )
-from .kernel.platform import (
+from .kernel.client import (
     PostgresClient,
     PostgresClientPort,
     PostgresConfig,

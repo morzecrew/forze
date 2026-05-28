@@ -7,8 +7,8 @@ import pytest
 
 from forze.domain.models import Document
 from forze_postgres.kernel.gateways import PostgresQualifiedName, PostgresReadGateway
-from forze_postgres.kernel.introspect import PostgresIntrospector
-from forze_postgres.kernel.platform import PostgresClient
+from forze_postgres.kernel.catalog.introspect import PostgresIntrospector
+from forze_postgres.kernel.client import PostgresClient
 
 
 class _Row(Document):

@@ -1,4 +1,4 @@
-"""Unit tests for forze_postgres.kernel.query."""
+"""Unit tests for forze_postgres.kernel.sql.query."""
 
 from datetime import date, datetime, timezone
 
@@ -6,8 +6,8 @@ import pytest
 
 from forze.base.exceptions import CoreException
 
-from forze_postgres.kernel.introspect import PostgresType
-from forze_postgres.kernel.query.render import PsycopgValueCoercer
+from forze_postgres.kernel.catalog.introspect import PostgresType
+from forze_postgres.kernel.sql.query.render import PsycopgValueCoercer
 
 # ----------------------- #
 
@@ -22,7 +22,7 @@ class TestPsycopgValueCoercer:
     def test_scalar_uuid_type(self) -> None:
         from uuid import UUID
 
-        from forze_postgres.kernel.introspect import PostgresType
+        from forze_postgres.kernel.catalog.introspect import PostgresType
 
         coercer = PsycopgValueCoercer()
         t = PostgresType(base="uuid", is_array=False, not_null=False)

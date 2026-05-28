@@ -23,7 +23,7 @@ ERROR_CODE_HEADER: Final[str] = "X-Error-Code"
 GENERIC_500_DETAIL: Final[str] = "Internal server error"
 """Generic detail message for unhandled server errors."""
 
-error_logger = Logger(str(ForzeFastAPILogger.ERRORS))
+error_logger = Logger(ForzeFastAPILogger.ERRORS)
 """Logger for FastAPI server-side error diagnostics."""
 
 # ....................... #

@@ -33,12 +33,12 @@ from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
 from forze.base.serialization import pydantic_validate, pydantic_validate_many
 from forze.domain.constants import ID_FIELD
-from forze_postgres.kernel.query import PsycopgQueryRenderer
-from forze_postgres.kernel.query.nested import sort_key_expr
+from forze_postgres.kernel.sql.query import PsycopgQueryRenderer
+from forze_postgres.kernel.sql.query.nested import sort_key_expr
 from forze.application.contracts.querying.sort_resolution import (
     normalize_sorts_for_keyset,
 )
-from forze_postgres.pagination import (
+from forze_postgres.kernel.sql import (
     build_order_by_sql,
     build_seek_condition,
     decode_keyset_v1,

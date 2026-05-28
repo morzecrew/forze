@@ -103,6 +103,7 @@ def doc_write_gw(
     bookkeeping_strategy: PostgresBookkeepingStrategy,
     tenant_aware: bool,
     nested_field_hints: Mapping[str, type[Any]] | None = None,
+    conflict_target: tuple[str, ...] | None = None,
 ) -> PostgresWriteGateway[Any, Any, Any]:
     """Build a write gateway for document CRUD with optional history.
 
@@ -113,6 +114,7 @@ def doc_write_gw(
     :param history_enabled: Whether to enable history.
     :param bookkeeping_strategy: Bookkeeping strategy.
     :param tenant_aware: Whether the document is tenant-aware.
+    :param conflict_target: Optional ``ON CONFLICT`` columns; ``None`` infers PRIMARY KEY.
     :returns: Postgres write gateway.
     """
 
@@ -150,4 +152,5 @@ def doc_write_gw(
         strategy=bookkeeping_strategy,
         tenant_provider=ctx.inv_ctx.get_tenant,
         tenant_aware=tenant_aware,
+        conflict_target=conflict_target,
     )

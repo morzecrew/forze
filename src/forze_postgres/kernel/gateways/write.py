@@ -35,8 +35,9 @@ from forze.base.serialization import (
 from forze.domain.constants import ID_FIELD, REV_FIELD
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document
 
-from ..db_gather import gather_db_work
-from ..introspect import PostgresColumnTypes, PostgresType
+from forze_postgres.kernel.catalog.introspect import PostgresColumnTypes, PostgresType
+from forze_postgres.kernel.client import gather_db_work
+from forze_postgres.kernel.sql.conflict_target import resolve_write_conflict_target
 from .base import PostgresGateway
 from .history import PostgresHistoryGateway
 from .read import PostgresReadGateway
@@ -129,6 +130,16 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
 
     strategy: PostgresBookkeepingStrategy
     """Bookkeeping strategy."""
+
+    conflict_target: tuple[str, ...] | None = attrs.field(default=None)
+    """``ON CONFLICT`` columns for :meth:`ensure` / :meth:`upsert`; ``None`` infers PRIMARY KEY."""
+
+    _conflict_target_resolved: tuple[str, ...] | None = attrs.field(
+        default=None,
+        init=False,
+        eq=False,
+        repr=False,
+    )
 
     # ....................... #
 
@@ -248,6 +259,29 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
             self._ident_rev(),
             sql.Placeholder(),
         )
+
+    # ....................... #
+
+    async def _resolved_conflict_target(self) -> tuple[str, ...]:
+        cached = self._conflict_target_resolved
+
+        if cached is not None:
+            return cached
+
+        resolved = await resolve_write_conflict_target(
+            self.introspector,
+            schema=self.source_qname.schema,
+            relation=self.source_qname.name,
+            configured=self.conflict_target,
+        )
+        object.__setattr__(self, "_conflict_target_resolved", resolved)
+
+        return resolved
+
+    async def _ident_conflict_target(self) -> sql.Composable:
+        cols = await self._resolved_conflict_target()
+
+        return sql.SQL(", ").join(sql.Identifier(c) for c in cols)
 
     # ....................... #
 
@@ -402,15 +436,16 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
             vals = [sql.Placeholder() for _ in insert_data.keys()]
             params = list(insert_data.values())
 
+            conflict = await self._ident_conflict_target()
             stmt = sql.SQL(
                 "INSERT INTO {table} ({cols}) VALUES ({vals}) "
-                "ON CONFLICT ({pk}) DO NOTHING "
+                "ON CONFLICT ({conflict}) DO NOTHING "
                 "RETURNING {ret}"
             ).format(
                 table=self.source_qname.ident(),
                 cols=sql.SQL(", ").join(cols),
                 vals=sql.SQL(", ").join(vals),
-                pk=self.ident_pk(),
+                conflict=conflict,
                 ret=self.return_clause(),
             )
 
@@ -471,15 +506,16 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
                 value_parts = [row_template] * len(batch)
                 params = [b[k] for b in batch for k in keys]
 
+                conflict = await self._ident_conflict_target()
                 stmt = sql.SQL(
                     "INSERT INTO {table} ({cols}) VALUES {vals} "
-                    "ON CONFLICT ({pk}) DO NOTHING "
+                    "ON CONFLICT ({conflict}) DO NOTHING "
                     "RETURNING {ret}"
                 ).format(
                     table=self.source_qname.ident(),
                     cols=sql.SQL(", ").join(col_idents),
                     vals=sql.SQL(", ").join(value_parts),
-                    pk=self.ident_pk(),
+                    conflict=conflict,
                     ret=self.return_clause(),
                 )
 
@@ -582,15 +618,16 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
             vals = [sql.Placeholder() for _ in insert_data.keys()]
             params = list(insert_data.values())
 
+            conflict = await self._ident_conflict_target()
             stmt = sql.SQL(
                 "INSERT INTO {table} ({cols}) VALUES ({vals}) "
-                "ON CONFLICT ({pk}) DO NOTHING "
+                "ON CONFLICT ({conflict}) DO NOTHING "
                 "RETURNING {ret}"
             ).format(
                 table=self.source_qname.ident(),
                 cols=sql.SQL(", ").join(cols),
                 vals=sql.SQL(", ").join(vals),
-                pk=self.ident_pk(),
+                conflict=conflict,
                 ret=self.return_clause(),
             )
 
@@ -649,15 +686,16 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
                 value_parts = [row_template] * len(batch)
                 params_in = [b[k] for b in batch for k in keys]
 
+                conflict = await self._ident_conflict_target()
                 stmt = sql.SQL(
                     "INSERT INTO {table} ({cols}) VALUES {vals} "
-                    "ON CONFLICT ({pk}) DO NOTHING "
+                    "ON CONFLICT ({conflict}) DO NOTHING "
                     "RETURNING {ret}"
                 ).format(
                     table=self.source_qname.ident(),
                     cols=sql.SQL(", ").join(col_idents),
                     vals=sql.SQL(", ").join(value_parts),
-                    pk=self.ident_pk(),
+                    conflict=conflict,
                     ret=self.return_clause(),
                 )
 
@@ -671,6 +709,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
                 by_returned: dict[UUID, JsonDict] = {_pk_from_row(r): r for r in rows}
 
                 inserted: list[D] = []
+
                 for m in model_batch:
                     rj = by_returned.get(m.id)
                     if rj is not None:

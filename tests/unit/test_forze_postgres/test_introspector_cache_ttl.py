@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from forze_postgres.kernel.introspect import PostgresIntrospector
+from forze_postgres.kernel.catalog.introspect import PostgresIntrospector
 
 # ----------------------- #
 
@@ -18,7 +18,7 @@ async def test_relation_cache_expires_with_ttl() -> None:
     intro = PostgresIntrospector(client=client, cache_ttl=timedelta(seconds=1))
 
     with patch(
-        "forze_postgres.kernel.introspect.introspector.monotonic",
+        "forze_postgres.kernel.catalog.introspect.introspector._lane_clock",
         side_effect=[100.0, 100.5, 102.0, 102.0, 103.0],
     ):
         await intro.get_relation(schema="public", relation="t")
@@ -56,7 +56,7 @@ async def test_get_index_info_respects_ttl() -> None:
     intro = PostgresIntrospector(client=client, cache_ttl=timedelta(seconds=1))
 
     with patch(
-        "forze_postgres.kernel.introspect.introspector.monotonic",
+        "forze_postgres.kernel.catalog.introspect.introspector._lane_clock",
         side_effect=[5.0, 5.5, 6.5, 6.5],
     ):
         await intro.get_index_info(index="ix", schema="public")
@@ -86,7 +86,7 @@ async def test_column_types_ttl() -> None:
     intro = PostgresIntrospector(client=client, cache_ttl=timedelta(seconds=1))
 
     with patch(
-        "forze_postgres.kernel.introspect.introspector.monotonic",
+        "forze_postgres.kernel.catalog.introspect.introspector._lane_clock",
         side_effect=[1.0, 1.5, 3.0, 3.0, 3.0, 3.0],
     ):
         t1 = await intro.get_column_types(schema="public", relation="t")

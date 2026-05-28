@@ -10,8 +10,8 @@ import pytest
 from forze.domain.constants import HISTORY_DATA_FIELD
 from forze.domain.models import Document
 from forze_postgres.kernel.gateways import PostgresHistoryGateway, PostgresQualifiedName
-from forze_postgres.kernel.introspect import PostgresIntrospector, PostgresType
-from forze_postgres.kernel.platform.client import PostgresClient
+from forze_postgres.kernel.catalog.introspect import PostgresIntrospector, PostgresType
+from forze_postgres.kernel.client.client import PostgresClient
 
 pytest.importorskip("psycopg")
 

@@ -16,8 +16,8 @@ from forze_postgres.kernel.gateways import (
     PostgresReadGateway,
     PostgresWriteGateway,
 )
-from forze_postgres.kernel.introspect import PostgresIntrospector, PostgresType
-from forze_postgres.kernel.platform import PostgresClient
+from forze_postgres.kernel.catalog.introspect import PostgresIntrospector, PostgresType
+from forze_postgres.kernel.client import PostgresClient
 
 class MyDoc(Document):
     name: str
@@ -40,6 +40,8 @@ def _build_gateway() -> (
 
     introspector = MagicMock(spec=PostgresIntrospector)
     introspector.get_column_types = AsyncMock(return_value={})
+    introspector.get_primary_key_columns = AsyncMock(return_value=(ID_FIELD,))
+    introspector.constraint_exists_for_columns = AsyncMock(return_value=True)
 
     qname = PostgresQualifiedName(schema="public", name="docs")
     read = MagicMock(spec=PostgresReadGateway)
@@ -178,6 +180,23 @@ async def test_create_many_raises_when_batch_returns_fewer_rows() -> None:
         await gw.create_many(dtos, batch_size=100)
 
 @pytest.mark.asyncio
+async def test_ensure_uses_configured_conflict_target_in_sql() -> None:
+    gw, client = _build_gateway()
+    ts = datetime(2025, 1, 1, tzinfo=UTC)
+    pk = UUID("11111111-1111-1111-1111-111111111111")
+    object.__setattr__(gw, "conflict_target", ("tenant_id", "id"))
+
+    client.fetch_one = AsyncMock(return_value=_row(pk=pk, name="n", ts=ts))
+
+    await gw.ensure(MyCreateDoc(id=pk, created_at=ts, name="n"))
+
+    stmt = client.fetch_one.await_args.args[0]
+    assert "ON CONFLICT" in str(stmt)
+    introspector = gw.introspector
+    introspector.constraint_exists_for_columns.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_ensure_many_skips_conflicts_and_loads_existing() -> None:
     gw, client = _build_gateway()
     read = gw.read_gw
@@ -270,6 +289,8 @@ def _build_tenant_aware_gateway() -> (
 
     introspector = MagicMock(spec=PostgresIntrospector)
     introspector.get_column_types = AsyncMock(return_value={})
+    introspector.get_primary_key_columns = AsyncMock(return_value=(ID_FIELD,))
+    introspector.constraint_exists_for_columns = AsyncMock(return_value=True)
 
     qname = PostgresQualifiedName(schema="public", name="docs")
     read = MagicMock(spec=PostgresReadGateway)

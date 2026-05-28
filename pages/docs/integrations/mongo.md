@@ -84,6 +84,30 @@ Kernel `DocumentSpec` names must match keys in `MongoDepsModule.rw_documents` / 
 | `batch_size` | Optional write batch size |
 | `tenant_aware` | Optional tenant field handling |
 
+### Ensure / upsert and unique indexes
+
+`ensure`, `ensure_many`, `upsert`, and `upsert_many` are **idempotent by document `id`** (stored as MongoDB `_id`). The adapter uses `update` + `$setOnInsert` + `upsert` filtered on `_id` (and tenant when `tenant_aware=True`).
+
+- When a document with the same `id` already exists, the insert half of the upsert is skipped and the existing row is returned (or updated for `upsert`).
+- When the `id` is new but a **secondary unique index** (for example on `email`) would be violated, MongoDB returns a duplicate-key error mapped to `CoreException.conflict`.
+- There is no Postgres-style `conflict_target` on `MongoDocumentConfig`; logical identity is always `_id`.
+
+Optional startup validation (warn only on secondary unique indexes):
+
+    :::python
+    from forze_mongo import (
+        mongo_document_index_spec_for_binding,
+        mongo_document_index_validation_lifecycle_step,
+    )
+
+    index_specs = [
+        mongo_document_index_spec_for_binding("projects", spec=project_spec, config=project_config),
+    ]
+    # Add mongo_document_index_validation_lifecycle_step(specs=index_specs) to LifecyclePlan
+    # after mongo_lifecycle_step.
+
+DocumentSpec example:
+
     :::python
     from forze.application.contracts.document import DocumentSpec
     from forze_patterns.soft_deletion import SoftDeletionMixin
@@ -220,11 +244,48 @@ Enable caching on the kernel side:
 
 The `CacheSpec.name` must match a key in `RedisDepsModule.caches`.
 
+## Search
+
+Register `SearchSpec.name` in `MongoDepsModule.searches` with a `MongoSearchConfig` (`engine`: `text`, `atlas`, or `vector`). Resolve at runtime with `ctx.search_query(spec)` — same port surface as Postgres (`search`, `search_page`, `*_cursor`, projections, snapshots).
+
+    :::python
+    from forze.application.contracts.search import SearchSpec
+    from forze_mongo import MongoDepsModule
+
+    project_search = SearchSpec(
+        name="projects",
+        model_type=ProjectRead,
+        fields=("title", "description"),
+    )
+
+    module = MongoDepsModule(
+        client=mongo,
+        rw_documents={...},
+        searches={
+            "projects": {
+                "read": ("app", "projects"),
+                "engine": "atlas",
+                "index_name": "default",  # required for atlas and vector
+            },
+        },
+    )
+
+`index_name` is the physical Atlas Search or Vector Search index name when using those engines; it is optional for `text` (queries use the collection text index via `$text`, not a named index in the aggregation).
+
+| Engine | MongoDB feature | `index_name` |
+|--------|-----------------|--------------|
+| `text` | Compound text index + `$text` | Optional (not passed to `$text`) |
+| `atlas` | Atlas Search `$search` stage | Required |
+| `vector` | `$vectorSearch` | Required (plus `vector_path`, embeddings deps) |
+
+For local Atlas Search / vector development and CI, use the [`mongodb/mongodb-atlas-local`](https://hub.docker.com/r/mongodb/mongodb-atlas-local) image (`mongod` + `mongot`). Integration tests marked `mongo_atlas_search` exercise `atlas` and `vector` engines.
+
 ## Differences from Postgres
 
 | Aspect | Postgres | MongoDB |
 |--------|----------|---------|
 | Config | `(schema, table)` tuples | `(database, collection)` tuples |
-| Search in box | `SearchSpec` + `PostgresSearchConfig` | Not bundled — use Atlas Search or external search |
+| Search in box | `SearchSpec` + `PostgresSearchConfig` | `SearchSpec` + `MongoSearchConfig` (`text` / `atlas` / `vector`) |
+| Hub / federated search | Supported | Not bundled in `forze_mongo` yet |
 | Transactions | Always available on server | Requires replica set for multi-doc tx |
 | Rev / history | `bookkeeping_strategy` + optional triggers | Application-managed |

@@ -10,7 +10,7 @@ from dirty_equals import IsStr
 from forze.application.contracts.base import CountlessPage, Page
 from forze.application.contracts.querying import QueryFilterExpression
 from forze_postgres.adapters.search import PostgresPGroongaSearchAdapter
-from forze_postgres.kernel.platform.client import PostgresClient
+from forze_postgres.kernel.client.client import PostgresClient
 from tests.support import IsPartialDict, IsUUID
 
 from tests.integration.test_forze_postgres._search_fixtures import (

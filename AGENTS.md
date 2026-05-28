@@ -108,7 +108,7 @@ Use them for:
 - `tests/perf/`: performance benchmarks (require Docker).
 - `pages/`: documentation source and build files.
 - `examples/`: usage examples and tutorials.
-- `skills/`: published [Agent Skills](https://agentskills.io/) (`SKILL.md` per skill); install via README **Agent Skills** (e.g. `npx skills add morzecrew/forze`).
+- `skills/`: published [Agent Skills](https://agentskills.io/) for **app authors** (`SKILL.md` per skill; see `skills/AUTHORING.md`); install via README **Agent Skills** (e.g. `npx skills add morzecrew/forze`). Framework contribution uses `.claude/skills/` and canonical docs.
 
 ## Operating rules for agents
 

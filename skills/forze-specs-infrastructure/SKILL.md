@@ -1,7 +1,7 @@
 ---
 name: forze-specs-infrastructure
 description: >-
-  Maps kernel specs (DocumentSpec, SearchSpec, CacheSpec, CounterSpec) to
+  Maps logical specs (DocumentSpec, SearchSpec, CacheSpec, CounterSpec) to
   integration configs on PostgresDepsModule, MongoDepsModule, RedisDepsModule,
   S3DepsModule, queue/workflow modules, and transaction routes. Use when wiring
   logical StrEnum spec names to tables, collections, namespaces, buckets, queues,
@@ -10,7 +10,7 @@ description: >-
 
 # Forze specs and infrastructure wiring
 
-Kernel **specs** declare model types and logical `name`. Integration **configs** on dependency modules map each `name` to physical infrastructure (relations, collections, Redis namespaces, buckets, queues, task queues, transaction routes). At runtime, handlers obtain **`DocumentQueryPort`**, **`DocumentCommandPort`**, **`SearchQueryPort`**, and other ports from **`ExecutionContext`** once those modules are merged into a `DepsPlan`; specs only supply the route (`name`) and types the factories receive. Use with [`forze-domain-aggregates`](../forze-domain-aggregates/SKILL.md) for spec fields, [`forze-deps-modules`](../forze-deps-modules/SKILL.md) for custom modules, and [`forze-wiring`](../forze-wiring/SKILL.md) for runtime setup.
+Logical **specs** declare model types and `name`. Integration **configs** on dependency modules map each `name` to physical infrastructure (relations, collections, Redis namespaces, buckets, queues, task queues, transaction routes). At runtime, handlers obtain **`DocumentQueryPort`**, **`DocumentCommandPort`**, **`SearchQueryPort`**, and other ports from **`ExecutionContext`** once those modules are merged into a `DepsPlan`; specs only supply the route (`name`) and types the factories receive. Use with [`forze-domain-aggregates`](../forze-domain-aggregates/SKILL.md) for spec fields, [`forze-deps-consumption`](../forze-deps-consumption/SKILL.md) for resolution, [`forze-custom-deps`](../forze-custom-deps/SKILL.md) for private integrations, and [`forze-wiring`](../forze-wiring/SKILL.md) for runtime setup.
 
 ## Prefer `StrEnum` names
 
@@ -131,11 +131,11 @@ Register routes on the backend module (e.g. `PostgresDepsModule(tx={TxRoute.DEFA
 
 ## Reference
 
-- [`pages/docs/concepts/specs-and-wiring.md`](../../pages/docs/concepts/specs-and-wiring.md)
-- [`pages/docs/integrations/postgres.md`](../../pages/docs/integrations/postgres.md)
-- [`pages/docs/integrations/mongo.md`](../../pages/docs/integrations/mongo.md)
-- [`pages/docs/integrations/redis.md`](../../pages/docs/integrations/redis.md)
-- [`pages/docs/integrations/s3.md`](../../pages/docs/integrations/s3.md)
-- [`pages/docs/integrations/sqs.md`](../../pages/docs/integrations/sqs.md)
-- [`pages/docs/integrations/rabbitmq.md`](../../pages/docs/integrations/rabbitmq.md)
-- [`pages/docs/integrations/temporal.md`](../../pages/docs/integrations/temporal.md)
+- [Specs and wiring](https://morzecrew.github.io/forze/docs/concepts/specs-and-wiring/)
+- [Postgres integration](https://morzecrew.github.io/forze/docs/integrations/postgres/)
+- [Mongo integration](https://morzecrew.github.io/forze/docs/integrations/mongo/)
+- [Redis integration](https://morzecrew.github.io/forze/docs/integrations/redis/)
+- [S3 integration](https://morzecrew.github.io/forze/docs/integrations/s3/)
+- [SQS integration](https://morzecrew.github.io/forze/docs/integrations/sqs/)
+- [RabbitMQ integration](https://morzecrew.github.io/forze/docs/integrations/rabbitmq/)
+- [Temporal integration](https://morzecrew.github.io/forze/docs/integrations/temporal/)

@@ -9,8 +9,8 @@ from forze.base.exceptions import CoreException
 pytest.importorskip("psycopg")
 
 
-from forze_postgres.kernel.introspect import PostgresIntrospector
-from forze_postgres.kernel.validate_bookkeeping import (
+from forze_postgres.kernel.catalog.introspect import PostgresIntrospector
+from forze_postgres.kernel.catalog.validation.validate_bookkeeping import (
     PostgresDocumentBookkeepingSpec,
     validate_postgres_document_bookkeeping,
 )

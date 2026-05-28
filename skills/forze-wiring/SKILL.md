@@ -2,20 +2,20 @@
 name: forze-wiring
 description: >-
   Wires Forze ExecutionRuntime, DepsPlan, lifecycle, built-in deps modules,
-  document/search composition, registry stage authoring, and interface entry
+  document/search composition, operation pipeline stages, and interface entry
   points. Use when bootstrapping an app or composing runtime, lifecycle, and
   operation registries.
 ---
 
 # Forze Wiring
 
-Use when setting up the Forze runtime, dependency plan, lifecycle, operation composition, and interface layer. For logical spec names, routes, and `StrEnum` wiring, see [`forze-specs-infrastructure`](../forze-specs-infrastructure/SKILL.md). For custom dependency modules, see [`forze-deps-modules`](../forze-deps-modules/SKILL.md). For HTTP details, see [`forze-fastapi-interface`](../forze-fastapi-interface/SKILL.md). For day-to-day handler code, see [`forze-framework-usage`](../forze-framework-usage/SKILL.md).
+Use when setting up the Forze runtime, dependency plan, lifecycle, operation composition, and interface layer. For logical spec names, routes, and `StrEnum` wiring, see [`forze-specs-infrastructure`](../forze-specs-infrastructure/SKILL.md). For dependency resolution, see [`forze-deps-consumption`](../forze-deps-consumption/SKILL.md); for private integrations, see [`forze-custom-deps`](../forze-custom-deps/SKILL.md). For HTTP details, see [`forze-fastapi-interface`](../forze-fastapi-interface/SKILL.md). For day-to-day handler code, see [`forze-framework-usage`](../forze-framework-usage/SKILL.md).
 
-For which plan enables deps, lifecycle hooks, or operation stages, see [Three execution plans](../../pages/docs/reference/execution.md#three-execution-plans) (`DepsPlan`, `LifecyclePlan`, `OperationRegistry`).
+For which plan enables deps, lifecycle hooks, or operation stages, see [Three execution plans](https://morzecrew.github.io/forze/docs/reference/execution/#three-execution-plans) (`DepsPlan`, `LifecyclePlan`, `OperationRegistry`).
 
 ## Runtime setup
 
-Kernel **specs** (`DocumentSpec`, `SearchSpec`, `CacheSpec`, …) declare model types and logical `name` only—no DSNs, table names, collection paths, or index DDL. **Deps modules** (`PostgresDepsModule`, `MongoDepsModule`, `RedisDepsModule`, …) map that same `name` to physical configs (read/write relations, Redis namespaces, `PostgresSearchConfig`, …). **`DepsPlan.from_modules(...)`** merges those modules so `ExecutionContext` resolves factories by route `spec.name` (for example `DocumentQueryDepKey` / `DocumentCommandDepKey`). See [`pages/docs/concepts/specs-and-wiring.md`](../../pages/docs/concepts/specs-and-wiring.md).
+Logical **specs** (`DocumentSpec`, `SearchSpec`, `CacheSpec`, …) declare model types and `name` only—no DSNs, table names, collection paths, or index DDL. **Deps modules** (`PostgresDepsModule`, `MongoDepsModule`, `RedisDepsModule`, …) map that same `name` to physical configs (read/write relations, Redis namespaces, `PostgresSearchConfig`, …). **`DepsPlan.from_modules(...)`** merges those modules so `ExecutionContext` resolves factories by route `spec.name` (for example `DocumentQueryDepKey` / `DocumentCommandDepKey`). See [Specs and wiring](https://morzecrew.github.io/forze/docs/concepts/specs-and-wiring/).
 
 ### Dependency plan
 
@@ -59,9 +59,9 @@ deps_plan = DepsPlan.from_modules(
 )
 ```
 
-Alternatively, a single callable module may return `Deps.merge(...)` — see [`pages/docs/getting-started.md`](../../pages/docs/getting-started.md).
+Alternatively, a single callable module may return `Deps.merge(...)` — see [Getting started](https://morzecrew.github.io/forze/docs/getting-started/).
 
-Merge optional integration modules the same way — for example `TenancyDepsModule` from `forze_identity.tenancy.execution` registers `TenantResolverDepKey` / `TenantManagementDepKey` routes for document-backed tenant resolution (see [`pages/docs/concepts/multi-tenancy.md`](../../pages/docs/concepts/multi-tenancy.md)):
+Merge optional integration modules the same way — for example `TenancyDepsModule` from `forze_identity.tenancy.execution` registers `TenantResolverDepKey` / `TenantManagementDepKey` routes for document-backed tenant resolution (see [Multi-tenancy](https://morzecrew.github.io/forze/docs/concepts/multi-tenancy/)):
 
 ```python
 from forze_identity.tenancy.execution import TenancyDepsModule
@@ -192,7 +192,7 @@ registry = (
 
 ### Stage order
 
-Outer `before` / `wrap` / `on_success` / `on_failure` / `finally_`, then optional transaction scope (`tx_before`, handler, transactional `on_success`, `after_commit`, `dispatch_after_commit`). Higher `priority` runs first within the same stage. See [`pages/docs/reference/middleware-plans.md`](../../pages/docs/reference/middleware-plans.md).
+Outer `before` / `wrap` / `on_success` / `on_failure` / `finally_`, then optional transaction scope (`tx_before`, handler, transactional `on_success`, `after_commit`, `dispatch_after_commit`). Higher `priority` runs first within the same stage. See [Middleware and plans](https://morzecrew.github.io/forze/docs/reference/middleware-plans/).
 
 ## FastAPI integration
 
@@ -297,8 +297,8 @@ result = await facade.search(SearchRequestDTO(query="roadmap", limit=20))
 
 ## Reference
 
-- [`pages/docs/getting-started.md`](../../pages/docs/getting-started.md)
-- [`pages/docs/concepts/operation-composition.md`](../../pages/docs/concepts/operation-composition.md)
-- [`pages/docs/reference/composition.md`](../../pages/docs/reference/composition.md)
-- [`pages/docs/integrations/fastapi.md`](../../pages/docs/integrations/fastapi.md)
-- [`pages/docs/integrations/mock.md`](../../pages/docs/integrations/mock.md)
+- [Getting started](https://morzecrew.github.io/forze/docs/getting-started/)
+- [Operation composition](https://morzecrew.github.io/forze/docs/concepts/operation-composition/)
+- [Composition reference](https://morzecrew.github.io/forze/docs/reference/composition/)
+- [FastAPI integration](https://morzecrew.github.io/forze/docs/integrations/fastapi/)
+- [Mock integration](https://morzecrew.github.io/forze/docs/integrations/mock/)

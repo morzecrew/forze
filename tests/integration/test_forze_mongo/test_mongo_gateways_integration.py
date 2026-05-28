@@ -1,6 +1,6 @@
 """Integration tests for :class:`~forze_mongo.kernel.gateways.read.MongoReadGateway` and write gateway against MongoDB."""
 
-from forze.base.exceptions import CoreException, exc
+from forze.base.exceptions import CoreException, ExceptionKind, exc
 from uuid import UUID, uuid4
 
 import pytest
@@ -14,7 +14,12 @@ from forze.domain.models import BaseDTO, CreateDocumentCmd, Document
 from forze_mongo.adapters import MongoTxManagerAdapter
 from forze_mongo.execution.deps.keys import MongoClientDepKey
 from forze_mongo.execution.deps.utils import doc_write_gw
+from forze_mongo.kernel.introspect import MongoIntrospector
 from forze_mongo.kernel.platform import MongoClient
+from forze_mongo.kernel.validate_indexes import (
+    MongoDocumentIndexSpec,
+    validate_mongo_document_indexes,
+)
 
 class GwDoc(Document):
     name: str
@@ -463,3 +468,84 @@ async def test_mongo_write_gateway_create_ensure_and_batch_validation(
 
     with pytest.raises(CoreException, match="Length mismatch"):
         await write.update_many([out[0].id], [GwUpdate(name="x"), GwUpdate(name="y")])
+
+
+class GwDocEmail(GwDoc):
+    email: str
+
+
+class GwCreateEmail(GwCreate):
+    email: str
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_mongo_write_gateway_ensure_with_secondary_unique_index(
+    mongo_client: MongoClient,
+    mongo_gw_ctx: ExecutionContext,
+) -> None:
+    """``ensure``/``ensure_many`` are ``_id``-scoped; secondary uniques raise on new id."""
+    db_name = (await mongo_client.db()).name
+    collection = f"mongo_gw_uq_{uuid4().hex[:8]}"
+    relation = (db_name, collection)
+    coll = await mongo_client.collection(collection, db_name=db_name)
+    await coll.create_index("email", unique=True)
+
+    intro = MongoIntrospector(client=mongo_client)
+    await validate_mongo_document_indexes(
+        intro,
+        [MongoDocumentIndexSpec(name="gw", write_relation=relation)],
+    )
+
+    write_types = DocumentWriteTypes(
+        domain=GwDocEmail,
+        create_cmd=GwCreateEmail,
+        update_cmd=GwUpdate,
+    )
+    write = doc_write_gw(
+        mongo_gw_ctx,
+        write_types=write_types,
+        write_relation=relation,
+        history_enabled=False,
+        tenant_aware=False,
+    )
+
+    doc_id = uuid4()
+    seeded = await write.create(
+        GwCreateEmail(id=doc_id, name="seeded", email="a@example.com"),
+    )
+
+    second = await write.ensure(
+        GwCreateEmail(id=doc_id, name="ignored", email="other@example.com"),
+    )
+    assert second.name == seeded.name
+    assert second.email == seeded.email
+
+    dup_id = uuid4()
+    with pytest.raises(CoreException) as err:
+        await write.ensure(
+            GwCreateEmail(id=dup_id, name="dup", email="a@example.com"),
+        )
+    assert err.value.kind == ExceptionKind.CONFLICT or (
+        err.value.details.get("exc_type") == "DuplicateKeyError"
+    )
+
+    em = await write.ensure_many(
+        [
+            GwCreateEmail(name="fresh", email="fresh@example.com"),
+            GwCreateEmail(id=doc_id, name="skip", email="ignored"),
+        ],
+        batch_size=10,
+    )
+    assert len(em) == 2
+
+    with pytest.raises(CoreException) as err_many:
+        await write.ensure_many(
+            [
+                GwCreateEmail(name="x", email="fresh@example.com"),
+            ],
+            batch_size=10,
+        )
+    assert err_many.value.kind == ExceptionKind.CONFLICT or (
+        err_many.value.details.get("exc_type") in ("DuplicateKeyError", "BulkWriteError")
+    )

@@ -1,10 +1,10 @@
-"""Unit tests for :mod:`forze_postgres.kernel.type_cast`."""
+"""Unit tests for :mod:`forze_postgres.kernel.sql.type_cast`."""
 
 import pytest
 from psycopg import sql
 
-from forze_postgres.kernel.introspect import PostgresType
-from forze_postgres.kernel.type_cast import (
+from forze_postgres.kernel.catalog.introspect import PostgresType
+from forze_postgres.kernel.sql.type_cast import (
     assignment_from_values_column,
     cast_sql_for_column_type,
 )

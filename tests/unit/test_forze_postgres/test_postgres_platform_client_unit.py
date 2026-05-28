@@ -1,4 +1,4 @@
-"""Unit tests for :mod:`forze_postgres.kernel.platform.client` helpers (no DB I/O)."""
+"""Unit tests for :mod:`forze_postgres.kernel.client.client` helpers (no DB I/O)."""
 
 from unittest.mock import MagicMock, patch
 
@@ -8,11 +8,11 @@ from forze.base.exceptions import CoreException
 
 pytest.importorskip("psycopg")
 
-from forze_postgres.kernel.platform.client import (
+from forze_postgres.kernel.client.client import (
     PostgresClient,
     PostgresConfig,
 )
-from forze_postgres.kernel.platform.helpers import isolation_level_sql_fragment
+from forze_postgres.kernel.client.helpers import isolation_level_sql_fragment
 
 # ----------------------- #
 
@@ -42,7 +42,7 @@ class TestPostgresConfig:
         mock_logger = MagicMock()
 
         with patch(
-            "forze_postgres.kernel.platform.value_objects.logger",
+            "forze_postgres.kernel.client.value_objects.logger",
             mock_logger,
         ):
             PostgresConfig(min_size=11, max_size=101)

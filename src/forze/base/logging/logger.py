@@ -1,3 +1,4 @@
+from enum import StrEnum
 from typing import Any, Self, cast, final
 
 import attrs
@@ -14,7 +15,7 @@ from .constants import TRACE_LEVEL_KEY, LogLevel, LogLevelToRank
 class Logger:
     """Convenience wrapper around structlog's FilteringBoundLogger."""
 
-    name: str
+    name: str | StrEnum = attrs.field(converter=str)
     """Logger name."""
 
     bound: dict[str, Any] = attrs.field(factory=dict, kw_only=True)

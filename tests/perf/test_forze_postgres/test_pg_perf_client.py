@@ -4,7 +4,7 @@ import pytest
 
 pytest.importorskip("psycopg")
 
-from forze_postgres.kernel.platform.client import PostgresClient
+from forze_postgres.kernel.client.client import PostgresClient
 
 _PG_FETCH_LARGE_ROWS = 10_000
 _PG_EXECUTE_MANY_LARGE = 2_000

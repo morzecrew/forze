@@ -10,7 +10,7 @@ from forze.application.contracts.execution import LifecycleHook, LifecycleStep
 from forze.application.execution import ExecutionContext
 from forze.base.exceptions import exc
 
-from ..kernel.introspect import PostgresIntrospector
+from ..kernel.catalog.introspect import PostgresIntrospector
 from .deps.configs import (
     PostgresFederatedSearchConfig,
     PostgresHubSearchConfig,
@@ -62,7 +62,7 @@ async def warm_postgres_catalog(
     hub_searches: Mapping[Any, PostgresHubSearchConfig] | None = None,
     federated_searches: Mapping[Any, PostgresFederatedSearchConfig] | None = None,
 ) -> None:
-    """Populate :class:`~forze_postgres.kernel.introspect.PostgresIntrospector` caches for search wiring.
+    """Populate :class:`~forze_postgres.kernel.catalog.introspect.PostgresIntrospector` caches for search wiring.
 
     Safe to skip when using a partitioned introspector without a tenant in scope
     (logs at trace and returns). Idempotent with respect to cache contents.

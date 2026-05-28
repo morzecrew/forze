@@ -12,7 +12,7 @@ from testcontainers.redis import RedisContainer
 pytest.importorskip("psycopg")
 pytest.importorskip("redis")
 
-from forze_postgres.kernel.platform.client import PostgresClient, PostgresConfig
+from forze_postgres.kernel.client.client import PostgresClient, PostgresConfig
 from forze_redis.adapters import RedisSearchResultSnapshotAdapter
 from forze_redis.adapters.codecs import RedisKeyCodec
 from forze_redis.kernel.platform.client import RedisClient, RedisConfig

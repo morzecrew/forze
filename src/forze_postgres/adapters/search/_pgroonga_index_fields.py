@@ -10,7 +10,7 @@ from forze.application.contracts.search import SearchSpec
 from forze.base.exceptions import exc
 
 from ...kernel.gateways import PostgresQualifiedName
-from ...kernel.introspect.types import PostgresIndexInfo
+from ...kernel.catalog.introspect.types import PostgresIndexInfo
 
 # ----------------------- #
 

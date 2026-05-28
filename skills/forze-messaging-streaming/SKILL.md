@@ -115,7 +115,7 @@ stream = ctx.deps.resolve_configurable(
 entry_id = await stream.append("orders", payload, type="order.created")
 ```
 
-Use `StreamQueryDepKey` for `read` / `tail`, and `StreamGroupQueryDepKey` for consumer-group reads and acknowledgements. `MockDepsModule` registers stream factories. Redis stream adapters exist; use a custom deps module until `RedisDepsModule` exposes stream maps.
+Use `StreamQueryDepKey` for `read` / `tail`, and `StreamGroupQueryDepKey` for consumer-group reads and acknowledgements. `MockDepsModule` registers stream factories. For Redis streams or pub/sub, `RedisDepsModule` does not register stream/pubsub maps yet — use [`forze-custom-deps`](../forze-custom-deps/SKILL.md) or `MockDepsModule`.
 
 ## Processing rules
 
@@ -129,13 +129,13 @@ Use `StreamQueryDepKey` for `read` / `tail`, and `StreamGroupQueryDepKey` for co
 1. **Resolving queue ports without `route=spec.name`** when using SQS/RabbitMQ routed modules.
 2. **Using queue names as spec names by accident** — spec names route deps; queue/topic/stream names are provider-level names.
 3. **Acknowledging before processing succeeds** — failures become data loss.
-4. **Assuming Redis pub/sub/stream deps maps are wired in `RedisDepsModule`** — use a custom module or mock until maps exist.
+4. **Assuming Redis pub/sub/stream maps are wired in `RedisDepsModule`** — use [`forze-custom-deps`](../forze-custom-deps/SKILL.md) or `MockDepsModule`.
 5. **Importing SQS/RabbitMQ adapters in handlers** — use contracts and dependency keys.
 
 ## Reference
 
-- [`pages/docs/integrations/sqs.md`](../../pages/docs/integrations/sqs.md)
-- [`pages/docs/integrations/rabbitmq.md`](../../pages/docs/integrations/rabbitmq.md)
-- [`src/forze/application/contracts/queue`](../../src/forze/application/contracts/queue)
-- [`src/forze/application/contracts/pubsub`](../../src/forze/application/contracts/pubsub)
-- [`src/forze/application/contracts/stream`](../../src/forze/application/contracts/stream)
+- [SQS integration](https://morzecrew.github.io/forze/docs/integrations/sqs/)
+- [RabbitMQ integration](https://morzecrew.github.io/forze/docs/integrations/rabbitmq/)
+- [Queue contracts](https://morzecrew.github.io/forze/docs/core-package/contracts/queue/)
+- [Pub/Sub contracts](https://morzecrew.github.io/forze/docs/core-package/contracts/pubsub/)
+- [Stream contracts](https://morzecrew.github.io/forze/docs/core-package/contracts/stream/)

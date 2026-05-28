@@ -54,7 +54,7 @@ Full documentation is available at [https://morzecrew.github.io/forze/](https://
 
 ## Agent Skills
 
-Forze ships with AI agent skills that help assistants understand the framework's architecture, patterns, and conventions. Install them to improve code generation and refactoring when working with Forze:
+Forze ships with AI agent skills for **applications that use Forze as a dependency**. Install them in your service repo so assistants follow correct wiring, handlers, and integration patterns:
 
 ```bash
 # Install all skills

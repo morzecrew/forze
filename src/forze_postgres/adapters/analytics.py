@@ -48,8 +48,8 @@ from forze_postgres.execution.deps.configs import (
     PostgresAnalyticsConfig,
     PostgresQueryConfig,
 )
-from forze_postgres.kernel.platform import PostgresClientPort
-from forze_postgres.kernel.platform.analytics_query import (
+from forze_postgres.kernel.client import PostgresClientPort
+from forze_postgres.kernel.client.analytics_query import (
     apply_limit_offset,
     build_count_sql,
     parameters_from_model,
@@ -72,7 +72,7 @@ class PostgresAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
     AnalyticsQueryPort[R],
     AnalyticsIngestPort[Ing],
 ):
-    """Analytics ports backed by PostgreSQL via :class:`~forze_postgres.kernel.platform.PostgresClient`."""
+    """Analytics ports backed by PostgreSQL via :class:`~forze_postgres.kernel.client.PostgresClient`."""
 
     client: PostgresClientPort
     spec: AnalyticsSpec[R, Ing]

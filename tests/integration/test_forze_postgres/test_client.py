@@ -2,7 +2,7 @@ from forze.base.exceptions import CoreException
 import pytest
 
 
-from forze_postgres.kernel.platform.client import (
+from forze_postgres.kernel.client.client import (
     PostgresClient,
     PostgresConfig,
     PostgresTransactionOptions,

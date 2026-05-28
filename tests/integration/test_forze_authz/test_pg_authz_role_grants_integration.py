@@ -16,7 +16,7 @@ from forze.application.execution import Deps, ExecutionContext, InvocationMetada
 from forze_identity.authz.application.constants import AuthzResourceName
 from forze_identity.authz.execution import AuthzDepsModule, AuthzKernelConfig
 from forze_postgres.execution.deps.deps import ConfigurablePostgresDocument
-from forze_postgres.kernel.platform.client import PostgresClient
+from forze_postgres.kernel.client.client import PostgresClient
 
 from tests.integration.test_forze_authz.test_pg_authz_kernel_flow import (
     _AUTHZ_SPEC,

@@ -19,7 +19,7 @@ from forze_fastapi._logging import ForzeFastAPILogger
 
 # ----------------------- #
 
-logger = Logger(str(ForzeFastAPILogger.ACCESS))
+logger = Logger(ForzeFastAPILogger.ACCESS)
 """The logger for the logging middleware."""
 
 # ....................... #

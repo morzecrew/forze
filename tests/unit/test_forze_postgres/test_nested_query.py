@@ -12,8 +12,8 @@ import pytest
 from forze.base.exceptions import CoreException
 from pydantic import BaseModel
 
-from forze_postgres.kernel.introspect import PostgresType
-from forze_postgres.kernel.query.nested import (
+from forze_postgres.kernel.catalog.introspect import PostgresType
+from forze_postgres.kernel.sql.query.nested import (
     build_nested_json_scalar_expr,
     python_type_to_postgres_scalar,
     resolve_leaf_python_type,

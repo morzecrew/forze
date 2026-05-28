@@ -34,8 +34,8 @@ from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
 from forze.base.serialization import pydantic_validate_many
 
-from ...kernel.db_gather import gather_db_work
-from ...kernel.platform import PostgresClientPort
+from ...kernel.client import gather_db_work
+from ...kernel.client import PostgresClientPort
 
 # ----------------------- #
 

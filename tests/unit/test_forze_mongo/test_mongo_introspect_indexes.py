@@ -1,0 +1,46 @@
+"""Unit tests for Mongo index introspection."""
+
+from unittest.mock import AsyncMock, MagicMock
+
+import pytest
+
+from forze_mongo.kernel.introspect import MongoIntrospector
+from forze_mongo.kernel.platform import MongoClient
+
+
+@pytest.mark.asyncio
+async def test_list_indexes_parses_and_caches() -> None:
+    client = MagicMock(spec=MongoClient)
+    client.list_indexes = AsyncMock(
+        return_value=[
+            {"name": "_id_", "key": {"_id": 1}, "unique": False},
+            {"name": "email_1", "key": {"email": 1}, "unique": True},
+        ],
+    )
+
+    intro = MongoIntrospector(client=client)
+    indexes = await intro.list_indexes(database="app", collection="docs")
+
+    assert len(indexes) == 2
+    assert indexes[1].name == "email_1"
+    assert indexes[1].unique is True
+    assert indexes[1].keys == (("email", 1),)
+
+    again = await intro.list_indexes(database="app", collection="docs")
+    assert again == indexes
+    assert client.list_indexes.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_invalidate_collection_clears_cache() -> None:
+    client = MagicMock(spec=MongoClient)
+    client.list_indexes = AsyncMock(
+        return_value=[{"name": "_id_", "key": {"_id": 1}}],
+    )
+
+    intro = MongoIntrospector(client=client)
+    await intro.list_indexes(database="app", collection="docs")
+    intro.invalidate_collection(database="app", collection="docs")
+    await intro.list_indexes(database="app", collection="docs")
+
+    assert client.list_indexes.await_count == 2

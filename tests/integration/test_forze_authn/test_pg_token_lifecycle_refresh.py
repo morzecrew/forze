@@ -30,7 +30,7 @@ from tests.integration.test_forze_authn.test_pg_authn_integration import (
     session_spec,
     principal_spec,
 )
-from forze_postgres.kernel.platform.client import PostgresClient
+from forze_postgres.kernel.client.client import PostgresClient
 
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
 

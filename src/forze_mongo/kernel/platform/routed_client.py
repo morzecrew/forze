@@ -359,3 +359,12 @@ class RoutedMongoClient(MongoClientPort):
     ) -> int:
         inner = await self._get_client()
         return await inner.count(coll, filter)
+
+    async def list_indexes(
+        self,
+        *,
+        database: str,
+        collection: str,
+    ) -> list[JsonDict]:
+        inner = await self._get_client()
+        return await inner.list_indexes(database=database, collection=collection)

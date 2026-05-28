@@ -9,11 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- ...
+- **Mongo:** `MongoDepsModule.searches` and `SearchQueryPort` adapters (`MongoTextSearchAdapter`, `MongoAtlasSearchAdapter`, `MongoVectorSearchAdapter`) with offset, cursor, and optional Redis result snapshots.
+- **Mongo:** optional `mongo_document_index_validation_lifecycle_step` warns when write collections define secondary unique indexes used with `ensure` / `upsert`.
+- **`forze.base`:** `CacheLane` in `forze.base.primitives.cache` — reusable in-memory TTL/FIFO cache for catalog metadata.
 
 ### Changed
 
-- ...
+- **Mongo:** `MongoSearchConfig` uses a single `index_name` (semantics depend on `engine`) instead of separate `atlas_index_name` / `vector_index_name` / `text_index_name` keys.
+- **Postgres:** reorganized `forze_postgres.kernel` into `kernel.client`, `kernel.catalog`, and `kernel.sql`; `PostgresIntrospector` uses `CacheLane`. Direct imports of `forze_postgres.kernel.platform`, `forze_postgres.kernel.introspect`, `forze_postgres.kernel.query`, `forze_postgres.pagination`, and related flat kernel modules must be updated to the new paths.
 
 ### Removed
 
@@ -21,7 +24,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- ...
+- **Postgres:** `ensure`, `ensure_many`, `upsert`, and `upsert_many` build `ON CONFLICT` from `PostgresDocumentConfig.conflict_target` or inferred primary-key columns (fixes composite PKs and tables with additional UNIQUE indexes).
+- **Mongo:** `ensure_many` and `upsert_many` classify bulk `$setOnInsert` upserts safely; missing rows after bulk upsert raise `mongo_ensure_bulk_miss` conflict instead of a generic not-found.
 
 ## [0.2.0] - 2026-05-28
 

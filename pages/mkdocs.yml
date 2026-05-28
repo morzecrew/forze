@@ -84,6 +84,7 @@ nav:
       - Queue: core-package/contracts/queue.md
       - Pub/Sub: core-package/contracts/pubsub.md
       - Stream: core-package/contracts/stream.md
+      - Graph: core-package/contracts/graph.md
       - Storage: core-package/contracts/storage.md
       - Durable: core-package/contracts/durable.md
       - Durable workflow: core-package/contracts/durable-workflow.md

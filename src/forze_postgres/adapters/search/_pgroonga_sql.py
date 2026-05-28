@@ -18,7 +18,7 @@ from forze.application.contracts.search import (
 )
 
 from ...kernel.gateways import PostgresQualifiedName
-from ...kernel.introspect import PostgresIntrospector
+from ...kernel.catalog.introspect import PostgresIntrospector
 from ._pgroonga_index_fields import resolve_pgroonga_index_alignment
 
 # ----------------------- #

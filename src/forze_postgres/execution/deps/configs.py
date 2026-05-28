@@ -17,7 +17,7 @@ from forze.domain.constants import ID_FIELD
 
 from ...adapters import FtsGroupLetter
 from ...kernel.gateways import PostgresBookkeepingStrategy
-from ...kernel.hub_fk_columns import normalize_hub_fk_columns
+from ...kernel.catalog.hub_fk_columns import normalize_hub_fk_columns
 
 # ----------------------- #
 
@@ -70,6 +70,12 @@ class PostgresDocumentConfig(PostgresReadOnlyDocumentConfig):
 
     history: NotRequired[tuple[str, str]]
     """History relation (schema, table), optional."""
+
+    conflict_target: NotRequired[tuple[str, ...]]
+    """``ON CONFLICT`` column(s) for :meth:`ensure` / :meth:`upsert` on the write table.
+
+    When omitted, the adapter infers the relation PRIMARY KEY from Postgres catalogs.
+    """
 
 
 # ....................... #

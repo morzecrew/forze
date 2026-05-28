@@ -10,18 +10,40 @@ from forze.application.contracts.document import (
     DocumentQueryDepPort,
     DocumentSpec,
 )
+from forze.application.contracts.embeddings import EmbeddingsSpec
+from forze.application.contracts.search import (
+    SearchQueryDepPort,
+    SearchResultSnapshotDepKey,
+    SearchResultSnapshotSpec,
+    SearchSpec,
+)
+from forze.application.contracts.search.ports import SearchQueryPort
 from forze.application.contracts.transaction import (
     AfterCommitPort,
     TransactionManagerPort,
 )
-from forze.application.coordinators import DocumentCacheCoordinator
+from forze.application.coordinators import (
+    DocumentCacheCoordinator,
+    SearchResultSnapshotCoordinator,
+)
 from forze.application.execution import ExecutionContext
 from forze.base.exceptions import exc
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document
 
-from ...adapters import MongoDocumentAdapter, MongoTxManagerAdapter
+from ...adapters import (
+    MongoAtlasSearchAdapter,
+    MongoDocumentAdapter,
+    MongoTextSearchAdapter,
+    MongoTxManagerAdapter,
+    MongoVectorSearchAdapter,
+)
 from .._logger import logger
-from .configs import MongoDocumentConfig, MongoReadOnlyDocumentConfig
+from .configs import (
+    MongoDocumentConfig,
+    MongoReadOnlyDocumentConfig,
+    MongoSearchConfig,
+    validate_mongo_search_conf,
+)
 from .keys import MongoClientDepKey
 from .utils import doc_write_gw, read_gw
 
@@ -156,6 +178,151 @@ class ConfigurableMongoDocument(DocumentCommandDepPort[R, D, C, U]):
             cache_coord=cc,
             batch_size=config.get("batch_size", 200),
         )
+
+
+# ....................... #
+
+
+def _resolve_result_snapshot(
+    context: ExecutionContext,
+    spec: SearchResultSnapshotSpec | None,
+) -> Any:
+    if spec is None:
+        return None
+
+    if not (
+        context.deps.exists(SearchResultSnapshotDepKey, route=spec.name)
+        or context.deps.exists(SearchResultSnapshotDepKey)
+    ):
+        return None
+
+    return context.deps.provide(SearchResultSnapshotDepKey, route=spec.name)(
+        context,
+        spec,
+    )
+
+
+# ....................... #
+
+
+def _snapshot_coord(
+    context: ExecutionContext,
+    spec: SearchResultSnapshotSpec | None,
+) -> SearchResultSnapshotCoordinator | None:
+    port = _resolve_result_snapshot(context, spec)
+
+    if port is None:
+        return None
+
+    return SearchResultSnapshotCoordinator(store=port)
+
+
+# ....................... #
+
+
+def _mongo_search_port_for_config(
+    context: ExecutionContext,
+    member_spec: SearchSpec[Any],
+    c: MongoSearchConfig,
+) -> (
+    MongoTextSearchAdapter[Any]
+    | MongoAtlasSearchAdapter[Any]
+    | MongoVectorSearchAdapter[Any]
+):
+    validate_mongo_search_conf(c, member_spec)
+
+    db_name, coll_name = c["read"]
+    field_map = dict(c.get("field_map") or {})
+    snapshot_coord = _snapshot_coord(context, member_spec.snapshot)
+    client = context.deps.provide(MongoClientDepKey)
+    tenant_aware = c.get("tenant_aware", False)
+
+    match c["engine"]:
+        case "text":
+            return MongoTextSearchAdapter(
+                spec=member_spec,
+                model_type=member_spec.model_type,
+                database=db_name,
+                collection=coll_name,
+                client=client,
+                field_map=field_map,
+                tenant_provider=context.inv_ctx.get_tenant,
+                tenant_aware=tenant_aware,
+                snapshot_coord=snapshot_coord,
+            )
+
+        case "atlas":
+            index_name = c.get("index_name")
+
+            if not index_name:
+                raise exc.configuration("index_name is required for atlas engine.")
+
+            return MongoAtlasSearchAdapter(
+                spec=member_spec,
+                model_type=member_spec.model_type,
+                database=db_name,
+                collection=coll_name,
+                client=client,
+                field_map=field_map,
+                tenant_provider=context.inv_ctx.get_tenant,
+                tenant_aware=tenant_aware,
+                snapshot_coord=snapshot_coord,
+                index_name=str(index_name),
+            )
+
+        case "vector":
+            en = c.get("embeddings_name")
+            ed = c.get("embedding_dimensions")
+            vpath = c.get("vector_path")
+            index_name = c.get("index_name")
+
+            if en is None or ed is None or vpath is None or index_name is None:
+                raise exc.internal(
+                    "vector engine requires embeddings_name, embedding_dimensions, "
+                    "vector_path, and index_name.",
+                )
+
+            es = EmbeddingsSpec(name=str(en), dimensions=int(ed))
+
+            return MongoVectorSearchAdapter(
+                spec=member_spec,
+                model_type=member_spec.model_type,
+                database=db_name,
+                collection=coll_name,
+                client=client,
+                field_map=field_map,
+                tenant_provider=context.inv_ctx.get_tenant,
+                tenant_aware=tenant_aware,
+                snapshot_coord=snapshot_coord,
+                embedder=context.embeddings.provider(es),
+                embedding_dimensions=int(ed),
+                vector_path=str(vpath),
+                index_name=str(index_name),
+            )
+
+        case _:  # pyright: ignore[reportUnnecessaryComparison]
+            raise exc.internal(f"Unsupported Mongo search engine: {c['engine']!r}.")
+
+
+# ....................... #
+
+
+@final
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class ConfigurableMongoSearch(SearchQueryDepPort):
+    """Configurable Mongo search adapter factory."""
+
+    config: MongoSearchConfig
+    """Mongo-specific search configuration."""
+
+    # ....................... #
+
+    def __call__(
+        self,
+        context: ExecutionContext,
+        spec: SearchSpec[Any],
+    ) -> SearchQueryPort[Any]:
+        return _mongo_search_port_for_config(context, spec, self.config)
 
 
 # ....................... #

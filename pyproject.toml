@@ -212,6 +212,7 @@ markers = [
     "integration: Integration test",
     "unit: Unit test",
     "asyncio: Async test",
+    "mongo_atlas_search: Integration test requiring mongodb/mongodb-atlas-local",
 ]
 
 [tool.coverage.run]
