@@ -13,8 +13,10 @@ Use this when you operate a ClickHouse cluster (or a local Docker instance for t
 1. Install the `clickhouse` optional extra.
 2. Declare `AnalyticsSpec` routes and named queries in application code.
 3. Map each route to database, SQL templates, and optional ingest table in `ClickHouseDepsModule`.
-4. Add `clickhouse_lifecycle_step` with `ClickHouseConfig` when the client opens network connections.
+4. Add `clickhouse_lifecycle_step` or `routed_clickhouse_lifecycle_step` when the client opens network connections.
 5. Resolve ports from `ExecutionContext`; do not import adapters in handlers.
+
+Use `RoutedClickHouseClient` when tenant identity selects ClickHouse host, credentials, or database.
 
 `forze_clickhouse` implements `AnalyticsQueryPort` and, when configured, `AnalyticsIngestPort` on the same adapter.
 
@@ -72,6 +74,10 @@ Use this when you operate a ClickHouse cluster (or a local Docker instance for t
 
 Start ClickHouse (for example `clickhouse/clickhouse-server` on port 8123 with credentials), then pass host/port in `ClickHouseConfig`. There is no emulator environment variable on the public API—connection settings are explicit.
 
+### Routed client (multi-tenant credentials)
+
+Register `RoutedClickHouseClient` under `ClickHouseClientDepKey` and use `routed_clickhouse_lifecycle_step(client=routed_ch)`. Per-tenant secrets resolve to `ClickHouseRoutingCredentials` (`host`, `port`, `username`, `password`, `database`, `secure`, …).
+
 ## Configuration
 
 Physical mapping lives on `ClickHouseDepsModule.analytics`, keyed by `AnalyticsSpec.name`:
@@ -119,7 +125,8 @@ Pass `AnalyticsRunOptions` (`dry_run`, `max_rows`, `timeout`) per request; `dry_
 
 ## Multi-tenant databases
 
-v1 uses one `ClickHouseConfig` per client. For multiple tenants, register separate analytics routes with distinct `database` values, or deploy per-tenant connection config. Routed clients are not included in v1.
+- **Connection routing:** `RoutedClickHouseClient` resolves per-tenant connection settings from `SecretsPort`.
+- **Route-level `database` in analytics config:** still static per `AnalyticsSpec` route; use separate routes or deploy-time config when logical database names differ per tenant on a shared cluster.
 
 ## Client health
 
@@ -127,7 +134,7 @@ Call `await client.health()` after lifecycle startup (`SELECT 1` probe).
 
 ## Out of scope (v1)
 
-Load jobs, `MERGE`, DDL, automatic tenancy routing, and bulk ETL. Prefer queue/stream handoff plus external loaders for large pipelines; see [Analytics contracts](../core-package/contracts/analytics.md).
+Load jobs, `MERGE`, DDL, per-route database resolvers, and bulk ETL. Prefer queue/stream handoff plus external loaders for large pipelines; see [Analytics contracts](../core-package/contracts/analytics.md).
 
 ## Related pages
 

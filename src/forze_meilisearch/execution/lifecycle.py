@@ -7,9 +7,14 @@ from pydantic import SecretStr
 
 from forze.application.contracts.execution import LifecycleHook, LifecycleStep
 from forze.application.execution import ExecutionContext
+from forze.application.execution.lifecycle.builtin import routed_client_lifecycle_step
 from forze.base.serialization import pydantic_secret_converter
 from forze_meilisearch.execution.deps.keys import MeilisearchClientDepKey
-from forze_meilisearch.kernel.platform import MeilisearchClient, MeilisearchConfig
+from forze_meilisearch.kernel.platform import (
+    MeilisearchClient,
+    MeilisearchConfig,
+    RoutedMeilisearchClient,
+)
 
 # ----------------------- #
 
@@ -60,3 +65,13 @@ def meilisearch_lifecycle_step(
         ),
         shutdown=MeilisearchShutdownHook(),
     )
+
+
+def routed_meilisearch_lifecycle_step(
+    name: str = "routed_meilisearch_lifecycle",
+    *,
+    client: RoutedMeilisearchClient,
+) -> LifecycleStep:
+    """Lifecycle for :class:`RoutedMeilisearchClient` registered as :data:`MeilisearchClientDepKey`."""
+
+    return routed_client_lifecycle_step(name, client=client)

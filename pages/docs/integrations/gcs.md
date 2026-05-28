@@ -8,6 +8,8 @@ Store and retrieve binary objects behind Forze storage contracts without couplin
 
 Use this when you run on GCP (or local fake-gcs-server) and want native GCS buckets with Application Default Credentials instead of S3 interoperability.
 
+Use `RoutedGCSClient` when tenant identity selects GCP project and credentials (`tenant_aware` on storage routes still prefixes object keys).
+
 ## Standard setup checklist
 
 1. Install the matching optional extra.
@@ -60,6 +62,10 @@ By default the client uses Application Default Credentials. To use an explicit k
         project_id="my-gcp-project",
         service_file="/path/to/service-account.json",
     )
+
+### Routed client
+
+Register `RoutedGCSClient` under `GCSClientDepKey` and use `routed_gcs_lifecycle_step(client=routed_gcs)`. Per-tenant secrets use `GCSRoutingCredentials` (same shape as BigQuery: `project_id`, optional `service_file` or `service_account_json`).
 
 ### What gets registered
 

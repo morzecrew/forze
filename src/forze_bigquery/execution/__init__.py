@@ -4,7 +4,7 @@ from .deps import (
     BigQueryDepsModule,
     BigQueryQueryConfig,
 )
-from .lifecycle import bigquery_lifecycle_step
+from .lifecycle import bigquery_lifecycle_step, routed_bigquery_lifecycle_step
 
 # ----------------------- #
 
@@ -12,6 +12,7 @@ __all__ = [
     "BigQueryDepsModule",
     "BigQueryClientDepKey",
     "bigquery_lifecycle_step",
+    "routed_bigquery_lifecycle_step",
     "BigQueryAnalyticsConfig",
     "BigQueryQueryConfig",
 ]

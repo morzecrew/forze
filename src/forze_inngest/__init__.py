@@ -13,19 +13,29 @@ from .execution import (
     InngestFunctionBinding,
     get_function_bindings,
     inngest_lifecycle_step,
+    routed_inngest_lifecycle_step,
     register_functions,
 )
-from .kernel.platform import InngestClient, InngestClientPort, InngestConfig
+from .kernel.platform import (
+    InngestClient,
+    InngestClientPort,
+    InngestConfig,
+    InngestRoutingCredentials,
+    RoutedInngestClient,
+)
 
 __all__ = [
     "InngestClient",
     "InngestClientPort",
     "InngestConfig",
+    "RoutedInngestClient",
+    "InngestRoutingCredentials",
     "InngestClientDepKey",
     "InngestDepsModule",
     "InngestEventConfig",
     "InngestFunctionBinding",
     "get_function_bindings",
     "inngest_lifecycle_step",
+    "routed_inngest_lifecycle_step",
     "register_functions",
 ]

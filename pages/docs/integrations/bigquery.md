@@ -13,8 +13,10 @@ Use this when you run on GCP (or the [goccy/bigquery-emulator](https://github.co
 1. Install the `bigquery` optional extra.
 2. Declare `AnalyticsSpec` routes and named queries in application code.
 3. Map each route to dataset, SQL templates, and optional ingest table in `BigQueryDepsModule`.
-4. Add `bigquery_lifecycle_step` when the client opens network connections.
+4. Add `bigquery_lifecycle_step` or `routed_bigquery_lifecycle_step` when the client opens network connections.
 5. Resolve ports from `ExecutionContext`; do not import adapters in handlers.
+
+Use `RoutedBigQueryClient` when tenant identity selects GCP project and credentials (JSON secret per tenant).
 
 `forze_bigquery` implements `AnalyticsQueryPort` and, when configured, `AnalyticsIngestPort` on the same adapter.
 
@@ -75,6 +77,18 @@ By default the client uses Application Default Credentials. To use an explicit k
         service_file="/path/to/service-account.json",
     )
 
+### Routed client (multi-tenant credentials)
+
+Register `RoutedBigQueryClient` under `BigQueryClientDepKey` and use `routed_bigquery_lifecycle_step(client=routed_bq)`. Do not combine routed and non-routed lifecycle steps for the same instance.
+
+Per-tenant secrets resolve to `BigQueryRoutingCredentials` (`project_id`, and optionally `service_file` or `service_account_json`):
+
+    :::json
+    {
+      "project_id": "tenant-a-gcp",
+      "service_file": "/secrets/tenant-a.json"
+    }
+
 ### What gets registered
 
 | Key | Capability |
@@ -129,12 +143,8 @@ Pass `AnalyticsRunOptions` (`dry_run`, `max_rows`, `timeout`) per request; the a
 
 ## Multi-tenant datasets
 
-v1 uses a single `project_id` per `BigQueryClient`. For multiple tenants, either:
-
-- Register separate `AnalyticsSpec` routes per tenant with distinct `dataset` values in `BigQueryDepsModule.analytics`, or
-- Resolve the dataset in application code and pass tenant-specific specs/config at deploy time.
-
-A future `RoutedBigQueryClient` may resolve dataset from `ctx.inv_ctx` tenant identity; not included in v1.
+- **Connection routing:** `RoutedBigQueryClient` resolves per-tenant `project_id` and credentials from `SecretsPort` (see routed client above).
+- **Dataset names:** still configured per `AnalyticsSpec` route in `BigQueryDepsModule.analytics` (static `dataset` or deploy-time separate routes). Routed clients do not auto-resolve dataset from tenant identity.
 
 ## Client health
 
@@ -142,7 +152,7 @@ Call `await client.health()` after lifecycle startup for readiness checks (light
 
 ## Out of scope (v1)
 
-Load jobs, `MERGE`, DDL, automatic tenancy routing, and bulk ETL. Prefer queue/stream handoff plus external loaders for large pipelines; see [Analytics contracts](../core-package/contracts/analytics.md).
+Load jobs, `MERGE`, DDL, per-route dataset resolvers, and bulk ETL. Prefer queue/stream handoff plus external loaders for large pipelines; see [Analytics contracts](../core-package/contracts/analytics.md).
 
 ## Related pages
 

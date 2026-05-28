@@ -8,6 +8,8 @@ Persist documents and transactions in Google Cloud Firestore behind Forze docume
 
 Use this when Firestore is your document store and you want the same `DocumentSpec` / query DSL surface as Postgres or Mongo, with explicit errors for unsupported query shapes.
 
+Use `RoutedFirestoreClient` when tenant identity selects Firestore `project_id` and `database` (row-level isolation can still use `tenant_aware` on document routes). Per-tenant service account overrides are not supported in v1 (ADC only).
+
 ## Standard setup checklist
 
 1. Install the matching optional extra.
@@ -69,6 +71,10 @@ Kernel `DocumentSpec` names must match keys in `FirestoreDepsModule.rw_documents
 | Option | Type | Default | Purpose |
 |--------|------|---------|---------|
 | (reserved) | — | — | Placeholder for future client tuning |
+
+### Routed client
+
+Register `RoutedFirestoreClient` under `FirestoreClientDepKey` and use `routed_firestore_lifecycle_step(client=routed_fs)`. Per-tenant JSON: `FirestoreRoutingCredentials` with `project_id` and `database`.
 
 ### What gets registered
 

@@ -170,7 +170,7 @@ See [External IdP (OIDC) recipe](https://morzecrew.github.io/forze/docs/recipes/
 
 ## Tenancy and routed clients
 
-`TenantIdentity` is the current tenant. Tenant-aware adapters derive routing from `ExecutionContext`, not from user DTO fields. Routed Postgres, Mongo, Redis, S3, RabbitMQ, SQS, and Temporal clients can choose per-tenant infrastructure at call time.
+`TenantIdentity` is the current tenant. Tenant-aware adapters derive routing from `ExecutionContext`, not from user DTO fields. Routed Postgres, Mongo, Redis, S3, RabbitMQ, SQS, Temporal, BigQuery, ClickHouse, Meilisearch, GCS, Firestore, and Inngest clients can choose per-tenant infrastructure at call time.
 
 For database-per-tenant Postgres routing, set `PostgresDepsModule.introspector_cache_partition_key` so catalog metadata caches are partitioned per tenant/database.
 

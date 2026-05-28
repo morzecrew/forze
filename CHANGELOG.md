@@ -26,6 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`forze.base`:** `stable_fingerprint` and `connection_string_fingerprint` in `forze.base.primitives.fingerprint`; optional `dedup_key` on `SimpleLruRegistry` / `GuardedLruRegistry` to share slots across logical keys.
 - **Postgres:** `RelationSpec` on document (`read` / `write` / `history`), search (`index` / `read` / `heap`), and hub (`hub` plus leg `index` / `read` / `heap`) configs; gateways and search adapters resolve relations per request via `forze.application.contracts.resolution`.
 - **Postgres:** `require_static_relation` — explicit error when startup document schema validation is wired for a route that uses a dynamic `RelationSpec` resolver.
+- **BigQuery, ClickHouse, Meilisearch, GCS, Firestore, Inngest:** `Routed*Client` with per-tenant `*RoutingCredentials`, `routed_*_lifecycle_step`, and LRU pool deduplication by connection fingerprint.
 
 ### Changed
 

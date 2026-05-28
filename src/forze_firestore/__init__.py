@@ -12,10 +12,13 @@ from .execution import (
     FirestoreDocumentConfig,
     FirestoreReadOnlyDocumentConfig,
     firestore_lifecycle_step,
+    routed_firestore_lifecycle_step,
 )
 from .kernel.platform import (
     FirestoreClient,
     FirestoreClientPort,
+    FirestoreRoutingCredentials,
+    RoutedFirestoreClient,
 )
 
 # ----------------------- #
@@ -24,8 +27,11 @@ __all__ = [
     "FirestoreDepsModule",
     "FirestoreClient",
     "FirestoreClientPort",
+    "RoutedFirestoreClient",
+    "FirestoreRoutingCredentials",
     "FirestoreClientDepKey",
     "firestore_lifecycle_step",
+    "routed_firestore_lifecycle_step",
     "FirestoreDocumentConfig",
     "FirestoreReadOnlyDocumentConfig",
 ]

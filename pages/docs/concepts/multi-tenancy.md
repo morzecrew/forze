@@ -25,7 +25,7 @@ Postgres does not use a separate `tenant_isolation` config field. Effective mode
 
 Document routes accept a static `(schema, table)` tuple or a `ValueResolver` from `forze.application.contracts.resolution` (resolved on each async gateway call from `TenantIdentity`). Use relation mode for schema-per-tenant layouts; avoid combining it with `tenant_aware=True` on the same route unless you want defense-in-depth.
 
-`RoutedPostgresClient` (and other routed integration clients) deduplicate LRU pools by connection fingerprint when several tenants resolve to the same DSN or endpoint.
+`RoutedPostgresClient` and other routed integration clients (Redis, Mongo, S3, RabbitMQ, SQS, Temporal, BigQuery, ClickHouse, Meilisearch, GCS, Firestore, Inngest) deduplicate LRU pools by connection fingerprint when several tenants resolve to the same DSN or endpoint.
 
 When using `RoutedPostgresClient`, set `PostgresDepsModule.introspector_cache_partition_key` to the same tenant identity used for routing (startup validation **fails** if it is missing). Optional schema validation warns when a write table has a `tenant_id` column but `tenant_aware=False`, or when `tenant_aware=True` on a routed client (redundant row filter — defense-in-depth is acceptable).
 

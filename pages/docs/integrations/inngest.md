@@ -12,6 +12,7 @@ memoized steps via `DurableFunctionStepPort`.
 | What it provides | `InngestClient`, `InngestDepsModule`, event command adapters, function registration, FastAPI `serve`. |
 | Supported Forze contracts | `DurableFunctionEventCommandDepKey`, `DurableFunctionStepDepKey`, plus `InngestClientDepKey`. |
 | When to use it | Event-driven durable handlers, cron-triggered jobs, and step memoization without Temporal workflows. |
+| Multi-tenant emit | `RoutedInngestClient` resolves `app_id` / keys per tenant for `send`; framework `serve()` remains single-app. |
 
 ## Installation
 
@@ -44,6 +45,8 @@ client = InngestClient(
     config=InngestConfig(is_production=False),
 )
 ```
+
+For per-tenant Inngest apps or keys, register `RoutedInngestClient` and `routed_inngest_lifecycle_step`. Secrets use `InngestRoutingCredentials` (`app_id`, optional `event_key`, `signing_key`). Access `native` only after the inner client is warmed for the current tenant (typically after `send`).
 
 ### Deps module (emit events from API)
 

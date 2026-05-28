@@ -14,7 +14,6 @@ if TYPE_CHECKING:
 RelationSpec: TypeAlias = tuple[str, str] | ValueResolver[tuple[str, str]]
 """Static ``(schema, relation)`` or tenant-scoped resolver."""
 
-
 # ....................... #
 
 

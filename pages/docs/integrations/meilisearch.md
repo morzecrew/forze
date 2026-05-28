@@ -10,6 +10,8 @@ Indexed documents are treated as a **read model**: hits are validated as your `S
 
 Use this when Meilisearch is your full-text search backend and you want Forze search contracts (offset pagination, filters, federated multi-index search, optional Redis result snapshots).
 
+Use `RoutedMeilisearchClient` when tenant identity selects Meilisearch URL and API key (row-level isolation can still use `tenant_aware` on search configs).
+
 ## Installation
 
 ```bash
@@ -58,6 +60,22 @@ runtime = ExecutionRuntime(
     ),
 )
 ```
+
+### Routed lifecycle
+
+```python
+from forze_meilisearch.kernel.platform import RoutedMeilisearchClient
+from forze_meilisearch.execution.lifecycle import routed_meilisearch_lifecycle_step
+
+routed = RoutedMeilisearchClient(
+    secrets=secrets_port,
+    secret_ref_for_tenant=lambda tid: SecretRef(f"tenants/{tid}/meilisearch"),
+    tenant_provider=ctx.inv_ctx.get_tenant,
+)
+# LifecyclePlan.from_steps(routed_meilisearch_lifecycle_step(client=routed))
+```
+
+Per-tenant JSON: `{"url": "https://search.example.com", "api_key": "..."}` (`MeilisearchRoutingCredentials`).
 
 ### What gets registered
 

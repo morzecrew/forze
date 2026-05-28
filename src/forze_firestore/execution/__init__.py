@@ -4,7 +4,7 @@ from .deps import (
     FirestoreDocumentConfig,
     FirestoreReadOnlyDocumentConfig,
 )
-from .lifecycle import firestore_lifecycle_step
+from .lifecycle import firestore_lifecycle_step, routed_firestore_lifecycle_step
 
 __all__ = [
     "FirestoreDepsModule",
@@ -12,4 +12,5 @@ __all__ = [
     "FirestoreDocumentConfig",
     "FirestoreReadOnlyDocumentConfig",
     "firestore_lifecycle_step",
+    "routed_firestore_lifecycle_step",
 ]

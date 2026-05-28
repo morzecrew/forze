@@ -6,8 +6,9 @@ import attrs
 
 from forze.application.contracts.execution import LifecycleHook, LifecycleStep
 from forze.application.execution import ExecutionContext
+from forze.application.execution.lifecycle.builtin import routed_client_lifecycle_step
 
-from ..kernel.platform import GCSClient, GCSConfig
+from ..kernel.platform import GCSClient, GCSConfig, RoutedGCSClient
 from .deps import GCSClientDepKey
 
 # ----------------------- #
@@ -80,3 +81,13 @@ def gcs_lifecycle_step(
         ),
         shutdown=GCSShutdownHook(),
     )
+
+
+def routed_gcs_lifecycle_step(
+    name: str = "routed_gcs_lifecycle",
+    *,
+    client: RoutedGCSClient,
+) -> LifecycleStep:
+    """Lifecycle for :class:`RoutedGCSClient` registered as :data:`GCSClientDepKey`."""
+
+    return routed_client_lifecycle_step(name, client=client)

@@ -12,8 +12,15 @@ from .execution import (
     ClickHouseDepsModule,
     ClickHouseQueryConfig,
     clickhouse_lifecycle_step,
+    routed_clickhouse_lifecycle_step,
 )
-from .kernel.platform import ClickHouseClient, ClickHouseClientPort, ClickHouseConfig
+from .kernel.platform import (
+    ClickHouseClient,
+    ClickHouseClientPort,
+    ClickHouseConfig,
+    ClickHouseRoutingCredentials,
+    RoutedClickHouseClient,
+)
 
 # ----------------------- #
 
@@ -21,9 +28,12 @@ __all__ = [
     "ClickHouseDepsModule",
     "ClickHouseClient",
     "ClickHouseClientPort",
+    "RoutedClickHouseClient",
+    "ClickHouseRoutingCredentials",
     "ClickHouseConfig",
     "ClickHouseClientDepKey",
     "clickhouse_lifecycle_step",
+    "routed_clickhouse_lifecycle_step",
     "ClickHouseAnalyticsConfig",
     "ClickHouseQueryConfig",
 ]

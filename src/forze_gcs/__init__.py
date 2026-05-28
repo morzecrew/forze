@@ -11,8 +11,15 @@ from .execution import (
     GCSDepsModule,
     GCSStorageConfig,
     gcs_lifecycle_step,
+    routed_gcs_lifecycle_step,
 )
-from .kernel.platform import GCSClient, GCSClientPort, GCSConfig
+from .kernel.platform import (
+    GCSClient,
+    GCSClientPort,
+    GCSConfig,
+    GCSRoutingCredentials,
+    RoutedGCSClient,
+)
 
 # ----------------------- #
 
@@ -20,8 +27,11 @@ __all__ = [
     "GCSDepsModule",
     "GCSClient",
     "GCSClientPort",
+    "RoutedGCSClient",
+    "GCSRoutingCredentials",
     "GCSConfig",
     "GCSClientDepKey",
     "gcs_lifecycle_step",
+    "routed_gcs_lifecycle_step",
     "GCSStorageConfig",
 ]
