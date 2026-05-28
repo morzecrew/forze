@@ -1,9 +1,6 @@
 """Shared helpers for warehouse analytics adapters (kernel-only, no SDK imports)."""
 
-from __future__ import annotations
-
-from collections.abc import Sequence
-from typing import Any, TypeVar, cast
+from typing import Any, Sequence, TypeVar, cast
 
 from pydantic import BaseModel
 
@@ -13,7 +10,11 @@ from forze.application.contracts.base import (
     Page,
     page_from_limit_offset,
 )
-from forze.application.contracts.querying import PaginationExpression
+from forze.application.contracts.querying import (
+    CursorPaginationExpression,
+    PaginationExpression,
+)
+from forze.base.codecs import B64UrlJsonCodec
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
 from forze.base.serialization import pydantic_validate, pydantic_validate_many
@@ -21,6 +22,8 @@ from forze.base.serialization import pydantic_validate, pydantic_validate_many
 # ----------------------- #
 
 T = TypeVar("T", bound=BaseModel)
+
+_ANALYTICS_CURSOR_CODEC = B64UrlJsonCodec()
 
 # ....................... #
 
@@ -129,3 +132,152 @@ def parse_count_row(rows: list[JsonDict], *, column: str = "forze_cnt") -> int:
     raw = rows[0].get(column, 0)
 
     return int(raw)
+
+
+# ....................... #
+
+
+def parse_analytics_cursor_limit(
+    cursor: CursorPaginationExpression | None,
+) -> int:
+    """Return a positive page size from a cursor expression."""
+
+    c = dict(cursor or {})
+
+    if c.get("after") and c.get("before"):
+        raise exc.internal("Cursor pagination: pass at most one of 'after' or 'before'")
+
+    lim_raw = c.get("limit")
+    lim = int(cast(Any, lim_raw)) if lim_raw is not None else 10
+
+    if lim < 1:
+        raise exc.internal("Cursor pagination 'limit' must be positive")
+
+    return lim
+
+
+# ....................... #
+
+
+def parse_offset_cursor_after(
+    cursor: CursorPaginationExpression | None,
+    *,
+    backward_not_supported: str = "Backward analytics cursors are not supported.",
+) -> tuple[int, int]:
+    """Decode an offset-style ``after`` token into ``(start_offset, limit)``."""
+
+    c = dict(cursor or {})
+    lim = parse_analytics_cursor_limit(cursor)
+
+    if c.get("before"):
+        raise exc.internal(backward_not_supported)
+
+    if not c.get("after"):
+        return 0, lim
+
+    try:
+        payload = _ANALYTICS_CURSOR_CODEC.loads(str(c["after"]))
+
+        if not isinstance(payload, dict):
+            raise exc.internal("Invalid analytics cursor token")
+
+        if "kc" in payload:
+            raise exc.internal("Offset cursor token passed to offset-based query.")
+
+        return int(payload["o"]), lim  # type: ignore[arg-type]
+
+    except (ValueError, KeyError, TypeError) as e:
+        raise exc.internal("Invalid analytics cursor token") from e
+
+
+# ....................... #
+
+
+def parse_keyset_cursor_after(
+    cursor: CursorPaginationExpression | None,
+    *,
+    backward_not_supported: str = "Backward analytics cursors are not supported.",
+) -> tuple[Any | None, int]:
+    """Decode a keyset ``after`` token into ``(forze_after value, limit)``."""
+
+    c = dict(cursor or {})
+    lim = parse_analytics_cursor_limit(cursor)
+
+    if c.get("before"):
+        raise exc.internal(backward_not_supported)
+
+    if not c.get("after"):
+        return None, lim
+
+    try:
+        payload = _ANALYTICS_CURSOR_CODEC.loads(str(c["after"]))
+
+        if not isinstance(payload, dict) or "kv" not in payload:
+            raise exc.internal("Invalid analytics keyset cursor token")
+
+        return payload["kv"], lim  # type: ignore[return-value]
+
+    except (ValueError, KeyError, TypeError) as e:
+        raise exc.internal("Invalid analytics keyset cursor token") from e
+
+
+# ....................... #
+
+
+def encode_offset_cursor_next_prev(
+    *,
+    start: int,
+    page_len: int,
+    limit: int,
+) -> tuple[str | None, str | None]:
+    has_more = page_len >= limit
+    next_c = (
+        _ANALYTICS_CURSOR_CODEC.dumps({"o": start + page_len}) if has_more else None
+    )
+    prev_c = _ANALYTICS_CURSOR_CODEC.dumps({"o": start}) if start > 0 else None
+
+    return next_c, prev_c
+
+
+# ....................... #
+
+
+def encode_keyset_cursor_next(
+    *,
+    column: str,
+    hits: list[Any],
+    limit: int,
+) -> str | None:
+    has_more = len(hits) >= limit
+
+    if not has_more or not hits:
+        return None
+
+    last = hits[-1]
+
+    if isinstance(last, BaseModel):
+        value = last.model_dump().get(column)
+
+    elif isinstance(last, dict):
+        value = last.get(column)  # type: ignore[assignment]
+
+    else:
+        value = getattr(last, column, None)
+
+    if value is None:
+        return None
+
+    return _ANALYTICS_CURSOR_CODEC.dumps({"kc": column, "kv": value})
+
+
+# ....................... #
+
+
+def merge_forze_after_params(
+    param_dict: dict[str, object],
+    after_value: Any | None,
+) -> dict[str, object]:
+    if after_value is None:
+        return param_dict
+
+    return {**param_dict, "forze_after": after_value}

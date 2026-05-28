@@ -1,18 +1,7 @@
-"""Search query and command port definitions.
-
-**Cursor search (``search_cursor`` / ``project_search_cursor`` / ``select_search_cursor``):**
-SQL and vector adapters must keyset within the same ranked ``ORDER BY`` (score columns +
-optional user sorts, then a tie-breaker when the read model has ``id``). Set
-:class:`.SearchSpec` ``default_sort`` (or pass ``sorts``) for read models without ``id``; use a
-stable composite key for SQL views. Postgres hub and
-simple adapters inject keyset columns into the query when using projection cursor methods, then
-return only the requested fields. Federated (RRF) search does not implement cursors yet; use
-offset methods such as :meth:`~SearchQueryPort.search` or :meth:`~SearchQueryPort.search_page`
-with limit/offset there.
-"""
+"""Search query and command port definitions."""
 
 from datetime import timedelta
-from typing import Awaitable, Protocol, Sequence, TypeVar
+from typing import Awaitable, Protocol, Sequence, TypeVar, runtime_checkable
 
 from pydantic import BaseModel
 
@@ -31,6 +20,7 @@ from .value_objects import SearchResultSnapshotMeta
 # ----------------------- #
 
 T = TypeVar("T", bound=BaseModel)
+M = TypeVar("M", bound=BaseModel)
 
 # ....................... #
 
@@ -168,8 +158,29 @@ class SearchQueryPort[R: BaseModel](Protocol):
 # ....................... #
 
 
-#! Not implemented yet
-class SearchCommandPort[M: BaseModel](Protocol): ...  # pragma: no cover
+@runtime_checkable
+class SearchCommandPort[M: BaseModel](Protocol):
+    """Maintain external search indexes (e.g. Meilisearch) outside the system of record."""
+
+    def ensure_index(self) -> Awaitable[None]:
+        """Create or update the backing index settings for the configured search surface."""
+        ...  # pragma: no cover
+
+    def upsert(self, documents: Sequence[M]) -> Awaitable[None]:
+        """Add or update documents in the search index."""
+        ...  # pragma: no cover
+
+    def upsert_many(self, documents: Sequence[M]) -> Awaitable[None]:
+        """Batch add or update documents in the search index."""
+        ...  # pragma: no cover
+
+    def delete(self, ids: Sequence[str]) -> Awaitable[None]:
+        """Remove documents from the search index by primary key."""
+        ...  # pragma: no cover
+
+    def delete_all(self) -> Awaitable[None]:
+        """Remove all documents from the search index."""
+        ...  # pragma: no cover
 
 
 # ....................... #

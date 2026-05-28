@@ -1,11 +1,8 @@
 """RabbitMQ client that resolves a DSN per tenant via :class:`~forze.application.contracts.secrets.SecretsPort`."""
 
-import asyncio
-from collections import OrderedDict
-from collections.abc import Callable, Mapping
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
-from typing import AsyncGenerator, Sequence, final
+from typing import AsyncGenerator, Callable, Mapping, Sequence, final
 from uuid import UUID
 
 import attrs
@@ -13,6 +10,7 @@ from aio_pika.abc import AbstractChannel
 
 from forze.application.contracts.secrets import SecretRef, SecretsPort
 from forze.base.exceptions import exc
+from forze.base.primitives.lru_registry import SimpleLruRegistry
 
 from .client import RabbitMQClient
 from .port import RabbitMQClientPort
@@ -39,11 +37,7 @@ class RoutedRabbitMQClient(RabbitMQClientPort):
     connection_config: RabbitMQConfig = attrs.field(factory=RabbitMQConfig)
     max_cached_tenants: int = 100
 
-    _lock: asyncio.Lock = attrs.field(factory=asyncio.Lock, init=False)
-    _clients: OrderedDict[UUID, RabbitMQClient] = attrs.field(
-        factory=OrderedDict,
-        init=False,
-    )
+    _registry: SimpleLruRegistry[UUID, RabbitMQClient] = attrs.field(init=False)
     _started: bool = attrs.field(default=False, init=False)
 
     # ....................... #
@@ -51,6 +45,12 @@ class RoutedRabbitMQClient(RabbitMQClientPort):
     def __attrs_post_init__(self) -> None:
         if self.max_cached_tenants < 1:
             raise exc.internal("max_cached_tenants must be at least 1")
+
+        self._registry = SimpleLruRegistry(
+            max_entries=self.max_cached_tenants,
+            create=self._create_client,
+            dispose=lambda client: client.close(),
+        )
 
     # ....................... #
 
@@ -68,23 +68,13 @@ class RoutedRabbitMQClient(RabbitMQClientPort):
     # ....................... #
 
     async def close(self) -> None:
-        async with self._lock:
-            to_close = list(self._clients.values())
-            self._clients.clear()
-
-        for c in to_close:
-            await c.close()
-
+        await self._registry.close_all()
         self._started = False
 
     # ....................... #
 
     async def evict_tenant(self, tenant_id: UUID) -> None:
-        async with self._lock:
-            client = self._clients.pop(tenant_id, None)
-
-        if client is not None:
-            await client.close()
+        await self._registry.evict(tenant_id)
 
     # ....................... #
 
@@ -101,41 +91,32 @@ class RoutedRabbitMQClient(RabbitMQClientPort):
 
     # ....................... #
 
+    async def _create_client(self, tid: UUID) -> RabbitMQClient:
+        ref = self._get_secret_ref(tid)
+
+        try:
+            dsn = await self.secrets.resolve_str(ref)
+
+        except exc:
+            raise
+
+        except Exception as e:
+            raise exc.internal(
+                f"Failed to resolve RabbitMQ secret for tenant {tid}: {e}",
+            ) from e
+
+        client = RabbitMQClient()
+        await client.initialize(dsn, config=self.connection_config)
+
+        return client
+
+    # ....................... #
+
     async def _get_client(self) -> RabbitMQClient:
         if not self._started:
             raise exc.internal("Routed RabbitMQ client is not started")
 
-        tid = self._require_tenant_id()
-
-        async with self._lock:
-            if tid in self._clients:
-                client = self._clients[tid]
-                self._clients.move_to_end(tid)
-                return client
-
-            ref = self._get_secret_ref(tid)
-
-            try:
-                dsn = await self.secrets.resolve_str(ref)
-
-            except exc:
-                raise
-
-            except Exception as e:
-                raise exc.internal(
-                    f"Failed to resolve RabbitMQ secret for tenant {tid}: {e}",
-                ) from e
-
-            client = RabbitMQClient()
-            await client.initialize(dsn, config=self.connection_config)
-            self._clients[tid] = client
-            self._clients.move_to_end(tid)
-
-            while len(self._clients) > self.max_cached_tenants:
-                _, old = self._clients.popitem(last=False)
-                await old.close()
-
-            return client
+        return await self._registry.get_or_create(self._require_tenant_id())
 
     # ....................... #
 

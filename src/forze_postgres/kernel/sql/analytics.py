@@ -14,7 +14,6 @@ def parameters_from_model(params: BaseModel) -> dict[str, object]:
 
 
 # ....................... #
-#! TODO: move to SQL folder
 
 
 def apply_limit_offset(
@@ -41,7 +40,6 @@ def apply_limit_offset(
 
 
 # ....................... #
-#! TODO: move to SQL folder
 
 
 def build_count_sql(inner_sql: str) -> str:

@@ -11,9 +11,8 @@ require_s3()
 import asyncio
 import mimetypes
 import re
-from collections.abc import Mapping
 from datetime import datetime
-from typing import Callable, final
+from typing import Callable, Mapping, final
 
 import attrs
 import magic

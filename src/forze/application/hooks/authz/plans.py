@@ -1,7 +1,6 @@
 """Wire authz into :class:`~forze.application.execution.registry.OperationRegistry` plans."""
 
-from collections.abc import Awaitable, Callable
-from typing import Any, final
+from typing import Any, Awaitable, Callable, final
 
 import attrs
 

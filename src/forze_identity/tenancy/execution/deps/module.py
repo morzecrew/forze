@@ -1,8 +1,7 @@
 """Tenancy dependency module for the application kernel."""
 
-from collections.abc import Collection, Mapping
 from enum import StrEnum
-from typing import final
+from typing import Collection, Mapping, final
 
 import attrs
 

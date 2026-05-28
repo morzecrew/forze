@@ -1,8 +1,16 @@
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
 from contextlib import AbstractAsyncContextManager
-from typing import TYPE_CHECKING, Any, Iterable, Never, Self, TypeVar
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Awaitable,
+    Callable,
+    Iterable,
+    Never,
+    Self,
+    TypeVar,
+)
 
 import attrs
 

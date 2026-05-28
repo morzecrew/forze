@@ -1,11 +1,11 @@
 """Validate Mongo write-collection indexes for document ensure/upsert."""
 
-from collections.abc import Sequence
+from typing import Sequence
 
 import attrs
 
 from ._logger import logger
-from .introspect import MongoIntrospector, MongoIndexInfo
+from .introspect import MongoIndexInfo, MongoIntrospector
 
 # ----------------------- #
 

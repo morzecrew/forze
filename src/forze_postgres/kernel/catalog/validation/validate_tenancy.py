@@ -1,12 +1,10 @@
 """Validate Postgres tenant isolation wiring (client vs per-route tenant_aware)."""
 
-from collections.abc import Sequence
-from typing import Literal
+from typing import Literal, Sequence
 
 import attrs
 
 from forze.base.exceptions import exc
-
 from forze_postgres.kernel._logger import logger
 
 # ----------------------- #

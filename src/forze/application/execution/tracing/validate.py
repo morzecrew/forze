@@ -1,9 +1,6 @@
 """Validate runtime traces with caller-supplied rules."""
 
-from __future__ import annotations
-
-from collections.abc import Callable, Sequence
-from typing import Literal
+from typing import Callable, Literal, Sequence
 
 from .buffer import RuntimeTrace
 from .events import TracingEvent, TracingViolation

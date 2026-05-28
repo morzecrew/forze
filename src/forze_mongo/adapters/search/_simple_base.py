@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
-from typing import Any
+from typing import Any, Sequence
 
 import attrs
 from pydantic import BaseModel
@@ -27,8 +26,8 @@ from forze_mongo.kernel.platform.port import MongoClientPort
 
 from ._cursor_run import execute_mongo_ranked_cursor_search
 from ._offset_run import execute_mongo_ranked_offset_search
-from .base import MongoSearchGateway
 from ._port import MongoSearchPortMixin
+from .base import MongoSearchGateway
 
 # ----------------------- #
 

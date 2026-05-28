@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel
 
-from forze_postgres.kernel.client.analytics_query import (
+from forze_postgres.kernel.sql import (
     apply_limit_offset,
     build_count_sql,
     parameters_from_model,

@@ -3,7 +3,7 @@
 import os
 import shutil
 import subprocess
-from collections.abc import Iterator
+from typing import Iterator
 from uuid import uuid4
 
 import pytest
@@ -96,7 +96,9 @@ def firestore_emulator_container() -> DockerContainer:
 
 
 @pytest_asyncio.fixture(scope="function")
-async def firestore_client(firestore_emulator_container: DockerContainer) -> FirestoreClient:
+async def firestore_client(
+    firestore_emulator_container: DockerContainer,
+) -> FirestoreClient:
     """Provide an initialized Firestore client connected to the emulator."""
     _ = firestore_emulator_container
     client = FirestoreClient()

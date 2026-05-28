@@ -214,7 +214,8 @@ class SearchResultSnapshotCoordinator:
         sorts: QuerySortExpression | None,  # type: ignore[valid-type]
         *,
         spec_name: str,
-        rrf_k: int,
+        rrf_k: int | None = None,
+        extras: Mapping[str, object] | None = None,
     ) -> str:
         if isinstance(query, (list, tuple)):
             qpart: object = [str(x) for x in query]
@@ -224,11 +225,16 @@ class SearchResultSnapshotCoordinator:
 
         payload: dict[str, object] = {
             "federated": spec_name,
-            "rrf_k": rrf_k,
             "query": qpart,
             "filters": filters,
             "sorts": dict(sorts) if sorts is not None else None,
         }
+
+        if rrf_k is not None:
+            payload["rrf_k"] = rrf_k
+
+        if extras:
+            payload.update(dict(extras))
         body = json.dumps(payload, sort_keys=True, default=str, ensure_ascii=False)
         h = hashlib.sha256(body.encode("utf-8")).hexdigest()
 

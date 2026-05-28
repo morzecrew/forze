@@ -1,7 +1,6 @@
 """Lifecycle hooks for Temporal client initialization and shutdown."""
 
-from collections.abc import Mapping
-from typing import Any, cast, final
+from typing import Any, Mapping, cast, final
 
 import attrs
 

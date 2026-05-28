@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
-from typing import Any
+from typing import Any, Mapping, Sequence
 
 from forze.application.contracts.search import (
     PhraseCombine,
@@ -60,7 +59,13 @@ def build_browse_pipeline(
     stages: list[JsonDict] = [*_pre_match_stages(pre_filter)]
 
     stages.append({"$addFields": {rank_field: 1}})
-    stages.append({"$sort": _sort_dict(ranked=False, user_sorts=user_sorts, rank_field=rank_field)})
+    stages.append(
+        {
+            "$sort": _sort_dict(
+                ranked=False, user_sorts=user_sorts, rank_field=rank_field
+            )
+        }
+    )
 
     return stages
 

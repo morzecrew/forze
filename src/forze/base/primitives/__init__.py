@@ -2,6 +2,7 @@
 
 from .buffer import ContextualBuffer
 from .cache import CacheLane
+from .lru_registry import GuardedLruRegistry, SimpleLruRegistry
 from .datetime import utcnow
 from .graph import DirectedAcyclicGraph
 from .namespace import StrKeyNamespace
@@ -17,6 +18,8 @@ from .uuid import uuid4, uuid7
 __all__ = [
     "utcnow",
     "CacheLane",
+    "GuardedLruRegistry",
+    "SimpleLruRegistry",
     "ContextualBuffer",
     "normalize_string",
     "JsonDict",

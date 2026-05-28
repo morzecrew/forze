@@ -5,8 +5,7 @@ require_clickhouse()
 # ....................... #
 
 import asyncio
-from collections.abc import Awaitable, Callable
-from typing import Any, Sequence, TypeVar, final
+from typing import Any, Awaitable, Callable, Sequence, TypeVar, final
 
 import attrs
 from clickhouse_connect.driver import (  # pyright: ignore[reportMissingTypeStubs]

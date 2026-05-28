@@ -1,7 +1,6 @@
 """Trim over-fetched rows and build next/prev keyset tokens for cursor pages."""
 
-from collections.abc import Callable, Mapping, Sequence
-from typing import Any
+from typing import Any, Callable, Mapping, Sequence
 
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict

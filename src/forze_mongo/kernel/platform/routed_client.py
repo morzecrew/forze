@@ -2,11 +2,16 @@
 
 from __future__ import annotations
 
-import asyncio
-from collections import OrderedDict
-from collections.abc import Callable
 from contextlib import asynccontextmanager
-from typing import Any, AsyncContextManager, AsyncGenerator, Mapping, Sequence, final
+from typing import (
+    Any,
+    AsyncContextManager,
+    AsyncGenerator,
+    Callable,
+    Mapping,
+    Sequence,
+    final,
+)
 from uuid import UUID
 
 import attrs
@@ -18,6 +23,7 @@ from pymongo.asynchronous.database import AsyncDatabase
 from forze.application.contracts.secrets import SecretRef, SecretsPort
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
+from forze.base.primitives.lru_registry import SimpleLruRegistry
 
 from .client import MongoClient
 from .port import MongoClientPort
@@ -48,11 +54,7 @@ class RoutedMongoClient(MongoClientPort):
     mongo_config: MongoConfig = attrs.field(factory=MongoConfig)
     max_cached_tenants: int = 100
 
-    _lock: asyncio.Lock = attrs.field(factory=asyncio.Lock, init=False)
-    _clients: OrderedDict[UUID, MongoClient] = attrs.field(
-        factory=OrderedDict,
-        init=False,
-    )
+    _registry: SimpleLruRegistry[UUID, MongoClient] = attrs.field(init=False)
     _started: bool = attrs.field(default=False, init=False)
 
     # ....................... #
@@ -60,6 +62,12 @@ class RoutedMongoClient(MongoClientPort):
     def __attrs_post_init__(self) -> None:
         if self.max_cached_tenants < 1:
             raise exc.internal("max_cached_tenants must be at least 1")
+
+        self._registry = SimpleLruRegistry(
+            max_entries=self.max_cached_tenants,
+            create=self._create_client,
+            dispose=lambda client: client.close(),
+        )
 
     # ....................... #
 
@@ -71,13 +79,7 @@ class RoutedMongoClient(MongoClientPort):
     # ....................... #
 
     async def close(self) -> None:
-        async with self._lock:
-            to_close = list(self._clients.values())
-            self._clients.clear()
-
-        for c in to_close:
-            await c.close()
-
+        await self._registry.close_all()
         self._started = False
 
     # ....................... #
@@ -85,11 +87,7 @@ class RoutedMongoClient(MongoClientPort):
     async def evict_tenant(self, tenant_id: UUID) -> None:
         """Close and remove the client for one tenant."""
 
-        async with self._lock:
-            client = self._clients.pop(tenant_id, None)
-
-        if client is not None:
-            await client.close()
+        await self._registry.evict(tenant_id)
 
     # ....................... #
 
@@ -106,48 +104,38 @@ class RoutedMongoClient(MongoClientPort):
 
     # ....................... #
 
+    async def _create_client(self, tid: UUID) -> MongoClient:
+        ref = self.secret_ref_for_tenant(tid)
+
+        try:
+            uri = await self.secrets.resolve_str(ref)
+
+        except exc:
+            raise
+
+        except Exception as e:
+            raise exc.internal(
+                f"Failed to resolve Mongo secret for tenant {tid}: {e}",
+            ) from e
+
+        db_name = self.database_name_for_tenant(tid)
+        client = MongoClient()
+
+        await client.initialize(
+            uri,
+            db_name=db_name,
+            config=self.mongo_config,
+        )
+
+        return client
+
+    # ....................... #
+
     async def _get_client(self) -> MongoClient:
         if not self._started:
             raise exc.internal("Routed Mongo client is not started")
 
-        tid = self._require_tenant_id()
-
-        async with self._lock:
-            if tid in self._clients:
-                client = self._clients[tid]
-                self._clients.move_to_end(tid)
-                return client
-
-            ref = self.secret_ref_for_tenant(tid)
-
-            try:
-                uri = await self.secrets.resolve_str(ref)
-
-            except exc:
-                raise
-
-            except Exception as e:
-                raise exc.internal(
-                    f"Failed to resolve Mongo secret for tenant {tid}: {e}",
-                ) from e
-
-            db_name = self.database_name_for_tenant(tid)
-            client = MongoClient()
-
-            await client.initialize(
-                uri,
-                db_name=db_name,
-                config=self.mongo_config,
-            )
-
-            self._clients[tid] = client
-            self._clients.move_to_end(tid)
-
-            while len(self._clients) > self.max_cached_tenants:
-                _, old = self._clients.popitem(last=False)
-                await old.close()
-
-            return client
+        return await self._registry.get_or_create(self._require_tenant_id())
 
     # ....................... #
 
@@ -180,7 +168,7 @@ class RoutedMongoClient(MongoClientPort):
         if tid is None:
             return False
 
-        inner = self._clients.get(tid)
+        inner = self._registry.peek(tid)
 
         if inner is None:
             return False
@@ -195,7 +183,7 @@ class RoutedMongoClient(MongoClientPort):
         if tid is None:
             raise exc.internal("Transactional context is required")
 
-        inner = self._clients.get(tid)
+        inner = self._registry.peek(tid)
 
         if inner is None:
             raise exc.internal("Transactional context is required")

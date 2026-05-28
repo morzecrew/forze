@@ -1,11 +1,8 @@
 """Tracing wrapper for configurable dependency ports."""
 
-from __future__ import annotations
-
 import inspect
-from collections.abc import Callable
 from functools import wraps
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, Callable, cast
 
 import attrs
 
@@ -29,12 +26,14 @@ class TracingPortProxy:
     """Wrap a port and record sync and async method calls."""
 
     inner: Any
-    deps: Deps[Any]
+    deps: "Deps[Any]"
     domain: str
     surface: str
     route: str | None
     phase: str | None
     tx_depth_getter: Callable[[], int] = attrs.field(default=_default_tx_depth)
+
+    # ....................... #
 
     def _record_call(self, name: str) -> None:
         record(
@@ -46,6 +45,8 @@ class TracingPortProxy:
             tx_depth=self.tx_depth_getter(),
             deps=self.deps,
         )
+
+    # ....................... #
 
     def __getattr__(self, name: str) -> Any:
         attr = getattr(self.inner, name)
@@ -76,7 +77,7 @@ class TracingPortProxy:
 def wrap_port[T](
     inner: T,
     *,
-    deps: Deps[Any],
+    deps: "Deps[Any]",
     domain: str,
     surface: str,
     route: str | None,

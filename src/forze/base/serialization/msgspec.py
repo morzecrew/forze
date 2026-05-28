@@ -1,11 +1,21 @@
 """Serialization helpers around msgspec structs."""
 
-from collections.abc import Iterator, Mapping, Sequence
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 from functools import lru_cache
 from types import NoneType, UnionType
-from typing import Annotated, Any, Final, NoReturn, Union, get_args, get_origin
+from typing import (
+    Annotated,
+    Any,
+    Final,
+    Iterator,
+    Mapping,
+    NoReturn,
+    Sequence,
+    Union,
+    get_args,
+    get_origin,
+)
 from uuid import UUID
 
 import msgspec

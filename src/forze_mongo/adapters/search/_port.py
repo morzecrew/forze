@@ -1,9 +1,6 @@
 """Shared :class:`~forze.application.contracts.search.SearchQueryPort` method implementations."""
 
-from __future__ import annotations
-
-from collections.abc import Sequence
-from typing import Any, Literal, TypeVar, overload
+from typing import Any, Literal, Sequence, TypeVar, overload
 
 from pydantic import BaseModel
 

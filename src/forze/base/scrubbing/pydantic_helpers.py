@@ -1,7 +1,6 @@
 """Pydantic-specific helpers for error context scrubbing."""
 
-from collections.abc import Mapping
-from typing import Any
+from typing import Any, Mapping
 
 from pydantic import BaseModel
 

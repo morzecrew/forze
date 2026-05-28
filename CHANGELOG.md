@@ -9,15 +9,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Core:** `SearchCommandPort` (`ensure_index`, `upsert`, `upsert_many`, `delete`, `delete_all`) for external search index maintenance.
+- **Meilisearch:** `forze_meilisearch` package with async client, `SearchQueryPort` (offset), `SearchCommandPort`, and federated search (`merge`: native federation or weighted RRF). Optional extra `forze[meilisearch]`.
+- **Search snapshots:** `SearchResultSnapshotCoordinator.federated_fingerprint` accepts optional `extras` for merge-mode-specific cache keys.
 - **Mongo:** `MongoDepsModule.searches` and `SearchQueryPort` adapters (`MongoTextSearchAdapter`, `MongoAtlasSearchAdapter`, `MongoVectorSearchAdapter`) with offset, cursor, and optional Redis result snapshots.
 - **Mongo:** optional `mongo_document_index_validation_lifecycle_step` warns when write collections define secondary unique indexes used with `ensure` / `upsert`.
 - **`forze.base`:** `CacheLane` in `forze.base.primitives.cache` — reusable in-memory TTL/FIFO cache for catalog metadata.
+- **`forze.base`:** `SimpleLruRegistry` and `GuardedLruRegistry` in `forze.base.primitives.lru_registry` — async LRU resource caches with optional in-use guarded eviction.
 
 ### Changed
 
 - **Mongo:** `MongoSearchConfig` uses a single `index_name` (semantics depend on `engine`) instead of separate `atlas_index_name` / `vector_index_name` / `text_index_name` keys.
 - **Postgres:** reorganized `forze_postgres.kernel` into `kernel.client`, `kernel.catalog`, and `kernel.sql`; `PostgresIntrospector` uses `CacheLane`. Direct imports of `forze_postgres.kernel.platform`, `forze_postgres.kernel.introspect`, `forze_postgres.kernel.query`, `forze_postgres.pagination`, and related flat kernel modules must be updated to the new paths.
+- **Postgres:** `RoutedPostgresClient` uses `GuardedLruRegistry` internally (no public API change).
+- **Redis, Mongo, SQS, S3, Temporal, RabbitMQ:** routed clients use `SimpleLruRegistry` internally (no public API change).
 - **Postgres:** internal reorganisation of `forze_postgres.adapters.search` (shared port/cursor/offset base for FTS, vector, and PGroonga; `hub` subpackage). Public imports from `forze_postgres.adapters.search` are unchanged.
+- **Postgres:** internal reorganisation of `forze_postgres.adapters.analytics` (package split with shared port/query/cursor/chunked modules); analytics SQL helpers moved from `forze_postgres.kernel.client` to `forze_postgres.kernel.sql`. Public import `forze_postgres.adapters.analytics.PostgresAnalyticsAdapter` is unchanged.
+- **Analytics:** shared offset/keyset cursor token helpers in `forze.application.contracts.analytics._adapter_common` (used by Postgres and ClickHouse adapters).
 
 ### Removed
 
@@ -25,6 +33,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Meilisearch:** federated search awaits snapshot finalization; `ensure_index` and multi-search federation payloads match `meilisearch-python-sdk` v7 models.
 - **Postgres:** `ensure`, `ensure_many`, `upsert`, and `upsert_many` build `ON CONFLICT` from `PostgresDocumentConfig.conflict_target` or inferred primary-key columns (fixes composite PKs and tables with additional UNIQUE indexes).
 - **Mongo:** `ensure_many` and `upsert_many` classify bulk `$setOnInsert` upserts safely; missing rows after bulk upsert raise `mongo_ensure_bulk_miss` conflict instead of a generic not-found.
 

@@ -1,8 +1,7 @@
 """In-memory TTL/FIFO cache."""
 
-from collections.abc import Callable, Hashable
 from time import monotonic
-from typing import Generic, TypeVar, final
+from typing import Callable, Generic, Hashable, TypeVar, final
 
 import attrs
 

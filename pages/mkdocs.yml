@@ -108,6 +108,7 @@ nav:
     - Google BigQuery: integrations/bigquery.md
     - ClickHouse: integrations/clickhouse.md
     - MongoDB: integrations/mongo.md
+    - Meilisearch: integrations/meilisearch.md
     - Cloud Firestore: integrations/firestore.md
     - Temporal: integrations/temporal.md
     - Inngest: integrations/inngest.md

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-from collections import OrderedDict
 from contextlib import asynccontextmanager
 from datetime import timedelta
 from typing import (
@@ -24,6 +23,7 @@ from psycopg.abc import Params, QueryNoTemplate
 from forze.application.contracts.secrets import SecretRef, SecretsPort
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
+from forze.base.primitives.lru_registry import GuardedLruRegistry
 
 from .client import PostgresClient
 from .port import PostgresClientPort
@@ -33,75 +33,12 @@ from .value_objects import PostgresConfig, PostgresTransactionOptions
 # ----------------------- #
 
 
-@attrs.define
-class _TenantPoolSlot:
-    """Per-tenant pool entry with in-flight refcount for safe LRU eviction."""
-
-    tenant_id: UUID
-    client: PostgresClient
-    router: RoutedPostgresClient
-    refcount: int = 0
-    drain_after_idle: bool = False
-    condition: asyncio.Condition = attrs.field(factory=asyncio.Condition)
-    draining_barrier: asyncio.Event = attrs.field(factory=asyncio.Event)
-
-    # ....................... #
-
-    def __attrs_post_init__(self) -> None:
-        self.draining_barrier.set()
-
-    # ....................... #
-
-    def mark_entered_draining_registry(self) -> None:
-        """Block :meth:`wait_until_not_in_draining_registry` until the pool is deregistered."""
-
-        self.draining_barrier.clear()
-
-    # ....................... #
-
-    @asynccontextmanager
-    async def use(self) -> AsyncGenerator[PostgresClient]:
-        """Increment refcount around work on :attr:`client`; close when draining and idle."""
-
-        async with self.condition:
-            self.refcount += 1
-
-        try:
-            yield self.client
-
-        finally:
-            do_finish_drain = False
-
-            async with self.condition:
-                self.refcount -= 1
-                do_finish_drain = self.refcount == 0 and self.drain_after_idle
-                self.condition.notify_all()
-
-            if do_finish_drain:
-                await self.client.close()
-                self.drain_after_idle = False
-                await self.router.deregister_draining_tenant_pool(self.tenant_id)
-
-                async with self.condition:
-                    self.condition.notify_all()
-
-    # ....................... #
-
-    async def wait_until_not_in_draining_registry(self) -> None:
-        """Wait until this tenant's drained pool has been closed and deregistered."""
-
-        await self.draining_barrier.wait()
-
-
-# ....................... #
-
-
 @attrs.define(slots=True)
 class RoutedPostgresClient(PostgresClientPort):
     """Routes each call to a lazily created :class:`PostgresClient` for the current tenant.
 
     The tenant is read from ``tenant_provider`` (typically
-    :meth:`forze.application.execution.ExecutionContext.get_tenant_id`).
+    :meth:`forze.application.execution.context.ExecutionContext.inv_ctx.get_tenant`).
     DSN strings are loaded via :meth:`SecretsPort.resolve_str` using
     ``secret_ref_for_tenant``.
 
@@ -132,16 +69,9 @@ class RoutedPostgresClient(PostgresClientPort):
     max_cached_tenants: int = 100
     """Maximum number of tenant pools to retain; LRU eviction closes overflow pools."""
 
-    _registry_lock: asyncio.Lock = attrs.field(factory=asyncio.Lock, init=False)
-    _slots: OrderedDict[UUID, _TenantPoolSlot] = attrs.field(
-        factory=OrderedDict,
-        init=False,
-    )
-    _draining: dict[UUID, _TenantPoolSlot] = attrs.field(factory=dict, init=False)
-    _tenant_init_locks: dict[UUID, asyncio.Lock] = attrs.field(
-        factory=dict,
-        init=False,
-    )
+    # ....................... #
+
+    _registry: GuardedLruRegistry[UUID, PostgresClient] = attrs.field(init=False)
     _started: bool = attrs.field(default=False, init=False)
     _gather_sem: asyncio.Semaphore | None = attrs.field(default=None, init=False)
 
@@ -150,6 +80,12 @@ class RoutedPostgresClient(PostgresClientPort):
     def __attrs_post_init__(self) -> None:
         if self.max_cached_tenants < 1:
             raise exc.internal("max_cached_tenants must be at least 1")
+
+        self._registry = GuardedLruRegistry(
+            max_entries=self.max_cached_tenants,
+            create=self._create_client,
+            dispose=lambda client: client.close(),
+        )
 
     # ....................... #
 
@@ -170,17 +106,7 @@ class RoutedPostgresClient(PostgresClientPort):
     async def close(self) -> None:
         """Close all per-tenant pools and reset startup state."""
 
-        async with self._registry_lock:
-            to_close = [s.client for s in self._slots.values()] + [
-                s.client for s in self._draining.values()
-            ]
-            self._slots.clear()
-            self._draining.clear()
-            self._tenant_init_locks.clear()
-
-        for c in to_close:
-            await c.close()
-
+        await self._registry.close_all()
         self._started = False
         self._gather_sem = None
 
@@ -189,42 +115,7 @@ class RoutedPostgresClient(PostgresClientPort):
     async def evict_tenant(self, tenant_id: UUID) -> None:
         """Close and remove the pool for one tenant (e.g. after credential rotation)."""
 
-        immediate: PostgresClient | None = None
-
-        async with self._registry_lock:
-            self._tenant_init_locks.pop(tenant_id, None)
-            slot = self._slots.pop(tenant_id, None)
-
-            if slot is None:
-                slot = self._draining.pop(tenant_id, None)
-
-            if slot is not None:
-                if slot.refcount == 0:
-                    immediate = slot.client
-
-                else:
-                    slot.mark_entered_draining_registry()
-                    slot.drain_after_idle = True
-                    self._draining[tenant_id] = slot
-
-        if immediate is not None:
-            await immediate.close()
-
-    # ....................... #
-
-    async def deregister_draining_tenant_pool(self, tenant_id: UUID) -> None:
-        """Remove *tenant_id* from the draining map and wake waiters (internal hook for slots)."""
-
-        slot: _TenantPoolSlot | None = None
-
-        async with self._registry_lock:
-            slot = self._draining.pop(tenant_id, None)
-
-        if slot is not None:
-            async with slot.condition:
-                slot.condition.notify_all()
-
-            slot.draining_barrier.set()
+        await self._registry.evict(tenant_id)
 
     # ....................... #
 
@@ -241,18 +132,6 @@ class RoutedPostgresClient(PostgresClientPort):
 
     # ....................... #
 
-    async def _lock_for_tenant_init(self, tid: UUID) -> asyncio.Lock:
-        async with self._registry_lock:
-            lock = self._tenant_init_locks.get(tid)
-
-            if lock is None:
-                lock = asyncio.Lock()
-                self._tenant_init_locks[tid] = lock
-
-            return lock
-
-    # ....................... #
-
     def _get_secret_ref(self, tenant_id: UUID) -> SecretRef:
         if callable(self.secret_ref_for_tenant):
             return self.secret_ref_for_tenant(tenant_id)
@@ -261,16 +140,28 @@ class RoutedPostgresClient(PostgresClientPort):
 
     # ....................... #
 
-    async def _await_not_draining(self, tid: UUID) -> None:
-        """Block until *tid* is not waiting on a prior drained pool."""
+    async def _create_client(self, tid: UUID) -> PostgresClient:
+        ref = self._get_secret_ref(tid)
 
-        while True:
-            async with self._registry_lock:
-                slot = self._draining.get(tid)
-                if slot is None:
-                    return
+        try:
+            dsn = await self.secrets.resolve_str(ref)
 
-            await slot.wait_until_not_in_draining_registry()
+        except exc:
+            raise
+
+        except Exception as e:
+            raise exc.internal(
+                f"Failed to resolve database secret for tenant {tid}: {e}",
+            ) from e
+
+        client = PostgresClient()
+        await client.initialize(
+            dsn,
+            config=self.pool_config,
+            acquire_timeout=self.acquire_timeout,
+        )
+
+        return client
 
     # ....................... #
 
@@ -281,111 +172,8 @@ class RoutedPostgresClient(PostgresClientPort):
         if not self._started:
             raise exc.internal("Routed Postgres client is not started")
 
-        tid = self._require_tenant_id()
-        await self._await_not_draining(tid)
-
-        slot: _TenantPoolSlot | None = None
-
-        async with self._registry_lock:
-            if tid in self._slots:
-                slot = self._slots[tid]
-                self._slots.move_to_end(tid)
-
-        if slot is not None:
-            async with slot.use():
-                yield slot.client
-
-            return
-
-        tlock = await self._lock_for_tenant_init(tid)
-
-        async with tlock:
-            await self._await_not_draining(tid)
-
-            slot = None
-
-            async with self._registry_lock:
-                if tid in self._slots:
-                    slot = self._slots[tid]
-                    self._slots.move_to_end(tid)
-
-            if slot is not None:
-                async with slot.use():
-                    yield slot.client
-
-                return
-
-            ref = self._get_secret_ref(tid)
-
-            try:
-                dsn = await self.secrets.resolve_str(ref)
-
-            except exc:
-                raise
-
-            except Exception as e:
-                raise exc.internal(
-                    f"Failed to resolve database secret for tenant {tid}: {e}",
-                ) from e
-
-            client = PostgresClient()
-            await client.initialize(
-                dsn,
-                config=self.pool_config,
-                acquire_timeout=self.acquire_timeout,
-            )
-
-            immediate_close: list[PostgresClient] = []
-            new_slot: _TenantPoolSlot
-
-            async with self._registry_lock:
-                if tid in self._slots:
-                    await client.close()
-                    existing_slot = self._slots[tid]
-                    self._slots.move_to_end(tid)
-
-                else:
-                    existing_slot = None
-
-            if existing_slot is not None:
-                async with existing_slot.use():
-                    yield existing_slot.client
-
-                return
-
-            async with self._registry_lock:
-                new_slot = _TenantPoolSlot(tenant_id=tid, client=client, router=self)
-                self._slots[tid] = new_slot
-                self._slots.move_to_end(tid)
-
-                while len(self._slots) > self.max_cached_tenants:
-                    old_tid, old_slot = self._slots.popitem(last=False)
-
-                    if old_slot.refcount == 0:
-                        immediate_close.append(old_slot.client)
-
-                    else:
-                        old_slot.mark_entered_draining_registry()
-                        old_slot.drain_after_idle = True
-                        self._draining[old_tid] = old_slot
-
-            for c in immediate_close:
-                await c.close()
-
-            async with new_slot.use():
-                yield new_slot.client
-
-    # ....................... #
-
-    def _slot_for_tenant_read(self, tid: UUID) -> _TenantPoolSlot | None:
-        """Best-effort slot lookup for sync helpers (may race with eviction)."""
-
-        s = self._slots.get(tid)
-
-        if s is not None:
-            return s
-
-        return self._draining.get(tid)
+        async with self._registry.use(self._require_tenant_id()) as client:
+            yield client
 
     # ....................... #
 
@@ -408,12 +196,12 @@ class RoutedPostgresClient(PostgresClientPort):
         if tid is None:
             return False
 
-        slot = self._slot_for_tenant_read(tid)
+        client = self._registry.peek(tid)
 
-        if slot is None:
+        if client is None:
             return False
 
-        return slot.client.is_in_transaction()
+        return client.is_in_transaction()
 
     # ....................... #
 
@@ -421,10 +209,10 @@ class RoutedPostgresClient(PostgresClientPort):
         tid = self.tenant_provider()
 
         if tid is not None:
-            slot = self._slot_for_tenant_read(tid)
+            client = self._registry.peek(tid)
 
-            if slot is not None:
-                return slot.client.query_concurrency_limit()
+            if client is not None:
+                return client.query_concurrency_limit()
 
         cfg = self.pool_config
 
@@ -449,12 +237,12 @@ class RoutedPostgresClient(PostgresClientPort):
         if tid is None:
             raise exc.internal("Transactional context is required")
 
-        slot = self._slot_for_tenant_read(tid)
+        client = self._registry.peek(tid)
 
-        if slot is None:
+        if client is None:
             raise exc.internal("Transactional context is required")
 
-        slot.client.require_transaction()
+        client.require_transaction()
 
     # ....................... #
 
@@ -514,7 +302,9 @@ class RoutedPostgresClient(PostgresClientPort):
     # ....................... #
 
     async def execute_many(
-        self, query: QueryNoTemplate, params: Sequence[Params]
+        self,
+        query: QueryNoTemplate,
+        params: Sequence[Params],
     ) -> None:
         async with self._client_scope() as inner:
             await inner.execute_many(query, params)

@@ -6,8 +6,7 @@ require_bigquery()
 
 import asyncio
 import os
-from collections.abc import Awaitable, Callable
-from typing import Any, TypeVar, final
+from typing import Any, Awaitable, Callable, TypeVar, final
 
 import attrs
 from aiohttp import ClientSession

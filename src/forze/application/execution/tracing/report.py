@@ -1,8 +1,6 @@
 """Format runtime traces and validation reports for logs and test failures."""
 
-from __future__ import annotations
-
-from collections.abc import Sequence
+from typing import Sequence
 
 from .buffer import RuntimeTrace
 from .events import TracingViolation
@@ -13,9 +11,7 @@ from .events import TracingViolation
 def format_violation(violation: TracingViolation) -> str:
     """Return a single-line description of *violation*."""
 
-    return (
-        f"[{violation.profile}] seq={violation.at_seq}: {violation.message}"
-    )
+    return f"[{violation.profile}] seq={violation.at_seq}: {violation.message}"
 
 
 def format_violations(violations: Sequence[TracingViolation]) -> str:

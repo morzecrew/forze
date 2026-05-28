@@ -1,5 +1,5 @@
-from collections.abc import Callable
 from contextlib import AbstractAsyncContextManager
+from typing import Callable
 
 import attrs
 

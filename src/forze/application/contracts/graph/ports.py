@@ -4,8 +4,7 @@ Ports are intentionally free of Cypher, AQL, and other engine-specific query
 strings; adapters map these operations to the underlying graph database.
 """
 
-from collections.abc import Sequence
-from typing import Awaitable, Protocol, runtime_checkable
+from typing import Awaitable, Protocol, Sequence, runtime_checkable
 
 from pydantic import BaseModel
 

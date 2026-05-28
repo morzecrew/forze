@@ -1,9 +1,6 @@
 """Temporal client that resolves a server address per tenant via :class:`~forze.application.contracts.secrets.SecretsPort`."""
 
-import asyncio
-from collections import OrderedDict
-from collections.abc import Callable, Mapping
-from typing import Any, final
+from typing import Any, Callable, Mapping, final
 from uuid import UUID
 
 import attrs
@@ -16,6 +13,7 @@ from forze.application.contracts.durable.workflow import (
 )
 from forze.application.contracts.secrets import SecretRef, SecretsPort
 from forze.base.exceptions import exc
+from forze.base.primitives.lru_registry import SimpleLruRegistry
 
 from .client import TemporalClient
 from .port import TemporalClientPort
@@ -47,13 +45,7 @@ class RoutedTemporalClient(TemporalClientPort):
     connection_config: TemporalConfig = attrs.field(factory=TemporalConfig)
     max_cached_tenants: int = 100
 
-    # ....................... #
-
-    _lock: asyncio.Lock = attrs.field(factory=asyncio.Lock, init=False)
-    _clients: OrderedDict[UUID, TemporalClient] = attrs.field(
-        factory=OrderedDict,
-        init=False,
-    )
+    _registry: SimpleLruRegistry[UUID, TemporalClient] = attrs.field(init=False)
     _started: bool = attrs.field(default=False, init=False)
 
     # ....................... #
@@ -61,6 +53,12 @@ class RoutedTemporalClient(TemporalClientPort):
     def __attrs_post_init__(self) -> None:
         if self.max_cached_tenants < 1:
             raise exc.internal("max_cached_tenants must be at least 1")
+
+        self._registry = SimpleLruRegistry(
+            max_entries=self.max_cached_tenants,
+            create=self._create_client,
+            dispose=lambda client: client.close(),
+        )
 
     # ....................... #
 
@@ -78,23 +76,13 @@ class RoutedTemporalClient(TemporalClientPort):
     # ....................... #
 
     async def close(self) -> None:
-        async with self._lock:
-            to_close = list(self._clients.values())
-            self._clients.clear()
-
-        for c in to_close:
-            await c.close()
-
+        await self._registry.close_all()
         self._started = False
 
     # ....................... #
 
     async def evict_tenant(self, tenant_id: UUID) -> None:
-        async with self._lock:
-            client = self._clients.pop(tenant_id, None)
-
-        if client is not None:
-            await client.close()
+        await self._registry.evict(tenant_id)
 
     # ....................... #
 
@@ -111,42 +99,32 @@ class RoutedTemporalClient(TemporalClientPort):
 
     # ....................... #
 
+    async def _create_client(self, tid: UUID) -> TemporalClient:
+        ref = self._get_secret_ref(tid)
+
+        try:
+            host = await self.secrets.resolve_str(ref)
+
+        except exc:
+            raise
+
+        except Exception as e:
+            raise exc.internal(
+                f"Failed to resolve Temporal secret for tenant {tid}: {e}",
+            ) from e
+
+        client = TemporalClient()
+        await client.initialize(host, config=self.connection_config)
+
+        return client
+
+    # ....................... #
+
     async def _get_client(self) -> TemporalClient:
         if not self._started:
             raise exc.internal("Routed Temporal client is not started")
 
-        tid = self._require_tenant_id()
-
-        async with self._lock:
-            if tid in self._clients:
-                client = self._clients[tid]
-                self._clients.move_to_end(tid)
-                return client
-
-            ref = self._get_secret_ref(tid)
-
-            try:
-                host = await self.secrets.resolve_str(ref)
-
-            except exc:
-                raise
-
-            except Exception as e:
-                raise exc.internal(
-                    f"Failed to resolve Temporal secret for tenant {tid}: {e}",
-                ) from e
-
-            client = TemporalClient()
-            await client.initialize(host, config=self.connection_config)
-
-            self._clients[tid] = client
-            self._clients.move_to_end(tid)
-
-            while len(self._clients) > self.max_cached_tenants:
-                _, old = self._clients.popitem(last=False)
-                await old.close()
-
-            return client
+        return await self._registry.get_or_create(self._require_tenant_id())
 
     # ....................... #
 
@@ -187,7 +165,7 @@ class RoutedTemporalClient(TemporalClientPort):
             raise exc.internal("Routed Temporal client is not started")
 
         tid = self._require_tenant_id()
-        inner = self._clients.get(tid)
+        inner = self._registry.peek(tid)
 
         if inner is None:
             raise exc.internal(

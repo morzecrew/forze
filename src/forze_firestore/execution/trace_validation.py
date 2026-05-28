@@ -1,8 +1,6 @@
 """Runtime-trace validators for Firestore transaction semantics."""
 
-from __future__ import annotations
-
-from collections.abc import Sequence
+from typing import Sequence
 
 from forze.application.execution.tracing import TracingEvent, TracingViolation
 
@@ -29,7 +27,9 @@ _READ_PREFIXES = (
 
 
 def _is_write_op(op: str) -> bool:
-    return any(op == prefix or op.startswith(f"{prefix}_") for prefix in _WRITE_PREFIXES)
+    return any(
+        op == prefix or op.startswith(f"{prefix}_") for prefix in _WRITE_PREFIXES
+    )
 
 
 def _is_read_op(op: str) -> bool:

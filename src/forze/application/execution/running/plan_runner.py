@@ -1,8 +1,7 @@
 """Orchestrate execution of a resolved operation plan."""
 
-from collections.abc import Awaitable, Callable
 from contextlib import AbstractAsyncContextManager
-from typing import Any, cast
+from typing import Any, Awaitable, Callable, cast
 
 from forze.application.contracts.execution import (
     ExecutionGraph,

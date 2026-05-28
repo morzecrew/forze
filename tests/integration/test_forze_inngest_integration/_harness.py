@@ -1,14 +1,11 @@
 """Shared harness for starting a Forze-backed Inngest app in integration tests."""
 
-from __future__ import annotations
-
 import os
 import socket
 import threading
 import time
-from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Sequence
 
 import httpx
 import uvicorn
@@ -166,4 +163,6 @@ async def wait_for_outcome(
 
         await asyncio.sleep(poll_interval_sec)
 
-    raise TimeoutError(f"timed out waiting for Inngest function outcome (got {outcomes!r})")
+    raise TimeoutError(
+        f"timed out waiting for Inngest function outcome (got {outcomes!r})"
+    )

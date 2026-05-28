@@ -1,8 +1,7 @@
 """Aggregate expression parsing and validation."""
 
 import re
-from collections.abc import Mapping
-from typing import Any, Literal, cast, get_args
+from typing import Any, Literal, Mapping, cast, get_args
 
 import attrs
 

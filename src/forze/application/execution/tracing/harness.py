@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
-from typing import TYPE_CHECKING, Any, final
+from typing import TYPE_CHECKING, Any, Sequence, final
 
 import attrs
 
@@ -14,9 +13,10 @@ from .log import log_runtime_trace
 from .validate import RuntimeTraceValidator, validate_runtime_trace
 
 if TYPE_CHECKING:
+    from forze.base.primitives import StrKey
+
     from ..context import ExecutionContext
     from ..registry import FrozenOperationRegistry
-    from forze.base.primitives import StrKey
 
 # ----------------------- #
 
@@ -51,7 +51,7 @@ async def run_traced_operation(
 
     Requires ``ctx.deps.trace_runtime`` (or ``FORZE_RUNTIME_TRACE`` on plan build)
     for a non-empty trace. Uses :func:`~forze.application.execution.running.run_operation`.
-  """
+    """
 
     result = await run_operation(registry, op, args, ctx)
     trace = ctx.deps.runtime_trace()
@@ -61,7 +61,9 @@ async def run_traced_operation(
     if trace is not None:
         for validator in validators:
             violations.extend(
-                validate_runtime_trace(trace, validator=validator, on_violation="return")
+                validate_runtime_trace(
+                    trace, validator=validator, on_violation="return"
+                )
             )
         log_runtime_trace(ctx.deps)
 

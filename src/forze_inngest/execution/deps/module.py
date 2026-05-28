@@ -1,8 +1,7 @@
 """Inngest dependency module for the application kernel."""
 
-from collections.abc import Sequence
 from enum import StrEnum
-from typing import Any, Mapping, final
+from typing import Any, Mapping, Sequence, final
 
 import attrs
 
@@ -15,8 +14,8 @@ from forze.application.contracts.durable.function import (
 from forze.application.execution import Deps, DepsModule
 
 from ...adapters import InngestStepAdapter
-from ..registration import InngestFunctionBinding
 from ...kernel.platform import InngestClientPort
+from ..registration import InngestFunctionBinding
 from .configs import InngestEventConfig
 from .deps import ConfigurableInngestEventCommand
 from .keys import InngestClientDepKey

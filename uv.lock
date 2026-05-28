@@ -389,6 +389,20 @@ wheels = [
 ]
 
 [[package]]
+name = "camel-converter"
+version = "5.1.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/cd/cb/55feabf13527c464db60145e2e0dccd2f190b0a4a417cac2473bd2b18508/camel_converter-5.1.0.tar.gz", hash = "sha256:d979f23de232aa262dcf15a263ed9af934ff4378644dae23a7c2f8d40f4fff8f", size = 71481, upload-time = "2026-03-05T15:30:58.957Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/d5/c3/8fc18a914da9747b7a652180758a46a3d5f22efd0dffd5a8b97acfb1ebf3/camel_converter-5.1.0-py3-none-any.whl", hash = "sha256:93f05d7d84a4353ddfd87bca909d1de45c11f5757f6a460de10534397146fe88", size = 6960, upload-time = "2026-03-05T15:31:00.135Z" },
+]
+
+[package.optional-dependencies]
+pydantic = [
+    { name = "pydantic" },
+]
+
+[[package]]
 name = "certifi"
 version = "2026.5.20"
 source = { registry = "https://pypi.org/simple" }
@@ -919,6 +933,9 @@ gcs = [
 inngest = [
     { name = "inngest" },
 ]
+meilisearch = [
+    { name = "meilisearch-python-sdk" },
+]
 mongo = [
     { name = "pymongo" },
 ]
@@ -1023,6 +1040,7 @@ requires-dist = [
     { name = "httpx", marker = "extra == 'fastapi'", specifier = ">=0.28.0" },
     { name = "hvac", extras = ["parser"], marker = "extra == 'vault'", specifier = ">=2.4.0" },
     { name = "inngest", marker = "extra == 'inngest'", specifier = ">=0.5.18" },
+    { name = "meilisearch-python-sdk", marker = "extra == 'meilisearch'", specifier = ">=7.0.0" },
     { name = "msgspec", specifier = ">=0.21.1" },
     { name = "neo4j", marker = "extra == 'neo4j'", specifier = ">=6.1.0" },
     { name = "opentelemetry-api", specifier = ">=1.39.0" },
@@ -1060,7 +1078,7 @@ requires-dist = [
     { name = "urllib3", marker = "extra == 'vault'", specifier = ">=2.7.0" },
     { name = "uvicorn", extras = ["standard"], marker = "extra == 'fastapi'", specifier = ">=0.42.0" },
 ]
-provides-extras = ["arango", "authn", "bigquery", "casbin", "clickhouse", "fastapi", "firestore", "gcs", "inngest", "mongo", "neo4j", "oidc", "postgres", "rabbitmq", "redis", "s3", "socketio", "sqs", "temporal", "vault"]
+provides-extras = ["arango", "authn", "bigquery", "casbin", "clickhouse", "fastapi", "firestore", "gcs", "inngest", "meilisearch", "mongo", "neo4j", "oidc", "postgres", "rabbitmq", "redis", "s3", "socketio", "sqs", "temporal", "vault"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -1500,6 +1518,28 @@ wheels = [
 ]
 
 [[package]]
+name = "h2"
+version = "4.3.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "hpack" },
+    { name = "hyperframe" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/1d/17/afa56379f94ad0fe8defd37d6eb3f89a25404ffc71d4d848893d270325fc/h2-4.3.0.tar.gz", hash = "sha256:6c59efe4323fa18b47a632221a1888bd7fde6249819beda254aeca909f221bf1", size = 2152026, upload-time = "2025-08-23T18:12:19.778Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/69/b2/119f6e6dcbd96f9069ce9a2665e0146588dc9f88f29549711853645e736a/h2-4.3.0-py3-none-any.whl", hash = "sha256:c438f029a25f7945c69e0ccf0fb951dc3f73a5f6412981daee861431b70e2bdd", size = 61779, upload-time = "2025-08-23T18:12:17.779Z" },
+]
+
+[[package]]
+name = "hpack"
+version = "4.1.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/2c/48/71de9ed269fdae9c8057e5a4c0aa7402e8bb16f2c6e90b3aa53327b113f8/hpack-4.1.0.tar.gz", hash = "sha256:ec5eca154f7056aa06f196a557655c5b009b382873ac8d1e66e79e87535f1dca", size = 51276, upload-time = "2025-01-22T21:44:58.347Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/07/c6/80c95b1b2b94682a72cbdbfb85b81ae2daffa4291fbfa1b1464502ede10d/hpack-4.1.0-py3-none-any.whl", hash = "sha256:157ac792668d995c657d93111f46b4535ed114f0c9c8d672271bbec7eae1b496", size = 34357, upload-time = "2025-01-22T21:44:56.92Z" },
+]
+
+[[package]]
 name = "httpcore"
 version = "1.0.9"
 source = { registry = "https://pypi.org/simple" }
@@ -1510,6 +1550,19 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/06/94/82699a10bca87a5556c9c59b5963f2d039dbd239f25bc2a63907a05a14cb/httpcore-1.0.9.tar.gz", hash = "sha256:6e34463af53fd2ab5d807f399a9b45ea31c3dfa2276f15a2c3f00afff6e176e8", size = 85484, upload-time = "2025-04-24T22:06:22.219Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/7e/f5/f66802a942d491edb555dd61e3a9961140fd64c90bce1eafd741609d334d/httpcore-1.0.9-py3-none-any.whl", hash = "sha256:2d400746a40668fc9dec9810239072b40b4484b640a8c38fd654a024c7a1bf55", size = 78784, upload-time = "2025-04-24T22:06:20.566Z" },
+]
+
+[[package]]
+name = "httpcore2"
+version = "2.2.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "certifi" },
+    { name = "h11" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/1a/7e/8ab39aab1d392845b6512009a9be57d24a5bd4ec7a22d02e513d0645e7a8/httpcore2-2.2.0.tar.gz", hash = "sha256:10e0e142f1ecc1c1cb2a9ebbce82e57f16169f61d163ea336abf36799e89294b", size = 63533, upload-time = "2026-05-17T05:29:55.836Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/39/22/64de17e7956e8c002f7558ed667d924c2a288344aeff4bd8ff5dc5fdb70b/httpcore2-2.2.0-py3-none-any.whl", hash = "sha256:ce859f268bf8d34fa2d7753e09e4dd5194f557e1b3038439b68a89b2999572fa", size = 79288, upload-time = "2026-05-17T05:29:52.56Z" },
 ]
 
 [[package]]
@@ -1557,6 +1610,26 @@ wheels = [
 ]
 
 [[package]]
+name = "httpx2"
+version = "2.2.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "anyio" },
+    { name = "certifi" },
+    { name = "httpcore2" },
+    { name = "idna" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/f4/aa/c3119de1aa7ad870a01aaddbf3bc3445ed9a681c31d45e3838fd8b7bc155/httpx2-2.2.0.tar.gz", hash = "sha256:f3428d59b1752b8f5629826277262fb4d65e3a683f48af8a5b16c4d012e0b801", size = 80477, upload-time = "2026-05-17T05:29:57.376Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/be/e0/e0a52596c14194e428c20de4903f4abec38c0dfb5364d20f1d4a2b6266ef/httpx2-2.2.0-py3-none-any.whl", hash = "sha256:12347ebd2daeaefd50b529359778fff767082a09c5826752c963e71269722ff0", size = 74083, upload-time = "2026-05-17T05:29:54.543Z" },
+]
+
+[package.optional-dependencies]
+http2 = [
+    { name = "h2" },
+]
+
+[[package]]
 name = "hvac"
 version = "2.4.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1571,6 +1644,15 @@ wheels = [
 [package.optional-dependencies]
 parser = [
     { name = "pyhcl" },
+]
+
+[[package]]
+name = "hyperframe"
+version = "6.1.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/02/e7/94f8232d4a74cc99514c13a9f995811485a6903d48e5d952771ef6322e30/hyperframe-6.1.0.tar.gz", hash = "sha256:f630908a00854a7adeabd6382b43923a4c4cd4b821fcb527e6ab9e15382a3b08", size = 26566, upload-time = "2025-01-22T21:41:49.302Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/48/30/47d0bf6072f7252e6521f3447ccfa40b421b6824517f82854703d0f5a98b/hyperframe-6.1.0-py3-none-any.whl", hash = "sha256:b03380493a519fce58ea5af42e4a42317bf9bd425596f7a0835ffce80f1a42e5", size = 13007, upload-time = "2025-01-22T21:41:47.295Z" },
 ]
 
 [[package]]
@@ -1843,6 +1925,21 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/d6/54/cfe61301667036ec958cb99bd3efefba235e65cdeb9c84d24a8293ba1d90/mdurl-0.1.2.tar.gz", hash = "sha256:bb413d29f5eea38f31dd4754dd7377d4465116fb207585f97bf925588687c1ba", size = 8729, upload-time = "2022-08-14T12:40:10.846Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/b3/38/89ba8ad64ae25be8de66a6d463314cf1eb366222074cfda9ee839c56a4b4/mdurl-0.1.2-py3-none-any.whl", hash = "sha256:84008a41e51615a49fc9966191ff91509e3c40b939176e643fd50a5c2196b8f8", size = 9979, upload-time = "2022-08-14T12:40:09.779Z" },
+]
+
+[[package]]
+name = "meilisearch-python-sdk"
+version = "7.2.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "aiofiles" },
+    { name = "camel-converter", extra = ["pydantic"] },
+    { name = "httpx2", extra = ["http2"] },
+    { name = "pydantic" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/cf/75/93fe864e5e2754f0854da0bc11ce79324c3be781881c429ded7afcd81bc6/meilisearch_python_sdk-7.2.0.tar.gz", hash = "sha256:fe67f953329fe5bc3309b5071ae1c49eb1568561118b7ff71adae6e5c650147c", size = 257026, upload-time = "2026-05-27T18:16:37.696Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/95/a8/21d1e4a657e2437dcc44ac51a63cfa889b09a9542d0afd9223187403afd3/meilisearch_python_sdk-7.2.0-py3-none-any.whl", hash = "sha256:6dd8333382158afc5f722c926ced2a69e09550b1026204d88c2e37c358c3d631", size = 79429, upload-time = "2026-05-27T18:16:36.352Z" },
 ]
 
 [[package]]

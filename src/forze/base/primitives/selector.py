@@ -3,8 +3,7 @@
 from __future__ import annotations
 
 import fnmatch
-from collections.abc import Callable, Iterable, Iterator
-from typing import TypeAlias, final
+from typing import Callable, Iterable, Iterator, TypeAlias, final
 
 import attrs
 

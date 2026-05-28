@@ -1,10 +1,7 @@
 """S3 client that resolves credentials per tenant via :class:`~forze.application.contracts.secrets.SecretsPort`."""
 
-import asyncio
-from collections import OrderedDict
-from collections.abc import Callable, Mapping
 from contextlib import asynccontextmanager
-from typing import AsyncGenerator, final
+from typing import AsyncGenerator, Callable, Mapping, final
 from uuid import UUID
 
 import attrs
@@ -17,6 +14,7 @@ from forze.application.contracts.secrets import (
     resolve_structured,
 )
 from forze.base.exceptions import exc
+from forze.base.primitives.lru_registry import SimpleLruRegistry
 
 from .client import S3Client
 from .port import S3ClientPort
@@ -47,11 +45,7 @@ class RoutedS3Client(S3ClientPort):
     botocore_config: S3Config | None = None
     max_cached_tenants: int = 100
 
-    _lock: asyncio.Lock = attrs.field(factory=asyncio.Lock, init=False)
-    _clients: OrderedDict[UUID, S3Client] = attrs.field(
-        factory=OrderedDict,
-        init=False,
-    )
+    _registry: SimpleLruRegistry[UUID, S3Client] = attrs.field(init=False)
     _started: bool = attrs.field(default=False, init=False)
 
     # ....................... #
@@ -59,6 +53,12 @@ class RoutedS3Client(S3ClientPort):
     def __attrs_post_init__(self) -> None:
         if self.max_cached_tenants < 1:
             raise exc.internal("max_cached_tenants must be at least 1")
+
+        self._registry = SimpleLruRegistry(
+            max_entries=self.max_cached_tenants,
+            create=self._create_client,
+            dispose=lambda client: client.close(),
+        )
 
     # ....................... #
 
@@ -76,23 +76,13 @@ class RoutedS3Client(S3ClientPort):
     # ....................... #
 
     async def close(self) -> None:
-        async with self._lock:
-            to_close = list(self._clients.values())
-            self._clients.clear()
-
-        for c in to_close:
-            await c.close()
-
+        await self._registry.close_all()
         self._started = False
 
     # ....................... #
 
     async def evict_tenant(self, tenant_id: UUID) -> None:
-        async with self._lock:
-            client = self._clients.pop(tenant_id, None)
-
-        if client is not None:
-            await client.close()
+        await self._registry.evict(tenant_id)
 
     # ....................... #
 
@@ -109,50 +99,41 @@ class RoutedS3Client(S3ClientPort):
 
     # ....................... #
 
+    async def _create_client(self, tid: UUID) -> S3Client:
+        ref = self._get_secret_ref(tid)
+
+        try:
+            creds = await resolve_structured(
+                self.secrets,
+                ref,
+                S3RoutingCredentials,
+            )
+
+        except exc:
+            raise
+
+        except Exception as e:
+            raise exc.internal(
+                f"Failed to resolve S3 secret for tenant {tid}: {e}",
+            ) from e
+
+        client = S3Client()
+        await client.initialize(
+            creds.endpoint,
+            creds.access_key_id,
+            creds.secret_access_key,
+            config=self.botocore_config,
+        )
+
+        return client
+
+    # ....................... #
+
     async def _get_client(self) -> S3Client:
         if not self._started:
             raise exc.internal("Routed S3 client is not started")
 
-        tid = self._require_tenant_id()
-
-        async with self._lock:
-            if tid in self._clients:
-                client = self._clients[tid]
-                self._clients.move_to_end(tid)
-                return client
-
-            ref = self._get_secret_ref(tid)
-
-            try:
-                creds = await resolve_structured(
-                    self.secrets,
-                    ref,
-                    S3RoutingCredentials,
-                )
-
-            except exc:
-                raise
-
-            except Exception as e:
-                raise exc.internal(
-                    f"Failed to resolve S3 secret for tenant {tid}: {e}",
-                ) from e
-
-            client = S3Client()
-            await client.initialize(
-                creds.endpoint,
-                creds.access_key_id,
-                creds.secret_access_key,
-                config=self.botocore_config,
-            )
-            self._clients[tid] = client
-            self._clients.move_to_end(tid)
-
-            while len(self._clients) > self.max_cached_tenants:
-                _, old = self._clients.popitem(last=False)
-                await old.close()
-
-            return client
+        return await self._registry.get_or_create(self._require_tenant_id())
 
     # ....................... #
 

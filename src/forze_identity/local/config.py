@@ -1,7 +1,6 @@
 """Frozen configuration models for local identity backends."""
 
-from collections.abc import Mapping
-from typing import Self, final
+from typing import Mapping, Self, final
 from uuid import UUID
 
 import attrs

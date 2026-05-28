@@ -15,8 +15,13 @@ from forze.application.contracts.analytics import (
 from forze.application.contracts.analytics._adapter_common import (
     dry_run_enabled,
     dry_run_offset_page,
+    encode_keyset_cursor_next,
+    encode_offset_cursor_next_prev,
+    merge_forze_after_params,
     pagination_window,
     parse_count_row,
+    parse_keyset_cursor_after,
+    parse_offset_cursor_after,
     shape_rows,
     timeout_seconds,
     validated_params,
@@ -31,7 +36,6 @@ from forze.application.contracts.querying import (
     CursorPaginationExpression,
     PaginationExpression,
 )
-from forze.base.codecs import B64UrlJsonCodec
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
 from forze.base.serialization import (
@@ -56,7 +60,7 @@ R = TypeVar("R", bound=BaseModel)
 Ing = TypeVar("Ing", bound=BaseModel)
 T = TypeVar("T", bound=BaseModel)
 
-_CURSOR_CODEC = B64UrlJsonCodec()
+_CH_BACKWARD_CURSOR = "Backward analytics cursors are not supported on ClickHouse."
 
 # ....................... #
 
@@ -118,137 +122,6 @@ class ClickHouseAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
         col = self._query_config(query_key).get("cursor_column")
 
         return str(col) if col else None
-
-    # ....................... #
-
-    def _cursor_start_and_limit(
-        self,
-        cursor: CursorPaginationExpression | None,
-    ) -> tuple[int, int]:
-        c = dict(cursor or {})
-        lim_raw = c.get("limit")
-        lim = int(cast(Any, lim_raw)) if lim_raw is not None else 10
-
-        if lim < 1:
-            raise exc.internal("Cursor pagination 'limit' must be positive")
-
-        if c.get("after") and c.get("before"):
-            raise exc.internal(
-                "Cursor pagination: pass at most one of 'after' or 'before'"
-            )
-
-        if c.get("after"):
-            try:
-                payload = _CURSOR_CODEC.loads(str(c["after"]))
-
-                if not isinstance(payload, dict):
-                    raise exc.internal("Invalid analytics cursor token")
-
-                if "kc" in payload:
-                    raise exc.internal(
-                        "Offset cursor token passed to offset-based query."
-                    )
-
-                return int(payload["o"]), lim  # type: ignore[arg-type]
-
-            except (ValueError, KeyError, TypeError) as e:
-                raise exc.internal("Invalid analytics cursor token") from e
-
-        if c.get("before"):
-            raise exc.internal(
-                "Backward analytics cursors are not supported on ClickHouse."
-            )
-
-        return 0, lim
-
-    # ....................... #
-
-    def _keyset_after_value(
-        self,
-        cursor: CursorPaginationExpression | None,
-    ) -> tuple[Any | None, int]:
-        c = dict(cursor or {})
-        lim_raw = c.get("limit")
-        lim = int(cast(Any, lim_raw)) if lim_raw is not None else 10
-
-        if lim < 1:
-            raise exc.internal("Cursor pagination 'limit' must be positive")
-
-        if c.get("before"):
-            raise exc.internal(
-                "Backward analytics cursors are not supported on ClickHouse."
-            )
-
-        if not c.get("after"):
-            return None, lim
-
-        try:
-            payload = _CURSOR_CODEC.loads(str(c["after"]))
-
-            if not isinstance(payload, dict) or "kv" not in payload:
-                raise exc.internal("Invalid analytics keyset cursor token")
-
-            return payload["kv"], lim  # type: ignore[return-value]
-
-        except (ValueError, KeyError, TypeError) as e:
-            raise exc.internal("Invalid analytics keyset cursor token") from e
-
-    # ....................... #
-
-    def _cursor_tokens(
-        self,
-        *,
-        start: int,
-        page_len: int,
-        limit: int,
-    ) -> tuple[str | None, str | None]:
-        has_more = page_len >= limit
-        next_c = _CURSOR_CODEC.dumps({"o": start + page_len}) if has_more else None
-        prev_c = _CURSOR_CODEC.dumps({"o": start}) if start > 0 else None
-
-        return next_c, prev_c
-
-    # ....................... #
-
-    def _keyset_cursor_tokens(
-        self,
-        *,
-        column: str,
-        hits: list[Any],
-        limit: int,
-    ) -> tuple[str | None, str | None]:
-        has_more = len(hits) >= limit
-        next_c = None
-
-        if has_more and hits:
-            last = hits[-1]
-            if isinstance(last, BaseModel):
-                value = last.model_dump().get(column)
-
-            elif isinstance(last, dict):
-                value = last.get(column)  # type: ignore[assignment]
-
-            else:
-                value = getattr(last, column, None)
-
-            if value is not None:
-                next_c = _CURSOR_CODEC.dumps({"kc": column, "kv": value})
-
-        return next_c, None
-
-    # ....................... #
-
-    def _params_with_keyset(
-        self,
-        params: BaseModel,
-        after_value: Any | None,
-    ) -> BaseModel | JsonDict:
-        if after_value is None:
-            return params
-
-        merged = {**parameters_from_model(params), "forze_after": after_value}
-
-        return merged
 
     # ....................... #
 
@@ -573,8 +446,18 @@ class ClickHouseAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
         cursor_col = self._cursor_column(query_key)
 
         if cursor_col:
-            after_value, lim = self._keyset_after_value(cursor)
-            bound = self._params_with_keyset(params, after_value)
+            after_value, lim = parse_keyset_cursor_after(
+                cursor,
+                backward_not_supported=_CH_BACKWARD_CURSOR,
+            )
+            bound: BaseModel | JsonDict = (
+                params
+                if after_value is None
+                else merge_forze_after_params(
+                    parameters_from_model(params),
+                    after_value,
+                )
+            )
             result = await self._fetch_rows(
                 query_key,
                 bound,
@@ -588,13 +471,17 @@ class ClickHouseAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
                 return_type=return_type,
                 return_fields=return_fields,
             )
-            next_c, prev_c = self._keyset_cursor_tokens(
+            next_c = encode_keyset_cursor_next(
                 column=cursor_col,
                 hits=hits,
                 limit=lim,
             )
+            prev_c = None
         else:
-            start, lim = self._cursor_start_and_limit(cursor)
+            start, lim = parse_offset_cursor_after(
+                cursor,
+                backward_not_supported=_CH_BACKWARD_CURSOR,
+            )
             result = await self._fetch_rows(
                 query_key,
                 params,
@@ -608,7 +495,7 @@ class ClickHouseAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
                 return_type=return_type,
                 return_fields=return_fields,
             )
-            next_c, prev_c = self._cursor_tokens(
+            next_c, prev_c = encode_offset_cursor_next_prev(
                 start=start,
                 page_len=len(hits),
                 limit=lim,

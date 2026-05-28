@@ -1,6 +1,5 @@
-from collections.abc import Awaitable, Callable
 from datetime import datetime
-from typing import Protocol, TypeVar, runtime_checkable
+from typing import Awaitable, Callable, Protocol, TypeVar, runtime_checkable
 
 # ----------------------- #
 

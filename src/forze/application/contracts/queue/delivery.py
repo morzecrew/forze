@@ -1,7 +1,7 @@
 """Shared helpers for queue delivery timing."""
 
-from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
+from typing import Callable
 
 from forze.base.exceptions import exc
 from forze.base.primitives import utcnow
@@ -29,7 +29,9 @@ def resolve_delivery_delay(
     """
 
     if delay is not None and not_before is not None:
-        raise exc.precondition("queue enqueue: delay and not_before are mutually exclusive")
+        raise exc.precondition(
+            "queue enqueue: delay and not_before are mutually exclusive"
+        )
 
     if delay is not None:
         if delay < timedelta(0):

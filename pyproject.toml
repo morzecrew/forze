@@ -135,6 +135,9 @@ vault = [
 inngest = [
     "inngest>=0.5.18",
 ]
+meilisearch = [
+    "meilisearch-python-sdk>=7.0.0",
+]
 
 # ....................... #
 
@@ -185,6 +188,7 @@ packages = [
     "src/forze_inngest",
     "src/forze_secrets",
     "src/forze_vault",
+    "src/forze_meilisearch",
 ]
 
 [tool.hatch.build.hooks.vcs]
@@ -243,6 +247,8 @@ omit = [
     "*/forze_temporal/execution/deps/deps.py",
     # Redis deps module is exercised with a full SDK runtime.
     "*/forze_redis/execution/deps/module.py",
+    "*/forze_meilisearch/execution/lifecycle.py",
+    "*/forze_meilisearch/execution/deps/module.py",
     # Mock
     "*/forze_mock/*",
 ]
@@ -287,6 +293,11 @@ module = ["forze_inngest", "forze_inngest.*", "inngest", "inngest.*"]
 ignore_missing_imports = true
 disable_error_code = ["import-untyped"]
 
+[[tool.mypy.overrides]]
+module = ["forze_meilisearch", "forze_meilisearch.*", "meilisearch_python_sdk", "meilisearch_python_sdk.*"]
+ignore_missing_imports = true
+disable_error_code = ["import-untyped"]
+
 # ....................... #
 # Import contracts
 
@@ -312,6 +323,7 @@ root_packages = [
     "forze_identity",
     "forze_secrets",
     "forze_vault",
+    "forze_meilisearch",
 ]
 exclude_type_checking_imports = true
 
@@ -364,6 +376,7 @@ protected_modules = [
     "forze_sqs",
     "forze_secrets",
     "forze_vault",
+    "forze_meilisearch",
 ]
 allowed_importers = []
 as_packages = true
@@ -393,6 +406,7 @@ paths = [
     "src/forze_identity",
     "src/forze_secrets",
     "src/forze_vault",
+    "src/forze_meilisearch",
 ]
 sort_by_size = true
 min_confidence = 80
@@ -430,6 +444,7 @@ known_first_party = [
     "forze_identity",
     "forze_secrets",
     "forze_vault",
+    "forze_meilisearch",
 ]
 ignore_notebooks = true
 

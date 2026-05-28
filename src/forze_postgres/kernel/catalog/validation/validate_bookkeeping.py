@@ -1,11 +1,10 @@
 """Validate Postgres document bookkeeping strategy against relation triggers."""
 
-from collections.abc import Sequence
+from typing import Sequence
 
 import attrs
 
 from forze.base.exceptions import exc
-
 from forze_postgres.kernel._logger import logger
 from forze_postgres.kernel.catalog.introspect import PostgresIntrospector
 from forze_postgres.kernel.gateways.types import PostgresBookkeepingStrategy

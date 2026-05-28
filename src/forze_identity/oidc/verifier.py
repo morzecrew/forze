@@ -4,9 +4,8 @@ require_oidc()
 
 # ....................... #
 
-from collections.abc import Sequence
 from datetime import timedelta
-from typing import final
+from typing import Sequence, final
 
 import attrs
 from jwt import ExpiredSignatureError, InvalidTokenError

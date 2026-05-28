@@ -1,6 +1,6 @@
 """Msgspec-backed implementation of the record-mapping codec protocol."""
 
-from collections.abc import Iterator, Sequence
+from typing import Iterator, Sequence
 
 import attrs
 import msgspec

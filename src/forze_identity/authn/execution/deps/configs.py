@@ -1,8 +1,7 @@
 """Kernel and shared-service configuration for authn dependency factories."""
 
-from collections.abc import Collection, Mapping
 from enum import StrEnum
-from typing import final
+from typing import Collection, Mapping, final
 
 import attrs
 

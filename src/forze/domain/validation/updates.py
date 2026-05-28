@@ -2,12 +2,12 @@
 
 import inspect
 import warnings
-from collections import OrderedDict
 from typing import (
     Callable,
     Final,
     Iterable,
     Literal,
+    OrderedDict,
     TypeVar,
     Union,
     cast,

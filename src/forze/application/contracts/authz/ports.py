@@ -1,7 +1,6 @@
 """Authz port protocols."""
 
-from collections.abc import Awaitable
-from typing import Protocol
+from typing import Awaitable, Protocol
 from uuid import UUID
 
 from forze.application.contracts.authn import AuthnIdentity

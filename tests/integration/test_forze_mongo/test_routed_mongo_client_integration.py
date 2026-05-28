@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
-from forze.base.exceptions import CoreException, exc
-from collections.abc import Callable
+from typing import Callable
 from unittest.mock import patch
 from uuid import UUID, uuid4
 
 import pytest
 from pymongo import InsertOne
+
+from forze.base.exceptions import CoreException, exc
 
 pytest.importorskip("pymongo")
 pytest.importorskip("testcontainers.mongodb")
@@ -16,12 +17,13 @@ pytest.importorskip("testcontainers.mongodb")
 from testcontainers.mongodb import MongoDbContainer
 
 from forze.application.contracts.secrets import SecretRef
-
 from forze_mongo.kernel.platform import RoutedMongoClient
 from forze_mongo.kernel.platform.client import MongoClient
 
+
 def _ref(tid: UUID) -> SecretRef:
     return SecretRef(path=f"tenants/{tid}/mongo")
+
 
 class _MemSecrets:
     def __init__(
@@ -69,6 +71,7 @@ class _MemSecrets:
         tid = self._tid_for_ref(ref)
         return tid is not None and tid in self._uris
 
+
 def _tenant_holder() -> tuple[Callable[[], UUID | None], Callable[[UUID | None], None]]:
     slot: list[UUID | None] = [None]
 
@@ -80,9 +83,12 @@ def _tenant_holder() -> tuple[Callable[[], UUID | None], Callable[[UUID | None],
 
     return getter, setter
 
+
 @pytest.mark.integration
 @pytest.mark.asyncio
-async def test_routed_mongo_health_crud_roundtrip(mongo_container: MongoDbContainer) -> None:
+async def test_routed_mongo_health_crud_roundtrip(
+    mongo_container: MongoDbContainer,
+) -> None:
     uri = mongo_container.get_connection_url()
     t1 = uuid4()
     secrets = _MemSecrets({t1: uri})
@@ -111,9 +117,12 @@ async def test_routed_mongo_health_crud_roundtrip(mongo_container: MongoDbContai
     finally:
         await routed.close()
 
+
 @pytest.mark.integration
 @pytest.mark.asyncio
-async def test_routed_mongo_port_delegators_roundtrip(mongo_container: MongoDbContainer) -> None:
+async def test_routed_mongo_port_delegators_roundtrip(
+    mongo_container: MongoDbContainer,
+) -> None:
     """Exercise routed wrappers over :class:`MongoClient` query helpers."""
 
     uri = mongo_container.get_connection_url()
@@ -183,7 +192,9 @@ async def test_routed_mongo_port_delegators_roundtrip(mongo_container: MongoDbCo
         )
         assert await routed.find_one(coll, {"i": 404}) is not None
 
-        await routed.update_many(coll, {"i": {"$lte": 3}}, {"$set": {"bulk_flag": True}})
+        await routed.update_many(
+            coll, {"i": {"$lte": 3}}, {"$set": {"bulk_flag": True}}
+        )
         await routed.delete_one(coll, {"i": 11})
         removed = await routed.delete_many(coll, {"bulk_flag": True})
         assert removed >= 1
@@ -195,9 +206,12 @@ async def test_routed_mongo_port_delegators_roundtrip(mongo_container: MongoDbCo
     finally:
         await routed.close()
 
+
 @pytest.mark.integration
 @pytest.mark.asyncio
-async def test_routed_mongo_transaction_guards_standalone(mongo_container: MongoDbContainer) -> None:
+async def test_routed_mongo_transaction_guards_standalone(
+    mongo_container: MongoDbContainer,
+) -> None:
     """``is_in_transaction`` / ``require_transaction`` routing without a replica set."""
 
     uri = mongo_container.get_connection_url()
@@ -238,6 +252,7 @@ async def test_routed_mongo_transaction_guards_standalone(mongo_container: Mongo
     finally:
         await routed.close()
 
+
 @pytest.mark.integration
 @pytest.mark.asyncio
 async def test_routed_mongo_lru_mru_refresh_evicts_correct_tenant(
@@ -250,7 +265,11 @@ async def test_routed_mongo_lru_mru_refresh_evicts_correct_tenant(
     secrets = _MemSecrets({t1: uri, t2: uri, t3: uri})
     tenant_get, tenant_set = _tenant_holder()
 
-    db_names = {t1: f"a_{uuid4().hex[:8]}", t2: f"b_{uuid4().hex[:8]}", t3: f"c_{uuid4().hex[:8]}"}
+    db_names = {
+        t1: f"a_{uuid4().hex[:8]}",
+        t2: f"b_{uuid4().hex[:8]}",
+        t3: f"c_{uuid4().hex[:8]}",
+    }
 
     routed = RoutedMongoClient(
         secrets=secrets,
@@ -292,6 +311,7 @@ async def test_routed_mongo_lru_mru_refresh_evicts_correct_tenant(
     finally:
         await routed.close()
 
+
 @pytest.mark.integration
 @pytest.mark.asyncio
 async def test_routed_mongo_evict_tenant_and_unknown_noop(
@@ -318,6 +338,7 @@ async def test_routed_mongo_evict_tenant_and_unknown_noop(
         assert ok is True
     finally:
         await routed.close()
+
 
 @pytest.mark.integration
 @pytest.mark.asyncio
@@ -347,6 +368,7 @@ async def test_routed_mongo_database_isolation_between_tenants(
     finally:
         await routed.close()
 
+
 @pytest.mark.integration
 @pytest.mark.asyncio
 async def test_routed_mongo_secret_not_found_propagates(
@@ -371,6 +393,7 @@ async def test_routed_mongo_secret_not_found_propagates(
     finally:
         await routed.close()
 
+
 @pytest.mark.integration
 @pytest.mark.asyncio
 async def test_routed_mongo_secret_resolve_failure_wrapped(
@@ -394,6 +417,7 @@ async def test_routed_mongo_secret_resolve_failure_wrapped(
             await routed.health()
     finally:
         await routed.close()
+
 
 @pytest.mark.integration
 @pytest.mark.asyncio

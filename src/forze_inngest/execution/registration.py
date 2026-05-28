@@ -6,9 +6,8 @@ require_inngest()
 
 # ....................... #
 
-from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
-from typing import Any, Generic, Self, TypeVar, final
+from typing import Any, Callable, Generic, Iterator, Self, Sequence, TypeVar, final
 
 import attrs
 import inngest

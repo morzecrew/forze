@@ -7,17 +7,15 @@ require_psycopg()
 # ....................... #
 
 import asyncio
-from collections.abc import Callable, Coroutine
 from datetime import timedelta
 from time import monotonic
-from typing import Any, TypeVar, cast, final
+from typing import Any, Callable, Coroutine, TypeVar, cast, final
 
 import attrs
 from psycopg import sql
 
 from forze.base.exceptions import exc
 from forze.base.primitives.cache import CacheLane
-
 from forze_postgres.kernel.client import PostgresClientPort
 
 from .types import (

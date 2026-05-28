@@ -7,11 +7,20 @@ require_redis()
 # ....................... #
 
 import asyncio
-from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
 from datetime import timedelta
-from typing import Any, AsyncGenerator, Mapping, Sequence, TypeVar, cast, final
+from typing import (
+    Any,
+    AsyncGenerator,
+    Awaitable,
+    Callable,
+    Mapping,
+    Sequence,
+    TypeVar,
+    cast,
+    final,
+)
 
 import attrs
 from redis.asyncio.client import Pipeline, Redis

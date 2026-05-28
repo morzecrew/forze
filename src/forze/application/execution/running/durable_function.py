@@ -1,9 +1,6 @@
 """Run durable functions via frozen operation registry keys."""
 
-from __future__ import annotations
-
-from collections.abc import Callable
-from typing import TYPE_CHECKING, Any, TypeVar, cast
+from typing import TYPE_CHECKING, Any, Callable, TypeVar, cast
 
 from pydantic import BaseModel
 

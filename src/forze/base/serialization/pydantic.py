@@ -1,10 +1,9 @@
 """Serialization and utility helpers around Pydantic models."""
 
 import hashlib
-from collections.abc import Iterator, Sequence
 from decimal import Decimal
 from functools import lru_cache
-from typing import Any, Final, Literal
+from typing import Any, Final, Iterator, Literal, Sequence
 
 import orjson
 from pydantic import BaseModel, SecretStr, TypeAdapter

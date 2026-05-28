@@ -1,8 +1,7 @@
 """Authz dependency module for the application kernel."""
 
-from collections.abc import Collection
 from enum import StrEnum
-from typing import final
+from typing import Collection, final
 
 import attrs
 

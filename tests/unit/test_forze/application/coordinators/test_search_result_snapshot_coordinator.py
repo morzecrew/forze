@@ -342,6 +342,25 @@ def test_federated_fingerprint_list_query_differs() -> None:
     assert f1 != f2
 
 
+def test_federated_fingerprint_extras_differ_by_merge() -> None:
+    f1 = SearchResultSnapshotCoordinator.federated_fingerprint(
+        "q",
+        None,
+        None,
+        spec_name="s",
+        extras={"merge": "federation"},
+    )
+    f2 = SearchResultSnapshotCoordinator.federated_fingerprint(
+        "q",
+        None,
+        None,
+        spec_name="s",
+        rrf_k=60,
+        extras={"merge": "rrf"},
+    )
+    assert f1 != f2
+
+
 def test_federated_record_key_string_shape() -> None:
     h = _Hit(id=1, t="z")
     s = SearchResultSnapshotCoordinator.federated_record_key_string("a", h)

@@ -5,8 +5,7 @@ This module defines the single extension seam for non-Pydantic backends.
 implementation used by the default codec.
 """
 
-from collections.abc import Iterator, Sequence
-from typing import Literal, Protocol, TypedDict
+from typing import Iterator, Literal, Protocol, Sequence, TypedDict
 
 from ..primitives import JsonDict
 

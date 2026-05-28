@@ -1,7 +1,6 @@
 """Internal tree walk for :func:`~forze.base.scrubbing.sanitize`."""
 
-from collections.abc import Mapping, Sequence
-from typing import Any
+from typing import Any, Mapping, Sequence
 
 from pydantic import BaseModel, SecretStr
 

@@ -1,5 +1,4 @@
-from collections.abc import Sequence
-from typing import Any
+from typing import Any, Sequence
 
 from forze.application.contracts.deps import DepKey
 from forze.application.contracts.durable.workflow import (

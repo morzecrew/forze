@@ -1,6 +1,6 @@
 """Compare Pydantic document shapes to Postgres relation columns (startup validation)."""
 
-from collections.abc import Sequence
+from typing import Sequence
 
 import attrs
 from pydantic import BaseModel
@@ -9,7 +9,6 @@ from forze.application.contracts.tenancy import TENANT_ID_FIELD
 from forze.base.exceptions import exc
 from forze.base.serialization import pydantic_field_names
 from forze.domain.models import DocumentHistory
-
 from forze_postgres.kernel._logger import logger
 from forze_postgres.kernel.catalog.introspect import PostgresIntrospector, PostgresType
 from forze_postgres.kernel.gateways.types import PostgresBookkeepingStrategy

@@ -1,7 +1,6 @@
 """Pydantic-backed implementation of the record-mapping codec protocol."""
 
-from collections.abc import Iterator, Sequence
-from typing import Literal
+from typing import Iterator, Literal, Sequence
 
 import attrs
 from pydantic import BaseModel

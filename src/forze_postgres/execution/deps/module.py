@@ -1,9 +1,8 @@
 """Postgres dependency module for the application kernel."""
 
-from collections.abc import Callable
 from datetime import timedelta
 from enum import StrEnum
-from typing import Mapping, final
+from typing import Callable, Mapping, final
 
 import attrs
 
@@ -24,11 +23,11 @@ from forze.application.contracts.transaction import TransactionManagerDepKey
 from forze.application.execution import Deps, DepsModule
 
 from ...kernel.catalog.introspect import PostgresIntrospector
-from ...kernel.client import PostgresClientPort, RoutedPostgresClient
 from ...kernel.catalog.validation.validate_tenancy import (
     PostgresTenancyRouteSpec,
     validate_postgres_tenancy_wiring,
 )
+from ...kernel.client import PostgresClientPort, RoutedPostgresClient
 from .configs import (
     PostgresAnalyticsConfig,
     PostgresDocumentConfig,

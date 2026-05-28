@@ -1,6 +1,5 @@
-from collections.abc import Sequence
 from enum import StrEnum
-from typing import Any, Mapping, final
+from typing import Any, Mapping, Sequence, final
 
 import attrs
 

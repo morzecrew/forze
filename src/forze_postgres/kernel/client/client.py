@@ -160,6 +160,7 @@ class PostgresClient(PostgresClientPort):
 
         if config.max_concurrent_queries is not None:
             self.__max_concurrent_queries = config.max_concurrent_queries
+
         else:
             self.__max_concurrent_queries = max(
                 1, config.max_size - config.pool_headroom
@@ -290,6 +291,7 @@ class PostgresClient(PostgresClientPort):
 
     # ....................... #
 
+    @exc_interceptor.asynccontextmanager("postgres.bound_connection")  # type: ignore[untyped-decorator]
     @asynccontextmanager
     async def bound_connection(self) -> AsyncGenerator[AsyncConnection]:
         """Check out one pool connection and bind it as the current context connection.
@@ -318,8 +320,10 @@ class PostgresClient(PostgresClientPort):
             timeout=self.__acquire_timeout.total_seconds()
         ) as conn:
             token = self.__ctx_conn.set(conn)
+
             try:
                 yield conn
+
             finally:
                 self.__ctx_conn.reset(token)
 

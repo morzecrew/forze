@@ -1,7 +1,13 @@
 """Transaction manager and scoped port contracts."""
 
-from collections.abc import Awaitable, Callable
-from typing import AsyncContextManager, Protocol, final, runtime_checkable
+from typing import (
+    AsyncContextManager,
+    Awaitable,
+    Callable,
+    Protocol,
+    final,
+    runtime_checkable,
+)
 from uuid import UUID
 
 import attrs

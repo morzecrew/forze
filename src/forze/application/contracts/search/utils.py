@@ -20,7 +20,7 @@ def normalize_search_queries(query: str | Sequence[str]) -> tuple[str, ...]:
     """Return non-empty stripped sub-queries for backend OR semantics.
 
     * A single :class:`str` that is empty or whitespace-only yields ``()`` (filter-only).
-    * A :class:`~collections.abc.Sequence` of strings drops empty / whitespace-only
+    * A :class:`~typing.Sequence` of strings drops empty / whitespace-only
       entries; if none remain, ``()`` (filter-only).
     * ``str`` is **not** iterated as a sequence of characters (``str`` is handled first).
 

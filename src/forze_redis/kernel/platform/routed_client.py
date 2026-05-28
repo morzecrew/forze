@@ -1,11 +1,16 @@
 """Redis client that resolves a DSN per tenant via :class:`~forze.application.contracts.secrets.SecretsPort`."""
 
-import asyncio
-from collections import OrderedDict
-from collections.abc import Callable
 from contextlib import asynccontextmanager
 from datetime import timedelta
-from typing import Any, AsyncContextManager, AsyncGenerator, Mapping, Sequence, final
+from typing import (
+    Any,
+    AsyncContextManager,
+    AsyncGenerator,
+    Callable,
+    Mapping,
+    Sequence,
+    final,
+)
 from uuid import UUID
 
 import attrs
@@ -14,6 +19,7 @@ from redis.asyncio.client import Pipeline
 from forze.application.contracts.secrets import SecretRef, SecretsPort
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
+from forze.base.primitives.lru_registry import SimpleLruRegistry
 
 from .client import RedisClient
 from .port import RedisClientPort
@@ -39,11 +45,7 @@ class RoutedRedisClient(RedisClientPort):
     pool_config: RedisConfig = attrs.field(factory=RedisConfig)
     max_cached_tenants: int = 100
 
-    _lock: asyncio.Lock = attrs.field(factory=asyncio.Lock, init=False)
-    _clients: OrderedDict[UUID, RedisClient] = attrs.field(
-        factory=OrderedDict,
-        init=False,
-    )
+    _registry: SimpleLruRegistry[UUID, RedisClient] = attrs.field(init=False)
     _started: bool = attrs.field(default=False, init=False)
 
     # ....................... #
@@ -51,6 +53,12 @@ class RoutedRedisClient(RedisClientPort):
     def __attrs_post_init__(self) -> None:
         if self.max_cached_tenants < 1:
             raise exc.internal("max_cached_tenants must be at least 1")
+
+        self._registry = SimpleLruRegistry(
+            max_entries=self.max_cached_tenants,
+            create=self._create_client,
+            dispose=lambda client: client.close(),
+        )
 
     # ....................... #
 
@@ -60,23 +68,13 @@ class RoutedRedisClient(RedisClientPort):
     # ....................... #
 
     async def close(self) -> None:
-        async with self._lock:
-            to_close = list(self._clients.values())
-            self._clients.clear()
-
-        for c in to_close:
-            await c.close()
-
+        await self._registry.close_all()
         self._started = False
 
     # ....................... #
 
     async def evict_tenant(self, tenant_id: UUID) -> None:
-        async with self._lock:
-            client = self._clients.pop(tenant_id, None)
-
-        if client is not None:
-            await client.close()
+        await self._registry.evict(tenant_id)
 
     # ....................... #
 
@@ -93,18 +91,7 @@ class RoutedRedisClient(RedisClientPort):
 
     # ....................... #
 
-    async def _get_client(self) -> RedisClient:
-        if not self._started:
-            raise exc.internal("Routed Redis client is not started")
-
-        tid = self._require_tenant_id()
-
-        async with self._lock:
-            if tid in self._clients:
-                client = self._clients[tid]
-                self._clients.move_to_end(tid)
-                return client
-
+    async def _create_client(self, tid: UUID) -> RedisClient:
         ref = self.secret_ref_for_tenant(tid)
 
         try:
@@ -118,29 +105,18 @@ class RoutedRedisClient(RedisClientPort):
                 f"Failed to resolve Redis secret for tenant {tid}: {e}",
             ) from e
 
-        fresh = RedisClient()
-        await fresh.initialize(dsn, config=self.pool_config)
+        client = RedisClient()
+        await client.initialize(dsn, config=self.pool_config)
 
-        evicted: list[RedisClient] = []
+        return client
 
-        async with self._lock:
-            if tid in self._clients:
-                await fresh.close()
-                client = self._clients[tid]
-                self._clients.move_to_end(tid)
-                return client
+    # ....................... #
 
-            self._clients[tid] = fresh
-            self._clients.move_to_end(tid)
+    async def _get_client(self) -> RedisClient:
+        if not self._started:
+            raise exc.internal("Routed Redis client is not started")
 
-            while len(self._clients) > self.max_cached_tenants:
-                _, old = self._clients.popitem(last=False)
-                evicted.append(old)
-
-        for old in evicted:
-            await old.close()
-
-        return fresh
+        return await self._registry.get_or_create(self._require_tenant_id())
 
     # ....................... #
 
