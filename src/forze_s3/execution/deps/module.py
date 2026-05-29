@@ -6,8 +6,10 @@ from typing import Mapping, final
 import attrs
 
 from forze.application.contracts.storage import StorageDepKey
+from forze.application.contracts.tenancy import warn_dynamic_relation_with_tenant_aware
 from forze.application.execution import Deps, DepsModule
 
+from ...kernel._logger import logger
 from ...kernel.platform import S3ClientPort
 from .configs import S3StorageConfig
 from .deps import ConfigurableS3Storage
@@ -31,6 +33,20 @@ class S3DepsModule[K: str | StrEnum](DepsModule[K]):
 
     storages: Mapping[K, S3StorageConfig] | None = attrs.field(default=None)
     """Mapping from storage names to their S3-specific configurations."""
+
+    # ....................... #
+
+    def __attrs_post_init__(self) -> None:
+        if self.storages:
+            for name, cfg in self.storages.items():
+                warn_dynamic_relation_with_tenant_aware(
+                    integration="S3",
+                    route_name=str(name),
+                    kind="storage",
+                    tenant_aware=cfg.tenant_aware,
+                    named_fields=[("bucket", cfg.bucket)],
+                    log_warning=logger.warning,
+                )
 
     # ....................... #
 

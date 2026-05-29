@@ -84,9 +84,10 @@ Physical mapping lives on `ClickHouseDepsModule.analytics`, keyed by `AnalyticsS
 
 | Field | Purpose |
 |-------|---------|
-| `database` | ClickHouse database for the route |
 | `queries` | Map of `query_key` → `sql` (+ optional `skip_total`, `cursor_column`) |
-| `ingest_table` | Table name for `append`; required when `spec.ingest` is set |
+| `ingest_relation` | Ingest target as static `(database, table)` or tenant `ValueResolver`. Preferred when `AnalyticsSpec.ingest` is set. |
+| `database` | Legacy database id for `ingest_table` when `ingest_relation` is omitted. |
+| `ingest_table` | Legacy table name for `append`; use `ingest_relation` for relation-level isolation. |
 | `max_append_rows` | Optional cap per `append` batch (default 10_000) |
 
 Query keys in config **must** match `AnalyticsSpec.queries`. The module validates this at build time.
@@ -100,6 +101,23 @@ Query keys in config **must** match `AnalyticsSpec.queries`. The module validate
 - `run_cursor` defaults to **offset cursors** (`{"o": offset}`); unstable under concurrent writes. For keyset pagination, set `cursor_column` on the query config and include `{forze_after:Type}` in SQL (the adapter injects `forze_after` from the cursor).
 - `dry_run` skips execution (empty pages); ClickHouse does not estimate query cost via this option.
 - The shared async client selects the database per request via query settings (safe under concurrent handlers).
+
+### Analytics queries and tenancy
+
+**Ingest** uses `ingest_relation` (resolved per request). **Query** SQL is **not** rewritten—use `{field:Type}` placeholders for params only.
+
+| Concern | Framework | Application |
+|---------|-----------|-------------|
+| Append target | `ingest_relation` / `resolved_ingest_relation()` | Static `(database, table)` or `ValueResolver` |
+| Read SQL | Not rewritten | Qualify tables in SQL (`database.table` or `FROM db.table`) |
+
+Recommended patterns:
+
+1. **Cluster/database per tenant** — `RoutedClickHouseClient` with per-tenant `database` in `ClickHouseRoutingCredentials`; static table names in SQL.
+2. **Database-per-tenant on shared cluster** — `ingest_relation` resolver for append; tenant-specific `database.table` in query strings.
+3. **Row filters** — `WHERE tenant_id = {tenant_id:UUID}` (or similar) bound from the params model when sharing tables.
+
+See [Multi-tenancy — relation-level isolation](../concepts/multi-tenancy.md#relation-level-isolation-all-integrations).
 
 ## Using analytics ports
 
@@ -125,8 +143,9 @@ Pass `AnalyticsRunOptions` (`dry_run`, `max_rows`, `timeout`) per request; `dry_
 
 ## Multi-tenant databases
 
-- **Connection routing:** `RoutedClickHouseClient` resolves per-tenant connection settings from `SecretsPort`.
-- **Route-level `database` in analytics config:** still static per `AnalyticsSpec` route; use separate routes or deploy-time config when logical database names differ per tenant on a shared cluster.
+- **Connection routing:** `RoutedClickHouseClient` resolves per-tenant connection settings from `SecretsPort` (including default `database` in credentials).
+- **Relation-level ingest:** use `ingest_relation` when the physical `(database, table)` varies per tenant on a shared cluster.
+- **Analytics reads:** query SQL remains author-defined; see [Analytics queries and tenancy](#analytics-queries-and-tenancy) above.
 
 ## Client health
 

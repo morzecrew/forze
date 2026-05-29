@@ -96,7 +96,7 @@ class MeilisearchSearchCommandAdapter[M: BaseModel](
         )
 
         index = await self.client.get_or_create_index(
-            self.index_uid,
+            await self._resolved_index_uid(),
             primary_key=self.primary_key,
         )
 
@@ -124,7 +124,7 @@ class MeilisearchSearchCommandAdapter[M: BaseModel](
         if not documents:
             return
 
-        index = self.client.index(self.index_uid)
+        index = self.client.index(await self._resolved_index_uid())
         payload = [self.to_index_document(d) for d in documents]
 
         for i in range(0, len(payload), _BATCH_SIZE):
@@ -136,11 +136,11 @@ class MeilisearchSearchCommandAdapter[M: BaseModel](
         if not ids:
             return
 
-        index = self.client.index(self.index_uid)
+        index = self.client.index(await self._resolved_index_uid())
         task = await index.delete_documents(list(ids))
         await self._await_task(task)
 
     async def delete_all(self) -> None:
-        index = self.client.index(self.index_uid)
+        index = self.client.index(await self._resolved_index_uid())
         task = await index.delete_all_documents()
         await self._await_task(task)

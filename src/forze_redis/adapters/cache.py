@@ -215,6 +215,7 @@ class RedisCacheAdapter(CachePort, RedisBaseAdapter):
     # Public: read
 
     async def get(self, key: str) -> Any | None:
+        await self._prepare_keys()
         # Try versioned first
         logger.debug("Cache lookup for key=%s", key)
 
@@ -239,6 +240,7 @@ class RedisCacheAdapter(CachePort, RedisBaseAdapter):
     # ....................... #
 
     async def get_many(self, keys: Sequence[str]) -> tuple[dict[str, Any], list[str]]:
+        await self._prepare_keys()
         if not keys:
             logger.debug("Empty list of keys, skipping")
             return {}, []
@@ -271,12 +273,14 @@ class RedisCacheAdapter(CachePort, RedisBaseAdapter):
     # Public: write
 
     async def set(self, key: str, value: Any) -> None:
+        await self._prepare_keys()
         # Plain set. (We do not touch pointer/body.)
         await self.__mset_kv({key: value}, ttl=self.ttl_kv)
 
     # ....................... #
 
     async def set_versioned(self, key: str, version: str, value: Any) -> None:
+        await self._prepare_keys()
         async with self.client.pipeline(transaction=True):
             await self.__mset_bodies({(key, version): value}, ttl=self.ttl_body)
             await self.__mset_pointers({key: version}, ttl=self.ttl_pointer)
@@ -284,6 +288,7 @@ class RedisCacheAdapter(CachePort, RedisBaseAdapter):
     # ....................... #
 
     async def set_many(self, key_mapping: dict[str, Any]) -> None:
+        await self._prepare_keys()
         if not key_mapping:
             return
 
@@ -295,6 +300,7 @@ class RedisCacheAdapter(CachePort, RedisBaseAdapter):
         self,
         key_version_mapping: Mapping[tuple[str, str], Any],
     ) -> None:
+        await self._prepare_keys()
         if not key_version_mapping:
             return
 
@@ -309,6 +315,7 @@ class RedisCacheAdapter(CachePort, RedisBaseAdapter):
     # ....................... #
 
     async def delete(self, key: str, *, hard: bool) -> None:
+        await self._prepare_keys()
         if hard:
             # Overlap kv-delete with pointer lookup; body-delete waits for the pointer.
             pointers, _ = await asyncio.gather(
@@ -328,6 +335,7 @@ class RedisCacheAdapter(CachePort, RedisBaseAdapter):
     # ....................... #
 
     async def delete_many(self, keys: Sequence[str], *, hard: bool) -> None:
+        await self._prepare_keys()
         if not keys:
             return
 

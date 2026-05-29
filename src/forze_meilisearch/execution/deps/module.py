@@ -5,6 +5,7 @@ from typing import Mapping, final
 
 import attrs
 
+from forze.application.contracts.tenancy import warn_dynamic_relation_with_tenant_aware
 from forze.application.contracts.search import (
     FederatedSearchQueryDepKey,
     SearchCommandDepKey,
@@ -21,6 +22,7 @@ from forze_meilisearch.execution.deps.deps import (
     ConfigurableMeilisearchSearchCommand,
 )
 from forze_meilisearch.execution.deps.keys import MeilisearchClientDepKey
+from forze_meilisearch.kernel._logger import logger
 from forze_meilisearch.kernel.platform.port import MeilisearchClientPort
 
 # ----------------------- #
@@ -36,6 +38,34 @@ class MeilisearchDepsModule[K: str | StrEnum](DepsModule[K]):
     federated_searches: Mapping[K, MeilisearchFederatedSearchConfig] | None = attrs.field(
         default=None,
     )
+
+    # ....................... #
+
+    def __attrs_post_init__(self) -> None:
+        if self.searches:
+            for name, cfg in self.searches.items():
+                warn_dynamic_relation_with_tenant_aware(
+                    integration="Meilisearch",
+                    route_name=str(name),
+                    kind="search",
+                    tenant_aware=cfg.tenant_aware,
+                    named_fields=[("index_uid", cfg.index_uid)],
+                    log_warning=logger.warning,
+                )
+
+        if self.federated_searches:
+            for fed_name, fed_cfg in self.federated_searches.items():
+                for member_name, member_cfg in fed_cfg.members.items():
+                    warn_dynamic_relation_with_tenant_aware(
+                        integration="Meilisearch",
+                        route_name=f"{fed_name}.{member_name}",
+                        kind="search",
+                        tenant_aware=member_cfg.tenant_aware,
+                        named_fields=[("index_uid", member_cfg.index_uid)],
+                        log_warning=logger.warning,
+                    )
+
+    # ....................... #
 
     def __call__(self) -> Deps[K]:
         plain = Deps[K].plain({MeilisearchClientDepKey: self.client})

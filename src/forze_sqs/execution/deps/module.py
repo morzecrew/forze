@@ -6,6 +6,7 @@ from typing import Mapping, final
 import attrs
 
 from forze.application.contracts.queue import QueueCommandDepKey, QueueQueryDepKey
+from forze.application.contracts.tenancy import warn_dynamic_relation_with_tenant_aware
 from forze.application.execution import Deps, DepsModule
 
 from ...kernel.platform import SQSClientPort
@@ -29,6 +30,23 @@ class SQSDepsModule[K: str | StrEnum](DepsModule[K]):
 
     queue_writers: Mapping[K, SQSQueueConfig] | None = attrs.field(default=None)
     """Mapping from queue names to their SQS-specific configurations."""
+
+    def __attrs_post_init__(self) -> None:
+        for mapping, kind in (
+            (self.queue_readers, "queue_reader"),
+            (self.queue_writers, "queue_writer"),
+        ):
+            if not mapping:
+                continue
+
+            for name, cfg in mapping.items():
+                warn_dynamic_relation_with_tenant_aware(
+                    integration="SQS",
+                    route_name=str(name),
+                    kind=kind,
+                    tenant_aware=cfg.tenant_aware,
+                    named_fields=[("namespace", cfg.namespace)],
+                )
 
     # ....................... #
 

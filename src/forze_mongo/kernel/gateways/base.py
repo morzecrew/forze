@@ -30,6 +30,7 @@ from forze.domain.constants import ID_FIELD
 
 from ..platform import MongoClientPort
 from ..query import MongoQueryRenderer
+from ..relation import RelationSpec, is_static_relation, resolve_mongo_collection
 
 # ----------------------- #
 
@@ -47,11 +48,15 @@ class MongoGateway[M: BaseModel](TenancyMixin):
     model_type: type[M]
     """Pydantic model used for deserialization."""
 
-    database: str | None = attrs.field(default=None)
-    """Mongo database name. ``None`` uses the client default."""
+    relation: RelationSpec
+    """Static ``(database, collection)`` or tenant-scoped resolver."""
 
-    collection: str
-    """Mongo collection name."""
+    _relation_resolved: tuple[str, str] | None = attrs.field(
+        default=None,
+        init=False,
+        eq=False,
+        repr=False,
+    )
 
     client: MongoClientPort
     """Shared Mongo client (single-URI or tenant-routed)."""
@@ -89,10 +94,74 @@ class MongoGateway[M: BaseModel](TenancyMixin):
 
     # ....................... #
 
+    def _tenant_id_for_resolve(self) -> UUID | None:
+        if self.tenant_provider is None:
+            return None
+
+        tenant = self.tenant_provider()
+
+        if tenant is None:
+            if self.tenant_aware:
+                raise exc.internal("Tenant ID is required for the gateway")
+
+            return None
+
+        return tenant.tenant_id
+
+    # ....................... #
+
+    async def _resolved_collection(self) -> tuple[str, str]:
+        if self._relation_resolved is not None:
+            return self._relation_resolved
+
+        resolved = await resolve_mongo_collection(
+            self.relation,
+            self._tenant_id_for_resolve(),
+        )
+        object.__setattr__(self, "_relation_resolved", resolved)
+
+        return resolved
+
+    # ....................... #
+
+    @property
+    def database(self) -> str | None:
+        """Best-effort sync access when :attr:`relation` is static."""
+
+        if is_static_relation(self.relation):
+            return self.relation[0]
+
+        if self._relation_resolved is not None:
+            return self._relation_resolved[0]
+
+        raise exc.internal(
+            "database is only available for static relations; await _resolved_collection()",
+        )
+
+    # ....................... #
+
+    @property
+    def collection(self) -> str:
+        """Best-effort sync access when :attr:`relation` is static."""
+
+        if is_static_relation(self.relation):
+            return self.relation[1]
+
+        if self._relation_resolved is not None:
+            return self._relation_resolved[1]
+
+        raise exc.internal(
+            "collection is only available for static relations; await _resolved_collection()",
+        )
+
+    # ....................... #
+
     async def coll(self) -> AsyncCollection[JsonDict]:
         """Return the async Mongo collection handle for this gateway's source."""
 
-        return await self.client.collection(self.collection, db_name=self.database)
+        database, collection = await self._resolved_collection()
+
+        return await self.client.collection(collection, db_name=database or None)
 
     # ....................... #
 

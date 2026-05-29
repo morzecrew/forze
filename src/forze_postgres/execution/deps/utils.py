@@ -4,6 +4,7 @@ from typing import Any, Mapping
 
 from forze.application.contracts.document import DocumentWriteTypes
 from forze.application.execution import ExecutionContext
+from forze_postgres.kernel.relation import RelationSpec
 
 from ...kernel.gateways import (
     PostgresBookkeepingStrategy,
@@ -11,7 +12,6 @@ from ...kernel.gateways import (
     PostgresReadGateway,
     PostgresWriteGateway,
 )
-from forze_postgres.kernel.relation import RelationSpec
 from .keys import PostgresClientDepKey, PostgresIntrospectorDepKey
 
 # ----------------------- #

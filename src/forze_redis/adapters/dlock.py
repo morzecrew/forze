@@ -49,6 +49,7 @@ class RedisDistributedLockAdapter(
     # ....................... #
 
     async def is_locked(self, key: str) -> bool:
+        await self._prepare_keys()
         _k = self.__key(key)
 
         return await self.client.exists(_k)
@@ -56,6 +57,7 @@ class RedisDistributedLockAdapter(
     # ....................... #
 
     async def get_owner(self, key: str) -> str | None:
+        await self._prepare_keys()
         _k = self.__key(key)
 
         res = await self.client.get(_k)
@@ -72,6 +74,7 @@ class RedisDistributedLockAdapter(
     # ....................... #
 
     async def get_ttl(self, key: str) -> timedelta | None:
+        await self._prepare_keys()
         _k = self.__key(key)
 
         res = await self.client.pttl(_k)
@@ -84,6 +87,7 @@ class RedisDistributedLockAdapter(
     # ....................... #
 
     async def acquire(self, key: str, owner: str) -> bool:
+        await self._prepare_keys()
         _k = self.__key(key)
 
         return await self.client.set(
@@ -96,6 +100,7 @@ class RedisDistributedLockAdapter(
     # ....................... #
 
     async def release(self, key: str, owner: str) -> bool:
+        await self._prepare_keys()
         _k = self.__key(key)
 
         res = await self.client.run_script(
@@ -115,6 +120,7 @@ class RedisDistributedLockAdapter(
     # ....................... #
 
     async def reset(self, key: str, owner: str) -> bool:
+        await self._prepare_keys()
         _k = self.__key(key)
 
         res = await self.client.run_script(

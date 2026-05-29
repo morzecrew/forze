@@ -34,7 +34,7 @@ def mock_redis_client() -> MagicMock:
 def adapter_with_tenant(mock_redis_client: MagicMock) -> RedisIdempotencyAdapter:
     return RedisIdempotencyAdapter(
         client=mock_redis_client,
-        key_codec=RedisKeyCodec(namespace=_NS),
+        namespace=_NS,
         ttl=timedelta(seconds=60),
         tenant_aware=True,
         tenant_provider=lambda: TenantIdentity(tenant_id=_TID),
@@ -45,7 +45,7 @@ def adapter_with_tenant(mock_redis_client: MagicMock) -> RedisIdempotencyAdapter
 def adapter_without_tenant(mock_redis_client: MagicMock) -> RedisIdempotencyAdapter:
     return RedisIdempotencyAdapter(
         client=mock_redis_client,
-        key_codec=RedisKeyCodec(namespace=_NS),
+        namespace=_NS,
         ttl=timedelta(seconds=60),
     )
 

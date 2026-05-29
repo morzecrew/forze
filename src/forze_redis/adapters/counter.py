@@ -33,6 +33,7 @@ class RedisCounterAdapter(CounterPort, RedisBaseAdapter):
     # ....................... #
 
     async def incr(self, by: int = 1, *, suffix: str | None = None) -> int:
+        await self._prepare_keys()
         key = self.__key(suffix)
 
         logger.debug("Incrementing counter '%s' by %s", key, by)
@@ -47,6 +48,7 @@ class RedisCounterAdapter(CounterPort, RedisBaseAdapter):
         *,
         suffix: str | None = None,
     ) -> list[int]:
+        await self._prepare_keys()
         key = self.__key(suffix)
 
         logger.debug(
@@ -62,6 +64,7 @@ class RedisCounterAdapter(CounterPort, RedisBaseAdapter):
     # ....................... #
 
     async def decr(self, by: int = 1, *, suffix: str | None = None) -> int:
+        await self._prepare_keys()
         key = self.__key(suffix)
 
         logger.debug("Decrementing counter '%s' by %s", key, by)
@@ -71,6 +74,7 @@ class RedisCounterAdapter(CounterPort, RedisBaseAdapter):
     # ....................... #
 
     async def reset(self, value: int = 1, *, suffix: str | None = None) -> int:
+        await self._prepare_keys()
         key = self.__key(suffix)
 
         logger.debug("Resetting counter '%s' to %s", key, value)

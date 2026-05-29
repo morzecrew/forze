@@ -95,7 +95,7 @@ Per-tenant secrets resolve to `BigQueryRoutingCredentials` (`project_id`, and op
 |-----|-----------|
 | `BigQueryClientDepKey` | Raw BigQuery client (`Job` / `Table` via shared `aiohttp` session) |
 | `AnalyticsQueryDepKey` | Query port adapter factory |
-| `AnalyticsIngestDepKey` | Ingest port adapter factory (when `ingest_table` is set) |
+| `AnalyticsIngestDepKey` | Ingest port adapter factory (when ingest is configured) |
 
 ## Configuration
 
@@ -103,9 +103,10 @@ Physical mapping lives on `BigQueryDepsModule.analytics`, keyed by `AnalyticsSpe
 
 | Field | Purpose |
 |-------|---------|
-| `dataset` | BigQuery dataset id for the route |
 | `queries` | Map of `query_key` → `sql` (+ optional `maximum_bytes_billed`, `skip_total`) |
-| `ingest_table` | Table id for `append`; required when `spec.ingest` is set |
+| `ingest_relation` | Ingest target as static `(dataset, table)` or tenant `ValueResolver`. Preferred when `AnalyticsSpec.ingest` is set. |
+| `dataset` | Legacy dataset id for `ingest_table` when `ingest_relation` is omitted. |
+| `ingest_table` | Legacy table id for `append`; use `ingest_relation` for relation-level isolation. |
 | `insert_id_field` | Optional row field for streaming insert deduplication |
 | `max_append_rows` | Optional cap per `append` batch (default 10_000) |
 
@@ -118,6 +119,23 @@ Query keys in config **must** match `AnalyticsSpec.queries`. The module validate
 - Offset pagination is applied in SQL (`LIMIT` / `OFFSET`) or by slicing small result sets.
 - `run_page` runs a `COUNT(*)` wrapper around your query SQL, then the data query, so totals are available on `Page.total`. Set `skip_total: true` on a query to skip the COUNT (``Page.total`` is ``None``).
 - Streaming inserts may partially fail; `AnalyticsAppendResult.rejected` and `.errors` surface row-level `insertErrors` when present.
+
+### Analytics queries and tenancy
+
+**Ingest** uses `ingest_relation` (resolved per request with `tenant_provider`). **Query** SQL in `queries.*.sql` is executed **as written**—Forze does not inject dataset or table names into query text.
+
+| Concern | Framework | Application |
+|---------|-----------|-------------|
+| Append target | `ingest_relation` / `resolved_ingest_relation()` | Static `(dataset, table)` or `ValueResolver` |
+| Read SQL | Not rewritten | Use fully qualified `` `project.dataset.table` `` (or project from routed credentials) |
+
+Recommended patterns:
+
+1. **Project-per-tenant** — `RoutedBigQueryClient` with per-tenant GCP project in secrets; static dataset/table names in SQL within that project.
+2. **Dataset-per-tenant** — `ingest_relation` resolver for append; qualify read SQL with the tenant dataset (or use views).
+3. **Shared project** — hard-code dataset/table in SQL, separate routes per layout, or bind `tenant_id` in `WHERE` via `@param` placeholders from the params model.
+
+See [Multi-tenancy — relation-level isolation](../concepts/multi-tenancy.md#relation-level-isolation-all-integrations).
 
 ## Using analytics ports
 

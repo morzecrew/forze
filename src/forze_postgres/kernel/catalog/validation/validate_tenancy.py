@@ -4,13 +4,18 @@ from typing import Literal, Sequence
 
 import attrs
 
-from forze.base.exceptions import exc
+from forze.application.contracts.tenancy import (
+    TenancyRouteSpec,
+    TenantIsolationMode,
+    derive_tenant_isolation_mode,
+    validate_routed_client_tenancy_wiring,
+)
+
 from forze_postgres.kernel._logger import logger
 
 # ----------------------- #
 
-PostgresTenantIsolationMode = Literal["none", "row", "database"]
-"""Derived isolation mode for error messages and docs (not configured directly)."""
+PostgresTenantIsolationMode = TenantIsolationMode
 
 PostgresTenancyRouteKind = Literal[
     "document",
@@ -27,13 +32,15 @@ class PostgresTenancyRouteSpec:
     """One registered Postgres route and its row-level tenant flag."""
 
     name: str
-    """Route name (document or search spec key)."""
-
     tenant_aware: bool
-    """Whether the route applies row-level ``tenant_id`` filtering."""
-
     kind: PostgresTenancyRouteKind
-    """Resource kind for log messages."""
+
+    def to_contract(self) -> TenancyRouteSpec:
+        return TenancyRouteSpec(
+            name=self.name,
+            tenant_aware=self.tenant_aware,
+            kind=self.kind,
+        )
 
 
 # ....................... #
@@ -43,16 +50,15 @@ def derive_postgres_tenant_isolation_mode(
     *,
     client_is_routed: bool,
     routes: Sequence[PostgresTenancyRouteSpec],
+    has_relation_resolvers: bool = False,
 ) -> PostgresTenantIsolationMode:
     """Return the effective isolation mode implied by client and route flags."""
 
-    if client_is_routed:
-        return "database"
-
-    if any(r.tenant_aware for r in routes):
-        return "row"
-
-    return "none"
+    return derive_tenant_isolation_mode(
+        client_is_routed=client_is_routed,
+        routes=[r.to_contract() for r in routes],
+        has_relation_resolvers=has_relation_resolvers,
+    )
 
 
 # ....................... #
@@ -66,28 +72,15 @@ def validate_postgres_tenancy_wiring(
 ) -> None:
     """Fail or warn when Postgres client routing and ``tenant_aware`` flags disagree."""
 
-    if client_is_routed and not introspector_cache_partition_key_set:
-        raise exc.internal(
-            "Postgres tenancy validation failed: RoutedPostgresClient requires "
-            "PostgresDepsModule.introspector_cache_partition_key so catalog caches "
-            "are partitioned by tenant.",
-            code="postgres_tenancy_validation_failed",
-            details={"client_is_routed": True},
-        )
-
-    if not client_is_routed:
-        return
-
-    tenant_aware_routes = [r for r in routes if r.tenant_aware]
-
-    if not tenant_aware_routes:
-        return
-
-    for route in tenant_aware_routes:
-        logger.warning(
-            "Postgres tenancy for %s route %r: RoutedPostgresClient already scopes "
-            "connections per tenant; tenant_aware=True adds redundant row-level "
-            "filtering (defense-in-depth is acceptable).",
-            route.kind,
-            route.name,
-        )
+    validate_routed_client_tenancy_wiring(
+        integration="Postgres",
+        client_is_routed=client_is_routed,
+        partition_key_set=introspector_cache_partition_key_set,
+        routes=[r.to_contract() for r in routes],
+        partition_key_detail=(
+            "Set PostgresDepsModule.introspector_cache_partition_key to the same tenant "
+            "identity used for routing."
+        ),
+        validation_failed_code="postgres_tenancy_validation_failed",
+        log_warning=logger.warning,
+    )

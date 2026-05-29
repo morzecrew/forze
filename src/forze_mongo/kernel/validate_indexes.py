@@ -4,6 +4,12 @@ from typing import Sequence
 
 import attrs
 
+from forze.application.contracts.resolution import (
+    RelationSpec,
+    is_static_relation,
+    require_static_relation,
+)
+
 from ._logger import logger
 from .introspect import MongoIndexInfo, MongoIntrospector
 
@@ -17,7 +23,7 @@ class MongoDocumentIndexSpec:
     name: str
     """Document route name (for log messages)."""
 
-    write_relation: tuple[str, str]
+    write_relation: RelationSpec
     """Write collection ``(database, collection)``."""
 
 
@@ -48,7 +54,20 @@ async def validate_mongo_document_indexes(
     """
 
     for spec in specs:
-        database, collection = spec.write_relation
+        if not is_static_relation(spec.write_relation):
+            logger.trace(
+                "Mongo index validation for document %r: skipping dynamic write relation.",
+                spec.name,
+            )
+            continue
+
+        database, collection = require_static_relation(
+            spec.write_relation,
+            route_name=spec.name,
+            field="write",
+            integration="Mongo",
+            omit_hint="Omit mongo_document_index_validation_lifecycle_step for this route.",
+        )
         indexes = await introspector.list_indexes(
             database=database,
             collection=collection,

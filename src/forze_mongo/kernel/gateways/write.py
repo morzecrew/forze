@@ -27,6 +27,7 @@ from forze.base.serialization import (
 from forze.domain.constants import ID_FIELD, REV_FIELD
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document
 
+from ..relation import relations_match
 from .base import MongoGateway
 from .history import MongoHistoryGateway
 from .read import MongoReadGateway
@@ -84,19 +85,14 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](MongoGate
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
-        if self.collection != self.read_gw.collection:
+        if not relations_match(self.relation, self.read_gw.relation):
             raise exc.configuration(
-                "Collection mismatch. Write gateway and nested read gateway must have the same collection."
+                "Relation mismatch. Write gateway and nested read gateway must use the same relation."
             )
 
         if self.client is not self.read_gw.client:
             raise exc.configuration(
                 "Client mismatch. Write gateway and nested read gateway must use the same client."
-            )
-
-        if self.database != self.read_gw.database:
-            raise exc.configuration(
-                "Database mismatch. Write gateway and nested read gateway must use the same database."
             )
 
         if self.tenant_aware != self.read_gw.tenant_aware:
@@ -110,14 +106,9 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](MongoGate
                     "Client mismatch. Write gateway and nested history gateway must use the same client."
                 )
 
-            if self.collection != self.history_gw.target_collection:
+            if not relations_match(self.relation, self.history_gw.target_relation):
                 raise exc.configuration(
-                    "Collection mismatch. Write gateway and nested history gateway must point to the same collection."
-                )
-
-            if self.database != self.history_gw.target_database:
-                raise exc.configuration(
-                    "Database mismatch. Write gateway and nested history gateway must point to the same database."
+                    "Relation mismatch. Write gateway and nested history gateway must point to the same write relation."
                 )
 
             if self.tenant_aware != self.history_gw.tenant_aware:

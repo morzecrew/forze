@@ -59,11 +59,10 @@ class FakeRedisClient:
 
 def test_redis_cache_adapter_keys_no_tenant() -> None:
     client = MockRedisClient()
-    key_codec = RedisKeyCodec(namespace="test")
 
     adapter = RedisCacheAdapter(
         client=client,  # type: ignore[arg-type]
-        key_codec=key_codec,
+        namespace="test",
     )
 
     assert adapter._RedisCacheAdapter__kv_key("mykey") == "cache:kv:test:mykey"
@@ -79,11 +78,10 @@ def test_redis_cache_adapter_keys_no_tenant() -> None:
 def test_redis_cache_adapter_keys_with_tenant() -> None:
     tenant_id = uuid.uuid4()
     client = MockRedisClient()
-    key_codec = RedisKeyCodec(namespace="test")
 
     adapter = RedisCacheAdapter(
         client=client,  # type: ignore[arg-type]
-        key_codec=key_codec,
+        namespace="test",
         tenant_aware=True,
         tenant_provider=lambda: TenantIdentity(tenant_id=tenant_id),
     )
@@ -122,7 +120,7 @@ async def test_cache_get_plain_round_trip() -> None:
     fake = FakeRedisClient()
     adapter = RedisCacheAdapter(
         client=fake,  # type: ignore[arg-type]
-        key_codec=RedisKeyCodec(namespace="ns"),
+        namespace="ns",
     )
 
     await adapter.set("a", {"x": 1})
@@ -133,7 +131,7 @@ async def test_cache_get_versioned_round_trip() -> None:
     fake = FakeRedisClient()
     adapter = RedisCacheAdapter(
         client=fake,  # type: ignore[arg-type]
-        key_codec=RedisKeyCodec(namespace="ns"),
+        namespace="ns",
     )
 
     await adapter.set_versioned("v", "1", [1, 2])
@@ -144,7 +142,7 @@ async def test_cache_get_miss_returns_none() -> None:
     fake = FakeRedisClient()
     adapter = RedisCacheAdapter(
         client=fake,  # type: ignore[arg-type]
-        key_codec=RedisKeyCodec(namespace="ns"),
+        namespace="ns",
     )
 
     assert await adapter.get("nope") is None
@@ -155,7 +153,7 @@ async def test_cache_get_orphan_pointer_falls_back_to_plain_kv() -> None:
     fake = FakeRedisClient()
     adapter = RedisCacheAdapter(
         client=fake,  # type: ignore[arg-type]
-        key_codec=RedisKeyCodec(namespace="ns"),
+        namespace="ns",
     )
 
     fake.store[_pointer(adapter, "k")] = b"v1"
@@ -168,7 +166,7 @@ async def test_cache_get_many_empty_keys() -> None:
     fake = FakeRedisClient()
     adapter = RedisCacheAdapter(
         client=fake,  # type: ignore[arg-type]
-        key_codec=RedisKeyCodec(namespace="ns"),
+        namespace="ns",
     )
 
     hits, misses = await adapter.get_many([])
@@ -180,7 +178,7 @@ async def test_cache_get_many_skips_corrupt_kv_entries() -> None:
     fake = FakeRedisClient()
     adapter = RedisCacheAdapter(
         client=fake,  # type: ignore[arg-type]
-        key_codec=RedisKeyCodec(namespace="ns"),
+        namespace="ns",
     )
 
     fake.store[_kv(adapter, "good")] = JsonCodec().dumps(1)
@@ -195,7 +193,7 @@ async def test_cache_get_many_large_batch_uses_thread_path() -> None:
     fake = FakeRedisClient()
     adapter = RedisCacheAdapter(
         client=fake,  # type: ignore[arg-type]
-        key_codec=RedisKeyCodec(namespace="ns"),
+        namespace="ns",
     )
 
     keys = [f"k{i}" for i in range(65)]
@@ -211,7 +209,7 @@ async def test_cache_set_many_and_set_many_versioned_noop_for_empty() -> None:
     fake = FakeRedisClient()
     adapter = RedisCacheAdapter(
         client=fake,  # type: ignore[arg-type]
-        key_codec=RedisKeyCodec(namespace="ns"),
+        namespace="ns",
     )
 
     await adapter.set_many({})
@@ -223,7 +221,7 @@ async def test_cache_delete_soft_and_hard() -> None:
     fake = FakeRedisClient()
     adapter = RedisCacheAdapter(
         client=fake,  # type: ignore[arg-type]
-        key_codec=RedisKeyCodec(namespace="ns"),
+        namespace="ns",
     )
 
     await adapter.set("plain", 1)
@@ -241,7 +239,7 @@ async def test_cache_delete_hard_without_pointer_still_unlinks() -> None:
     fake = FakeRedisClient()
     adapter = RedisCacheAdapter(
         client=fake,  # type: ignore[arg-type]
-        key_codec=RedisKeyCodec(namespace="ns"),
+        namespace="ns",
     )
 
     await adapter.set("only_kv", 9)
@@ -253,7 +251,7 @@ async def test_cache_delete_many_empty_is_noop() -> None:
     fake = FakeRedisClient()
     adapter = RedisCacheAdapter(
         client=fake,  # type: ignore[arg-type]
-        key_codec=RedisKeyCodec(namespace="ns"),
+        namespace="ns",
     )
 
     await adapter.delete_many([], hard=True)

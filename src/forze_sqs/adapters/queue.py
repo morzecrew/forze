@@ -6,6 +6,7 @@ require_sqs()
 
 from datetime import datetime, timedelta
 from typing import AsyncGenerator, Sequence, final
+from uuid import UUID
 
 import attrs
 from pydantic import BaseModel
@@ -15,9 +16,12 @@ from forze.application.contracts.queue import (
     QueueMessage,
     QueueQueryPort,
 )
+from forze.application.contracts.resolution import NamedResourceSpec, is_static_named_resource
 from forze.application.contracts.tenancy import TenancyMixin
+from forze.base.exceptions import exc
 
 from ..kernel.platform import SQSClientPort
+from ..kernel.relation import resolve_sqs_namespace
 from .codecs import SQSQueueCodec
 
 # ----------------------- #
@@ -38,8 +42,15 @@ class SQSQueueAdapter[M: BaseModel](
     codec: SQSQueueCodec[M]
     """SQS queue codec instance."""
 
-    namespace: str | None = attrs.field(default=None)
+    namespace: NamedResourceSpec = ""
     """SQS queue namespace."""
+
+    _namespace_resolved: str | None = attrs.field(
+        default=None,
+        init=False,
+        eq=False,
+        repr=False,
+    )
 
     # ....................... #
 
@@ -49,7 +60,45 @@ class SQSQueueAdapter[M: BaseModel](
 
     # ....................... #
 
-    def __queue_name(self, queue: str) -> str:
+    def _tenant_id_for_resolve(self) -> UUID | None:
+        if self.tenant_provider is None:
+            return None
+
+        tenant = self.tenant_provider()
+
+        if tenant is None:
+            if self.tenant_aware:
+                raise exc.internal("Tenant ID is required for the SQS queue adapter")
+
+            return None
+
+        return tenant.tenant_id
+
+    # ....................... #
+
+    async def _resolved_namespace(self) -> str:
+        if self._namespace_resolved is not None:
+            return self._namespace_resolved
+
+        resolved = await resolve_sqs_namespace(
+            self.namespace,
+            self._tenant_id_for_resolve(),
+        )
+        object.__setattr__(self, "_namespace_resolved", resolved)
+
+        return resolved
+
+    # ....................... #
+
+    async def _prepare_queue_names(self) -> None:
+        if is_static_named_resource(self.namespace):
+            return
+
+        await self._resolved_namespace()
+
+    # ....................... #
+
+    async def __queue_name(self, queue: str) -> str:
         if self.__is_queue_url(queue):
             return queue
 
@@ -61,8 +110,10 @@ class SQSQueueAdapter[M: BaseModel](
         else:
             tenant_prefix = ""
 
-        if self.namespace:
-            namespaced_queue = f"{self.namespace}-{queue}"
+        namespace = await self._resolved_namespace()
+
+        if namespace:
+            namespaced_queue = f"{namespace}-{queue}"
 
         else:
             namespaced_queue = queue
@@ -82,7 +133,8 @@ class SQSQueueAdapter[M: BaseModel](
         delay: timedelta | None = None,
         not_before: datetime | None = None,
     ) -> str:
-        physical_queue = self.__queue_name(queue)
+        await self._prepare_queue_names()
+        physical_queue = await self.__queue_name(queue)
         body = self.codec.encode(payload)
 
         async with self.client.client():
@@ -112,7 +164,8 @@ class SQSQueueAdapter[M: BaseModel](
         if not payloads:
             return []
 
-        physical_queue = self.__queue_name(queue)
+        await self._prepare_queue_names()
+        physical_queue = await self.__queue_name(queue)
         bodies = [self.codec.encode(payload) for payload in payloads]
 
         async with self.client.client():
@@ -135,7 +188,8 @@ class SQSQueueAdapter[M: BaseModel](
         limit: int | None = None,
         timeout: timedelta | None = None,
     ) -> list[QueueMessage[M]]:
-        physical_queue = self.__queue_name(queue)
+        await self._prepare_queue_names()
+        physical_queue = await self.__queue_name(queue)
 
         async with self.client.client():
             raw = await self.client.receive(
@@ -154,7 +208,8 @@ class SQSQueueAdapter[M: BaseModel](
         *,
         timeout: timedelta | None = None,
     ) -> AsyncGenerator[QueueMessage[M]]:
-        physical_queue = self.__queue_name(queue)
+        await self._prepare_queue_names()
+        physical_queue = await self.__queue_name(queue)
 
         async with self.client.client():
             async for msg in self.client.consume(physical_queue, timeout=timeout):
@@ -163,7 +218,8 @@ class SQSQueueAdapter[M: BaseModel](
     # ....................... #
 
     async def ack(self, queue: str, ids: Sequence[str]) -> int:
-        physical_queue = self.__queue_name(queue)
+        await self._prepare_queue_names()
+        physical_queue = await self.__queue_name(queue)
 
         async with self.client.client():
             return await self.client.ack(physical_queue, ids)
@@ -177,7 +233,8 @@ class SQSQueueAdapter[M: BaseModel](
         *,
         requeue: bool = True,
     ) -> int:
-        physical_queue = self.__queue_name(queue)
+        await self._prepare_queue_names()
+        physical_queue = await self.__queue_name(queue)
 
         async with self.client.client():
             return await self.client.nack(physical_queue, ids, requeue=requeue)

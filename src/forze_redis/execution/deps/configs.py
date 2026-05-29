@@ -1,9 +1,11 @@
 """Redis dependency integration configs (frozen attrs)."""
 
-from enum import StrEnum
-
 import attrs
 
+from forze.application.contracts.resolution import (
+    NamedResourceSpec,
+    coerce_named_resource_spec,
+)
 from forze.application.contracts.tenancy import TenantAwareIntegrationConfig
 
 # ----------------------- #
@@ -13,7 +15,7 @@ from forze.application.contracts.tenancy import TenantAwareIntegrationConfig
 class RedisUniversalConfig(TenantAwareIntegrationConfig):
     """Base configuration for a Redis resource."""
 
-    namespace: str | StrEnum
+    namespace: NamedResourceSpec = attrs.field(converter=coerce_named_resource_spec)
     """Namespace for the keys."""
 
 

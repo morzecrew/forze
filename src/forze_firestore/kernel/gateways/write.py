@@ -31,6 +31,7 @@ from forze.base.serialization import (
 from forze.domain.constants import REV_FIELD
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document
 
+from ..relation import relations_match
 from .base import FirestoreGateway
 from .history import FirestoreHistoryGateway
 from .read import FirestoreReadGateway
@@ -68,21 +69,36 @@ class FirestoreWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
-        if self.collection != self.read_gw.collection:
-            raise exc.internal(
-                "Collection mismatch. Write gateway and nested read gateway must match."
+        if not relations_match(self.relation, self.read_gw.relation):
+            raise exc.configuration(
+                "Relation mismatch. Write gateway and nested read gateway must use the same relation."
             )
 
         if self.client is not self.read_gw.client:
-            raise exc.internal("Client mismatch between write and read gateways.")
-
-        if self.database != self.read_gw.database:
-            raise exc.internal("Database mismatch between write and read gateways.")
+            raise exc.configuration(
+                "Client mismatch. Write gateway and nested read gateway must use the same client."
+            )
 
         if self.tenant_aware != self.read_gw.tenant_aware:
-            raise exc.internal(
-                "Tenant awareness mismatch between write and read gateways."
+            raise exc.configuration(
+                "Tenant awareness mismatch. Write gateway and nested read gateway must have the same tenant awareness."
             )
+
+        if self.history_gw is not None:
+            if self.client is not self.history_gw.client:
+                raise exc.configuration(
+                    "Client mismatch. Write gateway and nested history gateway must use the same client."
+                )
+
+            if not relations_match(self.relation, self.history_gw.target_relation):
+                raise exc.configuration(
+                    "Relation mismatch. Write gateway and nested history gateway must point to the same write relation."
+                )
+
+            if self.tenant_aware != self.history_gw.tenant_aware:
+                raise exc.configuration(
+                    "Tenant awareness mismatch. Write gateway and nested history gateway must have the same tenant awareness."
+                )
 
     # ....................... #
 

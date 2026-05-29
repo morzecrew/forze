@@ -12,8 +12,10 @@ from forze.application.contracts.analytics import (
     AnalyticsQueryPort,
     AnalyticsSpec,
 )
+from forze.application.contracts.tenancy import TenantProviderPort
 from forze_postgres.execution.deps.configs import PostgresAnalyticsConfig
 from forze_postgres.kernel.client import PostgresClientPort
+from forze_postgres.kernel.gateways import PostgresQualifiedName
 
 from ._chunked import PostgresAnalyticsChunkedMixin
 from ._cursor import PostgresAnalyticsCursorMixin
@@ -40,3 +42,12 @@ class PostgresAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
     client: PostgresClientPort
     spec: AnalyticsSpec[R, Ing]
     config: PostgresAnalyticsConfig
+    tenant_provider: TenantProviderPort | None = None
+    """Tenant context for dynamic ingest :class:`~forze_postgres.kernel.relation.RelationSpec` resolvers."""
+
+    _ingest_qname_resolved: PostgresQualifiedName | None = attrs.field(
+        default=None,
+        init=False,
+        eq=False,
+        repr=False,
+    )

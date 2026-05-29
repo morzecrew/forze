@@ -37,6 +37,17 @@ def test_derive_mode_row() -> None:
     )
 
 
+def test_derive_mode_relation() -> None:
+    assert (
+        derive_postgres_tenant_isolation_mode(
+            client_is_routed=False,
+            routes=[],
+            has_relation_resolvers=True,
+        )
+        == "relation"
+    )
+
+
 def test_derive_mode_database() -> None:
     assert (
         derive_postgres_tenant_isolation_mode(

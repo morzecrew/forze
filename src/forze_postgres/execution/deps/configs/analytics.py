@@ -6,6 +6,7 @@ import attrs
 
 from forze.base.exceptions import exc
 from forze.base.primitives import StrKey
+from forze_postgres.kernel.relation import RelationSpec, coerce_relation_spec
 
 from ._mapping import frozen_mapping
 
@@ -13,6 +14,16 @@ if TYPE_CHECKING:
     from forze.application.contracts.analytics import AnalyticsSpec
 
 # ----------------------- #
+
+
+def _optional_relation_spec(value: object) -> RelationSpec | None:
+    if value is None:
+        return None
+
+    return coerce_relation_spec(value)
+
+
+# ....................... #
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
@@ -47,14 +58,33 @@ class PostgresAnalyticsConfig:
     )
     """Named queries; keys must match ``AnalyticsSpec.queries``."""
 
+    ingest_relation: RelationSpec | None = attrs.field(
+        default=None,
+        converter=_optional_relation_spec,
+    )
+    """Ingest target ``(schema, table)`` or tenant resolver (relation-level isolation)."""
+
     schema: str = "public"
-    """PostgreSQL schema for ``ingest_table``."""
+    """Legacy schema for :attr:`ingest_table` when :attr:`ingest_relation` is omitted."""
 
     ingest_table: str | None = None
-    """Table name for analytics ingest append."""
+    """Legacy table name; use :attr:`ingest_relation` ``(schema, table)`` instead."""
 
     max_append_rows: int = 10_000
     """Maximum rows per ``append`` call."""
+
+    # ....................... #
+
+    def resolved_ingest_relation(self) -> RelationSpec | None:
+        """Effective ingest relation from :attr:`ingest_relation` or legacy fields."""
+
+        if self.ingest_relation is not None:
+            return self.ingest_relation
+
+        if self.ingest_table is not None:
+            return (self.schema, self.ingest_table)
+
+        return None
 
     # ....................... #
 
@@ -80,8 +110,8 @@ class PostgresAnalyticsConfig:
                 f"{sorted(extra)!r}."
             )
 
-        if spec.ingest is not None and self.ingest_table is None:
+        if spec.ingest is not None and self.resolved_ingest_relation() is None:
             raise exc.configuration(
-                f"Postgres analytics config for route {spec.name!r} requires ingest_table "
-                "when AnalyticsSpec.ingest is set."
+                f"Postgres analytics config for route {spec.name!r} requires "
+                "ingest_relation (or legacy ingest_table) when AnalyticsSpec.ingest is set."
             )

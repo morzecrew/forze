@@ -17,7 +17,7 @@ def storage_adapter_with_tenant() -> GCSStorageAdapter:
     mock_uuid = UUID("00000000-0000-0000-0000-000000000000")
     return GCSStorageAdapter(
         client=client,
-        bucket="test-bucket",
+        bucket_spec="test-bucket",
         tenant_aware=True,
         tenant_provider=lambda: TenantIdentity(tenant_id=_TENANT),
         key_generator=lambda: str(mock_uuid),

@@ -11,8 +11,10 @@ from forze.application.contracts.durable.workflow import (
     DurableWorkflowScheduleCommandDepKey,
     DurableWorkflowScheduleQueryDepKey,
 )
+from forze.application.contracts.tenancy import warn_dynamic_relation_with_tenant_aware
 from forze.application.execution import Deps, DepsModule
 
+from ...kernel._logger import logger
 from ...kernel.platform import TemporalClientPort
 from .configs import TemporalWorkflowConfig
 from .deps import (
@@ -43,6 +45,18 @@ class TemporalDepsModule[K: str | StrEnum](DepsModule[K]):
         )
     )
     """Declarative schedules upserted on Temporal lifecycle startup."""
+
+    def __attrs_post_init__(self) -> None:
+        if self.workflows:
+            for name, cfg in self.workflows.items():
+                warn_dynamic_relation_with_tenant_aware(
+                    integration="Temporal",
+                    route_name=str(name),
+                    kind="workflow",
+                    tenant_aware=cfg.tenant_aware,
+                    named_fields=[("queue", cfg.queue)],
+                    log_warning=logger.warning,
+                )
 
     # ....................... #
 

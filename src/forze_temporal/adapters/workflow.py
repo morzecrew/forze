@@ -33,9 +33,6 @@ class TemporalWorkflowCommandAdapter[In: BaseModel, Out: BaseModel](
 ):
     """Temporal-backed implementation of :class:`DurableWorkflowCommandPort`."""
 
-    queue: str
-    """Temporal task queue name."""
-
     spec: DurableWorkflowSpec[In, Out]
     """Workflow specification."""
 
@@ -48,10 +45,11 @@ class TemporalWorkflowCommandAdapter[In: BaseModel, Out: BaseModel](
         workflow_id: str | None = None,
         raise_on_already_started: bool = True,
     ) -> DurableWorkflowHandle:
+        await self._prepare_queue()
         wid = self.construct_workflow_id(workflow_id)
 
         res = await self.client.start_workflow(
-            queue=self.queue,
+            queue=await self._resolved_queue(),
             name=self.spec.name,
             arg=args,
             workflow_id=wid,
@@ -127,9 +125,6 @@ class TemporalWorkflowQueryAdapter[In: BaseModel, Out: BaseModel](
     DurableWorkflowQueryPort[In, Out],
 ):
     """Temporal-backed implementation of :class:`DurableWorkflowQueryPort`."""
-
-    queue: str
-    """Temporal task queue name."""
 
     spec: DurableWorkflowSpec[In, Out]
     """Workflow specification."""

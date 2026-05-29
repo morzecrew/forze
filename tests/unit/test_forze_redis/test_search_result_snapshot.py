@@ -28,7 +28,7 @@ async def test_append_chunk_cas_conflict_raises() -> None:
 
     adapter = RedisSearchResultSnapshotAdapter(
         client=client,
-        key_codec=RedisKeyCodec(namespace="u:snap:cas"),
+        namespace="u:snap:cas",
     )
 
     with pytest.raises(CoreException, match="Concurrent snapshot append"):
@@ -58,7 +58,7 @@ async def test_append_chunk_cas_success_calls_script() -> None:
 
     adapter = RedisSearchResultSnapshotAdapter(
         client=client,
-        key_codec=RedisKeyCodec(namespace="u:snap:cas"),
+        namespace="u:snap:cas",
     )
 
     await adapter.append_chunk(
@@ -79,7 +79,7 @@ async def test_append_chunk_cas_success_calls_script() -> None:
 async def test_get_id_range_rejects_zero_limit() -> None:
     adapter = RedisSearchResultSnapshotAdapter(
         client=AsyncMock(),
-        key_codec=RedisKeyCodec(namespace="u:snap:unit"),
+        namespace="u:snap:unit",
     )
     with pytest.raises(CoreException, match="limit"):
         await adapter.get_id_range("run", 0, 0)

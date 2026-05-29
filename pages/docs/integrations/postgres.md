@@ -229,7 +229,7 @@ Connection recovery is bounded by `reconnect_timeout`. Query-level retries shoul
 Use analytics when handlers need **named, parameterized SQL** against pre-provisioned tables or materialized views (warehouse-style reads and optional small batch append). This is separate from `DocumentQueryPort` OLTP aggregates.
 
 1. Declare `AnalyticsSpec` routes and named queries in application code.
-2. Map each route in `PostgresDepsModule.analytics` to SQL templates and optional `ingest_table`.
+2. Map each route in `PostgresDepsModule.analytics` to SQL templates and optional ingest target (`ingest_relation` or legacy `ingest_table`).
 3. Resolve ports from `ExecutionContext`; do not import adapters in handlers.
 
 `PostgresAnalyticsAdapter` implements `AnalyticsQueryPort` and, when configured, `AnalyticsIngestPort` on the same adapter instance.
@@ -240,10 +240,13 @@ Physical mapping lives on `PostgresDepsModule.analytics`, keyed by `AnalyticsSpe
 
 | Field | Purpose |
 |-------|---------|
-| `schema` | Schema for `ingest_table` (default `public`). Query SQL should use qualified `schema.table` names as needed. |
 | `queries` | Map of `query_key` → `{ "sql": "...", "skip_total"?: bool, "cursor_column"?: str }`. Keys must match `AnalyticsSpec.queries`. |
-| `ingest_table` | Table name for `append` (required when `AnalyticsSpec.ingest` is set). |
+| `ingest_relation` | Ingest target as static `(schema, table)` or tenant `ValueResolver` (schema-per-tenant). Preferred when `AnalyticsSpec.ingest` is set. |
+| `schema` | Legacy schema for `ingest_table` when `ingest_relation` is omitted (default `public`). |
+| `ingest_table` | Legacy table name for `append`; use `ingest_relation` for relation-level isolation. |
 | `max_append_rows` | Cap per `append` call (default 10_000). |
+
+Query SQL should use fully qualified `schema.table` names as needed; ingest resolution is independent of query templates.
 
 ### SQL templates
 
@@ -254,7 +257,6 @@ Use **psycopg named placeholders** `%(param)s` bound from each query’s Pydanti
         client=pg,
         analytics={
             "events": {
-                "schema": "public",
                 "queries": {
                     "daily": {
                         "sql": (
@@ -263,12 +265,30 @@ Use **psycopg named placeholders** `%(param)s` bound from each query’s Pydanti
                         ),
                     },
                 },
-                "ingest_table": "metrics_raw",
+                "ingest_relation": ("public", "metrics_raw"),
             },
         },
     )
 
 Pass `AnalyticsRunOptions` (`dry_run`, `max_rows`, `timeout`) per request. When `timeout` is set, the adapter applies `SET LOCAL statement_timeout` for that query. `dry_run` returns empty pages without executing SQL.
+
+### Analytics queries and tenancy
+
+Forze resolves **ingest** targets via `ingest_relation` (or legacy `ingest_table`). **Query** SQL in `queries.*.sql` is passed to Postgres **verbatim**—there is no `RelationSpec` on query templates.
+
+| Concern | Framework | Application |
+|---------|-----------|-------------|
+| Append target | `ingest_relation` / `resolved_ingest_relation()` | Static tuple or `ValueResolver` for schema-per-tenant tables |
+| Read SQL | Not rewritten | You own qualification and filters |
+
+Recommended patterns:
+
+1. **Database-per-tenant** — `RoutedPostgresClient` with per-tenant DSN; keep static `schema.table` in SQL inside that database.
+2. **Schema-per-tenant** — `RelationSpec` on document routes and `ingest_relation` for append; point analytics SQL at views or tables in each tenant schema (fully qualified names in SQL).
+3. **Shared database** — embed `schema.table` in each query string, or register separate `AnalyticsSpec` routes with different static SQL per layout.
+4. **Row scope in SQL** — add `WHERE tenant_id = %(tenant_id)s` (or equivalent) and bind from the query params model; this complements document `tenant_aware`, it does not replace missing table qualification.
+
+See [Multi-tenancy — relation-level isolation](../concepts/multi-tenancy.md#relation-level-isolation-all-integrations).
 
 See [Analytics contracts](../core-package/contracts/analytics.md).
 

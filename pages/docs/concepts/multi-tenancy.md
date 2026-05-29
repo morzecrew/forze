@@ -12,6 +12,63 @@ Typical HTTP flow:
 
 If credential validation reads **tenant-scoped** document ports (`tenant_aware=True`) before step 2 completes, bootstrap can deadlock. Keep **authentication document routes** (`AUTHN_TENANT_UNAWARE_DOCUMENT_SPEC_NAMES` in `forze_identity.authn.application`) on **tenant-unaware** stores or global registry clients.
 
+## Relation-level isolation (all integrations)
+
+Integration configs can name physical resources **statically** or with a **`ValueResolver`** from `forze.application.contracts.resolution` (resolved per request from `ctx.inv_ctx.get_tenant()`).
+
+| Spec type | Shape | Examples |
+|-----------|--------|----------|
+| **`RelationSpec`** | `(namespace, name)` tuple or resolver | Postgres `(schema, table)`; Mongo/Firestore `(database, collection)`; BigQuery/ClickHouse analytics ingest `(dataset, table)` / `(database, table)` |
+| **`NamedResourceSpec`** | `str` or resolver | S3/GCS `bucket`; Redis/SQS/RabbitMQ `namespace`; Temporal `queue`; Meilisearch `index_uid`; Mongo Atlas/vector `index_name` |
+
+Helpers in `forze.application.contracts.resolution`: `coerce_relation_spec`, `coerce_named_resource_spec`, `require_static_relation`, `require_static_named_resource` (startup validation when names must be fixed).
+
+`warn_dynamic_relation_with_tenant_aware` in `forze.application.contracts.tenancy` logs when a route uses a dynamic resolver with `tenant_aware=True` (row filters are usually redundant for schema/collection/bucket-per-tenant layouts).
+
+Author-written **analytics query SQL** is not resolved automatically; only **ingest** targets use `ingest_relation` where supported (Postgres, BigQuery, ClickHouse). See integration pages under [Analytics queries and tenancy](../integrations/postgres.md#analytics-queries-and-tenancy).
+
+## Layering routed clients and RelationSpec
+
+Isolation is **layered**. Routed clients and `RelationSpec` solve different problems; combine them deliberately.
+
+| Layer | Mechanism | What you configure |
+|-------|-----------|-------------------|
+| **Account / cluster** | `Routed*Client` + `secret_ref_for_tenant` | Per-tenant DSN, URI, project, or API keys in secrets |
+| **Database / project** | Payload inside the secret (or Mongo `database_name_for_tenant`) | Which database or project the connection uses |
+| **Relation** | `RelationSpec` / `NamedResourceSpec` on routes | Which table, collection, bucket, queue, or ingest target after connected |
+| **Row** | `tenant_aware=True` | `tenant_id` column filters, key prefixes, Meilisearch filters |
+
+Guidelines:
+
+- **Routed = where you connect.** `RoutedPostgresClient`, `RoutedMongoClient`, and siblings resolve credentials per `TenantIdentity` and LRU-dedupe pools by connection fingerprint when several tenants share the same physical endpoint.
+- **RelationSpec = which resource** on that connection (for example `lambda tid: (f"tenant_{tid}", "orders")` on `PostgresDocumentConfig.read`).
+- **Same DSN + dynamic `RelationSpec`** — schema-per-tenant (or collection-per-tenant) on a shared database.
+- **Different DSNs + static relations** — database-per-tenant without resolvers on document routes.
+- **`tenant_aware=True` with a routed client** — redundant row-level filtering; startup logs a warning (`validate_routed_client_tenancy_wiring`). Defense-in-depth is acceptable.
+
+Postgres-only: `PostgresDepsModule.introspector_cache_partition_key` is **required** when using `RoutedPostgresClient` so catalog caches partition by tenant.
+
+### Troubleshooting routed pools
+
+- **Wrong tenant after LRU eviction** — integration tests that share one DSN across tenants should use **distinct connection fingerprints** per tenant (see `tests/integration/_routed_lru_helpers.py`).
+- **Catalog / schema validation on dynamic relations** — startup hooks that need fixed names call `require_static_relation` or skip dynamic routes; omit schema validation lifecycle steps for schema-per-tenant documents.
+
+DSN fingerprinting and secret resolution are **not** changed by the `RelationSpec` rollout; do not expect resolver fields to replace per-tenant secrets.
+
+## Integrations without RelationSpec config
+
+### Inngest (`forze_inngest`)
+
+`InngestEventConfig` has no physical resource fields (only options such as `include_execution_context`). Tenancy is **credential routing only**: `RoutedInngestClient` resolves per-tenant `app_id` and keys from secrets, LRU-dedupes by credential fingerprint, and requires a tenant on `send`.
+
+Relation-level isolation for Inngest means **separate Inngest apps per tenant** (secrets + routed client), not `RelationSpec` on the deps module. Event names, function IDs, and `serve()` registration remain **application conventions** (for example `tenant:{tenant_id}:invoice.paid`). See [Inngest integration](../integrations/inngest.md).
+
+### Mock (`forze_mock`)
+
+`forze_mock` provides in-memory adapters (`MockState`) for unit tests and local demos. There is no physical backend, no `TenantAwareIntegrationConfig` on integration configs, and no routed client.
+
+Mock is **tenant-agnostic** unless tests partition `MockState` themselves (separate module instances or explicit keys). Do not use mock for production tenancy patterns.
+
 ## Postgres isolation modes
 
 Postgres does not use a separate `tenant_isolation` config field. Effective mode is **derived** from the client type and per-route `tenant_aware` flags on `PostgresDocumentConfig` / search configs:

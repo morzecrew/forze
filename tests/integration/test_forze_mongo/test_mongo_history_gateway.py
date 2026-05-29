@@ -40,10 +40,8 @@ async def _gw(
 ) -> MongoHistoryGateway[HistDoc]:
     db_name = (await client.db()).name
     return MongoHistoryGateway(
-        database=db_name,
-        collection=hist_coll,
-        target_database=db_name,
-        target_collection=target_coll,
+        relation=(db_name, hist_coll),
+        target_relation=(db_name, target_coll),
         client=client,
         model_type=HistDoc,
         tenant_aware=False,

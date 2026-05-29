@@ -17,7 +17,6 @@ from ...adapters import (
     RedisCounterAdapter,
     RedisDistributedLockAdapter,
     RedisIdempotencyAdapter,
-    RedisKeyCodec,
     RedisSearchResultSnapshotAdapter,
 )
 from .configs import (
@@ -49,11 +48,10 @@ class ConfigurableRedisCache(CacheDepPort):
         spec: CacheSpec,
     ) -> RedisCacheAdapter:
         client = ctx.deps.provide(RedisClientDepKey)
-        key_codec = RedisKeyCodec(namespace=str(self.config.namespace))
 
         return RedisCacheAdapter(
             client=client,
-            key_codec=key_codec,
+            namespace=self.config.namespace,
             ttl_pointer=spec.ttl_pointer,
             ttl_body=spec.ttl,
             ttl_kv=spec.ttl,
@@ -81,11 +79,10 @@ class ConfigurableRedisCounter(CounterDepPort):
         spec: CounterSpec,
     ) -> RedisCounterAdapter:
         client = ctx.deps.provide(RedisClientDepKey)
-        key_codec = RedisKeyCodec(namespace=str(self.config.namespace))
 
         return RedisCounterAdapter(
             client=client,
-            key_codec=key_codec,
+            namespace=self.config.namespace,
             tenant_aware=self.config.tenant_aware,
             tenant_provider=ctx.inv_ctx.get_tenant,
         )
@@ -110,11 +107,10 @@ class ConfigurableRedisIdempotency(IdempotencyDepPort):
         spec: IdempotencySpec,
     ) -> RedisIdempotencyAdapter:
         client = ctx.deps.provide(RedisClientDepKey)
-        key_codec = RedisKeyCodec(namespace=str(self.config.namespace))
 
         return RedisIdempotencyAdapter(
             client=client,
-            key_codec=key_codec,
+            namespace=self.config.namespace,
             ttl=spec.ttl,
             tenant_aware=self.config.tenant_aware,
             tenant_provider=ctx.inv_ctx.get_tenant,
@@ -140,11 +136,10 @@ class ConfigurableRedisSearchResultSnapshot:
         spec: SearchResultSnapshotSpec,
     ) -> SearchResultSnapshotPort:
         client = ctx.deps.provide(RedisClientDepKey)
-        key_codec = RedisKeyCodec(namespace=str(self.config.namespace))
 
         return RedisSearchResultSnapshotAdapter(
             client=client,
-            key_codec=key_codec,
+            namespace=self.config.namespace,
             default_ttl=spec.ttl,
             default_max_ids=spec.max_ids,
             default_chunk_size=spec.chunk_size,
@@ -172,11 +167,10 @@ class ConfigurableRedisDistributedLock:
         spec: DistributedLockSpec,
     ) -> RedisDistributedLockAdapter:
         client = ctx.deps.provide(RedisClientDepKey)
-        key_codec = RedisKeyCodec(namespace=str(self.config.namespace))
 
         return RedisDistributedLockAdapter(
             client=client,
-            key_codec=key_codec,
+            namespace=self.config.namespace,
             spec=spec,
             tenant_aware=self.config.tenant_aware,
             tenant_provider=ctx.inv_ctx.get_tenant,

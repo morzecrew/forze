@@ -6,6 +6,7 @@ require_rabbitmq()
 
 from datetime import datetime, timedelta
 from typing import AsyncGenerator, Sequence, final
+from uuid import UUID
 
 import attrs
 from pydantic import BaseModel
@@ -15,9 +16,12 @@ from forze.application.contracts.queue import (
     QueueMessage,
     QueueQueryPort,
 )
+from forze.application.contracts.resolution import NamedResourceSpec, is_static_named_resource
 from forze.application.contracts.tenancy import TenancyMixin
+from forze.base.exceptions import exc
 
 from ..kernel.platform import RabbitMQClientPort
+from ..kernel.relation import resolve_rabbitmq_namespace
 from .codecs import RabbitMQQueueCodec
 
 # ----------------------- #
@@ -38,15 +42,60 @@ class RabbitMQQueueAdapter[M: BaseModel](
     codec: RabbitMQQueueCodec[M]
     """RabbitMQ queue codec instance."""
 
-    namespace: str | None = attrs.field(default=None)
+    namespace: NamedResourceSpec = ""
     """RabbitMQ queue namespace."""
 
-    delayed_delivery: bool = attrs.field(default=False)
+    delayed_delivery: bool = False
     """Whether delayed enqueue uses the DLX delay-queue topology."""
+
+    _namespace_resolved: str | None = attrs.field(
+        default=None,
+        init=False,
+        eq=False,
+        repr=False,
+    )
 
     # ....................... #
 
-    def __queue_name(self, queue: str) -> str:
+    def _tenant_id_for_resolve(self) -> UUID | None:
+        if self.tenant_provider is None:
+            return None
+
+        tenant = self.tenant_provider()
+
+        if tenant is None:
+            if self.tenant_aware:
+                raise exc.internal("Tenant ID is required for the RabbitMQ queue adapter")
+
+            return None
+
+        return tenant.tenant_id
+
+    # ....................... #
+
+    async def _resolved_namespace(self) -> str:
+        if self._namespace_resolved is not None:
+            return self._namespace_resolved
+
+        resolved = await resolve_rabbitmq_namespace(
+            self.namespace,
+            self._tenant_id_for_resolve(),
+        )
+        object.__setattr__(self, "_namespace_resolved", resolved)
+
+        return resolved
+
+    # ....................... #
+
+    async def _prepare_queue_names(self) -> None:
+        if is_static_named_resource(self.namespace):
+            return
+
+        await self._resolved_namespace()
+
+    # ....................... #
+
+    async def __queue_name(self, queue: str) -> str:
         tenant_id = self.require_tenant_if_aware()
 
         if tenant_id is not None:
@@ -55,8 +104,10 @@ class RabbitMQQueueAdapter[M: BaseModel](
         else:
             tenant_prefix = ""
 
-        if self.namespace:
-            namespaced_queue = f"{self.namespace}:{queue}"
+        namespace = await self._resolved_namespace()
+
+        if namespace:
+            namespaced_queue = f"{namespace}:{queue}"
 
         else:
             namespaced_queue = queue
@@ -76,7 +127,8 @@ class RabbitMQQueueAdapter[M: BaseModel](
         delay: timedelta | None = None,
         not_before: datetime | None = None,
     ) -> str:
-        physical_queue = self.__queue_name(queue)
+        await self._prepare_queue_names()
+        physical_queue = await self.__queue_name(queue)
         body = self.codec.encode(payload)
 
         return await self.client.enqueue(
@@ -106,7 +158,8 @@ class RabbitMQQueueAdapter[M: BaseModel](
         if not payloads:
             return []
 
-        physical_queue = self.__queue_name(queue)
+        await self._prepare_queue_names()
+        physical_queue = await self.__queue_name(queue)
         bodies = [self.codec.encode(payload) for payload in payloads]
 
         return await self.client.enqueue_many(
@@ -129,7 +182,8 @@ class RabbitMQQueueAdapter[M: BaseModel](
         limit: int | None = None,
         timeout: timedelta | None = None,
     ) -> list[QueueMessage[M]]:
-        physical_queue = self.__queue_name(queue)
+        await self._prepare_queue_names()
+        physical_queue = await self.__queue_name(queue)
         raw = await self.client.receive(physical_queue, limit=limit, timeout=timeout)
 
         return [self.codec.decode(queue, msg) for msg in raw]
@@ -142,7 +196,8 @@ class RabbitMQQueueAdapter[M: BaseModel](
         *,
         timeout: timedelta | None = None,
     ) -> AsyncGenerator[QueueMessage[M]]:
-        physical_queue = self.__queue_name(queue)
+        await self._prepare_queue_names()
+        physical_queue = await self.__queue_name(queue)
 
         async for msg in self.client.consume(physical_queue, timeout=timeout):
             yield self.codec.decode(queue, msg)
@@ -150,7 +205,8 @@ class RabbitMQQueueAdapter[M: BaseModel](
     # ....................... #
 
     async def ack(self, queue: str, ids: Sequence[str]) -> int:
-        physical_queue = self.__queue_name(queue)
+        await self._prepare_queue_names()
+        physical_queue = await self.__queue_name(queue)
         return await self.client.ack(physical_queue, ids)
 
     # ....................... #
@@ -162,5 +218,6 @@ class RabbitMQQueueAdapter[M: BaseModel](
         *,
         requeue: bool = True,
     ) -> int:
-        physical_queue = self.__queue_name(queue)
+        await self._prepare_queue_names()
+        physical_queue = await self.__queue_name(queue)
         return await self.client.nack(physical_queue, ids, requeue=requeue)

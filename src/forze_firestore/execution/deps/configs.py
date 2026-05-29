@@ -2,6 +2,7 @@
 
 import attrs
 
+from forze.application.contracts.resolution import RelationSpec, coerce_relation_spec
 from forze.application.contracts.tenancy import TenantAwareIntegrationConfig
 
 # ----------------------- #
@@ -11,7 +12,7 @@ from forze.application.contracts.tenancy import TenantAwareIntegrationConfig
 class FirestoreReadOnlyDocumentConfig(TenantAwareIntegrationConfig):
     """Read-only document mapping: ``(database_id, collection_id)``."""
 
-    read: tuple[str, str]
+    read: RelationSpec = attrs.field(converter=coerce_relation_spec)
     batch_size: int = 200
 
 
@@ -19,8 +20,11 @@ class FirestoreReadOnlyDocumentConfig(TenantAwareIntegrationConfig):
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class FirestoreDocumentConfig(FirestoreReadOnlyDocumentConfig):
+class FirestoreDocumentConfig(FirestoreReadOnlyDocumentConfig):  # type: ignore[no-untyped-def]
     """Read-write document mapping with optional history collection."""
 
-    write: tuple[str, str]
-    history: tuple[str, str] | None = None
+    write: RelationSpec = attrs.field(converter=coerce_relation_spec)
+    history: RelationSpec | None = attrs.field(  # type: ignore[var-annotated]
+        default=None,
+        converter=lambda v: coerce_relation_spec(v) if v is not None else None,
+    )

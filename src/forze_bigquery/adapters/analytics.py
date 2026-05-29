@@ -1,6 +1,7 @@
 """BigQuery implementation of analytics query and ingest ports."""
 
 from typing import Any, AsyncGenerator, Sequence, TypeVar, cast, final
+from uuid import UUID
 
 import attrs
 from pydantic import BaseModel
@@ -31,6 +32,7 @@ from forze.application.contracts.querying import (
     CursorPaginationExpression,
     PaginationExpression,
 )
+from forze.application.contracts.tenancy import TenantProviderPort
 from forze.base.codecs import B64UrlJsonCodec
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
@@ -48,6 +50,7 @@ from forze_bigquery.kernel.platform import (
     build_count_sql,
 )
 from forze_bigquery.kernel.platform.value_objects import BigQueryQueryResult
+from forze_bigquery.kernel.relation import resolve_bigquery_ingest_target
 
 # ----------------------- #
 
@@ -71,6 +74,46 @@ class BigQueryAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
     client: BigQueryClientPort
     spec: AnalyticsSpec[R, Ing]
     config: BigQueryAnalyticsConfig
+    tenant_provider: TenantProviderPort | None = None
+    """Tenant context for dynamic ingest :class:`~forze_bigquery.kernel.relation.RelationSpec` resolvers."""
+
+    _ingest_target_resolved: tuple[str, str] | None = attrs.field(
+        default=None,
+        init=False,
+        eq=False,
+        repr=False,
+    )
+
+    # ....................... #
+
+    def _tenant_id_for_resolve(self) -> UUID | None:
+        if self.tenant_provider is None:
+            return None
+
+        tenant = self.tenant_provider()
+
+        return tenant.tenant_id if tenant is not None else None
+
+    # ....................... #
+
+    async def _resolved_ingest_target(self) -> tuple[str, str]:
+        spec = self.config.resolved_ingest_relation()
+
+        if spec is None:
+            raise exc.internal(
+                f"BigQuery ingest relation is required for route {self.spec.name!r}."
+            )
+
+        if self._ingest_target_resolved is not None:
+            return self._ingest_target_resolved
+
+        resolved = await resolve_bigquery_ingest_target(
+            spec,
+            self._tenant_id_for_resolve(),
+        )
+        object.__setattr__(self, "_ingest_target_resolved", resolved)
+
+        return resolved
 
     # ....................... #
 
@@ -583,11 +626,9 @@ class BigQueryAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
                 f"Analytics ingest is not configured for route {self.spec.name!r}."
             )
 
-        table = self.config.ingest_table
-
-        if not table:
+        if self.config.resolved_ingest_relation() is None:
             raise exc.internal(
-                f"BigQuery ingest_table is required for route {self.spec.name!r}."
+                f"BigQuery ingest relation is required for route {self.spec.name!r}."
             )
 
         if not rows:
@@ -619,8 +660,10 @@ class BigQueryAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
                     "Analytics ingest rows must be Pydantic model instances."
                 )
 
+        dataset, table = await self._resolved_ingest_target()
+
         insert_result = await self.client.insert_rows(
-            self.config.dataset,
+            dataset,
             table,
             payloads,
             insert_id_field=self.config.insert_id_field,

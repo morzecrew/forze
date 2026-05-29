@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 from typing import Any, final
+from uuid import UUID
 
 import attrs
 from pydantic import BaseModel
 
 from forze.application.contracts.embeddings import EmbeddingsProviderPort
+from forze.application.contracts.resolution import NamedResourceSpec
+from forze_mongo.kernel.relation import resolve_mongo_named_resource
 from forze.application.contracts.querying import QuerySortExpression
 from forze.application.contracts.search import SearchOptions
 
@@ -46,8 +49,15 @@ class MongoVectorSearchAdapter[M: BaseModel](MongoSimpleSearchAdapter[M]):
     vector_path: str
     """Document field holding the embedding array."""
 
-    index_name: str
+    index_name: NamedResourceSpec
     """Atlas Vector Search index name (``$vectorSearch`` stage)."""
+
+    _index_name_resolved: str | None = attrs.field(
+        default=None,
+        init=False,
+        eq=False,
+        repr=False,
+    )
 
     vector_num_candidates: int = attrs.field(default=100)
     """``numCandidates`` passed to ``$vectorSearch``."""
@@ -56,6 +66,25 @@ class MongoVectorSearchAdapter[M: BaseModel](MongoSimpleSearchAdapter[M]):
     """``$vectorSearch`` ``limit`` (must be ``<=`` :attr:`vector_num_candidates`)."""
 
     search_variant: str = attrs.field(default="mongo_vector", init=False)
+
+    # ....................... #
+
+    async def _resolved_index_name(self) -> str:
+        if self._index_name_resolved is not None:
+            return self._index_name_resolved
+
+        tenant_id: UUID | None = None
+
+        if self.tenant_provider is not None:
+            tenant = self.tenant_provider()
+
+            if tenant is not None:
+                tenant_id = tenant.tenant_id
+
+        resolved = await resolve_mongo_named_resource(self.index_name, tenant_id)
+        object.__setattr__(self, "_index_name_resolved", resolved)
+
+        return resolved
 
     # ....................... #
 
@@ -100,7 +129,7 @@ class MongoVectorSearchAdapter[M: BaseModel](MongoSimpleSearchAdapter[M]):
         return build_vector_ranked_pipeline(
             pre_filter=pre_filter,
             query_vector=vec,
-            index_name=self.index_name,
+            index_name=await self._resolved_index_name(),
             vector_path=self.vector_path,
             num_candidates=self.vector_num_candidates,
             limit=self.vector_fetch_limit,

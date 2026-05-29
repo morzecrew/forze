@@ -26,7 +26,6 @@ from forze_redis.adapters import (
     RedisStreamCodec,
     RedisStreamGroupAdapter,
 )
-from forze_redis.adapters.codecs import RedisKeyCodec
 from forze_redis.kernel.platform.client import RedisClient, RedisConfig
 from forze.base.serialization import PydanticRecordMappingCodec
 
@@ -75,7 +74,7 @@ async def redis_cache(redis_client: RedisClient) -> RedisCacheAdapter:
     namespace = f"it:cache:{uuid4().hex[:12]}"
     return RedisCacheAdapter(
         client=redis_client,
-        key_codec=RedisKeyCodec(namespace=namespace),
+        namespace=namespace,
     )
 
 
@@ -85,7 +84,7 @@ async def redis_counter(redis_client: RedisClient) -> RedisCounterAdapter:
     namespace = f"it:counter:{uuid4().hex[:12]}"
     return RedisCounterAdapter(
         client=redis_client,
-        key_codec=RedisKeyCodec(namespace=namespace),
+        namespace=namespace,
     )
 
 
@@ -95,7 +94,7 @@ async def redis_idempotency(redis_client: RedisClient) -> RedisIdempotencyAdapte
     namespace = f"it:idempotency:{uuid4().hex[:12]}"
     return RedisIdempotencyAdapter(
         client=redis_client,
-        key_codec=RedisKeyCodec(namespace=namespace),
+        namespace=namespace,
     )
 
 
@@ -107,7 +106,7 @@ async def redis_search_snapshot(
     namespace = f"it:search_snapshot:{uuid4().hex[:12]}"
     return RedisSearchResultSnapshotAdapter(
         client=redis_client,
-        key_codec=RedisKeyCodec(namespace=namespace),
+        namespace=namespace,
     )
 
 
@@ -119,7 +118,7 @@ async def redis_dlock(
     namespace = f"it:dlock:{uuid4().hex[:12]}"
     return RedisDistributedLockAdapter(
         client=redis_client,
-        key_codec=RedisKeyCodec(namespace=namespace),
+        namespace=namespace,
         spec=DistributedLockSpec(name="it-lock", ttl=timedelta(seconds=60)),
     )
 

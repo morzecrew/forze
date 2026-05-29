@@ -123,7 +123,9 @@ async def execute_meilisearch_offset_search[M: BaseModel](
             dict.fromkeys([*phys_fields, gw.primary_key])
         )
 
-    index = client.index(gw.index_uid)
+    index = client.index(
+        await gw._resolved_index_uid()  # pyright: ignore[reportPrivateUsage]
+    )
     result = await index.search(q, **search_kwargs)
 
     hits_raw = list(getattr(result, "hits", []) or [])

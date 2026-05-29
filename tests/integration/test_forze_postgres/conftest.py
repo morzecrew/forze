@@ -14,7 +14,6 @@ pytest.importorskip("redis")
 
 from forze_postgres.kernel.client.client import PostgresClient, PostgresConfig
 from forze_redis.adapters import RedisSearchResultSnapshotAdapter
-from forze_redis.adapters.codecs import RedisKeyCodec
 from forze_redis.kernel.platform.client import RedisClient, RedisConfig
 
 
@@ -134,5 +133,5 @@ async def redis_search_snapshot(
     namespace = f"it:search_snapshot:{uuid4().hex[:12]}"
     return RedisSearchResultSnapshotAdapter(
         client=redis_client,
-        key_codec=RedisKeyCodec(namespace=namespace),
+        namespace=namespace,
     )

@@ -230,7 +230,6 @@ def _mongo_search_port_for_config(
 ):
     c.validate_against_spec(member_spec)
 
-    db_name, coll_name = c.read
     field_map = dict(c.field_map or {})
     snapshot_coord = _snapshot_coord(context, member_spec.snapshot)
     client = context.deps.provide(MongoClientDepKey)
@@ -241,8 +240,7 @@ def _mongo_search_port_for_config(
             return MongoTextSearchAdapter(
                 spec=member_spec,
                 model_type=member_spec.model_type,
-                database=db_name,
-                collection=coll_name,
+                relation=c.read,
                 client=client,
                 field_map=field_map,
                 tenant_provider=context.inv_ctx.get_tenant,
@@ -253,17 +251,19 @@ def _mongo_search_port_for_config(
         case "atlas":
             index_name = c.index_name
 
+            if index_name is None:
+                raise exc.configuration("index_name is required for atlas engine.")
+
             return MongoAtlasSearchAdapter(
                 spec=member_spec,
                 model_type=member_spec.model_type,
-                database=db_name,
-                collection=coll_name,
+                relation=c.read,
                 client=client,
                 field_map=field_map,
                 tenant_provider=context.inv_ctx.get_tenant,
                 tenant_aware=tenant_aware,
                 snapshot_coord=snapshot_coord,
-                index_name=str(index_name),
+                index_name=index_name,
             )
 
         case "vector":
@@ -273,7 +273,7 @@ def _mongo_search_port_for_config(
             index_name = c.index_name
 
             if en is None or ed is None or vpath is None or index_name is None:
-                raise exc.internal(
+                raise exc.configuration(
                     "vector engine requires embeddings_name, embedding_dimensions, "
                     "vector_path, and index_name.",
                 )
@@ -283,8 +283,7 @@ def _mongo_search_port_for_config(
             return MongoVectorSearchAdapter(
                 spec=member_spec,
                 model_type=member_spec.model_type,
-                database=db_name,
-                collection=coll_name,
+                relation=c.read,
                 client=client,
                 field_map=field_map,
                 tenant_provider=context.inv_ctx.get_tenant,
@@ -297,7 +296,7 @@ def _mongo_search_port_for_config(
             )
 
         case _:  # pyright: ignore[reportUnnecessaryComparison]
-            raise exc.internal(f"Unsupported Mongo search engine: {c.engine!r}.")
+            raise exc.configuration(f"Unsupported Mongo search engine: {c.engine!r}.")
 
 
 # ....................... #

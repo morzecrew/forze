@@ -23,6 +23,9 @@ from forze.application.contracts.transaction import TransactionManagerDepKey
 from forze.application.execution import Deps, DepsModule
 
 from ...kernel.catalog.introspect import PostgresIntrospector
+from ...kernel.catalog.validation.validate_relation_specs import (
+    warn_dynamic_relation_with_tenant_aware,
+)
 from ...kernel.catalog.validation.validate_tenancy import (
     PostgresTenancyRouteSpec,
     validate_postgres_tenancy_wiring,
@@ -32,6 +35,7 @@ from .configs import (
     PostgresAnalyticsConfig,
     PostgresDocumentConfig,
     PostgresFederatedSearchConfig,
+    PostgresFederatedSearchLegHub,
     PostgresHubSearchConfig,
     PostgresReadOnlyDocumentConfig,
     PostgresSearchConfig,
@@ -108,6 +112,12 @@ class PostgresDepsModule[K: str | StrEnum](DepsModule[K]):
                         kind="document",
                     ),
                 )
+                warn_dynamic_relation_with_tenant_aware(
+                    route_name=str(name),
+                    kind="document",
+                    tenant_aware=cfg.tenant_aware,
+                    fields=[("read", cfg.read)],
+                )
 
         if self.rw_documents:
             for name, cfg in self.rw_documents.items():
@@ -117,6 +127,16 @@ class PostgresDepsModule[K: str | StrEnum](DepsModule[K]):
                         tenant_aware=cfg.tenant_aware,
                         kind="document",
                     ),
+                )
+                warn_dynamic_relation_with_tenant_aware(
+                    route_name=str(name),
+                    kind="document",
+                    tenant_aware=cfg.tenant_aware,
+                    fields=[
+                        ("read", cfg.read),
+                        ("write", cfg.write),
+                        ("history", cfg.history),
+                    ],
                 )
 
         if self.searches:
@@ -128,6 +148,16 @@ class PostgresDepsModule[K: str | StrEnum](DepsModule[K]):
                         kind="search",
                     ),
                 )
+                warn_dynamic_relation_with_tenant_aware(
+                    route_name=str(name),
+                    kind="search",
+                    tenant_aware=search_cfg.tenant_aware,
+                    fields=[
+                        ("index", search_cfg.index),
+                        ("read", search_cfg.read),
+                        ("heap", search_cfg.heap_relation),
+                    ],
+                )
 
         if self.hub_searches:
             for name, hub_search_cfg in self.hub_searches.items():
@@ -138,6 +168,24 @@ class PostgresDepsModule[K: str | StrEnum](DepsModule[K]):
                         kind="hub_search",
                     ),
                 )
+                warn_dynamic_relation_with_tenant_aware(
+                    route_name=str(name),
+                    kind="hub_search",
+                    tenant_aware=hub_search_cfg.tenant_aware,
+                    fields=[("hub", hub_search_cfg.hub)],
+                )
+
+                for member_name, leg in hub_search_cfg.members.items():
+                    warn_dynamic_relation_with_tenant_aware(
+                        route_name=f"{name}.{member_name}",
+                        kind="hub_search",
+                        tenant_aware=hub_search_cfg.tenant_aware,
+                        fields=[
+                            ("index", leg.index),
+                            ("read", leg.read),
+                            ("heap", leg.heap_relation),
+                        ],
+                    )
 
         if self.federated_searches:
             for name, federated_search_cfg in self.federated_searches.items():
@@ -148,6 +196,42 @@ class PostgresDepsModule[K: str | StrEnum](DepsModule[K]):
                         kind="federated_search",
                     ),
                 )
+
+                for member_name, fed_leg in federated_search_cfg.members.items():
+                    if isinstance(fed_leg, PostgresFederatedSearchLegHub):
+                        hub_cfg = fed_leg.hub
+                        warn_dynamic_relation_with_tenant_aware(
+                            route_name=f"{name}.{member_name}",
+                            kind="federated_search",
+                            tenant_aware=federated_search_cfg.tenant_aware,
+                            fields=[("hub", hub_cfg.hub)],
+                        )
+
+                        for hub_member_name, hub_leg in hub_cfg.members.items():
+                            warn_dynamic_relation_with_tenant_aware(
+                                route_name=f"{name}.{member_name}.{hub_member_name}",
+                                kind="federated_search",
+                                tenant_aware=federated_search_cfg.tenant_aware,
+                                fields=[
+                                    ("index", hub_leg.index),
+                                    ("read", hub_leg.read),
+                                    ("heap", hub_leg.heap_relation),
+                                ],
+                            )
+
+                    else:
+                        search_cfg = fed_leg.search
+
+                        warn_dynamic_relation_with_tenant_aware(
+                            route_name=f"{name}.{member_name}",
+                            kind="federated_search",
+                            tenant_aware=federated_search_cfg.tenant_aware,
+                            fields=[
+                                ("index", search_cfg.index),
+                                ("read", search_cfg.read),
+                                ("heap", search_cfg.heap_relation),
+                            ],
+                        )
 
         validate_postgres_tenancy_wiring(
             client_is_routed=isinstance(self.client, RoutedPostgresClient),

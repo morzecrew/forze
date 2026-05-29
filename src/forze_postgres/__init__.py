@@ -33,6 +33,11 @@ from .kernel.client import (
     PostgresConfig,
     RoutedPostgresClient,
 )
+from .kernel.relation import (
+    RelationSpec,
+    coerce_relation_spec,
+    require_static_relation,
+)
 
 # ----------------------- #
 
@@ -60,4 +65,7 @@ __all__ = [
     "PostgresFederatedSearchConfig",
     "PostgresHubSearchConfig",
     "PostgresHubSearchMemberConfig",
+    "RelationSpec",
+    "coerce_relation_spec",
+    "require_static_relation",
 ]

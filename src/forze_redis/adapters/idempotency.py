@@ -85,6 +85,7 @@ class RedisIdempotencyAdapter(IdempotencyPort, RedisBaseAdapter):
             logger.debug("Idempotency key is not provided for op '%s', skipping", op)
             return None
 
+        await self._prepare_keys()
         logger.debug("Beginning idempotency for op '%s', key '%s'", op, key[:9] + "...")
 
         meta_k = self.__meta_key(op, key)
@@ -157,6 +158,7 @@ class RedisIdempotencyAdapter(IdempotencyPort, RedisBaseAdapter):
             logger.debug("Idempotency key is not provided for op '%s', skipping", op)
             return None
 
+        await self._prepare_keys()
         logger.debug(
             "Committing idempotency for op '%s', key '%s'",
             op,

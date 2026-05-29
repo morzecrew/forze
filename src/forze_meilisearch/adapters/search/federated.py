@@ -122,8 +122,11 @@ class MeilisearchFederatedSearchAdapter[M: BaseModel](
 
     # ....................... #
 
-    def _index_to_member(self) -> dict[str, str]:
-        return {adapter.index_uid: name for name, adapter in self.legs}
+    async def _index_to_member(self) -> dict[str, str]:
+        return {
+            await adapter._resolved_index_uid(): name  # pyright: ignore[reportPrivateUsage]
+            for name, adapter in self.legs
+        }
 
     # ....................... #
 
@@ -298,7 +301,7 @@ class MeilisearchFederatedSearchAdapter[M: BaseModel](
         terms = tuple(normalize_search_queries(query))
         combine = effective_phrase_combine(leg_opts)
         q = build_search_query_string(terms, combine=combine)
-        index_to_member = self._index_to_member()
+        index_to_member = await self._index_to_member()
 
         queries: list[SearchParams] = []
 
@@ -318,7 +321,7 @@ class MeilisearchFederatedSearchAdapter[M: BaseModel](
             sort_list = build_sort(render_user_sorts(sorts, adapter.field_map))
 
             params_kwargs: dict[str, Any] = {
-                "index_uid": adapter.index_uid,
+                "index_uid": await adapter._resolved_index_uid(),  # pyright: ignore[reportPrivateUsage]
                 "query": q,
             }
 
@@ -370,7 +373,11 @@ class MeilisearchFederatedSearchAdapter[M: BaseModel](
 
             if not member:
                 for name, adapter in self.legs:
-                    if adapter.index_uid == idx_uid:
+                    resolved = (
+                        await adapter._resolved_index_uid()  # pyright: ignore[reportPrivateUsage]
+                    )
+
+                    if resolved == idx_uid:
                         member = name
                         break
 

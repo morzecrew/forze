@@ -19,7 +19,7 @@ def redis_mock() -> Mock:
 async def test_redis_counter_adapter_without_tenant(redis_mock: Mock) -> None:
     counter = RedisCounterAdapter(
         client=redis_mock,
-        key_codec=RedisKeyCodec(namespace="ns"),
+        namespace="ns",
     )
 
     redis_mock.incr = AsyncMock(return_value=1)
@@ -32,7 +32,7 @@ async def test_redis_counter_adapter_with_tenant(redis_mock: Mock) -> None:
     tid = UUID("12345678-1234-5678-1234-567812345678")
     counter = RedisCounterAdapter(
         client=redis_mock,
-        key_codec=RedisKeyCodec(namespace="ns"),
+        namespace="ns",
         tenant_aware=True,
         tenant_provider=lambda: TenantIdentity(tenant_id=tid),
     )
@@ -63,7 +63,7 @@ async def test_redis_counter_adapter_with_tenant(redis_mock: Mock) -> None:
 async def test_redis_counter_incr_batch_returns_range(redis_mock: Mock) -> None:
     counter = RedisCounterAdapter(
         client=redis_mock,
-        key_codec=RedisKeyCodec(namespace="ns"),
+        namespace="ns",
     )
     redis_mock.incr = AsyncMock(return_value=10)
 

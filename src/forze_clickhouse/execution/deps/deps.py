@@ -32,4 +32,5 @@ class ConfigurableClickHouseAnalytics:
             client=client,
             spec=spec,
             config=self.config,
+            tenant_provider=ctx.inv_ctx.get_tenant,
         )

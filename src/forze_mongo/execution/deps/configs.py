@@ -4,8 +4,15 @@ from typing import TYPE_CHECKING, Any, Literal, Mapping
 
 import attrs
 
+from forze.application.contracts.resolution import (
+    NamedResourceSpec,
+    RelationSpec,
+    coerce_named_resource_spec,
+    coerce_relation_spec,
+)
 from forze.application.contracts.tenancy import TenantAwareIntegrationConfig
 from forze.base.exceptions import exc
+
 if TYPE_CHECKING:
     from forze.application.contracts.search import SearchSpec
 
@@ -20,7 +27,7 @@ MongoSearchEngine = Literal["text", "atlas", "vector"]
 class MongoReadOnlyDocumentConfig(TenantAwareIntegrationConfig):
     """Configuration for a Mongo read-only document."""
 
-    read: tuple[str, str]
+    read: RelationSpec = attrs.field(converter=coerce_relation_spec)
     """Read collection (database, collection / view)."""
 
     batch_size: int = 200
@@ -31,13 +38,16 @@ class MongoReadOnlyDocumentConfig(TenantAwareIntegrationConfig):
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class MongoDocumentConfig(MongoReadOnlyDocumentConfig):
+class MongoDocumentConfig(MongoReadOnlyDocumentConfig):  # type: ignore[no-untyped-def]
     """Configuration for a Mongo read-write document."""
 
-    write: tuple[str, str]
+    write: RelationSpec = attrs.field(converter=coerce_relation_spec)
     """Write collection (database, collection)."""
 
-    history: tuple[str, str] | None = None
+    history: RelationSpec | None = attrs.field(  # type: ignore[var-annotated]
+        default=None,
+        converter=lambda v: coerce_relation_spec(v) if v is not None else None,
+    )
     """History collection (database, collection), optional."""
 
 
@@ -45,10 +55,10 @@ class MongoDocumentConfig(MongoReadOnlyDocumentConfig):
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class MongoSearchConfig(TenantAwareIntegrationConfig):
+class MongoSearchConfig(TenantAwareIntegrationConfig):  # type: ignore[no-untyped-def]
     """Physical Mongo mapping for one :class:`~forze.application.contracts.search.SearchSpec` route."""
 
-    read: tuple[str, str]
+    read: RelationSpec = attrs.field(converter=coerce_relation_spec)
     """Read collection (database, collection) for filters and row shape."""
 
     engine: MongoSearchEngine
@@ -57,7 +67,10 @@ class MongoSearchConfig(TenantAwareIntegrationConfig):
     field_map: Mapping[str, str] | None = None
     """Maps :class:`SearchSpec` field names to BSON paths when they differ."""
 
-    index_name: str | None = None
+    index_name: NamedResourceSpec | None = attrs.field(  # type: ignore[var-annotated]
+        default=None,
+        converter=lambda v: coerce_named_resource_spec(v) if v is not None else None,
+    )
     """Physical index name (required for ``atlas`` and ``vector`` engines)."""
 
     default_language: str | None = None

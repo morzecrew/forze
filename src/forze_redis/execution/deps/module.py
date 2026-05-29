@@ -14,8 +14,10 @@ from forze.application.contracts.dlock import (
 )
 from forze.application.contracts.idempotency import IdempotencyDepKey
 from forze.application.contracts.search import SearchResultSnapshotDepKey
+from forze.application.contracts.tenancy import warn_dynamic_relation_with_tenant_aware
 from forze.application.execution import Deps, DepsModule
 
+from ...kernel._logger import logger
 from ...kernel.platform import RedisClientPort
 from .configs import (
     RedisCacheConfig,
@@ -94,6 +96,46 @@ class RedisDepsModule[K: str | StrEnum](DepsModule[K]):
         attrs.field(default=None)
     )
     """Mapping from distributed lock spec names to their Redis-specific configurations."""
+
+    def __attrs_post_init__(self) -> None:
+        def _warn_route(
+            route_name: str,
+            *,
+            kind: str,
+            config: RedisUniversalConfig,
+        ) -> None:
+            warn_dynamic_relation_with_tenant_aware(
+                integration="Redis",
+                route_name=route_name,
+                kind=kind,
+                tenant_aware=config.tenant_aware,
+                named_fields=[("namespace", config.namespace)],
+                log_warning=logger.warning,
+            )
+
+        if self.caches:
+            for name, cfg in self.caches.items():
+                _warn_route(str(name), kind="cache", config=cfg)
+
+        if self.counters:
+            for name, cfg in self.counters.items():
+                _warn_route(str(name), kind="counter", config=cfg)
+
+        if self.idempotency:
+            if _is_idem_routed(self.idempotency):
+                for name, cfg in self.idempotency.items():
+                    _warn_route(str(name), kind="idempotency", config=cfg)
+
+            elif _is_idem_plain(self.idempotency):
+                _warn_route("idempotency", kind="idempotency", config=self.idempotency)
+
+        if self.search_snapshots:
+            for name, cfg in self.search_snapshots.items():
+                _warn_route(str(name), kind="search_snapshot", config=cfg)
+
+        if self.dlocks:
+            for name, cfg in self.dlocks.items():
+                _warn_route(str(name), kind="dlock", config=cfg)
 
     #! read and write separately?
 

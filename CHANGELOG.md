@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Application contracts:** `RelationSpec`, `NamedResourceSpec`, coercion and `require_static_*` helpers in `forze.application.contracts.resolution`; `warn_dynamic_relation_with_tenant_aware` and `validate_routed_client_tenancy_wiring` in `forze.application.contracts.tenancy`.
+- **Mongo, Firestore:** `RelationSpec` on document (`read` / `write` / `history`) and Mongo search `read` / `index_name`; gateways resolve collections per request; index validation skips dynamic write relations.
+- **BigQuery, ClickHouse:** analytics `ingest_relation` with legacy `dataset`/`database` + `ingest_table`; ingest adapters resolve per tenant.
+- **Redis, SQS, RabbitMQ, Temporal:** `NamedResourceSpec` on integration configs (`RedisUniversalConfig.namespace`, `SQSQueueConfig.namespace`, `RabbitMQQueueConfig.namespace`, `TemporalWorkflowConfig.queue`) with `coerce_named_resource_spec` (including `StrEnum`), per-package `kernel/relation.py` resolvers, adapter resolution before key/queue naming, and deps-module warnings when combined with `tenant_aware=True`.
 - **Core:** `SearchCommandPort` (`ensure_index`, `upsert`, `upsert_many`, `delete`, `delete_all`) for external search index maintenance.
 - **Meilisearch:** `forze_meilisearch` package with async client, `SearchQueryPort` (offset), `SearchCommandPort`, and federated search (`merge`: native federation or weighted RRF). Optional extra `forze[meilisearch]`.
 - **Search snapshots:** `SearchResultSnapshotCoordinator.federated_fingerprint` accepts optional `extras` for merge-mode-specific cache keys.
@@ -24,7 +28,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Application contracts:** `TenantAwareIntegrationConfig` in `forze.application.contracts.tenancy` — shared frozen `tenant_aware` flag for integration wiring configs (distinct from runtime `TenancyMixin`).
 - **Application contracts:** `forze.application.contracts.resolution` — `ValueResolver`, `MaybeAwaitable`, and `resolve_value` for static or tenant-scoped async/sync resolution.
 - **`forze.base`:** `stable_fingerprint` and `connection_string_fingerprint` in `forze.base.primitives.fingerprint`; optional `dedup_key` on `SimpleLruRegistry` / `GuardedLruRegistry` to share slots across logical keys.
-- **Postgres:** `RelationSpec` on document (`read` / `write` / `history`), search (`index` / `read` / `heap`), and hub (`hub` plus leg `index` / `read` / `heap`) configs; gateways and search adapters resolve relations per request via `forze.application.contracts.resolution`.
+- **Postgres:** `RelationSpec` on document (`read` / `write` / `history`), search (`index` / `read` / `heap`), hub (`hub` plus leg `index` / `read` / `heap`), and analytics (`ingest_relation`) configs; gateways and adapters resolve relations per request via `forze.application.contracts.resolution`.
+- **S3, GCS, Meilisearch:** `NamedResourceSpec` on `S3StorageConfig.bucket`, `GCSStorageConfig.bucket`, and `MeilisearchSearchConfig.index_uid` (with `coerce_named_resource_spec`); storage/search adapters resolve per request; deps modules warn when `tenant_aware=True` combines with dynamic resolvers.
+- **Postgres:** public exports `RelationSpec`, `coerce_relation_spec`, and `require_static_relation` from `forze_postgres`.
+- **Postgres:** startup warning when a route combines `tenant_aware=True` with dynamic `RelationSpec` resolvers (prefer relation-level isolation without row filters).
 - **Postgres:** `require_static_relation` — explicit error when startup document schema validation is wired for a route that uses a dynamic `RelationSpec` resolver.
 - **BigQuery, ClickHouse, Meilisearch, GCS, Firestore, Inngest:** `Routed*Client` with per-tenant `*RoutingCredentials`, `routed_*_lifecycle_step`, and LRU pool deduplication by connection fingerprint.
 
@@ -52,6 +59,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Documentation
 
+- **Multi-tenancy:** document `RelationSpec` exclusions—author-defined analytics query SQL, Inngest/Mock boundaries, and layering routed clients vs relation-level resolvers; analytics query tenancy on Postgres, BigQuery, and ClickHouse integration pages.
 - **Concepts and execution reference:** align lifecycle (`LifecycleStep.id`, routed client lifecycle), handler examples (`DocumentIdDTO`, `GetDocument`), `SearchCommandPort` / `ctx.search.command`, document kernel ops table, multi-tenancy helpers, and layered-architecture package examples with current APIs.
 
 ### Fixed

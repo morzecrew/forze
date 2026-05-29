@@ -6,11 +6,22 @@ import attrs
 
 from forze.base.exceptions import exc
 from forze.base.primitives import StrKey, frozen_mapping
+from forze_clickhouse.kernel.relation import RelationSpec, coerce_relation_spec
 
 if TYPE_CHECKING:
     from forze.application.contracts.analytics import AnalyticsSpec
 
 # ----------------------- #
+
+
+def _optional_relation_spec(value: object) -> RelationSpec | None:
+    if value is None:
+        return None
+
+    return coerce_relation_spec(value)
+
+
+# ....................... #
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
@@ -48,11 +59,30 @@ class ClickHouseAnalyticsConfig:
     )
     """Named queries; keys must match ``AnalyticsSpec.queries``."""
 
+    ingest_relation: RelationSpec | None = attrs.field(
+        default=None,
+        converter=_optional_relation_spec,
+    )
+    """Ingest target ``(database, table)`` or tenant resolver (relation-level isolation)."""
+
     ingest_table: str | None = None
-    """Table name for analytics ingest append."""
+    """Legacy table name; use :attr:`ingest_relation` ``(database, table)`` instead."""
 
     max_append_rows: int = 10_000
     """Maximum rows per ``append`` call."""
+
+    # ....................... #
+
+    def resolved_ingest_relation(self) -> RelationSpec | None:
+        """Effective ingest relation from :attr:`ingest_relation` or legacy fields."""
+
+        if self.ingest_relation is not None:
+            return self.ingest_relation
+
+        if self.ingest_table is not None:
+            return (self.database, self.ingest_table)
+
+        return None
 
     # ....................... #
 
@@ -76,8 +106,8 @@ class ClickHouseAnalyticsConfig:
                 f"{sorted(extra)!r}."
             )
 
-        if spec.ingest is not None and self.ingest_table is None:
+        if spec.ingest is not None and self.resolved_ingest_relation() is None:
             raise exc.configuration(
-                f"ClickHouse analytics config for route {spec.name!r} requires ingest_table "
-                "when AnalyticsSpec.ingest is set."
+                f"ClickHouse analytics config for route {spec.name!r} requires "
+                "ingest_relation (or legacy ingest_table) when AnalyticsSpec.ingest is set."
             )

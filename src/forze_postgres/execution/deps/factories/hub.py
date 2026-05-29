@@ -7,7 +7,6 @@ import attrs
 from forze.application.contracts.search import HubSearchQueryDepPort
 
 from ....adapters import PostgresHubSearchAdapter
-from ..configs import PostgresHubSearchConfig
 from ..keys import PostgresClientDepKey, PostgresIntrospectorDepKey
 from ._snapshot import snapshot_coord
 from .hub_builder import build_hub_leg_runtimes
@@ -15,6 +14,8 @@ from .hub_builder import build_hub_leg_runtimes
 if TYPE_CHECKING:
     from forze.application.contracts.search import HubSearchSpec
     from forze.application.execution.context import ExecutionContext
+
+    from ..configs import PostgresHubSearchConfig
 
 
 # ----------------------- #
@@ -25,7 +26,7 @@ if TYPE_CHECKING:
 class ConfigurablePostgresHubSearch(HubSearchQueryDepPort):
     """Build :class:`PostgresHubSearchAdapter` from spec + :class:`PostgresHubSearchConfig`."""
 
-    config: PostgresHubSearchConfig
+    config: "PostgresHubSearchConfig"
     """Postgres hub relation, per-leg indexes/heaps, merge options."""
 
     # ....................... #
@@ -36,6 +37,7 @@ class ConfigurablePostgresHubSearch(HubSearchQueryDepPort):
         spec: "HubSearchSpec[Any]",
     ) -> PostgresHubSearchAdapter[Any]:
         members, vector_embedders = build_hub_leg_runtimes(context, spec, self.config)
+
         return PostgresHubSearchAdapter(
             hub_spec=spec,
             members=members,

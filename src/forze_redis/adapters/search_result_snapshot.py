@@ -137,6 +137,7 @@ class RedisSearchResultSnapshotAdapter(
         ttl: timedelta | None = None,
         chunk_size: int | None = None,
     ) -> None:
+        await self._prepare_keys()
         eff = self._resolve_ttl(ttl)
         ex = _ex_seconds(eff)
         cs = self.default_chunk_size if chunk_size is None else chunk_size
@@ -184,6 +185,7 @@ class RedisSearchResultSnapshotAdapter(
         chunk_size: int | None = None,
         ttl: timedelta | None = None,
     ) -> None:
+        await self._prepare_keys()
         eff = self._resolve_ttl(ttl)
         ex = _ex_seconds(eff)
         cs = self.default_chunk_size if chunk_size is None else chunk_size
@@ -214,6 +216,7 @@ class RedisSearchResultSnapshotAdapter(
         ids: Sequence[str],
         is_last: bool,
     ) -> None:
+        await self._prepare_keys()
         meta_key = self.__key_meta(run_id)
         raw_meta, meta = await self.__load_meta_raw(run_id)
 
@@ -291,6 +294,7 @@ class RedisSearchResultSnapshotAdapter(
         *,
         expected_fingerprint: str | None = None,
     ) -> list[str] | None:
+        await self._prepare_keys()
         if offset < 0 or limit < 1:
             raise exc.internal("get_id_range requires offset >= 0 and limit >= 1.")
 
@@ -347,6 +351,7 @@ class RedisSearchResultSnapshotAdapter(
     # ....................... #
 
     async def get_meta(self, run_id: str) -> SearchResultSnapshotMeta | None:
+        await self._prepare_keys()
         meta = await self.__load_meta(run_id)
 
         if meta is None:
@@ -366,6 +371,7 @@ class RedisSearchResultSnapshotAdapter(
     # ....................... #
 
     async def delete_run(self, run_id: str) -> None:
+        await self._prepare_keys()
         meta = await self.__load_meta(run_id)
 
         if meta is None:

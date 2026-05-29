@@ -11,6 +11,13 @@ from .integration_config import TenantAwareIntegrationConfig
 from .mixins import TenancyMixin
 from .ports import TenantManagementPort, TenantProviderPort, TenantResolverPort
 from .value_objects import TenantIdentity
+from .wiring import (
+    TenancyRouteSpec,
+    TenantIsolationMode,
+    derive_tenant_isolation_mode,
+    validate_routed_client_tenancy_wiring,
+    warn_dynamic_relation_with_tenant_aware,
+)
 
 # ----------------------- #
 
@@ -28,4 +35,9 @@ __all__ = [
     "TenantAwareIntegrationConfig",
     "TenancyMixin",
     "require_tenant_id",
+    "TenancyRouteSpec",
+    "TenantIsolationMode",
+    "derive_tenant_isolation_mode",
+    "validate_routed_client_tenancy_wiring",
+    "warn_dynamic_relation_with_tenant_aware",
 ]

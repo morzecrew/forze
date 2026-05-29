@@ -6,8 +6,10 @@ from typing import Mapping, final
 import attrs
 
 from forze.application.contracts.storage import StorageDepKey
+from forze.application.contracts.tenancy import warn_dynamic_relation_with_tenant_aware
 from forze.application.execution import Deps, DepsModule
 
+from ...kernel._logger import logger
 from ...kernel.platform import GCSClientPort
 from .configs import GCSStorageConfig
 from .deps import ConfigurableGCSStorage
@@ -26,6 +28,20 @@ class GCSDepsModule[K: str | StrEnum](DepsModule[K]):
 
     storages: Mapping[K, GCSStorageConfig] | None = attrs.field(default=None)
     """Mapping from storage route names to GCS bucket configuration."""
+
+    # ....................... #
+
+    def __attrs_post_init__(self) -> None:
+        if self.storages:
+            for name, cfg in self.storages.items():
+                warn_dynamic_relation_with_tenant_aware(
+                    integration="GCS",
+                    route_name=str(name),
+                    kind="storage",
+                    tenant_aware=cfg.tenant_aware,
+                    named_fields=[("bucket", cfg.bucket)],
+                    log_warning=logger.warning,
+                )
 
     # ....................... #
 

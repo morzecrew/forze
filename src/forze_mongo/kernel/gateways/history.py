@@ -6,7 +6,6 @@ require_mongo()
 
 # ....................... #
 
-from functools import cached_property
 from typing import Any, Sequence, final
 from uuid import UUID
 
@@ -27,6 +26,7 @@ from forze.domain.constants import (
 )
 from forze.domain.models import Document, DocumentHistory
 
+from ..relation import RelationSpec, resolve_mongo_collection
 from .base import MongoGateway
 
 # ----------------------- #
@@ -42,17 +42,29 @@ class MongoHistoryGateway[D: Document](MongoGateway[D]):
     by :class:`MongoWriteGateway` to enable historical consistency checks.
     """
 
-    target_database: str
-    """Name of the database where the target collection resides."""
+    target_relation: RelationSpec
+    """Write collection ``(database, collection)`` this history tracks."""
 
-    target_collection: str
-    """Name of the primary collection this history tracks."""
+    _target_resolved: tuple[str, str] | None = attrs.field(
+        default=None,
+        init=False,
+        eq=False,
+        repr=False,
+    )
 
     # ....................... #
 
-    @cached_property
-    def _full_target(self) -> str:
-        return f"{self.target_database}.{self.target_collection}"
+    async def _history_source_key(self) -> str:
+        if self._target_resolved is not None:
+            database, collection = self._target_resolved
+        else:
+            database, collection = await resolve_mongo_collection(
+                self.target_relation,
+                self._tenant_id_for_resolve(),
+            )
+            object.__setattr__(self, "_target_resolved", (database, collection))
+
+        return f"{database}.{collection}"
 
     # ....................... #
 
@@ -67,7 +79,7 @@ class MongoHistoryGateway[D: Document](MongoGateway[D]):
         raw = await self.client.find_one(
             await self.coll(),
             {
-                HISTORY_SOURCE_FIELD: self._full_target,
+                HISTORY_SOURCE_FIELD: await self._history_source_key(),
                 ID_FIELD: self._storage_pk(pk),
                 REV_FIELD: rev,
             },
@@ -108,7 +120,7 @@ class MongoHistoryGateway[D: Document](MongoGateway[D]):
         rows = await self.client.find_many(
             await self.coll(),
             {
-                HISTORY_SOURCE_FIELD: self._full_target,
+                HISTORY_SOURCE_FIELD: await self._history_source_key(),
                 "$or": lookup,
             },
         )
@@ -138,9 +150,9 @@ class MongoHistoryGateway[D: Document](MongoGateway[D]):
 
     # ....................... #
 
-    def _from_data(self, data: D) -> DocumentHistory[D]:
+    async def _from_data(self, data: D) -> DocumentHistory[D]:
         return DocumentHistory(
-            source=self._full_target,
+            source=await self._history_source_key(),
             id=data.id,
             rev=data.rev,
             data=data,
@@ -154,7 +166,7 @@ class MongoHistoryGateway[D: Document](MongoGateway[D]):
         :param data: Document to snapshot.
         """
 
-        record = self._from_data(data)
+        record = await self._from_data(data)
         raw_payload = pydantic_persistence_dump(record)
         raw_payload = self.adapt_payload_for_write(raw_payload)
 
@@ -173,7 +185,16 @@ class MongoHistoryGateway[D: Document](MongoGateway[D]):
         if not data:
             return
 
-        records = list(map(self._from_data, data))
+        source_key = await self._history_source_key()
+        records = [
+            DocumentHistory(
+                source=source_key,
+                id=item.id,
+                rev=item.rev,
+                data=item,
+            )
+            for item in data
+        ]
         raw_payloads = pydantic_persistence_dump_many(records)
         raw_payloads = list(map(self.adapt_payload_for_write, raw_payloads))
 

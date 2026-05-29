@@ -13,10 +13,12 @@ import mimetypes
 import re
 from datetime import datetime
 from typing import Callable, Mapping, final
+from uuid import UUID
 
 import attrs
 import magic
 
+from forze.application.contracts.resolution import NamedResourceSpec, is_static_named_resource
 from forze.application.contracts.storage import (
     DownloadedObject,
     ObjectMetadata,
@@ -29,6 +31,7 @@ from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict, utcnow, uuid7
 
 from ..kernel.platform import S3ClientPort
+from ..kernel.relation import resolve_s3_bucket
 from .codecs import default_b64_codec, default_path_codec
 
 # ----------------------- #
@@ -79,11 +82,61 @@ class S3StorageAdapter(StoragePort, TenancyMixin):
     client: S3ClientPort
     """S3 client."""
 
-    bucket: str
-    """S3 bucket name."""
+    bucket_spec: NamedResourceSpec
+    """S3 bucket name (static or tenant-scoped resolver)."""
+
+    _bucket_resolved: str | None = attrs.field(
+        default=None,
+        init=False,
+        eq=False,
+        repr=False,
+    )
 
     key_generator: Callable[[], str] = attrs.field(default=lambda: str(uuid7()))
     """Callable to generate a unique key. Defaults to a UUID v7 per :func:`~forze.base.primitives.uuid7`."""
+
+    # ....................... #
+
+    def _tenant_id_for_resolve(self) -> UUID | None:
+        if self.tenant_provider is None:
+            return None
+
+        tenant = self.tenant_provider()
+
+        if tenant is None:
+            if self.tenant_aware:
+                raise exc.internal("Tenant ID is required for the storage adapter")
+
+            return None
+
+        return tenant.tenant_id
+
+    # ....................... #
+
+    async def _resolved_bucket(self) -> str:
+        if self._bucket_resolved is not None:
+            return self._bucket_resolved
+
+        resolved = await resolve_s3_bucket(self.bucket_spec, self._tenant_id_for_resolve())
+        object.__setattr__(self, "_bucket_resolved", resolved)
+
+        return resolved
+
+    # ....................... #
+
+    @property
+    def bucket(self) -> str:
+        """Best-effort sync access when :attr:`bucket_spec` is static."""
+
+        if is_static_named_resource(self.bucket_spec):
+            return self.bucket_spec
+
+        if self._bucket_resolved is not None:
+            return self._bucket_resolved
+
+        raise exc.internal(
+            "bucket is only available for static bucket names; await _resolved_bucket()",
+        )
 
     # ....................... #
 
@@ -171,11 +224,13 @@ class S3StorageAdapter(StoragePort, TenancyMixin):
         meta_dict: JsonDict = msgspec.to_builtins(metadata, str_keys=True)
         safe_meta = {k: str(v) for k, v in meta_dict.items() if v is not None}
 
+        bucket = await self._resolved_bucket()
+
         async with self.client.client():
-            await self.client.ensure_bucket(self.bucket)
+            await self.client.ensure_bucket(bucket)
 
             await self.client.upload_bytes(
-                bucket=self.bucket,
+                bucket=bucket,
                 key=key,
                 data=data,
                 content_type=content_type,
@@ -201,8 +256,10 @@ class S3StorageAdapter(StoragePort, TenancyMixin):
         :raises exc.internal: If the object metadata is missing or malformed.
         """
 
+        bucket = await self._resolved_bucket()
+
         async with self.client.client():
-            h = await self.client.head_object(bucket=self.bucket, key=key)
+            h = await self.client.head_object(bucket=bucket, key=key)
 
             if "metadata" not in h:
                 raise exc.internal("Invalid object metadata")
@@ -216,7 +273,7 @@ class S3StorageAdapter(StoragePort, TenancyMixin):
             except Exception as e:
                 raise exc.internal("Invalid object metadata") from e
 
-            data = await self.client.download_bytes(bucket=self.bucket, key=key)
+            data = await self.client.download_bytes(bucket=bucket, key=key)
 
             return DownloadedObject(
                 data=data,
@@ -232,8 +289,10 @@ class S3StorageAdapter(StoragePort, TenancyMixin):
         :param key: Object key to delete.
         """
 
+        bucket = await self._resolved_bucket()
+
         async with self.client.client():
-            await self.client.delete_object(bucket=self.bucket, key=key)
+            await self.client.delete_object(bucket=bucket, key=key)
 
     # ....................... #
 
@@ -260,11 +319,13 @@ class S3StorageAdapter(StoragePort, TenancyMixin):
 
         path = self.construct_path(prefix)
 
+        bucket = await self._resolved_bucket()
+
         async with self.client.client():
-            await self.client.ensure_bucket(self.bucket)
+            await self.client.ensure_bucket(bucket)
 
             objects, total_count = await self.client.list_objects(
-                bucket=self.bucket,
+                bucket=bucket,
                 prefix=path,
                 limit=limit,
                 offset=offset,
@@ -276,7 +337,7 @@ class S3StorageAdapter(StoragePort, TenancyMixin):
 
             heads = await asyncio.gather(
                 *(
-                    self.client.head_object(bucket=self.bucket, key=o["Key"])  # type: ignore[typeddict-item]
+                    self.client.head_object(bucket=bucket, key=o["Key"])  # type: ignore[typeddict-item]
                     for o in objects
                 )
             )

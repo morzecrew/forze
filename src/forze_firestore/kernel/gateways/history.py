@@ -6,7 +6,6 @@ require_firestore()
 
 # ....................... #
 
-from functools import cached_property
 from typing import Sequence, final
 from uuid import UUID
 
@@ -27,6 +26,7 @@ from forze.domain.constants import (
 )
 from forze.domain.models import Document, DocumentHistory
 
+from ..relation import RelationSpec, resolve_firestore_collection
 from .base import FirestoreGateway
 
 # ----------------------- #
@@ -37,24 +37,40 @@ from .base import FirestoreGateway
 class FirestoreHistoryGateway[D: Document](FirestoreGateway[D]):
     """Gateway for document revision history in Firestore."""
 
-    target_database: str
-    """Name of the database where the target collection resides."""
+    target_relation: RelationSpec
+    """Write collection ``(database, collection)`` this history tracks."""
 
-    target_collection: str
-    """Name of the primary collection this history tracks."""
+    _target_resolved: tuple[str, str] | None = attrs.field(
+        default=None,
+        init=False,
+        eq=False,
+        repr=False,
+    )
 
     # ....................... #
 
-    @cached_property
-    def _full_target(self) -> str:
-        return f"{self.target_database}.{self.target_collection}"
+    async def _history_source_key(self) -> str:
+        if self._target_resolved is not None:
+            database, collection = self._target_resolved
+        else:
+            database, collection = await resolve_firestore_collection(
+                self.target_relation,
+                self._tenant_id_for_resolve(),
+            )
+            object.__setattr__(self, "_target_resolved", (database, collection))
+
+        return f"{database}.{collection}"
 
     # ....................... #
 
     async def read(self, pk: UUID, rev: int) -> D:
         flt = And(
             filters=[
-                FieldFilter(HISTORY_SOURCE_FIELD, "==", self._full_target),
+                FieldFilter(
+                    HISTORY_SOURCE_FIELD,
+                    "==",
+                    await self._history_source_key(),
+                ),
                 FieldFilter(ID_FIELD, "==", self._storage_pk(pk)),
                 FieldFilter(REV_FIELD, "==", rev),
             ]
@@ -98,9 +114,9 @@ class FirestoreHistoryGateway[D: Document](FirestoreGateway[D]):
 
     # ....................... #
 
-    def _from_data(self, data: D) -> DocumentHistory[D]:
+    async def _from_data(self, data: D) -> DocumentHistory[D]:
         return DocumentHistory(
-            source=self._full_target,
+            source=await self._history_source_key(),
             id=data.id,
             rev=data.rev,
             data=data,
@@ -109,7 +125,7 @@ class FirestoreHistoryGateway[D: Document](FirestoreGateway[D]):
     # ....................... #
 
     async def write(self, data: D) -> None:
-        record = self._from_data(data)
+        record = await self._from_data(data)
         raw_payload = pydantic_persistence_dump(record)
         raw_payload = self.adapt_payload_for_write(raw_payload)
 
@@ -125,10 +141,16 @@ class FirestoreHistoryGateway[D: Document](FirestoreGateway[D]):
         if not data:
             return
 
+        source_key = await self._history_source_key()
         documents: list[tuple[str, JsonDict]] = []
 
         for item in data:
-            record = self._from_data(item)
+            record = DocumentHistory(
+                source=source_key,
+                id=item.id,
+                rev=item.rev,
+                data=item,
+            )
             raw_payload = pydantic_persistence_dump(record)
             raw_payload = self.adapt_payload_for_write(raw_payload)
             documents.append((f"{self._storage_pk(item.id)}_{item.rev}", raw_payload))

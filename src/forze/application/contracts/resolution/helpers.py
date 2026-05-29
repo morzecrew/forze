@@ -8,6 +8,7 @@ from forze.base.asyncio import maybe_await
 from .types import MaybeAwaitable, ValueResolver
 
 # ----------------------- #
+# move to tenancy contract?
 
 
 async def resolve_value[T](spec: T | ValueResolver[T], tenant_id: UUID | None) -> T:

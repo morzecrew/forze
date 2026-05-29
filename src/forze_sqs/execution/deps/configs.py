@@ -2,6 +2,10 @@
 
 import attrs
 
+from forze.application.contracts.resolution import (
+    NamedResourceSpec,
+    coerce_named_resource_spec,
+)
 from forze.application.contracts.tenancy import TenantAwareIntegrationConfig
 
 # ----------------------- #
@@ -11,5 +15,8 @@ from forze.application.contracts.tenancy import TenantAwareIntegrationConfig
 class SQSQueueConfig(TenantAwareIntegrationConfig):
     """Configuration for an SQS queue."""
 
-    namespace: str = ""
+    namespace: NamedResourceSpec = attrs.field(
+        default="",
+        converter=coerce_named_resource_spec,
+    )
     """Base namespace for queues."""

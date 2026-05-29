@@ -18,7 +18,7 @@ def storage_adapter_with_tenant() -> S3StorageAdapter:
     mock_uuid = UUID("00000000-0000-0000-0000-000000000000")
     return S3StorageAdapter(
         client=client,
-        bucket="test-bucket",
+        bucket_spec="test-bucket",
         tenant_aware=True,
         tenant_provider=lambda: TenantIdentity(tenant_id=_TENANT),
         key_generator=lambda: str(mock_uuid),

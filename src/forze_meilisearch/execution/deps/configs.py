@@ -6,6 +6,11 @@ from typing import TYPE_CHECKING, Any, Literal, Mapping, Sequence
 
 import attrs
 
+from forze.application.contracts.resolution import (
+    NamedResourceSpec,
+    coerce_named_resource_spec,
+    is_static_named_resource,
+)
 from forze.application.contracts.tenancy import TenantAwareIntegrationConfig
 from forze.base.exceptions import exc
 from forze.base.primitives import frozen_mapping
@@ -22,8 +27,8 @@ MeilisearchFederatedMerge = Literal["federation", "rrf"]
 class MeilisearchSearchConfig(TenantAwareIntegrationConfig):
     """Physical Meilisearch mapping for one :class:`~forze.application.contracts.search.SearchSpec`."""
 
-    index_uid: str
-    """Meilisearch index UID."""
+    index_uid: NamedResourceSpec = attrs.field(converter=coerce_named_resource_spec)
+    """Meilisearch index UID (static or tenant-scoped resolver)."""
 
     primary_key: str = "id"
     """Document primary key attribute."""
@@ -49,7 +54,7 @@ class MeilisearchSearchConfig(TenantAwareIntegrationConfig):
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
-        if not self.index_uid:
+        if is_static_named_resource(self.index_uid) and not self.index_uid:
             raise exc.configuration("Meilisearch search config requires index_uid.")
 
 

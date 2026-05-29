@@ -3,6 +3,7 @@
 from typing import Any
 
 from forze.application.contracts.document import DocumentWriteTypes
+from forze.application.contracts.resolution import RelationSpec
 from forze.application.execution import ExecutionContext
 
 from ...kernel.gateways import MongoHistoryGateway, MongoReadGateway, MongoWriteGateway
@@ -19,15 +20,14 @@ def read_gw(
     ctx: ExecutionContext,
     *,
     read_type: type[Any],
-    read_relation: tuple[str, str],
+    read_relation: RelationSpec,
     tenant_aware: bool,
 ) -> MongoReadGateway[Any]:
     """Build a read gateway for a source and model."""
     client = ctx.deps.provide(MongoClientDepKey)
 
     return MongoReadGateway(
-        database=read_relation[0],
-        collection=read_relation[1],
+        relation=read_relation,
         client=client,
         model_type=read_type,
         tenant_provider=ctx.inv_ctx.get_tenant,
@@ -42,8 +42,8 @@ def _doc_history_gw(
     ctx: ExecutionContext,
     *,
     domain_type: type[Any],
-    history_relation: tuple[str, str],
-    write_relation: tuple[str, str],
+    history_relation: RelationSpec,
+    write_relation: RelationSpec,
     tenant_aware: bool,
 ) -> MongoHistoryGateway[Any]:
     """Build a history gateway for document audit trails."""
@@ -51,10 +51,8 @@ def _doc_history_gw(
     client = ctx.deps.provide(MongoClientDepKey)
 
     return MongoHistoryGateway(
-        database=history_relation[0],
-        collection=history_relation[1],
-        target_database=write_relation[0],
-        target_collection=write_relation[1],
+        relation=history_relation,
+        target_relation=write_relation,
         client=client,
         model_type=domain_type,
         tenant_provider=ctx.inv_ctx.get_tenant,
@@ -69,8 +67,8 @@ def doc_write_gw(
     ctx: ExecutionContext,
     *,
     write_types: DocWriteTypes,
-    write_relation: tuple[str, str],
-    history_relation: tuple[str, str] | None = None,
+    write_relation: RelationSpec,
+    history_relation: RelationSpec | None = None,
     history_enabled: bool = False,
     tenant_aware: bool,
 ) -> MongoWriteGateway[Any, Any, Any]:
@@ -95,8 +93,7 @@ def doc_write_gw(
         )
 
     return MongoWriteGateway(
-        database=write_relation[0],
-        collection=write_relation[1],
+        relation=write_relation,
         client=client,
         model_type=write_types["domain"],
         create_cmd_type=write_types["create_cmd"],

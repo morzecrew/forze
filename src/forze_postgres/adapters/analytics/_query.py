@@ -1,12 +1,14 @@
 """Query execution helpers for Postgres analytics."""
 
 from typing import Any, Awaitable, Callable, Sequence, TypeVar, cast
+from uuid import UUID
 
 from psycopg import sql
 from psycopg.abc import QueryNoTemplate
 from pydantic import BaseModel
 
 from forze.application.contracts.analytics import AnalyticsRunOptions, AnalyticsSpec
+from forze.application.contracts.tenancy import TenantProviderPort
 from forze.application.contracts.analytics._adapter_common import (
     dry_run_enabled,
     dry_run_offset_page,
@@ -25,6 +27,8 @@ from forze_postgres.execution.deps.configs import (
     PostgresQueryConfig,
 )
 from forze_postgres.kernel.client import PostgresClientPort
+from forze_postgres.kernel.gateways import PostgresQualifiedName
+from forze_postgres.kernel.relation import resolve_postgres_qname
 from forze_postgres.kernel.sql import (
     apply_limit_offset,
     build_count_sql,
@@ -46,6 +50,8 @@ class PostgresAnalyticsQueryMixin[R: BaseModel, Ing: BaseModel]:
     client: PostgresClientPort
     spec: AnalyticsSpec[R, Ing]
     config: PostgresAnalyticsConfig
+    tenant_provider: TenantProviderPort | None
+    _ingest_qname_resolved: PostgresQualifiedName | None
 
     # ....................... #
 
@@ -68,8 +74,31 @@ class PostgresAnalyticsQueryMixin[R: BaseModel, Ing: BaseModel]:
 
     # ....................... #
 
-    def _schema(self) -> str:
-        return self.config.schema
+    def _tenant_id_for_resolve(self) -> UUID | None:
+        if self.tenant_provider is None:
+            return None
+
+        tenant = self.tenant_provider()
+
+        return tenant.tenant_id if tenant is not None else None
+
+    # ....................... #
+
+    async def _ingest_qname(self) -> PostgresQualifiedName:
+        spec = self.config.resolved_ingest_relation()
+
+        if spec is None:
+            raise exc.internal(
+                f"Postgres ingest relation is required for route {self.spec.name!r}."
+            )
+
+        if self._ingest_qname_resolved is not None:
+            return self._ingest_qname_resolved
+
+        resolved = await resolve_postgres_qname(spec, self._tenant_id_for_resolve())
+        object.__setattr__(self, "_ingest_qname_resolved", resolved)
+
+        return resolved
 
     # ....................... #
 

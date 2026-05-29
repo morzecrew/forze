@@ -10,7 +10,7 @@ from forze_s3.adapters.storage import S3StorageAdapter, _object_metadata_from_s3
 @pytest.fixture
 def storage_adapter():
     client = MagicMock()
-    return S3StorageAdapter(client=client, bucket="test-bucket")
+    return S3StorageAdapter(client=client, bucket_spec="test-bucket")
 
 def test_validate_prefix_valid(storage_adapter):
     # Should not raise any exception

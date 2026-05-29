@@ -4,10 +4,12 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 from typing import Any
+from uuid import UUID
 
 import attrs
 from pydantic import BaseModel
 
+from forze.application.contracts.resolution import is_static_named_resource
 from forze.application.contracts.querying import (
     QueryFilterExpression,
     QueryFilterExpressionParser,
@@ -16,10 +18,12 @@ from forze.application.contracts.querying import (
 from forze.application.contracts.search import SearchSpec
 from forze.application.contracts.tenancy import TENANT_ID_FIELD
 from forze.application.contracts.tenancy.mixins import TenancyMixin
+from forze.base.exceptions import exc
 from forze.base.serialization import pydantic_dump
 from forze.domain.constants import ID_FIELD
 from forze_meilisearch.adapters.search._filter_render import MeilisearchFilterRenderer
 from forze_meilisearch.execution.deps.configs import MeilisearchSearchConfig
+from forze_meilisearch.kernel.relation import resolve_meilisearch_index_uid
 
 # ----------------------- #
 
@@ -42,11 +46,60 @@ class MeilisearchSearchGateway[M: BaseModel](TenancyMixin):
         init=False,
     )
 
+    _index_uid_resolved: str | None = attrs.field(
+        default=None,
+        init=False,
+        eq=False,
+        repr=False,
+    )
+
+    # ....................... #
+
+    def _tenant_id_for_resolve(self) -> UUID | None:
+        if self.tenant_provider is None:
+            return None
+
+        tenant = self.tenant_provider()
+
+        if tenant is None:
+            if self.tenant_aware:
+                raise exc.internal("Tenant ID is required for Meilisearch search")
+
+            return None
+
+        return tenant.tenant_id
+
+    # ....................... #
+
+    async def _resolved_index_uid(self) -> str:
+        if self._index_uid_resolved is not None:
+            return self._index_uid_resolved
+
+        resolved = await resolve_meilisearch_index_uid(
+            self.config.index_uid,
+            self._tenant_id_for_resolve(),
+        )
+        object.__setattr__(self, "_index_uid_resolved", resolved)
+
+        return resolved
+
     # ....................... #
 
     @property
     def index_uid(self) -> str:
-        return self.config.index_uid
+        """Best-effort sync access when config ``index_uid`` is static."""
+
+        spec = self.config.index_uid
+
+        if is_static_named_resource(spec):
+            return spec
+
+        if self._index_uid_resolved is not None:
+            return self._index_uid_resolved
+
+        raise exc.internal(
+            "index_uid is only available for static index UIDs; await _resolved_index_uid()",
+        )
 
     @property
     def primary_key(self) -> str:

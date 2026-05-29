@@ -7,7 +7,6 @@ import pytest
 
 from forze.application.contracts.idempotency import IdempotencySnapshot
 from forze_redis.adapters.cache import RedisCacheAdapter
-from forze_redis.adapters.codecs import RedisKeyCodec
 from forze_redis.adapters.counter import RedisCounterAdapter
 from forze_redis.adapters.idempotency import RedisIdempotencyAdapter
 from forze_redis.kernel.platform.client import RedisClient
@@ -15,9 +14,7 @@ from forze_redis.kernel.platform.client import RedisClient
 @pytest.mark.asyncio
 async def test_redis_cache_adapter_roundtrip(redis_client: RedisClient) -> None:
     namespace = f"it:redis-cache:{uuid4()}"
-    cache = RedisCacheAdapter(
-        client=redis_client, key_codec=RedisKeyCodec(namespace=namespace)
-    )
+    cache = RedisCacheAdapter(client=redis_client, namespace=namespace)
 
     await cache.set("plain", {"name": "plain"})
     await cache.set_versioned("doc", "v1", {"name": "old"})
@@ -37,7 +34,7 @@ async def test_redis_cache_adapter_roundtrip(redis_client: RedisClient) -> None:
 async def test_redis_counter_adapter_operations(redis_client: RedisClient) -> None:
     counter = RedisCounterAdapter(
         client=redis_client,
-        key_codec=RedisKeyCodec(namespace=f"it:redis-counter:{uuid4()}"),
+        namespace=f"it:redis-counter:{uuid4()}",
     )
 
     assert await counter.incr() == 1
@@ -53,7 +50,7 @@ async def test_redis_idempotency_adapter_replays_snapshot(
     adapter = RedisIdempotencyAdapter(
         client=redis_client,
         ttl=timedelta(seconds=30),
-        key_codec=RedisKeyCodec(namespace=f"it:redis-idempotency:{uuid4()}"),
+        namespace=f"it:redis-idempotency:{uuid4()}",
     )
     op = f"orders:{uuid4()}"
     key = f"request:{uuid4()}"

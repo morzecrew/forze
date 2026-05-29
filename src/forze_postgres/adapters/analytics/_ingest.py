@@ -33,11 +33,9 @@ class PostgresAnalyticsIngestMixin[R: BaseModel, Ing: BaseModel](
                 f"Analytics ingest is not configured for route {host.spec.name!r}."
             )
 
-        table = host.config.ingest_table
-
-        if not table:
+        if host.config.resolved_ingest_relation() is None:
             raise exc.internal(
-                f"Postgres ingest_table is required for route {host.spec.name!r}."
+                f"Postgres ingest relation is required for route {host.spec.name!r}."
             )
 
         if not rows:
@@ -82,9 +80,10 @@ class PostgresAnalyticsIngestMixin[R: BaseModel, Ing: BaseModel](
         for payload in payloads:
             flat_params.extend(payload[k] for k in keys)
 
-        stmt = sql.SQL("INSERT INTO {schema}.{table} ({cols}) VALUES {vals}").format(
-            schema=sql.Identifier(host._schema()),  # type: ignore[protected-access]
-            table=sql.Identifier(table),
+        ingest_qn = await host._ingest_qname()  # type: ignore[protected-access]
+
+        stmt = sql.SQL("INSERT INTO {table} ({cols}) VALUES {vals}").format(
+            table=ingest_qn.ident(),
             cols=sql.SQL(", ").join(col_idents),
             vals=sql.SQL(", ").join(value_parts),
         )

@@ -25,6 +25,7 @@ def _mem(name: str) -> SearchSpec[_Hit]:
 def _leg(name: str, index_uid: str) -> MagicMock:
     leg = MagicMock()
     leg.index_uid = index_uid
+    leg._resolved_index_uid = AsyncMock(return_value=index_uid)
     leg.spec = _mem(name)
     leg.field_map = {}
     leg.build_filter = MagicMock(return_value=None)

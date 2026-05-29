@@ -66,3 +66,51 @@ async def test_search_adapter_resolves_dynamic_index_and_heap() -> None:
     assert index_qn.name == "idx"
     assert heap_qn.schema == f"t_{tid}"
     assert heap_qn.name == "heap"
+
+
+@pytest.mark.asyncio
+async def test_analytics_adapter_resolves_dynamic_ingest_relation() -> None:
+    from unittest.mock import MagicMock
+    from uuid import uuid4
+
+    from pydantic import BaseModel
+
+    from forze.application.contracts.analytics import (
+        AnalyticsQueryDefinition,
+        AnalyticsSpec,
+    )
+    from forze_postgres.adapters.analytics import PostgresAnalyticsAdapter
+    from forze_postgres.execution.deps.configs import (
+        PostgresAnalyticsConfig,
+        PostgresQueryConfig,
+    )
+
+    class _Row(BaseModel):
+        value: int
+
+    class _Params(BaseModel):
+        day: str = "2026-01-01"
+
+    tid = uuid4()
+    spec = AnalyticsSpec(
+        name="events",
+        read=_Row,
+        queries={"counts": AnalyticsQueryDefinition(params=_Params)},
+    )
+    config = PostgresAnalyticsConfig(
+        queries={
+            "counts": PostgresQueryConfig(sql="SELECT 1"),
+        },
+        ingest_relation=lambda t: (f"t_{t}", "raw") if t else ("public", "raw"),
+    )
+    adapter = PostgresAnalyticsAdapter(
+        client=MagicMock(),
+        spec=spec,
+        config=config,
+        tenant_provider=lambda: type("T", (), {"tenant_id": tid})(),
+    )
+
+    qn = await adapter._ingest_qname()
+
+    assert qn.schema == f"t_{tid}"
+    assert qn.name == "raw"

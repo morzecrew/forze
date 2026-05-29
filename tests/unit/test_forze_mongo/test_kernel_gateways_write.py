@@ -37,11 +37,16 @@ def _build_client() -> MagicMock:
     client.update_one = AsyncMock()
     return client
 
-def _build_read(client: MagicMock, *, collection: str = "docs") -> MagicMock:
+def _build_read(
+    client: MagicMock,
+    *,
+    relation: tuple[str, str] = ("test_db", "docs"),
+) -> MagicMock:
     read = MagicMock(spec=MongoReadGateway)
     read.client = client
-    read.collection = collection
-    read.database = None
+    read.relation = relation
+    read.collection = relation[1]
+    read.database = relation[0]
     read.tenant_aware = False
     read.model_type = MyDoc
     read.get = AsyncMock()
@@ -63,8 +68,7 @@ class TestMongoWriteGateway:
 
         gw = MongoWriteGateway(
             model_type=MyDoc,
-            collection="docs",
-            database=None,
+            relation=("test_db", "docs"),
             client=client,
             read_gw=read,
             create_cmd_type=MyCreateDoc,
@@ -95,8 +99,7 @@ class TestMongoWriteGateway:
 
         gw = MongoWriteGateway(
             model_type=MyDoc,
-            collection="docs",
-            database=None,
+            relation=("test_db", "docs"),
             client=client,
             read_gw=read,
             create_cmd_type=MyCreateDoc,
@@ -130,8 +133,7 @@ class TestMongoWriteGateway:
 
         gw = MongoWriteGateway(
             model_type=MyDoc,
-            collection="docs",
-            database=None,
+            relation=("test_db", "docs"),
             client=client,
             read_gw=read,
             create_cmd_type=MyCreateDoc,
@@ -153,8 +155,7 @@ class TestMongoWriteGateway:
 
         gw = MongoWriteGateway(
             model_type=MyDoc,
-            collection="docs",
-            database=None,
+            relation=("test_db", "docs"),
             client=client,
             read_gw=read,
             create_cmd_type=MyCreateDoc,
@@ -185,8 +186,7 @@ class TestMongoWriteGateway:
 
         gw = MongoWriteGateway(
             model_type=MyDoc,
-            collection="docs",
-            database=None,
+            relation=("test_db", "docs"),
             client=client,
             read_gw=read,
             create_cmd_type=MyCreateDoc,
@@ -212,8 +212,7 @@ class TestMongoWriteGateway:
         read = _build_read(client)
         gw = MongoWriteGateway(
             model_type=MyDoc,
-            collection="docs",
-            database=None,
+            relation=("test_db", "docs"),
             client=client,
             read_gw=read,
             create_cmd_type=MyCreateDoc,
@@ -240,8 +239,7 @@ class TestMongoWriteGateway:
         )
         gw = MongoWriteGateway(
             model_type=MyDoc,
-            collection="docs",
-            database=None,
+            relation=("test_db", "docs"),
             client=client,
             read_gw=read,
             create_cmd_type=MyCreateDoc,
@@ -262,12 +260,11 @@ class TestOptimisticRetry:
 class TestMongoWriteGatewayPostInit:
     def test_rejects_mismatched_read_collection(self) -> None:
         client = _build_client()
-        read = _build_read(client, collection="read_col")
-        with pytest.raises(CoreException, match="Collection mismatch"):
+        read = _build_read(client, relation=("test_db", "read_col"))
+        with pytest.raises(CoreException, match="Relation mismatch"):
             MongoWriteGateway(
                 model_type=MyDoc,
-                collection="write_col",
-                database=None,
+                relation=("test_db", "write_col"),
                 client=client,
                 read_gw=read,
                 create_cmd_type=MyCreateDoc,
@@ -281,8 +278,7 @@ class TestMongoWriteGatewayPostInit:
         with pytest.raises(CoreException, match="Client mismatch"):
             MongoWriteGateway(
                 model_type=MyDoc,
-                collection="docs",
-                database=None,
+                relation=("test_db", "docs"),
                 client=c_write,
                 read_gw=read,
                 create_cmd_type=MyCreateDoc,
@@ -291,13 +287,11 @@ class TestMongoWriteGatewayPostInit:
 
     def test_rejects_mismatched_read_database(self) -> None:
         client = _build_client()
-        read = _build_read(client)
-        read.database = "db_a"
-        with pytest.raises(CoreException, match="Database mismatch"):
+        read = _build_read(client, relation=("db_a", "docs"))
+        with pytest.raises(CoreException, match="Relation mismatch"):
             MongoWriteGateway(
                 model_type=MyDoc,
-                collection="docs",
-                database="db_b",
+                relation=("db_b", "docs"),
                 client=client,
                 read_gw=read,
                 create_cmd_type=MyCreateDoc,
@@ -311,8 +305,7 @@ class TestMongoWriteGatewayPostInit:
         with pytest.raises(CoreException, match="Tenant awareness mismatch"):
             MongoWriteGateway(
                 model_type=MyDoc,
-                collection="docs",
-                database=None,
+                relation=("test_db", "docs"),
                 client=client,
                 read_gw=read,
                 create_cmd_type=MyCreateDoc,
@@ -323,23 +316,19 @@ class TestMongoWriteGatewayPostInit:
     def test_rejects_history_gateway_client_mismatch(self) -> None:
         c_main = _build_client()
         c_hist = _build_client()
-        read = _build_read(c_main)
-        read.database = "db"
+        read = _build_read(c_main, relation=("db", "docs"))
         hist = MongoHistoryGateway(
             model_type=MyDoc,
-            collection="hist",
-            database="db",
+            relation=("db", "hist"),
+            target_relation=("db", "docs"),
             client=c_hist,
-            target_database="db",
-            target_collection="docs",
         )
         with pytest.raises(
             CoreException, match="nested history gateway must use the same client"
         ):
             MongoWriteGateway(
                 model_type=MyDoc,
-                collection="docs",
-                database="db",
+                relation=("db", "docs"),
                 client=c_main,
                 read_gw=read,
                 create_cmd_type=MyCreateDoc,

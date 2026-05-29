@@ -10,10 +10,12 @@ from forze.application.contracts.document import (
     DocumentQueryDepKey,
 )
 from forze.application.contracts.search import SearchQueryDepKey
+from forze.application.contracts.tenancy import warn_dynamic_relation_with_tenant_aware
 from forze.application.contracts.transaction import TransactionManagerDepKey
 from forze.application.execution import Deps, DepsModule
 
-from ...kernel.platform import MongoClientPort
+from ...kernel._logger import logger
+from ...kernel.platform import MongoClientPort, RoutedMongoClient
 from .configs import (
     MongoDocumentConfig,
     MongoReadOnlyDocumentConfig,
@@ -68,6 +70,47 @@ class MongoDepsModule[K: str | StrEnum](DepsModule[K]):
     """Mapping from search spec names to Mongo-specific search configurations."""
 
     # ....................... #
+
+    def __attrs_post_init__(self) -> None:
+        if self.ro_documents:
+            for name, cfg in self.ro_documents.items():
+                warn_dynamic_relation_with_tenant_aware(
+                    integration="Mongo",
+                    route_name=str(name),
+                    kind="document",
+                    tenant_aware=cfg.tenant_aware,
+                    relation_fields=[("read", cfg.read)],
+                    log_warning=logger.warning,
+                )
+
+        if self.rw_documents:
+            for name, rw_cfg in self.rw_documents.items():
+                warn_dynamic_relation_with_tenant_aware(
+                    integration="Mongo",
+                    route_name=str(name),
+                    kind="document",
+                    tenant_aware=rw_cfg.tenant_aware,
+                    relation_fields=[
+                        ("read", rw_cfg.read),
+                        ("write", rw_cfg.write),
+                        ("history", rw_cfg.history),
+                    ],
+                    log_warning=logger.warning,
+                )
+
+        if self.searches:
+            for name, s_cfg in self.searches.items():
+                warn_dynamic_relation_with_tenant_aware(
+                    integration="Mongo",
+                    route_name=str(name),
+                    kind="search",
+                    tenant_aware=s_cfg.tenant_aware,
+                    relation_fields=[("read", s_cfg.read)],
+                    named_fields=[("index_name", s_cfg.index_name)],
+                    log_warning=logger.warning,
+                )
+
+        _ = isinstance(self.client, RoutedMongoClient)
 
     # ....................... #
 

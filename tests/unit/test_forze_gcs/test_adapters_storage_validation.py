@@ -10,7 +10,7 @@ from forze_gcs.adapters.storage import GCSStorageAdapter, _object_metadata_from_
 @pytest.fixture
 def storage_adapter():
     client = MagicMock()
-    return GCSStorageAdapter(client=client, bucket="test-bucket")
+    return GCSStorageAdapter(client=client, bucket_spec="test-bucket")
 
 def test_validate_prefix_valid(storage_adapter: GCSStorageAdapter) -> None:
     storage_adapter._validate_prefix(None)

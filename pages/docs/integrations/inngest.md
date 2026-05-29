@@ -48,6 +48,8 @@ client = InngestClient(
 
 For per-tenant Inngest apps or keys, register `RoutedInngestClient` and `routed_inngest_lifecycle_step`. Secrets use `InngestRoutingCredentials` (`app_id`, optional `event_key`, `signing_key`). Access `native` only after the inner client is warmed for the current tenant (typically after `send`).
 
+`InngestEventConfig` does not support `RelationSpec` or `NamedResourceSpec`—there is no table, queue, or bucket field to resolve. Multi-tenant **event routing** (event names, function IDs, cron triggers) is an **application convention** (for example prefixing IDs with `tenant:{tenant_id}:`), not framework config. See [Multi-tenancy — Inngest](../concepts/multi-tenancy.md#inngest-forze_inngest).
+
 ### Deps module (emit events from API)
 
 ```python

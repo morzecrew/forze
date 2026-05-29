@@ -37,11 +37,9 @@ class TestMongoHistoryGateway:
         client = _build_client()
         gw = MongoHistoryGateway(
             model_type=MyDoc,
-            collection="docs_history",
-            database=_DB,
+            relation=(_DB, "docs_history"),
+            target_relation=(_DB, "docs"),
             client=client,
-            target_database=_DB,
-            target_collection="docs",
         )
         doc = _domain_doc(uuid4(), rev=2, name="beta")
 
@@ -74,11 +72,9 @@ class TestMongoHistoryGateway:
         ]
         gw = MongoHistoryGateway(
             model_type=MyDoc,
-            collection="docs_history",
-            database=_DB,
+            relation=(_DB, "docs_history"),
+            target_relation=(_DB, "docs"),
             client=client,
-            target_database=_DB,
-            target_collection="docs",
         )
 
         result = await gw.read_many([pk], [1])

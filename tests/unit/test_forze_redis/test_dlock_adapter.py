@@ -16,7 +16,7 @@ from forze_redis.adapters.codecs import RedisKeyCodec
 def _adapter(client: object) -> RedisDistributedLockAdapter:
     return RedisDistributedLockAdapter(
         client=client,  # type: ignore[arg-type]
-        key_codec=RedisKeyCodec(namespace="ns"),
+        namespace="ns",
         spec=DistributedLockSpec(name="locks", ttl=timedelta(seconds=10)),
     )
 

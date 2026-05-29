@@ -34,9 +34,6 @@ class TemporalWorkflowScheduleCommandAdapter[In: BaseModel](
 ):
     """Temporal-backed implementation of :class:`DurableWorkflowScheduleCommandPort`."""
 
-    queue: str
-    """Temporal task queue name."""
-
     spec: DurableWorkflowSpec[In, BaseModel]
     """Workflow specification."""
 
@@ -65,6 +62,7 @@ class TemporalWorkflowScheduleCommandAdapter[In: BaseModel](
         trigger_immediately: bool = False,
         note: str | None = None,
     ) -> DurableWorkflowScheduleHandle:
+        await self._prepare_queue()
         sid = self.construct_schedule_id(schedule_id)
         workflow_id = self._workflow_id(
             sid,
@@ -74,7 +72,7 @@ class TemporalWorkflowScheduleCommandAdapter[In: BaseModel](
         await self.client.create_schedule(
             sid,
             workflow_name=self.spec.name,
-            queue=self.queue,
+            queue=await self._resolved_queue(),
             arg=args,
             timing=timing,
             workflow_id=workflow_id,
@@ -120,7 +118,7 @@ class TemporalWorkflowScheduleCommandAdapter[In: BaseModel](
         await self.client.update_schedule(
             sid,
             workflow_name=self.spec.name,
-            queue=self.queue,
+            queue=await self._resolved_queue(),
             arg=args,
             timing=timing,
             workflow_id=workflow_id,
@@ -143,6 +141,7 @@ class TemporalWorkflowScheduleCommandAdapter[In: BaseModel](
         workflow_id_template: str | None = None,
         note: str | None = None,
     ) -> None:
+        await self._prepare_queue()
         workflow_id = (
             self._workflow_id(
                 handle.schedule_id, workflow_id_template=workflow_id_template
@@ -154,7 +153,7 @@ class TemporalWorkflowScheduleCommandAdapter[In: BaseModel](
         await self.client.update_schedule(
             handle.schedule_id,
             workflow_name=self.spec.name,
-            queue=self.queue,
+            queue=await self._resolved_queue(),
             arg=args,
             timing=timing,
             workflow_id=workflow_id,
@@ -202,9 +201,6 @@ class TemporalWorkflowScheduleQueryAdapter[In: BaseModel](
     DurableWorkflowScheduleQueryPort[In],
 ):
     """Temporal-backed implementation of :class:`DurableWorkflowScheduleQueryPort`."""
-
-    queue: str
-    """Temporal task queue name."""
 
     spec: DurableWorkflowSpec[In, BaseModel]
     """Workflow specification."""
