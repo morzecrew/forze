@@ -1,10 +1,16 @@
 """Tests for forze.application.execution.lifecycle."""
 
+import asyncio
+
 import pytest
 
 from forze.application.contracts.execution import noop_lifecycle_hook
 from forze.application.execution.context import ExecutionContext
-from forze.application.execution.lifecycle import LifecyclePlan, LifecycleStep
+from forze.application.execution.lifecycle import (
+    FrozenLifecyclePlan,
+    LifecyclePlan,
+    LifecycleStep,
+)
 from forze_mock import MockDepsModule, MockState
 
 # ----------------------- #
@@ -13,6 +19,13 @@ from forze_mock import MockDepsModule, MockState
 @pytest.fixture
 def ctx() -> ExecutionContext:
     return ExecutionContext(deps=MockDepsModule(state=MockState())())
+
+
+def _wave_step_ids(frozen: FrozenLifecyclePlan) -> list[str]:
+    return [step_id for wave in frozen.graph.waves for step_id in wave]
+
+
+# ....................... #
 
 
 class TestNoopLifecycleHook:
@@ -55,11 +68,11 @@ class TestLifecyclePlan:
         async def down(_ctx: ExecutionContext) -> None:
             order.append("down")
 
-        plan = LifecyclePlan.from_steps(
+        frozen = LifecyclePlan.from_steps(
             LifecycleStep(id="s", startup=up, shutdown=down),
-        )
-        await plan.startup(ctx)
-        await plan.shutdown(ctx)
+        ).freeze()
+        await frozen.startup(ctx)
+        await frozen.shutdown(ctx)
         assert order == ["up", "down"]
 
     def test_with_steps_appends(self) -> None:
@@ -67,6 +80,12 @@ class TestLifecyclePlan:
         extended = plan.with_steps(LifecycleStep(id="b"))
 
         assert tuple(s.id for s in extended.steps) == ("a", "b")
+
+    def test_with_concurrent_sets_flag(self) -> None:
+        plan = LifecyclePlan.from_steps(LifecycleStep(id="a")).with_concurrent()
+        frozen = plan.freeze()
+
+        assert frozen.concurrent is True
 
     @pytest.mark.asyncio
     async def test_startup_failure_runs_shutdown_in_reverse(
@@ -83,29 +102,120 @@ class TestLifecyclePlan:
         async def down(_ctx: ExecutionContext) -> None:
             order.append("down1")
 
-        plan = LifecyclePlan.from_steps(
+        frozen = LifecyclePlan.from_steps(
             LifecycleStep(id="first", startup=up_ok, shutdown=down),
-            LifecycleStep(id="second", startup=up_fail, shutdown=down),
+            LifecycleStep(
+                id="second",
+                startup=up_fail,
+                shutdown=down,
+                depends_on=("first",),
+            ),
+        ).freeze()
+
+        with pytest.raises(RuntimeError, match="startup failed"):
+            await frozen.startup(ctx)
+
+        assert order == ["up1", "down1"]
+
+    @pytest.mark.asyncio
+    async def test_startup_failure_concurrent_partial_wave_rollback(
+        self, ctx: ExecutionContext
+    ) -> None:
+        order: list[str] = []
+
+        async def up_slow(_ctx: ExecutionContext) -> None:
+            order.append("up_slow")
+
+        async def up_fail(_ctx: ExecutionContext) -> None:
+            order.append("up_fail")
+            raise RuntimeError("startup failed")
+
+        async def down_slow(_ctx: ExecutionContext) -> None:
+            order.append("down_slow")
+
+        frozen = (
+            LifecyclePlan.from_steps(
+                LifecycleStep(id="slow", startup=up_slow, shutdown=down_slow),
+                LifecycleStep(id="fail", startup=up_fail),
+            )
+            .with_concurrent()
+            .freeze()
         )
 
         with pytest.raises(RuntimeError, match="startup failed"):
-            await plan.startup(ctx)
+            await frozen.startup(ctx)
 
-        assert order == ["up1", "down1"]
+        assert "up_slow" in order
+        assert "up_fail" in order
+        assert order.count("down_slow") == 1
 
     @pytest.mark.asyncio
     async def test_shutdown_swallows_step_errors(self, ctx: ExecutionContext) -> None:
         async def down_fail(_ctx: ExecutionContext) -> None:
             raise RuntimeError("shutdown failed")
 
-        plan = LifecyclePlan.from_steps(
+        frozen = LifecyclePlan.from_steps(
             LifecycleStep(id="bad", shutdown=down_fail),
             LifecycleStep(id="ok"),
+        ).freeze()
+
+        await frozen.shutdown(ctx)
+
+    @pytest.mark.asyncio
+    async def test_concurrent_startup_runs_same_wave_in_parallel(
+        self, ctx: ExecutionContext
+    ) -> None:
+        entered: list[str] = []
+        release = asyncio.Event()
+
+        async def up_a(_ctx: ExecutionContext) -> None:
+            entered.append("a")
+            await release.wait()
+
+        async def up_b(_ctx: ExecutionContext) -> None:
+            entered.append("b")
+            await release.wait()
+
+        frozen = (
+            LifecyclePlan.from_steps(
+                LifecycleStep(id="a", startup=up_a),
+                LifecycleStep(id="b", startup=up_b),
+            )
+            .with_concurrent()
+            .freeze()
         )
 
-        await plan.shutdown(ctx)
+        startup_task = asyncio.create_task(frozen.startup(ctx))
+        await asyncio.sleep(0.05)
+        assert set(entered) == {"a", "b"}
+        release.set()
+        await startup_task
 
-    def test_from_modules_build_resolves_order(self) -> None:
+    @pytest.mark.asyncio
+    async def test_sequential_startup_within_wave(self, ctx: ExecutionContext) -> None:
+        entered: list[str] = []
+        release = asyncio.Event()
+
+        async def up_a(_ctx: ExecutionContext) -> None:
+            entered.append("a")
+            await release.wait()
+
+        async def up_b(_ctx: ExecutionContext) -> None:
+            entered.append("b")
+
+        frozen = LifecyclePlan.from_steps(
+            LifecycleStep(id="a", startup=up_a, priority=10),
+            LifecycleStep(id="b", startup=up_b, priority=0),
+        ).freeze()
+
+        startup_task = asyncio.create_task(frozen.startup(ctx))
+        await asyncio.sleep(0.05)
+        assert entered == ["a"]
+        release.set()
+        await startup_task
+        assert entered == ["a", "b"]
+
+    def test_from_modules_freeze_resolves_order(self) -> None:
         pool = LifecycleStep(id="pool", provides=("db",))
         warmup = LifecycleStep(id="warmup", requires=("db",))
 
@@ -113,21 +223,21 @@ class TestLifecyclePlan:
             def __call__(self) -> tuple[LifecycleStep, ...]:
                 return (warmup, pool)
 
-        built = LifecyclePlan.from_modules(_Module()).build()
+        frozen = LifecyclePlan.from_modules(_Module()).freeze()
 
-        assert tuple(s.id for s in built.steps) == ("pool", "warmup")
-        assert built.modules == ()
+        assert _wave_step_ids(frozen) == ["pool", "warmup"]
+        assert frozen.graph.waves == (("pool",), ("warmup",))
 
-    def test_build_merges_modules_and_steps(self) -> None:
+    def test_freeze_merges_modules_and_steps(self) -> None:
         extra = LifecycleStep(id="extra")
 
         class _Module:
             def __call__(self) -> tuple[LifecycleStep, ...]:
                 return (LifecycleStep(id="from_module"),)
 
-        built = LifecyclePlan.from_modules(_Module()).with_steps(extra).build()
+        frozen = LifecyclePlan.from_modules(_Module()).with_steps(extra).freeze()
 
-        assert tuple(s.id for s in built.steps) == ("from_module", "extra")
+        assert _wave_step_ids(frozen) == ["from_module", "extra"]
 
     def test_with_modules_appends(self) -> None:
         class _A:

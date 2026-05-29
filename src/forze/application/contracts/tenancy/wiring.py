@@ -5,6 +5,7 @@ from typing import Literal
 
 import attrs
 
+from forze.application._logger import logger
 from forze.application.contracts.resolution import (
     NamedResourceSpec,
     RelationSpec,
@@ -12,6 +13,7 @@ from forze.application.contracts.resolution import (
     is_static_relation,
 )
 from forze.base.exceptions import exc
+from forze.base.primitives import StrKey
 
 # ----------------------- #
 
@@ -25,7 +27,7 @@ TenantIsolationMode = Literal["none", "row", "relation", "database"]
 class TenancyRouteSpec:
     """One registered integration route and its row-level tenant flag."""
 
-    name: str
+    name: StrKey
     """Route name (document, search, or analytics spec key)."""
 
     tenant_aware: bool
@@ -119,7 +121,7 @@ def validate_routed_client_tenancy_wiring(
     """Fail or warn when a routed client and per-route ``tenant_aware`` disagree."""
 
     if client_is_routed and not partition_key_set:
-        raise exc.internal(
+        raise exc.configuration(
             f"{integration} tenancy validation failed: routed client requires a "
             f"cache partition key so metadata caches are partitioned by tenant. "
             f"{partition_key_detail}",
@@ -143,11 +145,10 @@ def validate_routed_client_tenancy_wiring(
         )
 
         if log_warning is not None:
-            log_warning("%s", message)
-        else:
-            import logging
+            log_warning(message)
 
-            logging.getLogger(__name__).warning(message)
+        else:
+            logger.warning(message)
 
 
 # ....................... #
@@ -169,9 +170,7 @@ def _emit_dynamic_warn(
     )
 
     if log_warning is not None:
-        log_warning("%s", message)
-        return
+        log_warning(message)
 
-    import logging
-
-    logging.getLogger(__name__).warning(message)
+    else:
+        logger.warning(message)

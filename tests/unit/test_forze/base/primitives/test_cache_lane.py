@@ -1,6 +1,6 @@
-"""Unit tests for :class:`~forze.base.primitives.cache.CacheLane`."""
+"""Unit tests for :class:`~forze.base.primitives.lanes.CacheLane`."""
 
-from forze.base.primitives.cache import CacheLane
+from forze.base.primitives.lanes import CacheLane
 
 # ----------------------- #
 

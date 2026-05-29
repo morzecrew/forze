@@ -1,16 +1,6 @@
 from __future__ import annotations
 
-from contextlib import AbstractAsyncContextManager
-from typing import (
-    TYPE_CHECKING,
-    Any,
-    Awaitable,
-    Callable,
-    Iterable,
-    Never,
-    Self,
-    TypeVar,
-)
+from typing import TYPE_CHECKING, Any, Callable, Iterable, Never, Self
 
 import attrs
 
@@ -31,12 +21,6 @@ from .scopes import (
 
 if TYPE_CHECKING:
     from ..context import ExecutionContext
-
-Args = TypeVar("Args")
-R = TypeVar("R")
-
-DeferAfterCommit = Callable[[Callable[[], Awaitable[None]]], Awaitable[None]]
-TxRunner = Callable[[StrKey], AbstractAsyncContextManager[None]]
 
 # ----------------------- #
 

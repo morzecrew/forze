@@ -1,3 +1,7 @@
+from .builders import (
+    steps_graph_from_sequence,
+    steps_pipe_from_sequence,
+)
 from .defaults import noop_lifecycle_hook
 from .protocols import (
     Before,
@@ -62,4 +66,6 @@ __all__ = [
     "LifecycleStep",
     "Failure",
     "Success",
+    "steps_graph_from_sequence",
+    "steps_pipe_from_sequence",
 ]

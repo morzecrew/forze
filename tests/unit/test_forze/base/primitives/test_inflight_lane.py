@@ -1,10 +1,10 @@
-"""Unit tests for :class:`~forze.base.primitives.inflight.InflightLane`."""
+"""Unit tests for :class:`~forze.base.primitives.lanes.InflightLane`."""
 
 import asyncio
 
 import pytest
 
-from forze.base.primitives.inflight import InflightLane
+from forze.base.primitives.lanes import InflightLane
 
 # ----------------------- #
 

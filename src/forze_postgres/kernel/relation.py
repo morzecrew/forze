@@ -59,4 +59,5 @@ async def resolve_postgres_qname(
     from forze_postgres.kernel.gateways.base import PostgresQualifiedName
 
     resolved = await resolve_value(spec, tenant_id)
+
     return PostgresQualifiedName(*resolved)

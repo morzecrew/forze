@@ -84,7 +84,7 @@ def require_static_relation(
     if is_static_relation(spec):
         return spec
 
-    raise exc.internal(
+    raise exc.configuration(
         f"{integration} route {route_name!r}: {field} uses a dynamic RelationSpec resolver; "
         f"startup validation requires static (namespace, name) tuples. {omit_hint}",
         code="dynamic_relation_startup_validation",
@@ -108,7 +108,7 @@ def require_static_named_resource(
     if is_static_named_resource(spec):
         return spec
 
-    raise exc.internal(
+    raise exc.configuration(
         f"{integration} route {route_name!r}: {field} uses a dynamic NamedResourceSpec "
         f"resolver; startup validation requires a static name. {omit_hint}",
         code="dynamic_named_resource_startup_validation",

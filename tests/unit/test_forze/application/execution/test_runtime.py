@@ -39,7 +39,7 @@ class TestExecutionRuntime:
             order.append("shut")
 
         step = LifecycleStep(id="s", startup=start, shutdown=shut)
-        plan = LifecyclePlan.from_steps(step)
+        plan = LifecyclePlan.from_steps(step).freeze()
         rt = ExecutionRuntime(lifecycle=plan)
 
         async with rt.scope():
@@ -59,7 +59,7 @@ class TestExecutionRuntime:
             def __call__(self) -> tuple[LifecycleStep, ...]:
                 return (LifecycleStep(id="s", startup=start),)
 
-        rt = ExecutionRuntime(lifecycle=LifecyclePlan.from_modules(_Module()))
+        rt = ExecutionRuntime(lifecycle=LifecyclePlan.from_modules(_Module()).freeze())
 
         async with rt.scope():
             assert order == ["start"]

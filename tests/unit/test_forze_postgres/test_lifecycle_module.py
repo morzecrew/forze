@@ -12,6 +12,10 @@ from forze_postgres import (
 # ----------------------- #
 
 
+def _wave_step_ids(frozen) -> list[str]:
+    return [step_id for wave in frozen.graph.waves for step_id in wave]
+
+
 def _pgroonga_search() -> PostgresSearchConfig:
     return PostgresSearchConfig(
         engine="pgroonga",
@@ -27,9 +31,9 @@ class TestPostgresLifecycleModule:
             dsn="postgresql://u:p@localhost/db",
             searches={"main": _pgroonga_search()},
         )
-        built = LifecyclePlan.from_modules(module).build()
+        frozen = LifecyclePlan.from_modules(module).freeze()
 
-        assert [s.id for s in built.steps] == [
+        assert _wave_step_ids(frozen) == [
             "postgres_lifecycle",
             "postgres_catalog_warmup",
         ]
@@ -39,9 +43,9 @@ class TestPostgresLifecycleModule:
         warmup = postgres_catalog_warmup_lifecycle_step(
             searches={"main": _pgroonga_search()},
         )
-        built = LifecyclePlan.from_steps(warmup, pool).build()
+        frozen = LifecyclePlan.from_steps(warmup, pool).freeze()
 
-        assert [s.id for s in built.steps] == [
+        assert _wave_step_ids(frozen) == [
             "postgres_lifecycle",
             "postgres_catalog_warmup",
         ]

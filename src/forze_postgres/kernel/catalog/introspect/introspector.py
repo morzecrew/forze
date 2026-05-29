@@ -7,15 +7,13 @@ require_psycopg()
 # ....................... #
 
 from datetime import timedelta
-from time import monotonic
-from typing import Any, Callable, Coroutine, TypeVar, cast, final
+from typing import Any, Callable, TypeVar, cast, final
 
 import attrs
 from psycopg import sql
 
 from forze.base.exceptions import exc
-from forze.base.primitives.cache import CacheLane
-from forze.base.primitives.inflight import InflightLane
+from forze.base.primitives import CachedInflightLane, CacheLane, InflightLane
 from forze_postgres.kernel.client import PostgresClientPort
 
 from .types import (
@@ -33,13 +31,7 @@ from .utils import extract_index_expr_from_indexdef, normalize_pg_type
 CacheKey = tuple[str, str, str]
 T_co = TypeVar("T_co")
 
-
-def _lane_clock() -> float:
-    return monotonic()
-
-
-def _tick_lane_clock() -> float:
-    return _lane_clock()
+# ....................... #
 
 
 @final
@@ -80,8 +72,12 @@ class PostgresIntrospector:
     (FIFO by insertion order). ``None`` means unbounded per-kind growth.
     """
 
-    __inflight: InflightLane[Any] = attrs.field(factory=InflightLane, init=False)
+    # ....................... #
 
+    __inflight: InflightLane[Any] = attrs.field(factory=InflightLane, init=False)
+    __coalesce: CachedInflightLane[CacheKey, Any] = attrs.field(
+        factory=CachedInflightLane, init=False
+    )
     __relation_lane: CacheLane[CacheKey, PostgresRelationKind] = attrs.field(init=False)
     __column_lane: CacheLane[CacheKey, PostgresColumnTypes] = attrs.field(init=False)
     __trigger_lane: CacheLane[CacheKey, PostgresRelationTriggers] = attrs.field(
@@ -99,44 +95,36 @@ class PostgresIntrospector:
         mx = self.max_cache_entries_per_kind
 
         if mx is not None and mx < 1:
-            raise exc.internal("max_cache_entries_per_kind must be at least 1 when set")
+            raise exc.configuration(
+                "max_cache_entries_per_kind must be at least 1 when set"
+            )
 
         ttl = self._ttl_seconds()
+
         self.__relation_lane = CacheLane(
-            max_entries=mx, ttl_seconds=ttl, clock=_tick_lane_clock
+            max_entries=mx,
+            ttl_seconds=ttl,
         )
         self.__column_lane = CacheLane(
-            max_entries=mx, ttl_seconds=ttl, clock=_tick_lane_clock
+            max_entries=mx,
+            ttl_seconds=ttl,
         )
         self.__trigger_lane = CacheLane(
-            max_entries=mx, ttl_seconds=ttl, clock=_tick_lane_clock
+            max_entries=mx,
+            ttl_seconds=ttl,
         )
         self.__pk_lane = CacheLane(
-            max_entries=mx, ttl_seconds=ttl, clock=_tick_lane_clock
+            max_entries=mx,
+            ttl_seconds=ttl,
         )
         self.__unique_sets_lane = CacheLane(
-            max_entries=mx, ttl_seconds=ttl, clock=_tick_lane_clock
+            max_entries=mx,
+            ttl_seconds=ttl,
         )
         self.__index_lane = CacheLane(
-            max_entries=mx, ttl_seconds=ttl, clock=_tick_lane_clock
+            max_entries=mx,
+            ttl_seconds=ttl,
         )
-
-    # ....................... #
-
-    async def _cached(
-        self,
-        *,
-        inflight_key: tuple[Any, ...],
-        cache_key: CacheKey,
-        lane: CacheLane[CacheKey, T_co],
-        factory: Callable[[], Coroutine[Any, Any, T_co]],
-    ) -> T_co:
-        hit = lane.lookup(cache_key)
-
-        if hit is not None:
-            return hit
-
-        return await self.__inflight.run(inflight_key, factory)
 
     # ....................... #
 
@@ -240,7 +228,7 @@ class PostgresIntrospector:
         schema = self.__normalize_schema(schema)
         key = self._rel_key(schema, relation)
 
-        return await self._cached(
+        return await self.__coalesce.coalesce(
             inflight_key=("pg_rel_kind", *key),
             cache_key=key,
             lane=self.__relation_lane,
@@ -345,6 +333,7 @@ class PostgresIntrospector:
 
                 else:
                     base = normalize_pg_type(str(elem))
+
             else:
                 base = normalize_pg_type(str(r["full_type"]))
 
@@ -373,7 +362,7 @@ class PostgresIntrospector:
         schema = self.__normalize_schema(schema)
         key = self._rel_key(schema, relation)
 
-        return await self._cached(
+        return await self.__coalesce.coalesce(
             inflight_key=("pg_col_types", *key),
             cache_key=key,
             lane=self.__column_lane,
@@ -501,7 +490,6 @@ class PostgresIntrospector:
 
         schema = self.__normalize_schema(schema)
         key = self._rel_key(schema, relation)
-
         hit = self.__pk_lane.lookup(key)
 
         if hit is not None:
@@ -559,7 +547,9 @@ class PostgresIntrospector:
             row_factory="dict",
         )
         names = frozenset(str(r["trigger_name"]) for r in rows)
+
         self.__trigger_lane.store(key, names)
+
         return names
 
     # ....................... #
@@ -575,7 +565,7 @@ class PostgresIntrospector:
         schema = self.__normalize_schema(schema)
         key = self._rel_key(schema, relation)
 
-        return await self._cached(
+        return await self.__coalesce.coalesce(
             inflight_key=("pg_rel_triggers", *key),
             cache_key=key,
             lane=self.__trigger_lane,
@@ -636,12 +626,20 @@ class PostgresIntrospector:
         if existing is not None and existing.amname:
             self.__index_lane.store(
                 key,
-                attrs.evolve(existing, indexdef=indexdef),
+                attrs.evolve(
+                    inst=existing,
+                    indexdef=indexdef,
+                ),
             )
+
         else:
             self.__index_lane.store(
                 key,
-                self._index_def_stub(schema=schema, index=index, indexdef=indexdef),
+                self._index_def_stub(
+                    schema=schema,
+                    index=index,
+                    indexdef=indexdef,
+                ),
             )
 
         return indexdef
@@ -740,6 +738,7 @@ class PostgresIntrospector:
 
         if expr_s is None:
             maybe = extract_index_expr_from_indexdef(indexdef)
+
             if maybe:
                 expr_s = maybe
 
@@ -776,7 +775,6 @@ class PostgresIntrospector:
 
         schema = self.__normalize_schema(schema)
         key = self._idx_key(schema, index)
-
         hit = self.__index_lane.lookup(key)
 
         if hit is not None and hit.amname:
@@ -794,6 +792,7 @@ class PostgresIntrospector:
 
         schema = self.__normalize_schema(schema)
         rk = self._rel_key(schema, relation)
+
         self.__relation_lane.invalidate(rk)
         self.__column_lane.invalidate(rk)
         self.__trigger_lane.invalidate(rk)
@@ -806,6 +805,7 @@ class PostgresIntrospector:
         """Evict cached index info and definition for a specific index."""
 
         schema = self.__normalize_schema(schema)
+
         self.__index_lane.invalidate(self._idx_key(schema, index))
 
     # ....................... #
@@ -820,3 +820,4 @@ class PostgresIntrospector:
         self.__unique_sets_lane.clear()
         self.__index_lane.clear()
         self.__inflight.clear()
+        self.__coalesce.clear_inflight()

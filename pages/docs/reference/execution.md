@@ -285,7 +285,7 @@ Pair of startup and shutdown hooks identified by `id` (a `GraphStep`):
 
 `LifecycleStep` is defined in `forze.application.contracts.execution` and re-exported from `forze.application.execution.lifecycle`. Integration packages typically provide factory functions (e.g. `postgres_lifecycle_step()`) that return pre-configured steps.
 
-Capability metadata **orders** steps at plan build time only; it does not skip hooks when a capability is missing (unlike operation `before` hooks).
+Capability metadata **orders** steps at freeze time only; it does not skip hooks when a capability is missing (unlike operation `before` hooks).
 
 #### Routed clients
 
@@ -297,14 +297,14 @@ Protocol for a callable that returns lifecycle steps (mirrors `DepsModule`). Int
 
 ### LifecyclePlan
 
-Collects modules and/or steps, resolves order via capability and dependency metadata, then runs startup/shutdown:
+Collects modules and/or steps, then freezes into a validated `ExecutionGraph`:
 
     :::python
     from forze.application.execution import LifecycleModule, LifecyclePlan
 
     lifecycle = LifecyclePlan.from_modules(pg_lifecycle_module, redis_lifecycle_module)
     lifecycle = lifecycle.with_steps(custom_step)
-    resolved = lifecycle.build()
+    frozen = lifecycle.freeze()
 
 | Method | Purpose |
 |--------|---------|
@@ -312,11 +312,20 @@ Collects modules and/or steps, resolves order via capability and dependency meta
 | `from_steps(*steps)` | Create a plan from plain steps |
 | `with_modules(*modules)` | Append modules to a new plan instance |
 | `with_steps(*steps)` | Append steps to a new plan instance |
-| `build()` | Invoke modules, merge with steps, topologically order, return resolved plan |
-| `startup(ctx)` | Resolve (if needed), run startup hooks in order |
-| `shutdown(ctx)` | Resolve (if needed), run shutdown hooks in reverse order |
+| `with_concurrent(concurrent=True)` | Run steps in the same wave concurrently at runtime |
+| `freeze()` | Invoke modules, merge with steps, build topological waves |
+| `build()` | Deprecated alias for `freeze()` |
 
-`ExecutionRuntime` calls `lifecycle.build()` before startup and shutdown. Startup behavior: if a hook fails, all previously started steps are shut down in reverse order before re-raising. Shutdown behavior: exceptions are swallowed so all steps are attempted.
+### FrozenLifecyclePlan and ResolvedLifecyclePlan
+
+After `freeze()`, the plan exposes an `ExecutionGraph` with `waves`. Call `resolve(ctx)` for a runnable snapshot (identity mapping today), then `startup(ctx)` / `shutdown(ctx)`:
+
+| Type | Purpose |
+|------|---------|
+| `FrozenLifecyclePlan` | Validated graph + `concurrent` flag; `resolve(ctx)` → `ResolvedLifecyclePlan` |
+| `ResolvedLifecyclePlan` | Runnable plan; runs startup forward by wave, shutdown reverse by wave |
+
+`ExecutionRuntime` accepts `LifecyclePlan` or `FrozenLifecyclePlan`, freezes when needed, and resolves per scope. Startup behavior: if a hook fails, completed steps are shut down in reverse wave order before re-raising. Shutdown behavior: exceptions are swallowed so all steps are attempted. When `concurrent=True`, steps within the same wave run in parallel (`asyncio.gather`); waves still run sequentially.
 
 ## Three execution plans
 
@@ -325,7 +334,7 @@ Forze uses three declarative plans in the execution layer. They are siblings: on
 | Plan | Collects | Terminal step | Typical enablement |
 |------|----------|-----------------|-------------------|
 | `DepsPlan` | modules, pre-built `Deps` | `build()` → `Deps` | `DepsPlan.from_modules(...).with_tracing(...)`; env `FORZE_DEPS_TRACE` |
-| `LifecyclePlan` | modules, `LifecycleStep` | `build()` then `startup` / `shutdown` | `LifecyclePlan.from_modules(...)` or `from_steps(...)` in app lifespan |
+| `LifecyclePlan` | modules, `LifecycleStep` | `freeze()` → `FrozenLifecyclePlan` → `resolve` → run | `LifecyclePlan.from_modules(...)` or `from_steps(...)` in app lifespan |
 | `OperationRegistry` | handlers, plans, `PlanPatch` | `freeze()` → `FrozenOperationRegistry` | `.patch(selector)` / `.bind(...)` / `OperationRegistry.merge` |
 
 **Where do I enable X?**
@@ -363,9 +372,9 @@ Use `scope()` as an async context manager:
 ### Scope lifecycle
 
 1. **Create context** — build `Deps` from the deps plan, store in a `RuntimeVar`
-2. **Startup** — run all lifecycle startup hooks in order
+2. **Startup** — run lifecycle startup hooks by wave (forward)
 3. **Yield** — the application runs
-4. **Shutdown** — run all lifecycle shutdown hooks in reverse order
+4. **Shutdown** — run lifecycle shutdown hooks by wave (reverse)
 5. **Reset** — clear the context
 
 ### Methods

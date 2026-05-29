@@ -162,7 +162,7 @@ The `LifecyclePlan` manages startup and shutdown hooks for infrastructure client
         PostgresLifecycleModule(client=pg, dsn="postgresql://..."),
     ).with_steps(redis_lifecycle_step(dsn="redis://..."))
 
-Each `LifecycleStep` is a `GraphStep` with `requires`, `provides`, and `depends_on` for declarative ordering at `LifecyclePlan.build()`. Steps run in resolved order at startup and in reverse at shutdown. If startup fails, already-executed steps are shut down in reverse before the exception propagates.
+Each `LifecycleStep` is a `GraphStep` with `requires`, `provides`, and `depends_on` for declarative ordering at `LifecyclePlan.freeze()`. Steps run by wave at startup (forward) and shutdown (reverse). If startup fails, completed steps are shut down in reverse wave order before the exception propagates.
 
 Use `LifecycleModule` implementations (for example `PostgresLifecycleModule`) or step factories (`postgres_lifecycle_step()`, …). Deps registration stays on `DepsModule`; lifecycle stays separate.
 

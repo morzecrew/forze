@@ -12,7 +12,10 @@ from .deps import (
     resolution_tracer_from_flag,
     runtime_tracer_from_flag,
 )
-from .lifecycle import LifecycleModule, LifecyclePlan
+from .lifecycle import (
+    LifecycleModule,
+    LifecyclePlan,
+)
 from .planning import OperationPlan
 from .registry import FrozenOperationRegistry, OperationRegistry
 from .runtime import ExecutionRuntime

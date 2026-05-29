@@ -23,7 +23,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`forze.base`:** `InflightLane` in `forze.base.primitives` — asyncio singleflight coalescing for concurrent cache misses.
 - **Application contracts:** `require_tenant_id` in `forze.application.contracts.tenancy`; `secret_ref_for_tenant` and `resolve_str_for_tenant` in `forze.application.contracts.secrets`.
 - **Application execution:** `routed_client_lifecycle_step` and `RoutedClientLifecycle` protocol for tenant-routed integration clients.
-- **Application execution:** `LifecycleModule`, `LifecyclePlan.from_modules` / `with_modules` / `build()` — merge lifecycle modules and topologically order steps via `requires`, `provides`, and `depends_on` (same graph model as operation hooks; ordering only, no capability skip).
+- **Application execution:** `LifecycleModule`, `LifecyclePlan.from_modules` / `with_modules` / `freeze()` — merge lifecycle modules and topologically order steps via `requires`, `provides`, and `depends_on` (same graph model as operation hooks; ordering only, no capability skip).
+- **Application execution:** `FrozenLifecyclePlan`, `ResolvedLifecyclePlan`, and `LifecyclePlan.with_concurrent()` — lifecycle freeze/resolve/run pipeline aligned with operation plans; optional concurrent execution within the same topological wave.
 - **Postgres:** `PostgresLifecycleModule` (pool, optional catalog warmup, optional document schema validation); lifecycle step factories set `postgres.client` capability metadata for declarative ordering.
 - **Application contracts:** `TenantAwareIntegrationConfig` in `forze.application.contracts.tenancy` — shared frozen `tenant_aware` flag for integration wiring configs (distinct from runtime `TenancyMixin`).
 - **Application contracts:** `forze.application.contracts.resolution` — `ValueResolver`, `MaybeAwaitable`, and `resolve_value` for static or tenant-scoped async/sync resolution.
@@ -37,6 +38,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Application execution:** `LifecyclePlan.build()` now returns `FrozenLifecyclePlan` (deprecated alias for `freeze()`); `startup` / `shutdown` run on frozen or resolved plans, not on the authoring plan.
 - **Mongo:** `MongoSearchConfig` uses a single `index_name` (semantics depend on `engine`) instead of separate `atlas_index_name` / `vector_index_name` / `text_index_name` keys.
 - **Postgres:** reorganized `forze_postgres.kernel` into `kernel.client`, `kernel.catalog`, and `kernel.sql`; `PostgresIntrospector` uses `CacheLane`. Direct imports of `forze_postgres.kernel.platform`, `forze_postgres.kernel.introspect`, `forze_postgres.kernel.query`, `forze_postgres.pagination`, and related flat kernel modules must be updated to the new paths.
 - **Postgres:** `RoutedPostgresClient` uses `GuardedLruRegistry` internally (no public API change).

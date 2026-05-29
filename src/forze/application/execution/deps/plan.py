@@ -57,6 +57,7 @@ def _resolve_runtime_tracer(
 
 
 # ....................... #
+#! consider adding FrozenDepsPlan and / or FrozenDeps
 
 
 @final

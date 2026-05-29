@@ -53,7 +53,8 @@ class RedisClientPort(Protocol):
     def get(self, key: str) -> Awaitable[bytes | None]: ...  # pragma: no cover
 
     def mget(
-        self, keys: Sequence[str]
+        self,
+        keys: Sequence[str],
     ) -> Awaitable[list[bytes | None]]: ...  # pragma: no cover
 
     def set(
@@ -90,7 +91,9 @@ class RedisClientPort(Protocol):
     def reset(self, key: str, value: int) -> Awaitable[int]: ...  # pragma: no cover
 
     def publish(
-        self, channel: str, message: bytes | str
+        self,
+        channel: str,
+        message: bytes | str,
     ) -> Awaitable[int]: ...  # pragma: no cover
 
     def subscribe(
@@ -124,7 +127,9 @@ class RedisClientPort(Protocol):
     ) -> Awaitable[RedisStreamResponse]: ...  # pragma: no cover
 
     def xdel(
-        self, stream: str, ids: Sequence[str]
+        self,
+        stream: str,
+        ids: Sequence[str],
     ) -> Awaitable[int]: ...  # pragma: no cover
 
     def xtrim_maxlen(
@@ -166,5 +171,8 @@ class RedisClientPort(Protocol):
     ) -> Awaitable[RedisStreamResponse]: ...  # pragma: no cover
 
     def xack(
-        self, stream: str, group: str, ids: Sequence[str]
+        self,
+        stream: str,
+        group: str,
+        ids: Sequence[str],
     ) -> Awaitable[int]: ...  # pragma: no cover

@@ -80,7 +80,7 @@ deps_plan = DepsPlan.from_modules(
 
 ### Lifecycle plan
 
-Manages startup/shutdown of connection pools. Use `LifecyclePlan.from_modules(...)` for integration modules (for example `PostgresLifecycleModule`) or `from_steps(...)` for individual factories. `build()` topologically orders steps using `requires` / `provides` / `depends_on` on each `LifecycleStep`; `ExecutionRuntime` calls `build()` automatically.
+Manages startup/shutdown of connection pools. Use `LifecyclePlan.from_modules(...)` for integration modules (for example `PostgresLifecycleModule`) or `from_steps(...)` for individual factories. `freeze()` builds topological waves using `requires` / `provides` / `depends_on` on each `LifecycleStep`; `ExecutionRuntime` freezes and runs the plan per scope. Use `with_concurrent()` when independent steps in the same wave may start in parallel.
 
 ```python
 from forze_postgres import PostgresLifecycleModule

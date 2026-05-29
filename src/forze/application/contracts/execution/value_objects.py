@@ -56,6 +56,11 @@ class ExecutionGraph[G]:
     waves: tuple[tuple[StrKey, ...], ...] = attrs.field(factory=tuple)
     """Waves for this graph."""
 
+    # ....................... #
+
+    def is_empty(self) -> bool:
+        return not self.steps and not self.waves
+
 
 # ....................... #
 
@@ -66,6 +71,11 @@ class ExecutionPipeline[P]:
 
     steps: tuple[P, ...] = attrs.field(factory=tuple)
     """Steps for this pipeline."""
+
+    # ....................... #
+
+    def is_empty(self) -> bool:
+        return not self.steps
 
 
 # ....................... #

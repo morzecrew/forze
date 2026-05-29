@@ -1,21 +1,23 @@
 from __future__ import annotations
 
-from typing import Any, Callable, Literal, Protocol, Self, overload
+from typing import TYPE_CHECKING, Any, Callable, Literal, Protocol, Self, overload
 
 import attrs
 
-from forze.application.contracts.execution import (
-    BeforeStep,
-    DispatchStep,
-    FinallyStep,
-    MiddlewareStep,
-    OnFailureStep,
-    OnSuccessStep,
-)
 from forze.base.exceptions import exc
 from forze.base.primitives import StrKey
 
 from .scopes import Scope, TransactionScope
+
+if TYPE_CHECKING:
+    from forze.application.contracts.execution import (
+        BeforeStep,
+        DispatchStep,
+        FinallyStep,
+        MiddlewareStep,
+        OnFailureStep,
+        OnSuccessStep,
+    )
 
 # ----------------------- #
 
@@ -61,55 +63,73 @@ class ScopeBinder[P: _Parent, R]:
 
     # ....................... #
 
-    def wrap(self, *steps: MiddlewareStep) -> Self:
+    def wrap(self, *steps: "MiddlewareStep") -> Self:
         """Add wrap steps to the plan."""
 
-        new_acc = attrs.evolve(self._acc, wrap=self._acc.wrap.add(*steps))
+        new_acc = attrs.evolve(
+            self._acc,
+            wrap=self._acc.wrap.add(*steps),
+        )
 
         return self._patch_acc(new_acc)
 
     # ....................... #
 
-    def finally_(self, *steps: FinallyStep) -> Self:
+    def finally_(self, *steps: "FinallyStep") -> Self:
         """Add finally steps to the plan."""
 
-        new_acc = attrs.evolve(self._acc, finally_=self._acc.finally_.add(*steps))
+        new_acc = attrs.evolve(
+            self._acc,
+            finally_=self._acc.finally_.add(*steps),
+        )
 
         return self._patch_acc(new_acc)
 
     # ....................... #
 
-    def on_failure(self, *steps: OnFailureStep) -> Self:
+    def on_failure(self, *steps: "OnFailureStep") -> Self:
         """Add on failure steps to the plan."""
 
-        new_acc = attrs.evolve(self._acc, on_failure=self._acc.on_failure.add(*steps))
+        new_acc = attrs.evolve(
+            self._acc,
+            on_failure=self._acc.on_failure.add(*steps),
+        )
 
         return self._patch_acc(new_acc)
 
     # ....................... #
 
-    def before(self, *steps: BeforeStep) -> Self:
+    def before(self, *steps: "BeforeStep") -> Self:
         """Add before steps to the plan."""
 
-        new_acc = attrs.evolve(self._acc, before=self._acc.before.add(*steps))
+        new_acc = attrs.evolve(
+            self._acc,
+            before=self._acc.before.add(*steps),
+        )
 
         return self._patch_acc(new_acc)
 
     # ....................... #
 
-    def on_success(self, *steps: OnSuccessStep) -> Self:
+    def on_success(self, *steps: "OnSuccessStep") -> Self:
         """Add on success steps to the plan."""
 
-        new_acc = attrs.evolve(self._acc, on_success=self._acc.on_success.add(*steps))
+        new_acc = attrs.evolve(
+            self._acc,
+            on_success=self._acc.on_success.add(*steps),
+        )
 
         return self._patch_acc(new_acc)
 
     # ....................... #
 
-    def dispatch(self, *steps: DispatchStep) -> Self:
+    def dispatch(self, *steps: "DispatchStep") -> Self:
         """Add dispatch steps to the plan."""
 
-        new_acc = attrs.evolve(self._acc, dispatch=self._acc.dispatch.add(*steps))
+        new_acc = attrs.evolve(
+            self._acc,
+            dispatch=self._acc.dispatch.add(*steps),
+        )
 
         return self._patch_acc(new_acc)
 
@@ -184,7 +204,7 @@ class TransactionScopeBinder[P: _Parent, R](ScopeBinder[P, R]):
 
     # ....................... #
 
-    def after_commit(self, *steps: OnSuccessStep) -> Self:
+    def after_commit(self, *steps: "OnSuccessStep") -> Self:
         """Add after commit steps to the plan."""
 
         new_acc = attrs.evolve(
@@ -196,11 +216,12 @@ class TransactionScopeBinder[P: _Parent, R](ScopeBinder[P, R]):
 
     # ....................... #
 
-    def dispatch_after_commit(self, *steps: DispatchStep) -> Self:
+    def dispatch_after_commit(self, *steps: "DispatchStep") -> Self:
         """Add dispatch after commit steps to the plan."""
 
         new_acc = attrs.evolve(
-            self._acc, dispatch_after_commit=self._acc.dispatch_after_commit.add(*steps)
+            self._acc,
+            dispatch_after_commit=self._acc.dispatch_after_commit.add(*steps),
         )
 
         return self._patch_acc(new_acc)

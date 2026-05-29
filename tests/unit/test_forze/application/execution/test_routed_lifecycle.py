@@ -37,8 +37,9 @@ class TestRoutedClientLifecycleStep:
             routed_client_lifecycle_step("routed", client=client),
         )
 
-        await plan.startup(ctx)
-        await plan.shutdown(ctx)
+        frozen = plan.freeze()
+        await frozen.startup(ctx)
+        await frozen.shutdown(ctx)
 
         assert client.startup_calls == 1
         assert client.close_calls == 1

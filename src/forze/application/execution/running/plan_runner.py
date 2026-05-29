@@ -3,13 +3,8 @@
 from contextlib import AbstractAsyncContextManager
 from typing import Any, Awaitable, Callable, cast
 
-from forze.application.contracts.execution import (
-    ExecutionGraph,
-    ExecutionPipeline,
-    Failure,
-    Handler,
-    Success,
-)
+from forze.application.contracts.execution import Failure, Handler, Success
+from forze.application.contracts.transaction import AfterCommitPort
 from forze.base.exceptions import exc
 from forze.base.primitives import StrKey
 
@@ -26,44 +21,13 @@ from .executor import (
 
 # ----------------------- #
 
-DeferAfterCommit = Callable[[Callable[[], Awaitable[None]]], Awaitable[None]]
-TxRunner = Callable[[StrKey], AbstractAsyncContextManager[None]]
-
-# ....................... #
-
-
-def _graph_nonempty(graph: ExecutionGraph[Any]) -> bool:
-    return bool(graph.steps) or bool(graph.waves)
-
-
-# ....................... #
-
-
-def _pipeline_nonempty(pipeline: ExecutionPipeline[Any]) -> bool:
-    return bool(pipeline.steps)
-
-
-# ....................... #
-
-
-def _tx_has_stages(tx: ResolvedTransactionScope) -> bool:
-    return (
-        _graph_nonempty(tx.before)
-        or _pipeline_nonempty(tx.wrap)
-        or _pipeline_nonempty(tx.finally_)
-        or _pipeline_nonempty(tx.on_failure)
-        or _graph_nonempty(tx.on_success)
-        or _pipeline_nonempty(tx.dispatch)
-        or _graph_nonempty(tx.after_commit)
-        or _pipeline_nonempty(tx.dispatch_after_commit)
-    )
-
+TransactionRunner = Callable[[StrKey], AbstractAsyncContextManager[None]]
 
 # ....................... #
 
 
 def _assert_tx_configured(tx: ResolvedTransactionScope) -> None:
-    if tx.route is not None or not _tx_has_stages(tx):
+    if tx.route is not None or tx.is_empty():
         return
 
     raise exc.internal("Transaction scope has stages but no route set")
@@ -113,8 +77,8 @@ async def run_resolved_tx_scope[Args, R](
     handler: Handler[Args, R],
     args: Args,
     *,
-    tx_runner: TxRunner,
-    defer_after_commit: DeferAfterCommit,
+    tx_runner: TransactionRunner,
+    defer_after_commit: AfterCommitPort,
 ) -> R:
     """Run the transaction scope around the handler."""
 
@@ -170,8 +134,8 @@ async def run_resolved_operation_plan[Args, R](
     handler: Handler[Args, R],
     args: Args,
     *,
-    tx_runner: TxRunner,
-    defer_after_commit: DeferAfterCommit,
+    tx_runner: TransactionRunner,
+    defer_after_commit: AfterCommitPort,
 ) -> R:
     """Run handler through outer and transaction scopes in plan order."""
 

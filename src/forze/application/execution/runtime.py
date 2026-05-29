@@ -10,7 +10,7 @@ from forze.base.primitives import RuntimeVar
 
 from .context import ExecutionContext
 from .deps import DepsPlan
-from .lifecycle import LifecyclePlan
+from .lifecycle import FrozenLifecyclePlan
 
 # ----------------------- #
 
@@ -28,7 +28,7 @@ class ExecutionRuntime:
     deps: DepsPlan = attrs.field(factory=DepsPlan)
     """Plan for building the dependency container."""
 
-    lifecycle: LifecyclePlan = attrs.field(factory=LifecyclePlan)
+    lifecycle: FrozenLifecyclePlan = attrs.field(factory=FrozenLifecyclePlan)
     """Plan for startup and shutdown hooks."""
 
     # Non initable fields
@@ -76,7 +76,7 @@ class ExecutionRuntime:
         logger.info("Starting execution runtime")
 
         ctx = self.__ctx.get()
-        await self.lifecycle.build().startup(ctx)
+        await self.lifecycle.startup(ctx)
 
         logger.info("Execution runtime startup completed")
 
@@ -85,14 +85,15 @@ class ExecutionRuntime:
     async def shutdown(self) -> None:
         """Run lifecycle shutdown hooks and reset the context.
 
-        Shutdown runs in reverse order of startup. Context is reset in a
+        Shutdown runs in reverse wave order. Context is reset in a
         ``finally`` block so it is cleared even if shutdown raises.
         """
 
         logger.info("Shutting down execution runtime")
 
         try:
-            await self.lifecycle.build().shutdown(self.__ctx.get())
+            ctx = self.__ctx.get()
+            await self.lifecycle.shutdown(ctx)
 
         finally:
             self.__ctx.reset()

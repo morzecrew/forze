@@ -2,8 +2,13 @@
 from forze.application.contracts.execution import LifecycleStep
 
 from .module import LifecycleModule
-from .plan import LifecyclePlan
+from .plans import FrozenLifecyclePlan, LifecyclePlan
 
 # ----------------------- #
 
-__all__ = ["LifecycleModule", "LifecyclePlan", "LifecycleStep"]
+__all__ = [
+    "FrozenLifecyclePlan",
+    "LifecycleModule",
+    "LifecyclePlan",
+    "LifecycleStep",
+]
