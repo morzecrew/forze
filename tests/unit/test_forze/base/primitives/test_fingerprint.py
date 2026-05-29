@@ -1,6 +1,19 @@
-"""Tests for :func:`~forze.base.primitives.fingerprint.stable_fingerprint`."""
+"""Tests for :mod:`forze.base.primitives.fingerprint`."""
 
-from forze.base.primitives.fingerprint import stable_fingerprint
+from pydantic import SecretStr
+
+from forze.base.primitives.fingerprint import (
+    connection_string_fingerprint,
+    gcp_credential_dedup_tag,
+    secret_dedup_fingerprint,
+    stable_fingerprint,
+)
+from forze_clickhouse.kernel.platform.routing_credentials import (
+    ClickHouseRoutingCredentials,
+    routing_fingerprint,
+)
+
+# ----------------------- #
 
 
 def test_stable_fingerprint_is_deterministic() -> None:
@@ -9,3 +22,74 @@ def test_stable_fingerprint_is_deterministic() -> None:
 
 def test_stable_fingerprint_differs_for_different_parts() -> None:
     assert stable_fingerprint("a") != stable_fingerprint("b")
+
+
+def test_secret_dedup_fingerprint_is_deterministic() -> None:
+    assert secret_dedup_fingerprint("key") == secret_dedup_fingerprint("key")
+
+
+def test_secret_dedup_fingerprint_empty_and_none() -> None:
+    assert secret_dedup_fingerprint(None) == ""
+    assert secret_dedup_fingerprint("") == ""
+    assert secret_dedup_fingerprint(SecretStr("")) == ""
+
+
+def test_secret_dedup_fingerprint_differs_for_different_values() -> None:
+    assert secret_dedup_fingerprint("a") != secret_dedup_fingerprint("b")
+
+
+def test_secret_dedup_fingerprint_accepts_secret_str() -> None:
+    assert secret_dedup_fingerprint(SecretStr("key")) == secret_dedup_fingerprint("key")
+
+
+def test_gcp_credential_dedup_tag_file() -> None:
+    assert gcp_credential_dedup_tag(service_file="/path/key.json") == "file:/path/key.json"
+
+
+def test_gcp_credential_dedup_tag_inline_never_embeds_raw_json() -> None:
+    raw = '{"client_email":"x@y.z"}'
+    tag = gcp_credential_dedup_tag(service_account_json=raw)
+
+    assert tag.startswith("inline:")
+    assert raw not in tag
+
+
+def test_gcp_credential_dedup_tag_adc() -> None:
+    assert gcp_credential_dedup_tag() == "adc"
+
+
+def test_connection_string_fingerprint_differs_by_password() -> None:
+    base = "postgresql://user"
+    host = "@localhost:5432/mydb"
+    fp_a = connection_string_fingerprint(f"{base}:pass-a{host}")
+    fp_b = connection_string_fingerprint(f"{base}:pass-b{host}")
+
+    assert fp_a != fp_b
+    assert "pass-a" not in fp_a
+    assert "pass-b" not in fp_b
+
+
+def test_connection_string_fingerprint_without_password_unchanged_shape() -> None:
+    dsn = "postgresql://user@localhost:5432/mydb"
+    fp = connection_string_fingerprint(dsn)
+
+    assert fp
+    assert "user" not in fp
+
+
+def test_clickhouse_routing_fingerprint_differs_by_password() -> None:
+    creds_a = ClickHouseRoutingCredentials(password="secret-a")
+    creds_b = ClickHouseRoutingCredentials(password="secret-b")
+
+    fp_a = routing_fingerprint(creds_a)
+    fp_b = routing_fingerprint(creds_b)
+
+    assert fp_a != fp_b
+
+
+def test_clickhouse_routing_fingerprint_excludes_plaintext_password() -> None:
+    password = "super-secret-password"
+    creds = ClickHouseRoutingCredentials(password=password)
+    fp = routing_fingerprint(creds)
+
+    assert password not in fp

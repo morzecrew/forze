@@ -1,15 +1,14 @@
 """Meilisearch client that resolves URL and API key per tenant via :class:`~forze.application.contracts.secrets.SecretsPort`."""
 
-import hashlib
 from datetime import timedelta
 from typing import TYPE_CHECKING, Any, Callable, Mapping, final
 
 if TYPE_CHECKING:
     from meilisearch_python_sdk.models.search import SearchParams
+
 from uuid import UUID
 
 import attrs
-from pydantic import SecretStr
 
 from forze.application.contracts.secrets import (
     SecretRef,
@@ -20,7 +19,7 @@ from forze.application.contracts.secrets import (
 from forze.application.contracts.tenancy import require_tenant_id
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
-from forze.base.primitives.fingerprint import stable_fingerprint
+from forze.base.primitives.fingerprint import secret_dedup_fingerprint, stable_fingerprint
 from forze.base.primitives.lru_registry import SimpleLruRegistry
 
 from .client import MeilisearchClient
@@ -29,14 +28,6 @@ from .routing_credentials import MeilisearchRoutingCredentials
 from .value_objects import MeilisearchConfig
 
 # ----------------------- #
-
-
-def _api_key_fingerprint(api_key: str | SecretStr | None) -> str:
-    if api_key is None:
-        return ""
-
-    raw = api_key.get_secret_value() if isinstance(api_key, SecretStr) else api_key
-    return hashlib.sha256(raw.encode()).hexdigest()
 
 
 @final
@@ -120,7 +111,7 @@ class RoutedMeilisearchClient(MeilisearchClientPort):
             return cached
 
         creds = await self._resolve_creds(tenant_id)
-        fingerprint = stable_fingerprint(creds.url, _api_key_fingerprint(creds.api_key))
+        fingerprint = stable_fingerprint(creds.url, secret_dedup_fingerprint(creds.api_key))
         self._fingerprints[tenant_id] = fingerprint
 
         return fingerprint

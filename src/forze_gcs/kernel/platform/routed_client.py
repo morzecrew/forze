@@ -1,6 +1,5 @@
 """GCS client that resolves GCP credentials per tenant via :class:`~forze.application.contracts.secrets.SecretsPort`."""
 
-import hashlib
 import tempfile
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -18,7 +17,7 @@ from forze.application.contracts.secrets import (
 )
 from forze.application.contracts.tenancy import require_tenant_id
 from forze.base.exceptions import exc
-from forze.base.primitives.fingerprint import stable_fingerprint
+from forze.base.primitives.fingerprint import gcp_credential_dedup_tag, stable_fingerprint
 from forze.base.primitives.lru_registry import SimpleLruRegistry
 
 from .client import GCSClient
@@ -27,17 +26,6 @@ from .routing_credentials import GCSRoutingCredentials
 from .value_objects import GCSConfig, GCSHead, GCSListedObject
 
 # ----------------------- #
-
-
-def _credential_fingerprint(creds: GCSRoutingCredentials) -> str:
-    if creds.service_file is not None:
-        return creds.service_file
-
-    if creds.service_account_json is not None:
-        digest = hashlib.sha256(creds.service_account_json.encode()).hexdigest()
-        return f"inline:{digest}"
-
-    return "adc"
 
 
 def _service_file_for_init(creds: GCSRoutingCredentials) -> str | None:
@@ -138,7 +126,13 @@ class RoutedGCSClient(GCSClientPort):
             return cached
 
         creds = await self._resolve_creds(tenant_id)
-        fingerprint = stable_fingerprint(creds.project_id, _credential_fingerprint(creds))
+        fingerprint = stable_fingerprint(
+            creds.project_id,
+            gcp_credential_dedup_tag(
+                service_file=creds.service_file,
+                service_account_json=creds.service_account_json,
+            ),
+        )
         self._fingerprints[tenant_id] = fingerprint
 
         return fingerprint

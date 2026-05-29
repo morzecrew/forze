@@ -2,7 +2,12 @@
 
 from .buffer import ContextualBuffer
 from .datetime import utcnow
-from .fingerprint import connection_string_fingerprint, stable_fingerprint
+from .fingerprint import (
+    connection_string_fingerprint,
+    gcp_credential_dedup_tag,
+    secret_dedup_fingerprint,
+    stable_fingerprint,
+)
 from .graph import DirectedAcyclicGraph
 from .lanes import CachedInflightLane, CacheLane, InflightLane
 from .lru_registry import GuardedLruRegistry, SimpleLruRegistry
@@ -23,6 +28,8 @@ __all__ = [
     "InflightLane",
     "CachedInflightLane",
     "stable_fingerprint",
+    "secret_dedup_fingerprint",
+    "gcp_credential_dedup_tag",
     "connection_string_fingerprint",
     "GuardedLruRegistry",
     "SimpleLruRegistry",

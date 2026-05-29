@@ -8,10 +8,11 @@ from forze.base.primitives import StrKey
 from .runners import OperationRunner
 
 if TYPE_CHECKING:
-    from ..context import ExecutionContext, ExecutionContextFactory
+    from ..context import ExecutionContext
     from ..registry import FrozenOperationRegistry
 
 # ----------------------- #
+#! Mb move into "operation" folder
 
 
 @final
@@ -58,24 +59,6 @@ class DispatchedOperation[Args, R](OnSuccess[Args, R]):
         op_args = self.mapper(args, result)
 
         return await self.resolved(op_args)
-
-
-# ....................... #
-#! ... really useless - use the registry directly
-
-
-def resolved_op_factory(  #! TODO: remove or repurpose into class... but it's useless
-    *,
-    registry: "FrozenOperationRegistry",
-    operation: StrKey,
-    ctx_factory: "ExecutionContextFactory",
-) -> Callable[[], ResolvedOperation[Any, Any]]:
-    """Build a factory callable for creating :class:`ResolvedOperation` instances."""
-
-    def _factory() -> ResolvedOperation[Any, Any]:
-        return registry.resolve(operation, ctx_factory())
-
-    return _factory
 
 
 # ....................... #

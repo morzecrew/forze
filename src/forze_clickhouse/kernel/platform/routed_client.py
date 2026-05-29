@@ -15,7 +15,6 @@ from forze.application.contracts.secrets import (
 from forze.application.contracts.tenancy import require_tenant_id
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
-from forze.base.primitives.fingerprint import stable_fingerprint
 from forze.base.primitives.lru_registry import SimpleLruRegistry
 
 from .client import ClickHouseClient
@@ -139,7 +138,7 @@ class RoutedClickHouseClient(ClickHouseClientPort):
             return cached
 
         creds = await self._resolve_creds(tenant_id)
-        fingerprint = stable_fingerprint(routing_fingerprint(creds))
+        fingerprint = routing_fingerprint(creds)
         self._fingerprints[tenant_id] = fingerprint
 
         return fingerprint

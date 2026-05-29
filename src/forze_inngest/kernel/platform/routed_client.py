@@ -1,6 +1,5 @@
 """Inngest client that resolves app credentials per tenant via :class:`~forze.application.contracts.secrets.SecretsPort`."""
 
-import hashlib
 from typing import Callable, Mapping, final
 from uuid import UUID
 
@@ -16,7 +15,7 @@ from forze.application.contracts.secrets import (
 )
 from forze.application.contracts.tenancy import require_tenant_id
 from forze.base.exceptions import exc
-from forze.base.primitives.fingerprint import stable_fingerprint
+from forze.base.primitives.fingerprint import secret_dedup_fingerprint, stable_fingerprint
 from forze.base.primitives.lru_registry import SimpleLruRegistry
 
 from .client import InngestClient
@@ -31,15 +30,7 @@ async def _dispose_inngest_client(_client: InngestClient) -> None:
     return None
 
 
-# ----------------------- #
-
-
-def _secret_fingerprint(value: str | SecretStr | None) -> str:
-    if value is None:
-        return ""
-
-    raw = value.get_secret_value() if isinstance(value, SecretStr) else value
-    return hashlib.sha256(raw.encode()).hexdigest()
+# ....................... #
 
 
 def _to_inngest_config(creds: InngestRoutingCredentials) -> InngestConfig:
@@ -151,7 +142,10 @@ class RoutedInngestClient(InngestClientPort):
         creds = await self._resolve_creds(tenant_id)
         fingerprint = stable_fingerprint(
             creds.app_id,
-            _secret_fingerprint(creds.event_key),
+            secret_dedup_fingerprint(creds.event_key),
+            secret_dedup_fingerprint(creds.signing_key),
+            str(creds.is_production),
+            str(creds.request_timeout_ms),
         )
         self._fingerprints[tenant_id] = fingerprint
 

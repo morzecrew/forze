@@ -1,6 +1,6 @@
 """Run durable functions via frozen operation registry keys."""
 
-from typing import TYPE_CHECKING, Any, Callable, TypeVar, cast
+from typing import TYPE_CHECKING, Any, Callable, cast
 
 from pydantic import BaseModel
 
@@ -15,8 +15,6 @@ if TYPE_CHECKING:
     from ..context import ExecutionContext
     from ..registry import FrozenOperationRegistry
 
-SpecIn = TypeVar("SpecIn", bound=BaseModel)
-SpecOut = TypeVar("SpecOut", bound=BaseModel)
 
 # ----------------------- #
 
@@ -55,7 +53,7 @@ async def run_durable_function(
 # ....................... #
 
 
-async def run_durable_function_typed(
+async def run_durable_function_typed[SpecIn: BaseModel, SpecOut: BaseModel](
     spec: DurableFunctionSpec[SpecIn, SpecOut],
     registry: "FrozenOperationRegistry",
     ctx: "ExecutionContext",

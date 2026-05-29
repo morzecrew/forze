@@ -253,7 +253,10 @@ class OperationRegistry:
         for op in frozen_handlers:
             frozen_plans[op] = resolution.resolve(str(op)).freeze()
 
-        return FrozenOperationRegistry(handlers=frozen_handlers, plans=frozen_plans)
+        return FrozenOperationRegistry(
+            handlers=frozen_handlers,
+            plans=frozen_plans,
+        )
 
 
 # ....................... #

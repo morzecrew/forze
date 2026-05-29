@@ -18,10 +18,12 @@ class StartupWavePartialError(Exception):
 
     def __init__(self, cause: BaseException, completed: list[StrKey]) -> None:
         super().__init__(str(cause))
+
         self.cause = cause
         self.completed = completed
 
-# ----------------------- #
+
+# ....................... #
 
 
 async def _run_startup_step(
@@ -82,6 +84,7 @@ async def _run_startup_wave_concurrent(
         if isinstance(result, BaseException):
             if first_error is None:
                 first_error = result
+
         else:
             completed.append(step_id)
 
@@ -135,9 +138,7 @@ async def run_lifecycle_startup(
 
     executed_waves: list[list[StrKey]] = []
     run_wave = (
-        _run_startup_wave_concurrent
-        if concurrent
-        else _run_startup_wave_sequential
+        _run_startup_wave_concurrent if concurrent else _run_startup_wave_sequential
     )
     partial_error: StartupWavePartialError | None = None
 
@@ -146,9 +147,9 @@ async def run_lifecycle_startup(
             completed = await run_wave(graph, ctx, wave)
             executed_waves.append(completed)
 
-    except StartupWavePartialError as exc:
-        partial_error = exc
-        executed_waves.append(exc.completed)
+    except StartupWavePartialError as e:
+        partial_error = e
+        executed_waves.append(e.completed)
 
     except Exception:
         logger.exception("Lifecycle startup failed")
@@ -223,9 +224,7 @@ async def run_lifecycle_shutdown(
     )
 
     run_wave = (
-        _run_shutdown_wave_concurrent
-        if concurrent
-        else _run_shutdown_wave_sequential
+        _run_shutdown_wave_concurrent if concurrent else _run_shutdown_wave_sequential
     )
 
     for wave in reversed(graph.waves):
