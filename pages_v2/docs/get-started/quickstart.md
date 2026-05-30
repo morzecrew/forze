@@ -80,9 +80,18 @@ user_spec = DocumentSpec(
 )
 ```
 
-## Step 4: Declare operation registry
+## Step 4: Declare operations registry
 
-...
+```python
+from forze.application.composition.document import build_document_registry, DocumentDTOs
+
+reg = build_document_registry(
+    user_spec,
+    DocumentDTOs(read=ReadUser, create=CreateUserCmd)
+)
+
+frozen_reg = reg.freeze()
+```
 
 ## Step 5: Wire the runtime
 
@@ -103,13 +112,14 @@ def get_context() -> ExecutionContext:
 def construct_runtime() -> ExecutionRuntime:
     deps = DepsPlan.from_modules(MockDepsModule())
     crt = ExecutionRuntime(deps=deps)
+
     _rt.set_once(crt)
 
     return crt
 
 ```
 
-At runtime, a request desolves document ports from that context - not from any database directly.
+At runtime, a request resolves document ports from that context.
 
 *TODO: add diagram*
 
@@ -117,7 +127,7 @@ At runtime, a request desolves document ports from that context - not from any d
 
 ```python
 from contextlib import asynccontextmanager
-from fastapi import FastAPI
+from fastapi import FastAPI, Depends
 
 
 @asynccontextmanager
@@ -130,6 +140,10 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Users API", lifespan=lifespan)
 ```
+
+!!! tip "Lifespan is required"
+
+    Accessing the execution context outside the runtime scope is not possible.
 
 ## Step 7: Run the service
 
