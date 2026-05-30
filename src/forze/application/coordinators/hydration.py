@@ -1,4 +1,4 @@
-"""Helpers for post-write read-model hydration in :class:`~forze.application.coordinators.document.DocumentCoordinator`."""
+"""Helpers for post-write read-model hydration in :class:`~forze.application.coordinators.document.coordinator.DocumentCoordinator`."""
 
 from pydantic import BaseModel
 

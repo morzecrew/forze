@@ -38,6 +38,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Application coordinators:** `DocumentCoordinator` moved to `forze.application.coordinators.document` (query/command/pagination mixins); `DocumentReadGatewayPort` and `DocumentWriteGatewayPort` live in `forze.application.contracts.document`. Public import `from forze.application.coordinators import DocumentCoordinator` is unchanged.
 - **Application execution:** `LifecyclePlan.build()` now returns `FrozenLifecyclePlan` (deprecated alias for `freeze()`); `startup` / `shutdown` run on frozen or resolved plans, not on the authoring plan.
 - **Mongo:** `MongoSearchConfig` uses a single `index_name` (semantics depend on `engine`) instead of separate `atlas_index_name` / `vector_index_name` / `text_index_name` keys.
 - **Postgres:** reorganized `forze_postgres.kernel` into `kernel.client`, `kernel.catalog`, and `kernel.sql`; `PostgresIntrospector` uses `CacheLane`. Direct imports of `forze_postgres.kernel.platform`, `forze_postgres.kernel.introspect`, `forze_postgres.kernel.query`, `forze_postgres.pagination`, and related flat kernel modules must be updated to the new paths.
