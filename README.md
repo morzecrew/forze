@@ -8,8 +8,6 @@
 [![CodeFactor](https://www.codefactor.io/repository/github/morzecrew/forze/badge)](https://www.codefactor.io/repository/github/morzecrew/forze)
 [![codecov](https://codecov.io/github/morzecrew/forze/graph/badge.svg?token=WIKAC2IUS9)](https://codecov.io/github/morzecrew/forze)
 
----
-
 **Forze** is a lightweight infrastructure toolkit for building backend services
 with Domain-Driven Design and Hexagonal Architecture.
 
