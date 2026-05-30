@@ -1,7 +1,6 @@
 """Parsing utilities that normalise raw ``redis-py`` responses into typed structures."""
 
-from collections.abc import Iterable
-from typing import Any, cast
+from typing import Any, Iterable, cast
 
 from redis.typing import (
     StreamEntry,

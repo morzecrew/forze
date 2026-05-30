@@ -1,7 +1,6 @@
 """Shared tenancy wiring validation for integration deps modules."""
 
-from collections.abc import Callable, Sequence
-from typing import Literal
+from typing import Callable, Literal, Sequence
 
 import attrs
 

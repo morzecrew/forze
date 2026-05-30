@@ -2,19 +2,18 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
-from typing import Any
+from typing import Any, Callable, Sequence
 from uuid import UUID
 
 import attrs
 from pydantic import BaseModel
 
-from forze.application.contracts.resolution import is_static_named_resource
 from forze.application.contracts.querying import (
     QueryFilterExpression,
     QueryFilterExpressionParser,
     QueryFilterLimits,
 )
+from forze.application.contracts.resolution import is_static_named_resource
 from forze.application.contracts.search import SearchSpec
 from forze.application.contracts.tenancy import TENANT_ID_FIELD
 from forze.application.contracts.tenancy.mixins import TenancyMixin
@@ -127,7 +126,9 @@ class MeilisearchSearchGateway[M: BaseModel](TenancyMixin):
         self,
         filters: QueryFilterExpression | None,
     ) -> str | None:
-        from forze_meilisearch.adapters.search._search_params import merge_filter_strings
+        from forze_meilisearch.adapters.search._search_params import (
+            merge_filter_strings,
+        )
 
         base = self.filter_renderer.render_filters(filters)
         tenant = self._tenant_filter()

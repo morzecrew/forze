@@ -1,14 +1,13 @@
 """Postgres federated search execution configs and validation."""
 
-from collections.abc import Mapping
+from typing import Mapping
 
 import attrs
 
 from forze.application.contracts.tenancy import TenantAwareIntegrationConfig
 from forze.base.exceptions import exc
-from forze.base.primitives import StrKey
+from forze.base.primitives import StrKey, frozen_mapping
 
-from ._mapping import frozen_mapping
 from .hub import PostgresHubSearchConfig
 from .search import PostgresSearchConfig
 

@@ -3,8 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Callable, Mapping
-from typing import TypeVar
+from typing import Awaitable, Callable, Mapping, TypeVar
 
 from forze.application.contracts.execution import ExecutionGraph
 from forze.base.primitives import StrKey

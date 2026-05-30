@@ -1,7 +1,6 @@
 """Postgres lifecycle module (pool, catalog warmup, schema validation)."""
 
-from collections.abc import Mapping, Sequence
-from typing import final
+from typing import Mapping, Sequence, final
 
 import attrs
 from pydantic import SecretStr
