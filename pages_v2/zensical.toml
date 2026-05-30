@@ -32,17 +32,15 @@ nav = [
     { "Building Apps" = [
         "building-apps/wiring.md",
     ] },
+    { "Recipes" = [
+        "recipes/postgres.md",
+    ] },
 ]
 
 # ....................... #
 # Development
 
 dev_addr = "localhost:8045"
-
-# ....................... #
-# Extra
-
-extra_css = ["_stylesheets/extra.css"]
 
 # ....................... #
 # Theme
@@ -57,6 +55,9 @@ features = [
     "navigation.path",
     "navigation.top",
     "toc.follow",
+    "content.code.copy",
+    "content.code.select",
+    "content.code.annotate",
 ]
 custom_dir = "overrides"
 
@@ -78,6 +79,7 @@ toggle.name = "Switch to light mode"
 
 [project.markdown_extensions.zensical.extensions.glightbox]
 auto_themed = true
+auto_caption = true
 
 [project.markdown_extensions.pymdownx.snippets]
 [project.markdown_extensions.admonition]
@@ -85,6 +87,11 @@ auto_themed = true
 [project.markdown_extensions.pymdownx.superfences]
 [project.markdown_extensions.attr_list]
 [project.markdown_extensions.md_in_html]
+
+[project.markdown_extensions.pymdownx.emoji]
+emoji_index = "zensical.extensions.emoji.twemoji"
+emoji_generator = "zensical.extensions.emoji.to_svg"
+
 [project.markdown_extensions.tables]
 
 [project.markdown_extensions.pymdownx.tabbed]
@@ -92,3 +99,6 @@ alternate_style = true
 
 [project.markdown_extensions.toc]
 permalink = true
+
+[project.markdown_extensions.pymdownx.highlight]
+[project.markdown_extensions.pymdownx.inlinehilite]

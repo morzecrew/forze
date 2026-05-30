@@ -35,5 +35,6 @@ MD036: false
 # MD040: Fenced code language - not always needed
 MD040: false
 
-# MD046: Code block style - allow fenced inline code
+# Zensical
 MD046: false
+MD030: false
