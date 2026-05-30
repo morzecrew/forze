@@ -1,14 +1,12 @@
 """Optional debug logging for runtime traces."""
 
-from __future__ import annotations
-
 import os
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from forze.application._logger import logger
 
 if TYPE_CHECKING:
-    from ..deps.container import Deps
+    from ..deps.frozen import FrozenDeps
 
 # ----------------------- #
 
@@ -23,7 +21,7 @@ def _runtime_trace_log_from_env() -> bool:
 # ....................... #
 
 
-def log_runtime_trace(deps: Deps[Any]) -> None:
+def log_runtime_trace(deps: "FrozenDeps") -> None:
     """Log ``deps.runtime_trace().format_lines()`` at DEBUG when ``FORZE_RUNTIME_TRACE_LOG`` is set."""
 
     if not _runtime_trace_log_from_env():
@@ -34,4 +32,6 @@ def log_runtime_trace(deps: Deps[Any]) -> None:
     if trace is None or not trace.events:
         return
 
-    logger.debug("Runtime trace (%s events):\n%s", len(trace.events), trace.format_lines())
+    logger.debug(
+        "Runtime trace (%s events):\n%s", len(trace.events), trace.format_lines()
+    )

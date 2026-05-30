@@ -9,6 +9,7 @@ from forze.application.contracts.document import (
     DocumentQueryDepKey,
     DocumentSpec,
 )
+from tests.support.execution_context import context_from_deps, context_from_modules, frozen_deps_from_deps
 from forze.application.contracts.transaction.deps import TransactionManagerDepKey
 from forze.application.execution import Deps, ExecutionContext
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
@@ -65,7 +66,7 @@ async def test_document_create_commits_in_transaction(
         }
     )
     routed = Deps.routed({TransactionManagerDepKey: {"firestore": firestore_txmanager}})
-    ctx = ExecutionContext(deps=plain.merge(routed))
+    ctx = context_from_deps(plain.merge(routed))
 
     async with ctx.tx_ctx.scope("firestore"):
         created = await ctx.document.command(spec).create(TxCreate(title="in-tx"))
@@ -103,7 +104,7 @@ async def test_document_create_rolls_back_on_error(
         }
     )
     routed = Deps.routed({TransactionManagerDepKey: {"firestore": firestore_txmanager}})
-    ctx = ExecutionContext(deps=plain.merge(routed))
+    ctx = context_from_deps(plain.merge(routed))
 
     with pytest.raises(RuntimeError, match="boom"):
         async with ctx.tx_ctx.scope("firestore"):
@@ -141,7 +142,7 @@ async def test_document_create_many_in_transaction(
         }
     )
     routed = Deps.routed({TransactionManagerDepKey: {"firestore": firestore_txmanager}})
-    ctx = ExecutionContext(deps=plain.merge(routed))
+    ctx = context_from_deps(plain.merge(routed))
 
     async with ctx.tx_ctx.scope("firestore"):
         created = await ctx.document.command(spec).create_many(

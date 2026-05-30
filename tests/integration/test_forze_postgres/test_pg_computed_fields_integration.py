@@ -13,6 +13,7 @@ from forze_postgres.execution.deps.keys import (
 from forze_postgres.execution.deps.utils import doc_write_gw
 from forze_postgres.kernel.catalog.introspect import PostgresIntrospector
 from forze_postgres.kernel.client.client import PostgresClient
+from tests.support.execution_context import context_from_deps
 
 from tests.integration._computed_field_models import (
     ComputedCreate,
@@ -51,8 +52,7 @@ async def test_postgres_document_computed_field_roundtrip_not_persisted(
         """
     )
 
-    ctx = ExecutionContext(
-        deps=Deps.plain(
+    ctx = context_from_deps(Deps.plain(
             {
                 PostgresClientDepKey: pg_client,
                 PostgresIntrospectorDepKey: PostgresIntrospector(client=pg_client),

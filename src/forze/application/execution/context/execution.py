@@ -1,4 +1,4 @@
-from typing import Any, Callable, final
+from typing import Callable, final
 
 import attrs
 
@@ -14,7 +14,7 @@ from forze.application.contracts.storage import StorageDeps
 from forze.application.contracts.tenancy import TenancyDeps
 from forze.application.contracts.transaction import TransactionDeps
 
-from ..deps import Deps
+from ..deps import FrozenDeps
 from ..deps.tx_tracer import tx_tracer_from_runtime
 from ..tracing import bind_active_deps, init_runtime_tracing
 from .invocation import InvocationContext
@@ -28,7 +28,7 @@ from .transaction import TransactionContext
 class ExecutionContext:
     """Execution context."""
 
-    deps: Deps[Any]
+    deps: FrozenDeps
     """Dependencies container."""
 
     # ....................... #

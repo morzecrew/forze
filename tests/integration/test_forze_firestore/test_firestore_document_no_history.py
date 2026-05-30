@@ -18,6 +18,7 @@ from forze_firestore.execution.deps.configs import FirestoreDocumentConfig
 from forze_firestore.execution.deps.deps import ConfigurableFirestoreDocument
 from forze_firestore.execution.deps.keys import FirestoreClientDepKey
 from forze_firestore.kernel.platform import FirestoreClient
+from tests.support.execution_context import context_from_deps
 
 class PlainDoc(Document):
     label: str
@@ -41,14 +42,12 @@ def _ctx(
             write=("(default)", collection),
         ),
     )
-    return ExecutionContext(
-        deps=Deps.plain(
+    return context_from_deps(Deps.plain(
             {
                 FirestoreClientDepKey: client,
                 DocumentQueryDepKey: configurable,
                 DocumentCommandDepKey: configurable,
-            }
-        )
+            })
     )
 
 @pytest.mark.asyncio

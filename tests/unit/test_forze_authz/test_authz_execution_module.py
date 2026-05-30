@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from forze.base.exceptions import CoreException
+from tests.support.execution_context import context_from_deps, context_from_modules, frozen_deps_from_deps
 
 pytestmark = pytest.mark.unit
 
@@ -90,7 +91,7 @@ class TestConfigurableRuntimeFactory:
             },
         )
 
-        ctx = ExecutionContext(deps=doc_deps)
+        ctx = context_from_deps(doc_deps)
 
         shared = build_authz_shared_services(AuthzKernelConfig())
 

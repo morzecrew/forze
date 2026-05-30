@@ -1,17 +1,17 @@
 """Meilisearch dependency module for the application kernel."""
 
-from enum import StrEnum
 from typing import Mapping, final
 
 import attrs
 
-from forze.application.contracts.tenancy import warn_dynamic_relation_with_tenant_aware
 from forze.application.contracts.search import (
     FederatedSearchQueryDepKey,
     SearchCommandDepKey,
     SearchQueryDepKey,
 )
+from forze.application.contracts.tenancy import warn_dynamic_relation_with_tenant_aware
 from forze.application.execution import Deps, DepsModule
+from forze.base.primitives import StrKey
 from forze_meilisearch.execution.deps.configs import (
     MeilisearchFederatedSearchConfig,
     MeilisearchSearchConfig,
@@ -30,13 +30,17 @@ from forze_meilisearch.kernel.platform.port import MeilisearchClientPort
 
 @final
 @attrs.define(slots=True, frozen=True, kw_only=True)
-class MeilisearchDepsModule[K: str | StrEnum](DepsModule[K]):
+class MeilisearchDepsModule(DepsModule):
     """Registers Meilisearch client and search ports."""
 
     client: MeilisearchClientPort
-    searches: Mapping[K, MeilisearchSearchConfig] | None = attrs.field(default=None)
-    federated_searches: Mapping[K, MeilisearchFederatedSearchConfig] | None = attrs.field(
-        default=None,
+    searches: Mapping[StrKey, MeilisearchSearchConfig] | None = attrs.field(
+        default=None
+    )
+    federated_searches: Mapping[StrKey, MeilisearchFederatedSearchConfig] | None = (
+        attrs.field(
+            default=None,
+        )
     )
 
     # ....................... #
@@ -67,14 +71,14 @@ class MeilisearchDepsModule[K: str | StrEnum](DepsModule[K]):
 
     # ....................... #
 
-    def __call__(self) -> Deps[K]:
-        plain = Deps[K].plain({MeilisearchClientDepKey: self.client})
-        search_deps = Deps[K]()
-        fed_deps = Deps[K]()
+    def __call__(self) -> Deps:
+        plain = Deps.plain({MeilisearchClientDepKey: self.client})
+        search_deps = Deps()
+        fed_deps = Deps()
 
         if self.searches:
             search_deps = search_deps.merge(
-                Deps[K].routed(
+                Deps.routed(
                     {
                         SearchQueryDepKey: {
                             name: ConfigurableMeilisearchSearch(config=config)
@@ -90,7 +94,7 @@ class MeilisearchDepsModule[K: str | StrEnum](DepsModule[K]):
 
         if self.federated_searches:
             fed_deps = fed_deps.merge(
-                Deps[K].routed(
+                Deps.routed(
                     {
                         FederatedSearchQueryDepKey: {
                             name: ConfigurableMeilisearchFederatedSearch(config=config)

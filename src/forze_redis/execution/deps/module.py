@@ -1,7 +1,6 @@
 """Redis dependency module for the application kernel."""
 
 from collections.abc import Mapping as MappingABC
-from enum import StrEnum
 from typing import Any, Mapping, TypeGuard, cast, final
 
 import attrs
@@ -16,6 +15,7 @@ from forze.application.contracts.idempotency import IdempotencyDepKey
 from forze.application.contracts.search import SearchResultSnapshotDepKey
 from forze.application.contracts.tenancy import warn_dynamic_relation_with_tenant_aware
 from forze.application.execution import Deps, DepsModule
+from forze.base.primitives import StrKey
 
 from ...kernel._logger import logger
 from ...kernel.platform import RedisClientPort
@@ -60,7 +60,7 @@ def _is_idem_plain(config: Any) -> TypeGuard[RedisIdempotencyConfig]:
 
 @final
 @attrs.define(slots=True, frozen=True, kw_only=True)
-class RedisDepsModule[K: str | StrEnum](DepsModule[K]):
+class RedisDepsModule(DepsModule):
     """Dependency module that registers Redis clients and adapters."""
 
     client: RedisClientPort
@@ -69,18 +69,18 @@ class RedisDepsModule[K: str | StrEnum](DepsModule[K]):
     blocking_client: RedisClientPort | None = None
     """Optional second client registered under :data:`RedisBlockingClientDepKey`."""
 
-    caches: Mapping[K, RedisCacheConfig | RedisUniversalConfig] | None = attrs.field(
-        default=None
+    caches: Mapping[StrKey, RedisCacheConfig | RedisUniversalConfig] | None = (
+        attrs.field(default=None)
     )
     """Mapping from cache names to their Redis-specific configurations."""
 
-    counters: Mapping[K, RedisCounterConfig | RedisUniversalConfig] | None = (
+    counters: Mapping[StrKey, RedisCounterConfig | RedisUniversalConfig] | None = (
         attrs.field(default=None)
     )
     """Mapping from counter names to their Redis-specific configurations."""
 
     idempotency: (
-        Mapping[K, RedisIdempotencyConfig | RedisUniversalConfig]
+        Mapping[StrKey, RedisIdempotencyConfig | RedisUniversalConfig]
         | RedisIdempotencyConfig
         | RedisUniversalConfig
         | None
@@ -88,13 +88,13 @@ class RedisDepsModule[K: str | StrEnum](DepsModule[K]):
     """Redis-specific configurations for idempotency."""
 
     search_snapshots: (
-        Mapping[K, RedisSearchResultSnapshotConfig | RedisUniversalConfig] | None
+        Mapping[StrKey, RedisSearchResultSnapshotConfig | RedisUniversalConfig] | None
     ) = attrs.field(default=None)
     """Mapping from search snapshot names to their Redis-specific configurations."""
 
-    dlocks: Mapping[K, RedisDistributedLockConfig | RedisUniversalConfig] | None = (
-        attrs.field(default=None)
-    )
+    dlocks: (
+        Mapping[StrKey, RedisDistributedLockConfig | RedisUniversalConfig] | None
+    ) = attrs.field(default=None)
     """Mapping from distributed lock spec names to their Redis-specific configurations."""
 
     def __attrs_post_init__(self) -> None:
@@ -150,7 +150,7 @@ class RedisDepsModule[K: str | StrEnum](DepsModule[K]):
 
     # ....................... #
 
-    def __call__(self) -> Deps[K]:
+    def __call__(self) -> Deps:
         """Build a dependency container with Redis-backed ports."""
 
         plain: dict[Any, Any] = {RedisClientDepKey: self.client}
@@ -158,17 +158,17 @@ class RedisDepsModule[K: str | StrEnum](DepsModule[K]):
         if self.blocking_client is not None:
             plain[RedisBlockingClientDepKey] = self.blocking_client
 
-        plain_deps = Deps[K].plain(plain)
+        plain_deps = Deps.plain(plain)
 
-        cache_deps = Deps[K]()
-        counter_deps = Deps[K]()
-        idempotency_deps = Deps[K]()
-        search_snapshot_deps = Deps[K]()
-        dlock_deps = Deps[K]()
+        cache_deps = Deps()
+        counter_deps = Deps()
+        idempotency_deps = Deps()
+        search_snapshot_deps = Deps()
+        dlock_deps = Deps()
 
         if self.caches:
             cache_deps = cache_deps.merge(
-                Deps[K].routed(
+                Deps.routed(
                     {
                         CacheDepKey: {
                             name: ConfigurableRedisCache(config=config)
@@ -180,7 +180,7 @@ class RedisDepsModule[K: str | StrEnum](DepsModule[K]):
 
         if self.counters:
             counter_deps = counter_deps.merge(
-                Deps[K].routed(
+                Deps.routed(
                     {
                         CounterDepKey: {
                             name: ConfigurableRedisCounter(config=config)
@@ -193,7 +193,7 @@ class RedisDepsModule[K: str | StrEnum](DepsModule[K]):
         if self.idempotency:
             if _is_idem_routed(self.idempotency):
                 idempotency_deps = idempotency_deps.merge(
-                    Deps[K].routed(
+                    Deps.routed(
                         {
                             IdempotencyDepKey: {
                                 name: ConfigurableRedisIdempotency(config=config)
@@ -205,7 +205,7 @@ class RedisDepsModule[K: str | StrEnum](DepsModule[K]):
 
             elif _is_idem_plain(self.idempotency):
                 idempotency_deps = idempotency_deps.merge(
-                    Deps[K].plain(
+                    Deps.plain(
                         {
                             IdempotencyDepKey: ConfigurableRedisIdempotency(
                                 config=self.idempotency
@@ -216,7 +216,7 @@ class RedisDepsModule[K: str | StrEnum](DepsModule[K]):
 
         if self.search_snapshots:
             search_snapshot_deps = search_snapshot_deps.merge(
-                Deps[K].routed(
+                Deps.routed(
                     {
                         SearchResultSnapshotDepKey: {
                             name: ConfigurableRedisSearchResultSnapshot(config=config)
@@ -232,7 +232,7 @@ class RedisDepsModule[K: str | StrEnum](DepsModule[K]):
                 for name, config in self.dlocks.items()
             }
             dlock_deps = dlock_deps.merge(
-                Deps[K].routed(
+                Deps.routed(
                     {
                         DistributedLockQueryDepKey: dlock_factories,
                         DistributedLockCommandDepKey: dlock_factories,

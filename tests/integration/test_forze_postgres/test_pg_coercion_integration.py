@@ -26,6 +26,7 @@ from forze_postgres.execution.deps.utils import doc_write_gw
 from forze_postgres.kernel.catalog.introspect import PostgresIntrospector
 from forze_postgres.kernel.client.client import PostgresClient
 from forze_postgres.execution.deps.configs import PostgresDocumentConfig
+from tests.support.execution_context import context_from_deps
 
 
 # ----------------------- #
@@ -123,8 +124,7 @@ def _doc_ctx(pg_client: PostgresClient, table: str) -> ExecutionContext:
             bookkeeping_strategy="application",
         )
     )
-    return ExecutionContext(
-        deps=Deps.plain(
+    return context_from_deps(Deps.plain(
             {
                 PostgresClientDepKey: pg_client,
                 PostgresIntrospectorDepKey: PostgresIntrospector(client=pg_client),
@@ -154,8 +154,7 @@ async def test_update_many_values_cast_nullable_timestamptz(
         );
         """
     )
-    ctx = ExecutionContext(
-        deps=Deps.plain(
+    ctx = context_from_deps(Deps.plain(
             {
                 PostgresClientDepKey: pg_client,
                 PostgresIntrospectorDepKey: PostgresIntrospector(client=pg_client),
@@ -206,8 +205,7 @@ async def test_update_many_coerces_numeric_and_native_text_array(
         );
         """
     )
-    ctx = ExecutionContext(
-        deps=Deps.plain(
+    ctx = context_from_deps(Deps.plain(
             {
                 PostgresClientDepKey: pg_client,
                 PostgresIntrospectorDepKey: PostgresIntrospector(client=pg_client),

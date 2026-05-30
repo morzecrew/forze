@@ -2,7 +2,7 @@
 
 import pytest
 
-from forze.application.execution import Deps, DepsPlan
+from forze.application.execution import Deps, DepsRegistry
 from forze.application.execution.lifecycle import LifecyclePlan, LifecycleStep
 from forze.application.execution.runtime import ExecutionRuntime
 from forze.base.exceptions import CoreException
@@ -13,14 +13,14 @@ from forze.base.exceptions import CoreException
 class TestExecutionRuntime:
     """Tests for ExecutionRuntime."""
 
-    def test_create_context_builds_from_deps_plan(self) -> None:
-        deps = Deps()
-        plan = DepsPlan.from_modules(lambda: deps)
-        rt = ExecutionRuntime(deps=plan)
+    def test_create_context_builds_from_deps_registry(self) -> None:
+        registration = Deps.plain({})
+        rt = ExecutionRuntime(deps=DepsRegistry.from_deps(registration))
         rt.create_context()
         ctx = rt.get_context()
         assert ctx is not None
-        assert ctx.deps == deps
+        assert ctx.deps.store.plain_deps == registration.store.plain_deps
+        assert ctx.deps.store.routed_deps == registration.store.routed_deps
 
     def test_get_context_outside_scope_raises(self) -> None:
 
@@ -67,7 +67,7 @@ class TestExecutionRuntime:
     @pytest.mark.asyncio
     async def test_scope_resets_context_on_exit(self) -> None:
 
-        rt = ExecutionRuntime(deps=DepsPlan.from_modules(Deps))
+        rt = ExecutionRuntime(deps=DepsRegistry())
         async with rt.scope():
             ctx = rt.get_context()
             assert ctx is not None

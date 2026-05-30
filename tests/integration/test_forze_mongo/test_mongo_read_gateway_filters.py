@@ -7,6 +7,7 @@ from uuid import uuid4
 import pytest
 
 from forze.application.execution import Deps, ExecutionContext
+from tests.support.execution_context import context_from_deps, context_from_modules, frozen_deps_from_deps
 from forze_mongo.execution.deps.keys import MongoClientDepKey
 from forze_mongo.execution.deps.utils import doc_write_gw
 from forze_mongo.kernel.platform import MongoClient
@@ -31,7 +32,7 @@ class MongoGwCreate(IntegrationCreateCmd):
 
 @pytest.fixture
 def mongo_filter_ctx(mongo_client: MongoClient) -> ExecutionContext:
-    return ExecutionContext(deps=Deps.plain({MongoClientDepKey: mongo_client}))
+    return context_from_deps(Deps.plain({MongoClientDepKey: mongo_client}))
 
 
 @pytest.mark.integration

@@ -19,6 +19,7 @@ from forze_mongo.execution.deps import MongoDocumentConfig
 from forze_mongo.execution.deps.deps import ConfigurableMongoDocument
 from forze_mongo.execution.deps.keys import MongoClientDepKey
 from forze_mongo.kernel.platform import MongoClient
+from tests.support.execution_context import context_from_deps
 
 class _Doc(Document):
     title: str
@@ -67,14 +68,12 @@ async def _rw_ctx(
         history_enabled=history_enabled,
     )
     fac = ConfigurableMongoDocument(config=cfg)
-    ctx = ExecutionContext(
-        deps=Deps.plain(
+    ctx = context_from_deps(Deps.plain(
             {
                 MongoClientDepKey: mongo_client,
                 DocumentQueryDepKey: fac,
                 DocumentCommandDepKey: fac,
-            }
-        )
+            })
     )
     return ctx, spec
 

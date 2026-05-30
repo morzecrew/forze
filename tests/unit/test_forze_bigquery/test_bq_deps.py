@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from forze.base.exceptions import CoreException
+from tests.support.execution_context import context_from_deps, context_from_modules, frozen_deps_from_deps
 from pydantic import BaseModel
 
 from forze.application.contracts.analytics import (
@@ -61,7 +62,7 @@ def test_deps_module_registers_analytics_keys() -> None:
         },
     )
     deps = module()
-    ctx = ExecutionContext(deps=deps)
+    ctx = context_from_deps(deps)
     spec = _spec()
     assert ctx.analytics.query(spec) is not None
     assert ctx.analytics.ingest(spec) is not None

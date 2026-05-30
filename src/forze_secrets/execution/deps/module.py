@@ -1,6 +1,5 @@
 """Dependency module for registering a :class:`~forze.application.contracts.secrets.SecretsPort`."""
 
-from enum import StrEnum
 from typing import final
 
 import attrs
@@ -13,7 +12,7 @@ from forze.application.execution import Deps, DepsModule
 
 @final
 @attrs.define(slots=True, frozen=True, kw_only=True)
-class SecretsDepsModule[K: str | StrEnum](DepsModule[K]):
+class SecretsDepsModule(DepsModule):
     """Register a pre-constructed secrets backend under :data:`~forze.application.contracts.secrets.SecretsDepKey`."""
 
     secrets: SecretsPort
@@ -21,5 +20,5 @@ class SecretsDepsModule[K: str | StrEnum](DepsModule[K]):
 
     # ....................... #
 
-    def __call__(self) -> Deps[K]:
-        return Deps[K].plain({SecretsDepKey: self.secrets})
+    def __call__(self) -> Deps:
+        return Deps.plain({SecretsDepKey: self.secrets})

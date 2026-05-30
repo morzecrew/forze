@@ -14,6 +14,7 @@ from forze.application.contracts.execution import (
     OnFailureStep,
     OnSuccessStep,
 )
+from tests.support.execution_context import context_from_deps, context_from_modules, frozen_deps_from_deps
 from forze.application.contracts.execution.value_objects import Failure, Success
 from forze.application.execution import ExecutionContext
 from forze.application.execution.registry import OperationRegistry
@@ -81,7 +82,7 @@ def _wrap_factory(order: list[str], name: str):
 
 @pytest.fixture
 def ctx() -> ExecutionContext:
-    return ExecutionContext(deps=MockDepsModule()())
+    return context_from_deps(MockDepsModule()())
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)

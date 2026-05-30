@@ -9,11 +9,11 @@ from forze.application.execution import ExecutionContext
 from forze_s3.execution.deps.configs import S3StorageConfig
 from forze_s3.execution.deps.module import S3DepsModule
 from forze_s3.kernel.platform.client import S3Client
+from tests.support.execution_context import context_from_deps
 
 
 def _s3_ctx(client: S3Client, bucket: str) -> ExecutionContext:
-    return ExecutionContext(
-        deps=S3DepsModule(
+    return context_from_deps(S3DepsModule(
             client=client,
             storages={bucket: S3StorageConfig(bucket=bucket)},
         )()

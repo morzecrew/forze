@@ -14,6 +14,7 @@ from fastapi import FastAPI
 
 from forze.application.execution import Deps, ExecutionContext
 from forze.application.execution.context import ExecutionContextFactory
+from tests.support.execution_context import context_from_deps, context_from_modules, frozen_deps_from_deps
 from forze_inngest import InngestFunctionBinding
 from forze_inngest.execution.deps import InngestDepsModule
 from forze_inngest.execution.deps.configs import InngestEventConfig
@@ -38,7 +39,7 @@ class InngestAppHarness:
     """Running FastAPI app registered with a dev server."""
 
     client: InngestClientPort
-    deps: Deps[Any]
+    deps: Deps
     ctx_factory: ExecutionContextFactory
     port: int
     outcomes: list[Any] = field(default_factory=list)
@@ -107,7 +108,7 @@ def start_forze_inngest_app(
     deps = Deps.plain(extra_plain_deps or {}).merge(module())
 
     def ctx_factory() -> ExecutionContext:
-        return ExecutionContext(deps=deps)
+        return context_from_deps(deps)
 
     app = FastAPI()
     serve(app, client, bindings, ctx_factory=ctx_factory)

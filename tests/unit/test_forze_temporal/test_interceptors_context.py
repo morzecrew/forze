@@ -19,6 +19,7 @@ from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.execution import ExecutionContext, InvocationMetadata
 from forze.application.execution.deps import Deps
 from forze.base.primitives import uuid7
+from tests.support.execution_context import context_from_deps, context_from_modules, frozen_deps_from_deps
 from forze_temporal.interceptors.codecs import TemporalContextCodec
 from forze_temporal.interceptors.context import (
     ActivityContextInboundInterceptor,
@@ -34,7 +35,7 @@ _PRINCIPAL_HEADER = "Forze-Principal-ID"
 
 
 def _exec_ctx() -> ExecutionContext:
-    return ExecutionContext(deps=Deps.plain({}))
+    return context_from_deps(Deps.plain({}))
 
 
 class TestExecutionContextInterceptorChains:

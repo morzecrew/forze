@@ -17,6 +17,7 @@ from forze.application.contracts.authz import (
     AuthzScope,
     AuthzSensitiveAccessRequest,
 )
+from tests.support.execution_context import context_from_deps, context_from_modules, frozen_deps_from_deps
 from forze.application.contracts.authz.specs import AuthzSpec
 from forze.application.contracts.document import DocumentSpec
 from forze.application.contracts.authn import AuthnIdentity
@@ -142,7 +143,7 @@ async def test_wrap_document_scope_merges_filters_on_ctx() -> None:
         ),
     )
 
-    ctx = ExecutionContext(deps=Deps())
+    ctx = context_from_deps(Deps())
     metadata = InvocationMetadata(execution_id=uuid4(), correlation_id=uuid4())
     ident = AuthnIdentity(principal_id=uuid4())
 

@@ -1,6 +1,5 @@
 """BigQuery dependency module for the application kernel."""
 
-from enum import StrEnum
 from typing import Mapping, final
 
 import attrs
@@ -10,6 +9,7 @@ from forze.application.contracts.analytics import (
     AnalyticsQueryDepKey,
 )
 from forze.application.execution import Deps, DepsModule
+from forze.base.primitives import StrKey
 
 from ...kernel.platform import BigQueryClientPort
 from .configs import BigQueryAnalyticsConfig
@@ -21,25 +21,27 @@ from .keys import BigQueryClientDepKey
 
 @final
 @attrs.define(slots=True, frozen=True, kw_only=True)
-class BigQueryDepsModule[K: str | StrEnum](DepsModule[K]):
+class BigQueryDepsModule(DepsModule):
     """Dependency module that registers BigQuery client and analytics adapters."""
 
     client: BigQueryClientPort
     """Pre-constructed BigQuery client (initialized via :func:`bigquery_lifecycle_step`)."""
 
-    analytics: Mapping[K, BigQueryAnalyticsConfig] | None = attrs.field(default=None)
+    analytics: Mapping[StrKey, BigQueryAnalyticsConfig] | None = attrs.field(
+        default=None
+    )
     """Mapping from analytics route names to BigQuery configuration."""
 
     # ....................... #
 
-    def __call__(self) -> Deps[K]:
-        plain_deps = Deps[K].plain({BigQueryClientDepKey: self.client})
-        analytics_deps = Deps[K]()
+    def __call__(self) -> Deps:
+        plain_deps = Deps.plain({BigQueryClientDepKey: self.client})
+        analytics_deps = Deps()
 
         if self.analytics:
             factory = ConfigurableBigQueryAnalytics
             analytics_deps = analytics_deps.merge(
-                Deps[K].routed(
+                Deps.routed(
                     {
                         AnalyticsQueryDepKey: {
                             name: factory(config=config)

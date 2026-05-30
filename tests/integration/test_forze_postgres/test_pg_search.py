@@ -4,6 +4,7 @@ from uuid import UUID, uuid4
 import pytest
 
 from forze.base.exceptions import CoreException
+from tests.support.execution_context import context_from_deps, context_from_modules, frozen_deps_from_deps
 from pydantic import BaseModel
 
 from forze.application.contracts.base import CountlessPage, CursorPage, Page
@@ -79,7 +80,7 @@ def execution_context(pg_client: PostgresClient):
             ),
         }
     )
-    return ExecutionContext(deps=deps)
+    return context_from_deps(deps)
 
 
 @pytest.mark.asyncio
@@ -104,8 +105,7 @@ async def test_postgres_pgroonga_single_column_index(
         {"id": uuid4(), "t": "singleton pgroonga row"},
     )
 
-    ctx = ExecutionContext(
-        deps=Deps.plain(
+    ctx = context_from_deps(Deps.plain(
             {
                 PostgresClientDepKey: pg_client,
                 PostgresIntrospectorDepKey: PostgresIntrospector(client=pg_client),
@@ -296,8 +296,7 @@ async def test_pgroonga_search_spec_field_order_does_not_change_ranking(
             row,
         )
 
-    ctx = ExecutionContext(
-        deps=Deps.plain(
+    ctx = context_from_deps(Deps.plain(
             {
                 PostgresClientDepKey: pg_client,
                 PostgresIntrospectorDepKey: PostgresIntrospector(client=pg_client),
@@ -450,8 +449,7 @@ async def test_postgres_search_configurable_uses_heap_and_field_map(
         {"id": uuid4()},
     )
 
-    ctx = ExecutionContext(
-        deps=Deps.plain(
+    ctx = context_from_deps(Deps.plain(
             {
                 PostgresClientDepKey: pg_client,
                 PostgresIntrospectorDepKey: PostgresIntrospector(client=pg_client),
@@ -598,8 +596,7 @@ async def test_postgres_hub_pgroonga_search_links_or_legs(pg_client: PostgresCli
     )
 
     introspector = PostgresIntrospector(client=pg_client)
-    ctx_hub = ExecutionContext(
-        deps=Deps.plain(
+    ctx_hub = context_from_deps(Deps.plain(
             {
                 PostgresClientDepKey: pg_client,
                 PostgresIntrospectorDepKey: introspector,
@@ -675,8 +672,7 @@ async def test_postgres_hub_pgroonga_search_links_or_legs(pg_client: PostgresCli
     assert cnt2 == 2
     assert {h.id for h in hits2} == {lid1, lid2}
 
-    ctx = ExecutionContext(
-        deps=Deps.plain(
+    ctx = context_from_deps(Deps.plain(
             {
                 PostgresClientDepKey: pg_client,
                 PostgresIntrospectorDepKey: introspector,
@@ -813,8 +809,7 @@ async def test_postgres_hub_fts_search_links_or_legs(pg_client: PostgresClient) 
     )
 
     introspector = PostgresIntrospector(client=pg_client)
-    ctx_hub = ExecutionContext(
-        deps=Deps.plain(
+    ctx_hub = context_from_deps(Deps.plain(
             {
                 PostgresClientDepKey: pg_client,
                 PostgresIntrospectorDepKey: introspector,
@@ -940,8 +935,7 @@ async def test_postgres_hub_pgroonga_combine_or_vs_and(
     )
 
     introspector = PostgresIntrospector(client=pg_client)
-    ctx = ExecutionContext(
-        deps=Deps.plain(
+    ctx = context_from_deps(Deps.plain(
             {
                 PostgresClientDepKey: pg_client,
                 PostgresIntrospectorDepKey: introspector,
@@ -1068,8 +1062,7 @@ async def test_postgres_hub_mixed_pgroonga_and_fts_legs(
     )
 
     introspector = PostgresIntrospector(client=pg_client)
-    ctx_hub = ExecutionContext(
-        deps=Deps.plain(
+    ctx_hub = context_from_deps(Deps.plain(
             {
                 PostgresClientDepKey: pg_client,
                 PostgresIntrospectorDepKey: introspector,
@@ -1189,8 +1182,7 @@ async def test_postgres_hub_pgroonga_multi_hub_fk_one_heap(
     )
 
     introspector = PostgresIntrospector(client=pg_client)
-    ctx_hub = ExecutionContext(
-        deps=Deps.plain(
+    ctx_hub = context_from_deps(Deps.plain(
             {
                 PostgresClientDepKey: pg_client,
                 PostgresIntrospectorDepKey: introspector,
@@ -1296,8 +1288,7 @@ async def test_postgres_hub_same_heap_as_hub_single_leg(
         },
     )
     introspector = PostgresIntrospector(client=pg_client)
-    ctx_hub = ExecutionContext(
-        deps=Deps.plain(
+    ctx_hub = context_from_deps(Deps.plain(
             {
                 PostgresClientDepKey: pg_client,
                 PostgresIntrospectorDepKey: introspector,
@@ -1705,8 +1696,7 @@ async def test_postgres_hub_fts_leg_multi_query_phrase_combine(
         },
     )
 
-    ctx = ExecutionContext(
-        deps=Deps.plain(
+    ctx = context_from_deps(Deps.plain(
             {
                 PostgresClientDepKey: pg_client,
                 PostgresIntrospectorDepKey: PostgresIntrospector(client=pg_client),
@@ -1818,8 +1808,7 @@ async def test_postgres_hub_combine_and_with_score_merge_sum(
         },
     )
 
-    ctx = ExecutionContext(
-        deps=Deps.plain(
+    ctx = context_from_deps(Deps.plain(
             {
                 PostgresClientDepKey: pg_client,
                 PostgresIntrospectorDepKey: PostgresIntrospector(client=pg_client),
@@ -1888,8 +1877,7 @@ async def test_postgres_hub_return_count_zero_and_projections(
         },
     )
 
-    ctx = ExecutionContext(
-        deps=Deps.plain(
+    ctx = context_from_deps(Deps.plain(
             {
                 PostgresClientDepKey: pg_client,
                 PostgresIntrospectorDepKey: PostgresIntrospector(client=pg_client),
@@ -1968,8 +1956,7 @@ async def test_postgres_hub_browse_empty_query_with_sorts(
         },
     )
 
-    ctx = ExecutionContext(
-        deps=Deps.plain(
+    ctx = context_from_deps(Deps.plain(
             {
                 PostgresClientDepKey: pg_client,
                 PostgresIntrospectorDepKey: PostgresIntrospector(client=pg_client),
@@ -2035,8 +2022,7 @@ async def test_postgres_hub_search_with_cursor(
         },
     )
 
-    ctx = ExecutionContext(
-        deps=Deps.plain(
+    ctx = context_from_deps(Deps.plain(
             {
                 PostgresClientDepKey: pg_client,
                 PostgresIntrospectorDepKey: PostgresIntrospector(client=pg_client),
@@ -2143,8 +2129,7 @@ async def test_postgres_hub_search_with_cursor_ranked_id_desc_chains(
                 engine="pgroonga"),
         },
     )
-    ctx = ExecutionContext(
-        deps=Deps.plain(
+    ctx = context_from_deps(Deps.plain(
             {
                 PostgresClientDepKey: pg_client,
                 PostgresIntrospectorDepKey: PostgresIntrospector(client=pg_client),
@@ -2226,8 +2211,7 @@ async def test_postgres_hub_search_with_cursor_browse_no_sorts(
                 engine="pgroonga"),
         },
     )
-    ctx = ExecutionContext(
-        deps=Deps.plain(
+    ctx = context_from_deps(Deps.plain(
             {
                 PostgresClientDepKey: pg_client,
                 PostgresIntrospectorDepKey: PostgresIntrospector(client=pg_client),

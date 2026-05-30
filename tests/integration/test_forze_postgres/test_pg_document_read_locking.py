@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from forze.base.exceptions import CoreException
+from tests.support.execution_context import context_from_deps, context_from_modules, frozen_deps_from_deps
 from uuid import UUID, uuid4
 
 import pytest
@@ -56,7 +57,7 @@ def _execution_context(pg_client: PostgresClient, table: str) -> ExecutionContex
         }
     )
     routed = Deps.routed({TransactionManagerDepKey: {"main": postgres_txmanager}})
-    return ExecutionContext(deps=plain.merge(routed))
+    return context_from_deps(plain.merge(routed))
 
 @pytest.mark.asyncio
 async def test_get_for_update_requires_active_transaction(

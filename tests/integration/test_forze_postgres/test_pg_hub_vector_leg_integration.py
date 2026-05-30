@@ -23,6 +23,7 @@ from forze_postgres.execution.deps.keys import (
 from forze_postgres.kernel.catalog.introspect import PostgresIntrospector
 from forze_postgres.kernel.client.client import PostgresClient
 from forze_mock import MockHashEmbeddingsProvider
+from tests.support.execution_context import context_from_deps
 
 
 class VecItemFields(BaseModel):
@@ -113,8 +114,7 @@ async def test_hub_vector_leg_knn_single_and_multi_query(
         },
     )
 
-    ctx = ExecutionContext(
-        deps=Deps.plain(
+    ctx = context_from_deps(Deps.plain(
             {
                 PostgresClientDepKey: pgvector_client,
                 PostgresIntrospectorDepKey: PostgresIntrospector(client=pgvector_client),

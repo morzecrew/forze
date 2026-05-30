@@ -8,6 +8,7 @@ from starlette.requests import Request
 from forze.application.contracts.authn import AuthnIdentity, AuthnResult
 from forze.application.contracts.tenancy import TenantIdentity, TenantResolverDepKey
 from forze.application.execution import Deps, ExecutionContext
+from tests.support.execution_context import context_from_deps, context_from_modules, frozen_deps_from_deps
 from forze_fastapi.security import resolve_tenant_identity
 
 
@@ -26,8 +27,7 @@ async def test_resolve_tenant_identity_uses_authoritative_resolver() -> None:
             assert requested_tenant_id is None
             return TenantIdentity(tenant_id=tid)
 
-    ctx = ExecutionContext(
-        deps=Deps.plain({TenantResolverDepKey: lambda c: _TenantResolver()}),
+    ctx = context_from_deps(Deps.plain({TenantResolverDepKey: lambda c: _TenantResolver()}),
     )
     req = Request({"type": "http", "method": "GET", "path": "/", "headers": []})
 
@@ -39,7 +39,7 @@ async def test_resolve_tenant_identity_uses_authoritative_resolver() -> None:
 
 @pytest.mark.asyncio
 async def test_resolve_tenant_identity_returns_none_without_authn() -> None:
-    ctx = ExecutionContext(deps=Deps.plain({}))
+    ctx = context_from_deps(Deps.plain({}))
     req = Request({"type": "http", "method": "GET", "path": "/", "headers": []})
 
     out = await resolve_tenant_identity(None, request=req, ctx=ctx)
@@ -50,7 +50,7 @@ async def test_resolve_tenant_identity_returns_none_without_authn() -> None:
 @pytest.mark.asyncio
 async def test_resolve_tenant_identity_returns_none_without_tenant_resolver() -> None:
     pid = uuid4()
-    ctx = ExecutionContext(deps=Deps.plain({}))
+    ctx = context_from_deps(Deps.plain({}))
     req = Request({"type": "http", "method": "GET", "path": "/", "headers": []})
 
     out = await resolve_tenant_identity(_authn(pid), request=req, ctx=ctx)

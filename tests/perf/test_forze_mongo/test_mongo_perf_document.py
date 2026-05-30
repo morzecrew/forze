@@ -12,6 +12,7 @@ from forze.application.contracts.document import (
     DocumentQueryDepKey,
     DocumentSpec,
 )
+from tests.support.execution_context import context_from_deps, context_from_modules, frozen_deps_from_deps
 from forze.application.execution import Deps, ExecutionContext
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
 from forze_mongo.execution.deps import MongoDocumentConfig
@@ -66,7 +67,7 @@ async def execution_context(mongo_client: MongoClient) -> ExecutionContext:
             DocumentCommandDepKey: configurable,
         }
     )
-    return ExecutionContext(deps=deps)
+    return context_from_deps(deps)
 
 
 @pytest_asyncio.fixture

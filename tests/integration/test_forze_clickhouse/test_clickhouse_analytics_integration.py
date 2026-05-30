@@ -9,6 +9,7 @@ from forze.application.contracts.analytics import (
     AnalyticsQueryDefinition,
     AnalyticsSpec,
 )
+from tests.support.execution_context import context_from_deps, context_from_modules, frozen_deps_from_deps
 from forze.application.execution import ExecutionContext
 from forze.base.exceptions import CoreException
 from forze_clickhouse.adapters import ClickHouseAnalyticsAdapter
@@ -82,7 +83,7 @@ async def test_deps_module_wiring(clickhouse_client, analytics_table) -> None:
         client=clickhouse_client,
         analytics={"events": _config(database_id, table_id)},
     )
-    ctx = ExecutionContext(deps=module())
+    ctx = context_from_deps(module())
     port = ctx.analytics.query(spec)
     page = await port.run("all", _Params())
     assert len(page.hits) >= 0

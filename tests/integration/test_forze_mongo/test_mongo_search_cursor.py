@@ -12,6 +12,7 @@ from forze_mongo.execution.deps.configs import MongoSearchConfig
 from forze_mongo.execution.deps.deps import ConfigurableMongoSearch
 from forze_mongo.execution.deps.keys import MongoClientDepKey
 from forze_mongo.kernel.platform import MongoClient
+from tests.support.execution_context import context_from_deps
 
 from mongo_search_helpers import wait_search_ready
 
@@ -22,8 +23,7 @@ def _search_ctx(
     db_name: str,
     collection: str,
 ) -> ExecutionContext:
-    return ExecutionContext(
-        deps=Deps.plain(
+    return context_from_deps(Deps.plain(
             {
                 MongoClientDepKey: mongo_client,
                 SearchQueryDepKey: ConfigurableMongoSearch(
@@ -107,8 +107,7 @@ async def test_mongo_atlas_search_cursor(mongo_atlas_client: MongoClient) -> Non
     )
     await wait_search_ready(mongo_atlas_client, coll, index_name=index_name)
 
-    ctx = ExecutionContext(
-        deps=Deps.plain(
+    ctx = context_from_deps(Deps.plain(
             {
                 MongoClientDepKey: mongo_atlas_client,
                 SearchQueryDepKey: ConfigurableMongoSearch(

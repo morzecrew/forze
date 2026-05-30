@@ -14,6 +14,7 @@ from forze.application.contracts.authn import AuthnIdentity
 from forze.application.execution import ExecutionContext, InvocationMetadata
 from forze.application.execution.deps import Deps
 from forze.base.primitives import uuid7
+from tests.support.execution_context import context_from_deps, context_from_modules, frozen_deps_from_deps
 from forze_temporal.adapters.workflow import (
     TemporalWorkflowCommandAdapter,
     TemporalWorkflowQueryAdapter,
@@ -39,7 +40,7 @@ async def test_execution_context_interceptor_propagates_correlation_to_activity(
 
     fixed = uuid7()
     deps = Deps.plain({})
-    exec_ctx = ExecutionContext(deps=deps)
+    exec_ctx = context_from_deps(deps)
     CTX_BOX["exec"] = exec_ctx
     try:
         eci = ExecutionContextInterceptor(ctx_dep=lambda: exec_ctx)
@@ -83,7 +84,7 @@ async def test_temporal_workflow_adapters_end_to_end() -> None:
     """``TemporalWorkflowCommandAdapter`` / ``TemporalWorkflowQueryAdapter`` against a live client."""
 
     deps = Deps.plain({})
-    exec_ctx = ExecutionContext(deps=deps)
+    exec_ctx = context_from_deps(deps)
     CTX_BOX["exec"] = exec_ctx
     try:
         eci = ExecutionContextInterceptor(ctx_dep=lambda: exec_ctx)
@@ -142,7 +143,7 @@ async def test_interceptor_is_worker_and_client_for_sdk_merge() -> None:
     from temporalio.worker import Interceptor as WorkerInterceptor
 
     deps = Deps.plain({})
-    exec_ctx = ExecutionContext(deps=deps)
+    exec_ctx = context_from_deps(deps)
     eci = ExecutionContextInterceptor(ctx_dep=lambda: exec_ctx)
 
     assert isinstance(eci, ClientInterceptor)

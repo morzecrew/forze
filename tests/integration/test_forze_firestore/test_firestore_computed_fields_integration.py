@@ -14,6 +14,7 @@ from forze_firestore.execution.deps.configs import FirestoreDocumentConfig
 from forze_firestore.execution.deps.deps import ConfigurableFirestoreDocument
 from forze_firestore.execution.deps.keys import FirestoreClientDepKey
 from forze_firestore.kernel.platform import FirestoreClient
+from tests.support.execution_context import context_from_deps
 
 from tests.integration._computed_field_models import (
     ComputedCreate,
@@ -46,14 +47,12 @@ async def test_firestore_document_computed_field_roundtrip_not_persisted(
             write=("(default)", collection),
         ),
     )
-    ctx = ExecutionContext(
-        deps=Deps.plain(
+    ctx = context_from_deps(Deps.plain(
             {
                 FirestoreClientDepKey: firestore_client,
                 DocumentQueryDepKey: configurable,
                 DocumentCommandDepKey: configurable,
-            }
-        )
+            })
     )
     adapter = ctx.document.command(spec)
 

@@ -1,6 +1,5 @@
 """Authn dependency module for the application kernel."""
 
-from enum import StrEnum
 from typing import Collection, Mapping, final
 
 import attrs
@@ -23,6 +22,7 @@ from forze.application.contracts.authn import (
 )
 from forze.application.execution import Deps, DepsModule
 from forze.base.exceptions import exc
+from forze.base.primitives import StrKey
 
 from .configs import (
     AuthnKernelConfig,
@@ -44,9 +44,9 @@ from .deps import (
 # ----------------------- #
 
 
-def _normalize_route_set[K: str | StrEnum](
-    routes: Collection[K] | None,
-) -> frozenset[K]:
+def _normalize_route_set(
+    routes: Collection[StrKey] | None,
+) -> frozenset[StrKey]:
     return frozenset(routes) if routes else frozenset()
 
 
@@ -55,7 +55,7 @@ def _normalize_route_set[K: str | StrEnum](
 
 @final
 @attrs.define(slots=True, frozen=True, kw_only=True)
-class AuthnDepsModule[K: str | StrEnum](DepsModule[K]):
+class AuthnDepsModule(DepsModule):
     """Register authn dependency factories that resolve document ports via execution context.
 
     The ``authn`` mapping carries one entry per route, describing which credential families
@@ -72,40 +72,44 @@ class AuthnDepsModule[K: str | StrEnum](DepsModule[K]):
     kernel: AuthnKernelConfig | None = attrs.field(default=None)
     """Secrets and service configs; required when any route registration is non-empty."""
 
-    authn: Mapping[K, frozenset[AuthnMethod]] | None = attrs.field(default=None)
+    authn: Mapping[StrKey, frozenset[AuthnMethod]] | None = attrs.field(default=None)
     """Per-route enabled credential families. Empty/omitted disables authentication wiring."""
 
-    resolvers: Mapping[K, PrincipalResolverDepPort] | None = attrs.field(default=None)
+    resolvers: Mapping[StrKey, PrincipalResolverDepPort] | None = attrs.field(
+        default=None
+    )
     """Optional per-route principal resolver overrides; routes without an entry get :class:`JwtNativeUuidResolver`."""
 
-    token_verifiers: Mapping[K, TokenVerifierDepPort] | None = attrs.field(default=None)
+    token_verifiers: Mapping[StrKey, TokenVerifierDepPort] | None = attrs.field(
+        default=None
+    )
     """Optional per-route token verifier overrides; routes without an entry get :class:`ForzeJwtTokenVerifier`."""
 
-    password_verifiers: Mapping[K, PasswordVerifierDepPort] | None = attrs.field(
+    password_verifiers: Mapping[StrKey, PasswordVerifierDepPort] | None = attrs.field(
         default=None
     )
     """Optional per-route password verifier overrides; routes without an entry get :class:`Argon2PasswordVerifier`."""
 
-    api_key_verifiers: Mapping[K, ApiKeyVerifierDepPort] | None = attrs.field(
+    api_key_verifiers: Mapping[StrKey, ApiKeyVerifierDepPort] | None = attrs.field(
         default=None
     )
     """Optional per-route API key verifier overrides; routes without an entry get :class:`HmacApiKeyVerifier`."""
 
-    token_lifecycle: Collection[K] | None = attrs.field(default=None)
+    token_lifecycle: Collection[StrKey] | None = attrs.field(default=None)
     """Authn routes that should use first-party token lifecycle management."""
 
-    password_lifecycle: Collection[K] | None = attrs.field(default=None)
+    password_lifecycle: Collection[StrKey] | None = attrs.field(default=None)
     """Authn routes that should use first-party password lifecycle management."""
 
-    api_key_lifecycle: Collection[K] | None = attrs.field(default=None)
+    api_key_lifecycle: Collection[StrKey] | None = attrs.field(default=None)
     """Authn routes that should use first-party API key lifecycle management."""
 
-    password_account_provisioning: Collection[K] | None = attrs.field(default=None)
+    password_account_provisioning: Collection[StrKey] | None = attrs.field(default=None)
     """Authn routes that should use first-party password account provisioning."""
 
     # ....................... #
 
-    def __call__(self) -> Deps[K]:  # noqa: C901
+    def __call__(self) -> Deps:  # noqa: C901
         authn_map = self.authn or {}
         tl = _normalize_route_set(self.token_lifecycle)
         pl = _normalize_route_set(self.password_lifecycle)
@@ -115,7 +119,7 @@ class AuthnDepsModule[K: str | StrEnum](DepsModule[K]):
         has_registrations = bool(authn_map or tl or pl or akl or pap)
 
         if not has_registrations:
-            return Deps[K]()
+            return Deps()
 
         if self.kernel is None:
             raise exc.internal(
@@ -136,14 +140,14 @@ class AuthnDepsModule[K: str | StrEnum](DepsModule[K]):
             api_key_verifier_overrides=api_key_overrides_keys,
         )
 
-        merged: Deps[K] = Deps[K]()
+        merged: Deps = Deps()
 
         if authn_map:
-            password_verifier_routes: dict[K, object] = {}
-            token_verifier_routes: dict[K, object] = {}
-            api_key_verifier_routes: dict[K, object] = {}
-            resolver_routes: dict[K, object] = {}
-            authn_routes: dict[K, object] = {}
+            password_verifier_routes: dict[StrKey, object] = {}
+            token_verifier_routes: dict[StrKey, object] = {}
+            api_key_verifier_routes: dict[StrKey, object] = {}
+            resolver_routes: dict[StrKey, object] = {}
+            authn_routes: dict[StrKey, object] = {}
 
             password_overrides = dict(self.password_verifiers or {})
             token_overrides = dict(self.token_verifiers or {})
@@ -178,7 +182,7 @@ class AuthnDepsModule[K: str | StrEnum](DepsModule[K]):
 
                 authn_routes[name] = ConfigurableAuthn(enabled_methods=methods_fs)
 
-            routed_map: dict[object, dict[K, object]] = {AuthnDepKey: authn_routes}
+            routed_map: dict[object, dict[StrKey, object]] = {AuthnDepKey: authn_routes}
 
             if password_verifier_routes:
                 routed_map[PasswordVerifierDepKey] = password_verifier_routes
@@ -192,11 +196,11 @@ class AuthnDepsModule[K: str | StrEnum](DepsModule[K]):
             if resolver_routes:
                 routed_map[PrincipalResolverDepKey] = resolver_routes
 
-            merged = merged.merge(Deps[K].routed(routed_map))  # type: ignore[arg-type]
+            merged = merged.merge(Deps.routed(routed_map))  # type: ignore[arg-type]
 
         if tl:
             merged = merged.merge(
-                Deps[K].routed(
+                Deps.routed(
                     {
                         TokenLifecycleDepKey: {
                             name: ConfigurableTokenLifecycle(shared=shared)
@@ -208,7 +212,7 @@ class AuthnDepsModule[K: str | StrEnum](DepsModule[K]):
 
         if pl:
             merged = merged.merge(
-                Deps[K].routed(
+                Deps.routed(
                     {
                         PasswordLifecycleDepKey: {
                             name: ConfigurablePasswordLifecycle(shared=shared)
@@ -220,7 +224,7 @@ class AuthnDepsModule[K: str | StrEnum](DepsModule[K]):
 
         if akl:
             merged = merged.merge(
-                Deps[K].routed(
+                Deps.routed(
                     {
                         ApiKeyLifecycleDepKey: {
                             name: ConfigurableApiKeyLifecycle(shared=shared)
@@ -232,7 +236,7 @@ class AuthnDepsModule[K: str | StrEnum](DepsModule[K]):
 
         if pap:
             merged = merged.merge(
-                Deps[K].routed(
+                Deps.routed(
                     {
                         PasswordAccountProvisioningDepKey: {
                             name: ConfigurablePasswordAccountProvisioning(shared=shared)

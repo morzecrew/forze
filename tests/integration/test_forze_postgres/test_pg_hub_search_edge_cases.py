@@ -21,6 +21,7 @@ from forze_postgres.execution.deps.keys import (
 )
 from forze_postgres.kernel.catalog.introspect import PostgresIntrospector
 from forze_postgres.kernel.client.client import PostgresClient
+from tests.support.execution_context import context_from_deps
 
 
 def _hub_member(**kwargs: object) -> PostgresHubSearchMemberConfig:
@@ -87,8 +88,7 @@ async def test_hub_browse_empty_query_without_sorts(pg_client: PostgresClient) -
         },
     )
 
-    ctx = ExecutionContext(
-        deps=Deps.plain(
+    ctx = context_from_deps(Deps.plain(
             {
                 PostgresClientDepKey: pg_client,
                 PostgresIntrospectorDepKey: PostgresIntrospector(client=pg_client),
@@ -207,8 +207,7 @@ async def test_hub_two_leg_or_with_distinct_field_maps(
         },
     )
 
-    ctx = ExecutionContext(
-        deps=Deps.plain(
+    ctx = context_from_deps(Deps.plain(
             {
                 PostgresClientDepKey: pg_client,
                 PostgresIntrospectorDepKey: PostgresIntrospector(client=pg_client),

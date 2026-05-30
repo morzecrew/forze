@@ -10,6 +10,7 @@ import pytest
 from forze.application.contracts.counter import CounterDepKey, CounterPort, CounterSpec
 from forze.application.contracts.storage import StorageDepKey, StorageSpec
 from forze.application.execution import Deps, ExecutionContext
+from tests.support.execution_context import context_from_deps, context_from_modules, frozen_deps_from_deps
 
 from forze_mock import MockDepsModule, MockState
 from forze_mock.adapters import MockCounterAdapter, MockStorageAdapter
@@ -45,4 +46,4 @@ def composition_deps(composition_mock_state: MockState) -> Deps:
 @pytest.fixture
 def composition_ctx(composition_deps: Deps) -> ExecutionContext:
     """ExecutionContext with composition-specific Deps."""
-    return ExecutionContext(deps=composition_deps)
+    return context_from_deps(composition_deps)

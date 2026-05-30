@@ -6,6 +6,7 @@ from pydantic import BaseModel
 from forze.application.contracts.counter import CounterSpec
 from forze.application.contracts.pubsub import PubSubSpec
 from forze.application.execution import Deps, ExecutionContext
+from tests.support.execution_context import context_from_deps, context_from_modules, frozen_deps_from_deps
 from forze_redis.adapters import RedisPubSubAdapter, RedisPubSubCodec
 from forze_redis.adapters.counter import RedisCounterAdapter
 from forze_redis.adapters.codecs import RedisKeyCodec
@@ -19,7 +20,7 @@ from forze.base.serialization import PydanticRecordMappingCodec
 def test_redis_counter_factory_builds_adapter() -> None:
     redis_mock = Mock(spec=RedisClient)
     deps = Deps.plain({RedisClientDepKey: redis_mock})
-    context = ExecutionContext(deps=deps)
+    context = context_from_deps(deps)
 
     factory = ConfigurableRedisCounter(
         config=RedisCounterConfig(namespace="test-namespace"),
@@ -35,7 +36,7 @@ def test_redis_counter_factory_builds_adapter() -> None:
 def test_redis_counter_factory_tenant_aware_uses_context() -> None:
     redis_mock = Mock(spec=RedisClient)
     deps = Deps.plain({RedisClientDepKey: redis_mock})
-    context = ExecutionContext(deps=deps)
+    context = context_from_deps(deps)
     tid = uuid4()
 
     factory = ConfigurableRedisCounter(

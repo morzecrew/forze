@@ -18,6 +18,7 @@ from forze_mongo.execution.deps import MongoDocumentConfig
 from forze_mongo.execution.deps.deps import ConfigurableMongoDocument
 from forze_mongo.execution.deps.keys import MongoClientDepKey
 from forze_mongo.kernel.platform import MongoClient
+from tests.support.execution_context import context_from_deps
 
 
 async def _ctx(
@@ -28,14 +29,12 @@ async def _ctx(
     fac = ConfigurableMongoDocument(
         config=MongoDocumentConfig(read=(db, collection), write=(db, collection)),
     )
-    return ExecutionContext(
-        deps=Deps.plain(
+    return context_from_deps(Deps.plain(
             {
                 MongoClientDepKey: mongo_client,
                 DocumentQueryDepKey: fac,
                 DocumentCommandDepKey: fac,
-            }
-        )
+            })
     )
 
 

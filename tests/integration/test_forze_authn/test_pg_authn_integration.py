@@ -20,6 +20,7 @@ from forze.application.contracts.authn import (
     PasswordCredentials,
     TokenLifecycleDepKey,
 )
+from tests.support.execution_context import context_from_deps, context_from_modules, frozen_deps_from_deps
 from forze.application.contracts.document import (
     DocumentCommandDepKey,
     DocumentQueryDepKey,
@@ -136,6 +137,17 @@ async def _authn_pg_setup(
         """
     )
 
+    return context_from_deps(_authn_pg_deps(pg_client, suffix=suffix))
+
+
+def _authn_pg_deps(pg_client: PostgresClient, *, suffix: str) -> Deps:
+    """Postgres document routes for authn integration (DDL must exist)."""
+
+    pri = f"authn_pri_{suffix}"
+    pwd = f"authn_pwd_{suffix}"
+    ak = f"authn_ak_{suffix}"
+    sess = f"authn_sess_{suffix}"
+
     ro = {"read": ("public", pri)}
     pwd_cfg = {
         "read": ("public", pwd),
@@ -172,19 +184,17 @@ async def _authn_pg_setup(
         AuthnResourceName.TOKEN_SESSIONS: ConfigurablePostgresDocument(config=sess_cfg),
     }
 
-    return ExecutionContext(
-        deps=Deps.plain(
+    return Deps.plain(
+        {
+            PostgresClientDepKey: pg_client,
+            PostgresIntrospectorDepKey: introspector,
+        },
+    ).merge(
+        Deps.routed(
             {
-                PostgresClientDepKey: pg_client,
-                PostgresIntrospectorDepKey: introspector,
-            }
-        ).merge(
-            Deps.routed(
-                {
-                    DocumentQueryDepKey: query_routes,
-                    DocumentCommandDepKey: cmd_routes,
-                }
-            ),
+                DocumentQueryDepKey: query_routes,
+                DocumentCommandDepKey: cmd_routes,
+            },
         ),
     )
 
@@ -514,7 +524,9 @@ async def test_pg_execution_deps_password_authentication(
         authn={"default": frozenset({"password", "api_key"})},
     )()
 
-    ctx = ExecutionContext(deps=base_ctx.deps.merge(authn_part))
+    ctx = context_from_deps(
+        _authn_pg_deps(pg_client, suffix=suffix).merge(authn_part),
+    )
 
     pid = uuid4()
     await _insert_principal_row(
@@ -580,7 +592,9 @@ async def test_pg_execution_deps_issue_tokens_and_bearer_auth(
         token_lifecycle={"oauth"},
     )()
 
-    ctx = ExecutionContext(deps=base_ctx.deps.merge(exec_deps))
+    ctx = context_from_deps(
+        _authn_pg_deps(pg_client, suffix=suffix).merge(exec_deps),
+    )
 
     pid = uuid4()
     await _insert_principal_row(

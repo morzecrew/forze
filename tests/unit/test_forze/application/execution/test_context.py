@@ -12,6 +12,7 @@ from forze.application.contracts.search import SearchSpec
 from forze.application.contracts.storage import StorageDepKey, StorageSpec
 from forze.application.execution import Deps, ExecutionContext
 from forze.domain.models import CreateDocumentCmd, Document, ReadDocument
+from tests.support.execution_context import context_from_deps, context_from_modules, frozen_deps_from_deps
 from forze_mock import MockDepsModule, MockState
 from forze_mock.adapters import MockCounterAdapter, MockStorageAdapter
 from forze_mock.execution import MockStateDepKey
@@ -40,7 +41,7 @@ def ctx(mock_state: MockState) -> ExecutionContext:
     plain = dict(base.plain_deps)
     plain[CounterDepKey] = _mock_counter_fac
     plain[StorageDepKey] = _mock_storage_fac
-    return ExecutionContext(deps=Deps.plain(plain))
+    return context_from_deps(Deps.plain(plain))
 
 
 def _doc_spec(

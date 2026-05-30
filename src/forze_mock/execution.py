@@ -239,16 +239,16 @@ def mock_txmanager(context: ExecutionContext) -> TransactionManagerPort:
 
 @final
 @attrs.define(slots=True, frozen=True, kw_only=True)
-class MockDepsModule(DepsModule[Any]):
+class MockDepsModule(DepsModule):
     """Dependency module that registers all in-memory mock adapters."""
 
     state: MockState = attrs.field(factory=MockState)
 
     # ....................... #
 
-    def __call__(self) -> Deps[Any]:
+    def __call__(self) -> Deps:
         document = ConfigurableMockDocument()
-        return Deps[Any].plain(
+        return Deps.plain(
             {
                 MockStateDepKey: self.state,
                 DocumentQueryDepKey: document,

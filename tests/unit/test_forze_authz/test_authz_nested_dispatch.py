@@ -14,6 +14,7 @@ from forze.application.execution.registry import OperationRegistry
 from forze.application.hooks.authz import AuthzBeforeAuthorize
 from forze.base.exceptions import CoreException, ExceptionKind
 from forze.base.primitives import str_key_selector
+from tests.support.execution_context import context_from_deps, context_from_modules, frozen_deps_from_deps
 
 pytestmark = pytest.mark.unit
 
@@ -60,7 +61,7 @@ async def test_patch_inherits_authz_before_on_child_operation() -> None:
         .freeze()
     )
 
-    ctx = ExecutionContext(deps=Deps())
+    ctx = context_from_deps(Deps())
     metadata = InvocationMetadata(execution_id=uuid4(), correlation_id=uuid4())
     ident = AuthnIdentity(principal_id=uuid4())
 
@@ -91,7 +92,7 @@ async def test_patch_authz_denies_child_without_grant() -> None:
         .freeze()
     )
 
-    ctx = ExecutionContext(deps=Deps())
+    ctx = context_from_deps(Deps())
     metadata = InvocationMetadata(execution_id=uuid4(), correlation_id=uuid4())
     ident = AuthnIdentity(principal_id=uuid4())
 

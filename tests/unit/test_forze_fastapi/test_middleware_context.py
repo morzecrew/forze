@@ -15,6 +15,7 @@ from forze.application.contracts.authn import (
     AuthnResult,
     AuthnSpec,
 )
+from tests.support.execution_context import context_from_deps, context_from_modules, frozen_deps_from_deps
 from forze.application.contracts.tenancy import TenantIdentity, TenantResolverDepKey
 from forze.application.execution import Deps, ExecutionContext, InvocationMetadata
 from forze.base.exceptions import CoreException
@@ -30,7 +31,7 @@ from forze_mock import MockDepsModule, MockState
 
 
 def _execution_ctx() -> ExecutionContext:
-    return ExecutionContext(deps=MockDepsModule(state=MockState())())
+    return context_from_deps(MockDepsModule(state=MockState())())
 
 
 def _authn_result(
@@ -190,7 +191,7 @@ class TestInvocationMetadataMiddleware:
 class TestResolveAuthnIngress:
     @pytest.mark.asyncio
     async def test_header_token_uses_authentication_port(self) -> None:
-        ctx = ExecutionContext(deps=Deps.plain({AuthnDepKey: _TokenAuthFactory()}))
+        ctx = context_from_deps(Deps.plain({AuthnDepKey: _TokenAuthFactory()}))
         req = Request(
             {
                 "type": "http",
@@ -211,7 +212,7 @@ class TestResolveAuthnIngress:
 
     @pytest.mark.asyncio
     async def test_header_token_required_missing_raises(self) -> None:
-        ctx = ExecutionContext(deps=Deps.plain({AuthnDepKey: _TokenAuthFactory()}))
+        ctx = context_from_deps(Deps.plain({AuthnDepKey: _TokenAuthFactory()}))
         req = Request({"type": "http", "path": "/", "method": "GET", "headers": []})
 
         with pytest.raises(CoreException, match="required"):
@@ -227,7 +228,7 @@ class TestResolveAuthnIngress:
 
     @pytest.mark.asyncio
     async def test_header_api_key_uses_authentication_port(self) -> None:
-        ctx = ExecutionContext(deps=Deps.plain({AuthnDepKey: _ApiKeyAuthFactory()}))
+        ctx = context_from_deps(Deps.plain({AuthnDepKey: _ApiKeyAuthFactory()}))
         req = Request(
             {
                 "type": "http",
@@ -248,7 +249,7 @@ class TestResolveAuthnIngress:
 
     @pytest.mark.asyncio
     async def test_cookie_token_uses_authentication_port(self) -> None:
-        ctx = ExecutionContext(deps=Deps.plain({AuthnDepKey: _TokenAuthFactory()}))
+        ctx = context_from_deps(Deps.plain({AuthnDepKey: _TokenAuthFactory()}))
         req = Request(
             {
                 "type": "http",
@@ -277,7 +278,7 @@ class TestSecurityContextMiddleware:
         await send({"type": "http.response.body", "body": b"ok"})  # type: ignore[misc]
 
     def test_binds_authn_identity_from_token_ingress(self) -> None:
-        ctx = ExecutionContext(deps=Deps.plain({AuthnDepKey: _TokenAuthFactory()}))
+        ctx = context_from_deps(Deps.plain({AuthnDepKey: _TokenAuthFactory()}))
         captured: dict[str, object] = {}
 
         async def _capture_app(scope, receive, send):  # type: ignore[no-untyped-def]
@@ -307,8 +308,7 @@ class TestSecurityContextMiddleware:
                 _ = principal_id, requested_tenant_id
                 return TenantIdentity(tenant_id=tid)
 
-        ctx = ExecutionContext(
-            deps=Deps.plain(
+        ctx = context_from_deps(Deps.plain(
                 {
                     AuthnDepKey: _TokenAuthFactory(),
                     TenantResolverDepKey: lambda c: _TenantResolver(),
@@ -337,7 +337,7 @@ class TestSecurityContextMiddleware:
         assert captured["tenant"].tenant_id == tid
 
     def test_first_in_order_short_circuits(self) -> None:
-        ctx = ExecutionContext(deps=Deps.plain({AuthnDepKey: _BothFactory()}))
+        ctx = context_from_deps(Deps.plain({AuthnDepKey: _BothFactory()}))
         mw = SecurityContextMiddleware(
             self._ok_app,
             ctx_dep=lambda: ctx,
@@ -357,7 +357,7 @@ class TestSecurityContextMiddleware:
         assert response.status_code == 200
 
     def test_reject_raises_when_more_than_one_ingress_matches(self) -> None:
-        ctx = ExecutionContext(deps=Deps.plain({AuthnDepKey: _BothFactory()}))
+        ctx = context_from_deps(Deps.plain({AuthnDepKey: _BothFactory()}))
         mw = SecurityContextMiddleware(
             self._ok_app,
             ctx_dep=lambda: ctx,

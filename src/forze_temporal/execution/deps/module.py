@@ -1,4 +1,3 @@
-from enum import StrEnum
 from typing import Any, Mapping, Sequence, final
 
 import attrs
@@ -13,6 +12,7 @@ from forze.application.contracts.durable.workflow import (
 )
 from forze.application.contracts.tenancy import warn_dynamic_relation_with_tenant_aware
 from forze.application.execution import Deps, DepsModule
+from forze.base.primitives import StrKey
 
 from ...kernel._logger import logger
 from ...kernel.platform import TemporalClientPort
@@ -30,13 +30,15 @@ from .keys import TemporalClientDepKey, TemporalScheduleBootstrapDepKey
 
 @final
 @attrs.define(slots=True, frozen=True, kw_only=True)
-class TemporalDepsModule[K: str | StrEnum](DepsModule[K]):
+class TemporalDepsModule(DepsModule):
     """Dependency module that registers Temporal clients and adapters."""
 
     client: TemporalClientPort
     """Pre-constructed Temporal client (single cluster or routed, not connected until lifecycle)."""
 
-    workflows: Mapping[K, TemporalWorkflowConfig] | None = attrs.field(default=None)
+    workflows: Mapping[StrKey, TemporalWorkflowConfig] | None = attrs.field(
+        default=None
+    )
     """Mapping from workflow names to their Temporal-specific configurations."""
 
     schedule_bootstraps: Sequence[DurableWorkflowScheduleBootstrap[Any]] | None = (
@@ -60,7 +62,7 @@ class TemporalDepsModule[K: str | StrEnum](DepsModule[K]):
 
     # ....................... #
 
-    def __call__(self) -> Deps[K]:
+    def __call__(self) -> Deps:
         """Build a dependency container with Temporal-backed ports."""
 
         plain: dict[DepKey[Any], Any] = {TemporalClientDepKey: self.client}
@@ -68,12 +70,12 @@ class TemporalDepsModule[K: str | StrEnum](DepsModule[K]):
         if self.schedule_bootstraps:
             plain[TemporalScheduleBootstrapDepKey] = self.schedule_bootstraps
 
-        plain_deps = Deps[K].plain(plain)
-        workflow_deps = Deps[K]()
+        plain_deps = Deps.plain(plain)
+        workflow_deps = Deps()
 
         if self.workflows:
             workflow_deps = workflow_deps.merge(
-                Deps[K].routed(
+                Deps.routed(
                     {
                         DurableWorkflowQueryDepKey: {
                             name: ConfigurableTemporalWorkflowQuery(config=config)

@@ -9,24 +9,36 @@ from forze.application._logger import logger
 from forze.base.primitives import RuntimeVar
 
 from .context import ExecutionContext
-from .deps import DepsPlan
+from .deps import DepsRegistry, FrozenDepsRegistry
 from .lifecycle import FrozenLifecyclePlan
 
 # ----------------------- #
 
 
+def _frozen_deps_registry(
+    deps: DepsRegistry | FrozenDepsRegistry,
+) -> FrozenDepsRegistry:
+    if isinstance(deps, FrozenDepsRegistry):
+        return deps
+
+    return deps.freeze()
+
+
+# ....................... #
+
+
 @final
 @attrs.define(slots=True, frozen=True, kw_only=True)
 class ExecutionRuntime:
-    """Runnable scope combining deps plan, lifecycle plan, and execution context.
+    """Runnable scope combining deps registry, lifecycle plan, and execution context.
 
     Use :meth:`scope` as an async context manager to create a context, run
     startup hooks, yield, then run shutdown hooks and reset. The context is
     stored in a :class:`RuntimeVar` for per-request or per-task access.
     """
 
-    deps: DepsPlan = attrs.field(factory=DepsPlan)
-    """Plan for building the dependency container."""
+    deps: DepsRegistry | FrozenDepsRegistry = attrs.field(factory=DepsRegistry)
+    """Registry for building and freezing dependency providers."""
 
     lifecycle: FrozenLifecyclePlan = attrs.field(factory=FrozenLifecyclePlan)
     """Plan for startup and shutdown hooks."""
@@ -53,17 +65,18 @@ class ExecutionRuntime:
     # ....................... #
 
     def create_context(self) -> None:
-        """Create and set the execution context from the deps plan.
+        """Create and set the execution context from the deps registry.
 
-        Builds deps via :meth:`DepsPlan.build` and stores the context.
-        Idempotent within a scope; raises if context already exists.
+        Freezes the registry when needed, resolves per-scope deps, and stores
+        the context. Idempotent within a scope; raises if context already exists.
         """
 
         logger.info("Creating execution context")
 
-        deps = self.deps.build()
+        frozen_registry = _frozen_deps_registry(self.deps)
+        resolved_deps = frozen_registry.resolve()
 
-        ctx = ExecutionContext(deps=deps)
+        ctx = ExecutionContext(deps=resolved_deps)
         self.__ctx.set_once(ctx)
 
         logger.info("Execution context created")

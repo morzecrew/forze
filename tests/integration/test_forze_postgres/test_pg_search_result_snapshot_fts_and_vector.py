@@ -37,6 +37,7 @@ from forze_redis.execution.deps.configs import RedisSearchResultSnapshotConfig
 from forze_redis.execution.deps.deps import ConfigurableRedisSearchResultSnapshot
 from forze_redis.execution.deps.keys import RedisClientDepKey
 from forze_redis.kernel.platform.client import RedisClient
+from tests.support.execution_context import context_from_deps
 
 
 class FtsRow(BaseModel):
@@ -65,8 +66,7 @@ def _exec_fts(
     index_name: str,
 ) -> ExecutionContext:
     ns = f"it:rss:fts:{uuid4().hex[:10]}"
-    return ExecutionContext(
-        deps=Deps.plain(
+    return context_from_deps(Deps.plain(
             {
                 PostgresClientDepKey: pg_client,
                 PostgresIntrospectorDepKey: PostgresIntrospector(client=pg_client),
@@ -185,13 +185,11 @@ async def test_vector_v2_result_snapshot_reread(
         {"id": uuid4()},
     )
     ns = f"it:rss:vec:{uuid4().hex[:10]}"
-    ctx = ExecutionContext(
-        deps=Deps.plain(
+    ctx = context_from_deps(Deps.plain(
             {
                 PostgresClientDepKey: pgvector_client,
                 PostgresIntrospectorDepKey: PostgresIntrospector(
-                    client=pgvector_client
-                ),
+                    client=pgvector_client),
                 RedisClientDepKey: redis_client,
                 SearchResultSnapshotDepKey: ConfigurableRedisSearchResultSnapshot(
                     config=RedisSearchResultSnapshotConfig(namespace=ns),

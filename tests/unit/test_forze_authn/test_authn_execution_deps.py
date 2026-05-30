@@ -7,6 +7,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from forze.base.exceptions import CoreException
+from tests.support.execution_context import context_from_deps, context_from_modules, frozen_deps_from_deps
 
 pytest.importorskip("jwt")
 pytest.importorskip("argon2")
@@ -110,7 +111,7 @@ def _mock_doc_command_routes() -> dict[AuthnResourceName, object]:
     }
 
 
-def _document_deps() -> Deps[str]:
+def _document_deps() -> Deps:
     return Deps.routed(
         {
             DocumentQueryDepKey: _mock_doc_query_routes(),
@@ -179,7 +180,7 @@ class TestAuthnDepsModule:
             resolvers={"main": sentinel},
         )()
 
-        ctx = ExecutionContext(deps=deps.merge(_document_deps()))
+        ctx = context_from_deps(deps.merge(_document_deps()))
         resolver = ctx.deps.provide(PrincipalResolverDepKey, route="main")(
             ctx, AuthnSpec(name="main", enabled_methods=frozenset({"token"}))
         )
@@ -200,7 +201,7 @@ class TestConfigurableFactories:
     def _ctx(self) -> ExecutionContext:
         merged = AuthnDepsModule()().merge(_document_deps())
 
-        return ExecutionContext(deps=merged)
+        return context_from_deps(merged)
 
     def test_token_verifier_factory(self) -> None:
         ctx = self._ctx()
@@ -251,7 +252,7 @@ class TestConfigurableFactories:
             authn={"main": frozenset({"token", "password"})},
         )().merge(_document_deps())
 
-        ctx = ExecutionContext(deps=merged)
+        ctx = context_from_deps(merged)
 
         factory = ctx.deps.provide(AuthnDepKey, route="main")
         port = factory(
@@ -271,7 +272,7 @@ class TestConfigurableFactories:
             authn={"main": frozenset({"token"})},
         )().merge(_document_deps())
 
-        ctx = ExecutionContext(deps=merged)
+        ctx = context_from_deps(merged)
         factory = ctx.deps.provide(AuthnDepKey, route="main")
 
         with pytest.raises(CoreException, match="enabled_methods"):
@@ -338,7 +339,7 @@ class TestConfigurableFactories:
             password_lifecycle={"r"},
         )().merge(_document_deps())
 
-        ctx = ExecutionContext(deps=deps)
+        ctx = context_from_deps(deps)
 
         spec = AuthnSpec(name="r", enabled_methods=frozenset({"password"}))
         auth = ctx.deps.provide(AuthnDepKey, route="r")(ctx, spec)

@@ -1,6 +1,5 @@
 """Tenancy dependency module for the application kernel."""
 
-from enum import StrEnum
 from typing import Collection, Mapping, final
 
 import attrs
@@ -11,6 +10,7 @@ from forze.application.contracts.tenancy import (
     TenantResolverDepPort,
 )
 from forze.application.execution import Deps, DepsModule
+from forze.base.primitives import StrKey
 
 from .deps import (
     ConfigurableTenantManagement,
@@ -20,9 +20,9 @@ from .deps import (
 # ----------------------- #
 
 
-def _normalize_route_set[K: str | StrEnum](
-    routes: Collection[K] | None,
-) -> frozenset[K]:
+def _normalize_route_set(
+    routes: Collection[StrKey] | None,
+) -> frozenset[StrKey]:
     return frozenset(routes) if routes else frozenset()
 
 
@@ -31,33 +31,33 @@ def _normalize_route_set[K: str | StrEnum](
 
 @final
 @attrs.define(slots=True, frozen=True, kw_only=True)
-class TenancyDepsModule[K: str | StrEnum](DepsModule[K]):
+class TenancyDepsModule(DepsModule):
     """Registers tenant resolver and management factories (document-backed defaults)."""
 
-    tenant_resolver: Collection[K] | None = attrs.field(default=None)
+    tenant_resolver: Collection[StrKey] | None = attrs.field(default=None)
     """Route names for :class:`~forze.application.contracts.tenancy.TenantResolverDepKey`."""
 
-    tenant_management: Collection[K] | None = attrs.field(default=None)
+    tenant_management: Collection[StrKey] | None = attrs.field(default=None)
     """Route names for :class:`~forze.application.contracts.tenancy.TenantManagementDepKey`."""
 
     verify_tenant_active: bool = attrs.field(default=True)
     """Forwarded to :class:`~forze_tenancy.execution.deps.deps.ConfigurableTenantResolver`."""
 
-    tenant_resolvers: Mapping[K, TenantResolverDepPort] | None = attrs.field(
+    tenant_resolvers: Mapping[StrKey, TenantResolverDepPort] | None = attrs.field(
         default=None,
     )
     """Optional per-route tenant resolver overrides (e.g. local file/env backend)."""
 
     # ....................... #
 
-    def __call__(self) -> Deps[K]:
+    def __call__(self) -> Deps:
         tr = _normalize_route_set(self.tenant_resolver)
         tm = _normalize_route_set(self.tenant_management)
 
         if not tr and not tm:
-            return Deps[K]()
+            return Deps()
 
-        merged: Deps[K] = Deps[K]()
+        merged: Deps = Deps()
 
         if tr:
             resolver_overrides = dict(self.tenant_resolvers or {})
@@ -66,7 +66,7 @@ class TenancyDepsModule[K: str | StrEnum](DepsModule[K]):
             )
 
             merged = merged.merge(
-                Deps[K].routed(
+                Deps.routed(
                     {
                         TenantResolverDepKey: {
                             name: resolver_overrides.get(name, default_factory)
@@ -78,7 +78,7 @@ class TenancyDepsModule[K: str | StrEnum](DepsModule[K]):
 
         if tm:
             merged = merged.merge(
-                Deps[K].routed(
+                Deps.routed(
                     {
                         TenantManagementDepKey: {
                             name: ConfigurableTenantManagement() for name in tm

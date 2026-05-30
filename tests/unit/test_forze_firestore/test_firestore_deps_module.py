@@ -16,6 +16,8 @@ from forze_firestore.execution.deps.configs import (
 from forze_firestore.execution.deps.keys import FirestoreClientDepKey
 from forze_firestore.execution.deps.module import FirestoreDepsModule
 
+from tests.support.execution_context import frozen_deps_from_deps
+
 
 def test_firestore_deps_module_registers_client_and_documents() -> None:
     client = MagicMock()
@@ -35,8 +37,10 @@ def test_firestore_deps_module_registers_client_and_documents() -> None:
         },
         tx={"writable"},
     )
-    deps = module()
-    assert deps.provide(FirestoreClientDepKey) is client
+    registration = module()
+    resolved = frozen_deps_from_deps(registration)
+    assert resolved.provide(FirestoreClientDepKey) is client
+    deps = registration
     assert DocumentQueryDepKey in deps.routed_deps
     assert DocumentCommandDepKey in deps.routed_deps
     assert TransactionManagerDepKey in deps.routed_deps

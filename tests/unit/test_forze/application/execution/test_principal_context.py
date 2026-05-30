@@ -5,15 +5,16 @@ from uuid import uuid4
 from forze.application.contracts.authn import AuthnIdentity
 from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.execution import Deps, ExecutionContext, InvocationMetadata
+from tests.support.execution_context import context_from_deps, context_from_modules, frozen_deps_from_deps
 
 
 def test_get_tenant_without_binding_returns_none() -> None:
-    ctx = ExecutionContext(deps=Deps())
+    ctx = context_from_deps(Deps())
     assert ctx.inv_ctx.get_tenant() is None
 
 
 def test_get_tenant_returns_bound_tenant() -> None:
-    ctx = ExecutionContext(deps=Deps())
+    ctx = context_from_deps(Deps())
     tid = uuid4()
     metadata = InvocationMetadata(execution_id=uuid4(), correlation_id=uuid4())
 
@@ -27,7 +28,7 @@ def test_get_tenant_returns_bound_tenant() -> None:
 
 
 def test_get_authn_identity_roundtrip() -> None:
-    ctx = ExecutionContext(deps=Deps())
+    ctx = context_from_deps(Deps())
     tid = uuid4()
     pid = uuid4()
     metadata = InvocationMetadata(execution_id=uuid4(), correlation_id=uuid4())
@@ -47,7 +48,7 @@ def test_get_authn_identity_roundtrip() -> None:
 
 
 def test_bind_clears_identity_after_exit() -> None:
-    ctx = ExecutionContext(deps=Deps())
+    ctx = context_from_deps(Deps())
     metadata = InvocationMetadata(execution_id=uuid4(), correlation_id=uuid4())
     ident = AuthnIdentity(principal_id=uuid4())
 
@@ -63,7 +64,7 @@ def test_bind_clears_identity_after_exit() -> None:
 
 
 def test_identity_without_tenant_yields_no_tenancy_identity() -> None:
-    ctx = ExecutionContext(deps=Deps())
+    ctx = context_from_deps(Deps())
     metadata = InvocationMetadata(execution_id=uuid4(), correlation_id=uuid4())
     ident = AuthnIdentity(principal_id=uuid4())
 

@@ -3,6 +3,7 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 
 from forze.application.execution import Deps, ExecutionContext
+from tests.support.execution_context import context_from_deps, context_from_modules, frozen_deps_from_deps
 from forze_rabbitmq.execution.deps import RabbitMQClientDepKey
 from forze_rabbitmq.execution.lifecycle import (
     RabbitMQShutdownHook,
@@ -16,7 +17,7 @@ from forze_rabbitmq.kernel.platform import RabbitMQClient, RabbitMQConfig
 async def test_rabbitmq_startup_hook_initializes_client() -> None:
     client = Mock(spec=RabbitMQClient)
     client.initialize = AsyncMock(return_value=None)
-    ctx = ExecutionContext(deps=Deps.plain({RabbitMQClientDepKey: client}))
+    ctx = context_from_deps(Deps.plain({RabbitMQClientDepKey: client}))
     config = RabbitMQConfig(prefetch_count=10)
     hook = RabbitMQStartupHook(dsn="amqp://guest:guest@localhost/", config=config)
 
@@ -34,7 +35,7 @@ async def test_rabbitmq_startup_hook_initializes_client() -> None:
 async def test_rabbitmq_shutdown_hook_closes_client() -> None:
     client = Mock(spec=RabbitMQClient)
     client.close = AsyncMock(return_value=None)
-    ctx = ExecutionContext(deps=Deps.plain({RabbitMQClientDepKey: client}))
+    ctx = context_from_deps(Deps.plain({RabbitMQClientDepKey: client}))
     hook = RabbitMQShutdownHook()
 
     await hook(ctx)

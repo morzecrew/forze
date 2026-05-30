@@ -11,6 +11,7 @@ from forze.application.execution.lifecycle import (
     LifecyclePlan,
     LifecycleStep,
 )
+from tests.support.execution_context import context_from_deps, context_from_modules, frozen_deps_from_deps
 from forze_mock import MockDepsModule, MockState
 
 # ----------------------- #
@@ -18,7 +19,7 @@ from forze_mock import MockDepsModule, MockState
 
 @pytest.fixture
 def ctx() -> ExecutionContext:
-    return ExecutionContext(deps=MockDepsModule(state=MockState())())
+    return context_from_deps(MockDepsModule(state=MockState())())
 
 
 def _wave_step_ids(frozen: FrozenLifecyclePlan) -> list[str]:

@@ -1,7 +1,6 @@
 """Postgres lifecycle module (pool, catalog warmup, schema validation)."""
 
 from collections.abc import Mapping, Sequence
-from enum import StrEnum
 from typing import final
 
 import attrs
@@ -10,7 +9,9 @@ from pydantic import SecretStr
 from forze.application.contracts.execution import LifecycleStep
 from forze.application.execution.lifecycle import LifecycleModule
 from forze.base.exceptions import exc
+from forze.base.primitives import StrKey
 
+from ...kernel.catalog.validation.validate_schema import PostgresDocumentSchemaSpec
 from ...kernel.client import (
     PostgresClientPort,
     PostgresConfig,
@@ -21,7 +22,6 @@ from ..deps.configs import (
     PostgresHubSearchConfig,
     PostgresSearchConfig,
 )
-from ...kernel.catalog.validation.validate_schema import PostgresDocumentSchemaSpec
 from .catalog_warmup import postgres_catalog_warmup_lifecycle_step
 from .document_schema import postgres_document_schema_validation_lifecycle_step
 from .pool import postgres_lifecycle_step, routed_postgres_lifecycle_step
@@ -31,7 +31,7 @@ from .pool import postgres_lifecycle_step, routed_postgres_lifecycle_step
 
 @final
 @attrs.define(slots=True, frozen=True, kw_only=True)
-class PostgresLifecycleModule[K: str | StrEnum](LifecycleModule):
+class PostgresLifecycleModule(LifecycleModule):
     """Lifecycle module for Postgres client startup and optional follow-up steps."""
 
     client: PostgresClientPort
@@ -52,14 +52,18 @@ class PostgresLifecycleModule[K: str | StrEnum](LifecycleModule):
     schema_step_name: str = "postgres_document_schema_validate"
     """Step id for document schema validation."""
 
-    searches: Mapping[K, PostgresSearchConfig] | None = attrs.field(default=None)
+    searches: Mapping[StrKey, PostgresSearchConfig] | None = attrs.field(default=None)
     """When set, registers catalog warmup for these search routes."""
 
-    hub_searches: Mapping[K, PostgresHubSearchConfig] | None = attrs.field(default=None)
+    hub_searches: Mapping[StrKey, PostgresHubSearchConfig] | None = attrs.field(
+        default=None
+    )
     """When set, registers catalog warmup for hub search routes."""
 
-    federated_searches: Mapping[K, PostgresFederatedSearchConfig] | None = attrs.field(
-        default=None,
+    federated_searches: Mapping[StrKey, PostgresFederatedSearchConfig] | None = (
+        attrs.field(
+            default=None,
+        )
     )
     """When set, registers catalog warmup for federated search routes."""
 

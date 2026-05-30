@@ -9,7 +9,7 @@ import attrs
 from .emit import record
 
 if TYPE_CHECKING:
-    from ..deps.container import Deps
+    from ..deps.frozen import FrozenDeps
 
 # ----------------------- #
 
@@ -26,7 +26,7 @@ class TracingPortProxy:
     """Wrap a port and record sync and async method calls."""
 
     inner: Any
-    deps: "Deps[Any]"
+    deps: "FrozenDeps"
     domain: str
     surface: str
     route: str | None
@@ -77,7 +77,7 @@ class TracingPortProxy:
 def wrap_port[T](
     inner: T,
     *,
-    deps: "Deps[Any]",
+    deps: "FrozenDeps",
     domain: str,
     surface: str,
     route: str | None,

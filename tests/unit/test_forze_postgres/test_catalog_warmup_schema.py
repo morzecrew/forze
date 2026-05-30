@@ -29,6 +29,7 @@ from forze_postgres.kernel.catalog.validation.validate_schema import (
     PostgresDocumentSchemaSpec,
     validate_postgres_document_schemas,
 )
+from tests.support.execution_context import context_from_deps
 
 
 @pytest.mark.asyncio
@@ -48,8 +49,7 @@ async def test_warm_postgres_catalog_single_search() -> None:
         ),
     )
 
-    ctx = ExecutionContext(
-        deps=Deps.plain({PostgresIntrospectorDepKey: intro}),
+    ctx = context_from_deps(Deps.plain({PostgresIntrospectorDepKey: intro}),
     )
 
     await warm_postgres_catalog(
@@ -73,8 +73,7 @@ async def test_warm_postgres_catalog_vector_skips_index_info() -> None:
     intro = MagicMock(spec=PostgresIntrospector)
     intro.get_column_types = AsyncMock(return_value={})
 
-    ctx = ExecutionContext(
-        deps=Deps.plain({PostgresIntrospectorDepKey: intro}),
+    ctx = context_from_deps(Deps.plain({PostgresIntrospectorDepKey: intro}),
     )
 
     await warm_postgres_catalog(
@@ -106,8 +105,7 @@ async def test_warm_postgres_catalog_skips_on_partition_error() -> None:
         ),
     )
 
-    ctx = ExecutionContext(
-        deps=Deps.plain({PostgresIntrospectorDepKey: intro}),
+    ctx = context_from_deps(Deps.plain({PostgresIntrospectorDepKey: intro}),
     )
 
     await warm_postgres_catalog(
@@ -139,8 +137,7 @@ async def test_warm_postgres_catalog_hub_members() -> None:
         ),
     )
 
-    ctx = ExecutionContext(
-        deps=Deps.plain({PostgresIntrospectorDepKey: intro}),
+    ctx = context_from_deps(Deps.plain({PostgresIntrospectorDepKey: intro}),
     )
 
     await warm_postgres_catalog(
@@ -182,8 +179,7 @@ async def test_warm_postgres_catalog_federated_embedded_hub() -> None:
         ),
     )
 
-    ctx = ExecutionContext(
-        deps=Deps.plain({PostgresIntrospectorDepKey: intro}),
+    ctx = context_from_deps(Deps.plain({PostgresIntrospectorDepKey: intro}),
     )
 
     await warm_postgres_catalog(
@@ -236,8 +232,7 @@ async def test_catalog_warmup_lifecycle_step_runs_hook() -> None:
             has_tsvector_col=True,
         ),
     )
-    ctx = ExecutionContext(
-        deps=Deps.plain({PostgresIntrospectorDepKey: intro}),
+    ctx = context_from_deps(Deps.plain({PostgresIntrospectorDepKey: intro}),
     )
     step = postgres_catalog_warmup_lifecycle_step(
         searches={

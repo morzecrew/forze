@@ -1,6 +1,7 @@
 """Integration tests for :class:`~forze_mongo.kernel.gateways.read.MongoReadGateway` and write gateway against MongoDB."""
 
 from forze.base.exceptions import CoreException, ExceptionKind, exc
+from tests.support.execution_context import context_from_deps, context_from_modules, frozen_deps_from_deps
 from uuid import UUID, uuid4
 
 import pytest
@@ -75,7 +76,7 @@ def _gw_order_write_types() -> DocumentWriteTypes[
 @pytest.fixture
 def mongo_gw_ctx(mongo_client: MongoClient) -> ExecutionContext:
     deps = Deps.plain({MongoClientDepKey: mongo_client})
-    return ExecutionContext(deps=deps)
+    return context_from_deps(deps)
 
 @pytest.mark.integration
 @pytest.mark.asyncio
@@ -278,7 +279,7 @@ async def test_mongo_read_gateway_for_update_requires_transaction(
     db_name = (await mongo_client_replica.db()).name
     collection = f"mongo_gw_tx_{uuid4().hex[:8]}"
     relation = (db_name, collection)
-    ctx = ExecutionContext(deps=Deps.plain({MongoClientDepKey: mongo_client_replica}))
+    ctx = context_from_deps(Deps.plain({MongoClientDepKey: mongo_client_replica}))
 
     write = doc_write_gw(
         ctx,

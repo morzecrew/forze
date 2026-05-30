@@ -7,6 +7,7 @@ from uuid import UUID, uuid4
 import pytest
 
 from forze.base.exceptions import CoreException
+from tests.support.execution_context import context_from_deps, context_from_modules, frozen_deps_from_deps
 from pydantic import BaseModel
 
 from forze.application.contracts.base import Page
@@ -100,8 +101,7 @@ def _ctx_cached(
             state=ctx.deps.provide(MockStateDepKey), namespace=cspec.name
         )
 
-    ctx = ExecutionContext(
-        deps=Deps.plain(
+    ctx = context_from_deps(Deps.plain(
             {
                 MockStateDepKey: state,
                 PostgresClientDepKey: pg_client,
@@ -157,7 +157,7 @@ def _ctx_cached_tx(
         }
     )
     routed = Deps.routed({TransactionManagerDepKey: {"main": postgres_txmanager}})
-    ctx = ExecutionContext(deps=plain.merge(routed))
+    ctx = context_from_deps(plain.merge(routed))
     return ctx, spec
 
 
@@ -471,8 +471,7 @@ async def test_pg_adapter_soft_delete_restore_return_new_false(
             state=ctx.deps.provide(MockStateDepKey), namespace=cspec.name
         )
 
-    ctx = ExecutionContext(
-        deps=Deps.plain(
+    ctx = context_from_deps(Deps.plain(
             {
                 MockStateDepKey: state,
                 PostgresClientDepKey: pg_client,
@@ -716,8 +715,7 @@ async def test_pg_adapter_soft_delete_and_restore_many_return_new_true(
             state=ctx.deps.provide(MockStateDepKey), namespace=cspec.name
         )
 
-    ctx = ExecutionContext(
-        deps=Deps.plain(
+    ctx = context_from_deps(Deps.plain(
             {
                 MockStateDepKey: state,
                 PostgresClientDepKey: pg_client,
@@ -801,8 +799,7 @@ async def test_pg_adapter_uses_clamped_batch_size(
             batch_size=3,
         )
     )
-    ctx = ExecutionContext(
-        deps=Deps.plain(
+    ctx = context_from_deps(Deps.plain(
             {
                 PostgresClientDepKey: pg_client,
                 PostgresIntrospectorDepKey: PostgresIntrospector(client=pg_client),

@@ -21,6 +21,7 @@ from forze_firestore.execution.deps.deps import (
     firestore_txmanager,
 )
 from forze_firestore.execution.deps.keys import FirestoreClientDepKey
+from tests.support.execution_context import context_from_deps
 
 # ----------------------- #
 
@@ -55,11 +56,9 @@ def _rw_spec(*, history_enabled: bool = False) -> DocumentSpec:
 
 
 def _ctx(client: object = object()) -> ExecutionContext:
-    return ExecutionContext(
-        deps=__import__(
+    return context_from_deps(__import__(
             "forze.application.execution",
-            fromlist=["Deps"],
-        ).Deps.plain({FirestoreClientDepKey: client}),
+            fromlist=["Deps"],).Deps.plain({FirestoreClientDepKey: client}),
     )
 
 

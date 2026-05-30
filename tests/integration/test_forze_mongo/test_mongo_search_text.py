@@ -12,6 +12,7 @@ from forze_mongo.execution.deps.configs import MongoSearchConfig
 from forze_mongo.execution.deps.deps import ConfigurableMongoSearch
 from forze_mongo.execution.deps.keys import MongoClientDepKey
 from forze_mongo.kernel.platform import MongoClient
+from tests.support.execution_context import context_from_deps
 
 
 class SearchArticle(BaseModel):
@@ -26,8 +27,7 @@ def _search_ctx(
     db_name: str,
     collection: str,
 ) -> ExecutionContext:
-    return ExecutionContext(
-        deps=Deps.plain(
+    return context_from_deps(Deps.plain(
             {
                 MongoClientDepKey: mongo_client,
                 SearchQueryDepKey: ConfigurableMongoSearch(

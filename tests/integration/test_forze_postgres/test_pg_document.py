@@ -6,6 +6,7 @@ from forze.application.contracts.document import (
     DocumentQueryDepKey,
     DocumentSpec,
 )
+from tests.support.execution_context import context_from_deps, context_from_modules, frozen_deps_from_deps
 from forze.application.execution import Deps, ExecutionContext
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
 from forze_postgres.execution.deps import ConfigurablePostgresDocument
@@ -52,7 +53,7 @@ def execution_context(pg_client: PostgresClient):
             DocumentCommandDepKey: configurable,
         }
     )
-    return ExecutionContext(deps=deps)
+    return context_from_deps(deps)
 
 
 @pytest.mark.asyncio

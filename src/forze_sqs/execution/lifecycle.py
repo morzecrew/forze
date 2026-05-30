@@ -25,7 +25,8 @@ class SQSStartupHook(LifecycleHook):
     region_name: str
     access_key_id: str = attrs.field(repr=False)
     secret_access_key: SecretStr = attrs.field(
-        converter=pydantic_secret_converter, repr=False
+        converter=pydantic_secret_converter,
+        repr=False,
     )
     config: SQSConfig | None = attrs.field(default=None, repr=False)
 

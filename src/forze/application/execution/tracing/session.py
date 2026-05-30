@@ -1,17 +1,15 @@
 """Per-task active dependency container for runtime tracing emit sites."""
 
-from __future__ import annotations
-
 from contextvars import ContextVar, Token
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from ..deps.container import Deps
+    from ..deps.frozen import FrozenDeps
     from ..deps.runtime_tracer import RuntimeTracer
 
 # ----------------------- #
 
-_active_deps: ContextVar[Deps[Any] | None] = ContextVar(
+_active_deps: ContextVar["FrozenDeps | None"] = ContextVar(
     "forze_active_deps",
     default=None,
 )
@@ -19,7 +17,7 @@ _active_deps: ContextVar[Deps[Any] | None] = ContextVar(
 # ....................... #
 
 
-def active_deps() -> Deps[Any] | None:
+def active_deps() -> "FrozenDeps | None":
     """Return the :class:`~forze.application.execution.deps.container.Deps` bound for the current task."""
 
     return _active_deps.get()
@@ -28,7 +26,7 @@ def active_deps() -> Deps[Any] | None:
 # ....................... #
 
 
-def active_runtime_tracer() -> RuntimeTracer | None:
+def active_runtime_tracer() -> "RuntimeTracer | None":
     """Return the runtime tracer from the active deps when recording is enabled."""
 
     deps = _active_deps.get()
@@ -42,7 +40,7 @@ def active_runtime_tracer() -> RuntimeTracer | None:
 # ....................... #
 
 
-def bind_active_deps(deps: Deps[Any] | None) -> Token[Deps[Any] | None]:
+def bind_active_deps(deps: "FrozenDeps | None") -> Token["FrozenDeps | None"]:
     """Bind *deps* as the active container for runtime tracing in the current task."""
 
     return _active_deps.set(deps)

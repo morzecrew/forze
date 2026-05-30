@@ -16,6 +16,7 @@ from forze_mongo.execution.deps.configs import MongoSearchConfig
 from forze_mongo.execution.deps.deps import ConfigurableMongoSearch
 from forze_mongo.execution.deps.keys import MongoClientDepKey
 from forze_mongo.kernel.platform import MongoClient
+from tests.support.execution_context import context_from_deps
 
 from mongo_search_helpers import wait_vector_index
 
@@ -85,8 +86,7 @@ async def test_mongo_vector_search_knn(mongo_atlas_client: MongoClient) -> None:
 
     await wait_vector_index(mongo_atlas_client, coll, index_name=index_name, path=path)
 
-    ctx = ExecutionContext(
-        deps=Deps.plain(
+    ctx = context_from_deps(Deps.plain(
             {
                 MongoClientDepKey: mongo_atlas_client,
                 SearchQueryDepKey: ConfigurableMongoSearch(

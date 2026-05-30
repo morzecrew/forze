@@ -7,6 +7,7 @@ from forze.application.execution import ExecutionContext
 from forze_gcs.execution.deps.configs import GCSStorageConfig
 from forze_gcs.execution.deps.module import GCSDepsModule
 from forze_gcs.kernel.platform.client import GCSClient
+from tests.support.execution_context import context_from_deps
 
 
 @pytest.mark.integration
@@ -14,8 +15,7 @@ from forze_gcs.kernel.platform.client import GCSClient
 async def test_gcs_storage_adapter_upload_list_download_delete(
     gcs_client: GCSClient, gcs_bucket: str
 ) -> None:
-    ctx = ExecutionContext(
-        deps=GCSDepsModule(
+    ctx = context_from_deps(GCSDepsModule(
             client=gcs_client,
             storages={gcs_bucket: GCSStorageConfig(bucket=gcs_bucket)},
         )()
@@ -59,8 +59,7 @@ async def test_gcs_storage_adapter_upload_list_download_delete(
 async def test_gcs_storage_list_pagination(
     gcs_client: GCSClient, gcs_bucket: str
 ) -> None:
-    ctx = ExecutionContext(
-        deps=GCSDepsModule(
+    ctx = context_from_deps(GCSDepsModule(
             client=gcs_client,
             storages={gcs_bucket: GCSStorageConfig(bucket=gcs_bucket)},
         )()

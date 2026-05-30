@@ -4,6 +4,7 @@ import pytest
 from pydantic import SecretStr
 
 from forze.application.execution import Deps, ExecutionContext
+from tests.support.execution_context import context_from_deps, context_from_modules, frozen_deps_from_deps
 from forze_sqs.execution.deps import SQSClientDepKey
 from forze_sqs.execution.lifecycle import (
     SQSShutdownHook,
@@ -17,7 +18,7 @@ from forze_sqs.kernel.platform import SQSClient, SQSConfig
 async def test_sqs_startup_hook_initializes_client() -> None:
     client = Mock(spec=SQSClient)
     client.initialize = AsyncMock(return_value=None)
-    ctx = ExecutionContext(deps=Deps.plain({SQSClientDepKey: client}))
+    ctx = context_from_deps(Deps.plain({SQSClientDepKey: client}))
     config = SQSConfig(connect_timeout=10)
     hook = SQSStartupHook(
         endpoint="http://localhost:4566",
@@ -42,7 +43,7 @@ async def test_sqs_startup_hook_initializes_client() -> None:
 async def test_sqs_shutdown_hook_closes_client() -> None:
     client = Mock(spec=SQSClient)
     client.close = AsyncMock(return_value=None)
-    ctx = ExecutionContext(deps=Deps.plain({SQSClientDepKey: client}))
+    ctx = context_from_deps(Deps.plain({SQSClientDepKey: client}))
     hook = SQSShutdownHook()
 
     await hook(ctx)

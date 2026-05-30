@@ -7,6 +7,7 @@ from forze.application.contracts.queue import (
     QueueQueryDepKey,
     QueueSpec,
 )
+from tests.support.execution_context import context_from_deps, context_from_modules, frozen_deps_from_deps
 from forze.application.execution import Deps, ExecutionContext
 from forze.base.serialization import PydanticRecordMappingCodec
 from forze_sqs.adapters import SQSQueueAdapter
@@ -26,7 +27,7 @@ class _QueuePayload(BaseModel):
 def test_sqs_queue_factory_builds_adapter() -> None:
     sqs_mock = Mock(spec=SQSClient)
     deps = Deps.plain({SQSClientDepKey: sqs_mock})
-    context = ExecutionContext(deps=deps)
+    context = context_from_deps(deps)
     spec = QueueSpec(
         name="events",
         codec=PydanticRecordMappingCodec(model_type=_QueuePayload),

@@ -10,6 +10,7 @@ from pydantic import BaseModel
 from forze.application.contracts.document import DocumentSpec
 from forze.application.execution import Deps, ExecutionContext
 from forze.base.exceptions import CoreException, exc
+from tests.support.execution_context import context_from_deps, context_from_modules, frozen_deps_from_deps
 from forze_postgres.execution.deps.configs import (
     PostgresDocumentConfig,
     PostgresReadOnlyDocumentConfig,
@@ -99,7 +100,7 @@ async def test_schema_validation_hook_skips_partition_error() -> None:
     intro.get_column_types = AsyncMock(
         side_effect=exc.internal("x", code="introspection_partition_required"),
     )
-    ctx = ExecutionContext(deps=Deps.plain({PostgresIntrospectorDepKey: intro}))
+    ctx = context_from_deps(Deps.plain({PostgresIntrospectorDepKey: intro}))
     hook = PostgresDocumentSchemaValidationHook(
         specs=(
             PostgresDocumentSchemaSpec(
@@ -116,7 +117,7 @@ async def test_schema_validation_hook_skips_partition_error() -> None:
 async def test_schema_validation_hook_reraises_other_errors() -> None:
     intro = MagicMock()
     intro.get_column_types = AsyncMock(side_effect=CoreException.validation("bad"))
-    ctx = ExecutionContext(deps=Deps.plain({PostgresIntrospectorDepKey: intro}))
+    ctx = context_from_deps(Deps.plain({PostgresIntrospectorDepKey: intro}))
     hook = PostgresDocumentSchemaValidationHook(
         specs=(
             PostgresDocumentSchemaSpec(

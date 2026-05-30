@@ -21,6 +21,7 @@ from forze_meilisearch.execution.deps.deps import (
     ConfigurableMeilisearchFederatedSearch,
     ConfigurableMeilisearchSearchCommand,
 )
+from tests.support.execution_context import context_from_deps
 
 # ----------------------- #
 
@@ -38,8 +39,7 @@ def _mem(name: str) -> SearchSpec[Hit]:
 @pytest.mark.asyncio
 async def test_federated_federation_merge(meilisearch_client) -> None:
     spec = FederatedSearchSpec(name="fed", members=(_mem("a"), _mem("b")))
-    ctx = ExecutionContext(
-        deps=Deps.plain(
+    ctx = context_from_deps(Deps.plain(
             {
                 MeilisearchClientDepKey: meilisearch_client,
                 FederatedSearchQueryDepKey: ConfigurableMeilisearchFederatedSearch(
@@ -76,8 +76,7 @@ async def test_federated_federation_merge(meilisearch_client) -> None:
 @pytest.mark.asyncio
 async def test_federated_rrf_merge(meilisearch_client) -> None:
     spec = FederatedSearchSpec(name="fed_rrf", members=(_mem("a"), _mem("b")))
-    ctx = ExecutionContext(
-        deps=Deps.plain(
+    ctx = context_from_deps(Deps.plain(
             {
                 MeilisearchClientDepKey: meilisearch_client,
                 FederatedSearchQueryDepKey: ConfigurableMeilisearchFederatedSearch(

@@ -31,6 +31,7 @@ from forze_mongo.execution.deps.deps import (
 from forze_mongo.execution.deps.utils import doc_write_gw, read_gw
 from forze_mongo.kernel.gateways import MongoReadGateway, MongoWriteGateway
 from forze_mongo.kernel.platform import MongoClient
+from tests.support.execution_context import context_from_deps
 
 
 class _R(ReadDocument):
@@ -59,8 +60,7 @@ def _rw_spec(*, history_enabled: bool = False) -> DocumentSpec:
 
 
 def _ctx() -> ExecutionContext:
-    return ExecutionContext(
-        deps=Deps.plain({MongoClientDepKey: MagicMock(spec=MongoClient)})
+    return context_from_deps(Deps.plain({MongoClientDepKey: MagicMock(spec=MongoClient)})
     )
 
 

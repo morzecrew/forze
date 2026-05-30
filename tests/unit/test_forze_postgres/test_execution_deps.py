@@ -7,6 +7,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from forze.base.exceptions import CoreException
+from tests.support.execution_context import context_from_deps, context_from_modules, frozen_deps_from_deps
 from pydantic import BaseModel
 
 pytest.importorskip("psycopg")
@@ -87,8 +88,7 @@ def _rw_spec(*, history_enabled: bool = False) -> DocumentSpec:
 def _ctx() -> ExecutionContext:
     client = MagicMock(spec=PostgresClient)
     intro = MagicMock(spec=PostgresIntrospector)
-    return ExecutionContext(
-        deps=Deps.plain(
+    return context_from_deps(Deps.plain(
             {
                 PostgresClientDepKey: client,
                 PostgresIntrospectorDepKey: intro,
@@ -141,7 +141,7 @@ class TestPostgresDepsModule:
         client = MagicMock(spec=PostgresClient)
         ttl = timedelta(minutes=2)
         module = PostgresDepsModule(client=client, introspector_cache_ttl=ttl)
-        ctx = ExecutionContext(deps=module())
+        ctx = context_from_deps(module())
         intro = ctx.deps.provide(PostgresIntrospectorDepKey)
         assert intro.cache_ttl == ttl
 

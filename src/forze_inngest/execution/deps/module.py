@@ -1,6 +1,5 @@
 """Inngest dependency module for the application kernel."""
 
-from enum import StrEnum
 from typing import Any, Mapping, Sequence, final
 
 import attrs
@@ -12,6 +11,7 @@ from forze.application.contracts.durable.function import (
     DurableFunctionStepPort,
 )
 from forze.application.execution import Deps, DepsModule
+from forze.base.primitives import StrKey
 
 from ...adapters import InngestStepAdapter
 from ...kernel.platform import InngestClientPort
@@ -32,13 +32,13 @@ def _provide_step_port(_ctx: Any) -> DurableFunctionStepPort:
 
 @final
 @attrs.define(slots=True, frozen=True, kw_only=True)
-class InngestDepsModule[K: str | StrEnum](DepsModule[K]):
+class InngestDepsModule(DepsModule):
     """Dependency module that registers Inngest client and durable function ports."""
 
     client: InngestClientPort
     """Pre-constructed Inngest client."""
 
-    events: Mapping[K, InngestEventConfig] | None = attrs.field(default=None)
+    events: Mapping[StrKey, InngestEventConfig] | None = attrs.field(default=None)
     """Mapping from event spec names to Inngest event command configuration."""
 
     function_bindings: Sequence[InngestFunctionBinding[Any, Any]] | None = attrs.field(
@@ -48,18 +48,18 @@ class InngestDepsModule[K: str | StrEnum](DepsModule[K]):
 
     # ....................... #
 
-    def __call__(self) -> Deps[K]:
+    def __call__(self) -> Deps:
         plain: dict[DepKey[Any], Any] = {
             InngestClientDepKey: self.client,
             DurableFunctionStepDepKey: _provide_step_port,
         }
 
-        plain_deps = Deps[K].plain(plain)
-        event_deps = Deps[K]()
+        plain_deps = Deps.plain(plain)
+        event_deps = Deps()
 
         if self.events:
             event_deps = event_deps.merge(
-                Deps[K].routed(
+                Deps.routed(
                     {
                         DurableFunctionEventCommandDepKey: {
                             name: ConfigurableInngestEventCommand(config=config)
@@ -76,7 +76,7 @@ class InngestDepsModule[K: str | StrEnum](DepsModule[K]):
 
 
 def get_function_bindings(
-    module: InngestDepsModule[Any],
+    module: InngestDepsModule,
 ) -> Sequence[InngestFunctionBinding[Any, Any]]:
     """Return function bindings stored on an :class:`InngestDepsModule`."""
 

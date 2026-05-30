@@ -1,4 +1,5 @@
 from forze.base.exceptions import CoreException
+from tests.support.execution_context import context_from_deps, context_from_modules, frozen_deps_from_deps
 from uuid import UUID, uuid4
 
 
@@ -62,7 +63,7 @@ async def test_mongo_document_adapter_roundtrip(mongo_client: MongoClient) -> No
             DocumentCommandDepKey: configurable,
         }
     )
-    ctx = ExecutionContext(deps=deps)
+    ctx = context_from_deps(deps)
     adapter = ctx.document.command(spec)
 
     created = await adapter.create(MyCreateDoc(name="alpha"))
@@ -158,7 +159,7 @@ async def test_mongo_document_find_many_sorted(mongo_client: MongoClient) -> Non
             DocumentCommandDepKey: configurable,
         }
     )
-    ctx = ExecutionContext(deps=deps)
+    ctx = context_from_deps(deps)
     adapter = ctx.document.command(spec)
 
     for name in ("charlie", "alice", "bob"):

@@ -19,6 +19,7 @@ from forze_meilisearch.execution.deps.deps import (
     ConfigurableMeilisearchSearch,
     ConfigurableMeilisearchSearchCommand,
 )
+from tests.support.execution_context import context_from_deps
 
 # ----------------------- #
 
@@ -38,15 +39,13 @@ async def test_filter_eq_narrows_hits(meilisearch_client) -> None:
         model_type=Product,
         fields=["title"],
     )
-    ctx = ExecutionContext(
-        deps=Deps.plain(
+    ctx = context_from_deps(Deps.plain(
             {
                 MeilisearchClientDepKey: meilisearch_client,
                 SearchQueryDepKey: ConfigurableMeilisearchSearch(
                     config=MeilisearchSearchConfig(
                         index_uid=index_uid,
-                        filterable_attributes=["category"],
-                    ),
+                        filterable_attributes=["category"],),
                 ),
                 SearchCommandDepKey: ConfigurableMeilisearchSearchCommand(
                     config=MeilisearchSearchConfig(

@@ -8,6 +8,7 @@ from forze.application.contracts.document import DocumentSpec, DocumentWriteType
 from forze.application.contracts.search import SearchSpec
 from forze.application.execution import ExecutionContext
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
+from tests.support.execution_context import context_from_deps, context_from_modules, frozen_deps_from_deps
 from forze_mock.execution import MockDepsModule, MockStateDepKey
 
 # ----------------------- #
@@ -36,7 +37,7 @@ class _S(BaseModel):
 
 def test_mock_deps_module_resolves_shared_state_and_core_ports() -> None:
     mod = MockDepsModule()
-    ctx = ExecutionContext(deps=mod())
+    ctx = context_from_deps(mod())
 
     assert ctx.deps.provide(MockStateDepKey) is mod.state
 

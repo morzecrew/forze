@@ -15,6 +15,7 @@ from forze_firestore.execution.deps.configs import FirestoreDocumentConfig
 from forze_firestore.execution.deps.deps import ConfigurableFirestoreDocument
 from forze_firestore.execution.deps.keys import FirestoreClientDepKey
 from forze_firestore.kernel.platform import FirestoreClient
+from tests.support.execution_context import context_from_deps
 
 
 class FilterDoc(Document):
@@ -53,14 +54,12 @@ async def test_find_many_with_and_filter(
             write=("(default)", collection),
         ),
     )
-    ctx = ExecutionContext(
-        deps=Deps.plain(
+    ctx = context_from_deps(Deps.plain(
             {
                 FirestoreClientDepKey: firestore_client,
                 DocumentQueryDepKey: fac,
                 DocumentCommandDepKey: fac,
-            }
-        )
+            })
     )
     cmd = ctx.document.command(spec)
     query = ctx.document.query(spec)

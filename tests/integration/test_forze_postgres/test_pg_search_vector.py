@@ -27,6 +27,7 @@ from forze_postgres.execution.deps.keys import (
 from forze_postgres.kernel.gateways import PostgresQualifiedName
 from forze_postgres.kernel.catalog.introspect import PostgresIntrospector
 from forze_postgres.kernel.client.client import PostgresClient
+from tests.support.execution_context import context_from_deps
 
 # ----------------------- #
 
@@ -57,8 +58,7 @@ def _vector_search_context(
     index_name: str,
     vector_distance: str = "l2",
 ) -> ExecutionContext:
-    return ExecutionContext(
-        deps=Deps.plain(
+    return context_from_deps(Deps.plain(
             {
                 PostgresClientDepKey: pg_client,
                 PostgresIntrospectorDepKey: PostgresIntrospector(client=pg_client),

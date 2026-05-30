@@ -15,6 +15,7 @@ from forze_postgres.execution.deps.keys import (
 from forze_postgres.kernel.catalog.introspect import PostgresIntrospector
 from forze_postgres.kernel.client.client import PostgresClient
 from forze_postgres.execution.deps.configs import PostgresDocumentConfig
+from tests.support.execution_context import context_from_deps
 
 # ----------------------- #
 
@@ -73,8 +74,7 @@ async def test_field_filter_with_sql_metacharacters_is_literal_match(
             bookkeeping_strategy="application",
         )
     )
-    ctx = ExecutionContext(
-        deps=Deps.plain(
+    ctx = context_from_deps(Deps.plain(
             {
                 PostgresClientDepKey: pg_client,
                 PostgresIntrospectorDepKey: PostgresIntrospector(client=pg_client),
