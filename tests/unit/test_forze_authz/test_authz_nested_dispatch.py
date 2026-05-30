@@ -10,7 +10,7 @@ import pytest
 from forze.application.contracts.authn import AuthnIdentity
 from forze.application.contracts.authz import AuthzSpec
 from forze.application.execution import Deps, ExecutionContext, InvocationMetadata
-from forze.application.execution.registry import OperationRegistry
+from forze.application.execution.operations.registry import OperationRegistry
 from forze.application.hooks.authz import AuthzBeforeAuthorize
 from forze.base.exceptions import CoreException, ExceptionKind
 from forze.base.primitives import str_key_selector

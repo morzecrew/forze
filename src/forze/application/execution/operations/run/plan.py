@@ -10,7 +10,7 @@ from forze.base.primitives import StrKey
 
 from ..planning.plans import ResolvedOperationPlan
 from ..planning.scopes import ResolvedScope, ResolvedTransactionScope
-from .executor import (
+from .stages import (
     run_graph_before,
     run_graph_on_success,
     run_pipeline_finally,
@@ -36,12 +36,13 @@ def _assert_tx_configured(tx: ResolvedTransactionScope) -> None:
 # ....................... #
 
 
-async def run_resolved_scope[R](
+async def _run_scope_body[Args, R](
     scope: ResolvedScope,
-    inner: Callable[[], Awaitable[R]],
-    args: Any,
+    args: Args,
+    *,
+    inner: Callable[[Args], Awaitable[R]],
 ) -> R:
-    """Run a resolved scope around an inner callable."""
+    """Run before, wrap, on_success, dispatch, on_failure, and finally for a scope."""
 
     await run_graph_before(scope.before, args)
 
@@ -49,11 +50,7 @@ async def run_resolved_scope[R](
     exc: Exception | None = None
 
     try:
-
-        async def _wrapped(a: Any) -> R:
-            return await inner()
-
-        result = await run_wrap_pipeline(scope.wrap, args, _wrapped)
+        result = await run_wrap_pipeline(scope.wrap, args, inner)
         await run_graph_on_success(scope.on_success, args, result)
         await run_pipeline_on_success(scope.dispatch, args, result)
 
@@ -67,6 +64,22 @@ async def run_resolved_scope[R](
         await run_pipeline_finally(scope.finally_, args, outcome)
 
     return cast(R, result)  # type: ignore[redundant-cast]
+
+
+# ....................... #
+
+
+async def run_resolved_scope[R](
+    scope: ResolvedScope,
+    inner: Callable[[], Awaitable[R]],
+    args: Any,
+) -> R:
+    """Run a resolved scope around an inner callable."""
+
+    async def _wrapped(a: Any) -> R:
+        return await inner()
+
+    return await _run_scope_body(scope, args, inner=_wrapped)
 
 
 # ....................... #
@@ -88,42 +101,24 @@ async def run_resolved_tx_scope[Args, R](
         raise exc.internal("Transaction route is required to run a transaction scope")
 
     async with tx_runner(route):
-        await run_graph_before(tx.before, args)
 
-        result: R | None = None
-        err: Exception | None = None
+        async def _handler_call(a: Args) -> R:
+            return await handler(a)
 
-        try:
+        result = await _run_scope_body(tx, args, inner=_handler_call)
+        captured_result = result
 
-            async def _handler_call(a: Args) -> R:
-                return await handler(a)
+        async def _after_commit() -> None:
+            await run_graph_on_success(tx.after_commit, args, captured_result)
+            await run_pipeline_on_success(
+                tx.dispatch_after_commit,
+                args,
+                captured_result,
+            )
 
-            result = await run_wrap_pipeline(tx.wrap, args, _handler_call)
-            await run_graph_on_success(tx.on_success, args, result)
-            await run_pipeline_on_success(tx.dispatch, args, result)
+        await defer_after_commit(_after_commit)
 
-            captured_result = result
-
-            async def _after_commit() -> None:
-                await run_graph_on_success(tx.after_commit, args, captured_result)
-                await run_pipeline_on_success(
-                    tx.dispatch_after_commit,
-                    args,
-                    captured_result,
-                )
-
-            await defer_after_commit(_after_commit)
-
-        except Exception as e:
-            err = e
-            await run_pipeline_on_failure(tx.on_failure, args, e)
-            raise
-
-        finally:
-            outcome = Success(value=result) if err is None else Failure(exc=err)
-            await run_pipeline_finally(tx.finally_, args, outcome)
-
-        return cast(R, result)  # type: ignore[redundant-cast]
+        return result
 
 
 # ....................... #

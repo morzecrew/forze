@@ -6,7 +6,7 @@ from forze.application.composition.storage import (
     build_storage_registry,
 )
 from forze.application.contracts.storage import StorageSpec
-from forze.application.execution.registry import OperationRegistry
+from forze.application.execution.operations.registry import OperationRegistry
 
 from ..registry_helpers import registry_has_handler
 

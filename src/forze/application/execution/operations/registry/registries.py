@@ -10,7 +10,7 @@ from forze.base.exceptions import exc
 from forze.base.primitives import StrKey, StrKeyNamespace, StrKeySelector
 
 from ..planning import FrozenOperationPlan, OperationPlan
-from ..running import DispatchedOperation, OperationRunner, ResolvedOperation
+from ..run import DispatchedOperation, ResolvedOperation
 from .binder import OperationRegistryBinder
 from .merge import RegistryMerge
 from .patch import PlanPatch
@@ -18,7 +18,7 @@ from .resolution import PlanResolution
 from .validation import RegistryFreezeValidator
 
 if TYPE_CHECKING:
-    from ..context import ExecutionContext
+    from ...context import ExecutionContext
 
 # ----------------------- #
 
@@ -301,11 +301,11 @@ class FrozenOperationRegistry:
         plan = self.plans[op]
 
         resolved_plan = plan.resolve(ctx, self._dispatch)
-        runner = OperationRunner(
+
+        return ResolvedOperation(
             op=op,
+            handler=handler(ctx),
             plan=resolved_plan,
             tx_runner=ctx.tx_ctx.scope,
             defer_after_commit=ctx.tx_ctx.run_or_defer,
         )
-
-        return ResolvedOperation(op=op, handler=handler(ctx), runner=runner)

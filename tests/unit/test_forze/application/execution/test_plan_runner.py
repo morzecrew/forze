@@ -17,7 +17,7 @@ from forze.application.contracts.execution import (
 from tests.support.execution_context import context_from_deps, context_from_modules, frozen_deps_from_deps
 from forze.application.contracts.execution.value_objects import Failure, Success
 from forze.application.execution import ExecutionContext
-from forze.application.execution.registry import OperationRegistry
+from forze.application.execution.operations.registry import OperationRegistry
 from forze_mock import MockDepsModule
 
 # ----------------------- #

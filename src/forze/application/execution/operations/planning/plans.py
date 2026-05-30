@@ -20,7 +20,7 @@ from .scopes import (
 )
 
 if TYPE_CHECKING:
-    from ..context import ExecutionContext
+    from ...context import ExecutionContext
 
 # ----------------------- #
 

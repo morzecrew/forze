@@ -38,7 +38,7 @@ Helpers read `ctx.inv_ctx.get_authn()` and `ctx.inv_ctx.get_tenant()` to build `
 ```python
 from forze.application.contracts.authz import AuthzSpec
 from forze.application.hooks.authz import authorize_before_step, document_scope_wrap_step
-from forze.application.execution.registry import OperationRegistry
+from forze.application.execution.operations.registry import OperationRegistry
 from forze.base.primitives import str_key_selector
 
 registry = (

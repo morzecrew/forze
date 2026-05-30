@@ -17,8 +17,8 @@ from .lifecycle import (
     LifecycleModule,
     LifecyclePlan,
 )
-from .planning import OperationPlan
-from .registry import FrozenOperationRegistry, OperationRegistry
+from .operations import OperationPlan
+from .operations.registry import FrozenOperationRegistry, OperationRegistry
 from .runtime import ExecutionRuntime
 from .tracing import (
     RuntimeTrace,

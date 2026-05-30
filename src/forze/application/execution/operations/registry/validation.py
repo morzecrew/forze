@@ -19,8 +19,6 @@ from .resolution import PlanResolution
 class RegistryFreezeValidator:
     """Validate handlers, patches, and resolved plans before freeze."""
 
-    # ....................... #
-
     @staticmethod
     def validate_all(
         handlers: Mapping[StrKey, HandlerFactory],
@@ -60,9 +58,7 @@ class RegistryFreezeValidator:
             return
 
         for patch in resolution.patches:
-            if not any(
-                str_key_selector.matches(patch.selector, op) for op in handlers
-            ):
+            if not any(str_key_selector.matches(patch.selector, op) for op in handlers):
                 raise exc.internal(
                     "Orphan plan patch: selector "
                     f"{patch.selector!r} matches no registered operations"

@@ -1,11 +1,15 @@
 """Run resolved lifecycle graphs in wave order."""
 
+from __future__ import annotations
+
 import asyncio
 from typing import TYPE_CHECKING
 
 from forze.application._logger import logger
 from forze.application.contracts.execution import ExecutionGraph, LifecycleStep
 from forze.base.primitives import StrKey
+
+from ..graph_run import run_graph_waves_reverse
 
 if TYPE_CHECKING:
     from ..context import ExecutionContext
@@ -28,7 +32,7 @@ class StartupWavePartialError(Exception):
 
 async def _run_startup_step(
     step: LifecycleStep,
-    ctx: "ExecutionContext",
+    ctx: ExecutionContext,
 ) -> None:
     logger.trace("Executing '%s' startup hook", step.id)
     await step.startup(ctx)
@@ -39,7 +43,7 @@ async def _run_startup_step(
 
 async def _run_shutdown_step(
     step: LifecycleStep,
-    ctx: "ExecutionContext",
+    ctx: ExecutionContext,
 ) -> None:
     logger.trace("Executing '%s' shutdown hook", step.id)
     await step.shutdown(ctx)
@@ -48,26 +52,9 @@ async def _run_shutdown_step(
 # ....................... #
 
 
-async def _run_startup_wave_sequential(
-    graph: ExecutionGraph[LifecycleStep],
-    ctx: "ExecutionContext",
-    wave: tuple[StrKey, ...],
-) -> list[StrKey]:
-    completed: list[StrKey] = []
-
-    for step_id in wave:
-        await _run_startup_step(graph.steps[step_id], ctx)
-        completed.append(step_id)
-
-    return completed
-
-
-# ....................... #
-
-
 async def _run_startup_wave_concurrent(
     graph: ExecutionGraph[LifecycleStep],
-    ctx: "ExecutionContext",
+    ctx: ExecutionContext,
     wave: tuple[StrKey, ...],
 ) -> list[StrKey]:
     if not wave:
@@ -99,7 +86,7 @@ async def _run_startup_wave_concurrent(
 
 async def _rollback_startup(
     graph: ExecutionGraph[LifecycleStep],
-    ctx: "ExecutionContext",
+    ctx: ExecutionContext,
     executed_waves: list[list[StrKey]],
 ) -> None:
     for wave_ids in reversed(executed_waves):
@@ -121,7 +108,7 @@ async def _rollback_startup(
 
 async def run_lifecycle_startup(
     graph: ExecutionGraph[LifecycleStep],
-    ctx: "ExecutionContext",
+    ctx: ExecutionContext,
     *,
     concurrent: bool,
 ) -> None:
@@ -137,14 +124,30 @@ async def run_lifecycle_startup(
     )
 
     executed_waves: list[list[StrKey]] = []
-    run_wave = (
-        _run_startup_wave_concurrent if concurrent else _run_startup_wave_sequential
-    )
+
+    if not concurrent:
+        try:
+            for wave in graph.waves:
+                completed: list[StrKey] = []
+
+                for step_id in wave:
+                    await _run_startup_step(graph.steps[step_id], ctx)
+                    completed.append(step_id)
+
+                executed_waves.append(completed)
+
+        except Exception:
+            logger.exception("Lifecycle startup failed")
+            await _rollback_startup(graph, ctx, executed_waves)
+            raise
+
+        return
+
     partial_error: StartupWavePartialError | None = None
 
     try:
         for wave in graph.waves:
-            completed = await run_wave(graph, ctx, wave)
+            completed = await _run_startup_wave_concurrent(graph, ctx, wave)
             executed_waves.append(completed)
 
     except StartupWavePartialError as e:
@@ -165,42 +168,15 @@ async def run_lifecycle_startup(
 # ....................... #
 
 
-async def _run_shutdown_wave_sequential(
-    graph: ExecutionGraph[LifecycleStep],
-    ctx: "ExecutionContext",
-    wave: tuple[StrKey, ...],
+async def _run_shutdown_step_logged(
+    step: LifecycleStep,
+    ctx: ExecutionContext,
 ) -> None:
-    for step_id in reversed(wave):
-        try:
-            await _run_shutdown_step(graph.steps[step_id], ctx)
+    try:
+        await _run_shutdown_step(step, ctx)
 
-        except Exception:
-            logger.exception("Lifecycle shutdown failed for '%s'", step_id)
-
-
-# ....................... #
-
-
-async def _run_shutdown_wave_concurrent(
-    graph: ExecutionGraph[LifecycleStep],
-    ctx: "ExecutionContext",
-    wave: tuple[StrKey, ...],
-) -> None:
-    if not wave:
-        return
-
-    results = await asyncio.gather(
-        *(_run_shutdown_step(graph.steps[step_id], ctx) for step_id in wave),
-        return_exceptions=True,
-    )
-
-    for step_id, result in zip(wave, results, strict=True):
-        if isinstance(result, Exception):
-            logger.exception(
-                "Lifecycle shutdown failed for '%s'",
-                step_id,
-                exc_info=result,
-            )
+    except Exception:
+        logger.exception("Lifecycle shutdown failed for '%s'", step.id)
 
 
 # ....................... #
@@ -208,7 +184,7 @@ async def _run_shutdown_wave_concurrent(
 
 async def run_lifecycle_shutdown(
     graph: ExecutionGraph[LifecycleStep],
-    ctx: "ExecutionContext",
+    ctx: ExecutionContext,
     *,
     concurrent: bool,
 ) -> None:
@@ -223,9 +199,35 @@ async def run_lifecycle_shutdown(
         concurrent,
     )
 
-    run_wave = (
-        _run_shutdown_wave_concurrent if concurrent else _run_shutdown_wave_sequential
-    )
+    if concurrent:
 
-    for wave in reversed(graph.waves):
-        await run_wave(graph, ctx, wave)
+        async def _run_shutdown_concurrent_wave(wave: tuple[StrKey, ...]) -> None:
+            if not wave:
+                return
+
+            results = await asyncio.gather(
+                *(
+                    _run_shutdown_step_logged(graph.steps[step_id], ctx)
+                    for step_id in wave
+                ),
+                return_exceptions=True,
+            )
+
+            for step_id, result in zip(wave, results, strict=True):
+                if isinstance(result, Exception):
+                    logger.exception(
+                        "Lifecycle shutdown failed for '%s'",
+                        step_id,
+                        exc_info=result,
+                    )
+
+        for wave in reversed(graph.waves):
+            await _run_shutdown_concurrent_wave(wave)
+
+        return
+
+    await run_graph_waves_reverse(
+        graph,
+        lambda step: _run_shutdown_step_logged(step, ctx),
+        concurrent=False,
+    )

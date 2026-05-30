@@ -7,7 +7,7 @@ from forze.application.contracts.authn import (
     TokenLifecycleDepKey,
 )
 from forze.application.execution import ExecutionContext
-from forze.application.execution.registry import OperationRegistry
+from forze.application.execution.operations.registry import OperationRegistry
 from forze.application.handlers.authn import (
     AuthnChangePassword,
     AuthnLogout,

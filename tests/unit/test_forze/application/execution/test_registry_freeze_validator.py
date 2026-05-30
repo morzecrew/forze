@@ -3,10 +3,10 @@
 import pytest
 
 from forze.application.contracts.execution import DispatchStep
-from forze.application.execution.planning import OperationPlan
-from forze.application.execution.registry.patch import PlanPatch
-from forze.application.execution.registry.resolution import PlanResolution
-from forze.application.execution.registry.validation import RegistryFreezeValidator
+from forze.application.execution.operations.planning import OperationPlan
+from forze.application.execution.operations.registry.patch import PlanPatch
+from forze.application.execution.operations.registry.resolution import PlanResolution
+from forze.application.execution.operations.registry.validation import RegistryFreezeValidator
 from forze.base.exceptions import CoreException
 from forze.base.primitives import str_key_selector
 

@@ -6,7 +6,7 @@ from forze.application.composition.document import (
     build_document_registry,
 )
 from forze.application.contracts.document import DocumentSpec
-from forze.application.execution.registry import OperationRegistry
+from forze.application.execution.operations.registry import OperationRegistry
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
 from forze_patterns.soft_deletion.composition import (
     SoftDeletionKernelOp,

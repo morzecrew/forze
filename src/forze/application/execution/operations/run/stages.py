@@ -13,6 +13,8 @@ from forze.application.contracts.execution import (
     Outcome,
 )
 
+from ...graph_run import run_graph_waves_forward
+
 # ----------------------- #
 
 
@@ -22,10 +24,10 @@ async def run_graph_before[Args](
 ) -> None:
     """Run before hooks in topological wave order."""
 
-    for wave in graph.waves:
-        for step_id in wave:
-            hook = graph.steps[step_id]
-            await hook(args)
+    async def _run_hook(hook: Before[Args]) -> None:
+        await hook(args)
+
+    await run_graph_waves_forward(graph, _run_hook, concurrent=False)
 
 
 # ....................... #
@@ -38,10 +40,10 @@ async def run_graph_on_success[Args, R](
 ) -> None:
     """Run on-success hooks in topological wave order."""
 
-    for wave in graph.waves:
-        for step_id in wave:
-            hook = graph.steps[step_id]
-            await hook(args, result)
+    async def _run_hook(hook: OnSuccess[Args, R]) -> None:
+        await hook(args, result)
+
+    await run_graph_waves_forward(graph, _run_hook, concurrent=False)
 
 
 # ....................... #

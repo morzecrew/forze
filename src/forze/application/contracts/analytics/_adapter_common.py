@@ -1,4 +1,4 @@
-"""Shared helpers for warehouse analytics adapters (kernel-only, no SDK imports)."""
+"""Shared helpers for warehouse analytics adapters."""
 
 from typing import Any, Sequence, TypeVar, cast
 

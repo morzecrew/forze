@@ -11,7 +11,7 @@ from pydantic import BaseModel
 
 from forze.application.contracts.execution import Handler
 from forze.application.execution import Deps, ExecutionContext
-from forze.application.execution.registry import OperationRegistry
+from forze.application.execution.operations.registry import OperationRegistry
 from forze_socketio.routing import (
     ForzeSocketIOAdapter,
     SocketIONamespaceRouter,

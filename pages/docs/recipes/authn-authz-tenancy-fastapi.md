@@ -79,7 +79,7 @@ Register **authorization** on the frozen registry with `authorize_before_step` (
 ```python
 from forze.application.contracts.authz import AuthzSpec
 from forze.application.hooks.authz import authorize_before_step
-from forze.application.execution.registry import OperationRegistry
+from forze.application.execution.operations.registry import OperationRegistry
 
 registry = (
     OperationRegistry(handlers={"widgets.read": read_factory})

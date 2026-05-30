@@ -6,7 +6,7 @@ from forze.application.composition.search import (
     build_search_registry,
 )
 from forze.application.contracts.search import SearchSpec
-from forze.application.execution.registry import OperationRegistry
+from forze.application.execution.operations.registry import OperationRegistry
 from pydantic import BaseModel
 
 from ..registry_helpers import registry_has_handler

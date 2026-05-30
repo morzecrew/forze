@@ -2,7 +2,7 @@ from enum import StrEnum
 from typing import Any, TypeVar, final
 
 from forze.application.contracts.document import DocumentSpec
-from forze.application.execution.registry import OperationRegistry
+from forze.application.execution.operations.registry import OperationRegistry
 from forze.base.primitives import StrKeyNamespace
 
 from .handlers import DeleteDocument, RestoreDocument

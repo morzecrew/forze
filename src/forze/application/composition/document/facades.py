@@ -3,7 +3,7 @@ from typing import Any, Generic, TypeVar
 import attrs
 from pydantic import BaseModel
 
-from forze.application.execution.facade import (
+from forze.application.execution.operations.facade import (
     OperationFacade,
     facade_op,
     namespaced_facade,

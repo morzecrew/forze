@@ -1,7 +1,5 @@
 """Plain merge of operation registry handlers, plans, and patches."""
 
-from __future__ import annotations
-
 from typing import Mapping, Self, final
 
 import attrs

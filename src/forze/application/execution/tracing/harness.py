@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, Any, Sequence, final
 
 import attrs
 
-from ..running import run_operation
+from ..operations.run import run_operation
 from .buffer import RuntimeTrace
 from .events import TracingViolation
 from .log import log_runtime_trace
@@ -16,7 +16,7 @@ if TYPE_CHECKING:
     from forze.base.primitives import StrKey
 
     from ..context import ExecutionContext
-    from ..registry import FrozenOperationRegistry
+    from ..operations.registry import FrozenOperationRegistry
 
 # ----------------------- #
 
@@ -50,7 +50,7 @@ async def run_traced_operation(
     """Run *op* via *registry*, then collect trace and run *validators*.
 
     Requires ``ctx.deps.trace_runtime`` (or ``FORZE_RUNTIME_TRACE`` on plan build)
-    for a non-empty trace. Uses :func:`~forze.application.execution.running.run_operation`.
+    for a non-empty trace. Uses :func:`~forze.application.execution.operations.run.run_operation`.
     """
 
     result = await run_operation(registry, op, args, ctx)

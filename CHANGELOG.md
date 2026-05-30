@@ -40,6 +40,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Application execution:** operation registry, planning, facade, and run modules moved under `forze.application.execution.operations` (`operations.registry`, `operations.planning`, `operations.facade`, `operations.run`). Lifecycle wave execution lives in `forze.application.execution.lifecycle.run`; shared graph wave helpers in `forze.application.execution.graph_run`. `steps_graph_from_sequence` uses registration order as a tie-break when step priorities are equal.
 - **Application coordinators:** `DocumentCoordinator` moved to `forze.application.coordinators.document` (query/command/pagination mixins); `DocumentReadGatewayPort` and `DocumentWriteGatewayPort` live in `forze.application.contracts.document`. Public import `from forze.application.coordinators import DocumentCoordinator` is unchanged.
 - **Application execution:** `LifecyclePlan.build()` now returns `FrozenLifecyclePlan` (deprecated alias for `freeze()`); `startup` / `shutdown` run on frozen or resolved plans, not on the authoring plan.
 - **Application execution:** `DepsPlan` renamed to `DepsRegistry`; `DepsRegistry.build()` is deprecated in favor of `freeze()` then `FrozenDepsRegistry.resolve()`. The former `DepsRegistry` provider map is internal `ProviderStore`. Registration `Deps` no longer supports `provide` / `resolve_*`; use `FrozenDeps` via freeze/resolve.
@@ -60,6 +61,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
+- **Application execution:** `forze.application.execution.registry`, `planning`, `facade`, and `running` subpackages; `OperationRunner`; `lifecycle_graph_from_sequence` (use `steps_graph_from_sequence` from `forze.application.contracts.execution`).
 - **Postgres:** `validate_pg_search_conf`, `validate_postgres_hub_search_conf`, `validate_postgres_federated_search_conf`, and `is_postgres_federated_embedded_hub_config` from the public API (use config constructors and instance validation instead).
 - **Integrations:** `validate_mongo_search_conf`, `validate_meilisearch_search_conf`, `validate_meilisearch_federated_search_conf`, `validate_clickhouse_analytics_config`, and `validate_bigquery_analytics_config` from public exports.
 
@@ -89,7 +91,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Document & search:** `DocumentCoordinator`, `DocumentCacheCoordinator`, and `SearchResultSnapshotCoordinator`; `update_matching` / `ensure`; method-specific ports (`find_page`, `find_cursor`, `search_page`, `project_*`, `select_*`, …); hub and federated search (FTS/PGroonga v2, weighted RRF).
 - **Document contracts:** `RowLockMode` on `for_update`; `select_cursor`; stream methods `find_stream`, `project_stream`, and `select_stream`; post-write `hydrate_from_write` when read/write sources align.
 - **Sort defaults:** `DocumentSpec.default_sort`, `SearchSpec.default_sort`, and `HubSearchSpec.default_sort`; shared helpers `resolve_effective_sorts`, `normalize_sorts_for_keyset`, and `validate_sort_fields` in `forze.application.contracts.querying`.
-- **Durable functions:** contracts under `forze.application.contracts.durable.function`; optional `DurableFunctionSpec.operation`; `handler_for_registry_operation` and `run_durable_function` in `forze.application.execution.running`.
+- **Durable functions:** contracts under `forze.application.contracts.durable.function`; optional `DurableFunctionSpec.operation`; `handler_for_registry_operation` and `run_durable_function` in `forze.application.execution.operations.run`.
 - **`forze_inngest` (`inngest` extra):** Inngest adapter (`InngestClient`, `InngestDepsModule`, `register_functions`, `InngestFunctionBinding`, `inngest_lifecycle_step`, FastAPI `serve`) with registry-backed cron/event runs via `register_functions(..., registry=)`.
 - **Workflow schedules:** schedule contracts and `forze_temporal` Temporal Schedules support (create/upsert/update/delete/pause/unpause/trigger/describe/list) with declarative bootstrap via `TemporalDepsModule.schedule_bootstraps`.
 - **Queue delayed delivery:** `QueueCommandPort.enqueue` / `enqueue_many` accept `delay` and `not_before`; SQS `DelaySeconds`, Mock `visible_at` filtering, and RabbitMQ DLX delay queues when `delayed_delivery=True`.

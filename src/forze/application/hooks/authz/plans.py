@@ -1,4 +1,4 @@
-"""Wire authz into :class:`~forze.application.execution.registry.OperationRegistry` plans."""
+"""Wire authz into :class:`~forze.application.execution.operations.registry.OperationRegistry` plans."""
 
 from typing import Any, Awaitable, Callable, final
 

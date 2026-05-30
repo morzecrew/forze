@@ -1,6 +1,6 @@
 """Shared helpers for application-layer operation registry tests."""
 
-from forze.application.execution.registry import OperationRegistry
+from forze.application.execution.operations.registry import OperationRegistry
 from forze.base.primitives import StrKey
 
 # ----------------------- #

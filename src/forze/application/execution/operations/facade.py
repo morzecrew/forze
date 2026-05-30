@@ -7,9 +7,9 @@ from forze.base.exceptions import exc
 from forze.base.primitives import StrKey, StrKeyNamespace
 
 if TYPE_CHECKING:
-    from .context import ExecutionContext, ExecutionContextFactory
+    from ..context import ExecutionContext, ExecutionContextFactory
     from .registry.registries import FrozenOperationRegistry
-    from .running import ResolvedOperation
+    from .run import ResolvedOperation
 
 # ----------------------- #
 

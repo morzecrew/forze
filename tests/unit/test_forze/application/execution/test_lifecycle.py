@@ -56,6 +56,15 @@ class TestLifecycleStep:
         assert step.shutdown is down
 
 
+class TestLifecyclePlanGraphFreeze:
+    def test_builds_waves_from_capabilities(self) -> None:
+        pool = LifecycleStep(id="pool", provides=("postgres.client",))
+        warmup = LifecycleStep(id="warmup", requires=("postgres.client",))
+        frozen = LifecyclePlan.from_steps(warmup, pool).freeze()
+
+        assert frozen.graph.waves == (("pool",), ("warmup",))
+
+
 class TestLifecyclePlan:
     @pytest.mark.asyncio
     async def test_startup_and_shutdown_run_in_order(

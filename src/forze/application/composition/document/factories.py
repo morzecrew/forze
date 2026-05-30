@@ -5,7 +5,7 @@ from typing import Any, TypeVar
 from pydantic import BaseModel
 
 from forze.application.contracts.document import DocumentSpec
-from forze.application.execution.registry import OperationRegistry
+from forze.application.execution.operations.registry import OperationRegistry
 from forze.application.handlers.document import (
     AggregatedListDocuments,
     CreateDocument,

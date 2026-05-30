@@ -24,8 +24,8 @@ from forze.application.execution.context import (
     ExecutionContext,
     ExecutionContextFactory,
 )
-from forze.application.execution.registry import FrozenOperationRegistry
-from forze.application.execution.running import handler_for_registry_operation
+from forze.application.execution.operations.registry import FrozenOperationRegistry
+from forze.application.execution.operations.run import handler_for_registry_operation
 from forze.base.exceptions import exc
 
 from ..adapters.context import (

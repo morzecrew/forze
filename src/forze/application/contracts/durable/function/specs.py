@@ -86,7 +86,7 @@ class DurableFunctionSpec(Generic[In, Out], BaseSpec):
     """Specification for an event-driven durable function.
 
     When :attr:`operation` is set, runtimes resolve and execute that operation
-    from a frozen :class:`~forze.application.execution.registry.FrozenOperationRegistry`
+    from a frozen :class:`~forze.application.execution.operations.registry.FrozenOperationRegistry`
     (full operation plan). Otherwise integrations use a custom handler factory.
     """
 

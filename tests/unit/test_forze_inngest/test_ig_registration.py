@@ -11,7 +11,7 @@ from forze.application.contracts.durable.function import (
 from tests.support.execution_context import context_from_deps, context_from_modules, frozen_deps_from_deps
 from forze.application.contracts.execution import Handler
 from forze.application.execution import Deps, ExecutionContext
-from forze.application.execution.registry import OperationRegistry
+from forze.application.execution.operations.registry import OperationRegistry
 from forze.base.exceptions import CoreException
 from forze_inngest import InngestClient, InngestFunctionBinding, register_functions
 
