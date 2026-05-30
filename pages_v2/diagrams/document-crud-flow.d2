@@ -1,0 +1,63 @@
+style: {
+    fill: transparent
+}
+
+vars: {
+    d2-config: {
+        pad: 42
+    }
+}
+
+direction: right
+
+CommandDTO: {
+    shape: rectangle
+    label: |md
+        ### Command DTO
+        CreateProjectCmd / UpdateProjectCmd
+    |
+}
+
+DomainModel: {
+    shape: rectangle
+    style: {
+        stroke: "#4a90d9"
+    }
+    label: |md
+        ### Domain model
+        Project aggregate
+    |
+}
+
+DocumentPort: {
+    shape: rectangle
+    label: |md
+        ### Document port
+        DocumentCommandPort
+    |
+}
+
+ReadModel: {
+    shape: rectangle
+    style: {
+        stroke: "#2e7d32"
+    }
+    label: |md
+        ### Read model
+        ProjectReadModel
+    |
+}
+
+QueryPort: {
+    shape: rectangle
+    label: |md
+        ### Query port
+        DocumentQueryPort
+    |
+}
+
+CommandDTO -> DomainModel: validate invariants
+DomainModel -> DocumentPort: create / update / delete
+DocumentPort -> ReadModel: returns projection
+QueryPort -> ReadModel: get / find / list
+DocumentPort -> QueryPort: persisted state can be read

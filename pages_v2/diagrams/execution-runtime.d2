@@ -1,0 +1,52 @@
+style: {
+    fill: transparent
+}
+
+vars: {
+    d2-config: {
+        pad: 40
+    }
+}
+
+direction: right
+
+DepsPlan: {
+    shape: rectangle
+    label: |md
+        ### Deps Plan
+        What to build
+    |
+}
+
+LifecyclePlan: {
+    shape: rectangle
+    label: |md
+        ### Lifecycle Plan
+        Startup / shutdown
+    |
+}
+
+Runtime: {
+    shape: rectangle
+    style: {
+        stroke: "#4a90d9"
+    }
+    label: |md
+        ### ExecutionRuntime
+    |
+}
+
+Context: {
+    shape: rectangle
+    style: {
+        stroke: "#2e7d32"
+    }
+    label: |md
+        ### ExecutionContext
+        Resolve ports for handlers
+    |
+}
+
+DepsPlan -> Runtime
+LifecyclePlan -> Runtime
+Runtime -> Context: scope() creates

@@ -53,6 +53,12 @@ Postgres-only: `PostgresDepsModule.introspector_cache_partition_key` is **requir
 - **Wrong tenant after LRU eviction** — integration tests that share one DSN across tenants should use **distinct connection fingerprints** per tenant (see `tests/integration/_routed_lru_helpers.py`).
 - **Catalog / schema validation on dynamic relations** — startup hooks that need fixed names call `require_static_relation` or skip dynamic routes; omit schema validation lifecycle steps for schema-per-tenant documents.
 
+**Fingerprint composition** (LRU pool dedup via `forze.base.primitives.fingerprint`):
+
+- **DSN clients** (Postgres, Redis, Mongo, RabbitMQ): scheme, host, port, path, username, query options, plus a one-way password tag when the URI contains a password (raw passwords are never stored in fingerprints).
+- **Structured credentials** (Meilisearch, Inngest, ClickHouse, GCS, BigQuery): non-secret connection fields plus `secret_dedup_fingerprint` for API keys, passwords, and inline service-account JSON.
+- **S3 / SQS**: `access_key_id` as the public identifier (paired with the secret key at client creation).
+
 DSN fingerprinting and secret resolution are **not** changed by the `RelationSpec` rollout; do not expect resolver fields to replace per-tenant secrets.
 
 ## Integrations without RelationSpec config

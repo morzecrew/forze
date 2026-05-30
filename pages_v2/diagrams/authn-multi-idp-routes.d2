@@ -1,0 +1,78 @@
+# Multi-IdP topology under one AuthnDepsModule
+
+style: {
+    fill: transparent
+}
+
+vars: {
+    d2-config: {
+        pad: 50
+    }
+}
+
+Module: {
+    shape: rectangle
+    style: {
+        stroke: "#4a90d9"
+    }
+    label: |md
+        ### AuthnDepsModule
+        kernel + per-route registrations
+    |
+
+    internal_route: {
+        shape: rectangle
+        label: |md
+            ### Route 'internal'
+            enabled_methods = {token, password}
+        |
+
+        token_v: ForzeJwtTokenVerifier
+        password_v: Argon2PasswordVerifier
+        resolver: JwtNativeUuidResolver
+        orchestrator: AuthnOrchestrator
+    }
+
+    api_route: {
+        shape: rectangle
+        label: |md
+            ### Route 'api'
+            enabled_methods = {token}
+        |
+
+        token_v: OidcTokenVerifier
+        resolver: MappingTableResolver
+        orchestrator: AuthnOrchestrator
+    }
+}
+
+Internal_IdP: {
+    shape: rectangle
+    label: |md
+        ### Forze JWT
+        first-party access tokens
+    |
+}
+
+External_IdP: {
+    shape: rectangle
+    label: |md
+        ### External IdP
+        OIDC · Casdoor · Firebase · Auth0
+    |
+}
+
+IdentityMappings: {
+    shape: rectangle
+    style: {
+        stroke: "#9b59b6"
+    }
+    label: |md
+        ### identity_mapping_spec
+        (issuer, subject) -> principal_id
+    |
+}
+
+Internal_IdP -> Module.internal_route.token_v: signs
+External_IdP -> Module.api_route.token_v: signs
+Module.api_route.resolver -> IdentityMappings: looks up / provisions

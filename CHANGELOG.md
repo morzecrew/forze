@@ -53,6 +53,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Postgres:** `Postgres*Config` integration wiring is now frozen `attrs` classes (constructors required; dict literals no longer accepted). `tenant_aware` is inherited from `TenantAwareIntegrationConfig`. Federated members use `PostgresFederatedSearchLegSearch` / `PostgresFederatedSearchLegHub` instead of embedded dict shape detection. Removed module-level `validate_pg_search_conf`, `validate_postgres_hub_search_conf`, and `validate_postgres_federated_search_conf` (validation runs at config construction or via `.validate()` / `validate_against_spec`).
 - **Integrations:** `Mongo*Config`, `Firestore*Config`, `Meilisearch*Config`, `ClickHouse*Config`, `BigQuery*Config`, `Redis*Config`, `S3StorageConfig`, `GCSStorageConfig`, `TemporalWorkflowConfig`, `RabbitMQQueueConfig`, `SQSQueueConfig`, and `InngestEventConfig` are frozen `attrs` classes (constructors required; dict literals no longer accepted). `tenant_aware` uses `TenantAwareIntegrationConfig` where applicable. Removed `validate_mongo_search_conf`, `validate_meilisearch_search_conf`, `validate_meilisearch_federated_search_conf`, `validate_clickhouse_analytics_config`, and `validate_bigquery_analytics_config` from public exports (validation on config types).
 - **`forze.base`:** `frozen_mapping` in `forze.base.primitives` for immutable nested maps on integration configs.
+- **`forze.base`:** `secret_dedup_fingerprint` and `gcp_credential_dedup_tag` in `forze.base.primitives.fingerprint`; routed clients (Meilisearch, Inngest, GCS, BigQuery, ClickHouse) use these helpers instead of ad-hoc `hashlib` digest helpers.
 
 ### Removed
 
@@ -61,11 +62,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Documentation
 
-- **Multi-tenancy:** document `RelationSpec` exclusions—author-defined analytics query SQL, Inngest/Mock boundaries, and layering routed clients vs relation-level resolvers; analytics query tenancy on Postgres, BigQuery, and ClickHouse integration pages.
+- **Multi-tenancy:** document `RelationSpec` exclusions—author-defined analytics query SQL, Inngest/Mock boundaries, and layering routed clients vs relation-level resolvers; analytics query tenancy on Postgres, BigQuery, and ClickHouse integration pages; fingerprint composition for routed pool dedup.
 - **Concepts and execution reference:** align lifecycle (`LifecycleStep.id`, routed client lifecycle), handler examples (`DocumentIdDTO`, `GetDocument`), `SearchCommandPort` / `ctx.search.command`, document kernel ops table, multi-tenancy helpers, and layered-architecture package examples with current APIs.
 
 ### Fixed
 
+- **ClickHouse:** routed pool fingerprints no longer embed raw passwords; password material is a one-way dedup tag only.
+- **Inngest:** routed pool fingerprints include signing key and client config fields (`is_production`, `request_timeout_ms`), not only `app_id` and `event_key`.
+- **`forze.base`:** `connection_string_fingerprint` includes a hashed password tag when the URI contains a password (fixes incorrect LRU pool sharing when host/username match but passwords differ).
 - **Meilisearch:** federated search awaits snapshot finalization; `ensure_index` and multi-search use `meilisearch-python-sdk` models (`SearchParams.federation_options`, `Federation`). Requires `meilisearch-python-sdk>=7.2.1`.
 - **Postgres:** `ensure`, `ensure_many`, `upsert`, and `upsert_many` build `ON CONFLICT` from `PostgresDocumentConfig.conflict_target` or inferred primary-key columns (fixes composite PKs and tables with additional UNIQUE indexes).
 - **Mongo:** `ensure_many` and `upsert_many` classify bulk `$setOnInsert` upserts safely; missing rows after bulk upsert raise `mongo_ensure_bulk_miss` conflict instead of a generic not-found.

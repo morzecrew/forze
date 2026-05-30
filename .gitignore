@@ -217,3 +217,6 @@ pages/site/
 
 junit.xml
 .envrc
+
+pages_v2/docs/_diagrams/
+pages_v2/site/

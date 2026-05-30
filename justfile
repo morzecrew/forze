@@ -6,11 +6,16 @@ set shell := ["bash", "-cu"]
 
 _uv_sync := "uv sync --all-groups --all-extras > /dev/null 2>&1"
 
-# ----------------------- #
-# Modules
+# ....................... #
 
-# Supported commands: serve, build, diagrams
-mod pages "pages/justfile"
+_pwd := justfile_directory()
+_cwd := join(_pwd, "pages_v2")
+
+_d2_dir := join(_cwd, "diagrams")
+_d2_light_build_dir := join(_cwd, "docs", "_diagrams", "light")
+_d2_dark_build_dir := join(_cwd, "docs", "_diagrams", "dark")
+_d2_light_flags := "--center --scale 1"
+_d2_dark_flags := "--theme 200 --center --scale 1"
 
 # ----------------------- #
 # Default command
@@ -83,3 +88,23 @@ quality strict="false":
     just _uv_cmd "Dead code" {{ strict }} vulture
     just _uv_cmd "Dependencies" {{ strict }} deptry .
     just _uv_cmd "Security" {{ strict }} bandit -c pyproject.toml -r "src"
+
+
+# ----------------------- #
+# Docs
+
+# Serve the documentation with live reload
+[working-directory("pages_v2")]
+serve-docs:
+    uv run zensical serve
+
+
+# Build D2 diagrams
+build-diagrams:
+    mkdir -p {{ _d2_light_build_dir }}
+    mkdir -p {{ _d2_dark_build_dir }}
+
+    for f in {{ _d2_dir }}/*.d2; do \
+        d2 "$f" "{{ _d2_light_build_dir }}/$(basename "${f%.d2}.svg")" {{ _d2_light_flags }}; \
+        d2 "$f" "{{ _d2_dark_build_dir }}/$(basename "${f%.d2}.svg")" {{ _d2_dark_flags }}; \
+    done

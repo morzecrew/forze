@@ -1,0 +1,56 @@
+style: {
+    fill: transparent
+}
+
+vars: {
+    d2-config: {
+        pad: 40
+    }
+}
+
+direction: right
+
+Document: {
+    shape: rectangle
+    label: |md
+        ### Document
+        id · rev · timestamps
+    |
+}
+
+Mixins: {
+    shape: rectangle
+    label: |md
+        ### Mixins
+        SoftDeletion · Name · Number · Creator
+    |
+}
+
+CreateCmd: {
+    shape: rectangle
+    label: |md
+        ### CreateDocumentCmd
+        Creation payload
+    |
+}
+
+UpdateCmd: {
+    shape: rectangle
+    label: |md
+        ### BaseDTO
+        Partial update payload
+    |
+}
+
+ReadModel: {
+    shape: rectangle
+    label: |md
+        ### ReadDocument
+        Query result projection
+    |
+}
+
+Mixins -> Document: compose into
+CreateCmd -> Document: creates
+UpdateCmd -> Document: patches
+Document -> ReadModel: projects to

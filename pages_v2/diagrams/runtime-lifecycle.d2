@@ -1,0 +1,33 @@
+style: {
+    fill: transparent
+}
+
+vars: {
+    d2-config: {
+        pad: 30
+    }
+}
+
+direction: right
+
+Setup: {
+    shape: rectangle
+    create_ctx: create ExecutionContext
+    build_deps: build deps from DepsPlan
+    startup: run lifecycle startup hooks
+}
+
+Run: {
+    shape: rectangle
+    handlers: handlers resolve ports
+    tx: optional transaction scopes
+    effects: middlewares/effects executed
+}
+
+Teardown: {
+    shape: rectangle
+    shutdown: run lifecycle shutdown hooks
+    reset: reset runtime context var
+}
+
+Setup -> Run -> Teardown

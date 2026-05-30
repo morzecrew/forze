@@ -1,0 +1,45 @@
+style: {
+    fill: transparent
+}
+
+vars: {
+    d2-config: {
+        pad: 50
+    }
+}
+
+direction: right
+
+Application: {
+    shape: rectangle
+    style: {
+        stroke: "#4a90d9"
+    }
+
+    handlers: Handlers
+    contracts: {
+        shape: rectangle
+        doc: Document query/command ports
+        search: SearchQueryPort
+        cache: CachePort
+        storage: StoragePort
+    }
+}
+
+Infrastructure: {
+    shape: rectangle
+
+    postgres: Postgres adapter
+    pg_search: Postgres search adapter
+    redis_cache: Redis cache adapter
+    s3: S3 storage adapter
+    mongo: Mongo adapter
+}
+
+Application.handlers -> Application.contracts: resolve via context
+
+Infrastructure.postgres -> Application.contracts.doc: implements
+Infrastructure.pg_search -> Application.contracts.search: implements
+Infrastructure.redis_cache -> Application.contracts.cache: implements
+Infrastructure.s3 -> Application.contracts.storage: implements
+Infrastructure.mongo -> Application.contracts.doc: implements
