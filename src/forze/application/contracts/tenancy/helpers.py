@@ -22,6 +22,53 @@ from .value_objects import TenantIdentity
 
 # ----------------------- #
 
+TENANT_ID_HEADER = "X-Tenant-Id"
+"""HTTP header carrying an optional tenant id hint (UUID string)."""
+
+
+def parse_tenant_hint(raw: str | None) -> UUID | None:
+    """Parse a non-authoritative tenant hint string as a UUID, or return ``None``."""
+
+    if raw is None:
+        return None
+
+    stripped = raw.strip()
+
+    if not stripped:
+        return None
+
+    try:
+        return UUID(stripped)
+
+    except ValueError:
+        return None
+
+
+def coalesce_tenant_request_hints(
+    *,
+    issuer_hint: str | None = None,
+    header_hint: str | None = None,
+) -> UUID | None:
+    """Coalesce issuer and header tenant hints into a single requested tenant id.
+
+    Issuer hint takes precedence over the header. When both parse as UUIDs and
+    differ, raises :class:`exc.authentication` with code ``tenant_conflict``.
+    """
+
+    from_issuer = parse_tenant_hint(issuer_hint)
+    from_header = parse_tenant_hint(header_hint)
+
+    if from_issuer is not None and from_header is not None and from_issuer != from_header:
+        raise exc.authentication(
+            "Conflicting tenant identities from credential and request hint",
+            code="tenant_conflict",
+        )
+
+    return from_issuer or from_header
+
+
+# ....................... #
+
 
 def require_tenant_id(
     provider: Callable[[], UUID | TenantIdentity | None],

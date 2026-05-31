@@ -77,8 +77,8 @@ def gcp_credential_dedup_tag(
 def connection_string_fingerprint(dsn: str) -> str:
     """Fingerprint a connection URL/DSN for LRU dedup.
 
-    Includes scheme, host, port, path, username, query options, and a one-way password tag
-    when a password is present in the URI (the raw password is never stored).
+    Includes scheme, host, port, path, username, sorted query parameters, and a one-way
+    password tag when a password is present in the URI (the raw password is never stored).
     """
 
     parsed = urlparse(dsn)
@@ -86,6 +86,9 @@ def connection_string_fingerprint(dsn: str) -> str:
     sslmode = query.get("sslmode", [""])[0]
     options = query.get("options", [""])[0]
     password_tag = secret_dedup_fingerprint(parsed.password) if parsed.password else ""
+    query_canonical = "&".join(
+        f"{key}={query[key][0]}" for key in sorted(query)
+    )
 
     return stable_fingerprint(
         parsed.scheme or "",
@@ -96,4 +99,5 @@ def connection_string_fingerprint(dsn: str) -> str:
         sslmode,
         options,
         password_tag,
+        query_canonical,
     )

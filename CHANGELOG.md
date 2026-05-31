@@ -21,7 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`forze.base`:** `CacheLane` in `forze.base.primitives.cache` — reusable in-memory TTL/FIFO cache for catalog metadata.
 - **`forze.base`:** `SimpleLruRegistry` and `GuardedLruRegistry` in `forze.base.primitives.lru_registry` — async LRU resource caches with optional in-use guarded eviction.
 - **`forze.base`:** `InflightLane` in `forze.base.primitives` — asyncio singleflight coalescing for concurrent cache misses.
-- **Application contracts:** `require_tenant_id` in `forze.application.contracts.tenancy`; `secret_ref_for_tenant` and `resolve_str_for_tenant` in `forze.application.contracts.secrets`.
+- **Application contracts:** `require_tenant_id`, `parse_tenant_hint`, `coalesce_tenant_request_hints`, and `TENANT_ID_HEADER` in `forze.application.contracts.tenancy`; `secret_ref_for_tenant` and `resolve_str_for_tenant` in `forze.application.contracts.secrets`.
 - **Application execution:** `routed_client_lifecycle_step` and `RoutedClientLifecycle` protocol for tenant-routed integration clients.
 - **Application execution:** `LifecycleModule`, `LifecyclePlan.from_modules` / `with_modules` / `freeze()` — merge lifecycle modules and topologically order steps via `requires`, `provides`, and `depends_on` (same graph model as operation hooks; ordering only, no capability skip).
 - **Application execution:** `FrozenLifecyclePlan`, `ResolvedLifecyclePlan`, and `LifecyclePlan.with_concurrent()` — lifecycle freeze/resolve/run pipeline aligned with operation plans; optional concurrent execution within the same topological wave.
@@ -72,6 +72,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`forze_fastapi`:** tenant resolution honors JWT/OIDC `issuer_tenant_hint` and `X-Tenant-Id` via `TenantResolverPort.requested_tenant_id`; hint-only fallback when no tenant resolver is registered (`parse_tenant_hint`, `coalesce_tenant_request_hints` in `forze.application.contracts.tenancy`).
+- **`forze.base`:** `connection_string_fingerprint` includes sorted URI query parameters so routed-client LRU dedup distinguishes targets such as Temporal gRPC hosts with `?dedup=` test hints.
 - **Meilisearch:** federated search awaits snapshot finalization; `ensure_index` and multi-search use `meilisearch-python-sdk` models (`SearchParams.federation_options`, `Federation`). Requires `meilisearch-python-sdk>=7.2.1`.
 - **Postgres:** `ensure`, `ensure_many`, `upsert`, and `upsert_many` build `ON CONFLICT` from `PostgresDocumentConfig.conflict_target` or inferred primary-key columns (fixes composite PKs and tables with additional UNIQUE indexes).
 - **Mongo:** `ensure_many` and `upsert_many` classify bulk `$setOnInsert` upserts safely; missing rows after bulk upsert raise `mongo_ensure_bulk_miss` conflict instead of a generic not-found.
