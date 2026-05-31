@@ -55,6 +55,11 @@ _LOG_ASSIGNMENT_FRAGMENTS: tuple[str, ...] = (
 _LOG_STRING_EXTRAS: tuple[str, ...] = (
     r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}",
     r"Bearer\s+\S+",
+    r"postgresql(?:\+[a-z]+)?://\S+",
+    r"mysql(?:\+[a-z]+)?://\S+",
+    r"redis(?:\+[a-z]+)?://\S+",
+    r"amqps?://\S+",
+    r'"private_key"\s*:\s*"[^"]*"',
 )
 
 _SCRUB_FLAGS = re.IGNORECASE | re.DOTALL

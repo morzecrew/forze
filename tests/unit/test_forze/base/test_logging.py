@@ -282,6 +282,24 @@ class TestLogExtras:
         assert row["error.message"] == "test unhandled"
         assert "ValueError" in row["error.stack"]
 
+    def test_critical_exception_omits_stack_when_disabled(self) -> None:
+        buf = io.StringIO()
+        configure_logging(
+            level="info",
+            logger_names=["forze.test"],
+            stream=buf,
+            render_mode="json",
+            include_exception_stack=False,
+        )
+        log = Logger("forze.test")
+        try:
+            raise ValueError("test unhandled")
+        except ValueError as e:
+            log.critical_exception("Unhandled failure", exc=e)
+        row = _json_records(buf)[-1]
+        assert row["error.type"] == "ValueError"
+        assert "error.stack" not in row
+
 
 # ----------------------- #
 # Nested values (JSON render)

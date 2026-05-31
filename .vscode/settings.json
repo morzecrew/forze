@@ -31,6 +31,7 @@
         "uv.lock": true,
         "skills-lock.json": true,
         "SECURITY.md": true,
+        ".gitleaks.toml": true,
     },
     "cursorpyright.analysis.diagnosticMode": "workspace",
     "cursorpyright.analysis.typeCheckingMode": "strict",

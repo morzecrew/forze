@@ -47,7 +47,7 @@ Single entry point for safe copies destined for clients or logs:
     sanitize(payload, context="log")     # structured log extras — keys + log string rules
     ```
 
-`configure_logging()` scrubs log event fields by default (`sanitize_logs=True`). Log string scrubbing uses the same `**********` placeholder as sensitive keys (Logfire-aligned substring patterns plus email and Bearer tokens). Innocent words inside log message fields may be redacted; set `text_scrub=False` to disable string rules. Use `context="egress"` for HTTP and errors; do not scrub payloads before persisting to storage.
+`configure_logging()` scrubs log event fields by default (`sanitize_logs=True`). Log string scrubbing uses the same `**********` placeholder as sensitive keys (Logfire-aligned substring patterns plus email, Bearer tokens, common database URLs, and inline `private_key` JSON fragments). When `sanitize_logs=True`, `error.message` and `error.stack` are always text-scrubbed (independent of `text_scrub`). Set `include_exception_stack=False` to omit `error.stack` from structured JSON logs while keeping scrubbed messages. Innocent words inside log message fields may be redacted; set `text_scrub=False` to disable string rules on non-exception extras. Use `context="egress"` for HTTP and errors; do not scrub payloads before persisting to storage.
 
 In console mode, Rich tracebacks collapse long stacks to the first and last *N* frames (`ForzeConsoleRenderer.max_traceback_frames`, default `20`; set `0` for no limit). Customize via `configure_logging(..., custom_console_renderer=ForzeConsoleRenderer(max_traceback_frames=0))`. Use `traceback_supress` to omit framework modules (for example `uvicorn`, `starlette`, `fastapi`).
 

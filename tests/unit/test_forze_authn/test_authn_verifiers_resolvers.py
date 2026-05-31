@@ -33,9 +33,11 @@ from unittest.mock import AsyncMock, MagicMock
 from forze_identity.authn import (
     AuthnOrchestrator,
     DeterministicUuidResolver,
+    ForzeJwtTokenVerifier,
     JwtNativeUuidResolver,
 )
 from forze_identity.authn.resolvers.deterministic_uuid import derive_principal_id
+from forze_identity.authn.services import AccessTokenService
 
 # ----------------------- #
 
@@ -69,6 +71,92 @@ class TestVerifiedAssertion:
             a.subject = "other"  # type: ignore[misc]
 
 # ....................... #
+
+
+class TestForzeJwtSessionVerifier:
+    @pytest.mark.asyncio
+    async def test_active_session_passes(self) -> None:
+        import secrets
+
+        secret = secrets.token_bytes(32)
+        svc = AccessTokenService(secret_key=secret)
+        pid = uuid4()
+        sid = uuid4()
+        token = svc.issue_token(principal_id=pid, session_id=sid)
+
+        session = MagicMock()
+        session.revoked_at = None
+        session.rotated_at = None
+        session_qry = MagicMock()
+        session_qry.find = AsyncMock(return_value=session)
+
+        verifier = ForzeJwtTokenVerifier(access_svc=svc, session_qry=session_qry)
+        assertion = await verifier.verify_token(AccessTokenCredentials(token=token))
+
+        assert assertion.subject == str(pid)
+        session_qry.find.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_missing_sid_rejected(self) -> None:
+        import secrets
+
+        secret = secrets.token_bytes(32)
+        svc = AccessTokenService(secret_key=secret)
+        token = svc.issue_token(principal_id=uuid4())
+        session_qry = MagicMock()
+
+        verifier = ForzeJwtTokenVerifier(access_svc=svc, session_qry=session_qry)
+
+        with pytest.raises(CoreException) as ei:
+            await verifier.verify_token(AccessTokenCredentials(token=token))
+        assert ei.value.code == "invalid_access_token"
+        session_qry.find.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_revoked_session_rejected(self) -> None:
+        import secrets
+
+        secret = secrets.token_bytes(32)
+        svc = AccessTokenService(secret_key=secret)
+        sid = uuid4()
+        token = svc.issue_token(principal_id=uuid4(), session_id=sid)
+
+        session = MagicMock()
+        session.revoked_at = datetime.now(tz=UTC)
+        session.rotated_at = None
+        session_qry = MagicMock()
+        session_qry.find = AsyncMock(return_value=session)
+
+        verifier = ForzeJwtTokenVerifier(access_svc=svc, session_qry=session_qry)
+
+        with pytest.raises(CoreException) as ei:
+            await verifier.verify_token(AccessTokenCredentials(token=token))
+        assert ei.value.code == "session_revoked"
+
+    @pytest.mark.asyncio
+    async def test_rotated_session_rejected(self) -> None:
+        import secrets
+
+        secret = secrets.token_bytes(32)
+        svc = AccessTokenService(secret_key=secret)
+        sid = uuid4()
+        token = svc.issue_token(principal_id=uuid4(), session_id=sid)
+
+        session = MagicMock()
+        session.revoked_at = None
+        session.rotated_at = datetime.now(tz=UTC)
+        session_qry = MagicMock()
+        session_qry.find = AsyncMock(return_value=session)
+
+        verifier = ForzeJwtTokenVerifier(access_svc=svc, session_qry=session_qry)
+
+        with pytest.raises(CoreException) as ei:
+            await verifier.verify_token(AccessTokenCredentials(token=token))
+        assert ei.value.code == "session_revoked"
+
+
+# ....................... #
+
 
 class TestJwtNativeUuidResolver:
     @pytest.mark.asyncio

@@ -62,6 +62,20 @@ Internal `principal_id` and `tenant_id` are always `UUID`s, not opaque strings, 
 
 External IdPs that expose UUID subjects (e.g. internal SSO that already uses UUIDs) can use `JwtNativeUuidResolver` directly; everything else picks `DeterministicUuidResolver` or `MappingTableResolver` based on whether account management needs persistent rows.
 
+## Token revocation layers
+
+First-party access JWTs use short TTLs (default 15 minutes via `AccessTokenConfig.expires_in`) and optional session binding:
+
+| Mechanism | What it invalidates | When |
+|-----------|---------------------|------|
+| JWT `exp` | Access token | Naturally after TTL |
+| `sid` + session row | Access token from `TokenLifecycleAdapter` | Logout (`revoke_tokens`), refresh rotation (`rotated_at`), reuse detection |
+| `PrincipalEligibilityPort` | Any credential for the principal | Inactive or missing policy principal (e.g. after `PrincipalDeactivationPort`) |
+
+`AuthnDepsModule` wires `ForzeJwtTokenVerifier` with `session_qry` by default, so lifecycle-issued tokens include a `sid` claim and fail bearer auth when the session is revoked or rotated — even before `exp`. Logout still ends refresh immediately; access tokens without `sid` (pre-upgrade or manual `issue_token`) are rejected once session enforcement is enabled.
+
+External OIDC access tokens are not revoked by Forze logout; end the IdP session and enforce `iss`/`aud` on the verifier. See [OIDC integration](../integrations/oidc.md).
+
 ## AuthnSpec walkthrough
 
 `AuthnSpec` is the per-route configuration consumed by the boundary resolver and the orchestrator (see [`src/forze/application/contracts/authn/specs.py`](https://github.com/morzecrew/forze/blob/main/src/forze/application/contracts/authn/specs.py)):

@@ -109,7 +109,11 @@ class ConfigurableArgon2PasswordVerifier:
 @final
 @attrs.define(slots=True, frozen=True, kw_only=True)
 class ConfigurableForzeJwtTokenVerifier:
-    """Build :class:`ForzeJwtTokenVerifier` from the shared access-token service."""
+    """Build :class:`ForzeJwtTokenVerifier` from the shared access-token service.
+
+    Wires :attr:`ForzeJwtTokenVerifier.session_qry` so lifecycle-issued access JWTs
+    (``sid`` claim) are invalidated on logout and refresh rotation.
+    """
 
     shared: AuthnSharedServices
 
@@ -120,14 +124,17 @@ class ConfigurableForzeJwtTokenVerifier:
         ctx: ExecutionContext,
         spec: AuthnSpec,
     ) -> TokenVerifierPort:
-        _ = ctx, spec
+        _ = spec
 
         if self.shared.access_svc is None:
             raise exc.internal(
                 "Forze JWT token verifier requires kernel.access_token_secret",
             )
 
-        return ForzeJwtTokenVerifier(access_svc=self.shared.access_svc)
+        return ForzeJwtTokenVerifier(
+            access_svc=self.shared.access_svc,
+            session_qry=ctx.doc.query(session_spec),
+        )
 
 
 # ....................... #

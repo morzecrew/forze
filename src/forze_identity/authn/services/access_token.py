@@ -40,6 +40,8 @@ class AccessTokenClaims(TypedDict):
     iat: int
     exp: int
     tid: NotRequired[str]
+    sid: NotRequired[str]
+    """Session id binding the access token to a refresh session row."""
 
 
 # ....................... #
@@ -59,6 +61,7 @@ class AccessTokenService:
         *,
         principal_id: UUID,
         tenant_id: UUID | None = None,
+        session_id: UUID | None = None,
     ) -> str:
         now = utcnow()
         exp = now + self.config.expires_in
@@ -73,6 +76,9 @@ class AccessTokenService:
 
         if tenant_id is not None:
             payload["tid"] = str(tenant_id)
+
+        if session_id is not None:
+            payload["sid"] = str(session_id)
 
         return jwt.encode(  # pyright: ignore[reportUnknownMemberType]
             payload=payload,

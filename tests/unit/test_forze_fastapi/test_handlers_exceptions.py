@@ -110,7 +110,7 @@ class TestForzeExceptionHandler:
         error_log_buf: io.StringIO,
     ) -> None:
         try:
-            raise ValueError("root cause")
+            raise ValueError("password=hunter2")
         except ValueError as cause:
             err = exc.internal("Something went wrong", code="internal")
             err.__cause__ = cause
@@ -125,6 +125,9 @@ class TestForzeExceptionHandler:
         assert row["event"] == "Server error"
         assert row["error_code"] == "internal"
         assert "ValueError" in row["error.stack"]
+        assert SECRET_PLACEHOLDER in row["error.message"]
+        assert "hunter2" not in row["error.message"]
+        assert "hunter2" not in row["error.stack"]
 
     @pytest.mark.asyncio
     async def test_includes_context_when_error_has_details(self) -> None:

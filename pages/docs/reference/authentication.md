@@ -186,7 +186,7 @@ Convenience factory: `AuthnOrchestrator.from_spec(spec, *, resolver, password_ve
 | Verifier | Issuer label | Notes |
 |----------|--------------|-------|
 | `Argon2PasswordVerifier` | `ISSUER_FORZE_PASSWORD` (`"forze:password_account"`) | Verifies against `password_account_spec`; emits the principal id as `subject`. |
-| `ForzeJwtTokenVerifier` | Verified `iss` claim (`ISSUER_FORZE_JWT` for first-party tokens) | Treats `scheme` / `kind` as routing hints only; signature/claims are the security boundary. |
+| `ForzeJwtTokenVerifier` | Verified `iss` claim (`ISSUER_FORZE_JWT` for first-party tokens) | Crypto via `AccessTokenService`. Optional `session_qry`: requires `sid` claim and rejects revoked/rotated sessions (`session_revoked`). Default `AuthnDepsModule` wiring sets `session_qry`. |
 | `HmacApiKeyVerifier` | `ISSUER_FORZE_API_KEY` (`"forze:api_key"`) | Verifies against `api_key_account_spec`. |
 
 ### Resolvers

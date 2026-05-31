@@ -103,6 +103,21 @@ class TestOidcClaimMapper:
 # ....................... #
 
 class TestOidcTokenVerifier:
+    def test_enforce_issuer_and_audience_requires_both(self) -> None:
+        secret = secrets.token_bytes(32)
+        with pytest.raises(ValueError, match="issuer and audience"):
+            OidcTokenVerifier(
+                key_provider=StaticKeyProvider(key=secret),
+                enforce_issuer_and_audience=True,
+            )
+
+        with pytest.raises(ValueError, match="issuer and audience"):
+            OidcTokenVerifier(
+                key_provider=StaticKeyProvider(key=secret),
+                issuer="https://issuer.example",
+                enforce_issuer_and_audience=True,
+            )
+
     @pytest.mark.asyncio
     async def test_round_trip_with_static_hs256(self) -> None:
         secret = secrets.token_bytes(32)

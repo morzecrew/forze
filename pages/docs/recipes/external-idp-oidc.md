@@ -51,6 +51,7 @@ class ConfigurableOidcTokenVerifier:
             algorithms=("RS256",),
             audience=self.audience,
             issuer=self.issuer,
+            enforce_issuer_and_audience=True,
             claim_mapper=OidcClaimMapper(tenant_claim=self.tenant_claim),
         )
 ```

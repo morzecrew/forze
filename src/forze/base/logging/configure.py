@@ -19,6 +19,7 @@ from .constants import (
 )
 from .processors import (
     EventDictSanitizer,
+    ExceptionFieldsSanitizer,
     ExceptionInfoFormatter,
     OpenTelemetryContextInjector,
     RedundantKeysDropper,
@@ -65,6 +66,8 @@ def build_renderer(
 def build_common_processors(
     render_mode: RenderMode,
     otel_config: OpenTelemetryConfig | None = None,
+    *,
+    include_exception_stack: bool = True,
 ) -> list[Processor]:
     processors: list[Processor] = [
         structlog.contextvars.merge_contextvars,
@@ -86,7 +89,10 @@ def build_common_processors(
         [
             structlog.processors.TimeStamper(fmt="iso"),
             structlog.processors.StackInfoRenderer(),
-            ExceptionInfoFormatter(render_mode=render_mode),
+            ExceptionInfoFormatter(
+                render_mode=render_mode,
+                include_exception_stack=include_exception_stack,
+            ),
         ]
     )
 
@@ -103,7 +109,10 @@ def _event_sanitizer_processors(
 ) -> list[Processor]:
     if not sanitize_logs:
         return []
-    return [EventDictSanitizer(text_scrub=text_scrub)]
+    return [
+        ExceptionFieldsSanitizer(),
+        EventDictSanitizer(text_scrub=text_scrub),
+    ]
 
 
 # ....................... #
@@ -128,10 +137,15 @@ def build_foreign_formatter(
     *,
     sanitize_logs: bool = True,
     text_scrub: bool = True,
+    include_exception_stack: bool = True,
 ) -> structlog.stdlib.ProcessorFormatter:
     return structlog.stdlib.ProcessorFormatter(
         foreign_pre_chain=[
-            *build_common_processors(render_mode, otel_config),
+            *build_common_processors(
+                render_mode,
+                otel_config,
+                include_exception_stack=include_exception_stack,
+            ),
             *_event_sanitizer_processors(
                 sanitize_logs=sanitize_logs,
                 text_scrub=text_scrub,
@@ -160,6 +174,7 @@ def configure_logging(
     otel_config: OpenTelemetryConfig | None = None,
     sanitize_logs: bool = True,
     text_scrub: bool = True,
+    include_exception_stack: bool = True,
 ) -> None:
     """Configure logging for the application.
 
@@ -170,6 +185,7 @@ def configure_logging(
     :param stream: The stream to use for logging (default: stdout).
     :param sanitize_logs: Scrub sensitive keys (and optionally text PII) from log event fields.
     :param text_scrub: Apply scrub to string values in log extras when ``sanitize_logs`` is true.
+    :param include_exception_stack: When false, omit ``error.stack`` from structured logs.
     """
 
     wrapper_class = (
@@ -180,7 +196,11 @@ def configure_logging(
 
     structlog.configure(
         processors=[
-            *build_common_processors(render_mode, otel_config),
+            *build_common_processors(
+                render_mode,
+                otel_config,
+                include_exception_stack=include_exception_stack,
+            ),
             *build_structlog_processors(level),
             *_event_sanitizer_processors(
                 sanitize_logs=sanitize_logs,
@@ -195,7 +215,11 @@ def configure_logging(
 
     formatter = structlog.stdlib.ProcessorFormatter(
         foreign_pre_chain=[
-            *build_common_processors(render_mode, otel_config),
+            *build_common_processors(
+                render_mode,
+                otel_config,
+                include_exception_stack=include_exception_stack,
+            ),
             *_event_sanitizer_processors(
                 sanitize_logs=sanitize_logs,
                 text_scrub=text_scrub,
@@ -236,6 +260,7 @@ def attach_foreign_loggers(
     otel_config: OpenTelemetryConfig | None = None,
     sanitize_logs: bool = True,
     text_scrub: bool = True,
+    include_exception_stack: bool = True,
 ) -> None:
     formatter = build_foreign_formatter(
         render_mode,
@@ -243,6 +268,7 @@ def attach_foreign_loggers(
         otel_config=otel_config,
         sanitize_logs=sanitize_logs,
         text_scrub=text_scrub,
+        include_exception_stack=include_exception_stack,
     )
 
     for name in names:

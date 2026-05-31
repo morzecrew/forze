@@ -1,8 +1,6 @@
 """GCS client that resolves GCP credentials per tenant via :class:`~forze.application.contracts.secrets.SecretsPort`."""
 
-import tempfile
 from contextlib import asynccontextmanager
-from pathlib import Path
 from typing import AsyncGenerator, Callable, Mapping, final
 from uuid import UUID
 
@@ -17,6 +15,7 @@ from forze.application.contracts.tenancy import (
     resolve_structured_for_tenant,
 )
 from forze.base.primitives.fingerprint import gcp_credential_dedup_tag, stable_fingerprint
+from forze.base.primitives.gcp_service_file import materialize_service_account_json
 
 from .client import GCSClient
 from .port import GCSClientPort
@@ -26,21 +25,17 @@ from .value_objects import GCSConfig, GCSHead, GCSListedObject
 # ----------------------- #
 
 
-def _service_file_for_init(creds: GCSRoutingCredentials) -> str | None:
+def _service_file_for_init(creds: GCSRoutingCredentials) -> tuple[str | None, bool]:
     if creds.service_file is not None:
-        return creds.service_file
+        return creds.service_file, False
 
     if creds.service_account_json is None:
-        return None
+        return None, False
 
-    fd, path = tempfile.mkstemp(prefix="forze-gcs-", suffix=".json")
-    Path(path).write_text(creds.service_account_json, encoding="utf-8")
-
-    import os
-
-    os.close(fd)
-
-    return path
+    return materialize_service_account_json(
+        creds.service_account_json,
+        prefix="forze-gcs-",
+    )
 
 
 @final
@@ -118,10 +113,12 @@ class RoutedGCSClient(GCSClientPort):
             backend="GCS",
         )
         client = GCSClient()
+        service_file, service_file_owned = _service_file_for_init(creds)
 
         await client.initialize(
             creds.project_id,
-            service_file=_service_file_for_init(creds),
+            service_file=service_file,
+            service_file_owned=service_file_owned,
             config=self.client_config,
         )
 

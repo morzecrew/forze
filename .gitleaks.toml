@@ -1,0 +1,9 @@
+# Inherit all default secret detection rules
+useDefault = true
+
+[allowlist]
+description = "Global exclusions for pre-commit scanning"
+paths = [
+    '''^tests/''',     # Matches a top-level folder named 'tests'
+    '''.*/tests/.*''', # Matches any nested 'tests' directory
+]

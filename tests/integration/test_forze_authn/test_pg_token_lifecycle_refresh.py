@@ -76,6 +76,7 @@ async def test_refresh_tokens_rotates_session_and_bearer_auth(
 
     assert issued.refresh is not None
     old_refresh = issued.refresh.token
+    old_access = issued.access.token
 
     with ctx.inv_ctx.bind(metadata=_invocation_metadata()):
         rotated = await adapter.refresh_tokens(old_refresh)
@@ -83,9 +84,11 @@ async def test_refresh_tokens_rotates_session_and_bearer_auth(
     assert rotated.refresh is not None
     assert rotated.refresh.token.token != old_refresh.token
 
+    session_qry = ctx.document.query(session_spec)
     authn = _orchestrator(
         eligibility=_eligibility(ctx),
         access_svc=access_svc,
+        session_qry=session_qry,
         methods=frozenset({"token"}),
     )
     with ctx.inv_ctx.bind(metadata=_invocation_metadata()):
@@ -98,12 +101,63 @@ async def test_refresh_tokens_rotates_session_and_bearer_auth(
     assert bearer.identity.principal_id == pid
 
     with ctx.inv_ctx.bind(metadata=_invocation_metadata()):
+        with pytest.raises(CoreException) as exc_info:
+            await authn.authenticate_with_token(
+                AccessTokenCredentials(
+                    token=old_access.token,
+                    scheme=old_access.scheme,
+                ),
+            )
+    assert exc_info.value.code == "session_revoked"
+
+    with ctx.inv_ctx.bind(metadata=_invocation_metadata()):
         sessions = await ctx.document.query(session_spec).find_many(
             filters={"$values": {"principal_id": pid}},
         )
 
     assert len(sessions.hits) == 2
     assert any(s.rotated_at is not None for s in sessions.hits)
+
+
+async def test_revoke_tokens_blocks_bearer_auth(pg_client: PostgresClient) -> None:
+    suffix = uuid4().hex[:12]
+    pepper = secrets.token_bytes(32)
+    ctx = await _authn_pg_setup(pg_client, suffix=suffix)
+    pid = uuid4()
+    await insert_policy_principal_row(
+        pg_client,
+        table=f"authz_pri_{suffix}",
+        principal_id=pid,
+    )
+
+    adapter, access_svc = _token_services(ctx, pepper=pepper)
+    identity = AuthnIdentity(principal_id=pid)
+
+    with ctx.inv_ctx.bind(metadata=_invocation_metadata()):
+        issued = await adapter.issue_tokens(identity)
+
+    access_creds = issued.access.token
+    authn = _orchestrator(
+        eligibility=_eligibility(ctx),
+        access_svc=access_svc,
+        session_qry=ctx.document.query(session_spec),
+        methods=frozenset({"token"}),
+    )
+
+    with ctx.inv_ctx.bind(metadata=_invocation_metadata()):
+        await adapter.revoke_tokens(identity)
+
+    with ctx.inv_ctx.bind(metadata=_invocation_metadata()):
+        with pytest.raises(CoreException) as exc_info:
+            await authn.authenticate_with_token(
+                AccessTokenCredentials(
+                    token=access_creds.token,
+                    scheme=access_creds.scheme,
+                ),
+            )
+
+    assert exc_info.value.kind is ExceptionKind.AUTHENTICATION
+    assert exc_info.value.code == "session_revoked"
 
 
 async def test_revoke_tokens_blocks_refresh(pg_client: PostgresClient) -> None:

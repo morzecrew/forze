@@ -232,6 +232,7 @@ class TestConfigurableFactories:
         port = factory(ctx, AuthnSpec(name="s"))
 
         assert isinstance(port, ForzeJwtTokenVerifier)
+        assert port.session_qry is not None
 
     def test_token_verifier_requires_secret(self) -> None:
         ctx = self._ctx()

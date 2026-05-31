@@ -9,12 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- **`forze.base`:** `configure_logging(sanitize_logs=True)` scrubs `error.message` and `error.stack` with log string rules; use `include_exception_stack=False` to omit stacks from JSON logs.
+- **BigQuery, GCS:** Routed clients unlink Forze-created temp service-account JSON files on inner client `close()` (tenant eviction and pool shutdown).
 - **Authn:** `PrincipalEligibilityPort` gates authentication and credential lifecycle on `authz_policy_principals.is_active` (removed advisory `authn_principals` store).
 - **Authn:** API keys persist `expires_at` and enforce expiry at verification; `revoke_api_key` / `revoke_many_api_keys` require `identity` for ownership checks.
 - **Authn:** `PrincipalDeactivationPort` cascades policy deactivation, session revocation, and credential deactivation (prefer over `PrincipalRegistryPort.deactivate_principal` alone).
+- **Authn:** First-party access JWTs from `TokenLifecycleAdapter` include a `sid` session claim; default `ForzeJwtTokenVerifier` wiring rejects bearer tokens when the session is revoked or rotated (logout and refresh rotation invalidate access before JWT `exp`).
+- **OIDC:** `OidcTokenVerifier` resolves JWKS signing keys in a worker thread so cache misses do not block the asyncio event loop.
 
 ### Changed
 
+- **Authn (breaking):** `AuthnDepsModule` wires `ForzeJwtTokenVerifier.session_qry` by default; lifecycle-issued access tokens require `sid`. Pre-upgrade tokens without `sid` fail until clients re-login, or apps register a stateless verifier override (`session_qry=None`).
 - **Authn (breaking):** `ApiKeyLifecyclePort.revoke_api_key` and `revoke_many_api_keys` take `identity: AuthnIdentity`.
 - **Authn (breaking):** `issue_api_key` no longer requires a pre-existing API key row; requires an active policy principal.
 - **Authn (breaking):** `AuthnOrchestrator` requires `PrincipalEligibilityPort`; apps must wire tenant-unaware `authz_policy_principals` document routes alongside authn.
@@ -60,6 +65,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Postgres:** startup warning when a route combines `tenant_aware=True` with dynamic `RelationSpec` resolvers (prefer relation-level isolation without row filters).
 - **Postgres:** `require_static_relation` — explicit error when startup document schema validation is wired for a route that uses a dynamic `RelationSpec` resolver.
 - **BigQuery, ClickHouse, Meilisearch, GCS, Firestore, Inngest:** `Routed*Client` with per-tenant `*RoutingCredentials`, `routed_*_lifecycle_step`, and LRU pool deduplication by connection fingerprint.
+- **OIDC:** `OidcTokenVerifier.enforce_issuer_and_audience` — opt-in construction guard requiring `issuer` and `audience` (recommended for production app factories).
 
 ### Changed
 

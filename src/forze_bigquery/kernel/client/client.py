@@ -16,6 +16,7 @@ from pydantic import BaseModel
 
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
+from forze.base.primitives.gcp_service_file import release_service_file
 
 from .errors import exc_interceptor
 from .port import BigQueryClientPort
@@ -44,6 +45,7 @@ class BigQueryClient(BigQueryClientPort):
     __project_id: str | None = attrs.field(default=None, init=False)
     __config: BigQueryConfig | None = attrs.field(default=None, init=False)
     __service_file: str | None = attrs.field(default=None, init=False)
+    __service_file_owned: bool = attrs.field(default=False, init=False)
     __api_root: str | None = attrs.field(default=None, init=False)
     __session: Any = attrs.field(default=None, init=False)
 
@@ -54,6 +56,7 @@ class BigQueryClient(BigQueryClientPort):
         project_id: str,
         *,
         service_file: str | None = None,
+        service_file_owned: bool = False,
         config: BigQueryConfig | None = None,
     ) -> None:
         """Configure project, credentials, and shared HTTP session."""
@@ -64,6 +67,7 @@ class BigQueryClient(BigQueryClientPort):
         self.__project_id = project_id
         self.__config = config or BigQueryConfig()
         self.__service_file = service_file
+        self.__service_file_owned = service_file_owned
 
         if host := os.environ.get("BIGQUERY_EMULATOR_HOST"):
             self.__api_root = host.rstrip("/")
@@ -79,6 +83,12 @@ class BigQueryClient(BigQueryClientPort):
             await session.close()
             self.__session = None
 
+        release_service_file(
+            self.__service_file,
+            owned=self.__service_file_owned,
+        )
+        self.__service_file = None
+        self.__service_file_owned = False
         self.__project_id = None
         self.__config = None
 

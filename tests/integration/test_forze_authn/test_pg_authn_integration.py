@@ -184,6 +184,7 @@ def _orchestrator(
     api_key_svc: ApiKeyService | None = None,
     ak_qry: object = None,
     access_svc: AccessTokenService | None = None,
+    session_qry: object = None,
     methods: frozenset[str],
 ) -> AuthnOrchestrator:
     """Manually compose an :class:`AuthnOrchestrator` for explicit-wiring tests."""
@@ -203,7 +204,10 @@ def _orchestrator(
             else None
         ),
         token_verifier=(
-            ForzeJwtTokenVerifier(access_svc=access_svc)
+            ForzeJwtTokenVerifier(
+                access_svc=access_svc,
+                session_qry=session_qry,  # type: ignore[arg-type]
+            )
             if access_svc is not None
             else None
         ),
@@ -305,6 +309,7 @@ async def test_pg_issue_oauth_tokens_and_bearer_auth(pg_client: PostgresClient) 
     authn = _orchestrator(
         eligibility=_eligibility(ctx),
         access_svc=access_svc,
+        session_qry=ctx.document.query(session_spec),
         methods=frozenset({"token"}),
     )
 

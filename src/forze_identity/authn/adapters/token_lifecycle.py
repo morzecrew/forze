@@ -99,11 +99,6 @@ class TokenLifecycleAdapter(TokenLifecyclePort):
         access_expires_at = now + self.access_expires_in
         refresh_expires_at = now + self.refresh_expires_in
 
-        access_token = self.access_svc.issue_token(
-            principal_id=identity.principal_id,
-            tenant_id=tenant_id,
-        )
-
         refresh_token = self.refresh_svc.generate_token()
         refresh_digest = self.refresh_svc.calculate_token_digest(refresh_token)
 
@@ -114,7 +109,13 @@ class TokenLifecycleAdapter(TokenLifecyclePort):
             expires_at=refresh_expires_at,
         )
 
-        await self.session_cmd.create(session_cmd, return_new=False)
+        session = await self.session_cmd.create(session_cmd, return_new=True)
+
+        access_token = self.access_svc.issue_token(
+            principal_id=identity.principal_id,
+            tenant_id=tenant_id,
+            session_id=session.id,
+        )
 
         return IssuedTokens(
             access=IssuedAccessToken(
@@ -211,10 +212,6 @@ class TokenLifecycleAdapter(TokenLifecyclePort):
         access_expires_at = now + self.access_expires_in
         refresh_expires_at = now + self.refresh_expires_in
 
-        new_access_token = self.access_svc.issue_token(
-            principal_id=old_session.principal_id,
-            tenant_id=old_session.tenant_id,
-        )
         new_refresh_token = self.refresh_svc.generate_token()
         new_refresh_digest = self.refresh_svc.calculate_token_digest(new_refresh_token)
 
@@ -227,6 +224,12 @@ class TokenLifecycleAdapter(TokenLifecyclePort):
         )
 
         res = await self.session_cmd.create(new_session_cmd)
+
+        new_access_token = self.access_svc.issue_token(
+            principal_id=old_session.principal_id,
+            tenant_id=old_session.tenant_id,
+            session_id=res.id,
+        )
 
         old_session_cmd = UpdateSessionCmd(
             rotated_at=now,

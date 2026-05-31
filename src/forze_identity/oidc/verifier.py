@@ -4,6 +4,7 @@ require_oidc()
 
 # ....................... #
 
+import asyncio
 from datetime import timedelta
 from typing import Sequence, final
 
@@ -38,6 +39,8 @@ class OidcTokenVerifier(TokenVerifierPort):
     subjects to internal Forze :class:`UUID`-shaped principals (good for SSO with admin
     overrides), or with :class:`forze_authn.DeterministicUuidResolver` for stateless
     deterministic mapping.
+
+    JWKS resolution runs in a worker thread so cache misses do not block the event loop.
     """
 
     key_provider: SigningKeyProviderPort
@@ -52,6 +55,9 @@ class OidcTokenVerifier(TokenVerifierPort):
     issuer: str | None = attrs.field(default=None)
     """Required ``iss`` value; when ``None``, issuer is not enforced."""
 
+    enforce_issuer_and_audience: bool = False
+    """When ``True``, ``issuer`` and ``audience`` must be set at construction time."""
+
     leeway: timedelta = attrs.field(default=timedelta(seconds=10))
     """Clock-skew leeway for ``iat``/``exp``/``nbf`` validation."""
 
@@ -60,12 +66,25 @@ class OidcTokenVerifier(TokenVerifierPort):
 
     # ....................... #
 
+    def __attrs_post_init__(self) -> None:
+        if self.enforce_issuer_and_audience and (
+            self.issuer is None or self.audience is None
+        ):
+            raise ValueError(
+                "enforce_issuer_and_audience requires both issuer and audience",
+            )
+
+    # ....................... #
+
     async def verify_token(
         self,
         credentials: AccessTokenCredentials,
     ) -> VerifiedAssertion:
         try:
-            key = self.key_provider.get_signing_key(credentials.token)
+            key = await asyncio.to_thread(
+                self.key_provider.get_signing_key,
+                credentials.token,
+            )
 
             claims = jwt_decode(  # pyright: ignore[reportUnknownMemberType]
                 jwt=credentials.token,

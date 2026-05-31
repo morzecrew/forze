@@ -17,6 +17,7 @@ import attrs
 from gcloud.aio.storage import Storage
 
 from forze.base.exceptions import exc
+from forze.base.primitives.gcp_service_file import release_service_file
 
 from .errors import exc_interceptor
 from .port import GCSClientPort
@@ -38,6 +39,8 @@ class GCSClient(GCSClientPort):
     __storage: Storage | None = attrs.field(default=None, init=False)
     __project_id: str | None = attrs.field(default=None, init=False)
     __config: GCSConfig | None = attrs.field(default=None, init=False)
+    __service_file: str | None = attrs.field(default=None, init=False)
+    __service_file_owned: bool = attrs.field(default=False, init=False)
 
     __ctx_depth: ContextVar[int] = attrs.field(
         factory=lambda: ContextVar("gcs_depth", default=0),
@@ -51,6 +54,7 @@ class GCSClient(GCSClientPort):
         project_id: str,
         *,
         service_file: str | None = None,
+        service_file_owned: bool = False,
         config: GCSConfig | None = None,
     ) -> None:
         """Configure the client with project id and shared storage client.
@@ -75,6 +79,9 @@ class GCSClient(GCSClientPort):
         if key_file is None and config is not None:
             key_file = config.service_file
 
+        self.__service_file = key_file
+        self.__service_file_owned = service_file_owned
+
         self.__storage = Storage(
             service_file=key_file,
             api_root=api_root,
@@ -91,6 +98,12 @@ class GCSClient(GCSClientPort):
             await storage.close()
             self.__storage = None
 
+        release_service_file(
+            self.__service_file,
+            owned=self.__service_file_owned,
+        )
+        self.__service_file = None
+        self.__service_file_owned = False
         self.__project_id = None
         self.__config = None
 

@@ -93,12 +93,17 @@ oidc_verifier = OidcTokenVerifier(
 |-------|---------|-------|
 | `key_provider` | required | Any `SigningKeyProviderPort`. |
 | `algorithms` | `("RS256",)` | JWS algorithm allowlist; rejects everything else. |
-| `audience` | `None` | Required `aud` value(s); skip enforcement by leaving `None`. |
-| `issuer` | `None` | Required `iss` value; skip enforcement by leaving `None`. |
+| `audience` | `None` | Required `aud` value(s); skip enforcement by leaving `None` (dev/tests only). |
+| `issuer` | `None` | Required `iss` value; skip enforcement by leaving `None` (dev/tests only). |
+| `enforce_issuer_and_audience` | `False` | When `True`, construction fails unless both `issuer` and `audience` are set. Use in production factories. |
 | `leeway` | `timedelta(seconds=10)` | Clock-skew tolerance for `iat`/`exp`/`nbf`. |
 | `claim_mapper` | `OidcClaimMapper()` | Maps the verified payload to `VerifiedAssertion`. |
 
+JWKS resolution runs in a worker thread (`asyncio.to_thread`) so cache misses do not block the event loop.
+
 The verifier raises `AuthenticationError(code="oidc_token_expired")` for expired tokens and `AuthenticationError(code="invalid_oidc_token")` for any other validation failure.
+
+Forze `revoke_tokens` / logout does **not** invalidate third-party access JWTs. End the IdP session and rely on `PrincipalEligibilityPort` for mapped principals that are deactivated in Forze.
 
 ## Wiring into AuthnDepsModule
 
@@ -132,6 +137,7 @@ class ConfigurableOidcTokenVerifier:
             algorithms=("RS256",),
             audience=self.audience,
             issuer=self.issuer,
+            enforce_issuer_and_audience=True,
         )
 
 

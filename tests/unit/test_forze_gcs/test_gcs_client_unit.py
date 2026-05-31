@@ -1,10 +1,12 @@
 import os
 from datetime import timedelta
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from forze.base.exceptions import CoreException
+from forze.base.primitives.gcp_service_file import materialize_service_account_json
 
 from forze_gcs.kernel.client.client import GCSClient
 from forze_gcs.kernel.client.value_objects import GCSConfig
@@ -164,3 +166,25 @@ async def test_head_object_maps_download_metadata() -> None:
     assert head.metadata == {"filename": "Zm9v"}
     assert head.size == 42
     assert head.etag == "abc"
+
+
+@pytest.mark.asyncio
+async def test_close_unlinks_owned_service_file() -> None:
+    sa_json = '{"type":"service_account","project_id":"p"}'
+    path, owned = materialize_service_account_json(sa_json, prefix="forze-gcs-test-")
+    client = GCSClient()
+    fake_storage = MagicMock()
+    fake_storage.close = AsyncMock()
+
+    with patch(
+        "forze_gcs.kernel.client.client.Storage",
+        return_value=fake_storage,
+    ):
+        await client.initialize(
+            "test-project",
+            service_file=path,
+            service_file_owned=owned,
+        )
+        await client.close()
+
+    assert not Path(path).exists()
