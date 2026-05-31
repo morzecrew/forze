@@ -20,7 +20,7 @@ from forze.application.contracts.resolution import NamedResourceSpec, is_static_
 from forze.application.contracts.tenancy import TenancyMixin
 from forze.base.exceptions import exc
 
-from ..kernel.platform import RabbitMQClientPort
+from ..kernel.client import RabbitMQClientPort
 from ..kernel.relation import resolve_rabbitmq_namespace
 from .codecs import RabbitMQQueueCodec
 

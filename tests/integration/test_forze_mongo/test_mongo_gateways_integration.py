@@ -16,7 +16,7 @@ from forze_mongo.adapters import MongoTxManagerAdapter
 from forze_mongo.execution.deps.keys import MongoClientDepKey
 from forze_mongo.execution.deps.utils import doc_write_gw
 from forze_mongo.kernel.introspect import MongoIntrospector
-from forze_mongo.kernel.platform import MongoClient
+from forze_mongo.kernel.client import MongoClient
 from forze_mongo.kernel.validate_indexes import (
     MongoDocumentIndexSpec,
     validate_mongo_document_indexes,

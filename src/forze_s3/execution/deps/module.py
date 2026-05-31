@@ -10,9 +10,9 @@ from forze.application.execution import Deps, DepsModule
 from forze.base.primitives import StrKey
 
 from ...kernel._logger import logger
-from ...kernel.platform import S3ClientPort
+from ...kernel.client import S3ClientPort
 from .configs import S3StorageConfig
-from .deps import ConfigurableS3Storage
+from .factories import ConfigurableS3Storage
 from .keys import S3ClientDepKey
 
 # ----------------------- #

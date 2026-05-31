@@ -30,7 +30,7 @@ from forze.application.contracts.tenancy import TenancyMixin
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict, utcnow, uuid7
 
-from ..kernel.platform import S3ClientPort
+from ..kernel.client import S3ClientPort
 from ..kernel.relation import resolve_s3_bucket
 from .codecs import default_b64_codec, default_path_codec
 

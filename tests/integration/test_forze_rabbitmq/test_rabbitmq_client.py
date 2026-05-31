@@ -5,7 +5,7 @@ from uuid import uuid4
 
 import pytest
 
-from forze_rabbitmq.kernel.platform import RabbitMQClient
+from forze_rabbitmq.kernel.client import RabbitMQClient
 
 
 async def _receive_until(

@@ -7,10 +7,20 @@ from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.execution import Deps, ExecutionContext, InvocationMetadata
 from tests.support.execution_context import context_from_deps, context_from_modules, frozen_deps_from_deps
 from forze_s3.adapters.storage import S3StorageAdapter
-from forze_s3.execution.deps import S3ClientDepKey, S3DepsModule
-from forze_s3.execution.deps.configs import S3StorageConfig
-from forze_s3.execution.deps.deps import ConfigurableS3Storage
-from forze_s3.kernel.platform import S3Client
+import pytest
+
+from forze_s3.execution.deps import (
+    ConfigurableS3Storage,
+    S3ClientDepKey,
+    S3DepsModule,
+    S3StorageConfig,
+)
+from forze_s3.kernel.client import S3Client
+
+
+def test_rejects_mapping_config() -> None:
+    with pytest.raises(TypeError, match="S3StorageConfig"):
+        ConfigurableS3Storage(config={"bucket": "test-bucket"})
 
 
 def test_s3_storage_factory_builds_adapter_without_tenant() -> None:

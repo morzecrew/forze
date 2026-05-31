@@ -191,7 +191,7 @@ class TestSQSRegexPerf:
     @pytest.mark.perf
     def test_compiled_regex_throughput(self) -> None:
         """Measure SQS queue name sanitization with pre-compiled patterns."""
-        from forze_sqs.kernel.platform.client import SQSClient
+        from forze_sqs.kernel.client import SQSClient
 
         names = [
             "my.queue.name",

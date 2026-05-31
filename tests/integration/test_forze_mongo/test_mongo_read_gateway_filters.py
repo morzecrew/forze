@@ -10,7 +10,7 @@ from forze.application.execution import Deps, ExecutionContext
 from tests.support.execution_context import context_from_deps, context_from_modules, frozen_deps_from_deps
 from forze_mongo.execution.deps.keys import MongoClientDepKey
 from forze_mongo.execution.deps.utils import doc_write_gw
-from forze_mongo.kernel.platform import MongoClient
+from forze_mongo.kernel.client import MongoClient
 from tests.support import (
     IntegrationCreateCmd,
     IntegrationDocument,

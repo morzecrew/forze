@@ -6,7 +6,7 @@ import pytest
 
 pytest.importorskip("pymongo")
 
-from forze_mongo.kernel.platform import MongoClient
+from forze_mongo.kernel.client import MongoClient
 
 _MONGO_FIND_MANY_LARGE = 2_000
 _MONGO_INSERT_MANY_LARGE = 500

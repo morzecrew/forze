@@ -9,9 +9,9 @@ from forze.application.contracts.tenancy import warn_dynamic_relation_with_tenan
 from forze.application.execution import Deps, DepsModule
 from forze.base.primitives import StrKey
 
-from ...kernel.platform import RabbitMQClientPort
+from ...kernel.client import RabbitMQClientPort
 from .configs import RabbitMQQueueConfig
-from .deps import ConfigurableRabbitMQQueueRead, ConfigurableRabbitMQQueueWrite
+from .factories import ConfigurableRabbitMQQueueRead, ConfigurableRabbitMQQueueWrite
 from .keys import RabbitMQClientDepKey
 
 # ----------------------- #

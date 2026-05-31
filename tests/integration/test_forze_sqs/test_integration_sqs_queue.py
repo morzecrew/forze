@@ -7,7 +7,7 @@ from uuid import uuid4
 import pytest
 
 from forze_sqs.adapters import SQSQueueAdapter
-from forze_sqs.kernel.platform import SQSClient
+from forze_sqs.kernel.client import SQSClient
 
 
 async def _receive_until(

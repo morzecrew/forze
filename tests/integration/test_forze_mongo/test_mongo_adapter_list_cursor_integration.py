@@ -14,9 +14,9 @@ from forze.application.contracts.document import (
 from forze.application.execution import Deps, ExecutionContext
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
 from forze_mongo.execution.deps import MongoDocumentConfig
-from forze_mongo.execution.deps.deps import ConfigurableMongoDocument
+from forze_mongo.execution.deps import ConfigurableMongoDocument
 from forze_mongo.execution.deps.keys import MongoClientDepKey
-from forze_mongo.kernel.platform import MongoClient
+from forze_mongo.kernel.client import MongoClient
 from tests.support.execution_context import context_from_deps
 
 

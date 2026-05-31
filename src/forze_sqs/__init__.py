@@ -17,13 +17,18 @@ from .execution import (
     routed_sqs_lifecycle_step,
     sqs_lifecycle_step,
 )
-from .kernel.platform import (
+from .kernel.client import (
     RoutedSQSClient,
     SQSClient,
     SQSClientPort,
     SQSConfig,
     SQSQueueMessage,
     SQSRoutingCredentials,
+)
+from .kernel.relation import (
+    NamedResourceSpec,
+    coerce_named_resource_spec,
+    resolve_sqs_namespace,
 )
 
 # ----------------------- #
@@ -40,4 +45,7 @@ __all__ = [
     "sqs_lifecycle_step",
     "routed_sqs_lifecycle_step",
     "SQSQueueConfig",
+    "NamedResourceSpec",
+    "coerce_named_resource_spec",
+    "resolve_sqs_namespace",
 ]

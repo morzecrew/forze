@@ -1,4 +1,4 @@
-"""Integration tests for :class:`~forze_sqs.kernel.platform.RoutedSQSClient`."""
+"""Integration tests for :class:`~forze_sqs.kernel.client.RoutedSQSClient`."""
 
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ pytest.importorskip("testcontainers.localstack")
 from testcontainers.localstack import LocalStackContainer
 
 from forze.application.contracts.secrets import SecretRef
-from forze_sqs.kernel.platform import RoutedSQSClient, SQSClient
+from forze_sqs.kernel.client import RoutedSQSClient, SQSClient
 
 from tests.integration._routed_lru_helpers import sqs_payloads_for_lru_eviction
 

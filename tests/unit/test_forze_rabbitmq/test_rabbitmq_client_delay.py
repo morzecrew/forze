@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from forze.base.exceptions import CoreException
-from forze_rabbitmq.kernel.platform import RabbitMQClient
+from forze_rabbitmq.kernel.client import RabbitMQClient
 
 
 def test_delay_queue_name_suffix() -> None:

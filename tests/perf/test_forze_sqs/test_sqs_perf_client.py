@@ -7,7 +7,7 @@ import pytest
 
 pytest.importorskip("aioboto3")
 
-from forze_sqs.kernel.platform import SQSClient
+from forze_sqs.kernel.client import SQSClient
 
 
 # Note: receive-only benchmarks are omitted because a pre-seeded queue is

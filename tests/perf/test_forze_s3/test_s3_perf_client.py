@@ -6,7 +6,7 @@ import pytest
 
 pytest.importorskip("aioboto3")
 
-from forze_s3.kernel.platform.client import S3Client
+from forze_s3.kernel.client import S3Client
 
 
 def _perf_key(prefix: str) -> str:

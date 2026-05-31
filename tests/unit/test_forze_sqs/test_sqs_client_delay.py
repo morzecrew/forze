@@ -9,7 +9,7 @@ import pytest
 
 from forze.application.contracts.queue import SQS_MAX_DELAY
 from forze.base.exceptions import CoreException
-from forze_sqs.kernel.platform import SQSClient
+from forze_sqs.kernel.client import SQSClient
 
 
 def test_resolve_sqs_delay_seconds_none_for_immediate() -> None:

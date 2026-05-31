@@ -1,4 +1,4 @@
-"""Unit tests for :class:`~forze_rabbitmq.kernel.platform.RoutedRabbitMQClient`."""
+"""Unit tests for :class:`~forze_rabbitmq.kernel.client.RoutedRabbitMQClient`."""
 
 from forze.base.exceptions import CoreException, exc
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -7,7 +7,7 @@ from uuid import UUID
 import pytest
 
 from forze.application.contracts.secrets import SecretRef
-from forze_rabbitmq.kernel.platform import RoutedRabbitMQClient
+from forze_rabbitmq.kernel.client import RoutedRabbitMQClient
 
 # ----------------------- #
 
@@ -75,7 +75,7 @@ async def test_routed_rabbitmq_eviction() -> None:
         return inst
 
     with patch(
-        "forze_rabbitmq.kernel.platform.routed_client.RabbitMQClient",
+        "forze_rabbitmq.kernel.client.routed_client.RabbitMQClient",
         side_effect=_make_client,
     ):
         cur = _T1

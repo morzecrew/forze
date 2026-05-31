@@ -9,7 +9,7 @@ from uuid import uuid4
 import pytest
 
 from forze_mongo.adapters import MongoTxManagerAdapter, MongoTxScopeKey
-from forze_mongo.kernel.platform import MongoClient
+from forze_mongo.kernel.client import MongoClient
 
 
 @pytest.fixture

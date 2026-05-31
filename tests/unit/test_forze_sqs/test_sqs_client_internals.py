@@ -1,4 +1,4 @@
-"""Unit tests for :class:`~forze_sqs.kernel.platform.client.SQSClient` helpers (no I/O)."""
+"""Unit tests for :class:`~forze_sqs.kernel.client.SQSClient` helpers (no I/O)."""
 
 from forze.base.exceptions import CoreException, exc
 import asyncio
@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock
 import pytest
 from pydantic import SecretStr
 
-from forze_sqs.kernel.platform.client import SQSClient
+from forze_sqs.kernel.client import SQSClient
 
 # ----------------------- #
 

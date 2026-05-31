@@ -15,13 +15,13 @@ from forze.application.execution import Deps, DepsModule
 from forze.base.primitives import StrKey
 
 from ...kernel._logger import logger
-from ...kernel.platform import MongoClientPort, RoutedMongoClient
+from ...kernel.client import MongoClientPort, RoutedMongoClient
 from .configs import (
     MongoDocumentConfig,
     MongoReadOnlyDocumentConfig,
     MongoSearchConfig,
 )
-from .deps import (
+from .factories import (
     ConfigurableMongoDocument,
     ConfigurableMongoReadOnlyDocument,
     ConfigurableMongoSearch,

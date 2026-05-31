@@ -15,7 +15,7 @@ from forze_mongo.kernel.gateways import (
     MongoWriteGateway,
 )
 from forze_mongo.kernel.gateways.write import optimistic_retry
-from forze_mongo.kernel.platform import MongoClient
+from forze_mongo.kernel.client import MongoClient
 
 class MyDoc(Document):
     name: str

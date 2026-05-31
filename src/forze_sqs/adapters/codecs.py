@@ -5,7 +5,7 @@ import attrs
 from forze.application.contracts.queue import QueueMessage
 from forze.base.serialization import RecordMappingCodec
 
-from ..kernel.platform import SQSQueueMessage
+from ..kernel.client import SQSQueueMessage
 
 # ----------------------- #
 

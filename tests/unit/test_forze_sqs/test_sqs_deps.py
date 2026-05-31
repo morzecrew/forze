@@ -1,5 +1,6 @@
 from unittest.mock import Mock
 
+import pytest
 from pydantic import BaseModel
 
 from forze.application.contracts.queue import (
@@ -11,17 +12,23 @@ from tests.support.execution_context import context_from_deps, context_from_modu
 from forze.application.execution import Deps, ExecutionContext
 from forze.base.serialization import PydanticRecordMappingCodec
 from forze_sqs.adapters import SQSQueueAdapter
-from forze_sqs.execution.deps import SQSClientDepKey, SQSDepsModule
-from forze_sqs.execution.deps.configs import SQSQueueConfig
-from forze_sqs.execution.deps.deps import (
+from forze_sqs.execution.deps import (
     ConfigurableSQSQueueRead,
     ConfigurableSQSQueueWrite,
+    SQSClientDepKey,
+    SQSDepsModule,
+    SQSQueueConfig,
 )
-from forze_sqs.kernel.platform import SQSClient
+from forze_sqs.kernel.client import SQSClient
 
 
 class _QueuePayload(BaseModel):
     value: str
+
+
+def test_rejects_mapping_config() -> None:
+    with pytest.raises(TypeError, match="SQSQueueConfig"):
+        ConfigurableSQSQueueRead(config={"namespace": "q"})
 
 
 def test_sqs_queue_factory_builds_adapter() -> None:

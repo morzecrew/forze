@@ -1,4 +1,4 @@
-"""Integration tests for :class:`~forze_s3.kernel.platform.RoutedS3Client`."""
+"""Integration tests for :class:`~forze_s3.kernel.client.RoutedS3Client`."""
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ pytest.importorskip("aioboto3")
 pytest.importorskip("testcontainers")
 
 from forze.application.contracts.secrets import SecretRef
-from forze_s3.kernel.platform import RoutedS3Client, S3Client, S3Config
+from forze_s3.kernel.client import RoutedS3Client, S3Client, S3Config
 
 from tests.integration._routed_lru_helpers import s3_payloads_for_lru_eviction
 

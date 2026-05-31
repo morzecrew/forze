@@ -17,7 +17,7 @@ from testcontainers.core.waiting_utils import wait_for_logs
 from testcontainers.mongodb import MongoDbContainer
 from testcontainers.redis import RedisContainer
 
-from forze_mongo.kernel.platform import MongoClient
+from forze_mongo.kernel.client import MongoClient
 from forze_redis.kernel.client import RedisClient, RedisConfig
 
 

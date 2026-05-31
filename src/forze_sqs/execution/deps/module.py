@@ -9,9 +9,9 @@ from forze.application.contracts.tenancy import warn_dynamic_relation_with_tenan
 from forze.application.execution import Deps, DepsModule
 from forze.base.primitives import StrKey
 
-from ...kernel.platform import SQSClientPort
+from ...kernel.client import SQSClientPort
 from .configs import SQSQueueConfig
-from .deps import ConfigurableSQSQueueRead, ConfigurableSQSQueueWrite
+from .factories import ConfigurableSQSQueueRead, ConfigurableSQSQueueWrite
 from .keys import SQSClientDepKey
 
 # ----------------------- #

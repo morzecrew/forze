@@ -17,9 +17,9 @@ from forze.domain.constants import ID_FIELD
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
 from forze_mock import MockCacheAdapter, MockState, MockStateDepKey
 from forze_mongo.execution.deps import MongoDocumentConfig
-from forze_mongo.execution.deps.deps import ConfigurableMongoDocument, mongo_txmanager
+from forze_mongo.execution.deps import ConfigurableMongoDocument, mongo_txmanager
 from forze_mongo.execution.deps.keys import MongoClientDepKey
-from forze_mongo.kernel.platform import MongoClient
+from forze_mongo.kernel.client import MongoClient
 
 
 class _CxDoc(Document):

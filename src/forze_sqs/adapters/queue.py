@@ -20,7 +20,7 @@ from forze.application.contracts.resolution import NamedResourceSpec, is_static_
 from forze.application.contracts.tenancy import TenancyMixin
 from forze.base.exceptions import exc
 
-from ..kernel.platform import SQSClientPort
+from ..kernel.client import SQSClientPort
 from ..kernel.relation import resolve_sqs_namespace
 from .codecs import SQSQueueCodec
 

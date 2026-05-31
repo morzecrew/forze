@@ -6,7 +6,7 @@ import pytest
 from pydantic import BaseModel
 
 from forze_sqs.adapters import SQSQueueAdapter, SQSQueueCodec
-from forze_sqs.kernel.platform import SQSClient
+from forze_sqs.kernel.client import SQSClient
 from forze.base.serialization import PydanticRecordMappingCodec
 
 

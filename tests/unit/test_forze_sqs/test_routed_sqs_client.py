@@ -1,4 +1,4 @@
-"""Unit tests for :class:`~forze_sqs.kernel.platform.RoutedSQSClient`."""
+"""Unit tests for :class:`~forze_sqs.kernel.client.RoutedSQSClient`."""
 
 from forze.base.exceptions import CoreException, exc
 import json
@@ -9,7 +9,7 @@ from uuid import UUID
 import pytest
 
 from forze.application.contracts.secrets import SecretRef
-from forze_sqs.kernel.platform import RoutedSQSClient
+from forze_sqs.kernel.client import RoutedSQSClient
 
 # ----------------------- #
 
@@ -86,7 +86,7 @@ async def test_routed_sqs_eviction() -> None:
         return inst
 
     with patch(
-        "forze_sqs.kernel.platform.routed_client.SQSClient",
+        "forze_sqs.kernel.client.routed_client.SQSClient",
         side_effect=_make_client,
     ):
         cur = _T1

@@ -1,4 +1,4 @@
-"""Integration tests for :class:`~forze_rabbitmq.kernel.platform.RoutedRabbitMQClient`."""
+"""Integration tests for :class:`~forze_rabbitmq.kernel.client.RoutedRabbitMQClient`."""
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ pytest.importorskip("aio_pika")
 from testcontainers.rabbitmq import RabbitMqContainer
 
 from forze.application.contracts.secrets import SecretRef
-from forze_rabbitmq.kernel.platform import (
+from forze_rabbitmq.kernel.client import (
     RabbitMQClient,
     RabbitMQConfig,
     RoutedRabbitMQClient,

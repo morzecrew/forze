@@ -8,7 +8,7 @@ import pytest
 
 from forze.domain.models import Document
 from forze_mongo.kernel.gateways import MongoHistoryGateway
-from forze_mongo.kernel.platform import MongoClient
+from forze_mongo.kernel.client import MongoClient
 
 
 class MyDoc(Document):

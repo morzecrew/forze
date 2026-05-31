@@ -8,7 +8,7 @@ import pytest
 pytest.importorskip("aioboto3")
 
 from forze_sqs.adapters import SQSQueueAdapter
-from forze_sqs.kernel.platform import SQSClient
+from forze_sqs.kernel.client import SQSClient
 
 
 async def _ensure_queue(

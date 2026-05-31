@@ -14,7 +14,7 @@ pytest.importorskip("testcontainers")
 
 from testcontainers.minio import MinioContainer
 
-from forze_s3.kernel.platform.client import S3Client, S3Config
+from forze_s3.kernel.client import S3Client, S3Config
 
 MINIO_ROOT_USER = "minioadmin"
 MINIO_ROOT_PASSWORD = "minioadmin"

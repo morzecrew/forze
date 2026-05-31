@@ -11,7 +11,7 @@ from forze_sqs.execution.lifecycle import (
     SQSStartupHook,
     sqs_lifecycle_step,
 )
-from forze_sqs.kernel.platform import SQSClient, SQSConfig
+from forze_sqs.kernel.client import SQSClient, SQSConfig
 
 
 @pytest.mark.asyncio

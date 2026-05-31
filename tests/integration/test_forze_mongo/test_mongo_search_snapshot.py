@@ -17,9 +17,9 @@ from forze.application.contracts.search import (
 from forze.application.execution import Deps, ExecutionContext
 from forze_mongo.adapters.search import MongoTextSearchAdapter
 from forze_mongo.execution.deps.configs import MongoSearchConfig
-from forze_mongo.execution.deps.deps import ConfigurableMongoSearch
+from forze_mongo.execution.deps import ConfigurableMongoSearch
 from forze_mongo.execution.deps.keys import MongoClientDepKey
-from forze_mongo.kernel.platform import MongoClient
+from forze_mongo.kernel.client import MongoClient
 from forze_redis.execution.deps.configs import RedisSearchResultSnapshotConfig
 from forze_redis.execution.deps import ConfigurableRedisSearchResultSnapshot
 from forze_redis.execution.deps.keys import RedisClientDepKey

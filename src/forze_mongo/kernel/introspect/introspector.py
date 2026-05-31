@@ -9,7 +9,7 @@ import attrs
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
 
-from ..platform import MongoClientPort
+from ..client import MongoClientPort
 from .types import MongoIndexInfo
 
 # ----------------------- #

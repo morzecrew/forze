@@ -17,12 +17,18 @@ from .execution import (
     routed_s3_lifecycle_step,
     s3_lifecycle_step,
 )
-from .kernel.platform import (
+from .kernel.client import (
     RoutedS3Client,
     S3Client,
     S3ClientPort,
     S3Config,
     S3RoutingCredentials,
+)
+from .kernel.relation import (
+    NamedResourceSpec,
+    coerce_named_resource_spec,
+    is_static_named_resource,
+    resolve_s3_bucket,
 )
 
 # ----------------------- #
@@ -38,4 +44,8 @@ __all__ = [
     "s3_lifecycle_step",
     "routed_s3_lifecycle_step",
     "S3StorageConfig",
+    "NamedResourceSpec",
+    "coerce_named_resource_spec",
+    "is_static_named_resource",
+    "resolve_s3_bucket",
 ]
