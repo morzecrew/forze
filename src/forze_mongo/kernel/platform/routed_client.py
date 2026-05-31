@@ -20,17 +20,15 @@ from pymongo.asynchronous.client_session import AsyncClientSession
 from pymongo.asynchronous.collection import AsyncCollection
 from pymongo.asynchronous.database import AsyncDatabase
 
-from forze.application.contracts.secrets import (
-    SecretRef,
-    SecretsPort,
-    resolve_str_for_tenant,
-    secret_ref_for_tenant,
+from forze.application.contracts.secrets import SecretRef, SecretsPort
+from forze.application.contracts.tenancy import (
+    TenantClientRegistry,
+    ensure_dsn_fingerprint,
+    require_tenant_id,
+    resolve_dsn_for_tenant,
 )
-from forze.application.contracts.tenancy import require_tenant_id
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
-from forze.base.primitives.fingerprint import connection_string_fingerprint, stable_fingerprint
-from forze.base.primitives.lru_registry import SimpleLruRegistry
 
 from .client import MongoClient
 from .port import MongoClientPort
@@ -61,21 +59,16 @@ class RoutedMongoClient(MongoClientPort):
     mongo_config: MongoConfig = attrs.field(factory=MongoConfig)
     max_cached_tenants: int = 100
 
-    _registry: SimpleLruRegistry[UUID, MongoClient] = attrs.field(init=False)
-    _fingerprints: dict[UUID, str] = attrs.field(factory=dict, init=False, repr=False)
-    _started: bool = attrs.field(default=False, init=False)
+    __pool: TenantClientRegistry[MongoClient, str] = attrs.field(init=False)
 
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
-        if self.max_cached_tenants < 1:
-            raise exc.internal("max_cached_tenants must be at least 1")
-
-        self._registry = SimpleLruRegistry(
+        self.__pool = TenantClientRegistry(
             max_entries=self.max_cached_tenants,
             create=self._create_client,
             dispose=lambda client: client.close(),
-            dedup_key=lambda tid: self._fingerprints[tid],
+            guarded=False,
         )
 
     # ....................... #
@@ -83,53 +76,27 @@ class RoutedMongoClient(MongoClientPort):
     async def startup(self) -> None:
         """Mark the client as ready (idempotent)."""
 
-        self._started = True
+        await self.__pool.startup()
 
     # ....................... #
 
     async def close(self) -> None:
-        await self._registry.close_all()
-        self._started = False
+        await self.__pool.close()
 
     # ....................... #
 
     async def evict_tenant(self, tenant_id: UUID) -> None:
         """Close and remove the client for one tenant."""
 
-        self._fingerprints.pop(tenant_id, None)
-        await self._registry.evict(tenant_id)
-
-    # ....................... #
-
-    async def _ensure_fingerprint(self, tenant_id: UUID) -> str:
-        cached = self._fingerprints.get(tenant_id)
-
-        if cached is not None:
-            return cached
-
-        ref = secret_ref_for_tenant(self.secret_ref_for_tenant, tenant_id)
-        uri = await resolve_str_for_tenant(
-            self.secrets,
-            ref,
-            tenant_id=tenant_id,
-            backend="Mongo",
-        )
-        fingerprint = stable_fingerprint(
-            connection_string_fingerprint(uri),
-            self.database_name_for_tenant(tenant_id),
-        )
-        self._fingerprints[tenant_id] = fingerprint
-
-        return fingerprint
+        await self.__pool.evict(tenant_id)
 
     # ....................... #
 
     async def _create_client(self, tid: UUID) -> MongoClient:
-        ref = secret_ref_for_tenant(self.secret_ref_for_tenant, tid)
-        uri = await resolve_str_for_tenant(
-            self.secrets,
-            ref,
+        uri = await resolve_dsn_for_tenant(
             tenant_id=tid,
+            secrets=self.secrets,
+            ref_for_tenant=self.secret_ref_for_tenant,
             backend="Mongo",
         )
 
@@ -147,16 +114,22 @@ class RoutedMongoClient(MongoClientPort):
     # ....................... #
 
     async def _get_client(self) -> MongoClient:
-        if not self._started:
-            raise exc.internal("Routed Mongo client is not started")
-
         tenant_id = require_tenant_id(
             self.tenant_provider,
             message="Tenant ID is required for routed Mongo access",
         )
-        await self._ensure_fingerprint(tenant_id)
 
-        return await self._registry.get_or_create(tenant_id)
+        await ensure_dsn_fingerprint(
+            self.__pool.get_fingerprint,
+            self.__pool.set_fingerprint,
+            tenant_id=tenant_id,
+            secrets=self.secrets,
+            ref_for_tenant=self.secret_ref_for_tenant,
+            backend="Mongo",
+            extra_parts=[self.database_name_for_tenant(tenant_id)],
+        )
+
+        return await self.__pool.get(tenant_id)
 
     # ....................... #
 
@@ -189,7 +162,7 @@ class RoutedMongoClient(MongoClientPort):
         if tid is None:
             return False
 
-        inner = self._registry.peek(tid)
+        inner = self.__pool.peek(tid)
 
         if inner is None:
             return False
@@ -204,7 +177,7 @@ class RoutedMongoClient(MongoClientPort):
         if tid is None:
             raise exc.internal("Transactional context is required")
 
-        inner = self._registry.peek(tid)
+        inner = self.__pool.peek(tid)
 
         if inner is None:
             raise exc.internal("Transactional context is required")

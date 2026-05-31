@@ -99,7 +99,7 @@ async def test_routed_s3_eviction() -> None:
 
 def test_routed_s3_rejects_zero_max_cached_tenants() -> None:
     secrets = _MemSecrets({_T1: _creds()})
-    with pytest.raises(CoreException, match="max_cached_tenants"):
+    with pytest.raises(CoreException, match="max_entries"):
         RoutedS3Client(
             secrets=secrets,
             secret_ref_for_tenant=_ref,

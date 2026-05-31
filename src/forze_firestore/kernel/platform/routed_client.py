@@ -8,17 +8,16 @@ import attrs
 from google.cloud.firestore_v1.async_collection import AsyncCollectionReference
 from google.cloud.firestore_v1.base_query import BaseFilter
 
-from forze.application.contracts.secrets import (
-    SecretRef,
-    SecretsPort,
-    resolve_structured,
-    secret_ref_for_tenant,
+from forze.application.contracts.secrets import SecretRef, SecretsPort
+from forze.application.contracts.tenancy import (
+    TenantClientRegistry,
+    ensure_structured_fingerprint,
+    require_tenant_id,
+    resolve_structured_for_tenant,
 )
-from forze.application.contracts.tenancy import require_tenant_id
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
 from forze.base.primitives.fingerprint import stable_fingerprint
-from forze.base.primitives.lru_registry import SimpleLruRegistry
 
 from .client import FirestoreClient
 from .port import FirestoreClientPort
@@ -44,78 +43,56 @@ class RoutedFirestoreClient(FirestoreClientPort):
     tenant_provider: Callable[[], UUID | None]
     max_cached_tenants: int = 100
 
-    _registry: SimpleLruRegistry[UUID, FirestoreClient] = attrs.field(init=False)
-    _fingerprints: dict[UUID, str] = attrs.field(factory=dict, init=False, repr=False)
-    _started: bool = attrs.field(default=False, init=False)
+    __pool: TenantClientRegistry[FirestoreClient, str] = attrs.field(init=False)
 
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
-        if self.max_cached_tenants < 1:
-            raise exc.internal("max_cached_tenants must be at least 1")
-
-        self._registry = SimpleLruRegistry(
+        self.__pool = TenantClientRegistry(
             max_entries=self.max_cached_tenants,
             create=self._create_client,
             dispose=lambda client: client.close(),
-            dedup_key=lambda tid: self._fingerprints[tid],
+            guarded=False,
         )
 
     # ....................... #
 
     async def startup(self) -> None:
-        self._started = True
+        await self.__pool.startup()
 
     # ....................... #
 
     async def close(self) -> None:
-        await self._registry.close_all()
-        self._started = False
+        await self.__pool.close()
 
     # ....................... #
 
     async def evict_tenant(self, tenant_id: UUID) -> None:
-        self._fingerprints.pop(tenant_id, None)
-        await self._registry.evict(tenant_id)
+        await self.__pool.evict(tenant_id)
 
     # ....................... #
 
-    async def _resolve_creds(self, tenant_id: UUID) -> FirestoreRoutingCredentials:
-        ref = secret_ref_for_tenant(self.secret_ref_for_tenant, tenant_id)
+    async def _fingerprint_for(self, tenant_id: UUID) -> str:
+        creds = await resolve_structured_for_tenant(
+            FirestoreRoutingCredentials,
+            tenant_id=tenant_id,
+            secrets=self.secrets,
+            ref_for_tenant=self.secret_ref_for_tenant,
+            backend="Firestore",
+        )
 
-        try:
-            return await resolve_structured(
-                self.secrets,
-                ref,
-                FirestoreRoutingCredentials,
-            )
-
-        except exc:
-            raise
-
-        except Exception as e:
-            raise exc.internal(
-                f"Failed to resolve Firestore secret for tenant {tenant_id}: {e}",
-            ) from e
-
-    # ....................... #
-
-    async def _ensure_fingerprint(self, tenant_id: UUID) -> str:
-        cached = self._fingerprints.get(tenant_id)
-
-        if cached is not None:
-            return cached
-
-        creds = await self._resolve_creds(tenant_id)
-        fingerprint = stable_fingerprint(creds.project_id, creds.database)
-        self._fingerprints[tenant_id] = fingerprint
-
-        return fingerprint
+        return stable_fingerprint(creds.project_id, creds.database)
 
     # ....................... #
 
     async def _create_client(self, tid: UUID) -> FirestoreClient:
-        creds = await self._resolve_creds(tid)
+        creds = await resolve_structured_for_tenant(
+            FirestoreRoutingCredentials,
+            tenant_id=tid,
+            secrets=self.secrets,
+            ref_for_tenant=self.secret_ref_for_tenant,
+            backend="Firestore",
+        )
         client = FirestoreClient()
 
         await client.initialize(
@@ -128,16 +105,19 @@ class RoutedFirestoreClient(FirestoreClientPort):
     # ....................... #
 
     async def _get_client(self) -> FirestoreClient:
-        if not self._started:
-            raise exc.internal("Routed Firestore client is not started")
-
         tenant_id = require_tenant_id(
             self.tenant_provider,
             message="Tenant ID is required for routed Firestore access",
         )
-        await self._ensure_fingerprint(tenant_id)
 
-        return await self._registry.get_or_create(tenant_id)
+        await ensure_structured_fingerprint(
+            self.__pool.get_fingerprint,
+            self.__pool.set_fingerprint,
+            tenant_id=tenant_id,
+            fingerprint=lambda: self._fingerprint_for(tenant_id),
+        )
+
+        return await self.__pool.get(tenant_id)
 
     # ....................... #
 
@@ -160,7 +140,7 @@ class RoutedFirestoreClient(FirestoreClientPort):
         if tid is None:
             return False
 
-        inner = self._registry.peek(tid)
+        inner = self.__pool.peek(tid)
 
         if inner is None:
             return False
@@ -173,7 +153,7 @@ class RoutedFirestoreClient(FirestoreClientPort):
         if tid is None:
             raise exc.internal("Transactional context is required")
 
-        inner = self._registry.peek(tid)
+        inner = self.__pool.peek(tid)
 
         if inner is None:
             raise exc.internal("Transactional context is required")

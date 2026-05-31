@@ -94,7 +94,7 @@ async def test_routed_meilisearch_eviction() -> None:
 
 def test_routed_meilisearch_rejects_zero_max_cached_tenants() -> None:
     secrets = _MemSecrets({_T1: _creds()})
-    with pytest.raises(CoreException, match="max_cached_tenants"):
+    with pytest.raises(CoreException, match="max_entries"):
         RoutedMeilisearchClient(
             secrets=secrets,
             secret_ref_for_tenant=_ref,

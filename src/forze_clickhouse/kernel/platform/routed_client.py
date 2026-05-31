@@ -6,16 +6,14 @@ from uuid import UUID
 import attrs
 from pydantic import BaseModel
 
-from forze.application.contracts.secrets import (
-    SecretRef,
-    SecretsPort,
-    resolve_structured,
-    secret_ref_for_tenant,
+from forze.application.contracts.secrets import SecretRef, SecretsPort
+from forze.application.contracts.tenancy import (
+    TenantClientRegistry,
+    ensure_structured_fingerprint,
+    require_tenant_id,
+    resolve_structured_for_tenant,
 )
-from forze.application.contracts.tenancy import require_tenant_id
-from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
-from forze.base.primitives.lru_registry import SimpleLruRegistry
 
 from .client import ClickHouseClient
 from .port import ClickHouseClientPort
@@ -49,59 +47,32 @@ class RoutedClickHouseClient(ClickHouseClientPort):
 
     max_cached_tenants: int = 100
 
-    _registry: SimpleLruRegistry[UUID, ClickHouseClient] = attrs.field(init=False)
-    _fingerprints: dict[UUID, str] = attrs.field(factory=dict, init=False, repr=False)
-    _started: bool = attrs.field(default=False, init=False)
+    __pool: TenantClientRegistry[ClickHouseClient, str] = attrs.field(init=False)
 
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
-        if self.max_cached_tenants < 1:
-            raise exc.internal("max_cached_tenants must be at least 1")
-
-        self._registry = SimpleLruRegistry(
+        self.__pool = TenantClientRegistry(
             max_entries=self.max_cached_tenants,
             create=self._create_client,
             dispose=lambda client: client.close(),
-            dedup_key=lambda tid: self._fingerprints[tid],
+            guarded=False,
         )
 
     # ....................... #
 
     async def startup(self) -> None:
-        self._started = True
+        await self.__pool.startup()
 
     # ....................... #
 
     async def close(self) -> None:
-        await self._registry.close_all()
-        self._started = False
+        await self.__pool.close()
 
     # ....................... #
 
     async def evict_tenant(self, tenant_id: UUID) -> None:
-        self._fingerprints.pop(tenant_id, None)
-        await self._registry.evict(tenant_id)
-
-    # ....................... #
-
-    async def _resolve_creds(self, tenant_id: UUID) -> ClickHouseRoutingCredentials:
-        ref = secret_ref_for_tenant(self.secret_ref_for_tenant, tenant_id)
-
-        try:
-            return await resolve_structured(
-                self.secrets,
-                ref,
-                ClickHouseRoutingCredentials,
-            )
-
-        except exc:
-            raise
-
-        except Exception as e:
-            raise exc.internal(
-                f"Failed to resolve ClickHouse secret for tenant {tenant_id}: {e}",
-            ) from e
+        await self.__pool.evict(tenant_id)
 
     # ....................... #
 
@@ -131,22 +102,27 @@ class RoutedClickHouseClient(ClickHouseClientPort):
 
     # ....................... #
 
-    async def _ensure_fingerprint(self, tenant_id: UUID) -> str:
-        cached = self._fingerprints.get(tenant_id)
+    async def _fingerprint_for(self, tenant_id: UUID) -> str:
+        creds = await resolve_structured_for_tenant(
+            ClickHouseRoutingCredentials,
+            tenant_id=tenant_id,
+            secrets=self.secrets,
+            ref_for_tenant=self.secret_ref_for_tenant,
+            backend="ClickHouse",
+        )
 
-        if cached is not None:
-            return cached
-
-        creds = await self._resolve_creds(tenant_id)
-        fingerprint = routing_fingerprint(creds)
-        self._fingerprints[tenant_id] = fingerprint
-
-        return fingerprint
+        return routing_fingerprint(creds)
 
     # ....................... #
 
     async def _create_client(self, tid: UUID) -> ClickHouseClient:
-        creds = await self._resolve_creds(tid)
+        creds = await resolve_structured_for_tenant(
+            ClickHouseRoutingCredentials,
+            tenant_id=tid,
+            secrets=self.secrets,
+            ref_for_tenant=self.secret_ref_for_tenant,
+            backend="ClickHouse",
+        )
         client = ClickHouseClient()
         await client.initialize(self._merge_config(creds))
 
@@ -155,16 +131,19 @@ class RoutedClickHouseClient(ClickHouseClientPort):
     # ....................... #
 
     async def _get_client(self) -> ClickHouseClient:
-        if not self._started:
-            raise exc.internal("Routed ClickHouse client is not started")
-
         tenant_id = require_tenant_id(
             self.tenant_provider,
             message="Tenant ID is required for routed ClickHouse access",
         )
-        await self._ensure_fingerprint(tenant_id)
 
-        return await self._registry.get_or_create(tenant_id)
+        await ensure_structured_fingerprint(
+            self.__pool.get_fingerprint,
+            self.__pool.set_fingerprint,
+            tenant_id=tenant_id,
+            fingerprint=lambda: self._fingerprint_for(tenant_id),
+        )
+
+        return await self.__pool.get(tenant_id)
 
     # ....................... #
 

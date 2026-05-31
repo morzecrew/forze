@@ -44,7 +44,7 @@ class RoutedRedisClient(RedisClientPort):
     """
 
     secrets: SecretsPort
-    secret_ref_for_tenant: Callable[[UUID], SecretRef]
+    secret_ref_for_tenant: Callable[[UUID], SecretRef] | Mapping[UUID, SecretRef]
     tenant_provider: Callable[[], UUID | None]
     pool_config: RedisConfig = attrs.field(factory=RedisConfig)
     max_cached_tenants: int = 100

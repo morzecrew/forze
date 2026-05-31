@@ -91,7 +91,7 @@ async def test_routed_temporal_eviction() -> None:
 
 def test_routed_temporal_rejects_zero_max_cached_tenants() -> None:
     secrets = _MemSecrets({_T1: "localhost:7233"})
-    with pytest.raises(CoreException, match="max_cached_tenants"):
+    with pytest.raises(CoreException, match="max_entries"):
         RoutedTemporalClient(
             secrets=secrets,
             secret_ref_for_tenant=_ref,

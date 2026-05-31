@@ -7,16 +7,15 @@ import attrs
 import inngest
 from pydantic import SecretStr
 
-from forze.application.contracts.secrets import (
-    SecretRef,
-    SecretsPort,
-    resolve_structured,
-    secret_ref_for_tenant,
+from forze.application.contracts.secrets import SecretRef, SecretsPort
+from forze.application.contracts.tenancy import (
+    TenantClientRegistry,
+    ensure_structured_fingerprint,
+    require_tenant_id,
+    resolve_structured_for_tenant,
 )
-from forze.application.contracts.tenancy import require_tenant_id
 from forze.base.exceptions import exc
 from forze.base.primitives.fingerprint import secret_dedup_fingerprint, stable_fingerprint
-from forze.base.primitives.lru_registry import SimpleLruRegistry
 
 from .client import InngestClient
 from .config import InngestConfig
@@ -77,112 +76,93 @@ class RoutedInngestClient(InngestClientPort):
     tenant_provider: Callable[[], UUID | None]
     max_cached_tenants: int = 100
 
-    _registry: SimpleLruRegistry[UUID, InngestClient] = attrs.field(init=False)
-    _fingerprints: dict[UUID, str] = attrs.field(factory=dict, init=False, repr=False)
-    _started: bool = attrs.field(default=False, init=False)
+    __pool: TenantClientRegistry[InngestClient, str] = attrs.field(init=False)
 
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
-        if self.max_cached_tenants < 1:
-            raise exc.internal("max_cached_tenants must be at least 1")
-
-        self._registry = SimpleLruRegistry(
+        self.__pool = TenantClientRegistry(
             max_entries=self.max_cached_tenants,
             create=self._create_client,
             dispose=_dispose_inngest_client,
-            dedup_key=lambda tid: self._fingerprints[tid],
+            guarded=False,
         )
 
     # ....................... #
 
     async def startup(self) -> None:
-        self._started = True
+        await self.__pool.startup()
 
     # ....................... #
 
     async def close(self) -> None:
-        await self._registry.close_all()
-        self._started = False
+        await self.__pool.close()
 
     # ....................... #
 
     async def evict_tenant(self, tenant_id: UUID) -> None:
-        self._fingerprints.pop(tenant_id, None)
-        await self._registry.evict(tenant_id)
+        await self.__pool.evict(tenant_id)
 
     # ....................... #
 
-    async def _resolve_creds(self, tenant_id: UUID) -> InngestRoutingCredentials:
-        ref = secret_ref_for_tenant(self.secret_ref_for_tenant, tenant_id)
+    async def _fingerprint_for(self, tenant_id: UUID) -> str:
+        creds = await resolve_structured_for_tenant(
+            InngestRoutingCredentials,
+            tenant_id=tenant_id,
+            secrets=self.secrets,
+            ref_for_tenant=self.secret_ref_for_tenant,
+            backend="Inngest",
+        )
 
-        try:
-            return await resolve_structured(
-                self.secrets,
-                ref,
-                InngestRoutingCredentials,
-            )
-
-        except exc:
-            raise
-
-        except Exception as e:
-            raise exc.internal(
-                f"Failed to resolve Inngest secret for tenant {tenant_id}: {e}",
-            ) from e
-
-    # ....................... #
-
-    async def _ensure_fingerprint(self, tenant_id: UUID) -> str:
-        cached = self._fingerprints.get(tenant_id)
-
-        if cached is not None:
-            return cached
-
-        creds = await self._resolve_creds(tenant_id)
-        fingerprint = stable_fingerprint(
+        return stable_fingerprint(
             creds.app_id,
             secret_dedup_fingerprint(creds.event_key),
             secret_dedup_fingerprint(creds.signing_key),
             str(creds.is_production),
             str(creds.request_timeout_ms),
         )
-        self._fingerprints[tenant_id] = fingerprint
-
-        return fingerprint
 
     # ....................... #
 
     async def _create_client(self, tid: UUID) -> InngestClient:
-        creds = await self._resolve_creds(tid)
+        creds = await resolve_structured_for_tenant(
+            InngestRoutingCredentials,
+            tenant_id=tid,
+            secrets=self.secrets,
+            ref_for_tenant=self.secret_ref_for_tenant,
+            backend="Inngest",
+        )
+
         return InngestClient(app_id=creds.app_id, config=_to_inngest_config(creds))
 
     # ....................... #
 
     async def _get_client(self) -> InngestClient:
-        if not self._started:
-            raise exc.internal("Routed Inngest client is not started")
-
         tenant_id = require_tenant_id(
             self.tenant_provider,
             message="Tenant ID is required for routed Inngest access",
         )
-        await self._ensure_fingerprint(tenant_id)
 
-        return await self._registry.get_or_create(tenant_id)
+        await ensure_structured_fingerprint(
+            self.__pool.get_fingerprint,
+            self.__pool.set_fingerprint,
+            tenant_id=tenant_id,
+            fingerprint=lambda: self._fingerprint_for(tenant_id),
+        )
+
+        return await self.__pool.get(tenant_id)
 
     # ....................... #
 
     @property
     def native(self) -> inngest.Inngest:
-        if not self._started:
-            raise exc.internal("Routed Inngest client is not started")
+        self.__pool.require_started()
 
         tenant_id = require_tenant_id(
             self.tenant_provider,
             message="Tenant ID is required for routed Inngest access",
         )
-        inner = self._registry.peek(tenant_id)
+        inner = self.__pool.peek(tenant_id)
 
         if inner is None:
             raise exc.internal(

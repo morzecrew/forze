@@ -89,7 +89,7 @@ async def test_routed_rabbitmq_eviction() -> None:
 
 def test_routed_rabbitmq_rejects_zero_max_cached_tenants() -> None:
     secrets = _MemSecrets({_T1: "amqp://guest:guest@localhost/"})
-    with pytest.raises(CoreException, match="max_cached_tenants"):
+    with pytest.raises(CoreException, match="max_entries"):
         RoutedRabbitMQClient(
             secrets=secrets,
             secret_ref_for_tenant=_ref,

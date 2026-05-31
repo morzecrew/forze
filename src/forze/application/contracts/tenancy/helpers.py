@@ -1,6 +1,6 @@
 """Helpers for tenant identity in routed infrastructure clients."""
 
-from typing import Awaitable, Callable, Sequence
+from typing import Awaitable, Callable, Mapping, Sequence
 from uuid import UUID
 
 from pydantic import BaseModel
@@ -51,7 +51,7 @@ async def ensure_dsn_fingerprint(
     *,
     tenant_id: UUID,
     secrets: SecretsPort,
-    ref_for_tenant: Callable[[UUID], SecretRef],
+    ref_for_tenant: Callable[[UUID], SecretRef] | Mapping[UUID, SecretRef],
     backend: str,
     extra_parts: Sequence[str] = (),
 ) -> str:
@@ -86,7 +86,7 @@ async def resolve_dsn_for_tenant(
     *,
     tenant_id: UUID,
     secrets: SecretsPort,
-    ref_for_tenant: Callable[[UUID], SecretRef],
+    ref_for_tenant: Callable[[UUID], SecretRef] | Mapping[UUID, SecretRef],
     backend: str,
 ) -> str:
     """Resolve DSN for *tenant_id*, wrapping unexpected errors."""
@@ -109,17 +109,27 @@ async def resolve_structured_for_tenant[T: BaseModel](
     *,
     tenant_id: UUID,
     secrets: SecretsPort,
-    ref_for_tenant: Callable[[UUID], SecretRef],
+    ref_for_tenant: Callable[[UUID], SecretRef] | Mapping[UUID, SecretRef],
+    backend: str,
 ) -> T:
     """Resolve structured credentials for *tenant_id*, wrapping unexpected errors."""
 
     ref = secret_ref_for_tenant(ref_for_tenant, tenant_id)
 
-    return await resolve_structured(
-        secrets,
-        ref,
-        creds_type,
-    )
+    try:
+        return await resolve_structured(
+            secrets,
+            ref,
+            creds_type,
+        )
+
+    except exc:
+        raise
+
+    except Exception as e:
+        raise exc.internal(
+            f"Failed to resolve {backend} secret for tenant {tenant_id}: {e}",
+        ) from e
 
 
 # ....................... #

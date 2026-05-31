@@ -91,7 +91,7 @@ async def test_routed_mongo_eviction() -> None:
 
 def test_routed_mongo_rejects_zero_max_cached_tenants() -> None:
     secrets = _MemSecrets({_T1: "mongodb://localhost:27017"})
-    with pytest.raises(CoreException, match="max_cached_tenants"):
+    with pytest.raises(CoreException, match="max_entries"):
         RoutedMongoClient(
             secrets=secrets,
             secret_ref_for_tenant=_ref,

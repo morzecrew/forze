@@ -11,16 +11,14 @@ from forze.application.contracts.durable.workflow import (
     DurableWorkflowScheduleDescription,
     DurableWorkflowScheduleTiming,
 )
-from forze.application.contracts.secrets import (
-    SecretRef,
-    SecretsPort,
-    resolve_str_for_tenant,
-    secret_ref_for_tenant,
+from forze.application.contracts.secrets import SecretRef, SecretsPort
+from forze.application.contracts.tenancy import (
+    TenantClientRegistry,
+    ensure_dsn_fingerprint,
+    require_tenant_id,
+    resolve_dsn_for_tenant,
 )
-from forze.application.contracts.tenancy import require_tenant_id
 from forze.base.exceptions import exc
-from forze.base.primitives.fingerprint import stable_fingerprint
-from forze.base.primitives.lru_registry import SimpleLruRegistry
 
 from .client import TemporalClient
 from .port import TemporalClientPort
@@ -52,68 +50,40 @@ class RoutedTemporalClient(TemporalClientPort):
     connection_config: TemporalConfig = attrs.field(factory=TemporalConfig)
     max_cached_tenants: int = 100
 
-    _registry: SimpleLruRegistry[UUID, TemporalClient] = attrs.field(init=False)
-    _fingerprints: dict[UUID, str] = attrs.field(factory=dict, init=False, repr=False)
-    _started: bool = attrs.field(default=False, init=False)
+    __pool: TenantClientRegistry[TemporalClient, str] = attrs.field(init=False)
 
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
-        if self.max_cached_tenants < 1:
-            raise exc.internal("max_cached_tenants must be at least 1")
-
-        self._registry = SimpleLruRegistry(
+        self.__pool = TenantClientRegistry(
             max_entries=self.max_cached_tenants,
             create=self._create_client,
             dispose=lambda client: client.close(),
-            dedup_key=lambda tid: self._fingerprints[tid],
+            guarded=False,
         )
 
     # ....................... #
 
     async def startup(self) -> None:
-        self._started = True
+        await self.__pool.startup()
 
     # ....................... #
 
     async def close(self) -> None:
-        await self._registry.close_all()
-        self._started = False
+        await self.__pool.close()
 
     # ....................... #
 
     async def evict_tenant(self, tenant_id: UUID) -> None:
-        self._fingerprints.pop(tenant_id, None)
-        await self._registry.evict(tenant_id)
-
-    # ....................... #
-
-    async def _ensure_fingerprint(self, tenant_id: UUID) -> str:
-        cached = self._fingerprints.get(tenant_id)
-
-        if cached is not None:
-            return cached
-
-        ref = secret_ref_for_tenant(self.secret_ref_for_tenant, tenant_id)
-        host = await resolve_str_for_tenant(
-            self.secrets,
-            ref,
-            tenant_id=tenant_id,
-            backend="Temporal",
-        )
-        fingerprint = stable_fingerprint(host, self.connection_config.namespace)
-        self._fingerprints[tenant_id] = fingerprint
-
-        return fingerprint
+        await self.__pool.evict(tenant_id)
 
     # ....................... #
 
     async def _create_client(self, tid: UUID) -> TemporalClient:
-        ref = secret_ref_for_tenant(self.secret_ref_for_tenant, tid)
-        host = await resolve_str_for_tenant(
-            self.secrets,
-            ref,
+        host = await resolve_dsn_for_tenant(
             tenant_id=tid,
+            secrets=self.secrets,
+            ref_for_tenant=self.secret_ref_for_tenant,
             backend="Temporal",
         )
 
@@ -125,16 +95,22 @@ class RoutedTemporalClient(TemporalClientPort):
     # ....................... #
 
     async def _get_client(self) -> TemporalClient:
-        if not self._started:
-            raise exc.internal("Routed Temporal client is not started")
-
         tenant_id = require_tenant_id(
             self.tenant_provider,
             message="Tenant ID is required for routed Temporal access",
         )
-        await self._ensure_fingerprint(tenant_id)
 
-        return await self._registry.get_or_create(tenant_id)
+        await ensure_dsn_fingerprint(
+            self.__pool.get_fingerprint,
+            self.__pool.set_fingerprint,
+            tenant_id=tenant_id,
+            secrets=self.secrets,
+            ref_for_tenant=self.secret_ref_for_tenant,
+            backend="Temporal",
+            extra_parts=[self.connection_config.namespace],
+        )
+
+        return await self.__pool.get(tenant_id)
 
     # ....................... #
 
@@ -171,14 +147,13 @@ class RoutedTemporalClient(TemporalClientPort):
         *,
         run_id: str | None = None,
     ) -> WorkflowHandle[Any, Any]:
-        if not self._started:
-            raise exc.internal("Routed Temporal client is not started")
+        self.__pool.require_started()
 
         tid = require_tenant_id(
             self.tenant_provider,
             message="Tenant ID is required for routed Temporal access",
         )
-        inner = self._registry.peek(tid)
+        inner = self.__pool.peek(tid)
 
         if inner is None:
             raise exc.internal(
