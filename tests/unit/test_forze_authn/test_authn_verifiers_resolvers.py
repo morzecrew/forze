@@ -28,6 +28,8 @@ from forze.application.contracts.authn import (
     VerifiedAssertion,
 )
 from forze.base.primitives import uuid4 as deterministic_uuid4
+from unittest.mock import AsyncMock, MagicMock
+
 from forze_identity.authn import (
     AuthnOrchestrator,
     DeterministicUuidResolver,
@@ -178,6 +180,12 @@ class _CountingResolver:
 
 # ....................... #
 
+def _noop_eligibility() -> MagicMock:
+    eligibility = MagicMock()
+    eligibility.require_authentication_allowed = AsyncMock()
+    return eligibility
+
+
 class TestAuthnOrchestrator:
     def _orch(
         self,
@@ -187,9 +195,11 @@ class TestAuthnOrchestrator:
         token: object | None = None,
         api_key: object | None = None,
         resolver: object | None = None,
+        eligibility: object | None = None,
     ) -> AuthnOrchestrator:
         return AuthnOrchestrator(
             resolver=resolver or _CountingResolver(),  # type: ignore[arg-type]
+            eligibility=eligibility or _noop_eligibility(),  # type: ignore[arg-type]
             enabled_methods=methods,
             password_verifier=password,  # type: ignore[arg-type]
             token_verifier=token,  # type: ignore[arg-type]

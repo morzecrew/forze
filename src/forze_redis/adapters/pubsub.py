@@ -19,7 +19,7 @@ from forze.application.contracts.pubsub import (
 )
 from forze.application.contracts.tenancy import TenancyMixin
 
-from ..kernel.platform import RedisClientPort
+from ..kernel.client import RedisClientPort
 from .codecs import RedisPubSubCodec
 
 # ----------------------- #
@@ -36,7 +36,7 @@ class RedisPubSubAdapter[M: BaseModel](
 
     Publishes JSON-encoded messages via ``PUBLISH`` and yields decoded
     :class:`~forze.application.contracts.pubsub.PubSubMessage` instances by
-    subscribing to Redis channels through :class:`~forze_redis.kernel.platform.RedisClientPort`.
+    subscribing to Redis channels through :class:`~forze_redis.kernel.client.RedisClientPort`.
     """
 
     client: RedisClientPort

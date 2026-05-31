@@ -14,9 +14,10 @@ from forze.application.contracts.document import (
 from forze.application.execution import Deps, ExecutionContext
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
 from forze_firestore.execution.deps.configs import FirestoreDocumentConfig
-from forze_firestore.execution.deps.deps import ConfigurableFirestoreDocument
+from forze_firestore.execution.deps import ConfigurableFirestoreDocument
 from forze_firestore.execution.deps.keys import FirestoreClientDepKey
-from forze_firestore.kernel.platform import FirestoreClient
+from forze_firestore.kernel.client import FirestoreClient
+from tests.support.execution_context import context_from_deps
 
 
 class QDoc(Document):
@@ -42,14 +43,12 @@ def _ctx(client: FirestoreClient, collection: str) -> ExecutionContext:
             write=("(default)", collection),
         ),
     )
-    return ExecutionContext(
-        deps=Deps.plain(
+    return context_from_deps(Deps.plain(
             {
                 FirestoreClientDepKey: client,
                 DocumentQueryDepKey: fac,
                 DocumentCommandDepKey: fac,
-            }
-        )
+            })
     )
 
 

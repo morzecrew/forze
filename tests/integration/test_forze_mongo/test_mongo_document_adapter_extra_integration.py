@@ -10,15 +10,16 @@ from forze.application.contracts.document import (
     DocumentQueryDepKey,
     DocumentSpec,
 )
+from tests.support.execution_context import context_from_deps, context_from_modules, frozen_deps_from_deps
 from forze.application.contracts.transaction.deps import TransactionManagerDepKey
 from forze.application.execution import Deps, ExecutionContext
 from forze.domain.constants import ID_FIELD
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
 from forze_mock import MockCacheAdapter, MockState, MockStateDepKey
 from forze_mongo.execution.deps import MongoDocumentConfig
-from forze_mongo.execution.deps.deps import ConfigurableMongoDocument, mongo_txmanager
+from forze_mongo.execution.deps import ConfigurableMongoDocument, mongo_txmanager
 from forze_mongo.execution.deps.keys import MongoClientDepKey
-from forze_mongo.kernel.platform import MongoClient
+from forze_mongo.kernel.client import MongoClient
 
 
 class _CxDoc(Document):
@@ -61,8 +62,7 @@ async def _ctx_cached(
     def _cache_factory(ctx: ExecutionContext, cspec: CacheSpec) -> MockCacheAdapter:
         return MockCacheAdapter(state=ctx.deps.provide(MockStateDepKey), namespace=cspec.name)
 
-    ctx = ExecutionContext(
-        deps=Deps.plain(
+    ctx = context_from_deps(Deps.plain(
             {
                 MockStateDepKey: state,
                 MongoClientDepKey: mongo_client,
@@ -111,7 +111,7 @@ async def _ctx_cached_tx(
         }
     )
     routed = Deps.routed({TransactionManagerDepKey: {"main": mongo_txmanager}})
-    ctx = ExecutionContext(deps=plain.merge(routed))
+    ctx = context_from_deps(plain.merge(routed))
     return ctx, spec
 
 
@@ -135,8 +135,7 @@ async def test_mongo_adapter_cursor_prev_next_and_desc(
     fac = ConfigurableMongoDocument(
         config=MongoDocumentConfig(read=(db, col), write=(db, col))
     )
-    ctx = ExecutionContext(
-        deps=Deps.plain(
+    ctx = context_from_deps(Deps.plain(
             {
                 MongoClientDepKey: mongo_client,
                 DocumentQueryDepKey: fac,
@@ -203,8 +202,7 @@ async def test_mongo_adapter_find_and_find_many_projections_with_count(
     fac = ConfigurableMongoDocument(
         config=MongoDocumentConfig(read=(db, col), write=(db, col))
     )
-    ctx = ExecutionContext(
-        deps=Deps.plain(
+    ctx = context_from_deps(Deps.plain(
             {
                 MongoClientDepKey: mongo_client,
                 DocumentQueryDepKey: fac,

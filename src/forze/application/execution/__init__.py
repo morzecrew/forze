@@ -4,8 +4,9 @@ from .context import ExecutionContext, InvocationMetadata
 from .deps import (
     Deps,
     DepsModule,
-    DepsPlan,
     DepsRegistry,
+    FrozenDeps,
+    FrozenDepsRegistry,
     ResolutionContext,
     ResolutionTracer,
     RuntimeTracer,
@@ -16,8 +17,8 @@ from .lifecycle import (
     LifecycleModule,
     LifecyclePlan,
 )
-from .planning import OperationPlan
-from .registry import FrozenOperationRegistry, OperationRegistry
+from .operations import OperationPlan
+from .operations.registry import FrozenOperationRegistry, OperationRegistry
 from .runtime import ExecutionRuntime
 from .tracing import (
     RuntimeTrace,
@@ -41,8 +42,9 @@ __all__ = [
     "InvocationMetadata",
     "Deps",
     "DepsModule",
-    "DepsPlan",
     "DepsRegistry",
+    "FrozenDeps",
+    "FrozenDepsRegistry",
     "ResolutionContext",
     "ResolutionTracer",
     "RuntimeTracer",

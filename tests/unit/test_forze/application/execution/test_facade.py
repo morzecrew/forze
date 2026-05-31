@@ -1,4 +1,4 @@
-"""Unit tests for forze.application.execution.facade."""
+"""Unit tests for forze.application.execution.operations.facade."""
 
 import attrs
 import pytest
@@ -6,8 +6,8 @@ import pytest
 from forze.base.exceptions import CoreException
 
 from forze.application.contracts.execution import Handler
-from forze.application.execution.facade import OperationFacade, facade_op
-from forze.application.execution.registry import OperationRegistry
+from forze.application.execution.operations.facade import OperationFacade, facade_op
+from forze.application.execution.operations.registry import OperationRegistry
 from forze.base.primitives import StrKeyNamespace
 
 # ----------------------- #

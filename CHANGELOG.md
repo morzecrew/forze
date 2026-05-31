@@ -7,8 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- **Authn:** `PrincipalEligibilityPort` gates authentication and credential lifecycle on `authz_policy_principals.is_active` (removed advisory `authn_principals` store).
+- **Authn:** API keys persist `expires_at` and enforce expiry at verification; `revoke_api_key` / `revoke_many_api_keys` require `identity` for ownership checks.
+- **Authn:** `PrincipalDeactivationPort` cascades policy deactivation, session revocation, and credential deactivation (prefer over `PrincipalRegistryPort.deactivate_principal` alone).
+
+### Changed
+
+- **Authn (breaking):** `ApiKeyLifecyclePort.revoke_api_key` and `revoke_many_api_keys` take `identity: AuthnIdentity`.
+- **Authn (breaking):** `issue_api_key` no longer requires a pre-existing API key row; requires an active policy principal.
+- **Authn (breaking):** `AuthnOrchestrator` requires `PrincipalEligibilityPort`; apps must wire tenant-unaware `authz_policy_principals` document routes alongside authn.
+
 ### Added
 
+- **Durable workflow:** `DurableWorkflowRunStatus`, `DurableWorkflowRunDescription`, and `describe()` on `DurableWorkflowQueryPort` for coarse run lifecycle; `forze_temporal` maps Temporal `WorkflowHandle.describe()`.
 - **Application contracts:** `RelationSpec`, `NamedResourceSpec`, coercion and `require_static_*` helpers in `forze.application.contracts.resolution`; `warn_dynamic_relation_with_tenant_aware` and `validate_routed_client_tenancy_wiring` in `forze.application.contracts.tenancy`.
 - **Mongo, Firestore:** `RelationSpec` on document (`read` / `write` / `history`) and Mongo search `read` / `index_name`; gateways resolve collections per request; index validation skips dynamic write relations.
 - **BigQuery, ClickHouse:** analytics `ingest_relation` with legacy `dataset`/`database` + `ingest_table`; ingest adapters resolve per tenant.
@@ -21,10 +34,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`forze.base`:** `CacheLane` in `forze.base.primitives.cache` — reusable in-memory TTL/FIFO cache for catalog metadata.
 - **`forze.base`:** `SimpleLruRegistry` and `GuardedLruRegistry` in `forze.base.primitives.lru_registry` — async LRU resource caches with optional in-use guarded eviction.
 - **`forze.base`:** `InflightLane` in `forze.base.primitives` — asyncio singleflight coalescing for concurrent cache misses.
-- **Application contracts:** `require_tenant_id` in `forze.application.contracts.tenancy`; `secret_ref_for_tenant` and `resolve_str_for_tenant` in `forze.application.contracts.secrets`.
+- **Application contracts:** `require_tenant_id`, `parse_tenant_hint`, `coalesce_tenant_request_hints`, and `TENANT_ID_HEADER` in `forze.application.contracts.tenancy`; `secret_ref_for_tenant` and `resolve_str_for_tenant` in `forze.application.contracts.secrets`.
 - **Application execution:** `routed_client_lifecycle_step` and `RoutedClientLifecycle` protocol for tenant-routed integration clients.
 - **Application execution:** `LifecycleModule`, `LifecyclePlan.from_modules` / `with_modules` / `freeze()` — merge lifecycle modules and topologically order steps via `requires`, `provides`, and `depends_on` (same graph model as operation hooks; ordering only, no capability skip).
 - **Application execution:** `FrozenLifecyclePlan`, `ResolvedLifecyclePlan`, and `LifecyclePlan.with_concurrent()` — lifecycle freeze/resolve/run pipeline aligned with operation plans; optional concurrent execution within the same topological wave.
+- **Application execution:** `FrozenDepsRegistry`, `FrozenDeps`, and authoring `DepsRegistry` (`freeze()` / `resolve()`) — dependency registration (`Deps`) is split from per-scope resolution (`FrozenDeps` on `ExecutionContext`).
+- **Application execution:** dependency route typing uses `StrKey` directly; `Deps`, `FrozenDeps`, `ProviderStore`, and `DepsModule` are no longer generic over a route type parameter.
 - **Postgres:** `PostgresLifecycleModule` (pool, optional catalog warmup, optional document schema validation); lifecycle step factories set `postgres.client` capability metadata for declarative ordering.
 - **Application contracts:** `TenantAwareIntegrationConfig` in `forze.application.contracts.tenancy` — shared frozen `tenant_aware` flag for integration wiring configs (distinct from runtime `TenancyMixin`).
 - **Application contracts:** `forze.application.contracts.resolution` — `ValueResolver`, `MaybeAwaitable`, and `resolve_value` for static or tenant-scoped async/sync resolution.
@@ -32,17 +47,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Postgres:** `RelationSpec` on document (`read` / `write` / `history`), search (`index` / `read` / `heap`), hub (`hub` plus leg `index` / `read` / `heap`), and analytics (`ingest_relation`) configs; gateways and adapters resolve relations per request via `forze.application.contracts.resolution`.
 - **S3, GCS, Meilisearch:** `NamedResourceSpec` on `S3StorageConfig.bucket`, `GCSStorageConfig.bucket`, and `MeilisearchSearchConfig.index_uid` (with `coerce_named_resource_spec`); storage/search adapters resolve per request; deps modules warn when `tenant_aware=True` combines with dynamic resolvers.
 - **Postgres:** public exports `RelationSpec`, `coerce_relation_spec`, and `require_static_relation` from `forze_postgres`.
+- **Redis:** public exports `NamedResourceSpec`, `coerce_named_resource_spec`, and `resolve_redis_namespace` from `forze_redis`.
+- **S3:** public exports `NamedResourceSpec`, `coerce_named_resource_spec`, `is_static_named_resource`, and `resolve_s3_bucket` from `forze_s3`.
+- **SQS:** public exports `NamedResourceSpec`, `coerce_named_resource_spec`, and `resolve_sqs_namespace` from `forze_sqs`.
+- **Mongo:** public exports `NamedResourceSpec`, `RelationSpec`, `coerce_named_resource_spec`, `coerce_relation_spec`, `is_static_relation`, `relations_match`, `resolve_mongo_collection`, and `resolve_mongo_named_resource` from `forze_mongo`.
+- **RabbitMQ:** public exports `NamedResourceSpec`, `coerce_named_resource_spec`, and `resolve_rabbitmq_namespace` from `forze_rabbitmq`.
+- **BigQuery:** public exports `RelationSpec`, `coerce_relation_spec`, and `resolve_bigquery_ingest_target` from `forze_bigquery`.
+- **ClickHouse:** public exports `RelationSpec`, `coerce_relation_spec`, and `resolve_clickhouse_ingest_target` from `forze_clickhouse`.
+- **GCS:** public exports `NamedResourceSpec`, `coerce_named_resource_spec`, `is_static_named_resource`, and `resolve_gcs_bucket` from `forze_gcs`.
+- **Firestore:** public exports `RelationSpec`, `coerce_relation_spec`, `is_static_relation`, `relations_match`, and `resolve_firestore_collection` from `forze_firestore`.
+- **Meilisearch:** public exports `NamedResourceSpec`, `coerce_named_resource_spec`, `is_static_named_resource`, and `resolve_meilisearch_index_uid` from `forze_meilisearch`.
 - **Postgres:** startup warning when a route combines `tenant_aware=True` with dynamic `RelationSpec` resolvers (prefer relation-level isolation without row filters).
 - **Postgres:** `require_static_relation` — explicit error when startup document schema validation is wired for a route that uses a dynamic `RelationSpec` resolver.
 - **BigQuery, ClickHouse, Meilisearch, GCS, Firestore, Inngest:** `Routed*Client` with per-tenant `*RoutingCredentials`, `routed_*_lifecycle_step`, and LRU pool deduplication by connection fingerprint.
 
 ### Changed
 
+- **Application execution:** operation registry, planning, facade, and run modules moved under `forze.application.execution.operations` (`operations.registry`, `operations.planning`, `operations.facade`, `operations.run`). Lifecycle wave execution lives in `forze.application.execution.lifecycle.run`; shared graph wave helpers in `forze.application.execution.graph_run`. `steps_graph_from_sequence` uses registration order as a tie-break when step priorities are equal.
+- **Application coordinators:** `DocumentCoordinator` moved to `forze.application.coordinators.document` (query/command/pagination mixins); `DocumentReadGatewayPort` and `DocumentWriteGatewayPort` live in `forze.application.contracts.document`. Public import `from forze.application.coordinators import DocumentCoordinator` is unchanged.
 - **Application execution:** `LifecyclePlan.build()` now returns `FrozenLifecyclePlan` (deprecated alias for `freeze()`); `startup` / `shutdown` run on frozen or resolved plans, not on the authoring plan.
+- **Application execution:** `DepsPlan` renamed to `DepsRegistry`; `DepsRegistry.build()` is deprecated in favor of `freeze()` then `FrozenDepsRegistry.resolve()`. The former `DepsRegistry` provider map is internal `ProviderStore`. Registration `Deps` no longer supports `provide` / `resolve_*`; use `FrozenDeps` via freeze/resolve.
 - **Mongo:** `MongoSearchConfig` uses a single `index_name` (semantics depend on `engine`) instead of separate `atlas_index_name` / `vector_index_name` / `text_index_name` keys.
 - **Postgres:** reorganized `forze_postgres.kernel` into `kernel.client`, `kernel.catalog`, and `kernel.sql`; `PostgresIntrospector` uses `CacheLane`. Direct imports of `forze_postgres.kernel.platform`, `forze_postgres.kernel.introspect`, `forze_postgres.kernel.query`, `forze_postgres.pagination`, and related flat kernel modules must be updated to the new paths.
-- **Postgres:** `RoutedPostgresClient` uses `GuardedLruRegistry` internally (no public API change).
-- **Redis, Mongo, SQS, S3, Temporal, RabbitMQ:** routed clients use `SimpleLruRegistry` internally (no public API change).
+- **Application contracts:** `TenantClientRegistry`, `resolve_dsn_for_tenant`, `ensure_dsn_fingerprint`, `resolve_structured_for_tenant`, and `ensure_structured_fingerprint` in `forze.application.contracts.tenancy` — shared pool and secret-resolution helpers for routed integration clients.
+- **Postgres, Redis, Mongo, SQS, S3, GCS, Temporal, RabbitMQ, Firestore, BigQuery, ClickHouse, Meilisearch, Inngest:** all `Routed*Client` implementations use `TenantClientRegistry` and the tenancy helpers above (no public constructor API change; misconfiguration errors may reference `max_entries` or `Tenant client registry is not started`).
 - **Postgres:** `PostgresIntrospector` uses `InflightLane` for catalog singleflight (no public API change).
 - **Postgres, Redis, Mongo, SQS, S3, Temporal, RabbitMQ:** routed clients and lifecycle steps use shared tenancy/secrets helpers and generic routed lifecycle hooks internally (no public API change).
 - **Postgres, Redis, Mongo, SQS, S3, Temporal, RabbitMQ:** routed clients deduplicate LRU pools by connection fingerprint when multiple tenants resolve to the same backend target.
@@ -50,6 +78,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Postgres:** internal reorganisation of `forze_postgres.adapters.analytics` (package split with shared port/query/cursor/chunked modules); analytics SQL helpers moved from `forze_postgres.kernel.client` to `forze_postgres.kernel.sql`. Public import `forze_postgres.adapters.analytics.PostgresAnalyticsAdapter` is unchanged.
 - **Analytics:** shared offset/keyset cursor token helpers in `forze.application.contracts.analytics._adapter_common` (used by Postgres and ClickHouse adapters).
 - **Postgres:** internal reorganisation of `forze_postgres.execution` (`lifecycle/` subpackage; `execution.deps.configs` and `execution.deps.factories` subpackages). Public imports from `forze_postgres` are unchanged. Direct imports of removed modules (`forze_postgres.execution.deps.deps`, `forze_postgres.execution.deps.configs` as a single file, top-level `forze_postgres.execution.catalog_warmup`, `forze_postgres.execution.document_schema`, and `forze_postgres.execution.lifecycle` as a module file) must use `forze_postgres.execution.deps`, `forze_postgres.execution.lifecycle`, or the `forze_postgres` package root instead.
+- **Redis:** reorganized `forze_redis.kernel` into `kernel.client`; direct imports of `forze_redis.kernel.platform` must use `forze_redis.kernel.client` (or package root).
+- **Redis:** internal reorganisation of `forze_redis.execution` (`lifecycle/` subpackage; `execution.deps.configs` and `execution.deps.factories` subpackages). Public imports from `forze_redis` are unchanged. Direct imports of `forze_redis.execution.deps.deps` or `forze_redis.execution.lifecycle` as a module file must use `forze_redis.execution.deps`, `forze_redis.execution.lifecycle`, or the package root.
+- **S3 / SQS:** reorganized `kernel` into `kernel.client`; direct imports of `forze_s3.kernel.platform` / `forze_sqs.kernel.platform` must use `kernel.client` (or package root).
+- **S3 / SQS:** internal reorganisation of `execution` (`lifecycle/` subpackage; `execution.deps.configs` and `execution.deps.factories`). Public imports from `forze_s3` / `forze_sqs` unchanged. Direct imports of `execution.deps.deps` or top-level `execution.lifecycle` module files must use `execution.deps`, `execution.lifecycle`, or the package root.
+- **Mongo / RabbitMQ:** reorganized `kernel` into `kernel.client`; direct imports of `forze_mongo.kernel.platform` / `forze_rabbitmq.kernel.platform` must use `kernel.client` (or package root).
+- **Mongo / RabbitMQ:** internal reorganisation of `execution` (`lifecycle/` subpackage; `execution.deps.configs` and `execution.deps.factories`). Public imports from `forze_mongo` / `forze_rabbitmq` unchanged. Direct imports of `execution.deps.deps` or top-level `execution.lifecycle` module files must use `execution.deps`, `execution.lifecycle`, or the package root.
+- **BigQuery / ClickHouse:** reorganized `kernel` into `kernel.client`; direct imports of `forze_bigquery.kernel.platform` / `forze_clickhouse.kernel.platform` must use `kernel.client` (or package root).
+- **BigQuery / ClickHouse:** internal reorganisation of `execution` (`lifecycle/` subpackage; `execution.deps.configs` and `execution.deps.factories`). Public imports from `forze_bigquery` / `forze_clickhouse` unchanged. Direct imports of `execution.deps.deps` or top-level `execution.lifecycle` module files must use `execution.deps`, `execution.lifecycle`, or the package root.
+- **GCS / Firestore:** reorganized `kernel` into `kernel.client`; direct imports of `forze_gcs.kernel.platform` / `forze_firestore.kernel.platform` must use `kernel.client` (or package root).
+- **GCS / Firestore:** internal reorganisation of `execution` (`lifecycle/` subpackage; `execution.deps.configs` and `execution.deps.factories`). Public imports from `forze_gcs` / `forze_firestore` unchanged. Direct imports of `execution.deps.deps` or top-level `execution.lifecycle` module files must use `execution.deps`, `execution.lifecycle`, or the package root.
+- **Temporal / Inngest:** reorganized `kernel` into `kernel.client`; direct imports of `forze_temporal.kernel.platform` / `forze_inngest.kernel.platform` must use `kernel.client` (or package root).
+- **Temporal / Inngest:** internal reorganisation of `execution` (`lifecycle/` subpackage; `execution.deps.configs` and `execution.deps.factories`). Public imports from `forze_temporal` / `forze_inngest` unchanged. Direct imports of `execution.deps.deps` or top-level `execution.lifecycle` module files must use `execution.deps`, `execution.lifecycle`, or the package root.
+- **Meilisearch / Vault:** reorganized `kernel` into `kernel.client`; direct imports of `forze_meilisearch.kernel.platform` / `forze_vault.kernel.platform` must use `kernel.client` (or package root).
+- **Meilisearch:** internal reorganisation of `execution` (`lifecycle/` subpackage; `execution.deps.configs` and `execution.deps.factories`); expanded package-root exports. Direct imports of `forze_meilisearch.execution.deps.deps` or top-level `execution.lifecycle` module files must use `execution.deps`, `execution.lifecycle`, or the package root.
+- **Vault:** internal reorganisation of `execution` (`lifecycle/` subpackage). Public imports from `forze_vault` unchanged. Direct imports of top-level `forze_vault.execution.lifecycle` as a module file must use `execution.lifecycle` or the package root.
+- **Inngest:** `InngestConfig` is a frozen attrs class; `request_timeout` is `timedelta | None` (replaces `request_timeout_ms` on config and `InngestRoutingCredentials` JSON).
+- **S3 / SQS:** `S3Config` and `SQSConfig` are frozen attrs classes with `to_aio_config()`; `S3Head`, `GCSHead`, `GCSListedObject`, `SQSQueueMessage`, and `RabbitMQQueueMessage` are frozen attrs types (constructors required; dict literals no longer accepted for configs).
+- **BigQuery / ClickHouse:** client port `timeout` parameters use `timedelta | None`.
+- **ClickHouse:** `ClickHouseConfig.keepalive_timeout` is `timedelta`.
+- **Identity OIDC:** `JwksKeyProvider.timeout` and `cache_ttl` use `timedelta`.
 - **Postgres:** `Postgres*Config` integration wiring is now frozen `attrs` classes (constructors required; dict literals no longer accepted). `tenant_aware` is inherited from `TenantAwareIntegrationConfig`. Federated members use `PostgresFederatedSearchLegSearch` / `PostgresFederatedSearchLegHub` instead of embedded dict shape detection. Removed module-level `validate_pg_search_conf`, `validate_postgres_hub_search_conf`, and `validate_postgres_federated_search_conf` (validation runs at config construction or via `.validate()` / `validate_against_spec`).
 - **Integrations:** `Mongo*Config`, `Firestore*Config`, `Meilisearch*Config`, `ClickHouse*Config`, `BigQuery*Config`, `Redis*Config`, `S3StorageConfig`, `GCSStorageConfig`, `TemporalWorkflowConfig`, `RabbitMQQueueConfig`, `SQSQueueConfig`, and `InngestEventConfig` are frozen `attrs` classes (constructors required; dict literals no longer accepted). `tenant_aware` uses `TenantAwareIntegrationConfig` where applicable. Removed `validate_mongo_search_conf`, `validate_meilisearch_search_conf`, `validate_meilisearch_federated_search_conf`, `validate_clickhouse_analytics_config`, and `validate_bigquery_analytics_config` from public exports (validation on config types).
 - **`forze.base`:** `frozen_mapping` in `forze.base.primitives` for immutable nested maps on integration configs.
@@ -57,7 +105,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
+- **Application execution:** `forze.application.execution.registry`, `planning`, `facade`, and `running` subpackages; `OperationRunner`; `lifecycle_graph_from_sequence` (use `steps_graph_from_sequence` from `forze.application.contracts.execution`).
 - **Postgres:** `validate_pg_search_conf`, `validate_postgres_hub_search_conf`, `validate_postgres_federated_search_conf`, and `is_postgres_federated_embedded_hub_config` from the public API (use config constructors and instance validation instead).
+- **Postgres:** dict/mapping coercion for `ConfigurablePostgresDocument` and `ConfigurablePostgresReadOnlyDocument` (use `PostgresDocumentConfig` / `PostgresReadOnlyDocumentConfig` constructors).
+- **Redis:** `forze_redis.execution.deps.deps` module path (use `forze_redis.execution.deps` or `execution.deps.factories`).
+- **S3 / SQS:** `forze_s3.execution.deps.deps` and `forze_sqs.execution.deps.deps` module paths (use `execution.deps` or `execution.deps.factories`).
+- **Mongo / RabbitMQ:** `forze_mongo.execution.deps.deps` and `forze_rabbitmq.execution.deps.deps` module paths (use `execution.deps` or `execution.deps.factories`).
+- **BigQuery / ClickHouse:** `forze_bigquery.execution.deps.deps` and `forze_clickhouse.execution.deps.deps` module paths (use `execution.deps` or `execution.deps.factories`).
+- **GCS / Firestore:** `forze_gcs.execution.deps.deps` and `forze_firestore.execution.deps.deps` module paths (use `execution.deps` or `execution.deps.factories`).
+- **Temporal / Inngest:** `forze_temporal.execution.deps.deps` and `forze_inngest.execution.deps.deps` module paths (use `execution.deps` or `execution.deps.factories`).
+- **Meilisearch:** `forze_meilisearch.execution.deps.deps` module path (use `execution.deps` or `execution.deps.factories`).
+- **Meilisearch / Vault:** `forze_meilisearch.kernel.platform` and `forze_vault.kernel.platform` module paths (use `kernel.client` or package root).
+- **Inngest:** dict-literal / TypedDict `InngestConfig`; `request_timeout_ms` field names on Inngest types and routing credentials JSON.
+- **S3 / SQS:** TypedDict `S3Config` and `SQSConfig`; dict-literal construction for those configs.
 - **Integrations:** `validate_mongo_search_conf`, `validate_meilisearch_search_conf`, `validate_meilisearch_federated_search_conf`, `validate_clickhouse_analytics_config`, and `validate_bigquery_analytics_config` from public exports.
 
 ### Documentation
@@ -67,9 +127,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **ClickHouse:** routed pool fingerprints no longer embed raw passwords; password material is a one-way dedup tag only.
-- **Inngest:** routed pool fingerprints include signing key and client config fields (`is_production`, `request_timeout_ms`), not only `app_id` and `event_key`.
-- **`forze.base`:** `connection_string_fingerprint` includes a hashed password tag when the URI contains a password (fixes incorrect LRU pool sharing when host/username match but passwords differ).
+- **`forze_fastapi`:** tenant resolution honors JWT/OIDC `issuer_tenant_hint` and `X-Tenant-Id` via `TenantResolverPort.requested_tenant_id`; hint-only fallback when no tenant resolver is registered (`parse_tenant_hint`, `coalesce_tenant_request_hints` in `forze.application.contracts.tenancy`).
+- **`forze.base`:** `connection_string_fingerprint` includes sorted URI query parameters so routed-client LRU dedup distinguishes targets such as Temporal gRPC hosts with `?dedup=` test hints.
 - **Meilisearch:** federated search awaits snapshot finalization; `ensure_index` and multi-search use `meilisearch-python-sdk` models (`SearchParams.federation_options`, `Federation`). Requires `meilisearch-python-sdk>=7.2.1`.
 - **Postgres:** `ensure`, `ensure_many`, `upsert`, and `upsert_many` build `ON CONFLICT` from `PostgresDocumentConfig.conflict_target` or inferred primary-key columns (fixes composite PKs and tables with additional UNIQUE indexes).
 - **Mongo:** `ensure_many` and `upsert_many` classify bulk `$setOnInsert` upserts safely; missing rows after bulk upsert raise `mongo_ensure_bulk_miss` conflict instead of a generic not-found.
@@ -89,7 +148,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Document & search:** `DocumentCoordinator`, `DocumentCacheCoordinator`, and `SearchResultSnapshotCoordinator`; `update_matching` / `ensure`; method-specific ports (`find_page`, `find_cursor`, `search_page`, `project_*`, `select_*`, …); hub and federated search (FTS/PGroonga v2, weighted RRF).
 - **Document contracts:** `RowLockMode` on `for_update`; `select_cursor`; stream methods `find_stream`, `project_stream`, and `select_stream`; post-write `hydrate_from_write` when read/write sources align.
 - **Sort defaults:** `DocumentSpec.default_sort`, `SearchSpec.default_sort`, and `HubSearchSpec.default_sort`; shared helpers `resolve_effective_sorts`, `normalize_sorts_for_keyset`, and `validate_sort_fields` in `forze.application.contracts.querying`.
-- **Durable functions:** contracts under `forze.application.contracts.durable.function`; optional `DurableFunctionSpec.operation`; `handler_for_registry_operation` and `run_durable_function` in `forze.application.execution.running`.
+- **Durable functions:** contracts under `forze.application.contracts.durable.function`; optional `DurableFunctionSpec.operation`; `handler_for_registry_operation` and `run_durable_function` in `forze.application.execution.operations.run`.
 - **`forze_inngest` (`inngest` extra):** Inngest adapter (`InngestClient`, `InngestDepsModule`, `register_functions`, `InngestFunctionBinding`, `inngest_lifecycle_step`, FastAPI `serve`) with registry-backed cron/event runs via `register_functions(..., registry=)`.
 - **Workflow schedules:** schedule contracts and `forze_temporal` Temporal Schedules support (create/upsert/update/delete/pause/unpause/trigger/describe/list) with declarative bootstrap via `TemporalDepsModule.schedule_bootstraps`.
 - **Queue delayed delivery:** `QueueCommandPort.enqueue` / `enqueue_many` accept `delay` and `not_before`; SQS `DelaySeconds`, Mock `visible_at` filtering, and RabbitMQ DLX delay queues when `delayed_delivery=True`.

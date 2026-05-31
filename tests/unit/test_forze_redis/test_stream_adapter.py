@@ -10,7 +10,7 @@ pytest.importorskip("redis")
 
 from forze_redis.adapters.stream import RedisStreamAdapter, RedisStreamGroupAdapter
 from forze_redis.adapters.codecs import RedisStreamCodec
-from forze_redis.kernel.platform.client import RedisClient
+from forze_redis.kernel.client import RedisClient
 from forze.base.serialization import PydanticRecordMappingCodec
 
 

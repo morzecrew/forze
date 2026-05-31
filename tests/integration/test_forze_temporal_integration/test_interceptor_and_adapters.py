@@ -8,18 +8,23 @@ from temporalio.contrib.pydantic import pydantic_data_converter
 from temporalio.testing import WorkflowEnvironment
 from temporalio.worker import Worker
 
-from forze.application.contracts.durable.workflow import DurableWorkflowHandle, DurableWorkflowSpec
+from forze.application.contracts.durable.workflow import (
+    DurableWorkflowHandle,
+    DurableWorkflowRunStatus,
+    DurableWorkflowSpec,
+)
 from forze.application.contracts.durable.workflow.specs import DurableWorkflowInvokeSpec
 from forze.application.contracts.authn import AuthnIdentity
 from forze.application.execution import ExecutionContext, InvocationMetadata
 from forze.application.execution.deps import Deps
 from forze.base.primitives import uuid7
+from tests.support.execution_context import context_from_deps, context_from_modules, frozen_deps_from_deps
 from forze_temporal.adapters.workflow import (
     TemporalWorkflowCommandAdapter,
     TemporalWorkflowQueryAdapter,
 )
 from forze_temporal.interceptors.context import ExecutionContextInterceptor
-from forze_temporal.kernel.platform.client import TemporalClient
+from forze_temporal.kernel.client.client import TemporalClient
 
 from ._workflow_defs import (
     CTX_BOX,
@@ -39,7 +44,7 @@ async def test_execution_context_interceptor_propagates_correlation_to_activity(
 
     fixed = uuid7()
     deps = Deps.plain({})
-    exec_ctx = ExecutionContext(deps=deps)
+    exec_ctx = context_from_deps(deps)
     CTX_BOX["exec"] = exec_ctx
     try:
         eci = ExecutionContextInterceptor(ctx_dep=lambda: exec_ctx)
@@ -83,7 +88,7 @@ async def test_temporal_workflow_adapters_end_to_end() -> None:
     """``TemporalWorkflowCommandAdapter`` / ``TemporalWorkflowQueryAdapter`` against a live client."""
 
     deps = Deps.plain({})
-    exec_ctx = ExecutionContext(deps=deps)
+    exec_ctx = context_from_deps(deps)
     CTX_BOX["exec"] = exec_ctx
     try:
         eci = ExecutionContextInterceptor(ctx_dep=lambda: exec_ctx)
@@ -123,10 +128,16 @@ async def test_temporal_workflow_adapters_end_to_end() -> None:
                     metadata=InvocationMetadata(execution_id=uuid7(), correlation_id=uuid7(), causation_id=None),
                 ):
                     handle: DurableWorkflowHandle = await cmd.start(SumIn(a=40, b=2))
+                    running = await qry.describe(handle)
+                    assert running.status == DurableWorkflowRunStatus.RUNNING
+                    assert running.is_terminal is False
                     out = await qry.result(handle)
 
             validated = SumOut.model_validate(out)
             assert validated.total == 42
+            completed = await qry.describe(handle)
+            assert completed.status == DurableWorkflowRunStatus.COMPLETED
+            assert completed.is_terminal is True
         finally:
             await env.shutdown()
     finally:
@@ -142,7 +153,7 @@ async def test_interceptor_is_worker_and_client_for_sdk_merge() -> None:
     from temporalio.worker import Interceptor as WorkerInterceptor
 
     deps = Deps.plain({})
-    exec_ctx = ExecutionContext(deps=deps)
+    exec_ctx = context_from_deps(deps)
     eci = ExecutionContextInterceptor(ctx_dep=lambda: exec_ctx)
 
     assert isinstance(eci, ClientInterceptor)

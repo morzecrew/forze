@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 
 from forze.base.exceptions import CoreException
-from forze_bigquery.kernel.platform.client import BigQueryClient
+from forze_bigquery.kernel.client.client import BigQueryClient
 
 
 @pytest.mark.integration

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from forze.application.contracts.mapping import Mapper
 from forze.application.execution import Deps, ExecutionContext
+from tests.support.execution_context import context_from_deps, context_from_modules, frozen_deps_from_deps
 
 
 class _StubMapper:
@@ -19,5 +20,5 @@ class TestMapperProtocol:
     async def test_call_maps_source(self) -> None:
         m = _StubMapper()
         assert await m(3) == "6"
-        _ = ExecutionContext(deps=Deps.plain({}))
+        _ = context_from_deps(Deps.plain({}))
         assert await m(4) == "8"

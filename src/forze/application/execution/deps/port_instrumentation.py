@@ -9,13 +9,13 @@ from forze.base.primitives import StrKey
 if TYPE_CHECKING:
     from forze.application.execution.context import ExecutionContext
 
-    from .container import Deps
+    from .frozen import FrozenDeps
 
 # ----------------------- #
 
 
 def maybe_wrap_configurable(
-    deps: "Deps[Any]",
+    deps: "FrozenDeps",
     ctx: "ExecutionContext",
     key: DepKey[Any],
     spec: BaseSpec,
@@ -50,7 +50,7 @@ def maybe_wrap_configurable(
 
 
 def record_simple_resolve(
-    deps: "Deps[Any]",
+    deps: "FrozenDeps",
     ctx: "ExecutionContext",
     key: DepKey[Any],
     route: StrKey | None,

@@ -11,6 +11,7 @@ from forze.application.contracts.authn import (
     AuthnSpec,
     PasswordCredentials,
     PasswordVerifierPort,
+    PrincipalEligibilityPort,
     PrincipalResolverPort,
     TokenVerifierPort,
 )
@@ -45,6 +46,9 @@ class AuthnOrchestrator(AuthnPort):
     api_key_verifier: ApiKeyVerifierPort | None = attrs.field(default=None)
     """Optional API key verifier; required when ``"api_key"`` is enabled."""
 
+    eligibility: PrincipalEligibilityPort
+    """Principal eligibility gate applied after credential verification."""
+
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
@@ -71,6 +75,7 @@ class AuthnOrchestrator(AuthnPort):
         spec: AuthnSpec,
         *,
         resolver: PrincipalResolverPort,
+        eligibility: PrincipalEligibilityPort,
         password_verifier: PasswordVerifierPort | None = None,
         token_verifier: TokenVerifierPort | None = None,
         api_key_verifier: ApiKeyVerifierPort | None = None,
@@ -79,6 +84,7 @@ class AuthnOrchestrator(AuthnPort):
 
         return cls(
             resolver=resolver,
+            eligibility=eligibility,
             enabled_methods=frozenset(spec.enabled_methods),
             password_verifier=password_verifier,
             token_verifier=token_verifier,
@@ -99,6 +105,7 @@ class AuthnOrchestrator(AuthnPort):
 
         assertion = await self.password_verifier.verify_password(credentials)
         identity = await self.resolver.resolve(assertion)
+        await self.eligibility.require_authentication_allowed(identity.principal_id)
 
         return AuthnResult(
             identity=identity,
@@ -119,6 +126,7 @@ class AuthnOrchestrator(AuthnPort):
 
         assertion = await self.token_verifier.verify_token(credentials)
         identity = await self.resolver.resolve(assertion)
+        await self.eligibility.require_authentication_allowed(identity.principal_id)
 
         return AuthnResult(
             identity=identity,
@@ -139,6 +147,7 @@ class AuthnOrchestrator(AuthnPort):
 
         assertion = await self.api_key_verifier.verify_api_key(credentials)
         identity = await self.resolver.resolve(assertion)
+        await self.eligibility.require_authentication_allowed(identity.principal_id)
 
         return AuthnResult(
             identity=identity,

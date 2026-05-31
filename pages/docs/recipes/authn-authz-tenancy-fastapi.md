@@ -4,13 +4,13 @@ This recipe describes how Forze separates **boundary authentication** (who is ca
 
 ## Two trust boundaries
 
-1. **ASGI / FastAPI boundary** — `ContextBindingMiddleware` resolves boundary authentication (`AuthnResult`), derives optional `TenantIdentity`, then `ctx.inv_ctx.bind(...)` stores the principal-only `AuthnIdentity` plus tenant for the request. Downstream code should read `ctx.inv_ctx.get_authn()` / `ctx.inv_ctx.get_tenant()`, not re-parse headers everywhere.
+1. **ASGI / FastAPI boundary** — `SecurityContextMiddleware` resolves boundary authentication (`AuthnResult` via ingress resolvers), derives optional `TenantIdentity` (`resolve_tenant_identity` coalesces JWT/OIDC `issuer_tenant_hint` and optional `X-Tenant-Id` into `TenantResolverPort.requested_tenant_id`), then `ctx.inv_ctx.bind_identity(...)` stores the principal-only `AuthnIdentity` plus tenant for the request. Downstream code should read `ctx.inv_ctx.get_authn()` / `ctx.inv_ctx.get_tenant()`, not re-parse headers everywhere.
 2. **Route / handler boundary** — Optional `HttpEndpointFeaturePort` wrappers (for example `RequireAuthnFeature`, `RequireTenantFeature`) can enforce policy **after** the execution context exists but **before** the handler runs (fast-fail at the HTTP edge). Prefer **authoritative** checks on the operation plan: `authn_required_before_step` and `tenant_required_before_step` from `forze.application.hooks.authn` / `hooks.tenancy`, plus `authorize_before_step` / `document_scope_wrap_step` from `forze.application.hooks.authz`, so non-HTTP callers hit the same rules. Align OpenAPI with `HttpMetadataSpec` (`dependencies`, `openapi_extra`) on `build_http_endpoint_spec` / `attach_http_endpoint` (see below).
 
 ```mermaid
 flowchart TB
-  MW[ContextBindingMiddleware]
-  MW --> bind[inv_ctx.bind]
+  MW[SecurityContextMiddleware]
+  MW --> bind[inv_ctx.bind_identity]
   bind --> feats[HttpEndpointFeature chain]
   feats --> uc[Handler]
 ```
@@ -18,23 +18,23 @@ flowchart TB
 ## Without tenancy
 
 - Register **authn** and **authz** dep routes on the kernel `Deps` (`AuthnDepsModule`, `AuthzDepsModule`, document stores for auth specs).
-- Use one or more of `HeaderTokenAuthnIdentityResolver` / `HeaderApiKeyAuthnIdentityResolver` / `CookieTokenAuthnIdentityResolver` for credentials.
-- For tenant, you must still configure **exactly one** tenant strategy on the middleware: for example `TenantIdentityResolver(required=False)` with **no** `TenantResolverDepKey` registered, so `TenantIdentity` stays `None` even if request or issuer hints are present.
+- Use one or more ingress sources from `forze_fastapi.security` (`HeaderTokenAuthn`, `HeaderApiKeyAuthn`, `CookieTokenAuthn`) inside `AuthnRequirement`.
+- With **no** `TenantResolverDepKey` registered, `TenantIdentity` stays `None` unless a valid UUID hint is present (`issuer_tenant_hint` on `AuthnResult` or `X-Tenant-Id`); hints alone bind tenant context for demos only — production apps should register `TenantResolverDepKey` so membership is validated.
 - Build `AuthzScope` from `ctx.inv_ctx.get_tenant()` (or pass `AuthzScope()` when policy is global). Use `ctx.authz.decision(spec).authorize(...)` on the operation plan — see [Authorization reference](../reference/authorization.md).
 
 ## With tenancy
 
-- Resolve tenant with `TenantIdentityResolver` (validates optional issuer `tid` and optional header hint against `TenantResolverPort`; the resolver is authoritative and hints never outrank it).
+- Register `TenantResolverDepKey` so `resolve_tenant_identity` passes coalesced issuer `tid` / `X-Tenant-Id` hints as `requested_tenant_id`; the resolver is authoritative and hints never outrank membership.
 - Keep **authentication document routes** on **tenant-unaware** document clients until `TenantIdentity` is known (see `AUTHN_TENANT_UNAWARE_DOCUMENT_SPEC_NAMES` in `forze_identity.authn.application` and [Multi-tenancy](../concepts/multi-tenancy.md)).
 - Pass `AuthzScope(tenant_id=ctx.inv_ctx.get_tenant().tenant_id)` into decision and scoping requests when your policy store is partitioned.
 
 ## Credential sources on the boundary
 
-`ContextBindingMiddleware` accepts a sequence of single-source resolvers (`authn_identity_resolvers`); the **order** of the sequence is the precedence order, and the `when_multiple_credentials` policy decides what happens when more than one resolver returns an identity for the same request:
+`SecurityContextMiddleware` accepts `AuthnRequirement.ingress` — a sequence of ingress sources; the **order** is precedence, and `when_multiple_credentials` decides what happens when more than one ingress succeeds:
 
-- `HeaderTokenAuthnIdentityResolver` reads bearer tokens from a configurable header (default `Authorization`). The `scheme` part of the header is forwarded to verifiers as a **routing hint** — the JWT signature/claims (or opaque-token verifier) remain the actual security boundary.
-- `HeaderApiKeyAuthnIdentityResolver` reads API keys from a configurable header (default `X-API-Key`). The optional `prefix:key` shape lets verifiers route to per-prefix profiles.
-- `CookieTokenAuthnIdentityResolver` reads an access token from a named cookie into `AccessTokenCredentials`. Cookie bearer has **CSRF** implications for browser clients; prefer `HttpOnly` + `SameSite` and avoid using cookie access tokens for state-changing requests without anti-CSRF tokens, or restrict cookies to non-browser clients.
+- `HeaderTokenAuthn` reads bearer tokens from a configurable header (default `Authorization`). The `scheme` part of the header is forwarded to verifiers as a **routing hint** — the JWT signature/claims (or opaque-token verifier) remain the actual security boundary.
+- `HeaderApiKeyAuthn` reads API keys from a configurable header (default `X-API-Key`). The optional `prefix:key` shape lets verifiers route to per-prefix profiles.
+- `CookieTokenAuthn` reads an access token from a named cookie into `AccessTokenCredentials`. Cookie bearer has **CSRF** implications for browser clients; prefer `HttpOnly` + `SameSite` and avoid using cookie access tokens for state-changing requests without anti-CSRF tokens, or restrict cookies to non-browser clients.
 
 Set `when_multiple_credentials="reject"` to raise `AuthenticationError(code="ambiguous_credentials")` when more than one resolver succeeds; the default `"first_in_order"` short-circuits on the first hit.
 
@@ -46,12 +46,12 @@ Merge document deps with `AuthnDepsModule(...)()` and `AuthzDepsModule(...)()`, 
 
 ```python
 from forze.application.contracts.authn import AuthnSpec
-from forze_fastapi.middlewares.context import (
-    ContextBindingMiddleware,
-    HeaderApiKeyAuthnIdentityResolver,
-    HeaderTokenAuthnIdentityResolver,
+from forze_fastapi.middlewares import SecurityContextMiddleware
+from forze_fastapi.security import (
+    AuthnRequirement,
+    HeaderApiKeyAuthn,
+    HeaderTokenAuthn,
 )
-from forze_fastapi.middlewares.context.tenancy import TenantIdentityResolver
 
 api_authn = AuthnSpec(
     name="api",
@@ -59,14 +59,15 @@ api_authn = AuthnSpec(
 )
 
 app.add_middleware(
-    ContextBindingMiddleware,
+    SecurityContextMiddleware,
     ctx_dep=get_ctx,
-    authn_identity_resolvers=(
-        HeaderTokenAuthnIdentityResolver(spec=api_authn),
-        HeaderApiKeyAuthnIdentityResolver(spec=api_authn),
+    authn=AuthnRequirement(
+        ingress=(
+            HeaderTokenAuthn(authn_spec=api_authn),
+            HeaderApiKeyAuthn(authn_spec=api_authn),
+        ),
     ),
     when_multiple_credentials="reject",
-    tenant_identity_resolver=TenantIdentityResolver(required=False),
 )
 ```
 
@@ -79,7 +80,7 @@ Register **authorization** on the frozen registry with `authorize_before_step` (
 ```python
 from forze.application.contracts.authz import AuthzSpec
 from forze.application.hooks.authz import authorize_before_step
-from forze.application.execution.registry import OperationRegistry
+from forze.application.execution.operations.registry import OperationRegistry
 
 registry = (
     OperationRegistry(handlers={"widgets.read": read_factory})

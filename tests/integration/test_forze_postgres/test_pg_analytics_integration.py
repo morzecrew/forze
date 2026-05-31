@@ -9,6 +9,7 @@ from forze.application.contracts.analytics import (
     AnalyticsQueryDefinition,
     AnalyticsSpec,
 )
+from tests.support.execution_context import context_from_deps, context_from_modules, frozen_deps_from_deps
 from forze.application.execution import ExecutionContext
 from forze.base.exceptions import CoreException
 from forze_postgres.adapters.analytics import PostgresAnalyticsAdapter
@@ -83,7 +84,7 @@ async def test_deps_module_wiring(pg_client: PostgresClient, pg_analytics_table:
             "events": _config(table_id),
         },
     )
-    ctx = ExecutionContext(deps=module())
+    ctx = context_from_deps(module())
     port = ctx.analytics.query(spec)
     page = await port.run("all", _Params())
     assert len(page.hits) >= 0

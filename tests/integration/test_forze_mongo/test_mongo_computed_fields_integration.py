@@ -11,9 +11,10 @@ from forze.application.contracts.document import (
 )
 from forze.application.execution import Deps, ExecutionContext
 from forze_mongo.execution.deps import MongoDocumentConfig
-from forze_mongo.execution.deps.deps import ConfigurableMongoDocument
+from forze_mongo.execution.deps import ConfigurableMongoDocument
 from forze_mongo.execution.deps.keys import MongoClientDepKey
-from forze_mongo.kernel.platform import MongoClient
+from forze_mongo.kernel.client import MongoClient
+from tests.support.execution_context import context_from_deps
 
 from tests.integration._computed_field_models import (
     ComputedCreate,
@@ -47,14 +48,12 @@ async def test_mongo_document_computed_field_roundtrip_not_persisted(
             write=(db_name, collection),
         )
     )
-    ctx = ExecutionContext(
-        deps=Deps.plain(
+    ctx = context_from_deps(Deps.plain(
             {
                 MongoClientDepKey: mongo_client,
                 DocumentQueryDepKey: configurable,
                 DocumentCommandDepKey: configurable,
-            }
-        )
+            })
     )
     adapter = ctx.document.command(spec)
 

@@ -14,7 +14,7 @@ pytest.importorskip("testcontainers")
 
 from testcontainers.minio import MinioContainer
 
-from forze_s3.kernel.platform.client import S3Client, S3Config
+from forze_s3.kernel.client import S3Client, S3Config
 
 MINIO_ROOT_USER = "minioadmin"
 MINIO_ROOT_PASSWORD = "minioadmin"
@@ -56,7 +56,7 @@ async def s3_client(minio_container):
     _container, endpoint = minio_container
 
     client = S3Client()
-    config: S3Config = {"s3": {"addressing_style": "path"}}
+    config = S3Config(s3={"addressing_style": "path"})
     await client.initialize(
         endpoint=endpoint,
         access_key_id=MINIO_ROOT_USER,

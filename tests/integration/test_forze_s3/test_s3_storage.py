@@ -6,14 +6,14 @@ from forze.application.contracts.storage import StorageSpec, UploadedObject
 from forze.application.execution import ExecutionContext
 from forze_s3.execution.deps.configs import S3StorageConfig
 from forze_s3.execution.deps.module import S3DepsModule
-from forze_s3.kernel.platform.client import S3Client
+from forze_s3.kernel.client import S3Client
+from tests.support.execution_context import context_from_deps
 
 @pytest.mark.asyncio
 async def test_s3_storage_adapter_upload_list_download_delete(
     s3_client: S3Client, s3_bucket: str
 ) -> None:
-    ctx = ExecutionContext(
-        deps=S3DepsModule(
+    ctx = context_from_deps(S3DepsModule(
             client=s3_client,
             storages={s3_bucket: S3StorageConfig(bucket=s3_bucket)},
         )()
@@ -56,8 +56,7 @@ async def test_s3_storage_list_pagination(
     s3_client: S3Client, s3_bucket: str
 ) -> None:
     """list() can page with limit/offset; full scan reports correct total_count."""
-    ctx = ExecutionContext(
-        deps=S3DepsModule(
+    ctx = context_from_deps(S3DepsModule(
             client=s3_client,
             storages={s3_bucket: S3StorageConfig(bucket=s3_bucket)},
         )()

@@ -10,7 +10,7 @@ from forze.base.exceptions import CoreException
 
 from forze.application.composition.document import DocumentFacade, DocumentKernelOp
 from forze.application.contracts.execution import Handler
-from forze.application.execution.registry import OperationRegistry
+from forze.application.execution.operations.registry import OperationRegistry
 from forze.base.primitives import StrKeyNamespace
 from forze.domain.models import ReadDocument
 

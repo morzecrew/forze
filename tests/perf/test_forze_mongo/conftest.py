@@ -11,7 +11,7 @@ pytest.importorskip("testcontainers.mongodb")
 
 from testcontainers.mongodb import MongoDbContainer
 
-from forze_mongo.kernel.platform import MongoClient
+from forze_mongo.kernel.client import MongoClient
 
 
 def _ensure_docker() -> None:

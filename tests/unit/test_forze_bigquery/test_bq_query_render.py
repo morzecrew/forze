@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel
 
-from forze_bigquery.kernel.platform.query import (
+from forze_bigquery.kernel.client.query import (
     build_count_sql,
     build_sync_query_request,
     params_to_query_parameters,

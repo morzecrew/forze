@@ -16,7 +16,6 @@ from forze.domain.models import BaseDTO, CreateDocumentCmd, Document
 from ....adapters import PostgresDocumentAdapter
 from ..._logger import logger
 from ..configs import PostgresDocumentConfig, PostgresReadOnlyDocumentConfig
-from ..configs.document import coerce_document_config, coerce_read_only_document_config
 from ..utils import doc_write_gw, read_gw
 
 if TYPE_CHECKING:
@@ -40,7 +39,7 @@ class ConfigurablePostgresReadOnlyDocument(DocumentQueryDepPort[R]):
     """Configurable Postgres read-only document adapter."""
 
     config: PostgresReadOnlyDocumentConfig = attrs.field(
-        converter=coerce_read_only_document_config,
+        validator=attrs.validators.instance_of(PostgresReadOnlyDocumentConfig),
     )
     """Configuration for the document."""
 
@@ -90,7 +89,9 @@ class ConfigurablePostgresReadOnlyDocument(DocumentQueryDepPort[R]):
 class ConfigurablePostgresDocument(DocumentCommandDepPort[R, D, C, U]):
     """Configurable Postgres document adapter."""
 
-    config: PostgresDocumentConfig = attrs.field(converter=coerce_document_config)
+    config: PostgresDocumentConfig = attrs.field(
+        validator=attrs.validators.instance_of(PostgresDocumentConfig),
+    )
     """Configuration for the document."""
 
     # ....................... #

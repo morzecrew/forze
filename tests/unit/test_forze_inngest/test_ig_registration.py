@@ -8,9 +8,10 @@ from forze.application.contracts.durable.function import (
     DurableFunctionInvokeSpec,
     DurableFunctionSpec,
 )
+from tests.support.execution_context import context_from_deps, context_from_modules, frozen_deps_from_deps
 from forze.application.contracts.execution import Handler
 from forze.application.execution import Deps, ExecutionContext
-from forze.application.execution.registry import OperationRegistry
+from forze.application.execution.operations.registry import OperationRegistry
 from forze.base.exceptions import CoreException
 from forze_inngest import InngestClient, InngestFunctionBinding, register_functions
 
@@ -45,7 +46,7 @@ def test_register_functions_returns_sdk_functions() -> None:
     functions = register_functions(
         client,
         [binding],
-        ctx_factory=lambda: ExecutionContext(deps=deps),
+        ctx_factory=lambda: context_from_deps(deps),
     )
 
     assert len(functions) == 1
@@ -70,7 +71,7 @@ def test_recording_client_native_used_for_registration() -> None:
     fns = register_functions(
         recording,
         [binding],
-        ctx_factory=lambda: ExecutionContext(deps=Deps.plain({})),
+        ctx_factory=lambda: context_from_deps(Deps.plain({})),
     )
 
     assert len(fns) == 1
@@ -107,7 +108,7 @@ def test_register_functions_with_spec_operation_and_registry() -> None:
     functions = register_functions(
         client,
         [binding],
-        ctx_factory=lambda: ExecutionContext(deps=Deps.plain({})),
+        ctx_factory=lambda: context_from_deps(Deps.plain({})),
         registry=frozen,
     )
 

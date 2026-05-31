@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -12,7 +12,6 @@ from forze_identity.authn.adapters.password_provisioning import PasswordAccountP
 from forze_identity.authn.domain.models.account import (
     PasswordAccount,
     ReadPasswordAccount,
-    ReadPrincipal,
 )
 
 # ----------------------- #
@@ -35,14 +34,14 @@ def _adapter(**overrides: object) -> PasswordAccountProvisioningAdapter:
             "update_cmd": MagicMock(),
         },
     )
-    principal_qry = MagicMock()
-    principal_qry.spec = DocumentSpec(name="pri", read=ReadPrincipal)
+    eligibility = MagicMock()
+    eligibility.require_authentication_allowed = AsyncMock()
 
     kwargs = {
         "password_svc": MagicMock(),
         "password_account_qry": password_account_qry,
         "password_account_cmd": password_account_cmd,
-        "principal_qry": principal_qry,
+        "eligibility": eligibility,
     }
     kwargs.update(overrides)
     return PasswordAccountProvisioningAdapter(**kwargs)  # type: ignore[arg-type]
@@ -55,17 +54,6 @@ class TestPasswordAccountProvisioningInit:
 
         with pytest.raises(CoreException, match="Password account caching"):
             _adapter(password_account_qry=qry)
-
-    def test_rejects_principal_history(self) -> None:
-        principal_qry = MagicMock()
-        principal_qry.spec = DocumentSpec(
-            name="pri",
-            read=ReadPrincipal,
-            history_enabled=True,
-        )
-
-        with pytest.raises(CoreException, match="Principal history"):
-            _adapter(principal_qry=principal_qry)
 
     @pytest.mark.asyncio
     async def test_accept_invite_not_implemented(self) -> None:

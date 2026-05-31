@@ -15,6 +15,7 @@ from forze.application.contracts.dlock import (
     DistributedLockQueryDepKey,
     DistributedLockSpec,
 )
+from tests.support.execution_context import context_from_deps, context_from_modules, frozen_deps_from_deps
 from forze.application.contracts.idempotency import IdempotencyDepKey, IdempotencySpec
 from forze.application.contracts.authn import AuthnIdentity
 from forze.application.contracts.tenancy import TenantIdentity
@@ -31,7 +32,7 @@ from forze_redis.execution.deps.configs import (
     RedisDistributedLockConfig,
     RedisIdempotencyConfig,
 )
-from forze_redis.execution.deps.deps import (
+from forze_redis.execution.deps import (
     ConfigurableRedisCache,
     ConfigurableRedisCounter,
     ConfigurableRedisDistributedLock,
@@ -39,11 +40,17 @@ from forze_redis.execution.deps.deps import (
 )
 from forze_redis.execution.deps.keys import RedisBlockingClientDepKey, RedisClientDepKey
 from forze_redis.execution.deps.module import RedisDepsModule
-from forze_redis.kernel.platform import RedisClient
+from forze_redis.kernel.client import RedisClient
 
 
 def _ctx() -> ExecutionContext:
-    return ExecutionContext(deps=Deps.plain({RedisClientDepKey: MagicMock(spec=RedisClient)}))
+    return context_from_deps(Deps.plain({RedisClientDepKey: MagicMock(spec=RedisClient)}))
+
+
+class TestConfigurableRedisCache:
+    def test_rejects_mapping_config(self) -> None:
+        with pytest.raises(TypeError, match="RedisUniversalConfig"):
+            ConfigurableRedisCache(config={"namespace": "acme"})
 
 
 class TestRedisDepsModule:
@@ -72,10 +79,10 @@ class TestRedisDepsModule:
         blocking = MagicMock(spec=RedisClient)
         module = RedisDepsModule(client=main, blocking_client=blocking)
 
-        deps = module()
+        resolved = frozen_deps_from_deps(module())
 
-        assert deps.provide(RedisClientDepKey) is main
-        assert deps.provide(RedisBlockingClientDepKey) is blocking
+        assert resolved.provide(RedisClientDepKey) is main
+        assert resolved.provide(RedisBlockingClientDepKey) is blocking
     def test_cache_adapter(self) -> None:
         factory = ConfigurableRedisCache(
             config=RedisCacheConfig(namespace="acme", tenant_aware=True),
@@ -141,7 +148,7 @@ class TestRedisDepsModule:
             client=MagicMock(spec=RedisClient),
             dlocks={"dl": RedisDistributedLockConfig(namespace="x")},
         )()
-        ctx2 = ExecutionContext(deps=deps)
+        ctx2 = context_from_deps(deps)
         q = ctx2.dlock.query(spec)
         c = ctx2.dlock.command(spec)
         assert isinstance(q, RedisDistributedLockAdapter)

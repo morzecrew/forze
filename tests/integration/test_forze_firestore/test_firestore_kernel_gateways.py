@@ -7,9 +7,10 @@ from uuid import uuid4
 import pytest
 
 from forze.application.execution import Deps, ExecutionContext
+from tests.support.execution_context import context_from_deps, context_from_modules, frozen_deps_from_deps
 from forze_firestore.execution.deps.keys import FirestoreClientDepKey
 from forze_firestore.execution.deps.utils import doc_write_gw, read_gw
-from forze_firestore.kernel.platform import FirestoreClient
+from forze_firestore.kernel.client import FirestoreClient
 from tests.support import (
     IntegrationCreateCmd,
     IntegrationDocument,
@@ -28,7 +29,7 @@ async def test_firestore_read_gateway_find_and_projections(
     unique_collection: str,
 ) -> None:
     collection = f"gw_rd_{unique_collection}"
-    ctx = ExecutionContext(deps=Deps.plain({FirestoreClientDepKey: firestore_client}))
+    ctx = context_from_deps(Deps.plain({FirestoreClientDepKey: firestore_client}))
     write = doc_write_gw(
         ctx,
         write_types={
@@ -74,7 +75,7 @@ async def test_firestore_write_gateway_update_and_history(
 ) -> None:
     collection = f"gw_wr_{unique_collection}"
     history = f"{collection}_history"
-    ctx = ExecutionContext(deps=Deps.plain({FirestoreClientDepKey: firestore_client}))
+    ctx = context_from_deps(Deps.plain({FirestoreClientDepKey: firestore_client}))
     write = doc_write_gw(
         ctx,
         write_types={

@@ -28,7 +28,7 @@ from forze.base.primitives import JsonDict
 from forze.base.serialization import pydantic_field_names
 from forze.domain.constants import ID_FIELD
 
-from ..platform import MongoClientPort
+from ..client import MongoClientPort
 from ..query import MongoQueryRenderer
 from ..relation import RelationSpec, is_static_relation, resolve_mongo_collection
 

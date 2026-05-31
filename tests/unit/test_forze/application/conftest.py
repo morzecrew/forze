@@ -6,8 +6,9 @@ from forze.application.contracts.counter import CounterDepKey, CounterPort, Coun
 from forze.application.contracts.document import DocumentSpec
 from forze.application.contracts.search import SearchSpec
 from forze.application.contracts.storage import StorageDepKey, StorageSpec
-from forze.application.execution import Deps, DepsPlan, ExecutionContext
+from forze.application.execution import Deps, DepsRegistry, ExecutionContext, FrozenDeps
 from forze.domain.models import CreateDocumentCmd, Document, ReadDocument
+from tests.support.execution_context import context_from_deps, context_from_modules, frozen_deps_from_deps
 
 from forze_mock import MockDepsModule, MockState
 from forze_mock.adapters import (
@@ -55,19 +56,19 @@ def stub_deps(mock_deps_module: MockDepsModule) -> Deps:
 @pytest.fixture
 def stub_ctx(stub_deps: Deps) -> ExecutionContext:
     """ExecutionContext with forze_mock-based Deps."""
-    return ExecutionContext(deps=stub_deps)
+    return context_from_deps(stub_deps)
 
 
 @pytest.fixture
-def traced_deps(mock_state: MockState) -> Deps:
+def traced_deps(mock_state: MockState) -> FrozenDeps:
     """Mock deps with runtime tracing enabled."""
-    return DepsPlan.from_modules(
+    return DepsRegistry.from_modules(
         lambda: MockDepsModule(state=mock_state)(),
-    ).with_tracing(runtime=True).build()
+    ).with_tracing(runtime=True).freeze().resolve()
 
 
 @pytest.fixture
-def traced_ctx(traced_deps: Deps) -> ExecutionContext:
+def traced_ctx(traced_deps: FrozenDeps) -> ExecutionContext:
     """ExecutionContext with runtime tracing enabled."""
     return ExecutionContext(deps=traced_deps)
 

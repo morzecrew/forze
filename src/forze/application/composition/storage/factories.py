@@ -1,5 +1,5 @@
 from forze.application.contracts.storage import StorageSpec
-from forze.application.execution.registry import OperationRegistry
+from forze.application.execution.operations.registry import OperationRegistry
 from forze.application.handlers.storage import (
     DeleteObject,
     DownloadObject,

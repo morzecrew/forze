@@ -68,6 +68,8 @@ deps_plan = DepsPlan.from_modules(inngest_module)
 
 Route keys must match `DurableFunctionEventSpec.name`.
 
+For framework tests or advanced wiring, prefer `from forze_inngest.execution.deps import ConfigurableInngestEventCommand` rather than removed `forze_inngest.execution.deps.deps` paths.
+
 ### Emit from a handler
 
 ```python

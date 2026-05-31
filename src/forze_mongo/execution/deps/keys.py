@@ -2,7 +2,7 @@
 
 from forze.application.contracts.deps import DepKey
 
-from ...kernel.platform import MongoClientPort
+from ...kernel.client import MongoClientPort
 
 # ----------------------- #
 

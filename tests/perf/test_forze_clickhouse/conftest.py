@@ -15,7 +15,7 @@ pytest.importorskip("testcontainers")
 
 from testcontainers.core.container import DockerContainer
 
-from forze_clickhouse.kernel.platform import ClickHouseClient, ClickHouseConfig
+from forze_clickhouse.kernel.client import ClickHouseClient, ClickHouseConfig
 
 CH_IMAGE = "clickhouse/clickhouse-server:24.8"
 CH_HTTP_PORT = 8123

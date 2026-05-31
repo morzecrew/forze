@@ -6,6 +6,7 @@ from forze.application.contracts.document import DocumentSpec
 from forze.application.execution import Deps, ExecutionContext
 from forze.application.handlers.document import GetDocument
 from forze.application.handlers.document.dto import DocumentIdDTO, DocumentIdRevDTO
+from tests.support.execution_context import context_from_deps, context_from_modules, frozen_deps_from_deps
 from pydantic import PositiveInt
 
 from forze_patterns.soft_deletion import DeleteDocument, RestoreDocument
@@ -48,7 +49,7 @@ class SoftUpdateCmd(UpdateCmdWithSoftDeletion):
 async def test_find_by_number_id_roundtrip_integration() -> None:
     state = MockState()
     deps = Deps.plain(dict(MockDepsModule(state=state)().plain_deps))
-    ctx = ExecutionContext(deps=deps)
+    ctx = context_from_deps(deps)
     spec = DocumentSpec(
         name="orders",
         read=NumberedReadDocument,
@@ -75,7 +76,7 @@ async def test_find_by_number_id_roundtrip_integration() -> None:
 async def test_soft_delete_hides_document_until_restore_integration() -> None:
     state = MockState()
     deps = Deps.plain(dict(MockDepsModule(state=state)().plain_deps))
-    ctx = ExecutionContext(deps=deps)
+    ctx = context_from_deps(deps)
     spec = DocumentSpec(
         name="orders",
         read=SoftDeletableReadDocument,

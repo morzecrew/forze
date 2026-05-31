@@ -4,7 +4,7 @@ import pytest
 
 from forze.base.exceptions import CoreException
 
-from forze_redis.kernel.platform.client import RedisClient
+from forze_redis.kernel.client import RedisClient
 
 
 @pytest.fixture

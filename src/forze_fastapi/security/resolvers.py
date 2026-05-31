@@ -9,7 +9,11 @@ from forze.application.contracts.authn import (
     AuthnPort,
     AuthnResult,
 )
-from forze.application.contracts.tenancy import TenantIdentity
+from forze.application.contracts.tenancy import (
+    TENANT_ID_HEADER,
+    TenantIdentity,
+    coalesce_tenant_request_hints,
+)
 from forze.application.execution.context import ExecutionContext
 from forze.base.exceptions import exc
 
@@ -179,12 +183,22 @@ async def resolve_tenant_identity(
     request: Request,
     ctx: ExecutionContext,
 ) -> TenantIdentity | None:
+    issuer_hint = authn.issuer_tenant_hint if authn is not None else None
+    header_hint = request.headers.get(TENANT_ID_HEADER)
+    requested = coalesce_tenant_request_hints(
+        issuer_hint=issuer_hint,
+        header_hint=header_hint,
+    )
+
     ten = ctx.tenancy.resolver()
-    resolved: TenantIdentity | None = None
 
     if ten is not None and authn is not None:
-        resolved = await ten.resolve_from_principal(
+        return await ten.resolve_from_principal(
             authn.identity.principal_id,
+            requested_tenant_id=requested,
         )
 
-    return resolved
+    if requested is not None:
+        return TenantIdentity(tenant_id=requested)
+
+    return None

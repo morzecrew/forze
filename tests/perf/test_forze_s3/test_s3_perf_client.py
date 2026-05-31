@@ -6,7 +6,7 @@ import pytest
 
 pytest.importorskip("aioboto3")
 
-from forze_s3.kernel.platform.client import S3Client
+from forze_s3.kernel.client import S3Client
 
 
 def _perf_key(prefix: str) -> str:
@@ -94,7 +94,7 @@ async def test_s3_head_object_benchmark(
     async def run() -> None:
         async with s3_client.client():
             head = await s3_client.head_object(s3_bucket, key)
-            assert head["size"] == 512
+            assert head.size == 512
 
     await async_benchmark(run)
 

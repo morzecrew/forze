@@ -9,7 +9,7 @@ from forze.base.exceptions import CoreException
 
 from forze.application.composition.storage import StorageFacade, StorageKernelOp
 from forze.application.contracts.execution import Handler
-from forze.application.execution.registry import OperationRegistry
+from forze.application.execution.operations.registry import OperationRegistry
 from forze.application.handlers.storage.dto import (
     StoredObjectDTO,
     UploadObjectRequestDTO,

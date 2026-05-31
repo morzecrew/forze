@@ -20,7 +20,7 @@ from forze.application.contracts.durable.workflow import (
 from forze.base.exceptions import exc
 from forze.base.exceptions.model import CoreException, ExceptionKind
 
-from ..kernel.platform.schedule_mapping import resolve_scheduled_workflow_id
+from ..kernel.client.schedule_mapping import resolve_scheduled_workflow_id
 from .base import TemporalBaseAdapter
 
 # ----------------------- #

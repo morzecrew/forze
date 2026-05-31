@@ -19,6 +19,7 @@ from forze_postgres.execution.deps.keys import (
 from forze_postgres.kernel.gateways import PostgresQualifiedName
 from forze_postgres.kernel.catalog.introspect import PostgresIntrospector
 from forze_postgres.kernel.client.client import PostgresClient
+from tests.support.execution_context import context_from_deps
 
 
 class FtsArticle(BaseModel):
@@ -33,8 +34,7 @@ def _fts_context(
     table: str,
     index_name: str,
 ) -> ExecutionContext:
-    return ExecutionContext(
-        deps=Deps.plain(
+    return context_from_deps(Deps.plain(
             {
                 PostgresClientDepKey: pg_client,
                 PostgresIntrospectorDepKey: PostgresIntrospector(client=pg_client),
@@ -256,8 +256,7 @@ async def test_fts_v2_projection_view_and_heap_split(pg_client: PostgresClient) 
         {"id": uuid4()},
     )
 
-    ctx = ExecutionContext(
-        deps=Deps.plain(
+    ctx = context_from_deps(Deps.plain(
             {
                 PostgresClientDepKey: pg_client,
                 PostgresIntrospectorDepKey: PostgresIntrospector(client=pg_client),

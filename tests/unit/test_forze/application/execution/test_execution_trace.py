@@ -8,14 +8,14 @@ from forze.application.contracts.deps import DepKey
 from forze.application.contracts.document import DocumentSpec
 from forze.application.execution import (
     Deps,
-    DepsPlan,
+    DepsRegistry,
     ExecutionContext,
     RuntimeTrace,
     TracingEvent,
     TracingViolation,
-    runtime_tracer_from_flag,
     validate_runtime_trace,
 )
+from tests.support.execution_context import context_from_deps
 from forze.application.execution.tracing import bind_active_deps, record
 from forze.application.execution.tracing.port_proxy import TracingPortProxy, wrap_port
 from forze.domain.models import CreateDocumentCmd, Document, ReadDocument
@@ -53,15 +53,20 @@ def mock_state() -> MockState:
 @pytest.fixture
 def ctx(mock_state: MockState) -> ExecutionContext:
     deps = MockDepsModule(state=mock_state)()
-    return ExecutionContext(deps=deps)
+    return context_from_deps(deps)
 
 
 @pytest.fixture
 def traced_ctx(mock_state: MockState) -> ExecutionContext:
-    deps = DepsPlan.from_modules(
-        lambda: MockDepsModule(state=mock_state)(),
-    ).with_tracing(runtime=True).build()
-    return ExecutionContext(deps=deps)
+    frozen = (
+        DepsRegistry.from_modules(
+            lambda: MockDepsModule(state=mock_state)(),
+        )
+        .with_tracing(runtime=True)
+        .freeze()
+        .resolve()
+    )
+    return ExecutionContext(deps=frozen)
 
 
 # ----------------------- #
@@ -90,22 +95,33 @@ class TestRuntimeTracingEnabled:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         monkeypatch.setenv("FORZE_RUNTIME_TRACE", "true")
-        built = DepsPlan.from_modules(lambda: MockDepsModule(state=mock_state)()).build()
+        built = (
+            DepsRegistry.from_modules(lambda: MockDepsModule(state=mock_state)())
+            .freeze()
+            .resolve()
+        )
         assert built.trace_runtime is True
 
-    def test_merge_does_not_propagate_trace_runtime(self) -> None:
+    def test_freeze_without_registry_tracing_disables_runtime_trace(self) -> None:
         _k = DepKey[str]("only")
-        a = Deps.plain({_k: 1}, trace_runtime=True)
-        b = Deps.plain({DepKey[str]("other"): 2})
-        merged = Deps.merge(a, b)
-        assert merged.trace_runtime is False
+        resolved = DepsRegistry.from_deps(
+            Deps.plain({_k: 1}),
+            Deps.plain({DepKey[str]("other"): 2}),
+        ).freeze().resolve()
+        assert resolved.trace_runtime is False
 
-    def test_merge_accepts_explicit_runtime_tracer(self) -> None:
+    def test_registry_with_tracing_enables_runtime_trace(self) -> None:
         _k = DepKey[str]("only")
-        a = Deps.plain({_k: 1}, trace_runtime=True)
-        b = Deps.plain({DepKey[str]("other"): 2})
-        merged = Deps.merge(a, b, runtime_tracer=runtime_tracer_from_flag(True))
-        assert merged.trace_runtime is True
+        resolved = (
+            DepsRegistry.from_deps(
+                Deps.plain({_k: 1}),
+                Deps.plain({DepKey[str]("other"): 2}),
+            )
+            .with_tracing(runtime=True)
+            .freeze()
+            .resolve()
+        )
+        assert resolved.trace_runtime is True
 
     def test_query_port_wrapped_when_enabled(self, traced_ctx: ExecutionContext) -> None:
         port = traced_ctx.document.query(_doc_spec())
@@ -142,9 +158,14 @@ class TestRuntimeTracingRecording:
 
     @pytest.mark.asyncio
     async def test_proxy_passes_through_return_value(self, mock_state: MockState) -> None:
-        deps = DepsPlan.from_modules(
-            lambda: MockDepsModule(state=mock_state)(),
-        ).with_tracing(runtime=True).build()
+        deps = (
+            DepsRegistry.from_modules(
+                lambda: MockDepsModule(state=mock_state)(),
+            )
+            .with_tracing(runtime=True)
+            .freeze()
+            .resolve()
+        )
 
         class _Inner:
             async def get(self) -> int:

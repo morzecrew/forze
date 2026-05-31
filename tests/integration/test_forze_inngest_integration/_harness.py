@@ -14,11 +14,12 @@ from fastapi import FastAPI
 
 from forze.application.execution import Deps, ExecutionContext
 from forze.application.execution.context import ExecutionContextFactory
+from tests.support.execution_context import context_from_deps, context_from_modules, frozen_deps_from_deps
 from forze_inngest import InngestFunctionBinding
 from forze_inngest.execution.deps import InngestDepsModule
 from forze_inngest.execution.deps.configs import InngestEventConfig
 from forze_inngest.fastapi import serve
-from forze_inngest.kernel.platform import InngestClient, InngestClientPort
+from forze_inngest.kernel.client import InngestClient, InngestClientPort
 
 from .inngest_dev_server import InngestDevTarget
 
@@ -38,7 +39,7 @@ class InngestAppHarness:
     """Running FastAPI app registered with a dev server."""
 
     client: InngestClientPort
-    deps: Deps[Any]
+    deps: Deps
     ctx_factory: ExecutionContextFactory
     port: int
     outcomes: list[Any] = field(default_factory=list)
@@ -95,9 +96,11 @@ def start_forze_inngest_app(
     port = free_tcp_port()
     os.environ["INNGEST_SERVE_ORIGIN"] = f"http://host.docker.internal:{port}"
 
+    from forze_inngest import InngestConfig
+
     client = InngestClient(
         app_id=app_id,
-        config={"is_production": False},
+        config=InngestConfig(is_production=False),
     )
     module = InngestDepsModule(
         client=client,
@@ -107,7 +110,7 @@ def start_forze_inngest_app(
     deps = Deps.plain(extra_plain_deps or {}).merge(module())
 
     def ctx_factory() -> ExecutionContext:
-        return ExecutionContext(deps=deps)
+        return context_from_deps(deps)
 
     app = FastAPI()
     serve(app, client, bindings, ctx_factory=ctx_factory)

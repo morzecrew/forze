@@ -1,7 +1,6 @@
 """Postgres dependency module for the application kernel."""
 
 from datetime import timedelta
-from enum import StrEnum
 from typing import Callable, Mapping, final
 
 import attrs
@@ -21,6 +20,7 @@ from forze.application.contracts.search import (
 )
 from forze.application.contracts.transaction import TransactionManagerDepKey
 from forze.application.execution import Deps, DepsModule
+from forze.base.primitives import StrKey
 
 from ...kernel.catalog.introspect import PostgresIntrospector
 from ...kernel.catalog.validation.validate_relation_specs import (
@@ -56,7 +56,7 @@ from .keys import PostgresClientDepKey, PostgresIntrospectorDepKey
 
 @final
 @attrs.define(slots=True, frozen=True, kw_only=True)
-class PostgresDepsModule[K: str | StrEnum](DepsModule[K]):
+class PostgresDepsModule(DepsModule):
     """Dependency module that registers Postgres clients and adapters."""
 
     client: PostgresClientPort
@@ -73,29 +73,37 @@ class PostgresDepsModule[K: str | StrEnum](DepsModule[K]):
     introspector_cache_ttl: timedelta | None = attrs.field(default=None)
     """Optional TTL for :class:`PostgresIntrospector` catalog caches (``None`` = no expiry)."""
 
-    ro_documents: Mapping[K, PostgresReadOnlyDocumentConfig] | None = attrs.field(
+    ro_documents: Mapping[StrKey, PostgresReadOnlyDocumentConfig] | None = attrs.field(
         default=None
     )
     """Mapping from read-only document names to their Postgres-specific configurations."""
 
-    rw_documents: Mapping[K, PostgresDocumentConfig] | None = attrs.field(default=None)
+    rw_documents: Mapping[StrKey, PostgresDocumentConfig] | None = attrs.field(
+        default=None
+    )
     """Mapping from read-write document names to their Postgres-specific configurations."""
 
-    searches: Mapping[K, PostgresSearchConfig] | None = attrs.field(default=None)
+    searches: Mapping[StrKey, PostgresSearchConfig] | None = attrs.field(default=None)
     """Mapping from search names to their Postgres-specific configurations."""
 
-    hub_searches: Mapping[K, PostgresHubSearchConfig] | None = attrs.field(default=None)
+    hub_searches: Mapping[StrKey, PostgresHubSearchConfig] | None = attrs.field(
+        default=None
+    )
     """Mapping from hub search names to their Postgres-specific configurations."""
 
-    federated_searches: Mapping[K, PostgresFederatedSearchConfig] | None = attrs.field(
-        default=None,
+    federated_searches: Mapping[StrKey, PostgresFederatedSearchConfig] | None = (
+        attrs.field(
+            default=None,
+        )
     )
     """Mapping from federated search names to their Postgres-specific configurations."""
 
-    tx: set[K] | None = attrs.field(default=None)
+    tx: set[StrKey] | None = attrs.field(default=None)
     """Set of transaction routes to register."""
 
-    analytics: Mapping[K, PostgresAnalyticsConfig] | None = attrs.field(default=None)
+    analytics: Mapping[StrKey, PostgresAnalyticsConfig] | None = attrs.field(
+        default=None
+    )
     """Mapping from analytics route names to their Postgres-specific configurations."""
 
     # ....................... #
@@ -243,10 +251,10 @@ class PostgresDepsModule[K: str | StrEnum](DepsModule[K]):
 
     # ....................... #
 
-    def __call__(self) -> Deps[K]:
+    def __call__(self) -> Deps:
         """Build a dependency container with Postgres-backed ports."""
 
-        plain_deps = Deps[K].plain(
+        plain_deps = Deps.plain(
             {
                 PostgresClientDepKey: self.client,
                 PostgresIntrospectorDepKey: PostgresIntrospector(
@@ -257,16 +265,16 @@ class PostgresDepsModule[K: str | StrEnum](DepsModule[K]):
             }
         )
 
-        doc_deps = Deps[K]()
-        search_deps = Deps[K]()
-        hub_search_deps = Deps[K]()
-        federated_search_deps = Deps[K]()
-        tx_deps = Deps[K]()
-        analytics_deps = Deps[K]()
+        doc_deps = Deps()
+        search_deps = Deps()
+        hub_search_deps = Deps()
+        federated_search_deps = Deps()
+        tx_deps = Deps()
+        analytics_deps = Deps()
 
         if self.ro_documents:
             doc_deps = doc_deps.merge(
-                Deps[K].routed(
+                Deps.routed(
                     {
                         DocumentQueryDepKey: {
                             name: ConfigurablePostgresReadOnlyDocument(config=config)
@@ -278,7 +286,7 @@ class PostgresDepsModule[K: str | StrEnum](DepsModule[K]):
 
         if self.rw_documents:
             doc_deps = doc_deps.merge(
-                Deps[K].routed(
+                Deps.routed(
                     {
                         DocumentQueryDepKey: {
                             name: ConfigurablePostgresReadOnlyDocument(config=config)
@@ -294,7 +302,7 @@ class PostgresDepsModule[K: str | StrEnum](DepsModule[K]):
 
         if self.searches:
             search_deps = search_deps.merge(
-                Deps[K].routed(
+                Deps.routed(
                     {
                         SearchQueryDepKey: {
                             name: ConfigurablePostgresSearch(config=config)
@@ -306,7 +314,7 @@ class PostgresDepsModule[K: str | StrEnum](DepsModule[K]):
 
         if self.hub_searches:
             hub_search_deps = hub_search_deps.merge(
-                Deps[K].routed(
+                Deps.routed(
                     {
                         HubSearchQueryDepKey: {
                             name: ConfigurablePostgresHubSearch(config=config)
@@ -318,7 +326,7 @@ class PostgresDepsModule[K: str | StrEnum](DepsModule[K]):
 
         if self.federated_searches:
             federated_search_deps = federated_search_deps.merge(
-                Deps[K].routed(
+                Deps.routed(
                     {
                         FederatedSearchQueryDepKey: {
                             name: ConfigurablePostgresFederatedSearch(config=config)
@@ -330,7 +338,7 @@ class PostgresDepsModule[K: str | StrEnum](DepsModule[K]):
 
         if self.tx:
             tx_deps = tx_deps.merge(
-                Deps[K].routed(
+                Deps.routed(
                     {
                         TransactionManagerDepKey: {
                             name: postgres_txmanager for name in self.tx
@@ -342,7 +350,7 @@ class PostgresDepsModule[K: str | StrEnum](DepsModule[K]):
         if self.analytics:
             factory = ConfigurablePostgresAnalytics
             analytics_deps = analytics_deps.merge(
-                Deps[K].routed(
+                Deps.routed(
                     {
                         AnalyticsQueryDepKey: {
                             name: factory(config=config)

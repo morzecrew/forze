@@ -2,7 +2,11 @@ from typing import Any, final
 
 import attrs
 
-from forze.application.contracts.authn import AuthnIdentity, PasswordLifecyclePort
+from forze.application.contracts.authn import (
+    AuthnIdentity,
+    PasswordLifecyclePort,
+    PrincipalEligibilityPort,
+)
 from forze.application.contracts.document import DocumentCommandPort, DocumentQueryPort
 from forze.base.exceptions import exc
 
@@ -35,6 +39,9 @@ class PasswordLifecycleAdapter(PasswordLifecyclePort):
         UpdatePasswordAccountCmd,
     ]
     """Password account command port."""
+
+    eligibility: PrincipalEligibilityPort
+    """Principal eligibility gate."""
 
     # ....................... #
 
@@ -69,6 +76,8 @@ class PasswordLifecycleAdapter(PasswordLifecyclePort):
         identity: AuthnIdentity,
         new_password: str,
     ) -> None:
+        await self.eligibility.require_authentication_allowed(identity.principal_id)
+
         pa = await find_password_account_by_authn_identity(
             self.pa_qry,
             identity,

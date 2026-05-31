@@ -1,4 +1,5 @@
 from forze.base.exceptions import CoreException
+from tests.support.execution_context import context_from_deps, context_from_modules, frozen_deps_from_deps
 from uuid import UUID, uuid4
 
 
@@ -14,9 +15,9 @@ from forze.application.contracts.querying import QueryFilterExpression
 from forze.application.execution import Deps, ExecutionContext
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
 from forze_mongo.execution.deps import MongoDocumentConfig
-from forze_mongo.execution.deps.deps import ConfigurableMongoDocument
+from forze_mongo.execution.deps import ConfigurableMongoDocument
 from forze_mongo.execution.deps.keys import MongoClientDepKey
-from forze_mongo.kernel.platform import MongoClient
+from forze_mongo.kernel.client import MongoClient
 
 class MyDoc(DocWithSoftDeletion):
     name: str
@@ -62,7 +63,7 @@ async def test_mongo_document_adapter_roundtrip(mongo_client: MongoClient) -> No
             DocumentCommandDepKey: configurable,
         }
     )
-    ctx = ExecutionContext(deps=deps)
+    ctx = context_from_deps(deps)
     adapter = ctx.document.command(spec)
 
     created = await adapter.create(MyCreateDoc(name="alpha"))
@@ -158,7 +159,7 @@ async def test_mongo_document_find_many_sorted(mongo_client: MongoClient) -> Non
             DocumentCommandDepKey: configurable,
         }
     )
-    ctx = ExecutionContext(deps=deps)
+    ctx = context_from_deps(deps)
     adapter = ctx.document.command(spec)
 
     for name in ("charlie", "alice", "bob"):

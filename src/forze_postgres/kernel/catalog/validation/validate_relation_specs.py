@@ -1,12 +1,11 @@
 """Warnings for Postgres RelationSpec wiring on integration configs."""
 
-from collections.abc import Sequence
+from typing import Sequence
 
 from forze.application.contracts.resolution import RelationSpec
 from forze.application.contracts.tenancy import (
     warn_dynamic_relation_with_tenant_aware as _warn_dynamic_relation,
 )
-
 from forze_postgres.kernel._logger import logger
 
 # ----------------------- #

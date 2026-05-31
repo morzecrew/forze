@@ -1,4 +1,4 @@
-"""Integration tests for :class:`~forze_redis.kernel.platform.RoutedRedisClient`."""
+"""Integration tests for :class:`~forze_redis.kernel.client.RoutedRedisClient`."""
 
 from __future__ import annotations
 
@@ -18,8 +18,8 @@ from testcontainers.redis import RedisContainer
 
 from forze.application.contracts.secrets import SecretRef
 
-from forze_redis.kernel.platform import RoutedRedisClient
-from forze_redis.kernel.platform.client import RedisClient, RedisConfig
+from forze_redis.kernel.client import RoutedRedisClient
+from forze_redis.kernel.client import RedisClient, RedisConfig
 
 def _ref(tid: UUID) -> SecretRef:
     return SecretRef(path=f"tenants/{tid}/redis")

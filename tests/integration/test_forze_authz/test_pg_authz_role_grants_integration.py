@@ -11,27 +11,30 @@ from forze.application.contracts.authz import (
     AuthzRequest,
     subject_from_authn,
 )
+from tests.support.execution_context import context_from_deps, context_from_modules, frozen_deps_from_deps
 from forze.application.contracts.document import DocumentCommandDepKey
 from forze.application.execution import Deps, ExecutionContext, InvocationMetadata
 from forze_identity.authz.application.constants import AuthzResourceName
 from forze_identity.authz.execution import AuthzDepsModule, AuthzKernelConfig
 from forze_postgres.execution.deps import ConfigurablePostgresDocument
+from forze_postgres.execution.deps.configs import PostgresDocumentConfig
 from forze_postgres.kernel.client.client import PostgresClient
 
 from tests.integration.test_forze_authz.test_pg_authz_kernel_flow import (
     _AUTHZ_SPEC,
+    _authz_pg_deps,
     _authz_pg_setup,
 )
 
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
 
 
-def _rw(table: str) -> dict[str, object]:
-    return {
-        "read": ("public", table),
-        "write": ("public", table),
-        "bookkeeping_strategy": "application",
-    }
+def _rw(table: str) -> PostgresDocumentConfig:
+    return PostgresDocumentConfig(
+        read=("public", table),
+        write=("public", table),
+        bookkeeping_strategy="application",
+    )
 
 
 async def _authz_role_grants_ctx(
@@ -39,7 +42,7 @@ async def _authz_role_grants_ctx(
     *,
     suffix: str,
 ) -> ExecutionContext:
-    ctx = await _authz_pg_setup(pg_client, suffix=suffix)
+    await _authz_pg_setup(pg_client, suffix=suffix)
     await pg_client.execute(
         f"""
         ALTER TABLE authz_role_{suffix}
@@ -64,7 +67,9 @@ async def _authz_role_grants_ctx(
         kernel=AuthzKernelConfig(),
         role_assignment={"main"},
     )()
-    return ExecutionContext(deps=ctx.deps.merge(cmd_extra).merge(authz_extra))
+    return context_from_deps(
+        _authz_pg_deps(pg_client, suffix=suffix).merge(cmd_extra).merge(authz_extra),
+    )
 
 
 async def _seed_role_grant(

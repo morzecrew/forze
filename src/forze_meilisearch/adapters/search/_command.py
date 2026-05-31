@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
-from typing import Any, cast, final
+from typing import Any, Sequence, cast, final
 
 import attrs
 from pydantic import BaseModel
@@ -11,7 +10,7 @@ from pydantic import BaseModel
 from forze.application.contracts.search import SearchCommandPort, SearchSpec
 from forze.application.contracts.tenancy import TENANT_ID_FIELD
 from forze_meilisearch.adapters.search.base import MeilisearchSearchGateway
-from forze_meilisearch.kernel.platform.port import MeilisearchClientPort
+from forze_meilisearch.kernel.client.port import MeilisearchClientPort
 
 # ----------------------- #
 

@@ -18,7 +18,7 @@ from forze.application.contracts.search import (
 from forze.application.coordinators import SearchResultSnapshotCoordinator
 from forze.base.primitives import JsonDict
 from forze.base.serialization import pydantic_validate_many
-from forze_mongo.kernel.platform.port import MongoClientPort
+from forze_mongo.kernel.client.port import MongoClientPort
 
 from ._materialize import materialize_search_page
 from ._pipeline import append_pagination_stages, build_count_pipeline

@@ -8,6 +8,8 @@ implementations under :mod:`forze_authn.verifiers` and an orchestrator under
 from .api_key_lifecycle import ApiKeyLifecycleAdapter
 from .password_lifecycle import PasswordLifecycleAdapter
 from .password_provisioning import PasswordAccountProvisioningAdapter
+from .principal_eligibility import PolicyPrincipalEligibilityAdapter
+from .principal_deactivation import PrincipalDeactivationAdapter
 from .token_lifecycle import TokenLifecycleAdapter
 
 # ----------------------- #
@@ -16,5 +18,7 @@ __all__ = [
     "ApiKeyLifecycleAdapter",
     "PasswordAccountProvisioningAdapter",
     "PasswordLifecycleAdapter",
+    "PolicyPrincipalEligibilityAdapter",
+    "PrincipalDeactivationAdapter",
     "TokenLifecycleAdapter",
 ]

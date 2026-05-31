@@ -12,7 +12,7 @@ from forze.application.execution import (
     assert_trace_contains,
     run_traced_operation,
 )
-from forze.application.execution.registry import OperationRegistry
+from forze.application.execution.operations.registry import OperationRegistry
 from forze.application.execution.tracing import TracedOperationResult
 from forze.domain.models import CreateDocumentCmd, Document, ReadDocument
 # ----------------------- #

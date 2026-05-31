@@ -5,10 +5,8 @@ from typing import TYPE_CHECKING, Any, Mapping
 import attrs
 
 from forze.base.exceptions import exc
-from forze.base.primitives import StrKey
+from forze.base.primitives import StrKey, frozen_mapping
 from forze_postgres.kernel.relation import RelationSpec, coerce_relation_spec
-
-from ._mapping import frozen_mapping
 
 if TYPE_CHECKING:
     from forze.application.contracts.analytics import AnalyticsSpec

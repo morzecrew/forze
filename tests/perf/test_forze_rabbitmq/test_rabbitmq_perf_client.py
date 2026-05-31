@@ -7,7 +7,7 @@ import pytest
 
 pytest.importorskip("aio_pika")
 
-from forze_rabbitmq.kernel.platform import RabbitMQClient
+from forze_rabbitmq.kernel.client import RabbitMQClient
 
 
 # Note: receive-only benchmarks are omitted because a pre-seeded queue is

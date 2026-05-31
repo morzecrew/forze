@@ -5,7 +5,8 @@ import pytest
 
 from forze.application.contracts.execution import Handler
 from forze.application.execution import Deps, ExecutionContext
-from forze.application.execution.registry import OperationRegistry
+from forze.application.execution.operations.registry import OperationRegistry
+from tests.support.execution_context import context_from_deps, context_from_modules, frozen_deps_from_deps
 
 # ----------------------- #
 
@@ -19,7 +20,7 @@ class EchoHandler(Handler[str, str]):
 class TestHandlerExecution:
     @pytest.fixture
     def stub_ctx(self) -> ExecutionContext:
-        return ExecutionContext(deps=Deps())
+        return context_from_deps(Deps())
 
     @pytest.mark.asyncio
     async def test_resolve_and_call_handler(self, stub_ctx: ExecutionContext) -> None:

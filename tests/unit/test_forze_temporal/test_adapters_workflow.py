@@ -13,6 +13,8 @@ from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.contracts.durable.workflow import (
     DurableWorkflowHandle,
     DurableWorkflowQuerySpec,
+    DurableWorkflowRunDescription,
+    DurableWorkflowRunStatus,
     DurableWorkflowSignalSpec,
     DurableWorkflowSpec,
     DurableWorkflowUpdateSpec,
@@ -22,7 +24,7 @@ from forze_temporal.adapters.workflow import (
     TemporalWorkflowCommandAdapter,
     TemporalWorkflowQueryAdapter,
 )
-from forze_temporal.kernel.platform.client import TemporalClient
+from forze_temporal.kernel.client.client import TemporalClient
 
 
 class _In(BaseModel):
@@ -162,6 +164,56 @@ class TestTemporalWorkflowQueryAdapter:
         backend.get_workflow_handle.assert_called_with("w2", run_id="r2")
         wh.query.assert_awaited_once_with(query="q", arg=_QIn(q=1))
         wh.result.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_describe_delegates_to_client(self) -> None:
+        client = MagicMock(spec=TemporalClient)
+        run_desc = DurableWorkflowRunDescription(
+            workflow_id="w2",
+            run_id="r2",
+            workflow_name="Wf",
+            status=DurableWorkflowRunStatus.COMPLETED,
+        )
+        client.describe_workflow = AsyncMock(return_value=run_desc)
+
+        spec = _spec()
+        adapter = TemporalWorkflowQueryAdapter(
+            client=client,
+            queue="tq",
+            spec=spec,
+            tenant_aware=False,
+        )
+        h = DurableWorkflowHandle(workflow_id="w2", run_id="r2")
+
+        out = await adapter.describe(h)
+
+        assert out is run_desc
+        client.describe_workflow.assert_awaited_once_with(
+            workflow_id="w2",
+            run_id="r2",
+        )
+
+    @pytest.mark.asyncio
+    async def test_describe_wrong_workflow_name_raises_not_found(self) -> None:
+        client = MagicMock(spec=TemporalClient)
+        client.describe_workflow = AsyncMock(
+            return_value=DurableWorkflowRunDescription(
+                workflow_id="w2",
+                run_id="r2",
+                workflow_name="OtherWorkflow",
+                status=DurableWorkflowRunStatus.RUNNING,
+            ),
+        )
+
+        adapter = TemporalWorkflowQueryAdapter(
+            client=client,
+            queue="tq",
+            spec=_spec(),
+            tenant_aware=False,
+        )
+
+        with pytest.raises(CoreException, match="not for workflow"):
+            await adapter.describe(DurableWorkflowHandle(workflow_id="w2", run_id="r2"))
 
 
 class TestTemporalBaseAdapterWorkflowId:

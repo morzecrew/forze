@@ -12,7 +12,7 @@ from temporalio.contrib.pydantic import pydantic_data_converter
 pytest.importorskip("temporalio")
 pytest.importorskip("testcontainers")
 
-from forze_temporal.kernel.platform import TemporalClient, TemporalConfig
+from forze_temporal.kernel.client import TemporalClient, TemporalConfig
 
 from .temporal_dev_server import (
     TemporalDevTarget,

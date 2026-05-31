@@ -2,13 +2,8 @@ from uuid import UUID
 
 from forze.application.contracts.authn import AuthnIdentity
 from forze.application.contracts.document import DocumentQueryPort
-from forze.base.exceptions import exc
 
-from ..domain.models.account import (
-    ReadApiKeyAccount,
-    ReadPasswordAccount,
-    ReadPrincipal,
-)
+from ..domain.models.account import ReadApiKeyAccount, ReadPasswordAccount
 
 # ----------------------- #
 
@@ -30,17 +25,27 @@ async def find_password_account_by_login(
 # ....................... #
 
 
-async def find_password_account_by_authn_identity(
+async def find_password_account_by_principal_id(
     qry: DocumentQueryPort[ReadPasswordAccount],
-    identity: AuthnIdentity,
+    principal_id: UUID,
 ) -> ReadPasswordAccount | None:
     return await qry.find(
         filters={
             "$values": {
-                "principal_id": identity.principal_id,
+                "principal_id": principal_id,
             },
         }
     )
+
+
+# ....................... #
+
+
+async def find_password_account_by_authn_identity(
+    qry: DocumentQueryPort[ReadPasswordAccount],
+    identity: AuthnIdentity,
+) -> ReadPasswordAccount | None:
+    return await find_password_account_by_principal_id(qry, identity.principal_id)
 
 
 # ....................... #
@@ -62,34 +67,14 @@ async def find_api_key_account_by_key_hash(
 # ....................... #
 
 
-async def find_api_key_account_by_authn_identity(
+async def find_api_key_account_by_id(
     qry: DocumentQueryPort[ReadApiKeyAccount],
-    identity: AuthnIdentity,
+    key_id: UUID,
 ) -> ReadApiKeyAccount | None:
     return await qry.find(
         filters={
             "$values": {
-                "principal_id": identity.principal_id,
+                "id": key_id,
             },
         }
     )
-
-
-# ....................... #
-#! TODO: repurpose into abstract port which by id gives ReadPrincipal or None
-
-
-async def validate_principal(
-    qry: DocumentQueryPort[ReadPrincipal],
-    principal_id: UUID,
-) -> None:
-    principal = await qry.find(
-        filters={
-            "$values": {
-                "id": principal_id,
-            },
-        }
-    )
-
-    if principal is None or not principal.is_active:
-        raise exc.authentication("Principal not found")

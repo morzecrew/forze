@@ -18,19 +18,19 @@ from forze.application.execution import Deps, ExecutionContext
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
 from forze_mongo.adapters import MongoDocumentAdapter, MongoTxManagerAdapter
 from forze_mongo.execution.deps import (
+    ConfigurableMongoDocument,
+    ConfigurableMongoReadOnlyDocument,
+    ConfigurableMongoSearch,
     MongoClientDepKey,
     MongoDepsModule,
     MongoDocumentConfig,
     MongoReadOnlyDocumentConfig,
-)
-from forze_mongo.execution.deps.deps import (
-    ConfigurableMongoDocument,
-    ConfigurableMongoReadOnlyDocument,
     mongo_txmanager,
 )
 from forze_mongo.execution.deps.utils import doc_write_gw, read_gw
 from forze_mongo.kernel.gateways import MongoReadGateway, MongoWriteGateway
-from forze_mongo.kernel.platform import MongoClient
+from forze_mongo.kernel.client import MongoClient
+from tests.support.execution_context import context_from_deps
 
 
 class _R(ReadDocument):
@@ -59,8 +59,7 @@ def _rw_spec(*, history_enabled: bool = False) -> DocumentSpec:
 
 
 def _ctx() -> ExecutionContext:
-    return ExecutionContext(
-        deps=Deps.plain({MongoClientDepKey: MagicMock(spec=MongoClient)})
+    return context_from_deps(Deps.plain({MongoClientDepKey: MagicMock(spec=MongoClient)})
     )
 
 
@@ -196,6 +195,18 @@ def test_doc_write_gw_without_history() -> None:
 
     assert isinstance(gw, MongoWriteGateway)
     assert gw.history_gw is None
+
+
+def test_rejects_mapping_document_config() -> None:
+    with pytest.raises(TypeError, match="MongoDocumentConfig"):
+        ConfigurableMongoDocument(config={"read": ("db", "c"), "write": ("db", "c")})
+
+
+def test_rejects_mapping_search_config() -> None:
+    with pytest.raises(TypeError, match="MongoSearchConfig"):
+        ConfigurableMongoSearch(
+            config={"read": ("db", "c"), "engine": "text"},
+        )
 
 
 def test_doc_write_gw_with_history() -> None:

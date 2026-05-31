@@ -14,7 +14,7 @@ Use this recipe when a request should start long-running work and return before 
 2. Declare the workflow or queue spec with a logical name.
 3. Register the same name in the integration dependency module.
 4. Resolve the command port from a handler and enqueue/start work.
-5. Expose a query endpoint for status or result retrieval when needed.
+5. Expose a status endpoint when needed: poll **`describe(handle)`** for coarse lifecycle (`running` / `completed` / …), optional app **`query()`** for step-level progress, then **`result(handle)`** once terminal.
 
 ## Choosing an integration
 

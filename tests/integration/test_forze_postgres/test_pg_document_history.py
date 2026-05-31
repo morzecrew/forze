@@ -21,6 +21,7 @@ from forze_postgres.execution.deps.keys import (
 )
 from forze_postgres.kernel.catalog.introspect import PostgresIntrospector
 from forze_postgres.kernel.client.client import PostgresClient
+from tests.support.execution_context import context_from_deps
 
 
 class HistDoc(Document):
@@ -46,8 +47,7 @@ def _deps(
     history_table: str,
     bookkeeping_strategy: str,
 ) -> ExecutionContext:
-    return ExecutionContext(
-        deps=Deps.plain(
+    return context_from_deps(Deps.plain(
             {
                 PostgresClientDepKey: pg_client,
                 PostgresIntrospectorDepKey: PostgresIntrospector(client=pg_client),

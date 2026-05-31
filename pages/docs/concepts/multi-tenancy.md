@@ -50,6 +50,7 @@ Postgres-only: `PostgresDepsModule.introspector_cache_partition_key` is **requir
 
 ### Troubleshooting routed pools
 
+- **Implementation** — routed clients share `TenantClientRegistry` plus DSN or structured fingerprint helpers from `forze.application.contracts.tenancy` (see `RoutedRedisClient` as the reference).
 - **Wrong tenant after LRU eviction** — integration tests that share one DSN across tenants should use **distinct connection fingerprints** per tenant (see `tests/integration/_routed_lru_helpers.py`).
 - **Catalog / schema validation on dynamic relations** — startup hooks that need fixed names call `require_static_relation` or skip dynamic routes; omit schema validation lifecycle steps for schema-per-tenant documents.
 

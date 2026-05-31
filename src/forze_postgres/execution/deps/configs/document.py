@@ -1,51 +1,15 @@
 """Postgres document execution configs."""
 
-from collections.abc import Mapping
-from typing import Any
+from typing import Any, Mapping
 
 import attrs
 
 from forze.application.contracts.tenancy import TenantAwareIntegrationConfig
-from forze.base.exceptions import exc
 from forze_postgres.kernel.relation import RelationSpec, coerce_relation_spec
 
 from ....kernel.gateways import PostgresBookkeepingStrategy
 
 # ----------------------- #
-
-
-def coerce_read_only_document_config(value: object) -> "PostgresReadOnlyDocumentConfig":
-    """Accept :class:`PostgresReadOnlyDocumentConfig` or a legacy mapping."""
-
-    if isinstance(value, PostgresReadOnlyDocumentConfig):
-        return value
-
-    if isinstance(value, Mapping):
-        return PostgresReadOnlyDocumentConfig(**dict(value))  # type: ignore[arg-type]
-
-    raise exc.configuration(
-        "Postgres read-only document config must be PostgresReadOnlyDocumentConfig or a mapping",
-    )
-
-
-# ....................... #
-
-
-def coerce_document_config(value: object) -> "PostgresDocumentConfig":
-    """Accept :class:`PostgresDocumentConfig` or a legacy mapping."""
-
-    if isinstance(value, PostgresDocumentConfig):
-        return value
-
-    if isinstance(value, Mapping):
-        return PostgresDocumentConfig(**dict(value))  # type: ignore[arg-type]
-
-    raise exc.configuration(
-        "Postgres document config must be PostgresDocumentConfig or a mapping",
-    )
-
-
-# ....................... #
 
 
 def _optional_relation_spec(value: object) -> RelationSpec | None:

@@ -1,6 +1,5 @@
 """Mongo dependency module for the application kernel."""
 
-from enum import StrEnum
 from typing import Mapping, final
 
 import attrs
@@ -13,15 +12,16 @@ from forze.application.contracts.search import SearchQueryDepKey
 from forze.application.contracts.tenancy import warn_dynamic_relation_with_tenant_aware
 from forze.application.contracts.transaction import TransactionManagerDepKey
 from forze.application.execution import Deps, DepsModule
+from forze.base.primitives import StrKey
 
 from ...kernel._logger import logger
-from ...kernel.platform import MongoClientPort, RoutedMongoClient
+from ...kernel.client import MongoClientPort, RoutedMongoClient
 from .configs import (
     MongoDocumentConfig,
     MongoReadOnlyDocumentConfig,
     MongoSearchConfig,
 )
-from .deps import (
+from .factories import (
     ConfigurableMongoDocument,
     ConfigurableMongoReadOnlyDocument,
     ConfigurableMongoSearch,
@@ -49,24 +49,26 @@ def _document_config_to_read_only(
 
 @final
 @attrs.define(slots=True, frozen=True, kw_only=True)
-class MongoDepsModule[K: str | StrEnum](DepsModule[K]):
+class MongoDepsModule(DepsModule):
     """Dependency module that registers Mongo client, tx manager, and document port."""
 
     client: MongoClientPort
     """Pre-constructed Mongo client (single-URI or routed)."""
 
-    ro_documents: Mapping[K, MongoReadOnlyDocumentConfig] | None = attrs.field(
+    ro_documents: Mapping[StrKey, MongoReadOnlyDocumentConfig] | None = attrs.field(
         default=None
     )
     """Mapping from read-only document names to their Mongo-specific configurations."""
 
-    rw_documents: Mapping[K, MongoDocumentConfig] | None = attrs.field(default=None)
+    rw_documents: Mapping[StrKey, MongoDocumentConfig] | None = attrs.field(
+        default=None
+    )
     """Mapping from read-write document names to their Mongo-specific configurations."""
 
-    tx: set[K] | None = attrs.field(default=None)
+    tx: set[StrKey] | None = attrs.field(default=None)
     """Set of transaction routes to register."""
 
-    searches: Mapping[K, MongoSearchConfig] | None = attrs.field(default=None)
+    searches: Mapping[StrKey, MongoSearchConfig] | None = attrs.field(default=None)
     """Mapping from search spec names to Mongo-specific search configurations."""
 
     # ....................... #
@@ -114,17 +116,17 @@ class MongoDepsModule[K: str | StrEnum](DepsModule[K]):
 
     # ....................... #
 
-    def __call__(self) -> Deps[K]:
+    def __call__(self) -> Deps:
         """Build a dependency container with Mongo-backed ports."""
 
-        plain_deps = Deps[K].plain({MongoClientDepKey: self.client})
-        doc_deps = Deps[K]()
-        search_deps = Deps[K]()
-        tx_deps = Deps[K]()
+        plain_deps = Deps.plain({MongoClientDepKey: self.client})
+        doc_deps = Deps()
+        search_deps = Deps()
+        tx_deps = Deps()
 
         if self.ro_documents:
             doc_deps = doc_deps.merge(
-                Deps[K].routed(
+                Deps.routed(
                     {
                         DocumentQueryDepKey: {
                             name: ConfigurableMongoReadOnlyDocument(config=config)
@@ -136,7 +138,7 @@ class MongoDepsModule[K: str | StrEnum](DepsModule[K]):
 
         if self.rw_documents:
             doc_deps = doc_deps.merge(
-                Deps[K].routed(
+                Deps.routed(
                     {
                         DocumentQueryDepKey: {
                             name: ConfigurableMongoReadOnlyDocument(
@@ -154,7 +156,7 @@ class MongoDepsModule[K: str | StrEnum](DepsModule[K]):
 
         if self.searches:
             search_deps = search_deps.merge(
-                Deps[K].routed(
+                Deps.routed(
                     {
                         SearchQueryDepKey: {
                             name: ConfigurableMongoSearch(config=config)
@@ -166,7 +168,7 @@ class MongoDepsModule[K: str | StrEnum](DepsModule[K]):
 
         if self.tx:
             tx_deps = tx_deps.merge(
-                Deps[K].routed(
+                Deps.routed(
                     {
                         TransactionManagerDepKey: {
                             name: mongo_txmanager for name in self.tx

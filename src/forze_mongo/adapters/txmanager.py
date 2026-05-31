@@ -16,7 +16,7 @@ from forze.application.contracts.transaction import (
     TransactionScopeKey,
 )
 
-from ..kernel.platform import MongoClientPort, MongoTransactionOptions
+from ..kernel.client import MongoClientPort, MongoTransactionOptions
 from ._logger import logger
 
 # ----------------------- #

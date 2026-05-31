@@ -26,9 +26,10 @@ from forze_postgres.execution.deps.keys import (
 from forze_postgres.kernel.catalog.introspect import PostgresIntrospector
 from forze_postgres.kernel.client.client import PostgresClient
 from forze_redis.execution.deps.configs import RedisSearchResultSnapshotConfig
-from forze_redis.execution.deps.deps import ConfigurableRedisSearchResultSnapshot
+from forze_redis.execution.deps import ConfigurableRedisSearchResultSnapshot
 from forze_redis.execution.deps.keys import RedisClientDepKey
-from forze_redis.kernel.platform.client import RedisClient
+from forze_redis.kernel.client import RedisClient
+from tests.support.execution_context import context_from_deps
 
 
 class PgRow(BaseModel):
@@ -71,8 +72,7 @@ async def test_pgroonga_v2_result_snapshot_reread(
         {"id": rid},
     )
     ns = f"it:rss:pgr:{uuid4().hex[:10]}"
-    ctx = ExecutionContext(
-        deps=Deps.plain(
+    ctx = context_from_deps(Deps.plain(
             {
                 PostgresClientDepKey: pg_client,
                 PostgresIntrospectorDepKey: PostgresIntrospector(client=pg_client),
@@ -152,8 +152,7 @@ async def test_pgroonga_v2_filter_only_empty_query_snapshot_reread(
         {"a": uuid4(), "b": uuid4()},
     )
     ns = f"it:rss:pgrf:{uuid4().hex[:10]}"
-    ctx = ExecutionContext(
-        deps=Deps.plain(
+    ctx = context_from_deps(Deps.plain(
             {
                 PostgresClientDepKey: pg_client,
                 PostgresIntrospectorDepKey: PostgresIntrospector(client=pg_client),

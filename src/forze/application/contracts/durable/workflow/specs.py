@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta
+from enum import StrEnum
 from typing import Any, Generic, TypeVar, final
 
 import attrs
@@ -104,6 +105,68 @@ class DurableWorkflowHandle:
 
     run_id: str | None = attrs.field(default=None)
     """The id of the run."""
+
+
+# ....................... #
+
+
+class DurableWorkflowRunStatus(StrEnum):
+    """Coarse lifecycle status of a workflow run."""
+
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+    TERMINATED = "terminated"
+    CONTINUED_AS_NEW = "continued_as_new"
+    TIMED_OUT = "timed_out"
+
+
+# ....................... #
+
+
+@final
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class DurableWorkflowRunDescription:
+    """Coarse description of a workflow run returned by query ports."""
+
+    workflow_id: str
+    """Workflow execution identifier."""
+
+    run_id: str
+    """Run identifier for this execution."""
+
+    workflow_name: StrKey
+    """Logical workflow name (``DurableWorkflowSpec.name``)."""
+
+    status: DurableWorkflowRunStatus
+    """Coarse execution status."""
+
+    started_at: datetime | None = None
+    """When the run started (UTC when the provider supplies a timezone)."""
+
+    closed_at: datetime | None = None
+    """When the run closed, if applicable."""
+
+    failure_message: str | None = None
+    """Human-readable failure detail when ``status`` is terminal failure."""
+
+    failure_type: str | None = None
+    """Failure type name when the provider exposes it."""
+
+    # ....................... #
+
+    @property
+    def is_terminal(self) -> bool:
+        """Whether the run has reached a terminal coarse status."""
+
+        return self.status in (
+            DurableWorkflowRunStatus.COMPLETED,
+            DurableWorkflowRunStatus.FAILED,
+            DurableWorkflowRunStatus.CANCELLED,
+            DurableWorkflowRunStatus.TERMINATED,
+            DurableWorkflowRunStatus.TIMED_OUT,
+        )
 
 
 # ....................... #

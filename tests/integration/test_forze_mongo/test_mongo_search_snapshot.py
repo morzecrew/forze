@@ -17,13 +17,14 @@ from forze.application.contracts.search import (
 from forze.application.execution import Deps, ExecutionContext
 from forze_mongo.adapters.search import MongoTextSearchAdapter
 from forze_mongo.execution.deps.configs import MongoSearchConfig
-from forze_mongo.execution.deps.deps import ConfigurableMongoSearch
+from forze_mongo.execution.deps import ConfigurableMongoSearch
 from forze_mongo.execution.deps.keys import MongoClientDepKey
-from forze_mongo.kernel.platform import MongoClient
+from forze_mongo.kernel.client import MongoClient
 from forze_redis.execution.deps.configs import RedisSearchResultSnapshotConfig
-from forze_redis.execution.deps.deps import ConfigurableRedisSearchResultSnapshot
+from forze_redis.execution.deps import ConfigurableRedisSearchResultSnapshot
 from forze_redis.execution.deps.keys import RedisClientDepKey
-from forze_redis.kernel.platform.client import RedisClient
+from forze_redis.kernel.client import RedisClient
+from tests.support.execution_context import context_from_deps
 
 
 class SnapRow(BaseModel):
@@ -51,8 +52,7 @@ async def test_mongo_text_result_snapshot_reread(
     )
 
     ns = f"it:mongo:rss:{uuid4().hex[:10]}"
-    ctx = ExecutionContext(
-        deps=Deps.plain(
+    ctx = context_from_deps(Deps.plain(
             {
                 MongoClientDepKey: mongo_client,
                 RedisClientDepKey: redis_client,

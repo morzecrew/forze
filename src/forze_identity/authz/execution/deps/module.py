@@ -1,6 +1,5 @@
 """Authz dependency module for the application kernel."""
 
-from enum import StrEnum
 from typing import Collection, final
 
 import attrs
@@ -14,6 +13,7 @@ from forze.application.contracts.authz import (
 )
 from forze.application.execution import Deps, DepsModule
 from forze.base.exceptions import exc
+from forze.base.primitives import StrKey
 
 from .configs import AuthzKernelConfig, build_authz_shared_services
 from .deps import (
@@ -27,25 +27,25 @@ from .deps import (
 # ----------------------- #
 
 
-def _normalize_route_set[K: str | StrEnum](
-    routes: Collection[K] | None,
-) -> frozenset[K]:
+def _normalize_route_set(
+    routes: Collection[StrKey] | None,
+) -> frozenset[StrKey]:
     return frozenset(routes) if routes else frozenset()
 
 
 @final
 @attrs.define(slots=True, frozen=True, kw_only=True)
-class AuthzDepsModule[K: str | StrEnum](DepsModule[K]):
+class AuthzDepsModule(DepsModule):
     """Registers authz dependency factories that resolve document ports via execution context."""
 
     kernel: AuthzKernelConfig | None = attrs.field(default=None)
-    principal_registry: Collection[K] | None = attrs.field(default=None)
-    role_assignment: Collection[K] | None = attrs.field(default=None)
-    grant_query: Collection[K] | None = attrs.field(default=None)
-    decision: Collection[K] | None = attrs.field(default=None)
-    scope: Collection[K] | None = attrs.field(default=None)
+    principal_registry: Collection[StrKey] | None = attrs.field(default=None)
+    role_assignment: Collection[StrKey] | None = attrs.field(default=None)
+    grant_query: Collection[StrKey] | None = attrs.field(default=None)
+    decision: Collection[StrKey] | None = attrs.field(default=None)
+    scope: Collection[StrKey] | None = attrs.field(default=None)
 
-    def __call__(self) -> Deps[K]:
+    def __call__(self) -> Deps:
         pr = _normalize_route_set(self.principal_registry)
         ra = _normalize_route_set(self.role_assignment)
         gq = _normalize_route_set(self.grant_query)
@@ -55,7 +55,7 @@ class AuthzDepsModule[K: str | StrEnum](DepsModule[K]):
         has_registrations = bool(pr or ra or gq or dc or sc)
 
         if not has_registrations:
-            return Deps[K]()
+            return Deps()
 
         if self.kernel is None:
             raise exc.internal(
@@ -64,11 +64,11 @@ class AuthzDepsModule[K: str | StrEnum](DepsModule[K]):
 
         shared = build_authz_shared_services(self.kernel)
 
-        merged: Deps[K] = Deps[K]()
+        merged: Deps = Deps()
 
         if pr:
             merged = merged.merge(
-                Deps[K].routed(
+                Deps.routed(
                     {
                         PrincipalRegistryDepKey: {
                             name: ConfigurablePrincipalRegistry() for name in pr
@@ -79,7 +79,7 @@ class AuthzDepsModule[K: str | StrEnum](DepsModule[K]):
 
         if ra:
             merged = merged.merge(
-                Deps[K].routed(
+                Deps.routed(
                     {
                         RoleAssignmentDepKey: {
                             name: ConfigurableRoleAssignment() for name in ra
@@ -90,7 +90,7 @@ class AuthzDepsModule[K: str | StrEnum](DepsModule[K]):
 
         if gq:
             merged = merged.merge(
-                Deps[K].routed(
+                Deps.routed(
                     {
                         GrantQueryDepKey: {
                             name: ConfigurableGrantQuery() for name in gq
@@ -101,7 +101,7 @@ class AuthzDepsModule[K: str | StrEnum](DepsModule[K]):
 
         if dc:
             merged = merged.merge(
-                Deps[K].routed(
+                Deps.routed(
                     {
                         AuthzDecisionDepKey: {
                             name: ConfigurableAuthzDecision(shared=shared)
@@ -113,7 +113,7 @@ class AuthzDepsModule[K: str | StrEnum](DepsModule[K]):
 
         if sc:
             merged = merged.merge(
-                Deps[K].routed(
+                Deps.routed(
                     {
                         AuthzScopeDepKey: {
                             name: ConfigurableAuthzScope(shared=shared) for name in sc

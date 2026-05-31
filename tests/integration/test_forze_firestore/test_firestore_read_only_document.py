@@ -16,12 +16,13 @@ from forze_firestore.execution.deps.configs import (
     FirestoreDocumentConfig,
     FirestoreReadOnlyDocumentConfig,
 )
-from forze_firestore.execution.deps.deps import (
+from forze_firestore.execution.deps import (
     ConfigurableFirestoreDocument,
     ConfigurableFirestoreReadOnlyDocument,
 )
 from forze_firestore.execution.deps.keys import FirestoreClientDepKey
-from forze_firestore.kernel.platform import FirestoreClient
+from forze_firestore.kernel.client import FirestoreClient
+from tests.support.execution_context import context_from_deps
 
 
 class RoDoc(Document):
@@ -59,13 +60,11 @@ async def test_read_only_document_query_without_writes(
     factory = ConfigurableFirestoreReadOnlyDocument(
         config=FirestoreReadOnlyDocumentConfig(read=("(default)", collection)),
     )
-    ctx = ExecutionContext(
-        deps=Deps.plain(
+    ctx = context_from_deps(Deps.plain(
             {
                 FirestoreClientDepKey: firestore_client,
                 DocumentQueryDepKey: factory,
-            }
-        )
+            })
     )
 
     writable = ConfigurableFirestoreDocument(
@@ -74,14 +73,12 @@ async def test_read_only_document_query_without_writes(
             write=("(default)", collection),
         ),
     )
-    seed_ctx = ExecutionContext(
-        deps=Deps.plain(
+    seed_ctx = context_from_deps(Deps.plain(
             {
                 FirestoreClientDepKey: firestore_client,
                 DocumentQueryDepKey: writable,
                 DocumentCommandDepKey: writable,
-            }
-        )
+            })
     )
     seeded = await seed_ctx.document.command(spec).create(RoCreate(label="seed"))
 

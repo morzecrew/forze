@@ -84,6 +84,13 @@ class TenantClientRegistry[C, R = str]:
 
     # ....................... #
 
+    def peek(self, tenant_id: UUID) -> C | None:
+        """Return a cached client without LRU touch (best-effort, no lock)."""
+
+        return self.__registry.peek(tenant_id)
+
+    # ....................... #
+
     def require_started(self) -> None:
         if not self.__started:
             raise exc.internal("Tenant client registry is not started")

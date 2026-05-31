@@ -2,7 +2,7 @@ from uuid import uuid4
 
 import pytest
 
-from forze_redis.kernel.platform.client import RedisClient
+from forze_redis.kernel.client import RedisClient
 
 
 @pytest.mark.asyncio

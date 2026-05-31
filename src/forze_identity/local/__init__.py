@@ -13,7 +13,7 @@ def local_identity_deps(
     *,
     authn_route: str = "main",
     tenancy_route: str = "main",
-) -> Deps[str]:
+) -> Deps:
     """Lazy wrapper avoiding import cycles with :mod:`forze_identity.authn.execution`."""
 
     from .wiring import local_identity_deps as _impl

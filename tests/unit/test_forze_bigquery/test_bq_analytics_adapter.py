@@ -17,7 +17,7 @@ from forze_bigquery.execution.deps.configs import (
     BigQueryAnalyticsConfig,
     BigQueryQueryConfig,
 )
-from forze_bigquery.kernel.platform.value_objects import (
+from forze_bigquery.kernel.client.value_objects import (
     BigQueryInsertResult,
     BigQueryQueryResult,
 )

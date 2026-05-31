@@ -20,7 +20,7 @@ from forze_temporal.adapters.schedule import (
     TemporalWorkflowScheduleCommandAdapter,
     TemporalWorkflowScheduleQueryAdapter,
 )
-from forze_temporal.kernel.platform.client import TemporalClient
+from forze_temporal.kernel.client.client import TemporalClient
 
 
 class _In(BaseModel):

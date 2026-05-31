@@ -5,6 +5,7 @@ from pydantic import BaseModel
 from .specs import (
     DurableWorkflowHandle,
     DurableWorkflowQuerySpec,
+    DurableWorkflowRunDescription,
     DurableWorkflowSignalSpec,
     DurableWorkflowSpec,
     DurableWorkflowUpdateSpec,
@@ -106,4 +107,13 @@ class DurableWorkflowQueryPort(
 
     def result(self, handle: DurableWorkflowHandle) -> Awaitable[Out]:
         """Get the result of a workflow run."""
+        ...  # pragma: no cover
+
+    # ....................... #
+
+    def describe(
+        self,
+        handle: DurableWorkflowHandle,
+    ) -> Awaitable[DurableWorkflowRunDescription]:
+        """Return coarse execution status for a workflow run."""
         ...  # pragma: no cover

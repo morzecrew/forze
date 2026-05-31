@@ -1,19 +1,15 @@
-"""Helpers for runtime tracing in tests.
-
-Import via ``from tests.support.runtime_tracing import ...`` when the test
-package root is on ``PYTHONPATH`` (e.g. ``pytest`` with repo root as cwd).
-Prefer ``traced_deps`` / ``traced_ctx`` fixtures in
-``tests/unit/test_forze/application/conftest.py`` for unit tests.
-"""
+"""Helpers for runtime tracing in tests."""
 
 from __future__ import annotations
 
-from forze.application.execution import Deps, DepsPlan, ExecutionContext
+from forze.application.execution import Deps, DepsRegistry, ExecutionContext, FrozenDeps
 from forze.application.execution.tracing import (
     RuntimeTraceValidator,
     assert_runtime_trace_valid,
 )
 from forze_mock import MockDepsModule, MockState
+
+from tests.support.execution_context import context_from_deps
 
 # ----------------------- #
 
@@ -22,28 +18,27 @@ def build_traced_deps(
     mock_state: MockState,
     *,
     extra_plain: dict | None = None,
-) -> Deps:
-    """Build mock deps with runtime tracing enabled via :class:`DepsPlan`."""
+) -> FrozenDeps:
+    """Build mock deps with runtime tracing enabled via :class:`DepsRegistry`."""
 
-    base = DepsPlan.from_modules(
+    registry = DepsRegistry.from_modules(
         lambda: MockDepsModule(state=mock_state)(),
-    ).with_tracing(runtime=True).build()
+    )
 
-    if not extra_plain:
-        return base
+    if extra_plain:
+        registry = registry.with_deps(Deps.plain(extra_plain))
 
-    overlay = DepsPlan.from_deps(Deps.plain(extra_plain)).with_tracing(runtime=True).build()
-    return Deps.merge(base, overlay, runtime_tracer=base.runtime_tracer)
+    return registry.with_tracing(runtime=True).freeze().resolve()
 
 
-def build_traced_ctx(deps: Deps) -> ExecutionContext:
+def build_traced_ctx(deps: FrozenDeps) -> ExecutionContext:
     """Create an :class:`ExecutionContext` for *deps* with tracing session bound."""
 
     return ExecutionContext(deps=deps)
 
 
 def assert_deps_runtime_trace_valid(
-    deps: Deps,
+    deps: FrozenDeps,
     *validators: RuntimeTraceValidator,
 ) -> None:
     """Assert ``deps.runtime_trace()`` passes all *validators*."""

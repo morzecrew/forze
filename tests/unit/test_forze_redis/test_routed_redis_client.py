@@ -1,4 +1,4 @@
-"""Unit tests for :class:`~forze_redis.kernel.platform.RoutedRedisClient`."""
+"""Unit tests for :class:`~forze_redis.kernel.client.RoutedRedisClient`."""
 
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID
@@ -7,7 +7,7 @@ import pytest
 
 from forze.application.contracts.secrets import SecretRef
 from forze.base.exceptions import CoreException
-from forze_redis.kernel.platform import RoutedRedisClient
+from forze_redis.kernel.client import RoutedRedisClient
 
 # ----------------------- #
 
@@ -79,7 +79,7 @@ async def test_routed_redis_eviction() -> None:
         return inst
 
     with patch(
-        "forze_redis.kernel.platform.routed_client.RedisClient",
+        "forze_redis.kernel.client.routed_client.RedisClient",
         side_effect=_make_client,
     ):
         cur = _T1

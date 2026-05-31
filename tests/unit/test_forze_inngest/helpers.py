@@ -3,7 +3,7 @@ from collections.abc import Sequence
 import attrs
 import inngest
 
-from forze_inngest.kernel.platform import InngestClientPort
+from forze_inngest.kernel.client import InngestClientPort
 
 # ----------------------- #
 

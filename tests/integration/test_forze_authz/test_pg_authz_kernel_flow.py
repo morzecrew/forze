@@ -20,11 +20,16 @@ from forze.application.contracts.document import (
 )
 from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.execution import Deps, ExecutionContext, InvocationMetadata
+from tests.support.execution_context import context_from_deps
 from forze_identity.authz.application.constants import AuthzResourceName
 from forze_identity.authz.execution import AuthzDepsModule, AuthzKernelConfig
 from forze_postgres.execution.deps import (
     ConfigurablePostgresDocument,
     ConfigurablePostgresReadOnlyDocument,
+)
+from forze_postgres.execution.deps.configs import (
+    PostgresDocumentConfig,
+    PostgresReadOnlyDocumentConfig,
 )
 from forze_postgres.execution.deps.keys import (
     PostgresClientDepKey,
@@ -82,15 +87,32 @@ async def _authz_pg_setup(pg_client: PostgresClient, *, suffix: str) -> Executio
         """
     )
 
-    def _ro(table: str) -> dict[str, object]:
-        return {"read": ("public", table)}
+    return context_from_deps(_authz_pg_deps(pg_client, suffix=suffix))
 
-    def _rw(table: str) -> dict[str, object]:
-        return {
-            "read": ("public", table),
-            "write": ("public", table),
-            "bookkeeping_strategy": "application",
-        }
+
+def _authz_pg_deps(pg_client: PostgresClient, *, suffix: str) -> Deps:
+    """Postgres document routes for authz integration (DDL must exist)."""
+
+    pri = f"authz_pri_{suffix}"
+    perm = f"authz_perm_{suffix}"
+    role = f"authz_role_{suffix}"
+    grp = f"authz_grp_{suffix}"
+    rp = f"authz_rp_{suffix}"
+    pr = f"authz_pr_{suffix}"
+    pp = f"authz_pp_{suffix}"
+    gp = f"authz_gp_{suffix}"
+    gr = f"authz_gr_{suffix}"
+    gperm = f"authz_gperm_{suffix}"
+
+    def _ro(table: str) -> PostgresReadOnlyDocumentConfig:
+        return PostgresReadOnlyDocumentConfig(read=("public", table))
+
+    def _rw(table: str) -> PostgresDocumentConfig:
+        return PostgresDocumentConfig(
+            read=("public", table),
+            write=("public", table),
+            bookkeeping_strategy="application",
+        )
 
     introspector = PostgresIntrospector(client=pg_client)
 
@@ -129,31 +151,29 @@ async def _authz_pg_setup(pg_client: PostgresClient, *, suffix: str) -> Executio
         scope={"main"},
     )()
 
-    return ExecutionContext(
-        deps=Deps.plain(
+    return Deps.plain(
+        {
+            PostgresClientDepKey: pg_client,
+            PostgresIntrospectorDepKey: introspector,
+        },
+    ).merge(
+        Deps.routed(
             {
-                PostgresClientDepKey: pg_client,
-                PostgresIntrospectorDepKey: introspector,
-            },
-        ).merge(
-            Deps.routed(
-                {
-                    DocumentQueryDepKey: query_routes,
-                    DocumentCommandDepKey: {
-                        AuthzResourceName.POLICY_PRINCIPALS: ConfigurablePostgresDocument(
-                            config=_rw(pri),
-                        ),
-                        AuthzResourceName.PERMISSIONS: ConfigurablePostgresDocument(
-                            config=_rw(perm),
-                        ),
-                        AuthzResourceName.PRINCIPAL_PERMISSION_BINDINGS: ConfigurablePostgresDocument(
-                            config=_rw(pp),
-                        ),
-                    },
+                DocumentQueryDepKey: query_routes,
+                DocumentCommandDepKey: {
+                    AuthzResourceName.POLICY_PRINCIPALS: ConfigurablePostgresDocument(
+                        config=_rw(pri),
+                    ),
+                    AuthzResourceName.PERMISSIONS: ConfigurablePostgresDocument(
+                        config=_rw(perm),
+                    ),
+                    AuthzResourceName.PRINCIPAL_PERMISSION_BINDINGS: ConfigurablePostgresDocument(
+                        config=_rw(pp),
+                    ),
                 },
-            ),
-            authz_deps,
+            },
         ),
+        authz_deps,
     )
 
 

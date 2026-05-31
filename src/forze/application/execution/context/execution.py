@@ -1,8 +1,9 @@
-from typing import Any, Callable, final
+from typing import Callable, final
 
 import attrs
 
 from forze.application.contracts.analytics import AnalyticsDeps
+from forze.application.contracts.authn import AuthnDeps
 from forze.application.contracts.authz import AuthzDeps
 from forze.application.contracts.cache import CacheDeps
 from forze.application.contracts.counter import CounterDeps
@@ -14,7 +15,7 @@ from forze.application.contracts.storage import StorageDeps
 from forze.application.contracts.tenancy import TenancyDeps
 from forze.application.contracts.transaction import TransactionDeps
 
-from ..deps import Deps
+from ..deps import FrozenDeps
 from ..deps.tx_tracer import tx_tracer_from_runtime
 from ..tracing import bind_active_deps, init_runtime_tracing
 from .invocation import InvocationContext
@@ -28,7 +29,7 @@ from .transaction import TransactionContext
 class ExecutionContext:
     """Execution context."""
 
-    deps: Deps[Any]
+    deps: FrozenDeps
     """Dependencies container."""
 
     # ....................... #
@@ -72,6 +73,9 @@ class ExecutionContext:
     authz: AuthzDeps = attrs.field(factory=AuthzDeps, init=False)
     """Authorization dependencies."""
 
+    authn: AuthnDeps = attrs.field(factory=AuthnDeps, init=False)
+    """Authentication dependencies."""
+
     transaction: TransactionDeps = attrs.field(factory=TransactionDeps, init=False)
     """Transaction dependencies."""
 
@@ -99,6 +103,7 @@ class ExecutionContext:
         self.dlock.lock(self)
         self.tenancy.lock(self)
         self.authz.lock(self)
+        self.authn.lock(self)
         self.transaction.lock(self)
 
         self.tx_ctx.lock(

@@ -1,4 +1,4 @@
-"""Integration tests for :class:`~forze_mongo.kernel.platform.RoutedMongoClient`."""
+"""Integration tests for :class:`~forze_mongo.kernel.client.RoutedMongoClient`."""
 
 from __future__ import annotations
 
@@ -17,8 +17,8 @@ pytest.importorskip("testcontainers.mongodb")
 from testcontainers.mongodb import MongoDbContainer
 
 from forze.application.contracts.secrets import SecretRef
-from forze_mongo.kernel.platform import RoutedMongoClient
-from forze_mongo.kernel.platform.client import MongoClient
+from forze_mongo.kernel.client import RoutedMongoClient
+from forze_mongo.kernel.client.client import MongoClient
 
 
 def _ref(tid: UUID) -> SecretRef:

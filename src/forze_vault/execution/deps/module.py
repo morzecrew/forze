@@ -1,6 +1,5 @@
 """Dependency module for Vault client and secrets adapter."""
 
-from enum import StrEnum
 from typing import final
 
 import attrs
@@ -9,7 +8,7 @@ from forze.application.contracts.secrets import SecretsDepKey, SecretsPort
 from forze.application.execution import Deps, DepsModule
 
 from ...adapters import VaultKvSecrets
-from ...kernel.platform import VaultClientPort
+from ...kernel.client import VaultClientPort
 from .keys import VaultClientDepKey
 
 # ----------------------- #
@@ -17,7 +16,7 @@ from .keys import VaultClientDepKey
 
 @final
 @attrs.define(slots=True, frozen=True, kw_only=True)
-class VaultDepsModule[K: str | StrEnum](DepsModule[K]):
+class VaultDepsModule(DepsModule):
     """Register Vault client and :class:`~forze_vault.adapters.VaultKvSecrets` under deps keys."""
 
     client: VaultClientPort
@@ -28,10 +27,14 @@ class VaultDepsModule[K: str | StrEnum](DepsModule[K]):
 
     # ....................... #
 
-    def __call__(self) -> Deps[K]:
-        adapter = self.secrets if self.secrets is not None else VaultKvSecrets(client=self.client)
+    def __call__(self) -> Deps:
+        adapter = (
+            self.secrets
+            if self.secrets is not None
+            else VaultKvSecrets(client=self.client)
+        )
 
-        return Deps[K].plain(
+        return Deps.plain(
             {
                 VaultClientDepKey: self.client,
                 SecretsDepKey: adapter,

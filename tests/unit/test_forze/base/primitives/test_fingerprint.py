@@ -8,7 +8,7 @@ from forze.base.primitives.fingerprint import (
     secret_dedup_fingerprint,
     stable_fingerprint,
 )
-from forze_clickhouse.kernel.platform.routing_credentials import (
+from forze_clickhouse.kernel.client.routing_credentials import (
     ClickHouseRoutingCredentials,
     routing_fingerprint,
 )
@@ -75,6 +75,15 @@ def test_connection_string_fingerprint_without_password_unchanged_shape() -> Non
 
     assert fp
     assert "user" not in fp
+
+
+def test_connection_string_fingerprint_differs_by_query_params() -> None:
+    base = "127.0.0.1:7233"
+    fp_a = connection_string_fingerprint(base)
+    fp_b = connection_string_fingerprint(f"{base}?dedup=aaa")
+    fp_c = connection_string_fingerprint(f"{base}?dedup=bbb")
+
+    assert fp_a != fp_b != fp_c
 
 
 def test_clickhouse_routing_fingerprint_differs_by_password() -> None:

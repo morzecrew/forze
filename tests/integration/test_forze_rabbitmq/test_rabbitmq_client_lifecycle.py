@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from forze_rabbitmq.kernel.platform import RabbitMQClient
+from forze_rabbitmq.kernel.client import RabbitMQClient
 
 
 @pytest.mark.integration

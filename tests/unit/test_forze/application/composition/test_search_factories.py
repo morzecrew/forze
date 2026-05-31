@@ -18,6 +18,7 @@ from forze.application.contracts.search import (
     SearchSpec,
 )
 from forze.application.execution import Deps, ExecutionContext
+from tests.support.execution_context import context_from_deps
 from forze.application.handlers.search import (
     CursorSearch,
     ProjectedCursorSearch,
@@ -55,8 +56,8 @@ def _ctx_for_search(spec: SearchSpec[_Hit]) -> ExecutionContext:
         _ = _ctx, _sp
         return _search_port_mock()
 
-    return ExecutionContext(
-        deps=Deps.routed(
+    return context_from_deps(
+        Deps.routed(
             {SearchQueryDepKey: {spec.name: _fac}},
         ),
     )
@@ -67,8 +68,8 @@ def _ctx_for_hub(spec: HubSearchSpec[_Hit]) -> ExecutionContext:
         _ = _ctx, _sp
         return _search_port_mock()
 
-    return ExecutionContext(
-        deps=Deps.routed(
+    return context_from_deps(
+        Deps.routed(
             {HubSearchQueryDepKey: {spec.name: _fac}},
         ),
     )

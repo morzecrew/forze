@@ -16,9 +16,10 @@ from forze.domain.constants import ID_FIELD
 from forze_patterns.soft_deletion.models import DocWithSoftDeletion, UpdateCmdWithSoftDeletion
 from forze.domain.models import CreateDocumentCmd, ReadDocument
 from forze_mongo.execution.deps import MongoDocumentConfig
-from forze_mongo.execution.deps.deps import ConfigurableMongoDocument
+from forze_mongo.execution.deps import ConfigurableMongoDocument
 from forze_mongo.execution.deps.keys import MongoClientDepKey
-from forze_mongo.kernel.platform import MongoClient
+from forze_mongo.kernel.client import MongoClient
+from tests.support.execution_context import context_from_deps
 
 
 class BatchDoc(DocWithSoftDeletion):
@@ -66,14 +67,12 @@ async def _setup(
             history=(db_name, history_collection),
         )
     )
-    ctx = ExecutionContext(
-        deps=Deps.plain(
+    ctx = context_from_deps(Deps.plain(
             {
                 MongoClientDepKey: mongo_client,
                 DocumentQueryDepKey: configurable,
                 DocumentCommandDepKey: configurable,
-            }
-        )
+            })
     )
     return ctx, spec
 

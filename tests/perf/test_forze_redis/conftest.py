@@ -8,7 +8,7 @@ from testcontainers.redis import RedisContainer
 
 pytest.importorskip("redis")
 
-from forze_redis.kernel.platform.client import RedisClient, RedisConfig
+from forze_redis.kernel.client import RedisClient, RedisConfig
 
 
 def _ensure_docker_available() -> None:

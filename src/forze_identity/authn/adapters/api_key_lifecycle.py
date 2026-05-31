@@ -1,4 +1,5 @@
 from typing import Sequence, final
+from uuid import UUID
 
 import attrs
 
@@ -8,19 +9,20 @@ from forze.application.contracts.authn import (
     AuthnIdentity,
     CredentialLifetime,
     IssuedApiKey,
+    PrincipalEligibilityPort,
 )
 from forze.application.contracts.document import DocumentCommandPort, DocumentQueryPort
 from forze.base.exceptions import exc
+from forze.base.primitives import utcnow
 
 from ..domain.models.account import (
     ApiKeyAccount,
     CreateApiKeyAccountCmd,
     ReadApiKeyAccount,
-    ReadPrincipal,
     UpdateApiKeyAccountCmd,
 )
 from ..services import ApiKeyService
-from ._utils import find_api_key_account_by_authn_identity
+from ._utils import find_api_key_account_by_id
 
 # ----------------------- #
 #! TODO: configurable prefix
@@ -45,15 +47,14 @@ class ApiKeyLifecycleAdapter(ApiKeyLifecyclePort):
     ]
     """API key account command port."""
 
-    principal_qry: DocumentQueryPort[ReadPrincipal]
-    """Principal query port."""
+    eligibility: PrincipalEligibilityPort
+    """Principal eligibility gate."""
 
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
         qry_spec = self.ak_qry.spec
         cmd_spec = self.ak_cmd.spec
-        principal_spec = self.principal_qry.spec
 
         if qry_spec.cache is not None:
             raise exc.internal(
@@ -75,19 +76,14 @@ class ApiKeyLifecycleAdapter(ApiKeyLifecyclePort):
                 "API key account history is forbidden by security reasons"
             )
 
-        if principal_spec.cache is not None:
-            raise exc.internal("Principal caching is forbidden by security reasons")
-
-        if principal_spec.history_enabled:
-            raise exc.internal("Principal history is forbidden by security reasons")
-
     # ....................... #
 
     async def issue_api_key(self, identity: AuthnIdentity) -> IssuedApiKey:
-        ak = await find_api_key_account_by_authn_identity(self.ak_qry, identity)
+        await self.eligibility.require_authentication_allowed(identity.principal_id)
 
-        if ak is None or not ak.is_active:
-            raise exc.authentication("API key account not found")
+        now = utcnow()
+        expires_in = self.api_key_svc.config.expires_in
+        expires_at = (now + expires_in) if expires_in is not None else None
 
         res = self.api_key_svc.generate_key()
 
@@ -104,6 +100,7 @@ class ApiKeyLifecycleAdapter(ApiKeyLifecyclePort):
             principal_id=identity.principal_id,
             key_hash=key_hash,
             prefix=prefix,
+            expires_at=expires_at,
         )
 
         created_key = await self.ak_cmd.create(create_cmd)
@@ -113,7 +110,11 @@ class ApiKeyLifecycleAdapter(ApiKeyLifecyclePort):
         return IssuedApiKey(
             key=creds,
             key_id=str(created_key.id),
-            lifetime=CredentialLifetime(expires_in=self.api_key_svc.config.expires_in),
+            lifetime=CredentialLifetime(
+                expires_in=expires_in,
+                issued_at=created_key.created_at,
+                expires_at=expires_at,
+            ),
         )
 
     # ....................... #
@@ -126,10 +127,38 @@ class ApiKeyLifecycleAdapter(ApiKeyLifecyclePort):
 
     # ....................... #
 
-    async def revoke_api_key(self, key_id: str) -> None:  # noqa: F841
-        raise NotImplementedError("Not implemented")
+    async def revoke_api_key(self, identity: AuthnIdentity, key_id: str) -> None:
+        await self.eligibility.require_authentication_allowed(identity.principal_id)
+
+        try:
+            parsed_id = UUID(key_id)
+
+        except ValueError as e:
+            raise exc.authentication("API key not found") from e
+
+        account = await find_api_key_account_by_id(self.ak_qry, parsed_id)
+
+        if account is None or account.principal_id != identity.principal_id:
+            raise exc.authentication("API key not found")
+
+        if not account.is_active:
+            return
+
+        await self.ak_cmd.update(
+            account.id,
+            account.rev,
+            UpdateApiKeyAccountCmd(is_active=False),
+            return_new=False,
+        )
 
     # ....................... #
 
-    async def revoke_many_api_keys(self, key_ids: Sequence[str]) -> None:  # noqa: F841
-        raise NotImplementedError("Not implemented")
+    async def revoke_many_api_keys(
+        self,
+        identity: AuthnIdentity,
+        key_ids: Sequence[str],
+    ) -> None:
+        await self.eligibility.require_authentication_allowed(identity.principal_id)
+
+        for key_id in key_ids:
+            await self.revoke_api_key(identity, key_id)

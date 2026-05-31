@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from forze.base.exceptions import CoreException
+from tests.support.execution_context import context_from_deps, context_from_modules, frozen_deps_from_deps
 from pydantic import BaseModel
 
 from forze.application.contracts.analytics import (
@@ -16,8 +17,14 @@ from forze_bigquery.execution.deps import (
     BigQueryAnalyticsConfig,
     BigQueryDepsModule,
     BigQueryQueryConfig,
+    ConfigurableBigQueryAnalytics,
 )
-from forze_bigquery.kernel.platform import BigQueryClient
+from forze_bigquery.kernel.client import BigQueryClient
+
+
+def test_rejects_mapping_config() -> None:
+    with pytest.raises(TypeError, match="BigQueryAnalyticsConfig"):
+        ConfigurableBigQueryAnalytics(config={"dataset": "d", "queries": {}})
 
 
 class _Row(BaseModel):
@@ -61,7 +68,7 @@ def test_deps_module_registers_analytics_keys() -> None:
         },
     )
     deps = module()
-    ctx = ExecutionContext(deps=deps)
+    ctx = context_from_deps(deps)
     spec = _spec()
     assert ctx.analytics.query(spec) is not None
     assert ctx.analytics.ingest(spec) is not None

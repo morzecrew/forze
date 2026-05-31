@@ -1,19 +1,20 @@
 """Postgres hub search execution configs and validation."""
 
-from collections.abc import Mapping, Sequence
-from typing import Any, Literal
+from typing import Any, Literal, Mapping, Sequence
 
 import attrs
 
 from forze.application.contracts.tenancy import TenantAwareIntegrationConfig
 from forze.base.exceptions import exc
-from forze.base.primitives import StrKey
+from forze.base.primitives import StrKey, frozen_mapping
 from forze.domain.constants import ID_FIELD
-
-from forze_postgres.kernel.relation import RelationSpec, coerce_relation_spec, is_static_relation
+from forze_postgres.kernel.relation import (
+    RelationSpec,
+    coerce_relation_spec,
+    is_static_relation,
+)
 
 from ....kernel.catalog.hub_fk_columns import normalize_hub_fk_columns
-from ._mapping import frozen_mapping
 from .search import PostgresSearchConfig
 
 # ----------------------- #

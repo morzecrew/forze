@@ -12,6 +12,7 @@ from forze.application.contracts.authz import AuthzSpec, AuthzDecision
 from forze.application.execution import Deps, ExecutionContext, InvocationMetadata
 from forze.application.hooks.authz import AuthzBeforeAuthorize, merge_query_filters
 from forze.base.exceptions import CoreException, ExceptionKind
+from tests.support.execution_context import context_from_deps, context_from_modules, frozen_deps_from_deps
 
 pytestmark = pytest.mark.unit
 
@@ -31,7 +32,7 @@ def test_merge_query_filters_and() -> None:
 
 @pytest.mark.asyncio
 async def test_before_authorize_allows() -> None:
-    ctx = ExecutionContext(deps=Deps())
+    ctx = context_from_deps(Deps())
     ident = AuthnIdentity(principal_id=uuid4())
     metadata = InvocationMetadata(execution_id=uuid4(), correlation_id=uuid4())
 
@@ -42,7 +43,7 @@ async def test_before_authorize_allows() -> None:
 
 @pytest.mark.asyncio
 async def test_before_authorize_denies() -> None:
-    ctx = ExecutionContext(deps=Deps())
+    ctx = context_from_deps(Deps())
     ident = AuthnIdentity(principal_id=uuid4())
     metadata = InvocationMetadata(execution_id=uuid4(), correlation_id=uuid4())
 

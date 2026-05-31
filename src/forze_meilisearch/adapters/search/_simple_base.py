@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
-from typing import Any
+from typing import Any, Sequence
 
 import attrs
 from pydantic import BaseModel
@@ -20,10 +19,12 @@ from forze.application.contracts.search import (
     search_options_for_simple_adapter,
 )
 from forze.application.coordinators import SearchResultSnapshotCoordinator
-from forze_meilisearch.adapters.search._offset_run import execute_meilisearch_offset_search
+from forze_meilisearch.adapters.search._offset_run import (
+    execute_meilisearch_offset_search,
+)
 from forze_meilisearch.adapters.search._port import MeilisearchSearchPortMixin
 from forze_meilisearch.adapters.search.base import MeilisearchSearchGateway
-from forze_meilisearch.kernel.platform.port import MeilisearchClientPort
+from forze_meilisearch.kernel.client.port import MeilisearchClientPort
 
 # ----------------------- #
 

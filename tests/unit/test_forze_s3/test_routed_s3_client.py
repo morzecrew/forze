@@ -1,4 +1,4 @@
-"""Unit tests for :class:`~forze_s3.kernel.platform.RoutedS3Client`."""
+"""Unit tests for :class:`~forze_s3.kernel.client.RoutedS3Client`."""
 
 from forze.base.exceptions import CoreException, exc
 import json
@@ -9,7 +9,7 @@ from uuid import UUID
 import pytest
 
 from forze.application.contracts.secrets import SecretRef
-from forze_s3.kernel.platform import RoutedS3Client
+from forze_s3.kernel.client import RoutedS3Client
 
 # ----------------------- #
 
@@ -85,7 +85,7 @@ async def test_routed_s3_eviction() -> None:
         return inst
 
     with patch(
-        "forze_s3.kernel.platform.routed_client.S3Client",
+        "forze_s3.kernel.client.routed_client.S3Client",
         side_effect=_make_client,
     ):
         cur = _T1
@@ -99,7 +99,7 @@ async def test_routed_s3_eviction() -> None:
 
 def test_routed_s3_rejects_zero_max_cached_tenants() -> None:
     secrets = _MemSecrets({_T1: _creds()})
-    with pytest.raises(CoreException, match="max_cached_tenants"):
+    with pytest.raises(CoreException, match="max_entries"):
         RoutedS3Client(
             secrets=secrets,
             secret_ref_for_tenant=_ref,

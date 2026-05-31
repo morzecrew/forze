@@ -6,11 +6,12 @@ import attrs
 import pytest
 
 from forze.base.exceptions import CoreException
+from tests.support.execution_context import context_from_deps, context_from_modules, frozen_deps_from_deps
 from pydantic import BaseModel
 
 from forze.application.contracts.execution import Handler
 from forze.application.execution import Deps, ExecutionContext
-from forze.application.execution.registry import OperationRegistry
+from forze.application.execution.operations.registry import OperationRegistry
 from forze_socketio.routing import (
     ForzeSocketIOAdapter,
     SocketIONamespaceRouter,
@@ -73,7 +74,7 @@ class TestSocketIORouting:
 
         def context_factory(request: SocketIORequest) -> ExecutionContext:
             request_log.append(request)
-            return ExecutionContext(deps=Deps())
+            return context_from_deps(Deps())
 
         router = SocketIONamespaceRouter(namespace="/chat").command(
             event="echo",
@@ -119,7 +120,7 @@ async def test_event_dispatch_without_ack_type_returns_raw_value() -> None:
     registry = _frozen_echo_registry()
 
     def context_factory(request: SocketIORequest) -> ExecutionContext:
-        return ExecutionContext(deps=Deps())
+        return context_from_deps(Deps())
 
     router = SocketIONamespaceRouter(namespace="/chat").command(
         event="echo",

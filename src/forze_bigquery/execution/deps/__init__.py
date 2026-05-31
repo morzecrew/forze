@@ -1,5 +1,5 @@
 from .configs import BigQueryAnalyticsConfig, BigQueryQueryConfig
-from .deps import ConfigurableBigQueryAnalytics
+from .factories import ConfigurableBigQueryAnalytics
 from .keys import BigQueryClientDepKey
 from .module import BigQueryDepsModule
 

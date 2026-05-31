@@ -8,7 +8,7 @@ require_vault()
 
 from .adapters import VaultKvSecrets
 from .execution import VaultClientDepKey, VaultDepsModule, vault_lifecycle_step
-from .kernel.platform import VaultClient, VaultClientPort, VaultConfig
+from .kernel.client import VaultClient, VaultClientPort, VaultConfig
 
 # ----------------------- #
 

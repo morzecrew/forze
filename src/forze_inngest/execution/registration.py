@@ -24,8 +24,8 @@ from forze.application.execution.context import (
     ExecutionContext,
     ExecutionContextFactory,
 )
-from forze.application.execution.registry import FrozenOperationRegistry
-from forze.application.execution.running import handler_for_registry_operation
+from forze.application.execution.operations.registry import FrozenOperationRegistry
+from forze.application.execution.operations.run import handler_for_registry_operation
 from forze.base.exceptions import exc
 
 from ..adapters.context import (
@@ -34,7 +34,7 @@ from ..adapters.context import (
     split_envelope,
 )
 from ..adapters.step import bind_inngest_step, reset_inngest_step
-from ..kernel.platform import InngestClientPort
+from ..kernel.client import InngestClientPort
 
 # ----------------------- #
 

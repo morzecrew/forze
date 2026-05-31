@@ -13,7 +13,7 @@ pytest.importorskip("redis")
 from forze.application.contracts.tenancy import TenantIdentity
 from forze_redis.adapters.stream import RedisStreamAdapter, _stream_physical, _stream_wire_and_back
 from forze_redis.adapters.codecs import RedisStreamCodec
-from forze_redis.kernel.platform.client import RedisClient
+from forze_redis.kernel.client import RedisClient
 from forze.base.serialization import PydanticRecordMappingCodec
 
 

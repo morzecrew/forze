@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 
 from forze.base.exceptions import CoreException
-from forze_redis.kernel.platform.client import RedisClient, RedisConfig
+from forze_redis.kernel.client import RedisClient, RedisConfig
 
 
 @pytest.mark.integration

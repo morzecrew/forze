@@ -16,6 +16,7 @@ from forze_postgres.execution.deps.keys import (
 from forze_postgres.execution.deps.utils import doc_write_gw
 from forze_postgres.kernel.catalog.introspect import PostgresIntrospector
 from forze_postgres.kernel.client.client import PostgresClient
+from tests.support.execution_context import context_from_deps
 
 
 class PgGwDoc(Document):
@@ -81,8 +82,7 @@ async def test_postgres_write_gateway_roundtrip_and_projections(
         """
     )
 
-    ctx = ExecutionContext(
-        deps=Deps.plain(
+    ctx = context_from_deps(Deps.plain(
             {
                 PostgresClientDepKey: pg_client,
                 PostgresIntrospectorDepKey: PostgresIntrospector(client=pg_client),
@@ -139,8 +139,7 @@ async def test_postgres_write_gateway_upsert_insert_then_conflict_updates(
     )
 
     pk = UUID(int=0x12345678123456781234567812345678)
-    ctx = ExecutionContext(
-        deps=Deps.plain(
+    ctx = context_from_deps(Deps.plain(
             {
                 PostgresClientDepKey: pg_client,
                 PostgresIntrospectorDepKey: PostgresIntrospector(client=pg_client),
@@ -191,8 +190,7 @@ async def test_postgres_write_gateway_upsert_many_mixed_batch(
         """
     )
 
-    ctx = ExecutionContext(
-        deps=Deps.plain(
+    ctx = context_from_deps(Deps.plain(
             {
                 PostgresClientDepKey: pg_client,
                 PostgresIntrospectorDepKey: PostgresIntrospector(client=pg_client),
@@ -248,8 +246,7 @@ async def test_postgres_write_gateway_ensure_returns_existing_row(
     )
 
     pk = UUID(int=0xABCDEF0123456789ABCDEF0123456789)
-    ctx = ExecutionContext(
-        deps=Deps.plain(
+    ctx = context_from_deps(Deps.plain(
             {
                 PostgresClientDepKey: pg_client,
                 PostgresIntrospectorDepKey: PostgresIntrospector(client=pg_client),
@@ -289,8 +286,7 @@ async def test_postgres_write_gateway_ensure_many_inserts_and_reuses_existing(
         """
     )
 
-    ctx = ExecutionContext(
-        deps=Deps.plain(
+    ctx = context_from_deps(Deps.plain(
             {
                 PostgresClientDepKey: pg_client,
                 PostgresIntrospectorDepKey: PostgresIntrospector(client=pg_client),
@@ -339,8 +335,7 @@ async def test_postgres_write_gateway_create_many_empty(
         """
     )
 
-    ctx = ExecutionContext(
-        deps=Deps.plain(
+    ctx = context_from_deps(Deps.plain(
             {
                 PostgresClientDepKey: pg_client,
                 PostgresIntrospectorDepKey: PostgresIntrospector(client=pg_client),
@@ -377,8 +372,7 @@ async def test_postgres_write_gateway_update_many_empty_diff_skips_batch_update(
         """
     )
 
-    ctx = ExecutionContext(
-        deps=Deps.plain(
+    ctx = context_from_deps(Deps.plain(
             {
                 PostgresClientDepKey: pg_client,
                 PostgresIntrospectorDepKey: PostgresIntrospector(client=pg_client),
@@ -424,8 +418,7 @@ async def test_postgres_write_gateway_touch_many(
         """
     )
 
-    ctx = ExecutionContext(
-        deps=Deps.plain(
+    ctx = context_from_deps(Deps.plain(
             {
                 PostgresClientDepKey: pg_client,
                 PostgresIntrospectorDepKey: PostgresIntrospector(client=pg_client),
@@ -465,8 +458,7 @@ async def test_postgres_write_gateway_kill_many_empty_is_noop(
         """
     )
 
-    ctx = ExecutionContext(
-        deps=Deps.plain(
+    ctx = context_from_deps(Deps.plain(
             {
                 PostgresClientDepKey: pg_client,
                 PostgresIntrospectorDepKey: PostgresIntrospector(client=pg_client),
@@ -501,8 +493,7 @@ async def test_postgres_write_gateway_create_many_empty_is_noop(
         );
         """
     )
-    ctx = ExecutionContext(
-        deps=Deps.plain(
+    ctx = context_from_deps(Deps.plain(
             {
                 PostgresClientDepKey: pg_client,
                 PostgresIntrospectorDepKey: PostgresIntrospector(client=pg_client),
@@ -545,8 +536,7 @@ async def test_postgres_write_gateway_update_many_nullable_timestamptz_all_null(
         """
     )
 
-    ctx = ExecutionContext(
-        deps=Deps.plain(
+    ctx = context_from_deps(Deps.plain(
             {
                 PostgresClientDepKey: pg_client,
                 PostgresIntrospectorDepKey: PostgresIntrospector(client=pg_client),
@@ -630,8 +620,7 @@ async def test_postgres_write_gateway_ensure_composite_pk_and_secondary_unique(
         """
     )
 
-    ctx = ExecutionContext(
-        deps=Deps.plain(
+    ctx = context_from_deps(Deps.plain(
             {
                 PostgresClientDepKey: pg_client,
                 PostgresIntrospectorDepKey: PostgresIntrospector(client=pg_client),

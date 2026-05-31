@@ -9,6 +9,7 @@ from forze.application.contracts.analytics import (
     AnalyticsQueryDefinition,
     AnalyticsSpec,
 )
+from tests.support.execution_context import context_from_deps, context_from_modules, frozen_deps_from_deps
 from forze.application.execution import ExecutionContext
 from forze.base.exceptions import CoreException
 from forze_postgres import PostgresClient, PostgresDepsModule
@@ -57,7 +58,7 @@ def test_deps_module_registers_analytics_keys() -> None:
         },
     )
     deps = module()
-    ctx = ExecutionContext(deps=deps)
+    ctx = context_from_deps(deps)
     spec = _spec()
     assert ctx.analytics.query(spec) is not None
     assert ctx.analytics.ingest(spec) is not None

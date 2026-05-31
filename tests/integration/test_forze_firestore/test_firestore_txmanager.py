@@ -5,7 +5,7 @@ from uuid import uuid4
 import pytest
 
 from forze_firestore.adapters import FirestoreTxManagerAdapter, FirestoreTxScopeKey
-from forze_firestore.kernel.platform import FirestoreClient
+from forze_firestore.kernel.client import FirestoreClient
 
 
 @pytest.fixture

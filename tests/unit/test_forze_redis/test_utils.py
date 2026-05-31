@@ -18,7 +18,7 @@ for _name in _MOCKED_REDIS_MODULES:
     sys.modules[_name] = MagicMock()
 
 try:
-    from forze_redis.kernel.platform.utils import parse_stream_entries
+    from forze_redis.kernel.client.utils import parse_stream_entries
 finally:
     for _name, _original in _saved_redis_modules.items():
         if _original is None:

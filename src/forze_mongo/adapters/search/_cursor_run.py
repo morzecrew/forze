@@ -20,7 +20,7 @@ from forze.application.contracts.querying import (
 from forze.application.contracts.search import ranked_search_cursor_key_spec
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
-from forze_mongo.kernel.platform.port import MongoClientPort
+from forze_mongo.kernel.client.port import MongoClientPort
 
 from ._cursor_seek import build_keyset_seek_match
 from ._materialize import materialize_search_page

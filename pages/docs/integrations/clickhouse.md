@@ -78,6 +78,8 @@ Start ClickHouse (for example `clickhouse/clickhouse-server` on port 8123 with c
 
 Register `RoutedClickHouseClient` under `ClickHouseClientDepKey` and use `routed_clickhouse_lifecycle_step(client=routed_ch)`. Per-tenant secrets resolve to `ClickHouseRoutingCredentials` (`host`, `port`, `username`, `password`, `database`, `secure`, …).
 
+For framework tests or advanced wiring, prefer `from forze_clickhouse.execution.deps import ConfigurableClickHouseAnalytics` rather than removed `forze_clickhouse.execution.deps.deps` paths.
+
 ## Configuration
 
 Physical mapping lives on `ClickHouseDepsModule.analytics`, keyed by `AnalyticsSpec.name`:

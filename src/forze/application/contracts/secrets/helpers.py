@@ -1,7 +1,6 @@
 """Helpers built on :class:`SecretsPort`."""
 
-from collections.abc import Callable, Mapping
-from typing import TypeVar
+from typing import Callable, Mapping, TypeVar
 from uuid import UUID
 
 from pydantic import BaseModel, ValidationError

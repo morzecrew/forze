@@ -7,7 +7,7 @@ import pytest
 from forze.base.exceptions import CoreException
 
 from forze.application.contracts.execution import BeforeStep, DispatchStep
-from forze.application.execution.registry import (
+from forze.application.execution.operations.registry import (
     FrozenOperationRegistry,
     OperationRegistry,
 )

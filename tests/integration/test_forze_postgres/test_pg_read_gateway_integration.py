@@ -17,6 +17,7 @@ from forze_postgres.execution.deps.keys import (
 from forze_postgres.execution.deps.utils import read_gw
 from forze_postgres.kernel.catalog.introspect import PostgresIntrospector
 from forze_postgres.kernel.client.client import PostgresClient
+from tests.support.execution_context import context_from_deps
 
 class RdDoc(Document):
     name: str
@@ -66,8 +67,7 @@ async def test_postgres_read_gateway_get_find_and_projections(
         {"a": id_a, "b": id_b},
     )
 
-    ctx = ExecutionContext(
-        deps=Deps.plain(
+    ctx = context_from_deps(Deps.plain(
             {
                 PostgresClientDepKey: pg_client,
                 PostgresIntrospectorDepKey: PostgresIntrospector(client=pg_client),
@@ -143,8 +143,7 @@ async def test_postgres_read_gateway_aggregate_expressions(
         },
     )
 
-    ctx = ExecutionContext(
-        deps=Deps.plain(
+    ctx = context_from_deps(Deps.plain(
             {
                 PostgresClientDepKey: pg_client,
                 PostgresIntrospectorDepKey: PostgresIntrospector(client=pg_client),
@@ -241,8 +240,7 @@ async def test_postgres_read_gateway_get_many_order_and_not_found(
         {"a": id_first, "b": id_second},
     )
 
-    ctx = ExecutionContext(
-        deps=Deps.plain(
+    ctx = context_from_deps(Deps.plain(
             {
                 PostgresClientDepKey: pg_client,
                 PostgresIntrospectorDepKey: PostgresIntrospector(client=pg_client),
@@ -296,8 +294,7 @@ async def test_postgres_read_gateway_find_many_with_cursor(
             {"id": u, "name": f"n{i}"},
         )
 
-    ctx = ExecutionContext(
-        deps=Deps.plain(
+    ctx = context_from_deps(Deps.plain(
             {
                 PostgresClientDepKey: pg_client,
                 PostgresIntrospectorDepKey: PostgresIntrospector(client=pg_client),
@@ -396,8 +393,7 @@ async def test_postgres_read_gateway_for_update_requires_transaction(
         {"id": pk},
     )
 
-    ctx = ExecutionContext(
-        deps=Deps.plain(
+    ctx = context_from_deps(Deps.plain(
             {
                 PostgresClientDepKey: pg_client,
                 PostgresIntrospectorDepKey: PostgresIntrospector(client=pg_client),
@@ -438,8 +434,7 @@ async def test_postgres_read_gateway_get_many_empty_sequence(
         );
         """
     )
-    ctx = ExecutionContext(
-        deps=Deps.plain(
+    ctx = context_from_deps(Deps.plain(
             {
                 PostgresClientDepKey: pg_client,
                 PostgresIntrospectorDepKey: PostgresIntrospector(client=pg_client),
@@ -483,8 +478,7 @@ async def test_postgres_read_gateway_find_many_aggregates_raw_rows(
         """,
         {"a": uuid4(), "b": uuid4()},
     )
-    ctx = ExecutionContext(
-        deps=Deps.plain(
+    ctx = context_from_deps(Deps.plain(
             {
                 PostgresClientDepKey: pg_client,
                 PostgresIntrospectorDepKey: PostgresIntrospector(client=pg_client),
@@ -535,8 +529,7 @@ async def test_postgres_read_gateway_find_many_with_cursor_return_model(
         """,
         {"a": id_a, "b": id_b},
     )
-    ctx = ExecutionContext(
-        deps=Deps.plain(
+    ctx = context_from_deps(Deps.plain(
             {
                 PostgresClientDepKey: pg_client,
                 PostgresIntrospectorDepKey: PostgresIntrospector(client=pg_client),
@@ -586,8 +579,7 @@ async def test_postgres_read_gateway_aggregates_reject_return_fields(
         """,
         {"a": uuid4()},
     )
-    ctx = ExecutionContext(
-        deps=Deps.plain(
+    ctx = context_from_deps(Deps.plain(
             {
                 PostgresClientDepKey: pg_client,
                 PostgresIntrospectorDepKey: PostgresIntrospector(client=pg_client),
@@ -627,8 +619,7 @@ async def test_postgres_read_gateway_get_missing_raises(
         );
         """,
     )
-    ctx = ExecutionContext(
-        deps=Deps.plain(
+    ctx = context_from_deps(Deps.plain(
             {
                 PostgresClientDepKey: pg_client,
                 PostgresIntrospectorDepKey: PostgresIntrospector(client=pg_client),

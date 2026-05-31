@@ -11,9 +11,10 @@ from forze.application.contracts.search import SearchQueryDepKey, SearchSpec
 from forze.application.execution import Deps, ExecutionContext
 from forze_mongo.adapters.search import MongoAtlasSearchAdapter
 from forze_mongo.execution.deps.configs import MongoSearchConfig
-from forze_mongo.execution.deps.deps import ConfigurableMongoSearch
+from forze_mongo.execution.deps import ConfigurableMongoSearch
 from forze_mongo.execution.deps.keys import MongoClientDepKey
-from forze_mongo.kernel.platform import MongoClient
+from forze_mongo.kernel.client import MongoClient
+from tests.support.execution_context import context_from_deps
 
 from mongo_search_helpers import wait_search_ready
 
@@ -33,8 +34,7 @@ def _atlas_ctx(
     collection: str,
     index_name: str,
 ) -> ExecutionContext:
-    return ExecutionContext(
-        deps=Deps.plain(
+    return context_from_deps(Deps.plain(
             {
                 MongoClientDepKey: mongo_client,
                 SearchQueryDepKey: ConfigurableMongoSearch(

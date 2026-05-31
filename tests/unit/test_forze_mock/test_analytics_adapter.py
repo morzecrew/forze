@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from forze.base.exceptions import CoreException
+from tests.support.execution_context import context_from_deps, context_from_modules, frozen_deps_from_deps
 from pydantic import BaseModel
 
 from forze.application.contracts.analytics import (
@@ -44,7 +45,7 @@ def ctx() -> ExecutionContext:
         "counts": [{"value": 10}, {"value": 20}],
     }
     module = MockDepsModule(state=state)
-    return ExecutionContext(deps=module())
+    return context_from_deps(module())
 
 
 @pytest.mark.asyncio

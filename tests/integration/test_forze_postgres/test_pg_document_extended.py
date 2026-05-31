@@ -20,6 +20,7 @@ from forze_postgres.execution.deps.keys import (
 from forze_postgres.kernel.catalog.introspect import PostgresIntrospector
 from forze_postgres.kernel.client.client import PostgresClient
 from forze_postgres.execution.deps.configs import PostgresDocumentConfig
+from tests.support.execution_context import context_from_deps
 
 
 class _Doc(Document):
@@ -50,8 +51,7 @@ def _ctx_for_table(pg_client: PostgresClient, table: str) -> ExecutionContext:
             bookkeeping_strategy="application",
         )
     )
-    return ExecutionContext(
-        deps=Deps.plain(
+    return context_from_deps(Deps.plain(
             {
                 PostgresClientDepKey: pg_client,
                 PostgresIntrospectorDepKey: PostgresIntrospector(client=pg_client),

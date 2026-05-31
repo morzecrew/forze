@@ -55,7 +55,7 @@ from forze_meilisearch.adapters.search._simple_base import (
     MeilisearchSimpleSearchAdapter,
 )
 from forze_meilisearch.execution.deps.configs import MeilisearchFederatedMerge
-from forze_meilisearch.kernel.platform.port import MeilisearchClientPort
+from forze_meilisearch.kernel.client.port import MeilisearchClientPort
 
 # ----------------------- #
 

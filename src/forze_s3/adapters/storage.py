@@ -30,7 +30,7 @@ from forze.application.contracts.tenancy import TenancyMixin
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict, utcnow, uuid7
 
-from ..kernel.platform import S3ClientPort
+from ..kernel.client import S3ClientPort
 from ..kernel.relation import resolve_s3_bucket
 from .codecs import default_b64_codec, default_path_codec
 
@@ -261,11 +261,11 @@ class S3StorageAdapter(StoragePort, TenancyMixin):
         async with self.client.client():
             h = await self.client.head_object(bucket=bucket, key=key)
 
-            if "metadata" not in h:
+            if not h.metadata:
                 raise exc.internal("Invalid object metadata")
 
             try:
-                meta = _object_metadata_from_s3_user(h["metadata"])
+                meta = _object_metadata_from_s3_user(dict(h.metadata))
 
             except exc:
                 raise
@@ -277,7 +277,7 @@ class S3StorageAdapter(StoragePort, TenancyMixin):
 
             return DownloadedObject(
                 data=data,
-                content_type=str(h["content_type"]),  # type: ignore[arg-type]
+                content_type=h.content_type,
                 filename=default_b64_codec.loads(meta.filename),
             )
 
@@ -345,11 +345,11 @@ class S3StorageAdapter(StoragePort, TenancyMixin):
             out: list[StoredObject] = []
 
             for o, h in zip(objects, heads, strict=True):
-                if "metadata" not in h:
+                if not h.metadata:
                     raise exc.internal("Invalid object metadata")
 
                 try:
-                    meta = _object_metadata_from_s3_user(h["metadata"])
+                    meta = _object_metadata_from_s3_user(dict(h.metadata))
 
                 except exc:
                     raise
@@ -366,7 +366,7 @@ class S3StorageAdapter(StoragePort, TenancyMixin):
                             if meta.description
                             else None
                         ),
-                        content_type=h.get("content_type", "application/json"),
+                        content_type=h.content_type or "application/json",
                         size=meta.size,
                         created_at=meta.created_at,
                     )

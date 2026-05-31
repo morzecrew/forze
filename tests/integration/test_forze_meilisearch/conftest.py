@@ -12,7 +12,7 @@ pytest.importorskip("meilisearch_python_sdk")
 from testcontainers.core.container import DockerContainer
 from testcontainers.core.waiting_utils import wait_for_logs
 
-from forze_meilisearch.kernel.platform import MeilisearchClient
+from forze_meilisearch.kernel.client import MeilisearchClient
 
 _MEILI_IMAGE = "getmeili/meilisearch:v1.45.0"
 _MEILI_MASTER_KEY = "masterKey"

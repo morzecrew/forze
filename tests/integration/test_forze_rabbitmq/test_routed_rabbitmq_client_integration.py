@@ -1,4 +1,4 @@
-"""Integration tests for :class:`~forze_rabbitmq.kernel.platform.RoutedRabbitMQClient`."""
+"""Integration tests for :class:`~forze_rabbitmq.kernel.client.RoutedRabbitMQClient`."""
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ pytest.importorskip("aio_pika")
 from testcontainers.rabbitmq import RabbitMqContainer
 
 from forze.application.contracts.secrets import SecretRef
-from forze_rabbitmq.kernel.platform import (
+from forze_rabbitmq.kernel.client import (
     RabbitMQClient,
     RabbitMQConfig,
     RoutedRabbitMQClient,
@@ -162,7 +162,7 @@ async def test_routed_rabbitmq_queue_roundtrip(
             enqueued_at=ts,
         )
         messages = await _receive_until(routed, queue)
-        assert messages[0]["id"] == mid
+        assert messages[0].id == mid
         assert await routed.ack(queue, [mid]) == 1
 
         ids = await routed.enqueue_many(
@@ -173,22 +173,22 @@ async def test_routed_rabbitmq_queue_roundtrip(
             enqueued_at=ts,
         )
         batch_msgs = await _receive_exact(routed, queue, expected=2)
-        assert {m["id"] for m in batch_msgs} == set(ids)
+        assert {m.id for m in batch_msgs} == set(ids)
         assert await routed.ack(queue, ids) == 2
 
         saw = 0
         await routed.enqueue(queue, b'{"value":"stream"}')
         async for _m in routed.consume(queue, timeout=timedelta(seconds=2)):
             saw += 1
-            await routed.ack(queue, [_m["id"]])
+            await routed.ack(queue, [_m.id])
             break
         assert saw == 1
 
         await routed.enqueue(queue, b'{"value":"requeue"}')
         first = (await _receive_until(routed, queue))[0]
-        assert await routed.nack(queue, [first["id"]], requeue=True) == 1
+        assert await routed.nack(queue, [first.id], requeue=True) == 1
         second = (await _receive_until(routed, queue))[0]
-        assert await routed.ack(queue, [second["id"]]) == 1
+        assert await routed.ack(queue, [second.id]) == 1
     finally:
         await routed.close()
 

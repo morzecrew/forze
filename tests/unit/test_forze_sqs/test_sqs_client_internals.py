@@ -1,4 +1,4 @@
-"""Unit tests for :class:`~forze_sqs.kernel.platform.client.SQSClient` helpers (no I/O)."""
+"""Unit tests for :class:`~forze_sqs.kernel.client.SQSClient` helpers (no I/O)."""
 
 from forze.base.exceptions import CoreException, exc
 import asyncio
@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock
 import pytest
 from pydantic import SecretStr
 
-from forze_sqs.kernel.platform.client import SQSClient
+from forze_sqs.kernel.client import SQSClient, SQSConfig
 
 # ----------------------- #
 
@@ -64,10 +64,10 @@ async def test_initialize_converts_timedelta_in_config() -> None:
         access_key_id="k",
         secret_access_key=SecretStr("s"),
         region_name="us-east-1",
-        config={
-            "connect_timeout": timedelta(seconds=5),
-            "read_timeout": timedelta(seconds=2),
-        },
+        config=SQSConfig(
+            connect_timeout=timedelta(seconds=5),
+            read_timeout=timedelta(seconds=2),
+        ),
     )
     opts = client._SQSClient__opts  # type: ignore[attr-defined]
     assert opts is not None
@@ -231,7 +231,7 @@ async def test_initialize_sets_enqueue_concurrency_from_max_pool_connections() -
         access_key_id="k",
         secret_access_key="s",
         region_name="us-east-1",
-        config={"max_pool_connections": 3},
+        config=SQSConfig(max_pool_connections=3),
     )
     assert client._SQSClient__enqueue_batch_concurrency == 3  # type: ignore[attr-defined]
     await client.close()
@@ -244,7 +244,7 @@ async def test_enqueue_many_parallel_batches_respects_concurrency_cap() -> None:
         access_key_id="k",
         secret_access_key="s",
         region_name="us-east-1",
-        config={"max_pool_connections": 2},
+        config=SQSConfig(max_pool_connections=2),
     )
 
     in_flight = 0

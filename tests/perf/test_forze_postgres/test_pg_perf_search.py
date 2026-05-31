@@ -10,6 +10,7 @@ pytest.importorskip("psycopg")
 
 from forze.application.contracts.search import SearchQueryDepKey, SearchSpec
 from forze.application.execution import Deps, ExecutionContext
+from tests.support.execution_context import context_from_deps, context_from_modules, frozen_deps_from_deps
 from forze_postgres.execution.deps import ConfigurablePostgresSearch
 from forze_postgres.execution.deps.keys import (
     PostgresClientDepKey,
@@ -45,7 +46,7 @@ def execution_context(pg_client: PostgresClient):
             ),
         }
     )
-    return ExecutionContext(deps=deps)
+    return context_from_deps(deps)
 
 
 @pytest_asyncio.fixture

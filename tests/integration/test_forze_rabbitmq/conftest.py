@@ -14,7 +14,7 @@ from testcontainers.rabbitmq import RabbitMqContainer
 pytest.importorskip("aio_pika")
 
 from forze_rabbitmq.adapters import RabbitMQQueueAdapter, RabbitMQQueueCodec
-from forze_rabbitmq.kernel.platform import RabbitMQClient, RabbitMQConfig
+from forze_rabbitmq.kernel.client import RabbitMQClient, RabbitMQConfig
 from forze.base.serialization import PydanticRecordMappingCodec
 
 

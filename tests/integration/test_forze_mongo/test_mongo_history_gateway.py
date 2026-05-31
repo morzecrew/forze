@@ -17,7 +17,7 @@ from forze.domain.constants import (
 from forze_patterns.soft_deletion import SoftDeletionMixin
 from forze.domain.models import Document
 from forze_mongo.kernel.gateways.history import MongoHistoryGateway
-from forze_mongo.kernel.platform import MongoClient
+from forze_mongo.kernel.client import MongoClient
 
 class HistDoc(Document, SoftDeletionMixin):
     title: str

@@ -8,9 +8,10 @@ import attrs
 
 from forze.application._logger import logger
 from forze.application.contracts.execution import ExecutionGraph, LifecycleStep
-from forze.application.execution.planning.builders import lifecycle_graph_from_sequence
+from forze.application.contracts.execution.builders import steps_graph_from_sequence
+from forze.base.primitives import AbstractSequence
 
-from ..running.lifecycle_runner import run_lifecycle_shutdown, run_lifecycle_startup
+from .run import run_lifecycle_shutdown, run_lifecycle_startup
 from .module import LifecycleModule
 
 if TYPE_CHECKING:
@@ -148,7 +149,7 @@ class LifecyclePlan:
         if not collected:
             return FrozenLifecyclePlan(concurrent=self.concurrent)
 
-        graph = lifecycle_graph_from_sequence(collected)
+        graph = steps_graph_from_sequence(AbstractSequence(items=tuple(collected)))
 
         logger.trace(
             "Frozen lifecycle plan with %s step(s) in %s wave(s): %s",

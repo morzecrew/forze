@@ -11,6 +11,7 @@ from forze.application.execution.lifecycle import (
     LifecyclePlan,
     LifecycleStep,
 )
+from tests.support.execution_context import context_from_deps, context_from_modules, frozen_deps_from_deps
 from forze_mock import MockDepsModule, MockState
 
 # ----------------------- #
@@ -18,7 +19,7 @@ from forze_mock import MockDepsModule, MockState
 
 @pytest.fixture
 def ctx() -> ExecutionContext:
-    return ExecutionContext(deps=MockDepsModule(state=MockState())())
+    return context_from_deps(MockDepsModule(state=MockState())())
 
 
 def _wave_step_ids(frozen: FrozenLifecyclePlan) -> list[str]:
@@ -53,6 +54,15 @@ class TestLifecycleStep:
         step = LifecycleStep(id="custom", startup=up, shutdown=down)
         assert step.startup is up
         assert step.shutdown is down
+
+
+class TestLifecyclePlanGraphFreeze:
+    def test_builds_waves_from_capabilities(self) -> None:
+        pool = LifecycleStep(id="pool", provides=("postgres.client",))
+        warmup = LifecycleStep(id="warmup", requires=("postgres.client",))
+        frozen = LifecyclePlan.from_steps(warmup, pool).freeze()
+
+        assert frozen.graph.waves == (("pool",), ("warmup",))
 
 
 class TestLifecyclePlan:

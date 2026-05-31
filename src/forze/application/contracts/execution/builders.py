@@ -19,14 +19,16 @@ def steps_graph_from_sequence[X: GraphStep](
     step_list = tuple(seq.items)
 
     steps: dict[StrKey, X] = {}
-    order: dict[StrKey, int] = {}
+    priority: dict[StrKey, int] = {}
+    index: dict[StrKey, int] = {}
 
-    for s in step_list:
+    for i, s in enumerate(step_list):
         if s.id in steps:
             raise exc.internal(f"Step ID {s.id} is not unique")
 
         steps[s.id] = s
-        order[s.id] = s.priority
+        priority[s.id] = s.priority
+        index[s.id] = i
 
     provider_by_capability: dict[StrKey, StrKey] = {}
 
@@ -66,9 +68,11 @@ def steps_graph_from_sequence[X: GraphStep](
         u_before_v=True,
     )
 
-    # If sort key is not provided, sort by priority in descending order
+    # If sort key is not provided, sort by priority descending, then registration order
     resolved_sort_key: Callable[[StrKey], Any] = (
-        ready_sort_key if ready_sort_key is not None else (lambda sid: -order[sid])
+        ready_sort_key
+        if ready_sort_key is not None
+        else (lambda sid: (-priority[sid], index[sid]))
     )
     waves = tuple(dag.topological_batches(ready_sort_key=resolved_sort_key))
 

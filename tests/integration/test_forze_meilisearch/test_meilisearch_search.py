@@ -13,13 +13,12 @@ from forze.application.contracts.search import (
 from forze.application.execution import Deps, ExecutionContext
 from forze_meilisearch.adapters.search import MeilisearchSimpleSearchAdapter
 from forze_meilisearch.execution.deps import (
+    ConfigurableMeilisearchSearch,
+    ConfigurableMeilisearchSearchCommand,
     MeilisearchClientDepKey,
     MeilisearchSearchConfig,
 )
-from forze_meilisearch.execution.deps.deps import (
-    ConfigurableMeilisearchSearch,
-    ConfigurableMeilisearchSearchCommand,
-)
+from tests.support.execution_context import context_from_deps
 
 # ----------------------- #
 
@@ -31,8 +30,7 @@ class Article(BaseModel):
 
 
 def _ctx(meilisearch_client, *, index_uid: str) -> ExecutionContext:
-    return ExecutionContext(
-        deps=Deps.plain(
+    return context_from_deps(Deps.plain(
             {
                 MeilisearchClientDepKey: meilisearch_client,
                 SearchQueryDepKey: ConfigurableMeilisearchSearch(

@@ -9,7 +9,8 @@ from forze.application.contracts.search import SearchCommandDepKey, SearchSpec
 from forze.application.execution import Deps, ExecutionContext
 from forze_meilisearch.execution.deps import MeilisearchClientDepKey
 from forze_meilisearch.execution.deps import MeilisearchSearchConfig
-from forze_meilisearch.execution.deps.deps import ConfigurableMeilisearchSearchCommand
+from forze_meilisearch.execution.deps import ConfigurableMeilisearchSearchCommand
+from tests.support.execution_context import context_from_deps
 
 # ----------------------- #
 
@@ -24,8 +25,7 @@ class Item(BaseModel):
 async def test_command_delete_round_trip(meilisearch_client) -> None:
     index_uid = "cmd_it"
     spec = SearchSpec(name="items", model_type=Item, fields=["title"])
-    ctx = ExecutionContext(
-        deps=Deps.plain(
+    ctx = context_from_deps(Deps.plain(
             {
                 MeilisearchClientDepKey: meilisearch_client,
                 SearchCommandDepKey: ConfigurableMeilisearchSearchCommand(

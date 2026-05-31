@@ -2,7 +2,7 @@
 
 from forze.application.contracts.deps import DepKey
 
-from ...kernel.platform import S3ClientPort
+from ...kernel.client import S3ClientPort
 
 # ----------------------- #
 

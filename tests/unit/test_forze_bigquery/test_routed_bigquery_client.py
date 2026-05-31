@@ -1,4 +1,4 @@
-"""Unit tests for :class:`~forze_bigquery.kernel.platform.RoutedBigQueryClient`."""
+"""Unit tests for :class:`~forze_bigquery.kernel.client.RoutedBigQueryClient`."""
 
 import json
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -8,7 +8,7 @@ import pytest
 
 from forze.application.contracts.secrets import SecretRef
 from forze.base.exceptions import CoreException
-from forze_bigquery.kernel.platform import RoutedBigQueryClient
+from forze_bigquery.kernel.client import RoutedBigQueryClient
 
 # ----------------------- #
 
@@ -79,7 +79,7 @@ async def test_routed_bigquery_eviction() -> None:
         return inst
 
     with patch(
-        "forze_bigquery.kernel.platform.routed_client.BigQueryClient",
+        "forze_bigquery.kernel.client.routed_client.BigQueryClient",
         side_effect=_make_client,
     ):
         cur = _T1
@@ -94,7 +94,7 @@ async def test_routed_bigquery_eviction() -> None:
 
 def test_routed_bigquery_rejects_zero_max_cached_tenants() -> None:
     secrets = _MemSecrets({_T1: _creds()})
-    with pytest.raises(CoreException, match="max_cached_tenants"):
+    with pytest.raises(CoreException, match="max_entries"):
         RoutedBigQueryClient(
             secrets=secrets,
             secret_ref_for_tenant=_ref,

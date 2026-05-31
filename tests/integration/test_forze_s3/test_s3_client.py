@@ -1,6 +1,6 @@
 import pytest
 
-from forze_s3.kernel.platform.client import S3Client
+from forze_s3.kernel.client import S3Client
 
 
 @pytest.mark.asyncio
@@ -31,9 +31,9 @@ async def test_s3_client_bucket_and_object_crud(
         assert await s3_client.object_exists(s3_bucket, key)
 
         head = await s3_client.head_object(s3_bucket, key)
-        assert head["content_type"] == "text/plain"
-        assert head["metadata"]["filename"] == "readme.txt"
-        assert head["size"] == len(data)
+        assert head.content_type == "text/plain"
+        assert head.metadata["filename"] == "readme.txt"
+        assert head.size == len(data)
 
         downloaded = await s3_client.download_bytes(s3_bucket, key)
         assert downloaded == data

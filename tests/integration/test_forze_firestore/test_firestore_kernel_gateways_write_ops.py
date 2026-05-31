@@ -9,9 +9,10 @@ from pydantic import BaseModel
 
 from forze.application.execution import Deps, ExecutionContext
 from forze.base.exceptions import CoreException
+from tests.support.execution_context import context_from_deps, context_from_modules, frozen_deps_from_deps
 from forze_firestore.execution.deps.keys import FirestoreClientDepKey
 from forze_firestore.execution.deps.utils import doc_write_gw, read_gw
-from forze_firestore.kernel.platform import FirestoreClient
+from forze_firestore.kernel.client import FirestoreClient
 from tests.support import (
     IntegrationCreateCmd,
     IntegrationDocument,
@@ -33,7 +34,7 @@ class _NameOnly(BaseModel):
 
 
 def _ctx(client: FirestoreClient) -> ExecutionContext:
-    return ExecutionContext(deps=Deps.plain({FirestoreClientDepKey: client}))
+    return context_from_deps(Deps.plain({FirestoreClientDepKey: client}))
 
 
 def _write(ctx: ExecutionContext, collection: str) -> object:

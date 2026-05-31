@@ -7,7 +7,6 @@ from ..domain.models.account import (
     PasswordAccount,
     ReadApiKeyAccount,
     ReadPasswordAccount,
-    ReadPrincipal,
     UpdateApiKeyAccountCmd,
     UpdatePasswordAccountCmd,
 )
@@ -26,13 +25,6 @@ from ..domain.models.session import (
 from .constants import AuthnResourceName
 
 # ----------------------- #
-
-principal_spec = DocumentSpec(
-    name=AuthnResourceName.PRINCIPALS,
-    read=ReadPrincipal,
-)
-
-# ....................... #
 
 password_account_spec = DocumentSpec(
     name=AuthnResourceName.PASSWORD_ACCOUNTS,

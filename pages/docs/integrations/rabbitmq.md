@@ -66,6 +66,8 @@ deps_plan = DepsPlan.from_modules(rabbit_module)
 
 The route key should match your `QueueSpec.name`.
 
+For framework tests or advanced wiring, prefer `from forze_rabbitmq.execution.deps import ConfigurableRabbitMQQueueRead` and `ConfigurableRabbitMQQueueWrite` rather than removed `forze_rabbitmq.execution.deps.deps` paths.
+
 ### Lifecycle step
 
 ```python

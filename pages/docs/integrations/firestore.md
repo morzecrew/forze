@@ -182,3 +182,5 @@ Integration tests start the gcloud emulator via `testcontainers` (`DockerContain
 | Transactions | Replica set; read after write OK | Reads before writes; smaller limits |
 | Query surface | Broader DSL | MVP subset with explicit errors |
 | Offset pages | Supported | Only `offset=0`; use cursor for paging |
+
+For framework tests or advanced wiring, prefer `from forze_firestore.execution.deps import ConfigurableFirestoreDocument`, `ConfigurableFirestoreReadOnlyDocument`, and `firestore_txmanager` rather than removed `forze_firestore.execution.deps.deps` paths.

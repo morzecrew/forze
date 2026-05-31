@@ -157,10 +157,16 @@ class _StubApiKeyLifecyclePort:
     async def refresh_api_key(self, credentials: ApiKeyCredentials) -> IssuedApiKey:
         return IssuedApiKey(key=credentials)
 
-    async def revoke_api_key(self, key_id: str) -> None:
+    async def revoke_api_key(self, identity: AuthnIdentity, key_id: str) -> None:
+        _ = identity, key_id
         return None
 
-    async def revoke_many_api_keys(self, key_ids: tuple[str, ...]) -> None:
+    async def revoke_many_api_keys(
+        self,
+        identity: AuthnIdentity,
+        key_ids: tuple[str, ...],
+    ) -> None:
+        _ = identity, key_ids
         return None
 
 

@@ -20,6 +20,7 @@ from forze.application.contracts.authn import (
     PasswordCredentials,
     TokenLifecycleDepKey,
 )
+from tests.support.execution_context import context_from_deps, context_from_modules, frozen_deps_from_deps
 from forze.application.contracts.document import (
     DocumentCommandDepKey,
     DocumentQueryDepKey,
@@ -36,18 +37,21 @@ from forze_identity.authn.adapters import (
     ApiKeyLifecycleAdapter,
     PasswordAccountProvisioningAdapter,
     PasswordLifecycleAdapter,
+    PolicyPrincipalEligibilityAdapter,
     TokenLifecycleAdapter,
 )
 from forze_identity.authn.application.constants import AuthnResourceName
 from forze_identity.authn.application.specs import (
     api_key_account_spec,
     password_account_spec,
-    principal_spec,
     session_spec,
 )
-from forze_identity.authn.domain.models.account import (
-    CreateApiKeyAccountCmd,
-    CreatePasswordAccountCmd,
+from forze_identity.authn.domain.models.account import CreatePasswordAccountCmd
+from forze_identity.authz.application import policy_principal_spec
+from forze_identity.authz.application.constants import AuthzResourceName
+from tests.support.authn_pg_fixtures import (
+    create_authn_tables,
+    insert_policy_principal_row,
 )
 from forze_identity.authn.execution import (
     AuthnDepsModule,
@@ -67,6 +71,10 @@ from forze_postgres.execution.deps import (
     ConfigurablePostgresDocument,
     ConfigurablePostgresReadOnlyDocument,
 )
+from forze_postgres.execution.deps.configs import (
+    PostgresDocumentConfig,
+    PostgresReadOnlyDocumentConfig,
+)
 from forze_postgres.execution.deps.keys import (
     PostgresClientDepKey,
     PostgresIntrospectorDepKey,
@@ -84,79 +92,47 @@ async def _authn_pg_setup(
 ) -> ExecutionContext:
     """Create authn DDL and routed Postgres document adapters."""
 
-    pri = f"authn_pri_{suffix}"
+    await create_authn_tables(pg_client, suffix=suffix)
+    return context_from_deps(_authn_pg_deps(pg_client, suffix=suffix))
+
+
+def _authn_pg_deps(pg_client: PostgresClient, *, suffix: str) -> Deps:
+    """Postgres document routes for authn integration (DDL must exist)."""
+
+    policy_pri = f"authz_pri_{suffix}"
     pwd = f"authn_pwd_{suffix}"
     ak = f"authn_ak_{suffix}"
     sess = f"authn_sess_{suffix}"
 
-    await pg_client.execute(
-        f"""
-        CREATE TABLE {pri} (
-            id uuid PRIMARY KEY,
-            rev integer NOT NULL,
-            created_at timestamptz NOT NULL,
-            last_update_at timestamptz NOT NULL,
-            is_active boolean NOT NULL
-        );
-        CREATE TABLE {pwd} (
-            id uuid PRIMARY KEY,
-            rev integer NOT NULL,
-            created_at timestamptz NOT NULL,
-            last_update_at timestamptz NOT NULL,
-            principal_id uuid NOT NULL,
-            username text NOT NULL,
-            email text,
-            password_hash text NOT NULL,
-            is_active boolean NOT NULL DEFAULT true
-        );
-        CREATE TABLE {ak} (
-            id uuid PRIMARY KEY,
-            rev integer NOT NULL,
-            created_at timestamptz NOT NULL,
-            last_update_at timestamptz NOT NULL,
-            principal_id uuid NOT NULL,
-            prefix text,
-            key_hash text NOT NULL,
-            is_active boolean NOT NULL DEFAULT true
-        );
-        CREATE TABLE {sess} (
-            id uuid PRIMARY KEY,
-            rev integer NOT NULL,
-            created_at timestamptz NOT NULL,
-            last_update_at timestamptz NOT NULL,
-            principal_id uuid NOT NULL,
-            tenant_id uuid,
-            family_id uuid NOT NULL,
-            refresh_digest bytea NOT NULL,
-            expires_at timestamptz NOT NULL,
-            revoked_at timestamptz,
-            rotated_at timestamptz,
-            replaced_by uuid
-        );
-        """
+    policy_ro = PostgresReadOnlyDocumentConfig(read=("public", policy_pri))
+    pwd_cfg = PostgresDocumentConfig(
+        read=("public", pwd),
+        write=("public", pwd),
+        bookkeeping_strategy="application",
     )
-
-    ro = {"read": ("public", pri)}
-    pwd_cfg = {
-        "read": ("public", pwd),
-        "write": ("public", pwd),
-        "bookkeeping_strategy": "application",
-    }
-    ak_cfg = {
-        "read": ("public", ak),
-        "write": ("public", ak),
-        "bookkeeping_strategy": "application",
-    }
-    sess_cfg = {
-        "read": ("public", sess),
-        "write": ("public", sess),
-        "bookkeeping_strategy": "application",
-    }
+    ak_cfg = PostgresDocumentConfig(
+        read=("public", ak),
+        write=("public", ak),
+        bookkeeping_strategy="application",
+    )
+    sess_cfg = PostgresDocumentConfig(
+        read=("public", sess),
+        write=("public", sess),
+        bookkeeping_strategy="application",
+    )
 
     introspector = PostgresIntrospector(client=pg_client)
 
+    policy_cmd_cfg = PostgresDocumentConfig(
+        read=("public", policy_pri),
+        write=("public", policy_pri),
+        bookkeeping_strategy="application",
+    )
+
     query_routes = {
-        AuthnResourceName.PRINCIPALS: ConfigurablePostgresReadOnlyDocument(config=ro),
+        AuthzResourceName.POLICY_PRINCIPALS: ConfigurablePostgresReadOnlyDocument(
+            config=policy_ro,
+        ),
         AuthnResourceName.PASSWORD_ACCOUNTS: ConfigurablePostgresDocument(
             config=pwd_cfg
         ),
@@ -165,6 +141,9 @@ async def _authn_pg_setup(
     }
 
     cmd_routes = {
+        AuthzResourceName.POLICY_PRINCIPALS: ConfigurablePostgresDocument(
+            config=policy_cmd_cfg,
+        ),
         AuthnResourceName.PASSWORD_ACCOUNTS: ConfigurablePostgresDocument(
             config=pwd_cfg
         ),
@@ -172,37 +151,24 @@ async def _authn_pg_setup(
         AuthnResourceName.TOKEN_SESSIONS: ConfigurablePostgresDocument(config=sess_cfg),
     }
 
-    return ExecutionContext(
-        deps=Deps.plain(
+    return Deps.plain(
+        {
+            PostgresClientDepKey: pg_client,
+            PostgresIntrospectorDepKey: introspector,
+        },
+    ).merge(
+        Deps.routed(
             {
-                PostgresClientDepKey: pg_client,
-                PostgresIntrospectorDepKey: introspector,
-            }
-        ).merge(
-            Deps.routed(
-                {
-                    DocumentQueryDepKey: query_routes,
-                    DocumentCommandDepKey: cmd_routes,
-                }
-            ),
+                DocumentQueryDepKey: query_routes,
+                DocumentCommandDepKey: cmd_routes,
+            },
         ),
     )
 
 
-async def _insert_principal_row(
-    pg_client: PostgresClient,
-    *,
-    table: str,
-    principal_id: UUID,
-) -> None:
-    """Insert one ``ReadPrincipal`` row for adapter validation."""
-
-    await pg_client.execute(
-        f"""
-        INSERT INTO {table} (id, rev, created_at, last_update_at, is_active)
-        VALUES (%s, 1, now(), now(), true)
-        """,
-        (principal_id,),
+def _eligibility(ctx: ExecutionContext) -> PolicyPrincipalEligibilityAdapter:
+    return PolicyPrincipalEligibilityAdapter(
+        principal_qry=ctx.document.query(policy_principal_spec),
     )
 
 
@@ -212,6 +178,7 @@ def _invocation_metadata() -> InvocationMetadata:
 
 def _orchestrator(
     *,
+    eligibility: PolicyPrincipalEligibilityAdapter,
     password_svc: PasswordService | None = None,
     pa_qry: object = None,
     api_key_svc: ApiKeyService | None = None,
@@ -223,6 +190,7 @@ def _orchestrator(
 
     return AuthnOrchestrator(
         resolver=JwtNativeUuidResolver(),
+        eligibility=eligibility,
         enabled_methods=methods,
         password_verifier=(
             Argon2PasswordVerifier(password_svc=password_svc, pa_qry=pa_qry)  # type: ignore[arg-type]
@@ -253,8 +221,10 @@ async def test_pg_password_authentication(pg_client: PostgresClient) -> None:
 
     pwd_svc = PasswordService()
     pid = uuid4()
-    await _insert_principal_row(
-        pg_client, table=f"authn_pri_{suffix}", principal_id=pid
+    await insert_policy_principal_row(
+        pg_client,
+        table=f"authz_pri_{suffix}",
+        principal_id=pid,
     )
 
     hashed = pwd_svc.hash_password("correct horse battery staple")
@@ -271,6 +241,7 @@ async def test_pg_password_authentication(pg_client: PostgresClient) -> None:
         )
 
     authn = _orchestrator(
+        eligibility=_eligibility(ctx),
         password_svc=pwd_svc,
         pa_qry=ctx.document.query(password_account_spec),
         methods=frozenset({"password"}),
@@ -299,8 +270,10 @@ async def test_pg_issue_oauth_tokens_and_bearer_auth(pg_client: PostgresClient) 
     ctx = await _authn_pg_setup(pg_client, suffix=suffix)
 
     pid = uuid4()
-    await _insert_principal_row(
-        pg_client, table=f"authn_pri_{suffix}", principal_id=pid
+    await insert_policy_principal_row(
+        pg_client,
+        table=f"authz_pri_{suffix}",
+        principal_id=pid,
     )
 
     access_svc = AccessTokenService(secret_key=secrets.token_bytes(32))
@@ -314,7 +287,7 @@ async def test_pg_issue_oauth_tokens_and_bearer_auth(pg_client: PostgresClient) 
         refresh_svc=refresh_svc,
         session_qry=ctx.document.query(session_spec),
         session_cmd=ctx.document.command(session_spec),
-        principal_qry=ctx.document.query(principal_spec),
+        eligibility=_eligibility(ctx),
     )
 
     identity = AuthnIdentity(principal_id=pid)
@@ -330,6 +303,7 @@ async def test_pg_issue_oauth_tokens_and_bearer_auth(pg_client: PostgresClient) 
     )
 
     authn = _orchestrator(
+        eligibility=_eligibility(ctx),
         access_svc=access_svc,
         methods=frozenset({"token"}),
     )
@@ -357,33 +331,23 @@ async def test_pg_api_key_issue_and_authenticate(pg_client: PostgresClient) -> N
 
     api_key_svc = ApiKeyService(pepper=pepper, config=ApiKeyConfig(prefix="sk_test"))
     pid = uuid4()
-    await _insert_principal_row(
-        pg_client, table=f"authn_pri_{suffix}", principal_id=pid
+    await insert_policy_principal_row(
+        pg_client,
+        table=f"authz_pri_{suffix}",
+        principal_id=pid,
     )
 
-    bootstrap_key_material = secrets.token_hex(16)
-    bootstrap_digest = api_key_svc.calculate_key_digest(bootstrap_key_material)
-
     ak_cmd = ctx.document.command(api_key_account_spec)
-
-    with ctx.inv_ctx.bind(metadata=_invocation_metadata()):
-        await ak_cmd.create(
-            CreateApiKeyAccountCmd(
-                principal_id=pid,
-                key_hash=bootstrap_digest,
-                prefix=api_key_svc.config.prefix,
-            ),
-            return_new=False,
-        )
 
     lifecycle = ApiKeyLifecycleAdapter(
         api_key_svc=api_key_svc,
         ak_qry=ctx.document.query(api_key_account_spec),
         ak_cmd=ak_cmd,
-        principal_qry=ctx.document.query(principal_spec),
+        eligibility=_eligibility(ctx),
     )
 
     authn = _orchestrator(
+        eligibility=_eligibility(ctx),
         api_key_svc=api_key_svc,
         ak_qry=ctx.document.query(api_key_account_spec),
         methods=frozenset({"api_key"}),
@@ -410,8 +374,10 @@ async def test_pg_change_password(pg_client: PostgresClient) -> None:
 
     pwd_svc = PasswordService()
     pid = uuid4()
-    await _insert_principal_row(
-        pg_client, table=f"authn_pri_{suffix}", principal_id=pid
+    await insert_policy_principal_row(
+        pg_client,
+        table=f"authz_pri_{suffix}",
+        principal_id=pid,
     )
 
     pwd_cmd = ctx.document.command(password_account_spec)
@@ -429,12 +395,14 @@ async def test_pg_change_password(pg_client: PostgresClient) -> None:
         password_svc=pwd_svc,
         pa_qry=ctx.document.query(password_account_spec),
         pa_cmd=pwd_cmd,
+        eligibility=_eligibility(ctx),
     )
 
     with ctx.inv_ctx.bind(metadata=_invocation_metadata()):
         await plc.change_password(AuthnIdentity(principal_id=pid), "new-secret")
 
     authn = _orchestrator(
+        eligibility=_eligibility(ctx),
         password_svc=pwd_svc,
         pa_qry=ctx.document.query(password_account_spec),
         methods=frozenset({"password"}),
@@ -459,15 +427,17 @@ async def test_pg_provision_password_account(pg_client: PostgresClient) -> None:
     ctx = await _authn_pg_setup(pg_client, suffix=suffix)
 
     pid = uuid4()
-    await _insert_principal_row(
-        pg_client, table=f"authn_pri_{suffix}", principal_id=pid
+    await insert_policy_principal_row(
+        pg_client,
+        table=f"authz_pri_{suffix}",
+        principal_id=pid,
     )
 
     provisioning = PasswordAccountProvisioningAdapter(
         password_svc=PasswordService(),
         password_account_qry=ctx.document.query(password_account_spec),
         password_account_cmd=ctx.document.command(password_account_spec),
-        principal_qry=ctx.document.query(principal_spec),
+        eligibility=_eligibility(ctx),
     )
 
     with ctx.inv_ctx.bind(metadata=_invocation_metadata()):
@@ -478,6 +448,7 @@ async def test_pg_provision_password_account(pg_client: PostgresClient) -> None:
 
     pwd_qry = ctx.document.query(password_account_spec)
     authn = _orchestrator(
+        eligibility=_eligibility(ctx),
         password_svc=PasswordService(),
         pa_qry=pwd_qry,
         methods=frozenset({"password"}),
@@ -514,11 +485,15 @@ async def test_pg_execution_deps_password_authentication(
         authn={"default": frozenset({"password", "api_key"})},
     )()
 
-    ctx = ExecutionContext(deps=base_ctx.deps.merge(authn_part))
+    ctx = context_from_deps(
+        _authn_pg_deps(pg_client, suffix=suffix).merge(authn_part),
+    )
 
     pid = uuid4()
-    await _insert_principal_row(
-        pg_client, table=f"authn_pri_{suffix}", principal_id=pid
+    await insert_policy_principal_row(
+        pg_client,
+        table=f"authz_pri_{suffix}",
+        principal_id=pid,
     )
 
     shared = build_authn_shared_services(kernel)
@@ -580,11 +555,15 @@ async def test_pg_execution_deps_issue_tokens_and_bearer_auth(
         token_lifecycle={"oauth"},
     )()
 
-    ctx = ExecutionContext(deps=base_ctx.deps.merge(exec_deps))
+    ctx = context_from_deps(
+        _authn_pg_deps(pg_client, suffix=suffix).merge(exec_deps),
+    )
 
     pid = uuid4()
-    await _insert_principal_row(
-        pg_client, table=f"authn_pri_{suffix}", principal_id=pid
+    await insert_policy_principal_row(
+        pg_client,
+        table=f"authz_pri_{suffix}",
+        principal_id=pid,
     )
 
     spec = AuthnSpec(name="oauth", enabled_methods=methods)

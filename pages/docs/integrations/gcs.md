@@ -132,3 +132,5 @@ When `ExecutionContext` has a bound `TenantIdentity` and the storage route confi
 Forze handles resolving `StoragePort`, upload/download/delete/list, content-type detection, metadata in custom blob metadata, and optional tenant key prefixes.
 
 Forze does **not** manage IAM, bucket lifecycle rules, CORS, encryption defaults, or signed URLs — configure those in GCP or IaC.
+
+For framework tests or advanced wiring, prefer `from forze_gcs.execution.deps import ConfigurableGCSStorage` rather than removed `forze_gcs.execution.deps.deps` paths.

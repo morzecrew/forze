@@ -1,4 +1,4 @@
-"""Integration tests for :class:`~forze_temporal.kernel.platform.RoutedTemporalClient`."""
+"""Integration tests for :class:`~forze_temporal.kernel.client.RoutedTemporalClient`."""
 
 from forze.base.exceptions import CoreException, exc
 from typing import Callable
@@ -12,7 +12,7 @@ pytest.importorskip("temporalio")
 from temporalio.worker import Worker
 
 from forze.application.contracts.secrets import SecretRef
-from forze_temporal.kernel.platform import RoutedTemporalClient, TemporalClient
+from forze_temporal.kernel.client import RoutedTemporalClient, TemporalClient
 
 from tests.integration._routed_lru_helpers import temporal_hosts_for_lru_eviction
 

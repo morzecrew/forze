@@ -1,4 +1,4 @@
-"""Unit tests for :class:`~forze_temporal.kernel.platform.RoutedTemporalClient`."""
+"""Unit tests for :class:`~forze_temporal.kernel.client.RoutedTemporalClient`."""
 
 from forze.base.exceptions import CoreException, exc
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -9,7 +9,7 @@ import pytest
 pytest.importorskip("temporalio")
 
 from forze.application.contracts.secrets import SecretRef
-from forze_temporal.kernel.platform import RoutedTemporalClient
+from forze_temporal.kernel.client import RoutedTemporalClient
 
 # ----------------------- #
 
@@ -77,7 +77,7 @@ async def test_routed_temporal_eviction() -> None:
         return inst
 
     with patch(
-        "forze_temporal.kernel.platform.routed_client.TemporalClient",
+        "forze_temporal.kernel.client.routed_client.TemporalClient",
         side_effect=_make_client,
     ):
         cur = _T1
@@ -91,7 +91,7 @@ async def test_routed_temporal_eviction() -> None:
 
 def test_routed_temporal_rejects_zero_max_cached_tenants() -> None:
     secrets = _MemSecrets({_T1: "localhost:7233"})
-    with pytest.raises(CoreException, match="max_cached_tenants"):
+    with pytest.raises(CoreException, match="max_entries"):
         RoutedTemporalClient(
             secrets=secrets,
             secret_ref_for_tenant=_ref,

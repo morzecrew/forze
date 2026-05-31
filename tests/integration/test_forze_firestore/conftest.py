@@ -15,7 +15,7 @@ pytest.importorskip("testcontainers")
 from testcontainers.core.container import DockerContainer
 from testcontainers.core.waiting_utils import wait_for_logs
 
-from forze_firestore.kernel.platform import FirestoreClient
+from forze_firestore.kernel.client import FirestoreClient
 
 _EMULATOR_IMAGE = "gcr.io/google.com/cloudsdktool/google-cloud-cli:522.0.0-emulators"
 _TEST_PROJECT = "forze-firestore-test"

@@ -1,4 +1,4 @@
-"""Unit tests for :class:`~forze_clickhouse.kernel.platform.RoutedClickHouseClient`."""
+"""Unit tests for :class:`~forze_clickhouse.kernel.client.RoutedClickHouseClient`."""
 
 import json
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -8,7 +8,7 @@ import pytest
 
 from forze.application.contracts.secrets import SecretRef
 from forze.base.exceptions import CoreException
-from forze_clickhouse.kernel.platform import RoutedClickHouseClient
+from forze_clickhouse.kernel.client import RoutedClickHouseClient
 
 # ----------------------- #
 
@@ -86,7 +86,7 @@ async def test_routed_clickhouse_eviction() -> None:
         return inst
 
     with patch(
-        "forze_clickhouse.kernel.platform.routed_client.ClickHouseClient",
+        "forze_clickhouse.kernel.client.routed_client.ClickHouseClient",
         side_effect=_make_client,
     ):
         cur = _T1
@@ -101,7 +101,7 @@ async def test_routed_clickhouse_eviction() -> None:
 
 def test_routed_clickhouse_rejects_zero_max_cached_tenants() -> None:
     secrets = _MemSecrets({_T1: _creds()})
-    with pytest.raises(CoreException, match="max_cached_tenants"):
+    with pytest.raises(CoreException, match="max_entries"):
         RoutedClickHouseClient(
             secrets=secrets,
             secret_ref_for_tenant=_ref,

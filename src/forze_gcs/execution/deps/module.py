@@ -1,6 +1,5 @@
 """GCS dependency module for the application kernel."""
 
-from enum import StrEnum
 from typing import Mapping, final
 
 import attrs
@@ -8,11 +7,12 @@ import attrs
 from forze.application.contracts.storage import StorageDepKey
 from forze.application.contracts.tenancy import warn_dynamic_relation_with_tenant_aware
 from forze.application.execution import Deps, DepsModule
+from forze.base.primitives import StrKey
 
 from ...kernel._logger import logger
-from ...kernel.platform import GCSClientPort
+from ...kernel.client import GCSClientPort
 from .configs import GCSStorageConfig
-from .deps import ConfigurableGCSStorage
+from .factories import ConfigurableGCSStorage
 from .keys import GCSClientDepKey
 
 # ----------------------- #
@@ -20,13 +20,13 @@ from .keys import GCSClientDepKey
 
 @final
 @attrs.define(slots=True, frozen=True, kw_only=True)
-class GCSDepsModule[K: str | StrEnum](DepsModule[K]):
+class GCSDepsModule(DepsModule):
     """Dependency module that registers GCS client and storage port."""
 
     client: GCSClientPort
     """Pre-constructed GCS client (initialized via :func:`gcs_lifecycle_step`)."""
 
-    storages: Mapping[K, GCSStorageConfig] | None = attrs.field(default=None)
+    storages: Mapping[StrKey, GCSStorageConfig] | None = attrs.field(default=None)
     """Mapping from storage route names to GCS bucket configuration."""
 
     # ....................... #
@@ -45,13 +45,13 @@ class GCSDepsModule[K: str | StrEnum](DepsModule[K]):
 
     # ....................... #
 
-    def __call__(self) -> Deps[K]:
-        plain_deps = Deps[K].plain({GCSClientDepKey: self.client})
-        storage_deps = Deps[K]()
+    def __call__(self) -> Deps:
+        plain_deps = Deps.plain({GCSClientDepKey: self.client})
+        storage_deps = Deps()
 
         if self.storages:
             storage_deps = storage_deps.merge(
-                Deps[K].routed(
+                Deps.routed(
                     {
                         StorageDepKey: {
                             name: ConfigurableGCSStorage(config=config)

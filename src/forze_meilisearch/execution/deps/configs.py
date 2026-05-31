@@ -1,7 +1,5 @@
 """Meilisearch dependency configuration types."""
 
-from __future__ import annotations
-
 from typing import TYPE_CHECKING, Any, Literal, Mapping, Sequence
 
 import attrs
@@ -21,6 +19,8 @@ if TYPE_CHECKING:
 # ----------------------- #
 
 MeilisearchFederatedMerge = Literal["federation", "rrf"]
+
+# ....................... #
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)

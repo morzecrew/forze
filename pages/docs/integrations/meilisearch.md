@@ -24,9 +24,12 @@ Integration tests require Docker and `uv sync --extra meilisearch`.
 
 ```python
 from forze.application.execution import DepsPlan, ExecutionRuntime, LifecyclePlan
-from forze_meilisearch.execution.deps.module import MeilisearchDepsModule
-from forze_meilisearch.execution.lifecycle import meilisearch_lifecycle_step
-from forze_meilisearch.kernel.platform import MeilisearchClient, MeilisearchConfig
+from forze_meilisearch import (
+    MeilisearchClient,
+    MeilisearchConfig,
+    MeilisearchDepsModule,
+    meilisearch_lifecycle_step,
+)
 
 client = MeilisearchClient()
 module = MeilisearchDepsModule(
@@ -64,8 +67,7 @@ runtime = ExecutionRuntime(
 ### Routed lifecycle
 
 ```python
-from forze_meilisearch.kernel.platform import RoutedMeilisearchClient
-from forze_meilisearch.execution.lifecycle import routed_meilisearch_lifecycle_step
+from forze_meilisearch import RoutedMeilisearchClient, routed_meilisearch_lifecycle_step
 
 routed = RoutedMeilisearchClient(
     secrets=secrets_port,
@@ -147,3 +149,5 @@ Snapshot fingerprints include `extras={"merge": "federation"}` or `extras={"merg
 | Cursor pagination | Not implemented |
 | Full filter language | Subset only |
 | `forze_mock` command adapter | Not bundled (optional follow-up) |
+
+For framework tests or advanced wiring, prefer `from forze_meilisearch.execution.deps import ConfigurableMeilisearchSearch`, `ConfigurableMeilisearchSearchCommand`, and `ConfigurableMeilisearchFederatedSearch` rather than removed `forze_meilisearch.execution.deps.deps` paths.

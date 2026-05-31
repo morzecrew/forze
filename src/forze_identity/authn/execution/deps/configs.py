@@ -1,12 +1,12 @@
 """Kernel and shared-service configuration for authn dependency factories."""
 
-from enum import StrEnum
 from typing import Collection, Mapping, final
 
 import attrs
 
 from forze.application.contracts.authn import AuthnMethod
 from forze.base.exceptions import exc
+from forze.base.primitives import StrKey
 
 from ...services import (
     AccessTokenConfig,
@@ -153,15 +153,15 @@ def validate_route_methods(
 # ....................... #
 
 
-def validate_shared_matches_route_sets[K: str | StrEnum](
+def validate_shared_matches_route_sets(
     *,
     shared: AuthnSharedServices,
-    authn: Mapping[K, frozenset[AuthnMethod]],
-    token_lifecycle: Collection[K],
-    password_lifecycle: Collection[K],
-    api_key_lifecycle: Collection[K],
-    password_account_provisioning: Collection[K],
-    api_key_verifier_overrides: Collection[K] | None = None,
+    authn: Mapping[StrKey, frozenset[AuthnMethod]],
+    token_lifecycle: Collection[StrKey],
+    password_lifecycle: Collection[StrKey],
+    api_key_lifecycle: Collection[StrKey],
+    password_account_provisioning: Collection[StrKey],
+    api_key_verifier_overrides: Collection[StrKey] | None = None,
 ) -> None:
     """Fail fast when routes require kernel sections that were not configured."""
 

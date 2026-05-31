@@ -22,7 +22,7 @@ from forze.application.contracts.search import (
     search_options_for_simple_adapter,
 )
 from forze.application.coordinators import SearchResultSnapshotCoordinator
-from forze_mongo.kernel.platform.port import MongoClientPort
+from forze_mongo.kernel.client.port import MongoClientPort
 
 from ._cursor_run import execute_mongo_ranked_cursor_search
 from ._offset_run import execute_mongo_ranked_offset_search

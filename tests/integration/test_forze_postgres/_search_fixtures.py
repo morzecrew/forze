@@ -16,6 +16,7 @@ from forze_postgres.execution.deps.keys import (
 from forze_postgres.kernel.catalog.introspect import PostgresIntrospector
 from forze_postgres.kernel.client.client import PostgresClient
 from forze_postgres.execution.deps.configs import PostgresSearchConfig
+from tests.support.execution_context import context_from_deps
 from tests.support import IntegrationSearchHitFactory
 
 
@@ -116,8 +117,7 @@ def pgroonga_search_context(
     table: str,
     index_name: str,
 ) -> ExecutionContext:
-    return ExecutionContext(
-        deps=Deps.plain(
+    return context_from_deps(Deps.plain(
             {
                 PostgresClientDepKey: pg_client,
                 PostgresIntrospectorDepKey: PostgresIntrospector(client=pg_client),
@@ -139,8 +139,7 @@ def fts_search_context(
     table: str,
     index_name: str,
 ) -> ExecutionContext:
-    return ExecutionContext(
-        deps=Deps.plain(
+    return context_from_deps(Deps.plain(
             {
                 PostgresClientDepKey: pg_client,
                 PostgresIntrospectorDepKey: PostgresIntrospector(client=pg_client),

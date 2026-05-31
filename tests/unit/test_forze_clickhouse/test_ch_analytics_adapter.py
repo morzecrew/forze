@@ -16,7 +16,7 @@ from forze_clickhouse.execution.deps.configs import (
     ClickHouseAnalyticsConfig,
     ClickHouseQueryConfig,
 )
-from forze_clickhouse.kernel.platform.value_objects import (
+from forze_clickhouse.kernel.client.value_objects import (
     ClickHouseInsertResult,
     ClickHouseQueryResult,
 )

@@ -9,6 +9,7 @@ from forze.application.contracts.authn import (
 )
 from forze.application.contracts.document import DocumentQueryPort
 from forze.base.exceptions import exc
+from forze.base.primitives import utcnow
 
 from ..adapters._utils import find_api_key_account_by_key_hash
 from ..domain.constants import ISSUER_FORZE_API_KEY
@@ -54,6 +55,9 @@ class HmacApiKeyVerifier(ApiKeyVerifierPort):
         account = await find_api_key_account_by_key_hash(self.ak_qry, digest)
 
         if account is None or not account.is_active:
+            raise exc.authentication("API key account not found")
+
+        if account.expires_at is not None and account.expires_at <= utcnow():
             raise exc.authentication("API key account not found")
 
         ok = self.api_key_svc.verify_key(

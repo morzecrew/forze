@@ -1,6 +1,6 @@
 """Helpers for tenant identity in routed infrastructure clients."""
 
-from typing import Awaitable, Callable, Sequence
+from typing import Awaitable, Callable, Mapping, Sequence
 from uuid import UUID
 
 from pydantic import BaseModel
@@ -21,6 +21,53 @@ from ..secrets import (
 from .value_objects import TenantIdentity
 
 # ----------------------- #
+
+TENANT_ID_HEADER = "X-Tenant-Id"
+"""HTTP header carrying an optional tenant id hint (UUID string)."""
+
+
+def parse_tenant_hint(raw: str | None) -> UUID | None:
+    """Parse a non-authoritative tenant hint string as a UUID, or return ``None``."""
+
+    if raw is None:
+        return None
+
+    stripped = raw.strip()
+
+    if not stripped:
+        return None
+
+    try:
+        return UUID(stripped)
+
+    except ValueError:
+        return None
+
+
+def coalesce_tenant_request_hints(
+    *,
+    issuer_hint: str | None = None,
+    header_hint: str | None = None,
+) -> UUID | None:
+    """Coalesce issuer and header tenant hints into a single requested tenant id.
+
+    Issuer hint takes precedence over the header. When both parse as UUIDs and
+    differ, raises :class:`exc.authentication` with code ``tenant_conflict``.
+    """
+
+    from_issuer = parse_tenant_hint(issuer_hint)
+    from_header = parse_tenant_hint(header_hint)
+
+    if from_issuer is not None and from_header is not None and from_issuer != from_header:
+        raise exc.authentication(
+            "Conflicting tenant identities from credential and request hint",
+            code="tenant_conflict",
+        )
+
+    return from_issuer or from_header
+
+
+# ....................... #
 
 
 def require_tenant_id(
@@ -51,7 +98,7 @@ async def ensure_dsn_fingerprint(
     *,
     tenant_id: UUID,
     secrets: SecretsPort,
-    ref_for_tenant: Callable[[UUID], SecretRef],
+    ref_for_tenant: Callable[[UUID], SecretRef] | Mapping[UUID, SecretRef],
     backend: str,
     extra_parts: Sequence[str] = (),
 ) -> str:
@@ -86,7 +133,7 @@ async def resolve_dsn_for_tenant(
     *,
     tenant_id: UUID,
     secrets: SecretsPort,
-    ref_for_tenant: Callable[[UUID], SecretRef],
+    ref_for_tenant: Callable[[UUID], SecretRef] | Mapping[UUID, SecretRef],
     backend: str,
 ) -> str:
     """Resolve DSN for *tenant_id*, wrapping unexpected errors."""
@@ -109,17 +156,27 @@ async def resolve_structured_for_tenant[T: BaseModel](
     *,
     tenant_id: UUID,
     secrets: SecretsPort,
-    ref_for_tenant: Callable[[UUID], SecretRef],
+    ref_for_tenant: Callable[[UUID], SecretRef] | Mapping[UUID, SecretRef],
+    backend: str,
 ) -> T:
     """Resolve structured credentials for *tenant_id*, wrapping unexpected errors."""
 
     ref = secret_ref_for_tenant(ref_for_tenant, tenant_id)
 
-    return await resolve_structured(
-        secrets,
-        ref,
-        creds_type,
-    )
+    try:
+        return await resolve_structured(
+            secrets,
+            ref,
+            creds_type,
+        )
+
+    except exc:
+        raise
+
+    except Exception as e:
+        raise exc.internal(
+            f"Failed to resolve {backend} secret for tenant {tenant_id}: {e}",
+        ) from e
 
 
 # ....................... #

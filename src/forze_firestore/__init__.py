@@ -14,11 +14,18 @@ from .execution import (
     firestore_lifecycle_step,
     routed_firestore_lifecycle_step,
 )
-from .kernel.platform import (
+from .kernel.client import (
     FirestoreClient,
     FirestoreClientPort,
     FirestoreRoutingCredentials,
     RoutedFirestoreClient,
+)
+from .kernel.relation import (
+    RelationSpec,
+    coerce_relation_spec,
+    is_static_relation,
+    relations_match,
+    resolve_firestore_collection,
 )
 
 # ----------------------- #
@@ -34,4 +41,9 @@ __all__ = [
     "routed_firestore_lifecycle_step",
     "FirestoreDocumentConfig",
     "FirestoreReadOnlyDocumentConfig",
+    "RelationSpec",
+    "coerce_relation_spec",
+    "is_static_relation",
+    "relations_match",
+    "resolve_firestore_collection",
 ]

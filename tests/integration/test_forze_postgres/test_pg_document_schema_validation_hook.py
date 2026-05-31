@@ -14,6 +14,7 @@ from forze_postgres.execution.lifecycle import PostgresDocumentSchemaValidationH
 from forze_postgres.kernel.catalog.introspect import PostgresIntrospector
 from forze_postgres.kernel.client.client import PostgresClient
 from forze_postgres.kernel.catalog.validation.validate_schema import PostgresDocumentSchemaSpec
+from tests.support.execution_context import context_from_deps
 
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
 
@@ -63,8 +64,7 @@ async def test_schema_validation_hook_accepts_history_table(
     )
 
     intro = PostgresIntrospector(client=pg_client)
-    ctx = ExecutionContext(
-        deps=Deps.plain({PostgresIntrospectorDepKey: intro}),
+    ctx = context_from_deps(Deps.plain({PostgresIntrospectorDepKey: intro}),
     )
     hook = PostgresDocumentSchemaValidationHook(
         specs=(

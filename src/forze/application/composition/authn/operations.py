@@ -21,3 +21,6 @@ class AuthnKernelOp(StrEnum):
 
     CHANGE_PASSWORD = "change_password"  # nosec B105
     """Change the password of the currently authenticated identity."""
+
+    DEACTIVATE_PRINCIPAL = "deactivate_principal"
+    """Deactivate a principal for the application (policy, sessions, credentials)."""

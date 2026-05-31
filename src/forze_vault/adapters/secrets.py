@@ -8,7 +8,7 @@ import orjson
 from forze.application.contracts.secrets import SecretRef
 from forze.base.primitives import JsonDict
 
-from ..kernel.platform import VaultClientPort
+from ..kernel.client import VaultClientPort
 
 # ----------------------- #
 
@@ -26,7 +26,7 @@ def _encode_kv_payload(data: JsonDict) -> str:
 @final
 @attrs.define(slots=True)
 class VaultKvSecrets:
-    """Resolve secrets via :class:`~forze_vault.kernel.platform.VaultClient`.
+    """Resolve secrets via :class:`~forze_vault.kernel.client.VaultClient`.
 
     :attr:`~forze.application.contracts.secrets.SecretRef.path` is the logical KV path
     (without mount prefix; mount is configured on the client).

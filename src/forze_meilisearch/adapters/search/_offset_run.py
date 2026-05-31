@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
-from typing import Any
+from typing import Any, Sequence
 
 from pydantic import BaseModel
 
@@ -29,7 +28,7 @@ from forze_meilisearch.adapters.search._search_params import (
     render_user_sorts,
 )
 from forze_meilisearch.adapters.search.base import MeilisearchSearchGateway
-from forze_meilisearch.kernel.platform.port import MeilisearchClientPort
+from forze_meilisearch.kernel.client.port import MeilisearchClientPort
 
 # ----------------------- #
 

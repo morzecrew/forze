@@ -5,8 +5,8 @@ import pytest
 from forze.base.exceptions import CoreException
 
 from forze.application.contracts.execution import DispatchStep
-from forze.application.execution.planning import OperationPlan
-from forze.application.execution.registry import OperationRegistry
+from forze.application.execution.operations.planning import OperationPlan
+from forze.application.execution.operations.registry import OperationRegistry
 
 
 class TestOperationPlan:

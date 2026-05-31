@@ -9,7 +9,7 @@ from forze.application.contracts.idempotency import IdempotencySnapshot
 from forze_redis.adapters.cache import RedisCacheAdapter
 from forze_redis.adapters.counter import RedisCounterAdapter
 from forze_redis.adapters.idempotency import RedisIdempotencyAdapter
-from forze_redis.kernel.platform.client import RedisClient
+from forze_redis.kernel.client import RedisClient
 
 @pytest.mark.asyncio
 async def test_redis_cache_adapter_roundtrip(redis_client: RedisClient) -> None:

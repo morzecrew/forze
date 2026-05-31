@@ -25,6 +25,7 @@ from forze_postgres.execution.deps.keys import (
 )
 from forze_postgres.kernel.catalog.introspect import PostgresIntrospector
 from forze_postgres.kernel.client.client import PostgresClient
+from tests.support.execution_context import context_from_deps
 
 class TenantDoc(Document):
     """Domain model: ``tenant_id`` is populated by the gateway on insert."""
@@ -51,8 +52,7 @@ def _tenant_table_context(pg_client: PostgresClient, table: str) -> ExecutionCon
             tenant_aware=True,
         )
     )
-    return ExecutionContext(
-        deps=Deps.plain(
+    return context_from_deps(Deps.plain(
             {
                 PostgresClientDepKey: pg_client,
                 PostgresIntrospectorDepKey: PostgresIntrospector(client=pg_client),
@@ -311,8 +311,7 @@ async def test_schema_resolver_isolates_tenants(pg_client: PostgresClient) -> No
             tenant_aware=False,
         )
     )
-    execution_context = ExecutionContext(
-        deps=Deps.plain(
+    execution_context = context_from_deps(Deps.plain(
             {
                 PostgresClientDepKey: pg_client,
                 PostgresIntrospectorDepKey: PostgresIntrospector(client=pg_client),

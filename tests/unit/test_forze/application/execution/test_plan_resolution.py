@@ -1,9 +1,9 @@
 """Unit tests for :class:`PlanResolution` (no registry freeze)."""
 
 from forze.application.contracts.execution import BeforeStep
-from forze.application.execution.planning import OperationPlan
-from forze.application.execution.registry.patch import PlanPatch
-from forze.application.execution.registry.resolution import PlanResolution
+from forze.application.execution.operations.planning import OperationPlan
+from forze.application.execution.operations.registry.patch import PlanPatch
+from forze.application.execution.operations.registry.resolution import PlanResolution
 from forze.base.primitives import str_key_selector
 
 # ----------------------- #

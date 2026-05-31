@@ -14,12 +14,17 @@ from .execution import (
     bigquery_lifecycle_step,
     routed_bigquery_lifecycle_step,
 )
-from .kernel.platform import (
+from .kernel.client import (
     BigQueryClient,
     BigQueryClientPort,
     BigQueryConfig,
     BigQueryRoutingCredentials,
     RoutedBigQueryClient,
+)
+from .kernel.relation import (
+    RelationSpec,
+    coerce_relation_spec,
+    resolve_bigquery_ingest_target,
 )
 
 # ----------------------- #
@@ -36,4 +41,7 @@ __all__ = [
     "routed_bigquery_lifecycle_step",
     "BigQueryAnalyticsConfig",
     "BigQueryQueryConfig",
+    "RelationSpec",
+    "coerce_relation_spec",
+    "resolve_bigquery_ingest_target",
 ]

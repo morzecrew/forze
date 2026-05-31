@@ -1,4 +1,4 @@
-"""Integration tests for :class:`~forze_s3.kernel.platform.RoutedS3Client`."""
+"""Integration tests for :class:`~forze_s3.kernel.client.RoutedS3Client`."""
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ pytest.importorskip("aioboto3")
 pytest.importorskip("testcontainers")
 
 from forze.application.contracts.secrets import SecretRef
-from forze_s3.kernel.platform import RoutedS3Client, S3Client, S3Config
+from forze_s3.kernel.client import RoutedS3Client, S3Client, S3Config
 
 from tests.integration._routed_lru_helpers import s3_payloads_for_lru_eviction
 
@@ -98,7 +98,7 @@ async def test_routed_s3_health_and_object_crud(minio_container) -> None:
     t1 = uuid4()
     secrets = _MemSecretsTenantJson({t1: _payload(endpoint)})
     tenant_get, tenant_set = _tenant_holder()
-    cfg: S3Config = {"s3": {"addressing_style": "path"}}
+    cfg = S3Config(s3={"addressing_style": "path"})
 
     routed = RoutedS3Client(
         secrets=secrets,
@@ -141,8 +141,8 @@ async def test_routed_s3_health_and_object_crud(minio_container) -> None:
         )
         assert await routed.object_exists(bucket, key)
         head = await routed.head_object(bucket, key)
-        assert head["content_type"] == "text/plain"
-        assert head["metadata"]["filename"] == "readme.txt"
+        assert head.content_type == "text/plain"
+        assert head.metadata["filename"] == "readme.txt"
         assert await routed.download_bytes(bucket, key) == data
 
         items, total = await routed.list_objects(
@@ -164,7 +164,7 @@ async def test_routed_s3_mapping_secret_ref(minio_container) -> None:
     custom = SecretRef(path=f"cfg/s3/{uuid4().hex[:12]}")
     secrets = _MemSecretsJson({custom.path: json.dumps(_payload(endpoint))})
     tenant_get, tenant_set = _tenant_holder()
-    cfg: S3Config = {"s3": {"addressing_style": "path"}}
+    cfg = S3Config(s3={"addressing_style": "path"})
 
     routed = RoutedS3Client(
         secrets=secrets,
@@ -277,7 +277,7 @@ async def test_routed_s3_lru_and_evict(minio_container) -> None:
         s3_payloads_for_lru_eviction(endpoint, t1, t2, t3, base_payload=p),
     )
     tenant_get, tenant_set = _tenant_holder()
-    cfg: S3Config = {"s3": {"addressing_style": "path"}}
+    cfg = S3Config(s3={"addressing_style": "path"})
 
     routed = RoutedS3Client(
         secrets=secrets,

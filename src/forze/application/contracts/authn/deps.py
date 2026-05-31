@@ -1,4 +1,4 @@
-from ..deps import ConfigurableDepPort, DepKey
+from ..deps import ConfigurableDepPort, ConvenientDeps, DepKey
 from .ports import (
     ApiKeyLifecyclePort,
     ApiKeyVerifierPort,
@@ -6,6 +6,8 @@ from .ports import (
     PasswordAccountProvisioningPort,
     PasswordLifecyclePort,
     PasswordVerifierPort,
+    PrincipalDeactivationPort,
+    PrincipalEligibilityPort,
     PrincipalResolverPort,
     TokenLifecyclePort,
     TokenVerifierPort,
@@ -73,3 +75,79 @@ PasswordAccountProvisioningDepKey = DepKey[PasswordAccountProvisioningDepPort](
     "authn_password_account_provisioning"
 )
 """Key used to register the `PasswordAccountProvisioningPort` builder implementation."""
+
+PrincipalEligibilityDepPort = ConfigurableDepPort[AuthnSpec, PrincipalEligibilityPort]
+"""Principal eligibility dependency port."""
+
+PrincipalDeactivationDepPort = ConfigurableDepPort[AuthnSpec, PrincipalDeactivationPort]
+"""Principal deactivation dependency port."""
+
+# ....................... #
+
+PrincipalEligibilityDepKey = DepKey[PrincipalEligibilityDepPort]("authn_principal_eligibility")
+"""Key used to register the `PrincipalEligibilityPort` builder implementation."""
+
+PrincipalDeactivationDepKey = DepKey[PrincipalDeactivationDepPort](
+    "authn_principal_deactivation"
+)
+"""Key used to register the `PrincipalDeactivationPort` builder implementation."""
+
+# ....................... #
+
+
+class AuthnDeps(ConvenientDeps):
+    """Convenience wrapper for authentication dependencies."""
+
+    def authn(self, spec: AuthnSpec) -> AuthnPort:
+        """Resolve the authentication orchestrator for ``spec``."""
+
+        return self._resolve_configurable(AuthnDepKey, spec, route=spec.name)
+
+    def eligibility(self, spec: AuthnSpec) -> PrincipalEligibilityPort:
+        """Resolve principal eligibility checks for ``spec``."""
+
+        return self._resolve_configurable(
+            PrincipalEligibilityDepKey,
+            spec,
+            route=spec.name,
+        )
+
+    def token_lifecycle(self, spec: AuthnSpec) -> TokenLifecyclePort:
+        """Resolve token lifecycle for ``spec``."""
+
+        return self._resolve_configurable(TokenLifecycleDepKey, spec, route=spec.name)
+
+    def password_lifecycle(self, spec: AuthnSpec) -> PasswordLifecyclePort:
+        """Resolve password lifecycle for ``spec``."""
+
+        return self._resolve_configurable(
+            PasswordLifecycleDepKey,
+            spec,
+            route=spec.name,
+        )
+
+    def api_key_lifecycle(self, spec: AuthnSpec) -> ApiKeyLifecyclePort:
+        """Resolve API key lifecycle for ``spec``."""
+
+        return self._resolve_configurable(ApiKeyLifecycleDepKey, spec, route=spec.name)
+
+    def password_account_provisioning(
+        self,
+        spec: AuthnSpec,
+    ) -> PasswordAccountProvisioningPort:
+        """Resolve password account provisioning for ``spec``."""
+
+        return self._resolve_configurable(
+            PasswordAccountProvisioningDepKey,
+            spec,
+            route=spec.name,
+        )
+
+    def principal_deactivation(self, spec: AuthnSpec) -> PrincipalDeactivationPort:
+        """Resolve cascaded principal deactivation for ``spec``."""
+
+        return self._resolve_configurable(
+            PrincipalDeactivationDepKey,
+            spec,
+            route=spec.name,
+        )

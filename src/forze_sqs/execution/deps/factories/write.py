@@ -1,0 +1,43 @@
+"""SQS queue write dep factory."""
+
+from typing import Any, final
+
+import attrs
+
+from forze.application.contracts.queue import QueueCommandDepPort, QueueSpec
+from forze.application.execution import ExecutionContext
+
+from ....adapters import SQSQueueAdapter, SQSQueueCodec
+from ..configs import SQSQueueConfig
+from ..keys import SQSClientDepKey
+
+# ----------------------- #
+
+
+@final
+@attrs.define(slots=True, frozen=True, kw_only=True)
+class ConfigurableSQSQueueWrite(QueueCommandDepPort):
+    """Configurable SQS queue command adapter."""
+
+    config: SQSQueueConfig = attrs.field(
+        validator=attrs.validators.instance_of(SQSQueueConfig),
+    )
+    """Configuration for the queue."""
+
+    # ....................... #
+
+    def __call__(
+        self,
+        ctx: ExecutionContext,
+        spec: QueueSpec[Any],
+    ) -> SQSQueueAdapter[Any]:
+        client = ctx.deps.provide(SQSClientDepKey)
+        codec = SQSQueueCodec(payload_codec=spec.codec)
+
+        return SQSQueueAdapter(
+            client=client,
+            codec=codec,
+            namespace=self.config.namespace,
+            tenant_aware=self.config.tenant_aware,
+            tenant_provider=ctx.inv_ctx.get_tenant,
+        )

@@ -154,7 +154,7 @@ async def test_routed_lru_defers_close_while_tenant_pool_still_in_use() -> None:
 
 def test_routed_postgres_rejects_zero_max_cached_tenants() -> None:
     secrets = _MemSecrets({_T1: "postgresql://localhost/db1"})
-    with pytest.raises(CoreException, match="max_cached_tenants"):
+    with pytest.raises(CoreException, match="max_entries"):
         RoutedPostgresClient(
             secrets=secrets,
             secret_ref_for_tenant=_ref,

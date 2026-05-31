@@ -15,7 +15,7 @@ def local_identity_deps(
     *,
     authn_route: str = "main",
     tenancy_route: str = "main",
-) -> Deps[str]:
+) -> Deps:
     """Merge authn + tenancy deps for API-key-only local identity (demo/MVP).
 
     :param config: Frozen local identity configuration.

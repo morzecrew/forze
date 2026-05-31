@@ -2,8 +2,8 @@
 
 Durable workflow contracts describe and interact with **Temporal-style** long-running
 orchestration engines. They live under the [Durable](durable.md) family and separate
-command operations (start/signal/update/cancel) from query operations (workflow
-queries and result retrieval).
+command operations (start/signal/update/cancel) from query operations (coarse run
+status, workflow queries, and result retrieval).
 
 ## `DurableWorkflowSpec[In, Out]`
 
@@ -56,15 +56,33 @@ Import path for all invocation specs:
 
 | Section | Details |
 |---------|---------|
-| Purpose | Queries running workflows and awaits workflow completion results. |
+| Purpose | Inspects workflow runs: coarse platform status, app-defined queries, and final results. |
 | Import path | `from forze.application.contracts.durable.workflow import DurableWorkflowQueryPort` |
 | Type parameters | `In` run argument model, `Out` workflow result model. |
-| Required methods | `query`, `result`. |
-| Returned values | Query result model or workflow result model. |
+| Required methods | `describe`, `query`, `result`. |
+| Returned values | `DurableWorkflowRunDescription`, query result model, or workflow result model. |
 | Common implementations | Temporal workflow query adapter. |
 | Related dependency keys | `DurableWorkflowQueryDepKey`. |
-| Minimal example | `result = await queries.result(handle)` |
+| Minimal example | `status = await queries.describe(handle)` |
 | Related pages | [Temporal](../../integrations/temporal.md). |
+
+### Polling guidance
+
+| Method | Use when |
+|--------|----------|
+| `describe(handle)` | Coarse lifecycle (`running`, `completed`, `failed`, …) for status endpoints; poll until `is_terminal` is true. |
+| `query(handle, …)` | Domain progress you define in workflow code (steps, phase, percentage). |
+| `result(handle)` | Typed workflow output after completion; blocks until the run finishes—do not use as a poll loop. |
+
+## `DurableWorkflowRunStatus` and `DurableWorkflowRunDescription`
+
+| Section | Details |
+|---------|---------|
+| Purpose | Provider-agnostic coarse status for a single workflow run. |
+| Import path | `from forze.application.contracts.durable.workflow import DurableWorkflowRunDescription, DurableWorkflowRunStatus` |
+| Status values | `running`, `completed`, `failed`, `cancelled`, `terminated`, `continued_as_new`, `timed_out` |
+| Key fields | `workflow_id`, `run_id`, `workflow_name`, `status`, `started_at`, `closed_at`; optional `failure_message` / `failure_type` when the provider exposes them |
+| Convenience | `DurableWorkflowRunDescription.is_terminal` — true for completed, failed, cancelled, terminated, timed_out |
 
 ## `DurableWorkflowHandle`
 

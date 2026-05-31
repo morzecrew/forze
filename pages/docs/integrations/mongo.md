@@ -78,6 +78,8 @@ Kernel `DocumentSpec` names must match keys in `MongoDepsModule.rw_documents` / 
 | `DocumentCommandDepKey` | Routed document command factories |
 | `TxManagerDepKey` | Transaction managers per route in `tx` |
 
+For framework tests or advanced wiring, prefer `from forze_mongo.execution.deps import ConfigurableMongoDocument` and `ConfigurableMongoSearch` rather than removed `forze_mongo.execution.deps.deps` paths.
+
 ## DocumentSpec and Mongo config
 
 `DocumentSpec` carries model types, `history_enabled`, and optional `CacheSpec`. Per-database mapping uses `MongoDocumentConfig`:

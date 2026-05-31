@@ -70,6 +70,8 @@ deps_plan = DepsPlan.from_modules(sqs_module)
 
 The route key should match your `QueueSpec.name`.
 
+For framework tests or advanced wiring, prefer `from forze_sqs.execution.deps import ConfigurableSQSQueueRead` and `ConfigurableSQSQueueWrite` rather than removed `forze_sqs.execution.deps.deps` paths.
+
 ### Lifecycle step
 
 ```python

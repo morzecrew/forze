@@ -10,7 +10,7 @@ from pydantic import BaseModel
 pytest.importorskip("aio_pika")
 
 from forze_rabbitmq.adapters import RabbitMQQueueAdapter, RabbitMQQueueCodec
-from forze_rabbitmq.kernel.platform import RabbitMQClient
+from forze_rabbitmq.kernel.client import RabbitMQClient
 from forze.base.serialization import PydanticRecordMappingCodec
 
 

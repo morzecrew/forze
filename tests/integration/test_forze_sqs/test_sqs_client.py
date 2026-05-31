@@ -4,7 +4,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from forze_sqs.kernel.platform import SQSClient
+from forze_sqs.kernel.client import SQSClient
 
 
 async def _receive_until(
@@ -40,17 +40,17 @@ async def test_client_enqueue_receive_ack(
         messages = await _receive_until(sqs_client, sqs_queue_url)
         message = messages[0]
 
-        assert message["queue"] == sqs_queue_url
+        assert message.queue == sqs_queue_url
         # enqueue() returns a send-side id; receive() id is the receipt handle for ack.
         assert message_id
-        assert message["id"]
-        assert message["id"] != message_id
-        assert message["body"] == b'{"value":"hello"}'
-        assert message["type"] == "created"
-        assert message["key"] == "partition-1"
-        assert message["enqueued_at"] == ts
+        assert message.id
+        assert message.id != message_id
+        assert message.body == b'{"value":"hello"}'
+        assert message.type == "created"
+        assert message.key == "partition-1"
+        assert message.enqueued_at == ts
 
-        assert await sqs_client.ack(sqs_queue_url, [message["id"]]) == 1
+        assert await sqs_client.ack(sqs_queue_url, [message.id]) == 1
         assert await sqs_client.receive(sqs_queue_url, limit=1) == []
 
 
@@ -64,11 +64,11 @@ async def test_client_nack_requeue_then_ack(
 
         first = (await _receive_until(sqs_client, sqs_queue_url))[0]
 
-        assert await sqs_client.nack(sqs_queue_url, [first["id"]], requeue=True) == 1
+        assert await sqs_client.nack(sqs_queue_url, [first.id], requeue=True) == 1
 
         second = (await _receive_until(sqs_client, sqs_queue_url))[0]
-        assert second["body"] == b'{"value":"requeue"}'
-        assert await sqs_client.ack(sqs_queue_url, [second["id"]]) == 1
+        assert second.body == b'{"value":"requeue"}'
+        assert await sqs_client.ack(sqs_queue_url, [second.id]) == 1
 
 
 @pytest.mark.asyncio
@@ -87,5 +87,5 @@ async def test_client_delayed_enqueue_not_visible_until_delay_elapses(
         assert immediate == []
 
         messages = await _receive_until(sqs_client, sqs_queue_url, attempts=12)
-        assert messages[0]["body"] == b'{"value":"delayed"}'
-        await sqs_client.ack(sqs_queue_url, [messages[0]["id"]])
+        assert messages[0].body == b'{"value":"delayed"}'
+        await sqs_client.ack(sqs_queue_url, [messages[0].id])

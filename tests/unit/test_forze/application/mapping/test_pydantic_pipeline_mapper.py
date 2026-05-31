@@ -9,6 +9,7 @@ from forze.application.mapping.pydantic import (
     PydanticPipelineMapper,
     PydanticPipelineMapperFactory,
 )
+from tests.support.execution_context import context_from_deps, context_from_modules, frozen_deps_from_deps
 from forze.domain.models import BaseDTO
 from forze_mock import MockDepsModule, MockState
 from pydantic import BaseModel
@@ -53,7 +54,7 @@ async def test_maps_through_steps() -> None:
 
 @pytest.mark.asyncio
 async def test_factory_builds_mapper_with_context() -> None:
-    ctx = ExecutionContext(deps=MockDepsModule(state=MockState())())
+    ctx = context_from_deps(MockDepsModule(state=MockState())())
 
     def step_factory(_ctx: ExecutionContext):
         async def step(

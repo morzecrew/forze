@@ -9,6 +9,7 @@ from forze.application.contracts.queue import (
     QueueQueryDepKey,
     QueueSpec,
 )
+from tests.support.execution_context import context_from_deps, context_from_modules, frozen_deps_from_deps
 from forze.application.contracts.search import SearchSpec
 from forze.application.contracts.stream import (
     StreamCommandDepKey,
@@ -75,7 +76,7 @@ async def test_mock_deps_module_registers_expected_contracts() -> None:
 
 
 async def test_execution_context_can_use_mock_document_and_search() -> None:
-    ctx = ExecutionContext(deps=MockDepsModule()())
+    ctx = context_from_deps(MockDepsModule()())
     spec = _doc_spec()
     doc = ctx.document.command(spec)
     created = await doc.create(_Create(title="Hello"))
@@ -91,7 +92,7 @@ async def test_execution_context_can_use_mock_document_and_search() -> None:
 
 
 async def test_execution_context_resolves_optional_contract_ports() -> None:
-    ctx = ExecutionContext(deps=MockDepsModule()())
+    ctx = context_from_deps(MockDepsModule()())
 
     queue_read = ctx.deps.provide(QueueQueryDepKey)(
         ctx, QueueSpec(name="q", codec=PydanticRecordMappingCodec(model_type=_Msg))
