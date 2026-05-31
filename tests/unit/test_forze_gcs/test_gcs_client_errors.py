@@ -8,7 +8,7 @@ from aiohttp import ClientResponseError, RequestInfo
 from yarl import URL
 
 from forze.base.exceptions import CoreException, ExceptionKind, exc
-from forze_gcs.kernel.platform.errors import _gcs_eh
+from forze_gcs.kernel.client.errors import _gcs_eh
 
 # ----------------------- #
 

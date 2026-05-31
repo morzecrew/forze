@@ -6,8 +6,8 @@ import pytest
 
 from forze.base.exceptions import CoreException
 
-from forze_gcs.kernel.platform.client import GCSClient
-from forze_gcs.kernel.platform.value_objects import GCSConfig
+from forze_gcs.kernel.client.client import GCSClient
+from forze_gcs.kernel.client.value_objects import GCSConfig
 
 
 @pytest.mark.asyncio
@@ -17,7 +17,7 @@ async def test_initialize_creates_storage_client() -> None:
     fake_storage.close = AsyncMock()
 
     with patch(
-        "forze_gcs.kernel.platform.client.Storage",
+        "forze_gcs.kernel.client.client.Storage",
         return_value=fake_storage,
     ) as storage_ctor:
         with patch.dict(
@@ -40,7 +40,7 @@ async def test_initialize_uses_service_file_from_config() -> None:
     fake_storage = MagicMock()
 
     with patch(
-        "forze_gcs.kernel.platform.client.Storage",
+        "forze_gcs.kernel.client.client.Storage",
         return_value=fake_storage,
     ) as storage_ctor:
         with patch.dict(

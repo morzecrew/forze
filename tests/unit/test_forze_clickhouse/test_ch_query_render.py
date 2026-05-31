@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel
 
-from forze_clickhouse.kernel.platform.query import (
+from forze_clickhouse.kernel.client.query import (
     apply_limit_offset,
     build_count_sql,
     parameters_from_model,

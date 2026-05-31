@@ -9,7 +9,7 @@ pytest.importorskip("google.cloud.firestore")
 from google.api_core import exceptions as gax_exceptions
 
 from forze.base.exceptions import CoreException, ExceptionKind, exc
-from forze_firestore.kernel.platform.errors import _firestore_eh
+from forze_firestore.kernel.client.errors import _firestore_eh
 
 
 class TestFirestoreErrorHandler:

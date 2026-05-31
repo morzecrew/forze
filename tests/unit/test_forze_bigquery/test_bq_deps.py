@@ -17,8 +17,14 @@ from forze_bigquery.execution.deps import (
     BigQueryAnalyticsConfig,
     BigQueryDepsModule,
     BigQueryQueryConfig,
+    ConfigurableBigQueryAnalytics,
 )
-from forze_bigquery.kernel.platform import BigQueryClient
+from forze_bigquery.kernel.client import BigQueryClient
+
+
+def test_rejects_mapping_config() -> None:
+    with pytest.raises(TypeError, match="BigQueryAnalyticsConfig"):
+        ConfigurableBigQueryAnalytics(config={"dataset": "d", "queries": {}})
 
 
 class _Row(BaseModel):

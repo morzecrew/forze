@@ -45,11 +45,11 @@ from forze_bigquery.execution.deps.configs import (
     BigQueryAnalyticsConfig,
     BigQueryQueryConfig,
 )
-from forze_bigquery.kernel.platform import (
+from forze_bigquery.kernel.client import (
     BigQueryClientPort,
     build_count_sql,
 )
-from forze_bigquery.kernel.platform.value_objects import BigQueryQueryResult
+from forze_bigquery.kernel.client.value_objects import BigQueryQueryResult
 from forze_bigquery.kernel.relation import resolve_bigquery_ingest_target
 
 # ----------------------- #
@@ -69,7 +69,7 @@ class BigQueryAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
     AnalyticsQueryPort[R],
     AnalyticsIngestPort[Ing],
 ):
-    """Analytics ports backed by BigQuery via :class:`~forze_bigquery.kernel.platform.BigQueryClient`."""
+    """Analytics ports backed by BigQuery via :class:`~forze_bigquery.kernel.client.BigQueryClient`."""
 
     client: BigQueryClientPort
     spec: AnalyticsSpec[R, Ing]

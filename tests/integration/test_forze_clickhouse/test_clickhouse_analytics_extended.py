@@ -16,7 +16,7 @@ from forze_clickhouse.execution.deps.configs import (
     ClickHouseAnalyticsConfig,
     ClickHouseQueryConfig,
 )
-from forze_clickhouse.kernel.platform import ClickHouseClient
+from forze_clickhouse.kernel.client import ClickHouseClient
 
 pytestmark = pytest.mark.integration
 

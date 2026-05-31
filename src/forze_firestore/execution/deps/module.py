@@ -14,9 +14,9 @@ from forze.application.execution import Deps, DepsModule
 from forze.base.primitives import StrKey
 
 from ...kernel._logger import logger
-from ...kernel.platform import FirestoreClientPort
+from ...kernel.client import FirestoreClientPort
 from .configs import FirestoreDocumentConfig, FirestoreReadOnlyDocumentConfig
-from .deps import (
+from .factories import (
     ConfigurableFirestoreDocument,
     ConfigurableFirestoreReadOnlyDocument,
     firestore_txmanager,

@@ -11,9 +11,9 @@ from forze.application.contracts.document import (
 )
 from forze.application.execution import Deps, ExecutionContext
 from forze_firestore.execution.deps.configs import FirestoreDocumentConfig
-from forze_firestore.execution.deps.deps import ConfigurableFirestoreDocument
+from forze_firestore.execution.deps import ConfigurableFirestoreDocument
 from forze_firestore.execution.deps.keys import FirestoreClientDepKey
-from forze_firestore.kernel.platform import FirestoreClient
+from forze_firestore.kernel.client import FirestoreClient
 from tests.support.execution_context import context_from_deps
 
 from tests.integration._computed_field_models import (

@@ -10,7 +10,7 @@ pytest.importorskip("aiohttp")
 from aiohttp import ClientResponseError, RequestInfo
 from yarl import URL
 
-from forze_bigquery.kernel.platform.errors import _bigquery_eh
+from forze_bigquery.kernel.client.errors import _bigquery_eh
 
 def _client_error(status: int) -> ClientResponseError:
     request_info = RequestInfo(

@@ -1,3 +1,5 @@
+"""GCS storage dep factory."""
+
 from typing import final
 
 import attrs
@@ -5,9 +7,9 @@ import attrs
 from forze.application.contracts.storage import StorageDepPort, StorageSpec
 from forze.application.execution import ExecutionContext
 
-from ...adapters import GCSStorageAdapter
-from .configs import GCSStorageConfig
-from .keys import GCSClientDepKey
+from ....adapters import GCSStorageAdapter
+from ..configs import GCSStorageConfig
+from ..keys import GCSClientDepKey
 
 # ----------------------- #
 
@@ -17,7 +19,9 @@ from .keys import GCSClientDepKey
 class ConfigurableGCSStorage(StorageDepPort):
     """Configurable GCS storage adapter factory."""
 
-    config: GCSStorageConfig
+    config: GCSStorageConfig = attrs.field(
+        validator=attrs.validators.instance_of(GCSStorageConfig),
+    )
     """Configuration for the storage route."""
 
     # ....................... #

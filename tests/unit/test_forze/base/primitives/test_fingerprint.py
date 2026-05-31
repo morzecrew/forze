@@ -8,7 +8,7 @@ from forze.base.primitives.fingerprint import (
     secret_dedup_fingerprint,
     stable_fingerprint,
 )
-from forze_clickhouse.kernel.platform.routing_credentials import (
+from forze_clickhouse.kernel.client.routing_credentials import (
     ClickHouseRoutingCredentials,
     routing_fingerprint,
 )

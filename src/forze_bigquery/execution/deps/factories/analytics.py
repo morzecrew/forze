@@ -1,12 +1,15 @@
+"""BigQuery analytics dep factory."""
+
 from typing import Any, final
 
 import attrs
 
 from forze.application.contracts.analytics import AnalyticsSpec
 from forze.application.execution import ExecutionContext
-from ...adapters import BigQueryAnalyticsAdapter
-from .configs import BigQueryAnalyticsConfig
-from .keys import BigQueryClientDepKey
+
+from ....adapters import BigQueryAnalyticsAdapter
+from ..configs import BigQueryAnalyticsConfig
+from ..keys import BigQueryClientDepKey
 
 # ----------------------- #
 
@@ -16,7 +19,9 @@ from .keys import BigQueryClientDepKey
 class ConfigurableBigQueryAnalytics:
     """Build a :class:`BigQueryAnalyticsAdapter` for an analytics spec route."""
 
-    config: BigQueryAnalyticsConfig
+    config: BigQueryAnalyticsConfig = attrs.field(
+        validator=attrs.validators.instance_of(BigQueryAnalyticsConfig),
+    )
     """BigQuery-specific configuration for the route."""
 
     # ....................... #

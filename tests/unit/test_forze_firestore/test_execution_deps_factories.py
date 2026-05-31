@@ -15,7 +15,7 @@ from forze_firestore.execution.deps.configs import (
     FirestoreDocumentConfig,
     FirestoreReadOnlyDocumentConfig,
 )
-from forze_firestore.execution.deps.deps import (
+from forze_firestore.execution.deps import (
     ConfigurableFirestoreDocument,
     ConfigurableFirestoreReadOnlyDocument,
     firestore_txmanager,
@@ -62,6 +62,11 @@ def _ctx(client: object = object()) -> ExecutionContext:
     )
 
 
+def test_rejects_mapping_config() -> None:
+    with pytest.raises(TypeError, match="FirestoreReadOnlyDocumentConfig"):
+        ConfigurableFirestoreReadOnlyDocument(config={"read": ("(default)", "c")})
+
+
 class TestConfigurableFirestoreReadOnlyDocument:
     def test_builds_read_only_adapter(self) -> None:
         factory = ConfigurableFirestoreReadOnlyDocument(
@@ -95,7 +100,7 @@ class TestConfigurableFirestoreDocument:
         mock_logger = MagicMock()
 
         with patch(
-            "forze_firestore.execution.deps.deps.logger",
+            "forze_firestore.execution.deps.factories.document.logger",
             mock_logger,
         ):
             factory(_ctx(), _rw_spec(history_enabled=True))
@@ -114,7 +119,7 @@ class TestConfigurableFirestoreDocument:
         mock_logger = MagicMock()
 
         with patch(
-            "forze_firestore.execution.deps.deps.logger",
+            "forze_firestore.execution.deps.factories.document.logger",
             mock_logger,
         ):
             factory(_ctx(), _rw_spec(history_enabled=False))

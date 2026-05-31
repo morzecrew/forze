@@ -16,12 +16,12 @@ from forze_firestore.execution.deps.configs import (
     FirestoreDocumentConfig,
     FirestoreReadOnlyDocumentConfig,
 )
-from forze_firestore.execution.deps.deps import (
+from forze_firestore.execution.deps import (
     ConfigurableFirestoreDocument,
     ConfigurableFirestoreReadOnlyDocument,
 )
 from forze_firestore.execution.deps.keys import FirestoreClientDepKey
-from forze_firestore.kernel.platform import FirestoreClient
+from forze_firestore.kernel.client import FirestoreClient
 from tests.support.execution_context import context_from_deps
 
 

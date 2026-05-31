@@ -10,7 +10,7 @@ from .value_objects import ClickHouseConfig, resolve_password
 
 
 class ClickHouseRoutingCredentials(BaseModel):
-    """JSON shape stored in secrets for :class:`~forze_clickhouse.kernel.platform.RoutedClickHouseClient`.
+    """JSON shape stored in secrets for :class:`~forze_clickhouse.kernel.client.RoutedClickHouseClient`.
 
     Use with :func:`~forze.application.contracts.secrets.resolve_structured`.
     """

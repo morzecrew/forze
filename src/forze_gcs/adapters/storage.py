@@ -30,7 +30,7 @@ from forze.application.contracts.tenancy import TenancyMixin
 from forze.base.exceptions import CoreException, exc
 from forze.base.primitives import JsonDict, utcnow, uuid7
 
-from ..kernel.platform import GCSClientPort
+from ..kernel.client import GCSClientPort
 from ..kernel.relation import resolve_gcs_bucket
 from .codecs import default_b64_codec, default_path_codec
 

@@ -11,9 +11,9 @@ from forze.application.contracts.analytics import (
 from forze.application.execution import Deps, DepsModule
 from forze.base.primitives import StrKey
 
-from ...kernel.platform import ClickHouseClientPort
+from ...kernel.client import ClickHouseClientPort
 from .configs import ClickHouseAnalyticsConfig
-from .deps import ConfigurableClickHouseAnalytics
+from .factories import ConfigurableClickHouseAnalytics
 from .keys import ClickHouseClientDepKey
 
 # ----------------------- #

@@ -8,8 +8,8 @@ from typing import Any
 import pytest
 from pydantic import BaseModel
 
-from forze_clickhouse.kernel.platform.client import ClickHouseClient
-from forze_clickhouse.kernel.platform.value_objects import (
+from forze_clickhouse.kernel.client.client import ClickHouseClient
+from forze_clickhouse.kernel.client.value_objects import (
     ClickHouseConfig,
     ClickHouseQueryResult,
 )

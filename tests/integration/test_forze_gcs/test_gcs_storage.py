@@ -6,7 +6,7 @@ from forze.application.contracts.storage import StorageSpec, UploadedObject
 from forze.application.execution import ExecutionContext
 from forze_gcs.execution.deps.configs import GCSStorageConfig
 from forze_gcs.execution.deps.module import GCSDepsModule
-from forze_gcs.kernel.platform.client import GCSClient
+from forze_gcs.kernel.client.client import GCSClient
 from tests.support.execution_context import context_from_deps
 
 

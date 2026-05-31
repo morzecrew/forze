@@ -49,12 +49,12 @@ from forze_clickhouse.execution.deps.configs import (
     ClickHouseAnalyticsConfig,
     ClickHouseQueryConfig,
 )
-from forze_clickhouse.kernel.platform import (
+from forze_clickhouse.kernel.client import (
     ClickHouseClientPort,
     build_count_sql,
 )
-from forze_clickhouse.kernel.platform.query import parameters_from_model
-from forze_clickhouse.kernel.platform.value_objects import ClickHouseQueryResult
+from forze_clickhouse.kernel.client.query import parameters_from_model
+from forze_clickhouse.kernel.client.value_objects import ClickHouseQueryResult
 from forze_clickhouse.kernel.relation import resolve_clickhouse_ingest_target
 
 # ----------------------- #
@@ -74,7 +74,7 @@ class ClickHouseAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
     AnalyticsQueryPort[R],
     AnalyticsIngestPort[Ing],
 ):
-    """Analytics ports backed by ClickHouse via :class:`~forze_clickhouse.kernel.platform.ClickHouseClient`."""
+    """Analytics ports backed by ClickHouse via :class:`~forze_clickhouse.kernel.client.ClickHouseClient`."""
 
     client: ClickHouseClientPort
     spec: AnalyticsSpec[R, Ing]

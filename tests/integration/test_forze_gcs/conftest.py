@@ -13,7 +13,7 @@ pytest.importorskip("testcontainers")
 from testcontainers.core.container import DockerContainer
 from testcontainers.core.waiting_utils import wait_for_logs
 
-from forze_gcs.kernel.platform.client import GCSClient
+from forze_gcs.kernel.client.client import GCSClient
 
 FAKE_GCS_IMAGE = "fsouza/fake-gcs-server:latest"
 FAKE_GCS_PORT = 4443

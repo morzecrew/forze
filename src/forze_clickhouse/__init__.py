@@ -14,12 +14,17 @@ from .execution import (
     clickhouse_lifecycle_step,
     routed_clickhouse_lifecycle_step,
 )
-from .kernel.platform import (
+from .kernel.client import (
     ClickHouseClient,
     ClickHouseClientPort,
     ClickHouseConfig,
     ClickHouseRoutingCredentials,
     RoutedClickHouseClient,
+)
+from .kernel.relation import (
+    RelationSpec,
+    coerce_relation_spec,
+    resolve_clickhouse_ingest_target,
 )
 
 # ----------------------- #
@@ -36,4 +41,7 @@ __all__ = [
     "routed_clickhouse_lifecycle_step",
     "ClickHouseAnalyticsConfig",
     "ClickHouseQueryConfig",
+    "RelationSpec",
+    "coerce_relation_spec",
+    "resolve_clickhouse_ingest_target",
 ]

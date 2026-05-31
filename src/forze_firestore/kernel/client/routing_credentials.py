@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field
 
 
 class FirestoreRoutingCredentials(BaseModel):
-    """JSON shape stored in secrets for :class:`~forze_firestore.kernel.platform.RoutedFirestoreClient`.
+    """JSON shape stored in secrets for :class:`~forze_firestore.kernel.client.RoutedFirestoreClient`.
 
     Use with :func:`~forze.application.contracts.secrets.resolve_structured`.
 

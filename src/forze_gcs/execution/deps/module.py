@@ -10,9 +10,9 @@ from forze.application.execution import Deps, DepsModule
 from forze.base.primitives import StrKey
 
 from ...kernel._logger import logger
-from ...kernel.platform import GCSClientPort
+from ...kernel.client import GCSClientPort
 from .configs import GCSStorageConfig
-from .deps import ConfigurableGCSStorage
+from .factories import ConfigurableGCSStorage
 from .keys import GCSClientDepKey
 
 # ----------------------- #

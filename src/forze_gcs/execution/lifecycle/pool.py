@@ -1,4 +1,4 @@
-"""Lifecycle hooks for GCS client initialization and shutdown."""
+"""GCS client pool lifecycle hooks and step factories."""
 
 from typing import cast, final
 
@@ -8,8 +8,8 @@ from forze.application.contracts.execution import LifecycleHook, LifecycleStep
 from forze.application.execution import ExecutionContext
 from forze.application.execution.lifecycle.builtin import routed_client_lifecycle_step
 
-from ..kernel.platform import GCSClient, GCSConfig, RoutedGCSClient
-from .deps import GCSClientDepKey
+from ...kernel.client import GCSClient, GCSConfig, RoutedGCSClient
+from ..deps import GCSClientDepKey
 
 # ----------------------- #
 

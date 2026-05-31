@@ -13,12 +13,18 @@ from .execution import (
     gcs_lifecycle_step,
     routed_gcs_lifecycle_step,
 )
-from .kernel.platform import (
+from .kernel.client import (
     GCSClient,
     GCSClientPort,
     GCSConfig,
     GCSRoutingCredentials,
     RoutedGCSClient,
+)
+from .kernel.relation import (
+    NamedResourceSpec,
+    coerce_named_resource_spec,
+    is_static_named_resource,
+    resolve_gcs_bucket,
 )
 
 # ----------------------- #
@@ -34,4 +40,8 @@ __all__ = [
     "gcs_lifecycle_step",
     "routed_gcs_lifecycle_step",
     "GCSStorageConfig",
+    "NamedResourceSpec",
+    "coerce_named_resource_spec",
+    "is_static_named_resource",
+    "resolve_gcs_bucket",
 ]

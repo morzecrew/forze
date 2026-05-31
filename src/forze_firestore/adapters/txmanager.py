@@ -16,7 +16,7 @@ from forze.application.contracts.transaction import (
     TransactionScopeKey,
 )
 
-from ..kernel.platform import FirestoreClientPort
+from ..kernel.client import FirestoreClientPort
 from ._logger import logger
 
 # ----------------------- #

@@ -11,9 +11,9 @@ from forze.application.contracts.analytics import (
 from forze.application.execution import Deps, DepsModule
 from forze.base.primitives import StrKey
 
-from ...kernel.platform import BigQueryClientPort
+from ...kernel.client import BigQueryClientPort
 from .configs import BigQueryAnalyticsConfig
-from .deps import ConfigurableBigQueryAnalytics
+from .factories import ConfigurableBigQueryAnalytics
 from .keys import BigQueryClientDepKey
 
 # ----------------------- #

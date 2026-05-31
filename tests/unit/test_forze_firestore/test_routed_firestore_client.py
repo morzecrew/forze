@@ -1,4 +1,4 @@
-"""Unit tests for :class:`~forze_firestore.kernel.platform.RoutedFirestoreClient`."""
+"""Unit tests for :class:`~forze_firestore.kernel.client.RoutedFirestoreClient`."""
 
 import json
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -8,7 +8,7 @@ import pytest
 
 from forze.application.contracts.secrets import SecretRef
 from forze.base.exceptions import CoreException
-from forze_firestore.kernel.platform import RoutedFirestoreClient
+from forze_firestore.kernel.client import RoutedFirestoreClient
 
 # ----------------------- #
 
@@ -79,7 +79,7 @@ async def test_routed_firestore_eviction() -> None:
         return inst
 
     with patch(
-        "forze_firestore.kernel.platform.routed_client.FirestoreClient",
+        "forze_firestore.kernel.client.routed_client.FirestoreClient",
         side_effect=_make_client,
     ):
         cur = _T1

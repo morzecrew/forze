@@ -2,7 +2,7 @@
 
 from forze.application.contracts.deps import DepKey
 
-from ...kernel.platform import GCSClientPort
+from ...kernel.client import GCSClientPort
 
 # ----------------------- #
 

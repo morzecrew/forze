@@ -17,8 +17,14 @@ from forze_clickhouse.execution.deps import (
     ClickHouseAnalyticsConfig,
     ClickHouseDepsModule,
     ClickHouseQueryConfig,
+    ConfigurableClickHouseAnalytics,
 )
-from forze_clickhouse.kernel.platform import ClickHouseClient
+from forze_clickhouse.kernel.client import ClickHouseClient
+
+
+def test_rejects_mapping_config() -> None:
+    with pytest.raises(TypeError, match="ClickHouseAnalyticsConfig"):
+        ConfigurableClickHouseAnalytics(config={"database": "db", "queries": {}})
 
 
 class _Row(BaseModel):

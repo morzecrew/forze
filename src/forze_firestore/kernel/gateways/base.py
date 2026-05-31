@@ -28,7 +28,7 @@ from forze.base.primitives import JsonDict
 from forze.base.serialization import pydantic_field_names
 from forze.domain.constants import ID_FIELD
 
-from ..platform import FirestoreClientPort
+from ..client import FirestoreClientPort
 from ..query import FirestoreQueryRenderer
 from ..relation import RelationSpec, is_static_relation, resolve_firestore_collection
 

@@ -16,7 +16,7 @@ from gcloud.aio.bigquery import Dataset, Table
 from testcontainers.core.container import DockerContainer
 from testcontainers.core.waiting_utils import wait_for_logs
 
-from forze_bigquery.kernel.platform.client import BigQueryClient
+from forze_bigquery.kernel.client.client import BigQueryClient
 
 BQ_EMULATOR_IMAGE = "ghcr.io/goccy/bigquery-emulator:latest"
 BQ_EMULATOR_PORT = 9050

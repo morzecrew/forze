@@ -1,16 +1,26 @@
 from unittest.mock import Mock
 from uuid import uuid4
 
+import pytest
+
 from forze.application.contracts.storage import StorageDepKey, StorageSpec
 from forze.application.contracts.authn import AuthnIdentity
 from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.execution import Deps, ExecutionContext, InvocationMetadata
 from tests.support.execution_context import context_from_deps, context_from_modules, frozen_deps_from_deps
 from forze_gcs.adapters.storage import GCSStorageAdapter
-from forze_gcs.execution.deps import GCSClientDepKey, GCSDepsModule
-from forze_gcs.execution.deps.configs import GCSStorageConfig
-from forze_gcs.execution.deps.deps import ConfigurableGCSStorage
-from forze_gcs.kernel.platform import GCSClient
+from forze_gcs.execution.deps import (
+    ConfigurableGCSStorage,
+    GCSClientDepKey,
+    GCSDepsModule,
+    GCSStorageConfig,
+)
+from forze_gcs.kernel.client import GCSClient
+
+
+def test_rejects_mapping_config() -> None:
+    with pytest.raises(TypeError, match="GCSStorageConfig"):
+        ConfigurableGCSStorage(config={"bucket": "b"})
 
 
 def test_gcs_storage_factory_builds_adapter_without_tenant() -> None:

@@ -97,6 +97,8 @@ Per-tenant secrets resolve to `BigQueryRoutingCredentials` (`project_id`, and op
 | `AnalyticsQueryDepKey` | Query port adapter factory |
 | `AnalyticsIngestDepKey` | Ingest port adapter factory (when ingest is configured) |
 
+For framework tests or advanced wiring, prefer `from forze_bigquery.execution.deps import ConfigurableBigQueryAnalytics` rather than removed `forze_bigquery.execution.deps.deps` paths.
+
 ## Configuration
 
 Physical mapping lives on `BigQueryDepsModule.analytics`, keyed by `AnalyticsSpec.name`:

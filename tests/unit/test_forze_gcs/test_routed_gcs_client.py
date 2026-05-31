@@ -1,4 +1,4 @@
-"""Unit tests for :class:`~forze_gcs.kernel.platform.RoutedGCSClient`."""
+"""Unit tests for :class:`~forze_gcs.kernel.client.RoutedGCSClient`."""
 
 import json
 from contextlib import asynccontextmanager
@@ -9,7 +9,7 @@ import pytest
 
 from forze.application.contracts.secrets import SecretRef
 from forze.base.exceptions import CoreException
-from forze_gcs.kernel.platform import RoutedGCSClient
+from forze_gcs.kernel.client import RoutedGCSClient
 
 # ----------------------- #
 
@@ -86,7 +86,7 @@ async def test_routed_gcs_eviction() -> None:
         return inst
 
     with patch(
-        "forze_gcs.kernel.platform.routed_client.GCSClient",
+        "forze_gcs.kernel.client.routed_client.GCSClient",
         side_effect=_make_client,
     ):
         cur = _T1

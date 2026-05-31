@@ -1,4 +1,4 @@
-"""Factory functions for Firestore document and tx manager adapters."""
+"""Firestore document dep factories."""
 
 from typing import Any, TypeVar, final
 
@@ -10,20 +10,16 @@ from forze.application.contracts.document import (
     DocumentQueryDepPort,
     DocumentSpec,
 )
-from forze.application.contracts.transaction import (
-    AfterCommitPort,
-    TransactionManagerPort,
-)
+from forze.application.contracts.transaction import AfterCommitPort
 from forze.application.coordinators import DocumentCacheCoordinator
 from forze.application.execution import ExecutionContext
 from forze.base.exceptions import exc
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document
 
-from ...adapters import FirestoreDocumentAdapter, FirestoreTxManagerAdapter
-from .._logger import logger
-from .configs import FirestoreDocumentConfig, FirestoreReadOnlyDocumentConfig
-from .keys import FirestoreClientDepKey
-from .utils import doc_write_gw, read_gw
+from ....adapters import FirestoreDocumentAdapter
+from ..._logger import logger
+from ..configs import FirestoreDocumentConfig, FirestoreReadOnlyDocumentConfig
+from ..utils import doc_write_gw, read_gw
 
 # ----------------------- #
 
@@ -38,7 +34,14 @@ U = TypeVar("U", bound=BaseDTO)
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class ConfigurableFirestoreReadOnlyDocument(DocumentQueryDepPort[R]):
-    config: FirestoreReadOnlyDocumentConfig
+    """Configurable Firestore read-only document adapter."""
+
+    config: FirestoreReadOnlyDocumentConfig = attrs.field(
+        validator=attrs.validators.instance_of(FirestoreReadOnlyDocumentConfig),
+    )
+    """Configuration for the document."""
+
+    # ....................... #
 
     def __call__(
         self,
@@ -81,7 +84,14 @@ class ConfigurableFirestoreReadOnlyDocument(DocumentQueryDepPort[R]):
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class ConfigurableFirestoreDocument(DocumentCommandDepPort[R, D, C, U]):
-    config: FirestoreDocumentConfig
+    """Configurable Firestore read-write document adapter."""
+
+    config: FirestoreDocumentConfig = attrs.field(
+        validator=attrs.validators.instance_of(FirestoreDocumentConfig),
+    )
+    """Configuration for the document."""
+
+    # ....................... #
 
     def __call__(
         self,
@@ -144,12 +154,3 @@ class ConfigurableFirestoreDocument(DocumentCommandDepPort[R, D, C, U]):
             cache_coord=cc,
             batch_size=config.batch_size,
         )
-
-
-# ....................... #
-
-
-def firestore_txmanager(context: ExecutionContext) -> TransactionManagerPort:
-    client = context.deps.provide(FirestoreClientDepKey)
-
-    return FirestoreTxManagerAdapter(client=client)

@@ -14,12 +14,12 @@ from forze.application.contracts.transaction.deps import TransactionManagerDepKe
 from forze.application.execution import Deps, ExecutionContext
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
 from forze_firestore.execution.deps.configs import FirestoreDocumentConfig
-from forze_firestore.execution.deps.deps import (
+from forze_firestore.execution.deps import (
     ConfigurableFirestoreDocument,
     firestore_txmanager,
 )
 from forze_firestore.execution.deps.keys import FirestoreClientDepKey
-from forze_firestore.kernel.platform import FirestoreClient
+from forze_firestore.kernel.client import FirestoreClient
 
 
 class TxDoc(Document):

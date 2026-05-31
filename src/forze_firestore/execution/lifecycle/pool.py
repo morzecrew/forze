@@ -1,4 +1,4 @@
-"""Lifecycle hooks for Firestore client initialization and shutdown."""
+"""Firestore client pool lifecycle hooks and step factories."""
 
 from typing import cast, final
 
@@ -8,8 +8,8 @@ from forze.application.contracts.execution import LifecycleHook, LifecycleStep
 from forze.application.execution import ExecutionContext
 from forze.application.execution.lifecycle.builtin import routed_client_lifecycle_step
 
-from ..kernel.platform import FirestoreClient, RoutedFirestoreClient
-from .deps import FirestoreClientDepKey
+from ...kernel.client import FirestoreClient, RoutedFirestoreClient
+from ..deps import FirestoreClientDepKey
 
 # ----------------------- #
 
@@ -17,8 +17,13 @@ from .deps import FirestoreClientDepKey
 @final
 @attrs.define(slots=True, frozen=True, kw_only=True)
 class FirestoreStartupHook(LifecycleHook):
+    """Startup hook that initializes the Firestore client from the deps container."""
+
     project_id: str
+    """GCP project id."""
+
     database: str = "(default)"
+    """Firestore database id."""
 
     # ....................... #
 
@@ -37,6 +42,8 @@ class FirestoreStartupHook(LifecycleHook):
 @final
 @attrs.define(slots=True, frozen=True, kw_only=True)
 class FirestoreShutdownHook(LifecycleHook):
+    """Shutdown hook that closes the Firestore client."""
+
     async def __call__(self, ctx: ExecutionContext) -> None:
         client = ctx.deps.provide(FirestoreClientDepKey)
         await client.close()
@@ -51,6 +58,8 @@ def firestore_lifecycle_step(
     project_id: str,
     database: str = "(default)",
 ) -> LifecycleStep:
+    """Build a lifecycle step for Firestore client init and shutdown."""
+
     return LifecycleStep(
         id=name,
         startup=FirestoreStartupHook(

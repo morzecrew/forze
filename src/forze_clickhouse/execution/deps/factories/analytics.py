@@ -1,12 +1,15 @@
+"""ClickHouse analytics dep factory."""
+
 from typing import Any, final
 
 import attrs
 
 from forze.application.contracts.analytics import AnalyticsSpec
 from forze.application.execution import ExecutionContext
-from ...adapters import ClickHouseAnalyticsAdapter
-from .configs import ClickHouseAnalyticsConfig
-from .keys import ClickHouseClientDepKey
+
+from ....adapters import ClickHouseAnalyticsAdapter
+from ..configs import ClickHouseAnalyticsConfig
+from ..keys import ClickHouseClientDepKey
 
 # ----------------------- #
 
@@ -16,7 +19,9 @@ from .keys import ClickHouseClientDepKey
 class ConfigurableClickHouseAnalytics:
     """Build a :class:`ClickHouseAnalyticsAdapter` for an analytics spec route."""
 
-    config: ClickHouseAnalyticsConfig
+    config: ClickHouseAnalyticsConfig = attrs.field(
+        validator=attrs.validators.instance_of(ClickHouseAnalyticsConfig),
+    )
     """ClickHouse-specific configuration for the route."""
 
     # ....................... #
