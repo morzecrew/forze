@@ -63,6 +63,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Application execution:** `forze.application.execution.registry`, `planning`, `facade`, and `running` subpackages; `OperationRunner`; `lifecycle_graph_from_sequence` (use `steps_graph_from_sequence` from `forze.application.contracts.execution`).
 - **Postgres:** `validate_pg_search_conf`, `validate_postgres_hub_search_conf`, `validate_postgres_federated_search_conf`, and `is_postgres_federated_embedded_hub_config` from the public API (use config constructors and instance validation instead).
+- **Postgres:** dict/mapping coercion for `ConfigurablePostgresDocument` and `ConfigurablePostgresReadOnlyDocument` (use `PostgresDocumentConfig` / `PostgresReadOnlyDocumentConfig` constructors).
 - **Integrations:** `validate_mongo_search_conf`, `validate_meilisearch_search_conf`, `validate_meilisearch_federated_search_conf`, `validate_clickhouse_analytics_config`, and `validate_bigquery_analytics_config` from public exports.
 
 ### Documentation

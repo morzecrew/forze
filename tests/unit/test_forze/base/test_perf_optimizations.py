@@ -53,7 +53,7 @@ class TestRowToDictPerf:
         """
         from unittest.mock import MagicMock
 
-        from forze_postgres.kernel.platform.client import PostgresClient
+        from forze_postgres.kernel.client import PostgresClient
 
         cols_data = [("id", "name", "email", "age", "status", "created_at")]
         mock_desc = []
@@ -88,7 +88,7 @@ class TestRowToDictPerf:
         """Verify ``_rows_to_dicts`` uses tuple for column names."""
         from unittest.mock import MagicMock
 
-        from forze_postgres.kernel.platform.client import PostgresClient
+        from forze_postgres.kernel.client import PostgresClient
 
         mock_desc = []
         for name in ("id", "name", "value"):

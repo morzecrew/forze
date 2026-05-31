@@ -6,7 +6,7 @@ import pytest
 from psycopg import errors
 
 from forze.base.exceptions import CoreException, ExceptionKind, exc
-from forze_postgres.kernel.client import errors as platform_errors
+from forze_postgres.kernel.client import errors as client_errors
 
 # ----------------------- #
 
@@ -29,7 +29,7 @@ class TestPsycopgErrorHandler:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setattr(
-            platform_errors.errors,
+            client_errors.errors,
             "ForeignKeyViolation",
             _FakeForeignKeyViolation,
         )
@@ -38,7 +38,7 @@ class TestPsycopgErrorHandler:
             'is not present in table "users"'
         )
 
-        err = platform_errors._psycopg_eh(
+        err = client_errors._psycopg_eh(
             _FakeForeignKeyViolation(detail),
             site="create_doc",
         )
@@ -55,13 +55,13 @@ class TestPsycopgErrorHandler:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setattr(
-            platform_errors.errors,
+            client_errors.errors,
             "ForeignKeyViolation",
             _FakeForeignKeyViolation,
         )
         detail = "insert or update on table orders violates foreign key constraint"
 
-        err = platform_errors._psycopg_eh(
+        err = client_errors._psycopg_eh(
             _FakeForeignKeyViolation(detail),
             site="create_doc",
         )
@@ -77,7 +77,7 @@ class TestPsycopgErrorHandlerBranches:
 
     def test_core_error_returned_unchanged(self) -> None:
         original = exc.internal("boundary", code="x")
-        out = platform_errors._psycopg_eh(original, site="op")
+        out = client_errors._psycopg_eh(original, site="op")
         assert out is original
 
     @pytest.mark.parametrize(
@@ -131,19 +131,19 @@ class TestPsycopgErrorHandlerBranches:
         expected_kind: ExceptionKind,
     ) -> None:
         raised = exc_factory()  # type: ignore[misc]
-        out = platform_errors._psycopg_eh(raised, site="test_op")
+        out = client_errors._psycopg_eh(raised, site="test_op")
         assert out is not None
         assert out.kind == expected_kind
 
     def test_operational_error_transient_message_maps_to_concurrency(self) -> None:
         raised = errors.OperationalError("connection closed unexpectedly")
-        out = platform_errors._psycopg_eh(raised, site="op")
+        out = client_errors._psycopg_eh(raised, site="op")
         assert out is not None
         assert out.kind == ExceptionKind.CONCURRENCY
         assert "retry" in out.summary.lower()
 
     def test_unknown_exception_becomes_infrastructure_error(self) -> None:
-        out = platform_errors._psycopg_eh(RuntimeError("weird"), site="my_op")
+        out = client_errors._psycopg_eh(RuntimeError("weird"), site="my_op")
         assert out is not None
         assert out.kind == ExceptionKind.INFRASTRUCTURE
         assert "my_op" in out.summary

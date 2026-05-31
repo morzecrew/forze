@@ -259,6 +259,16 @@ class TestConfigurablePostgresDocumentFactories:
         assert isinstance(adapter, PostgresDocumentAdapter)
         assert adapter.batch_size == 321
 
+    def test_rejects_mapping_config(self) -> None:
+        with pytest.raises(TypeError, match="PostgresDocumentConfig"):
+            ConfigurablePostgresDocument(
+                config={
+                    "read": ("public", "t"),
+                    "write": ("public", "t"),
+                    "bookkeeping_strategy": "application",
+                },
+            )
+
     def test_command_requires_write_spec(self) -> None:
         factory = ConfigurablePostgresDocument(
             config=PostgresDocumentConfig(
