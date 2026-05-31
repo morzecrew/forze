@@ -23,7 +23,7 @@ from forze.application.contracts.stream import (
 )
 from forze.application.contracts.tenancy import TenancyMixin
 
-from ..kernel.platform import RedisClientPort
+from ..kernel.client import RedisClientPort
 from .codecs import RedisStreamCodec
 
 # ----------------------- #

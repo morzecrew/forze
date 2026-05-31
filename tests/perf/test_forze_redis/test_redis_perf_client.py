@@ -6,7 +6,7 @@ import pytest
 
 pytest.importorskip("redis")
 
-from forze_redis.kernel.platform.client import RedisClient
+from forze_redis.kernel.client import RedisClient
 
 _REDIS_MGET_LARGE = 1_000
 _REDIS_MSET_LARGE = 500

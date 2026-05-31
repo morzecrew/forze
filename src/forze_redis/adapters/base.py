@@ -13,7 +13,7 @@ from forze.application.contracts.resolution import NamedResourceSpec, is_static_
 from forze.application.contracts.tenancy import TenancyMixin
 from forze.base.exceptions import exc
 
-from ..kernel.platform import RedisClientPort
+from ..kernel.client import RedisClientPort
 from ..kernel.relation import resolve_redis_namespace
 from .codecs import KEY_SEP, RedisKeyCodec
 

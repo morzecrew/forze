@@ -2,7 +2,7 @@
 
 from forze.application.contracts.deps import DepKey
 
-from ...kernel.platform import RedisClientPort
+from ...kernel.client import RedisClientPort
 
 # ----------------------- #
 

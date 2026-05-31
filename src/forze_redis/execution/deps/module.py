@@ -18,7 +18,7 @@ from forze.application.execution import Deps, DepsModule
 from forze.base.primitives import StrKey
 
 from ...kernel._logger import logger
-from ...kernel.platform import RedisClientPort
+from ...kernel.client import RedisClientPort
 from .configs import (
     RedisCacheConfig,
     RedisCounterConfig,
@@ -27,7 +27,7 @@ from .configs import (
     RedisSearchResultSnapshotConfig,
     RedisUniversalConfig,
 )
-from .deps import (
+from .factories import (
     ConfigurableRedisCache,
     ConfigurableRedisCounter,
     ConfigurableRedisDistributedLock,
@@ -97,6 +97,19 @@ class RedisDepsModule(DepsModule):
     ) = attrs.field(default=None)
     """Mapping from distributed lock spec names to their Redis-specific configurations."""
 
+    #! read and write separately?
+
+    # pubsub: dict[str, RedisPubSubConfig] = attrs.field(factory=dict)
+    # """Mapping from pubsub names to their Redis-specific configurations."""
+
+    # streams: dict[str, RedisStreamConfig] = attrs.field(factory=dict)
+    # """Mapping from stream names to their Redis-specific configurations."""
+
+    # stream_groups: dict[str, RedisStreamGroupConfig] = attrs.field(factory=dict)
+    # """Mapping from stream group names to their Redis-specific configurations."""
+
+    # ....................... #
+
     def __attrs_post_init__(self) -> None:
         def _warn_route(
             route_name: str,
@@ -136,17 +149,6 @@ class RedisDepsModule(DepsModule):
         if self.dlocks:
             for name, cfg in self.dlocks.items():
                 _warn_route(str(name), kind="dlock", config=cfg)
-
-    #! read and write separately?
-
-    # pubsub: dict[str, RedisPubSubConfig] = attrs.field(factory=dict)
-    # """Mapping from pubsub names to their Redis-specific configurations."""
-
-    # streams: dict[str, RedisStreamConfig] = attrs.field(factory=dict)
-    # """Mapping from stream names to their Redis-specific configurations."""
-
-    # stream_groups: dict[str, RedisStreamGroupConfig] = attrs.field(factory=dict)
-    # """Mapping from stream group names to their Redis-specific configurations."""
 
     # ....................... #
 

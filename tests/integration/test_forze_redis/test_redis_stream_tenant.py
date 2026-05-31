@@ -9,7 +9,7 @@ from pydantic import BaseModel
 
 from forze.application.contracts.tenancy import TenantIdentity
 from forze_redis.adapters import RedisStreamAdapter, RedisStreamCodec
-from forze_redis.kernel.platform.client import RedisClient
+from forze_redis.kernel.client import RedisClient
 from forze.base.serialization import PydanticRecordMappingCodec
 
 pytestmark = pytest.mark.integration

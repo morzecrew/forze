@@ -1,6 +1,6 @@
-"""Unit tests for :mod:`forze_redis.kernel.platform.utils`."""
+"""Unit tests for :mod:`forze_redis.kernel.client.utils`."""
 
-from forze_redis.kernel.platform.utils import parse_pubsub_message, parse_stream_entries
+from forze_redis.kernel.client.utils import parse_pubsub_message, parse_stream_entries
 
 
 class TestParseStreamEntries:

@@ -18,7 +18,7 @@ from testcontainers.mongodb import MongoDbContainer
 from testcontainers.redis import RedisContainer
 
 from forze_mongo.kernel.platform import MongoClient
-from forze_redis.kernel.platform.client import RedisClient, RedisConfig
+from forze_redis.kernel.client import RedisClient, RedisConfig
 
 
 def _ensure_docker() -> None:

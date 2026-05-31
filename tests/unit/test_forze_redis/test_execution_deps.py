@@ -32,7 +32,7 @@ from forze_redis.execution.deps.configs import (
     RedisDistributedLockConfig,
     RedisIdempotencyConfig,
 )
-from forze_redis.execution.deps.deps import (
+from forze_redis.execution.deps import (
     ConfigurableRedisCache,
     ConfigurableRedisCounter,
     ConfigurableRedisDistributedLock,
@@ -40,11 +40,17 @@ from forze_redis.execution.deps.deps import (
 )
 from forze_redis.execution.deps.keys import RedisBlockingClientDepKey, RedisClientDepKey
 from forze_redis.execution.deps.module import RedisDepsModule
-from forze_redis.kernel.platform import RedisClient
+from forze_redis.kernel.client import RedisClient
 
 
 def _ctx() -> ExecutionContext:
     return context_from_deps(Deps.plain({RedisClientDepKey: MagicMock(spec=RedisClient)}))
+
+
+class TestConfigurableRedisCache:
+    def test_rejects_mapping_config(self) -> None:
+        with pytest.raises(TypeError, match="RedisUniversalConfig"):
+            ConfigurableRedisCache(config={"namespace": "acme"})
 
 
 class TestRedisDepsModule:

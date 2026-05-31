@@ -27,6 +27,10 @@ from forze_postgres.execution.deps import (
     ConfigurablePostgresDocument,
     ConfigurablePostgresReadOnlyDocument,
 )
+from forze_postgres.execution.deps.configs import (
+    PostgresDocumentConfig,
+    PostgresReadOnlyDocumentConfig,
+)
 from forze_postgres.execution.deps.keys import (
     PostgresClientDepKey,
     PostgresIntrospectorDepKey,
@@ -100,15 +104,15 @@ def _authz_pg_deps(pg_client: PostgresClient, *, suffix: str) -> Deps:
     gr = f"authz_gr_{suffix}"
     gperm = f"authz_gperm_{suffix}"
 
-    def _ro(table: str) -> dict[str, object]:
-        return {"read": ("public", table)}
+    def _ro(table: str) -> PostgresReadOnlyDocumentConfig:
+        return PostgresReadOnlyDocumentConfig(read=("public", table))
 
-    def _rw(table: str) -> dict[str, object]:
-        return {
-            "read": ("public", table),
-            "write": ("public", table),
-            "bookkeeping_strategy": "application",
-        }
+    def _rw(table: str) -> PostgresDocumentConfig:
+        return PostgresDocumentConfig(
+            read=("public", table),
+            write=("public", table),
+            bookkeeping_strategy="application",
+        )
 
     introspector = PostgresIntrospector(client=pg_client)
 

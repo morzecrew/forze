@@ -9,7 +9,7 @@ pytest.importorskip("redis")
 
 from forze_redis.adapters import RedisCacheAdapter, RedisCounterAdapter
 from forze_redis.adapters.codecs import RedisKeyCodec
-from forze_redis.kernel.platform.client import RedisClient
+from forze_redis.kernel.client import RedisClient
 
 _REDIS_CACHE_GET_MANY_LARGE = 200
 

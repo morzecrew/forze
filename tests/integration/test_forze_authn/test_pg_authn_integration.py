@@ -68,6 +68,10 @@ from forze_postgres.execution.deps import (
     ConfigurablePostgresDocument,
     ConfigurablePostgresReadOnlyDocument,
 )
+from forze_postgres.execution.deps.configs import (
+    PostgresDocumentConfig,
+    PostgresReadOnlyDocumentConfig,
+)
 from forze_postgres.execution.deps.keys import (
     PostgresClientDepKey,
     PostgresIntrospectorDepKey,
@@ -148,22 +152,22 @@ def _authn_pg_deps(pg_client: PostgresClient, *, suffix: str) -> Deps:
     ak = f"authn_ak_{suffix}"
     sess = f"authn_sess_{suffix}"
 
-    ro = {"read": ("public", pri)}
-    pwd_cfg = {
-        "read": ("public", pwd),
-        "write": ("public", pwd),
-        "bookkeeping_strategy": "application",
-    }
-    ak_cfg = {
-        "read": ("public", ak),
-        "write": ("public", ak),
-        "bookkeeping_strategy": "application",
-    }
-    sess_cfg = {
-        "read": ("public", sess),
-        "write": ("public", sess),
-        "bookkeeping_strategy": "application",
-    }
+    ro = PostgresReadOnlyDocumentConfig(read=("public", pri))
+    pwd_cfg = PostgresDocumentConfig(
+        read=("public", pwd),
+        write=("public", pwd),
+        bookkeeping_strategy="application",
+    )
+    ak_cfg = PostgresDocumentConfig(
+        read=("public", ak),
+        write=("public", ak),
+        bookkeeping_strategy="application",
+    )
+    sess_cfg = PostgresDocumentConfig(
+        read=("public", sess),
+        write=("public", sess),
+        bookkeeping_strategy="application",
+    )
 
     introspector = PostgresIntrospector(client=pg_client)
 

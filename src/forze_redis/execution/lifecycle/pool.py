@@ -1,4 +1,4 @@
-"""Lifecycle hooks for Redis client initialization and shutdown."""
+"""Redis client pool lifecycle hooks and step factories."""
 
 from typing import cast, final
 
@@ -10,8 +10,8 @@ from forze.application.execution.context import ExecutionContext
 from forze.application.execution.lifecycle.builtin import routed_client_lifecycle_step
 from forze.base.serialization import pydantic_secret_converter
 
-from ..kernel.platform import RedisClient, RedisConfig, RoutedRedisClient
-from .deps import RedisClientDepKey
+from ...kernel.client import RedisClient, RedisConfig, RoutedRedisClient
+from ..deps import RedisClientDepKey
 
 # ----------------------- #
 

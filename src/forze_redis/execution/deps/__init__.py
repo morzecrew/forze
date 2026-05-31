@@ -8,7 +8,13 @@ from .configs import (
     RedisSearchResultSnapshotConfig,
     RedisUniversalConfig,
 )
-from .deps import ConfigurableRedisDistributedLock, ConfigurableRedisSearchResultSnapshot
+from .factories import (
+    ConfigurableRedisCache,
+    ConfigurableRedisCounter,
+    ConfigurableRedisDistributedLock,
+    ConfigurableRedisIdempotency,
+    ConfigurableRedisSearchResultSnapshot,
+)
 from .keys import RedisBlockingClientDepKey, RedisClientDepKey
 from .module import RedisDepsModule
 
@@ -24,6 +30,9 @@ __all__ = [
     "RedisIdempotencyConfig",
     "RedisSearchResultSnapshotConfig",
     "RedisUniversalConfig",
+    "ConfigurableRedisCache",
+    "ConfigurableRedisCounter",
     "ConfigurableRedisDistributedLock",
+    "ConfigurableRedisIdempotency",
     "ConfigurableRedisSearchResultSnapshot",
 ]

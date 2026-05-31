@@ -1,4 +1,4 @@
-"""Unit tests for the Redis error handler."""
+"""Unit tests for :mod:`forze_redis.kernel.client.errors`."""
 
 from forze.base.exceptions import CoreException, ExceptionKind, exc
 import pytest
@@ -7,7 +7,7 @@ pytest.importorskip("redis")
 
 from redis import exceptions as redis_errors
 
-from forze_redis.kernel.platform.errors import _redis_eh
+from forze_redis.kernel.client.errors import _redis_eh
 
 class TestRedisErrorHandler:
     def test_core_error_passthrough(self) -> None:

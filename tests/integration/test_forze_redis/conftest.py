@@ -26,7 +26,7 @@ from forze_redis.adapters import (
     RedisStreamCodec,
     RedisStreamGroupAdapter,
 )
-from forze_redis.kernel.platform.client import RedisClient, RedisConfig
+from forze_redis.kernel.client import RedisClient, RedisConfig
 from forze.base.serialization import PydanticRecordMappingCodec
 
 

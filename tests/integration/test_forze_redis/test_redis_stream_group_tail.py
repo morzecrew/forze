@@ -9,7 +9,7 @@ from uuid import uuid4
 import pytest
 
 from forze_redis.adapters import RedisStreamAdapter, RedisStreamGroupAdapter
-from forze_redis.kernel.platform.client import RedisClient
+from forze_redis.kernel.client import RedisClient
 
 pytestmark = pytest.mark.integration
 

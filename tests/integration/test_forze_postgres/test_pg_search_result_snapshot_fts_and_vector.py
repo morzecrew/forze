@@ -34,9 +34,9 @@ from forze_postgres.execution.deps.keys import (
 from forze_postgres.kernel.catalog.introspect import PostgresIntrospector
 from forze_postgres.kernel.client.client import PostgresClient
 from forze_redis.execution.deps.configs import RedisSearchResultSnapshotConfig
-from forze_redis.execution.deps.deps import ConfigurableRedisSearchResultSnapshot
+from forze_redis.execution.deps import ConfigurableRedisSearchResultSnapshot
 from forze_redis.execution.deps.keys import RedisClientDepKey
-from forze_redis.kernel.platform.client import RedisClient
+from forze_redis.kernel.client import RedisClient
 from tests.support.execution_context import context_from_deps
 
 

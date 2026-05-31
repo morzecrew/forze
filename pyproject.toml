@@ -229,7 +229,7 @@ omit = [
     "*/forze_postgres/execution/lifecycle/pool.py",
     "*/forze_mongo/execution/lifecycle.py",
     "*/forze_firestore/execution/lifecycle.py",
-    "*/forze_redis/execution/lifecycle.py",
+    "*/forze_redis/execution/lifecycle/pool.py",
     "*/forze_s3/execution/lifecycle.py",
     "*/forze_gcs/execution/lifecycle.py",
     "*/forze_bigquery/execution/lifecycle.py",

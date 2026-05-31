@@ -77,6 +77,8 @@ deps_plan = DepsPlan.from_modules(redis_module)
 
 Use routed mappings when the contract is named, and a plain `idempotency` config when all idempotency specs share one Redis namespace.
 
+For framework tests or advanced wiring, prefer `from forze_redis.execution.deps import ConfigurableRedisCache` (and siblings) rather than removed `forze_redis.execution.deps.deps` paths.
+
 ### Lifecycle step
 
 ```python

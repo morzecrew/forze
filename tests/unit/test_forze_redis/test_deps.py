@@ -11,9 +11,9 @@ from forze_redis.adapters import RedisPubSubAdapter, RedisPubSubCodec
 from forze_redis.adapters.counter import RedisCounterAdapter
 from forze_redis.adapters.codecs import RedisKeyCodec
 from forze_redis.execution.deps.configs import RedisCounterConfig
-from forze_redis.execution.deps.deps import ConfigurableRedisCounter
+from forze_redis.execution.deps import ConfigurableRedisCounter
 from forze_redis.execution.deps.keys import RedisClientDepKey
-from forze_redis.kernel.platform.client import RedisClient
+from forze_redis.kernel.client import RedisClient
 from forze.base.serialization import PydanticRecordMappingCodec
 
 

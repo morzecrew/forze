@@ -14,7 +14,7 @@ pytest.importorskip("redis")
 
 from forze_postgres.kernel.client.client import PostgresClient, PostgresConfig
 from forze_redis.adapters import RedisSearchResultSnapshotAdapter
-from forze_redis.kernel.platform.client import RedisClient, RedisConfig
+from forze_redis.kernel.client import RedisClient, RedisConfig
 
 
 def _ensure_docker_available() -> None:

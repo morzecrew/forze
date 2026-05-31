@@ -9,7 +9,7 @@ from pydantic import BaseModel
 
 from forze.base.serialization import PydanticRecordMappingCodec
 from forze_redis.adapters.pubsub import RedisPubSubAdapter, RedisPubSubCodec
-from forze_redis.kernel.platform.client import RedisClient
+from forze_redis.kernel.client import RedisClient
 
 
 class _Payload(BaseModel):

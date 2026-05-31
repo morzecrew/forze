@@ -21,9 +21,9 @@ from forze_mongo.execution.deps.deps import ConfigurableMongoSearch
 from forze_mongo.execution.deps.keys import MongoClientDepKey
 from forze_mongo.kernel.platform import MongoClient
 from forze_redis.execution.deps.configs import RedisSearchResultSnapshotConfig
-from forze_redis.execution.deps.deps import ConfigurableRedisSearchResultSnapshot
+from forze_redis.execution.deps import ConfigurableRedisSearchResultSnapshot
 from forze_redis.execution.deps.keys import RedisClientDepKey
-from forze_redis.kernel.platform.client import RedisClient
+from forze_redis.kernel.client import RedisClient
 from tests.support.execution_context import context_from_deps
 
 
