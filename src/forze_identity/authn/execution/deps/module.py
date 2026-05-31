@@ -14,6 +14,8 @@ from forze.application.contracts.authn import (
     PasswordLifecycleDepKey,
     PasswordVerifierDepKey,
     PasswordVerifierDepPort,
+    PrincipalDeactivationDepKey,
+    PrincipalEligibilityDepKey,
     PrincipalResolverDepKey,
     PrincipalResolverDepPort,
     TokenLifecycleDepKey,
@@ -38,6 +40,8 @@ from .deps import (
     ConfigurableJwtNativeUuidResolver,
     ConfigurablePasswordAccountProvisioning,
     ConfigurablePasswordLifecycle,
+    ConfigurablePolicyPrincipalEligibility,
+    ConfigurablePrincipalDeactivation,
     ConfigurableTokenLifecycle,
 )
 
@@ -107,6 +111,12 @@ class AuthnDepsModule(DepsModule):
     password_account_provisioning: Collection[StrKey] | None = attrs.field(default=None)
     """Authn routes that should use first-party password account provisioning."""
 
+    principal_deactivation: Collection[StrKey] | None = attrs.field(default=None)
+    """Authn routes that expose cascaded principal deactivation."""
+
+    authz_route: StrKey | None = attrs.field(default=None)
+    """Authz route name for :class:`PrincipalRegistryPort` when deactivation is registered."""
+
     # ....................... #
 
     def __call__(self) -> Deps:  # noqa: C901
@@ -115,8 +125,9 @@ class AuthnDepsModule(DepsModule):
         pl = _normalize_route_set(self.password_lifecycle)
         akl = _normalize_route_set(self.api_key_lifecycle)
         pap = _normalize_route_set(self.password_account_provisioning)
+        pd = _normalize_route_set(self.principal_deactivation)
 
-        has_registrations = bool(authn_map or tl or pl or akl or pap)
+        has_registrations = bool(authn_map or tl or pl or akl or pap or pd)
 
         if not has_registrations:
             return Deps()
@@ -141,6 +152,37 @@ class AuthnDepsModule(DepsModule):
         )
 
         merged: Deps = Deps()
+
+        eligibility_routes = authn_map.keys() | tl | pl | akl | pap | pd
+        if eligibility_routes:
+            merged = merged.merge(
+                Deps.routed(
+                    {
+                        PrincipalEligibilityDepKey: {
+                            name: ConfigurablePolicyPrincipalEligibility()
+                            for name in eligibility_routes
+                        },
+                    },
+                ),
+            )
+
+        if pd:
+            if self.authz_route is None:
+                raise exc.internal(
+                    "authz_route is required when principal_deactivation routes are registered",
+                )
+            merged = merged.merge(
+                Deps.routed(
+                    {
+                        PrincipalDeactivationDepKey: {
+                            name: ConfigurablePrincipalDeactivation(
+                                authz_route=self.authz_route,
+                            )
+                            for name in pd
+                        },
+                    },
+                ),
+            )
 
         if authn_map:
             password_verifier_routes: dict[StrKey, object] = {}

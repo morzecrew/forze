@@ -15,6 +15,8 @@ from .deps import (
     ConfigurableMappingTableResolver,
     ConfigurablePasswordAccountProvisioning,
     ConfigurablePasswordLifecycle,
+    ConfigurablePolicyPrincipalEligibility,
+    ConfigurablePrincipalDeactivation,
     ConfigurableTokenLifecycle,
     build_authn_shared_services,
 )
@@ -37,5 +39,7 @@ __all__ = [
     "ConfigurableMappingTableResolver",
     "ConfigurablePasswordAccountProvisioning",
     "ConfigurablePasswordLifecycle",
+    "ConfigurablePolicyPrincipalEligibility",
+    "ConfigurablePrincipalDeactivation",
     "ConfigurableTokenLifecycle",
 ]

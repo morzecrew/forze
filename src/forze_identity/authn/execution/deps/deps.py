@@ -14,14 +14,21 @@ from forze.application.contracts.authn import (
     PasswordLifecyclePort,
     PasswordVerifierDepKey,
     PasswordVerifierPort,
+    PrincipalDeactivationPort,
+    PrincipalEligibilityDepKey,
+    PrincipalEligibilityPort,
     PrincipalResolverDepKey,
     PrincipalResolverPort,
+    TokenLifecycleDepKey,
     TokenLifecyclePort,
     TokenVerifierDepKey,
     TokenVerifierPort,
 )
+from forze.application.contracts.authz import AuthzSpec
 from forze.application.execution import ExecutionContext
 from forze.base.exceptions import exc
+
+from forze_identity.authz.application import policy_principal_spec
 
 from ...adapters import (
     ApiKeyLifecycleAdapter,
@@ -29,11 +36,13 @@ from ...adapters import (
     PasswordLifecycleAdapter,
     TokenLifecycleAdapter,
 )
+from ...adapters.credential_deactivation import AuthnCredentialDeactivationHelper
+from ...adapters.principal_deactivation import PrincipalDeactivationAdapter
+from ...adapters.principal_eligibility import PolicyPrincipalEligibilityAdapter
 from ...application.specs import (
     api_key_account_spec,
     identity_mapping_spec,
     password_account_spec,
-    principal_spec,
     session_spec,
 )
 from ...orchestrator import AuthnOrchestrator
@@ -49,7 +58,19 @@ from ...verifiers import (
     HmacApiKeyVerifier,
 )
 from ...verifiers.local_api_key import LocalApiKeyVerifier
+from forze.base.primitives import StrKey
+
 from .configs import AuthnSharedServices
+
+# ----------------------- #
+
+
+def _resolve_eligibility(
+    ctx: ExecutionContext,
+    spec: AuthnSpec,
+) -> PrincipalEligibilityPort:
+    return ctx.deps.provide(PrincipalEligibilityDepKey, route=spec.name)(ctx, spec)
+
 
 # ----------------------- #
 # Verifier factories
@@ -270,13 +291,68 @@ class ConfigurableAuthn:
             )
 
         resolver = ctx.deps.provide(PrincipalResolverDepKey, route=spec.name)(ctx, spec)
+        eligibility = _resolve_eligibility(ctx, spec)
 
         return AuthnOrchestrator(
             resolver=resolver,
+            eligibility=eligibility,
             enabled_methods=self.enabled_methods,
             password_verifier=password_v,
             token_verifier=token_v,
             api_key_verifier=api_key_v,
+        )
+
+
+# ....................... #
+
+
+@final
+@attrs.define(slots=True, frozen=True, kw_only=True)
+class ConfigurablePolicyPrincipalEligibility:
+    """Build :class:`PolicyPrincipalEligibilityAdapter` from policy principal documents."""
+
+    def __call__(
+        self,
+        ctx: ExecutionContext,
+        spec: AuthnSpec,
+    ) -> PrincipalEligibilityPort:
+        _ = spec
+        return PolicyPrincipalEligibilityAdapter(
+            principal_qry=ctx.doc.query(policy_principal_spec),
+        )
+
+
+# ....................... #
+
+
+@final
+@attrs.define(slots=True, frozen=True, kw_only=True)
+class ConfigurablePrincipalDeactivation:
+    """Build :class:`PrincipalDeactivationAdapter` for cascaded offboarding."""
+
+    authz_route: StrKey
+    """Authz route name used to resolve :class:`PrincipalRegistryPort`."""
+
+    def __call__(
+        self,
+        ctx: ExecutionContext,
+        spec: AuthnSpec,
+    ) -> PrincipalDeactivationPort:
+        registry = ctx.authz.principal_registry(AuthzSpec(name=self.authz_route))
+        token_lifecycle = ctx.deps.provide(TokenLifecycleDepKey, route=spec.name)(
+            ctx,
+            spec,
+        )
+        credentials = AuthnCredentialDeactivationHelper(
+            pa_qry=ctx.doc.query(password_account_spec),
+            pa_cmd=ctx.doc.command(password_account_spec),
+            ak_qry=ctx.doc.query(api_key_account_spec),
+            ak_cmd=ctx.doc.command(api_key_account_spec),
+        )
+        return PrincipalDeactivationAdapter(
+            principal_registry=registry,
+            token_lifecycle=token_lifecycle,
+            credentials=credentials,
         )
 
 
@@ -306,7 +382,7 @@ class ConfigurableTokenLifecycle:
             refresh_svc=self.shared.refresh_svc,
             session_qry=ctx.doc.query(session_spec),
             session_cmd=ctx.doc.command(session_spec),
-            principal_qry=ctx.doc.query(principal_spec),
+            eligibility=_resolve_eligibility(ctx, spec),
         )
 
 
@@ -336,6 +412,7 @@ class ConfigurablePasswordLifecycle:
             password_svc=self.shared.password_svc,
             pa_qry=ctx.doc.query(password_account_spec),
             pa_cmd=ctx.doc.command(password_account_spec),
+            eligibility=_resolve_eligibility(ctx, spec),
         )
 
 
@@ -361,7 +438,7 @@ class ConfigurableApiKeyLifecycle:
             api_key_svc=self.shared.api_key_svc,
             ak_qry=ctx.doc.query(api_key_account_spec),
             ak_cmd=ctx.doc.command(api_key_account_spec),
-            principal_qry=ctx.doc.query(principal_spec),
+            eligibility=_resolve_eligibility(ctx, spec),
         )
 
 
@@ -391,5 +468,5 @@ class ConfigurablePasswordAccountProvisioning:
             password_svc=self.shared.password_svc,
             password_account_qry=ctx.doc.query(password_account_spec),
             password_account_cmd=ctx.doc.command(password_account_spec),
-            principal_qry=ctx.doc.query(principal_spec),
+            eligibility=_resolve_eligibility(ctx, spec),
         )

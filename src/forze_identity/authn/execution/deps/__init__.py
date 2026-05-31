@@ -17,6 +17,8 @@ from .deps import (
     ConfigurableMappingTableResolver,
     ConfigurablePasswordAccountProvisioning,
     ConfigurablePasswordLifecycle,
+    ConfigurablePolicyPrincipalEligibility,
+    ConfigurablePrincipalDeactivation,
     ConfigurableTokenLifecycle,
 )
 from .module import AuthnDepsModule
@@ -39,5 +41,7 @@ __all__ = [
     "ConfigurableMappingTableResolver",
     "ConfigurablePasswordAccountProvisioning",
     "ConfigurablePasswordLifecycle",
+    "ConfigurablePolicyPrincipalEligibility",
+    "ConfigurablePrincipalDeactivation",
     "ConfigurableTokenLifecycle",
 ]

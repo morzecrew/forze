@@ -22,6 +22,7 @@ from forze.application.contracts.authn import (
     PasswordAccountProvisioningDepKey,
     PasswordLifecycleDepKey,
     PasswordVerifierDepKey,
+    PrincipalEligibilityDepKey,
     PrincipalResolverDepKey,
     TokenLifecycleDepKey,
     TokenVerifierDepKey,
@@ -45,6 +46,7 @@ from forze_identity.authn.adapters import (
     TokenLifecycleAdapter,
 )
 from forze_identity.authn.application.constants import AuthnResourceName
+from forze_identity.authz.application.constants import AuthzResourceName
 from forze_identity.authn.execution import (
     AuthnDepsModule,
     AuthnKernelConfig,
@@ -57,6 +59,7 @@ from forze_identity.authn.execution import (
     ConfigurableJwtNativeUuidResolver,
     ConfigurablePasswordAccountProvisioning,
     ConfigurablePasswordLifecycle,
+    ConfigurablePolicyPrincipalEligibility,
     ConfigurableTokenLifecycle,
     build_authn_shared_services,
 )
@@ -90,7 +93,7 @@ def _mock_doc_query_routes() -> dict[AuthnResourceName, object]:
         return port
 
     return {
-        AuthnResourceName.PRINCIPALS: factory,
+        AuthzResourceName.POLICY_PRINCIPALS: factory,
         AuthnResourceName.PASSWORD_ACCOUNTS: factory,
         AuthnResourceName.API_KEY_ACCOUNTS: factory,
         AuthnResourceName.TOKEN_SESSIONS: factory,
@@ -111,13 +114,32 @@ def _mock_doc_command_routes() -> dict[AuthnResourceName, object]:
     }
 
 
-def _document_deps() -> Deps:
+def _eligibility_deps() -> Deps:
+    factory = ConfigurablePolicyPrincipalEligibility()
+    return Deps.routed(
+        {
+            PrincipalEligibilityDepKey: {
+                "s": factory,
+                "r": factory,
+                "main": factory,
+                "default": factory,
+                "oauth": factory,
+            },
+        },
+    )
+
+
+def _document_deps_only() -> Deps:
     return Deps.routed(
         {
             DocumentQueryDepKey: _mock_doc_query_routes(),
             DocumentCommandDepKey: _mock_doc_command_routes(),
         },
     )
+
+
+def _document_deps() -> Deps:
+    return _document_deps_only().merge(_eligibility_deps())
 
 
 # ....................... #
@@ -180,7 +202,7 @@ class TestAuthnDepsModule:
             resolvers={"main": sentinel},
         )()
 
-        ctx = context_from_deps(deps.merge(_document_deps()))
+        ctx = context_from_deps(deps.merge(_document_deps_only()))
         resolver = ctx.deps.provide(PrincipalResolverDepKey, route="main")(
             ctx, AuthnSpec(name="main", enabled_methods=frozenset({"token"}))
         )
@@ -250,7 +272,7 @@ class TestConfigurableFactories:
         merged = AuthnDepsModule(
             kernel=_kernel_full(),
             authn={"main": frozenset({"token", "password"})},
-        )().merge(_document_deps())
+        )().merge(_document_deps_only())
 
         ctx = context_from_deps(merged)
 
@@ -270,7 +292,7 @@ class TestConfigurableFactories:
         merged = AuthnDepsModule(
             kernel=_kernel_full(),
             authn={"main": frozenset({"token"})},
-        )().merge(_document_deps())
+        )().merge(_document_deps_only())
 
         ctx = context_from_deps(merged)
         factory = ctx.deps.provide(AuthnDepKey, route="main")
@@ -337,7 +359,7 @@ class TestConfigurableFactories:
             kernel=kernel,
             authn={"r": frozenset({"password"})},
             password_lifecycle={"r"},
-        )().merge(_document_deps())
+        )().merge(_document_deps_only())
 
         ctx = context_from_deps(deps)
 
@@ -351,9 +373,11 @@ class TestConfigurableFactories:
         assert auth.password_verifier.password_svc is pl.password_svc
 
     def test_configurable_authn_post_init_validates_required_verifiers(self) -> None:
+        eligibility = MagicMock()
         with pytest.raises(CoreException, match="PasswordVerifierPort"):
             AuthnOrchestrator(
                 resolver=JwtNativeUuidResolver(),
+                eligibility=eligibility,
                 enabled_methods=frozenset({"password"}),
             )
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID
 
 import pytest
@@ -20,8 +21,11 @@ async def test_orchestrator_local_api_key_round_trip() -> None:
     config = LocalIdentityConfig.from_mapping(
         {"api_keys": {"dev": {"principal_id": str(_PID)}}},
     )
+    eligibility = MagicMock()
+    eligibility.require_authentication_allowed = AsyncMock()
     orchestrator = AuthnOrchestrator(
         resolver=JwtNativeUuidResolver(),
+        eligibility=eligibility,
         enabled_methods=frozenset({"api_key"}),
         api_key_verifier=LocalApiKeyVerifier(config=config),
     )

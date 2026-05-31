@@ -24,12 +24,12 @@ from forze_identity.authn.services import (
 
 from tests.integration.test_forze_authn.test_pg_authn_integration import (
     _authn_pg_setup,
-    _insert_principal_row,
+    _eligibility,
     _invocation_metadata,
     _orchestrator,
     session_spec,
-    principal_spec,
 )
+from tests.support.authn_pg_fixtures import insert_policy_principal_row
 from forze_postgres.kernel.client.client import PostgresClient
 
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
@@ -50,7 +50,7 @@ def _token_services(
         refresh_svc=refresh_svc,
         session_qry=ctx.document.query(session_spec),
         session_cmd=ctx.document.command(session_spec),
-        principal_qry=ctx.document.query(principal_spec),
+        eligibility=_eligibility(ctx),
     )
     return adapter, access_svc
 
@@ -62,8 +62,10 @@ async def test_refresh_tokens_rotates_session_and_bearer_auth(
     pepper = secrets.token_bytes(32)
     ctx = await _authn_pg_setup(pg_client, suffix=suffix)
     pid = uuid4()
-    await _insert_principal_row(
-        pg_client, table=f"authn_pri_{suffix}", principal_id=pid
+    await insert_policy_principal_row(
+        pg_client,
+        table=f"authz_pri_{suffix}",
+        principal_id=pid,
     )
 
     adapter, access_svc = _token_services(ctx, pepper=pepper)
@@ -82,6 +84,7 @@ async def test_refresh_tokens_rotates_session_and_bearer_auth(
     assert rotated.refresh.token.token != old_refresh.token
 
     authn = _orchestrator(
+        eligibility=_eligibility(ctx),
         access_svc=access_svc,
         methods=frozenset({"token"}),
     )
@@ -108,8 +111,10 @@ async def test_revoke_tokens_blocks_refresh(pg_client: PostgresClient) -> None:
     pepper = secrets.token_bytes(32)
     ctx = await _authn_pg_setup(pg_client, suffix=suffix)
     pid = uuid4()
-    await _insert_principal_row(
-        pg_client, table=f"authn_pri_{suffix}", principal_id=pid
+    await insert_policy_principal_row(
+        pg_client,
+        table=f"authz_pri_{suffix}",
+        principal_id=pid,
     )
 
     adapter, _access_svc = _token_services(ctx, pepper=pepper)
@@ -135,8 +140,10 @@ async def test_refresh_reuse_revokes_token_family(pg_client: PostgresClient) -> 
     pepper = secrets.token_bytes(32)
     ctx = await _authn_pg_setup(pg_client, suffix=suffix)
     pid = uuid4()
-    await _insert_principal_row(
-        pg_client, table=f"authn_pri_{suffix}", principal_id=pid
+    await insert_policy_principal_row(
+        pg_client,
+        table=f"authz_pri_{suffix}",
+        principal_id=pid,
     )
 
     adapter, _access_svc = _token_services(ctx, pepper=pepper)

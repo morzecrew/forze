@@ -3,6 +3,7 @@ from typing import Callable, final
 import attrs
 
 from forze.application.contracts.analytics import AnalyticsDeps
+from forze.application.contracts.authn import AuthnDeps
 from forze.application.contracts.authz import AuthzDeps
 from forze.application.contracts.cache import CacheDeps
 from forze.application.contracts.counter import CounterDeps
@@ -72,6 +73,9 @@ class ExecutionContext:
     authz: AuthzDeps = attrs.field(factory=AuthzDeps, init=False)
     """Authorization dependencies."""
 
+    authn: AuthnDeps = attrs.field(factory=AuthnDeps, init=False)
+    """Authentication dependencies."""
+
     transaction: TransactionDeps = attrs.field(factory=TransactionDeps, init=False)
     """Transaction dependencies."""
 
@@ -99,6 +103,7 @@ class ExecutionContext:
         self.dlock.lock(self)
         self.tenancy.lock(self)
         self.authz.lock(self)
+        self.authn.lock(self)
         self.transaction.lock(self)
 
         self.tx_ctx.lock(

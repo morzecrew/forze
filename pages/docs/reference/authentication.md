@@ -111,7 +111,9 @@ Maps a `VerifiedAssertion` to a canonical `AuthnIdentity`.
 |------|---------|
 | `PasswordLifecyclePort` | `change_password(identity, new_password)` |
 | `TokenLifecyclePort` | `issue_tokens(identity) -> IssuedTokens`, `refresh_tokens(RefreshTokenCredentials) -> IssuedTokens`, `revoke_tokens(identity)` |
-| `ApiKeyLifecyclePort` | `issue_api_key(identity)`, `refresh_api_key(ApiKeyCredentials)`, `revoke_api_key(key_id)`, `revoke_many_api_keys(key_ids)` |
+| `ApiKeyLifecyclePort` | `issue_api_key(identity)`, `refresh_api_key(ApiKeyCredentials)`, `revoke_api_key(identity, key_id)`, `revoke_many_api_keys(identity, key_ids)` |
+| `PrincipalEligibilityPort` | `require_authentication_allowed(principal_id)` — policy principal must exist and be active |
+| `PrincipalDeactivationPort` | `deactivate(principal_id)` — policy + sessions + credentials |
 
 ### PasswordAccountProvisioningPort
 
@@ -255,13 +257,14 @@ Each `Configurable*` class is the dep factory shape for one component. Lifecycle
 
 | Spec | Resource name | Purpose |
 |------|---------------|---------|
-| `principal_spec` | `authn_principals` | Principal directory (read-only at the spec level). |
 | `password_account_spec` | `authn_password_accounts` | Password-account aggregate. |
-| `api_key_account_spec` | `authn_api_key_accounts` | API-key-account aggregate. |
+| `api_key_account_spec` | `authn_api_key_accounts` | API-key credential rows (`expires_at` enforced when set). |
 | `session_spec` | `authn_token_sessions` | Refresh-session storage for token lifecycle. |
 | `identity_mapping_spec` | `authn_identity_mappings` | `(issuer, subject) -> principal_id` mappings used by `MappingTableResolver`. |
 
-All five names are members of `AUTHN_TENANT_UNAWARE_DOCUMENT_SPEC_NAMES` (see [Multi-tenancy](../concepts/multi-tenancy.md)) and must be wired to **tenant-unaware** document stores so authentication can run before `TenantIdentity` is bound.
+All four names are members of `AUTHN_TENANT_UNAWARE_DOCUMENT_SPEC_NAMES` (see [Multi-tenancy](../concepts/multi-tenancy.md)) and must be wired to **tenant-unaware** document stores so authentication can run before `TenantIdentity` is bound.
+
+Authentication eligibility reads **`policy_principal_spec`** (`authz_policy_principals` from [Authorization](authorization.md)) via `PrincipalEligibilityPort`; wire that document route tenant-unaware as well.
 
 ### Issuer constants
 

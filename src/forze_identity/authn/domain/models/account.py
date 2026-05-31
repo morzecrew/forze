@@ -1,3 +1,4 @@
+from datetime import datetime
 from uuid import UUID
 
 from pydantic import EmailStr, Field
@@ -73,6 +74,9 @@ class UpdatePasswordAccountCmd(BaseDTO, PasswordAccountMutableFields):
     password_hash: str | None = None
     """Hashed password."""
 
+    is_active: bool | None = None
+    """Whether the password account is active."""
+
 
 # ....................... #
 
@@ -100,6 +104,9 @@ class ApiKeyAccountImmutableFields(CoreModel):
 
     prefix: str | None = Field(default=None, frozen=True)
     """Prefix."""
+
+    expires_at: datetime | None = Field(default=None, frozen=True)
+    """Absolute expiration time; ``None`` means the key does not expire."""
 
 
 # ....................... #
@@ -144,14 +151,3 @@ class ReadApiKeyAccount(ReadDocument, ApiKeyAccountImmutableFields, IsActiveMixi
 
     key_hash: str
     """Hashed API key."""
-
-
-# ....................... #
-# Only projection of principal
-
-
-class ReadPrincipal(ReadDocument):
-    """Read principal model."""
-
-    is_active: bool = True
-    """Whether the principal is active."""

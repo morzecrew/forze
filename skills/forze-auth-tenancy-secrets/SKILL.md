@@ -162,7 +162,7 @@ See [External IdP (OIDC) recipe](https://morzecrew.github.io/forze/docs/recipes/
 
 ## Authn document specs
 
-`forze_identity.authn` exposes five `DocumentSpec`s (`principal_spec`, `password_account_spec`, `api_key_account_spec`, `session_spec`, `identity_mapping_spec`). All five are members of `AUTHN_TENANT_UNAWARE_DOCUMENT_SPEC_NAMES` and must be wired to **tenant-unaware** document stores so authentication can run before `TenantIdentity` is bound. `MappingTableResolver` additionally forbids cache and history on `identity_mapping_spec`.
+`forze_identity.authn` exposes four `DocumentSpec`s (`password_account_spec`, `api_key_account_spec`, `session_spec`, `identity_mapping_spec`). All four are members of `AUTHN_TENANT_UNAWARE_DOCUMENT_SPEC_NAMES` and must be wired to **tenant-unaware** document stores so authentication can run before `TenantIdentity` is bound. `PrincipalEligibilityPort` additionally requires tenant-unaware `authz_policy_principals` (`policy_principal_spec`). User offboarding uses `PrincipalDeactivationPort`, not `deactivate_principal` alone. `MappingTableResolver` forbids cache and history on `identity_mapping_spec`.
 
 ## Authz
 

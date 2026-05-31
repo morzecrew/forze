@@ -62,9 +62,14 @@ class ApiKeyLifecyclePort(Protocol):  # pragma: no cover
         credentials: ApiKeyCredentials,  # noqa: F841
     ) -> Awaitable[IssuedApiKey]: ...
 
-    def revoke_api_key(self, key_id: str) -> Awaitable[None]: ...  # noqa: F841
+    def revoke_api_key(
+        self,
+        identity: AuthnIdentity,  # noqa: F841
+        key_id: str,  # noqa: F841
+    ) -> Awaitable[None]: ...
 
     def revoke_many_api_keys(
         self,
+        identity: AuthnIdentity,  # noqa: F841
         key_ids: Sequence[str],  # noqa: F841
     ) -> Awaitable[None]: ...

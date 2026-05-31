@@ -11,6 +11,7 @@ from forze.application.contracts.authn import (
     IssuedAccessToken,
     IssuedRefreshToken,
     IssuedTokens,
+    PrincipalEligibilityPort,
     RefreshTokenCredentials,
     TokenLifecyclePort,
 )
@@ -19,7 +20,6 @@ from forze.base.exceptions import exc
 from forze.base.primitives import utcnow
 
 from ..domain.constants import ACCESS_TOKEN_SCHEME
-from ..domain.models.account import ReadPrincipal
 from ..domain.models.session import (
     CreateSessionCmd,
     ReadSession,
@@ -27,7 +27,6 @@ from ..domain.models.session import (
     UpdateSessionCmd,
 )
 from ..services import AccessTokenService, RefreshTokenService
-from ._utils import validate_principal
 
 # ----------------------- #
 
@@ -54,15 +53,14 @@ class TokenLifecycleAdapter(TokenLifecyclePort):
     ]
     """Session command port."""
 
-    principal_qry: DocumentQueryPort[ReadPrincipal]
-    """Principal query port."""
+    eligibility: PrincipalEligibilityPort
+    """Principal eligibility gate."""
 
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
         qry_spec = self.session_qry.spec
         cmd_spec = self.session_cmd.spec
-        principal_spec = self.principal_qry.spec
 
         if qry_spec.cache is not None:
             raise exc.internal("Session caching is forbidden by security reasons")
@@ -76,12 +74,6 @@ class TokenLifecycleAdapter(TokenLifecyclePort):
         if cmd_spec.history_enabled:
             raise exc.internal("Session history is forbidden by security reasons")
 
-        if principal_spec.cache is not None:
-            raise exc.internal("Principal caching is forbidden by security reasons")
-
-        if principal_spec.history_enabled:
-            raise exc.internal("Principal history is forbidden by security reasons")
-
     # ....................... #
 
     @property
@@ -93,7 +85,6 @@ class TokenLifecycleAdapter(TokenLifecyclePort):
         return self.refresh_svc.config.expires_in
 
     # ....................... #
-    #! Do we need to validate principal everywhere?
 
     async def issue_tokens(
         self,
@@ -101,6 +92,8 @@ class TokenLifecycleAdapter(TokenLifecyclePort):
         *,
         tenant_id: UUID | None = None,
     ) -> IssuedTokens:
+        await self.eligibility.require_authentication_allowed(identity.principal_id)
+
         now = utcnow()
 
         access_expires_at = now + self.access_expires_in
@@ -146,7 +139,6 @@ class TokenLifecycleAdapter(TokenLifecyclePort):
         )
 
     # ....................... #
-    # This will revoke all tokens for a given principal.
 
     async def revoke_tokens(self, identity: AuthnIdentity) -> None:
         sessions = await self.session_qry.find_many(
@@ -203,21 +195,17 @@ class TokenLifecycleAdapter(TokenLifecyclePort):
         if old_session is None or old_session.revoked_at is not None:
             raise exc.authentication("Invalid refresh token")
 
-        # Detect reuse of already rotated refresh token and revoke entire chain
         if old_session.rotated_at is not None:
             await self.revoke_chain_of_tokens(
                 old_session.principal_id, old_session.family_id
             )
-            # Raise common error to avoid leaking information about token reuse
             raise exc.authentication("Invalid refresh token")
 
         if old_session.expires_at <= utcnow():
             raise exc.authentication("Refresh token expired")
 
-        # validate principal
-        await validate_principal(self.principal_qry, old_session.principal_id)
+        await self.eligibility.require_authentication_allowed(old_session.principal_id)
 
-        # rotate session
         now = utcnow()
 
         access_expires_at = now + self.access_expires_in

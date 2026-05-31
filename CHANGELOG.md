@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- **Authn:** `PrincipalEligibilityPort` gates authentication and credential lifecycle on `authz_policy_principals.is_active` (removed advisory `authn_principals` store).
+- **Authn:** API keys persist `expires_at` and enforce expiry at verification; `revoke_api_key` / `revoke_many_api_keys` require `identity` for ownership checks.
+- **Authn:** `PrincipalDeactivationPort` cascades policy deactivation, session revocation, and credential deactivation (prefer over `PrincipalRegistryPort.deactivate_principal` alone).
+
+### Changed
+
+- **Authn (breaking):** `ApiKeyLifecyclePort.revoke_api_key` and `revoke_many_api_keys` take `identity: AuthnIdentity`.
+- **Authn (breaking):** `issue_api_key` no longer requires a pre-existing API key row; requires an active policy principal.
+- **Authn (breaking):** `AuthnOrchestrator` requires `PrincipalEligibilityPort`; apps must wire tenant-unaware `authz_policy_principals` document routes alongside authn.
+
 ### Added
 
 - **Durable workflow:** `DurableWorkflowRunStatus`, `DurableWorkflowRunDescription`, and `describe()` on `DurableWorkflowQueryPort` for coarse run lifecycle; `forze_temporal` maps Temporal `WorkflowHandle.describe()`.
