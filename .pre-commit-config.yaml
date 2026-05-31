@@ -7,6 +7,7 @@ repos:
   rev: 3.0.0
   hooks:
   - id: forbid-binary
+    exclude: \.(png|jpg|jpeg|gif|svg|webp)$
   - id: shfmt
   - id: shellcheck
 - repo: https://github.com/pre-commit/pre-commit-hooks
