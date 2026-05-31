@@ -50,8 +50,7 @@ async def test_send_merges_execution_context_from_resolved_adapter() -> None:
     from uuid import uuid4
 
     from forze.application.execution import InvocationMetadata
-    from forze_inngest.execution.deps.configs import InngestEventConfig
-    from forze_inngest.execution.deps.deps import ConfigurableInngestEventCommand
+    from forze_inngest.execution.deps import ConfigurableInngestEventCommand, InngestEventConfig
 
     client = RecordingInngestClient()
     deps = Deps.plain({InngestClientDepKey: client})

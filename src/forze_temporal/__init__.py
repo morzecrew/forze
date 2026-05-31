@@ -14,7 +14,7 @@ from .execution import (
     temporal_lifecycle_step,
 )
 from .interceptors import ExecutionContextInterceptor
-from .kernel.platform import (
+from .kernel.client import (
     RoutedTemporalClient,
     TemporalClient,
     TemporalClientPort,

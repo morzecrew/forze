@@ -14,10 +14,12 @@ from forze.application.contracts.durable.workflow import (
     DurableWorkflowHandle,
     DurableWorkflowQueryPort,
     DurableWorkflowQuerySpec,
+    DurableWorkflowRunDescription,
     DurableWorkflowSignalSpec,
     DurableWorkflowSpec,
     DurableWorkflowUpdateSpec,
 )
+from forze.base.exceptions import exc
 
 from .base import TemporalBaseAdapter
 
@@ -154,3 +156,21 @@ class TemporalWorkflowQueryAdapter[In: BaseModel, Out: BaseModel](
             workflow_id=handle.workflow_id,
             run_id=handle.run_id,
         )
+
+    # ....................... #
+
+    async def describe(
+        self,
+        handle: DurableWorkflowHandle,
+    ) -> DurableWorkflowRunDescription:
+        desc = await self.client.describe_workflow(
+            workflow_id=handle.workflow_id,
+            run_id=handle.run_id,
+        )
+
+        if desc.workflow_name != self.spec.name:
+            raise exc.not_found(
+                f"Workflow run {handle.workflow_id!r} is not for workflow {self.spec.name!r}",
+            )
+
+        return desc

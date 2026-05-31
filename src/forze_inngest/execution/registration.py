@@ -34,7 +34,7 @@ from ..adapters.context import (
     split_envelope,
 )
 from ..adapters.step import bind_inngest_step, reset_inngest_step
-from ..kernel.platform import InngestClientPort
+from ..kernel.client import InngestClientPort
 
 # ----------------------- #
 

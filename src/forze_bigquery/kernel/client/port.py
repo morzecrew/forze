@@ -1,5 +1,6 @@
 """Structural protocol for BigQuery clients."""
 
+from datetime import timedelta
 from typing import Any, Awaitable, Protocol
 
 from pydantic import BaseModel
@@ -28,7 +29,7 @@ class BigQueryClientPort(Protocol):
         max_results: int | None = None,
         start_index: int | None = None,
         page_token: str | None = None,
-        timeout: int | None = None,
+        timeout: timedelta | None = None,
     ) -> Awaitable[BigQueryQueryResult]: ...  # pragma: no cover
 
     def run_query_all_pages(
@@ -38,7 +39,7 @@ class BigQueryClientPort(Protocol):
         *,
         maximum_bytes_billed: int | None = None,
         max_rows: int | None = None,
-        timeout: int | None = None,
+        timeout: timedelta | None = None,
         fetch_batch_size: int = 2000,
     ) -> Awaitable[list[JsonDict]]: ...  # pragma: no cover
 
@@ -49,7 +50,7 @@ class BigQueryClientPort(Protocol):
         rows: list[JsonDict],
         *,
         insert_id_field: str | None = None,
-        timeout: int | None = None,
+        timeout: timedelta | None = None,
     ) -> Awaitable[BigQueryInsertResult]: ...  # pragma: no cover
 
     def table(self, dataset: str, table: str) -> Any: ...  # pragma: no cover

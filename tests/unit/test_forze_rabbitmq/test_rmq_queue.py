@@ -6,7 +6,7 @@ import pytest
 from pydantic import BaseModel
 
 from forze_rabbitmq.adapters import RabbitMQQueueAdapter, RabbitMQQueueCodec
-from forze_rabbitmq.kernel.client import RabbitMQClient
+from forze_rabbitmq.kernel.client import RabbitMQClient, RabbitMQQueueMessage
 from forze.base.serialization import PydanticRecordMappingCodec
 
 
@@ -21,14 +21,14 @@ def test_queue_codec_encode_decode_roundtrip() -> None:
     encoded = codec.encode(_Payload(value="hello"))
     decoded = codec.decode(
         "jobs",
-        {
-            "queue": "jobs",
-            "id": "msg-1",
-            "body": encoded,
-            "type": "created",
-            "enqueued_at": ts,
-            "key": "partition-a",
-        },
+        RabbitMQQueueMessage(
+            queue="jobs",
+            id="msg-1",
+            body=encoded,
+            type="created",
+            enqueued_at=ts,
+            key="partition-a",
+        ),
     )
 
     assert decoded.queue == "jobs"
@@ -99,28 +99,22 @@ async def test_queue_adapter_enqueue_many_uses_namespaced_queue() -> None:
     assert (
         codec.decode(
             "jobs",
-            {
-                "queue": "ns:jobs",
-                "id": "msg-1",
-                "body": bodies[0],
-                "type": None,
-                "enqueued_at": None,
-                "key": None,
-            },
+            RabbitMQQueueMessage(
+                queue="ns:jobs",
+                id="msg-1",
+                body=bodies[0],
+            ),
         ).payload.value
         == "hello"
     )
     assert (
         codec.decode(
             "jobs",
-            {
-                "queue": "ns:jobs",
-                "id": "msg-2",
-                "body": bodies[1],
-                "type": None,
-                "enqueued_at": None,
-                "key": None,
-            },
+            RabbitMQQueueMessage(
+                queue="ns:jobs",
+                id="msg-2",
+                body=bodies[1],
+            ),
         ).payload.value
         == "world"
     )
@@ -151,15 +145,15 @@ async def test_queue_adapter_receive_decodes_messages() -> None:
     ts = datetime(2025, 1, 1, 12, 0, 0)
     client.receive = AsyncMock(
         return_value=[
-            {
-                "queue": "ns:jobs",
-                "id": "msg-1",
-                "body": codec.encode(_Payload(value="hello")),
-                "type": "created",
-                "enqueued_at": ts,
-                "key": "partition-a",
-            }
-        ]
+            RabbitMQQueueMessage(
+                queue="ns:jobs",
+                id="msg-1",
+                body=codec.encode(_Payload(value="hello")),
+                type="created",
+                enqueued_at=ts,
+                key="partition-a",
+            ),
+        ],
     )
     adapter = RabbitMQQueueAdapter(client=client, codec=codec, namespace="ns")
 
@@ -182,14 +176,11 @@ async def test_queue_adapter_consume_decodes_messages() -> None:
     captured: dict[str, object] = {}
 
     async def _iter():
-        yield {
-            "queue": "ns:jobs",
-            "id": "msg-1",
-            "body": codec.encode(_Payload(value="hello")),
-            "type": None,
-            "enqueued_at": None,
-            "key": None,
-        }
+        yield RabbitMQQueueMessage(
+            queue="ns:jobs",
+            id="msg-1",
+            body=codec.encode(_Payload(value="hello")),
+        )
 
     def _consume(queue: str, timeout: Optional[timedelta] = None):
         captured["queue"] = queue

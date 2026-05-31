@@ -5,6 +5,7 @@ require_clickhouse()
 # ....................... #
 
 import asyncio
+from datetime import timedelta
 from typing import Any, Awaitable, Callable, Sequence, TypeVar, final
 
 import attrs
@@ -67,7 +68,7 @@ class ClickHouseClient(ClickHouseClientPort):
             send_receive_timeout=timeout_sec,
             connector_limit=config.connector_limit,
             connector_limit_per_host=config.connector_limit_per_host,
-            keepalive_timeout=config.keepalive_timeout,
+            keepalive_timeout=config.keepalive_timeout.total_seconds(),
         )
 
     # ....................... #
@@ -99,9 +100,9 @@ class ClickHouseClient(ClickHouseClientPort):
 
     # ....................... #
 
-    def __timeout_sec(self, override: int | None) -> int:
+    def __timeout_sec(self, override: timedelta | None) -> int:
         if override is not None:
-            return override
+            return max(1, int(override.total_seconds()))
 
         if self.__config is not None:
             return max(1, int(self.__config.timeout.total_seconds()))
@@ -193,7 +194,7 @@ class ClickHouseClient(ClickHouseClientPort):
         max_rows: int | None = None,
         limit: int | None = None,
         offset: int | None = None,
-        timeout: int | None = None,
+        timeout: timedelta | None = None,
     ) -> ClickHouseQueryResult:
         async def _run() -> ClickHouseQueryResult:
             effective_limit = limit
@@ -240,7 +241,7 @@ class ClickHouseClient(ClickHouseClientPort):
         *,
         database: str | None = None,
         max_rows: int | None = None,
-        timeout: int | None = None,
+        timeout: timedelta | None = None,
         fetch_batch_size: int = 2000,
     ) -> list[JsonDict]:
         if fetch_batch_size < 1:
@@ -289,7 +290,7 @@ class ClickHouseClient(ClickHouseClientPort):
         table: str,
         rows: list[JsonDict],
         *,
-        timeout: int | None = None,
+        timeout: timedelta | None = None,
     ) -> ClickHouseInsertResult:
         if not rows:
             return ClickHouseInsertResult(accepted=0)
@@ -325,7 +326,7 @@ class ClickHouseClient(ClickHouseClientPort):
         params: BaseModel | JsonDict | Sequence[Any] | None = None,
         *,
         database: str | None = None,
-        timeout: int | None = None,
+        timeout: timedelta | None = None,
     ) -> None:
         if isinstance(params, BaseModel):
             bound_params = parameters_from_model(params)

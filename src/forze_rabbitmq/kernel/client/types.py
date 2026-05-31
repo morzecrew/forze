@@ -1,13 +1,17 @@
 from datetime import datetime
-from typing import TypedDict
+from typing import final
+
+import attrs
 
 # ----------------------- #
 
 
-class RabbitMQQueueMessage(TypedDict):
+@final
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class RabbitMQQueueMessage:
     queue: str
     id: str
     body: bytes
-    type: str | None
-    enqueued_at: datetime | None
-    key: str | None
+    type: str | None = None
+    enqueued_at: datetime | None = None
+    key: str | None = None

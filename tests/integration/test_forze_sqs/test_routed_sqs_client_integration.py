@@ -150,18 +150,18 @@ async def test_routed_sqs_enqueue_receive_consume_ack(
         assert len(ids) == 2
 
         msgs = await _receive_until(routed, url)
-        assert await routed.ack(url, [msgs[0]["id"]]) == 1
+        assert await routed.ack(url, [msgs[0].id]) == 1
 
         batch = await routed.receive(url, limit=10, timeout=timedelta(seconds=2))
         assert len(batch) == 2
-        await routed.ack(url, [m["id"] for m in batch])
+        await routed.ack(url, [m.id for m in batch])
 
         await routed.enqueue(url, b'{"value":"requeue"}')
         first = (await _receive_until(routed, url))[0]
-        assert await routed.nack(url, [first["id"]], requeue=True) == 1
+        assert await routed.nack(url, [first.id], requeue=True) == 1
         second = (await _receive_until(routed, url))[0]
-        assert second["body"] == b'{"value":"requeue"}'
-        assert await routed.ack(url, [second["id"]]) == 1
+        assert second.body == b'{"value":"requeue"}'
+        assert await routed.ack(url, [second.id]) == 1
 
     finally:
         await routed.close()

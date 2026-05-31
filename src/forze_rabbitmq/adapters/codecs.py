@@ -30,13 +30,11 @@ class RabbitMQQueueCodec[M]:
     def decode(self, queue: str, raw: RabbitMQQueueMessage) -> QueueMessage[M]:
         """Decode a raw RabbitMQ queue message into a QueueMessage."""
 
-        body = raw["body"]
-
         return QueueMessage(
             queue=queue,
-            id=raw["id"],
-            payload=self.payload_codec.decode_json_bytes(body),
-            type=raw.get("type"),
-            enqueued_at=raw.get("enqueued_at"),
-            key=raw.get("key"),
+            id=raw.id,
+            payload=self.payload_codec.decode_json_bytes(raw.body),
+            type=raw.type,
+            enqueued_at=raw.enqueued_at,
+            key=raw.key,
         )

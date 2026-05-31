@@ -18,7 +18,7 @@ from forze.application.contracts.durable.function import (
 )
 from forze.application.execution import ExecutionContext
 
-from ..kernel.platform import InngestClientPort
+from ..kernel.client import InngestClientPort
 from .context import merge_envelope
 
 # ----------------------- #

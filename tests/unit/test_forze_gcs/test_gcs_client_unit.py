@@ -77,7 +77,7 @@ async def test_list_objects_applies_offset_and_limit() -> None:
         offset=1,
     )
 
-    assert [item["Key"] for item in items] == ["b", "c"]
+    assert [item.Key for item in items] == ["b", "c"]
     assert total_count == 4
     bucket_ref.list_blobs.assert_awaited_once_with(prefix="")
 
@@ -160,7 +160,7 @@ async def test_head_object_maps_download_metadata() -> None:
 
     head = await client.head_object("bucket", "key")
 
-    assert head["content_type"] == "text/plain"
-    assert head["metadata"] == {"filename": "Zm9v"}
-    assert head["size"] == 42
-    assert head["etag"] == "abc"
+    assert head.content_type == "text/plain"
+    assert head.metadata == {"filename": "Zm9v"}
+    assert head.size == 42
+    assert head.etag == "abc"

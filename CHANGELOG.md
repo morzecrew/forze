@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Durable workflow:** `DurableWorkflowRunStatus`, `DurableWorkflowRunDescription`, and `describe()` on `DurableWorkflowQueryPort` for coarse run lifecycle; `forze_temporal` maps Temporal `WorkflowHandle.describe()`.
 - **Application contracts:** `RelationSpec`, `NamedResourceSpec`, coercion and `require_static_*` helpers in `forze.application.contracts.resolution`; `warn_dynamic_relation_with_tenant_aware` and `validate_routed_client_tenancy_wiring` in `forze.application.contracts.tenancy`.
 - **Mongo, Firestore:** `RelationSpec` on document (`read` / `write` / `history`) and Mongo search `read` / `index_name`; gateways resolve collections per request; index validation skips dynamic write relations.
 - **BigQuery, ClickHouse:** analytics `ingest_relation` with legacy `dataset`/`database` + `ingest_table`; ingest adapters resolve per tenant.
@@ -43,6 +44,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **ClickHouse:** public exports `RelationSpec`, `coerce_relation_spec`, and `resolve_clickhouse_ingest_target` from `forze_clickhouse`.
 - **GCS:** public exports `NamedResourceSpec`, `coerce_named_resource_spec`, `is_static_named_resource`, and `resolve_gcs_bucket` from `forze_gcs`.
 - **Firestore:** public exports `RelationSpec`, `coerce_relation_spec`, `is_static_relation`, `relations_match`, and `resolve_firestore_collection` from `forze_firestore`.
+- **Meilisearch:** public exports `NamedResourceSpec`, `coerce_named_resource_spec`, `is_static_named_resource`, and `resolve_meilisearch_index_uid` from `forze_meilisearch`.
 - **Postgres:** startup warning when a route combines `tenant_aware=True` with dynamic `RelationSpec` resolvers (prefer relation-level isolation without row filters).
 - **Postgres:** `require_static_relation` — explicit error when startup document schema validation is wired for a route that uses a dynamic `RelationSpec` resolver.
 - **BigQuery, ClickHouse, Meilisearch, GCS, Firestore, Inngest:** `Routed*Client` with per-tenant `*RoutingCredentials`, `routed_*_lifecycle_step`, and LRU pool deduplication by connection fingerprint.
@@ -74,6 +76,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **BigQuery / ClickHouse:** internal reorganisation of `execution` (`lifecycle/` subpackage; `execution.deps.configs` and `execution.deps.factories`). Public imports from `forze_bigquery` / `forze_clickhouse` unchanged. Direct imports of `execution.deps.deps` or top-level `execution.lifecycle` module files must use `execution.deps`, `execution.lifecycle`, or the package root.
 - **GCS / Firestore:** reorganized `kernel` into `kernel.client`; direct imports of `forze_gcs.kernel.platform` / `forze_firestore.kernel.platform` must use `kernel.client` (or package root).
 - **GCS / Firestore:** internal reorganisation of `execution` (`lifecycle/` subpackage; `execution.deps.configs` and `execution.deps.factories`). Public imports from `forze_gcs` / `forze_firestore` unchanged. Direct imports of `execution.deps.deps` or top-level `execution.lifecycle` module files must use `execution.deps`, `execution.lifecycle`, or the package root.
+- **Temporal / Inngest:** reorganized `kernel` into `kernel.client`; direct imports of `forze_temporal.kernel.platform` / `forze_inngest.kernel.platform` must use `kernel.client` (or package root).
+- **Temporal / Inngest:** internal reorganisation of `execution` (`lifecycle/` subpackage; `execution.deps.configs` and `execution.deps.factories`). Public imports from `forze_temporal` / `forze_inngest` unchanged. Direct imports of `execution.deps.deps` or top-level `execution.lifecycle` module files must use `execution.deps`, `execution.lifecycle`, or the package root.
+- **Meilisearch / Vault:** reorganized `kernel` into `kernel.client`; direct imports of `forze_meilisearch.kernel.platform` / `forze_vault.kernel.platform` must use `kernel.client` (or package root).
+- **Meilisearch:** internal reorganisation of `execution` (`lifecycle/` subpackage; `execution.deps.configs` and `execution.deps.factories`); expanded package-root exports. Direct imports of `forze_meilisearch.execution.deps.deps` or top-level `execution.lifecycle` module files must use `execution.deps`, `execution.lifecycle`, or the package root.
+- **Vault:** internal reorganisation of `execution` (`lifecycle/` subpackage). Public imports from `forze_vault` unchanged. Direct imports of top-level `forze_vault.execution.lifecycle` as a module file must use `execution.lifecycle` or the package root.
+- **Inngest:** `InngestConfig` is a frozen attrs class; `request_timeout` is `timedelta | None` (replaces `request_timeout_ms` on config and `InngestRoutingCredentials` JSON).
+- **S3 / SQS:** `S3Config` and `SQSConfig` are frozen attrs classes with `to_aio_config()`; `S3Head`, `GCSHead`, `GCSListedObject`, `SQSQueueMessage`, and `RabbitMQQueueMessage` are frozen attrs types (constructors required; dict literals no longer accepted for configs).
+- **BigQuery / ClickHouse:** client port `timeout` parameters use `timedelta | None`.
+- **ClickHouse:** `ClickHouseConfig.keepalive_timeout` is `timedelta`.
+- **Identity OIDC:** `JwksKeyProvider.timeout` and `cache_ttl` use `timedelta`.
 - **Postgres:** `Postgres*Config` integration wiring is now frozen `attrs` classes (constructors required; dict literals no longer accepted). `tenant_aware` is inherited from `TenantAwareIntegrationConfig`. Federated members use `PostgresFederatedSearchLegSearch` / `PostgresFederatedSearchLegHub` instead of embedded dict shape detection. Removed module-level `validate_pg_search_conf`, `validate_postgres_hub_search_conf`, and `validate_postgres_federated_search_conf` (validation runs at config construction or via `.validate()` / `validate_against_spec`).
 - **Integrations:** `Mongo*Config`, `Firestore*Config`, `Meilisearch*Config`, `ClickHouse*Config`, `BigQuery*Config`, `Redis*Config`, `S3StorageConfig`, `GCSStorageConfig`, `TemporalWorkflowConfig`, `RabbitMQQueueConfig`, `SQSQueueConfig`, and `InngestEventConfig` are frozen `attrs` classes (constructors required; dict literals no longer accepted). `tenant_aware` uses `TenantAwareIntegrationConfig` where applicable. Removed `validate_mongo_search_conf`, `validate_meilisearch_search_conf`, `validate_meilisearch_federated_search_conf`, `validate_clickhouse_analytics_config`, and `validate_bigquery_analytics_config` from public exports (validation on config types).
 - **`forze.base`:** `frozen_mapping` in `forze.base.primitives` for immutable nested maps on integration configs.
@@ -88,6 +100,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Mongo / RabbitMQ:** `forze_mongo.execution.deps.deps` and `forze_rabbitmq.execution.deps.deps` module paths (use `execution.deps` or `execution.deps.factories`).
 - **BigQuery / ClickHouse:** `forze_bigquery.execution.deps.deps` and `forze_clickhouse.execution.deps.deps` module paths (use `execution.deps` or `execution.deps.factories`).
 - **GCS / Firestore:** `forze_gcs.execution.deps.deps` and `forze_firestore.execution.deps.deps` module paths (use `execution.deps` or `execution.deps.factories`).
+- **Temporal / Inngest:** `forze_temporal.execution.deps.deps` and `forze_inngest.execution.deps.deps` module paths (use `execution.deps` or `execution.deps.factories`).
+- **Meilisearch:** `forze_meilisearch.execution.deps.deps` module path (use `execution.deps` or `execution.deps.factories`).
+- **Meilisearch / Vault:** `forze_meilisearch.kernel.platform` and `forze_vault.kernel.platform` module paths (use `kernel.client` or package root).
+- **Inngest:** dict-literal / TypedDict `InngestConfig`; `request_timeout_ms` field names on Inngest types and routing credentials JSON.
+- **S3 / SQS:** TypedDict `S3Config` and `SQSConfig`; dict-literal construction for those configs.
 - **Integrations:** `validate_mongo_search_conf`, `validate_meilisearch_search_conf`, `validate_meilisearch_federated_search_conf`, `validate_clickhouse_analytics_config`, and `validate_bigquery_analytics_config` from public exports.
 
 ### Documentation

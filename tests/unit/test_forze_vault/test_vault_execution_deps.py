@@ -9,7 +9,7 @@ pytest.importorskip("hvac")
 from forze.application.contracts.secrets import SecretsDepKey
 from forze_vault.adapters import VaultKvSecrets
 from forze_vault.execution import VaultClientDepKey, VaultDepsModule
-from forze_vault.kernel.platform import VaultClient
+from forze_vault.kernel.client import VaultClient
 
 # ----------------------- #
 

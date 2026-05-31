@@ -16,7 +16,6 @@ from uuid import uuid4
 
 import aioboto3
 import attrs
-from botocore.config import Config as AioConfig
 from pydantic import SecretStr
 from types_aiobotocore_sqs.client import SQSClient as AsyncSQSClient
 
@@ -92,18 +91,10 @@ class SQSClient(SQSClientPort):
 
         pool_cap = _DEFAULT_HTTP_POOL_SIZE
 
-        if config:
-            aio_params = cast(SQSConfig, dict(config))
-            for key in ("connect_timeout", "read_timeout"):
-                val = aio_params.get(key)
-                if isinstance(val, timedelta):
-                    aio_params[key] = val.total_seconds()  # type: ignore
-
-            raw_pool = aio_params.get("max_pool_connections")
-            if raw_pool is not None:
-                pool_cap = max(1, int(raw_pool))
-
-            aio_config = AioConfig(**aio_params)  # type: ignore
+        if config is not None:
+            aio_config = config.to_aio_config()
+            if config.max_pool_connections is not None:
+                pool_cap = max(1, int(config.max_pool_connections))
         else:
             aio_config = None
 
@@ -507,7 +498,9 @@ class SQSClient(SQSClientPort):
         )
         is_fifo = self.__is_fifo_target(queue, queue_url)
         c = self.__require_client()
-        delay_seconds = self._resolve_sqs_delay_seconds(delay=delay, not_before=not_before)
+        delay_seconds = self._resolve_sqs_delay_seconds(
+            delay=delay, not_before=not_before
+        )
 
         def _entries_for_chunk(
             chunk: list[bytes],

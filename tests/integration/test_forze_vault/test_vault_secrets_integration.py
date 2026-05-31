@@ -8,7 +8,7 @@ from pydantic import BaseModel
 
 from forze.application.contracts.secrets import SecretRef, resolve_structured
 from forze_vault.adapters import VaultKvSecrets
-from forze_vault.kernel.platform import VaultClient, VaultConfig
+from forze_vault.kernel.client import VaultClient, VaultConfig
 
 # ----------------------- #
 

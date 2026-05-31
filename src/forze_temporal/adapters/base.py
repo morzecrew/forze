@@ -14,7 +14,7 @@ from forze.application.contracts.tenancy import TenancyMixin
 from forze.base.exceptions import exc
 from forze.base.primitives import uuid4
 
-from ..kernel.platform import TemporalClientPort
+from ..kernel.client import TemporalClientPort
 from ..kernel.relation import resolve_temporal_queue
 
 # ----------------------- #

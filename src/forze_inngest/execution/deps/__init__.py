@@ -1,5 +1,5 @@
 from .configs import InngestEventConfig
-from .deps import ConfigurableInngestEventCommand
+from .factories import ConfigurableInngestEventCommand
 from .keys import InngestClientDepKey
 from .module import InngestDepsModule, get_function_bindings
 

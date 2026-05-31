@@ -1,4 +1,4 @@
-"""Unit tests for :class:`~forze_meilisearch.kernel.platform.RoutedMeilisearchClient`."""
+"""Unit tests for :class:`~forze_meilisearch.kernel.client.RoutedMeilisearchClient`."""
 
 import json
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -8,7 +8,7 @@ import pytest
 
 from forze.application.contracts.secrets import SecretRef
 from forze.base.exceptions import CoreException
-from forze_meilisearch.kernel.platform import RoutedMeilisearchClient
+from forze_meilisearch.kernel.client import RoutedMeilisearchClient
 
 # ----------------------- #
 
@@ -79,7 +79,7 @@ async def test_routed_meilisearch_eviction() -> None:
         return inst
 
     with patch(
-        "forze_meilisearch.kernel.platform.routed_client.MeilisearchClient",
+        "forze_meilisearch.kernel.client.routed_client.MeilisearchClient",
         side_effect=_make_client,
     ):
         cur = _T1

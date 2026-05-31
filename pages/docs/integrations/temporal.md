@@ -63,6 +63,8 @@ deps_plan = DepsPlan.from_modules(temporal_module)
 
 The route key should match your `DurableWorkflowSpec.name`.
 
+For framework tests or advanced wiring, prefer `from forze_temporal.execution.deps import ConfigurableTemporalWorkflowQuery`, `ConfigurableTemporalWorkflowCommand`, `ConfigurableTemporalWorkflowScheduleQuery`, and `ConfigurableTemporalWorkflowScheduleCommand` rather than removed `forze_temporal.execution.deps.deps` paths.
+
 ### Lifecycle step
 
 ```python
@@ -130,7 +132,7 @@ with the scheduled time (for example ``my-run-2026-05-27T16:49:42Z``). Use
 | Forze contract | Adapter implementation | Dependency key/spec name | Limitations |
 |----------------|------------------------|--------------------------|-------------|
 | Durable workflow commands | `ConfigurableTemporalWorkflowCommand` / Temporal workflow command adapter. | `DurableWorkflowCommandDepKey`, route usually equal to `DurableWorkflowSpec.name`. | Requires a worker to register the workflow/activity implementation and poll the configured task queue. |
-| Durable workflow queries | `ConfigurableTemporalWorkflowQuery` / Temporal workflow query adapter. | `DurableWorkflowQueryDepKey`, route usually equal to `DurableWorkflowSpec.name`. | Query availability depends on Temporal workflow state and query handlers. |
+| Durable workflow queries | `ConfigurableTemporalWorkflowQuery` / Temporal workflow query adapter. | `DurableWorkflowQueryDepKey`, route usually equal to `DurableWorkflowSpec.name`. | `describe()` maps Temporal execution status; app `query()` handlers are optional for domain progress. |
 | Durable workflow schedule commands | `ConfigurableTemporalWorkflowScheduleCommand` / schedule command adapter. | `DurableWorkflowScheduleCommandDepKey`, route usually equal to `DurableWorkflowSpec.name`. | Uses Temporal Schedules API (`create_schedule`, pause, trigger, etc.). |
 | Durable workflow schedule queries | `ConfigurableTemporalWorkflowScheduleQuery` / schedule query adapter. | `DurableWorkflowScheduleQueryDepKey`, route usually equal to `DurableWorkflowSpec.name`. | `list()` filters to schedules whose action targets the workflow name. |
 | Raw Temporal client | `TemporalClient` or `RoutedTemporalClient`. | `TemporalClientDepKey`. | Prefer workflow contracts in handlers to keep Temporal details at the infrastructure edge. |

@@ -7,12 +7,10 @@ require_s3()
 import io
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
-from datetime import timedelta
 from typing import Any, AsyncGenerator, cast, final
 
 import aioboto3
 import attrs
-from botocore.config import Config as AioConfig
 from pydantic import SecretStr
 from types_aiobotocore_s3.client import S3Client as AsyncS3Client
 from types_aiobotocore_s3.type_defs import ObjectTypeDef
@@ -73,22 +71,8 @@ class S3Client(S3ClientPort):
         if self.__session is not None:
             return
 
-        if config is None:
-            aio_params = S3Config(retries={"max_attempts": 3, "mode": "adaptive"})
-
-        else:
-            aio_params = cast(S3Config, dict(config))
-            if "retries" not in aio_params:
-                aio_params["retries"] = {"max_attempts": 3, "mode": "adaptive"}
-
-        # Convert timedelta to float seconds for botocore
-        for key in ("connect_timeout", "read_timeout"):
-            val = aio_params.get(key)
-
-            if isinstance(val, timedelta):
-                aio_params[key] = val.total_seconds()  # type: ignore
-
-        aio_config = AioConfig(**aio_params)  # type: ignore
+        cfg = config if config is not None else S3Config()
+        aio_config = cfg.to_aio_config()
 
         self.__opts = S3ConnectionOpts(
             endpoint=endpoint,
@@ -440,10 +424,10 @@ class S3Client(S3ClientPort):
         c = self.__require_client()
         head = await c.head_object(Bucket=bucket, Key=key)
 
-        return {
-            "content_type": head.get("ContentType", "application/octet-stream"),
-            "metadata": head.get("Metadata", {}),
-            "size": head.get("ContentLength", 0),
-            "last_modified": head.get("LastModified"),
-            "etag": head.get("ETag", "").strip('"'),
-        }
+        return S3Head(
+            content_type=head.get("ContentType", "application/octet-stream"),
+            metadata=head.get("Metadata", {}),
+            size=head.get("ContentLength", 0),
+            last_modified=head.get("LastModified"),
+            etag=head.get("ETag", "").strip('"'),
+        )

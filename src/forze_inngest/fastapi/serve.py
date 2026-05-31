@@ -6,7 +6,7 @@ from forze.application.execution import ExecutionContext, FrozenOperationRegistr
 
 from .._compat import require_fastapi, require_inngest
 from ..execution.registration import InngestFunctionBinding, register_functions
-from ..kernel.platform import InngestClientPort
+from ..kernel.client import InngestClientPort
 
 require_inngest()
 

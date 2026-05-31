@@ -8,7 +8,11 @@ from temporalio.contrib.pydantic import pydantic_data_converter
 from temporalio.testing import WorkflowEnvironment
 from temporalio.worker import Worker
 
-from forze.application.contracts.durable.workflow import DurableWorkflowHandle, DurableWorkflowSpec
+from forze.application.contracts.durable.workflow import (
+    DurableWorkflowHandle,
+    DurableWorkflowRunStatus,
+    DurableWorkflowSpec,
+)
 from forze.application.contracts.durable.workflow.specs import DurableWorkflowInvokeSpec
 from forze.application.contracts.authn import AuthnIdentity
 from forze.application.execution import ExecutionContext, InvocationMetadata
@@ -20,7 +24,7 @@ from forze_temporal.adapters.workflow import (
     TemporalWorkflowQueryAdapter,
 )
 from forze_temporal.interceptors.context import ExecutionContextInterceptor
-from forze_temporal.kernel.platform.client import TemporalClient
+from forze_temporal.kernel.client.client import TemporalClient
 
 from ._workflow_defs import (
     CTX_BOX,
@@ -124,10 +128,16 @@ async def test_temporal_workflow_adapters_end_to_end() -> None:
                     metadata=InvocationMetadata(execution_id=uuid7(), correlation_id=uuid7(), causation_id=None),
                 ):
                     handle: DurableWorkflowHandle = await cmd.start(SumIn(a=40, b=2))
+                    running = await qry.describe(handle)
+                    assert running.status == DurableWorkflowRunStatus.RUNNING
+                    assert running.is_terminal is False
                     out = await qry.result(handle)
 
             validated = SumOut.model_validate(out)
             assert validated.total == 42
+            completed = await qry.describe(handle)
+            assert completed.status == DurableWorkflowRunStatus.COMPLETED
+            assert completed.is_terminal is True
         finally:
             await env.shutdown()
     finally:

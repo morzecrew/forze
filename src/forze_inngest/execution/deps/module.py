@@ -14,10 +14,10 @@ from forze.application.execution import Deps, DepsModule
 from forze.base.primitives import StrKey
 
 from ...adapters import InngestStepAdapter
-from ...kernel.platform import InngestClientPort
+from ...kernel.client import InngestClientPort
 from ..registration import InngestFunctionBinding
 from .configs import InngestEventConfig
-from .deps import ConfigurableInngestEventCommand
+from .factories import ConfigurableInngestEventCommand
 from .keys import InngestClientDepKey
 
 # ----------------------- #

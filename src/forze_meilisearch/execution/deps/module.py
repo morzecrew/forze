@@ -16,14 +16,14 @@ from forze_meilisearch.execution.deps.configs import (
     MeilisearchFederatedSearchConfig,
     MeilisearchSearchConfig,
 )
-from forze_meilisearch.execution.deps.deps import (
+from forze_meilisearch.execution.deps.factories import (
     ConfigurableMeilisearchFederatedSearch,
     ConfigurableMeilisearchSearch,
     ConfigurableMeilisearchSearchCommand,
 )
 from forze_meilisearch.execution.deps.keys import MeilisearchClientDepKey
 from forze_meilisearch.kernel._logger import logger
-from forze_meilisearch.kernel.platform.port import MeilisearchClientPort
+from forze_meilisearch.kernel.client.port import MeilisearchClientPort
 
 # ----------------------- #
 

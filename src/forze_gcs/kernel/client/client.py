@@ -281,9 +281,7 @@ class GCSClient(GCSClientPort):
 
         total_count = len(keys)
         window = keys[_offset : _offset + _limit]
-        items: list[GCSListedObject] = [
-            cast(GCSListedObject, {"Key": key}) for key in window
-        ]
+        items: list[GCSListedObject] = [GCSListedObject(Key=key) for key in window]
 
         return items, total_count
 
@@ -364,14 +362,10 @@ def _head_from_object_json(raw: dict[str, object]) -> GCSHead:
     size_raw = raw.get("size", 0)
     size = int(size_raw) if isinstance(size_raw, (int, float, str)) else 0
 
-    head: GCSHead = {
-        "content_type": str(raw.get("contentType") or "application/octet-stream"),
-        "metadata": meta_dict,
-        "size": size,
-        "etag": etag_str,
-    }
-
-    if last_modified is not None:
-        head["last_modified"] = last_modified
-
-    return head
+    return GCSHead(
+        content_type=str(raw.get("contentType") or "application/octet-stream"),
+        metadata=meta_dict,
+        size=size,
+        etag=etag_str,
+        last_modified=last_modified,
+    )

@@ -524,8 +524,19 @@ Workflows are typed with **`DurableWorkflowSpec`** (logical **`name`**, **`run`*
 
 | Method | Purpose |
 |--------|---------|
-| `query(handle, *, query, args)` | Run a query |
+| `describe(handle)` | Return **`DurableWorkflowRunDescription`** (coarse run status) |
+| `query(handle, *, query, args)` | Run an app-defined workflow query |
 | `result(handle)` | Await the workflow result |
+
+### DurableWorkflowRunDescription
+
+| Field | Purpose |
+|-------|---------|
+| `workflow_id`, `run_id`, `workflow_name` | Run identifiers |
+| `status` | **`DurableWorkflowRunStatus`** (`running`, `completed`, `failed`, …) |
+| `started_at`, `closed_at` | Timestamps when the provider supplies them |
+| `failure_message`, `failure_type` | Optional failure detail |
+| `is_terminal` | Property: true when the coarse status is terminal |
 
 ### Dependency keys
 

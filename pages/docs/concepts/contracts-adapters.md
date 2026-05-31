@@ -209,7 +209,7 @@ Resolve with `ctx.search.command(search_spec)` when the integration registers `S
 
 See the [Durable contracts](../core-package/contracts/durable.md) overview.
 
-**`DurableWorkflowCommandPort`** / **`DurableWorkflowQueryPort`**: orchestrate long-running processes with **`DurableWorkflowSpec`** (Pydantic-typed **`run`**, **`signals`**, **`queries`**, **`updates`**). Commands cover **`start`**, **`signal`**, **`update`**, **`cancel`**, **`terminate`**; queries cover **`query`** and **`result`**. Resolve routed factories with **`DurableWorkflowCommandDepKey`** / **`DurableWorkflowQueryDepKey`** and **`route=spec.name`** (see [Temporal integration](../integrations/temporal.md)).
+**`DurableWorkflowCommandPort`** / **`DurableWorkflowQueryPort`**: orchestrate long-running processes with **`DurableWorkflowSpec`** (Pydantic-typed **`run`**, **`signals`**, **`queries`**, **`updates`**). Commands cover **`start`**, **`signal`**, **`update`**, **`cancel`**, **`terminate`**; queries cover **`describe`** (coarse run status), app-defined **`query`**, and **`result`**. Resolve routed factories with **`DurableWorkflowCommandDepKey`** / **`DurableWorkflowQueryDepKey`** and **`route=spec.name`** (see [Temporal integration](../integrations/temporal.md)).
 
 **`DurableWorkflowScheduleCommandPort`** / **`DurableWorkflowScheduleQueryPort`**: manage recurring workflow starts (Temporal Schedules) with **`DurableWorkflowScheduleTiming`**. Resolve with **`DurableWorkflowScheduleCommandDepKey`** / **`DurableWorkflowScheduleQueryDepKey`** (see [Durable workflow schedule contracts](../core-package/contracts/durable-workflow-schedule.md)).
 

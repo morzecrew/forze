@@ -1,4 +1,4 @@
-"""Unit tests for :class:`~forze_inngest.kernel.platform.RoutedInngestClient`."""
+"""Unit tests for :class:`~forze_inngest.kernel.client.RoutedInngestClient`."""
 
 import json
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -8,7 +8,7 @@ import pytest
 
 from forze.application.contracts.secrets import SecretRef
 from forze.base.exceptions import CoreException
-from forze_inngest.kernel.platform import RoutedInngestClient
+from forze_inngest.kernel.client import RoutedInngestClient
 
 # ----------------------- #
 
@@ -78,7 +78,7 @@ async def test_routed_inngest_eviction() -> None:
         return inst
 
     with patch(
-        "forze_inngest.kernel.platform.routed_client.InngestClient",
+        "forze_inngest.kernel.client.routed_client.InngestClient",
         side_effect=_make_client,
     ):
         cur = _T1

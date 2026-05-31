@@ -19,7 +19,7 @@ from forze_inngest import InngestFunctionBinding
 from forze_inngest.execution.deps import InngestDepsModule
 from forze_inngest.execution.deps.configs import InngestEventConfig
 from forze_inngest.fastapi import serve
-from forze_inngest.kernel.platform import InngestClient, InngestClientPort
+from forze_inngest.kernel.client import InngestClient, InngestClientPort
 
 from .inngest_dev_server import InngestDevTarget
 
@@ -96,9 +96,11 @@ def start_forze_inngest_app(
     port = free_tcp_port()
     os.environ["INNGEST_SERVE_ORIGIN"] = f"http://host.docker.internal:{port}"
 
+    from forze_inngest import InngestConfig
+
     client = InngestClient(
         app_id=app_id,
-        config={"is_production": False},
+        config=InngestConfig(is_production=False),
     )
     module = InngestDepsModule(
         client=client,

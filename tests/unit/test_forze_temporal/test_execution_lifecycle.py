@@ -19,7 +19,7 @@ from forze_temporal.execution.lifecycle import (
     TemporalStartupHook,
     temporal_lifecycle_step,
 )
-from forze_temporal.kernel.platform import TemporalClient, TemporalConfig
+from forze_temporal.kernel.client import TemporalClient, TemporalConfig
 
 
 @pytest.mark.asyncio

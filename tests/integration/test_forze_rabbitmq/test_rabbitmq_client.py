@@ -67,13 +67,13 @@ async def test_client_enqueue_receive_ack(rabbitmq_client: RabbitMQClient) -> No
     messages = await _receive_until(rabbitmq_client, queue)
     message = messages[0]
 
-    assert message["id"] == message_id
-    assert message["body"] == b'{"value":"hello"}'
-    assert message["type"] == "created"
-    assert message["key"] == "partition-1"
-    assert message["enqueued_at"] == ts
+    assert message.id == message_id
+    assert message.body == b'{"value":"hello"}'
+    assert message.type == "created"
+    assert message.key == "partition-1"
+    assert message.enqueued_at == ts
 
-    assert await rabbitmq_client.ack(queue, [message["id"]]) == 1
+    assert await rabbitmq_client.ack(queue, [message.id]) == 1
 
 
 @pytest.mark.asyncio
@@ -94,13 +94,13 @@ async def test_client_enqueue_many_receive_ack(rabbitmq_client: RabbitMQClient) 
     )
 
     messages = await _receive_exact(rabbitmq_client, queue, expected=3)
-    received_ids = [message["id"] for message in messages]
+    received_ids = [message.id for message in messages]
 
     assert len(message_ids) == 3
     assert set(received_ids) == set(message_ids)
-    assert all(message["type"] == "created" for message in messages)
-    assert all(message["key"] == "partition-batch" for message in messages)
-    assert all(message["enqueued_at"] == ts for message in messages)
+    assert all(message.type == "created" for message in messages)
+    assert all(message.key == "partition-batch" for message in messages)
+    assert all(message.enqueued_at == ts for message in messages)
     assert await rabbitmq_client.ack(queue, received_ids) == 3
 
 
@@ -111,8 +111,8 @@ async def test_client_nack_requeue_then_ack(rabbitmq_client: RabbitMQClient) -> 
 
     first = (await _receive_until(rabbitmq_client, queue))[0]
 
-    assert await rabbitmq_client.nack(queue, [first["id"]], requeue=True) == 1
+    assert await rabbitmq_client.nack(queue, [first.id], requeue=True) == 1
 
     second = (await _receive_until(rabbitmq_client, queue))[0]
-    assert second["body"] == b'{"value":"requeue"}'
-    assert await rabbitmq_client.ack(queue, [second["id"]]) == 1
+    assert second.body == b'{"value":"requeue"}'
+    assert await rabbitmq_client.ack(queue, [second.id]) == 1

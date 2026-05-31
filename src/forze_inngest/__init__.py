@@ -16,7 +16,7 @@ from .execution import (
     routed_inngest_lifecycle_step,
     register_functions,
 )
-from .kernel.platform import (
+from .kernel.client import (
     InngestClient,
     InngestClientPort,
     InngestConfig,

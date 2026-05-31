@@ -13,7 +13,7 @@ from forze.base.primitives import JsonDict
 DEFAULT_TIMEOUT = timedelta(seconds=60)
 _DEFAULT_CONNECTOR_LIMIT = 100
 _DEFAULT_CONNECTOR_LIMIT_PER_HOST = 20
-_DEFAULT_KEEPALIVE_TIMEOUT = 30.0
+_DEFAULT_KEEPALIVE_TIMEOUT = timedelta(seconds=30)
 _DEFAULT_INSERT_BATCH_SIZE = 1000
 _MAX_INSERT_ERRORS = 50
 
@@ -64,8 +64,8 @@ class ClickHouseConfig:
     connector_limit_per_host: int = _DEFAULT_CONNECTOR_LIMIT_PER_HOST
     """aiohttp connector per-host connection limit."""
 
-    keepalive_timeout: float = _DEFAULT_KEEPALIVE_TIMEOUT
-    """aiohttp keepalive timeout in seconds."""
+    keepalive_timeout: timedelta = attrs.field(default=_DEFAULT_KEEPALIVE_TIMEOUT)
+    """aiohttp keepalive timeout."""
 
     read_retry_attempts: int = 0
     """Retry count for idempotent read operations (``run_query``)."""

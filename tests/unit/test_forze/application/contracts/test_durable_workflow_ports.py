@@ -10,6 +10,8 @@ from forze.application.contracts.durable.workflow import (
     DurableWorkflowHandle,
     DurableWorkflowQueryPort,
     DurableWorkflowQuerySpec,
+    DurableWorkflowRunDescription,
+    DurableWorkflowRunStatus,
     DurableWorkflowSignalSpec,
     DurableWorkflowSpec,
     DurableWorkflowUpdateSpec,
@@ -89,6 +91,14 @@ class _StubWorkflowQuery:
     async def result(self, handle: DurableWorkflowHandle) -> _Out:
         return _Out(msg="final")
 
+    async def describe(self, handle: DurableWorkflowHandle) -> DurableWorkflowRunDescription:
+        return DurableWorkflowRunDescription(
+            workflow_id=handle.workflow_id,
+            run_id=handle.run_id or "run-1",
+            workflow_name="wf",
+            status=DurableWorkflowRunStatus.RUNNING,
+        )
+
 
 class TestDurableWorkflowPorts:
     def test_command_runtime_checkable(self) -> None:
@@ -129,3 +139,6 @@ async def test_durable_workflow_query_methods() -> None:
     )
     assert res.msg == "q"
     assert (await q.result(handle)).msg == "final"
+    desc = await q.describe(handle)
+    assert desc.status == DurableWorkflowRunStatus.RUNNING
+    assert desc.is_terminal is False

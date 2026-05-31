@@ -6,6 +6,7 @@ require_bigquery()
 
 import asyncio
 import os
+from datetime import timedelta
 from typing import Any, Awaitable, Callable, TypeVar, final
 
 import attrs
@@ -88,9 +89,9 @@ class BigQueryClient(BigQueryClientPort):
 
     # ....................... #
 
-    def __timeout(self, override: int | None) -> int:
+    def __timeout(self, override: timedelta | None) -> int:
         if override is not None:
-            return override
+            return max(1, int(override.total_seconds()))
 
         return max(1, int(self.__require_config().timeout.total_seconds()))
 
@@ -204,11 +205,7 @@ class BigQueryClient(BigQueryClientPort):
         try:
 
             async def _probe() -> None:
-                await self.run_query(
-                    "SELECT 1",
-                    dry_run=True,
-                    timeout=self.__timeout(None),
-                )
+                await self.run_query("SELECT 1", dry_run=True, timeout=None)
 
             await self.__maybe_read_retry("health", _probe)
             return "ok", True
@@ -285,7 +282,7 @@ class BigQueryClient(BigQueryClientPort):
         max_results: int | None = None,
         start_index: int | None = None,
         page_token: str | None = None,
-        timeout: int | None = None,
+        timeout: timedelta | None = None,
     ) -> BigQueryQueryResult:
         async def _run() -> BigQueryQueryResult:
             query_parameters = (
@@ -352,7 +349,7 @@ class BigQueryClient(BigQueryClientPort):
         *,
         maximum_bytes_billed: int | None = None,
         max_rows: int | None = None,
-        timeout: int | None = None,
+        timeout: timedelta | None = None,
         fetch_batch_size: int = 2000,
     ) -> list[JsonDict]:
         if fetch_batch_size < 1:
@@ -394,7 +391,7 @@ class BigQueryClient(BigQueryClientPort):
         rows: list[JsonDict],
         *,
         insert_id_field: str | None = None,
-        timeout: int | None = None,
+        timeout: timedelta | None = None,
     ) -> BigQueryInsertResult:
         if not rows:
             return BigQueryInsertResult(accepted=0)

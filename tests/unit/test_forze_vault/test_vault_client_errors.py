@@ -10,7 +10,7 @@ pytest.importorskip("hvac")
 from hvac.exceptions import InvalidPath, VaultError
 
 from forze.application.contracts.secrets import SecretRef
-from forze_vault.kernel.platform import VaultClient, VaultConfig
+from forze_vault.kernel.client import VaultClient, VaultConfig
 
 # ----------------------- #
 

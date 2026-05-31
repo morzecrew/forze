@@ -15,9 +15,9 @@ from forze.application.execution import Deps, DepsModule
 from forze.base.primitives import StrKey
 
 from ...kernel._logger import logger
-from ...kernel.platform import TemporalClientPort
+from ...kernel.client import TemporalClientPort
 from .configs import TemporalWorkflowConfig
-from .deps import (
+from .factories import (
     ConfigurableTemporalWorkflowCommand,
     ConfigurableTemporalWorkflowQuery,
     ConfigurableTemporalWorkflowScheduleCommand,

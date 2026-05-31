@@ -8,7 +8,7 @@ from forze.application.contracts.secrets import SecretsDepKey, SecretsPort
 from forze.application.execution import Deps, DepsModule
 
 from ...adapters import VaultKvSecrets
-from ...kernel.platform import VaultClientPort
+from ...kernel.client import VaultClientPort
 from .keys import VaultClientDepKey
 
 # ----------------------- #

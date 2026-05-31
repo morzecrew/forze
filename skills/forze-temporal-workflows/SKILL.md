@@ -87,6 +87,7 @@ from forze.application.contracts.durable.workflow import (
     DurableWorkflowHandle,
     DurableWorkflowQueryDepKey,
     DurableWorkflowQueryPort,
+    DurableWorkflowRunDescription,
 )
 from forze.application.contracts.execution import Handler
 
@@ -100,6 +101,14 @@ class StartProjectOnboarding(Handler[StartOnboarding, DurableWorkflowHandle]):
             args,
             workflow_id=f"project:{args.project_id}",
         )
+
+
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class GetOnboardingStatus(Handler[DurableWorkflowHandle, DurableWorkflowRunDescription]):
+    queries: DurableWorkflowQueryPort
+
+    async def __call__(self, args: DurableWorkflowHandle) -> DurableWorkflowRunDescription:
+        return await self.queries.describe(args)
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)

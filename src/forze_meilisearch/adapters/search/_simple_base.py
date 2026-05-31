@@ -24,7 +24,7 @@ from forze_meilisearch.adapters.search._offset_run import (
 )
 from forze_meilisearch.adapters.search._port import MeilisearchSearchPortMixin
 from forze_meilisearch.adapters.search.base import MeilisearchSearchGateway
-from forze_meilisearch.kernel.platform.port import MeilisearchClientPort
+from forze_meilisearch.kernel.client.port import MeilisearchClientPort
 
 # ----------------------- #
 

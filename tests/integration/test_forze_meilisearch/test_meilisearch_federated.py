@@ -13,13 +13,11 @@ from forze.application.contracts.search import (
 )
 from forze.application.execution import Deps, ExecutionContext
 from forze_meilisearch.execution.deps import (
+    ConfigurableMeilisearchFederatedSearch,
+    ConfigurableMeilisearchSearchCommand,
     MeilisearchClientDepKey,
     MeilisearchFederatedSearchConfig,
     MeilisearchSearchConfig,
-)
-from forze_meilisearch.execution.deps.deps import (
-    ConfigurableMeilisearchFederatedSearch,
-    ConfigurableMeilisearchSearchCommand,
 )
 from tests.support.execution_context import context_from_deps
 

@@ -5,7 +5,7 @@ from forze.application.contracts.durable.workflow import (
     DurableWorkflowScheduleBootstrap,
 )
 
-from ...kernel.platform import TemporalClientPort
+from ...kernel.client import TemporalClientPort
 
 # ----------------------- #
 

@@ -1,5 +1,6 @@
 """Structural protocol for ClickHouse clients."""
 
+from datetime import timedelta
 from typing import Awaitable, Protocol
 
 from pydantic import BaseModel
@@ -27,7 +28,7 @@ class ClickHouseClientPort(Protocol):
         max_rows: int | None = None,
         limit: int | None = None,
         offset: int | None = None,
-        timeout: int | None = None,
+        timeout: timedelta | None = None,
     ) -> Awaitable[ClickHouseQueryResult]: ...  # pragma: no cover
 
     def run_query_all_pages(
@@ -37,7 +38,7 @@ class ClickHouseClientPort(Protocol):
         *,
         database: str | None = None,
         max_rows: int | None = None,
-        timeout: int | None = None,
+        timeout: timedelta | None = None,
         fetch_batch_size: int = 2000,
     ) -> Awaitable[list[JsonDict]]: ...  # pragma: no cover
 
@@ -47,7 +48,7 @@ class ClickHouseClientPort(Protocol):
         table: str,
         rows: list[JsonDict],
         *,
-        timeout: int | None = None,
+        timeout: timedelta | None = None,
     ) -> Awaitable[ClickHouseInsertResult]: ...  # pragma: no cover
 
     def run_command(
@@ -56,5 +57,5 @@ class ClickHouseClientPort(Protocol):
         params: BaseModel | None = None,
         *,
         database: str | None = None,
-        timeout: int | None = None,
+        timeout: timedelta | None = None,
     ) -> Awaitable[None]: ...  # pragma: no cover

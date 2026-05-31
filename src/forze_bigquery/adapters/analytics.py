@@ -1,5 +1,6 @@
 """BigQuery implementation of analytics query and ingest ports."""
 
+from datetime import timedelta
 from typing import Any, AsyncGenerator, Sequence, TypeVar, cast, final
 from uuid import UUID
 
@@ -19,7 +20,6 @@ from forze.application.contracts.analytics._adapter_common import (
     pagination_window,
     parse_count_row,
     shape_rows,
-    timeout_seconds,
     validated_params,
 )
 from forze.application.contracts.base import (
@@ -147,8 +147,12 @@ class BigQueryAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
 
     # ....................... #
 
-    def _timeout_sec(self, options: AnalyticsRunOptions | None) -> int | None:
-        return timeout_seconds(options)
+    @staticmethod
+    def _run_timeout(options: AnalyticsRunOptions | None) -> timedelta | None:
+        if options is None:
+            return None
+
+        return options.get("timeout")
 
     # ....................... #
 
@@ -234,7 +238,7 @@ class BigQueryAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
             max_results=effective_max,
             start_index=start_index,
             page_token=page_token,
-            timeout=self._timeout_sec(options),
+            timeout=self._run_timeout(options),
         )
 
     # ....................... #
@@ -253,7 +257,7 @@ class BigQueryAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
             dry_run=False,
             maximum_bytes_billed=self._max_bytes(query_key, options),
             max_results=1,
-            timeout=self._timeout_sec(options),
+            timeout=self._run_timeout(options),
         )
 
         return parse_count_row(result.rows)
@@ -366,7 +370,7 @@ class BigQueryAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
             params,
             maximum_bytes_billed=self._max_bytes(query_key, options),
             max_rows=max_rows,
-            timeout=self._timeout_sec(options),
+            timeout=self._run_timeout(options),
             fetch_batch_size=fetch_batch_size,
         )
 
@@ -508,7 +512,7 @@ class BigQueryAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
             params,
             maximum_bytes_billed=self._max_bytes(query_key, options),
             max_rows=max_rows,
-            timeout=self._timeout_sec(options),
+            timeout=self._run_timeout(options),
             fetch_batch_size=fetch_batch_size,
         )
         typed = pydantic_validate_many(return_type, rows)

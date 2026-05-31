@@ -1,5 +1,6 @@
 """ClickHouse client that resolves connection settings per tenant via :class:`~forze.application.contracts.secrets.SecretsPort`."""
 
+from datetime import timedelta
 from typing import Callable, Mapping, final
 from uuid import UUID
 
@@ -160,7 +161,7 @@ class RoutedClickHouseClient(ClickHouseClientPort):
         max_rows: int | None = None,
         limit: int | None = None,
         offset: int | None = None,
-        timeout: int | None = None,
+        timeout: timedelta | None = None,
     ) -> ClickHouseQueryResult:
         inner = await self._get_client()
 
@@ -181,7 +182,7 @@ class RoutedClickHouseClient(ClickHouseClientPort):
         *,
         database: str | None = None,
         max_rows: int | None = None,
-        timeout: int | None = None,
+        timeout: timedelta | None = None,
         fetch_batch_size: int = 2000,
     ) -> list[JsonDict]:
         inner = await self._get_client()
@@ -201,7 +202,7 @@ class RoutedClickHouseClient(ClickHouseClientPort):
         table: str,
         rows: list[JsonDict],
         *,
-        timeout: int | None = None,
+        timeout: timedelta | None = None,
     ) -> ClickHouseInsertResult:
         inner = await self._get_client()
 
@@ -218,7 +219,7 @@ class RoutedClickHouseClient(ClickHouseClientPort):
         params: BaseModel | None = None,
         *,
         database: str | None = None,
-        timeout: int | None = None,
+        timeout: timedelta | None = None,
     ) -> None:
         inner = await self._get_client()
 

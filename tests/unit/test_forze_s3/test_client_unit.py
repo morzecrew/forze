@@ -9,6 +9,7 @@ import pytest
 from pydantic import SecretStr
 
 import forze_s3.kernel.client.client as s3_client_module
+import forze_s3.kernel.client.value_objects as s3_value_objects
 from forze_s3.kernel.client import S3Client, S3Config
 
 class _FakeAioConfig:
@@ -47,14 +48,14 @@ async def test_initialize_injects_default_retries_when_missing(
     client = S3Client()
     fake_session = object()
 
-    monkeypatch.setattr(s3_client_module, "AioConfig", _FakeAioConfig)
+    monkeypatch.setattr(s3_value_objects, "AioConfig", _FakeAioConfig)
     monkeypatch.setattr(s3_client_module.aioboto3, "Session", lambda: fake_session)
 
     await client.initialize(
         endpoint="http://s3.local",
         access_key_id="key",
         secret_access_key="secret",
-        config={"region_name": "us-east-1"},
+        config=S3Config(region_name="us-east-1"),
     )
 
     opts = client._S3Client__opts
@@ -71,14 +72,14 @@ async def test_initialize_preserves_explicit_retries(
     client = S3Client()
     fake_session = object()
 
-    monkeypatch.setattr(s3_client_module, "AioConfig", _FakeAioConfig)
+    monkeypatch.setattr(s3_value_objects, "AioConfig", _FakeAioConfig)
     monkeypatch.setattr(s3_client_module.aioboto3, "Session", lambda: fake_session)
 
     await client.initialize(
         endpoint="http://s3.local",
         access_key_id="key",
         secret_access_key="secret",
-        config={"retries": {"max_attempts": 7, "mode": "standard"}},
+        config=S3Config(retries={"max_attempts": 7, "mode": "standard"}),
     )
 
     opts = client._S3Client__opts
@@ -126,14 +127,14 @@ async def test_initialize_converts_timedelta_to_float(
     client = S3Client()
     fake_session = object()
 
-    monkeypatch.setattr(s3_client_module, "AioConfig", _FakeAioConfig)
+    monkeypatch.setattr(s3_value_objects, "AioConfig", _FakeAioConfig)
     monkeypatch.setattr(s3_client_module.aioboto3, "Session", lambda: fake_session)
 
-    config: S3Config = {
-        "region_name": "us-east-1",
-        "connect_timeout": timedelta(seconds=10),
-        "read_timeout": timedelta(seconds=20),
-    }
+    config = S3Config(
+        region_name="us-east-1",
+        connect_timeout=timedelta(seconds=10),
+        read_timeout=timedelta(seconds=20),
+    )
 
     await client.initialize(
         endpoint="http://s3.local",
@@ -148,13 +149,13 @@ async def test_initialize_converts_timedelta_to_float(
     assert opts.config.kwargs["connect_timeout"] == 10.0
     assert opts.config.kwargs["read_timeout"] == 20.0
     # Verify original config is not mutated
-    assert isinstance(config["connect_timeout"], timedelta)
+    assert config.connect_timeout == timedelta(seconds=10)
 
 @pytest.mark.asyncio
 async def test_initialize_is_idempotent(monkeypatch: pytest.MonkeyPatch) -> None:
     client = S3Client()
     fake_session = object()
-    monkeypatch.setattr(s3_client_module, "AioConfig", _FakeAioConfig)
+    monkeypatch.setattr(s3_value_objects, "AioConfig", _FakeAioConfig)
     monkeypatch.setattr(s3_client_module.aioboto3, "Session", lambda: fake_session)
 
     await client.initialize(
@@ -224,7 +225,7 @@ async def test_client_nested_reuses_context_client(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     client = S3Client()
-    monkeypatch.setattr(s3_client_module, "AioConfig", _FakeAioConfig)
+    monkeypatch.setattr(s3_value_objects, "AioConfig", _FakeAioConfig)
     monkeypatch.setattr(s3_client_module.aioboto3, "Session", lambda: object())
 
     await client.initialize(
@@ -262,7 +263,7 @@ async def test_client_unwraps_secret_access_key(
 
             return _cm()
 
-    monkeypatch.setattr(s3_client_module, "AioConfig", _FakeAioConfig)
+    monkeypatch.setattr(s3_value_objects, "AioConfig", _FakeAioConfig)
     monkeypatch.setattr(s3_client_module.aioboto3, "Session", _Sess)
 
     client = S3Client()
@@ -372,10 +373,10 @@ async def test_initialize_injects_retries_when_config_has_no_retries(
 ) -> None:
     client = S3Client()
     fake_session = object()
-    monkeypatch.setattr(s3_client_module, "AioConfig", _FakeAioConfig)
+    monkeypatch.setattr(s3_value_objects, "AioConfig", _FakeAioConfig)
     monkeypatch.setattr(s3_client_module.aioboto3, "Session", lambda: fake_session)
 
-    cfg: S3Config = {"region_name": "eu-west-1"}
+    cfg = S3Config(region_name="eu-west-1")
     await client.initialize(
         endpoint="http://s3.local",
         access_key_id="k",

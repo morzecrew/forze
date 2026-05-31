@@ -4,6 +4,7 @@ require_oidc()
 
 # ....................... #
 
+from datetime import timedelta
 from typing import Any, Protocol, final
 
 import attrs
@@ -61,11 +62,11 @@ class JwksKeyProvider(SigningKeyProviderPort):
     cache_keys: bool = True
     """Whether to cache the signing keys."""
 
-    cache_ttl_seconds: int = 300
-    """The cache TTL in seconds."""
+    cache_ttl: timedelta = attrs.field(default=timedelta(seconds=300))
+    """JWKS signing key cache TTL."""
 
-    timeout: int = 10
-    """The timeout in seconds."""
+    timeout: timedelta = attrs.field(default=timedelta(seconds=10))
+    """HTTP timeout for JWKS fetches."""
 
     # Non-init field to lazily create the client.
     _client: PyJWKClient | None = attrs.field(default=None, init=False)
@@ -79,8 +80,8 @@ class JwksKeyProvider(SigningKeyProviderPort):
         self._client = PyJWKClient(
             uri=self.jwks_uri,
             cache_keys=self.cache_keys,
-            lifespan=self.cache_ttl_seconds,
-            timeout=self.timeout,
+            lifespan=int(self.cache_ttl.total_seconds()),
+            timeout=int(self.timeout.total_seconds()),
         )
 
         return self._client

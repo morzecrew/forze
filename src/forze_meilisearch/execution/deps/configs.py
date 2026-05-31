@@ -20,6 +20,8 @@ if TYPE_CHECKING:
 
 MeilisearchFederatedMerge = Literal["federation", "rrf"]
 
+# ....................... #
+
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class MeilisearchSearchConfig(TenantAwareIntegrationConfig):

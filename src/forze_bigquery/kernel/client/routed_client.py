@@ -1,6 +1,7 @@
 """BigQuery client that resolves GCP credentials per tenant via :class:`~forze.application.contracts.secrets.SecretsPort`."""
 
 import tempfile
+from datetime import timedelta
 from pathlib import Path
 from typing import Any, Callable, Mapping, final
 from uuid import UUID
@@ -187,7 +188,7 @@ class RoutedBigQueryClient(BigQueryClientPort):
         max_results: int | None = None,
         start_index: int | None = None,
         page_token: str | None = None,
-        timeout: int | None = None,
+        timeout: timedelta | None = None,
     ) -> BigQueryQueryResult:
         inner = await self._get_client()
 
@@ -209,7 +210,7 @@ class RoutedBigQueryClient(BigQueryClientPort):
         *,
         maximum_bytes_billed: int | None = None,
         max_rows: int | None = None,
-        timeout: int | None = None,
+        timeout: timedelta | None = None,
         fetch_batch_size: int = 2000,
     ) -> list[JsonDict]:
         inner = await self._get_client()
@@ -230,7 +231,7 @@ class RoutedBigQueryClient(BigQueryClientPort):
         rows: list[JsonDict],
         *,
         insert_id_field: str | None = None,
-        timeout: int | None = None,
+        timeout: timedelta | None = None,
     ) -> BigQueryInsertResult:
         inner = await self._get_client()
 

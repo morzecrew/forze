@@ -1,5 +1,6 @@
 """ClickHouse implementation of analytics query and ingest ports."""
 
+from datetime import timedelta
 from typing import Any, AsyncGenerator, Sequence, TypeVar, cast, final
 from uuid import UUID
 
@@ -24,7 +25,6 @@ from forze.application.contracts.analytics._adapter_common import (
     parse_keyset_cursor_after,
     parse_offset_cursor_after,
     shape_rows,
-    timeout_seconds,
     validated_params,
 )
 from forze.application.contracts.base import (
@@ -146,8 +146,12 @@ class ClickHouseAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
 
     # ....................... #
 
-    def _timeout_sec(self, options: AnalyticsRunOptions | None) -> int | None:
-        return timeout_seconds(options)
+    @staticmethod
+    def _run_timeout(options: AnalyticsRunOptions | None) -> timedelta | None:
+        if options is None:
+            return None
+
+        return options.get("timeout")
 
     # ....................... #
 
@@ -185,7 +189,7 @@ class ClickHouseAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
             database=self._database(),
             limit=limit,
             offset=offset,
-            timeout=self._timeout_sec(options),
+            timeout=self._run_timeout(options),
             max_rows=int(max_rows) if max_rows is not None else None,
         )
 
@@ -204,7 +208,7 @@ class ClickHouseAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
             params,
             database=self._database(),
             limit=1,
-            timeout=self._timeout_sec(options),
+            timeout=self._run_timeout(options),
         )
 
         return parse_count_row(result.rows)
@@ -316,7 +320,7 @@ class ClickHouseAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
             params,
             database=self._database(),
             max_rows=int(max_rows) if max_rows is not None else None,
-            timeout=self._timeout_sec(options),
+            timeout=self._run_timeout(options),
             fetch_batch_size=fetch_batch_size,
         )
 
@@ -459,7 +463,7 @@ class ClickHouseAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
             params,
             database=self._database(),
             max_rows=int(max_rows) if max_rows is not None else None,
-            timeout=self._timeout_sec(options),
+            timeout=self._run_timeout(options),
             fetch_batch_size=fetch_batch_size,
         )
         typed = pydantic_validate_many(return_type, rows)
@@ -660,7 +664,7 @@ class ClickHouseAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
             database,
             table,
             payloads,
-            timeout=self._timeout_sec(None),
+            timeout=self._run_timeout(None),
         )
 
         return AnalyticsAppendResult(

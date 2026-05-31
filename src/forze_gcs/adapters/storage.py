@@ -18,7 +18,10 @@ from uuid import UUID
 import attrs
 import magic
 
-from forze.application.contracts.resolution import NamedResourceSpec, is_static_named_resource
+from forze.application.contracts.resolution import (
+    NamedResourceSpec,
+    is_static_named_resource,
+)
 from forze.application.contracts.storage import (
     DownloadedObject,
     ObjectMetadata,
@@ -116,7 +119,9 @@ class GCSStorageAdapter(StoragePort, TenancyMixin):
         if self._bucket_resolved is not None:
             return self._bucket_resolved
 
-        resolved = await resolve_gcs_bucket(self.bucket_spec, self._tenant_id_for_resolve())
+        resolved = await resolve_gcs_bucket(
+            self.bucket_spec, self._tenant_id_for_resolve()
+        )
         object.__setattr__(self, "_bucket_resolved", resolved)
 
         return resolved
@@ -238,11 +243,8 @@ class GCSStorageAdapter(StoragePort, TenancyMixin):
         async with self.client.client():
             h = await self.client.head_object(bucket=bucket, key=key)
 
-            if "metadata" not in h:
-                raise exc.internal("Invalid object metadata")
-
             try:
-                meta = _object_metadata_from_gcs_custom(h["metadata"])
+                meta = _object_metadata_from_gcs_custom(h.metadata)
 
             except CoreException:
                 raise
@@ -254,7 +256,7 @@ class GCSStorageAdapter(StoragePort, TenancyMixin):
 
             return DownloadedObject(
                 data=data,
-                content_type=str(h.get("content_type", "application/octet-stream")),
+                content_type=h.content_type,
                 filename=default_b64_codec.loads(meta.filename),
             )
 
@@ -293,24 +295,18 @@ class GCSStorageAdapter(StoragePort, TenancyMixin):
             )
 
             for o in objects:
-                if "Key" not in o:
+                if not o.Key:
                     raise exc.internal("Invalid object key")
 
             heads = await asyncio.gather(
-                *(
-                    self.client.head_object(bucket=bucket, key=o["Key"])
-                    for o in objects
-                )
+                *(self.client.head_object(bucket=bucket, key=o.Key) for o in objects)
             )
 
             out: list[StoredObject] = []
 
             for o, h in zip(objects, heads, strict=True):
-                if "metadata" not in h:
-                    raise exc.internal("Invalid object metadata")
-
                 try:
-                    meta = _object_metadata_from_gcs_custom(h["metadata"])
+                    meta = _object_metadata_from_gcs_custom(h.metadata)
 
                 except CoreException:
                     raise
@@ -320,14 +316,14 @@ class GCSStorageAdapter(StoragePort, TenancyMixin):
 
                 out.append(
                     StoredObject(
-                        key=o["Key"],
+                        key=o.Key,
                         filename=default_b64_codec.loads(meta.filename),
                         description=(
                             default_b64_codec.loads(meta.description)
                             if meta.description
                             else None
                         ),
-                        content_type=h.get("content_type", "application/json"),
+                        content_type=h.content_type,
                         size=meta.size,
                         created_at=meta.created_at,
                     )

@@ -9,7 +9,7 @@ pytest.importorskip("hvac")
 from forze.application.execution import ExecutionContext
 from forze_vault.execution import VaultClientDepKey, vault_lifecycle_step
 from forze_vault.execution.lifecycle import VaultShutdownHook, VaultStartupHook
-from forze_vault.kernel.platform import VaultClient
+from forze_vault.kernel.client import VaultClient
 
 # ----------------------- #
 
