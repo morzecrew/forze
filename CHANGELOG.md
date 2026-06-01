@@ -7,8 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Outbox:** Postgres `flush` uses a single bulk `INSERT … ON CONFLICT DO NOTHING`; `claim_pending` sets `processing_at`; `OutboxQueryPort.reclaim_stale_processing` resets stuck `processing` rows; `relay_outbox_to_queue` reclaims before claim (`reclaim_stale_after`, default 5 minutes) and reports `OutboxRelayResult.reclaimed`; mock adapter matches Postgres idempotency and claim/mark semantics; docs cover `processing_at` DDL, at-least-once relay, and worker patterns.
+- **Integrations:** Shared storage adapter base, object-storage client port, metadata/path helpers, and warehouse analytics adapter helpers moved from `forze.application.contracts` to `forze.application.integrations` (`integrations.storage`, `integrations.analytics`); contracts retain ports, specs, and value objects only.
+- **S3 / GCS:** MIME sniffing via `python-magic` stays in `S3StorageAdapter` / `GCSStorageAdapter` (optional extras); shared `ObjectStorageAdapter` uses stdlib `mimetypes` only. Public `S3StorageAdapter`, `GCSStorageAdapter`, `S3ClientPort`, and `GCSClientPort` unchanged.
+
+### Changed (breaking)
+
+- **Application layer:** Removed `forze.application.coordinators`. Adapter-side helpers live under `forze.application.integrations` (`document`, `search`, `outbox`); app-facing distributed lock ergonomics live under `forze.application.kit` (`DistributedLockScope`).
+- **Renames:** `DocumentCoordinator` → `DocumentAdapter`, `DocumentCacheCoordinator` → `DocumentCache`, `SearchResultSnapshotCoordinator` → `SearchResultSnapshot`, `OutboxStagingCoordinator` → `OutboxStaging`, `DistributedLockCoordinator` → `DistributedLockScope`.
+- **Field renames:** `cache_coord` → `document_cache` on document adapters; `snapshot_coord` → `result_snapshot` on search adapters; outbox adapters use private `_staging` instead of `_coordinator`.
+
 ### Security
 
+- **Authn:** `Argon2PasswordVerifier` returns a generic `401` (`Invalid login or password`, code `invalid_credentials`) for all failed logins and always runs Argon2 verify (including unknown accounts) to reduce username enumeration and timing leakage.
+- **`forze_fastapi`:** Scalar docs default `persist_auth=False`; `X-Forwarded-Host` / `X-Forwarded-Proto` apply only when `trust_forwarded_host=True` (enable behind a trusted reverse proxy).
+- **Repository:** Gitleaks scans `tests/`; `just quality` runs secret detection via pre-commit (no blanket `tests/` allowlist).
 - **`forze.base`:** `configure_logging(sanitize_logs=True)` scrubs `error.message` and `error.stack` with log string rules; use `include_exception_stack=False` to omit stacks from JSON logs.
 - **BigQuery, GCS:** Routed clients unlink Forze-created temp service-account JSON files on inner client `close()` (tenant eviction and pool shutdown).
 - **Authn:** `PrincipalEligibilityPort` gates authentication and credential lifecycle on `authz_policy_principals.is_active` (removed advisory `authn_principals` store).
@@ -19,6 +34,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`forze_fastapi` (breaking):** `register_scalar_docs` / `scalar_docs` no longer honor `X-Forwarded-Host` unless `trust_forwarded_host=True`; apps behind a reverse proxy must opt in explicitly.
+- **Tests / coverage:** Integration `execution/lifecycle/pool.py` modules are included in coverage reports (no longer omitted); `fail_under = 80` applies to `src/forze` and `src/forze/application` in coverage reports.
+- **Tests:** Integration tests under `tests/integration/` inherit `integration` and `asyncio` markers from the root conftest.
 - **Authn (breaking):** `AuthnDepsModule` wires `ForzeJwtTokenVerifier.session_qry` by default; lifecycle-issued access tokens require `sid`. Pre-upgrade tokens without `sid` fail until clients re-login, or apps register a stateless verifier override (`session_qry=None`).
 - **Authn (breaking):** `ApiKeyLifecyclePort.revoke_api_key` and `revoke_many_api_keys` take `identity: AuthnIdentity`.
 - **Authn (breaking):** `issue_api_key` no longer requires a pre-existing API key row; requires an active policy principal.
@@ -26,6 +44,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Outbox:** `forze.application.contracts.outbox` (`OutboxSpec`, `IntegrationEvent`, `OutboxCommandPort`, `OutboxQueryPort`, `OutboxDeps`); request-scoped staging via `OutboxStagingContext` and `OutboxStaging` (`forze.application.integrations.outbox`); `outbox_flush_tx_on_success_factory` and `relay_outbox_to_queue` in `forze.application.composition.outbox`; `PostgresOutboxAdapter` / `PostgresOutboxConfig` on `PostgresDepsModule`; `MockOutboxAdapter` on `MockDepsModule`.
+- **`forze.base`:** `GuardedLruRegistry` / `SimpleLruRegistry` detect reentrant `create` (fail fast instead of deadlocking on `init_lock`); bounded wait when a slot stays in the draining set; optional `timeout` on `InflightLane.run` / `CachedInflightLane`.
+- **Document coordinators:** `max_scan_pages`, `max_stream_pages`, and `max_chunked_command_pages` (default 100_000 each; set `None` for unlimited); cursor stream stall detection when `next_cursor` does not change.
+- **`forze_identity.authz`:** `fetch_all_document_hits` accepts `max_pages` (default 100_000).
+- **Tests:** Lifecycle unit tests for Redis, Mongo, S3, GCS, BigQuery, ClickHouse, Firestore, Inngest, Meilisearch, and Postgres pool hooks (startup/shutdown and routed client steps).
+- **Tests:** `tests/README.md`, root `tests/integration/conftest.py`, `tests/support/docker.py`, `tests/support/secrets_fixtures.py`, shared `tests/support/scenarios/document_nested_filters.py`, FastAPI integration smoke test, and split `test_pg_search_hub.py` from hub search cases.
+- **Tests:** Hypothesis and parametrized cases for scrubbing, mock query matching, nested query paths, and Redis client errors.
+- **Tests:** Unit coverage for authn composition (facades, factories, operations), authn handlers and DTOs, execution graph waves, `DepsResolutionTrace`, dry-run tracing re-exports, `TenancyDeps`, and document default mapper configuration errors.
+- **Tests:** Coverage for Postgres DSN fingerprinting, Meilisearch client errors and filter rendering, Mongo document index lifecycle, identity API-key revoke/deactivation adapters, Temporal schedule bootstrap, resolution spec coercion, and operation-registry mutations; integration cases for Meilisearch `$in`/`$or` filters, Postgres API-key revoke, and Mongo index validation startup.
+- **Tests:** Integration coverage for routed Firestore, GCS, and BigQuery clients (CRUD, secrets, LRU eviction); extended Meilisearch search/federated/filter integration; Firestore query `$or`/`$neq` filters.
+- **Tests:** Unit coverage for Redis base adapter key construction, Mongo search page materialization, Firestore gateway base and query render, Temporal schedule adapter, distributed-lock extend loop, Meilisearch federated zero-weight and member resolution, Postgres analytics cursor dry-run/keyset paths, directed-acyclic-graph helpers, and routed Temporal client delegation; BigQuery analytics `project_run` / backward-cursor integration cases.
 - **Durable workflow:** `DurableWorkflowRunStatus`, `DurableWorkflowRunDescription`, and `describe()` on `DurableWorkflowQueryPort` for coarse run lifecycle; `forze_temporal` maps Temporal `WorkflowHandle.describe()`.
 - **Application contracts:** `RelationSpec`, `NamedResourceSpec`, coercion and `require_static_*` helpers in `forze.application.contracts.resolution`; `warn_dynamic_relation_with_tenant_aware` and `validate_routed_client_tenancy_wiring` in `forze.application.contracts.tenancy`.
 - **Mongo, Firestore:** `RelationSpec` on document (`read` / `write` / `history`) and Mongo search `read` / `index_name`; gateways resolve collections per request; index validation skips dynamic write relations.

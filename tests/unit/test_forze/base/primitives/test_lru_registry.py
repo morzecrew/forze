@@ -1,7 +1,7 @@
 """Unit tests for :class:`~forze.base.primitives.lru_registry` registries."""
 
 import asyncio
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -262,3 +262,55 @@ class TestGuardedLruRegistry:
                 assert v1 == v2 == "v-a"
 
         create.assert_awaited_once()
+
+
+class TestLruRegistryReentrancy:
+    @pytest.mark.asyncio
+    async def test_simple_create_reentrancy_raises(self) -> None:
+        reg = SimpleLruRegistry(
+            max_entries=4,
+            create=AsyncMock(),
+            dispose=AsyncMock(),
+        )
+
+        async def reentrant_create(key: str) -> str:
+            return await reg.get_or_create(key)
+
+        reg.create = reentrant_create  # type: ignore[method-assign]
+
+        with pytest.raises(CoreException, match="Reentrant"):
+            await reg.get_or_create("a")
+
+    @pytest.mark.asyncio
+    async def test_guarded_create_reentrancy_raises(self) -> None:
+        reg = GuardedLruRegistry(
+            max_entries=4,
+            create=AsyncMock(),
+            dispose=AsyncMock(),
+        )
+
+        async def reentrant_create(key: str) -> str:
+            async with reg.use(key):
+                return "v"
+
+        reg.create = reentrant_create  # type: ignore[method-assign]
+
+        with pytest.raises(CoreException, match="Reentrant"):
+            async with reg.use("a"):
+                pass
+
+
+class TestGuardedDrainWait:
+    @pytest.mark.asyncio
+    async def test_await_not_draining_times_out(self) -> None:
+        create = AsyncMock(return_value="v")
+        dispose = AsyncMock()
+        reg = GuardedLruRegistry(max_entries=4, create=create, dispose=dispose)
+        slot = "stuck"
+        entry = reg._make_entry(slot, "v")  # noqa: SLF001
+        entry.mark_draining()
+        reg._draining[slot] = entry  # noqa: SLF001
+
+        with patch.object(type(entry), "wait_until_drained", AsyncMock()):
+            with pytest.raises(CoreException, match="draining"):
+                await reg._await_not_draining(slot)  # noqa: SLF001

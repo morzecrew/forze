@@ -12,8 +12,8 @@ import attrs
 from pydantic import BaseModel
 
 from forze.application.contracts.document import DocumentSpec
-from forze.application.coordinators import DocumentCacheCoordinator, DocumentCoordinator
-from forze.application.coordinators.hydration import can_hydrate_read_from_write_domain
+from forze.application.integrations.document import DocumentCache, DocumentAdapter
+from forze.application.integrations.document.hydration import can_hydrate_read_from_write_domain
 from forze.base.exceptions import exc
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document
 
@@ -42,8 +42,8 @@ def _relation_cache_key(relation: RelationSpec) -> str:
 
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class PostgresDocumentAdapter(DocumentCoordinator[R, D, C, U]):
-    """Postgres-backed implementation of document contracts based on document coordinator."""
+class PostgresDocumentAdapter(DocumentAdapter[R, D, C, U]):
+    """Postgres-backed implementation of document contracts based on :class:`DocumentAdapter`."""
 
     spec: DocumentSpec[R, D, C, U]
     """Document specification."""
@@ -54,7 +54,7 @@ class PostgresDocumentAdapter(DocumentCoordinator[R, D, C, U]):
     write_gw: PostgresWriteGateway[D, C, U] | None = attrs.field(default=None)
     """Optional gateway for mutations; ``None`` disables write operations."""
 
-    cache_coord: DocumentCacheCoordinator[R]
+    document_cache: DocumentCache[R]
     """Unified read/write cache semantics for documents."""
 
     batch_size: int = 200

@@ -58,16 +58,21 @@ class Argon2PasswordVerifier(PasswordVerifierPort):
     ) -> VerifiedAssertion:
         account = await find_password_account_by_login(self.pa_qry, credentials.login)
 
-        if account is None or not account.is_active:
-            raise exc.authentication("Password account not found")
+        if account is not None and account.is_active:
+            password_hash = account.password_hash
+        else:
+            password_hash = self.password_svc.timing_dummy_hash()
 
         ok = self.password_svc.verify_password(
+            password_hash=password_hash,
             password=credentials.password,
-            password_hash=account.password_hash,
         )
 
-        if not ok:
-            raise exc.authentication("Invalid password")
+        if not ok or account is None or not account.is_active:
+            raise exc.authentication(
+                "Invalid login or password",
+                code="invalid_credentials",
+            )
 
         return VerifiedAssertion(
             issuer=ISSUER_FORZE_PASSWORD,

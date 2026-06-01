@@ -28,7 +28,7 @@ Value objects live under `forze.application.contracts.authz.value_objects`:
 - `ctx.authz.grant_query(spec)` — effective grants snapshot.
 - `ctx.authz.principal_registry(spec)` / `ctx.authz.role_assignment(spec)` — catalog and binding management.
 
-Authoritative enforcement belongs on the **operation plan**, not in generic `DocumentCoordinator` or FastAPI route policies alone. Use `forze.application.hooks.authz` (not `contracts.authz`):
+Authoritative enforcement belongs on the **operation plan**, not in generic `DocumentAdapter` or FastAPI route policies alone. Use `forze.application.hooks.authz` (not `contracts.authz`):
 
 1. **`BeforeStep`** — operation-level allow/deny (`authorize_before_step` or `AuthzBeforeAuthorize(...).to_before_step()`).
 2. **`wrap`** — inject policy filters into list/search DTOs (`document_scope_wrap_step` or `AuthzDocumentScopeWrap(...).to_middleware_step()`).

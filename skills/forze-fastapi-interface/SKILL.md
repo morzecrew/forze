@@ -219,6 +219,9 @@ app.add_middleware(
 )
 register_exception_handlers(app)
 register_scalar_docs(app, path="/docs")
+# Behind a trusted reverse proxy that sets X-Forwarded-Host / X-Forwarded-Proto:
+# register_scalar_docs(app, path="/docs", trust_forwarded_host=True)
+# Do not enable trust_forwarded_host on directly exposed apps (header spoofing).
 ```
 
 `ContextBindingMiddleware` binds `InvocationMetadata`, `AuthnIdentity`, and `TenantIdentity` at the boundary. Use resolvers/codecs there; handlers should only read identity from `ExecutionContext.inv_ctx`.

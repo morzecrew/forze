@@ -26,7 +26,7 @@ from forze.application.contracts.search import (
     normalize_search_queries,
     prepare_hub_search_options,
 )
-from forze.application.coordinators import SearchResultSnapshotCoordinator
+from forze.application.integrations.search import SearchResultSnapshot
 
 from ....kernel.gateways import PostgresGateway
 from .._offset_run import RankedOffsetPlan, execute_hub_ranked_offset_search
@@ -53,7 +53,7 @@ class PostgresHubSearchAdapter[M: BaseModel](
     vector_embedders: Mapping[int, EmbeddingsProviderPort] = attrs.field(
         factory=dict[int, EmbeddingsProviderPort],
     )
-    snapshot_coord: SearchResultSnapshotCoordinator | None = None
+    result_snapshot: SearchResultSnapshot | None = None
     combine: Literal["or", "and"] = "or"
     score_merge: Literal["max", "sum"] = "max"
 
@@ -117,6 +117,6 @@ class PostgresHubSearchAdapter[M: BaseModel](
             return_type=return_type,
             return_fields=return_fields,
             model_type=self.model_type,
-            snapshot_coord=self.snapshot_coord,
+            result_snapshot=self.result_snapshot,
             combo_alias=COMBO_ALIAS,
         )

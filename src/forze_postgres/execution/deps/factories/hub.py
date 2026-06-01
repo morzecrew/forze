@@ -8,7 +8,7 @@ from forze.application.contracts.search import HubSearchQueryDepPort
 
 from ....adapters import PostgresHubSearchAdapter
 from ..keys import PostgresClientDepKey, PostgresIntrospectorDepKey
-from ._snapshot import snapshot_coord
+from ._snapshot import result_snapshot
 from .hub_builder import build_hub_leg_runtimes
 
 if TYPE_CHECKING:
@@ -52,5 +52,5 @@ class ConfigurablePostgresHubSearch(HubSearchQueryDepPort):
             tenant_aware=self.config.tenant_aware,
             filter_table_alias="h",
             nested_field_hints=self.config.nested_field_hints,
-            snapshot_coord=snapshot_coord(context, spec.snapshot),
+            result_snapshot=result_snapshot(context, spec.snapshot),
         )

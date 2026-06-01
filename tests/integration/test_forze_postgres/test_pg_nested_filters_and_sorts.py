@@ -5,15 +5,12 @@ from __future__ import annotations
 from uuid import uuid4
 
 import pytest
-from pydantic import BaseModel
-
 from forze.application.contracts.document import (
     DocumentCommandDepKey,
     DocumentQueryDepKey,
     DocumentSpec,
 )
 from forze.application.execution import Deps, ExecutionContext
-from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
 from forze_postgres.execution.deps import ConfigurablePostgresDocument
 from forze_postgres.execution.deps.keys import (
     PostgresClientDepKey,
@@ -23,33 +20,14 @@ from forze_postgres.kernel.catalog.introspect import PostgresIntrospector
 from forze_postgres.kernel.client.client import PostgresClient
 from forze_postgres.execution.deps.configs import PostgresDocumentConfig
 from tests.support.execution_context import context_from_deps
-
-
-class Meta(BaseModel):
-    """Nested payload stored in ``meta`` jsonb."""
-
-    score: int
-    tag: str = ""
-
-
-class RowDoc(Document):
-    title: str
-    meta: Meta
-
-
-class RowCreate(CreateDocumentCmd):
-    title: str
-    meta: Meta
-
-
-class RowUpdate(BaseDTO):
-    title: str | None = None
-    meta: Meta | None = None
-
-
-class RowRead(ReadDocument):
-    title: str
-    meta: Meta
+from tests.support.scenarios.document_nested_filters import (
+    NestedFilterMeta as Meta,
+    NestedFilterRowCreate as RowCreate,
+    NestedFilterRowDoc as RowDoc,
+    NestedFilterRowRead as RowRead,
+    NestedFilterRowUpdate as RowUpdate,
+    expected_scores_ascending,
+)
 
 
 def _ctx(pg_client: PostgresClient, table: str) -> ExecutionContext:
@@ -116,7 +94,7 @@ async def test_sort_by_nested_jsonb_field(pg_client: PostgresClient) -> None:
     rows = __p.hits
     total = __p.count
     assert total == 3
-    assert [r.meta.score for r in rows] == [10, 20, 30]
+    assert [r.meta.score for r in rows] == expected_scores_ascending()
 
 
 @pytest.mark.asyncio

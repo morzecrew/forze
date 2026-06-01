@@ -1,10 +1,17 @@
 """Tests for forze.application.composition.document.factories."""
 
+import pytest
+
 from forze.application.composition.document import (
     DocumentDTOs,
     DocumentKernelOp,
     build_document_registry,
 )
+from forze.application.composition.document.factories import (
+    _default_create_mapper,
+    _default_update_mapper,
+)
+from forze.base.exceptions import exc
 from forze.application.contracts.document import DocumentSpec
 from forze.application.execution.operations.registry import OperationRegistry
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
@@ -63,6 +70,26 @@ def _write_dtos(update_cmd: type = _UpdateCmd) -> DocumentDTOs:
 
 def _read_only_dtos() -> DocumentDTOs:
     return DocumentDTOs(read=ReadDocument)
+
+
+class TestDefaultMappers:
+    def test_create_mapper_requires_dto_and_cmd(self) -> None:
+        spec = _write_spec()
+        dtos = DocumentDTOs(read=ReadDocument, create=None, update=_UpdateCmd)
+
+        with pytest.raises(exc, match="Create DTO"):
+            _default_create_mapper(spec, dtos)
+
+    def test_update_mapper_requires_dto_and_cmd(self) -> None:
+        spec = DocumentSpec(
+            name="test",
+            read=ReadDocument,
+            write={"domain": Document, "create_cmd": CreateDocumentCmd},
+        )
+        dtos = DocumentDTOs(read=ReadDocument, create=CreateDocumentCmd, update=None)
+
+        with pytest.raises(exc, match="Update DTO"):
+            _default_update_mapper(spec, dtos)
 
 
 class TestBuildDocumentRegistry:

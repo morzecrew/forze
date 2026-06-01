@@ -257,7 +257,7 @@ async def test_pg_password_authentication(pg_client: PostgresClient) -> None:
         )
     assert identity.identity.principal_id == pid
 
-    with pytest.raises(Exception, match="Invalid password|authentication"):
+    with pytest.raises(Exception, match="Invalid login or password"):
         with ctx.inv_ctx.bind(metadata=_invocation_metadata()):
             await authn.authenticate_with_password(
                 PasswordCredentials(login="alice", password="wrong"),
@@ -373,6 +373,50 @@ async def test_pg_api_key_issue_and_authenticate(pg_client: PostgresClient) -> N
 
 @pytest.mark.integration
 @pytest.mark.asyncio
+async def test_pg_api_key_revoke_blocks_authentication(pg_client: PostgresClient) -> None:
+    suffix = uuid4().hex[:12]
+    pepper = secrets.token_bytes(32)
+    ctx = await _authn_pg_setup(pg_client, suffix=suffix)
+
+    api_key_svc = ApiKeyService(pepper=pepper, config=ApiKeyConfig(prefix="sk_test"))
+    pid = uuid4()
+    await insert_policy_principal_row(
+        pg_client,
+        table=f"authz_pri_{suffix}",
+        principal_id=pid,
+    )
+
+    lifecycle = ApiKeyLifecycleAdapter(
+        api_key_svc=api_key_svc,
+        ak_qry=ctx.document.query(api_key_account_spec),
+        ak_cmd=ctx.document.command(api_key_account_spec),
+        eligibility=_eligibility(ctx),
+    )
+    authn = _orchestrator(
+        eligibility=_eligibility(ctx),
+        api_key_svc=api_key_svc,
+        ak_qry=ctx.document.query(api_key_account_spec),
+        methods=frozenset({"api_key"}),
+    )
+
+    with ctx.inv_ctx.bind(metadata=_invocation_metadata()):
+        issued = await lifecycle.issue_api_key(AuthnIdentity(principal_id=pid))
+
+    creds = ApiKeyCredentials(key=issued.key.key, prefix=issued.key.prefix)
+
+    with ctx.inv_ctx.bind(metadata=_invocation_metadata()):
+        await lifecycle.revoke_api_key(
+            AuthnIdentity(principal_id=pid),
+            issued.key_id,
+        )
+
+    with pytest.raises(Exception, match="API key account not found"):
+        with ctx.inv_ctx.bind(metadata=_invocation_metadata()):
+            await authn.authenticate_with_api_key(creds)
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
 async def test_pg_change_password(pg_client: PostgresClient) -> None:
     suffix = uuid4().hex[:12]
     ctx = await _authn_pg_setup(pg_client, suffix=suffix)
@@ -418,7 +462,7 @@ async def test_pg_change_password(pg_client: PostgresClient) -> None:
             PasswordCredentials(login="bob", password="new-secret"),
         )
 
-    with pytest.raises(Exception, match="Invalid password|authentication"):
+    with pytest.raises(Exception, match="Invalid login or password"):
         with ctx.inv_ctx.bind(metadata=_invocation_metadata()):
             await authn.authenticate_with_password(
                 PasswordCredentials(login="bob", password="old-secret"),

@@ -9,7 +9,7 @@ import pytest
 from forze.base.exceptions import CoreException
 
 from forze.application.contracts.document import DocumentSpec
-from forze.application.coordinators import DocumentCacheCoordinator
+from forze.application.integrations.document import DocumentCache
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
 from forze_mongo.adapters.document import MongoDocumentAdapter
 from forze_mongo.kernel.gateways import MongoReadGateway, MongoWriteGateway
@@ -58,7 +58,7 @@ def _build_read_gateway() -> MagicMock:
 
 
 def _mongo_cc(read_gw, spec: DocumentSpec, *, cache=None, after_commit=None):
-    return DocumentCacheCoordinator(
+    return DocumentCache(
         read_model_type=read_gw.model_type,
         document_name=spec.name,
         cache=cache,
@@ -110,7 +110,7 @@ class TestMongoDocumentAdapter:
                 spec=(ms := _doc_spec()),
                 read_gw=read_gw,
                 write_gw=write_gw,
-                cache_coord=_mongo_cc(read_gw, ms),
+                document_cache=_mongo_cc(read_gw, ms),
             )
 
     def test_post_init_rejects_tenant_aware_mismatch(self) -> None:
@@ -123,20 +123,20 @@ class TestMongoDocumentAdapter:
                 spec=(ms := _doc_spec()),
                 read_gw=read_gw,
                 write_gw=write_gw,
-                cache_coord=_mongo_cc(read_gw, ms),
+                document_cache=_mongo_cc(read_gw, ms),
             )
 
     def test_eff_batch_size_clamps_extremes(self) -> None:
         rg = _build_read_gateway()
         ms = _doc_spec()
         small = MongoDocumentAdapter(
-            spec=ms, read_gw=rg, cache_coord=_mongo_cc(rg, ms), batch_size=5
+            spec=ms, read_gw=rg, document_cache=_mongo_cc(rg, ms), batch_size=5
         )
         assert small.eff_batch_size == 200
         rg = _build_read_gateway()
         ms = _doc_spec()
         large = MongoDocumentAdapter(
-            spec=ms, read_gw=rg, cache_coord=_mongo_cc(rg, ms), batch_size=200000
+            spec=ms, read_gw=rg, document_cache=_mongo_cc(rg, ms), batch_size=200000
         )
         assert large.eff_batch_size == 200
 
@@ -154,7 +154,7 @@ class TestMongoDocumentAdapter:
         adapter = MongoDocumentAdapter(
             spec=(ms := _doc_spec()),
             read_gw=read_gw,
-            cache_coord=_mongo_cc(read_gw, ms, cache=cache),
+            document_cache=_mongo_cc(read_gw, ms, cache=cache),
         )
         result = await adapter.get(pk)
 
@@ -170,7 +170,7 @@ class TestMongoDocumentAdapter:
         adapter = MongoDocumentAdapter(
             spec=(ms := _doc_spec()),
             read_gw=read_gw,
-            cache_coord=_mongo_cc(read_gw, ms),
+            document_cache=_mongo_cc(read_gw, ms),
         )
         page = await adapter.find_page(None, pagination=None, sorts=None)
 
@@ -192,7 +192,7 @@ class TestMongoDocumentAdapter:
         adapter = MongoDocumentAdapter(
             spec=(ms := _doc_spec()),
             read_gw=read_gw,
-            cache_coord=_mongo_cc(read_gw, ms, cache=cache),
+            document_cache=_mongo_cc(read_gw, ms, cache=cache),
         )
         result = await adapter.get(pk, for_update=True)
 
@@ -216,7 +216,7 @@ class TestMongoDocumentAdapter:
         adapter = MongoDocumentAdapter(
             spec=(ms := _doc_spec()),
             read_gw=read_gw,
-            cache_coord=_mongo_cc(read_gw, ms, cache=cache),
+            document_cache=_mongo_cc(read_gw, ms, cache=cache),
         )
         result = await adapter.get_many(pks)
 
@@ -238,7 +238,7 @@ class TestMongoDocumentAdapter:
         adapter = MongoDocumentAdapter(
             spec=(ms := _doc_spec()),
             read_gw=read_gw,
-            cache_coord=_mongo_cc(read_gw, ms, cache=cache),
+            document_cache=_mongo_cc(read_gw, ms, cache=cache),
         )
         result = await adapter.get(pk, skip_cache=True)
 
@@ -261,7 +261,7 @@ class TestMongoDocumentAdapter:
         adapter = MongoDocumentAdapter(
             spec=(ms := _doc_spec()),
             read_gw=read_gw,
-            cache_coord=_mongo_cc(read_gw, ms, cache=cache),
+            document_cache=_mongo_cc(read_gw, ms, cache=cache),
         )
         result = await adapter.get_many(pks, skip_cache=True)
 
@@ -284,7 +284,7 @@ class TestMongoDocumentAdapter:
             spec=(ms := _doc_spec()),
             read_gw=read_gw,
             write_gw=write_gw,
-            cache_coord=_mongo_cc(read_gw, ms),
+            document_cache=_mongo_cc(read_gw, ms),
         )
         updated = await adapter.update(pk, 1, MyUpdateDoc(name="after"))
 
@@ -299,7 +299,7 @@ class TestMongoDocumentAdapter:
         adapter = MongoDocumentAdapter(
             spec=(ms := _doc_spec()),
             read_gw=(rg := _build_read_gateway()),
-            cache_coord=_mongo_cc(rg, ms),
+            document_cache=_mongo_cc(rg, ms),
         )
 
         with pytest.raises(CoreException, match="Write gateway is not configured"):
@@ -322,7 +322,7 @@ class TestMongoDocumentAdapterReturnNew:
             spec=(ms := _doc_spec()),
             read_gw=read_gw,
             write_gw=write_gw,
-            cache_coord=_mongo_cc(read_gw, ms, cache=cache),
+            document_cache=_mongo_cc(read_gw, ms, cache=cache),
         )
 
         assert await adapter.create(MyCreateDoc(name="n"), return_new=False) is None
@@ -343,7 +343,7 @@ class TestMongoDocumentAdapterReturnNew:
             spec=(ms := _doc_spec()),
             read_gw=read_gw,
             write_gw=write_gw,
-            cache_coord=_mongo_cc(read_gw, ms),
+            document_cache=_mongo_cc(read_gw, ms),
             batch_size=50,
         )
 
@@ -371,7 +371,7 @@ class TestMongoDocumentAdapterReturnNew:
             spec=(ms := _doc_spec()),
             read_gw=read_gw,
             write_gw=write_gw,
-            cache_coord=_mongo_cc(read_gw, ms, cache=cache),
+            document_cache=_mongo_cc(read_gw, ms, cache=cache),
         )
 
         assert (
@@ -393,7 +393,7 @@ class TestMongoDocumentAdapterReturnNew:
             spec=(ms := _doc_spec()),
             read_gw=read_gw,
             write_gw=write_gw,
-            cache_coord=_mongo_cc(read_gw, ms, cache=cache),
+            document_cache=_mongo_cc(read_gw, ms, cache=cache),
         )
 
         assert await adapter.touch(pk, return_new=False) is None
@@ -413,7 +413,7 @@ class TestMongoDocumentAdapterReturnNew:
             spec=(ms := _doc_spec()),
             read_gw=read_gw,
             write_gw=write_gw,
-            cache_coord=_mongo_cc(read_gw, ms),
+            document_cache=_mongo_cc(read_gw, ms),
             batch_size=40,
         )
 
@@ -434,7 +434,7 @@ class TestMongoDocumentAdapterReturnNew:
             spec=(ms := _doc_spec()),
             read_gw=read_gw,
             write_gw=write_gw,
-            cache_coord=_mongo_cc(read_gw, ms, cache=cache),
+            document_cache=_mongo_cc(read_gw, ms, cache=cache),
         )
 
         assert (
@@ -467,7 +467,7 @@ class TestMongoDocumentAdapterCacheHits:
         adapter = MongoDocumentAdapter(
             spec=(ms := _doc_spec()),
             read_gw=read_gw,
-            cache_coord=_mongo_cc(read_gw, ms, cache=cache),
+            document_cache=_mongo_cc(read_gw, ms, cache=cache),
         )
         out = await adapter.get(pk)
 
@@ -487,7 +487,7 @@ class TestMongoDocumentAdapterCacheHits:
         adapter = MongoDocumentAdapter(
             spec=(ms := _doc_spec()),
             read_gw=read_gw,
-            cache_coord=_mongo_cc(read_gw, ms, cache=cache),
+            document_cache=_mongo_cc(read_gw, ms, cache=cache),
         )
         out = await adapter.get_many(pks)
 
@@ -507,7 +507,7 @@ class TestMongoDocumentAdapterCacheHits:
         adapter = MongoDocumentAdapter(
             spec=(ms := _doc_spec()),
             read_gw=read_gw,
-            cache_coord=_mongo_cc(read_gw, ms, cache=cache),
+            document_cache=_mongo_cc(read_gw, ms, cache=cache),
         )
         out = await adapter.get_many(pks)
 
@@ -527,7 +527,7 @@ class TestMongoDocumentAdapterCacheHits:
             spec=(ms := _doc_spec()),
             read_gw=read_gw,
             write_gw=write_gw,
-            cache_coord=_mongo_cc(read_gw, ms, cache=cache),
+            document_cache=_mongo_cc(read_gw, ms, cache=cache),
         )
         assert (
             await adapter.update(pk, 1, MyUpdateDoc(name="z"), return_new=False) is None
@@ -546,7 +546,7 @@ class TestMongoDocumentAdapterFindCursor:
         adapter = MongoDocumentAdapter(
             spec=(ms := _doc_spec()),
             read_gw=read_gw,
-            cache_coord=_mongo_cc(read_gw, ms),
+            document_cache=_mongo_cc(read_gw, ms),
         )
         page = await adapter.find_cursor(
             None,
@@ -567,7 +567,7 @@ class TestMongoDocumentAdapterFindAndPage:
         adapter = MongoDocumentAdapter(
             spec=(ms := _doc_spec()),
             read_gw=read_gw,
-            cache_coord=_mongo_cc(read_gw, ms),
+            document_cache=_mongo_cc(read_gw, ms),
         )
         filt = {"$values": {"name": "x"}}
         row = await adapter.project(filt, ["name"])
@@ -584,7 +584,7 @@ class TestMongoDocumentAdapterFindAndPage:
         adapter = MongoDocumentAdapter(
             spec=(ms := _doc_spec()),
             read_gw=read_gw,
-            cache_coord=_mongo_cc(read_gw, ms),
+            document_cache=_mongo_cc(read_gw, ms),
         )
         page = await adapter.find_page(
             None,
@@ -605,7 +605,7 @@ class TestMongoDocumentAdapterMutationsWithCache:
             spec=(ms := _doc_spec()),
             read_gw=read_gw,
             write_gw=write_gw,
-            cache_coord=_mongo_cc(read_gw, ms),
+            document_cache=_mongo_cc(read_gw, ms),
         )
         assert await adapter.create_many([]) == []
         assert await adapter.create_many([], return_new=False) is None
@@ -628,7 +628,7 @@ class TestMongoDocumentAdapterMutationsWithCache:
             spec=(ms := _doc_spec()),
             read_gw=read_gw,
             write_gw=write_gw,
-            cache_coord=_mongo_cc(read_gw, ms, cache=cache),
+            document_cache=_mongo_cc(read_gw, ms, cache=cache),
         )
         out = await adapter.create_many([MyCreateDoc(name="a"), MyCreateDoc(name="b")])
         assert len(out) == 2
@@ -651,7 +651,7 @@ class TestMongoDocumentAdapterMutationsWithCache:
             spec=(ms := _doc_spec()),
             read_gw=read_gw,
             write_gw=write_gw,
-            cache_coord=_mongo_cc(read_gw, ms, cache=cache),
+            document_cache=_mongo_cc(read_gw, ms, cache=cache),
         )
         out = await adapter.create(MyCreateDoc(name="n"))
         assert out == read
@@ -676,7 +676,7 @@ class TestMongoDocumentAdapterMutationsWithCache:
             spec=(ms := _doc_spec()),
             read_gw=read_gw,
             write_gw=write_gw,
-            cache_coord=_mongo_cc(read_gw, ms, cache=cache),
+            document_cache=_mongo_cc(read_gw, ms, cache=cache),
         )
         e = await adapter.ensure(MyCreateDoc(id=pk, name="a"))
         assert e == read
@@ -704,7 +704,7 @@ class TestMongoDocumentAdapterMutationsWithCache:
             spec=(ms := _doc_spec()),
             read_gw=read_gw,
             write_gw=write_gw,
-            cache_coord=_mongo_cc(read_gw, ms, cache=cache),
+            document_cache=_mongo_cc(read_gw, ms, cache=cache),
         )
         em = await adapter.ensure_many(
             [MyCreateDoc(id=p1, name="a"), MyCreateDoc(id=p2, name="b")]
@@ -726,7 +726,7 @@ class TestMongoDocumentAdapterMutationsWithCache:
             spec=(ms := _doc_spec()),
             read_gw=read_gw,
             write_gw=write_gw,
-            cache_coord=_mongo_cc(read_gw, ms),
+            document_cache=_mongo_cc(read_gw, ms),
         )
         assert await adapter.ensure_many([], return_new=True) == []
         assert await adapter.ensure_many([], return_new=False) is None
@@ -745,7 +745,7 @@ class TestMongoDocumentAdapterMutationsWithCache:
             spec=(ms := _doc_spec()),
             read_gw=read_gw,
             write_gw=write_gw,
-            cache_coord=_mongo_cc(read_gw, ms),
+            document_cache=_mongo_cc(read_gw, ms),
         )
         assert (
             await adapter.ensure_many(
@@ -766,7 +766,7 @@ class TestMongoDocumentAdapterMutationsWithCache:
             spec=(ms := _doc_spec()),
             read_gw=read_gw,
             write_gw=write_gw,
-            cache_coord=_mongo_cc(read_gw, ms),
+            document_cache=_mongo_cc(read_gw, ms),
         )
         assert (
             await adapter.upsert_many(
@@ -791,7 +791,7 @@ class TestMongoDocumentAdapterMutationsWithCache:
             spec=(ms := _doc_spec()),
             read_gw=read_gw,
             write_gw=write_gw,
-            cache_coord=_mongo_cc(read_gw, ms),
+            document_cache=_mongo_cc(read_gw, ms),
         )
         pair = await adapter.update(pk, 1, MyUpdateDoc(name="z"), return_diff=True)
         assert pair == (read, diff)
@@ -808,7 +808,7 @@ class TestMongoDocumentAdapterMutationsWithCache:
             spec=(ms := _doc_spec()),
             read_gw=read_gw,
             write_gw=write_gw,
-            cache_coord=_mongo_cc(read_gw, ms),
+            document_cache=_mongo_cc(read_gw, ms),
         )
         out = await adapter.update(
             pk, 1, MyUpdateDoc(name="z"), return_new=False, return_diff=True
@@ -823,7 +823,7 @@ class TestMongoDocumentAdapterMutationsWithCache:
             spec=(ms := _doc_spec()),
             read_gw=read_gw,
             write_gw=write_gw,
-            cache_coord=_mongo_cc(read_gw, ms),
+            document_cache=_mongo_cc(read_gw, ms),
             batch_size=100,
         )
         assert await adapter.update_many([], return_new=True) == []
@@ -863,7 +863,7 @@ class TestMongoDocumentAdapterMutationsWithCache:
             spec=(ms := _doc_spec()),
             read_gw=read_gw,
             write_gw=write_gw,
-            cache_coord=_mongo_cc(read_gw, ms),
+            document_cache=_mongo_cc(read_gw, ms),
         )
         out = await adapter.update_many(
             [(p1, 1, MyUpdateDoc(name="a"))],
@@ -891,7 +891,7 @@ class TestMongoDocumentAdapterMutationsWithCache:
             spec=(ms := _doc_spec()),
             read_gw=read_gw,
             write_gw=write_gw,
-            cache_coord=_mongo_cc(read_gw, ms, cache=cache),
+            document_cache=_mongo_cc(read_gw, ms, cache=cache),
         )
         assert await adapter.touch(pk) == read
         assert await adapter.touch_many([pk]) == [read]
@@ -908,7 +908,7 @@ class TestMongoDocumentAdapterMutationsWithCache:
             spec=(ms := _doc_spec()),
             read_gw=read_gw,
             write_gw=write_gw,
-            cache_coord=_mongo_cc(read_gw, ms, cache=cache),
+            document_cache=_mongo_cc(read_gw, ms, cache=cache),
         )
         await adapter.kill(pk)
         await adapter.kill_many([pk, uuid4()])
@@ -930,7 +930,7 @@ class TestMongoDocumentAdapterMutationsWithCache:
             spec=(ms := _doc_spec()),
             read_gw=read_gw,
             write_gw=write_gw,
-            cache_coord=_mongo_cc(read_gw, ms, cache=cache),
+            document_cache=_mongo_cc(read_gw, ms, cache=cache),
         )
         assert await adapter.update(pk, 1, MyUpdateDoc(is_deleted=True)) == read
         assert await adapter.update(pk, 2, MyUpdateDoc(is_deleted=False)) == read

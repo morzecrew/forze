@@ -60,7 +60,7 @@ just test tests/integration
 
 ### Code Quality
 
-Run all quality checks (types, imports, dead code, dependencies, security):
+Run all quality checks (types, imports, dead code, dependencies, security, secret scanning):
 
 ```bash
 just quality
@@ -71,6 +71,8 @@ Strict mode (fail on any issue):
 ```bash
 just quality -s
 ```
+
+`just quality` runs [gitleaks](https://github.com/gitleaks/gitleaks) on the full tree (including `tests/`) via pre-commit. Do not commit real credentials or API keys anywhere in the repository; use synthetic fixtures in tests.
 
 All checks must pass before submitting a pull request.
 
@@ -249,9 +251,15 @@ Avoid external i/o. Use mocks when necessary. Prefer `MagicMoc(spec=RealClass)`.
 
 **Integration Tests**
 
-Use fixtures defined in `tests/integration/conftest.py`. One scenario per test. Ensure test data isolation.
+Use fixtures from `tests/integration/conftest.py` (shared Docker check via `tests/support/docker.py`). One scenario per test. Ensure test data isolation. See [tests/README.md](tests/README.md) for tiers (L0–L3) and the per-package smoke matrix.
 
 **Markers**
+
+- `integration` — applied to all tests under `tests/integration/` via root conftest
+- `unit` — use `pytestmark = pytest.mark.unit` on focused unit modules (authn/authz pattern)
+- `perf` — excluded from default `just test`
+
+Run subsets: `just test -m integration`, `just test tests/unit`.
 
 New pytest markers must be registered in `pyproject.toml` before use.
 

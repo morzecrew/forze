@@ -2,6 +2,7 @@
 
 import asyncio
 from contextlib import asynccontextmanager
+from contextvars import ContextVar
 from typing import (
     Any,
     AsyncGenerator,
@@ -23,6 +24,18 @@ from forze.base.exceptions import exc
 K = TypeVar("K", bound=Hashable)
 V = TypeVar("V")
 R = TypeVar("R", bound=Hashable, default=Any)
+
+_MAX_DRAIN_WAIT_ATTEMPTS = 64
+
+_REENTRANT_CREATE_MSG = (
+    "Reentrant LRU registry access for the same slot during create; "
+    "do not call use() or get_or_create() from create()."
+)
+
+_creating_slot: ContextVar[Any | None] = ContextVar(
+    "lru_registry_creating_slot",
+    default=None,
+)
 
 # ....................... #
 
@@ -136,6 +149,24 @@ class SimpleLruRegistry(Generic[K, V, R]):
 
     # ....................... #
 
+    @staticmethod
+    def _assert_slot_not_creating(slot: R) -> None:
+        if _creating_slot.get() == slot:
+            raise exc.internal(_REENTRANT_CREATE_MSG)
+
+    # ....................... #
+
+    async def _invoke_create(self, key: K, slot: R) -> V:
+        token = _creating_slot.set(slot)
+
+        try:
+            return await self.create(key)
+
+        finally:
+            _creating_slot.reset(token)
+
+    # ....................... #
+
     def peek(self, key: K) -> V | None:
         """Return a cached value without LRU touch (best-effort, no lock)."""
 
@@ -175,6 +206,8 @@ class SimpleLruRegistry(Generic[K, V, R]):
                 self._entries.move_to_end(slot)
                 return value
 
+        self._assert_slot_not_creating(slot)
+
         init_lock = await self._lock_for_init(slot)
 
         async with init_lock:
@@ -184,7 +217,7 @@ class SimpleLruRegistry(Generic[K, V, R]):
                     self._entries.move_to_end(slot)
                     return value
 
-            value = await self.create(key)
+            value = await self._invoke_create(key, slot)
 
             evicted: list[V] = []
 
@@ -331,6 +364,9 @@ class GuardedLruRegistry(Generic[K, V, R]):
 
     When ``dedup_key`` is set, LRU slots are keyed by ``dedup_key(logical_key)`` while
     ``create`` still receives the logical key.
+
+    Do not call :meth:`use` or nested registry access for the same slot from
+    :meth:`create` (raises :exc:`~forze.base.errors.exc.internal` instead of deadlocking).
     """
 
     max_entries: int
@@ -376,6 +412,24 @@ class GuardedLruRegistry(Generic[K, V, R]):
             raise exc.internal("max_entries must be at least 1")
 
         self._dedup = _DedupIndex(dedup_key=self.dedup_key)
+
+    # ....................... #
+
+    @staticmethod
+    def _assert_slot_not_creating(slot: R) -> None:
+        if _creating_slot.get() == slot:
+            raise exc.internal(_REENTRANT_CREATE_MSG)
+
+    # ....................... #
+
+    async def _invoke_create(self, key: K, slot: R) -> V:
+        token = _creating_slot.set(slot)
+
+        try:
+            return await self.create(key)
+
+        finally:
+            _creating_slot.reset(token)
 
     # ....................... #
 
@@ -432,7 +486,7 @@ class GuardedLruRegistry(Generic[K, V, R]):
     # ....................... #
 
     async def _await_not_draining(self, slot: R) -> None:
-        while True:
+        for _ in range(_MAX_DRAIN_WAIT_ATTEMPTS):
             async with self._registry_lock:
                 entry = self._draining.get(slot)
 
@@ -440,6 +494,9 @@ class GuardedLruRegistry(Generic[K, V, R]):
                     return
 
             await entry.wait_until_drained()
+            await asyncio.sleep(0)
+
+        raise exc.internal("Timed out waiting for LRU registry slot to finish draining")
 
     # ....................... #
 
@@ -479,6 +536,8 @@ class GuardedLruRegistry(Generic[K, V, R]):
         async with self._registry_lock:
             slot = self._dedup.slot_for(key)
 
+        self._assert_slot_not_creating(slot)
+
         await self._await_not_draining(slot)
 
         entry: _GuardedEntry[V, R] | None = None
@@ -512,7 +571,7 @@ class GuardedLruRegistry(Generic[K, V, R]):
 
                 return
 
-            value = await self.create(key)
+            value = await self._invoke_create(key, slot)
 
             async with self._registry_lock:
                 if slot in self._slots:

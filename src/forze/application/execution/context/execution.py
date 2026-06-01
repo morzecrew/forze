@@ -13,12 +13,14 @@ from forze.application.contracts.embeddings import EmbeddingsDeps
 from forze.application.contracts.search import SearchDeps
 from forze.application.contracts.storage import StorageDeps
 from forze.application.contracts.tenancy import TenancyDeps
+from forze.application.contracts.outbox import OutboxDeps
 from forze.application.contracts.transaction import TransactionDeps
 
 from ..deps import FrozenDeps
 from ..deps.tx_tracer import tx_tracer_from_runtime
 from ..tracing import bind_active_deps, init_runtime_tracing
 from .invocation import InvocationContext
+from .outbox_staging import OutboxStagingContext
 from .transaction import TransactionContext
 
 # ----------------------- #
@@ -40,7 +42,16 @@ class ExecutionContext:
     inv_ctx: InvocationContext = attrs.field(factory=InvocationContext, init=False)
     """Invocation context."""
 
+    outbox_staging: OutboxStagingContext = attrs.field(
+        factory=OutboxStagingContext,
+        init=False,
+    )
+    """Outbox staging buffer for the current request."""
+
     # ....................... #
+
+    outbox: OutboxDeps = attrs.field(factory=OutboxDeps, init=False)
+    """Outbox dependencies."""
 
     document: DocumentDeps = attrs.field(factory=DocumentDeps, init=False)
     """Document dependencies."""
@@ -93,6 +104,7 @@ class ExecutionContext:
         bind_active_deps(self.deps)
         init_runtime_tracing(self.deps)
 
+        self.outbox.lock(self)
         self.document.lock(self)
         self.search.lock(self)
         self.analytics.lock(self)

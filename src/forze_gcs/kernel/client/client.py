@@ -16,12 +16,16 @@ import aiohttp
 import attrs
 from gcloud.aio.storage import Storage
 
+from forze.application.integrations.storage.client import (
+    ObjectStorageHead,
+    ObjectStorageListedObject,
+)
 from forze.base.exceptions import exc
 from forze.base.primitives.gcp_service_file import release_service_file
 
 from .errors import exc_interceptor
 from .port import GCSClientPort
-from .value_objects import DEFAULT_TIMEOUT, GCSConfig, GCSHead, GCSListedObject
+from .value_objects import DEFAULT_TIMEOUT, GCSConfig
 
 # ----------------------- #
 
@@ -227,12 +231,15 @@ class GCSClient(GCSClientPort):
         *,
         content_type: str | None = None,
         metadata: dict[str, str] | None = None,
+        tags: dict[str, str] | None = None,
     ) -> None:
         storage = self.__require_storage()
         upload_metadata: dict[str, object] | None = None
 
         if metadata is not None:
             upload_metadata = {"metadata": metadata}
+
+        _ = tags
 
         await storage.upload(
             bucket,
@@ -277,7 +284,7 @@ class GCSClient(GCSClientPort):
         *,
         limit: int | None = None,
         offset: int | None = None,
-    ) -> tuple[list[GCSListedObject], int]:
+    ) -> tuple[list[ObjectStorageListedObject], int]:
         if limit is not None and limit <= 0:
             raise exc.internal("limit must be > 0")
 
@@ -294,14 +301,16 @@ class GCSClient(GCSClientPort):
 
         total_count = len(keys)
         window = keys[_offset : _offset + _limit]
-        items: list[GCSListedObject] = [GCSListedObject(Key=key) for key in window]
+        items: list[ObjectStorageListedObject] = [
+            ObjectStorageListedObject(key=key) for key in window
+        ]
 
         return items, total_count
 
     # ....................... #
 
     @exc_interceptor.coroutine("gcs.head_object")  # type: ignore[untyped-decorator]
-    async def head_object(self, bucket: str, key: str) -> GCSHead:
+    async def head_object(self, bucket: str, key: str) -> ObjectStorageHead:
         storage = self.__require_storage()
         raw = await storage.download_metadata(
             bucket,
@@ -348,7 +357,7 @@ def _response_is_not_found(exc: aiohttp.ClientResponseError) -> bool:
 # ....................... #
 
 
-def _head_from_object_json(raw: dict[str, object]) -> GCSHead:
+def _head_from_object_json(raw: dict[str, object]) -> ObjectStorageHead:
     custom: Any = raw.get("metadata") or {}
     meta_dict: dict[str, str] = {}
 
@@ -375,7 +384,7 @@ def _head_from_object_json(raw: dict[str, object]) -> GCSHead:
     size_raw = raw.get("size", 0)
     size = int(size_raw) if isinstance(size_raw, (int, float, str)) else 0
 
-    return GCSHead(
+    return ObjectStorageHead(
         content_type=str(raw.get("contentType") or "application/octet-stream"),
         metadata=meta_dict,
         size=size,

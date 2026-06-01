@@ -28,7 +28,7 @@ from forze.application.contracts.search import (
     SearchResultSnapshotSpec,
     prepare_federated_search_options,
 )
-from forze.application.coordinators import SearchResultSnapshotCoordinator
+from forze.application.integrations.search import SearchResultSnapshot
 from forze.base.exceptions import exc
 from forze.base.serialization import pydantic_validate_many
 
@@ -83,8 +83,8 @@ class PostgresFederatedSearchAdapter[M: BaseModel](
     postgres_client: PostgresClientPort | None = None
     """When set, leg queries respect pool / transaction concurrency rules."""
 
-    snapshot_coord: SearchResultSnapshotCoordinator | None = None
-    """Coordinator for federation snapshot runs."""
+    result_snapshot: SearchResultSnapshot | None = None
+    """Federation snapshot run helper."""
 
     spec: FederatedSearchSpec[M] = attrs.field(init=False)
     """Set in :meth:`__attrs_post_init__` from :attr:`federated_spec` (port mixin)."""
@@ -217,7 +217,7 @@ class PostgresFederatedSearchAdapter[M: BaseModel](
         offset = int((pagination or {}).get("offset") or 0)
         limit = (pagination or {}).get("limit")
 
-        fp_computed = SearchResultSnapshotCoordinator.federated_fingerprint(
+        fp_computed = SearchResultSnapshot.federated_fingerprint(
             query,
             filters,
             sorts,
@@ -226,13 +226,13 @@ class PostgresFederatedSearchAdapter[M: BaseModel](
         )
 
         if (
-            self.snapshot_coord is not None
+            self.result_snapshot is not None
             and rs_spec is not None
             and snapshot is not None
             and "id" in snapshot
         ):
             maybe_page = (
-                await self.snapshot_coord.read_federated_snapshot_page_if_requested(
+                await self.result_snapshot.read_federated_snapshot_page_if_requested(
                     federated_spec=self.federated_spec,
                     rs_spec=rs_spec,
                     snapshot=snapshot,
@@ -290,7 +290,7 @@ class PostgresFederatedSearchAdapter[M: BaseModel](
                 *(_run_leg(n, p, w) for n, p, w in active),
             )
 
-        merged = SearchResultSnapshotCoordinator.weighted_rrf_merge_rows(
+        merged = SearchResultSnapshot.weighted_rrf_merge_rows(
             leg_rows=leg_results,
             k=int(self.rrf_k),
         )
@@ -299,7 +299,7 @@ class PostgresFederatedSearchAdapter[M: BaseModel](
             for field, direction in reversed(list(sorts.items())):
                 merged.sort(
                     key=partial(
-                        SearchResultSnapshotCoordinator.federated_merged_hit_field,
+                        SearchResultSnapshot.federated_merged_hit_field,
                         field=field,
                     ),
                     reverse=(direction == "desc"),
@@ -311,22 +311,22 @@ class PostgresFederatedSearchAdapter[M: BaseModel](
         handle_out: SearchSnapshotHandle | None = None
 
         if (
-            self.snapshot_coord is not None
+            self.result_snapshot is not None
             and rs_spec is not None
-            and self.snapshot_coord.should_write_result_snapshot(snapshot, rs_spec)
+            and self.result_snapshot.should_write_result_snapshot(snapshot, rs_spec)
         ):
-            max_n = self.snapshot_coord.effective_snapshot_max_ids(snapshot, rs_spec)
+            max_n = self.result_snapshot.effective_snapshot_max_ids(snapshot, rs_spec)
             to_store = merged[:max_n]
 
             row_keys = [
-                SearchResultSnapshotCoordinator.federated_record_key_string(
+                SearchResultSnapshot.federated_record_key_string(
                     item[0].member,
                     item[0].hit,
                 )
                 for item in to_store
             ]
 
-            handle_out = await self.snapshot_coord.put_ordered_snapshot_keys(
+            handle_out = await self.result_snapshot.put_ordered_snapshot_keys(
                 row_keys,
                 snap_opt=snapshot,
                 rs_spec=rs_spec,

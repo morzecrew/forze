@@ -61,3 +61,34 @@ async def test_rrf_merge_calls_each_leg_search() -> None:
     assert len(page.hits) >= 1
     members = {row.member for row in page.hits}
     assert members <= {"a", "b"}
+
+
+@pytest.mark.asyncio
+async def test_rrf_all_zero_weights_returns_empty() -> None:
+    leg = MagicMock()
+    leg.spec = _mem("a")
+    leg.search = AsyncMock()
+
+    leg_b = MagicMock()
+    leg_b.spec = _mem("b")
+    leg_b.search = AsyncMock()
+
+    adapter = MeilisearchFederatedSearchAdapter(
+        federated_spec=FederatedSearchSpec(
+            name="fed_rrf_empty",
+            members=(_mem("a"), _mem("b")),
+        ),
+        legs=(("a", leg), ("b", leg_b)),
+        client=MagicMock(),
+        merge="rrf",
+    )
+
+    page = await adapter.search_page(
+        "q",
+        options={"member_weights": {"a": 0.0, "b": 0.0}},
+        pagination={"offset": 0, "limit": 5},
+    )
+
+    assert page.count == 0
+    leg.search.assert_not_called()
+    leg_b.search.assert_not_called()

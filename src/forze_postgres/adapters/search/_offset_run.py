@@ -23,7 +23,7 @@ from forze.application.contracts.search import (
     SearchResultSnapshotOptions,
     SearchSpec,
 )
-from forze.application.coordinators import SearchResultSnapshotCoordinator
+from forze.application.integrations.search import SearchResultSnapshot
 from forze.base.serialization import pydantic_validate_many
 
 from ...kernel.gateways import PostgresGateway
@@ -92,12 +92,12 @@ async def execute_simple_ranked_offset_search(
     return_type: type[BaseModel] | None,
     return_fields: Sequence[str] | None,
     model_type: type[M],
-    snapshot_coord: SearchResultSnapshotCoordinator | None,
+    result_snapshot: SearchResultSnapshot | None,
 ) -> Any:
     """Run count (optional), data fetch, snapshot materialization for simple search adapters."""
 
     rs_spec = spec.snapshot
-    fp_fingerprint = SearchResultSnapshotCoordinator.simple_search_fingerprint(
+    fp_fingerprint = SearchResultSnapshot.simple_search_fingerprint(
         query,
         filters,
         sorts,
@@ -106,8 +106,8 @@ async def execute_simple_ranked_offset_search(
         extras=fingerprint_extras,
     )
 
-    if snapshot_coord is not None and rs_spec is not None:
-        maybe_snap: Any = await snapshot_coord.read_simple_result_snapshot(
+    if result_snapshot is not None and rs_spec is not None:
+        maybe_snap: Any = await result_snapshot.read_simple_result_snapshot(
             rs_spec=rs_spec,
             snap_opt=snapshot,
             fp_computed=fp_fingerprint,
@@ -167,17 +167,17 @@ async def execute_simple_ranked_offset_search(
     pagination_dict: dict[str, Any] = dict(pagination or {})
 
     want_snap = (
-        snapshot_coord is not None
+        result_snapshot is not None
         and rs_spec is not None
-        and snapshot_coord.should_write_result_snapshot(snapshot, rs_spec)
+        and result_snapshot.should_write_result_snapshot(snapshot, rs_spec)
     )
     max_nw = (
-        snapshot_coord.effective_snapshot_max_ids(snapshot, rs_spec)
-        if want_snap and snapshot_coord is not None
+        result_snapshot.effective_snapshot_max_ids(snapshot, rs_spec)
+        if want_snap and result_snapshot is not None
         else 0
     )
     sql_limit, sql_offset, page_limit = (
-        SearchResultSnapshotCoordinator.snapshot_pagination(
+        SearchResultSnapshot.snapshot_pagination(
             want_snap, max_nw, pagination_dict
         )
     )
@@ -200,10 +200,10 @@ async def execute_simple_ranked_offset_search(
     pool_snap: list[M] | None = None
     u_off = _offset_from_dict(pagination_dict)
 
-    if want_snap and snapshot_coord is not None and rs_spec is not None:
+    if want_snap and result_snapshot is not None and rs_spec is not None:
         pool_len = len(rows)
         pool_snap = pydantic_validate_many(model_type, rows)
-        handle_out = await snapshot_coord.put_simple_ordered_hits(
+        handle_out = await result_snapshot.put_simple_ordered_hits(
             pool_snap,
             snap_opt=snapshot,
             rs_spec=rs_spec,
@@ -258,13 +258,13 @@ async def execute_hub_ranked_offset_search(
     return_type: type[BaseModel] | None,
     return_fields: Sequence[str] | None,
     model_type: type[M],
-    snapshot_coord: SearchResultSnapshotCoordinator | None,
+    result_snapshot: SearchResultSnapshot | None,
     combo_alias: str = "comb",
 ) -> Any:
     """Ranked offset search for :class:`~forze_postgres.adapters.search.hub.PostgresHubSearchAdapter`."""
 
     rs_spec = hub_spec.snapshot
-    fp_fingerprint = SearchResultSnapshotCoordinator.hub_search_fingerprint(
+    fp_fingerprint = SearchResultSnapshot.hub_search_fingerprint(
         query,
         filters,
         sorts,
@@ -274,8 +274,8 @@ async def execute_hub_ranked_offset_search(
         combine=combine,
     )
 
-    if snapshot_coord is not None and rs_spec is not None:
-        read_page = await snapshot_coord.read_hub_result_snapshot(
+    if result_snapshot is not None and rs_spec is not None:
+        read_page = await result_snapshot.read_hub_result_snapshot(
             rs_spec=rs_spec,
             snap_opt=snapshot,
             fp_computed=fp_fingerprint,
@@ -336,17 +336,17 @@ async def execute_hub_ranked_offset_search(
     pagination_dict: dict[str, Any] = dict(pagination or {})
 
     want_sn = (
-        snapshot_coord is not None
+        result_snapshot is not None
         and rs_spec is not None
-        and snapshot_coord.should_write_result_snapshot(snapshot, rs_spec)
+        and result_snapshot.should_write_result_snapshot(snapshot, rs_spec)
     )
     max_nh = (
-        snapshot_coord.effective_snapshot_max_ids(snapshot, rs_spec)
-        if want_sn and snapshot_coord is not None
+        result_snapshot.effective_snapshot_max_ids(snapshot, rs_spec)
+        if want_sn and result_snapshot is not None
         else 0
     )
     sql_limit, sql_offset, page_limit = (
-        SearchResultSnapshotCoordinator.snapshot_pagination(
+        SearchResultSnapshot.snapshot_pagination(
             want_sn, max_nh, pagination_dict
         )
     )
@@ -369,10 +369,10 @@ async def execute_hub_ranked_offset_search(
     pool_h: list[M] | None = None
     u_h = _offset_from_dict(pagination_dict)
 
-    if want_sn and snapshot_coord is not None and rs_spec is not None:
+    if want_sn and result_snapshot is not None and rs_spec is not None:
         plh = len(rows)
         pool_h = pydantic_validate_many(model_type, rows)
-        handle_h = await snapshot_coord.put_simple_ordered_hits(
+        handle_h = await result_snapshot.put_simple_ordered_hits(
             pool_h,
             snap_opt=snapshot,
             rs_spec=rs_spec,

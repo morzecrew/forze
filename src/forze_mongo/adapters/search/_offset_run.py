@@ -15,7 +15,7 @@ from forze.application.contracts.search import (
     SearchResultSnapshotOptions,
     SearchSpec,
 )
-from forze.application.coordinators import SearchResultSnapshotCoordinator
+from forze.application.integrations.search import SearchResultSnapshot
 from forze.base.primitives import JsonDict
 from forze.base.serialization import pydantic_validate_many
 from forze_mongo.kernel.client.port import MongoClientPort
@@ -54,12 +54,12 @@ async def execute_mongo_ranked_offset_search[M: BaseModel](
     return_count: bool,
     return_type: type[BaseModel] | None,
     return_fields: Sequence[str] | None,
-    snapshot_coord: SearchResultSnapshotCoordinator | None,
+    result_snapshot: SearchResultSnapshot | None,
 ) -> Any:
     """Run count (optional), aggregation fetch, and snapshot materialization."""
 
     rs_spec = spec.snapshot
-    fp_fingerprint = SearchResultSnapshotCoordinator.simple_search_fingerprint(
+    fp_fingerprint = SearchResultSnapshot.simple_search_fingerprint(
         query,
         filters,
         None,
@@ -70,8 +70,8 @@ async def execute_mongo_ranked_offset_search[M: BaseModel](
 
     pagination_dict: dict[str, Any] = dict(pagination or {})
 
-    if snapshot_coord is not None and rs_spec is not None:
-        maybe_snap: Any = await snapshot_coord.read_simple_result_snapshot(
+    if result_snapshot is not None and rs_spec is not None:
+        maybe_snap: Any = await result_snapshot.read_simple_result_snapshot(
             rs_spec=rs_spec,
             snap_opt=snapshot,
             fp_computed=fp_fingerprint,
@@ -102,17 +102,17 @@ async def execute_mongo_ranked_offset_search[M: BaseModel](
             return page_from_limit_offset(any_hits, pagination_dict, total=0)
 
     want_snap = (
-        snapshot_coord is not None
+        result_snapshot is not None
         and rs_spec is not None
-        and snapshot_coord.should_write_result_snapshot(snapshot, rs_spec)
+        and result_snapshot.should_write_result_snapshot(snapshot, rs_spec)
     )
     max_nw = (
-        snapshot_coord.effective_snapshot_max_ids(snapshot, rs_spec)
-        if want_snap and snapshot_coord is not None
+        result_snapshot.effective_snapshot_max_ids(snapshot, rs_spec)
+        if want_snap and result_snapshot is not None
         else 0
     )
     sql_limit, sql_offset, page_limit = (
-        SearchResultSnapshotCoordinator.snapshot_pagination(
+        SearchResultSnapshot.snapshot_pagination(
             want_snap,
             max_nw,
             pagination_dict,
@@ -137,10 +137,10 @@ async def execute_mongo_ranked_offset_search[M: BaseModel](
     pool_snap: list[M] | None = None
     u_off = offset if want_snap else _offset_from_dict(pagination_dict)
 
-    if want_snap and snapshot_coord is not None and rs_spec is not None:
+    if want_snap and result_snapshot is not None and rs_spec is not None:
         pool_len = len(normalized)
         pool_snap = pydantic_validate_many(gw.model_type, normalized)
-        handle_out = await snapshot_coord.put_simple_ordered_hits(
+        handle_out = await result_snapshot.put_simple_ordered_hits(
             pool_snap,
             snap_opt=snapshot,
             rs_spec=rs_spec,

@@ -10,6 +10,7 @@ from pydantic import BaseModel
 pytest.importorskip("temporalio")
 
 from forze.application.contracts.tenancy import TenantIdentity
+from forze.base.exceptions import CoreException, exc
 from forze.application.contracts.durable.workflow import (
     DurableWorkflowScheduleHandle,
     DurableWorkflowScheduleTiming,
@@ -118,3 +119,84 @@ class TestTemporalWorkflowScheduleQueryAdapter:
             limit=10,
             next_page_token=None,
         )
+
+    @pytest.mark.asyncio
+    async def test_describe_wrong_workflow_raises(self) -> None:
+        from forze.application.contracts.durable.workflow import (
+            DurableWorkflowScheduleDescription,
+        )
+
+        client = MagicMock(spec=TemporalClient)
+        client.describe_schedule = AsyncMock(
+            return_value=DurableWorkflowScheduleDescription(
+                schedule_id="s1",
+                workflow_name="OtherWorkflow",
+                paused=False,
+                timing=_timing(),
+            ),
+        )
+        adapter = TemporalWorkflowScheduleQueryAdapter(
+            client=client,
+            queue="tq-a",
+            spec=_spec(),
+            tenant_aware=False,
+        )
+
+        with pytest.raises(CoreException, match="not for workflow"):
+            await adapter.describe(DurableWorkflowScheduleHandle(schedule_id="s1"))
+
+
+class TestTemporalScheduleCommandLifecycle:
+    @pytest.mark.asyncio
+    async def test_upsert_updates_on_conflict(self) -> None:
+        client = MagicMock(spec=TemporalClient)
+        client.create_schedule = AsyncMock(side_effect=exc.conflict("exists"))
+        client.update_schedule = AsyncMock()
+        client.trigger_schedule = AsyncMock()
+
+        adapter = TemporalWorkflowScheduleCommandAdapter(
+            client=client,
+            queue="tq-a",
+            spec=_spec(),
+            tenant_aware=False,
+        )
+
+        handle = await adapter.upsert(
+            "daily",
+            _In(x=2),
+            _timing(),
+            trigger_immediately=True,
+        )
+
+        assert handle.schedule_id == "daily"
+        client.update_schedule.assert_awaited_once()
+        client.trigger_schedule.assert_awaited_once_with("daily")
+
+    @pytest.mark.asyncio
+    async def test_update_pause_unpause_trigger_delete(self) -> None:
+        client = MagicMock(spec=TemporalClient)
+        client.update_schedule = AsyncMock()
+        client.pause_schedule = AsyncMock()
+        client.unpause_schedule = AsyncMock()
+        client.trigger_schedule = AsyncMock()
+        client.delete_schedule = AsyncMock()
+
+        adapter = TemporalWorkflowScheduleCommandAdapter(
+            client=client,
+            queue="tq-a",
+            spec=_spec(),
+            tenant_aware=False,
+        )
+        handle = DurableWorkflowScheduleHandle(schedule_id="sched-1")
+
+        await adapter.update(handle, timing=_timing(), note="n")
+        await adapter.pause(handle, note="paused")
+        await adapter.unpause(handle)
+        await adapter.trigger(handle)
+        await adapter.delete(handle)
+
+        client.update_schedule.assert_awaited_once()
+        client.pause_schedule.assert_awaited_once_with("sched-1", note="paused")
+        client.unpause_schedule.assert_awaited_once_with("sched-1", note=None)
+        client.trigger_schedule.assert_awaited_once_with("sched-1")
+        client.delete_schedule.assert_awaited_once_with("sched-1")

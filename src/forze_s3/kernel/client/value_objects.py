@@ -1,11 +1,18 @@
-from datetime import datetime, timedelta
+from datetime import timedelta
 from typing import Any, Mapping, final
 
 import attrs
 from botocore.config import Config as AioConfig
 from pydantic import SecretStr
 
+from forze.application.integrations.storage.client import (
+    ObjectStorageHead,
+    ObjectStorageListedObject,
+)
 from forze.base.serialization import pydantic_secret_converter
+
+S3Head = ObjectStorageHead
+S3ListedObject = ObjectStorageListedObject
 
 # ----------------------- #
 
@@ -52,30 +59,6 @@ class S3Config:
                 params[key] = val.total_seconds()
 
         return AioConfig(**params)
-
-
-# ....................... #
-
-
-@final
-@attrs.define(slots=True, kw_only=True, frozen=True)
-class S3Head:
-    """Metadata returned by an S3 ``HeadObject`` call."""
-
-    content_type: str = "application/octet-stream"
-    """MIME type of the object."""
-
-    metadata: Mapping[str, str] = attrs.field(factory=dict[str, str])
-    """User-defined metadata key-value pairs."""
-
-    size: int = 0
-    """Content length in bytes."""
-
-    last_modified: datetime | None = None
-    """Timestamp of the last modification."""
-
-    etag: str = ""
-    """Entity tag with surrounding quotes stripped."""
 
 
 # ....................... #

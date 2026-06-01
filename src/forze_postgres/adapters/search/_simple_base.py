@@ -25,7 +25,7 @@ from forze.application.contracts.search import (
     normalize_search_queries,
     search_options_for_simple_adapter,
 )
-from forze.application.coordinators import SearchResultSnapshotCoordinator
+from forze.application.integrations.search import SearchResultSnapshot
 from forze.base.exceptions import exc
 from forze_postgres.kernel.relation import RelationSpec, is_static_relation, resolve_postgres_qname
 
@@ -82,7 +82,7 @@ class PostgresRankedPipelineSearchAdapter[M: BaseModel](
     projection_alias: str = "v"
     """SQL alias for the read projection in outer queries."""
 
-    snapshot_coord: SearchResultSnapshotCoordinator | None = attrs.field(default=None)
+    result_snapshot: SearchResultSnapshot | None = attrs.field(default=None)
     """Optional result-ID snapshot coordinator."""
 
     # ....................... #
@@ -234,7 +234,7 @@ class PostgresRankedPipelineSearchAdapter[M: BaseModel](
             return_type=return_type,
             return_fields=return_fields,
             model_type=self.model_type,
-            snapshot_coord=self.snapshot_coord,
+            result_snapshot=self.result_snapshot,
         )
 
     # ....................... #

@@ -12,7 +12,13 @@ from forze.base.primitives import GuardedLruRegistry, SimpleLruRegistry
 
 @attrs.define(slots=True)
 class TenantClientRegistry[C, R = str]:
-    """LRU pool keyed by tenant id with optional fingerprint dedup."""
+    """LRU pool keyed by tenant id with optional fingerprint dedup.
+
+    When ``guarded=True``, the underlying :class:`~forze.base.primitives.GuardedLruRegistry`
+    ``create`` callback must not call :meth:`use` for the same tenant (or deduplicated slot)
+    while that tenant is being created — reentrant access raises
+    :exc:`~forze.base.errors.exc.internal` instead of deadlocking.
+    """
 
     max_entries: int
     """Maximum number of entries in the registry."""

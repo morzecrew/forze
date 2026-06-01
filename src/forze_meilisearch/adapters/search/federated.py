@@ -41,7 +41,7 @@ from forze.application.contracts.search import (
     normalize_search_queries,
     prepare_federated_search_options,
 )
-from forze.application.coordinators import SearchResultSnapshotCoordinator
+from forze.application.integrations.search import SearchResultSnapshot
 from forze.base.exceptions import exc
 from forze.base.serialization import pydantic_validate_many
 from forze_meilisearch.adapters.search._port import MeilisearchSearchPortMixin
@@ -96,7 +96,7 @@ class MeilisearchFederatedSearchAdapter[M: BaseModel](
     merge: MeilisearchFederatedMerge = "federation"
     rrf_k: int = _DEFAULT_RRF_K
     rrf_per_leg_limit: int = _DEFAULT_PER_LEG_LIMIT
-    snapshot_coord: SearchResultSnapshotCoordinator | None = None
+    result_snapshot: SearchResultSnapshot | None = None
 
     spec: FederatedSearchSpec[M] = attrs.field(init=False)
     model_type: type[FederatedSearchReadModel[M]] = attrs.field(init=False)
@@ -267,7 +267,7 @@ class MeilisearchFederatedSearchAdapter[M: BaseModel](
             options,
         )
 
-        fp_computed = SearchResultSnapshotCoordinator.federated_fingerprint(
+        fp_computed = SearchResultSnapshot.federated_fingerprint(
             query,
             filters,
             sorts,
@@ -278,13 +278,13 @@ class MeilisearchFederatedSearchAdapter[M: BaseModel](
         rs_spec: SearchResultSnapshotSpec | None = self.federated_spec.snapshot
 
         if (
-            self.snapshot_coord is not None
+            self.result_snapshot is not None
             and rs_spec is not None
             and snapshot is not None
             and "id" in snapshot
         ):
             maybe_page = (
-                await self.snapshot_coord.read_federated_snapshot_page_if_requested(
+                await self.result_snapshot.read_federated_snapshot_page_if_requested(
                     federated_spec=self.federated_spec,
                     rs_spec=rs_spec,
                     snapshot=snapshot,
@@ -417,7 +417,7 @@ class MeilisearchFederatedSearchAdapter[M: BaseModel](
             options,
         )
 
-        fp_computed = SearchResultSnapshotCoordinator.federated_fingerprint(
+        fp_computed = SearchResultSnapshot.federated_fingerprint(
             query,
             filters,
             sorts,
@@ -431,13 +431,13 @@ class MeilisearchFederatedSearchAdapter[M: BaseModel](
         limit = (pagination or {}).get("limit")
 
         if (
-            self.snapshot_coord is not None
+            self.result_snapshot is not None
             and rs_spec is not None
             and snapshot is not None
             and "id" in snapshot
         ):
             maybe_page = (
-                await self.snapshot_coord.read_federated_snapshot_page_if_requested(
+                await self.result_snapshot.read_federated_snapshot_page_if_requested(
                     federated_spec=self.federated_spec,
                     rs_spec=rs_spec,
                     snapshot=snapshot,
@@ -486,7 +486,7 @@ class MeilisearchFederatedSearchAdapter[M: BaseModel](
             *(_run_leg(n, p, w) for n, p, w in active),
         )
 
-        merged = SearchResultSnapshotCoordinator.weighted_rrf_merge_rows(
+        merged = SearchResultSnapshot.weighted_rrf_merge_rows(
             leg_rows=leg_results,
             k=int(self.rrf_k),
         )
@@ -495,7 +495,7 @@ class MeilisearchFederatedSearchAdapter[M: BaseModel](
             for field, direction in reversed(list(sorts.items())):
                 merged.sort(
                     key=partial(
-                        SearchResultSnapshotCoordinator.federated_merged_hit_field,
+                        SearchResultSnapshot.federated_merged_hit_field,
                         field=field,
                     ),
                     reverse=(direction == "desc"),
@@ -540,20 +540,20 @@ class MeilisearchFederatedSearchAdapter[M: BaseModel](
         handle_out: SearchSnapshotHandle | None = None
 
         if (
-            self.snapshot_coord is not None
+            self.result_snapshot is not None
             and rs_spec is not None
-            and self.snapshot_coord.should_write_result_snapshot(snapshot, rs_spec)
+            and self.result_snapshot.should_write_result_snapshot(snapshot, rs_spec)
         ):
-            max_n = self.snapshot_coord.effective_snapshot_max_ids(snapshot, rs_spec)
+            max_n = self.result_snapshot.effective_snapshot_max_ids(snapshot, rs_spec)
             to_store = merged_for_snap[:max_n]
             row_keys = [
-                SearchResultSnapshotCoordinator.federated_record_key_string(
+                SearchResultSnapshot.federated_record_key_string(
                     item[0].member,
                     item[0].hit,
                 )
                 for item in to_store
             ]
-            handle_out = await self.snapshot_coord.put_ordered_snapshot_keys(
+            handle_out = await self.result_snapshot.put_ordered_snapshot_keys(
                 row_keys,
                 snap_opt=snapshot,
                 rs_spec=rs_spec,

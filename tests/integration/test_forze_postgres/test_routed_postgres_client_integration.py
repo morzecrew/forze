@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from forze.base.exceptions import CoreException, exc
-from collections.abc import Callable
 from unittest.mock import patch
 from uuid import UUID, uuid4
 
@@ -12,83 +10,42 @@ import pytest
 pytest.importorskip("psycopg")
 
 from forze.application.contracts.secrets import SecretRef
-
+from forze.base.exceptions import CoreException
 from forze_postgres.kernel.client import PostgresClient, PostgresConfig, RoutedPostgresClient
 
 from tests.integration._routed_lru_helpers import postgres_dsns_for_lru_eviction
+from tests.support.secrets_fixtures import (
+    MemSecretsByPath,
+    MemSecretsTenantByPath,
+    tenant_holder,
+    tenant_secret_ref,
+)
 
-def _ref(tid: UUID) -> SecretRef:
-    return SecretRef(path=f"tenants/{tid}/dsn")
+_DSN_SUFFIX = "dsn"
+
+
+def _ref(tenant_id: UUID) -> SecretRef:
+    return tenant_secret_ref(tenant_id, _DSN_SUFFIX)
+
 
 def _normalize_postgres_url(url: str) -> str:
     if url.startswith("postgresql+psycopg://"):
         return url.replace("postgresql+psycopg://", "postgresql://")
     return url
 
-class _MemSecretsByPath:
-    """Maps secret paths to DSN strings."""
 
-    def __init__(
-        self,
-        paths: dict[str, str],
-        *,
-        missing_path: str | None = None,
-        broken_path: str | None = None,
-    ) -> None:
-        self._paths = paths
-        self._missing_path = missing_path
-        self._broken_path = broken_path
-
-    async def resolve_str(self, ref: SecretRef) -> str:
-        if self._broken_path is not None and ref.path == self._broken_path:
-            raise RuntimeError("vault unavailable")
-        if self._missing_path is not None and ref.path == self._missing_path:
-            raise exc.not_found(
-                f"No secret for {ref.path!r}",
-                details={"ref": ref.path},
-            )
-        try:
-            return self._paths[ref.path]
-        except KeyError as e:
-            raise exc.not_found(
-                f"No secret for {ref.path!r}",
-                details={"ref": ref.path},
-            ) from e
-
-    async def exists(self, ref: SecretRef) -> bool:
-        return ref.path in self._paths
-
-class _MemSecretsCallableTenant(_MemSecretsByPath):
-    """Looks up tenants/*/dsn paths (callable-style refs)."""
-
-    def __init__(
-        self,
-        dsns_by_tenant: dict[UUID, str],
-        *,
-        missing_tenant: UUID | None = None,
-        broken_tenant: UUID | None = None,
-    ) -> None:
-        paths = {
-            f"tenants/{tid}/dsn": dsn for tid, dsn in dsns_by_tenant.items()
-        }
-        missing_path = (
-            f"tenants/{missing_tenant}/dsn" if missing_tenant is not None else None
-        )
-        broken_path = (
-            f"tenants/{broken_tenant}/dsn" if broken_tenant is not None else None
-        )
-        super().__init__(paths, missing_path=missing_path, broken_path=broken_path)
-
-def _tenant_holder() -> tuple[Callable[[], UUID | None], Callable[[UUID | None], None]]:
-    slot: list[UUID | None] = [None]
-
-    def getter() -> UUID | None:
-        return slot[0]
-
-    def setter(value: UUID | None) -> None:
-        slot[0] = value
-
-    return getter, setter
+def _tenant_dsns(
+    dsns_by_tenant: dict[UUID, str],
+    *,
+    missing_tenant: UUID | None = None,
+    broken_tenant: UUID | None = None,
+) -> MemSecretsTenantByPath:
+    return MemSecretsTenantByPath(
+        resource_suffix=_DSN_SUFFIX,
+        values_by_tenant=dsns_by_tenant,
+        missing_tenant=missing_tenant,
+        broken_tenant=broken_tenant,
+    )
 
 @pytest.mark.integration
 @pytest.mark.asyncio
@@ -96,8 +53,8 @@ async def test_routed_postgres_sql_execute_fetch_mapping_refs(postgres_container
     url = _normalize_postgres_url(postgres_container.get_connection_url())
     t1 = uuid4()
     ref_custom = SecretRef(path=f"routed/pg/it/{uuid4().hex}")
-    secrets = _MemSecretsByPath({ref_custom.path: url})
-    tenant_get, tenant_set = _tenant_holder()
+    secrets = MemSecretsByPath({ref_custom.path: url})
+    tenant_get, tenant_set = tenant_holder()
 
     cfg = PostgresConfig(min_size=1, max_size=5, max_concurrent_queries=6)
     routed = RoutedPostgresClient(
@@ -171,8 +128,8 @@ async def test_routed_postgres_sql_execute_fetch_mapping_refs(postgres_container
 async def test_routed_postgres_query_concurrency_branches(postgres_container) -> None:
     url = _normalize_postgres_url(postgres_container.get_connection_url())
     t1 = uuid4()
-    secrets = _MemSecretsCallableTenant({t1: url})
-    tenant_get, tenant_set = _tenant_holder()
+    secrets = _tenant_dsns({t1: url})
+    tenant_get, tenant_set = tenant_holder()
 
     cfg = PostgresConfig(min_size=1, max_size=7, pool_headroom=2)
     routed = RoutedPostgresClient(
@@ -203,8 +160,8 @@ async def test_routed_postgres_query_concurrency_branches(postgres_container) ->
 async def test_routed_postgres_transaction_bound_connection_require_tx(postgres_container) -> None:
     url = _normalize_postgres_url(postgres_container.get_connection_url())
     t1 = uuid4()
-    secrets = _MemSecretsCallableTenant({t1: url})
-    tenant_get, tenant_set = _tenant_holder()
+    secrets = _tenant_dsns({t1: url})
+    tenant_get, tenant_set = tenant_holder()
 
     routed = RoutedPostgresClient(
         secrets=secrets,
@@ -245,8 +202,8 @@ async def test_routed_postgres_transaction_bound_connection_require_tx(postgres_
 async def test_routed_postgres_lru_eviction(postgres_container) -> None:
     url = _normalize_postgres_url(postgres_container.get_connection_url())
     t1, t2, t3 = uuid4(), uuid4(), uuid4()
-    secrets = _MemSecretsCallableTenant(postgres_dsns_for_lru_eviction(url, t1, t2, t3))
-    tenant_get, tenant_set = _tenant_holder()
+    secrets = _tenant_dsns(postgres_dsns_for_lru_eviction(url, t1, t2, t3))
+    tenant_get, tenant_set = tenant_holder()
 
     routed = RoutedPostgresClient(
         secrets=secrets,
@@ -285,8 +242,8 @@ async def test_routed_postgres_lru_eviction(postgres_container) -> None:
 async def test_routed_postgres_require_transaction_without_context(postgres_container) -> None:
     url = _normalize_postgres_url(postgres_container.get_connection_url())
     t1 = uuid4()
-    secrets = _MemSecretsCallableTenant({t1: url})
-    tenant_get, tenant_set = _tenant_holder()
+    secrets = _tenant_dsns({t1: url})
+    tenant_get, tenant_set = tenant_holder()
 
     routed = RoutedPostgresClient(
         secrets=secrets,
@@ -316,10 +273,10 @@ async def test_routed_postgres_evict_unknown_and_secret_errors(postgres_containe
     url = _normalize_postgres_url(postgres_container.get_connection_url())
     t_ok, t_miss, t_break = uuid4(), uuid4(), uuid4()
 
-    tenant_get, tenant_set = _tenant_holder()
+    tenant_get, tenant_set = tenant_holder()
 
     routed_miss = RoutedPostgresClient(
-        secrets=_MemSecretsCallableTenant({t_ok: url}, missing_tenant=t_miss),
+        secrets=_tenant_dsns({t_ok: url}, missing_tenant=t_miss),
         secret_ref_for_tenant=_ref,
         tenant_provider=tenant_get,
         max_cached_tenants=4,
@@ -333,7 +290,7 @@ async def test_routed_postgres_evict_unknown_and_secret_errors(postgres_containe
         await routed_miss.close()
 
     routed_break = RoutedPostgresClient(
-        secrets=_MemSecretsCallableTenant({t_ok: url}, broken_tenant=t_break),
+        secrets=_tenant_dsns({t_ok: url}, broken_tenant=t_break),
         secret_ref_for_tenant=_ref,
         tenant_provider=tenant_get,
         max_cached_tenants=4,
@@ -347,7 +304,7 @@ async def test_routed_postgres_evict_unknown_and_secret_errors(postgres_containe
         await routed_break.close()
 
     routed_ok = RoutedPostgresClient(
-        secrets=_MemSecretsCallableTenant({t_ok: url}),
+        secrets=_tenant_dsns({t_ok: url}),
         secret_ref_for_tenant=_ref,
         tenant_provider=tenant_get,
         max_cached_tenants=4,

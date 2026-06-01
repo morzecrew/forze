@@ -46,7 +46,7 @@ async def test_s3_client_bucket_and_object_crud(
         )
         assert total_count == 1
         assert len(items) == 1
-        assert items[0]["Key"] == key
+        assert items[0].key == key
 
         await s3_client.delete_object(s3_bucket, key)
         assert not await s3_client.object_exists(s3_bucket, key)

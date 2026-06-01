@@ -24,6 +24,11 @@ from forze.application.contracts.idempotency import (
     IdempotencyPort,
     IdempotencySpec,
 )
+from forze.application.contracts.outbox import (
+    OutboxCommandDepKey,
+    OutboxQueryDepKey,
+    OutboxSpec,
+)
 from forze.application.contracts.pubsub import (
     PubSubCommandDepKey,
     PubSubQueryDepKey,
@@ -48,6 +53,7 @@ from forze.application.contracts.transaction import (
 )
 from forze.application.execution import Deps, DepsModule, ExecutionContext
 
+from .outbox_adapter import MockOutboxAdapter
 from .adapters import (
     MockAnalyticsAdapter,
     MockCacheAdapter,
@@ -228,6 +234,20 @@ class ConfigurableMockStreamGroup:
         return MockStreamGroupAdapter(stream=stream, state=state, namespace=spec.name)
 
 
+@final
+@attrs.define(slots=True, frozen=True, kw_only=True)
+class ConfigurableMockOutbox:
+    """Build a :class:`MockOutboxAdapter` for any outbox spec route."""
+
+    def __call__(
+        self,
+        context: ExecutionContext,
+        spec: OutboxSpec[Any],
+    ) -> MockOutboxAdapter[Any]:
+        state = context.deps.provide(MockStateDepKey)
+        return MockOutboxAdapter(ctx=context, spec=spec, state=state)
+
+
 def mock_txmanager(context: ExecutionContext) -> TransactionManagerPort:
     """Build a no-op transaction manager for mock environments."""
     del context
@@ -268,5 +288,7 @@ class MockDepsModule(DepsModule):
                 StreamQueryDepKey: ConfigurableMockStream(),
                 StreamCommandDepKey: ConfigurableMockStream(),
                 StreamGroupQueryDepKey: ConfigurableMockStreamGroup(),
+                OutboxCommandDepKey: ConfigurableMockOutbox(),
+                OutboxQueryDepKey: ConfigurableMockOutbox(),
             }
         )

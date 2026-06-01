@@ -39,6 +39,11 @@ from forze.application.contracts.analytics import (
     AnalyticsRunOptions,
     AnalyticsSpec,
 )
+from forze.application.integrations.document._limits import (
+    DEFAULT_MAX_STREAM_PAGES,
+    assert_cursor_advanced,
+    check_page_limit,
+)
 from forze.application.contracts.analytics.specs import AnalyticsQueryDefinition
 from forze.application.contracts.base import (
     CountlessPage,
@@ -180,6 +185,9 @@ class MockState:
 
     analytics_ingest_log: dict[str, list[JsonDict]] = attrs.field(factory=dict)
     """Route → appended ingest rows."""
+
+    outbox_rows: dict[str, list[Any]] = attrs.field(factory=dict)
+    """Route → staged outbox rows (:class:`~forze_mock.outbox_adapter.MockOutboxRow`)."""
 
     # non-initable
     __lock: threading.RLock = attrs.field(
@@ -1375,16 +1383,35 @@ class MockDocumentAdapter(
         *,
         sorts: QuerySortExpression | None = None,
         chunk_size: int = 500,
+        max_stream_pages: int | None = DEFAULT_MAX_STREAM_PAGES,
     ) -> AsyncGenerator[Sequence[R]]:
         cursor: CursorPaginationExpression | None = {"limit": chunk_size}
+        page_num = 0
+        prev_cursor: str | None = None
+
         while True:
+            check_page_limit(
+                pages=page_num,
+                max_pages=max_stream_pages,
+                label="Mock find_stream",
+            )
             page = await self.find_cursor(filters=filters, cursor=cursor, sorts=sorts)
+
             if not page.hits:
                 break
+
             yield page.hits
+
             if not page.has_more or page.next_cursor is None:
                 break
+
+            assert_cursor_advanced(
+                prev_cursor=prev_cursor,
+                next_cursor=page.next_cursor,
+            )
+            prev_cursor = page.next_cursor
             cursor = {"limit": chunk_size, "after": page.next_cursor}
+            page_num += 1
 
     # ....................... #
 
@@ -1395,21 +1422,40 @@ class MockDocumentAdapter(
         *,
         sorts: QuerySortExpression | None = None,
         chunk_size: int = 500,
+        max_stream_pages: int | None = DEFAULT_MAX_STREAM_PAGES,
     ) -> AsyncGenerator[Sequence[JsonDict]]:
         cursor: CursorPaginationExpression | None = {"limit": chunk_size}
+        page_num = 0
+        prev_cursor: str | None = None
+
         while True:
+            check_page_limit(
+                pages=page_num,
+                max_pages=max_stream_pages,
+                label="Mock project_stream",
+            )
             page = await self.project_cursor(
                 fields,
                 filters=filters,
                 cursor=cursor,
                 sorts=sorts,
             )
+
             if not page.hits:
                 break
+
             yield page.hits
+
             if not page.has_more or page.next_cursor is None:
                 break
+
+            assert_cursor_advanced(
+                prev_cursor=prev_cursor,
+                next_cursor=page.next_cursor,
+            )
+            prev_cursor = page.next_cursor
             cursor = {"limit": chunk_size, "after": page.next_cursor}
+            page_num += 1
 
     # ....................... #
 
@@ -1420,21 +1466,40 @@ class MockDocumentAdapter(
         *,
         sorts: QuerySortExpression | None = None,
         chunk_size: int = 500,
+        max_stream_pages: int | None = DEFAULT_MAX_STREAM_PAGES,
     ) -> AsyncGenerator[Sequence[T]]:
         cursor: CursorPaginationExpression | None = {"limit": chunk_size}
+        page_num = 0
+        prev_cursor: str | None = None
+
         while True:
+            check_page_limit(
+                pages=page_num,
+                max_pages=max_stream_pages,
+                label="Mock select_stream",
+            )
             page = await self.select_cursor(
                 return_type,
                 filters=filters,
                 cursor=cursor,
                 sorts=sorts,
             )
+
             if not page.hits:
                 break
+
             yield page.hits
+
             if not page.has_more or page.next_cursor is None:
                 break
+
+            assert_cursor_advanced(
+                prev_cursor=prev_cursor,
+                next_cursor=page.next_cursor,
+            )
+            prev_cursor = page.next_cursor
             cursor = {"limit": chunk_size, "after": page.next_cursor}
+            page_num += 1
 
     @overload
     async def _mock_cursor_page(

@@ -28,7 +28,7 @@ Each infrastructure concern usually follows the same shape:
 | Component | Role | Example |
 |-----------|------|---------|
 | **Spec** | Declarative runtime configuration owned by the application layer | `DocumentSpec[R, D, C, U]` |
-| **Port** | Protocol interface consumed by handlers and coordinators | `DocumentQueryPort[R]` |
+| **Port** | Protocol interface consumed by handlers and adapters | `DocumentQueryPort[R]` |
 | **Value type** | TypedDict or attrs object returned by a port | `QueueMessage[M]` |
 | **DepPort** | Factory protocol that builds a port from `ExecutionContext` and a spec | `QueueCommandDepPort` |
 | **DepKey** | Typed container key used when registering factories | `QueueCommandDepKey` |

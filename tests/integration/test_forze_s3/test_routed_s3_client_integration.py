@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-from forze.base.exceptions import CoreException, exc
 import json
-from collections.abc import Callable
 from unittest.mock import patch
 from uuid import UUID, uuid4
 
@@ -14,15 +12,22 @@ pytest.importorskip("aioboto3")
 pytest.importorskip("testcontainers")
 
 from forze.application.contracts.secrets import SecretRef
+from forze.base.exceptions import CoreException
 from forze_s3.kernel.client import RoutedS3Client, S3Client, S3Config
 
 from tests.integration._routed_lru_helpers import s3_payloads_for_lru_eviction
+from tests.support.secrets_fixtures import (
+    MemSecretsByPath,
+    MemSecretsTenantJson,
+    tenant_holder,
+    tenant_secret_ref,
+)
 
 MINIO_ROOT_USER = "minioadmin"
 MINIO_ROOT_PASSWORD = "minioadmin"
 
-def _ref(tid: UUID) -> SecretRef:
-    return SecretRef(path=f"tenants/{tid}/s3")
+_S3_SUFFIX = "s3"
+
 
 def _payload(endpoint: str) -> dict[str, str]:
     return {
@@ -31,73 +36,31 @@ def _payload(endpoint: str) -> dict[str, str]:
         "secret_access_key": MINIO_ROOT_PASSWORD,
     }
 
-class _MemSecretsJson:
-    """JSON blobs per tenant path or arbitrary path (mapping refs)."""
 
-    def __init__(
-        self,
-        path_to_json: dict[str, str],
-        *,
-        missing_path: str | None = None,
-        broken_path: str | None = None,
-    ) -> None:
-        self._paths = path_to_json
-        self._missing_path = missing_path
-        self._broken_path = broken_path
+def _ref(tenant_id: UUID) -> SecretRef:
+    return tenant_secret_ref(tenant_id, _S3_SUFFIX)
 
-    async def resolve_str(self, ref: SecretRef) -> str:
-        if self._broken_path is not None and ref.path == self._broken_path:
-            raise RuntimeError("vault unavailable")
-        if self._missing_path is not None and ref.path == self._missing_path:
-            raise exc.not_found(
-                f"No secret for {ref.path!r}",
-                details={"ref": ref.path},
-            )
-        try:
-            return self._paths[ref.path]
-        except KeyError as e:
-            raise exc.not_found(
-                f"No secret for {ref.path!r}",
-                details={"ref": ref.path},
-            ) from e
 
-    async def exists(self, ref: SecretRef) -> bool:
-        return ref.path in self._paths
-
-class _MemSecretsTenantJson(_MemSecretsJson):
-    def __init__(
-        self,
-        payloads: dict[UUID, dict[str, str]],
-        *,
-        missing_tenant: UUID | None = None,
-        broken_tenant: UUID | None = None,
-    ) -> None:
-        paths = {
-            f"tenants/{tid}/s3": json.dumps(payload)
-            for tid, payload in payloads.items()
-        }
-        mp = f"tenants/{missing_tenant}/s3" if missing_tenant else None
-        bp = f"tenants/{broken_tenant}/s3" if broken_tenant else None
-        super().__init__(paths, missing_path=mp, broken_path=bp)
-
-def _tenant_holder() -> tuple[Callable[[], UUID | None], Callable[[UUID | None], None]]:
-    slot: list[UUID | None] = [None]
-
-    def getter() -> UUID | None:
-        return slot[0]
-
-    def setter(value: UUID | None) -> None:
-        slot[0] = value
-
-    return getter, setter
+def _tenant_json(
+    payloads: dict[UUID, dict[str, str]],
+    *,
+    missing_tenant: UUID | None = None,
+    broken_tenant: UUID | None = None,
+) -> MemSecretsTenantJson:
+    return MemSecretsTenantJson(
+        resource_suffix=_S3_SUFFIX,
+        payloads_by_tenant=payloads,
+        missing_tenant=missing_tenant,
+        broken_tenant=broken_tenant,
+    )
 
 @pytest.mark.integration
 @pytest.mark.asyncio
 async def test_routed_s3_health_and_object_crud(minio_container) -> None:
     _container, endpoint = minio_container
     t1 = uuid4()
-    secrets = _MemSecretsTenantJson({t1: _payload(endpoint)})
-    tenant_get, tenant_set = _tenant_holder()
+    secrets = _tenant_json({t1: _payload(endpoint)})
+    tenant_get, tenant_set = tenant_holder()
     cfg = S3Config(s3={"addressing_style": "path"})
 
     routed = RoutedS3Client(
@@ -149,7 +112,7 @@ async def test_routed_s3_health_and_object_crud(minio_container) -> None:
             bucket, prefix="docs", limit=10, offset=0
         )
         assert total == 1 and len(items) == 1
-        assert items[0]["Key"] == key
+        assert items[0].key == key
 
         await routed.delete_object(bucket, key)
         assert not await routed.object_exists(bucket, key)
@@ -162,8 +125,8 @@ async def test_routed_s3_mapping_secret_ref(minio_container) -> None:
     _container, endpoint = minio_container
     t1 = uuid4()
     custom = SecretRef(path=f"cfg/s3/{uuid4().hex[:12]}")
-    secrets = _MemSecretsJson({custom.path: json.dumps(_payload(endpoint))})
-    tenant_get, tenant_set = _tenant_holder()
+    secrets = MemSecretsByPath({custom.path: json.dumps(_payload(endpoint))})
+    tenant_get, tenant_set = tenant_holder()
     cfg = S3Config(s3={"addressing_style": "path"})
 
     routed = RoutedS3Client(
@@ -185,8 +148,8 @@ async def test_routed_s3_mapping_secret_ref(minio_container) -> None:
 async def test_routed_s3_requires_startup_and_tenant(minio_container) -> None:
     _container, endpoint = minio_container
     t1 = uuid4()
-    secrets = _MemSecretsTenantJson({t1: _payload(endpoint)})
-    tenant_get, tenant_set = _tenant_holder()
+    secrets = _tenant_json({t1: _payload(endpoint)})
+    tenant_get, tenant_set = tenant_holder()
 
     routed = RoutedS3Client(
         secrets=secrets,
@@ -211,9 +174,9 @@ async def test_routed_s3_requires_startup_and_tenant(minio_container) -> None:
 async def test_routed_s3_secret_errors(minio_container) -> None:
     _container, endpoint = minio_container
     t_ok, t_miss, t_break = uuid4(), uuid4(), uuid4()
-    tenant_get, tenant_set = _tenant_holder()
+    tenant_get, tenant_set = tenant_holder()
 
-    miss = _MemSecretsTenantJson({t_ok: _payload(endpoint)}, missing_tenant=t_miss)
+    miss = _tenant_json({t_ok: _payload(endpoint)}, missing_tenant=t_miss)
     r1 = RoutedS3Client(
         secrets=miss,
         secret_ref_for_tenant=_ref,
@@ -228,7 +191,7 @@ async def test_routed_s3_secret_errors(minio_container) -> None:
     finally:
         await r1.close()
 
-    br = _MemSecretsTenantJson({t_ok: _payload(endpoint)}, broken_tenant=t_break)
+    br = _tenant_json({t_ok: _payload(endpoint)}, broken_tenant=t_break)
     r2 = RoutedS3Client(
         secrets=br,
         secret_ref_for_tenant=_ref,
@@ -248,10 +211,8 @@ async def test_routed_s3_secret_errors(minio_container) -> None:
 async def test_routed_s3_invalid_json_raises_core_error(minio_container) -> None:
     _container, endpoint = minio_container
     t1 = uuid4()
-    secrets = _MemSecretsJson(
-        {f"tenants/{t1}/s3": "{not-valid-json"},
-    )
-    tenant_get, tenant_set = _tenant_holder()
+    secrets = MemSecretsByPath({f"tenants/{t1}/{_S3_SUFFIX}": "{not-valid-json"})
+    tenant_get, tenant_set = tenant_holder()
 
     routed = RoutedS3Client(
         secrets=secrets,
@@ -273,10 +234,10 @@ async def test_routed_s3_lru_and_evict(minio_container) -> None:
     _container, endpoint = minio_container
     t1, t2, t3 = uuid4(), uuid4(), uuid4()
     p = _payload(endpoint)
-    secrets = _MemSecretsTenantJson(
+    secrets = _tenant_json(
         s3_payloads_for_lru_eviction(endpoint, t1, t2, t3, base_payload=p),
     )
-    tenant_get, tenant_set = _tenant_holder()
+    tenant_get, tenant_set = tenant_holder()
     cfg = S3Config(s3={"addressing_style": "path"})
 
     routed = RoutedS3Client(

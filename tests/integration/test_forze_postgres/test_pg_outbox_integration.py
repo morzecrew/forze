@@ -1,0 +1,383 @@
+"""Integration tests for Postgres outbox adapter.
+
+# covers: OutboxCommandPort.flush
+# covers: OutboxQueryPort.claim_pending
+# covers: OutboxQueryPort.mark_published
+# covers: OutboxQueryPort.reclaim_stale_processing
+"""
+
+from __future__ import annotations
+
+from datetime import timedelta
+from uuid import uuid4
+
+import pytest
+from pydantic import BaseModel
+from psycopg import sql
+from psycopg.types.json import Jsonb
+
+from forze.application.composition.outbox import relay_outbox_to_queue
+from forze.application.contracts.outbox import (
+    IntegrationEvent,
+    OutboxDestination,
+    OutboxSpec,
+    OutboxStatus,
+)
+from forze.base.primitives import utcnow
+from forze.application.contracts.queue import QueueSpec
+from forze.application.contracts.queue import QueueCommandDepKey, QueueQueryDepKey
+from forze.application.execution import Deps, DepsRegistry, ExecutionRuntime
+from forze.base.serialization import PydanticRecordMappingCodec
+from forze_postgres.execution.deps import PostgresDepsModule
+from forze_postgres.execution.deps.configs import PostgresOutboxConfig
+from forze_postgres.kernel.client import PostgresClient
+from forze_mock import MockStateDepKey
+from forze_mock.adapters import MockState
+from forze_mock.execution import ConfigurableMockQueue
+
+
+class _OutboxPayload(BaseModel):
+    label: str
+
+
+@pytest.fixture
+async def outbox_table(pg_client: PostgresClient) -> str:
+    """Create a dedicated outbox table and return its qualified name suffix."""
+
+    schema = "public"
+    table = f"outbox_{uuid4().hex[:8]}"
+
+    await pg_client.execute(
+        sql.SQL(
+            """
+            CREATE TABLE {table} (
+                id UUID PRIMARY KEY,
+                outbox_route TEXT NOT NULL,
+                event_id UUID NOT NULL,
+                event_type TEXT NOT NULL,
+                tenant_id UUID,
+                execution_id UUID,
+                correlation_id UUID,
+                causation_id UUID,
+                occurred_at TIMESTAMPTZ NOT NULL,
+                payload JSONB NOT NULL,
+                status TEXT NOT NULL,
+                created_at TIMESTAMPTZ NOT NULL,
+                published_at TIMESTAMPTZ,
+                processing_at TIMESTAMPTZ,
+                last_error TEXT,
+                UNIQUE (outbox_route, event_id)
+            )
+            """
+        ).format(table=sql.Identifier(schema, table))
+    )
+
+    yield table
+
+    await pg_client.execute(
+        sql.SQL("DROP TABLE IF EXISTS {table}").format(
+            table=sql.Identifier(schema, table)
+        )
+    )
+
+
+@pytest.mark.asyncio
+async def test_outbox_flush_commits_with_transaction(
+    pg_client: PostgresClient,
+    outbox_table: str,
+) -> None:
+    codec = PydanticRecordMappingCodec(_OutboxPayload)
+    outbox_spec = OutboxSpec(name="integration", codec=codec)
+    pg_module = PostgresDepsModule(
+        client=pg_client,
+        tx={"default"},
+        outboxes={
+            "integration": PostgresOutboxConfig(
+                relation=("public", outbox_table),
+            ),
+        },
+    )
+    runtime = ExecutionRuntime(deps=DepsRegistry.from_modules(pg_module))
+
+    async with runtime.scope():
+        ctx = runtime.get_context()
+        async with ctx.tx_ctx.scope("default"):
+            outbox = ctx.outbox.command(outbox_spec)
+            await outbox.stage("demo.created", _OutboxPayload(label="ok"))
+            assert await outbox.flush() == 1
+
+        rows = await pg_client.fetch_all(
+            sql.SQL("SELECT status FROM {t} WHERE outbox_route = %s").format(
+                t=sql.Identifier("public", outbox_table)
+            ),
+            ("integration",),
+        )
+
+    assert len(rows) == 1
+    assert rows[0]["status"] == "pending"
+
+
+@pytest.mark.asyncio
+async def test_outbox_rollback_discards_staged_rows(
+    pg_client: PostgresClient,
+    outbox_table: str,
+) -> None:
+    codec = PydanticRecordMappingCodec(_OutboxPayload)
+    outbox_spec = OutboxSpec(name="integration", codec=codec)
+    pg_module = PostgresDepsModule(
+        client=pg_client,
+        tx={"default"},
+        outboxes={
+            "integration": PostgresOutboxConfig(
+                relation=("public", outbox_table),
+            ),
+        },
+    )
+    runtime = ExecutionRuntime(deps=DepsRegistry.from_modules(pg_module))
+
+    async with runtime.scope():
+        ctx = runtime.get_context()
+        with pytest.raises(RuntimeError):
+            async with ctx.tx_ctx.scope("default"):
+                await ctx.outbox.command(outbox_spec).stage(
+                    "demo.created",
+                    _OutboxPayload(label="rollback"),
+                )
+                raise RuntimeError("abort")
+
+        rows = await pg_client.fetch_all(
+            sql.SQL("SELECT id FROM {t}").format(
+                t=sql.Identifier("public", outbox_table)
+            )
+        )
+
+    assert rows == []
+
+
+@pytest.mark.asyncio
+async def test_outbox_relay_to_mock_queue(
+    pg_client: PostgresClient,
+    outbox_table: str,
+) -> None:
+    codec = PydanticRecordMappingCodec(_OutboxPayload)
+    outbox_spec = OutboxSpec(
+        name="integration",
+        codec=codec,
+        destination=OutboxDestination(queue_route="relay", queue="relay"),
+    )
+    queue_spec = QueueSpec(name="relay", codec=codec)
+    pg_module = PostgresDepsModule(
+        client=pg_client,
+        tx={"default"},
+        outboxes={
+            "integration": PostgresOutboxConfig(
+                relation=("public", outbox_table),
+            ),
+        },
+    )
+    shared_state = MockState()
+    mock_queue_deps = Deps.plain({MockStateDepKey: shared_state}).merge(
+        Deps.routed(
+            {
+                QueueCommandDepKey: {"relay": ConfigurableMockQueue()},
+                QueueQueryDepKey: {"relay": ConfigurableMockQueue()},
+            }
+        )
+    )
+    runtime = ExecutionRuntime(
+        deps=DepsRegistry.from_modules(pg_module).with_deps(mock_queue_deps),
+    )
+
+    async with runtime.scope():
+        ctx = runtime.get_context()
+        async with ctx.tx_ctx.scope("default"):
+            await ctx.outbox.command(outbox_spec).stage(
+                "demo.created",
+                _OutboxPayload(label="relay"),
+            )
+            await ctx.outbox.command(outbox_spec).flush()
+
+        result = await relay_outbox_to_queue(
+            ctx,
+            outbox_spec=outbox_spec,
+            queue_spec=queue_spec,
+        )
+
+    assert result.published == 1
+    state = shared_state
+
+    assert len(state.queues["relay"]["relay"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_outbox_bulk_flush_writes_multiple_rows(
+    pg_client: PostgresClient,
+    outbox_table: str,
+) -> None:
+    codec = PydanticRecordMappingCodec(_OutboxPayload)
+    outbox_spec = OutboxSpec(name="integration", codec=codec)
+    pg_module = PostgresDepsModule(
+        client=pg_client,
+        tx={"default"},
+        outboxes={
+            "integration": PostgresOutboxConfig(
+                relation=("public", outbox_table),
+            ),
+        },
+    )
+    runtime = ExecutionRuntime(deps=DepsRegistry.from_modules(pg_module))
+
+    async with runtime.scope():
+        ctx = runtime.get_context()
+        async with ctx.tx_ctx.scope("default"):
+            outbox = ctx.outbox.command(outbox_spec)
+            await outbox.stage_many(
+                [
+                    ("a", _OutboxPayload(label="one")),
+                    ("b", _OutboxPayload(label="two")),
+                    ("c", _OutboxPayload(label="three")),
+                ]
+            )
+            assert await outbox.flush() == 3
+
+        rows = await pg_client.fetch_all(
+            sql.SQL("SELECT id FROM {t} WHERE outbox_route = %s").format(
+                t=sql.Identifier("public", outbox_table)
+            ),
+            ("integration",),
+        )
+
+    assert len(rows) == 3
+
+
+@pytest.mark.asyncio
+async def test_outbox_duplicate_event_id_flush_is_idempotent(
+    pg_client: PostgresClient,
+    outbox_table: str,
+) -> None:
+    codec = PydanticRecordMappingCodec(_OutboxPayload)
+    outbox_spec = OutboxSpec(name="integration", codec=codec)
+    pg_module = PostgresDepsModule(
+        client=pg_client,
+        tx={"default"},
+        outboxes={
+            "integration": PostgresOutboxConfig(
+                relation=("public", outbox_table),
+            ),
+        },
+    )
+    runtime = ExecutionRuntime(deps=DepsRegistry.from_modules(pg_module))
+    event_id = uuid4()
+
+    async with runtime.scope():
+        ctx = runtime.get_context()
+        async with ctx.tx_ctx.scope("default"):
+            outbox = ctx.outbox.command(outbox_spec)
+            await outbox.stage_event(
+                IntegrationEvent(
+                    event_type="demo.created",
+                    payload=_OutboxPayload(label="first"),
+                    event_id=event_id,
+                )
+            )
+            assert await outbox.flush() == 1
+
+    async with runtime.scope():
+        ctx = runtime.get_context()
+        async with ctx.tx_ctx.scope("default"):
+            outbox = ctx.outbox.command(outbox_spec)
+            await outbox.stage_event(
+                IntegrationEvent(
+                    event_type="demo.created",
+                    payload=_OutboxPayload(label="second"),
+                    event_id=event_id,
+                )
+            )
+            assert await outbox.flush() == 0
+
+    rows = await pg_client.fetch_all(
+        sql.SQL("SELECT payload FROM {t} WHERE event_id = %s").format(
+            t=sql.Identifier("public", outbox_table)
+        ),
+        (event_id,),
+    )
+
+    assert len(rows) == 1
+    assert rows[0]["payload"]["label"] == "first"
+
+
+@pytest.mark.asyncio
+async def test_outbox_relay_reclaims_stale_processing(
+    pg_client: PostgresClient,
+    outbox_table: str,
+) -> None:
+    codec = PydanticRecordMappingCodec(_OutboxPayload)
+    outbox_spec = OutboxSpec(
+        name="integration",
+        codec=codec,
+        destination=OutboxDestination(queue_route="relay", queue="relay"),
+    )
+    queue_spec = QueueSpec(name="relay", codec=codec)
+    pg_module = PostgresDepsModule(
+        client=pg_client,
+        tx={"default"},
+        outboxes={
+            "integration": PostgresOutboxConfig(
+                relation=("public", outbox_table),
+            ),
+        },
+    )
+    shared_state = MockState()
+    mock_queue_deps = Deps.plain({MockStateDepKey: shared_state}).merge(
+        Deps.routed(
+            {
+                QueueCommandDepKey: {"relay": ConfigurableMockQueue()},
+                QueueQueryDepKey: {"relay": ConfigurableMockQueue()},
+            }
+        )
+    )
+    runtime = ExecutionRuntime(
+        deps=DepsRegistry.from_modules(pg_module).with_deps(mock_queue_deps),
+    )
+    row_id = uuid4()
+    event_id = uuid4()
+    stale_at = utcnow() - timedelta(hours=1)
+
+    async with runtime.scope():
+        ctx = runtime.get_context()
+        await pg_client.execute(
+            sql.SQL(
+                """
+                INSERT INTO {t} (
+                    id, outbox_route, event_id, event_type,
+                    occurred_at, payload, status, created_at, processing_at
+                ) VALUES (
+                    %(id)s, %(route)s, %(event_id)s, %(event_type)s,
+                    %(occurred_at)s, %(payload)s, %(status)s, %(created_at)s,
+                    %(processing_at)s
+                )
+                """
+            ).format(t=sql.Identifier("public", outbox_table)),
+            {
+                "id": row_id,
+                "route": "integration",
+                "event_id": event_id,
+                "event_type": "demo.created",
+                "occurred_at": utcnow(),
+                "payload": Jsonb({"label": "stale"}),
+                "status": OutboxStatus.PROCESSING.value,
+                "created_at": utcnow(),
+                "processing_at": stale_at,
+            },
+        )
+
+        result = await relay_outbox_to_queue(
+            ctx,
+            outbox_spec=outbox_spec,
+            queue_spec=queue_spec,
+            reclaim_stale_after=timedelta(minutes=5),
+        )
+
+    assert result.reclaimed >= 1
+    assert result.published == 1
+    assert len(shared_state.queues["relay"]["relay"]) == 1

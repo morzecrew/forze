@@ -18,7 +18,7 @@ from forze.application.contracts.search import (
     effective_phrase_combine,
     normalize_search_queries,
 )
-from forze.application.coordinators import SearchResultSnapshotCoordinator
+from forze.application.integrations.search import SearchResultSnapshot
 from forze.base.primitives import JsonDict
 from forze.base.serialization import pydantic_validate_many
 from forze_meilisearch.adapters.search._search_params import (
@@ -59,13 +59,13 @@ async def execute_meilisearch_offset_search[M: BaseModel](
     return_count: bool,
     return_type: type[BaseModel] | None,
     return_fields: Sequence[str] | None,
-    snapshot_coord: SearchResultSnapshotCoordinator | None,
+    result_snapshot: SearchResultSnapshot | None,
 ) -> Any:
     terms = tuple(normalize_search_queries(query))
     combine = effective_phrase_combine(options)
     q = build_search_query_string(terms, combine=combine)
 
-    fp_fingerprint = SearchResultSnapshotCoordinator.simple_search_fingerprint(
+    fp_fingerprint = SearchResultSnapshot.simple_search_fingerprint(
         query,
         filters,
         sorts,
@@ -77,8 +77,8 @@ async def execute_meilisearch_offset_search[M: BaseModel](
     pagination_dict: dict[str, Any] = dict(pagination or {})
     rs_spec = spec.snapshot
 
-    if snapshot_coord is not None and rs_spec is not None:
-        maybe_snap: Any = await snapshot_coord.read_simple_result_snapshot(
+    if result_snapshot is not None and rs_spec is not None:
+        maybe_snap: Any = await result_snapshot.read_simple_result_snapshot(
             rs_spec=rs_spec,
             snap_opt=snapshot,
             fp_computed=fp_fingerprint,
@@ -146,16 +146,16 @@ async def execute_meilisearch_offset_search[M: BaseModel](
         page_rows = pydantic_validate_many(gw.spec.model_type, rows)  # type: ignore[assignment]
 
     want_snap = (
-        snapshot_coord is not None
+        result_snapshot is not None
         and rs_spec is not None
-        and snapshot_coord.should_write_result_snapshot(snapshot, rs_spec)
+        and result_snapshot.should_write_result_snapshot(snapshot, rs_spec)
     )
 
     handle_out = None
 
-    if want_snap and snapshot_coord is not None and rs_spec is not None:
+    if want_snap and result_snapshot is not None and rs_spec is not None:
         pool_models = pydantic_validate_many(gw.spec.model_type, rows)
-        handle_out = await snapshot_coord.put_simple_ordered_hits(
+        handle_out = await result_snapshot.put_simple_ordered_hits(
             pool_models,
             snap_opt=snapshot,
             rs_spec=rs_spec,

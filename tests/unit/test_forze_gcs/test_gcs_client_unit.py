@@ -79,7 +79,7 @@ async def test_list_objects_applies_offset_and_limit() -> None:
         offset=1,
     )
 
-    assert [item.Key for item in items] == ["b", "c"]
+    assert [item.key for item in items] == ["b", "c"]
     assert total_count == 4
     bucket_ref.list_blobs.assert_awaited_once_with(prefix="")
 

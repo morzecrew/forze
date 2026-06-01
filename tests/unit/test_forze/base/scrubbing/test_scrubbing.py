@@ -1,7 +1,11 @@
 """Unit tests for forze.base.scrubbing."""
 
 import pytest
+from hypothesis import given
+from hypothesis import strategies as st
 from pydantic import BaseModel, EmailStr, SecretStr, ValidationError
+
+from tests.support.hypothesis_strategies import integration_hypothesis_settings
 
 from forze.base.scrubbing import (
     SECRET_PLACEHOLDER,
@@ -113,3 +117,16 @@ class TestDumpBoundArgsForErrors:
         ctx = dump_bound_args_for_errors({"dto": model, "limit": 10})
         assert ctx["limit"] == 10
         assert ctx["dto"]["password"] == SECRET_PLACEHOLDER
+
+
+@integration_hypothesis_settings
+@given(
+    key=st.text(min_size=1, max_size=12, alphabet=st.characters(blacklist_categories=("Cs",))),
+    value=st.text(min_size=0, max_size=24),
+)
+def test_sanitize_log_masks_nested_sensitive_keys(key: str, value: str) -> None:
+    sensitive_key = f"user_{key}_password"
+    data = {"outer": {sensitive_key: value, "safe": "ok"}}
+    result = sanitize(data, context="log")
+    assert result["outer"]["safe"] == "ok"
+    assert result["outer"][sensitive_key] == SECRET_PLACEHOLDER

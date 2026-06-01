@@ -13,6 +13,7 @@ from forze.application.contracts.document import (
     DocumentCommandDepKey,
     DocumentQueryDepKey,
 )
+from forze.application.contracts.outbox import OutboxCommandDepKey, OutboxQueryDepKey
 from forze.application.contracts.search import (
     FederatedSearchQueryDepKey,
     HubSearchQueryDepKey,
@@ -33,6 +34,7 @@ from ...kernel.catalog.validation.validate_tenancy import (
 from ...kernel.client import PostgresClientPort, RoutedPostgresClient
 from .configs import (
     PostgresAnalyticsConfig,
+    PostgresOutboxConfig,
     PostgresDocumentConfig,
     PostgresFederatedSearchConfig,
     PostgresFederatedSearchLegHub,
@@ -42,6 +44,7 @@ from .configs import (
 )
 from .factories import (
     ConfigurablePostgresAnalytics,
+    ConfigurablePostgresOutbox,
     ConfigurablePostgresDocument,
     ConfigurablePostgresFederatedSearch,
     ConfigurablePostgresHubSearch,
@@ -105,6 +108,9 @@ class PostgresDepsModule(DepsModule):
         default=None
     )
     """Mapping from analytics route names to their Postgres-specific configurations."""
+
+    outboxes: Mapping[StrKey, PostgresOutboxConfig] | None = attrs.field(default=None)
+    """Mapping from outbox route names to their Postgres-specific configurations."""
 
     # ....................... #
 
@@ -271,6 +277,7 @@ class PostgresDepsModule(DepsModule):
         federated_search_deps = Deps()
         tx_deps = Deps()
         analytics_deps = Deps()
+        outbox_deps = Deps()
 
         if self.ro_documents:
             doc_deps = doc_deps.merge(
@@ -364,6 +371,22 @@ class PostgresDepsModule(DepsModule):
                 )
             )
 
+        if self.outboxes:
+            outbox_deps = outbox_deps.merge(
+                Deps.routed(
+                    {
+                        OutboxCommandDepKey: {
+                            name: ConfigurablePostgresOutbox(config=config)
+                            for name, config in self.outboxes.items()
+                        },
+                        OutboxQueryDepKey: {
+                            name: ConfigurablePostgresOutbox(config=config)
+                            for name, config in self.outboxes.items()
+                        },
+                    }
+                )
+            )
+
         return plain_deps.merge(
             doc_deps,
             search_deps,
@@ -371,4 +394,5 @@ class PostgresDepsModule(DepsModule):
             hub_search_deps,
             federated_search_deps,
             analytics_deps,
+            outbox_deps,
         )

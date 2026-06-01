@@ -54,6 +54,10 @@ class RoutedPostgresClient(PostgresClientPort):
     LRU eviction never closes a pool that still has in-flight routed operations:
     evicted tenants move to a draining set until the last in-flight use of that pool
     finishes, then the pool is closed and the tenant slot may be recreated.
+
+    :meth:`_create_client` must not perform routed Postgres calls for the same tenant
+    while that tenant's pool is being created (reentrant :meth:`use` raises
+    :exc:`~forze.base.errors.exc.internal`).
     """
 
     secrets: SecretsPort

@@ -19,7 +19,7 @@ from ..configs import (
 )
 from ..configs.search import validate_fts_groups_for_search_spec
 from ..keys import PostgresClientDepKey
-from ._snapshot import snapshot_coord
+from ._snapshot import result_snapshot
 from .hub import ConfigurablePostgresHubSearch
 from .search import postgres_search_port_for_config
 
@@ -104,5 +104,5 @@ class ConfigurablePostgresFederatedSearch(FederatedSearchQueryDepPort):
             rrf_k=self.config.rrf_k,
             rrf_per_leg_limit=self.config.rrf_per_leg_limit,
             postgres_client=context.deps.provide(PostgresClientDepKey),
-            snapshot_coord=snapshot_coord(context, spec.snapshot),
+            result_snapshot=result_snapshot(context, spec.snapshot),
         )

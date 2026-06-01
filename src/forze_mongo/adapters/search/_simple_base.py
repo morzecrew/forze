@@ -21,7 +21,7 @@ from forze.application.contracts.search import (
     normalize_search_queries,
     search_options_for_simple_adapter,
 )
-from forze.application.coordinators import SearchResultSnapshotCoordinator
+from forze.application.integrations.search import SearchResultSnapshot
 from forze_mongo.kernel.client.port import MongoClientPort
 
 from ._cursor_run import execute_mongo_ranked_cursor_search
@@ -43,7 +43,7 @@ class MongoSimpleSearchAdapter[M: BaseModel](
     client: MongoClientPort
     """Mongo client for aggregation queries."""
 
-    snapshot_coord: SearchResultSnapshotCoordinator | None = attrs.field(default=None)
+    result_snapshot: SearchResultSnapshot | None = attrs.field(default=None)
     """Optional result-ID snapshot coordinator."""
 
     search_variant: str = "mongo"
@@ -111,7 +111,7 @@ class MongoSimpleSearchAdapter[M: BaseModel](
             return_count=return_count,
             return_type=return_type,
             return_fields=return_fields,
-            snapshot_coord=self.snapshot_coord,
+            result_snapshot=self.result_snapshot,
         )
 
     # ....................... #

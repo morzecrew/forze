@@ -225,25 +225,10 @@ omit = [
     "*/_version.py",
     "*/_compat.py",
     "*/_logging.py",
-    # DI lifecycle modules are integration/service wiring (containers, signals), not core library logic.
-    "*/forze_postgres/execution/lifecycle/pool.py",
-    "*/forze_mongo/execution/lifecycle/pool.py",
-    "*/forze_firestore/execution/lifecycle/pool.py",
-    "*/forze_redis/execution/lifecycle/pool.py",
-    "*/forze_s3/execution/lifecycle/pool.py",
-    "*/forze_gcs/execution/lifecycle/pool.py",
-    "*/forze_bigquery/execution/lifecycle/pool.py",
-    "*/forze_clickhouse/execution/lifecycle/pool.py",
-    "*/forze_rabbitmq/execution/lifecycle/pool.py",
-    "*/forze_sqs/execution/lifecycle/pool.py",
-    "*/forze_temporal/execution/lifecycle/pool.py",
-    "*/forze_inngest/execution/lifecycle/pool.py",
-    "*/forze_vault/execution/lifecycle/pool.py",
     # Temporal worker interceptors are exercised with a full SDK runtime.
     "*/forze_temporal/interceptors/*",
     # Redis deps module is exercised with a full SDK runtime.
     "*/forze_redis/execution/deps/module.py",
-    "*/forze_meilisearch/execution/lifecycle/pool.py",
     "*/forze_meilisearch/execution/deps/module.py",
     # Mock
     "*/forze_mock/*",
@@ -253,8 +238,9 @@ omit = [
 show_missing = true
 skip_covered = true
 sort = "cover"
-# fail_under = 90
 precision = 1
+# Core packages: enforced in CI (see .github/workflows/ci.yml).
+fail_under = 80
 exclude_lines = [
     "pragma: no cover",
     "if __name__ == .__main__.",
@@ -310,8 +296,10 @@ layers = [
     "forze.application.composition",
     "forze.application.handlers",
     "forze.application.hooks",
+    "forze.application.kit",
     "forze.application.execution",
     "forze.application.dto",
+    "forze.application.integrations",
     "forze.application.contracts",
 ]
 

@@ -137,7 +137,7 @@ Filters support a subset of `QueryFilterExpression` (`$eq`, `$neq`, order compar
 ## Federated search
 
 - **`merge="federation"`**: single `multi_search` with per-leg `federationOptions.weight` (from `SearchOptions.member_weights`; legs with weight ≤ 0 are skipped).
-- **`merge="rrf"`**: parallel per-leg `search`, merged with `SearchResultSnapshotCoordinator.weighted_rrf_merge_rows`, then caller sorts applied.
+- **`merge="rrf"`**: parallel per-leg `search`, merged with `SearchResultSnapshot.weighted_rrf_merge_rows`, then caller sorts applied.
 
 Snapshot fingerprints include `extras={"merge": "federation"}` or `extras={"merge": "rrf", "rrf_k": k}` so federation and RRF runs do not collide in Redis.
 

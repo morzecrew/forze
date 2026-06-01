@@ -1,0 +1,321 @@
+"""Postgres transactional outbox adapter."""
+
+from __future__ import annotations
+
+from collections.abc import Sequence
+from datetime import datetime
+from typing import Any, final
+from uuid import UUID
+
+import attrs
+from psycopg import sql
+from psycopg.types.json import Jsonb
+from pydantic import BaseModel
+
+from forze.application.contracts.outbox import (
+    IntegrationEvent,
+    OutboxClaim,
+    OutboxCommandPort,
+    OutboxQueryPort,
+    OutboxSpec,
+    OutboxStatus,
+    StagedOutboxEntry,
+)
+from forze.application.contracts.tenancy import TenancyMixin
+from forze.application.integrations.outbox import OutboxStaging
+from forze.application.execution.context import ExecutionContext
+from forze.base.exceptions import exc
+from forze.base.primitives import utcnow, uuid7
+from forze_postgres.execution.deps.configs.outbox import PostgresOutboxConfig
+from forze_postgres.kernel.client import PostgresClientPort
+from forze_postgres.kernel.gateways.base import PostgresQualifiedName
+from forze_postgres.kernel.relation import resolve_postgres_qname
+
+# ----------------------- #
+
+
+@final
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class PostgresOutboxAdapter[M: BaseModel](
+    TenancyMixin,
+    OutboxCommandPort[M],
+    OutboxQueryPort,
+):
+    """Postgres-backed outbox command and query port."""
+
+    ctx: ExecutionContext
+    client: PostgresClientPort
+    spec: OutboxSpec[M]
+    config: PostgresOutboxConfig
+
+    _staging: OutboxStaging[M] = attrs.field(init=False)
+
+    # ....................... #
+
+    def __attrs_post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "_staging",
+            OutboxStaging(
+                ctx=self.ctx,
+                spec=self.spec,
+                flush_rows=self._persist_rows,
+            ),
+        )
+
+    # ....................... #
+
+    async def _table(self) -> PostgresQualifiedName:
+        tenant_id = self.require_tenant_if_aware()
+        return await resolve_postgres_qname(self.config.relation, tenant_id)
+
+    # ....................... #
+
+    async def _persist_rows(self, rows: Sequence[StagedOutboxEntry]) -> int:
+        if not rows:
+            return 0
+
+        if len(rows) > self.config.max_flush_rows:
+            raise exc.internal(
+                f"Outbox flush exceeds max_flush_rows ({self.config.max_flush_rows})."
+            )
+
+        table = await self._table()
+        created_at = utcnow()
+        cols = (
+            "id",
+            "outbox_route",
+            "event_id",
+            "event_type",
+            "tenant_id",
+            "execution_id",
+            "correlation_id",
+            "causation_id",
+            "occurred_at",
+            "payload",
+            "status",
+            "created_at",
+        )
+        col_idents = [sql.Identifier(c) for c in cols]
+        row_template = (
+            sql.SQL("(")
+            + sql.SQL(", ").join(sql.Placeholder() for _ in cols)
+            + sql.SQL(")")
+        )
+        value_parts = [row_template] * len(rows)
+        flat_params: list[Any] = []
+
+        for entry in rows:
+            event = entry.event
+            flat_params.extend(
+                [
+                    uuid7(),
+                    entry.outbox_route,
+                    event.event_id,
+                    event.event_type,
+                    event.tenant_id,
+                    event.execution_id,
+                    event.correlation_id,
+                    event.causation_id,
+                    event.occurred_at,
+                    Jsonb(entry.payload_json),
+                    OutboxStatus.PENDING.value,
+                    created_at,
+                ]
+            )
+
+        stmt = sql.SQL(
+            """
+            INSERT INTO {table} ({cols})
+            VALUES {vals}
+            ON CONFLICT (outbox_route, event_id) DO NOTHING
+            """
+        ).format(
+            table=table.ident(),
+            cols=sql.SQL(", ").join(col_idents),
+            vals=sql.SQL(", ").join(value_parts),
+        )
+
+        rowcount = await self.client.execute(stmt, flat_params, return_rowcount=True)
+        return int(rowcount or 0)
+
+    # ....................... #
+
+    async def stage(
+        self,
+        event_type: str,
+        payload: M,
+        *,
+        event_id: UUID | None = None,
+        occurred_at: datetime | None = None,
+    ) -> None:
+        await self._staging.stage(
+            event_type,
+            payload,
+            event_id=event_id,
+            occurred_at=occurred_at,
+        )
+
+    async def stage_many(
+        self,
+        events: Sequence[tuple[str, M]],
+        *,
+        event_ids: Sequence[UUID] | None = None,
+    ) -> None:
+        await self._staging.stage_many(events, event_ids=event_ids)
+
+    async def stage_event(self, event: IntegrationEvent[M]) -> None:
+        await self._staging.stage_event(event)
+
+    async def flush(self) -> int:
+        return await self._staging.flush()
+
+    # ....................... #
+
+    async def claim_pending(
+        self,
+        *,
+        limit: int | None = None,
+    ) -> Sequence[OutboxClaim]:
+        table = await self._table()
+        max_n = limit if limit is not None else self.config.max_claim_rows
+        route = str(self.spec.name)
+        tenant_id = self.require_tenant_if_aware()
+
+        tenant_filter = sql.SQL("")
+        now = utcnow()
+        params: dict[str, Any] = {
+            "route": route,
+            "limit": max_n,
+            "pending": OutboxStatus.PENDING.value,
+            "processing": OutboxStatus.PROCESSING.value,
+            "processing_at": now,
+        }
+
+        if tenant_id is not None:
+            tenant_filter = sql.SQL("AND tenant_id = %(tenant_id)s")
+            params["tenant_id"] = tenant_id
+
+        stmt = sql.SQL(
+            """
+            WITH picked AS (
+                SELECT id
+                FROM {table}
+                WHERE outbox_route = %(route)s
+                  AND status = %(pending)s
+                  {tenant_filter}
+                ORDER BY created_at
+                LIMIT %(limit)s
+                FOR UPDATE SKIP LOCKED
+            )
+            UPDATE {table} AS t
+            SET status = %(processing)s,
+                processing_at = %(processing_at)s
+            FROM picked
+            WHERE t.id = picked.id
+            RETURNING
+                t.id, t.outbox_route, t.event_id, t.event_type, t.payload,
+                t.tenant_id, t.execution_id, t.correlation_id, t.causation_id,
+                t.occurred_at
+            """
+        ).format(table=table.ident(), tenant_filter=tenant_filter)
+
+        rows = await self.client.fetch_all(stmt, params)
+
+        return [
+            OutboxClaim(
+                id=row["id"],
+                outbox_route=row["outbox_route"],
+                event_id=row["event_id"],
+                event_type=row["event_type"],
+                payload=dict(row["payload"]),
+                tenant_id=row.get("tenant_id"),
+                execution_id=row.get("execution_id"),
+                correlation_id=row.get("correlation_id"),
+                causation_id=row.get("causation_id"),
+                occurred_at=row.get("occurred_at"),
+            )
+            for row in rows
+        ]
+
+    async def mark_published(self, ids: Sequence[UUID]) -> int:
+        return await self._mark(ids, OutboxStatus.PUBLISHED)
+
+    async def mark_failed(
+        self,
+        ids: Sequence[UUID],
+        *,
+        error: str | None = None,
+    ) -> int:
+        return await self._mark(ids, OutboxStatus.FAILED, error=error)
+
+    async def _mark(
+        self,
+        ids: Sequence[UUID],
+        status: OutboxStatus,
+        *,
+        error: str | None = None,
+    ) -> int:
+        if not ids:
+            return 0
+
+        table = await self._table()
+        now = utcnow()
+        params: dict[str, Any] = {
+            "ids": list(ids),
+            "status": status.value,
+            "processing": OutboxStatus.PROCESSING.value,
+            "published_at": now if status == OutboxStatus.PUBLISHED else None,
+            "last_error": error,
+        }
+
+        stmt = sql.SQL(
+            """
+            UPDATE {table}
+            SET status = %(status)s,
+                published_at = COALESCE(%(published_at)s, published_at),
+                last_error = %(last_error)s
+            WHERE id = ANY(%(ids)s::uuid[])
+              AND status = %(processing)s
+            """
+        ).format(table=table.ident())
+
+        rowcount = await self.client.execute(stmt, params, return_rowcount=True)
+        return int(rowcount or 0)
+
+    async def reclaim_stale_processing(
+        self,
+        *,
+        older_than: datetime,
+    ) -> int:
+        table = await self._table()
+        route = str(self.spec.name)
+        tenant_id = self.require_tenant_if_aware()
+
+        tenant_filter = sql.SQL("")
+        params: dict[str, Any] = {
+            "route": route,
+            "older_than": older_than,
+            "pending": OutboxStatus.PENDING.value,
+            "processing": OutboxStatus.PROCESSING.value,
+        }
+
+        if tenant_id is not None:
+            tenant_filter = sql.SQL("AND tenant_id = %(tenant_id)s")
+            params["tenant_id"] = tenant_id
+
+        stmt = sql.SQL(
+            """
+            UPDATE {table}
+            SET status = %(pending)s,
+                processing_at = NULL
+            WHERE outbox_route = %(route)s
+              AND status = %(processing)s
+              AND processing_at IS NOT NULL
+              AND processing_at < %(older_than)s
+              {tenant_filter}
+            """
+        ).format(table=table.ident(), tenant_filter=tenant_filter)
+
+        rowcount = await self.client.execute(stmt, params, return_rowcount=True)
+        return int(rowcount or 0)

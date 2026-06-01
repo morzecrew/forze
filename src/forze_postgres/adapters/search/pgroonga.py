@@ -26,7 +26,7 @@ from forze.application.contracts.search import (
     normalize_search_queries,
     search_options_for_simple_adapter,
 )
-from forze.application.coordinators import SearchResultSnapshotCoordinator
+from forze.application.integrations.search import SearchResultSnapshot
 from forze.base.serialization import pydantic_validate_many
 from forze.domain.constants import ID_FIELD
 
@@ -163,7 +163,7 @@ class PostgresPGroongaSearchAdapter[M: BaseModel](
 
         fw, fp = await self.where_clause(filters)
         rs_spec = self.spec.snapshot
-        fp_fingerprint = SearchResultSnapshotCoordinator.simple_search_fingerprint(
+        fp_fingerprint = SearchResultSnapshot.simple_search_fingerprint(
             query,
             filters,
             sorts,
@@ -172,8 +172,8 @@ class PostgresPGroongaSearchAdapter[M: BaseModel](
             extras=self._fingerprint_extras(options),
         )
 
-        if self.snapshot_coord is not None and rs_spec is not None:
-            maybe_snap: Any = await self.snapshot_coord.read_simple_result_snapshot(
+        if self.result_snapshot is not None and rs_spec is not None:
+            maybe_snap: Any = await self.result_snapshot.read_simple_result_snapshot(
                 rs_spec=rs_spec,
                 snap_opt=snapshot,
                 fp_computed=fp_fingerprint,
@@ -248,17 +248,17 @@ class PostgresPGroongaSearchAdapter[M: BaseModel](
         pagination = pagination or {}
 
         want_sn = (
-            self.snapshot_coord is not None
+            self.result_snapshot is not None
             and rs_spec is not None
-            and self.snapshot_coord.should_write_result_snapshot(snapshot, rs_spec)
+            and self.result_snapshot.should_write_result_snapshot(snapshot, rs_spec)
         )
         max_n0 = (
-            self.snapshot_coord.effective_snapshot_max_ids(snapshot, rs_spec)
-            if want_sn and self.snapshot_coord is not None
+            self.result_snapshot.effective_snapshot_max_ids(snapshot, rs_spec)
+            if want_sn and self.result_snapshot is not None
             else 0
         )
         sql_limit, sql_offset, page_limit = (
-            SearchResultSnapshotCoordinator.snapshot_pagination(
+            SearchResultSnapshot.snapshot_pagination(
                 want_sn, max_n0, dict(pagination)
             )
         )
@@ -280,10 +280,10 @@ class PostgresPGroongaSearchAdapter[M: BaseModel](
         pool_pg0: list[M] | None = None
         u_ = int(pagination.get("offset") or 0)
 
-        if want_sn and self.snapshot_coord is not None and rs_spec is not None:
+        if want_sn and self.result_snapshot is not None and rs_spec is not None:
             pool_len = len(rows)
             pool_pg0 = pydantic_validate_many(self.model_type, rows)
-            handle_no = await self.snapshot_coord.put_simple_ordered_hits(
+            handle_no = await self.result_snapshot.put_simple_ordered_hits(
                 pool_pg0,
                 snap_opt=snapshot,
                 rs_spec=rs_spec,

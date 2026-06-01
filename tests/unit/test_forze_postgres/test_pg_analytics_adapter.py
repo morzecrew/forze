@@ -111,6 +111,51 @@ async def test_run_cursor_exposes_next_token() -> None:
 
 
 @pytest.mark.asyncio
+async def test_run_cursor_dry_run_returns_empty() -> None:
+    mock = _MockClient()
+    adapter = _adapter(mock)
+    page = await adapter.run_cursor(
+        "counts",
+        _Params(),
+        cursor={"limit": 5},
+        options={"dry_run": True},
+    )
+    assert page.hits == []
+    assert page.next_cursor is None
+    assert page.has_more is False
+    assert mock.queries == []
+
+
+@pytest.mark.asyncio
+async def test_run_cursor_keyset_uses_cursor_column() -> None:
+    spec = AnalyticsSpec(
+        name="events",
+        read=_Row,
+        queries={"by_value": AnalyticsQueryDefinition(params=_Params)},
+        ingest=_Ingest,
+    )
+    config = PostgresAnalyticsConfig(
+        schema="public",
+        queries={
+            "by_value": PostgresQueryConfig(
+                sql="SELECT value FROM t WHERE value > %(forze_after)s",
+                cursor_column="value",
+            ),
+        },
+        ingest_table="events_raw",
+    )
+    mock = _MockClient()
+    adapter = PostgresAnalyticsAdapter(client=mock, spec=spec, config=config)
+    page = await adapter.run_cursor(
+        "by_value",
+        _Params(),
+        cursor={"limit": 1},
+    )
+    assert len(page.hits) >= 1
+    assert page.next_cursor is not None
+
+
+@pytest.mark.asyncio
 async def test_append_ingest() -> None:
     mock = _MockClient()
     adapter = _adapter(mock)

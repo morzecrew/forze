@@ -4,7 +4,7 @@ from datetime import timedelta
 
 import pytest
 
-from forze.application.coordinators import DistributedLockCoordinator
+from forze.application.kit import DistributedLockScope
 from forze_redis.adapters import RedisDistributedLockAdapter
 
 
@@ -34,7 +34,7 @@ async def test_adapter_release_wrong_owner_noops(redis_dlock: RedisDistributedLo
 async def test_coordinator_scope_releases_lock(
     redis_dlock: RedisDistributedLockAdapter,
 ) -> None:
-    coord = DistributedLockCoordinator(
+    coord = DistributedLockScope(
         cmd=redis_dlock,
         owner_provider=lambda: "coord-owner",
         wait_timeout=timedelta(seconds=5),
@@ -44,3 +44,24 @@ async def test_coordinator_scope_releases_lock(
         assert await redis_dlock.is_locked("exclusive-task") is True
 
     assert await redis_dlock.is_locked("exclusive-task") is False
+
+
+@pytest.mark.asyncio
+async def test_coordinator_extend_interval_refreshes_ttl(
+    redis_dlock: RedisDistributedLockAdapter,
+) -> None:
+    import asyncio
+
+    coord = DistributedLockScope(
+        cmd=redis_dlock,
+        owner_provider=lambda: "extend-owner",
+        extend_interval=timedelta(milliseconds=200),
+        wait_timeout=timedelta(seconds=2),
+    )
+
+    async with coord.scope("refresh-key"):
+        await asyncio.sleep(0.45)
+        ttl = await redis_dlock.get_ttl("refresh-key")
+        assert ttl is not None
+        # Extend resets the lease; TTL should stay near the 60s spec, not decay with wall clock.
+        assert ttl.total_seconds() >= 59.0

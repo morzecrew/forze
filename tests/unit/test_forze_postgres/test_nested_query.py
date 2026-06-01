@@ -76,6 +76,22 @@ class _RowIntKeyDict(BaseModel):
     data: dict[int, str]
 
 
+@pytest.mark.parametrize(
+    ("model", "path", "expected"),
+    [
+        (_Row, ["meta", "nope"], None),
+        (_Row, ["meta", "inner"], _Inner),
+        (_Row, ["meta", "inner", "score"], int),
+    ],
+)
+def test_walk_pydantic_path_cases(
+    model: type[BaseModel],
+    path: list[str],
+    expected: object,
+) -> None:
+    assert walk_pydantic_path(model, path) is expected
+
+
 def test_walk_pydantic_path_missing_returns_none() -> None:
     assert walk_pydantic_path(_Row, ["meta", "nope"]) is None
 

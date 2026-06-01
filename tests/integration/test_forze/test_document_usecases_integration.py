@@ -111,3 +111,30 @@ async def test_soft_delete_hides_document_until_restore_integration() -> None:
     assert restored.is_deleted is False
     assert refetched.id == created.id
     assert refetched.is_deleted is False
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_get_document_returns_created_row_integration() -> None:
+    """Round-trip create then GetDocument handler."""
+
+    state = MockState()
+    ctx = context_from_deps(Deps.plain(dict(MockDepsModule(state=state)().plain_deps)))
+    spec = DocumentSpec(
+        name="items",
+        read=NumberedReadDocument,
+        write={
+            "domain": NumberedDocument,
+            "create_cmd": NumberedCreateCmd,
+            "update_cmd": CreateDocumentCmd,
+        },
+    )
+    doc_command = ctx.document.command(spec)
+    doc_query = ctx.document.query(spec)
+    get_handler = GetDocument[NumberedReadDocument](doc=doc_query)
+
+    created = await doc_command.create(dto=NumberedCreateCmd(number_id=42))
+    fetched = await get_handler(DocumentIdDTO(id=created.id))
+
+    assert fetched.id == created.id
+    assert fetched.number_id == 42

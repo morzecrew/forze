@@ -88,3 +88,31 @@ class TestFirestoreQueryRenderer:
         r = FirestoreQueryRenderer()
         with pytest.raises(CoreException, match="text pattern"):
             r.render(QueryField("title", "$ilike", "%x%"))
+
+    def test_query_or_empty_raises(self) -> None:
+        r = FirestoreQueryRenderer()
+        with pytest.raises(CoreException, match="Empty \\$or"):
+            r.render(QueryOr(()))
+
+    def test_neq_in_nin_null_empty(self) -> None:
+        r = FirestoreQueryRenderer()
+        assert isinstance(r.render(QueryField("a", "$neq", 1)), FieldFilter)
+        assert isinstance(r.render(QueryField("a", "$in", [1, 2])), FieldFilter)
+        assert isinstance(r.render(QueryField("a", "$nin", ["x"])), FieldFilter)
+        assert isinstance(r.render(QueryField("a", "$null", True)), FieldFilter)
+        assert isinstance(r.render(QueryField("a", "$empty", False)), FieldFilter)
+
+    def test_comparison_ops(self) -> None:
+        r = FirestoreQueryRenderer()
+        assert isinstance(r.render(QueryField("n", "$gt", 1)), FieldFilter)
+        assert isinstance(r.render(QueryField("n", "$gte", 1)), FieldFilter)
+
+    def test_in_scalar_raises(self) -> None:
+        r = FirestoreQueryRenderer()
+        with pytest.raises(CoreException, match="expects list"):
+            r.render(QueryField("a", "$in", 1))
+
+    def test_set_ops_raise(self) -> None:
+        r = FirestoreQueryRenderer()
+        with pytest.raises(CoreException, match="set operator"):
+            r.render(QueryField("tags", "$overlaps", ["a"]))

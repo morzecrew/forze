@@ -266,7 +266,7 @@ Use `scope()` for nested isolation:
 | `clear()` | Clear the buffer |
 | `scope()` | Context manager providing an isolated buffer; restores previous state on exit |
 
-The outbox feature uses `ContextualBuffer` to collect events during a handler and flush them after commit.
+Outbox staging uses `ContextualBuffer` internally; see [Outbox contracts](../core-package/contracts/outbox.md).
 
 ## Serialization
 

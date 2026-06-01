@@ -7,7 +7,7 @@ from typing import Any, Sequence, TypeVar
 from pydantic import BaseModel
 
 from forze.application.contracts.analytics import AnalyticsRunOptions
-from forze.application.contracts.analytics._adapter_common import (
+from forze.application.integrations.analytics.adapter_common import (
     dry_run_enabled,
     encode_keyset_cursor_next,
     encode_offset_cursor_next_prev,

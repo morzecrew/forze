@@ -12,7 +12,7 @@ from forze.application.contracts.search import (
     SearchSpec,
 )
 from forze.application.contracts.search.ports import SearchQueryPort
-from forze.application.coordinators import SearchResultSnapshotCoordinator
+from forze.application.integrations.search import SearchResultSnapshot
 from forze.application.execution import ExecutionContext
 from forze.base.exceptions import exc
 
@@ -49,16 +49,16 @@ def _resolve_result_snapshot(
 # ....................... #
 
 
-def _snapshot_coord(
+def _result_snapshot(
     context: ExecutionContext,
     spec: SearchResultSnapshotSpec | None,
-) -> SearchResultSnapshotCoordinator | None:
+) -> SearchResultSnapshot | None:
     port = _resolve_result_snapshot(context, spec)
 
     if port is None:
         return None
 
-    return SearchResultSnapshotCoordinator(store=port)
+    return SearchResultSnapshot(store=port)
 
 
 # ....................... #
@@ -76,7 +76,7 @@ def _mongo_search_port_for_config(
     c.validate_against_spec(member_spec)
 
     field_map = dict(c.field_map or {})
-    snapshot_coord = _snapshot_coord(context, member_spec.snapshot)
+    result_snapshot = _result_snapshot(context, member_spec.snapshot)
     client = context.deps.provide(MongoClientDepKey)
     tenant_aware = c.tenant_aware
 
@@ -90,7 +90,7 @@ def _mongo_search_port_for_config(
                 field_map=field_map,
                 tenant_provider=context.inv_ctx.get_tenant,
                 tenant_aware=tenant_aware,
-                snapshot_coord=snapshot_coord,
+                result_snapshot=result_snapshot,
             )
 
         case "atlas":
@@ -107,7 +107,7 @@ def _mongo_search_port_for_config(
                 field_map=field_map,
                 tenant_provider=context.inv_ctx.get_tenant,
                 tenant_aware=tenant_aware,
-                snapshot_coord=snapshot_coord,
+                result_snapshot=result_snapshot,
                 index_name=index_name,
             )
 
@@ -133,7 +133,7 @@ def _mongo_search_port_for_config(
                 field_map=field_map,
                 tenant_provider=context.inv_ctx.get_tenant,
                 tenant_aware=tenant_aware,
-                snapshot_coord=snapshot_coord,
+                result_snapshot=result_snapshot,
                 embedder=context.embeddings.provider(es),
                 embedding_dimensions=ed,
                 vector_path=vpath,

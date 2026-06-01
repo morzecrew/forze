@@ -37,7 +37,7 @@ __all__ = [
 
 
 class DocumentReadGatewayPort(Protocol, Generic[M]):
-    """Read gateway operations required by :class:`~forze.application.coordinators.document.coordinator.DocumentCoordinator`."""
+    """Read gateway operations required by :class:`~forze.application.integrations.document.adapter.DocumentAdapter`."""
 
     @property
     def model_type(self) -> type[M]: ...
@@ -309,7 +309,7 @@ class DocumentReadGatewayPort(Protocol, Generic[M]):
 
 
 class DocumentWriteGatewayPort(Protocol, Generic[D_co, C_co, U_co]):
-    """Write gateway operations required by :class:`~forze.application.coordinators.document.coordinator.DocumentCoordinator`."""
+    """Write gateway operations required by :class:`~forze.application.integrations.document.adapter.DocumentAdapter`."""
 
     async def create(self, dto: C_co) -> D_co: ...
 

@@ -15,7 +15,7 @@ from ....adapters import (
 )
 from ..configs import PostgresSearchConfig, validate_fts_groups_for_search_spec
 from ..keys import PostgresClientDepKey, PostgresIntrospectorDepKey
-from ._snapshot import snapshot_coord
+from ._snapshot import result_snapshot
 
 if TYPE_CHECKING:
     from forze.application.contracts.search import SearchSpec
@@ -58,7 +58,7 @@ def postgres_search_port_for_config(
     | PostgresFTSSearchAdapter[Any]
     | PostgresVectorSearchAdapter[Any]
 ):
-    snap = snapshot_coord(context, member_spec.snapshot)
+    snap = result_snapshot(context, member_spec.snapshot)
 
     common = dict(
         spec=member_spec,
@@ -74,7 +74,7 @@ def postgres_search_port_for_config(
         tenant_aware=c.tenant_aware,
         filter_table_alias="v",
         nested_field_hints=c.nested_field_hints,
-        snapshot_coord=snap,
+        result_snapshot=snap,
     )
 
     match c.engine:

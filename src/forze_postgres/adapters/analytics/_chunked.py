@@ -7,7 +7,7 @@ from typing import AsyncGenerator, Sequence, TypeVar
 from pydantic import BaseModel
 
 from forze.application.contracts.analytics import AnalyticsRunOptions
-from forze.application.contracts.analytics._adapter_common import dry_run_enabled
+from forze.application.integrations.analytics.adapter_common import dry_run_enabled
 from forze.application.contracts.querying import PaginationExpression
 from forze.base.primitives import StrKey
 from forze.base.serialization import pydantic_validate_many

@@ -25,6 +25,8 @@ on:
       - "tests/**"
       - "pyproject.toml"
       - "uv.lock"
+      - ".gitleaks.toml"
+      - ".pre-commit-config.yaml"
       - ".github/workflows/ci.yml"
 
 permissions:
@@ -72,6 +74,8 @@ jobs:
               - "tests/**"
               - "pyproject.toml"
               - "uv.lock"
+              - ".gitleaks.toml"
+              - ".pre-commit-config.yaml"
               - ".github/workflows/ci.yml"
 
   quality:

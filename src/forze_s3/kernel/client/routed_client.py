@@ -6,9 +6,12 @@ from uuid import UUID
 
 import attrs
 from types_aiobotocore_s3.client import S3Client as AsyncS3Client
-from types_aiobotocore_s3.type_defs import ObjectTypeDef
 
 from forze.application.contracts.secrets import SecretRef, SecretsPort
+from forze.application.integrations.storage.client import (
+    ObjectStorageHead,
+    ObjectStorageListedObject,
+)
 from forze.application.contracts.tenancy import (
     TenantClientRegistry,
     ensure_structured_fingerprint,
@@ -20,7 +23,7 @@ from forze.base.primitives.fingerprint import stable_fingerprint
 from .client import S3Client
 from .port import S3ClientPort
 from .routing_credentials import S3RoutingCredentials
-from .value_objects import S3Config, S3Head
+from .value_objects import S3Config
 
 # ----------------------- #
 
@@ -208,7 +211,7 @@ class RoutedS3Client(S3ClientPort):
         *,
         limit: int | None = None,
         offset: int | None = None,
-    ) -> tuple[list[ObjectTypeDef], int]:
+    ) -> tuple[list[ObjectStorageListedObject], int]:
         inner = await self._get_client()
 
         async with inner.client():
@@ -219,7 +222,7 @@ class RoutedS3Client(S3ClientPort):
                 offset=offset,
             )
 
-    async def head_object(self, bucket: str, key: str) -> S3Head:
+    async def head_object(self, bucket: str, key: str) -> ObjectStorageHead:
         inner = await self._get_client()
 
         async with inner.client():

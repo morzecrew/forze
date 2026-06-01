@@ -1,335 +1,38 @@
 """GCS-backed implementation of :class:`~forze.application.contracts.storage.StoragePort`."""
 
-import msgspec
-
 from forze_gcs._compat import require_gcs
 
 require_gcs()
 
 # ....................... #
 
-import asyncio
-import mimetypes
-import re
-from datetime import datetime
-from typing import Callable, Mapping, final
+from collections.abc import Awaitable, Callable
+from typing import final
 from uuid import UUID
 
 import attrs
 import magic
 
-from forze.application.contracts.resolution import (
-    NamedResourceSpec,
-    is_static_named_resource,
-)
-from forze.application.contracts.storage import (
-    DownloadedObject,
-    ObjectMetadata,
-    StoragePort,
-    StoredObject,
-    UploadedObject,
-)
-from forze.application.contracts.tenancy import TenancyMixin
-from forze.base.exceptions import CoreException, exc
-from forze.base.primitives import JsonDict, utcnow, uuid7
+from forze.application.contracts.resolution import NamedResourceSpec
+from forze.application.integrations.storage import ObjectStorageAdapter
 
-from ..kernel.client import GCSClientPort
 from ..kernel.relation import resolve_gcs_bucket
-from .codecs import default_b64_codec, default_path_codec
 
 # ----------------------- #
 
 
-def _object_metadata_from_gcs_custom(meta: Mapping[str, str]) -> ObjectMetadata:
-    """Decode :class:`ObjectMetadata` from GCS custom metadata (string values)."""
-
-    try:
-        filename = meta["filename"]
-        size = int(meta["size"])
-        created_at_raw = meta["created_at"]
-
-    except KeyError as e:
-        raise exc.internal("Invalid object metadata") from e
-
-    except ValueError as e:
-        raise exc.internal("Invalid object metadata") from e
-
-    if created_at_raw.endswith("Z"):
-        created_at_raw = f"{created_at_raw[:-1]}+00:00"
-
-    created_at = datetime.fromisoformat(created_at_raw)
-
-    return ObjectMetadata(
-        filename=filename,
-        created_at=created_at,
-        size=size,
-        description=meta.get("description"),
-    )
-
-
-# ....................... #
-
-
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class GCSStorageAdapter(StoragePort, TenancyMixin):
+class GCSStorageAdapter(ObjectStorageAdapter):
     """Storage adapter that persists files in a GCS bucket.
 
-    Implements :class:`~forze.application.contracts.storage.StoragePort`.
-    Object keys are built from an optional tenant prefix, a user-supplied
-    prefix, and a key generator (defaults to UUID v7). Filenames and
-    descriptions are base-64 encoded into GCS custom metadata (lowercase keys).
+    Implements :class:`~forze.application.contracts.storage.StoragePort` via
+    :class:`~forze.application.integrations.storage.ObjectStorageAdapter`.
     """
 
-    client: GCSClientPort
-    """GCS client."""
-
-    bucket_spec: NamedResourceSpec
-    """GCS bucket name (static or tenant-scoped resolver)."""
-
-    _bucket_resolved: str | None = attrs.field(
-        default=None,
-        init=False,
-        eq=False,
-        repr=False,
+    resolve_bucket: Callable[[NamedResourceSpec, UUID | None], Awaitable[str]] = (
+        attrs.field(default=resolve_gcs_bucket)
     )
-
-    key_generator: Callable[[], str] = attrs.field(default=lambda: str(uuid7()))
-    """Callable to generate a unique key segment."""
-
-    # ....................... #
-
-    def _tenant_id_for_resolve(self) -> UUID | None:
-        if self.tenant_provider is None:
-            return None
-
-        tenant = self.tenant_provider()
-
-        if tenant is None:
-            if self.tenant_aware:
-                raise exc.internal("Tenant ID is required for the storage adapter")
-
-            return None
-
-        return tenant.tenant_id
-
-    # ....................... #
-
-    async def _resolved_bucket(self) -> str:
-        if self._bucket_resolved is not None:
-            return self._bucket_resolved
-
-        resolved = await resolve_gcs_bucket(
-            self.bucket_spec, self._tenant_id_for_resolve()
-        )
-        object.__setattr__(self, "_bucket_resolved", resolved)
-
-        return resolved
-
-    # ....................... #
-
-    @property
-    def bucket(self) -> str:
-        """Best-effort sync access when :attr:`bucket_spec` is static."""
-
-        if is_static_named_resource(self.bucket_spec):
-            return self.bucket_spec
-
-        if self._bucket_resolved is not None:
-            return self._bucket_resolved
-
-        raise exc.internal(
-            "bucket is only available for static bucket names; await _resolved_bucket()",
-        )
-
-    # ....................... #
-
-    def __tenant_prefix(self) -> str | None:
-        tenant_id = self.require_tenant_if_aware()
-
-        if tenant_id is not None:
-            return f"tenant_{tenant_id}"
-
-        return None
-
-    # ....................... #
-
-    def construct_path(self, prefix: tuple[str, ...] | str | None) -> str:
-        tenant_prefix = self.__tenant_prefix()
-
-        if isinstance(prefix, tuple):
-            prefix = default_path_codec.join(*prefix)
-
-        return default_path_codec.cond_join(tenant_prefix, prefix)
-
-    # ....................... #
-
-    def construct_key(self, prefix: tuple[str, ...] | str | None) -> str:
-        key = self.key_generator()
-
-        parts: tuple[str, ...]
-
-        if prefix is None:
-            parts = (key,)
-        elif isinstance(prefix, str):
-            parts = (prefix, key)
-        else:
-            parts = (*prefix, key)
-
-        return self.construct_path(parts)
-
-    # ....................... #
-
-    def _validate_prefix(self, prefix: str | None) -> None:
-        if prefix is None:
-            return
-
-        if not re.match(r"^[a-zA-Z0-9!\-_.*'()/]*$", prefix):
-            raise exc.precondition(f"Invalid GCS prefix: {prefix}")
-
-    # ....................... #
-
-    async def upload(self, obj: UploadedObject) -> StoredObject:
-        filename = obj.filename
-        data = obj.data
-        prefix = obj.prefix
-        description = obj.description
-
-        if description:
-            description = default_b64_codec.dumps(description)
-
-        self._validate_prefix(prefix)
-        key = self.construct_key(prefix)
-
-        content_type = self._guess_content_type(filename, data)
-        now = utcnow()
-
-        metadata = ObjectMetadata(
-            filename=default_b64_codec.dumps(filename),
-            created_at=now,
-            size=len(data),
-            description=description,
-        )
-        meta_dict: JsonDict = msgspec.to_builtins(metadata, str_keys=True)
-        safe_meta = {k: str(v) for k, v in meta_dict.items() if v is not None}
-
-        bucket = await self._resolved_bucket()
-
-        async with self.client.client():
-            await self.client.ensure_bucket(bucket)
-
-            await self.client.upload_bytes(
-                bucket=bucket,
-                key=key,
-                data=data,
-                content_type=content_type,
-                metadata=safe_meta,
-            )
-
-        return StoredObject(
-            key=key,
-            filename=filename,
-            description=description,
-            content_type=content_type,
-            size=len(data),
-            created_at=now,
-        )
-
-    # ....................... #
-
-    async def download(self, key: str) -> DownloadedObject:
-        bucket = await self._resolved_bucket()
-
-        async with self.client.client():
-            h = await self.client.head_object(bucket=bucket, key=key)
-
-            try:
-                meta = _object_metadata_from_gcs_custom(h.metadata)
-
-            except CoreException:
-                raise
-
-            except Exception as e:
-                raise exc.internal("Invalid object metadata") from e
-
-            data = await self.client.download_bytes(bucket=bucket, key=key)
-
-            return DownloadedObject(
-                data=data,
-                content_type=h.content_type,
-                filename=default_b64_codec.loads(meta.filename),
-            )
-
-    # ....................... #
-
-    async def delete(self, key: str) -> None:
-        bucket = await self._resolved_bucket()
-
-        async with self.client.client():
-            await self.client.delete_object(bucket=bucket, key=key)
-
-    # ....................... #
-
-    async def list(
-        self,
-        limit: int,
-        offset: int,
-        *,
-        prefix: tuple[str, ...] | str | None = None,
-    ) -> tuple[list[StoredObject], int]:
-        prefix = default_path_codec.join(prefix)
-        self._validate_prefix(prefix)
-
-        path = self.construct_path(prefix)
-
-        bucket = await self._resolved_bucket()
-
-        async with self.client.client():
-            await self.client.ensure_bucket(bucket)
-
-            objects, total_count = await self.client.list_objects(
-                bucket=bucket,
-                prefix=path,
-                limit=limit,
-                offset=offset,
-            )
-
-            for o in objects:
-                if not o.Key:
-                    raise exc.internal("Invalid object key")
-
-            heads = await asyncio.gather(
-                *(self.client.head_object(bucket=bucket, key=o.Key) for o in objects)
-            )
-
-            out: list[StoredObject] = []
-
-            for o, h in zip(objects, heads, strict=True):
-                try:
-                    meta = _object_metadata_from_gcs_custom(h.metadata)
-
-                except CoreException:
-                    raise
-
-                except Exception as e:
-                    raise exc.internal("Invalid object metadata") from e
-
-                out.append(
-                    StoredObject(
-                        key=o.Key,
-                        filename=default_b64_codec.loads(meta.filename),
-                        description=(
-                            default_b64_codec.loads(meta.description)
-                            if meta.description
-                            else None
-                        ),
-                        content_type=h.content_type,
-                        size=meta.size,
-                        created_at=meta.created_at,
-                    )
-                )
-
-        return out, total_count
 
     # ....................... #
 
@@ -344,9 +47,4 @@ class GCSStorageAdapter(StoragePort, TenancyMixin):
         except Exception:  # nosec B110
             pass
 
-        ct_mimetypes, _ = mimetypes.guess_type(filename)
-
-        if ct_mimetypes:
-            return ct_mimetypes
-
-        return "application/octet-stream"
+        return ObjectStorageAdapter._guess_content_type(filename, data)

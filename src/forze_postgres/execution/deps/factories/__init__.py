@@ -1,6 +1,7 @@
 """Postgres dependency factories (document, search, hub, federated, analytics, tx)."""
 
 from .analytics import ConfigurablePostgresAnalytics
+from .outbox import ConfigurablePostgresOutbox
 from .document import (
     ConfigurablePostgresDocument,
     ConfigurablePostgresReadOnlyDocument,
@@ -18,6 +19,7 @@ from .tx import postgres_txmanager
 
 __all__ = [
     "ConfigurablePostgresAnalytics",
+    "ConfigurablePostgresOutbox",
     "ConfigurablePostgresDocument",
     "ConfigurablePostgresFederatedSearch",
     "ConfigurablePostgresHubSearch",

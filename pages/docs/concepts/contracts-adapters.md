@@ -196,6 +196,10 @@ Resolve with `ctx.search.command(search_spec)` when the integration registers `S
 | `run_cursor` / … | Cursor pagination |
 | `append` | Batch append rows (ingest port) |
 
+### Outbox
+
+**`OutboxCommandPort`** / **`OutboxQueryPort`**: stage integration events in the same transaction as your writes, flush in one batch, then relay to a queue. Resolve with `ctx.outbox.command(spec)` / `ctx.outbox.query(spec)`. See [Outbox contracts](../core-package/contracts/outbox.md).
+
 ### Idempotency
 
 **`IdempotencyPort`**: deduplicate HTTP requests:

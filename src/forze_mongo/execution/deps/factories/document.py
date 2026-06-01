@@ -11,7 +11,7 @@ from forze.application.contracts.document import (
     DocumentSpec,
 )
 from forze.application.contracts.transaction import AfterCommitPort
-from forze.application.coordinators import DocumentCacheCoordinator
+from forze.application.integrations.document import DocumentCache
 from forze.application.execution import ExecutionContext
 from forze.base.exceptions import exc
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document
@@ -62,7 +62,7 @@ class ConfigurableMongoReadOnlyDocument(DocumentQueryDepPort[R]):
         if cache is not None:
             after_commit = ctx.tx_ctx.run_or_defer
 
-        cc = DocumentCacheCoordinator[R](
+        cc = DocumentCache[R](
             read_model_type=read.model_type,
             document_name=spec.name,
             cache=cache,
@@ -73,7 +73,7 @@ class ConfigurableMongoReadOnlyDocument(DocumentQueryDepPort[R]):
             spec=spec,
             read_gw=read,
             write_gw=None,
-            cache_coord=cc,
+            document_cache=cc,
             batch_size=self.config.batch_size,
         )
 
@@ -142,7 +142,7 @@ class ConfigurableMongoDocument(DocumentCommandDepPort[R, D, C, U]):
         if cache is not None:
             after_commit = ctx.tx_ctx.run_or_defer
 
-        cc = DocumentCacheCoordinator[R](
+        cc = DocumentCache[R](
             read_model_type=read.model_type,
             document_name=spec.name,
             cache=cache,
@@ -153,6 +153,6 @@ class ConfigurableMongoDocument(DocumentCommandDepPort[R, D, C, U]):
             spec=spec,
             read_gw=read,
             write_gw=write,
-            cache_coord=cc,
+            document_cache=cc,
             batch_size=config.batch_size,
         )

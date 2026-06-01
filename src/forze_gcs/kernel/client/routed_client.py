@@ -8,6 +8,10 @@ import attrs
 from gcloud.aio.storage import Storage
 
 from forze.application.contracts.secrets import SecretRef, SecretsPort
+from forze.application.integrations.storage.client import (
+    ObjectStorageHead,
+    ObjectStorageListedObject,
+)
 from forze.application.contracts.tenancy import (
     TenantClientRegistry,
     ensure_structured_fingerprint,
@@ -20,7 +24,7 @@ from forze.base.primitives.gcp_service_file import materialize_service_account_j
 from .client import GCSClient
 from .port import GCSClientPort
 from .routing_credentials import GCSRoutingCredentials
-from .value_objects import GCSConfig, GCSHead, GCSListedObject
+from .value_objects import GCSConfig
 
 # ----------------------- #
 
@@ -188,6 +192,7 @@ class RoutedGCSClient(GCSClientPort):
         *,
         content_type: str | None = None,
         metadata: dict[str, str] | None = None,
+        tags: dict[str, str] | None = None,
     ) -> None:
         inner = await self._get_client()
 
@@ -198,6 +203,7 @@ class RoutedGCSClient(GCSClientPort):
                 data,
                 content_type=content_type,
                 metadata=metadata,
+                tags=tags,
             )
 
     async def download_bytes(self, bucket: str, key: str) -> bytes:
@@ -219,7 +225,7 @@ class RoutedGCSClient(GCSClientPort):
         *,
         limit: int | None = None,
         offset: int | None = None,
-    ) -> tuple[list[GCSListedObject], int]:
+    ) -> tuple[list[ObjectStorageListedObject], int]:
         inner = await self._get_client()
 
         async with inner.client():
@@ -230,7 +236,7 @@ class RoutedGCSClient(GCSClientPort):
                 offset=offset,
             )
 
-    async def head_object(self, bucket: str, key: str) -> GCSHead:
+    async def head_object(self, bucket: str, key: str) -> ObjectStorageHead:
         inner = await self._get_client()
 
         async with inner.client():

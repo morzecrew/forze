@@ -12,7 +12,7 @@ import attrs
 from pydantic import BaseModel
 
 from forze.application.contracts.document import DocumentSpec
-from forze.application.coordinators import DocumentCacheCoordinator, DocumentCoordinator
+from forze.application.integrations.document import DocumentCache, DocumentAdapter
 from forze.base.exceptions import exc
 from forze.base.serialization import (
     pydantic_persistence_dump,
@@ -36,7 +36,7 @@ U = TypeVar("U", bound=BaseDTO)
 
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class FirestoreDocumentAdapter(DocumentCoordinator[R, D, C, U]):
+class FirestoreDocumentAdapter(DocumentAdapter[R, D, C, U]):
     """Firestore adapter bridging domain document ports to gateway operations."""
 
     spec: DocumentSpec[R, D, C, U]
@@ -48,7 +48,7 @@ class FirestoreDocumentAdapter(DocumentCoordinator[R, D, C, U]):
     write_gw: FirestoreWriteGateway[D, C, U] | None = attrs.field(default=None)
     """Optional gateway for mutations; ``None`` disables write operations."""
 
-    cache_coord: DocumentCacheCoordinator[R]
+    document_cache: DocumentCache[R]
     """Unified read/write cache semantics for documents."""
 
     batch_size: int = 200
@@ -89,12 +89,12 @@ class FirestoreDocumentAdapter(DocumentCoordinator[R, D, C, U]):
             return await super().create(dto, return_new=return_new)  # type: ignore[call-overload]
 
         domain = await write_gw.create(dto)
-        await self.cache_coord.invalidate_keys_now(domain.id)
+        await self.document_cache.invalidate_keys_now(domain.id)
 
         res = pydantic_validate(self.spec.read, pydantic_persistence_dump(domain))
 
-        await self.cache_coord.after_commit_or_now(
-            lambda: self.cache_coord.set_one(res)
+        await self.document_cache.after_commit_or_now(
+            lambda: self.document_cache.set_one(res)
         )
 
         return res
@@ -137,14 +137,14 @@ class FirestoreDocumentAdapter(DocumentCoordinator[R, D, C, U]):
 
         domains = await write_gw.create_many(dtos, batch_size=self.batch_size)
         pks_new = [doc.id for doc in domains]
-        await self.cache_coord.invalidate_keys_now(*pks_new)
+        await self.document_cache.invalidate_keys_now(*pks_new)
 
         res = pydantic_validate_many(
             self.spec.read,
             pydantic_persistence_dump_many(domains),
         )
 
-        await self.cache_coord.after_commit_or_now(
-            lambda: self.cache_coord.set_many(res)
+        await self.document_cache.after_commit_or_now(
+            lambda: self.document_cache.set_many(res)
         )
         return res

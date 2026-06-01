@@ -67,7 +67,7 @@ Helper methods:
 | Import path | `from forze.application.contracts.document import DocumentWriteTypes` |
 | Type parameters | `D` domain document, `C` create command, `U` update DTO. |
 | Required fields | `domain`, `create_cmd`, `update_cmd`. |
-| Returned values | Not returned directly; consumed by adapters and coordinators. |
+| Returned values | Not returned directly; consumed by adapters. |
 | Common implementations | Plain `dict` literals typed as `DocumentWriteTypes`. |
 | Related dependency keys | Used indirectly by `DocumentCommandDepKey`. |
 | Minimal example | `write={"domain": Project, "create_cmd": CreateProject, "update_cmd": UpdateProject}` |
@@ -82,7 +82,7 @@ Helper methods:
 | Type parameters | `R`, the read model for full-document reads. |
 | Required methods | Identity: `get`, `get_many`. Single row by filters: `find`, `project`, `select`. Offset listing: `find_many`, `find_page`, `project_many`, `project_page`, `select_many`, `select_page`. Keyset: `find_cursor`, `project_cursor`. Aggregates: `aggregate_many`, `aggregate_page`, `select_many_aggregated`, `select_page_aggregated`. `count`. |
 | Returned values | `R`, `Sequence[R]`, `JsonDict`, `Page[...]`, `CountlessPage[...]`, `CursorPage[...]`, or `int` depending on the method. |
-| Common implementations | Mock, Postgres, Mongo, Firestore document adapters (via `DocumentCoordinator`). |
+| Common implementations | Mock, Postgres, Mongo, Firestore document adapters (via `DocumentAdapter`). |
 | Related dependency keys | `DocumentQueryDepKey`; resolve with `ctx.document.query(spec)`. |
 | Minimal example | `project = await ctx.document.query(project_spec).get(project_id)` |
 | Related pages | [Query Syntax](../query-syntax.md), [Cache contracts](cache.md). |

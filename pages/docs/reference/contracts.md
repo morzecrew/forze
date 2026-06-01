@@ -71,6 +71,8 @@ Read-only operations for document aggregates. Result shape is selected by the me
 
 Stream methods export rows in keyset chunks via repeated internal cursor pages (default `chunk_size` 500, clamped 10–20 000). They do not support `for_update` or aggregates.
 
+`DocumentAdapter` (integrations layer) adds safety limits on internal scan/stream loops: `max_scan_pages`, `max_stream_pages`, and `max_chunked_command_pages` default to **100 000**; set any of them to `None` for unlimited export. Non-advancing cursor tokens raise an internal error instead of looping forever. Routed tenant pools (`TenantClientRegistry` with `guarded=True`) must not call `use()` for the same tenant from that tenant's `create` callback.
+
 ### DocumentCommandPort[R, D, C, U]
 
 Mutation operations for document aggregates:

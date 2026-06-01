@@ -9,7 +9,7 @@ from pydantic import BaseModel
 
 from forze.application.contracts.analytics import AnalyticsRunOptions, AnalyticsSpec
 from forze.application.contracts.tenancy import TenantProviderPort
-from forze.application.contracts.analytics._adapter_common import (
+from forze.application.integrations.analytics.adapter_common import (
     dry_run_enabled,
     dry_run_offset_page,
     pagination_window,
