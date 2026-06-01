@@ -11,7 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`forze_patterns`:** use `forze_kits.domain.*` (mixins, mapping steps, soft-deletion registry).
 - **`forze.application.composition`:** use `forze_kits.aggregates.document`, `forze_kits.aggregates.search`, `forze_kits.aggregates.storage`, `forze_kits.aggregates.authn`, `forze_kits.integrations.outbox`.
-- **`forze.application.kit`:** use `forze_kits.runtime` (`DistributedLockScope`).
+- **`forze.application.kit`:** use `forze_kits.scopes` (`DistributedLockScope`).
 - **`forze_secrets`:** use `forze_kits.adapters.secrets` (`EnvSecrets`, `DirectorySecrets`, `MappingSecrets`, `SecretsDepsModule`).
 
 | Old import | New import |
@@ -19,7 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 | `forze_patterns.soft_deletion` | `forze_kits.domain.soft_deletion` |
 | `forze.application.composition.document` | `forze_kits.aggregates.document` |
 | `forze.application.composition.outbox` | `forze_kits.integrations.outbox` |
-| `forze.application.kit.DistributedLockScope` | `forze_kits.runtime.DistributedLockScope` |
+| `forze.application.kit.DistributedLockScope` | `forze_kits.scopes.DistributedLockScope` |
 | `forze_secrets` | `forze_kits.adapters.secrets` |
 
 See [Kits reference](pages/docs/reference/kits.md).
@@ -53,7 +53,7 @@ See [Kits reference](pages/docs/reference/kits.md).
 ### Changed (breaking)
 
 - **`forze_identity.local`:** Removed; use `forze_identity.builtin.local` (`LocalIdentityConfig`, `local_identity_deps`, `LocalApiKeyVerifier`, `ConfigurableLocalApiKeyVerifier`, `LocalTenantResolver`, `ConfigurableLocalTenantResolver`). `LocalApiKeyVerifier` and local configurable factories are no longer exported from `forze_identity.authn` or `forze_identity.tenancy`.
-- **Application layer:** Removed `forze.application.coordinators`. Adapter-side helpers live under `forze.application.integrations` (`document`, `search`, `outbox`); app-facing distributed lock ergonomics live under `forze_kits.runtime` (`DistributedLockScope`).
+- **Application layer:** Removed `forze.application.coordinators`. Adapter-side helpers live under `forze.application.integrations` (`document`, `search`, `outbox`); app-facing distributed lock ergonomics live under `forze_kits.scopes` (`DistributedLockScope`).
 - **Renames:** `DocumentCoordinator` → `DocumentAdapter`, `DocumentCacheCoordinator` → `DocumentCache`, `SearchResultSnapshotCoordinator` → `SearchResultSnapshot`, `OutboxStagingCoordinator` → `OutboxStaging`, `DistributedLockCoordinator` → `DistributedLockScope`.
 - **Field renames:** `cache_coord` → `document_cache` on document adapters; `snapshot_coord` → `result_snapshot` on search adapters; outbox adapters use private `_staging` instead of `_coordinator`.
 

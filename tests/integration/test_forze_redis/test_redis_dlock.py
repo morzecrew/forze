@@ -4,12 +4,14 @@ from datetime import timedelta
 
 import pytest
 
-from forze_kits.runtime import DistributedLockScope
+from forze_kits.scopes import DistributedLockScope
 from forze_redis.adapters import RedisDistributedLockAdapter
 
 
 @pytest.mark.asyncio
-async def test_adapter_acquire_query_release(redis_dlock: RedisDistributedLockAdapter) -> None:
+async def test_adapter_acquire_query_release(
+    redis_dlock: RedisDistributedLockAdapter,
+) -> None:
     assert await redis_dlock.acquire("job", "worker-a") is True
     assert await redis_dlock.is_locked("job") is True
     assert await redis_dlock.get_owner("job") == "worker-a"
@@ -23,7 +25,9 @@ async def test_adapter_acquire_query_release(redis_dlock: RedisDistributedLockAd
 
 
 @pytest.mark.asyncio
-async def test_adapter_release_wrong_owner_noops(redis_dlock: RedisDistributedLockAdapter) -> None:
+async def test_adapter_release_wrong_owner_noops(
+    redis_dlock: RedisDistributedLockAdapter,
+) -> None:
     assert await redis_dlock.acquire("x", "alice") is True
     assert await redis_dlock.release("x", "bob") is False
     assert await redis_dlock.is_locked("x") is True

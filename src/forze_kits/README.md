@@ -22,7 +22,7 @@ forze_kits/
 | Aggregate ops | `forze_kits.aggregates.{document,search,storage,authn}` |
 | Integration flow | `forze_kits.integrations.outbox` |
 | Local port adapter | `forze_kits.adapters.secrets` |
-| Runtime ergonomics | `forze_kits.runtime` |
+| Runtime ergonomics | `forze_kits.scopes` |
 
 **Not in kits:** `forze_identity`, `forze_postgres`, `forze_vault`, and other full integration planes.
 

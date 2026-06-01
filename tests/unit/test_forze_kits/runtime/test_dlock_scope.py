@@ -1,4 +1,4 @@
-"""Tests for :class:`~forze_kits.runtime.DistributedLockScope`."""
+"""Tests for :class:`~forze_kits.scopes.DistributedLockScope`."""
 
 import asyncio
 from datetime import timedelta
@@ -7,8 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from forze.base.exceptions import CoreException
-
-from forze_kits.runtime import DistributedLockScope
+from forze_kits.scopes import DistributedLockScope
 
 
 @pytest.mark.asyncio

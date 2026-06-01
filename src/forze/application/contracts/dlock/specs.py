@@ -18,7 +18,7 @@ class DistributedLockSpec(BaseSpec):
 
     A very short default TTL is easy to lose under normal request latency; callers
     that need short leases should set ``ttl`` explicitly and use
-    :class:`~forze_kits.runtime.DistributedLockScope` with
+    :class:`~forze_kits.scopes.DistributedLockScope` with
     ``extend_interval`` for long-held sections.
     """
 

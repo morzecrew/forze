@@ -28,7 +28,7 @@ forze_kits/
 | Aggregate ops | `forze_kits.aggregates.{document,search,storage,authn}` |
 | Integration flow | `forze_kits.integrations.outbox` |
 | Local port adapter | `forze_kits.adapters.secrets` |
-| Runtime ergonomics | `forze_kits.runtime` |
+| Runtime ergonomics | `forze_kits.scopes` |
 
 Operation registry mechanics (`.bind()`, `.freeze()`, stage hooks) are documented under [Operation composition](../concepts/operation-composition.md)—that is **execution**, not this package.
 
@@ -42,7 +42,7 @@ Operation registry mechanics (`.bind()`, `.freeze()`, stage hooks) are documente
 | `forze.application.composition.storage` | `forze_kits.aggregates.storage` |
 | `forze.application.composition.authn` | `forze_kits.aggregates.authn` |
 | `forze.application.composition.outbox` | `forze_kits.integrations.outbox` |
-| `forze.application.kit` | `forze_kits.runtime` |
+| `forze.application.kit` | `forze_kits.scopes` |
 | `forze_secrets` | `forze_kits.adapters.secrets` |
 
 ## Document kit
@@ -164,7 +164,7 @@ Stdlib-backed implementations of [`SecretsPort`](../core-package/contracts.md) f
 `DistributedLockScope` wraps `DistributedLockCommandPort` with retry, jitter, optional lease extension, and release on exit:
 
     :::python
-    from forze_kits.runtime import DistributedLockScope
+    from forze_kits.scopes import DistributedLockScope
 
 Configure `ttl` on `DistributedLockSpec`; pass `wait_timeout`, `extend_interval`, and `retry_interval` on the scope—not on the spec.
 
