@@ -1,6 +1,6 @@
 """Postgres document execution configs."""
 
-from typing import Any, Mapping
+from typing import Any, Literal, Mapping
 
 import attrs
 
@@ -34,6 +34,9 @@ class PostgresReadOnlyDocumentConfig(TenantAwareIntegrationConfig):
 
     batch_size: int = 200
     """Chunk size for bulk writes and internal chunked offset reads."""
+
+    read_validation: Literal["strict", "trusted"] = "strict"
+    """How SELECT rows are turned into read models (``trusted`` uses ``model_construct``)."""
 
 
 # ....................... #

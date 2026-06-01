@@ -1,4 +1,4 @@
-"""Tests for :mod:`forze.application.handlers.authn._utils`."""
+"""Tests for :mod:`forze_kits.aggregates.authn.handlers._utils`."""
 
 from datetime import timedelta
 
@@ -12,8 +12,8 @@ from forze.application.contracts.authn.value_objects import (
     CredentialLifetime,
     RefreshTokenCredentials,
 )
-from forze.application.handlers.authn._utils import token_response_from_issued_tokens
-from forze.application.handlers.authn.dto import AuthnTokenResponseDTO
+from forze_kits.aggregates.authn.handlers._utils import token_response_from_issued_tokens
+from forze_kits.aggregates.authn.handlers.dto import AuthnTokenResponseDTO
 
 
 class TestTokenResponseFromIssuedTokens:

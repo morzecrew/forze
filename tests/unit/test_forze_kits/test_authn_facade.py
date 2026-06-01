@@ -9,7 +9,7 @@ import pytest
 from forze_kits.aggregates.authn import AuthnFacade, AuthnKernelOp, build_authn_registry
 from forze.application.contracts.authn import AuthnSpec
 from forze.application.execution.operations.facade import facade_op
-from forze.application.handlers.authn import AuthnPasswordLogin
+from forze_kits.aggregates.authn.handlers import AuthnPasswordLogin
 from forze.base.exceptions import exc
 
 # ----------------------- #

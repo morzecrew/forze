@@ -8,7 +8,10 @@ from pydantic import BaseModel, Field
 
 from forze.application.integrations.document import DocumentCache
 from forze.base.primitives import uuid7
-from forze.base.serialization import pydantic_cache_dump
+from forze.base.serialization import (
+    PydanticRecordMappingCodec,
+    pydantic_cache_dump,
+)
 
 _pk = UUID("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
 
@@ -94,6 +97,38 @@ async def test_set_one_versioned_writes_cache() -> None:
     kw = cache.set_versioned.await_args.args
     assert kw[0] == str(_pk)
     assert kw[1] == "4"
+    assert isinstance(kw[2], bytes)
+
+
+@pytest.mark.asyncio
+async def test_cache_bytes_roundtrip() -> None:
+    doc = DocModel(id=_pk, rev=2, payload="bytes")
+    codec = PydanticRecordMappingCodec(DocModel)
+    coord = DocumentCache[DocModel](
+        read_model_type=DocModel,
+        row_codec=codec,
+        document_name="w",
+        cache=AsyncMock(),
+    )
+    payload = coord._encode_for_cache(doc)
+    restored = coord._decode_from_cache(payload)
+
+    assert restored == doc
+
+
+@pytest.mark.asyncio
+async def test_cache_legacy_dict_hit() -> None:
+    dumped = pydantic_cache_dump(DocModel(id=_pk, rev=1, payload="legacy"))
+    coord = DocumentCache[DocModel](
+        read_model_type=DocModel,
+        document_name="w",
+        cache=AsyncMock(),
+    )
+
+    out = coord._decode_from_cache(dumped)
+
+    assert out.id == _pk
+    assert out.payload == "legacy"
 
 
 @pytest.mark.asyncio

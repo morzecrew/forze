@@ -53,6 +53,17 @@ project_document_config = PostgresDocumentConfig(
 )
 ```
 
+#### `read_validation` (read throughput)
+
+`PostgresReadOnlyDocumentConfig` and `PostgresDocumentConfig` accept `read_validation`:
+
+| Value | Behavior |
+|-------|----------|
+| `"strict"` (default) | Full Pydantic validation on every row returned from SELECT. |
+| `"trusted"` | Build read models with `model_construct` when row keys match the read model (no validator run). |
+
+Use `"trusted"` only when the read relation columns match `DocumentSpec.read` and psycopg already returns correct Python types. Extra columns not on the read model raise a precondition error. History blobs, cache payloads, and write `RETURNING` paths stay strict.
+
 Document `read`, `write`, and optional `history`, search `index` / `read` / `heap`, and hub `hub` (plus per-leg search relations) accept a static `(schema, relation)` tuple or a tenant resolver (`ValueResolver` from `forze.application.contracts.resolution`). Resolvers run on async I/O (not at deps wiring time). Startup document schema validation and catalog warmup require static tuples (or skip those lifecycle steps). Example schema-per-tenant document:
 
 ```python

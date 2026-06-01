@@ -20,12 +20,12 @@ from forze.application.contracts.authn.value_objects import (
     CredentialLifetime,
     RefreshTokenCredentials,
 )
-from forze.application.handlers.authn.dto import (
+from forze_kits.aggregates.authn.handlers.dto import (
     AuthnChangePasswordRequestDTO,
     AuthnLoginRequestDTO,
     AuthnRefreshRequestDTO,
 )
-from forze.application.handlers.authn.handlers import (
+from forze_kits.aggregates.authn.handlers.handlers import (
     AuthnChangePassword,
     AuthnLogout,
     AuthnPasswordLogin,

@@ -27,7 +27,7 @@ from forze.application.contracts.authn.value_objects import (
     RefreshTokenCredentials,
 )
 from forze.application.execution import ExecutionContext
-from forze.application.handlers.authn import (
+from forze_kits.aggregates.authn.handlers import (
     AuthnChangePassword,
     AuthnLogout,
     AuthnPasswordLogin,

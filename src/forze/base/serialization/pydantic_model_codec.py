@@ -38,11 +38,13 @@ class PydanticRecordMappingCodec[T: BaseModel](RecordMappingCodec[T, BaseModel])
         data: JsonDict,
         *,
         forbid_extra: bool = False,
+        trust_source: bool = False,
     ) -> T:
         return pydantic_validate(
             self.model_type,
             data,
             forbid_extra=forbid_extra,
+            trust_source=trust_source,
         )
 
     # ....................... #
@@ -52,11 +54,13 @@ class PydanticRecordMappingCodec[T: BaseModel](RecordMappingCodec[T, BaseModel])
         data: Sequence[JsonDict],
         *,
         forbid_extra: bool = False,
+        trust_source: bool = False,
     ) -> list[T]:
         return pydantic_validate_many(
             self.model_type,
             data,
             forbid_extra=forbid_extra,
+            trust_source=trust_source,
         )
 
     # ....................... #
@@ -67,12 +71,14 @@ class PydanticRecordMappingCodec[T: BaseModel](RecordMappingCodec[T, BaseModel])
         *,
         batch_size: int = 2000,
         forbid_extra: bool = False,
+        trust_source: bool = False,
     ) -> Iterator[list[T]]:
         return pydantic_validate_many_batched(
             self.model_type,
             data,
             batch_size=batch_size,
             forbid_extra=forbid_extra,
+            trust_source=trust_source,
         )
 
     # ....................... #

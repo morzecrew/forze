@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 
 from forze.application.execution import ExecutionContext
-from forze.application.mapping.pydantic import (
+from forze_kits.mapping.pydantic import (
     PydanticPipelineMapper,
     PydanticPipelineMapperFactory,
 )

@@ -1,6 +1,6 @@
 """Document read-through cache coordination (versioned keys, deferred warm, invalidation)."""
 
-from typing import Awaitable, Callable, Protocol, Sequence, cast, runtime_checkable
+from typing import Any, Awaitable, Callable, Protocol, Sequence, cast, runtime_checkable
 from uuid import UUID
 
 import attrs
@@ -8,11 +8,11 @@ from pydantic import BaseModel
 
 from forze.application.contracts.cache import CachePort
 from forze.application.contracts.transaction import AfterCommitPort
+from forze.base.primitives import JsonDict
 from forze.base.serialization import (
-    pydantic_cache_dump,
-    pydantic_cache_dump_many,
-    pydantic_validate,
-    pydantic_validate_many,
+    CACHE_DUMP_EXCLUDE_OPTS,
+    PydanticRecordMappingCodec,
+    RecordMappingCodec,
 )
 from forze.domain.constants import ID_FIELD, REV_FIELD
 
@@ -48,6 +48,14 @@ class DocumentCache[R: BaseModel]:
     read_model_type: type[R]
     """Read model used to validate presence of ``id`` and ``rev`` fields."""
 
+    row_codec: RecordMappingCodec[R, Any] | None = attrs.field(
+        kw_only=True,
+        default=None,
+        eq=False,
+        repr=False,
+    )
+    """Codec for cache bodies; defaults to :class:`PydanticRecordMappingCodec`."""
+
     document_name: str
     """Document kind used in logs (typically :attr:`~forze.application.contracts.document.DocumentSpec.name`)."""
 
@@ -56,6 +64,37 @@ class DocumentCache[R: BaseModel]:
 
     after_commit: AfterCommitPort | None = None
     """Optional deferral aligned with execution-context commit."""
+
+    # ....................... #
+
+    def __attrs_post_init__(self) -> None:
+        if self.row_codec is None:
+            object.__setattr__(
+                self,
+                "row_codec",
+                PydanticRecordMappingCodec(self.read_model_type),
+            )
+
+    # ....................... #
+
+    def _encode_for_cache(self, doc: R) -> bytes:
+        codec = cast(RecordMappingCodec[R, Any], self.row_codec)
+
+        return codec.encode_json_bytes(doc, exclude=CACHE_DUMP_EXCLUDE_OPTS)
+
+    # ....................... #
+
+    def _decode_from_cache(self, cached: Any) -> R:
+        codec = cast(RecordMappingCodec[R, Any], self.row_codec)
+
+        if isinstance(cached, bytes):
+            return codec.decode_json_bytes(cached)
+
+        if isinstance(cached, dict):
+            return codec.decode_mapping(cast(JsonDict, cached))
+
+        msg = f"Unsupported cache payload type: {type(cached)!r}"
+        raise TypeError(msg)
 
     # ....................... #
 
@@ -121,10 +160,10 @@ class DocumentCache[R: BaseModel]:
         try:
             casted_doc = cast(_ReadModelWithIdAndRev, doc)
 
-            dump = pydantic_cache_dump(doc)
+            payload = self._encode_for_cache(doc)
 
             await self.cache.set_versioned(
-                str(casted_doc.id), str(casted_doc.rev), dump
+                str(casted_doc.id), str(casted_doc.rev), payload
             )
 
             logger.trace("Cache set successfully")
@@ -151,10 +190,9 @@ class DocumentCache[R: BaseModel]:
         docs_casted = [cast(_ReadModelWithIdAndRev, x) for x in docs]
 
         try:
-            dumps = pydantic_cache_dump_many(docs)
             versioned_mapping = {
-                (str(x.id), str(x.rev)): y
-                for x, y in zip(docs_casted, dumps, strict=True)
+                (str(doc.id), str(doc.rev)): self._encode_for_cache(cast(R, doc))
+                for doc in docs_casted
             }
 
             await self.cache.set_many_versioned(versioned_mapping)
@@ -222,7 +260,7 @@ class DocumentCache[R: BaseModel]:
 
         if cached is not None:
             logger.trace("Retrieved 1 cached '%s' document", self.document_name)
-            return pydantic_validate(self.read_model_type, cached)
+            return self._decode_from_cache(cached)
 
         logger.debug(
             "Fetching 1 '%s' document from database (cache miss)", self.document_name
@@ -286,10 +324,7 @@ class DocumentCache[R: BaseModel]:
 
             await self.after_commit_or_now(lambda: self.set_many(miss_res))
 
-        hits_validated = pydantic_validate_many(
-            self.read_model_type,
-            list(hits.values()),
-        )
+        hits_validated = [self._decode_from_cache(value) for value in hits.values()]
         hits_validated_cast = [cast(_ReadModelWithIdAndRev, x) for x in hits_validated]
         miss_res_cast = [cast(_ReadModelWithIdAndRev, x) for x in miss_res]
 

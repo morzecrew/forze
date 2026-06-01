@@ -6,7 +6,7 @@ from pydantic import BaseModel
 
 from forze.application.contracts.document import DocumentSpec
 from forze.application.execution.operations import OperationRegistry
-from forze.application.handlers.document import (
+from .handlers import (
     AggregatedListDocuments,
     CreateDocument,
     CursorListDocuments,
@@ -17,7 +17,7 @@ from forze.application.handlers.document import (
     ProjectedListDocuments,
     UpdateDocument,
 )
-from forze.application.mapping import PydanticPipelineMapperFactory
+from forze_kits.mapping import PydanticPipelineMapperFactory
 from forze.base.exceptions import exc
 from forze.base.primitives import StrKeyNamespace
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document

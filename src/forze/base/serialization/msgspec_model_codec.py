@@ -41,7 +41,12 @@ class MsgspecRecordMappingCodec[T: msgspec.Struct](RecordMappingCodec[T, SourceT
         data: JsonDict,
         *,
         forbid_extra: bool = False,
+        trust_source: bool = False,
     ) -> T:
+        if trust_source:
+            msg = "MsgspecRecordMappingCodec does not support trust_source=True"
+            raise NotImplementedError(msg)
+
         return msgspec_validate(
             self.model_type,
             data,
@@ -55,7 +60,12 @@ class MsgspecRecordMappingCodec[T: msgspec.Struct](RecordMappingCodec[T, SourceT
         data: Sequence[JsonDict],
         *,
         forbid_extra: bool = False,
+        trust_source: bool = False,
     ) -> list[T]:
+        if trust_source:
+            msg = "MsgspecRecordMappingCodec does not support trust_source=True"
+            raise NotImplementedError(msg)
+
         return msgspec_validate_many(
             self.model_type,
             data,
@@ -70,7 +80,12 @@ class MsgspecRecordMappingCodec[T: msgspec.Struct](RecordMappingCodec[T, SourceT
         *,
         batch_size: int = 2000,
         forbid_extra: bool = False,
+        trust_source: bool = False,
     ) -> Iterator[list[T]]:
+        if trust_source:
+            msg = "MsgspecRecordMappingCodec does not support trust_source=True"
+            raise NotImplementedError(msg)
+
         return msgspec_validate_many_batched(
             self.model_type,
             data,

@@ -7,7 +7,7 @@ from forze.application.contracts.querying import (
     QueryFilterExpression,
     QuerySortExpression,
 )
-from forze.application.dto.paginated import CursorPagination, Pagination
+from forze_kits.dto.paginated import CursorPagination, Pagination
 from forze.base.primitives import JsonDict
 from forze.domain.models import BaseDTO
 

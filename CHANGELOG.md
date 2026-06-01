@@ -22,6 +22,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`forze.application.composition`:** use `forze_kits.aggregates.document`, `forze_kits.aggregates.search`, `forze_kits.aggregates.storage`, `forze_kits.aggregates.authn`, `forze_kits.integrations.outbox`.
 - **`forze.application.kit`:** use `forze_kits.scopes` (`DistributedLockScope`).
 - **`forze_secrets`:** use `forze_kits.adapters.secrets` (`EnvSecrets`, `DirectorySecrets`, `MappingSecrets`, `SecretsDepsModule`).
+- **`forze.application.handlers.*`:** use `forze_kits.aggregates.{document,search,storage,authn}.handlers`.
+- **`forze.application.mapping`:** use `forze_kits.mapping` (`PydanticPipelineMapperFactory`, pipeline steps). `Mapper` / `MapperFactory` protocols stay on `forze.application.contracts.mapping`.
+- **`forze.application.dto`:** use `forze_kits.dto` (`Pagination`, `Paginated`, `CursorPagination`, `CursorPaginated`, and related types).
 
 | Old import | New import |
 |------------|------------|
@@ -30,13 +33,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 | `forze.application.composition.outbox` | `forze_kits.integrations.outbox` |
 | `forze.application.kit.DistributedLockScope` | `forze_kits.scopes.DistributedLockScope` |
 | `forze_secrets` | `forze_kits.adapters.secrets` |
+| `forze.application.handlers.document` | `forze_kits.aggregates.document.handlers` |
+| `forze.application.handlers.search` | `forze_kits.aggregates.search.handlers` |
+| `forze.application.handlers.storage` | `forze_kits.aggregates.storage.handlers` |
+| `forze.application.handlers.authn` | `forze_kits.aggregates.authn.handlers` |
+| `forze.application.mapping` | `forze_kits.mapping` |
+| `forze.application.dto` | `forze_kits.dto` |
 
 See [Kits reference](pages/docs/reference/kits.md).
 
 ### Changed
 
+- **`forze_postgres`:** document gateways decode SELECT rows through `RecordMappingCodec` (default `PydanticRecordMappingCodec`; behavior unchanged unless `read_validation="trusted"`).
+- **`forze.application.integrations.document`:** versioned document cache stores compact JSON bytes; legacy dict cache entries remain readable until TTL expiry.
 - **`forze_identity.oidc`:** `OidcTokenVerifier.enforce_issuer_and_audience` defaults to `True` (construction requires both `issuer` and `audience` unless explicitly opted out).
-- **`forze_kits` layout:** modules live under `domain/`, `aggregates/`, `integration/`, `adapters/`, and `runtime/` (e.g. `forze_kits.aggregates.document`, `forze_kits.integrations.outbox`, `forze_kits.adapters.secrets`).
+- **`forze_kits` layout:** modules live under `domain/`, `aggregates/` (with per-aggregate `handlers/`), `mapping/`, `dto/`, `integrations/`, `adapters/`, and `scopes/` (e.g. `forze_kits.aggregates.document.handlers`, `forze_kits.mapping`, `forze_kits.integrations.outbox`, `forze_kits.adapters.secrets`). Core `forze.application` keeps contracts, execution, hooks, and integrations only.
 
 ### Added
 
@@ -48,6 +59,7 @@ See [Kits reference](pages/docs/reference/kits.md).
 - **`forze_kits`:** consolidated package for domain kits, aggregate registries/facades, outbox helpers, and runtime ergonomics (see migration table under **Removed**).
 - **Outbox (kits):** `outbox_relay_background_lifecycle_step` for optional in-process relay polling.
 - **`forze_mock`:** Tenancy helpers (`partition_namespace`, `resolve_mock_namespace`, `MockTenancyMixin`, `MockRoutedStateRegistry`), extended `MockState` buckets (dlocks, search snapshots, durable workflow/function, identity), new adapters (distributed lock, search command/snapshot/hub/federated, durable workflow/schedule/function, identity stubs), and `MockDepsModule` registration for all related dep keys. Docs updated under [Mock integration](pages/docs/integrations/mock.md) and [Multi-tenancy](pages/docs/concepts/multi-tenancy.md).
+- **`forze_postgres`:** `PostgresReadOnlyDocumentConfig.read_validation` (`"strict"` | `"trusted"`) for faster read-model materialization from trusted SQL rows.
 
 ### Changed
 

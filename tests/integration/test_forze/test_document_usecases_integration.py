@@ -4,8 +4,8 @@ import pytest
 
 from forze.application.contracts.document import DocumentSpec
 from forze.application.execution import Deps, ExecutionContext
-from forze.application.handlers.document import GetDocument
-from forze.application.handlers.document.dto import DocumentIdDTO, DocumentIdRevDTO
+from forze_kits.aggregates.document.handlers import GetDocument
+from forze_kits.aggregates.document.handlers.dto import DocumentIdDTO, DocumentIdRevDTO
 from tests.support.execution_context import context_from_deps, context_from_modules, frozen_deps_from_deps
 from pydantic import PositiveInt
 

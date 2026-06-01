@@ -6,7 +6,7 @@ require_psycopg()
 
 # ....................... #
 
-from typing import Any, Mapping, Self, Sequence, final
+from typing import Any, Mapping, Self, Sequence, cast, final
 from uuid import UUID
 
 import attrs
@@ -25,7 +25,11 @@ from forze.application.contracts.querying import (
 from forze.application.contracts.tenancy import TENANT_ID_FIELD, TenancyMixin
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
-from forze.base.serialization import pydantic_field_names, pydantic_validate
+from forze.base.serialization import (
+    PydanticRecordMappingCodec,
+    RecordMappingCodec,
+    pydantic_field_names,
+)
 from forze.domain.constants import ID_FIELD
 from forze_postgres.kernel.catalog.introspect import (
     PostgresColumnTypes,
@@ -128,6 +132,14 @@ class PostgresGateway[M: BaseModel](TenancyMixin):
     model_type: type[M]
     """Pydantic model used for deserialization."""
 
+    row_codec: RecordMappingCodec[M, Any] | None = attrs.field(
+        kw_only=True,
+        default=None,
+        eq=False,
+        repr=False,
+    )
+    """Row decode/encode codec; defaults to :class:`PydanticRecordMappingCodec` for :attr:`model_type`."""
+
     introspector: PostgresIntrospector
     """Postgres introspector instance."""
 
@@ -153,6 +165,13 @@ class PostgresGateway[M: BaseModel](TenancyMixin):
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
+        if self.row_codec is None:
+            object.__setattr__(
+                self,
+                "row_codec",
+                PydanticRecordMappingCodec(self.model_type),
+            )
+
         cap = self.find_many_implicit_limit
 
         if cap is not None and cap < 1:
@@ -177,6 +196,41 @@ class PostgresGateway[M: BaseModel](TenancyMixin):
 
         return frozenset(
             pydantic_field_names(self.model_type, include_computed=False),
+        )
+
+    # ....................... #
+
+    def _codec_for(self, model: type[BaseModel] | None = None) -> RecordMappingCodec[Any, Any]:
+        """Return :attr:`row_codec` or a codec bound to an alternate read model."""
+
+        if model is None or model is self.model_type:
+            return cast(RecordMappingCodec[Any, Any], self.row_codec)
+
+        return PydanticRecordMappingCodec(model)
+
+    # ....................... #
+
+    def _decode_row(
+        self,
+        row: JsonDict,
+        *,
+        model: type[BaseModel] | None = None,
+        trust_source: bool = False,
+    ) -> Any:
+        return self._codec_for(model).decode_mapping(row, trust_source=trust_source)
+
+    # ....................... #
+
+    def _decode_rows(
+        self,
+        rows: Sequence[JsonDict],
+        *,
+        model: type[BaseModel] | None = None,
+        trust_source: bool = False,
+    ) -> list[Any]:
+        return self._codec_for(model).decode_mapping_many(
+            rows,
+            trust_source=trust_source,
         )
 
     # ....................... #
@@ -507,7 +561,7 @@ class PostgresGateway[M: BaseModel](TenancyMixin):
         if row is None:
             raise exc.not_found(f"Record not found: {pk!s}")
 
-        return pydantic_validate(self.model_type, row)
+        return self._decode_row(row)
 
     # ....................... #
 
@@ -560,6 +614,6 @@ class PostgresGateway[M: BaseModel](TenancyMixin):
             if row_by_id is None:
                 raise exc.not_found(f"Record not found: {pk!s}")
 
-            out.append(pydantic_validate(self.model_type, row_by_id))
+            out.append(self._decode_row(row_by_id))
 
         return out

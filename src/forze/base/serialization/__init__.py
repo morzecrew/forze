@@ -22,6 +22,7 @@ from .msgspec import (
 )
 from .msgspec_model_codec import MsgspecRecordMappingCodec
 from .pydantic import (
+    CACHE_DUMP_EXCLUDE_OPTS,
     pydantic_cache_dump,
     pydantic_cache_dump_many,
     pydantic_persistence_dump,
@@ -39,6 +40,7 @@ from .pydantic import (
     pydantic_validate,
     pydantic_validate_many,
     pydantic_validate_many_batched,
+    pydantic_validate_trusted,
 )
 from .pydantic_model_codec import PydanticRecordMappingCodec
 
@@ -70,7 +72,9 @@ __all__ = [
     "pydantic_persistence_dump",
     "pydantic_persistence_dump_many",
     "pydantic_field_names",
+    "CACHE_DUMP_EXCLUDE_OPTS",
     "pydantic_validate",
+    "pydantic_validate_trusted",
     "pydantic_model_hash",
     "split_touches_from_merge_patch",
     "has_hybrid_patch_conflict",

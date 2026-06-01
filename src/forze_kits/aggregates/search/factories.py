@@ -6,7 +6,7 @@ from forze.application.contracts.search import (
     SearchSpec,
 )
 from forze.application.execution.operations.registry import OperationRegistry
-from forze.application.handlers.search import (
+from .handlers import (
     CursorSearch,
     ProjectedCursorSearch,
     ProjectedSearch,

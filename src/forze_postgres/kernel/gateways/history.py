@@ -16,8 +16,6 @@ from forze.base.exceptions import exc
 from forze.base.serialization import (
     pydantic_persistence_dump,
     pydantic_persistence_dump_many,
-    pydantic_validate,
-    pydantic_validate_many,
 )
 from forze.domain.constants import (
     HISTORY_DATA_FIELD,
@@ -102,7 +100,7 @@ class PostgresHistoryGateway[D: Document](PostgresGateway[D]):
         if row is None:
             raise exc.not_found(f"History not found: {pk}, {rev}")
 
-        return pydantic_validate(self.model_type, row[HISTORY_DATA_FIELD])
+        return self._decode_row(row[HISTORY_DATA_FIELD])
 
     # ....................... #
 
@@ -139,10 +137,7 @@ class PostgresHistoryGateway[D: Document](PostgresGateway[D]):
 
         rows = await self.client.fetch_all(stmt, params, row_factory="dict")
 
-        return pydantic_validate_many(
-            self.model_type,
-            [row[HISTORY_DATA_FIELD] for row in rows],
-        )
+        return self._decode_rows([row[HISTORY_DATA_FIELD] for row in rows])
 
     # ....................... #
 

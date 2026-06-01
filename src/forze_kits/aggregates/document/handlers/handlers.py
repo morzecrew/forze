@@ -6,7 +6,7 @@ from pydantic import BaseModel
 from forze.application.contracts.document import DocumentCommandPort, DocumentQueryPort
 from forze.application.contracts.execution import Handler
 from forze.application.contracts.mapping import Mapper
-from forze.application.dto.paginated import (
+from forze_kits.dto.paginated import (
     CursorPaginated,
     Paginated,
     ProjectedCursorPaginated,

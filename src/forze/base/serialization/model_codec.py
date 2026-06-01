@@ -47,6 +47,7 @@ class RecordMappingCodec[T, TSource](Protocol):
         data: JsonDict,
         *,
         forbid_extra: bool = False,
+        trust_source: bool = False,
     ) -> T: ...
 
     def decode_mapping_many(
@@ -54,6 +55,7 @@ class RecordMappingCodec[T, TSource](Protocol):
         data: Sequence[JsonDict],
         *,
         forbid_extra: bool = False,
+        trust_source: bool = False,
     ) -> list[T]: ...
 
     def decode_mapping_many_batched(
@@ -62,6 +64,7 @@ class RecordMappingCodec[T, TSource](Protocol):
         *,
         batch_size: int = 2000,
         forbid_extra: bool = False,
+        trust_source: bool = False,
     ) -> Iterator[list[T]]: ...
 
     def encode_mapping(

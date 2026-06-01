@@ -6,7 +6,7 @@ from pydantic import BaseModel as Bm
 from forze.application.contracts.execution import Handler
 from forze.application.contracts.mapping import Mapper
 from forze.application.contracts.search import SearchQueryPort
-from forze.application.dto import CursorPaginated, ProjectedCursorPaginated
+from forze_kits.dto import CursorPaginated, ProjectedCursorPaginated
 
 from .dto import (
     CursorSearchRequestDTO,

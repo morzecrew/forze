@@ -1,4 +1,4 @@
-"""Unit tests for forze.application.handlers.document."""
+"""Unit tests for forze_kits.aggregates.document.handlers."""
 
 from forze.base.exceptions import CoreException
 from unittest.mock import AsyncMock
@@ -8,14 +8,14 @@ from uuid import uuid4
 import pytest
 
 from forze.application.contracts.document import DocumentQueryPort
-from forze.application.handlers.document import (
+from forze_kits.aggregates.document.handlers import (
     CursorListDocuments,
     GetDocument,
     ListDocuments,
     ProjectedCursorListDocuments,
     ProjectedListDocuments,
 )
-from forze.application.handlers.document.dto import (
+from forze_kits.aggregates.document.handlers.dto import (
     CursorListRequestDTO,
     DocumentIdDTO,
     ListRequestDTO,

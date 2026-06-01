@@ -291,10 +291,8 @@ layers = ["forze.application", "forze.domain", "forze.base"]
 name = "Layered `forze.application` module architecture"
 type = "layers"
 layers = [
-    "forze.application.handlers",
     "forze.application.hooks",
     "forze.application.execution",
-    "forze.application.dto",
     "forze.application.integrations",
     "forze.application.contracts",
 ]

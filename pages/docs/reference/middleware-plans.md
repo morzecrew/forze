@@ -6,11 +6,11 @@ For the conceptual overview, see [Application Layer](../concepts/application-lay
 
 ## Handler
 
-`Handler[Args, R]` is a protocol for application operations. Built-in handlers in `forze.application.handlers` are attrs classes that receive ports in their constructor and implement `__call__(args) -> R`:
+`Handler[Args, R]` is a protocol for application operations. Built-in handlers in `forze_kits.aggregates.*.handlers` are attrs classes that receive ports in their constructor and implement `__call__(args) -> R`:
 
     :::python
     from forze.application.contracts.execution import Handler
-    from forze.application.handlers.document import DocumentIdDTO, GetDocument
+    from forze_kits.aggregates.document.handlers import DocumentIdDTO, GetDocument
 
     # Typical factory on OperationRegistry:
     get_factory = lambda ctx: GetDocument(doc=ctx.document.query(project_spec))

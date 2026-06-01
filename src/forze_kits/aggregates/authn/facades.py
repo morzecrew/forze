@@ -5,7 +5,7 @@ from forze.application.execution.operations.facade import (
     facade_op,
     namespaced_facade,
 )
-from forze.application.handlers.authn import (
+from .handlers import (
     AuthnChangePassword,
     AuthnLogout,
     AuthnPasswordLogin,

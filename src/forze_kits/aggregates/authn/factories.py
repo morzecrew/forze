@@ -8,7 +8,7 @@ from forze.application.contracts.authn import (
 )
 from forze.application.execution import ExecutionContext
 from forze.application.execution.operations.registry import OperationRegistry
-from forze.application.handlers.authn import (
+from .handlers import (
     AuthnChangePassword,
     AuthnLogout,
     AuthnPasswordLogin,

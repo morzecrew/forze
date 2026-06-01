@@ -8,10 +8,12 @@ integration flows, local port adapters, and runtime ergonomics.
 ```text
 forze_kits/
   domain/           # field/entity shape kits (mixins, mapping steps, …)
-  aggregates/       # document, search, storage, authn (registry + facade)
-  integration/      # outbox (notify planned)
+  aggregates/       # document, search, storage, authn (registry, facade, handlers/)
+  mapping/          # Pydantic pipeline mapper factory and steps
+  dto/              # shared pagination request/response DTOs
+  integrations/     # outbox (notify planned)
   adapters/         # secrets (local SecretsPort backends)
-  runtime/          # DistributedLockScope, …
+  scopes/           # DistributedLockScope, …
 ```
 
 ## Taxonomy
@@ -20,6 +22,9 @@ forze_kits/
 |------|-------------|
 | Domain shape | `forze_kits.domain.*` |
 | Aggregate ops | `forze_kits.aggregates.{document,search,storage,authn}` |
+| Default handlers | `forze_kits.aggregates.<name>.handlers` |
+| DTO mapping | `forze_kits.mapping` |
+| Pagination DTOs | `forze_kits.dto` |
 | Integration flow | `forze_kits.integrations.outbox` |
 | Local port adapter | `forze_kits.adapters.secrets` |
 | Runtime ergonomics | `forze_kits.scopes` |
@@ -32,7 +37,7 @@ forze_kits/
 
 ## Adding a new kit
 
-1. Pick the folder (`domain`, `aggregates`, `integration`, `adapters`, `runtime`).
+1. Pick the folder (`domain`, `aggregates`, `mapping`, `dto`, `integrations`, `adapters`, `scopes`).
 2. Implement under that path with `__init__.py` exports.
 3. Do not add new ports here—extend `forze.application.contracts` when a new capability is needed.
 4. Add unit tests under `tests/unit/test_forze_kits/`.

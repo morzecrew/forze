@@ -13,7 +13,7 @@ from forze.application.contracts.search import (
     SearchOptions,
     SearchResultSnapshotOptions,
 )
-from forze.application.dto.paginated import (
+from forze_kits.dto.paginated import (
     CursorPagination,
     Paginated,
     Pagination,

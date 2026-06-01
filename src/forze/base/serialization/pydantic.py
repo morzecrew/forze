@@ -9,6 +9,7 @@ import orjson
 from pydantic import BaseModel, SecretStr, TypeAdapter
 
 from .._logger import logger
+from ..exceptions import exc
 from ..primitives import JsonDict
 from .model_codec import RecordMappingDumpExcludeOptions
 
@@ -28,14 +29,19 @@ def pydantic_validate[M: BaseModel](
     data: JsonDict,
     *,
     forbid_extra: bool = False,
+    trust_source: bool = False,
 ) -> M:
     """Validate raw ``data`` into a Pydantic model instance.
 
     :param cls: Pydantic model class to validate against.
     :param data: Raw input mapping.
     :param forbid_extra: When true, extra keys are forbidden instead of ignored. Defaults to False.
+    :param trust_source: When true, skip validation and use :meth:`~pydantic.BaseModel.model_construct`.
     :returns: Validated model instance.
     """
+
+    if trust_source:
+        return pydantic_validate_trusted(cls, data, forbid_extra=forbid_extra)
 
     logger.trace(
         "Validating data into %s (forbid_extra=%s)",
@@ -44,6 +50,36 @@ def pydantic_validate[M: BaseModel](
     )
 
     return cls.model_validate(data, extra="forbid" if forbid_extra else "ignore")
+
+
+# ....................... #
+
+
+def pydantic_validate_trusted[M: BaseModel](
+    cls: type[M],
+    data: JsonDict,
+    *,
+    forbid_extra: bool = False,
+) -> M:
+    """Build a model from a trusted row mapping without running validators.
+
+    Row keys must be a subset of stored field names. Unknown keys raise
+    :class:`~forze.base.exceptions.exc.PreconditionError` (or when ``forbid_extra``).
+    """
+
+    allowed = pydantic_field_names(cls, include_computed=False)
+    unknown = set(data.keys()) - allowed
+
+    if unknown:
+        msg = (
+            f"Trusted decode for {cls.__name__} rejected unknown field(s): "
+            f"{sorted(unknown)}"
+        )
+        raise exc.precondition(msg)
+
+    logger.trace("Trusted construct into %s", cls.__name__)
+
+    return cls.model_construct(**data)
 
 
 # ....................... #
@@ -63,7 +99,14 @@ def pydantic_validate_many[M: BaseModel](
     data: Sequence[JsonDict],
     *,
     forbid_extra: bool = False,
+    trust_source: bool = False,
 ) -> list[M]:
+    if trust_source:
+        return [
+            pydantic_validate_trusted(cls, row, forbid_extra=forbid_extra)
+            for row in data
+        ]
+
     logger.trace(
         "Validating %s data items into list[%s] (forbid_extra=%s)",
         len(data),
@@ -88,6 +131,7 @@ def pydantic_validate_many_batched[M: BaseModel](
     *,
     batch_size: int = 2000,
     forbid_extra: bool = False,
+    trust_source: bool = False,
 ) -> Iterator[list[M]]:
     """Validate row dicts in fixed-size chunks to cap peak memory.
 
@@ -107,6 +151,15 @@ def pydantic_validate_many_batched[M: BaseModel](
 
     seq = _sequence_as_list(data)
     if not seq:
+        return
+
+    if trust_source:
+        for start in range(0, len(seq), batch_size):
+            chunk = seq[start : start + batch_size]
+            yield [
+                pydantic_validate_trusted(cls, row, forbid_extra=forbid_extra)
+                for row in chunk
+            ]
         return
 
     adapter = _list_adapter(cls)
@@ -375,13 +428,15 @@ def pydantic_model_hash(
 
 # ....................... #
 
-_CACHE_EXCLUDE_OPTS: Final[RecordMappingDumpExcludeOptions] = (
+CACHE_DUMP_EXCLUDE_OPTS: Final[RecordMappingDumpExcludeOptions] = (
     RecordMappingDumpExcludeOptions(
         none=True,
         defaults=True,
         computed_fields=True,
     )
 )
+
+_CACHE_EXCLUDE_OPTS = CACHE_DUMP_EXCLUDE_OPTS
 
 
 def pydantic_cache_dump(obj: BaseModel) -> JsonDict:

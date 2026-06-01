@@ -19,7 +19,7 @@ from forze.application.contracts.search import (
 )
 from forze.application.execution import Deps, ExecutionContext
 from tests.support.execution_context import context_from_deps
-from forze.application.handlers.search import (
+from forze_kits.aggregates.search.handlers import (
     CursorSearch,
     ProjectedCursorSearch,
     ProjectedSearch,

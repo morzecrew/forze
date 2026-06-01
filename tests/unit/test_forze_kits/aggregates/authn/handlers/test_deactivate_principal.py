@@ -1,4 +1,4 @@
-"""Tests for :mod:`forze.application.handlers.authn.deactivate_principal`."""
+"""Tests for :mod:`forze_kits.aggregates.authn.handlers.deactivate_principal`."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from uuid import uuid4
 import pytest
 
 from forze.application.contracts.authn import AuthnSpec
-from forze.application.handlers.authn.deactivate_principal import (
+from forze_kits.aggregates.authn.handlers.deactivate_principal import (
     DeactivatePrincipalHandler,
     DeactivatePrincipalRequestDTO,
 )

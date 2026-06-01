@@ -55,7 +55,7 @@ A **handler** is a single, well-defined business action. Built-in document handl
     :::python
     from forze.application.contracts.document import DocumentQueryPort
     from forze.application.contracts.execution import Handler
-    from forze.application.handlers.document import DocumentIdDTO, GetDocument
+    from forze_kits.aggregates.document.handlers import DocumentIdDTO, GetDocument
 
     # Factory registered on OperationRegistry (see build_document_registry)
     handler_factory = lambda ctx: GetDocument(doc=ctx.document.query(project_spec))
@@ -71,7 +71,7 @@ Example precondition as `BeforeStep` on an outer scope:
     :::python
     from forze_kits.aggregates.document import build_document_registry
     from forze.application.contracts.execution import BeforeStep
-    from forze.application.handlers.document import DocumentIdDTO
+    from forze_kits.aggregates.document.handlers import DocumentIdDTO
     from forze.base.errors import ValidationError
 
     def require_active_project_factory(ctx):

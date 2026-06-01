@@ -29,8 +29,6 @@ from forze.base.serialization import (
     pydantic_persistence_dump_many,
     pydantic_transform,
     pydantic_transform_many,
-    pydantic_validate,
-    pydantic_validate_many,
 )
 from forze.domain.constants import ID_FIELD, REV_FIELD
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document
@@ -307,7 +305,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
                     code="create_failed",
                 )
 
-            res = pydantic_validate(self.model_type, row)
+            res = self._decode_row(row)
             await self._write_history(res)
 
             return res
@@ -395,7 +393,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
 
             result: list[D] = []
             for rows in batch_results:
-                result.extend(pydantic_validate_many(self.model_type, rows))
+                result.extend(self._decode_rows(rows))
 
             if len(result) != len(dtos):
                 raise exc.internal("Failed to create all records")
@@ -444,7 +442,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
             )
 
             if row is not None:
-                res = pydantic_validate(self.model_type, row)
+                res = self._decode_row(row)
                 await self._write_history(res)
                 return res
 
@@ -533,7 +531,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
                     rj = by_returned.get(m.id)
 
                     if rj is not None:
-                        dom = pydantic_validate(self.model_type, rj)
+                        dom = self._decode_row(rj)
                         inserted.append(dom)
                         ordered.append(dom)
 
@@ -626,7 +624,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
             )
 
             if row is not None:
-                res = pydantic_validate(self.model_type, row)
+                res = self._decode_row(row)
                 await self._write_history(res)
 
                 return res
@@ -703,7 +701,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
                 for m in model_batch:
                     rj = by_returned.get(m.id)
                     if rj is not None:
-                        inserted.append(pydantic_validate(self.model_type, rj))
+                        inserted.append(self._decode_row(rj))
 
                 if inserted:
                     await self._write_history(*inserted)
@@ -737,7 +735,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
                     rj = by_returned.get(m.id)
 
                     if rj is not None:
-                        ordered.append(pydantic_validate(self.model_type, rj))
+                        ordered.append(self._decode_row(rj))
 
                     else:
                         u_one = by_updated.get(m.id)
@@ -852,7 +850,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
             if row is None:
                 raise exc.concurrency("Failed to update record")
 
-            res = pydantic_validate(self.model_type, row)
+            res = self._decode_row(row)
             await self._write_history(res)
 
             return res, diff
@@ -971,7 +969,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
         if missing:
             raise exc.concurrency("Failed to update records")
 
-        return pydantic_validate_many(self.model_type, rows)
+        return self._decode_rows(rows)
 
     # ....................... #
 
@@ -1197,7 +1195,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
                 commit=False,
             )
 
-            doms = pydantic_validate_many(self.model_type, rows)
+            doms = self._decode_rows(rows)
             await self._write_history(*doms)
 
             return len(doms), doms

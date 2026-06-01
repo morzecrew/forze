@@ -6,7 +6,7 @@ from forze.application.execution.operations.facade import (
     facade_op,
     namespaced_facade,
 )
-from forze.application.handlers.search import (
+from .handlers import (
     CursorSearch,
     ProjectedCursorSearch,
     ProjectedSearch,

@@ -2,7 +2,7 @@
 
 from datetime import datetime
 
-from forze.application.dto.paginated import Pagination
+from forze_kits.dto.paginated import Pagination
 from forze.domain.models import BaseDTO
 
 # ----------------------- #

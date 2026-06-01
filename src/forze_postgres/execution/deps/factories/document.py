@@ -58,6 +58,7 @@ class ConfigurablePostgresReadOnlyDocument(DocumentQueryDepPort[R]):
             read_relation=self.config.read,
             tenant_aware=self.config.tenant_aware,
             nested_field_hints=self.config.nested_field_hints,
+            read_validation=self.config.read_validation,
         )
 
         after_commit: "AfterCommitPort | None" = None
@@ -67,6 +68,7 @@ class ConfigurablePostgresReadOnlyDocument(DocumentQueryDepPort[R]):
 
         cc = DocumentCache[R](
             read_model_type=read.model_type,
+            row_codec=read.row_codec,
             document_name=spec.name,
             cache=cache,
             after_commit=after_commit,
@@ -115,6 +117,7 @@ class ConfigurablePostgresDocument(DocumentCommandDepPort[R, D, C, U]):
             read_relation=self.config.read,
             tenant_aware=tenant_aware,
             nested_field_hints=self.config.nested_field_hints,
+            read_validation=self.config.read_validation,
         )
 
         history_relation = self.config.history
@@ -149,6 +152,7 @@ class ConfigurablePostgresDocument(DocumentCommandDepPort[R, D, C, U]):
 
         cc = DocumentCache[R](
             read_model_type=read.model_type,
+            row_codec=read.row_codec,
             document_name=spec.name,
             cache=cache,
             after_commit=after_commit,

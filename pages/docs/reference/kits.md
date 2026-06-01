@@ -12,10 +12,12 @@ The **`forze_kits`** package ships with the default wheel. It provides canonical
 ```text
 forze_kits/
   domain/           # mixins, mapping steps
-  aggregates/       # document, search, storage, authn
-  integration/      # outbox (notify planned)
+  aggregates/       # document, search, storage, authn (+ handlers/ per aggregate)
+  mapping/          # Pydantic pipeline mapper factory
+  dto/              # pagination request/response DTOs
+  integrations/     # outbox (notify planned)
   adapters/         # secrets (local SecretsPort)
-  runtime/          # lock scopes, …
+  scopes/           # lock scopes, …
 ```
 
 **`forze_identity`** and other integration packages stay **outside** `forze_kits` (full contract implementations, not glue).
@@ -26,6 +28,9 @@ forze_kits/
 |------|-------------|
 | Domain shape | `forze_kits.domain.*` |
 | Aggregate ops | `forze_kits.aggregates.{document,search,storage,authn}` |
+| Default handlers | `forze_kits.aggregates.<name>.handlers` |
+| DTO mapping impl | `forze_kits.mapping` |
+| Pagination DTOs | `forze_kits.dto` |
 | Integration flow | `forze_kits.integrations.outbox` |
 | Local port adapter | `forze_kits.adapters.secrets` |
 | Runtime ergonomics | `forze_kits.scopes` |
@@ -44,6 +49,12 @@ Operation registry mechanics (`.bind()`, `.freeze()`, stage hooks) are documente
 | `forze.application.composition.outbox` | `forze_kits.integrations.outbox` |
 | `forze.application.kit` | `forze_kits.scopes` |
 | `forze_secrets` | `forze_kits.adapters.secrets` |
+| `forze.application.handlers.document` | `forze_kits.aggregates.document.handlers` |
+| `forze.application.handlers.search` | `forze_kits.aggregates.search.handlers` |
+| `forze.application.handlers.storage` | `forze_kits.aggregates.storage.handlers` |
+| `forze.application.handlers.authn` | `forze_kits.aggregates.authn.handlers` |
+| `forze.application.mapping` | `forze_kits.mapping` |
+| `forze.application.dto` | `forze_kits.dto` |
 
 ## Document kit
 

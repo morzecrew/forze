@@ -9,6 +9,7 @@ require_psycopg()
 from typing import (
     Any,
     AsyncGenerator,
+    Literal,
     Never,
     Sequence,
     TypeVar,
@@ -18,6 +19,7 @@ from typing import (
 )
 from uuid import UUID
 
+import attrs
 from psycopg import sql
 from pydantic import BaseModel
 
@@ -31,7 +33,6 @@ from forze.application.contracts.querying import (
 )
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
-from forze.base.serialization import pydantic_validate, pydantic_validate_many
 from forze.domain.constants import ID_FIELD
 from forze_postgres.kernel.sql.query import PsycopgQueryRenderer
 from forze_postgres.kernel.sql.query.nested import sort_key_expr
@@ -73,8 +74,48 @@ T = TypeVar("T", bound=BaseModel)
 
 
 @final
+@attrs.define(slots=True, kw_only=True, frozen=True)
 class PostgresReadGateway[M: BaseModel](PostgresGateway[M]):
     """Read-only gateway providing single/batch lookups, filtered queries, and counting."""
+
+    read_validation: Literal["strict", "trusted"] = attrs.field(
+        default="strict",
+        kw_only=True,
+    )
+    """Row decode mode for SELECT results from this gateway (``trusted`` skips validation)."""
+
+    def _decode_row(
+        self,
+        row: JsonDict,
+        *,
+        model: type[BaseModel] | None = None,
+        trust_source: bool | None = None,
+    ) -> Any:
+        eff_trust = (
+            self.read_validation == "trusted"
+            if trust_source is None
+            else trust_source
+        )
+
+        return self._codec_for(model).decode_mapping(row, trust_source=eff_trust)
+
+    def _decode_rows(
+        self,
+        rows: Sequence[JsonDict],
+        *,
+        model: type[BaseModel] | None = None,
+        trust_source: bool | None = None,
+    ) -> list[Any]:
+        eff_trust = (
+            self.read_validation == "trusted"
+            if trust_source is None
+            else trust_source
+        )
+
+        return self._codec_for(model).decode_mapping_many(
+            rows,
+            trust_source=eff_trust,
+        )
 
     def _effective_sql_limit(self, limit: int | None) -> int | None:
         """Apply :attr:`~forze_postgres.kernel.gateways.base.PostgresGateway.find_many_implicit_limit` when *limit* is omitted."""
@@ -117,7 +158,7 @@ class PostgresReadGateway[M: BaseModel](PostgresGateway[M]):
         if row is None:
             raise exc.not_found(f"Record not found: {pk}")
 
-        return pydantic_validate(self.model_type, row)
+        return self._decode_row(row)
 
     # ....................... #
 
@@ -148,7 +189,7 @@ class PostgresReadGateway[M: BaseModel](PostgresGateway[M]):
         if missing:
             raise exc.not_found(f"Some records not found: {missing}")
 
-        return pydantic_validate_many(self.model_type, ordered)
+        return self._decode_rows(ordered)
 
     # ....................... #
 
@@ -221,12 +262,12 @@ class PostgresReadGateway[M: BaseModel](PostgresGateway[M]):
             return None
 
         if return_model is not None:
-            return pydantic_validate(return_model, row)
+            return self._decode_row(row, model=return_model)
 
         if return_fields is not None:
             return {k: row.get(k, None) for k in return_fields}
 
-        return pydantic_validate(self.model_type, row)
+        return self._decode_row(row)
 
     # ....................... #
 
@@ -364,12 +405,12 @@ class PostgresReadGateway[M: BaseModel](PostgresGateway[M]):
         rows = await self.client.fetch_all(stmt, params, row_factory="dict")
 
         if return_model is not None:
-            return pydantic_validate_many(return_model, rows)
+            return self._decode_rows(rows, model=return_model)
 
         if return_fields is not None:
             return [{k: row.get(k, None) for k in return_fields} for row in rows]
 
-        return pydantic_validate_many(self.model_type, rows)
+        return self._decode_rows(rows)
 
     # ....................... #
 
@@ -432,10 +473,10 @@ class PostgresReadGateway[M: BaseModel](PostgresGateway[M]):
                 ]
 
             elif return_model is not None:
-                yield pydantic_validate_many(return_model, dict_chunk)
+                yield self._decode_rows(dict_chunk, model=return_model)
 
             else:
-                yield pydantic_validate_many(self.model_type, dict_chunk)
+                yield self._decode_rows(dict_chunk)
 
     # ....................... #
 
@@ -496,7 +537,7 @@ class PostgresReadGateway[M: BaseModel](PostgresGateway[M]):
         rows = await self.client.fetch_all(stmt, params, row_factory="dict")
 
         if return_model is not None:
-            return pydantic_validate_many(return_model, rows)
+            return self._decode_rows(rows, model=return_model)
 
         return list(rows)
 
@@ -677,12 +718,12 @@ class PostgresReadGateway[M: BaseModel](PostgresGateway[M]):
 
         # At most *lim* + 1 rows; caller slices and derives ``has_more``.
         if return_model is not None:
-            return pydantic_validate_many(return_model, raw_rows)
+            return self._decode_rows(raw_rows, model=return_model)
 
         if return_fields is not None:
             return [{k: r.get(k, None) for k in return_fields} for r in raw_rows]
 
-        return pydantic_validate_many(self.model_type, raw_rows)
+        return self._decode_rows(raw_rows)
 
     # ....................... #
 

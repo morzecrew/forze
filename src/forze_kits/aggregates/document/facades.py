@@ -8,7 +8,7 @@ from forze.application.execution.operations.facade import (
     facade_op,
     namespaced_facade,
 )
-from forze.application.handlers.document import (
+from .handlers import (
     AggregatedListDocuments,
     CreateDocument,
     CursorListDocuments,

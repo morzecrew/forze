@@ -1,16 +1,16 @@
-"""Unit tests for forze.application.handlers.storage."""
+"""Unit tests for forze_kits.aggregates.storage.handlers."""
 
 import pytest
 
 from forze.application.contracts.storage import StorageSpec
-from forze.application.handlers.storage import (
+from forze_kits.aggregates.storage.handlers import (
     DeleteObject,
     DownloadObject,
     ListObjects,
     UploadObject,
 )
 from forze.application.contracts.storage import UploadedObject
-from forze.application.handlers.storage.dto import (
+from forze_kits.aggregates.storage.handlers.dto import (
     ListObjectsRequestDTO,
     UploadObjectRequestDTO,
 )

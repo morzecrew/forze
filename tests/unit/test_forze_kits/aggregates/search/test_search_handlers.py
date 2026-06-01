@@ -1,4 +1,4 @@
-"""Unit tests for forze.application.handlers.search."""
+"""Unit tests for forze_kits.aggregates.search.handlers."""
 
 from uuid import UUID
 
@@ -7,14 +7,14 @@ from pydantic import BaseModel
 
 from forze.application.contracts.document import DocumentSpec
 from forze.application.contracts.search import SearchSpec
-from forze.application.dto.paginated import CursorPaginated, Paginated
-from forze.application.handlers.search import (
+from forze_kits.dto.paginated import CursorPaginated, Paginated
+from forze_kits.aggregates.search.handlers import (
     CursorSearch,
     ProjectedCursorSearch,
     ProjectedSearch,
     Search,
 )
-from forze.application.handlers.search.dto import (
+from forze_kits.aggregates.search.handlers.dto import (
     CursorSearchRequestDTO,
     ProjectedCursorSearchRequestDTO,
     ProjectedSearchRequestDTO,

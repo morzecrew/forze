@@ -1,9 +1,10 @@
 """Gateway factory helpers for building Postgres read, write, search, and history gateways."""
 
-from typing import Any, Mapping
+from typing import Any, Literal, Mapping
 
 from forze.application.contracts.document import DocumentWriteTypes
 from forze.application.execution import ExecutionContext
+from forze.base.serialization import PydanticRecordMappingCodec, RecordMappingCodec
 from forze_postgres.kernel.relation import RelationSpec
 
 from ...kernel.gateways import (
@@ -28,6 +29,8 @@ def read_gw(
     read_relation: RelationSpec,
     tenant_aware: bool,
     nested_field_hints: Mapping[str, type[Any]] | None = None,
+    row_codec: RecordMappingCodec[Any, Any] | None = None,
+    read_validation: Literal["strict", "trusted"] = "strict",
 ) -> PostgresReadGateway[Any]:
     """Build a read gateway for a relation and model.
 
@@ -41,14 +44,22 @@ def read_gw(
     client = ctx.deps.provide(PostgresClientDepKey)
     introspector = ctx.deps.provide(PostgresIntrospectorDepKey)
 
+    codec = (
+        row_codec
+        if row_codec is not None
+        else PydanticRecordMappingCodec(read_type)
+    )
+
     return PostgresReadGateway(
         relation=read_relation,
         client=client,
         model_type=read_type,
+        row_codec=codec,
         introspector=introspector,
         tenant_provider=ctx.inv_ctx.get_tenant,
         tenant_aware=tenant_aware,
         nested_field_hints=nested_field_hints,
+        read_validation=read_validation,
     )
 
 

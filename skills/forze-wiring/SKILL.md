@@ -255,7 +255,7 @@ Inject computed fields (e.g. `number_id`, `creator_id`) before the handler runs:
 
 ```python
 from forze_kits.aggregates.document import build_document_create_mapper
-from forze.application.mapping import CreatorIdStep, NumberIdStep
+from forze_kits.mapping import CreatorIdStep, NumberIdStep
 
 mapper = (
     build_document_create_mapper(project_spec, project_dtos)
@@ -284,7 +284,7 @@ async with runtime.scope():
 
 ```python
 from forze_kits.aggregates.search import SearchFacade, build_search_registry
-from forze.application.dto.search import SearchRequestDTO
+from forze_kits.aggregates.search.handlers.dto import SearchRequestDTO
 
 search_registry = build_search_registry(project_search_spec).freeze()
 

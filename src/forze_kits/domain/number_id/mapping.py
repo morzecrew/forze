@@ -3,7 +3,7 @@ from pydantic import BaseModel
 
 from forze.application.contracts.counter import CounterPort, CounterSpec
 from forze.application.execution.context import ExecutionContext
-from forze.application.mapping import (
+from forze_kits.mapping import (
     PydanticPipelineMapperStep,
     PydanticPipelineMapperStepFactory,
 )

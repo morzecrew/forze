@@ -4,7 +4,7 @@ import attrs
 from pydantic import BaseModel
 
 from forze.application.contracts.mapping import MapperFactory
-from forze.application.handlers.document import (
+from .handlers import (
     AggregatedListRequestDTO,
     CursorListRequestDTO,
     ListRequestDTO,
