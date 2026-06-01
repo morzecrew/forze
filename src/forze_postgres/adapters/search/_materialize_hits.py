@@ -5,7 +5,11 @@ from typing import Any, Sequence, TypeVar
 from pydantic import BaseModel
 
 from forze.base.primitives import JsonDict
-from forze.base.serialization import pydantic_validate_many
+from forze.base.serialization import (
+    PydanticRecordMappingCodec,
+    RecordMappingCodec,
+    materialize_mapping_rows,
+)
 
 # ----------------------- #
 
@@ -21,6 +25,7 @@ def materialize_search_page(
     return_type: type[BaseModel] | None,
     return_fields: Sequence[str] | None,
     model_type: type[M],
+    row_codec: RecordMappingCodec[Any, Any] | None,
 ) -> list[Any] | list[JsonDict]:
     """Build the API page payload after optional snapshot storage.
 
@@ -35,19 +40,19 @@ def materialize_search_page(
     :param return_type: Optional projection model; when ``None``, use ``model_type``.
     :param return_fields: When set, build plain dict projections from ``page_rows``.
     :param model_type: Default read model for this adapter.
+    :param row_codec: Search spec row codec for decode/materialization.
     :returns: Either a list of Pydantic models or plain dict projections.
     """
 
-    if return_fields is not None:
-        return [{k: r.get(k, None) for k in return_fields} for r in page_rows]
+    codec = row_codec or PydanticRecordMappingCodec(model_type)
 
-    if return_type is not None:
-        if pool is not None and return_type == model_type:
-            return pool[u : u + page_limit]
-
-        return pydantic_validate_many(return_type, page_rows)
-
-    if pool is not None:
-        return pool[u : u + page_limit]
-
-    return pydantic_validate_many(model_type, page_rows)
+    return materialize_mapping_rows(
+        row_codec=codec,
+        model_type=model_type,
+        page_rows=page_rows,
+        pool=pool,
+        u=u,
+        page_limit=page_limit,
+        return_type=return_type,
+        return_fields=return_fields,
+    )

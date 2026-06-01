@@ -238,6 +238,7 @@ class PostgresAnalyticsQueryMixin[R: BaseModel, Ing: BaseModel]:
         )
         data = shape_rows(
             rows,
+            read_codec=self.spec.resolved_read_codec,
             read_type=self.spec.read,
             return_type=return_type,
             return_fields=return_fields,

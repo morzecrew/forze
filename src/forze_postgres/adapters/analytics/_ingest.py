@@ -8,7 +8,6 @@ from pydantic import BaseModel
 from forze.application.contracts.analytics import AnalyticsAppendResult
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
-from forze.base.serialization import pydantic_dump, pydantic_validate
 
 from ._mixin_base import PostgresAnalyticsMixinBase
 
@@ -48,18 +47,25 @@ class PostgresAnalyticsIngestMixin[R: BaseModel, Ing: BaseModel](
                 f"Analytics append batch exceeds max_append_rows ({max_append})."
             )
 
-        ingest_type = host.spec.ingest
+        ingest_codec = host.spec.ingest_codec
+        if ingest_codec is None:
+            raise exc.internal(
+                f"Analytics ingest codec is not configured for route {host.spec.name!r}."
+            )
+
         payloads: list[JsonDict] = []
 
         for row in rows:
-            if isinstance(row, ingest_type):
-                payloads.append(pydantic_dump(row))
+            if isinstance(row, ingest_codec.model_type):
+                payloads.append(ingest_codec.encode_mapping(row))
 
             elif isinstance(
                 row, BaseModel
             ):  # pyright: ignore[reportUnnecessaryIsInstance]
                 payloads.append(
-                    pydantic_dump(pydantic_validate(ingest_type, row.model_dump()))
+                    ingest_codec.encode_mapping(
+                        ingest_codec.decode_mapping(row.model_dump()),
+                    )
                 )
 
             else:

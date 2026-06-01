@@ -14,10 +14,7 @@ from google.cloud.firestore_v1.base_query import And, FieldFilter
 
 from forze.base.exceptions import CoreException, ExceptionKind, exc
 from forze.base.primitives import JsonDict
-from forze.base.serialization import (
-    pydantic_persistence_dump,
-    pydantic_validate,
-)
+from forze.base.serialization import PydanticRecordMappingCodec
 from forze.domain.constants import (
     HISTORY_DATA_FIELD,
     HISTORY_SOURCE_FIELD,
@@ -52,6 +49,7 @@ class FirestoreHistoryGateway[D: Document](FirestoreGateway[D]):
     async def _history_source_key(self) -> str:
         if self._target_resolved is not None:
             database, collection = self._target_resolved
+
         else:
             database, collection = await resolve_firestore_collection(
                 self.target_relation,
@@ -86,7 +84,7 @@ class FirestoreHistoryGateway[D: Document](FirestoreGateway[D]):
         if payload is None:
             raise exc.not_found(f"History payload not found: {pk}, {rev}")
 
-        return pydantic_validate(self.model_type, payload)
+        return self._decode_row(payload)
 
     # ....................... #
 
@@ -126,7 +124,11 @@ class FirestoreHistoryGateway[D: Document](FirestoreGateway[D]):
 
     async def write(self, data: D) -> None:
         record = await self._from_data(data)
-        raw_payload = pydantic_persistence_dump(record)
+        raw_payload = PydanticRecordMappingCodec(
+            DocumentHistory[D]
+        ).encode_persistence_mapping(
+            record,
+        )
         raw_payload = self.adapt_payload_for_write(raw_payload)
 
         await self.client.set_document(
@@ -151,7 +153,12 @@ class FirestoreHistoryGateway[D: Document](FirestoreGateway[D]):
                 rev=item.rev,
                 data=item,
             )
-            raw_payload = pydantic_persistence_dump(record)
+            raw_payload = PydanticRecordMappingCodec(
+                DocumentHistory[D]
+            ).encode_persistence_mapping(
+                record,
+            )
+
             raw_payload = self.adapt_payload_for_write(raw_payload)
             documents.append((f"{self._storage_pk(item.id)}_{item.rev}", raw_payload))
 

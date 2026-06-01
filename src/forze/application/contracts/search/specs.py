@@ -5,6 +5,11 @@ import attrs
 from pydantic import BaseModel
 
 from forze.base.exceptions import exc
+from forze.base.serialization import (
+    PydanticRecordMappingCodec,
+    RecordMappingCodec,
+    resolve_row_codec,
+)
 
 from ..base import BaseSpec
 from ..querying import QuerySortExpression
@@ -68,9 +73,23 @@ class SearchSpec[M: BaseModel](BaseSpec):
     default_sort: QuerySortExpression | None = attrs.field(default=None)
     """Default ``sorts`` when callers omit them (required for models without ``id``)."""
 
+    row_codec: RecordMappingCodec[M, Any] | None = attrs.field(
+        default=None,
+        eq=False,
+        repr=False,
+    )
+    """Row decode/encode codec; defaults to :class:`PydanticRecordMappingCodec`."""
+
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
+        if self.row_codec is None:
+            object.__setattr__(
+                self,
+                "row_codec",
+                PydanticRecordMappingCodec(self.model_type),
+            )
+
         if self.default_sort is not None:
             validate_sort_fields(
                 self.default_sort,
@@ -100,6 +119,14 @@ class SearchSpec[M: BaseModel](BaseSpec):
                 "Default weights must be provided for all search fields."
             )
 
+    # ....................... #
+
+    @property
+    def resolved_row_codec(self) -> RecordMappingCodec[M, Any]:
+        """Row codec after :meth:`__attrs_post_init__` defaults are applied."""
+
+        return resolve_row_codec(self.row_codec, self.model_type)
+
 
 # ....................... #
 
@@ -125,9 +152,23 @@ class HubSearchSpec[M: BaseModel](BaseSpec):
     default_sort: QuerySortExpression | None = attrs.field(default=None)
     """Default ``sorts`` for hub browse/cursor when callers omit them."""
 
+    row_codec: RecordMappingCodec[M, Any] | None = attrs.field(
+        default=None,
+        eq=False,
+        repr=False,
+    )
+    """Row decode/encode codec; defaults to :class:`PydanticRecordMappingCodec`."""
+
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
+        if self.row_codec is None:
+            object.__setattr__(
+                self,
+                "row_codec",
+                PydanticRecordMappingCodec(self.model_type),
+            )
+
         if self.default_sort is not None:
             validate_sort_fields(
                 self.default_sort,
@@ -155,6 +196,14 @@ class HubSearchSpec[M: BaseModel](BaseSpec):
                     raise exc.configuration(
                         f"Default weight for search field '{member.name}' should be between 0.0 and 1.0."
                     )
+
+    # ....................... #
+
+    @property
+    def resolved_row_codec(self) -> RecordMappingCodec[M, Any]:
+        """Row codec after :meth:`__attrs_post_init__` defaults are applied."""
+
+        return resolve_row_codec(self.row_codec, self.model_type)
 
 
 # ....................... #

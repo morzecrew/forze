@@ -17,7 +17,6 @@ from forze.application.contracts.search import (
 )
 from forze.application.integrations.search import SearchResultSnapshot
 from forze.base.primitives import JsonDict
-from forze.base.serialization import pydantic_validate_many
 from forze_mongo.kernel.client.port import MongoClientPort
 
 from ._materialize import materialize_search_page
@@ -139,7 +138,7 @@ async def execute_mongo_ranked_offset_search[M: BaseModel](
 
     if want_snap and result_snapshot is not None and rs_spec is not None:
         pool_len = len(normalized)
-        pool_snap = pydantic_validate_many(gw.model_type, normalized)
+        pool_snap = gw.spec.resolved_row_codec.decode_mapping_many(normalized)
         handle_out = await result_snapshot.put_simple_ordered_hits(
             pool_snap,
             snap_opt=snapshot,
@@ -163,6 +162,7 @@ async def execute_mongo_ranked_offset_search[M: BaseModel](
         return_type=return_type,
         return_fields=return_fields,
         model_type=gw.model_type,
+        row_codec=gw.spec.resolved_row_codec,
     )
 
     if return_count:

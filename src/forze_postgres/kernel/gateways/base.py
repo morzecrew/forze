@@ -29,6 +29,7 @@ from forze.base.serialization import (
     PydanticRecordMappingCodec,
     RecordMappingCodec,
     pydantic_field_names,
+    resolve_row_codec,
 )
 from forze.domain.constants import ID_FIELD
 from forze_postgres.kernel.catalog.introspect import (
@@ -191,6 +192,14 @@ class PostgresGateway[M: BaseModel](TenancyMixin):
     # ....................... #
 
     @property
+    def effective_row_codec(self) -> RecordMappingCodec[M, Any]:
+        """Non-optional row codec (set in :meth:`__attrs_post_init__`)."""
+
+        return resolve_row_codec(self.row_codec, self.model_type)
+
+    # ....................... #
+
+    @property
     def read_fields(self) -> frozenset[str]:
         """Pydantic field names for :attr:`model_type` (safe for frozen attrs subclasses)."""
 
@@ -204,7 +213,7 @@ class PostgresGateway[M: BaseModel](TenancyMixin):
         """Return :attr:`row_codec` or a codec bound to an alternate read model."""
 
         if model is None or model is self.model_type:
-            return cast(RecordMappingCodec[Any, Any], self.row_codec)
+            return cast(RecordMappingCodec[Any, Any], self.effective_row_codec)
 
         return PydanticRecordMappingCodec(model)
 

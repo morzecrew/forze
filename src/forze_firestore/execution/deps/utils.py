@@ -1,10 +1,11 @@
 """Gateway factory helpers for Firestore read, write, and history gateways."""
 
-from typing import Any
+from typing import Any, Literal
 
 from forze.application.contracts.document import DocumentWriteTypes
 from forze.application.contracts.resolution import RelationSpec
 from forze.application.execution import ExecutionContext
+from forze.base.serialization import PydanticRecordMappingCodec, RecordMappingCodec
 
 from ...kernel.gateways import (
     FirestoreHistoryGateway,
@@ -22,15 +23,25 @@ def read_gw(
     read_type: type[Any],
     read_relation: RelationSpec,
     tenant_aware: bool,
+    row_codec: RecordMappingCodec[Any, Any] | None = None,
+    read_validation: Literal["strict", "trusted"] = "strict",
 ) -> FirestoreReadGateway[Any]:
     client = ctx.deps.provide(FirestoreClientDepKey)
+
+    codec = (
+        row_codec
+        if row_codec is not None
+        else PydanticRecordMappingCodec(read_type)
+    )
 
     return FirestoreReadGateway(
         relation=read_relation,
         client=client,
         model_type=read_type,
+        row_codec=codec,
         tenant_provider=ctx.inv_ctx.get_tenant,
         tenant_aware=tenant_aware,
+        read_validation=read_validation,
     )
 
 

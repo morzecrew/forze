@@ -21,12 +21,7 @@ from forze.application.contracts.querying import (
     resolve_effective_sorts,
 )
 from forze.base.exceptions import exc
-from forze.base.serialization import (
-    pydantic_persistence_dump,
-    pydantic_persistence_dump_many,
-    pydantic_validate,
-    pydantic_validate_many,
-)
+
 
 from ..._logger import logger
 from .cache import DocumentCache
@@ -141,10 +136,7 @@ class DocumentAdapter(
 
     async def _to_read(self, domain: D | None, *, pk: UUID | None = None) -> R:
         if self.hydrate_from_write and domain is not None:
-            return pydantic_validate(
-                self.read_gw.model_type,
-                pydantic_persistence_dump(domain),
-            )
+            return self.read_gw.effective_row_codec.transform(domain)
 
         doc_pk = domain.id if domain is not None else pk
 
@@ -171,10 +163,7 @@ class DocumentAdapter(
             return []
 
         if self.hydrate_from_write and all(d is not None for d in domains):
-            return pydantic_validate_many(
-                self.read_gw.model_type,
-                pydantic_persistence_dump_many(domains),  # type: ignore[arg-type]
-            )
+            return self.read_gw.effective_row_codec.transform_many(domains)  # type: ignore[arg-type]
 
         if pks is not None and len(pks) != len(domains):
             raise exc.internal(

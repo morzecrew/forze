@@ -45,10 +45,10 @@ from forze.application.integrations.document._limits import (
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict, utcnow
 from forze.base.serialization import (
-    pydantic_dump,
-    pydantic_persistence_dump,
-    pydantic_validate,
-    pydantic_validate_many,
+    PydanticRecordMappingCodec,
+    RecordMappingCodec,
+    pydantic_transform,
+    resolve_row_codec,
 )
 from forze.domain.constants import ID_FIELD, REV_FIELD
 from forze_mock.query._types import (
@@ -87,7 +87,21 @@ class MockDocumentAdapter(
     read_model: type[R]
     domain_model: type[D] | None = None
 
+    row_codec: RecordMappingCodec[R, Any] | None = attrs.field(
+        default=None,
+        eq=False,
+        repr=False,
+    )
+
     # ....................... #
+
+    def __attrs_post_init__(self) -> None:
+        if self.row_codec is None:
+            object.__setattr__(
+                self,
+                "row_codec",
+                PydanticRecordMappingCodec(self.read_model),
+            )
 
     def _store(self) -> dict[UUID, JsonDict]:
         ns = partition_namespace(self.require_tenant_if_aware(), self.namespace)
@@ -105,8 +119,12 @@ class MockDocumentAdapter(
 
     # ....................... #
 
+    @property
+    def _read_codec(self) -> RecordMappingCodec[R, Any]:
+        return resolve_row_codec(self.row_codec, self.read_model)
+
     def _to_read(self, doc: JsonDict) -> R:
-        return pydantic_validate(self.read_model, dict(doc))
+        return self._read_codec.decode_mapping(dict(doc))
 
     # ....................... #
 
@@ -117,9 +135,11 @@ class MockDocumentAdapter(
 
     # ....................... #
 
+    def _domain_codec(self) -> PydanticRecordMappingCodec[D]:
+        return PydanticRecordMappingCodec(self._require_domain_model())
+
     def _to_domain(self, doc: JsonDict) -> D:
-        model = self._require_domain_model()
-        return pydantic_validate(model, dict(doc))
+        return self._domain_codec().decode_mapping(dict(doc))
 
     # ....................... #
 
@@ -405,7 +425,7 @@ class MockDocumentAdapter(
             total = len(aggregate_rows)
             ordered_rows = _sort_docs(aggregate_rows, sorts)
             rows = (
-                pydantic_validate_many(return_type, ordered_rows)
+                PydanticRecordMappingCodec(return_type).decode_mapping_many(ordered_rows)
                 if return_type is not None
                 else ordered_rows
             )
@@ -425,7 +445,7 @@ class MockDocumentAdapter(
                     else:
                         dict_rows.append(dict(row))
 
-                rows = pydantic_validate_many(return_type, dict_rows)
+                rows = PydanticRecordMappingCodec(return_type).decode_mapping_many(dict_rows)
             else:
                 rows = [
                     self._to_read_or_projection(doc, return_fields)
@@ -660,7 +680,7 @@ class MockDocumentAdapter(
     ) -> CursorPage[T]:
         page = await self.find_cursor(filters=filters, cursor=cursor, sorts=sorts)
         return CursorPage(
-            hits=[pydantic_validate(return_type, hit.model_dump(mode="json")) for hit in page.hits],  # type: ignore[union-attr]
+            hits=[PydanticRecordMappingCodec(return_type).decode_mapping(hit.model_dump(mode="json")) for hit in page.hits],  # type: ignore[union-attr]
             next_cursor=page.next_cursor,
             prev_cursor=page.prev_cursor,
             has_more=page.has_more,
@@ -869,9 +889,8 @@ class MockDocumentAdapter(
 
     async def create(self, dto: C, *, return_new: bool = True) -> R | None:
         domain_model = self._require_domain_model()
-        payload = pydantic_dump(dto, exclude={"none": True})
-        domain = pydantic_validate(domain_model, payload)
-        serialized = pydantic_persistence_dump(domain)
+        domain = pydantic_transform(domain_model, dto)
+        serialized = PydanticRecordMappingCodec(domain_model).encode_persistence_mapping(domain)
 
         if self.tenant_aware:
             tid = self.require_tenant_if_aware()
@@ -943,15 +962,14 @@ class MockDocumentAdapter(
         require_create_id(dto)
 
         domain_model = self._require_domain_model()
-        payload = pydantic_dump(dto, exclude={"none": True})
-        domain = pydantic_validate(domain_model, payload)
+        domain = pydantic_transform(domain_model, dto)
 
         with self.state.lock:
             store = self._store()
             if domain.id in store:
                 raw = dict(store[domain.id])
             else:
-                serialized = pydantic_persistence_dump(domain)
+                serialized = self._domain_codec().encode_persistence_mapping(domain)
                 store[domain.id] = serialized
                 raw = serialized
         if not return_new:
@@ -1025,8 +1043,7 @@ class MockDocumentAdapter(
         require_create_id(create_dto)
 
         domain_model = self._require_domain_model()
-        payload = pydantic_dump(create_dto, exclude={"none": True})
-        domain = pydantic_validate(domain_model, payload)
+        domain = pydantic_transform(domain_model, create_dto)
         with self.state.lock:
             if domain.id in self._store():
                 rev = self._to_domain(dict(self._store()[domain.id])).rev
@@ -1135,7 +1152,10 @@ class MockDocumentAdapter(
         return_new: bool = True,
         return_diff: bool = False,
     ) -> R | JsonDict | None | tuple[R, JsonDict]:
-        patch = pydantic_dump(dto, exclude={"unset": True})
+        patch = self._domain_codec().encode_mapping(
+            cast(Any, dto),
+            exclude={"unset": True},
+        )
 
         with self.state.lock:
             current_raw = dict(self._ensure_exists(pk))
@@ -1146,7 +1166,7 @@ class MockDocumentAdapter(
             if diff:
                 updated = updated.model_copy(update={"rev": current.rev + 1}, deep=True)
 
-            serialized = pydantic_persistence_dump(updated)
+            serialized = self._domain_codec().encode_persistence_mapping(updated)
             self._store()[pk] = serialized
 
             if diff:
@@ -1275,7 +1295,10 @@ class MockDocumentAdapter(
         if not self.spec.supports_update():
             raise exc.internal("Update command type is not supported for this model")
 
-        patch = pydantic_dump(dto, exclude={"unset": True})
+        patch = self._domain_codec().encode_mapping(
+            cast(Any, dto),
+            exclude={"unset": True},
+        )
 
         if not patch:
             return [] if return_new else 0
@@ -1296,7 +1319,7 @@ class MockDocumentAdapter(
                     continue
 
                 updated = updated.model_copy(update={"rev": current.rev + 1}, deep=True)
-                serialized = pydantic_persistence_dump(updated)
+                serialized = self._domain_codec().encode_persistence_mapping(updated)
                 store[pk] = serialized
                 n += 1
 
@@ -1404,7 +1427,7 @@ class MockDocumentAdapter(
             current = self._to_domain(current_raw)
             updated, _ = current.touch()
             updated = updated.model_copy(update={"rev": current.rev + 1}, deep=True)
-            serialized = pydantic_persistence_dump(updated)
+            serialized = self._domain_codec().encode_persistence_mapping(updated)
             self._store()[pk] = serialized
 
         if not return_new:
@@ -1499,7 +1522,7 @@ class MockDocumentAdapter(
             current = self._to_domain(current_raw)
             self._check_rev(current.rev, rev)
             if cast(Any, current).is_deleted:
-                serialized = pydantic_persistence_dump(current)
+                serialized = self._domain_codec().encode_persistence_mapping(current)
                 self._store()[pk] = serialized
             else:
                 updated = current.model_copy(
@@ -1510,7 +1533,7 @@ class MockDocumentAdapter(
                     },
                     deep=True,
                 )
-                serialized = pydantic_persistence_dump(updated)
+                serialized = self._domain_codec().encode_persistence_mapping(updated)
                 self._store()[pk] = serialized
 
         if not return_new:
@@ -1582,7 +1605,7 @@ class MockDocumentAdapter(
             current = self._to_domain(current_raw)
             self._check_rev(current.rev, rev)
             if not cast(Any, current).is_deleted:
-                serialized = pydantic_persistence_dump(current)
+                serialized = self._domain_codec().encode_persistence_mapping(current)
                 self._store()[pk] = serialized
             else:
                 updated = current.model_copy(
@@ -1593,7 +1616,7 @@ class MockDocumentAdapter(
                     },
                     deep=True,
                 )
-                serialized = pydantic_persistence_dump(updated)
+                serialized = self._domain_codec().encode_persistence_mapping(updated)
                 self._store()[pk] = serialized
 
         if not return_new:

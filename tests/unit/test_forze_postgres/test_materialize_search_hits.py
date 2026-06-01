@@ -3,6 +3,7 @@
 from pydantic import BaseModel
 
 from forze.base.primitives import JsonDict
+from forze.base.serialization import PydanticRecordMappingCodec
 from forze_postgres.adapters.search._materialize_hits import materialize_search_page
 
 
@@ -15,6 +16,9 @@ class HitView(BaseModel):
     id: int
 
 
+_CODEC = PydanticRecordMappingCodec(Hit)
+
+
 def test_materialize_return_fields_from_page_rows() -> None:
     rows: list[JsonDict] = [{"id": 1, "name": "a", "extra": 9}]
     out = materialize_search_page(
@@ -25,6 +29,7 @@ def test_materialize_return_fields_from_page_rows() -> None:
         return_type=None,
         return_fields=("id", "name"),
         model_type=Hit,
+        row_codec=_CODEC,
     )
     assert out == [{"id": 1, "name": "a"}]
 
@@ -40,6 +45,7 @@ def test_materialize_reuses_pool_slice_when_return_type_none() -> None:
         return_type=None,
         return_fields=None,
         model_type=Hit,
+        row_codec=_CODEC,
     )
     assert len(out) == 1
     assert out[0] is pool[1]
@@ -55,6 +61,7 @@ def test_materialize_validates_when_no_pool() -> None:
         return_type=None,
         return_fields=None,
         model_type=Hit,
+        row_codec=_CODEC,
     )
     assert isinstance(out[0], Hit)
     assert out[0].id == 9
@@ -70,6 +77,7 @@ def test_materialize_return_type_same_as_model_uses_pool() -> None:
         return_type=Hit,
         return_fields=None,
         model_type=Hit,
+        row_codec=_CODEC,
     )
     assert out == [pool[1]]
 
@@ -85,6 +93,7 @@ def test_materialize_different_return_type_validates_rows() -> None:
         return_type=HitView,
         return_fields=None,
         model_type=Hit,
+        row_codec=_CODEC,
     )
     assert len(out) == 1
     assert isinstance(out[0], HitView)

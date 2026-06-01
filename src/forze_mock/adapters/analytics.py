@@ -33,11 +33,7 @@ from forze.application.contracts.querying import (
 )
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
-from forze.base.serialization import (
-    pydantic_dump,
-    pydantic_validate,
-    pydantic_validate_many,
-)
+from forze.base.serialization import PydanticRecordMappingCodec
 from forze_mock.query._types import T
 from forze_mock.query.cursors import (
     _mock_cursor_start_and_limit,  # type: ignore[reportPrivateUsage]
@@ -84,7 +80,9 @@ class MockAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
         if isinstance(
             params, BaseModel
         ):  # pyright: ignore[reportUnnecessaryIsInstance]
-            return pydantic_validate(defn.params, params.model_dump())
+            return PydanticRecordMappingCodec(defn.params).decode_mapping(
+                params.model_dump(),
+            )
         raise exc.internal("Analytics params must be a Pydantic model instance.")
 
     # ....................... #
@@ -115,7 +113,7 @@ class MockAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
     # ....................... #
 
     def _to_typed(self, rows: list[JsonDict]) -> list[R]:
-        return pydantic_validate_many(self.spec.read, rows)
+        return self.spec.resolved_read_codec.decode_mapping_many(rows)
 
     # ....................... #
 
@@ -150,7 +148,7 @@ class MockAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
         if return_fields is not None:
             data: list[Any] = self._to_projected(rows, return_fields)
         elif return_type is not None:
-            data = pydantic_validate_many(return_type, rows)
+            data = PydanticRecordMappingCodec(return_type).decode_mapping_many(rows)
         else:
             data = self._to_typed(rows)
 
@@ -188,7 +186,7 @@ class MockAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
         if return_fields is not None:
             hits: list[Any] = self._to_projected(page_rows, return_fields)
         elif return_type is not None:
-            hits = pydantic_validate_many(return_type, page_rows)
+            hits = PydanticRecordMappingCodec(return_type).decode_mapping_many(page_rows)
         else:
             hits = self._to_typed(page_rows)
 
@@ -471,18 +469,25 @@ class MockAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
         if not rows:
             return AnalyticsAppendResult(accepted=0)
 
-        ingest_type = self.spec.ingest
+        ingest_codec = self.spec.resolved_ingest_codec
+        if ingest_codec is None:
+            raise exc.internal(
+                f"Analytics ingest codec is not configured for route {self._route()!r}."
+            )
+
         accepted = 0
         payloads: list[JsonDict] = []
 
         for row in rows:
-            if isinstance(row, ingest_type):
-                payloads.append(pydantic_dump(row))
+            if isinstance(row, ingest_codec.model_type):
+                payloads.append(ingest_codec.encode_mapping(row))
             elif isinstance(
                 row, BaseModel
             ):  # pyright: ignore[reportUnnecessaryIsInstance]
                 payloads.append(
-                    pydantic_dump(pydantic_validate(ingest_type, row.model_dump()))
+                    ingest_codec.encode_mapping(
+                        ingest_codec.decode_mapping(row.model_dump()),
+                    )
                 )
             else:
                 raise exc.internal(

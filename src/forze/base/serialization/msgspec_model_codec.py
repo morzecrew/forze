@@ -1,6 +1,6 @@
 """Msgspec-backed implementation of the record-mapping codec protocol."""
 
-from typing import Iterator, Sequence
+from typing import Iterator, Sequence, cast
 
 import attrs
 import msgspec
@@ -21,6 +21,7 @@ from .msgspec import (
     msgspec_validate_many,
     msgspec_validate_many_batched,
 )
+from .pydantic import PERSISTENCE_DUMP_EXCLUDE_OPTS
 
 # ----------------------- #
 
@@ -185,6 +186,36 @@ class MsgspecRecordMappingCodec[T: msgspec.Struct](RecordMappingCodec[T, SourceT
         exclude: RecordMappingDumpExcludeOptions = {},
     ) -> bytes:
         return msgspec_encode_json_bytes(obj, exclude=exclude)
+
+    # ....................... #
+
+    def encode_persistence_mapping(
+        self,
+        obj: T,
+        *,
+        mode: EncodeMode = "python",
+        exclude: RecordMappingDumpExcludeOptions = {},
+    ) -> JsonDict:
+        merged = cast(
+            RecordMappingDumpExcludeOptions,
+            {**PERSISTENCE_DUMP_EXCLUDE_OPTS, **exclude},
+        )
+        return self.encode_mapping(obj, mode=mode, exclude=merged)
+
+    # ....................... #
+
+    def encode_persistence_mapping_many(
+        self,
+        objs: Sequence[T],
+        *,
+        mode: EncodeMode = "python",
+        exclude: RecordMappingDumpExcludeOptions = {},
+    ) -> list[JsonDict]:
+        merged = cast(
+            RecordMappingDumpExcludeOptions,
+            {**PERSISTENCE_DUMP_EXCLUDE_OPTS, **exclude},
+        )
+        return self.encode_mapping_many(objs, mode=mode, exclude=merged)
 
     # ....................... #
 

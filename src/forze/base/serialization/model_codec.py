@@ -121,6 +121,22 @@ class RecordMappingCodec[T, TSource](Protocol):
         exclude: RecordMappingDumpExcludeOptions = {},
     ) -> bytes: ...
 
+    def encode_persistence_mapping(
+        self,
+        obj: T,
+        *,
+        mode: EncodeMode = "python",
+        exclude: RecordMappingDumpExcludeOptions = {},
+    ) -> JsonDict: ...
+
+    def encode_persistence_mapping_many(
+        self,
+        objs: Sequence[T],
+        *,
+        mode: EncodeMode = "python",
+        exclude: RecordMappingDumpExcludeOptions = {},
+    ) -> list[JsonDict]: ...
+
     def decode_json_bytes(
         self,
         raw: bytes | str,

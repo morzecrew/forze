@@ -9,6 +9,11 @@ from pydantic import BaseModel
 
 from forze.base.exceptions import exc
 from forze.base.primitives import StrKey
+from forze.base.serialization import (
+    PydanticRecordMappingCodec,
+    RecordMappingCodec,
+    resolve_row_codec,
+)
 
 from ..base import BaseSpec
 
@@ -49,10 +54,55 @@ class AnalyticsSpec(BaseSpec, Generic[R, Ing]):
     ingest: type[Ing] | None = attrs.field(default=None)
     """Optional row model for :class:`~.AnalyticsIngestPort`; ``None`` disables ingest."""
 
+    read_codec: RecordMappingCodec[R, Any] | None = attrs.field(
+        default=None,
+        eq=False,
+        repr=False,
+    )
+    """Read-row codec; defaults to :class:`PydanticRecordMappingCodec` for :attr:`read`."""
+
+    ingest_codec: RecordMappingCodec[Ing, Any] | None = attrs.field(
+        default=None,
+        eq=False,
+        repr=False,
+    )
+    """Ingest-row codec when :attr:`ingest` is set."""
+
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
+        if self.read_codec is None:
+            object.__setattr__(
+                self,
+                "read_codec",
+                PydanticRecordMappingCodec(self.read),
+            )
+
+        if self.ingest is not None and self.ingest_codec is None:
+            object.__setattr__(
+                self,
+                "ingest_codec",
+                PydanticRecordMappingCodec(self.ingest),
+            )
+
         validate_analytics_spec(self)
+
+    # ....................... #
+
+    @property
+    def resolved_read_codec(self) -> RecordMappingCodec[R, Any]:
+        """Read codec after :meth:`__attrs_post_init__` defaults are applied."""
+
+        return resolve_row_codec(self.read_codec, self.read)
+
+    @property
+    def resolved_ingest_codec(self) -> RecordMappingCodec[Ing, Any] | None:
+        """Ingest codec when :attr:`ingest` is configured."""
+
+        if self.ingest is None:
+            return None
+
+        return resolve_row_codec(self.ingest_codec, self.ingest)
 
 
 # ....................... #

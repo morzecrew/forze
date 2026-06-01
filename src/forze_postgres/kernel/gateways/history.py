@@ -13,10 +13,7 @@ import attrs
 from psycopg import sql
 
 from forze.base.exceptions import exc
-from forze.base.serialization import (
-    pydantic_persistence_dump,
-    pydantic_persistence_dump_many,
-)
+from forze.base.serialization import PydanticRecordMappingCodec
 from forze.domain.constants import (
     HISTORY_DATA_FIELD,
     HISTORY_SOURCE_FIELD,
@@ -158,7 +155,11 @@ class PostgresHistoryGateway[D: Document](PostgresGateway[D]):
             return
 
         record = await self._from_data(data)
-        insert_data_raw = pydantic_persistence_dump(record)
+        insert_data_raw = PydanticRecordMappingCodec(
+            DocumentHistory[D]
+        ).encode_persistence_mapping(
+            record,
+        )
         insert_data = await self.adapt_payload_for_write(insert_data_raw)
 
         cols = [sql.Identifier(k) for k in insert_data.keys()]
@@ -180,7 +181,10 @@ class PostgresHistoryGateway[D: Document](PostgresGateway[D]):
             return
 
         records = [await self._from_data(item) for item in data]
-        insert_data_raw = pydantic_persistence_dump_many(records)
+        insert_data_raw = PydanticRecordMappingCodec(
+            DocumentHistory[D],
+        ).encode_persistence_mapping_many(records)
+
         insert_data = await self.adapt_many_payload_for_write(insert_data_raw)
 
         keys = list(insert_data[0].keys())

@@ -20,7 +20,7 @@ from forze.application.contracts.search import (
 )
 from forze.application.integrations.search import SearchResultSnapshot
 from forze.base.primitives import JsonDict
-from forze.base.serialization import pydantic_validate_many
+from forze.base.serialization import PydanticRecordMappingCodec
 from forze_meilisearch.adapters.search._search_params import (
     attributes_to_search_on,
     build_search_query_string,
@@ -141,9 +141,9 @@ async def execute_meilisearch_offset_search[M: BaseModel](
             {k: r.get(k, None) for k in return_fields} for r in rows
         ]
     elif return_type is not None:
-        page_rows = pydantic_validate_many(return_type, rows)  # type: ignore[assignment]
+        page_rows = PydanticRecordMappingCodec(return_type).decode_mapping_many(rows)  # type: ignore[assignment]
     else:
-        page_rows = pydantic_validate_many(gw.spec.model_type, rows)  # type: ignore[assignment]
+        page_rows = gw.spec.resolved_row_codec.decode_mapping_many(rows)  # type: ignore[assignment]
 
     want_snap = (
         result_snapshot is not None
@@ -154,7 +154,7 @@ async def execute_meilisearch_offset_search[M: BaseModel](
     handle_out = None
 
     if want_snap and result_snapshot is not None and rs_spec is not None:
-        pool_models = pydantic_validate_many(gw.spec.model_type, rows)
+        pool_models = gw.spec.resolved_row_codec.decode_mapping_many(rows)
         handle_out = await result_snapshot.put_simple_ordered_hits(
             pool_models,
             snap_opt=snapshot,

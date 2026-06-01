@@ -8,10 +8,7 @@ from pydantic import BaseModel, Field
 
 from forze.application.integrations.document import DocumentCache
 from forze.base.primitives import uuid7
-from forze.base.serialization import (
-    PydanticRecordMappingCodec,
-    pydantic_cache_dump,
-)
+from forze.base.serialization import PydanticRecordMappingCodec
 
 _pk = UUID("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
 
@@ -118,7 +115,9 @@ async def test_cache_bytes_roundtrip() -> None:
 
 @pytest.mark.asyncio
 async def test_cache_legacy_dict_hit() -> None:
-    dumped = pydantic_cache_dump(DocModel(id=_pk, rev=1, payload="legacy"))
+    dumped = PydanticRecordMappingCodec(DocModel).encode_mapping(
+        DocModel(id=_pk, rev=1, payload="legacy"),
+    )
     coord = DocumentCache[DocModel](
         read_model_type=DocModel,
         document_name="w",
@@ -233,7 +232,9 @@ def test_read_through_eligible() -> None:
 
 @pytest.mark.asyncio
 async def test_get_read_through_cache_hit() -> None:
-    dumped = pydantic_cache_dump(DocModel(id=_pk, rev=1, payload="a"))
+    dumped = PydanticRecordMappingCodec(DocModel).encode_mapping(
+        DocModel(id=_pk, rev=1, payload="a"),
+    )
     backend = AsyncMock()
 
     backend.get = AsyncMock(return_value=dumped)
@@ -300,7 +301,7 @@ async def test_get_many_read_through_merges_order() -> None:
 
     backend.get_many = AsyncMock(
         return_value=(
-            {str(pk0): pydantic_cache_dump(doc0)},
+            {str(pk0): PydanticRecordMappingCodec(DocModel).encode_mapping(doc0)},
             [str(pk1)],
         ),
     )

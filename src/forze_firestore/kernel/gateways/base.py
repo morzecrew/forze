@@ -7,7 +7,7 @@ require_firestore()
 # ....................... #
 
 from functools import cached_property
-from typing import Any, Sequence
+from typing import Any, Sequence, cast
 from uuid import UUID
 
 import attrs
@@ -25,7 +25,12 @@ from forze.application.contracts.tenancy import TENANT_ID_FIELD
 from forze.application.contracts.tenancy.mixins import TenancyMixin
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
-from forze.base.serialization import pydantic_field_names
+from forze.base.serialization import (
+    PydanticRecordMappingCodec,
+    RecordMappingCodec,
+    pydantic_field_names,
+    resolve_row_codec,
+)
 from forze.domain.constants import ID_FIELD
 
 from ..client import FirestoreClientPort
@@ -41,6 +46,14 @@ class FirestoreGateway[M: BaseModel](TenancyMixin):
 
     model_type: type[M]
     """Pydantic model used for deserialization."""
+
+    row_codec: RecordMappingCodec[M, Any] | None = attrs.field(
+        kw_only=True,
+        default=None,
+        eq=False,
+        repr=False,
+    )
+    """Row decode/encode codec; defaults to :class:`PydanticRecordMappingCodec`."""
 
     relation: RelationSpec
     """Static ``(database, collection)`` or tenant-scoped resolver."""
@@ -60,6 +73,13 @@ class FirestoreGateway[M: BaseModel](TenancyMixin):
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
+        if self.row_codec is None:
+            object.__setattr__(
+                self,
+                "row_codec",
+                PydanticRecordMappingCodec(self.model_type),
+            )
+
         limits = (
             self.filter_limits
             if self.filter_limits is not None
@@ -69,6 +89,47 @@ class FirestoreGateway[M: BaseModel](TenancyMixin):
             self,
             "filter_parser",
             QueryFilterExpressionParser(limits=limits),
+        )
+
+    # ....................... #
+
+    @property
+    def effective_row_codec(self) -> RecordMappingCodec[M, Any]:
+        """Non-optional row codec (set in :meth:`__attrs_post_init__`)."""
+
+        return resolve_row_codec(self.row_codec, self.model_type)
+
+    # ....................... #
+
+    def _codec_for(self, model: type[BaseModel] | None = None) -> RecordMappingCodec[Any, Any]:
+        if model is None or model is self.model_type:
+            return cast(RecordMappingCodec[Any, Any], self.effective_row_codec)
+
+        return PydanticRecordMappingCodec(model)
+
+    # ....................... #
+
+    def _decode_row(
+        self,
+        row: JsonDict,
+        *,
+        model: type[BaseModel] | None = None,
+        trust_source: bool = False,
+    ) -> Any:
+        return self._codec_for(model).decode_mapping(row, trust_source=trust_source)
+
+    # ....................... #
+
+    def _decode_rows(
+        self,
+        rows: Sequence[JsonDict],
+        *,
+        model: type[BaseModel] | None = None,
+        trust_source: bool = False,
+    ) -> list[Any]:
+        return self._codec_for(model).decode_mapping_many(
+            rows,
+            trust_source=trust_source,
         )
 
     # ....................... #

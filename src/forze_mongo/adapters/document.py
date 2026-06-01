@@ -44,7 +44,7 @@ class MongoDocumentAdapter(DocumentAdapter[R, D, C, U]):
     spec: DocumentSpec[R, D, C, U]
     """Document specification."""
 
-    read_gw: MongoReadGateway[R]
+    read_gw: MongoReadGateway[R]  # type: ignore[assignment]
     """Gateway used for all read queries."""
 
     write_gw: MongoWriteGateway[D, C, U] | None = attrs.field(default=None)

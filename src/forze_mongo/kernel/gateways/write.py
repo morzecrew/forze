@@ -17,12 +17,8 @@ from forze.application.contracts.querying import QueryFilterExpression
 from forze.base.exceptions import CoreException, ExceptionKind, exc
 from forze.base.primitives import JsonDict
 from forze.base.serialization import (
-    pydantic_dump,
-    pydantic_dump_many,
-    pydantic_persistence_dump,
-    pydantic_persistence_dump_many,
-    pydantic_validate,
-    pydantic_validate_many,
+    pydantic_transform,
+    pydantic_transform_many,
 )
 from forze.domain.constants import ID_FIELD, REV_FIELD
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document
@@ -85,6 +81,8 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](MongoGate
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
+        super().__attrs_post_init__()
+
         if not relations_match(self.relation, self.read_gw.relation):
             raise exc.configuration(
                 "Relation mismatch. Write gateway and nested read gateway must use the same relation."
@@ -236,15 +234,13 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](MongoGate
 
     #! TODO: canonical mapper from there
     def _from_cdto(self, dto: C) -> D:
-        data = pydantic_dump(dto, exclude={"unset": True})
-        return pydantic_validate(self.model_type, data)
+        return pydantic_transform(self.model_type, dto)
 
     # ....................... #
 
     #! TODO: canonical batch mapper from there
     def _from_cdto_many(self, dtos: Sequence[C]) -> Sequence[D]:
-        data = pydantic_dump_many(dtos, exclude={"unset": True})
-        return pydantic_validate_many(self.model_type, data)
+        return pydantic_transform_many(self.model_type, dtos)
 
     # ....................... #
 
@@ -257,7 +253,7 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](MongoGate
         """
 
         model = self._from_cdto(dto)
-        data = pydantic_persistence_dump(model)
+        data = self.effective_row_codec.encode_persistence_mapping(model)
         data = self.adapt_payload_for_write(data, create=True)
 
         await self.client.insert_one(await self.coll(), self._storage_doc(data))
@@ -285,7 +281,7 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](MongoGate
             return []
 
         models = self._from_cdto_many(dtos)
-        raw_payloads = pydantic_persistence_dump_many(models)
+        raw_payloads = self.effective_row_codec.encode_persistence_mapping_many(models)
         payloads = self.adapt_many_payload_for_write(raw_payloads, create=True)
         payloads = list(map(self._storage_doc, payloads))
 
@@ -305,7 +301,7 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](MongoGate
         """Insert a document when missing using ``$setOnInsert`` upsert; no field updates on match."""
 
         model = self._from_cdto(dto)
-        data = pydantic_persistence_dump(model)
+        data = self.effective_row_codec.encode_persistence_mapping(model)
         data = self.adapt_payload_for_write(data, create=True)
         storage = self._storage_doc(data)
         res: Any = await self.client.update_one_upsert(
@@ -335,7 +331,7 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](MongoGate
             return []
 
         models = self._from_cdto_many(dtos)
-        raw_payloads = pydantic_persistence_dump_many(models)
+        raw_payloads = self.effective_row_codec.encode_persistence_mapping_many(models)
         payloads = self.adapt_many_payload_for_write(raw_payloads, create=True)
 
         inserted_idx: set[int] = set()
@@ -370,7 +366,7 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](MongoGate
         self._require_update_cmd()
 
         model = self._from_cdto(create_dto)
-        data = pydantic_persistence_dump(model)
+        data = self.effective_row_codec.encode_persistence_mapping(model)
         data = self.adapt_payload_for_write(data, create=True)
         storage = self._storage_doc(data)
 
@@ -404,7 +400,7 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](MongoGate
             return []
 
         models = self._from_cdto_many([c for c, _ in pairs])
-        raw_payloads = pydantic_persistence_dump_many(models)
+        raw_payloads = self.effective_row_codec.encode_persistence_mapping_many(models)
         payloads = self.adapt_many_payload_for_write(raw_payloads, create=True)
         u_all = [u for _, u in pairs]
 
@@ -584,7 +580,10 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](MongoGate
 
         self._require_update_cmd()
 
-        update_data = pydantic_persistence_dump(dto, exclude={"unset": True})
+        update_data = self.effective_row_codec.encode_persistence_mapping(
+            cast(Any, dto),
+            exclude={"unset": True},
+        )
         return await self._patch(pk, update_data, rev=rev)
 
     # ....................... #
@@ -618,7 +617,10 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](MongoGate
         if revs is not None and len(revs) != len(pks):
             raise exc.precondition("Length mismatch between primary keys and revisions")
 
-        updates = pydantic_persistence_dump_many(dtos, exclude={"unset": True})
+        updates = self.effective_row_codec.encode_persistence_mapping_many(
+            cast(Any, dtos),
+            exclude={"unset": True},
+        )
         return await self._patch_many(pks, updates, revs=revs, batch_size=batch_size)
 
     # ....................... #
@@ -640,7 +642,10 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](MongoGate
 
         self._require_update_cmd()
 
-        update_data = pydantic_persistence_dump(dto, exclude={"unset": True})
+        update_data = self.effective_row_codec.encode_persistence_mapping(
+            cast(Any, dto),
+            exclude={"unset": True},
+        )
 
         if not update_data:
             return 0, []

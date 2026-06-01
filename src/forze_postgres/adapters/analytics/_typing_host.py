@@ -84,7 +84,7 @@ class PostgresAnalyticsHost(Protocol[R, Ing]):
         *,
         options: AnalyticsRunOptions | None,
         fetch_batch_size: int,
-        row_type: type[BaseModel],
+        _row_type: type[BaseModel],
     ) -> Any: ...
 
     def run_chunked(

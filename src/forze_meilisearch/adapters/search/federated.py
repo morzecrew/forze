@@ -43,7 +43,7 @@ from forze.application.contracts.search import (
 )
 from forze.application.integrations.search import SearchResultSnapshot
 from forze.base.exceptions import exc
-from forze.base.serialization import pydantic_validate_many
+from forze.base.serialization import PydanticRecordMappingCodec
 from forze_meilisearch.adapters.search._port import MeilisearchSearchPortMixin
 from forze_meilisearch.adapters.search._search_params import (
     attributes_to_search_on,
@@ -565,7 +565,7 @@ class MeilisearchFederatedSearchAdapter[M: BaseModel](
             rows = [
                 {"hit": h.hit.model_dump(mode="json"), "member": h.member} for h in hits
             ]
-            v = pydantic_validate_many(return_type, rows)
+            v = PydanticRecordMappingCodec(return_type).decode_mapping_many(rows)
 
             if return_count:
                 return page_from_limit_offset(

@@ -25,8 +25,6 @@ from forze.application.contracts.querying import QueryFilterExpression
 from forze.base.exceptions import CoreException, ExceptionKind, exc
 from forze.base.primitives import JsonDict
 from forze.base.serialization import (
-    pydantic_persistence_dump,
-    pydantic_persistence_dump_many,
     pydantic_transform,
     pydantic_transform_many,
 )
@@ -277,7 +275,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
     async def create(self, dto: C) -> D:
         async with self._write_tx():
             model = pydantic_transform(self.model_type, dto)
-            insert_data_raw = pydantic_persistence_dump(model)
+            insert_data_raw = self.effective_row_codec.encode_persistence_mapping(model)
             insert_data = await self.adapt_payload_for_write(
                 insert_data_raw, create=True
             )
@@ -364,7 +362,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
             for offset in range(0, len(dtos), batch_size):
                 dto_batch = dtos[offset : offset + batch_size]
                 models = pydantic_transform_many(self.model_type, dto_batch)
-                insert_data_raw = pydantic_persistence_dump_many(models)
+                insert_data_raw = self.effective_row_codec.encode_persistence_mapping_many(models)
                 insert_data = await self.adapt_many_payload_for_write(
                     insert_data_raw,
                     create=True,
@@ -415,7 +413,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
 
         async with self._write_tx():
             model = pydantic_transform(self.model_type, dto)
-            insert_data_raw = pydantic_persistence_dump(model)
+            insert_data_raw = self.effective_row_codec.encode_persistence_mapping(model)
             insert_data = await self.adapt_payload_for_write(
                 insert_data_raw, create=True
             )
@@ -555,7 +553,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
             for offset in range(0, len(dtos), batch_size):
                 dto_batch = dtos[offset : offset + batch_size]
                 models = pydantic_transform_many(self.model_type, dto_batch)
-                insert_data_raw = pydantic_persistence_dump_many(models)
+                insert_data_raw = self.effective_row_codec.encode_persistence_mapping_many(models)
                 insert_data = await self.adapt_many_payload_for_write(
                     insert_data_raw,
                     create=True,
@@ -597,7 +595,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
 
         async with self._write_tx():
             model = pydantic_transform(self.model_type, create_dto)
-            insert_data_raw = pydantic_persistence_dump(model)
+            insert_data_raw = self.effective_row_codec.encode_persistence_mapping(model)
             insert_data = await self.adapt_payload_for_write(
                 insert_data_raw, create=True
             )
@@ -755,7 +753,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
                 batch_pairs = pairs[offset : offset + batch_size]
                 creates = [c for c, _ in batch_pairs]
                 models = pydantic_transform_many(self.model_type, creates)
-                insert_data_raw = pydantic_persistence_dump_many(models)
+                insert_data_raw = self.effective_row_codec.encode_persistence_mapping_many(models)
                 insert_data = await self.adapt_many_payload_for_write(
                     insert_data_raw,
                     create=True,
@@ -866,7 +864,10 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
     ) -> tuple[D, JsonDict]:
         self._require_update_cmd()
 
-        update_data = pydantic_persistence_dump(dto, exclude={"unset": True})
+        update_data = self.effective_row_codec.encode_persistence_mapping(
+            cast(Any, dto),
+            exclude={"unset": True},
+        )
 
         return await self.__patch(pk, update_data, rev=rev)
 
@@ -1114,8 +1115,8 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
         updates: list[JsonDict] = []
         for start in range(0, len(dtos), batch_size):
             updates.extend(
-                pydantic_persistence_dump_many(
-                    dtos[start : start + batch_size],
+                self.effective_row_codec.encode_persistence_mapping_many(
+                    cast(Any, dtos[start : start + batch_size]),
                     exclude={"unset": True},
                 ),
             )
@@ -1147,7 +1148,10 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
 
         self._require_update_cmd()
 
-        update_data = pydantic_persistence_dump(dto, exclude={"unset": True})
+        update_data = self.effective_row_codec.encode_persistence_mapping(
+            cast(Any, dto),
+            exclude={"unset": True},
+        )
 
         if not update_data:
             return 0, []

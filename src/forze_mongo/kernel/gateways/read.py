@@ -6,9 +6,10 @@ require_mongo()
 
 # ....................... #
 
-from typing import Any, Never, Sequence, TypeVar, cast, final, overload
+from typing import Any, Literal, Never, Sequence, TypeVar, cast, final, overload
 from uuid import UUID
 
+import attrs
 from pydantic import BaseModel
 
 from forze.application.contracts.document.types import (
@@ -28,7 +29,6 @@ from forze.application.contracts.querying import (
 )
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
-from forze.base.serialization import pydantic_validate, pydantic_validate_many
 from forze.domain.constants import ID_FIELD
 
 from .base import MongoGateway
@@ -51,6 +51,7 @@ def _empty_global_aggregate_row(parsed: ParsedAggregates) -> JsonDict:
 
 
 @final
+@attrs.define(slots=True, kw_only=True, frozen=True)
 class MongoReadGateway[M: BaseModel](MongoGateway[M]):
     """Read-only Mongo gateway for single-document and multi-document queries.
 
@@ -58,6 +59,45 @@ class MongoReadGateway[M: BaseModel](MongoGateway[M]):
     and counting. Results can be projected to a subset of fields or mapped to
     an alternative model type.
     """
+
+    read_validation: Literal["strict", "trusted"] = attrs.field(
+        default="strict",
+        kw_only=True,
+    )
+    """Row decode mode for query results (``trusted`` skips validation)."""
+
+    def _decode_row(
+        self,
+        row: JsonDict,
+        *,
+        model: type[BaseModel] | None = None,
+        trust_source: bool | None = None,
+    ) -> Any:
+        eff_trust = (
+            self.read_validation == "trusted"
+            if trust_source is None
+            else trust_source
+        )
+
+        return self._codec_for(model).decode_mapping(row, trust_source=eff_trust)
+
+    def _decode_rows(
+        self,
+        rows: Sequence[JsonDict],
+        *,
+        model: type[BaseModel] | None = None,
+        trust_source: bool | None = None,
+    ) -> list[Any]:
+        eff_trust = (
+            self.read_validation == "trusted"
+            if trust_source is None
+            else trust_source
+        )
+
+        return self._codec_for(model).decode_mapping_many(
+            rows,
+            trust_source=eff_trust,
+        )
 
     async def get(
         self,
@@ -93,7 +133,7 @@ class MongoReadGateway[M: BaseModel](MongoGateway[M]):
 
         data = self._from_storage_doc(raw)
 
-        return pydantic_validate(self.model_type, data)
+        return self._decode_row(data)
 
     # ....................... #
 
@@ -130,7 +170,7 @@ class MongoReadGateway[M: BaseModel](MongoGateway[M]):
 
         ordered = [by_pk[self._storage_pk(pk)] for pk in pks]
 
-        return pydantic_validate_many(self.model_type, ordered)
+        return self._decode_rows(ordered)
 
     # ....................... #
 
@@ -218,12 +258,12 @@ class MongoReadGateway[M: BaseModel](MongoGateway[M]):
         data = self._from_storage_doc(raw)
 
         if return_model is not None:
-            return pydantic_validate(return_model, data)
+            return self._decode_row(data, model=return_model)
 
         if return_fields is not None:
             return self.return_subset(data, return_fields)
 
-        return pydantic_validate(self.model_type, data)
+        return self._decode_row(data)
 
     # ....................... #
 
@@ -376,12 +416,12 @@ class MongoReadGateway[M: BaseModel](MongoGateway[M]):
         normalized = [self._from_storage_doc(row) for row in rows]
 
         if return_model is not None:
-            return pydantic_validate_many(return_model, normalized)
+            return self._decode_rows(normalized, model=return_model)
 
         if return_fields is not None:
             return [self.return_subset(row, return_fields) for row in normalized]
 
-        return pydantic_validate_many(self.model_type, normalized)
+        return self._decode_rows(normalized)
 
     # ....................... #
 
@@ -421,7 +461,7 @@ class MongoReadGateway[M: BaseModel](MongoGateway[M]):
             rows = [_empty_global_aggregate_row(parsed_)]
 
         if return_model is not None:
-            return pydantic_validate_many(return_model, rows)
+            return self._decode_rows(rows, model=return_model)
 
         return rows
 
@@ -605,12 +645,12 @@ class MongoReadGateway[M: BaseModel](MongoGateway[M]):
         raw_normalized = [self._from_storage_doc(row) for row in rows]
 
         if return_model is not None:
-            return pydantic_validate_many(return_model, raw_normalized)
+            return self._decode_rows(raw_normalized, model=return_model)
 
         if return_fields is not None:
             return [self.return_subset(row, return_fields) for row in raw_normalized]
 
-        return pydantic_validate_many(self.model_type, raw_normalized)
+        return self._decode_rows(raw_normalized)
 
     # ....................... #
 

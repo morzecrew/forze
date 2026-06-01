@@ -36,7 +36,7 @@ from forze.application.contracts.search import (
 )
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
-from forze.base.serialization import pydantic_validate_many
+from forze.base.serialization import PydanticRecordMappingCodec
 
 # ----------------------- #
 
@@ -493,8 +493,7 @@ class SearchResultSnapshot:
         ]
 
         if return_type is not None:
-            v = pydantic_validate_many(
-                return_type, [h.model_dump(mode="json") for h in hydrated]
+            v = PydanticRecordMappingCodec(return_type).decode_mapping_many([h.model_dump(mode="json") for h in hydrated]
             )
 
             if return_count:
@@ -675,7 +674,7 @@ class SearchResultSnapshot:
                 }
                 for it in hydrated
             ]
-            v2 = pydantic_validate_many(return_type, rows2)
+            v2 = PydanticRecordMappingCodec(return_type).decode_mapping_many(rows2)
 
             if return_count:
 

@@ -1,6 +1,7 @@
 """Serialization and utility helpers around Pydantic models."""
 
 import hashlib
+import warnings
 from decimal import Decimal
 from functools import lru_cache
 from typing import Any, Final, Iterator, Literal, Sequence
@@ -439,12 +440,21 @@ CACHE_DUMP_EXCLUDE_OPTS: Final[RecordMappingDumpExcludeOptions] = (
 _CACHE_EXCLUDE_OPTS = CACHE_DUMP_EXCLUDE_OPTS
 
 
+@warnings.deprecated(
+    "Use PydanticRecordMappingCodec(model).encode_json_bytes("
+    "obj, exclude=CACHE_DUMP_EXCLUDE_OPTS) instead.",
+    category=DeprecationWarning,
+)
 def pydantic_cache_dump(obj: BaseModel) -> JsonDict:
     """Convenience helper for dumping a Pydantic model for cache storage."""
 
     return pydantic_dump(obj, exclude=_CACHE_EXCLUDE_OPTS, mode="json")
 
 
+@warnings.deprecated(
+    "Use PydanticRecordMappingCodec(model).encode_json_bytes per row instead.",
+    category=DeprecationWarning,
+)
 def pydantic_cache_dump_many(objs: Sequence[BaseModel]) -> list[JsonDict]:
     """Convenience helper for dumping a list of Pydantic models for cache storage."""
 
@@ -453,11 +463,13 @@ def pydantic_cache_dump_many(objs: Sequence[BaseModel]) -> list[JsonDict]:
 
 # ....................... #
 
-_PERSISTENCE_EXCLUDE_OPTS: Final[RecordMappingDumpExcludeOptions] = (
+PERSISTENCE_DUMP_EXCLUDE_OPTS: Final[RecordMappingDumpExcludeOptions] = (
     RecordMappingDumpExcludeOptions(
         computed_fields=True,
     )
 )
+
+_PERSISTENCE_EXCLUDE_OPTS = PERSISTENCE_DUMP_EXCLUDE_OPTS
 
 
 def _merge_dump_exclude(

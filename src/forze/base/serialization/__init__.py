@@ -1,5 +1,13 @@
 """Helpers for diffing, record-mapping codecs, and serialization."""
 
+from .codec_rows import (
+    codec_for_alt_model,
+    codec_for_model,
+    decode_row,
+    decode_rows,
+    materialize_mapping_rows,
+    resolve_row_codec,
+)
 from .diff import (
     apply_dict_patch,
     calculate_dict_difference,
@@ -23,10 +31,7 @@ from .msgspec import (
 from .msgspec_model_codec import MsgspecRecordMappingCodec
 from .pydantic import (
     CACHE_DUMP_EXCLUDE_OPTS,
-    pydantic_cache_dump,
-    pydantic_cache_dump_many,
-    pydantic_persistence_dump,
-    pydantic_persistence_dump_many,
+    PERSISTENCE_DUMP_EXCLUDE_OPTS,
     pydantic_decode_json_bytes,
     pydantic_dump,
     pydantic_dump_many,
@@ -34,6 +39,8 @@ from .pydantic import (
     pydantic_encode_json_bytes,
     pydantic_field_names,
     pydantic_model_hash,
+    pydantic_persistence_dump,
+    pydantic_persistence_dump_many,
     pydantic_secret_converter,
     pydantic_transform,
     pydantic_transform_many,
@@ -51,6 +58,13 @@ __all__ = [
     "calculate_dict_difference",
     "RecordMappingCodec",
     "RecordMappingDumpExcludeOptions",
+    "PERSISTENCE_DUMP_EXCLUDE_OPTS",
+    "codec_for_model",
+    "resolve_row_codec",
+    "codec_for_alt_model",
+    "decode_row",
+    "decode_rows",
+    "materialize_mapping_rows",
     "PydanticRecordMappingCodec",
     "MsgspecRecordMappingCodec",
     "msgspec_decode_json_bytes",
@@ -67,8 +81,6 @@ __all__ = [
     "pydantic_decode_json_bytes",
     "pydantic_dump",
     "pydantic_encode_json_bytes",
-    "pydantic_cache_dump",
-    "pydantic_cache_dump_many",
     "pydantic_persistence_dump",
     "pydantic_persistence_dump_many",
     "pydantic_field_names",

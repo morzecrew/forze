@@ -48,7 +48,7 @@ class PostgresDocumentAdapter(DocumentAdapter[R, D, C, U]):
     spec: DocumentSpec[R, D, C, U]
     """Document specification."""
 
-    read_gw: PostgresReadGateway[R]
+    read_gw: PostgresReadGateway[R]  # type: ignore[assignment]
     """Gateway used for all read queries."""
 
     write_gw: PostgresWriteGateway[D, C, U] | None = attrs.field(default=None)

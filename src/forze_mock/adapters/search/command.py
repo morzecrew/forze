@@ -10,7 +10,6 @@ from pydantic import BaseModel
 
 from forze.application.contracts.search import SearchCommandPort, SearchSpec
 from forze.base.primitives import JsonDict
-from forze.base.serialization import pydantic_persistence_dump
 from forze_mock.state import MockState
 from forze_mock.tenancy import MockTenancyMixin, partition_namespace
 
@@ -49,7 +48,7 @@ class MockSearchCommandAdapter(MockTenancyMixin, SearchCommandPort[BaseModel]):
         with self.state.lock:
             store = self._store()
             for doc in documents:
-                data = pydantic_persistence_dump(doc)
+                data = self.spec.resolved_row_codec.encode_persistence_mapping(doc)
                 doc_id = data.get("id")
                 if doc_id is None:
                     continue

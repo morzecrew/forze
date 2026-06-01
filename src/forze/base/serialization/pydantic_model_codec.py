@@ -1,6 +1,6 @@
 """Pydantic-backed implementation of the record-mapping codec protocol."""
 
-from typing import Iterator, Literal, Sequence
+from typing import Iterator, Literal, Sequence, cast
 
 import attrs
 from pydantic import BaseModel
@@ -8,6 +8,7 @@ from pydantic import BaseModel
 from ..primitives import JsonDict
 from .model_codec import RecordMappingCodec, RecordMappingDumpExcludeOptions
 from .pydantic import (
+    PERSISTENCE_DUMP_EXCLUDE_OPTS,
     pydantic_decode_json_bytes,
     pydantic_dump,
     pydantic_dump_many,
@@ -173,6 +174,36 @@ class PydanticRecordMappingCodec[T: BaseModel](RecordMappingCodec[T, BaseModel])
         exclude: RecordMappingDumpExcludeOptions = {},
     ) -> bytes:
         return pydantic_encode_json_bytes(obj, exclude=exclude)
+
+    # ....................... #
+
+    def encode_persistence_mapping(
+        self,
+        obj: T,
+        *,
+        mode: Literal["json", "python"] = "python",
+        exclude: RecordMappingDumpExcludeOptions = {},
+    ) -> JsonDict:
+        merged = cast(
+            RecordMappingDumpExcludeOptions,
+            {**PERSISTENCE_DUMP_EXCLUDE_OPTS, **exclude},
+        )
+        return self.encode_mapping(obj, mode=mode, exclude=merged)
+
+    # ....................... #
+
+    def encode_persistence_mapping_many(
+        self,
+        objs: Sequence[T],
+        *,
+        mode: Literal["json", "python"] = "python",
+        exclude: RecordMappingDumpExcludeOptions = {},
+    ) -> list[JsonDict]:
+        merged = cast(
+            RecordMappingDumpExcludeOptions,
+            {**PERSISTENCE_DUMP_EXCLUDE_OPTS, **exclude},
+        )
+        return self.encode_mapping_many(objs, mode=mode, exclude=merged)
 
     # ....................... #
 

@@ -79,12 +79,26 @@ class TestRunOptionsHelpers:
 class TestShapeRows:
     def test_return_fields_projection(self) -> None:
         rows: list[JsonDict] = [{"a": 1, "b": 2}]
-        out = shape_rows(rows, read_type=_Row, return_type=None, return_fields=("a",))
+        spec = _spec()
+        out = shape_rows(
+            rows,
+            read_codec=spec.read_codec,
+            read_type=_Row,
+            return_type=None,
+            return_fields=("a",),
+        )
         assert out == [{"a": 1}]
 
     def test_return_type_validation(self) -> None:
         rows: list[JsonDict] = [{"value": 3}]
-        out = shape_rows(rows, read_type=_Row, return_type=_Row, return_fields=None)
+        spec = _spec()
+        out = shape_rows(
+            rows,
+            read_codec=spec.read_codec,
+            read_type=_Row,
+            return_type=_Row,
+            return_fields=None,
+        )
         assert len(out) == 1
         assert out[0].value == 3
 

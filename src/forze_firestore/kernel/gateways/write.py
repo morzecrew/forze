@@ -6,7 +6,7 @@ require_firestore()
 
 # ....................... #
 
-from typing import Sequence, final
+from typing import Any, Sequence, cast, final
 from uuid import UUID
 
 import attrs
@@ -21,12 +21,8 @@ from forze.application.contracts.querying import QueryFilterExpression
 from forze.base.exceptions import CoreException, ExceptionKind, exc
 from forze.base.primitives import JsonDict
 from forze.base.serialization import (
-    pydantic_dump,
-    pydantic_dump_many,
-    pydantic_persistence_dump,
-    pydantic_persistence_dump_many,
-    pydantic_validate,
-    pydantic_validate_many,
+    pydantic_transform,
+    pydantic_transform_many,
 )
 from forze.domain.constants import REV_FIELD
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document
@@ -69,6 +65,8 @@ class FirestoreWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
+        super().__attrs_post_init__()
+
         if not relations_match(self.relation, self.read_gw.relation):
             raise exc.configuration(
                 "Relation mismatch. Write gateway and nested read gateway must use the same relation."
@@ -117,7 +115,7 @@ class FirestoreWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
     def _materialize_after_write(self, payload: JsonDict) -> D:
         """Build a domain model from written storage without a post-write read."""
 
-        return pydantic_validate(self.model_type, self._from_storage_doc(payload))
+        return self._decode_row(self._from_storage_doc(payload))
 
     # ....................... #
 
@@ -125,7 +123,7 @@ class FirestoreWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
         """Return a document after a write, avoiding read-after-write inside transactions."""
 
         if merged is not None and self.client.is_in_transaction():
-            return pydantic_validate(self.model_type, merged)
+            return self._decode_row(merged)
 
         return await self.read_gw.get(pk)
 
@@ -173,21 +171,19 @@ class FirestoreWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
     # ....................... #
 
     def _from_cdto(self, dto: C) -> D:
-        data = pydantic_dump(dto, exclude={"unset": True})
-        return pydantic_validate(self.model_type, data)
+        return pydantic_transform(self.model_type, dto)
 
     # ....................... #
 
     def _from_cdto_many(self, dtos: Sequence[C]) -> Sequence[D]:
-        data = pydantic_dump_many(dtos, exclude={"unset": True})
-        return pydantic_validate_many(self.model_type, data)
+        return pydantic_transform_many(self.model_type, dtos)
 
     # ....................... #
 
     @optimistic_retry()  # type: ignore[untyped-decorator]
     async def create(self, dto: C) -> D:
         model = self._from_cdto(dto)
-        data = pydantic_persistence_dump(model)
+        data = self.effective_row_codec.encode_persistence_mapping(model)
         data = self.adapt_payload_for_write(data, create=True)
         coll = await self.coll()
         await self.client.set_document(coll, self._storage_pk(model.id), data)
@@ -211,7 +207,7 @@ class FirestoreWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
             return []
 
         models = self._from_cdto_many(dtos)
-        raw_payloads = pydantic_persistence_dump_many(models)
+        raw_payloads = self.effective_row_codec.encode_persistence_mapping_many(models)
         payloads = self.adapt_many_payload_for_write(raw_payloads, create=True)
         documents = [
             (self._storage_pk(m.id), dict(p))
@@ -258,7 +254,7 @@ class FirestoreWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
             return current, diff
 
         diff = self._bump_rev(current, diff)
-        merged = pydantic_persistence_dump(current)
+        merged = self.effective_row_codec.encode_persistence_mapping(current)
         merged.update(self.adapt_payload_for_write(diff, create=False))
 
         coll = await self.coll()
@@ -279,7 +275,10 @@ class FirestoreWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
         rev: int | None = None,
     ) -> tuple[D, JsonDict]:
         self._require_update_cmd()
-        update_data = pydantic_persistence_dump(dto, exclude={"unset": True})
+        update_data = self.effective_row_codec.encode_persistence_mapping(
+            cast(Any, dto),
+            exclude={"unset": True},
+        )
 
         return await self._patch(pk, update_data, rev=rev)
 

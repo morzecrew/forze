@@ -40,11 +40,7 @@ from forze.application.contracts.querying import (
 from forze.application.contracts.tenancy import TenantProviderPort
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
-from forze.base.serialization import (
-    pydantic_dump,
-    pydantic_validate,
-    pydantic_validate_many,
-)
+from forze.base.serialization import PydanticRecordMappingCodec
 from forze_clickhouse.execution.deps.configs import (
     ClickHouseAnalyticsConfig,
     ClickHouseQueryConfig,
@@ -241,6 +237,7 @@ class ClickHouseAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
         )
         data = shape_rows(
             result.rows,
+            read_codec=self.spec.resolved_read_codec,
             read_type=self.spec.read,
             return_type=return_type,
             return_fields=return_fields,
@@ -324,7 +321,7 @@ class ClickHouseAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
             fetch_batch_size=fetch_batch_size,
         )
 
-        typed = pydantic_validate_many(self.spec.read, rows)
+        typed = self.spec.resolved_read_codec.decode_mapping_many(rows)
 
         for offset in range(0, len(typed), fetch_batch_size):
             yield typed[offset : offset + fetch_batch_size]
@@ -466,7 +463,7 @@ class ClickHouseAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
             timeout=self._run_timeout(options),
             fetch_batch_size=fetch_batch_size,
         )
-        typed = pydantic_validate_many(return_type, rows)
+        typed = PydanticRecordMappingCodec(return_type).decode_mapping_many(rows)
 
         for offset in range(0, len(typed), fetch_batch_size):
             yield typed[offset : offset + fetch_batch_size]
@@ -514,6 +511,7 @@ class ClickHouseAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
             )
             hits = shape_rows(
                 result.rows,
+                read_codec=self.spec.resolved_read_codec,
                 read_type=self.spec.read,
                 return_type=return_type,
                 return_fields=return_fields,
@@ -538,6 +536,7 @@ class ClickHouseAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
             )
             hits = shape_rows(
                 result.rows,
+                read_codec=self.spec.resolved_read_codec,
                 read_type=self.spec.read,
                 return_type=return_type,
                 return_fields=return_fields,
@@ -639,18 +638,25 @@ class ClickHouseAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
                 f"Analytics append batch exceeds max_append_rows ({max_append})."
             )
 
-        ingest_type = self.spec.ingest
+        ingest_codec = self.spec.ingest_codec
+        if ingest_codec is None:
+            raise exc.internal(
+                f"Analytics ingest codec is not configured for route {self.spec.name!r}."
+            )
+
         payloads: list[JsonDict] = []
 
         for row in rows:
-            if isinstance(row, ingest_type):
-                payloads.append(pydantic_dump(row))
+            if isinstance(row, ingest_codec.model_type):
+                payloads.append(ingest_codec.encode_mapping(row))
 
             elif isinstance(
                 row, BaseModel
             ):  # pyright: ignore[reportUnnecessaryIsInstance]
                 payloads.append(
-                    pydantic_dump(pydantic_validate(ingest_type, row.model_dump()))
+                    ingest_codec.encode_mapping(
+                        ingest_codec.decode_mapping(row.model_dump()),
+                    )
                 )
 
             else:

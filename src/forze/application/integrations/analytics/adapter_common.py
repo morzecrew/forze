@@ -17,7 +17,7 @@ from forze.application.contracts.querying import (
 from forze.base.codecs import B64UrlJsonCodec
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict, StrKey
-from forze.base.serialization import pydantic_validate, pydantic_validate_many
+from forze.base.serialization import PydanticRecordMappingCodec, RecordMappingCodec
 
 # ----------------------- #
 
@@ -45,7 +45,9 @@ def validated_params(
         return params
 
     if isinstance(params, BaseModel):  # pyright: ignore[reportUnnecessaryIsInstance]
-        return pydantic_validate(defn.params, params.model_dump())
+        return PydanticRecordMappingCodec(defn.params).decode_mapping(
+            params.model_dump(),
+        )
 
     raise exc.configuration("Analytics params must be a Pydantic model instance.")
 
@@ -93,6 +95,7 @@ def pagination_window(
 def shape_rows(
     rows: list[JsonDict],
     *,
+    read_codec: RecordMappingCodec[Any, Any] | None,
     read_type: type[BaseModel],
     return_type: type[T] | None,
     return_fields: Sequence[str] | None,
@@ -101,9 +104,11 @@ def shape_rows(
         return [{k: row.get(k) for k in return_fields} for row in rows]
 
     if return_type is not None:
-        return pydantic_validate_many(return_type, rows)
+        return PydanticRecordMappingCodec(return_type).decode_mapping_many(rows)
 
-    return pydantic_validate_many(read_type, rows)
+    codec = read_codec or PydanticRecordMappingCodec(read_type)
+
+    return codec.decode_mapping_many(rows)
 
 
 # ....................... #

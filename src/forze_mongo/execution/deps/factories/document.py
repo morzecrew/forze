@@ -55,6 +55,7 @@ class ConfigurableMongoReadOnlyDocument(DocumentQueryDepPort[R]):
             read_type=spec.read,
             read_relation=self.config.read,
             tenant_aware=self.config.tenant_aware,
+            read_validation=self.config.read_validation,
         )
 
         after_commit: AfterCommitPort | None = None
@@ -67,6 +68,7 @@ class ConfigurableMongoReadOnlyDocument(DocumentQueryDepPort[R]):
             document_name=spec.name,
             cache=cache,
             after_commit=after_commit,
+            row_codec=read.row_codec,
         )
 
         return MongoDocumentAdapter(
@@ -112,6 +114,7 @@ class ConfigurableMongoDocument(DocumentCommandDepPort[R, D, C, U]):
             read_type=spec.read,
             read_relation=config.read,
             tenant_aware=tenant_aware,
+            read_validation=config.read_validation,
         )
 
         write_relation = config.write
@@ -147,6 +150,7 @@ class ConfigurableMongoDocument(DocumentCommandDepPort[R, D, C, U]):
             document_name=spec.name,
             cache=cache,
             after_commit=after_commit,
+            row_codec=read.row_codec,
         )
 
         return MongoDocumentAdapter(

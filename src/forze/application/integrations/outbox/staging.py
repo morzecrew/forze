@@ -17,7 +17,7 @@ from forze.application.contracts.outbox import (
 )
 from forze.base.exceptions import exc
 from forze.base.primitives import utcnow, uuid7
-from forze.base.serialization import pydantic_dump
+
 
 if TYPE_CHECKING:
     from forze.application.execution.context import ExecutionContext
@@ -79,7 +79,7 @@ class OutboxStaging[M: BaseModel]:
         return StagedOutboxEntry(
             outbox_route=str(self.spec.name),
             event=event,
-            payload_json=pydantic_dump(event.payload),
+            payload_json=self.spec.codec.encode_mapping(event.payload),
         )
 
     # ....................... #

@@ -27,7 +27,6 @@ from forze.application.contracts.search import (
     search_options_for_simple_adapter,
 )
 from forze.application.integrations.search import SearchResultSnapshot
-from forze.base.serialization import pydantic_validate_many
 from forze.domain.constants import ID_FIELD
 
 from ._engine import RankedPipelineSql
@@ -282,7 +281,7 @@ class PostgresPGroongaSearchAdapter[M: BaseModel](
 
         if want_sn and self.result_snapshot is not None and rs_spec is not None:
             pool_len = len(rows)
-            pool_pg0 = pydantic_validate_many(self.model_type, rows)
+            pool_pg0 = self.spec.resolved_row_codec.decode_mapping_many(rows)
             handle_no = await self.result_snapshot.put_simple_ordered_hits(
                 pool_pg0,
                 snap_opt=snapshot,
@@ -300,6 +299,7 @@ class PostgresPGroongaSearchAdapter[M: BaseModel](
             return_type=return_type,
             return_fields=return_fields,
             model_type=self.model_type,
+            row_codec=self.spec.resolved_row_codec,
         )
 
         if return_count:

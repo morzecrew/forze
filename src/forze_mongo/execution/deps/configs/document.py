@@ -1,5 +1,7 @@
 """Mongo document execution configs."""
 
+from typing import Literal
+
 import attrs
 
 from forze.application.contracts.resolution import RelationSpec, coerce_relation_spec
@@ -17,6 +19,9 @@ class MongoReadOnlyDocumentConfig(TenantAwareIntegrationConfig):
 
     batch_size: int = 200
     """Chunk size for bulk writes and internal chunked offset reads."""
+
+    read_validation: Literal["strict", "trusted"] = "strict"
+    """Row decode mode for reads (``trusted`` skips Pydantic validation)."""
 
 
 # ....................... #

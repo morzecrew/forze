@@ -29,7 +29,7 @@ from forze.application.contracts.search import (
 )
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
-from forze.base.serialization import pydantic_validate_many
+from forze.base.serialization import PydanticRecordMappingCodec, RecordMappingCodec
 from forze_postgres.kernel.sql import (
     build_order_by_sql,
     build_ranked_cursor_order_by_sql,
@@ -207,6 +207,7 @@ async def execute_projection_keyset_cursor[M: BaseModel](
         return_type=return_type,
         return_fields=return_fields,
         model_type=gw.model_type,
+        row_codec=spec.resolved_row_codec,
         next_cursor=nxt,
         prev_cursor=prv,
         has_more=has_more,
@@ -382,6 +383,7 @@ async def execute_ranked_pipeline_cursor[M: BaseModel](
         return_type=return_type,
         return_fields=return_fields,
         model_type=gw.model_type,
+        row_codec=spec.resolved_row_codec,
         next_cursor=nxt,
         prev_cursor=prv,
         has_more=has_more,
@@ -397,6 +399,7 @@ def _cursor_page_from_rows(
     return_type: type[BaseModel] | None,
     return_fields: Sequence[str] | None,
     model_type: type[BaseModel],
+    row_codec: RecordMappingCodec[Any, Any],
     next_cursor: str | None,
     prev_cursor: str | None,
     has_more: bool,
@@ -404,13 +407,13 @@ def _cursor_page_from_rows(
     hits: list[Any]
 
     if return_type is not None:
-        hits = pydantic_validate_many(return_type, rows)
+        hits = PydanticRecordMappingCodec(return_type).decode_mapping_many(rows)
 
     elif return_fields is not None:
         hits = [{k: r.get(k, None) for k in return_fields} for r in rows]
 
     else:
-        hits = pydantic_validate_many(model_type, rows)
+        hits = row_codec.decode_mapping_many(rows)
 
     return CursorPage(
         hits=hits,

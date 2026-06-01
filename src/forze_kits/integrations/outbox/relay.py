@@ -10,7 +10,7 @@ from forze.application.contracts.outbox import OutboxRelayResult, OutboxSpec
 from forze.application.contracts.queue import QueueCommandDepKey, QueueSpec
 from forze.base.exceptions import exc
 from forze.base.primitives import utcnow
-from forze.base.serialization import pydantic_validate
+
 
 if TYPE_CHECKING:
     from forze.application.execution.context import ExecutionContext
@@ -79,13 +79,12 @@ async def relay_outbox_to_queue(
         route=queue_spec.name,
     )
 
-    model_type = outbox_spec.model_type
     published_ids: list[UUID] = []
     failed_ids: list[UUID] = []
 
     for claim in claims:
         try:
-            payload = pydantic_validate(model_type, claim.payload)
+            payload = outbox_spec.codec.decode_mapping(claim.payload)
         except Exception as e:
             await query.mark_failed([claim.id], error=str(e))
             failed_ids.append(claim.id)

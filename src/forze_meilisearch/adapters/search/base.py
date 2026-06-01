@@ -18,7 +18,6 @@ from forze.application.contracts.search import SearchSpec
 from forze.application.contracts.tenancy import TENANT_ID_FIELD
 from forze.application.contracts.tenancy.mixins import TenancyMixin
 from forze.base.exceptions import exc
-from forze.base.serialization import pydantic_dump
 from forze.domain.constants import ID_FIELD
 from forze_meilisearch.adapters.search._filter_render import MeilisearchFilterRenderer
 from forze_meilisearch.execution.deps.configs import MeilisearchSearchConfig
@@ -151,7 +150,7 @@ class MeilisearchSearchGateway[M: BaseModel](TenancyMixin):
     # ....................... #
 
     def to_index_document(self, model: M) -> dict[str, Any]:
-        data = pydantic_dump(model)
+        data = self.spec.resolved_row_codec.encode_mapping(model)
         out: dict[str, Any] = {}
 
         for key, value in data.items():

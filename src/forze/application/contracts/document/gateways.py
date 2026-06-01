@@ -1,6 +1,7 @@
 """Gateway port protocols for document persistence adapters."""
 
 from typing import (
+    Any,
     Awaitable,
     Generic,
     Never,
@@ -22,6 +23,7 @@ from forze.application.contracts.querying import (
     QuerySortExpression,
 )
 from forze.base.primitives import JsonDict
+from forze.base.serialization import RecordMappingCodec
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document
 
 M = TypeVar("M", bound=BaseModel)
@@ -41,6 +43,12 @@ class DocumentReadGatewayPort(Protocol, Generic[M]):
 
     @property
     def model_type(self) -> type[M]: ...
+
+    @property
+    def effective_row_codec(self) -> RecordMappingCodec[M, Any]:
+        """Row decode/encode codec for this gateway's read model."""
+
+        ...
 
     # ....................... #
 

@@ -7,6 +7,7 @@ from typing import (
     Literal,
     NoReturn,
     Sequence,
+    cast,
     final,
     overload,
 )
@@ -40,7 +41,7 @@ from forze.application.contracts.search import (
 from forze.application.integrations.search import SearchResultSnapshot
 from forze.base.primitives import JsonDict
 from forze.base.serialization import (
-    pydantic_validate_many,
+    PydanticRecordMappingCodec,
 )
 from forze_mock.query._types import (
     M,
@@ -350,14 +351,17 @@ class MockSearchAdapter(MockTenancyMixin, SearchQueryPort[M]):
             return page_from_limit_offset(proj, pagination, total=None)
 
         if return_type is not None:
-            out = pydantic_validate_many(return_type, ordered)
+            out = PydanticRecordMappingCodec(return_type).decode_mapping_many(ordered)
             if return_count:
                 return page_from_limit_offset(out, pagination, total=total)
             return page_from_limit_offset(out, pagination, total=None)
 
         allowed = set(self.spec.model_type.model_fields.keys())
         typed_docs = [{k: v for k, v in doc.items() if k in allowed} for doc in ordered]
-        out = pydantic_validate_many(self.spec.model_type, typed_docs)
+        out = cast(
+            list[Any],
+            self.spec.resolved_row_codec.decode_mapping_many(typed_docs),
+        )
 
         if return_count:
             return page_from_limit_offset(out, pagination, total=total)
@@ -571,7 +575,7 @@ class MockSearchAdapter(MockTenancyMixin, SearchQueryPort[M]):
             )
 
         if return_type is not None:
-            hits_T = pydantic_validate_many(return_type, page)
+            hits_T = PydanticRecordMappingCodec(return_type).decode_mapping_many(page)
 
             return CursorPage(
                 hits=hits_T,
@@ -582,7 +586,7 @@ class MockSearchAdapter(MockTenancyMixin, SearchQueryPort[M]):
 
         allowed = set(self.spec.model_type.model_fields.keys())
         typed_docs = [{k: v for k, v in doc.items() if k in allowed} for doc in page]
-        hits = pydantic_validate_many(self.spec.model_type, typed_docs)
+        hits = self.spec.resolved_row_codec.decode_mapping_many(typed_docs)
 
         return CursorPage(
             hits=hits,

@@ -45,7 +45,17 @@ See [Kits reference](pages/docs/reference/kits.md).
 ### Changed
 
 - **`forze_postgres`:** document gateways decode SELECT rows through `RecordMappingCodec` (default `PydanticRecordMappingCodec`; behavior unchanged unless `read_validation="trusted"`).
+- **`forze_mongo` / `forze_firestore`:** document gateways and factories use `row_codec` + optional `read_validation` (same pattern as Postgres).
 - **`forze.application.integrations.document`:** versioned document cache stores compact JSON bytes; legacy dict cache entries remain readable until TTL expiry.
+- **`forze.application.integrations.document`:** post-write hydration uses `read_gw.row_codec.transform` instead of direct `pydantic_*` dumps.
+- **`SearchSpec` / `HubSearchSpec`:** optional `row_codec` (defaults to `PydanticRecordMappingCodec`); search adapters materialize hits through the codec.
+- **`AnalyticsSpec`:** optional `read_codec` / `ingest_codec`; warehouse and mock analytics adapters route row encode/decode through codecs.
+- **`forze_mock`:** in-memory document adapter uses `row_codec` for read/write/search paths.
+- **`forze_kits.mapping`:** `PydanticPipelineMapper` uses `PydanticRecordMappingCodec.transform` when no pipeline steps are configured.
+
+### Deprecated
+
+- **`forze.base.serialization`:** `pydantic_cache_dump` / `pydantic_cache_dump_many` — use `PydanticRecordMappingCodec(...).encode_json_bytes(..., exclude=CACHE_DUMP_EXCLUDE_OPTS)` (or `encode_mapping` for dict-shaped cache fixtures).
 - **`forze_identity.oidc`:** `OidcTokenVerifier.enforce_issuer_and_audience` defaults to `True` (construction requires both `issuer` and `audience` unless explicitly opted out).
 - **`forze_kits` layout:** modules live under `domain/`, `aggregates/` (with per-aggregate `handlers/`), `mapping/`, `dto/`, `integrations/`, `adapters/`, and `scopes/` (e.g. `forze_kits.aggregates.document.handlers`, `forze_kits.mapping`, `forze_kits.integrations.outbox`, `forze_kits.adapters.secrets`). Core `forze.application` keeps contracts, execution, hooks, and integrations only.
 

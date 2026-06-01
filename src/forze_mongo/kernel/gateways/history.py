@@ -12,12 +12,7 @@ from uuid import UUID
 import attrs
 
 from forze.base.exceptions import exc
-from forze.base.serialization import (
-    pydantic_persistence_dump,
-    pydantic_persistence_dump_many,
-    pydantic_validate,
-    pydantic_validate_many,
-)
+from forze.base.serialization import PydanticRecordMappingCodec
 from forze.domain.constants import (
     HISTORY_DATA_FIELD,
     HISTORY_SOURCE_FIELD,
@@ -92,7 +87,7 @@ class MongoHistoryGateway[D: Document](MongoGateway[D]):
         if payload is None:
             raise exc.not_found(f"History payload not found: {pk}, {rev}")
 
-        return pydantic_validate(self.model_type, payload)
+        return self._decode_row(payload)
 
     # ....................... #
 
@@ -146,7 +141,7 @@ class MongoHistoryGateway[D: Document](MongoGateway[D]):
 
             ordered_raw.append(payload)
 
-        return pydantic_validate_many(self.model_type, ordered_raw)
+        return self._decode_rows(ordered_raw)
 
     # ....................... #
 
@@ -167,7 +162,11 @@ class MongoHistoryGateway[D: Document](MongoGateway[D]):
         """
 
         record = await self._from_data(data)
-        raw_payload = pydantic_persistence_dump(record)
+        raw_payload = PydanticRecordMappingCodec(
+            DocumentHistory[D]
+        ).encode_persistence_mapping(
+            record,
+        )
         raw_payload = self.adapt_payload_for_write(raw_payload)
 
         payload = self._coerce_query_value(raw_payload)
@@ -195,7 +194,9 @@ class MongoHistoryGateway[D: Document](MongoGateway[D]):
             )
             for item in data
         ]
-        raw_payloads = pydantic_persistence_dump_many(records)
+        raw_payloads = PydanticRecordMappingCodec(
+            DocumentHistory[D],
+        ).encode_persistence_mapping_many(records)
         raw_payloads = list(map(self.adapt_payload_for_write, raw_payloads))
 
         payloads = list(map(self._coerce_query_value, raw_payloads))
