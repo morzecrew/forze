@@ -46,6 +46,13 @@ The package supplies a single `MockDepsModule` that registers in-memory adapters
 | `MockStreamAdapter` | `StreamQueryPort`, `StreamCommandPort` |
 | `MockStreamGroupAdapter` | `StreamGroupQueryPort` |
 | `MockAnalyticsAdapter` | `AnalyticsQueryPort`, `AnalyticsIngestPort` |
+| `MockDistributedLockAdapter` | `DistributedLockQueryPort`, `DistributedLockCommandPort` |
+| `MockSearchCommandAdapter` | `SearchCommandPort` |
+| `MockSearchResultSnapshotAdapter` | `SearchResultSnapshotPort` (chunked in-memory) |
+| `MockHubSearchAdapter` | `SearchQueryPort` (hub merge) |
+| `MockFederatedSearchAdapter` | `SearchQueryPort` (weighted RRF) |
+| `MockDurableWorkflow*` / `MockDurableFunction*` | Durable workflow + function ports |
+| `MockSecretsPort` + authn/authz/tenancy stubs | Identity plane (in-memory) |
 
 ## Runtime wiring
 
@@ -85,6 +92,21 @@ No lifecycle plan is needed — mock adapters have no connections to manage.
 | `StreamQueryDepKey` | Stream query adapter |
 | `StreamCommandDepKey` | Stream command adapter |
 | `StreamGroupQueryDepKey` | Stream group query adapter |
+| `DistributedLockQueryDepKey` / `DistributedLockCommandDepKey` | Distributed lock |
+| `SearchCommandDepKey` | Search index maintenance |
+| `SearchResultSnapshotDepKey` | Search result snapshot store |
+| `HubSearchQueryDepKey` | Hub search |
+| `FederatedSearchQueryDepKey` | Federated search |
+| `EmbeddingsProviderDepKey` | Deterministic hash embeddings |
+| `DurableWorkflow*DepKey` (4) | Workflow command/query + schedule |
+| `DurableFunctionEventCommandDepKey` / `DurableFunctionStepDepKey` | Durable functions |
+| `SecretsDepKey` | Secrets resolution |
+| Authn (11) + Authz (5) + Tenancy (2) dep keys | Identity stubs (route `main` by default) |
+| `MockRoutedStateDepKey` | Optional per-tenant `MockState` registry |
+
+## Tenancy
+
+Per-route options live on :class:`~forze_mock.execution.MockRouteConfig` (`tenant_aware`, optional `namespace` / `relation` resolvers). Use :class:`~forze_mock.tenancy.MockRoutedStateRegistry` when each tenant needs a separate `MockState` instance. See [Multi-tenancy](../concepts/multi-tenancy.md#mock-forze_mock).
 
 ## Shared state
 

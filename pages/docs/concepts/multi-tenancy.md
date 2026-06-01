@@ -66,9 +66,15 @@ Relation-level isolation for Inngest means **separate Inngest apps per tenant** 
 
 ### Mock (`forze_mock`)
 
-`forze_mock` provides in-memory adapters (`MockState`) for unit tests and local demos. There is no physical backend, no `TenantAwareIntegrationConfig` on integration configs, and no routed client.
+`forze_mock` provides in-memory adapters backed by :class:`~forze_mock.state.MockState` for unit tests and local demos. There is no physical backend or DSN routing, but mock supports the same **layering concepts** at the application level:
 
-Mock is **tenant-agnostic** unless tests partition `MockState` themselves (separate module instances or explicit keys). Do not use mock for production tenancy patterns.
+| Mechanism | Mock support |
+|-----------|----------------|
+| **Routed state** | :class:`~forze_mock.tenancy.MockRoutedStateRegistry` + :data:`~forze_mock.tenancy.MockRoutedStateDepKey` — one isolated `MockState` per tenant (LRU pool, lifecycle via :func:`~forze_mock.tenancy.mock_routed_state_lifecycle_step`) |
+| **Relation / namespace** | :func:`~forze_mock.tenancy.resolve_mock_namespace` and per-route :class:`~forze_mock.execution.MockRouteConfig` (`namespace`, `relation`) |
+| **Row isolation** | `tenant_aware=True` on adapters — keys prefixed with :func:`~forze_mock.tenancy.partition_namespace`; documents filter and stamp `tenant_id` on create |
+
+When `tenant_id` is omitted, :func:`~forze_mock.tenancy.partition_namespace` returns the bare namespace (backward compatible with older tests). Prefer **routed state** for database-per-tenant simulations and **partition + tenant_aware** for shared-state row filters.
 
 ## Postgres isolation modes
 

@@ -1,6 +1,5 @@
 """Unit tests for forze.application.contracts.querying.internal."""
 
-from forze.base.exceptions import CoreException, ExceptionKind, exc
 from datetime import date, datetime, timezone
 from uuid import UUID
 
@@ -22,8 +21,10 @@ from forze.application.contracts.querying.internal import (
     QueryOr,
     QueryValueCaster,
 )
+from forze.base.exceptions import CoreException
 
 # ----------------------- #
+
 
 class TestAggregatesExpressionParser:
     def test_parses_group_fields_and_computed_fields(self) -> None:
@@ -186,7 +187,9 @@ class TestAggregatesExpressionParser:
                 },
             )
 
+
 # ----------------------- #
+
 
 class TestQueryValueCaster:
     # as_bool
@@ -417,7 +420,9 @@ class TestQueryValueCaster:
         assert QueryValueCaster.pass_through([1, 2]) == "[1, 2]"
         assert QueryValueCaster.pass_through({"a": 1}) == "{'a': 1}"
 
+
 # ----------------------- #
+
 
 class TestQueryFilterExpressionParser:
     # Predicate shortcuts
@@ -652,6 +657,7 @@ class TestQueryFilterExpressionParser:
         assert isinstance(result, QueryAnd)
         assert len(result.items) == 2
 
+
 class TestQueryCompareExpressionParser:
     def test_parse_compare_eq_shortcut(self) -> None:
         result = QueryFilterExpressionParser.parse(
@@ -870,11 +876,13 @@ class TestQueryCompareExpressionParser:
                 {"$values": {"tags": {"$any": {"$in": ["a"]}}}},
             )
 
+
 # ----------------------- #
+
 
 class TestMockElementQuantifiers:
     def test_match_elem_any_scalar(self) -> None:
-        from forze_mock.adapters import _match_expr
+        from forze_mock.query import _match_expr
 
         expr = QueryFilterExpressionParser.parse(
             {"$values": {"tags": {"$any": "urgent"}}},
@@ -884,7 +892,7 @@ class TestMockElementQuantifiers:
         assert _match_expr({"tags": []}, expr) is False
 
     def test_match_elem_any_scalar_gte(self) -> None:
-        from forze_mock.adapters import _match_expr
+        from forze_mock.query import _match_expr
 
         expr = QueryFilterExpressionParser.parse(
             {"$values": {"scores": {"$any": {"$gte": 10}}}},
@@ -893,7 +901,7 @@ class TestMockElementQuantifiers:
         assert _match_expr({"scores": [1, 2]}, expr) is False
 
     def test_match_elem_all_vacuous_empty(self) -> None:
-        from forze_mock.adapters import _match_expr
+        from forze_mock.query import _match_expr
 
         expr = QueryFilterExpressionParser.parse(
             {"$values": {"tags": {"$all": {"$eq": "x"}}}},
@@ -902,7 +910,7 @@ class TestMockElementQuantifiers:
         assert _match_expr({}, expr) is True
 
     def test_match_elem_all_requires_every_element(self) -> None:
-        from forze_mock.adapters import _match_expr
+        from forze_mock.query import _match_expr
 
         expr = QueryFilterExpressionParser.parse(
             {"$values": {"tags": {"$all": {"$eq": "ops"}}}},
@@ -911,7 +919,7 @@ class TestMockElementQuantifiers:
         assert _match_expr({"tags": ["ops", "urgent"]}, expr) is False
 
     def test_match_elem_none_scalar(self) -> None:
-        from forze_mock.adapters import _match_expr
+        from forze_mock.query import _match_expr
 
         expr = QueryFilterExpressionParser.parse(
             {"$values": {"tags": {"$none": "urgent"}}},
@@ -920,7 +928,7 @@ class TestMockElementQuantifiers:
         assert _match_expr({"tags": ["urgent"]}, expr) is False
 
     def test_match_elem_any_object_array(self) -> None:
-        from forze_mock.adapters import _match_expr
+        from forze_mock.query import _match_expr
 
         expr = QueryFilterExpressionParser.parse(
             {
@@ -946,7 +954,7 @@ class TestMockElementQuantifiers:
         assert _match_expr({"items": [{"status": "closed", "qty": 5}]}, expr) is False
 
     def test_match_not(self) -> None:
-        from forze_mock.adapters import _match_expr
+        from forze_mock.query import _match_expr
 
         expr = QueryFilterExpressionParser.parse(
             {"$not": {"$values": {"status": "archived"}}},
@@ -955,7 +963,7 @@ class TestMockElementQuantifiers:
         assert _match_expr({"status": "archived"}, expr) is False
 
     def test_match_not_with_or(self) -> None:
-        from forze_mock.adapters import _match_expr
+        from forze_mock.query import _match_expr
 
         expr = QueryFilterExpressionParser.parse(
             {
@@ -972,7 +980,7 @@ class TestMockElementQuantifiers:
         assert _match_expr({"status": "pending"}, expr) is False
 
     def test_match_and_with_elem_and_not(self) -> None:
-        from forze_mock.adapters import _match_expr
+        from forze_mock.query import _match_expr
 
         expr = QueryFilterExpressionParser.parse(
             {
@@ -998,6 +1006,7 @@ class TestMockElementQuantifiers:
             )
             is False
         )
+
 
 class TestQueryNodes:
     def test_query_field(self) -> None:

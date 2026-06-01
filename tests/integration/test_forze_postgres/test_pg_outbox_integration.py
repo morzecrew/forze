@@ -12,9 +12,9 @@ from datetime import timedelta
 from uuid import uuid4
 
 import pytest
-from pydantic import BaseModel
 from psycopg import sql
 from psycopg.types.json import Jsonb
+from pydantic import BaseModel
 
 from forze.application.composition.outbox import relay_outbox_to_queue
 from forze.application.contracts.outbox import (
@@ -23,21 +23,37 @@ from forze.application.contracts.outbox import (
     OutboxSpec,
     OutboxStatus,
 )
-from forze.base.primitives import utcnow
-from forze.application.contracts.queue import QueueSpec
-from forze.application.contracts.queue import QueueCommandDepKey, QueueQueryDepKey
+from forze.application.contracts.queue import (
+    QueueCommandDepKey,
+    QueueQueryDepKey,
+    QueueSpec,
+)
 from forze.application.execution import Deps, DepsRegistry, ExecutionRuntime
+from forze.base.primitives import utcnow
 from forze.base.serialization import PydanticRecordMappingCodec
+from forze_mock import MockStateDepKey
+from forze_mock.adapters import MockState
+from forze_mock.execution.module import ConfigurableMockQueue, MockDepsModule
 from forze_postgres.execution.deps import PostgresDepsModule
 from forze_postgres.execution.deps.configs import PostgresOutboxConfig
 from forze_postgres.kernel.client import PostgresClient
-from forze_mock import MockStateDepKey
-from forze_mock.adapters import MockState
-from forze_mock.execution import ConfigurableMockQueue
 
 
 class _OutboxPayload(BaseModel):
     label: str
+
+
+def _mock_queue_deps(shared_state: MockState) -> Deps:
+    mock_module = MockDepsModule(state=shared_state)
+    queue = ConfigurableMockQueue(module=mock_module)
+    return Deps.plain({MockStateDepKey: shared_state}).merge(
+        Deps.routed(
+            {
+                QueueCommandDepKey: {"relay": queue},
+                QueueQueryDepKey: {"relay": queue},
+            }
+        )
+    )
 
 
 @pytest.fixture
@@ -176,14 +192,7 @@ async def test_outbox_relay_to_mock_queue(
         },
     )
     shared_state = MockState()
-    mock_queue_deps = Deps.plain({MockStateDepKey: shared_state}).merge(
-        Deps.routed(
-            {
-                QueueCommandDepKey: {"relay": ConfigurableMockQueue()},
-                QueueQueryDepKey: {"relay": ConfigurableMockQueue()},
-            }
-        )
-    )
+    mock_queue_deps = _mock_queue_deps(shared_state)
     runtime = ExecutionRuntime(
         deps=DepsRegistry.from_modules(pg_module).with_deps(mock_queue_deps),
     )
@@ -328,14 +337,7 @@ async def test_outbox_relay_reclaims_stale_processing(
         },
     )
     shared_state = MockState()
-    mock_queue_deps = Deps.plain({MockStateDepKey: shared_state}).merge(
-        Deps.routed(
-            {
-                QueueCommandDepKey: {"relay": ConfigurableMockQueue()},
-                QueueQueryDepKey: {"relay": ConfigurableMockQueue()},
-            }
-        )
-    )
+    mock_queue_deps = _mock_queue_deps(shared_state)
     runtime = ExecutionRuntime(
         deps=DepsRegistry.from_modules(pg_module).with_deps(mock_queue_deps),
     )

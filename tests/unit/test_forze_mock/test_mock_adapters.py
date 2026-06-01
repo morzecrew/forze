@@ -10,7 +10,7 @@ from pydantic import BaseModel
 from forze.application.contracts.document import DocumentSpec, DocumentWriteTypes
 from forze.application.contracts.search import SearchSpec
 from forze_patterns.soft_deletion.models import DocWithSoftDeletion
-from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
+from forze.domain.models import BaseDTO, CreateDocumentCmd, ReadDocument
 from forze_mock.adapters import (
     MockCounterAdapter,
     MockDocumentAdapter,

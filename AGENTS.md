@@ -99,7 +99,7 @@ Use them for:
 - `src/forze_temporal/`: Temporal integration package.
 - `src/forze_inngest/`: Inngest integration package (durable functions).
 - `src/forze_mongo/`: Mongo integration package.
-- `src/forze_mock/`: in-memory mock adapters for local development (tenant-agnostic unless tests partition `MockState` themselves; no `RelationSpec` wiring).
+- `src/forze_mock/`: in-memory mock adapters (`MockState`, optional `MockRoutedStateRegistry`, `tenancy/`, `execution/` deps module with identity/durable/search/dlock stubs).
 - `src/forze_rabbitmq/`: RabbitMQ integration package.
 - `src/forze_socketio/`: Socket.IO integration package.
 - `src/forze_sqs/`: SQS integration package.

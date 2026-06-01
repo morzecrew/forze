@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`forze_mock`:** Tenancy helpers (`partition_namespace`, `resolve_mock_namespace`, `MockTenancyMixin`, `MockRoutedStateRegistry`), extended `MockState` buckets (dlocks, search snapshots, durable workflow/function, identity), new adapters (distributed lock, search command/snapshot/hub/federated, durable workflow/schedule/function, identity stubs), and `MockDepsModule` registration for all related dep keys. Docs updated under [Mock integration](pages/docs/integrations/mock.md) and [Multi-tenancy](pages/docs/concepts/multi-tenancy.md).
+
 ### Changed
 
 - **Outbox:** Postgres `flush` uses a single bulk `INSERT … ON CONFLICT DO NOTHING`; `claim_pending` sets `processing_at`; `OutboxQueryPort.reclaim_stale_processing` resets stuck `processing` rows; `relay_outbox_to_queue` reclaims before claim (`reclaim_stale_after`, default 5 minutes) and reports `OutboxRelayResult.reclaimed`; mock adapter matches Postgres idempotency and claim/mark semantics; docs cover `processing_at` DDL, at-least-once relay, and worker patterns.

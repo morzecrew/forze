@@ -10,7 +10,6 @@ from uuid import UUID
 import attrs
 from pydantic import BaseModel
 
-from forze.application.integrations.outbox import OutboxStaging
 from forze.application.contracts.outbox import (
     IntegrationEvent,
     OutboxClaim,
@@ -21,9 +20,10 @@ from forze.application.contracts.outbox import (
     StagedOutboxEntry,
 )
 from forze.application.execution.context import ExecutionContext
+from forze.application.integrations.outbox import OutboxStaging
 from forze.base.primitives import utcnow, uuid7
-
-from .adapters import MockState
+from forze_mock.state import MockState
+from forze_mock.tenancy import MockTenancyMixin, partition_namespace
 
 # ----------------------- #
 
@@ -54,13 +54,23 @@ class MockOutboxRow:
 
 
 @final
-@attrs.define(slots=True, kw_only=True)
-class MockOutboxAdapter[M: BaseModel](OutboxCommandPort[M], OutboxQueryPort):
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class MockOutboxAdapter[M: BaseModel](
+    MockTenancyMixin,
+    OutboxCommandPort[M],
+    OutboxQueryPort,
+):
     """In-memory outbox staging, flush, claim, and mark adapters."""
 
     ctx: ExecutionContext
     spec: OutboxSpec[M]
     state: MockState
+
+    def _route(self) -> str:
+        return partition_namespace(
+            self.require_tenant_if_aware(),
+            str(self.spec.name),
+        )
 
     _staging: OutboxStaging[M] = attrs.field(init=False)
 
@@ -78,7 +88,7 @@ class MockOutboxAdapter[M: BaseModel](OutboxCommandPort[M], OutboxQueryPort):
     # ....................... #
 
     async def _persist_rows(self, rows: Sequence[StagedOutboxEntry]) -> int:
-        route = str(self.spec.name)
+        route = self._route()
         written = 0
 
         with self.state.lock:
@@ -152,7 +162,7 @@ class MockOutboxAdapter[M: BaseModel](OutboxCommandPort[M], OutboxQueryPort):
         *,
         limit: int | None = None,
     ) -> Sequence[OutboxClaim]:
-        route = str(self.spec.name)
+        route = self._route()
         max_n = limit if limit is not None else 100
         now = utcnow()
 
@@ -201,7 +211,7 @@ class MockOutboxAdapter[M: BaseModel](OutboxCommandPort[M], OutboxQueryPort):
         *,
         older_than: datetime,
     ) -> int:
-        route = str(self.spec.name)
+        route = self._route()
         reclaimed = 0
 
         with self.state.lock:
@@ -229,7 +239,7 @@ class MockOutboxAdapter[M: BaseModel](OutboxCommandPort[M], OutboxQueryPort):
             return 0
 
         id_set = set(ids)
-        route = str(self.spec.name)
+        route = self._route()
         updated = 0
         now = utcnow()
 

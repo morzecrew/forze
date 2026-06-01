@@ -6,7 +6,7 @@ from uuid import UUID
 import pytest
 
 from forze.application.contracts.querying import QueryField
-from forze_mock.adapters import _MISSING, _match_field, _path_get, _path_text
+from forze_mock.query import _MISSING, _match_field, _path_get, _path_text
 
 # ----------------------- #
 
