@@ -4,15 +4,15 @@ from typing import Mapping, final
 
 import attrs
 
-from forze.application.contracts.secrets import SecretRef
+from forze.application.contracts.secrets import SecretRef, SecretsPort
 from forze.base.exceptions import exc
 
 # ----------------------- #
 
 
 @final
-@attrs.define(slots=True)
-class MappingSecrets:
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class MappingSecrets(SecretsPort):
     """Resolve secrets from a static ``path -> value`` mapping.
 
     :attr:`~forze.application.contracts.secrets.SecretRef.path` is the dict key.

@@ -5,15 +5,15 @@ from typing import final
 
 import attrs
 
-from forze.application.contracts.secrets import SecretRef
+from forze.application.contracts.secrets import SecretRef, SecretsPort
 from forze.base.exceptions import exc
 
 # ----------------------- #
 
 
 @final
-@attrs.define(slots=True)
-class EnvSecrets:
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class EnvSecrets(SecretsPort):
     """Resolve secrets from process environment variables.
 
     :attr:`~forze.application.contracts.secrets.SecretRef.path` is the env var name.

@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`forze_patterns`:** use `forze_kits.domain.*` (mixins, mapping steps, soft-deletion registry).
 - **`forze.application.composition`:** use `forze_kits.document`, `forze_kits.search`, `forze_kits.storage`, `forze_kits.authn`, `forze_kits.outbox`.
 - **`forze.application.kit`:** use `forze_kits.runtime` (`DistributedLockScope`).
+- **`forze_secrets`:** use `forze_kits.secrets` (`EnvSecrets`, `DirectorySecrets`, `MappingSecrets`, `SecretsDepsModule`).
 
 | Old import | New import |
 |------------|------------|
@@ -19,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 | `forze.application.composition.document` | `forze_kits.document` |
 | `forze.application.composition.outbox` | `forze_kits.outbox` |
 | `forze.application.kit.DistributedLockScope` | `forze_kits.runtime.DistributedLockScope` |
+| `forze_secrets` | `forze_kits.secrets` |
 
 See [Kits reference](pages/docs/reference/kits.md).
 

@@ -5,15 +5,15 @@ from typing import final
 
 import attrs
 
-from forze.application.contracts.secrets import SecretRef
+from forze.application.contracts.secrets import SecretRef, SecretsPort
 from forze.base.exceptions import exc
 
 # ----------------------- #
 
 
 @final
-@attrs.define(slots=True)
-class DirectorySecrets:
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class DirectorySecrets(SecretsPort):
     """Resolve secrets as UTF-8 text files under a configured root directory.
 
     :attr:`~forze.application.contracts.secrets.SecretRef.path` is a relative path

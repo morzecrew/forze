@@ -14,6 +14,7 @@ The **`forze_kits`** package ships with the default wheel. It provides canonical
 | Domain shape | `forze_kits.domain.*` | Mixins, field constants, mapping steps, small handlers |
 | Aggregate kit | `forze_kits.document`, `search`, `storage`, `authn` | `OperationRegistry` builders, `*KernelOp`, facades |
 | Integration flow | `forze_kits.outbox` | Transactional outbox flush, relay, lifecycle (`notify` planned) |
+| Secrets (local) | `forze_kits.secrets` | Stdlib `SecretsPort` backends + `SecretsDepsModule` |
 | Runtime ergonomics | `forze_kits.runtime` | Single-port helpers (`DistributedLockScope`, …) |
 
 Operation registry mechanics (`.bind()`, `.freeze()`, stage hooks) are documented under [Operation composition](../concepts/operation-composition.md)—that is **execution**, not this package.
@@ -29,6 +30,7 @@ Operation registry mechanics (`.bind()`, `.freeze()`, stage hooks) are documente
 | `forze.application.composition.authn` | `forze_kits.authn` |
 | `forze.application.composition.outbox` | `forze_kits.outbox` |
 | `forze.application.kit` | `forze_kits.runtime` |
+| `forze_secrets` | `forze_kits.secrets` |
 
 ## Document kit
 
@@ -132,6 +134,17 @@ Hub and federated search use `build_hub_search_registry` and `build_federated_se
 ## Outbox kit
 
 See [Outbox contracts](../core-package/contracts/outbox.md) and [Transactional outbox](../recipes/transactional-outbox.md). Helpers live in `forze_kits.outbox` (`outbox_flush_tx_on_success_factory`, `relay_outbox_to_queue`, `outbox_relay_background_lifecycle_step`).
+
+## Secrets kit (local)
+
+Stdlib-backed implementations of [`SecretsPort`](../core-package/contracts.md) for local development and simple deployments. For HashiCorp Vault, use the `vault` extra (`forze_vault`) instead.
+
+    :::python
+    from forze_kits.secrets import DirectorySecrets, EnvSecrets, MappingSecrets, SecretsDepsModule
+
+    deps = SecretsDepsModule(secrets=EnvSecrets())
+
+`SecretRef.path` is the env var name (`EnvSecrets`), file path under a root directory (`DirectorySecrets`), or key in an in-memory map (`MappingSecrets`). Contract helpers such as `resolve_structured` remain on `forze.application.contracts.secrets`.
 
 ## Runtime kit
 

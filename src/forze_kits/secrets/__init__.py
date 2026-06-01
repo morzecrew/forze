@@ -1,8 +1,8 @@
-"""Canonical local and materialized :class:`~forze.application.contracts.secrets.SecretsPort` adapters."""
+"""Local stdlib-backed :class:`~forze.application.contracts.secrets.SecretsPort` adapters."""
 
+from .deps import SecretsDepsModule
 from .directory import DirectorySecrets
 from .env import EnvSecrets
-from .execution import SecretsDepsModule
 from .mapping import MappingSecrets
 
 # ----------------------- #

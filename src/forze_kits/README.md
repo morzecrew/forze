@@ -10,6 +10,7 @@ integration flows, and runtime port ergonomics.
 | Domain shape | `forze_kits.domain.*` | Mixins, field constants, mapping steps, small handlers |
 | Aggregate kit | `forze_kits.document`, `search`, `storage`, `authn` | `OperationRegistry` builders, `*KernelOp`, facades |
 | Integration flow | `forze_kits.outbox` | Transactional outbox flush, relay, lifecycle (future: `notify`) |
+| Secrets (local) | `forze_kits.secrets` | Stdlib `SecretsPort` backends (env, directory, mapping) + `SecretsDepsModule` |
 | Runtime ergonomics | `forze_kits.runtime` | Single-port helpers (`DistributedLockScope`, …) |
 
 ## Dependency rule

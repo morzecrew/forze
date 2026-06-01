@@ -183,7 +183,6 @@ packages = [
     "src/forze_sqs",
     "src/forze_temporal",
     "src/forze_inngest",
-    "src/forze_secrets",
     "src/forze_vault",
     "src/forze_meilisearch",
 ]
@@ -278,7 +277,6 @@ root_packages = [
     "forze_rabbitmq",
     "forze_sqs",
     "forze_identity",
-    "forze_secrets",
     "forze_vault",
     "forze_meilisearch",
 ]
@@ -337,7 +335,6 @@ protected_modules = [
     "forze_firestore",
     "forze_rabbitmq",
     "forze_sqs",
-    "forze_secrets",
     "forze_vault",
     "forze_meilisearch",
 ]
@@ -367,7 +364,6 @@ paths = [
     "src/forze_rabbitmq",
     "src/forze_sqs",
     "src/forze_identity",
-    "src/forze_secrets",
     "src/forze_vault",
     "src/forze_meilisearch",
 ]
@@ -405,7 +401,6 @@ known_first_party = [
     "forze_rabbitmq",
     "forze_sqs",
     "forze_identity",
-    "forze_secrets",
     "forze_vault",
     "forze_meilisearch",
 ]
