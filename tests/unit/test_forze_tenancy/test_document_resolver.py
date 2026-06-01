@@ -46,7 +46,7 @@ async def test_resolver_returns_tenant_from_binding() -> None:
     assert got.tenant_id == tid
 
 @pytest.mark.asyncio
-async def test_resolver_returns_none_when_inactive_and_verifying() -> None:
+async def test_resolver_raises_tenant_inactive_when_verifying() -> None:
     pid = uuid4()
     tid = uuid4()
     bind = _binding_row(pid=pid, tid=tid)
@@ -73,9 +73,28 @@ async def test_resolver_returns_none_when_inactive_and_verifying() -> None:
 
     resolver = TenantResolverAdapter(binding_qry=binding_qry, tenant_qry=tenant_qry)
 
-    got = await resolver.resolve_from_principal(pid)
+    with pytest.raises(CoreException, match="inactive") as ei:
+        await resolver.resolve_from_principal(pid)
 
-    assert got is None
+    assert ei.value.code == "tenant_inactive"
+
+@pytest.mark.asyncio
+async def test_resolver_raises_tenant_mismatch_when_hint_not_in_membership() -> None:
+    pid = uuid4()
+    requested = uuid4()
+
+    binding_qry = AsyncMock()
+    binding_qry.spec = principal_tenant_binding_spec
+    binding_qry.find_many = AsyncMock(
+        return_value=CountlessPage(hits=[], page=1, size=0),
+    )
+
+    resolver = TenantResolverAdapter(binding_qry=binding_qry, tenant_qry=None)
+
+    with pytest.raises(CoreException, match="Requested tenant") as ei:
+        await resolver.resolve_from_principal(pid, requested_tenant_id=requested)
+
+    assert ei.value.code == "tenant_mismatch"
 
 @pytest.mark.asyncio
 async def test_resolver_uses_requested_tenant_when_present() -> None:

@@ -9,7 +9,7 @@ from forze.application.contracts.authn import (
     VerifiedAssertion,
 )
 from forze.application.contracts.document import DocumentCommandPort, DocumentQueryPort
-from forze.base.exceptions import exc
+from forze.base.exceptions import CoreException, ExceptionKind, exc
 
 from ..domain.models.identity_mapping import (
     CreateIdentityMappingCmd,
@@ -75,14 +75,7 @@ class MappingTableResolver(PrincipalResolverPort):
     # ....................... #
 
     async def resolve(self, assertion: VerifiedAssertion) -> AuthnIdentity:
-        existing = await self.qry.find(
-            filters={
-                "$values": {
-                    "issuer": assertion.issuer,
-                    "subject": assertion.subject,
-                }
-            }
-        )
+        existing = await self._find_mapping(assertion)
 
         if existing is not None:
             return AuthnIdentity(principal_id=existing.principal_id)
@@ -100,13 +93,38 @@ class MappingTableResolver(PrincipalResolverPort):
 
         new_pid = uuid4()
 
-        await self.cmd.create(
-            CreateIdentityMappingCmd(
-                issuer=assertion.issuer,
-                subject=assertion.subject,
-                principal_id=new_pid,
-            ),
-            return_new=False,
-        )
+        try:
+            await self.cmd.create(
+                CreateIdentityMappingCmd(
+                    issuer=assertion.issuer,
+                    subject=assertion.subject,
+                    principal_id=new_pid,
+                ),
+                return_new=False,
+            )
+        except CoreException as e:
+            if e.kind is not ExceptionKind.CONFLICT:
+                raise
+
+            raced = await self._find_mapping(assertion)
+            if raced is None:
+                raise
+
+            return AuthnIdentity(principal_id=raced.principal_id)
 
         return AuthnIdentity(principal_id=new_pid)
+
+    # ....................... #
+
+    async def _find_mapping(
+        self,
+        assertion: VerifiedAssertion,
+    ) -> ReadIdentityMapping | None:
+        return await self.qry.find(
+            filters={
+                "$values": {
+                    "issuer": assertion.issuer,
+                    "subject": assertion.subject,
+                }
+            }
+        )

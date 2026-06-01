@@ -108,13 +108,17 @@ class TestOidcTokenVerifier:
         with pytest.raises(ValueError, match="issuer and audience"):
             OidcTokenVerifier(
                 key_provider=StaticKeyProvider(key=secret),
-                enforce_issuer_and_audience=True,
             )
 
         with pytest.raises(ValueError, match="issuer and audience"):
             OidcTokenVerifier(
                 key_provider=StaticKeyProvider(key=secret),
                 issuer="https://issuer.example",
+            )
+
+        with pytest.raises(ValueError, match="issuer and audience"):
+            OidcTokenVerifier(
+                key_provider=StaticKeyProvider(key=secret),
                 enforce_issuer_and_audience=True,
             )
 
@@ -143,8 +147,14 @@ class TestOidcTokenVerifier:
             key_provider=StaticKeyProvider(key=secret),
             algorithms=("HS256",),
             issuer="expected",
+            audience="my-app",
         )
-        token = _hs256_token(secret, issuer="other", subject="u")
+        token = _hs256_token(
+            secret,
+            issuer="other",
+            subject="u",
+            audience="my-app",
+        )
 
         with pytest.raises(CoreException):
             await verifier.verify_token(AccessTokenCredentials(token=token))
@@ -202,6 +212,7 @@ class TestOidcTokenVerifier:
         # speak ``VerifiedAssertion``.
         verifier = OidcTokenVerifier(
             key_provider=StaticKeyProvider(key=b"x" * 32),
+            enforce_issuer_and_audience=False,
         )
         # MappingTableResolver requires a query port; construction is exercised in its own
         # tests. Asserting that both implement the related protocols is a contract smoke.

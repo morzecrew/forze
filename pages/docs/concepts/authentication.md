@@ -69,10 +69,10 @@ First-party access JWTs use short TTLs (default 15 minutes via `AccessTokenConfi
 | Mechanism | What it invalidates | When |
 |-----------|---------------------|------|
 | JWT `exp` | Access token | Naturally after TTL |
-| `sid` + session row | Access token from `TokenLifecycleAdapter` | Logout (`revoke_tokens`), refresh rotation (`rotated_at`), reuse detection |
+| `sid` + session row | Access token from `TokenLifecycleAdapter` | Logout (`revoke_tokens`), refresh rotation (`rotated_at`), reuse detection; session row must match token `sub` and `tid` when both carry tenant metadata |
 | `PrincipalEligibilityPort` | Any credential for the principal | Inactive or missing policy principal (e.g. after `PrincipalDeactivationPort`) |
 
-`AuthnDepsModule` wires `ForzeJwtTokenVerifier` with `session_qry` by default, so lifecycle-issued tokens include a `sid` claim and fail bearer auth when the session is revoked or rotated — even before `exp`. Logout still ends refresh immediately; access tokens without `sid` (pre-upgrade or manual `issue_token`) are rejected once session enforcement is enabled.
+`AuthnDepsModule` wires `ForzeJwtTokenVerifier` with `session_qry` by default, so lifecycle-issued tokens include a `sid` claim and fail bearer auth when the session is revoked or rotated — even before `exp`. Session validation also rejects tokens whose `sub` (and `tid`, when present on both token and session) do not match the session row (`session_subject_mismatch`, `session_tenant_mismatch`). Logout still ends refresh immediately; access tokens without `sid` (pre-upgrade or manual `issue_token`) are rejected once session enforcement is enabled.
 
 External OIDC access tokens are not revoked by Forze logout; end the IdP session and enforce `iss`/`aud` on the verifier. See [OIDC integration](../integrations/oidc.md).
 

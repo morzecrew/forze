@@ -56,6 +56,8 @@ class ConfigurableOidcTokenVerifier:
         )
 ```
 
+`OidcTokenVerifier` defaults `enforce_issuer_and_audience=True`; production factories should always set both `issuer` and `audience` (as above). Tests may pass `enforce_issuer_and_audience=False` when issuer/audience checks are intentionally omitted.
+
 `forze_identity.authn` already ships `ConfigurableMappingTableResolver` and `ConfigurableDeterministicUuidResolver`; reuse them directly.
 
 When `tenant_claim` is set, the mapped claim becomes `issuer_tenant_hint` on the boundary authn result. Combine it with `TenantIdentityResolver` plus a registered `TenantResolverPort` if you want authoritative tenant scoping; the hint alone does not define the effective tenant.

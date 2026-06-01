@@ -31,7 +31,8 @@ class ForzeJwtTokenVerifier(TokenVerifierPort):
 
     When ``session_qry`` is wired, the verifier requires a ``sid`` claim and rejects tokens
     whose session row is missing, revoked, or rotated — so logout and refresh rotation
-    invalidate bearer access before JWT ``exp``.
+    invalidate bearer access before JWT ``exp``. The session row must also match token
+    ``sub`` (and ``tid`` when both token and session carry tenant metadata).
     """
 
     access_svc: AccessTokenService
@@ -99,3 +100,25 @@ class ForzeJwtTokenVerifier(TokenVerifierPort):
                 "Session revoked",
                 code="session_revoked",
             )
+
+        try:
+            token_principal_id = UUID(claims["sub"])
+        except ValueError as e:
+            raise exc.authentication(
+                "Invalid access token",
+                code="invalid_access_token",
+            ) from e
+
+        if session.principal_id != token_principal_id:
+            raise exc.authentication(
+                "Session does not match token subject",
+                code="session_subject_mismatch",
+            )
+
+        tid_raw = claims.get("tid")
+        if tid_raw is not None and session.tenant_id is not None:
+            if str(session.tenant_id) != tid_raw:
+                raise exc.authentication(
+                    "Session does not match token tenant",
+                    code="session_tenant_mismatch",
+                )

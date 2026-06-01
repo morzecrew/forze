@@ -18,6 +18,7 @@ from ..domain.models.account import (
     ReadPasswordAccount,
 )
 from ..services import PasswordService
+from ._utils import find_password_account_by_login
 
 # ----------------------- #
 
@@ -99,6 +100,16 @@ class PasswordAccountProvisioningAdapter(PasswordAccountProvisioningPort):
         credentials: PasswordCredentials,
     ) -> None:
         await self.eligibility.require_authentication_allowed(principal_id)
+
+        existing = await find_password_account_by_login(
+            self.password_account_qry,
+            credentials.login,
+        )
+        if existing is not None:
+            raise exc.conflict(
+                "Password account already exists for this login",
+                code="password_account_exists",
+            )
 
         pwd_hash = self.password_svc.hash_password(credentials.password)
 

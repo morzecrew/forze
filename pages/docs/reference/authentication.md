@@ -185,9 +185,9 @@ Convenience factory: `AuthnOrchestrator.from_spec(spec, *, resolver, password_ve
 
 | Verifier | Issuer label | Notes |
 |----------|--------------|-------|
-| `Argon2PasswordVerifier` | `ISSUER_FORZE_PASSWORD` (`"forze:password_account"`) | Verifies against `password_account_spec`; emits the principal id as `subject`. Failed login returns HTTP `401` with detail `Invalid login or password` and error code `invalid_credentials` (no distinction between unknown user and wrong password). |
-| `ForzeJwtTokenVerifier` | Verified `iss` claim (`ISSUER_FORZE_JWT` for first-party tokens) | Crypto via `AccessTokenService`. Optional `session_qry`: requires `sid` claim and rejects revoked/rotated sessions (`session_revoked`). Default `AuthnDepsModule` wiring sets `session_qry`. |
-| `HmacApiKeyVerifier` | `ISSUER_FORZE_API_KEY` (`"forze:api_key"`) | Verifies against `api_key_account_spec`. |
+| `Argon2PasswordVerifier` | `ISSUER_FORZE_PASSWORD` (`"forze:password_account"`) | Verifies against `password_account_spec`; emits the principal id as `subject`. Failed login returns HTTP `401` with detail `Invalid login or password` and error code `invalid_credentials` (no distinction between unknown user and wrong password). Uses a timing-safe dummy hash on miss. Does not rate-limit or lock out accounts — enforce abuse controls at the API edge. |
+| `ForzeJwtTokenVerifier` | Verified `iss` claim (`ISSUER_FORZE_JWT` for first-party tokens) | Crypto via `AccessTokenService`. Optional `session_qry`: requires `sid` claim, rejects revoked/rotated sessions (`session_revoked`), and cross-checks session `principal_id` / `tenant_id` against token `sub` / `tid` when present (`session_subject_mismatch`, `session_tenant_mismatch`). Default `AuthnDepsModule` wiring sets `session_qry`. |
+| `HmacApiKeyVerifier` | `ISSUER_FORZE_API_KEY` (`"forze:api_key"`) | Verifies against `api_key_account_spec`. Does not rate-limit key attempts — enforce abuse controls at the API edge. |
 
 ### Resolvers
 
@@ -195,7 +195,7 @@ Convenience factory: `AuthnOrchestrator.from_spec(spec, *, resolver, password_ve
 |----------|---------|----------|
 | `JwtNativeUuidResolver` | None | Trusts `assertion.subject` as a UUID. |
 | `DeterministicUuidResolver` | None | `principal_id = uuid4({"iss": issuer, "sub": subject})` via `forze.base.primitives.uuid4`. Helper: `derive_principal_id(issuer, subject)`. |
-| `MappingTableResolver` | `IdentityMapping` document | Looks up `(issuer, subject)`; optional just-in-time provisioning when `provision_on_first_sight=True` and a command port is supplied. |
+| `MappingTableResolver` | `IdentityMapping` document | Looks up `(issuer, subject)`; optional just-in-time provisioning when `provision_on_first_sight=True` and a command port is supplied. On create conflict, re-reads the mapping row (race-safe when storage enforces uniqueness). |
 
 ### IdentityMapping document model
 
@@ -265,6 +265,18 @@ Each `Configurable*` class is the dep factory shape for one component. Lifecycle
 All four names are members of `AUTHN_TENANT_UNAWARE_DOCUMENT_SPEC_NAMES` (see [Multi-tenancy](../concepts/multi-tenancy.md)) and must be wired to **tenant-unaware** document stores so authentication can run before `TenantIdentity` is bound.
 
 Authentication eligibility reads **`policy_principal_spec`** (`authz_policy_principals` from [Authorization](authorization.md)) via `PrincipalEligibilityPort`; wire that document route tenant-unaware as well.
+
+### Required storage constraints
+
+Application-level guards (duplicate login checks, ambiguous login detection, mapping create retries) complement — but do not replace — backend uniqueness. Recommended unique indexes for production authn/tenancy stores:
+
+| Spec | Recommended unique index |
+|------|--------------------------|
+| `password_account_spec` | `username` (and `email` when used for login) |
+| `identity_mapping_spec` | `(issuer, subject)` |
+| `principal_tenant_binding_spec` | `(principal_id, tenant_id)` |
+
+Postgres and Mongo duplicate-key violations map to `CoreException.conflict` (see [Postgres](../integrations/postgres.md) and [Mongo](../integrations/mongo.md) integration pages).
 
 ### Issuer constants
 

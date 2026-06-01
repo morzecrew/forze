@@ -115,7 +115,7 @@ oidc_verifier = OidcTokenVerifier(
 | `algorithms` | `("RS256",)` | JWS algorithm allowlist; rejects everything else. |
 | `audience` | `None` | Required `aud` value(s); skip enforcement by leaving `None` (dev/tests only). |
 | `issuer` | `None` | Required `iss` value; skip enforcement by leaving `None` (dev/tests only). |
-| `enforce_issuer_and_audience` | `False` | When `True`, construction fails unless both `issuer` and `audience` are set. Use in production factories. |
+| `enforce_issuer_and_audience` | `True` | When `True` (default), construction fails unless both `issuer` and `audience` are set. Pass `False` in tests or minimal dev setups that intentionally omit issuer/audience checks. |
 | `leeway` | `timedelta(seconds=10)` | Clock-skew tolerance for `iat`/`exp`/`nbf`. |
 | `claim_mapper` | `OidcClaimMapper()` | Maps the verified payload to `VerifiedAssertion`. |
 

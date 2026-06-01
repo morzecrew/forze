@@ -9,6 +9,7 @@ from uuid import uuid4
 import pytest
 
 from forze.application.contracts.authn import PasswordCredentials
+from forze.application.contracts.base import CountlessPage
 from forze.application.contracts.document import DocumentSpec
 from forze.base.exceptions import CoreException, ExceptionKind
 from forze_identity.authn.domain.constants import ISSUER_FORZE_PASSWORD
@@ -57,7 +58,10 @@ def _verifier(
 ) -> Argon2PasswordVerifier:
     pa_qry = MagicMock()
     pa_qry.spec = _password_spec()
-    pa_qry.find = AsyncMock(return_value=account)
+    hits = [] if account is None else [account]
+    pa_qry.find_many = AsyncMock(
+        return_value=CountlessPage(hits=hits, page=1, size=len(hits)),
+    )
     svc = password_svc or PasswordService(config=_slow_password_config())
     return Argon2PasswordVerifier(password_svc=svc, pa_qry=pa_qry)
 

@@ -55,8 +55,8 @@ class OidcTokenVerifier(TokenVerifierPort):
     issuer: str | None = attrs.field(default=None)
     """Required ``iss`` value; when ``None``, issuer is not enforced."""
 
-    enforce_issuer_and_audience: bool = False
-    """When ``True``, ``issuer`` and ``audience`` must be set at construction time."""
+    enforce_issuer_and_audience: bool = True
+    """When ``True`` (default), ``issuer`` and ``audience`` must be set at construction time."""
 
     leeway: timedelta = attrs.field(default=timedelta(seconds=10))
     """Clock-skew leeway for ``iat``/``exp``/``nbf`` validation."""

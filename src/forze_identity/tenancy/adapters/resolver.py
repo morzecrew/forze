@@ -23,7 +23,7 @@ class TenantResolverAdapter(TenantResolverPort):
     """Query port for :data:`~forze_tenancy.application.specs.principal_tenant_binding_spec`."""
 
     tenant_qry: DocumentQueryPort[ReadTenant] | None = None
-    """When set, membership is ignored if tenant is inactive."""
+    """When set, inactive tenants raise ``tenant_inactive`` instead of resolving."""
 
     # ....................... #
 
@@ -58,6 +58,12 @@ class TenantResolverAdapter(TenantResolverPort):
         )
 
         if not page.hits:
+            if requested_tenant_id is not None:
+                raise exc.authentication(
+                    "Requested tenant does not match principal membership",
+                    code="tenant_mismatch",
+                )
+
             return None
 
         if requested_tenant_id is None and len(page.hits) > 1:
@@ -75,6 +81,9 @@ class TenantResolverAdapter(TenantResolverPort):
         tenant = await self.tenant_qry.get(tid)
 
         if not tenant.is_active:
-            return None
+            raise exc.authentication(
+                "Tenant is inactive",
+                code="tenant_inactive",
+            )
 
         return TenantIdentity(tenant_id=tid, tenant_key=tenant.tenant_key)

@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- **`forze_identity.tenancy`:** `TenantResolverAdapter` rejects invalid tenant hints (`tenant_mismatch`) and inactive tenants (`tenant_inactive`) instead of silently returning `None`.
+- **`forze_identity.authn`:** `ForzeJwtTokenVerifier` cross-checks session `principal_id` / `tenant_id` against token `sub` / `tid` when session enforcement is enabled.
+
+### Fixed
+
+- **`forze_identity.authn`:** password provisioning rejects duplicate logins (`password_account_exists`); login lookup detects ambiguous duplicate accounts (`password_account_ambiguous`); `MappingTableResolver` re-reads mappings after create conflicts when `provision_on_first_sight=True`.
+
 ### Removed
 
 - **`forze_patterns`:** use `forze_kits.domain.*` (mixins, mapping steps, soft-deletion registry).
@@ -26,6 +35,7 @@ See [Kits reference](pages/docs/reference/kits.md).
 
 ### Changed
 
+- **`forze_identity.oidc`:** `OidcTokenVerifier.enforce_issuer_and_audience` defaults to `True` (construction requires both `issuer` and `audience` unless explicitly opted out).
 - **`forze_kits` layout:** modules live under `domain/`, `aggregates/`, `integration/`, `adapters/`, and `runtime/` (e.g. `forze_kits.aggregates.document`, `forze_kits.integrations.outbox`, `forze_kits.adapters.secrets`).
 
 ### Added

@@ -10,7 +10,7 @@ import pytest
 from forze.application.contracts.authn import VerifiedAssertion
 from forze.application.contracts.cache import CacheSpec
 from forze.application.contracts.document import DocumentSpec
-from forze.base.exceptions import CoreException
+from forze.base.exceptions import CoreException, exc
 from forze_identity.authn.domain.models.identity_mapping import (
     CreateIdentityMappingCmd,
     ReadIdentityMapping,
@@ -100,3 +100,31 @@ async def test_resolve_provisions_on_first_sight() -> None:
     assert dto.issuer == "iss"
     assert dto.subject == "new"
     assert out.principal_id == dto.principal_id
+
+
+@pytest.mark.asyncio
+async def test_resolve_provision_retries_after_create_conflict() -> None:
+    pid = uuid4()
+    raced = MagicMock()
+    raced.principal_id = pid
+
+    qry = MagicMock()
+    qry.spec = _spec()
+    qry.find = AsyncMock(side_effect=[None, raced])
+    cmd = MagicMock()
+    cmd.create = AsyncMock(
+        side_effect=exc.conflict("Duplicate key violation", code="conflict"),
+    )
+
+    resolver = MappingTableResolver(
+        qry=qry,
+        cmd=cmd,
+        provision_on_first_sight=True,
+    )
+    out = await resolver.resolve(
+        VerifiedAssertion(issuer="iss", subject="new"),
+    )
+
+    assert out.principal_id == pid
+    assert qry.find.await_count == 2
+    cmd.create.assert_awaited_once()

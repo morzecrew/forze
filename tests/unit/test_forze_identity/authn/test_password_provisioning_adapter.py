@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock
+from uuid import uuid4
 
 import pytest
 
+from forze.application.contracts.authn import PasswordCredentials
+from forze.application.contracts.base import CountlessPage
 from forze.application.contracts.document import DocumentSpec
-from forze.base.exceptions import CoreException
+from forze.base.exceptions import CoreException, ExceptionKind
 from forze_identity.authn.adapters.password_provisioning import PasswordAccountProvisioningAdapter
 from forze_identity.authn.domain.models.account import (
     PasswordAccount,
@@ -61,6 +64,29 @@ class TestPasswordAccountProvisioningInit:
         with pytest.raises(NotImplementedError, match="Invite token"):
             await adapter.accept_invite_with_password(
                 "token",
-                __import__("uuid").uuid4(),
+                uuid4(),
                 MagicMock(),
             )
+
+
+class TestPasswordAccountProvisioningRegister:
+    @pytest.mark.asyncio
+    async def test_register_rejects_duplicate_login(self) -> None:
+        existing = MagicMock()
+        qry = MagicMock()
+        qry.spec = DocumentSpec(name="pwd", read=ReadPasswordAccount)
+        qry.find_many = AsyncMock(
+            return_value=CountlessPage(hits=[existing], page=1, size=1),
+        )
+
+        adapter = _adapter(password_account_qry=qry)
+
+        with pytest.raises(CoreException, match="already exists") as ei:
+            await adapter.register_with_password(
+                uuid4(),
+                PasswordCredentials(login="alice", password="secret"),
+            )
+
+        assert ei.value.kind is ExceptionKind.CONFLICT
+        assert ei.value.code == "password_account_exists"
+        adapter.password_account_cmd.create.assert_not_called()

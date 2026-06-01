@@ -85,6 +85,8 @@ class TestForzeJwtSessionVerifier:
         token = svc.issue_token(principal_id=pid, session_id=sid)
 
         session = MagicMock()
+        session.principal_id = pid
+        session.tenant_id = None
         session.revoked_at = None
         session.rotated_at = None
         session_qry = MagicMock()
@@ -154,11 +156,88 @@ class TestForzeJwtSessionVerifier:
             await verifier.verify_token(AccessTokenCredentials(token=token))
         assert ei.value.code == "session_revoked"
 
+    @pytest.mark.asyncio
+    async def test_session_subject_mismatch_rejected(self) -> None:
+        import secrets
+
+        secret = secrets.token_bytes(32)
+        svc = AccessTokenService(secret_key=secret)
+        token_pid = uuid4()
+        session_pid = uuid4()
+        sid = uuid4()
+        token = svc.issue_token(principal_id=token_pid, session_id=sid)
+
+        session = MagicMock()
+        session.principal_id = session_pid
+        session.tenant_id = None
+        session.revoked_at = None
+        session.rotated_at = None
+        session_qry = MagicMock()
+        session_qry.find = AsyncMock(return_value=session)
+
+        verifier = ForzeJwtTokenVerifier(access_svc=svc, session_qry=session_qry)
+
+        with pytest.raises(CoreException) as ei:
+            await verifier.verify_token(AccessTokenCredentials(token=token))
+        assert ei.value.code == "session_subject_mismatch"
+
+    @pytest.mark.asyncio
+    async def test_session_tenant_mismatch_rejected(self) -> None:
+        import secrets
+
+        secret = secrets.token_bytes(32)
+        svc = AccessTokenService(secret_key=secret)
+        pid = uuid4()
+        sid = uuid4()
+        token_tid = uuid4()
+        session_tid = uuid4()
+        token = svc.issue_token(
+            principal_id=pid,
+            tenant_id=token_tid,
+            session_id=sid,
+        )
+
+        session = MagicMock()
+        session.principal_id = pid
+        session.tenant_id = session_tid
+        session.revoked_at = None
+        session.rotated_at = None
+        session_qry = MagicMock()
+        session_qry.find = AsyncMock(return_value=session)
+
+        verifier = ForzeJwtTokenVerifier(access_svc=svc, session_qry=session_qry)
+
+        with pytest.raises(CoreException) as ei:
+            await verifier.verify_token(AccessTokenCredentials(token=token))
+        assert ei.value.code == "session_tenant_mismatch"
+
+    @pytest.mark.asyncio
+    async def test_session_tenant_ok_when_token_omits_tid(self) -> None:
+        import secrets
+
+        secret = secrets.token_bytes(32)
+        svc = AccessTokenService(secret_key=secret)
+        pid = uuid4()
+        sid = uuid4()
+        session_tid = uuid4()
+        token = svc.issue_token(principal_id=pid, session_id=sid)
+
+        session = MagicMock()
+        session.principal_id = pid
+        session.tenant_id = session_tid
+        session.revoked_at = None
+        session.rotated_at = None
+        session_qry = MagicMock()
+        session_qry.find = AsyncMock(return_value=session)
+
+        verifier = ForzeJwtTokenVerifier(access_svc=svc, session_qry=session_qry)
+        assertion = await verifier.verify_token(AccessTokenCredentials(token=token))
+
+        assert assertion.subject == str(pid)
+        assert assertion.issuer_tenant_hint is None
+
 
 # ....................... #
-
-
-class TestJwtNativeUuidResolver:
     @pytest.mark.asyncio
     async def test_uuid_subject_round_trip(self) -> None:
         pid = uuid4()
