@@ -18,7 +18,7 @@ from forze.application.contracts.stream import (
 from forze.application.contracts.stream.specs import StreamSpec
 from forze.base.serialization import PydanticRecordMappingCodec
 from forze.domain.models import BaseDTO, CreateDocumentCmd, ReadDocument
-from forze_patterns.soft_deletion.models import DocWithSoftDeletion
+from forze_kits.domain.soft_deletion.models import DocWithSoftDeletion
 from forze_mock import MockDepsModule
 from forze_mock.execution import MockStateDepKey
 

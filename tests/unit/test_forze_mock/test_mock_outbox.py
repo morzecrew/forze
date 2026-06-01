@@ -8,7 +8,7 @@ from uuid import uuid4
 import pytest
 from pydantic import BaseModel
 
-from forze.application.composition.outbox import relay_outbox_to_queue
+from forze_kits.outbox import relay_outbox_to_queue
 from forze.application.contracts.outbox import (
     IntegrationEvent,
     OutboxDestination,
@@ -135,3 +135,40 @@ async def test_mock_outbox_reclaim_stale_processing() -> None:
         assert reclaimed == 1
         assert state.outbox_rows["events"][0].status == OutboxStatus.PENDING
         assert state.outbox_rows["events"][0].processing_at is None
+
+
+@pytest.mark.asyncio
+async def test_mock_outbox_requeue_failed() -> None:
+    codec = PydanticRecordMappingCodec(_EventPayload)
+    outbox_spec = OutboxSpec(name="events", codec=codec)
+    row_id = uuid4()
+
+    module = MockDepsModule()
+    runtime = ExecutionRuntime(deps=DepsRegistry.from_modules(module))
+    async with runtime.scope():
+        ctx = runtime.get_context()
+        state = ctx.deps.provide(MockStateDepKey)
+        state.outbox_rows["events"] = [
+            MockOutboxRow(
+                id=row_id,
+                outbox_route="events",
+                event_id=uuid4(),
+                event_type="job.requested",
+                payload={"n": 1},
+                status=OutboxStatus.FAILED,
+                tenant_id=None,
+                execution_id=None,
+                correlation_id=None,
+                causation_id=None,
+                occurred_at=utcnow(),
+                created_at=utcnow(),
+                last_error="err",
+            )
+        ]
+        query = ctx.outbox.query(outbox_spec)
+        updated = await query.requeue_failed([row_id])
+
+        assert updated == 1
+        row = state.outbox_rows["events"][0]
+        assert row.status == OutboxStatus.PENDING
+        assert row.last_error is None

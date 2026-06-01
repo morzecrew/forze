@@ -213,6 +213,17 @@ class RoutedMongoClient(MongoClientPort):
         inner = await self._get_client()
         return await inner.find_one(coll, filter, projection=projection, sort=sort)
 
+    async def find_one_and_update(
+        self,
+        coll: AsyncCollection[Any],
+        filter: Mapping[str, Any],
+        update: Mapping[str, Any],
+        *,
+        sort: Sequence[tuple[str, int]] | None = None,
+    ) -> JsonDict | None:
+        inner = await self._get_client()
+        return await inner.find_one_and_update(coll, filter, update, sort=sort)
+
     async def find_many(
         self,
         coll: AsyncCollection[JsonDict],

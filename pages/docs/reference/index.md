@@ -11,7 +11,8 @@ The `forze` core package provides the foundation for building backend services w
 |-------|--------|------------------|
 | **Base** | `forze.base` | Error hierarchy, codecs, primitives (UUID, datetime, types),<br>serialization, file I/O, introspection |
 | **Domain** | `forze.domain` | `Document`, `CoreModel`, `BaseDTO`, mixins,<br>update validators, field constants |
-| **Application** | `forze.application` | Contracts (ports, specs), execution engine, middlewares,<br>operation plans, composition, mapping, DTOs |
+| **Application** | `forze.application` | Contracts (ports, specs), execution engine, middlewares,<br>operation plans, mapping, DTOs |
+| **Kits** | `forze_kits` | Registries, facades, domain field kits, outbox/lock helpers |
 
 Dependencies flow inward: Application → Domain → Base. No layer imports from an outer one.
 
@@ -32,7 +33,8 @@ These pages cover the orchestration layer:
 - [Authentication](authentication.md) — full authn contract surface (verifiers, resolvers, lifecycle, dep keys), `forze_identity.authn` first-party stack, and `forze_identity.oidc` integration surface
 - [Execution](execution.md) — `ExecutionContext`, dependency injection, runtime lifecycle
 - [Middleware & Plans](middleware-plans.md) — stage hooks, transaction wrapping, operation plans, and the registry
-- [Composition & Mapping](composition.md) — facades, providers, DTO mapping pipelines, and paginated responses
+- [Kits](kits.md) — registries, facades, domain mixins, outbox and lock helpers
+- [Composition & Mapping](composition.md) — pointer to kits vs operation composition
 
 ### Reference
 
@@ -49,7 +51,7 @@ A minimal aggregate definition using the core package:
         ReadDocument,
         BaseDTO,
     )
-    from forze_patterns.soft_deletion import SoftDeletionMixin
+    from forze_kits.domain.soft_deletion import SoftDeletionMixin
     from forze.application.contracts.cache import CacheSpec
     from forze.application.contracts.document import DocumentSpec
 

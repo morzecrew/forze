@@ -8,7 +8,7 @@ import pytest
 
 from forze.base.exceptions import CoreException
 
-from forze.application.composition.document import DocumentFacade, DocumentKernelOp
+from forze_kits.document import DocumentFacade, DocumentKernelOp
 from forze.application.contracts.execution import Handler
 from forze.application.execution.operations.registry import OperationRegistry
 from forze.base.primitives import StrKeyNamespace

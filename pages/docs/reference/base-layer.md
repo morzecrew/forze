@@ -148,7 +148,7 @@ Shared types, value generators, and context-scoped utilities importable from `fo
 |------|--------|---------|
 | `JsonDict` | `forze.base.primitives` | JSON-compatible dictionary |
 | `StrKey` | `forze.base.primitives` | String-compatible operation/spec key |
-| `String`, `LongString` | `forze_patterns.base.types` | Pydantic-aware normalized strings (optional `forze_patterns` package) |
+| `String`, `LongString` | `forze_kits.domain.base.types` | Pydantic-aware normalized strings (optional `forze_kits` package) |
 
     :::python
     from forze.base.primitives import JsonDict, StrKey

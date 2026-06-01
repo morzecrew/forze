@@ -8,6 +8,7 @@ from forze.application.contracts.document import (
     DocumentCommandDepKey,
     DocumentQueryDepKey,
 )
+from forze.application.contracts.outbox import OutboxCommandDepKey, OutboxQueryDepKey
 from forze.application.contracts.search import SearchQueryDepKey
 from forze.application.contracts.tenancy import warn_dynamic_relation_with_tenant_aware
 from forze.application.contracts.transaction import TransactionManagerDepKey
@@ -18,11 +19,13 @@ from ...kernel._logger import logger
 from ...kernel.client import MongoClientPort, RoutedMongoClient
 from .configs import (
     MongoDocumentConfig,
+    MongoOutboxConfig,
     MongoReadOnlyDocumentConfig,
     MongoSearchConfig,
 )
 from .factories import (
     ConfigurableMongoDocument,
+    ConfigurableMongoOutbox,
     ConfigurableMongoReadOnlyDocument,
     ConfigurableMongoSearch,
     mongo_txmanager,
@@ -71,6 +74,9 @@ class MongoDepsModule(DepsModule):
     searches: Mapping[StrKey, MongoSearchConfig] | None = attrs.field(default=None)
     """Mapping from search spec names to Mongo-specific search configurations."""
 
+    outboxes: Mapping[StrKey, MongoOutboxConfig] | None = attrs.field(default=None)
+    """Mapping from outbox route names to Mongo-specific configurations."""
+
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
@@ -112,6 +118,17 @@ class MongoDepsModule(DepsModule):
                     log_warning=logger.warning,
                 )
 
+        if self.outboxes:
+            for name, ob_cfg in self.outboxes.items():
+                warn_dynamic_relation_with_tenant_aware(
+                    integration="Mongo",
+                    route_name=str(name),
+                    kind="outbox",
+                    tenant_aware=ob_cfg.tenant_aware,
+                    relation_fields=[("collection", ob_cfg.collection)],
+                    log_warning=logger.warning,
+                )
+
         _ = isinstance(self.client, RoutedMongoClient)
 
     # ....................... #
@@ -123,6 +140,7 @@ class MongoDepsModule(DepsModule):
         doc_deps = Deps()
         search_deps = Deps()
         tx_deps = Deps()
+        outbox_deps = Deps()
 
         if self.ro_documents:
             doc_deps = doc_deps.merge(
@@ -177,4 +195,20 @@ class MongoDepsModule(DepsModule):
                 )
             )
 
-        return plain_deps.merge(doc_deps, search_deps, tx_deps)
+        if self.outboxes:
+            outbox_deps = outbox_deps.merge(
+                Deps.routed(
+                    {
+                        OutboxCommandDepKey: {
+                            name: ConfigurableMongoOutbox(config=config)
+                            for name, config in self.outboxes.items()
+                        },
+                        OutboxQueryDepKey: {
+                            name: ConfigurableMongoOutbox(config=config)
+                            for name, config in self.outboxes.items()
+                        },
+                    }
+                )
+            )
+
+        return plain_deps.merge(doc_deps, search_deps, tx_deps, outbox_deps)

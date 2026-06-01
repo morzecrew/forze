@@ -284,7 +284,7 @@ class TestDocumentCommandPortViaMock:
 
     @pytest.mark.asyncio
     async def test_delete_soft_deletes(self) -> None:
-        from forze_patterns.soft_deletion import SoftDeletionMixin
+        from forze_kits.domain.soft_deletion import SoftDeletionMixin
 
         from forze.domain.models import Document
 
@@ -320,7 +320,7 @@ class TestDocumentCommandPortViaMock:
 
     @pytest.mark.asyncio
     async def test_delete_many(self) -> None:
-        from forze_patterns.soft_deletion import SoftDeletionMixin
+        from forze_kits.domain.soft_deletion import SoftDeletionMixin
 
         from forze.domain.models import Document
 
@@ -352,7 +352,7 @@ class TestDocumentCommandPortViaMock:
 
     @pytest.mark.asyncio
     async def test_restore_after_delete(self) -> None:
-        from forze_patterns.soft_deletion import SoftDeletionMixin
+        from forze_kits.domain.soft_deletion import SoftDeletionMixin
 
         from forze.domain.models import Document
 
@@ -386,7 +386,7 @@ class TestDocumentCommandPortViaMock:
 
     @pytest.mark.asyncio
     async def test_restore_many(self) -> None:
-        from forze_patterns.soft_deletion import SoftDeletionMixin
+        from forze_kits.domain.soft_deletion import SoftDeletionMixin
 
         from forze.domain.models import Document
 
@@ -500,7 +500,7 @@ class TestDocumentCommandReturnNewViaMock:
 
     @pytest.mark.asyncio
     async def test_delete_restore_return_new_false(self) -> None:
-        from forze_patterns.soft_deletion import SoftDeletionMixin
+        from forze_kits.domain.soft_deletion import SoftDeletionMixin
 
         from forze.domain.models import Document
 
@@ -532,7 +532,7 @@ class TestDocumentCommandReturnNewViaMock:
 
     @pytest.mark.asyncio
     async def test_delete_many_restore_many_return_new_false(self) -> None:
-        from forze_patterns.soft_deletion import SoftDeletionMixin
+        from forze_kits.domain.soft_deletion import SoftDeletionMixin
 
         from forze.domain.models import Document
 

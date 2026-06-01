@@ -31,7 +31,7 @@ Example file:
 Load in Python:
 
 ```python
-from forze_identity.local import LocalIdentityConfig, from_json_path, from_env
+from forze_identity.builtin.local import LocalIdentityConfig, from_json_path, from_env
 
 config = from_json_path("identity.local.json")
 # or: config = from_env()
@@ -42,7 +42,7 @@ config = from_json_path("identity.local.json")
 One-shot merge into kernel `Deps`:
 
 ```python
-from forze_identity.local import local_identity_deps
+from forze_identity.builtin.local import local_identity_deps
 
 deps = local_identity_deps(config)
 kernel_deps = kernel_deps.merge(deps)
@@ -52,9 +52,11 @@ Manual wiring (same behavior):
 
 ```python
 from forze_identity.authn import AuthnDepsModule, AuthnKernelConfig
-from forze_identity.authn.execution.deps import ConfigurableLocalApiKeyVerifier
+from forze_identity.builtin.local import (
+    ConfigurableLocalApiKeyVerifier,
+    ConfigurableLocalTenantResolver,
+)
 from forze_identity.tenancy import TenancyDepsModule
-from forze_identity.tenancy.execution.deps import ConfigurableLocalTenantResolver
 
 authn = AuthnDepsModule(
     kernel=AuthnKernelConfig(),
@@ -78,9 +80,9 @@ Register an `AuthnSpec` with `enabled_methods=("api_key",)` and enable API key i
 
 | Piece | Module |
 |-------|--------|
-| Config model | `forze_identity.local.LocalIdentityConfig` |
-| API key verifier | `forze_identity.authn.LocalApiKeyVerifier` |
-| Tenant resolver | `forze_identity.tenancy.LocalTenantResolver` |
+| Config model | `forze_identity.builtin.local.LocalIdentityConfig` |
+| API key verifier | `forze_identity.builtin.local.LocalApiKeyVerifier` |
+| Tenant resolver | `forze_identity.builtin.local.LocalTenantResolver` |
 | Issuer label | `forze:local_api_key` (distinct from document-backed `forze:api_key`) |
 
 Principal resolution reuses `JwtNativeUuidResolver` because the local verifier sets `subject` to the canonical principal UUID string.

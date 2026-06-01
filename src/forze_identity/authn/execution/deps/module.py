@@ -140,6 +140,7 @@ class AuthnDepsModule(DepsModule):
         shared = build_authn_shared_services(self.kernel)
 
         api_key_overrides_keys = frozenset((self.api_key_verifiers or {}).keys())
+        token_overrides_keys = frozenset((self.token_verifiers or {}).keys())
 
         validate_shared_matches_route_sets(
             shared=shared,
@@ -149,6 +150,7 @@ class AuthnDepsModule(DepsModule):
             api_key_lifecycle=akl,
             password_account_provisioning=pap,
             api_key_verifier_overrides=api_key_overrides_keys,
+            token_verifier_overrides=token_overrides_keys,
         )
 
         merged: Deps = Deps()

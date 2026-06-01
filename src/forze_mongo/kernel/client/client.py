@@ -19,7 +19,7 @@ from typing import Any, AsyncGenerator, Mapping, Sequence, final
 
 import attrs
 from bson import ObjectId
-from pymongo import UpdateOne
+from pymongo import ReturnDocument, UpdateOne
 from pymongo.asynchronous.client_session import AsyncClientSession
 from pymongo.asynchronous.collection import AsyncCollection
 from pymongo.asynchronous.database import AsyncDatabase
@@ -286,6 +286,29 @@ class MongoClient(MongoClientPort):
             filter,
             projection=projection,
             sort=sort,
+            session=session,
+        )
+        return doc
+
+    # ....................... #
+
+    @exc_interceptor.coroutine("mongo.find_one_and_update")  # type: ignore[untyped-decorator]
+    async def find_one_and_update(
+        self,
+        coll: AsyncCollection[Any],
+        filter: Mapping[str, Any],
+        update: Mapping[str, Any],
+        *,
+        sort: Sequence[tuple[str, int]] | None = None,
+    ) -> JsonDict | None:
+        """Atomically update and return the document after modification."""
+
+        session = self.__current_session()
+        doc = await coll.find_one_and_update(
+            filter,
+            update,
+            sort=sort,
+            return_document=ReturnDocument.AFTER,
             session=session,
         )
         return doc

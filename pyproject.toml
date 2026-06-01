@@ -125,7 +125,7 @@ authn = [
     "email-validator>=2.3.0",
     "pyjwt[crypto]>=2.12.1",
 ]
-oidc = ["pyjwt[crypto]>=2.12.1"]
+oidc = ["pyjwt[crypto]>=2.12.1", "httpx>=0.28.0"]
 casbin = ["pycasbin>=2.8.0"]
 vault = [
     "hvac[parser]>=2.4.0",
@@ -166,7 +166,7 @@ include = [
 [tool.hatch.build.targets.wheel]
 packages = [
     "src/forze",
-    "src/forze_patterns",
+    "src/forze_kits",
     "src/forze_fastapi",
     "src/forze_mock",
     "src/forze_mongo",
@@ -261,7 +261,7 @@ warn_unused_ignores = false
 [tool.importlinter]
 root_packages = [
     "forze",
-    "forze_patterns",
+    "forze_kits",
     "forze_fastapi",
     "forze_mock",
     "forze_postgres",
@@ -293,15 +293,19 @@ layers = ["forze.application", "forze.domain", "forze.base"]
 name = "Layered `forze.application` module architecture"
 type = "layers"
 layers = [
-    "forze.application.composition",
     "forze.application.handlers",
     "forze.application.hooks",
-    "forze.application.kit",
     "forze.application.execution",
     "forze.application.dto",
     "forze.application.integrations",
     "forze.application.contracts",
 ]
+
+[[tool.importlinter.contracts]]
+name = "Core forze must not import forze_kits"
+type = "forbidden"
+source_modules = ["forze"]
+forbidden_modules = ["forze_kits"]
 
 [[tool.importlinter.contracts]]
 name = "Authz contracts do not import execution contracts"
@@ -346,7 +350,7 @@ as_packages = true
 [tool.vulture]
 paths = [
     "src/forze",
-    "src/forze_patterns",
+    "src/forze_kits",
     "src/forze_fastapi",
     "src/forze_mock",
     "src/forze_postgres",
@@ -384,7 +388,7 @@ mi_min = "B"
 [tool.deptry]
 known_first_party = [
     "forze",
-    "forze_patterns",
+    "forze_kits",
     "forze_fastapi",
     "forze_mock",
     "forze_postgres",

@@ -14,7 +14,7 @@ from forze.domain.constants import (
     ID_FIELD,
     REV_FIELD,
 )
-from forze_patterns.soft_deletion import SoftDeletionMixin
+from forze_kits.domain.soft_deletion import SoftDeletionMixin
 from forze.domain.models import Document
 from forze_mongo.kernel.gateways.history import MongoHistoryGateway
 from forze_mongo.kernel.client import MongoClient

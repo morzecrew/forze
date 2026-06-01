@@ -88,9 +88,9 @@ Use them for:
 ## Repository map (high signal paths)
 
 - `src/forze/`: core framework layers (application/domain/utils/base).
-- `src/forze_patterns/`: optional domain mixins and helpers (soft deletion, metadata, number id, creator id).
-- `src/forze_identity/`: identity plane (`authn/`, `authz/`, `tenancy/`, `oidc/` subpackages; import as `forze_identity.authn`, etc.).
-- `src/forze_identity/local/`: file/env API-key identity for demos (`LocalIdentityConfig`, `local_identity_deps`); not for production.
+- `src/forze_kits/`: pre-built wiring above contracts (`domain/` mixins and mapping; `document`, `search`, `storage`, `authn` registries/facades; `outbox/` flush and relay; `runtime/` e.g. `DistributedLockScope`). Core `forze` must not import `forze_kits`.
+- `src/forze_identity/`: identity plane (`authn/`, `authz/`, `tenancy/`, `oidc/`, `oauth/` subpackages; import as `forze_identity.authn`, etc.).
+- `src/forze_identity/builtin/`: shipped-in identity presets (`local/` file/env API keys, `idp/` Google/VK/Telegram Login OIDC); not for production unless you accept each preset's trust model.
 - `src/forze_fastapi/`: FastAPI integration package.
 - `src/forze_postgres/`: Postgres integration package.
 - `src/forze_redis/`: Redis integration package.

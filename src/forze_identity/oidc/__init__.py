@@ -14,13 +14,16 @@ package only needs to:
 
 from .claims import OidcClaimMapper
 from .keys import JwksKeyProvider, SigningKeyProviderPort, StaticKeyProvider
+from .preset import ConfigurableOidcIdpVerifier, OidcIdpPreset
 from .verifier import OidcTokenVerifier
 
 # ----------------------- #
 
 __all__ = [
+    "ConfigurableOidcIdpVerifier",
     "JwksKeyProvider",
     "OidcClaimMapper",
+    "OidcIdpPreset",
     "OidcTokenVerifier",
     "SigningKeyProviderPort",
     "StaticKeyProvider",

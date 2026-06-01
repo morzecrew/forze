@@ -7,19 +7,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+
+- **`forze_patterns`:** use `forze_kits.domain.*` (mixins, mapping steps, soft-deletion registry).
+- **`forze.application.composition`:** use `forze_kits.document`, `forze_kits.search`, `forze_kits.storage`, `forze_kits.authn`, `forze_kits.outbox`.
+- **`forze.application.kit`:** use `forze_kits.runtime` (`DistributedLockScope`).
+
+| Old import | New import |
+|------------|------------|
+| `forze_patterns.soft_deletion` | `forze_kits.domain.soft_deletion` |
+| `forze.application.composition.document` | `forze_kits.document` |
+| `forze.application.composition.outbox` | `forze_kits.outbox` |
+| `forze.application.kit.DistributedLockScope` | `forze_kits.runtime.DistributedLockScope` |
+
+See [Kits reference](pages/docs/reference/kits.md).
+
 ### Added
 
+- **`forze_identity.builtin.idp`:** OIDC IdP presets for Google Sign-In (`google_identity_deps`), VK ID (`vk_identity_deps`, `exchange_authorization_code`), and Telegram Login (`telegram_login_identity_deps`, code exchange); `oidc_bootstrap_identity_deps` for bootstrap routes that accept external `id_token` JWTs only.
+- **`forze_identity.oidc`:** `OidcIdpPreset` and `ConfigurableOidcIdpVerifier` for issuer/JWKS/audience wiring without vendor-specific URLs.
+- **`forze_identity.oauth`:** PKCE helpers (`generate_pkce`, `PkcePair`) for OAuth 2.1 authorization-code flows.
+- **Authn:** `AuthnDepsModule` skips `kernel.access_token_secret` validation on routes with a custom `token_verifiers` override (same pattern as API-key overrides for external/OIDC/Telegram token verifiers).
+- **Outbox (Mongo):** `MongoOutboxAdapter`, `MongoOutboxConfig`, and `outboxes={}` on `MongoDepsModule`; `MongoClientPort.find_one_and_update` for atomic claim.
+- **`forze_kits`:** consolidated package for domain kits, aggregate registries/facades, outbox helpers, and runtime ergonomics (see migration table under **Removed**).
+- **Outbox (kits):** `outbox_relay_background_lifecycle_step` for optional in-process relay polling.
 - **`forze_mock`:** Tenancy helpers (`partition_namespace`, `resolve_mock_namespace`, `MockTenancyMixin`, `MockRoutedStateRegistry`), extended `MockState` buckets (dlocks, search snapshots, durable workflow/function, identity), new adapters (distributed lock, search command/snapshot/hub/federated, durable workflow/schedule/function, identity stubs), and `MockDepsModule` registration for all related dep keys. Docs updated under [Mock integration](pages/docs/integrations/mock.md) and [Multi-tenancy](pages/docs/concepts/multi-tenancy.md).
 
 ### Changed
 
-- **Outbox:** Postgres `flush` uses a single bulk `INSERT … ON CONFLICT DO NOTHING`; `claim_pending` sets `processing_at`; `OutboxQueryPort.reclaim_stale_processing` resets stuck `processing` rows; `relay_outbox_to_queue` reclaims before claim (`reclaim_stale_after`, default 5 minutes) and reports `OutboxRelayResult.reclaimed`; mock adapter matches Postgres idempotency and claim/mark semantics; docs cover `processing_at` DDL, at-least-once relay, and worker patterns.
+- **`forze[oidc]` extra:** now includes `httpx` (used by `forze_identity.builtin.idp.vk` and `.telegram` authorization-code exchange helpers).
+- **Outbox:** Postgres `flush` uses a single bulk `INSERT … ON CONFLICT DO NOTHING`; `claim_pending` sets `processing_at`; `OutboxQueryPort.reclaim_stale_processing` resets stuck `processing` rows; `relay_outbox_to_queue` reclaims before claim (`reclaim_stale_after`, default 5 minutes) and reports `OutboxRelayResult.reclaimed`; mock adapter matches Postgres idempotency and claim/mark semantics; docs cover `processing_at` DDL, at-least-once relay, and worker patterns; `OutboxQueryPort.requeue_failed`; relay passes `key=str(event_id)` per enqueue; Mongo outbox adapter and docs.
 - **Integrations:** Shared storage adapter base, object-storage client port, metadata/path helpers, and warehouse analytics adapter helpers moved from `forze.application.contracts` to `forze.application.integrations` (`integrations.storage`, `integrations.analytics`); contracts retain ports, specs, and value objects only.
 - **S3 / GCS:** MIME sniffing via `python-magic` stays in `S3StorageAdapter` / `GCSStorageAdapter` (optional extras); shared `ObjectStorageAdapter` uses stdlib `mimetypes` only. Public `S3StorageAdapter`, `GCSStorageAdapter`, `S3ClientPort`, and `GCSClientPort` unchanged.
 
+### Removed
+
+- **`forze_identity.builtin.telegram`:** Telegram Mini App `initData` HMAC preset (superseded by Telegram Login OIDC under `forze_identity.builtin.idp.telegram`).
+
 ### Changed (breaking)
 
-- **Application layer:** Removed `forze.application.coordinators`. Adapter-side helpers live under `forze.application.integrations` (`document`, `search`, `outbox`); app-facing distributed lock ergonomics live under `forze.application.kit` (`DistributedLockScope`).
+- **`forze_identity.local`:** Removed; use `forze_identity.builtin.local` (`LocalIdentityConfig`, `local_identity_deps`, `LocalApiKeyVerifier`, `ConfigurableLocalApiKeyVerifier`, `LocalTenantResolver`, `ConfigurableLocalTenantResolver`). `LocalApiKeyVerifier` and local configurable factories are no longer exported from `forze_identity.authn` or `forze_identity.tenancy`.
+- **Application layer:** Removed `forze.application.coordinators`. Adapter-side helpers live under `forze.application.integrations` (`document`, `search`, `outbox`); app-facing distributed lock ergonomics live under `forze_kits.runtime` (`DistributedLockScope`).
 - **Renames:** `DocumentCoordinator` → `DocumentAdapter`, `DocumentCacheCoordinator` → `DocumentCache`, `SearchResultSnapshotCoordinator` → `SearchResultSnapshot`, `OutboxStagingCoordinator` → `OutboxStaging`, `DistributedLockCoordinator` → `DistributedLockScope`.
 - **Field renames:** `cache_coord` → `document_cache` on document adapters; `snapshot_coord` → `result_snapshot` on search adapters; outbox adapters use private `_staging` instead of `_coordinator`.
 
@@ -48,7 +76,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Outbox:** `forze.application.contracts.outbox` (`OutboxSpec`, `IntegrationEvent`, `OutboxCommandPort`, `OutboxQueryPort`, `OutboxDeps`); request-scoped staging via `OutboxStagingContext` and `OutboxStaging` (`forze.application.integrations.outbox`); `outbox_flush_tx_on_success_factory` and `relay_outbox_to_queue` in `forze.application.composition.outbox`; `PostgresOutboxAdapter` / `PostgresOutboxConfig` on `PostgresDepsModule`; `MockOutboxAdapter` on `MockDepsModule`.
+- **Outbox:** `forze.application.contracts.outbox` (`OutboxSpec`, `IntegrationEvent`, `OutboxCommandPort`, `OutboxQueryPort`, `OutboxDeps`); request-scoped staging via `OutboxStagingContext` and `OutboxStaging` (`forze.application.integrations.outbox`); `outbox_flush_tx_on_success_factory` and `relay_outbox_to_queue` in `forze_kits.outbox`; `PostgresOutboxAdapter` / `PostgresOutboxConfig` on `PostgresDepsModule`; `MockOutboxAdapter` on `MockDepsModule`.
 - **`forze.base`:** `GuardedLruRegistry` / `SimpleLruRegistry` detect reentrant `create` (fail fast instead of deadlocking on `init_lock`); bounded wait when a slot stays in the draining set; optional `timeout` on `InflightLane.run` / `CachedInflightLane`.
 - **Document coordinators:** `max_scan_pages`, `max_stream_pages`, and `max_chunked_command_pages` (default 100_000 each; set `None` for unlimited); cursor stream stall detection when `next_cursor` does not change.
 - **`forze_identity.authz`:** `fetch_all_document_hits` accepts `max_pages` (default 100_000).
@@ -180,7 +208,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Dependency tracing:** `ResolutionTracer`, `RuntimeTracer`, `DepsPlan.with_tracing()`, and `DepsResolutionTrace.to_key_dag()` / `canonical_edges()`.
 - **Runtime tracing (development):** `forze.application.execution.tracing` with `RuntimeTrace`, `FORZE_RUNTIME_TRACE`, `validate_runtime_trace`, and port recording via `Deps.resolve_configurable`.
 - **TxTracer:** Optional transaction scope observer on `TransactionContext`.
-- **Composition catalogs:** `DOCUMENT_OPERATIONS`, `SEARCH_OPERATIONS`, `STORAGE_OPERATIONS`, and `AUTHN_OPERATIONS` under `forze.application.composition.*.catalog`.
+- **Composition catalogs:** `DOCUMENT_OPERATIONS`, `SEARCH_OPERATIONS`, `STORAGE_OPERATIONS`, and `AUTHN_OPERATIONS` under `forze_kits.*.catalog`.
 - **Hooks:** `forze.application.hooks.authz`, `hooks.authn`, and `hooks.tenancy` for operation-plan authz, principal, and tenant enforcement.
 - **Query DSL:** Literal `$values` / field `$fields` filters, `$not`, array quantifiers (`$any`, `$all`, `$none`), text patterns (`$like`, `$ilike`, `$regex`), aggregate `$computed` / `$groups` / `$trunc`, configurable `QueryFilterLimits`, and pre-parsed `QueryExpr` support on gateways.
 - **Document & search:** `DocumentCoordinator`, `DocumentCacheCoordinator`, and `SearchResultSnapshotCoordinator`; `update_matching` / `ensure`; method-specific ports (`find_page`, `find_cursor`, `search_page`, `project_*`, `select_*`, …); hub and federated search (FTS/PGroonga v2, weighted RRF).
@@ -197,7 +225,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Postgres startup validation:** Pydantic↔column compatibility, bookkeeping triggers, and tenancy wiring checks on `PostgresDepsModule`.
 - **Scrubbing:** `forze.base.scrubbing` with `sanitize(value, context="egress"|"log")` and default structlog field scrubbing via `configure_logging(sanitize_logs=True)`.
 - **Console logging:** `ForzeConsoleRenderer.max_traceback_frames` for Rich traceback frame collapsing (default `20`; `0` shows all frames).
-- **Integrations:** Redis distributed locks; `PydanticRecordMappingCodec` and `MsgspecRecordMappingCodec`; `StrKeySelector` and `StrKeyNamespace`; optional domain mixins in `forze_patterns`.
+- **Integrations:** Redis distributed locks; `PydanticRecordMappingCodec` and `MsgspecRecordMappingCodec`; `StrKeySelector` and `StrKeyNamespace`; optional domain mixins in `forze_kits`.
 
 ### Changed
 
@@ -231,7 +259,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Authn & identity:** monolithic `AuthnAdapter`, `HeaderAuthnIdentityResolver`, `OAuth2Tokens`, `PrincipalContext`, and principal codec ports.
 - **Query:** deprecated predicate aliases (`QueryPredicate`, `is_query_predicate`, …).
 - **Postgres search:** legacy `PostgresFTSSearchAdapter` / `PostgresPGroongaSearchAdapter` and `hub_pgroonga` module.
-- **Domain:** `forze.domain.mixins` — use `forze_patterns` mixins instead.
+- **Domain:** `forze.domain.mixins` — use `forze_kits` mixins instead.
 
 ### Fixed
 
@@ -457,7 +485,7 @@ Execution and mapping refactor, middleware-first approach for usecases, split se
 
 ### Changed
 
-- `DocumentOperation`, `DocumentUsecasesFacade` moved from `forze.application.facades` to `forze.application.composition.document`. `StorageOperation` moved to `forze.application.usecases.storage`. Facades package removed.
+- `DocumentOperation`, `DocumentUsecasesFacade` moved from `forze.application.facades` to `forze_kits.document`. `StorageOperation` moved to `forze.application.usecases.storage`. Facades package removed.
 - `Effect`, `Guard`, `Middleware`, `NextCall` moved from `forze.application.execution.usecase` to `forze.application.execution.middleware`.
 - `Deps` constructor-based API: use `Deps(deps={...})` instead of `register`/`register_many`. Builder methods removed.
 - `Usecase` now requires `ctx: ExecutionContext`; `with_guards`/`with_effects` replaced by `with_middlewares`.
@@ -495,7 +523,7 @@ Execution and mapping refactor, middleware-first approach for usecases, split se
 - **Postgres, Redis, S3 restructure:** `dependencies/` removed; modules moved to `execution/` with `PostgresDepsModule`, `RedisDepsModule`, `S3DepsModule` (attrs-based classes) and lifecycle steps (`postgres_lifecycle_step`, `redis_lifecycle_step`, `s3_lifecycle_step`). Replace `postgres_module(client)` with `PostgresDepsModule(client=client)()` and similarly for redis/s3.
 - `DepRouter.from_deps` now accepts `DepsPort` and returns optional remainder.
 - Port resolvers `doc`, `counter`, `txmanager`, `storage` consolidated into `PortResolver` namespace class. Replace `doc(ctx, spec)` with `PortResolver.doc(ctx, spec)` and similarly for `counter`, `txmanager`, `storage`.
-- `DTOSpec` renamed to `DocumentDTOSpec` in `forze.application.composition.document`. Update imports accordingly.
+- `DTOSpec` renamed to `DocumentDTOSpec` in `forze_kits.document`. Update imports accordingly.
 - Document router: request body params now use `Body(...)` with `override_annotations` for correct OpenAPI schema generation.
 - `ForzeAPIRouter` and `build_document_router` no longer accept idempotency parameters; idempotency is applied via custom route class and resolved from `ExecutionContext` via `IdempotencyDepKey`. Register your `IdempotencyDepPort` with the key.
 

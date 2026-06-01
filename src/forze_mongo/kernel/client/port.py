@@ -60,6 +60,15 @@ class MongoClientPort(Protocol):
         sort: Sequence[tuple[str, int]] | None = None,
     ) -> Awaitable[JsonDict | None]: ...  # pragma: no cover
 
+    def find_one_and_update(
+        self,
+        coll: AsyncCollection[Any],
+        filter: Mapping[str, Any],
+        update: Mapping[str, Any],
+        *,
+        sort: Sequence[tuple[str, int]] | None = None,
+    ) -> Awaitable[JsonDict | None]: ...  # pragma: no cover
+
     def find_many(
         self,
         coll: AsyncCollection[JsonDict],

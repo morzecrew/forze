@@ -22,7 +22,7 @@ Transactional outbox for **integration events**: stage in the same database tran
 Wire **tx `on_success`** to flush before commit:
 
 ```python
-from forze.application.composition.outbox import outbox_flush_tx_on_success_factory
+from forze_kits.outbox import outbox_flush_tx_on_success_factory
 from forze.application.contracts.execution import OnSuccessStep
 
 registry.patch("my.op").bind_tx().set_route("postgres").on_success(
@@ -30,27 +30,30 @@ registry.patch("my.op").bind_tx().set_route("postgres").on_success(
 )
 ```
 
+Use `.set_route("mongo")` with `MongoTxScopeKey` when flushing via `MongoDepsModule`.
+
 #### Idempotency
 
-- Duplicate `(outbox_route, event_id)` on flush is a **no-op** (Postgres `ON CONFLICT DO NOTHING`; mock skips silently).
+- Duplicate `(outbox_route, event_id)` on flush is a **no-op** (Postgres `ON CONFLICT DO NOTHING`; Mongo unique index; mock skips silently).
 - `flush()` return value counts only rows actually inserted.
-- Rows in `published` or `failed` still occupy the unique key—re-drive with a **new** `event_id` or operational cleanup (delete/update the row).
+- Rows in `published` or `failed` still occupy the unique key—re-drive with `requeue_failed`, a **new** `event_id`, or operational cleanup.
 
 ### `OutboxQueryPort`
 
 | Method | Purpose |
 |--------|---------|
-| `claim_pending` | `FOR UPDATE SKIP LOCKED` → `processing`, sets `processing_at` |
+| `claim_pending` | Claim batch → `processing`, sets `processing_at` |
 | `reclaim_stale_processing` | Reset stuck `processing` rows to `pending` when `processing_at` is older than a cutoff |
 | `mark_published` | After successful enqueue (only from `processing`) |
 | `mark_failed` | On relay errors (only from `processing`) |
+| `requeue_failed` | Reset `failed` rows to `pending` for re-drive |
 
 ## Relay
 
 ```python
 from datetime import timedelta
 
-from forze.application.composition.outbox import relay_outbox_to_queue
+from forze_kits.outbox import relay_outbox_to_queue
 
 result = await relay_outbox_to_queue(
     ctx,
@@ -61,9 +64,15 @@ result = await relay_outbox_to_queue(
 # result.claimed, .published, .failed, .reclaimed
 ```
 
-Delivery is **at-least-once**: enqueue and `mark_published` are not atomic. Queue consumers should deduplicate on `event_id`.
+Delivery is **at-least-once**: each claim is enqueued with `key=str(event_id)` when the queue backend supports deduplication. Enqueue and `mark_published` are not atomic.
 
-Run from a worker or cron after HTTP handlers return. See [Transactional outbox recipe](../../recipes/transactional-outbox.md).
+Optional in-process polling (long-running apps only):
+
+```python
+from forze_kits.outbox import outbox_relay_background_lifecycle_step
+```
+
+Run from a worker, cron, or background lifecycle step. See [Transactional outbox recipe](../../recipes/transactional-outbox.md).
 
 ## Postgres DDL (application-owned)
 
@@ -94,10 +103,25 @@ Existing tables: add reclaim support with:
 ALTER TABLE my_schema.outbox ADD COLUMN IF NOT EXISTS processing_at TIMESTAMPTZ;
 ```
 
-Register on `PostgresDepsModule(outboxes={...})` with `PostgresOutboxConfig(relation=("my_schema", "outbox"))`. `default_processing_lease` documents a suggested `reclaim_stale_after` for workers.
+Register on `PostgresDepsModule(outboxes={...})` with `PostgresOutboxConfig(relation=("my_schema", "outbox"))`.
+
+## Mongo collection (application-owned)
+
+Register on `MongoDepsModule(outboxes={...})` with `MongoOutboxConfig(collection=("my_db", "outbox"))`. **Transactions require a replica set.**
+
+Recommended indexes:
+
+```javascript
+db.outbox.createIndex({ outbox_route: 1, event_id: 1 }, { unique: true })
+db.outbox.createIndex({ outbox_route: 1, status: 1, created_at: 1 })
+db.outbox.createIndex({ outbox_route: 1, status: 1, processing_at: 1 })
+```
+
+Document fields mirror the Postgres table (`id`, `outbox_route`, `event_id`, envelope ids, `payload`, `status`, timestamps, `last_error`).
 
 ## Related pages
 
 - [Queue contracts](queue.md)
+- [Mongo integration](../../integrations/mongo.md)
 - [Operation composition](../../concepts/operation-composition.md)
 - [Transactional outbox recipe](../../recipes/transactional-outbox.md)

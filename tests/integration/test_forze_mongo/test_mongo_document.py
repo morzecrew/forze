@@ -4,7 +4,7 @@ from uuid import UUID, uuid4
 
 
 import pytest
-from forze_patterns.soft_deletion.models import DocWithSoftDeletion, UpdateCmdWithSoftDeletion
+from forze_kits.domain.soft_deletion.models import DocWithSoftDeletion, UpdateCmdWithSoftDeletion
 
 from forze.application.contracts.document import (
     DocumentCommandDepKey,

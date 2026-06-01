@@ -228,6 +228,30 @@ class MockOutboxAdapter[M: BaseModel](
 
         return reclaimed
 
+    async def requeue_failed(self, ids: Sequence[UUID]) -> int:
+        if not ids:
+            return 0
+
+        id_set = set(ids)
+        route = self._route()
+        updated = 0
+
+        with self.state.lock:
+            for row in self.state.outbox_rows.get(route, []):
+                if row.id not in id_set:
+                    continue
+
+                if row.status != OutboxStatus.FAILED:
+                    continue
+
+                row.status = OutboxStatus.PENDING
+                row.processing_at = None
+                row.published_at = None
+                row.last_error = None
+                updated += 1
+
+        return updated
+
     def _mark(
         self,
         ids: Sequence[UUID],

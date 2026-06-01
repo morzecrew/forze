@@ -16,7 +16,7 @@ from psycopg import sql
 from psycopg.types.json import Jsonb
 from pydantic import BaseModel
 
-from forze.application.composition.outbox import relay_outbox_to_queue
+from forze_kits.outbox import relay_outbox_to_queue
 from forze.application.contracts.outbox import (
     IntegrationEvent,
     OutboxDestination,
@@ -381,5 +381,74 @@ async def test_outbox_relay_reclaims_stale_processing(
         )
 
     assert result.reclaimed >= 1
+    assert result.published == 1
+    assert len(shared_state.queues["relay"]["relay"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_outbox_requeue_failed_then_relay(
+    pg_client: PostgresClient,
+    outbox_table: str,
+) -> None:
+    codec = PydanticRecordMappingCodec(_OutboxPayload)
+    outbox_spec = OutboxSpec(
+        name="integration",
+        codec=codec,
+        destination=OutboxDestination(queue_route="relay", queue="relay"),
+    )
+    queue_spec = QueueSpec(name="relay", codec=codec)
+    pg_module = PostgresDepsModule(
+        client=pg_client,
+        tx={"default"},
+        outboxes={
+            "integration": PostgresOutboxConfig(
+                relation=("public", outbox_table),
+            ),
+        },
+    )
+    shared_state = MockState()
+    runtime = ExecutionRuntime(
+        deps=DepsRegistry.from_modules(pg_module).with_deps(
+            _mock_queue_deps(shared_state)
+        ),
+    )
+    row_id = uuid4()
+    event_id = uuid4()
+
+    await pg_client.execute(
+        sql.SQL(
+            """
+            INSERT INTO {t} (
+                id, outbox_route, event_id, event_type,
+                occurred_at, payload, status, created_at
+            ) VALUES (
+                %(id)s, %(route)s, %(event_id)s, %(event_type)s,
+                %(occurred_at)s, %(payload)s, %(status)s, %(created_at)s
+            )
+            """
+        ).format(t=sql.Identifier("public", outbox_table)),
+        {
+            "id": row_id,
+            "route": "integration",
+            "event_id": event_id,
+            "event_type": "demo.created",
+            "occurred_at": utcnow(),
+            "payload": Jsonb({"label": "failed"}),
+            "status": OutboxStatus.FAILED.value,
+            "created_at": utcnow(),
+        },
+    )
+
+    async with runtime.scope():
+        ctx = runtime.get_context()
+        query = ctx.outbox.query(outbox_spec)
+        assert await query.requeue_failed([row_id]) == 1
+
+        result = await relay_outbox_to_queue(
+            ctx,
+            outbox_spec=outbox_spec,
+            queue_spec=queue_spec,
+        )
+
     assert result.published == 1
     assert len(shared_state.queues["relay"]["relay"]) == 1

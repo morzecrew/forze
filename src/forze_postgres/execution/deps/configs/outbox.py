@@ -28,4 +28,4 @@ class PostgresOutboxConfig(TenantAwareIntegrationConfig):
     default_processing_lease: timedelta = attrs.field(
         factory=lambda: timedelta(minutes=5)
     )
-    """Suggested lease for :func:`~forze.application.composition.outbox.relay_outbox_to_queue` ``reclaim_stale_after`` (documentation default)."""
+    """Suggested lease for :func:`~forze_kits.outbox.relay_outbox_to_queue` ``reclaim_stale_after`` (documentation default)."""

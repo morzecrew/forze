@@ -18,9 +18,11 @@ uv add 'forze[oidc]'
 
 | Requirement | Notes |
 |-------------|-------|
-| Package extra | `oidc` installs `pyjwt[crypto]` for JWS verification and JWKS fetching. |
+| Package extra | `oidc` installs `pyjwt[crypto]` for JWS verification and JWKS fetching, plus `httpx` for `forze_identity.builtin.idp` authorization-code exchange helpers (VK ID, Telegram Login). |
 | Required service | The IdP (issuer URL + JWKS URI). No local service runs. |
 | Local development dependency | None beyond the extra; tests use `StaticKeyProvider` to avoid network. |
+
+Shipped IdP presets (`forze_identity.builtin.idp.google`, `.vk`, `.telegram`) wrap this package with issuer/JWKS defaults and bootstrap-route wiring — see [External bootstrap → Forze JWT](../recipes/external-bootstrap-forze-jwt.md).
 
 Importing any module from `forze_identity.oidc` calls `require_oidc()` and raises a clear `RuntimeError("forze_identity.oidc requires 'forze[oidc]' extra")` when the extra is missing.
 
@@ -69,6 +71,24 @@ casdoor_mapper = OidcClaimMapper(tenant_claim="organization")
 | `audience_claim` | `"aud"` | Optional; takes the first string when the IdP returns an array. |
 | `issued_at_claim` / `expires_at_claim` | `"iat"` / `"exp"` | Coerced to `datetime` when present as integer/float. |
 | `tenant_claim` | `None` | When set, the mapper copies this claim into `VerifiedAssertion.issuer_tenant_hint` for later tenancy resolution. |
+
+### IdP preset (issuer + JWKS + audience)
+
+`OidcIdpPreset` and `ConfigurableOidcIdpVerifier` bundle the usual JWKS-backed verifier wiring:
+
+```python
+from forze_identity.oidc import ConfigurableOidcIdpVerifier, OidcIdpPreset
+
+preset = OidcIdpPreset(
+    issuer="https://idp.example.com",
+    jwks_uri="https://idp.example.com/.well-known/jwks.json",
+    audience="my-client-id",
+)
+
+verifier_factory = ConfigurableOidcIdpVerifier(preset=preset)
+```
+
+Vendor-specific defaults (Google, VK ID, Telegram Login) live under `forze_identity.builtin.idp`; PKCE helpers live in `forze_identity.oauth`.
 
 ### Verifier
 

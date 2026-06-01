@@ -69,7 +69,7 @@ Stage hooks are authored as `BeforeStep`, `OnSuccessStep`, and related types on 
 Example precondition as `BeforeStep` on an outer scope:
 
     :::python
-    from forze.application.composition.document import build_document_registry
+    from forze_kits.document import build_document_registry
     from forze.application.contracts.execution import BeforeStep
     from forze.application.handlers.document import DocumentIdDTO
     from forze.base.errors import ValidationError
@@ -195,7 +195,7 @@ See [Composition & Mapping](../reference/composition.md) for `build_document_reg
 `DocumentFacade` ties together an execution context and a frozen registry. It provides typed access to resolved handlers:
 
     :::python
-    from forze.application.composition.document import (
+    from forze_kits.document import (
         DocumentDTOs,
         DocumentFacade,
         build_document_registry,

@@ -65,6 +65,10 @@ nav:
     - Authn, authz, and tenancy (FastAPI): recipes/authn-authz-tenancy-fastapi.md
     - External IdPs over OIDC: recipes/external-idp-oidc.md
     - Local identity (demo / MVP): recipes/local-identity.md
+    - External bootstrap → Forze JWT: recipes/external-bootstrap-forze-jwt.md
+    - Google Sign-In (OIDC): recipes/google-oidc.md
+    - VK ID (OIDC): recipes/vk-id.md
+    - Telegram Login (OIDC): recipes/telegram-login-oidc.md
     - Read-only Document API: recipes/read-only-document-api.md
     - Add Caching: recipes/add-caching.md
     - Add Idempotency: recipes/add-idempotency.md
@@ -97,6 +101,7 @@ nav:
     - Execution: reference/execution.md
     - Middleware & Plans: reference/middleware-plans.md
     - Capability execution: reference/capability-execution.md
+    - Kits: reference/kits.md
     - Composition & Mapping: reference/composition.md
     - Query Syntax: reference/query-syntax.md
 

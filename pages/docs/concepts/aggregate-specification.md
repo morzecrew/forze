@@ -54,7 +54,7 @@ Specifications are the bridge between your domain models and infrastructure adap
 
 ### Helper methods
 
-- `supports_soft_delete()` — `True` when `write["domain"]` subclasses `forze_patterns.soft_deletion.SoftDeletionMixin`
+- `supports_soft_delete()` — `True` when `write["domain"]` subclasses `forze_kits.domain.soft_deletion.SoftDeletionMixin`
 - `supports_update()` — `True` when `update_cmd` has writable fields
 
 Physical storage (Postgres tables, Mongo collections) is **not** on the spec — configure `PostgresDocumentConfig` / `MongoDocumentConfig` under the same `name`.

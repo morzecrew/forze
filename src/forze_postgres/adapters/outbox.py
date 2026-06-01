@@ -319,3 +319,29 @@ class PostgresOutboxAdapter[M: BaseModel](
 
         rowcount = await self.client.execute(stmt, params, return_rowcount=True)
         return int(rowcount or 0)
+
+    async def requeue_failed(self, ids: Sequence[UUID]) -> int:
+        if not ids:
+            return 0
+
+        table = await self._table()
+        params: dict[str, Any] = {
+            "ids": list(ids),
+            "pending": OutboxStatus.PENDING.value,
+            "failed": OutboxStatus.FAILED.value,
+        }
+
+        stmt = sql.SQL(
+            """
+            UPDATE {table}
+            SET status = %(pending)s,
+                processing_at = NULL,
+                published_at = NULL,
+                last_error = NULL
+            WHERE id = ANY(%(ids)s::uuid[])
+              AND status = %(failed)s
+            """
+        ).format(table=table.ident())
+
+        rowcount = await self.client.execute(stmt, params, return_rowcount=True)
+        return int(rowcount or 0)

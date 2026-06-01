@@ -46,6 +46,7 @@ The package supplies a single `MockDepsModule` that registers in-memory adapters
 | `MockStreamAdapter` | `StreamQueryPort`, `StreamCommandPort` |
 | `MockStreamGroupAdapter` | `StreamGroupQueryPort` |
 | `MockAnalyticsAdapter` | `AnalyticsQueryPort`, `AnalyticsIngestPort` |
+| `MockOutboxAdapter` | `OutboxCommandPort`, `OutboxQueryPort` |
 | `MockDistributedLockAdapter` | `DistributedLockQueryPort`, `DistributedLockCommandPort` |
 | `MockSearchCommandAdapter` | `SearchCommandPort` |
 | `MockSearchResultSnapshotAdapter` | `SearchResultSnapshotPort` (chunked in-memory) |
@@ -144,7 +145,7 @@ Access the state directly for test assertions:
 Replace real infrastructure modules with mock for local development or testing:
 
     :::python
-    from forze.application.composition.document import (
+    from forze_kits.document import (
         DocumentDTOs,
         build_document_registry,
     )

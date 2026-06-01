@@ -77,6 +77,22 @@ Kernel `DocumentSpec` names must match keys in `MongoDepsModule.rw_documents` / 
 | `DocumentQueryDepKey` | Routed document query factories |
 | `DocumentCommandDepKey` | Routed document command factories |
 | `TxManagerDepKey` | Transaction managers per route in `tx` |
+| `OutboxCommandDepKey` / `OutboxQueryDepKey` | Transactional outbox per route in `outboxes` |
+
+Example outbox route:
+
+    :::python
+    from forze_mongo.execution.deps.configs import MongoOutboxConfig
+
+    MongoDepsModule(
+        client=mongo_client,
+        tx={"default"},
+        outboxes={
+            "events": MongoOutboxConfig(collection=("app", "outbox")),
+        },
+    )
+
+See [Outbox contracts](../core-package/contracts/outbox.md) and [Transactional outbox recipe](../recipes/transactional-outbox.md). Flush requires a **replica set** (same as other Mongo transactions).
 
 For framework tests or advanced wiring, prefer `from forze_mongo.execution.deps import ConfigurableMongoDocument` and `ConfigurableMongoSearch` rather than removed `forze_mongo.execution.deps.deps` paths.
 
@@ -118,7 +134,7 @@ DocumentSpec example:
 
     :::python
     from forze.application.contracts.document import DocumentSpec
-    from forze_patterns.soft_deletion import SoftDeletionMixin
+    from forze_kits.domain.soft_deletion import SoftDeletionMixin
     from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
 
 

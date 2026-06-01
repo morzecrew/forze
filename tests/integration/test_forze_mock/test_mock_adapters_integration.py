@@ -11,7 +11,7 @@ from forze.application.contracts.search import SearchSpec
 from forze.application.contracts.storage import UploadedObject
 from forze.base.serialization import PydanticRecordMappingCodec
 from forze.domain.models import BaseDTO, CreateDocumentCmd, ReadDocument
-from forze_patterns.soft_deletion.models import DocWithSoftDeletion
+from forze_kits.domain.soft_deletion.models import DocWithSoftDeletion
 from forze_mock import (
     MockCacheAdapter,
     MockDocumentAdapter,

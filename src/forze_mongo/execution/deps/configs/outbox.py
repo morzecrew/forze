@@ -1,0 +1,31 @@
+"""Mongo outbox integration configuration."""
+
+from __future__ import annotations
+
+from datetime import timedelta
+
+import attrs
+
+from forze.application.contracts.resolution import RelationSpec, coerce_relation_spec
+from forze.application.contracts.tenancy import TenantAwareIntegrationConfig
+
+# ----------------------- #
+
+
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class MongoOutboxConfig(TenantAwareIntegrationConfig):
+    """Mongo configuration for :class:`~forze_mongo.adapters.outbox.MongoOutboxAdapter`."""
+
+    collection: RelationSpec = attrs.field(converter=coerce_relation_spec)
+    """Database and collection for outbox documents."""
+
+    max_flush_rows: int = 500
+    """Maximum rows per :meth:`~forze.application.contracts.outbox.OutboxCommandPort.flush`."""
+
+    max_claim_rows: int = 100
+    """Default batch size for :meth:`~forze.application.contracts.outbox.OutboxQueryPort.claim_pending`."""
+
+    default_processing_lease: timedelta = attrs.field(
+        factory=lambda: timedelta(minutes=5)
+    )
+    """Suggested lease for :func:`~forze_kits.outbox.relay_outbox_to_queue` ``reclaim_stale_after`` (documentation default)."""

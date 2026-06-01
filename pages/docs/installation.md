@@ -44,7 +44,7 @@ Install only what you need. Extras map directly to integration packages:
 | `authz` | Empty extra (symmetry / future-proofing); `forze_identity.authz` ships in the main wheel with `forze` |
 | `oidc` | Generic OIDC verifier (`forze_identity.oidc`, PyJWT with crypto) for external IdPs |
 
-The PyPI wheel includes `forze_identity` (authn, authz, oidc, tenancy) and `forze_patterns` without selecting those extras; extras only add **transitive** dependencies (for example `authn` pulls Argon2 and validators for password flows).
+The PyPI wheel includes `forze_identity` (authn, authz, oidc, tenancy) and `forze_kits` without selecting those extras; extras only add **transitive** dependencies (for example `authn` pulls Argon2 and validators for password flows).
 
 `forze_mock` is bundled with the core package and requires no extra. It provides in-memory adapters for development and testing without external infrastructure.
 

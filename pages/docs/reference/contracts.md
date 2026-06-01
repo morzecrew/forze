@@ -136,7 +136,7 @@ Kernel specification: model types, logical `name`, optional `history_enabled`, o
 
 Helper methods:
 
-- `supports_soft_delete()` — `True` when the domain model inherits from `forze_patterns.soft_deletion.SoftDeletionMixin`
+- `supports_soft_delete()` — `True` when the domain model inherits from `forze_kits.domain.soft_deletion.SoftDeletionMixin`
 - `supports_update()` — `True` when the update command has writable fields
 
 ### Dependency keys

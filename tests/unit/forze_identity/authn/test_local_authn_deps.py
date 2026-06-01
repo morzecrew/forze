@@ -8,8 +8,7 @@ import pytest
 
 from forze.application.contracts.authn import AuthnDepKey
 from forze_identity.authn import AuthnDepsModule, AuthnKernelConfig
-from forze_identity.authn.execution.deps import ConfigurableLocalApiKeyVerifier
-from forze_identity.local import LocalIdentityConfig
+from forze_identity.builtin.local import ConfigurableLocalApiKeyVerifier, LocalIdentityConfig
 
 pytestmark = pytest.mark.unit
 

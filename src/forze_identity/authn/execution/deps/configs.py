@@ -130,6 +130,7 @@ def validate_route_methods(
     methods: frozenset[AuthnMethod],
     *,
     skip_api_key_service: bool = False,
+    skip_token_service: bool = False,
 ) -> None:
     """Ensure each enabled method has the matching service in ``shared``."""
 
@@ -145,7 +146,7 @@ def validate_route_methods(
         msg = "'api_key' method requires kernel.api_key_pepper"
         raise exc.internal(msg)
 
-    if "token" in methods and shared.access_svc is None:
+    if "token" in methods and shared.access_svc is None and not skip_token_service:
         msg = "'token' method requires kernel.access_token_secret"
         raise exc.internal(msg)
 
@@ -162,16 +163,19 @@ def validate_shared_matches_route_sets(
     api_key_lifecycle: Collection[StrKey],
     password_account_provisioning: Collection[StrKey],
     api_key_verifier_overrides: Collection[StrKey] | None = None,
+    token_verifier_overrides: Collection[StrKey] | None = None,
 ) -> None:
     """Fail fast when routes require kernel sections that were not configured."""
 
-    override_routes = frozenset(api_key_verifier_overrides or ())
+    api_key_override_routes = frozenset(api_key_verifier_overrides or ())
+    token_override_routes = frozenset(token_verifier_overrides or ())
 
     for route, methods in authn.items():
         validate_route_methods(
             shared,
             methods,
-            skip_api_key_service=route in override_routes,
+            skip_api_key_service=route in api_key_override_routes,
+            skip_token_service=route in token_override_routes,
         )
 
     if token_lifecycle:

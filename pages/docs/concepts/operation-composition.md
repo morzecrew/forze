@@ -22,7 +22,7 @@ Forze composition has three parts:
 `OperationRegistry` holds handler factories and operation plans. Built-in helpers register standard document/search/storage/authn handlers; you add stages with `.bind(...)` then **freeze** before HTTP attach:
 
     :::python
-    from forze.application.composition.document import build_document_registry
+    from forze_kits.document import build_document_registry
 
     registry = (
         build_document_registry(project_spec, project_dtos)
@@ -93,7 +93,7 @@ Inspect merged plans on a frozen registry via internal explain helpers in tests,
 Facades provide typed entry points over a **frozen** registry:
 
     :::python
-    from forze.application.composition.document import DocumentFacade, build_document_registry
+    from forze_kits.document import DocumentFacade, build_document_registry
 
     registry = build_document_registry(project_spec, project_dtos).freeze()
     facade = DocumentFacade(
@@ -109,7 +109,7 @@ Built-in facades define operations with `facade_op(...)` descriptors on the clas
 ## Document and search composition
 
     :::python
-    from forze.application.composition.document import DocumentKernelOp, build_document_registry
+    from forze_kits.document import DocumentKernelOp, build_document_registry
 
     registry = build_document_registry(project_spec, project_dtos)
     write_ops = [

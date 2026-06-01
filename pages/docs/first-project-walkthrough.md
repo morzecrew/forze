@@ -22,7 +22,7 @@ This guide walks through building a working CRUD service with Forze from scratch
 Every aggregate starts with four model types: a **domain model**, a **read model**, a **create command**, and an **update command**.
 
     :::python
-    from forze_patterns.soft_deletion import SoftDeletionMixin
+    from forze_kits.domain.soft_deletion import SoftDeletionMixin
     from forze.domain.models import (
         BaseDTO,
         CreateDocumentCmd,
@@ -159,7 +159,7 @@ Build a registry that wires handler factories for the spec, attach document rout
     :::python
     from fastapi import APIRouter, FastAPI
 
-    from forze.application.composition.document import (
+    from forze_kits.document import (
         DocumentDTOs,
         DocumentKernelOp,
         build_document_registry,
@@ -271,7 +271,7 @@ Optionally add a history table for audit trails:
     import uvicorn
     from fastapi import APIRouter, FastAPI
 
-    from forze.application.composition.document import (
+    from forze_kits.document import (
         DocumentDTOs,
         build_document_registry,
     )
@@ -283,7 +283,7 @@ Optionally add a history table for audit trails:
         ExecutionRuntime,
         LifecyclePlan,
     )
-    from forze_patterns.soft_deletion import SoftDeletionMixin
+    from forze_kits.domain.soft_deletion import SoftDeletionMixin
     from forze.domain.models import (
         BaseDTO,
         CreateDocumentCmd,

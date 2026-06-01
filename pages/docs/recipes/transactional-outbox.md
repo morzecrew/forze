@@ -1,21 +1,21 @@
 # Transactional outbox
 
-Publish integration events reliably with the outbox contracts and Postgres adapter.
+Publish integration events reliably with the outbox contracts and Postgres or Mongo adapters.
 
 ## Checklist
 
-1. Create the outbox table (see [Outbox contracts](../core-package/contracts/outbox.md#postgres-ddl-application-owned)), including `processing_at` for relay reclaim.
-2. Register `OutboxSpec` and `PostgresOutboxConfig` on `PostgresDepsModule`.
+1. Create the outbox store (Postgres table or Mongo collection + indexes; see [Outbox contracts](../core-package/contracts/outbox.md)).
+2. Register `OutboxSpec` and `PostgresOutboxConfig` or `MongoOutboxConfig` on the deps module.
 3. Register a `QueueSpec` for relay targets.
-4. Patch mutating operations with `bind_tx()` and `outbox_flush_tx_on_success_factory`.
-5. Run `relay_outbox_to_queue` from a background worker.
+4. Patch mutating operations with `bind_tx()` and `outbox_flush_tx_on_success_factory` (`.set_route("postgres")` or `"mongo")`).
+5. Run `relay_outbox_to_queue` from a background worker—or opt into `outbox_relay_background_lifecycle_step`.
 
-## Example
+## Postgres example
 
 ```python
 from pydantic import BaseModel
 
-from forze.application.composition.outbox import (
+from forze_kits.outbox import (
     outbox_flush_tx_on_success_factory,
     relay_outbox_to_queue,
 )
@@ -45,7 +45,26 @@ pg_module = PostgresDepsModule(
 )
 ```
 
-In the handler:
+## Mongo example
+
+Mongo outbox flush participates in the same **replica-set transaction** as document writes.
+
+```python
+from forze_mongo import MongoDepsModule
+from forze_mongo.execution.deps.configs import MongoOutboxConfig
+
+mongo_module = MongoDepsModule(
+    client=mongo_client,
+    tx={"default"},
+    outboxes={
+        "events": MongoOutboxConfig(collection=("app", "outbox")),
+    },
+)
+```
+
+Wire flush with `.set_route("mongo")` on patched operations.
+
+## Handler
 
 ```python
 async def create_project(self, cmd: CreateProjectCmd) -> ProjectRead:
@@ -59,10 +78,12 @@ async def create_project(self, cmd: CreateProjectCmd) -> ProjectRead:
 
 ## Worker loop
 
-Run relay on a schedule (cron, Temporal activity, or asyncio task). Tune `reclaim_stale_after` to exceed your worst-case relay duration (see `PostgresOutboxConfig.default_processing_lease`).
+Run relay on a schedule (cron, Temporal activity, asyncio task, or optional lifecycle step). Tune `reclaim_stale_after` to exceed your worst-case relay duration.
 
 ```python
 from datetime import timedelta
+
+from forze_kits.outbox import relay_outbox_to_queue
 
 async def relay_pending(ctx: ExecutionContext) -> None:
     result = await relay_outbox_to_queue(
@@ -74,20 +95,36 @@ async def relay_pending(ctx: ExecutionContext) -> None:
     # Log result.claimed, result.published, result.failed, result.reclaimed
 ```
 
-Pass `reclaim_stale_after=None` if you reclaim stale rows in a separate maintenance job.
+### Optional background lifecycle step
+
+For long-running processes (not serverless):
+
+```python
+from forze_kits.outbox import outbox_relay_background_lifecycle_step
+from forze.application.execution import LifecyclePlan
+
+lifecycle = LifecyclePlan.from_steps(
+    mongo_lifecycle_step(...),
+    outbox_relay_background_lifecycle_step(
+        outbox_spec=events_spec,
+        queue_spec=jobs_spec,
+        interval=timedelta(seconds=30),
+    ),
+)
+```
+
+Production deployments often prefer external schedulers over in-process polling.
 
 ## Consumer idempotency
 
-Relay delivers **at-least-once**. Handlers should treat `IntegrationEvent.event_id` (or an envelope field you copy into the queue message) as the deduplication key.
-
-## DDL migration
-
-If the outbox table predates reclaim support:
-
-```sql
-ALTER TABLE app.outbox ADD COLUMN IF NOT EXISTS processing_at TIMESTAMPTZ;
-```
+Relay delivers **at-least-once** and passes `key=str(event_id)` to the queue when supported. Handlers should deduplicate on `IntegrationEvent.event_id`.
 
 ## Failed rows
 
-Query `status = 'failed'` and `last_error` for operational review. Automatic retry is not built in—use a new `event_id`, fix the payload, or update/delete the row before re-staging.
+Query `status = 'failed'` and `last_error`, fix the cause, then:
+
+```python
+await ctx.outbox.query(events_spec).requeue_failed([row_id])
+```
+
+Or stage with a new `event_id` if the unique key must change.

@@ -86,3 +86,7 @@ class OutboxQueryPort(Protocol):
     ) -> Awaitable[int]:
         """Reset stuck processing rows to pending; returns rows updated."""
         ...  # pragma: no cover
+
+    def requeue_failed(self, ids: Sequence[UUID]) -> Awaitable[int]:
+        """Reset failed rows to pending for manual or automated re-drive."""
+        ...  # pragma: no cover

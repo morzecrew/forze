@@ -1,1 +1,1 @@
-"""Unit tests for forze.application.composition.mapping."""
+"""Unit tests for forze_kits.mapping."""

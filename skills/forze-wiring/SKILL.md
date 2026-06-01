@@ -119,7 +119,7 @@ async with runtime.scope():
 `build_document_registry` registers standard CRUD handlers. **Transactions are not implicit** — bind a transaction route on write operations, then **freeze** before HTTP attach:
 
 ```python
-from forze.application.composition.document import (
+from forze_kits.document import (
     DocumentDTOs,
     DocumentKernelOp,
     build_document_registry,
@@ -156,7 +156,7 @@ registry = (
 
 ```python
 from forze.application.contracts.execution import BeforeStep
-from forze.application.composition.document import DocumentKernelOp
+from forze_kits.document import DocumentKernelOp
 
 create_op = project_spec.default_namespace.key(DocumentKernelOp.CREATE)
 
@@ -254,7 +254,7 @@ app = FastAPI(lifespan=lifespan)
 Inject computed fields (e.g. `number_id`, `creator_id`) before the handler runs:
 
 ```python
-from forze.application.composition.document import build_document_create_mapper
+from forze_kits.document import build_document_create_mapper
 from forze.application.mapping import CreatorIdStep, NumberIdStep
 
 mapper = (
@@ -283,7 +283,7 @@ async with runtime.scope():
 ## Search composition
 
 ```python
-from forze.application.composition.search import SearchFacade, build_search_registry
+from forze_kits.search import SearchFacade, build_search_registry
 from forze.application.dto.search import SearchRequestDTO
 
 search_registry = build_search_registry(project_search_spec).freeze()

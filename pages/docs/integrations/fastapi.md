@@ -48,8 +48,8 @@ Configure routers from `DocumentSpec`, `DocumentDTOs`, `SearchDTOs`, `build_stor
 
 ```python
 from fastapi import APIRouter
-from forze.application.composition.document import DocumentDTOs, build_document_registry
-from forze.application.composition.storage import build_storage_registry
+from forze_kits.document import DocumentDTOs, build_document_registry
+from forze_kits.storage import build_storage_registry
 from forze.application.contracts.storage import StorageSpec
 from forze.base.primitives import str_key_selector
 from forze_fastapi.endpoints.document import attach_document_endpoints
@@ -130,7 +130,7 @@ app = FastAPI(lifespan=lifespan)
 
 | Layer | Module | Role |
 |-------|--------|------|
-| Registry | `forze.application.composition.*` | `build_*_registry`, `*KernelOp`, facades — frozen `OperationRegistry` with explicit operation keys |
+| Registry | `forze_kits.*` | `build_*_registry`, `*KernelOp`, facades — frozen `OperationRegistry` with explicit operation keys |
 | Bindings | `forze_fastapi.transport.http.bindings` | HTTP method, default path, response model, handler builder per operation |
 | Options | `forze_fastapi.transport.http.options` | Per-route `RouteOpts` and attach `config` (ETag, idempotency, token transport) |
 | Attach | `forze_fastapi.transport.http.attach` | `attach_*_routes`: `enable` loop, policies, `register_route` on `APIRouter` |
@@ -143,7 +143,7 @@ Legacy [`attach_*_endpoints`](../../src/forze_fastapi/endpoints/) (`endpoints={.
 
 ```python
 from fastapi import APIRouter
-from forze.application.composition.document import (
+from forze_kits.document import (
     DocumentFacade,
     DocumentKernelOp,
     build_document_registry,

@@ -36,7 +36,7 @@ class OutboxSpec[M](BaseSpec):
     """Payload record codec for staged integration events."""
 
     destination: OutboxDestination | None = None
-    """Optional default relay target for :func:`~forze.application.composition.outbox.relay_outbox_to_queue`."""
+    """Optional default relay target for :func:`~forze_kits.outbox.relay_outbox_to_queue`."""
 
     # ....................... #
 

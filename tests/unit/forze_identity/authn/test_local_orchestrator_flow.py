@@ -8,8 +8,8 @@ from uuid import UUID
 import pytest
 
 from forze.application.contracts.authn import ApiKeyCredentials, AuthnSpec
-from forze_identity.authn import AuthnOrchestrator, JwtNativeUuidResolver, LocalApiKeyVerifier
-from forze_identity.local import LocalIdentityConfig
+from forze_identity.authn import AuthnOrchestrator, JwtNativeUuidResolver
+from forze_identity.builtin.local import LocalApiKeyVerifier, LocalIdentityConfig
 
 pytestmark = pytest.mark.unit
 

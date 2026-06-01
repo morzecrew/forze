@@ -4,7 +4,7 @@ from datetime import timedelta
 
 import pytest
 
-from forze.application.kit import DistributedLockScope
+from forze_kits.runtime import DistributedLockScope
 from forze_redis.adapters import RedisDistributedLockAdapter
 
 
