@@ -10,19 +10,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Removed
 
 - **`forze_patterns`:** use `forze_kits.domain.*` (mixins, mapping steps, soft-deletion registry).
-- **`forze.application.composition`:** use `forze_kits.document`, `forze_kits.search`, `forze_kits.storage`, `forze_kits.authn`, `forze_kits.outbox`.
+- **`forze.application.composition`:** use `forze_kits.aggregates.document`, `forze_kits.aggregates.search`, `forze_kits.aggregates.storage`, `forze_kits.aggregates.authn`, `forze_kits.integrations.outbox`.
 - **`forze.application.kit`:** use `forze_kits.runtime` (`DistributedLockScope`).
-- **`forze_secrets`:** use `forze_kits.secrets` (`EnvSecrets`, `DirectorySecrets`, `MappingSecrets`, `SecretsDepsModule`).
+- **`forze_secrets`:** use `forze_kits.adapters.secrets` (`EnvSecrets`, `DirectorySecrets`, `MappingSecrets`, `SecretsDepsModule`).
 
 | Old import | New import |
 |------------|------------|
 | `forze_patterns.soft_deletion` | `forze_kits.domain.soft_deletion` |
-| `forze.application.composition.document` | `forze_kits.document` |
-| `forze.application.composition.outbox` | `forze_kits.outbox` |
+| `forze.application.composition.document` | `forze_kits.aggregates.document` |
+| `forze.application.composition.outbox` | `forze_kits.integrations.outbox` |
 | `forze.application.kit.DistributedLockScope` | `forze_kits.runtime.DistributedLockScope` |
-| `forze_secrets` | `forze_kits.secrets` |
+| `forze_secrets` | `forze_kits.adapters.secrets` |
 
 See [Kits reference](pages/docs/reference/kits.md).
+
+### Changed
+
+- **`forze_kits` layout:** modules live under `domain/`, `aggregates/`, `integration/`, `adapters/`, and `runtime/` (e.g. `forze_kits.aggregates.document`, `forze_kits.integrations.outbox`, `forze_kits.adapters.secrets`).
 
 ### Added
 
@@ -78,7 +82,7 @@ See [Kits reference](pages/docs/reference/kits.md).
 
 ### Added
 
-- **Outbox:** `forze.application.contracts.outbox` (`OutboxSpec`, `IntegrationEvent`, `OutboxCommandPort`, `OutboxQueryPort`, `OutboxDeps`); request-scoped staging via `OutboxStagingContext` and `OutboxStaging` (`forze.application.integrations.outbox`); `outbox_flush_tx_on_success_factory` and `relay_outbox_to_queue` in `forze_kits.outbox`; `PostgresOutboxAdapter` / `PostgresOutboxConfig` on `PostgresDepsModule`; `MockOutboxAdapter` on `MockDepsModule`.
+- **Outbox:** `forze.application.contracts.outbox` (`OutboxSpec`, `IntegrationEvent`, `OutboxCommandPort`, `OutboxQueryPort`, `OutboxDeps`); request-scoped staging via `OutboxStagingContext` and `OutboxStaging` (`forze.application.integrations.outbox`); `outbox_flush_tx_on_success_factory` and `relay_outbox_to_queue` in `forze_kits.integrations.outbox`; `PostgresOutboxAdapter` / `PostgresOutboxConfig` on `PostgresDepsModule`; `MockOutboxAdapter` on `MockDepsModule`.
 - **`forze.base`:** `GuardedLruRegistry` / `SimpleLruRegistry` detect reentrant `create` (fail fast instead of deadlocking on `init_lock`); bounded wait when a slot stays in the draining set; optional `timeout` on `InflightLane.run` / `CachedInflightLane`.
 - **Document coordinators:** `max_scan_pages`, `max_stream_pages`, and `max_chunked_command_pages` (default 100_000 each; set `None` for unlimited); cursor stream stall detection when `next_cursor` does not change.
 - **`forze_identity.authz`:** `fetch_all_document_hits` accepts `max_pages` (default 100_000).
@@ -487,7 +491,7 @@ Execution and mapping refactor, middleware-first approach for usecases, split se
 
 ### Changed
 
-- `DocumentOperation`, `DocumentUsecasesFacade` moved from `forze.application.facades` to `forze_kits.document`. `StorageOperation` moved to `forze.application.usecases.storage`. Facades package removed.
+- `DocumentOperation`, `DocumentUsecasesFacade` moved from `forze.application.facades` to `forze_kits.aggregates.document`. `StorageOperation` moved to `forze.application.usecases.storage`. Facades package removed.
 - `Effect`, `Guard`, `Middleware`, `NextCall` moved from `forze.application.execution.usecase` to `forze.application.execution.middleware`.
 - `Deps` constructor-based API: use `Deps(deps={...})` instead of `register`/`register_many`. Builder methods removed.
 - `Usecase` now requires `ctx: ExecutionContext`; `with_guards`/`with_effects` replaced by `with_middlewares`.
@@ -525,7 +529,7 @@ Execution and mapping refactor, middleware-first approach for usecases, split se
 - **Postgres, Redis, S3 restructure:** `dependencies/` removed; modules moved to `execution/` with `PostgresDepsModule`, `RedisDepsModule`, `S3DepsModule` (attrs-based classes) and lifecycle steps (`postgres_lifecycle_step`, `redis_lifecycle_step`, `s3_lifecycle_step`). Replace `postgres_module(client)` with `PostgresDepsModule(client=client)()` and similarly for redis/s3.
 - `DepRouter.from_deps` now accepts `DepsPort` and returns optional remainder.
 - Port resolvers `doc`, `counter`, `txmanager`, `storage` consolidated into `PortResolver` namespace class. Replace `doc(ctx, spec)` with `PortResolver.doc(ctx, spec)` and similarly for `counter`, `txmanager`, `storage`.
-- `DTOSpec` renamed to `DocumentDTOSpec` in `forze_kits.document`. Update imports accordingly.
+- `DTOSpec` renamed to `DocumentDTOSpec` in `forze_kits.aggregates.document`. Update imports accordingly.
 - Document router: request body params now use `Body(...)` with `override_annotations` for correct OpenAPI schema generation.
 - `ForzeAPIRouter` and `build_document_router` no longer accept idempotency parameters; idempotency is applied via custom route class and resolved from `ExecutionContext` via `IdempotencyDepKey`. Register your `IdempotencyDepPort` with the key.
 

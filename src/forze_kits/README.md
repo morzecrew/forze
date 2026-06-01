@@ -1,17 +1,30 @@
 # forze_kits
 
 Pre-built wiring above Forze contracts: domain field kits, aggregate registries and facades,
-integration flows, and runtime port ergonomics.
+integration flows, local port adapters, and runtime ergonomics.
+
+## Layout
+
+```text
+forze_kits/
+  domain/           # field/entity shape kits (mixins, mapping steps, …)
+  aggregates/       # document, search, storage, authn (registry + facade)
+  integration/      # outbox (notify planned)
+  adapters/         # secrets (local SecretsPort backends)
+  runtime/          # DistributedLockScope, …
+```
 
 ## Taxonomy
 
-| Area | Module | Use for |
-|------|--------|---------|
-| Domain shape | `forze_kits.domain.*` | Mixins, field constants, mapping steps, small handlers |
-| Aggregate kit | `forze_kits.document`, `search`, `storage`, `authn` | `OperationRegistry` builders, `*KernelOp`, facades |
-| Integration flow | `forze_kits.outbox` | Transactional outbox flush, relay, lifecycle (future: `notify`) |
-| Secrets (local) | `forze_kits.secrets` | Stdlib `SecretsPort` backends (env, directory, mapping) + `SecretsDepsModule` |
-| Runtime ergonomics | `forze_kits.runtime` | Single-port helpers (`DistributedLockScope`, …) |
+| Kind | Import path |
+|------|-------------|
+| Domain shape | `forze_kits.domain.*` |
+| Aggregate ops | `forze_kits.aggregates.{document,search,storage,authn}` |
+| Integration flow | `forze_kits.integrations.outbox` |
+| Local port adapter | `forze_kits.adapters.secrets` |
+| Runtime ergonomics | `forze_kits.runtime` |
+
+**Not in kits:** `forze_identity`, `forze_postgres`, `forze_vault`, and other full integration planes.
 
 ## Dependency rule
 
@@ -19,8 +32,8 @@ integration flows, and runtime port ergonomics.
 
 ## Adding a new kit
 
-1. Pick the row above (domain vs aggregate vs integration vs runtime).
-2. Add a subpackage under `src/forze_kits/` with `__init__.py` exports.
-3. Do not add new ports here—extend `forze.application.contracts` if a new capability is needed.
+1. Pick the folder (`domain`, `aggregates`, `integration`, `adapters`, `runtime`).
+2. Implement under that path with `__init__.py` exports.
+3. Do not add new ports here—extend `forze.application.contracts` when a new capability is needed.
 4. Add unit tests under `tests/unit/test_forze_kits/`.
 5. Document in `pages/docs/reference/kits.md`.

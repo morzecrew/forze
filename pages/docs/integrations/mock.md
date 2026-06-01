@@ -145,7 +145,7 @@ Access the state directly for test assertions:
 Replace real infrastructure modules with mock for local development or testing:
 
     :::python
-    from forze_kits.document import (
+    from forze_kits.aggregates.document import (
         DocumentDTOs,
         build_document_registry,
     )

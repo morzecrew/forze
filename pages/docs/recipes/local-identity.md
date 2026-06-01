@@ -91,4 +91,4 @@ Principal resolution reuses `JwtNativeUuidResolver` because the local verifier s
 
 - Keep the number of API keys small (linear scan with constant-time compare per entry).
 - Do not commit real secrets; use env-specific files ignored by git.
-- This is separate from [`forze_kits.secrets`](../reference/contracts.md) (`SecretsPort` resolves DSNs and peppers, not caller identity).
+- This is separate from [`forze_kits.adapters.secrets`](../reference/contracts.md) (`SecretsPort` resolves DSNs and peppers, not caller identity).

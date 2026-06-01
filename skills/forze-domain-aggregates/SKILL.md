@@ -169,7 +169,7 @@ CREATE TABLE public.projects (
 When using `build_document_registry` and FastAPI routers:
 
 ```python
-from forze_kits.document import DocumentDTOs
+from forze_kits.aggregates.document import DocumentDTOs
 
 project_dtos = DocumentDTOs(
     read=ProjectReadModel,

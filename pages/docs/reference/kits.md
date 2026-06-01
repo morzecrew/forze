@@ -7,15 +7,28 @@ summary: Pre-built wiring above Forze contracts (registries, facades, domain hel
 
 The **`forze_kits`** package ships with the default wheel. It provides canonical wiring above atomic contracts and handlers—without adding new ports. Core **`forze`** must not import **`forze_kits`**; your application imports both.
 
+## Layout
+
+```text
+forze_kits/
+  domain/           # mixins, mapping steps
+  aggregates/       # document, search, storage, authn
+  integration/      # outbox (notify planned)
+  adapters/         # secrets (local SecretsPort)
+  runtime/          # lock scopes, …
+```
+
+**`forze_identity`** and other integration packages stay **outside** `forze_kits` (full contract implementations, not glue).
+
 ## Taxonomy
 
-| Area | Module | Use for |
-|------|--------|---------|
-| Domain shape | `forze_kits.domain.*` | Mixins, field constants, mapping steps, small handlers |
-| Aggregate kit | `forze_kits.document`, `search`, `storage`, `authn` | `OperationRegistry` builders, `*KernelOp`, facades |
-| Integration flow | `forze_kits.outbox` | Transactional outbox flush, relay, lifecycle (`notify` planned) |
-| Secrets (local) | `forze_kits.secrets` | Stdlib `SecretsPort` backends + `SecretsDepsModule` |
-| Runtime ergonomics | `forze_kits.runtime` | Single-port helpers (`DistributedLockScope`, …) |
+| Kind | Import path |
+|------|-------------|
+| Domain shape | `forze_kits.domain.*` |
+| Aggregate ops | `forze_kits.aggregates.{document,search,storage,authn}` |
+| Integration flow | `forze_kits.integrations.outbox` |
+| Local port adapter | `forze_kits.adapters.secrets` |
+| Runtime ergonomics | `forze_kits.runtime` |
 
 Operation registry mechanics (`.bind()`, `.freeze()`, stage hooks) are documented under [Operation composition](../concepts/operation-composition.md)—that is **execution**, not this package.
 
@@ -24,13 +37,13 @@ Operation registry mechanics (`.bind()`, `.freeze()`, stage hooks) are documente
 | Removed | Use instead |
 |---------|-------------|
 | `forze_patterns.*` | `forze_kits.domain.*` |
-| `forze.application.composition.document` | `forze_kits.document` |
-| `forze.application.composition.search` | `forze_kits.search` |
-| `forze.application.composition.storage` | `forze_kits.storage` |
-| `forze.application.composition.authn` | `forze_kits.authn` |
-| `forze.application.composition.outbox` | `forze_kits.outbox` |
+| `forze.application.composition.document` | `forze_kits.aggregates.document` |
+| `forze.application.composition.search` | `forze_kits.aggregates.search` |
+| `forze.application.composition.storage` | `forze_kits.aggregates.storage` |
+| `forze.application.composition.authn` | `forze_kits.aggregates.authn` |
+| `forze.application.composition.outbox` | `forze_kits.integrations.outbox` |
 | `forze.application.kit` | `forze_kits.runtime` |
-| `forze_secrets` | `forze_kits.secrets` |
+| `forze_secrets` | `forze_kits.adapters.secrets` |
 
 ## Document kit
 
@@ -39,7 +52,7 @@ Operation registry mechanics (`.bind()`, `.freeze()`, stage hooks) are documente
 Creates an `OperationRegistry` pre-populated with standard document handler factories:
 
     :::python
-    from forze_kits.document import (
+    from forze_kits.aggregates.document import (
         DocumentDTOs,
         build_document_registry,
     )
@@ -55,7 +68,7 @@ Creates an `OperationRegistry` pre-populated with standard document handler fact
 Use `spec.default_namespace` with `DocumentKernelOp` when you need fully qualified operation keys. Bind transaction routes and freeze before FastAPI attach:
 
     :::python
-    from forze_kits.document import DocumentKernelOp
+    from forze_kits.aggregates.document import DocumentKernelOp
 
     write_ops = [
         project_spec.default_namespace.key(op)
@@ -74,7 +87,7 @@ Use `spec.default_namespace` with `DocumentKernelOp` when you need fully qualifi
 Typed facade exposing document operations as attributes (requires a frozen registry):
 
     :::python
-    from forze_kits.document import DocumentFacade
+    from forze_kits.aggregates.document import DocumentFacade
 
     facade = DocumentFacade(
         ctx=ctx,
@@ -105,14 +118,14 @@ Add stages with `.bind(...).bind_outer().before(...)` as needed, then `.freeze()
 ### `build_search_registry`
 
     :::python
-    from forze_kits.search import build_search_registry
+    from forze_kits.aggregates.search import build_search_registry
 
     search_registry = build_search_registry(search_spec).freeze()
 
 ### `SearchFacade`
 
     :::python
-    from forze_kits.search import SearchFacade
+    from forze_kits.aggregates.search import SearchFacade
 
     facade = SearchFacade(
         ctx=ctx,
@@ -133,14 +146,14 @@ Hub and federated search use `build_hub_search_registry` and `build_federated_se
 
 ## Outbox kit
 
-See [Outbox contracts](../core-package/contracts/outbox.md) and [Transactional outbox](../recipes/transactional-outbox.md). Helpers live in `forze_kits.outbox` (`outbox_flush_tx_on_success_factory`, `relay_outbox_to_queue`, `outbox_relay_background_lifecycle_step`).
+See [Outbox contracts](../core-package/contracts/outbox.md) and [Transactional outbox](../recipes/transactional-outbox.md). Helpers live in `forze_kits.integrations.outbox` (`outbox_flush_tx_on_success_factory`, `relay_outbox_to_queue`, `outbox_relay_background_lifecycle_step`).
 
 ## Secrets kit (local)
 
 Stdlib-backed implementations of [`SecretsPort`](../core-package/contracts.md) for local development and simple deployments. For HashiCorp Vault, use the `vault` extra (`forze_vault`) instead.
 
     :::python
-    from forze_kits.secrets import DirectorySecrets, EnvSecrets, MappingSecrets, SecretsDepsModule
+    from forze_kits.adapters.secrets import DirectorySecrets, EnvSecrets, MappingSecrets, SecretsDepsModule
 
     deps = SecretsDepsModule(secrets=EnvSecrets())
 

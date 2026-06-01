@@ -1,8 +1,8 @@
-"""Unit tests for forze_kits.document."""
+"""Unit tests for forze_kits.aggregates.document."""
 
 import pytest
 
-from forze_kits.document import (
+from forze_kits.aggregates.document import (
     DocumentDTOs,
     DocumentFacade,
     DocumentKernelOp,

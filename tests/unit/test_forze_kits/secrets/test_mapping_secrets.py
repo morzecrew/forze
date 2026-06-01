@@ -1,10 +1,10 @@
-"""Unit tests for :class:`~forze_kits.secrets.MappingSecrets`."""
+"""Unit tests for :class:`~forze_kits.adapters.secrets.MappingSecrets`."""
 
 import pytest
 
 from forze.application.contracts.secrets import SecretRef
 from forze.base.exceptions import CoreException
-from forze_kits.secrets import MappingSecrets
+from forze_kits.adapters.secrets import MappingSecrets
 
 # ----------------------- #
 

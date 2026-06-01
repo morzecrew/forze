@@ -1,13 +1,13 @@
-"""Tests for forze_kits.document.factories."""
+"""Tests for forze_kits.aggregates.document.factories."""
 
 import pytest
 
-from forze_kits.document import (
+from forze_kits.aggregates.document import (
     DocumentDTOs,
     DocumentKernelOp,
     build_document_registry,
 )
-from forze_kits.document.factories import (
+from forze_kits.aggregates.document.factories import (
     _default_create_mapper,
     _default_update_mapper,
 )

@@ -1,4 +1,4 @@
-"""Tests for :mod:`forze_kits.authn.facades`."""
+"""Tests for :mod:`forze_kits.aggregates.authn.facades`."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from forze_kits.authn import AuthnFacade, AuthnKernelOp, build_authn_registry
+from forze_kits.aggregates.authn import AuthnFacade, AuthnKernelOp, build_authn_registry
 from forze.application.contracts.authn import AuthnSpec
 from forze.application.execution.operations.facade import facade_op
 from forze.application.handlers.authn import AuthnPasswordLogin

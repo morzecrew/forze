@@ -187,7 +187,7 @@ Attach the dependency at the **router** level for the common case (every route s
 
 ```python
 from fastapi import APIRouter
-from forze_kits.authn import build_authn_registry
+from forze_kits.aggregates.authn import build_authn_registry
 from forze.base.primitives import str_key_selector
 from forze_fastapi.endpoints.authn import (
     CookieTokenTransportSpec,

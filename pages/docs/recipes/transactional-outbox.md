@@ -15,7 +15,7 @@ Publish integration events reliably with the outbox contracts and Postgres or Mo
 ```python
 from pydantic import BaseModel
 
-from forze_kits.outbox import (
+from forze_kits.integrations.outbox import (
     outbox_flush_tx_on_success_factory,
     relay_outbox_to_queue,
 )
@@ -83,7 +83,7 @@ Run relay on a schedule (cron, Temporal activity, asyncio task, or optional life
 ```python
 from datetime import timedelta
 
-from forze_kits.outbox import relay_outbox_to_queue
+from forze_kits.integrations.outbox import relay_outbox_to_queue
 
 async def relay_pending(ctx: ExecutionContext) -> None:
     result = await relay_outbox_to_queue(
@@ -100,7 +100,7 @@ async def relay_pending(ctx: ExecutionContext) -> None:
 For long-running processes (not serverless):
 
 ```python
-from forze_kits.outbox import outbox_relay_background_lifecycle_step
+from forze_kits.integrations.outbox import outbox_relay_background_lifecycle_step
 from forze.application.execution import LifecyclePlan
 
 lifecycle = LifecyclePlan.from_steps(

@@ -1,6 +1,6 @@
-"""Unit tests for forze_kits.storage."""
+"""Unit tests for forze_kits.aggregates.storage."""
 
-from forze_kits.storage import (
+from forze_kits.aggregates.storage import (
     StorageFacade,
     StorageKernelOp,
     build_storage_registry,

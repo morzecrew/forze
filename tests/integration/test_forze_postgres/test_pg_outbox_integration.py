@@ -16,7 +16,6 @@ from psycopg import sql
 from psycopg.types.json import Jsonb
 from pydantic import BaseModel
 
-from forze_kits.outbox import relay_outbox_to_queue
 from forze.application.contracts.outbox import (
     IntegrationEvent,
     OutboxDestination,
@@ -31,6 +30,7 @@ from forze.application.contracts.queue import (
 from forze.application.execution import Deps, DepsRegistry, ExecutionRuntime
 from forze.base.primitives import utcnow
 from forze.base.serialization import PydanticRecordMappingCodec
+from forze_kits.integrations.outbox import relay_outbox_to_queue
 from forze_mock import MockStateDepKey
 from forze_mock.adapters import MockState
 from forze_mock.execution.module import ConfigurableMockQueue, MockDepsModule

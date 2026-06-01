@@ -6,8 +6,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 from pydantic import BaseModel
 
-from forze_kits.search import SearchKernelOp
-from forze_kits.search.factories import (
+from forze_kits.aggregates.search import SearchKernelOp
+from forze_kits.aggregates.search.factories import (
     build_hub_search_registry,
     build_search_registry,
 )

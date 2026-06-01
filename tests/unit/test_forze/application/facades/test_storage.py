@@ -7,7 +7,7 @@ import pytest
 
 from forze.base.exceptions import CoreException
 
-from forze_kits.storage import StorageFacade, StorageKernelOp
+from forze_kits.aggregates.storage import StorageFacade, StorageKernelOp
 from forze.application.contracts.execution import Handler
 from forze.application.execution.operations.registry import OperationRegistry
 from forze.application.handlers.storage.dto import (

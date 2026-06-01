@@ -8,17 +8,17 @@ from uuid import uuid4
 import pytest
 from pydantic import BaseModel
 
-from forze_kits.outbox import relay_outbox_to_queue
 from forze.application.contracts.outbox import (
     IntegrationEvent,
     OutboxDestination,
     OutboxSpec,
     OutboxStatus,
 )
-from forze.base.primitives import utcnow
 from forze.application.contracts.queue import QueueSpec
 from forze.application.execution import DepsRegistry, ExecutionRuntime
+from forze.base.primitives import utcnow
 from forze.base.serialization import PydanticRecordMappingCodec
+from forze_kits.integrations.outbox import relay_outbox_to_queue
 from forze_mock import MockDepsModule, MockStateDepKey
 from forze_mock.outbox_adapter import MockOutboxRow
 

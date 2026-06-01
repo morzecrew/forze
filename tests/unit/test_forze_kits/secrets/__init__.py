@@ -1,1 +1,1 @@
-"""Unit tests for forze_kits.secrets."""
+"""Unit tests for forze_kits.adapters.secrets."""

@@ -22,7 +22,7 @@ Transactional outbox for **integration events**: stage in the same database tran
 Wire **tx `on_success`** to flush before commit:
 
 ```python
-from forze_kits.outbox import outbox_flush_tx_on_success_factory
+from forze_kits.integrations.outbox import outbox_flush_tx_on_success_factory
 from forze.application.contracts.execution import OnSuccessStep
 
 registry.patch("my.op").bind_tx().set_route("postgres").on_success(
@@ -53,7 +53,7 @@ Use `.set_route("mongo")` with `MongoTxScopeKey` when flushing via `MongoDepsMod
 ```python
 from datetime import timedelta
 
-from forze_kits.outbox import relay_outbox_to_queue
+from forze_kits.integrations.outbox import relay_outbox_to_queue
 
 result = await relay_outbox_to_queue(
     ctx,
@@ -69,7 +69,7 @@ Delivery is **at-least-once**: each claim is enqueued with `key=str(event_id)` w
 Optional in-process polling (long-running apps only):
 
 ```python
-from forze_kits.outbox import outbox_relay_background_lifecycle_step
+from forze_kits.integrations.outbox import outbox_relay_background_lifecycle_step
 ```
 
 Run from a worker, cron, or background lifecycle step. See [Transactional outbox recipe](../../recipes/transactional-outbox.md).

@@ -9,12 +9,12 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from pydantic import BaseModel
 
-from forze_kits.outbox import outbox_relay_background_lifecycle_step
-from forze_kits.outbox.lifecycle import _OutboxRelayBackgroundStartup
 from forze.application.contracts.outbox import OutboxSpec
 from forze.application.contracts.queue import QueueSpec
 from forze.application.execution import DepsRegistry, ExecutionRuntime
 from forze.base.serialization import PydanticRecordMappingCodec
+from forze_kits.integrations.outbox import outbox_relay_background_lifecycle_step
+from forze_kits.integrations.outbox.lifecycle import _OutboxRelayBackgroundStartup
 from forze_mock import MockDepsModule
 
 
@@ -38,7 +38,7 @@ async def test_background_lifecycle_starts_and_stops_task() -> None:
     runtime = ExecutionRuntime(deps=DepsRegistry.from_modules(MockDepsModule()))
 
     with patch(
-        "forze_kits.outbox.lifecycle.relay_outbox_to_queue",
+        "forze_kits.integrations.outbox.lifecycle.relay_outbox_to_queue",
         relay_mock,
     ):
         async with runtime.scope():

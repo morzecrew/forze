@@ -40,8 +40,8 @@ Attach routes to standard FastAPI `APIRouter` instances.
 ```python
 from fastapi import APIRouter
 
-from forze_kits.document import DocumentDTOs, build_document_registry
-from forze_kits.search import SearchDTOs, build_search_registry
+from forze_kits.aggregates.document import DocumentDTOs, build_document_registry
+from forze_kits.aggregates.search import SearchDTOs, build_search_registry
 from forze.base.primitives import str_key_selector
 from forze_fastapi.endpoints.document import attach_document_endpoints
 from forze_fastapi.endpoints.search import attach_search_endpoints
@@ -87,10 +87,10 @@ Document routes are attached only when the spec/DTOs support the operation. Use 
 
 ## Pre-built authn endpoints
 
-`forze_fastapi.endpoints.authn.attach_authn_endpoints` registers configurable login/refresh/logout/change-password routes resolved from a **frozen** `OperationRegistry` (`forze_kits.authn.build_authn_registry`). Configure access/refresh transports per token type:
+`forze_fastapi.endpoints.authn.attach_authn_endpoints` registers configurable login/refresh/logout/change-password routes resolved from a **frozen** `OperationRegistry` (`forze_kits.aggregates.authn.build_authn_registry`). Configure access/refresh transports per token type:
 
 ```python
-from forze_kits.authn import build_authn_registry
+from forze_kits.aggregates.authn import build_authn_registry
 from forze.base.primitives import str_key_selector
 from forze_fastapi.endpoints.authn import (
     CookieTokenTransportSpec,

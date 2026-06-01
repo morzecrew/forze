@@ -48,8 +48,8 @@ Configure routers from `DocumentSpec`, `DocumentDTOs`, `SearchDTOs`, `build_stor
 
 ```python
 from fastapi import APIRouter
-from forze_kits.document import DocumentDTOs, build_document_registry
-from forze_kits.storage import build_storage_registry
+from forze_kits.aggregates.document import DocumentDTOs, build_document_registry
+from forze_kits.aggregates.storage import build_storage_registry
 from forze.application.contracts.storage import StorageSpec
 from forze.base.primitives import str_key_selector
 from forze_fastapi.endpoints.document import attach_document_endpoints
@@ -143,7 +143,7 @@ Legacy [`attach_*_endpoints`](../../src/forze_fastapi/endpoints/) (`endpoints={.
 
 ```python
 from fastapi import APIRouter
-from forze_kits.document import (
+from forze_kits.aggregates.document import (
     DocumentFacade,
     DocumentKernelOp,
     build_document_registry,

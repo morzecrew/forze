@@ -1,6 +1,6 @@
-"""Tests for :mod:`forze_kits.authn.operations`."""
+"""Tests for :mod:`forze_kits.aggregates.authn.operations`."""
 
-from forze_kits.authn import AuthnKernelOp
+from forze_kits.aggregates.authn import AuthnKernelOp
 
 
 class TestAuthnKernelOp:

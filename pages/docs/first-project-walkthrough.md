@@ -159,7 +159,7 @@ Build a registry that wires handler factories for the spec, attach document rout
     :::python
     from fastapi import APIRouter, FastAPI
 
-    from forze_kits.document import (
+    from forze_kits.aggregates.document import (
         DocumentDTOs,
         DocumentKernelOp,
         build_document_registry,
@@ -271,7 +271,7 @@ Optionally add a history table for audit trails:
     import uvicorn
     from fastapi import APIRouter, FastAPI
 
-    from forze_kits.document import (
+    from forze_kits.aggregates.document import (
         DocumentDTOs,
         build_document_registry,
     )

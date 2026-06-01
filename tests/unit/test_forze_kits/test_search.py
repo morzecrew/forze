@@ -1,6 +1,6 @@
-"""Unit tests for forze_kits.search."""
+"""Unit tests for forze_kits.aggregates.search."""
 
-from forze_kits.search import (
+from forze_kits.aggregates.search import (
     SearchFacade,
     SearchKernelOp,
     build_search_registry,

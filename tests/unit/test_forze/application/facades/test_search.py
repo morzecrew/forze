@@ -5,7 +5,7 @@ import pytest
 
 from forze.base.exceptions import CoreException
 
-from forze_kits.search import SearchFacade, SearchKernelOp
+from forze_kits.aggregates.search import SearchFacade, SearchKernelOp
 from forze.application.contracts.execution import Handler
 from forze.application.execution.operations.registry import OperationRegistry
 from forze.application.handlers.search.dto import SearchRequestDTO

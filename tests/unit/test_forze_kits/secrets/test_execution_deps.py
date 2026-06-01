@@ -1,7 +1,7 @@
-"""Unit tests for :class:`~forze_kits.secrets.SecretsDepsModule`."""
+"""Unit tests for :class:`~forze_kits.adapters.secrets.SecretsDepsModule`."""
 
 from forze.application.contracts.secrets import SecretsDepKey
-from forze_kits.secrets import MappingSecrets, SecretsDepsModule
+from forze_kits.adapters.secrets import MappingSecrets, SecretsDepsModule
 
 # ----------------------- #
 

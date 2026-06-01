@@ -5,10 +5,10 @@ from __future__ import annotations
 import pytest
 from pydantic import BaseModel
 
-from forze_kits.outbox import outbox_flush_tx_on_success_factory
 from forze.application.contracts.outbox import OutboxSpec
 from forze.application.execution import DepsRegistry, ExecutionRuntime
 from forze.base.serialization import PydanticRecordMappingCodec
+from forze_kits.integrations.outbox import outbox_flush_tx_on_success_factory
 from forze_mock import MockDepsModule, MockStateDepKey
 
 

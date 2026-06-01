@@ -7,7 +7,7 @@ from pydantic import BaseModel
 
 from forze.application.contracts.secrets import SecretRef, resolve_structured
 from forze.base.exceptions import CoreException
-from forze_kits.secrets import DirectorySecrets, EnvSecrets, MappingSecrets
+from forze_kits.adapters.secrets import DirectorySecrets, EnvSecrets, MappingSecrets
 
 # ----------------------- #
 

@@ -1,4 +1,4 @@
-"""Tests for :mod:`forze_kits.authn.factories`."""
+"""Tests for :mod:`forze_kits.aggregates.authn.factories`."""
 
 from __future__ import annotations
 
@@ -8,8 +8,8 @@ from uuid import uuid4
 
 import pytest
 
-from forze_kits.authn import AuthnKernelOp, build_authn_registry
-from forze_kits.authn.factories import build_authn_registry as build_registry
+from forze_kits.aggregates.authn import AuthnKernelOp, build_authn_registry
+from forze_kits.aggregates.authn.factories import build_authn_registry as build_registry
 from forze.application.contracts.authn import (
     AuthnDepKey,
     AuthnResult,
