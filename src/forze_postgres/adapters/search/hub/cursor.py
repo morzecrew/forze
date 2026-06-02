@@ -23,19 +23,18 @@ from forze.application.contracts.querying import (
 from forze.application.contracts.search import (
     SearchOptions,
     cursor_return_fields_for_select,
-    normalize_search_queries,
-    prepare_hub_search_options,
 )
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
 
+from .._cursor_run import parse_search_cursor
 from .._materialize_hits import decode_search_hits, search_trust_source
-from forze_postgres.kernel.sql import build_seek_condition
+from forze_postgres.kernel.sql import build_ranked_cursor_order_by_sql, build_seek_condition
 from forze_postgres.kernel.sql.query.nested import sort_key_expr
 
-from .._cursor_run import parse_search_cursor
 from .constants import COMBO_ALIAS, HUB_RANK
 from .parallel import HubParallelSearchMixin
+from .plan import build_hub_search_plan
 
 # ----------------------- #
 
@@ -44,7 +43,7 @@ T = TypeVar("T", bound=BaseModel)
 # ....................... #
 
 
-class HubSearchCursorMixin[M: BaseModel](HubParallelSearchMixin[M]):
+class HubSearchCursorMixin[T: BaseModel](HubParallelSearchMixin[T]):
     """Keyset cursor over the hub ``combo`` CTE."""
 
     async def _cursor_search_impl(
@@ -74,64 +73,42 @@ class HubSearchCursorMixin[M: BaseModel](HubParallelSearchMixin[M]):
         internally and stripped from the response.
         """
 
-        terms = normalize_search_queries(query)
-
-        leg_options, member_weights_list = prepare_hub_search_options(
-            self._hub_host.hub_spec,
-            options,
+        plan = await build_hub_search_plan(
+            self._hub_host,
+            query=query,
+            options=options,
+            sorts=sorts,
+            pagination_or_cursor=dict(cursor or {}),
+            snapshot=None,
+            result_snapshot=None,
+            mode="cursor",
         )
+
+        if plan.use_parallel:
+            return await self._hub_parallel_cursor_search(
+                plan=plan,
+                filters=filters,
+                cursor=cursor,
+                return_type=return_type,
+                return_fields=return_fields,
+                hub_spec=self._hub_host.hub_spec,
+            )
 
         c = dict(cursor or {})
         lim, use_after, use_before = parse_search_cursor(cursor)
 
-        from .._pgroonga_plan import effective_combo_limit
-
-        terms_tuple = tuple(terms)
-        active = [i for i, w in enumerate(member_weights_list) if w > 0.0]
-        do_legs_parallel = bool(terms_tuple) and bool(active)
-
-        if getattr(self._hub_host, "execution", "sql") == "parallel" and do_legs_parallel:
-            return await self._hub_parallel_cursor_search(
-                query=query,
-                filters=filters,
-                cursor=cursor,
-                sorts=sorts,
-                options=options,
-                return_type=return_type,
-                return_fields=return_fields,
-                hub_spec=self._hub_host.hub_spec,
-                member_weights_list=member_weights_list,
-            )
-
-        hub_spec = self._hub_host.hub_spec
-        rs_spec = hub_spec.snapshot
-        effective_sorts = sorts if sorts else hub_spec.default_sort
-
-        resolved_combo = effective_combo_limit(
-            config_limit=getattr(self._hub_host, "combo_limit", None),
-            per_leg_limit=self._hub_host.per_leg_limit,
-            options=leg_options,
-            pagination=dict(cursor or {}),
-            snapshot=None,
-            result_snapshot=None,
-            rs_spec=rs_spec,
-        )
+        combo_cap = plan.resolved_combo if plan.terms else None
 
         with_clause, params, do_legs, _count_rel, data_relation = (
-            await self._hub_build_with_clause(
-                query_terms=terms,
+            await self._hub_build_with_clause_from_plan(
+                plan,
                 filters=filters,
-                leg_options=leg_options,
-                member_weights_list=member_weights_list,
-                per_leg_limit=self._hub_host.per_leg_limit,
-                combo_limit=resolved_combo if terms else None,
-                sorts=effective_sorts,
+                combo_limit=combo_cap,
             )
         )
 
-        key_spec = self._hub_cursor_key_spec(do_legs=do_legs, sorts=sorts)
-        sort_keys = [k for k, _ in key_spec]
-        directions = [d for _, d in key_spec]
+        sort_keys = [k for k, _ in plan.order_key_spec]
+        directions = [d for _, d in plan.order_key_spec]
 
         types = await self._hub_host.column_types()
         exprs: list[sql.Composable] = []
@@ -173,10 +150,11 @@ class HubSearchCursorMixin[M: BaseModel](HubParallelSearchMixin[M]):
             where_fin = sk
             params = params + sp
 
-        order_sql = self._hub_cursor_order_sql(
+        order_sql = build_ranked_cursor_order_by_sql(
             exprs,
             sort_keys,
             directions,
+            rank_key=HUB_RANK,
             flip=use_before,
         )
 

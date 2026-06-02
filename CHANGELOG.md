@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Postgres hub search:** canonical combo merge/order/cursor semantics in `hub/semantics.py` and per-request `HubSearchPlan`; SQL and `execution: parallel` paths share the same rules (removed `hub/parallel_merge.py`).
 - **Search (offset + snapshots):** Postgres, Mongo, and Meilisearch simple offset search share orchestration in `forze.application.integrations.search.offset_executor`; Meilisearch snapshot writes now use the same capped pool window and in-memory page slice as SQL/document backends.
 - **Persistence gateways:** Mongo, Firestore, and Postgres gateways share codec, filter-parser, and tenant-relation helpers via `forze.application.integrations.persistence.gateway_mixins`.
 - **Routed clients:** Postgres, Redis, GCS, and BigQuery tenant-routed clients share pooling/fingerprint scaffolding in `forze.application.contracts.tenancy.routed_client_base` (`StructuredSecretRoutedTenantClientBase` with per-integration `credential_fingerprint` hooks).

@@ -43,6 +43,8 @@ class HubSearchHost(Protocol[M]):
     combine: Literal["or", "and"]
     score_merge: Literal["max", "sum"]
     per_leg_limit: int
+    execution: Literal["sql", "parallel"]
+    combo_limit: int | None
     read_fields: frozenset[str]
     model_type: type[M]
     nested_field_hints: Mapping[str, Any] | None

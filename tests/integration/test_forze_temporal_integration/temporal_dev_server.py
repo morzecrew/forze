@@ -1,5 +1,7 @@
 """Helpers for Temporal ``server start-dev`` testcontainers."""
 
+from __future__ import annotations
+
 import time
 import urllib.error
 import urllib.request

@@ -9,8 +9,12 @@ from forze.application.contracts.search import (
     SearchCommandDepKey,
     SearchQueryDepKey,
 )
-from forze.application.contracts.tenancy import warn_dynamic_relation_with_tenant_aware
+from forze.application.contracts.tenancy import (
+    warn_dynamic_relation_with_tenant_aware,
+    warn_integration_routes,
+)
 from forze.application.execution import Deps, DepsModule
+from forze.application.execution.deps.builders import merge_deps, routed_from_mapping
 from forze.base.primitives import StrKey
 from forze_meilisearch.execution.deps.configs import (
     MeilisearchFederatedSearchConfig,
@@ -24,6 +28,8 @@ from forze_meilisearch.execution.deps.factories import (
 from forze_meilisearch.execution.deps.keys import MeilisearchClientDepKey
 from forze_meilisearch.kernel._logger import logger
 from forze_meilisearch.kernel.client.port import MeilisearchClientPort
+
+from ._warnings import MEILISEARCH_SEARCH_WARNING
 
 # ----------------------- #
 
@@ -46,16 +52,12 @@ class MeilisearchDepsModule(DepsModule):
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
-        if self.searches:
-            for name, cfg in self.searches.items():
-                warn_dynamic_relation_with_tenant_aware(
-                    integration="Meilisearch",
-                    route_name=str(name),
-                    kind="search",
-                    tenant_aware=cfg.tenant_aware,
-                    named_fields=[("index_uid", cfg.index_uid)],
-                    log_warning=logger.warning,
-                )
+        warn_integration_routes(
+            integration="Meilisearch",
+            routes=self.searches,
+            warning=MEILISEARCH_SEARCH_WARNING,
+            log_warning=logger.warning,
+        )
 
         if self.federated_searches:
             for fed_name, fed_cfg in self.federated_searches.items():
@@ -72,36 +74,17 @@ class MeilisearchDepsModule(DepsModule):
     # ....................... #
 
     def __call__(self) -> Deps:
-        plain = Deps.plain({MeilisearchClientDepKey: self.client})
-        search_deps = Deps()
-        fed_deps = Deps()
-
-        if self.searches:
-            search_deps = search_deps.merge(
-                Deps.routed(
-                    {
-                        SearchQueryDepKey: {
-                            name: ConfigurableMeilisearchSearch(config=config)
-                            for name, config in self.searches.items()
-                        },
-                        SearchCommandDepKey: {
-                            name: ConfigurableMeilisearchSearchCommand(config=config)
-                            for name, config in self.searches.items()
-                        },
-                    }
-                )
-            )
-
-        if self.federated_searches:
-            fed_deps = fed_deps.merge(
-                Deps.routed(
-                    {
-                        FederatedSearchQueryDepKey: {
-                            name: ConfigurableMeilisearchFederatedSearch(config=config)
-                            for name, config in self.federated_searches.items()
-                        }
-                    }
-                )
-            )
-
-        return plain.merge(search_deps, fed_deps)
+        return merge_deps(
+            routed_from_mapping(
+                self.searches,
+                bindings=[
+                    (SearchQueryDepKey, ConfigurableMeilisearchSearch),
+                    (SearchCommandDepKey, ConfigurableMeilisearchSearchCommand),
+                ],
+            ),
+            routed_from_mapping(
+                self.federated_searches,
+                bindings=[(FederatedSearchQueryDepKey, ConfigurableMeilisearchFederatedSearch)],
+            ),
+            plain={MeilisearchClientDepKey: self.client},
+        )

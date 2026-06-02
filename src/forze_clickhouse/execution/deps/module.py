@@ -9,6 +9,7 @@ from forze.application.contracts.analytics import (
     AnalyticsQueryDepKey,
 )
 from forze.application.execution import Deps, DepsModule
+from forze.application.execution.deps.builders import merge_deps, routed_from_mapping
 from forze.base.primitives import StrKey
 
 from ...kernel.client import ClickHouseClientPort
@@ -35,24 +36,13 @@ class ClickHouseDepsModule(DepsModule):
     # ....................... #
 
     def __call__(self) -> Deps:
-        plain_deps = Deps.plain({ClickHouseClientDepKey: self.client})
-        analytics_deps = Deps()
-
-        if self.analytics:
-            factory = ConfigurableClickHouseAnalytics
-            analytics_deps = analytics_deps.merge(
-                Deps.routed(
-                    {
-                        AnalyticsQueryDepKey: {
-                            name: factory(config=config)
-                            for name, config in self.analytics.items()
-                        },
-                        AnalyticsIngestDepKey: {
-                            name: factory(config=config)
-                            for name, config in self.analytics.items()
-                        },
-                    }
-                )
-            )
-
-        return plain_deps.merge(analytics_deps)
+        return merge_deps(
+            routed_from_mapping(
+                self.analytics,
+                bindings=[
+                    (AnalyticsQueryDepKey, ConfigurableClickHouseAnalytics),
+                    (AnalyticsIngestDepKey, ConfigurableClickHouseAnalytics),
+                ],
+            ),
+            plain={ClickHouseClientDepKey: self.client},
+        )

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Any, Literal, Sequence, TypeVar, cast
+from typing import Any, Sequence, TypeVar, cast
 
 from psycopg import sql
 from pydantic import BaseModel
@@ -19,31 +19,21 @@ from forze.application.contracts.querying import (
     row_passes_keyset_seek,
     row_value_for_sort_key,
 )
-from forze.application.contracts.search import (
-    HubSearchSpec,
-    SearchOptions,
-    SearchResultSnapshotOptions,
-    normalize_search_queries,
-    prepare_hub_search_options,
-)
+from forze.application.contracts.search import SearchOptions, SearchResultSnapshotOptions
 from forze.application.integrations.search import SearchResultSnapshot
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
 
 from .._cursor_run import parse_search_cursor
 from .._materialize_hits import decode_search_hits, materialize_search_page, search_trust_source
-from .._pgroonga_plan import effective_combo_limit
-from .._search_count import effective_search_count, resolve_ranked_approximate_total
+from .._search_count import resolve_ranked_approximate_total
 from ._leg_sql import HubLegSqlContext, build_hub_cte, build_hub_leg_sql_parts
 from ._typing_host import HubSearchHost
 from .constants import HUB_CTE, HUB_RANK, HUB_ROW_ALIAS, LEG_EID, LEG_SCORE
 from .merge import hub_row_for_materialize
-from .parallel_merge import (
-    merge_hub_combo_rows,
-    merge_hub_leg_row_lists,
-    sort_merged_hub_rows,
-)
+from .plan import HubSearchPlan
 from .runtime import HubLegRuntime
+from .semantics import merge_hub_combo_rows, merge_hub_leg_row_lists, sort_hub_rows
 from .sql import HubSearchSqlMixin, hub_leg_order_limit
 
 M = TypeVar("M", bound=BaseModel)
@@ -56,28 +46,21 @@ class HubParallelSearchMixin(HubSearchSqlMixin[M]):
 
     async def _hub_parallel_merged_rows(
         self,
+        plan: HubSearchPlan,
         *,
-        query_terms: tuple[str, ...],
         filters: QueryFilterExpression | None,
-        leg_options: SearchOptions | None,
-        member_weights_list: Sequence[float],
-        per_leg_limit: int,
-        effective_sorts: QuerySortExpression | None,  # type: ignore[valid-type]
     ) -> list[dict[str, Any]]:
         host = cast(HubSearchHost[M], self)
+
+        if not plan.do_legs:
+            return []
 
         fw, fp = await host.where_clause(filters)
         tenant_id = host._tenant_id_for_resolve()  # type: ignore[protected-access]
         hub_qn = await host._qname()  # type: ignore[protected-access]
 
-        active = [
-            (i, leg, float(member_weights_list[i]))
-            for i, leg in enumerate(host.members)
-            if member_weights_list[i] > 0.0
-        ]
-
-        if not query_terms or not active:
-            return []
+        active = list(plan.active)
+        per_leg_limit = plan.per_leg_limit
 
         hub_cols = sql.SQL(", ").join(
             sql.Identifier(HUB_ROW_ALIAS, f) for f in sorted(host.read_fields)
@@ -88,8 +71,8 @@ class HubParallelSearchMixin(HubSearchSqlMixin[M]):
             hub_rel_ident=hub_qn.ident(),
             fw=fw,
             tenant_id=tenant_id,
-            query_terms=query_terms,
-            leg_options=leg_options,
+            query_terms=plan.terms,
+            leg_options=plan.leg_options,
             per_leg_limit=per_leg_limit,
             introspector=host.introspector,
             vector_embedders=dict(host.vector_embedders),
@@ -202,11 +185,11 @@ class HubParallelSearchMixin(HubSearchSqlMixin[M]):
             weights = [w for _, _, w in active]
             merged = merge_hub_leg_row_lists(
                 leg_rows=leg_row_lists,
-                legs=[leg for _, leg, _ in active],
                 weights=weights,
-                score_merge=host.score_merge,  # type: ignore[arg-type]
-                combine=host.combine,  # type: ignore[arg-type]
-                read_fields=host.read_fields,
+                score_merge=plan.score_merge,
+                combine=plan.combine,
+                read_fields=plan.read_fields,
+                rank_field=plan.rank_field,
             )
 
         else:
@@ -236,21 +219,13 @@ class HubParallelSearchMixin(HubSearchSqlMixin[M]):
                 hub_rows=hub_rows,
                 leg_ranked=leg_ranked,
                 weights=weights,
-                score_merge=host.score_merge,  # type: ignore[arg-type]
-                combine=host.combine,  # type: ignore[arg-type]
-                read_fields=host.read_fields,
+                score_merge=plan.score_merge,
+                combine=plan.combine,
+                read_fields=plan.read_fields,
+                rank_field=plan.rank_field,
             )
 
-        types = await host.column_types()
-        sort_merged_hub_rows(
-            merged,
-            do_legs=True,
-            sorts=effective_sorts,
-            read_fields=host.read_fields,
-            column_types=types,
-            model_type=host.model_type,
-            nested_field_hints=host.nested_field_hints,
-        )
+        sort_hub_rows(merged, key_spec=plan.order_key_spec)
         return merged
 
     # ....................... #
@@ -258,6 +233,7 @@ class HubParallelSearchMixin(HubSearchSqlMixin[M]):
     async def _hub_parallel_offset_search(
         self,
         *,
+        plan: HubSearchPlan,
         query: str | Sequence[str],
         filters: QueryFilterExpression | None,
         pagination: PaginationExpression | None,
@@ -267,43 +243,16 @@ class HubParallelSearchMixin(HubSearchSqlMixin[M]):
         return_count: bool,
         return_type: type[BaseModel] | None,
         return_fields: Sequence[str] | None,
-        hub_spec: HubSearchSpec[M],
-        members: Sequence[HubLegRuntime],
-        vector_embedders: dict[int, Any],
-        member_weights_list: Sequence[float],
-        score_merge: Literal["max", "sum"],
-        combine: Literal["or", "and"],
-        per_leg_limit: int,
-        combo_limit_config: int | None,
+        hub_spec: Any,
         result_snapshot: SearchResultSnapshot | None,
     ) -> Any:
-        _ = members, vector_embedders, score_merge, combine
+        _ = query, sorts, options, snapshot
         host = cast(HubSearchHost[M], self)
-        terms = tuple(normalize_search_queries(query))
-        leg_options = options
-        effective_sorts = sorts if sorts else hub_spec.default_sort
 
-        merged = await self._hub_parallel_merged_rows(
-            query_terms=terms,
-            filters=filters,
-            leg_options=leg_options,
-            member_weights_list=member_weights_list,
-            per_leg_limit=per_leg_limit,
-            effective_sorts=effective_sorts,
-        )
+        merged = await self._hub_parallel_merged_rows(plan, filters=filters)
 
-        rs_spec = hub_spec.snapshot
-        resolved_combo = effective_combo_limit(
-            config_limit=combo_limit_config,
-            per_leg_limit=per_leg_limit,
-            options=options,
-            pagination=dict(pagination or {}),
-            snapshot=snapshot,
-            result_snapshot=result_snapshot,
-            rs_spec=rs_spec,
-        )
-
-        count_policy = effective_search_count(options)
+        resolved_combo = plan.resolved_combo
+        count_policy = plan.count_policy
         total = 0
 
         if return_count and count_policy != "none":
@@ -319,13 +268,9 @@ class HubParallelSearchMixin(HubSearchSqlMixin[M]):
                     combo_limit=resolved_combo,
                 )
             else:
-                total = await self._hub_sql_combo_count(
-                    query_terms=terms,
+                total = await self._hub_sql_combo_count_for_plan(
+                    plan,
                     filters=filters,
-                    leg_options=leg_options,
-                    member_weights_list=member_weights_list,
-                    per_leg_limit=per_leg_limit,
-                    sorts=effective_sorts,
                 )
 
         if resolved_combo is not None:
@@ -373,52 +318,25 @@ class HubParallelSearchMixin(HubSearchSqlMixin[M]):
     async def _hub_parallel_cursor_search(
         self,
         *,
-        query: str | Sequence[str],
+        plan: HubSearchPlan,
         filters: QueryFilterExpression | None,
         cursor: CursorPaginationExpression | None,
-        sorts: QuerySortExpression | None,
-        options: SearchOptions | None,
         return_type: type[BaseModel] | None,
         return_fields: Sequence[str] | None,
-        hub_spec: HubSearchSpec[M],
-        member_weights_list: Sequence[float],
+        hub_spec: Any,
     ) -> Any:
-
         host = cast(HubSearchHost[M], self)
-        terms = tuple(normalize_search_queries(query))
-        leg_options, _weights = prepare_hub_search_options(hub_spec, options)
-        effective_sorts = sorts if sorts else hub_spec.default_sort
 
         c = dict(cursor or {})
         lim, use_after, use_before = parse_search_cursor(cursor)
 
-        merged = await self._hub_parallel_merged_rows(
-            query_terms=terms,
-            filters=filters,
-            leg_options=leg_options,
-            member_weights_list=member_weights_list,
-            per_leg_limit=host.per_leg_limit,
-            effective_sorts=effective_sorts,
-        )
+        merged = await self._hub_parallel_merged_rows(plan, filters=filters)
 
-        rs_spec = hub_spec.snapshot
-        resolved_combo = effective_combo_limit(
-            config_limit=getattr(host, "combo_limit", None),
-            per_leg_limit=host.per_leg_limit,
-            options=leg_options,
-            pagination=dict(cursor or {}),
-            snapshot=None,
-            result_snapshot=None,
-            rs_spec=rs_spec,
-        )
+        if plan.resolved_combo is not None:
+            merged = merged[: plan.resolved_combo]
 
-        if resolved_combo is not None:
-            merged = merged[:resolved_combo]
-
-        do_legs = True
-        key_spec = self._hub_cursor_key_spec(do_legs=do_legs, sorts=sorts)
-        sort_keys = [k for k, _ in key_spec]
-        directions = [d for _, d in key_spec]
+        sort_keys = [k for k, _ in plan.order_key_spec]
+        directions = [d for _, d in plan.order_key_spec]
 
         if use_after or use_before:
             token = str(c["after" if use_after else "before"])
@@ -474,7 +392,6 @@ class HubParallelSearchMixin(HubSearchSqlMixin[M]):
         else:
             prv = None
 
-        host = cast(HubSearchHost[M], self)
         trust = search_trust_source(host.read_validation)
 
         if return_fields is not None:

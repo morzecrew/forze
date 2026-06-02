@@ -1,5 +1,7 @@
 """Helpers for the Inngest Dev Server testcontainer."""
 
+from __future__ import annotations
+
 import time
 import urllib.error
 import urllib.request

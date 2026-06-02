@@ -9,9 +9,10 @@ from pydantic import BaseModel
 from forze.application.contracts.search import SearchSpec
 from forze_postgres.adapters.search.hub.constants import HUB_RANK
 from forze_postgres.adapters.search.hub.merge import merge_hub_leg_rows
-from forze_postgres.adapters.search.hub.parallel_merge import (
+from forze_postgres.adapters.search.hub.semantics import (
+    hub_order_key_spec,
     merge_hub_combo_rows,
-    sort_merged_hub_rows,
+    sort_hub_rows,
 )
 from forze_postgres.adapters.search.hub.runtime import HubLegRuntime
 
@@ -101,15 +102,15 @@ def test_sort_merged_hub_rows_user_sort_then_rank() -> None:
         {HUB_RANK: 0.1, "label": "b"},
         {HUB_RANK: 0.9, "label": "a"},
     ]
-    sort_merged_hub_rows(
-        rows,
+    key_spec = hub_order_key_spec(
         do_legs=True,
         sorts={"label": "asc"},  # type: ignore[arg-type]
+        default_sort=None,
         read_fields=frozenset({"label"}),
-        column_types={},
-        model_type=_HubRow,
-        nested_field_hints=None,
+        spec_name="hub",
+        rank_field=HUB_RANK,
     )
+    sort_hub_rows(rows, key_spec=key_spec)
     assert [r["label"] for r in rows] == ["a", "b"]
 
 
@@ -120,14 +121,14 @@ def test_sort_merged_hub_rows_id_desc_matches_keyset() -> None:
         {HUB_RANK: 1.0, "id": u1},
         {HUB_RANK: 1.0, "id": u2},
     ]
-    sort_merged_hub_rows(
-        rows,
+    key_spec = hub_order_key_spec(
         do_legs=True,
         sorts={"id": "desc"},  # type: ignore[arg-type]
+        default_sort=None,
         read_fields=frozenset({"id"}),
-        column_types={},
-        model_type=_HubRow,
-        nested_field_hints=None,
+        spec_name="hub",
+        rank_field=HUB_RANK,
     )
+    sort_hub_rows(rows, key_spec=key_spec)
     assert rows[0]["id"] == max(u1, u2)
     assert rows[1]["id"] == min(u1, u2)

@@ -231,44 +231,18 @@ class HubLegRuntime:
     def merge_coalesce(self, leg_index: int) -> sql.Composable:
         """Per-leg match score: single FK uses one join; multi-FK uses ``GREATEST`` of K joins."""
 
-        if len(self.hub_fk_columns) == 1:
-            return sql.SQL("COALESCE({}.{}, 0)").format(
-                sql.Identifier(f"lp{leg_index}"),
-                sql.Identifier(LEG_SCORE),
-            )
+        from .semantics import sql_leg_coalesce
 
-        br = [
-            sql.SQL("COALESCE({}.{}, 0)").format(
-                sql.Identifier(f"lp{leg_index}_{j}"),
-                sql.Identifier(LEG_SCORE),
-            )
-            for j in range(len(self.hub_fk_columns))
-        ]
-
-        return sql.SQL("GREATEST({})").format(sql.SQL(", ").join(br))
+        return sql_leg_coalesce(self, leg_index)
 
     # ....................... #
 
     def merge_matched(self, leg_index: int) -> sql.Composable:
         """Whether this leg matched: non-null leg ``eid`` on any FK join branch."""
 
-        if len(self.hub_fk_columns) == 1:
-            return sql.SQL("{} IS NOT NULL").format(
-                sql.SQL("{}.{}").format(
-                    sql.Identifier(f"lp{leg_index}"),
-                    sql.Identifier(LEG_EID),
-                ),
-            )
-        eid_null = [
-            sql.SQL("{} IS NOT NULL").format(
-                sql.SQL("{}.{}").format(
-                    sql.Identifier(f"lp{leg_index}_{j}"),
-                    sql.Identifier(LEG_EID),
-                ),
-            )
-            for j in range(len(self.hub_fk_columns))
-        ]
-        return sql.SQL("({})").format(sql.SQL(" OR ").join(eid_null))
+        from .semantics import sql_leg_matched
+
+        return sql_leg_matched(self, leg_index)
 
 
 # ....................... #

@@ -46,16 +46,16 @@ class InngestAppHarness:
     ctx_factory: ExecutionContextFactory
     port: int
     outcomes: list[Any] = attrs.field(factory=list)
-    _server: uvicorn.Server = attrs.field(repr=False)
-    _thread: threading.Thread = attrs.field(repr=False)
+    server: uvicorn.Server = attrs.field(repr=False)
+    thread: threading.Thread = attrs.field(repr=False)
 
     @property
     def serve_origin(self) -> str:
         return f"http://host.docker.internal:{self.port}"
 
     def stop(self) -> None:
-        self._server.should_exit = True
-        self._thread.join(timeout=10)
+        self.server.should_exit = True
+        self.thread.join(timeout=10)
 
 
 def sync_with_dev_server(
@@ -147,8 +147,8 @@ def start_forze_inngest_app(
         deps=deps,
         ctx_factory=ctx_factory,
         port=port,
-        _server=server,
-        _thread=thread,
+        server=server,
+        thread=thread,
     )
 
 
