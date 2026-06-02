@@ -37,6 +37,7 @@ from ._cursor_run import (
 )
 from ._engine import RankedPipelineSql
 from ._offset_run import RankedOffsetPlan, execute_simple_ranked_offset_search
+from ._search_count import effective_search_count
 from ._pipeline_sql import PipelineAliases, build_rank_first_order
 from ._port import PostgresSearchPortMixin
 
@@ -219,12 +220,25 @@ class PostgresRankedPipelineSearchAdapter[M: BaseModel](
             extra_order=extra_ob,
         )
 
+        approximate_total: int | None = None
+        count_policy = effective_search_count(options)
+
+        if return_count and count_policy == "approximate":
+            proj_qname = await self._qname()
+            approximate_total = await self.introspector.estimate_filtered_rows(
+                schema=proj_qname.schema,
+                relation=proj_qname.name,
+                where_sql=fw,
+                params=fp,
+            )
+
         plan = RankedOffsetPlan(
             with_clause=pipeline_sql.with_clause,
             from_outer=pipeline_sql.from_outer,
             order_sql=order_sql,
             params=pipeline_sql.params_body,
             count_params=pipeline_sql.count_params,
+            approximate_total=approximate_total,
             select_table_alias=self.projection_alias,
         )
 
@@ -250,6 +264,7 @@ class PostgresRankedPipelineSearchAdapter[M: BaseModel](
             return_fields=return_fields,
             model_type=self.model_type,
             result_snapshot=self.result_snapshot,
+            options=options,
         )
 
     # ....................... #

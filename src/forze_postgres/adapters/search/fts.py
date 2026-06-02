@@ -18,8 +18,14 @@ from forze.application.contracts.search import (
     effective_phrase_combine,
 )
 from forze.domain.constants import ID_FIELD
+from forze_postgres.kernel.relation import RelationSpec
 
 from ._engine import RankedPipelineSql
+from ._pgroonga_plan import (
+    effective_ranked_candidate_limit,
+    is_coalesced_read_heap,
+    is_trivial_filter,
+)
 from ._fts_sql import FtsGroupLetter
 from ._leg_fts import build_fts_leg
 from ._pipeline_sql import (
@@ -28,6 +34,7 @@ from ._pipeline_sql import (
     build_outer_from,
     build_pipeline_with_clause,
     build_scored_cte,
+    scored_order_by_rank_alias,
     filtered_select_list,
     outer_join_on_scored,
     scored_join_on_filtered,
@@ -69,6 +76,12 @@ class PostgresFTSSearchAdapter[M: BaseModel](PostgresRankedPipelineSearchAdapter
 
     index_field_map: Mapping[str, str] | None = attrs.field(default=None)
     """Reserved for API symmetry with PGroonga; FTS uses the catalog ``tsvector``."""
+
+    ranked_candidate_limit: int | None = 5000
+    """Cap ranked heap rows in the ``scored`` CTE; ``None`` disables."""
+
+    read_relation: RelationSpec | None = attrs.field(default=None)
+    heap_relation_spec: RelationSpec | None = attrs.field(default=None)
 
     search_variant: str = attrs.field(default="fts", init=False)
     pipeline: PipelineAliases = attrs.field(default=_PIPELINE, init=False)
@@ -112,11 +125,12 @@ class PostgresFTSSearchAdapter[M: BaseModel](PostgresRankedPipelineSearchAdapter
         snapshot: Any = None,
         parsed_filters: Any = None,
     ) -> RankedPipelineSql:
-        _ = query, filters, pagination, snapshot, parsed_filters
+        _ = query, filters
         join = self._safe_join_pairs
         index_qname = await self._index_qname()
         index_heap_qname = await self._index_heap_qname()
         proj_qname = await self._qname()
+        rs_spec = self.spec.snapshot
 
         sw, scored_rank, leg_params = await build_fts_leg(
             introspector=self.introspector,
@@ -129,42 +143,101 @@ class PostgresFTSSearchAdapter[M: BaseModel](PostgresRankedPipelineSearchAdapter
             score_column=self.search_rank_column,
         )
         scored_keys = scored_key_columns(join, index_alias=self.pipeline.index)
-        params_body = [*fp, *leg_params]
+        scored_order = scored_order_by_rank_alias(self.search_rank_column)
 
-        key_sel = filtered_select_list(
-            join,
-            projection_alias=self.pipeline.projection,
+        candidate_cap = effective_ranked_candidate_limit(
+            config_limit=self.ranked_candidate_limit,
+            options=options,
+            pagination=dict(pagination or {}),
+            snapshot=snapshot,
+            result_snapshot=self.result_snapshot,
+            rs_spec=rs_spec,
         )
-        filtered_cte = build_filtered_cte(
-            aliases=self.pipeline,
-            key_sel=key_sel,
-            proj_ident=proj_qname.ident(),
-            fw=fw,
+
+        cap_kw: dict[str, Any] = {}
+
+        if candidate_cap is not None:
+            cap_kw = {
+                "candidate_limit": candidate_cap,
+                "scored_order": scored_order,
+            }
+
+        read_spec = (
+            self.read_relation if self.read_relation is not None else self.relation
         )
-        join_sf = scored_join_on_filtered(
-            join,
-            index_alias=self.pipeline.index,
-            filtered_alias=self.pipeline.filtered,
+        heap_spec = (
+            self.heap_relation_spec
+            if self.heap_relation_spec is not None
+            else self.index_heap_relation
         )
-        scored_cte = build_scored_cte(
-            aliases=self.pipeline,
-            scored_keys=scored_keys,
-            scored_rank=scored_rank,
-            heap_ident=index_heap_qname.ident(),
-            join_sf=join_sf,
-            sw=sw,
-        )
+        coalesced = is_coalesced_read_heap(read_spec, heap_spec, self.join_pairs)
+
         join_vs = outer_join_on_scored(
             join,
             projection_alias=self.pipeline.projection,
             scored_alias=self.pipeline.scored,
         )
-        from_outer = build_outer_from(
-            aliases=self.pipeline,
-            proj_ident=proj_qname.ident(),
-            join_vs=join_vs,
-        )
-        with_clause = build_pipeline_with_clause(filtered_cte, scored_cte)
+
+        with_clause: sql.Composable
+        from_outer: sql.Composable
+        params_body: list[Any]
+
+        if coalesced and is_trivial_filter(parsed_filters):
+            scored_cte = build_scored_cte(
+                aliases=self.pipeline,
+                scored_keys=scored_keys,
+                scored_rank=scored_rank,
+                heap_ident=index_heap_qname.ident(),
+                join_sf=None,
+                sw=sw,
+                first_in_with=True,
+                **cap_kw,
+            )
+            with_clause = sql.SQL("WITH {}{}").format(scored_cte, sql.SQL(""))
+            from_outer = build_outer_from(
+                aliases=self.pipeline,
+                proj_ident=index_heap_qname.ident(),
+                join_vs=join_vs,
+            )
+            params_body = [*fp, *leg_params]
+
+        else:
+            key_sel = filtered_select_list(
+                join,
+                projection_alias=self.pipeline.projection,
+            )
+            filtered_cte = build_filtered_cte(
+                aliases=self.pipeline,
+                key_sel=key_sel,
+                proj_ident=proj_qname.ident(),
+                fw=fw,
+            )
+            join_sf = scored_join_on_filtered(
+                join,
+                index_alias=self.pipeline.index,
+                filtered_alias=self.pipeline.filtered,
+            )
+            scored_cte = build_scored_cte(
+                aliases=self.pipeline,
+                scored_keys=scored_keys,
+                scored_rank=scored_rank,
+                heap_ident=index_heap_qname.ident(),
+                join_sf=join_sf,
+                sw=sw,
+                **cap_kw,
+            )
+            join_vs = outer_join_on_scored(
+                join,
+                projection_alias=self.pipeline.projection,
+                scored_alias=self.pipeline.scored,
+            )
+            from_outer = build_outer_from(
+                aliases=self.pipeline,
+                proj_ident=proj_qname.ident(),
+                join_vs=join_vs,
+            )
+            with_clause = build_pipeline_with_clause(filtered_cte, scored_cte)
+            params_body = [*fp, *leg_params]
 
         return RankedPipelineSql(
             with_clause=with_clause,
@@ -174,4 +247,5 @@ class PostgresFTSSearchAdapter[M: BaseModel](PostgresRankedPipelineSearchAdapter
             pipeline=self.pipeline,
             rank_column=self.search_rank_column,
             projection_alias=self.projection_alias,
+            candidate_limit=candidate_cap,
         )

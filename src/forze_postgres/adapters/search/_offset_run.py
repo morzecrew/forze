@@ -20,6 +20,7 @@ from forze.application.contracts.querying import (
 )
 from forze.application.contracts.search import (
     HubSearchSpec,
+    SearchOptions,
     SearchResultSnapshotOptions,
     SearchSpec,
 )
@@ -27,6 +28,7 @@ from forze.application.integrations.search import SearchResultSnapshot
 
 from ...kernel.gateways import PostgresGateway
 from ._materialize_hits import materialize_search_page
+from ._search_count import effective_search_count
 
 # ----------------------- #
 
@@ -53,6 +55,15 @@ class RankedOffsetPlan:
 
     count_params: list[Any] | None = None
     """When set, used for ``COUNT(*)`` only (e.g. FTS empty-query uses filter params only)."""
+
+    approximate_total: int | None = None
+    """When set, used for ``search_count=approximate`` instead of ``COUNT(*)``."""
+
+    count_relation: str = "combo"
+    """Hub: relation name for ``COUNT(*)`` (defaults to full ``combo``)."""
+
+    data_relation: str = "combo"
+    """Hub: relation name for the ranked data ``SELECT`` (e.g. ``combo_top``)."""
 
     select_table_alias: str
     """Table alias passed to :meth:`~PostgresGateway.return_clause`."""
@@ -92,6 +103,7 @@ async def execute_simple_ranked_offset_search(
     return_fields: Sequence[str] | None,
     model_type: type[M],
     result_snapshot: SearchResultSnapshot | None,
+    options: SearchOptions | None = None,
 ) -> Any:
     """Run count (optional), data fetch, snapshot materialization for simple search adapters."""
 
@@ -130,11 +142,15 @@ async def execute_simple_ranked_offset_search(
     ).format(with_clause=plan.with_clause, from_outer=plan.from_outer)
 
     total = 0
+    count_policy = effective_search_count(options)
 
-    if return_count:
-        total = int(
-            await gw.client.fetch_value(count_stmt, count_params, default=0),
-        )
+    if return_count and count_policy != "none":
+        if count_policy == "approximate" and plan.approximate_total is not None:
+            total = int(plan.approximate_total)
+        else:
+            total = int(
+                await gw.client.fetch_value(count_stmt, count_params, default=0),
+            )
 
         if total == 0:
             return page_from_limit_offset(  # pyright: ignore[reportUnknownVariableType]
@@ -226,7 +242,7 @@ async def execute_simple_ranked_offset_search(
         return page_from_limit_offset(
             page,
             pagination_dict,
-            total=total,
+            total=total if count_policy != "none" else None,
             snapshot=handle_out,
         )
 
@@ -261,6 +277,7 @@ async def execute_hub_ranked_offset_search(
     model_type: type[M],
     result_snapshot: SearchResultSnapshot | None,
     combo_alias: str = "comb",
+    options: SearchOptions | None = None,
 ) -> Any:
     """Ranked offset search for :class:`~forze_postgres.adapters.search.hub.PostgresHubSearchAdapter`."""
 
@@ -298,14 +315,18 @@ async def execute_hub_ranked_offset_search(
             """
     ).format(
         with_clause=plan.with_clause,
-        combo=sql.Identifier("combo"),
+        combo=sql.Identifier(plan.count_relation),
         ca=sql.Identifier(combo_alias),
     )
 
     total = 0
+    count_policy = effective_search_count(options)
 
-    if return_count:
-        total = int(await gw.client.fetch_value(count_stmt, plan.params, default=0))
+    if return_count and count_policy != "none":
+        if count_policy == "approximate" and plan.approximate_total is not None:
+            total = int(plan.approximate_total)
+        else:
+            total = int(await gw.client.fetch_value(count_stmt, plan.params, default=0))
 
         if total == 0:
             return page_from_limit_offset(  # pyright: ignore[reportUnknownVariableType]
@@ -329,7 +350,7 @@ async def execute_hub_ranked_offset_search(
     ).format(
         with_clause=plan.with_clause,
         cols=cols,
-        combo=sql.Identifier("combo"),
+        combo=sql.Identifier(plan.data_relation),
         ca=sql.Identifier(combo_alias),
         order=plan.order_sql,
     )
@@ -398,7 +419,7 @@ async def execute_hub_ranked_offset_search(
         return page_from_limit_offset(
             page,
             pagination_dict,
-            total=total,
+            total=total if count_policy != "none" else None,
             snapshot=handle_h,
         )
 

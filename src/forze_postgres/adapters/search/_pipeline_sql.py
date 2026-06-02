@@ -27,6 +27,15 @@ class PipelineAliases:
 # ....................... #
 
 
+def scored_order_by_rank_alias(rank_column: str) -> sql.Composable:
+    """``ORDER BY`` target for capped ``scored`` CTEs (output alias, not a heap column)."""
+
+    return sql.Identifier(rank_column)
+
+
+# ....................... #
+
+
 def validate_join_pairs(join_pairs: Sequence[tuple[str, str]]) -> None:
     """Require unique projection-side column names in ``join_pairs``."""
 
@@ -162,6 +171,7 @@ def build_scored_cte(
     heap_fw: sql.Composable | None = None,
     candidate_limit: int | None = None,
     scored_order: sql.Composable | None = None,
+    candidate_order_asc: bool = False,
     first_in_with: bool = False,
 ) -> sql.Composable:
     """``, scored AS (SELECT keys, rank FROM heap [JOIN filtered] WHERE match)``."""
@@ -198,8 +208,14 @@ def build_scored_cte(
     tail = sql.SQL("")
 
     if candidate_limit is not None and scored_order is not None:
-        tail = sql.SQL(" ORDER BY {ord} DESC NULLS LAST LIMIT {lim}").format(  # type: ignore[assignment]
+        order_suf = (
+            sql.SQL("ASC NULLS LAST")
+            if candidate_order_asc
+            else sql.SQL("DESC NULLS LAST")
+        )
+        tail = sql.SQL(" ORDER BY {ord} {suf} LIMIT {lim}").format(  # type: ignore[assignment]
             ord=scored_order,
+            suf=order_suf,
             lim=sql.Literal(int(candidate_limit)),
         )
 

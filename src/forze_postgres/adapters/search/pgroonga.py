@@ -36,12 +36,14 @@ from ._engine import RankedPipelineSql
 from ._leg_pgroonga import build_pgroonga_leg
 from ._materialize_hits import materialize_search_page
 from ._pgroonga_plan import (
-    effective_candidate_limit,
+    effective_ranked_candidate_limit,
     ensure_pgroonga_plan_with_candidate_cap,
+    index_first_heap_limit,
     is_coalesced_read_heap,
     is_trivial_filter,
     resolve_pgroonga_plan,
 )
+from ._search_count import effective_search_count
 from ._pgroonga_sql import pgroonga_match_query_text, pgroonga_score_call
 from ._pipeline_sql import (
     PipelineAliases,
@@ -98,6 +100,15 @@ class PostgresPGroongaSearchAdapter[M: BaseModel](
 
     pgroonga_auto_use_exact_count: bool = False
     """``auto`` plan: use ``COUNT(*)`` on filtered projection to pick the plan."""
+
+    pgroonga_auto_with_filters: bool = True
+    """``auto`` plan: consider index-first when filters are eligible and estimates allow."""
+
+    pgroonga_auto_filter_first_max_rows: int = 50_000
+    """``auto`` with filters: prefer ``filter_first`` when filtered estimate is at most this size."""
+
+    pgroonga_index_first_filter_margin: float = 3.0
+    """Inflate heap top-K when index-first post-filters on the projection."""
 
     read_relation: RelationSpec | None = attrs.field(default=None)
     """Read relation spec (for coalesced read/heap detection)."""
@@ -256,11 +267,20 @@ class PostgresPGroongaSearchAdapter[M: BaseModel](
 
         params_base = list(fp)
         total = 0
+        count_policy = effective_search_count(options)
 
-        if return_count:
-            total = int(
-                await self.client.fetch_value(count_stmt, params_base, default=0),
-            )
+        if return_count and count_policy != "none":
+            if count_policy == "exact":
+                total = int(
+                    await self.client.fetch_value(count_stmt, params_base, default=0),
+                )
+            else:
+                total = await self.introspector.estimate_filtered_rows(
+                    schema=proj_qname.schema,
+                    relation=proj_qname.name,
+                    where_sql=fw,
+                    params=params_base,
+                )
 
             if total == 0:
                 return page_from_limit_offset(  # pyright: ignore[reportUnknownVariableType]
@@ -347,7 +367,7 @@ class PostgresPGroongaSearchAdapter[M: BaseModel](
             return page_from_limit_offset(
                 page,
                 pagination,
-                total=total,
+                total=total if count_policy != "none" else None,
                 snapshot=handle_no,
             )
 
@@ -418,6 +438,18 @@ class PostgresPGroongaSearchAdapter[M: BaseModel](
             )
             return int(await self.client.fetch_value(count_stmt, list(fp), default=0))
 
+        async def _estimate_filtered() -> int:
+            return await self.introspector.estimate_filtered_rows(
+                schema=proj_qname.schema,
+                relation=proj_qname.name,
+                where_sql=fw,
+                params=fp,
+            )
+
+        use_exact = self.pgroonga_auto_use_exact_count and not is_trivial_filter(
+            parsed_filters,
+        )
+
         resolved_plan = await resolve_pgroonga_plan(
             configured=self.pgroonga_plan,
             options=options,
@@ -425,13 +457,18 @@ class PostgresPGroongaSearchAdapter[M: BaseModel](
             read_qname=proj_qname,
             introspector=self.introspector,
             auto_index_first_min_rows=self.pgroonga_auto_index_first_min_rows,
-            auto_use_exact_count=self.pgroonga_auto_use_exact_count,
-            count_filtered_rows=(
-                _count_filtered if self.pgroonga_auto_use_exact_count else None
+            auto_filter_first_max_rows=self.pgroonga_auto_filter_first_max_rows,
+            auto_with_filters=self.pgroonga_auto_with_filters,
+            auto_use_exact_count=use_exact,
+            count_filtered_rows=_count_filtered if use_exact else None,
+            estimate_filtered_rows=(
+                _estimate_filtered
+                if not is_trivial_filter(parsed_filters)
+                else None
             ),
         )
 
-        candidate_cap = effective_candidate_limit(
+        candidate_cap = effective_ranked_candidate_limit(
             config_limit=self.pgroonga_candidate_limit,
             options=options,
             pagination=dict(pagination or {}),
@@ -455,6 +492,12 @@ class PostgresPGroongaSearchAdapter[M: BaseModel](
             if candidate_cap is None:
                 raise exc.internal("candidate_cap is None")
 
+            heap_limit = index_first_heap_limit(
+                int(candidate_cap),
+                has_projection_filters=not is_trivial_filter(parsed_filters),
+                filter_margin=self.pgroonga_index_first_filter_margin,
+            )
+
             with_clause, from_outer = build_pgroonga_index_first_pipeline(
                 aliases=self.pipeline,
                 scored_keys=scored_keys,
@@ -464,7 +507,7 @@ class PostgresPGroongaSearchAdapter[M: BaseModel](
                 join_vs=join_vs,
                 proj_ident=proj_qname.ident(),
                 proj_fw=fw,
-                candidate_limit=int(candidate_cap),
+                candidate_limit=heap_limit,
                 scored_order=scored_order,
             )
             params_body = [*leg_params, *fp]

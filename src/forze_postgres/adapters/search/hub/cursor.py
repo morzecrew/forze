@@ -83,12 +83,34 @@ class HubSearchCursorMixin[M: BaseModel](HubSearchSqlMixin[M]):
         c = dict(cursor or {})
         lim, use_after, use_before = parse_search_cursor(cursor)
 
-        with_clause, params, do_legs = await self._hub_build_with_clause(
-            query_terms=terms,
-            filters=filters,
-            leg_options=leg_options,
-            member_weights_list=member_weights_list,
+        if getattr(self._hub_host, "execution", "sql") == "parallel":
+            raise exc.internal(
+                "Hub cursor search requires execution='sql'; parallel hub "
+                "supports offset pagination only.",
+            )
+
+        from .._pgroonga_plan import effective_combo_limit
+
+        rs_spec = self._hub_host.hub_spec.snapshot
+        resolved_combo = effective_combo_limit(
+            config_limit=getattr(self._hub_host, "combo_limit", None),
             per_leg_limit=self._hub_host.per_leg_limit,
+            options=leg_options,
+            pagination=dict(cursor or {}),
+            snapshot=None,
+            result_snapshot=None,
+            rs_spec=rs_spec,
+        )
+
+        with_clause, params, do_legs, _count_rel, data_relation = (
+            await self._hub_build_with_clause(
+                query_terms=terms,
+                filters=filters,
+                leg_options=leg_options,
+                member_weights_list=member_weights_list,
+                per_leg_limit=self._hub_host.per_leg_limit,
+                combo_limit=resolved_combo if terms else None,
+            )
         )
 
         key_spec = self._hub_cursor_key_spec(do_legs=do_legs, sorts=sorts)
@@ -188,7 +210,7 @@ class HubSearchCursorMixin[M: BaseModel](HubSearchSqlMixin[M]):
         ).format(
             with_clause=with_clause,
             cols=cols,
-            combo=sql.Identifier("combo"),
+            combo=sql.Identifier(data_relation),
             ca=sql.Identifier(COMBO_ALIAS),
             w=where_fin,
             order=order_sql,

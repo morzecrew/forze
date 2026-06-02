@@ -101,6 +101,15 @@ class PostgresSearchConfig(TenantAwareIntegrationConfig):
     pgroonga_auto_use_exact_count: bool = False
     """When :attr:`pgroonga_plan` is ``auto``, run ``COUNT(*)`` on the filtered projection to pick the plan (extra round trip)."""
 
+    pgroonga_auto_with_filters: bool = True
+    """When :attr:`pgroonga_plan` is ``auto`` and filters are index-first eligible, use planner estimates to pick the plan."""
+
+    pgroonga_auto_filter_first_max_rows: int = 50_000
+    """With :attr:`pgroonga_auto_with_filters`, prefer ``filter_first`` when the filtered estimate is at most this many rows."""
+
+    pgroonga_index_first_filter_margin: float = 3.0
+    """Multiply the heap top-K cap when index-first applies projection post-filters."""
+
     # ....................... #
 
     @property
@@ -154,6 +163,16 @@ class PostgresSearchConfig(TenantAwareIntegrationConfig):
                 if self.pgroonga_auto_index_first_min_rows < 1:
                     raise exc.internal(
                         "pgroonga_auto_index_first_min_rows must be at least 1."
+                    )
+
+                if self.pgroonga_auto_filter_first_max_rows < 1:
+                    raise exc.internal(
+                        "pgroonga_auto_filter_first_max_rows must be at least 1."
+                    )
+
+                if self.pgroonga_index_first_filter_margin < 1.0:
+                    raise exc.internal(
+                        "pgroonga_index_first_filter_margin must be at least 1.0."
                     )
 
 

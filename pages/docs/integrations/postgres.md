@@ -235,14 +235,19 @@ For `engine="pgroonga"`, multi-column indexes use `ARRAY[col1, col2, ...]` in mi
 |-----------------|--------|
 | `pgroonga_plan` | `filter_first` (default), `index_first`, or `auto`. |
 | `pgroonga_candidate_limit` | Cap ranked heap rows per query (default `5000`; `None` disables). |
-| `pgroonga_auto_index_first_min_rows` | With `auto` and no filters, use `index_first` when the read relation estimate is at least this many rows (default `100_000`). |
-| `pgroonga_auto_use_exact_count` | When `auto`, run `COUNT(*)` on the filtered projection to pick the plan (off by default). |
+| `pgroonga_auto_index_first_min_rows` | With `auto`, use `index_first` when the filtered or read relation estimate is at least this many rows (default `100_000`). |
+| `pgroonga_auto_with_filters` | When `auto` and filters are index-first eligible (`$eq` / `$in` / … on projection), use filtered estimates to pick the plan (default `True`). |
+| `pgroonga_auto_filter_first_max_rows` | With `auto` and filters, prefer `filter_first` when the filtered estimate is at most this many rows (default `50_000`). |
+| `pgroonga_auto_use_exact_count` | When `auto`, run `COUNT(*)` on the filtered projection to pick the plan instead of `EXPLAIN` estimates (off by default). |
+| `pgroonga_index_first_filter_margin` | Multiply the heap top-K cap when `index_first` applies projection post-filters (default `3.0`). |
 | `SearchOptions.pgroonga_plan` / `candidate_limit` | Per-request overrides. |
 | `SearchOptions.groonga_query` | Raw Groonga query string (skips phrase combiner). |
+| `SearchOptions.search_count` | Ranked totals: `exact` (`COUNT(*)`), `approximate` (planner/stats estimate), or `none`. |
+| `SearchOptions.combo_limit` | Hub: cap merged rows in `combo_top` before pagination. |
 
-`PostgresHubSearchConfig.per_leg_limit` caps each hub leg before score merge (default `5000`). Ranking is exact only within these caps; raise them for deep paging or export-style searches.
+`pgroonga_candidate_limit` also caps FTS and vector `scored` CTEs. `PostgresHubSearchConfig.per_leg_limit` caps each hub leg before score merge (default `5000`). `combo_limit` (or derived default) caps the merged `combo_top` CTE for the data query. `execution: parallel` runs one ranked query per leg (single-column `hub_fk` only) and merges in Python; cursor hub search requires `execution: sql`.
 
-With `pgroonga_plan: auto`, non-empty query DSL filters always use `filter_first`; only filterless searches (no parsed filter AST) consult the introspector row estimate. `index_first` requires a candidate cap (`pgroonga_candidate_limit` or `SearchOptions.candidate_limit`); when the cap is disabled (`None`), Forze falls back to `filter_first` even if the configured plan is `index_first` or `auto` would otherwise pick `index_first`.
+With `pgroonga_plan: auto`, ineligible filters (e.g. `$like`, `OR`, ranges) use `filter_first`. Eligible filters use `EXPLAIN` filtered row estimates unless `pgroonga_auto_use_exact_count` is enabled. `index_first` requires a candidate cap (`pgroonga_candidate_limit` or `SearchOptions.candidate_limit`); when the cap is disabled (`None`), Forze falls back to `filter_first` even if the configured plan is `index_first` or `auto` would otherwise pick `index_first`.
 
 ### JSON filters and GIN-friendly indexes
 

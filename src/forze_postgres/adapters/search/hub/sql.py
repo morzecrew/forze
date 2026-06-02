@@ -26,6 +26,7 @@ from forze.domain.constants import ID_FIELD
 from ._typing_host import HubSearchHost
 from .constants import (
     COMBO_ALIAS,
+    COMBO_TOP_RELATION,
     HUB_CTE,
     HUB_GROONGA_CTID,
     HUB_GROONGA_TABLEOID,
@@ -39,7 +40,7 @@ from .runtime import hub_leg_engine_for
 # ----------------------- #
 
 
-def _hub_leg_order_limit(*, engine: str, per_leg_limit: int) -> sql.Composable:
+def hub_leg_order_limit(*, engine: str, per_leg_limit: int) -> sql.Composable:
     """``ORDER BY … LIMIT`` suffix for capped hub leg CTEs."""
 
     score = sql.Identifier(LEG_SCORE)
@@ -148,7 +149,8 @@ class HubSearchSqlMixin[M: BaseModel]:
         leg_options: SearchOptions | None,
         member_weights_list: Sequence[float],
         per_leg_limit: int,
-    ) -> tuple[sql.Composable, list[Any], bool]:
+        combo_limit: int | None = None,
+    ) -> tuple[sql.Composable, list[Any], bool, str, str]:
         fw, fp = await self._hub_host.where_clause(filters)
         tenant_id = (
             self._hub_host._tenant_id_for_resolve()  # pyright: ignore[reportPrivateUsage]
@@ -193,7 +195,7 @@ class HubSearchSqlMixin[M: BaseModel]:
                     else (HUB_ROW_ALIAS if leg.same_heap_as_hub else f"t{i}")
                 )
                 lr_alias = leg_aliases[i]
-                leg_order = _hub_leg_order_limit(
+                leg_order = hub_leg_order_limit(
                     engine=leg.engine,
                     per_leg_limit=per_leg_limit,
                 )
@@ -423,13 +425,38 @@ class HubSearchSqlMixin[M: BaseModel]:
                 combine=combine_sql,
             )
 
-        with_clause = sql.SQL("WITH {}{}{}").format(
+        count_relation = "combo"
+        data_relation = "combo"
+        combo_tail: sql.Composable = sql.SQL("")
+
+        if combo_limit is not None and do_legs:
+            combo_top_cte = sql.SQL(
+                """
+                ,
+                {combo_top} AS (
+                    SELECT *
+                    FROM {combo}
+                    ORDER BY {rank} DESC NULLS LAST
+                    LIMIT {lim}
+                )
+                """
+            ).format(
+                combo_top=sql.Identifier(COMBO_TOP_RELATION),
+                combo=sql.Identifier("combo"),
+                rank=sql.Identifier(HUB_RANK),
+                lim=sql.Literal(int(combo_limit)),
+            )
+            combo_tail = combo_top_cte
+            data_relation = COMBO_TOP_RELATION
+
+        with_clause = sql.SQL("WITH {}{}{}{}").format(
             hub_cte,
             sql.SQL("").join(leg_cte_parts),
             combo_cte,
+            combo_tail,
         )
 
-        return with_clause, params, do_legs
+        return with_clause, params, do_legs, count_relation, data_relation
 
     # ....................... #
 
