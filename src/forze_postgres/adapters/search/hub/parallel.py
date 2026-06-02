@@ -180,21 +180,25 @@ class HubParallelSearchMixin(HubSearchSqlMixin[M]):
             rs_spec=rs_spec,
         )
 
+        count_policy = effective_search_count(options)
+        full_merged_len = len(merged)
+        total = 0
+
+        if return_count and count_policy != "none":
+            if count_policy == "approximate":
+                total = await resolve_ranked_approximate_total(
+                    introspector=host.introspector,
+                    schema=hub_qn.schema,
+                    relation=hub_qn.name,
+                    where_sql=fw,
+                    params=fp,
+                    combo_limit=resolved_combo,
+                )
+            else:
+                total = full_merged_len
+
         if resolved_combo is not None:
             merged = merged[:resolved_combo]
-
-        count_policy = effective_search_count(options)
-        total = len(merged) if return_count and count_policy != "none" else 0
-
-        if return_count and count_policy == "approximate":
-            total = await resolve_ranked_approximate_total(
-                introspector=host.introspector,
-                schema=hub_qn.schema,
-                relation=hub_qn.name,
-                where_sql=fw,
-                params=fp,
-                combo_limit=resolved_combo,
-            )
 
         pagination_dict: dict[str, Any] = dict(pagination or {})
         offset = int(pagination_dict.get("offset") or 0)

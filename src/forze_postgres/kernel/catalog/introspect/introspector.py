@@ -923,7 +923,7 @@ class PostgresIntrospector:
 
             estimate = self._plan_rows_from_explain_payload(payload)
 
-        if estimate is None or estimate <= 0:
+        if estimate is None:
             estimate = await self._fetch_relation_row_estimate_uncached(
                 schema,
                 relation,

@@ -122,6 +122,7 @@ class PostgresHubSearchAdapter[M: BaseModel](
         use_parallel = (
             self.execution == "parallel"
             and do_legs
+            and sorts is None
             and all(len(leg.hub_fk_columns) == 1 for _, leg in active)
         )
 
@@ -166,6 +167,7 @@ class PostgresHubSearchAdapter[M: BaseModel](
                 member_weights_list=member_weights_list,
                 per_leg_limit=self.per_leg_limit,
                 combo_limit=resolved_combo if do_legs else None,
+                sorts=sorts,
             )
         )
 

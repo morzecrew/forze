@@ -134,8 +134,8 @@ class PostgresVectorSearchAdapter[M: BaseModel](PostgresRankedPipelineSearchAdap
     ) -> RankedPipelineSql:
         _ = query, filters
         join = self._safe_join_pairs
-        proj_qname = await self._qname()
-        index_heap_qname = await self._index_heap_qname()
+        proj_qname = await self._pipeline_read_qname()
+        index_heap_qname = await self._pipeline_heap_qname()
         rs_spec = self.spec.snapshot
 
         sw, scored_rank, leg_params = await build_vector_leg(

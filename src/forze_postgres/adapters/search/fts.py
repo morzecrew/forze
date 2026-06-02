@@ -125,8 +125,8 @@ class PostgresFTSSearchAdapter[M: BaseModel](PostgresRankedPipelineSearchAdapter
         _ = query, filters
         join = self._safe_join_pairs
         index_qname = await self._index_qname()
-        index_heap_qname = await self._index_heap_qname()
-        proj_qname = await self._qname()
+        proj_qname = await self._pipeline_read_qname()
+        index_heap_qname = await self._pipeline_heap_qname()
         rs_spec = self.spec.snapshot
 
         sw, scored_rank, leg_params = await build_fts_leg(

@@ -297,12 +297,13 @@ async def resolve_pgroonga_plan(
 
         return "filter_first"
 
-    estimate = await introspector.estimate_relation_rows(
-        schema=read_qname.schema,
-        relation=read_qname.name,
-    )
+    if estimate_filtered_rows is not None:
+        filtered_estimate = await estimate_filtered_rows()
 
-    if estimate >= auto_index_first_min_rows:
-        return "index_first"
+        if filtered_estimate <= auto_filter_first_max_rows:
+            return "filter_first"
+
+        if filtered_estimate >= auto_index_first_min_rows:
+            return "index_first"
 
     return "filter_first"

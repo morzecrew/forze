@@ -113,6 +113,9 @@ async def execute_simple_ranked_offset_search(
     """Run count (optional), data fetch, snapshot materialization for simple search adapters."""
 
     rs_spec = spec.snapshot
+    count_policy = effective_search_count(options)
+    snapshot_return_count = return_count and count_policy != "none"
+
     fp_fingerprint = SearchResultSnapshot.simple_search_fingerprint(
         query,
         filters,
@@ -131,13 +134,11 @@ async def execute_simple_ranked_offset_search(
             pagination=dict(pagination or {}),
             return_type=return_type,
             return_fields=return_fields,
-            return_count=return_count,
+            return_count=snapshot_return_count,
         )
 
         if maybe_snap is not None:
             return maybe_snap
-
-    count_policy = effective_search_count(options)
 
     use_uncapped_count = (
         return_count
@@ -174,12 +175,12 @@ async def execute_simple_ranked_offset_search(
                 await gw.client.fetch_value(count_stmt, count_params, default=0),
             )
 
-        if total == 0:
-            return page_from_limit_offset(  # pyright: ignore[reportUnknownVariableType]
-                [],
-                pagination or {},
-                total=0,
-            )
+            if total == 0:
+                return page_from_limit_offset(  # pyright: ignore[reportUnknownVariableType]
+                    [],
+                    pagination or {},
+                    total=0,
+                )
 
     cols = gw.return_clause(
         return_type,
@@ -307,6 +308,7 @@ async def execute_hub_ranked_offset_search(
 
     rs_spec = hub_spec.snapshot
     count_policy = effective_search_count(options)
+    snapshot_return_count = return_count and count_policy != "none"
     fp_fingerprint = SearchResultSnapshot.hub_search_fingerprint(
         query,
         filters,
@@ -330,7 +332,7 @@ async def execute_hub_ranked_offset_search(
             pagination=dict(pagination or {}),
             return_type=return_type,
             return_fields=return_fields,
-            return_count=return_count,
+            return_count=snapshot_return_count,
         )
 
         if read_page is not None:
@@ -348,7 +350,6 @@ async def execute_hub_ranked_offset_search(
     )
 
     total = 0
-    count_policy = effective_search_count(options)
 
     if return_count and count_policy != "none":
         if count_policy == "approximate" and plan.approximate_total is not None:
@@ -356,12 +357,12 @@ async def execute_hub_ranked_offset_search(
         else:
             total = int(await gw.client.fetch_value(count_stmt, plan.params, default=0))
 
-        if total == 0:
-            return page_from_limit_offset(  # pyright: ignore[reportUnknownVariableType]
-                [],
-                pagination or {},
-                total=0,
-            )
+            if total == 0:
+                return page_from_limit_offset(  # pyright: ignore[reportUnknownVariableType]
+                    [],
+                    pagination or {},
+                    total=0,
+                )
 
     cols = gw.return_clause(
         return_type,

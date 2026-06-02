@@ -270,6 +270,13 @@ class PostgresPGroongaSearchAdapter[M: BaseModel](
                 total = int(
                     await self.client.fetch_value(count_stmt, params_base, default=0),
                 )
+
+                if total == 0:
+                    return page_from_limit_offset(  # pyright: ignore[reportUnknownVariableType]
+                        [],
+                        pagination or {},
+                        total=0,
+                    )
             else:
                 total = await resolve_ranked_approximate_total(
                     introspector=self.introspector,
@@ -277,13 +284,6 @@ class PostgresPGroongaSearchAdapter[M: BaseModel](
                     relation=proj_qname.name,
                     where_sql=fw,
                     params=params_base,
-                )
-
-            if total == 0:
-                return page_from_limit_offset(  # pyright: ignore[reportUnknownVariableType]
-                    [],
-                    pagination or {},
-                    total=0,
                 )
 
         cols = self.return_clause(
@@ -393,8 +393,8 @@ class PostgresPGroongaSearchAdapter[M: BaseModel](
         _ = query, filters
         join = self._safe_join_pairs
         index_qname = await self._index_qname()
-        index_heap_qname = await self._index_heap_qname()
-        proj_qname = await self._qname()
+        proj_qname = await self._pipeline_read_qname()
+        index_heap_qname = await self._pipeline_heap_qname()
         rs_spec = self.spec.snapshot
 
         mq = pgroonga_match_query_text(terms, options)

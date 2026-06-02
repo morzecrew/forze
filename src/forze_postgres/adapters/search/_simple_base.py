@@ -103,6 +103,30 @@ class PostgresRankedPipelineSearchAdapter[M: BaseModel](
 
     # ....................... #
 
+    async def _pipeline_read_qname(self) -> PostgresQualifiedName:
+        """Read projection qname; honors ``read_relation`` when set on the adapter."""
+
+        read = getattr(self, "read_relation", None)
+
+        if read is not None:
+            return await resolve_postgres_qname(read, self._tenant_id_for_resolve())
+
+        return await self._qname()
+
+    # ....................... #
+
+    async def _pipeline_heap_qname(self) -> PostgresQualifiedName:
+        """Index heap qname; honors ``heap_relation_spec`` when set on the adapter."""
+
+        heap = getattr(self, "heap_relation_spec", None)
+
+        if heap is not None:
+            return await resolve_postgres_qname(heap, self._tenant_id_for_resolve())
+
+        return await self._index_heap_qname()
+
+    # ....................... #
+
     async def _index_heap_qname(self) -> PostgresQualifiedName:
         if self._index_heap_qname_resolved is not None:
             return self._index_heap_qname_resolved
@@ -247,7 +271,7 @@ class PostgresRankedPipelineSearchAdapter[M: BaseModel](
         approximate_total: int | None = None
         count_policy = effective_search_count(options)
 
-        if return_count and count_policy == "approximate":
+        if return_count and count_policy == "approximate" and not terms:
             proj_qname = await self._qname()
             approximate_total = await resolve_ranked_approximate_total(
                 introspector=self.introspector,

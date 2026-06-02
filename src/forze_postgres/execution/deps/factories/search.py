@@ -102,6 +102,7 @@ def postgres_search_port_for_config(
 
             validate_fts_groups_for_search_spec(member_spec, fts_groups)
 
+            # ``pgroonga_candidate_limit`` is the shared ranked-heap cap for FTS/vector too.
             return PostgresFTSSearchAdapter[Any](
                 **common,  # type: ignore[arg-type]
                 fts_groups=fts_groups,

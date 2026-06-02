@@ -22,6 +22,7 @@ from forze.application.contracts.search import (
     ranked_search_cursor_key_spec,
 )
 from forze.domain.constants import ID_FIELD
+from forze_postgres.kernel.sql.query.nested import sort_key_expr
 
 from ._typing_host import HubSearchHost
 from .constants import (
@@ -122,6 +123,55 @@ class HubSearchSqlMixin[M: BaseModel]:
 
     # ....................... #
 
+    async def _hub_combo_top_order_by(
+        self,
+        sorts: QuerySortExpression | None,  # type: ignore[valid-type]
+    ) -> sql.Composable | None:
+        """User sort keys on bare ``combo`` column names (matches ``SELECT * FROM combo``)."""
+
+        if not sorts:
+            return None
+
+        host = self._hub_host
+        types = await host.column_types()
+        parts: list[sql.Composable] = []
+
+        for field, order in sorts.items():
+            key = sort_key_expr(
+                field=field,
+                column_types=types,
+                model_type=host.model_type,
+                nested_field_hints=host.nested_field_hints,
+                table_alias=None,
+            )
+            parts.append(sql.SQL("{} {}").format(key, sql.SQL(order.upper())))
+
+        return sql.SQL(", ").join(parts)
+
+    # ....................... #
+
+    async def _hub_combo_top_order_sql(
+        self,
+        do_legs: bool,
+        sorts: QuerySortExpression | None,  # type: ignore[valid-type]
+    ) -> sql.Composable:
+        """ORDER BY for ``combo_top`` (rank + user keys, aligned with outer hub read)."""
+
+        if do_legs:
+            order_parts: list[sql.Composable] = [
+                sql.SQL("{} DESC NULLS LAST").format(sql.Identifier(HUB_RANK)),
+            ]
+            ob = await self._hub_combo_top_order_by(sorts)
+
+            if ob is not None:
+                order_parts.append(ob)
+
+            return sql.SQL(", ").join(order_parts)
+
+        return await self._hub_order_sql_for_search(do_legs, sorts)
+
+    # ....................... #
+
     async def _hub_build_with_clause(
         self,
         *,
@@ -131,6 +181,7 @@ class HubSearchSqlMixin[M: BaseModel]:
         member_weights_list: Sequence[float],
         per_leg_limit: int,
         combo_limit: int | None = None,
+        sorts: QuerySortExpression | None = None,  # type: ignore[valid-type]
     ) -> tuple[sql.Composable, list[Any], bool, str, str]:
         fw, fp = await self._hub_host.where_clause(filters)
         tenant_id = (
@@ -281,20 +332,21 @@ class HubSearchSqlMixin[M: BaseModel]:
         combo_tail: sql.Composable = sql.SQL("")
 
         if combo_limit is not None and do_legs:
+            combo_top_order = await self._hub_combo_top_order_sql(do_legs, sorts)
             combo_top_cte = sql.SQL(
                 """
                 ,
                 {combo_top} AS (
                     SELECT *
                     FROM {combo}
-                    ORDER BY {rank} DESC NULLS LAST
+                    ORDER BY {order}
                     LIMIT {lim}
                 )
                 """
             ).format(
                 combo_top=sql.Identifier(COMBO_TOP_RELATION),
                 combo=sql.Identifier("combo"),
-                rank=sql.Identifier(HUB_RANK),
+                order=combo_top_order,
                 lim=sql.Literal(int(combo_limit)),
             )
             combo_tail = combo_top_cte

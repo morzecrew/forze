@@ -110,6 +110,7 @@ class HubSearchCursorMixin[M: BaseModel](HubSearchSqlMixin[M]):
                 member_weights_list=member_weights_list,
                 per_leg_limit=self._hub_host.per_leg_limit,
                 combo_limit=resolved_combo if terms else None,
+                sorts=sorts,
             )
         )
 

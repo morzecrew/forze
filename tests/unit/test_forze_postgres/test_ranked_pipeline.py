@@ -56,7 +56,7 @@ def test_filter_first_emits_uncapped_count_sql_when_capped() -> None:
     count_with = parts.count_with_clause.as_string() if parts.count_with_clause else ""
 
     assert "LIMIT 5" in data_with
-    assert "LIMIT" not in count_with or count_with.count("LIMIT") == 0
+    assert "LIMIT" not in count_with
     assert parts.count_from_outer is not None
     assert parts.count_params is not None
 
