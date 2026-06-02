@@ -244,6 +244,9 @@ For `engine="pgroonga"`, multi-column indexes use `ARRAY[col1, col2, ...]` in mi
 | `SearchOptions.groonga_query` | Raw Groonga query string (skips phrase combiner). |
 | `SearchOptions.search_count` | Ranked totals: `exact` (`COUNT(*)`), `approximate` (planner/stats estimate), or `none`. |
 | `SearchOptions.combo_limit` | Hub: cap merged rows in `combo_top` before pagination. |
+| `read_validation` | On `PostgresSearchConfig` and `PostgresHubSearchConfig`: `"strict"` (default, full Pydantic validation on hits) or `"trusted"` (`model_construct` when row keys match the hit model). Applies at hit materialization (including parallel hub offset/cursor), not during leg scoring. |
+
+`read_validation="trusted"` is independent of `pgroonga_plan`, candidate caps, and `execution: parallel`. Use it only when projection/heap columns match `SearchSpec.model_type` / hub read model and psycopg returns correct Python types; extra SQL columns not on the hit model raise a precondition error.
 
 `pgroonga_candidate_limit` also caps FTS and vector `scored` CTEs. `PostgresHubSearchConfig.per_leg_limit` caps each hub leg before score merge (default `5000`). `combo_limit` (or derived default) caps the merged `combo_top` CTE for the data query. `execution: parallel` runs one ranked query per leg and merges in Python (single-column `hub_fk` legs use an INNER JOIN fast path; multi-column `hub_fk` fetches leg scores and hub rows then merges with the same OR/AND and max/sum semantics as SQL). Offset hub search with `execution: parallel` requires `sorts is None` (user sorts are applied in the merge); otherwise Forze falls back to `execution: sql`. Hub cursor search supports `execution: parallel` by materializing up to the effective `combo_limit` merged rows and applying in-memory keyset pagination; exact totals still use a SQL `COUNT(*)` over the `combo` CTE when `search_count=exact`.
 

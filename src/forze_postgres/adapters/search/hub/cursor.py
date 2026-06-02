@@ -28,7 +28,8 @@ from forze.application.contracts.search import (
 )
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
-from forze.base.serialization import default_model_codec
+
+from .._materialize_hits import decode_search_hits, search_trust_source
 from forze_postgres.kernel.sql import build_seek_condition
 from forze_postgres.kernel.sql.query.nested import sort_key_expr
 
@@ -271,15 +272,8 @@ class HubSearchCursorMixin[M: BaseModel](HubParallelSearchMixin[M]):
         else:
             prv = None
 
-        if return_type is not None:
-            v = default_model_codec(return_type).decode_mapping_many(rows)
+        trust = search_trust_source(self._hub_host.read_validation)
 
-            return CursorPage(
-                hits=v,
-                next_cursor=nxt,
-                prev_cursor=prv,
-                has_more=has_more,
-            )
         if return_fields is not None:
             rj = [{k: r.get(k, None) for k in return_fields} for r in rows]
 
@@ -290,10 +284,16 @@ class HubSearchCursorMixin[M: BaseModel](HubParallelSearchMixin[M]):
                 has_more=has_more,
             )
 
-        m = self._hub_host.hub_spec.resolved_read_codec.decode_mapping_many(rows)
+        hits = decode_search_hits(
+            rows=rows,
+            model_type=self._hub_host.model_type,
+            codec=self._hub_host.hub_spec.resolved_read_codec,
+            return_type=return_type,
+            trust_source=trust,
+        )
 
         return CursorPage(
-            hits=m,
+            hits=hits,
             next_cursor=nxt,
             prev_cursor=prv,
             has_more=has_more,

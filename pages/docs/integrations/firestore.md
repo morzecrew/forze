@@ -72,6 +72,17 @@ Kernel `DocumentSpec` names must match keys in `FirestoreDepsModule.rw_documents
 |--------|------|---------|---------|
 | (reserved) | — | — | Placeholder for future client tuning |
 
+#### `read_validation` (read throughput)
+
+`FirestoreReadOnlyDocumentConfig` and `FirestoreDocumentConfig` accept `read_validation`:
+
+| Value | Behavior |
+|-------|----------|
+| `"strict"` (default) | Full Pydantic validation on every document returned from reads. |
+| `"trusted"` | Build read models with `model_construct` when stored fields match the read model (no validator run). |
+
+Use `"trusted"` only when Firestore field shapes match `DocumentSpec.read` and decoded values already match expected Python types. Extra fields not on the read model raise a precondition error. History blobs, cache payloads, and write paths stay strict.
+
 ### Routed client
 
 Register `RoutedFirestoreClient` under `FirestoreClientDepKey` and use `routed_firestore_lifecycle_step(client=routed_fs)`. Per-tenant JSON: `FirestoreRoutingCredentials` with `project_id` and `database`.

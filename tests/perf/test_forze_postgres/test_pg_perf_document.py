@@ -244,3 +244,127 @@ async def test_pg_document_find_many_large_benchmark(
     await async_benchmark(run)
 
     await pg_client.execute("TRUNCATE perf_docs")
+
+
+@pytest.mark.perf
+@pytest.mark.asyncio
+@pytest.mark.parametrize("read_validation", ["strict", "trusted"])
+async def test_pg_document_find_read_validation_benchmark(
+    async_benchmark,
+    pg_client: PostgresClient,
+    read_validation: str,
+) -> None:
+    """Benchmark find_page with strict vs trusted read validation."""
+
+    configurable = ConfigurablePostgresDocument(
+        config={
+            "read": ("public", "perf_docs"),
+            "write": ("public", "perf_docs"),
+            "bookkeeping_strategy": "application",
+            "read_validation": read_validation,
+        }
+    )
+    deps = Deps.plain(
+        {
+            PostgresClientDepKey: pg_client,
+            PostgresIntrospectorDepKey: PostgresIntrospector(client=pg_client),
+            DocumentQueryDepKey: configurable,
+            DocumentCommandDepKey: configurable,
+        }
+    )
+    ctx = context_from_deps(deps)
+    await pg_client.execute(
+        """
+        CREATE TABLE IF NOT EXISTS perf_docs (
+            id uuid PRIMARY KEY,
+            rev integer NOT NULL,
+            created_at timestamptz NOT NULL,
+            last_update_at timestamptz NOT NULL,
+            name text NOT NULL
+        );
+        """
+    )
+    spec = DocumentSpec(
+        name="perf_docs_ns",
+        read=PerfReadDoc,
+        write={
+            "domain": PerfDoc,
+            "create_cmd": PerfCreateDoc,
+            "update_cmd": PerfUpdateDoc,
+        },
+    )
+    adapter = ctx.document.command(spec)
+    await pg_client.execute("TRUNCATE perf_docs")
+    await adapter.create_many(
+        [PerfCreateDoc(name=f"rv {i}") for i in range(_PG_DOC_GET_MANY_LARGE)]
+    )
+
+    async def run() -> None:
+        page = await adapter.find_page(pagination={"limit": 100})
+        assert len(page.hits) <= 100
+
+    await async_benchmark(run)
+
+    await pg_client.execute("TRUNCATE perf_docs")
+
+
+@pytest.mark.perf
+@pytest.mark.asyncio
+@pytest.mark.parametrize("read_validation", ["strict", "trusted"])
+async def test_pg_document_find_read_validation_benchmark(
+    async_benchmark,
+    pg_client: PostgresClient,
+    read_validation: str,
+) -> None:
+    """Benchmark find_page with strict vs trusted read validation."""
+
+    configurable = ConfigurablePostgresDocument(
+        config={
+            "read": ("public", "perf_docs"),
+            "write": ("public", "perf_docs"),
+            "bookkeeping_strategy": "application",
+            "read_validation": read_validation,
+        }
+    )
+    deps = Deps.plain(
+        {
+            PostgresClientDepKey: pg_client,
+            PostgresIntrospectorDepKey: PostgresIntrospector(client=pg_client),
+            DocumentQueryDepKey: configurable,
+            DocumentCommandDepKey: configurable,
+        }
+    )
+    ctx = context_from_deps(deps)
+    await pg_client.execute(
+        """
+        CREATE TABLE IF NOT EXISTS perf_docs (
+            id uuid PRIMARY KEY,
+            rev integer NOT NULL,
+            created_at timestamptz NOT NULL,
+            last_update_at timestamptz NOT NULL,
+            name text NOT NULL
+        );
+        """
+    )
+    spec = DocumentSpec(
+        name="perf_docs_ns",
+        read=PerfReadDoc,
+        write={
+            "domain": PerfDoc,
+            "create_cmd": PerfCreateDoc,
+            "update_cmd": PerfUpdateDoc,
+        },
+    )
+    adapter = ctx.document.command(spec)
+    await pg_client.execute("TRUNCATE perf_docs")
+    await adapter.create_many(
+        [PerfCreateDoc(name=f"rv {i}") for i in range(_PG_DOC_GET_MANY_LARGE)]
+    )
+
+    async def run() -> None:
+        page = await adapter.find_page(pagination={"limit": 100})
+        assert len(page.hits) <= 100
+
+    await async_benchmark(run)
+
+    await pg_client.execute("TRUNCATE perf_docs")

@@ -69,6 +69,17 @@ Kernel `DocumentSpec` names must match keys in `MongoDepsModule.rw_documents` / 
 | `max_pool_size` | `int` | `100` | Maximum connections in the pool |
 | `min_pool_size` | `int` | `0` | Minimum connections in the pool |
 
+#### `read_validation` (read throughput)
+
+`MongoReadOnlyDocumentConfig` and `MongoDocumentConfig` accept `read_validation`:
+
+| Value | Behavior |
+|-------|----------|
+| `"strict"` (default) | Full Pydantic validation on every document returned from reads. |
+| `"trusted"` | Build read models with `model_construct` when stored fields match the read model (no validator run). |
+
+Use `"trusted"` only when collection fields match `DocumentSpec.read` and the driver already returns correct Python types. Extra fields not on the read model raise a precondition error. History blobs, cache payloads, and write paths stay strict.
+
 ### What gets registered
 
 | Key | Capability |

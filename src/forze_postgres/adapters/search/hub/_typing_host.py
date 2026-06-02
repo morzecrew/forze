@@ -48,6 +48,7 @@ class HubSearchHost(Protocol[M]):
     nested_field_hints: Mapping[str, Any] | None
     introspector: PostgresIntrospector
     client: PostgresClientPort
+    read_validation: Literal["strict", "trusted"]
 
     # ....................... #
 

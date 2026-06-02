@@ -110,6 +110,7 @@ async def execute_simple_ranked_offset_search(
     model_type: type[M],
     result_snapshot: SearchResultSnapshot | None,
     options: SearchOptions | None = None,
+    trust_source: bool = False,
 ) -> Any:
     """Run count (optional), data fetch, snapshot materialization for simple search adapters."""
 
@@ -243,7 +244,10 @@ async def execute_simple_ranked_offset_search(
 
     if want_snap and result_snapshot is not None and rs_spec is not None:
         pool_len = len(rows)
-        pool_snap = spec.resolved_read_codec.decode_mapping_many(rows)
+        pool_snap = spec.resolved_read_codec.decode_mapping_many(
+            rows,
+            trust_source=trust_source,
+        )
         handle_out = await result_snapshot.put_simple_ordered_hits(
             pool_snap,
             snap_opt=snapshot,
@@ -262,6 +266,7 @@ async def execute_simple_ranked_offset_search(
         return_fields=return_fields,
         model_type=model_type,
         codec=spec.resolved_read_codec,
+        trust_source=trust_source,
     )
 
     if return_count:
@@ -306,6 +311,7 @@ async def execute_hub_ranked_offset_search(
     options: SearchOptions | None = None,
     execution: str | None = None,
     combo_limit: int | None = None,
+    trust_source: bool = False,
 ) -> Any:
     """Ranked offset search for :class:`~forze_postgres.adapters.search.hub.PostgresHubSearchAdapter`."""
 
@@ -438,7 +444,10 @@ async def execute_hub_ranked_offset_search(
 
     if want_sn and result_snapshot is not None and rs_spec is not None:
         plh = len(rows)
-        pool_h = hub_spec.resolved_read_codec.decode_mapping_many(rows)
+        pool_h = hub_spec.resolved_read_codec.decode_mapping_many(
+            rows,
+            trust_source=trust_source,
+        )
         handle_h = await result_snapshot.put_simple_ordered_hits(
             pool_h,
             snap_opt=snapshot,
@@ -457,6 +466,7 @@ async def execute_hub_ranked_offset_search(
         return_fields=return_fields,
         model_type=model_type,
         codec=hub_spec.resolved_read_codec,
+        trust_source=trust_source,
     )
 
     if return_count:

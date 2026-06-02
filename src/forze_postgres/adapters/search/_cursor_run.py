@@ -29,7 +29,9 @@ from forze.application.contracts.search import (
 )
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
-from forze.base.serialization import ModelCodec, default_model_codec
+from forze.base.serialization import ModelCodec
+
+from ._materialize_hits import decode_search_hits
 from forze_postgres.kernel.sql import (
     build_order_by_sql,
     build_ranked_cursor_order_by_sql,
@@ -75,6 +77,7 @@ async def execute_projection_keyset_cursor[M: BaseModel](
     parsed_filters: Any,
     return_type: type[BaseModel] | None,
     return_fields: Sequence[str] | None,
+    trust_source: bool = False,
 ) -> CursorPage[Any]:
     """Keyset cursor on the projection relation only (empty search query)."""
 
@@ -211,6 +214,7 @@ async def execute_projection_keyset_cursor[M: BaseModel](
         next_cursor=nxt,
         prev_cursor=prv,
         has_more=has_more,
+        trust_source=trust_source,
     )
 
 
@@ -227,6 +231,7 @@ async def execute_ranked_pipeline_cursor[M: BaseModel](
     spec: SearchSpec[Any],
     return_type: type[BaseModel] | None,
     return_fields: Sequence[str] | None,
+    trust_source: bool = False,
 ) -> CursorPage[Any]:
     """Keyset cursor over a ranked projection + index-heap pipeline."""
 
@@ -387,6 +392,7 @@ async def execute_ranked_pipeline_cursor[M: BaseModel](
         next_cursor=nxt,
         prev_cursor=prv,
         has_more=has_more,
+        trust_source=trust_source,
     )
 
 
@@ -403,17 +409,21 @@ def _cursor_page_from_rows(
     next_cursor: str | None,
     prev_cursor: str | None,
     has_more: bool,
+    trust_source: bool = False,
 ) -> CursorPage[Any]:
     hits: list[Any]
 
-    if return_type is not None:
-        hits = default_model_codec(return_type).decode_mapping_many(rows)
-
-    elif return_fields is not None:
+    if return_fields is not None:
         hits = [{k: r.get(k, None) for k in return_fields} for r in rows]
 
     else:
-        hits = codec.decode_mapping_many(rows)
+        hits = decode_search_hits(
+            rows=rows,
+            model_type=model_type,
+            codec=codec,
+            return_type=return_type,
+            trust_source=trust_source,
+        )
 
     return CursorPage(
         hits=hits,

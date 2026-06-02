@@ -53,6 +53,9 @@ class PostgresSearchConfig(TenantAwareIntegrationConfig):
     read: RelationSpec = attrs.field(converter=coerce_relation_spec)
     """Read relation for filters and row shape or resolver."""
 
+    read_validation: Literal["strict", "trusted"] = "strict"
+    """Row decode mode for search hits (``trusted`` skips Pydantic validation)."""
+
     engine: SearchEngine
     """Search engine: PGroonga, FTS, or pgvector KNN."""
 

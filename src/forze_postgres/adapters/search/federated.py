@@ -32,6 +32,8 @@ from forze.application.integrations.search import SearchResultSnapshot
 from forze.base.exceptions import exc
 from forze.base.serialization import default_model_codec
 
+from ._materialize_hits import decode_search_hits
+
 from ...kernel.client import PostgresClientPort, gather_db_work
 from ._port import PostgresSearchPortMixin
 from ._search_count import effective_search_count
@@ -351,7 +353,13 @@ class PostgresFederatedSearchAdapter[M: BaseModel](
                 }
                 for it in window
             ]
-            v = default_model_codec(return_type).decode_mapping_many(rows)
+            v = decode_search_hits(
+                rows=rows,
+                model_type=return_type,
+                codec=default_model_codec(return_type),
+                return_type=return_type,
+                trust_source=False,
+            )
             if return_count:
                 return page_from_limit_offset(
                     v,

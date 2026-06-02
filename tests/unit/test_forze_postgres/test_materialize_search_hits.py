@@ -1,10 +1,16 @@
 """Unit tests for :mod:`forze_postgres.adapters.search._materialize_hits`."""
 
-from pydantic import BaseModel
+import pytest
+from pydantic import BaseModel, field_validator
 
+from forze.base.exceptions import CoreException
 from forze.base.primitives import JsonDict
 from forze.base.serialization import PydanticModelCodec
-from forze_postgres.adapters.search._materialize_hits import materialize_search_page
+from forze_postgres.adapters.search._materialize_hits import (
+    decode_search_hits,
+    materialize_search_page,
+    search_trust_source,
+)
 
 
 class Hit(BaseModel):
@@ -98,3 +104,70 @@ def test_materialize_different_return_type_validates_rows() -> None:
     assert len(out) == 1
     assert isinstance(out[0], HitView)
     assert out[0].id == 1
+
+
+class _StrictHit(BaseModel):
+    id: int
+    name: str
+
+    @field_validator("name")
+    @classmethod
+    def name_must_be_long(cls, value: str) -> str:
+        if len(value) < 100:
+            msg = "name too short for strict validation"
+            raise ValueError(msg)
+
+        return value
+
+
+def test_search_trust_source() -> None:
+    assert search_trust_source("strict") is False
+    assert search_trust_source("trusted") is True
+
+
+def test_decode_search_hits_return_type_uses_projection_codec() -> None:
+    rows: list[JsonDict] = [{"id": 1}]
+    out = decode_search_hits(
+        rows=rows,
+        model_type=Hit,
+        codec=_CODEC,
+        return_type=HitView,
+        trust_source=False,
+    )
+    assert isinstance(out[0], HitView)
+
+
+def test_materialize_trusted_skips_validators() -> None:
+    codec = PydanticModelCodec(_StrictHit)
+    rows: list[JsonDict] = [{"id": 1, "name": "x"}]
+    out = materialize_search_page(
+        page_rows=rows,
+        pool=None,
+        u=0,
+        page_limit=10,
+        return_type=None,
+        return_fields=None,
+        model_type=_StrictHit,
+        codec=codec,
+        trust_source=True,
+    )
+    assert isinstance(out[0], _StrictHit)
+    assert out[0].name == "x"
+
+
+def test_materialize_trusted_rejects_extra_columns() -> None:
+    codec = PydanticModelCodec(Hit)
+    rows: list[JsonDict] = [{"id": 1, "name": "a", "extra": 9}]
+
+    with pytest.raises(CoreException, match="unknown field"):
+        materialize_search_page(
+            page_rows=rows,
+            pool=None,
+            u=0,
+            page_limit=10,
+            return_type=None,
+            return_fields=None,
+            model_type=Hit,
+            codec=codec,
+            trust_source=True,
+        )

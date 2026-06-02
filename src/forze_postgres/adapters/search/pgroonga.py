@@ -34,7 +34,7 @@ from forze_postgres.kernel.relation import RelationSpec
 
 from ._engine import RankedPipelineSql
 from ._leg_pgroonga import build_pgroonga_leg
-from ._materialize_hits import materialize_search_page
+from ._materialize_hits import materialize_search_page, search_trust_source
 from ._pgroonga_plan import (
     effective_ranked_candidate_limit,
     ensure_pgroonga_plan_with_candidate_cap,
@@ -339,7 +339,10 @@ class PostgresPGroongaSearchAdapter[M: BaseModel](
 
         if want_sn and self.result_snapshot is not None and rs_spec is not None:
             pool_len = len(rows)
-            pool_pg0 = self.spec.resolved_read_codec.decode_mapping_many(rows)
+            pool_pg0 = self.spec.resolved_read_codec.decode_mapping_many(
+                rows,
+                trust_source=search_trust_source(self.read_validation),
+            )
             handle_no = await self.result_snapshot.put_simple_ordered_hits(
                 pool_pg0,
                 snap_opt=snapshot,
@@ -358,6 +361,7 @@ class PostgresPGroongaSearchAdapter[M: BaseModel](
             return_fields=return_fields,
             model_type=self.model_type,
             codec=self.spec.resolved_read_codec,
+            trust_source=search_trust_source(self.read_validation),
         )
 
         if return_count:

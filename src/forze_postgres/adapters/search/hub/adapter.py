@@ -30,6 +30,7 @@ from forze.application.integrations.search import SearchResultSnapshot
 from forze.base.exceptions import exc
 
 from ....kernel.gateways import PostgresGateway
+from .._materialize_hits import search_trust_source
 from .._offset_run import RankedOffsetPlan, execute_hub_ranked_offset_search
 from .._pgroonga_plan import effective_combo_limit
 from .._port import PostgresSearchPortMixin
@@ -70,6 +71,9 @@ class PostgresHubSearchAdapter[M: BaseModel](
 
     parallel_hub_cte_materialized: bool = True
     """When ``execution=parallel``, use ``MATERIALIZED`` on the hub filter CTE per leg statement."""
+
+    read_validation: Literal["strict", "trusted"] = "strict"
+    """Row decode mode for hub search hits (``trusted`` skips Pydantic validation)."""
 
     # ....................... #
 
@@ -217,4 +221,5 @@ class PostgresHubSearchAdapter[M: BaseModel](
             options=leg_options,
             execution=str(self.execution),
             combo_limit=resolved_combo,
+            trust_source=search_trust_source(self.read_validation),
         )

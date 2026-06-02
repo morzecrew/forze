@@ -415,6 +415,20 @@ class TestConfigurablePostgresSearch:
         out = factory(ctx, self._search_spec())
         assert out.pgroonga_score_version == "v1"
 
+    def test_read_validation_trusted_wires_to_adapter(self) -> None:
+        factory = ConfigurablePostgresSearch(
+            config=PostgresSearchConfig(
+                engine="pgroonga",
+                index=("public", "gi"),
+                read=("public", "gs"),
+                read_validation="trusted",
+            )
+        )
+        ctx = _ctx()
+        out = factory(ctx, self._search_spec())
+
+        assert out.read_validation == "trusted"
+
 
 def test_postgres_txmanager_builds_adapter() -> None:
     ctx = _ctx()

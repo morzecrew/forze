@@ -1,8 +1,14 @@
 """Python hub combo merge for parallel execution (SQL ``combo`` parity)."""
 
+from functools import cmp_to_key
 from typing import Any, Sequence
 
 from forze.application.contracts.querying import QuerySortExpression
+from forze.application.contracts.querying.pagination.cursor_token import (
+    compare_keyset_sort_values,
+    row_value_for_sort_key,
+)
+from forze.application.contracts.search import ranked_search_cursor_key_spec
 from forze.domain.constants import ID_FIELD
 
 from .constants import HUB_RANK
@@ -119,29 +125,49 @@ def sort_merged_hub_rows(
 ) -> None:
     """In-place sort aligned with :meth:`HubSearchSqlMixin._hub_order_sql_for_search`."""
 
+    _ = column_types, model_type, nested_field_hints
+
     if not rows:
+        return
+
+    if do_legs:
+        key_spec = ranked_search_cursor_key_spec(
+            rank_field=rank_field,
+            sorts=sorts,
+            read_fields=read_fields,
+        )
+
+        def cmp_rows(a: dict[str, Any], b: dict[str, Any]) -> int:
+            for key, direction in key_spec:
+                cmp = compare_keyset_sort_values(
+                    row_value_for_sort_key(a, key),
+                    row_value_for_sort_key(b, key),
+                )
+
+                if cmp == 0:
+                    continue
+
+                return cmp if direction == "asc" else -cmp
+
+            return 0
+
+        rows.sort(key=cmp_to_key(cmp_rows))
         return
 
     def sort_key(row: dict[str, Any]) -> tuple[Any, ...]:
         parts: list[Any] = []
 
-        if do_legs:
-            parts.append(-float(row.get(rank_field) or 0.0))
-
         if sorts:
             for field, order in sorts.items():
-                if field == rank_field and do_legs:
-                    continue
                 val = row.get(field)
                 asc = (order or "").lower() == "asc"
                 parts.append((0 if asc else 1, val))
 
-        if not do_legs:
-            if ID_FIELD in read_fields:
-                parts.append(row.get(ID_FIELD))
+        if ID_FIELD in read_fields:
+            parts.append(row.get(ID_FIELD))
 
-            else:
-                parts.append(tuple(row.get(f) for f in sorted(read_fields)))
+        else:
+            parts.append(tuple(row.get(f) for f in sorted(read_fields)))
 
         return tuple(parts)
 

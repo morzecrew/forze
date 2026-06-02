@@ -111,3 +111,23 @@ def test_sort_merged_hub_rows_user_sort_then_rank() -> None:
         nested_field_hints=None,
     )
     assert [r["label"] for r in rows] == ["a", "b"]
+
+
+def test_sort_merged_hub_rows_id_desc_matches_keyset() -> None:
+    u1 = uuid4()
+    u2 = uuid4()
+    rows = [
+        {HUB_RANK: 1.0, "id": u1},
+        {HUB_RANK: 1.0, "id": u2},
+    ]
+    sort_merged_hub_rows(
+        rows,
+        do_legs=True,
+        sorts={"id": "desc"},  # type: ignore[arg-type]
+        read_fields=frozenset({"id"}),
+        column_types={},
+        model_type=_HubRow,
+        nested_field_hints=None,
+    )
+    assert rows[0]["id"] == max(u1, u2)
+    assert rows[1]["id"] == min(u1, u2)

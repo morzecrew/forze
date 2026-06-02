@@ -1909,3 +1909,398 @@ async def test_hub_exact_total_exceeds_leg_and_combo_caps(
     )
     assert page.count == 14
     assert len(page.hits) == 3
+
+
+def _hub_ctx(
+    pg_client: PostgresClient,
+    *,
+    hub_cfg: PostgresHubSearchConfig,
+    hub_spec: HubSearchSpec,
+):
+    ctx = context_from_deps(
+        Deps.plain(
+            {
+                PostgresClientDepKey: pg_client,
+                PostgresIntrospectorDepKey: PostgresIntrospector(client=pg_client),
+            }
+        )
+    )
+    return ConfigurablePostgresHubSearch(config=hub_cfg)(ctx, hub_spec)
+
+
+@pytest.mark.asyncio
+async def test_hub_parallel_cursor_ranked_forward_and_back(
+    pg_client: PostgresClient,
+) -> None:
+    """``execution=parallel`` ranked cursor walks all hits (after / before)."""
+    await pg_client.execute("CREATE EXTENSION IF NOT EXISTS pgroonga;")
+
+    suffix = uuid4().hex[:8]
+    ht = f"hub_pcur_{suffix}"
+    token = "parcur"
+    await pg_client.execute(
+        f"""
+        CREATE TABLE {ht} (
+            id uuid PRIMARY KEY,
+            name text NOT NULL,
+            display_name text NOT NULL
+        );
+        CREATE INDEX idx_{suffix}_pcur ON {ht}
+        USING pgroonga ((ARRAY[name, display_name]));
+        """
+    )
+    row_ids = [uuid4() for _ in range(8)]
+    for i, uid in enumerate(row_ids):
+        await pg_client.execute(
+            f"""
+            INSERT INTO {ht} (id, name, display_name)
+            VALUES (%(id)s, %(n)s, 'x')
+            """,
+            {"id": uid, "n": f"{token}-{i:02d}"},
+        )
+
+    leg_n = f"pcur_{suffix}"
+    doc_leg = SearchSpec(
+        name=leg_n,
+        model_type=_HubLegTxt,
+        fields=["name", "display_name"],
+    )
+    hub_spec = HubSearchSpec(
+        name=f"hub_pcur_{suffix}",
+        model_type=_SameHeapHubRow,
+        members=(doc_leg,),
+    )
+    hub_cfg = _hub_config(
+        hub=("public", ht),
+        members={
+            leg_n: _hub_member(
+                index=("public", f"idx_{suffix}_pcur"),
+                read=("public", ht),
+                hub_fk="id",
+                same_heap_as_hub=True,
+                engine="pgroonga",
+            ),
+        },
+        execution="parallel",
+        combo_limit=20,
+    )
+    adapter = _hub_ctx(pg_client, hub_cfg=hub_cfg, hub_spec=hub_spec)
+
+    p0: CursorPage = await adapter.search_cursor(
+        token,
+        sorts={"name": "asc"},
+        cursor={"limit": 3},
+    )
+    assert len(p0.hits) == 3
+    assert p0.has_more is True
+    assert p0.next_cursor is not None
+
+    p1 = await adapter.search_cursor(
+        token,
+        sorts={"name": "asc"},
+        cursor={"limit": 3, "after": p0.next_cursor},
+    )
+    assert len(p1.hits) == 3
+    assert p1.has_more is True
+
+    p2 = await adapter.search_cursor(
+        token,
+        sorts={"name": "asc"},
+        cursor={"limit": 3, "after": p1.next_cursor},
+    )
+    assert len(p2.hits) == 2
+    assert p2.has_more is False
+
+    forward_ids = [h.id for h in p0.hits] + [h.id for h in p1.hits] + [h.id for h in p2.hits]
+    assert set(forward_ids) == set(row_ids)
+
+    p_back: CursorPage = await adapter.search_cursor(
+        token,
+        sorts={"name": "asc"},
+        cursor={"limit": 3, "before": p1.next_cursor},
+    )
+    assert len(p_back.hits) >= 1
+    assert {h.id for h in p_back.hits}.issubset(set(row_ids))
+    assert {h.id for h in p_back.hits} & {h.id for h in p0.hits}
+
+
+@pytest.mark.asyncio
+async def test_hub_multi_fk_parallel_matches_sql(
+    pg_client: PostgresClient,
+) -> None:
+    """Multi-column ``hub_fk`` parallel merge agrees with SQL on counts and hit ids."""
+    await pg_client.execute("CREATE EXTENSION IF NOT EXISTS pgroonga;")
+
+    suffix = uuid4().hex[:8]
+    await pg_client.execute(
+        f"""
+        CREATE TABLE hub_mfk_p_{suffix} (
+            id uuid PRIMARY KEY,
+            name text NOT NULL,
+            display_name text NOT NULL
+        );
+        CREATE TABLE hub_mfk_l_{suffix} (
+            id uuid PRIMARY KEY,
+            name text NOT NULL,
+            display_name text NOT NULL
+        );
+        CREATE TABLE hub_mfk_c_{suffix} (
+            id uuid PRIMARY KEY,
+            party_a_id uuid NOT NULL REFERENCES hub_mfk_p_{suffix} (id),
+            party_b_id uuid NOT NULL REFERENCES hub_mfk_p_{suffix} (id),
+            label_id uuid NOT NULL REFERENCES hub_mfk_l_{suffix} (id)
+        );
+        CREATE INDEX idx_mfk_p_{suffix} ON hub_mfk_p_{suffix}
+        USING pgroonga ((ARRAY[name, display_name]));
+        CREATE INDEX idx_mfk_l_{suffix} ON hub_mfk_l_{suffix}
+        USING pgroonga ((ARRAY[name, display_name]));
+        """
+    )
+
+    pa, pb, pc = uuid4(), uuid4(), uuid4()
+    lbl = uuid4()
+    await pg_client.execute(
+        f"""
+        INSERT INTO hub_mfk_p_{suffix} (id, name, display_name) VALUES
+        (%(a)s, 'north party', 'Alpha North'),
+        (%(b)s, 'south party', 'Beta South'),
+        (%(c)s, 'east party', 'Gamma East')
+        """,
+        {"a": pa, "b": pb, "c": pc},
+    )
+    await pg_client.execute(
+        f"""
+        INSERT INTO hub_mfk_l_{suffix} (id, name, display_name)
+        VALUES (%(id)s, 'priority label', 'Label Z')
+        """,
+        {"id": lbl},
+    )
+    c1, c2 = uuid4(), uuid4()
+    await pg_client.execute(
+        f"""
+        INSERT INTO hub_mfk_c_{suffix}
+        (id, party_a_id, party_b_id, label_id) VALUES
+        (%(c1)s, %(pa)s, %(pb)s, %(lbl)s),
+        (%(c2)s, %(pb)s, %(pc)s, %(lbl)s)
+        """,
+        {"c1": c1, "c2": c2, "pa": pa, "pb": pb, "pc": pc, "lbl": lbl},
+    )
+
+    party_leg = f"parties_{suffix}"
+    label_leg = f"labels_{suffix}"
+    hub_spec = HubSearchSpec(
+        name=f"hub_mfk_par_{suffix}",
+        model_type=ContractMultiFkModel,
+        members=(
+            SearchSpec(
+                name=party_leg,
+                model_type=_HubLegTxt,
+                fields=["name", "display_name"],
+            ),
+            SearchSpec(
+                name=label_leg,
+                model_type=_HubLegTxt,
+                fields=["name", "display_name"],
+            ),
+        ),
+    )
+    members_cfg = {
+        party_leg: _hub_member(
+            index=("public", f"idx_mfk_p_{suffix}"),
+            read=("public", f"hub_mfk_p_{suffix}"),
+            hub_fk=["party_a_id", "party_b_id"],
+            engine="pgroonga",
+        ),
+        label_leg: _hub_member(
+            index=("public", f"idx_mfk_l_{suffix}"),
+            read=("public", f"hub_mfk_l_{suffix}"),
+            hub_fk="label_id",
+            engine="pgroonga",
+        ),
+    }
+    base = dict(
+        hub=("public", f"hub_mfk_c_{suffix}"),
+        members=members_cfg,
+        combine_strategy="or",
+        merge_strategy="max",
+    )
+
+    sql_adapter = _hub_ctx(
+        pg_client,
+        hub_cfg=_hub_config(**base, execution="sql"),
+        hub_spec=hub_spec,
+    )
+    par_adapter = _hub_ctx(
+        pg_client,
+        hub_cfg=_hub_config(**base, execution="parallel"),
+        hub_spec=hub_spec,
+    )
+
+    for term in ("Alpha", "Gamma", "Beta", "priority"):
+        sql_page = await sql_adapter.search_page(
+            term,
+            options={"search_count": "exact"},
+        )
+        par_page = await par_adapter.search_page(
+            term,
+            options={"search_count": "exact"},
+        )
+        assert sql_page.count == par_page.count
+        assert {h.id for h in sql_page.hits} == {h.id for h in par_page.hits}
+
+
+@pytest.mark.asyncio
+async def test_hub_parallel_offset_matches_sql_without_user_sorts(
+    pg_client: PostgresClient,
+) -> None:
+    """Parallel and SQL offset pages return the same hit order when ``sorts`` is omitted."""
+    await pg_client.execute("CREATE EXTENSION IF NOT EXISTS pgroonga;")
+
+    suffix = uuid4().hex[:8]
+    ht = f"hub_poff_{suffix}"
+    token = "pofftok"
+    await pg_client.execute(
+        f"""
+        CREATE TABLE {ht} (
+            id uuid PRIMARY KEY,
+            name text NOT NULL,
+            display_name text NOT NULL
+        );
+        CREATE INDEX idx_{suffix}_poff ON {ht}
+        USING pgroonga ((ARRAY[name, display_name]));
+        """
+    )
+    for i in range(10):
+        await pg_client.execute(
+            f"""
+            INSERT INTO {ht} (id, name, display_name)
+            VALUES (%(id)s, %(n)s, 'z')
+            """,
+            {"id": uuid4(), "n": f"{token}-{i:02d}"},
+        )
+
+    leg_n = f"poff_{suffix}"
+    doc_leg = SearchSpec(
+        name=leg_n,
+        model_type=_HubLegTxt,
+        fields=["name", "display_name"],
+    )
+    hub_spec = HubSearchSpec(
+        name=f"hub_poff_{suffix}",
+        model_type=_SameHeapHubRow,
+        members=(doc_leg,),
+        default_sort={"name": "asc"},
+    )
+    members = {
+        leg_n: _hub_member(
+            index=("public", f"idx_{suffix}_poff"),
+            read=("public", ht),
+            hub_fk="id",
+            same_heap_as_hub=True,
+            engine="pgroonga",
+        ),
+    }
+    sql_adapter = _hub_ctx(
+        pg_client,
+        hub_cfg=_hub_config(
+            hub=("public", ht),
+            members=members,
+            execution="sql",
+            combo_limit=6,
+        ),
+        hub_spec=hub_spec,
+    )
+    par_adapter = _hub_ctx(
+        pg_client,
+        hub_cfg=_hub_config(
+            hub=("public", ht),
+            members=members,
+            execution="parallel",
+            combo_limit=6,
+        ),
+        hub_spec=hub_spec,
+    )
+
+    sql_page = await sql_adapter.search_page(token, pagination={"limit": 6})
+    par_page = await par_adapter.search_page(token, pagination={"limit": 6})
+    assert [h.id for h in sql_page.hits] == [h.id for h in par_page.hits]
+
+
+@pytest.mark.asyncio
+async def test_hub_sql_offset_and_cursor_agree_with_explicit_sort(
+    pg_client: PostgresClient,
+) -> None:
+    """Offset and cursor (SQL) return the same ranked order for the same ``sorts``."""
+    await pg_client.execute("CREATE EXTENSION IF NOT EXISTS pgroonga;")
+
+    suffix = uuid4().hex[:8]
+    ht = f"hub_osrt_{suffix}"
+    token = "osrttok"
+    await pg_client.execute(
+        f"""
+        CREATE TABLE {ht} (
+            id uuid PRIMARY KEY,
+            name text NOT NULL,
+            display_name text NOT NULL
+        );
+        CREATE INDEX idx_{suffix}_osrt ON {ht}
+        USING pgroonga ((ARRAY[name, display_name]));
+        """
+    )
+    for i in range(9):
+        await pg_client.execute(
+            f"""
+            INSERT INTO {ht} (id, name, display_name)
+            VALUES (%(id)s, %(n)s, 'tie')
+            """,
+            {"id": uuid4(), "n": f"n{i:02d}-{token}"},
+        )
+
+    leg_n = f"osrt_{suffix}"
+    doc_leg = SearchSpec(
+        name=leg_n,
+        model_type=_HubLegTxt,
+        fields=["name", "display_name"],
+    )
+    hub_spec = HubSearchSpec(
+        name=f"hub_osrt_{suffix}",
+        model_type=_SameHeapHubRow,
+        members=(doc_leg,),
+        default_sort={"name": "asc"},
+    )
+    hub_cfg = _hub_config(
+        hub=("public", ht),
+        members={
+            leg_n: _hub_member(
+                index=("public", f"idx_{suffix}_osrt"),
+                read=("public", ht),
+                hub_fk="id",
+                same_heap_as_hub=True,
+                engine="pgroonga",
+            ),
+        },
+        execution="sql",
+        combo_limit=20,
+    )
+    adapter = _hub_ctx(pg_client, hub_cfg=hub_cfg, hub_spec=hub_spec)
+
+    sort_expr = {"name": "asc"}
+    off = await adapter.search_page(
+        token,
+        pagination={"limit": 5},
+        sorts=sort_expr,
+    )
+    collected: list[UUID] = []
+    next_c: str | None = None
+    for _ in range(5):
+        cur: dict[str, Any] = {"limit": 5}
+        if next_c is not None:
+            cur["after"] = next_c
+        page = await adapter.search_cursor(token, sorts=sort_expr, cursor=cur)
+        collected.extend(h.id for h in page.hits)
+        if not page.has_more:
+            break
+        next_c = page.next_cursor
+
+    assert [h.id for h in off.hits] == collected[: len(off.hits)]
+    assert len(collected) == off.count

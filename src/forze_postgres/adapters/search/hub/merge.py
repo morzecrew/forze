@@ -4,6 +4,8 @@ from typing import Any, Literal, Sequence
 
 from forze.domain.constants import ID_FIELD
 
+from .constants import HUB_INTERNAL_ROW_KEYS
+
 # ----------------------- #
 
 HubCombine = Literal["or", "and"]
@@ -85,3 +87,15 @@ def merge_hub_leg_rows(
     out.sort(key=lambda r: float(r.get(rank_field) or 0.0), reverse=True)
 
     return out
+
+
+# ....................... #
+
+
+def hub_row_for_materialize(row: dict[str, Any]) -> dict[str, Any]:
+    """Drop hub-internal keys before hit decode (SQL combo omits these columns)."""
+
+    if not HUB_INTERNAL_ROW_KEYS.intersection(row):
+        return row
+
+    return {k: v for k, v in row.items() if k not in HUB_INTERNAL_ROW_KEYS}

@@ -16,6 +16,7 @@ from forze.application.contracts.querying import (
     QuerySortExpression,
     decode_keyset_v1,
     encode_keyset_v1,
+    row_passes_keyset_seek,
     row_value_for_sort_key,
 )
 from forze.application.contracts.search import (
@@ -28,15 +29,15 @@ from forze.application.contracts.search import (
 from forze.application.integrations.search import SearchResultSnapshot
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
-from forze.base.serialization import default_model_codec
 
 from .._cursor_run import parse_search_cursor
-from .._materialize_hits import materialize_search_page
+from .._materialize_hits import decode_search_hits, materialize_search_page, search_trust_source
 from .._pgroonga_plan import effective_combo_limit
 from .._search_count import effective_search_count, resolve_ranked_approximate_total
 from ._leg_sql import HubLegSqlContext, build_hub_cte, build_hub_leg_sql_parts
 from ._typing_host import HubSearchHost
 from .constants import HUB_CTE, HUB_RANK, HUB_ROW_ALIAS, LEG_EID, LEG_SCORE
+from .merge import hub_row_for_materialize
 from .parallel_merge import (
     merge_hub_combo_rows,
     merge_hub_leg_row_lists,
@@ -340,7 +341,11 @@ class HubParallelSearchMixin(HubSearchSqlMixin[M]):
         else:
             page_limit = int(cast(int | str, limit_raw))
 
-        page_rows = merged[offset : offset + page_limit]
+        page_rows = [
+            hub_row_for_materialize(r)
+            for r in merged[offset : offset + page_limit]
+        ]
+        trust = search_trust_source(host.read_validation)
 
         page = materialize_search_page(
             page_rows=page_rows,
@@ -351,6 +356,7 @@ class HubParallelSearchMixin(HubSearchSqlMixin[M]):
             return_fields=return_fields,
             model_type=host.model_type,
             codec=hub_spec.resolved_read_codec,
+            trust_source=trust,
         )
 
         if return_count:
@@ -427,20 +433,17 @@ class HubParallelSearchMixin(HubSearchSqlMixin[M]):
 
             cursor_vals = list(tv)
 
-            def _row_tuple(row: dict[str, Any]) -> tuple[Any, ...]:
-                return tuple(row_value_for_sort_key(row, k) for k in sort_keys)
-
-            def _cmp_rows(row: dict[str, Any]) -> bool:
-                rt = _row_tuple(row)
-                for rv, cv, d in zip(rt, cursor_vals, directions, strict=True):
-                    if rv == cv:
-                        continue
-                    if d == "asc":
-                        return rv > cv if use_after else rv < cv
-                    return rv < cv if use_after else rv > cv
-                return False
-
-            merged = [r for r in merged if _cmp_rows(r)]
+            merged = [
+                r
+                for r in merged
+                if row_passes_keyset_seek(
+                    r,
+                    sort_keys=sort_keys,
+                    directions=directions,
+                    cursor_values=cursor_vals,
+                    after=use_after,
+                )
+            ]
 
         has_more = len(merged) > lim
         rows = merged[:lim]
@@ -471,11 +474,8 @@ class HubParallelSearchMixin(HubSearchSqlMixin[M]):
         else:
             prv = None
 
-        if return_type is not None:
-            v = default_model_codec(return_type).decode_mapping_many(rows)
-            return CursorPage(
-                hits=v, next_cursor=nxt, prev_cursor=prv, has_more=has_more
-            )
+        host = cast(HubSearchHost[M], self)
+        trust = search_trust_source(host.read_validation)
 
         if return_fields is not None:
             rj = [{k: r.get(k, None) for k in return_fields} for r in rows]
@@ -483,6 +483,12 @@ class HubParallelSearchMixin(HubSearchSqlMixin[M]):
                 hits=rj, next_cursor=nxt, prev_cursor=prv, has_more=has_more
             )
 
-        m = hub_spec.resolved_read_codec.decode_mapping_many(rows)
+        hits = decode_search_hits(
+            rows=[hub_row_for_materialize(r) for r in rows],
+            model_type=host.model_type,
+            codec=hub_spec.resolved_read_codec,
+            return_type=return_type,
+            trust_source=trust,
+        )
 
-        return CursorPage(hits=m, next_cursor=nxt, prev_cursor=prv, has_more=has_more)
+        return CursorPage(hits=hits, next_cursor=nxt, prev_cursor=prv, has_more=has_more)
