@@ -91,7 +91,10 @@ class HubSearchCursorMixin[M: BaseModel](HubSearchSqlMixin[M]):
 
         from .._pgroonga_plan import effective_combo_limit
 
-        rs_spec = self._hub_host.hub_spec.snapshot
+        hub_spec = self._hub_host.hub_spec
+        rs_spec = hub_spec.snapshot
+        effective_sorts = sorts if sorts else hub_spec.default_sort
+
         resolved_combo = effective_combo_limit(
             config_limit=getattr(self._hub_host, "combo_limit", None),
             per_leg_limit=self._hub_host.per_leg_limit,
@@ -110,7 +113,7 @@ class HubSearchCursorMixin[M: BaseModel](HubSearchSqlMixin[M]):
                 member_weights_list=member_weights_list,
                 per_leg_limit=self._hub_host.per_leg_limit,
                 combo_limit=resolved_combo if terms else None,
-                sorts=sorts,
+                sorts=effective_sorts,
             )
         )
 
