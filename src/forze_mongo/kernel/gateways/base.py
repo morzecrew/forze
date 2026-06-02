@@ -6,8 +6,7 @@ require_mongo()
 
 # ....................... #
 
-from functools import cached_property
-from typing import Any, Sequence, cast
+from typing import Any, Sequence
 from uuid import UUID
 
 import attrs
@@ -22,10 +21,14 @@ from forze.application.contracts.querying import (
     QuerySortExpression,
 )
 from forze.application.contracts.tenancy import TENANT_ID_FIELD
-from forze.application.contracts.tenancy.mixins import TenancyMixin
+from forze.application.integrations.persistence import (
+    FilterParserMixin,
+    ModelCodecGatewayMixin,
+    TenantResolvedRelationMixin,
+)
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
-from forze.base.serialization import ModelCodec, default_model_codec
+from forze.base.serialization import ModelCodec
 from forze.domain.constants import ID_FIELD
 
 from ..client import MongoClientPort
@@ -36,7 +39,11 @@ from ..relation import RelationSpec, is_static_relation, resolve_mongo_collectio
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class MongoGateway[M: BaseModel](TenancyMixin):
+class MongoGateway[M: BaseModel](
+    ModelCodecGatewayMixin[M],
+    FilterParserMixin,
+    TenantResolvedRelationMixin,
+):
     """Base gateway providing collection access, query rendering, and document mapping.
 
     Subclasses (e.g. :class:`MongoReadGateway`, :class:`MongoWriteGateway`)
@@ -68,7 +75,7 @@ class MongoGateway[M: BaseModel](TenancyMixin):
     """Query expression renderer."""
 
     filter_limits: QueryFilterLimits | None = attrs.field(default=None)
-    """Optional filter DSL abuse limits; defaults to :class:`QueryFilterLimits` factory values."""
+    """Optional filter DSL abuse limits."""
 
     filter_parser: QueryFilterExpressionParser = attrs.field(init=False)
     """Parser built from :attr:`filter_limits` during initialization."""
@@ -76,95 +83,18 @@ class MongoGateway[M: BaseModel](TenancyMixin):
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
-        limits = (
-            self.filter_limits
-            if self.filter_limits is not None
-            else QueryFilterLimits()
-        )
-        object.__setattr__(
-            self,
-            "filter_parser",
-            QueryFilterExpressionParser(limits=limits),
-        )
-
-    # ....................... #
-
-    @property
-    def read_codec(self) -> ModelCodec[M, Any]:
-        """Row codec (:attr:`codec`; required at construction)."""
-
-        return self.codec
-
-    # ....................... #
-
-    def _codec_for(self, model: type[BaseModel] | None = None) -> ModelCodec[Any, Any]:
-        if model is None or model is self.model_type:
-            return cast(ModelCodec[Any, Any], self.read_codec)
-
-        return default_model_codec(model)
-
-    # ....................... #
-
-    def _decode_row(
-        self,
-        row: JsonDict,
-        *,
-        model: type[BaseModel] | None = None,
-        trust_source: bool = False,
-    ) -> Any:
-        return self._codec_for(model).decode_mapping(row, trust_source=trust_source)
-
-    # ....................... #
-
-    def _decode_rows(
-        self,
-        rows: Sequence[JsonDict],
-        *,
-        model: type[BaseModel] | None = None,
-        trust_source: bool = False,
-    ) -> list[Any]:
-        return self._codec_for(model).decode_mapping_many(
-            rows,
-            trust_source=trust_source,
-        )
-
-    # ....................... #
-
-    @cached_property
-    def read_fields(self) -> frozenset[str]:
-        """Field names exposed by the model, cached for repeated access."""
-
-        return self.read_codec.stored_field_names(include_computed=False)
-
-    # ....................... #
-
-    def _tenant_id_for_resolve(self) -> UUID | None:
-        if self.tenant_provider is None:
-            return None
-
-        tenant = self.tenant_provider()
-
-        if tenant is None:
-            if self.tenant_aware:
-                raise exc.internal("Tenant ID is required for the gateway")
-
-            return None
-
-        return tenant.tenant_id
+        self.init_filter_parser()
 
     # ....................... #
 
     async def _resolved_collection(self) -> tuple[str, str]:
-        if self._relation_resolved is not None:
-            return self._relation_resolved
+        async def _factory() -> tuple[str, str]:
+            return await resolve_mongo_collection(
+                self.relation,
+                self._tenant_id_for_resolve(),
+            )
 
-        resolved = await resolve_mongo_collection(
-            self.relation,
-            self._tenant_id_for_resolve(),
-        )
-        object.__setattr__(self, "_relation_resolved", resolved)
-
-        return resolved
+        return await self._resolve_and_cache("_relation_resolved", _factory)
 
     # ....................... #
 
@@ -297,19 +227,6 @@ class MongoGateway[M: BaseModel](TenancyMixin):
             out[TENANT_ID_FIELD] = tenant_id
 
         return out
-
-    # ....................... #
-
-    def compile_filters(
-        self,
-        filters: QueryFilterExpression | None,  # type: ignore[valid-type]
-    ) -> QueryExpr | None:
-        """Parse *filters* into an AST using :attr:`filter_parser`."""
-
-        if not filters:
-            return None
-
-        return self.filter_parser.parse_filter(filters)
 
     # ....................... #
 

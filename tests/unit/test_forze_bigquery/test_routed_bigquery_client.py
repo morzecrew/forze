@@ -9,8 +9,10 @@ import pytest
 
 from forze.application.contracts.secrets import SecretRef
 from forze.base.exceptions import CoreException
-from forze.base.primitives.gcp_service_file import materialize_service_account_json
 from forze_bigquery.kernel.client import BigQueryClient, RoutedBigQueryClient
+from forze_bigquery.kernel.client.routing_credentials import (
+    credential_file_for_init as _credential_file_for_init,
+)
 
 # ----------------------- #
 
@@ -108,10 +110,11 @@ async def test_routed_bigquery_inline_json_temp_file_removed_on_eviction() -> No
     cur: UUID | None = None
     temp_paths: list[str] = []
 
-    def _track_materialize(raw: str, *, prefix: str) -> tuple[str, bool]:
-        path, owned = materialize_service_account_json(raw, prefix=prefix)
-        temp_paths.append(path)
-        return path, owned
+    def _track_credential_file(creds, *, prefix: str):
+        credential_path = _credential_file_for_init(creds, prefix=prefix)
+        if credential_path.owned and credential_path.path is not None:
+            temp_paths.append(credential_path.path)
+        return credential_path
 
     routed = RoutedBigQueryClient(
         secrets=secrets,
@@ -126,8 +129,8 @@ async def test_routed_bigquery_inline_json_temp_file_removed_on_eviction() -> No
 
     with (
         patch(
-            "forze_bigquery.kernel.client.routed_client.materialize_service_account_json",
-            side_effect=_track_materialize,
+            "forze_bigquery.kernel.client.routed_client.credential_file_for_init",
+            side_effect=_track_credential_file,
         ),
         patch(
             "forze_bigquery.kernel.client.routed_client.BigQueryClient",

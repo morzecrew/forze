@@ -17,12 +17,7 @@ import attrs
 from redis.asyncio.client import Pipeline
 
 from forze.application.contracts.secrets import SecretRef, SecretsPort
-from forze.application.contracts.tenancy import (
-    TenantClientRegistry,
-    ensure_dsn_fingerprint,
-    require_tenant_id,
-    resolve_dsn_for_tenant,
-)
+from forze.application.contracts.tenancy.routed_client_base import DsnRoutedTenantClientBase
 from forze.base.primitives import JsonDict
 
 from .client import RedisClient
@@ -34,8 +29,8 @@ from .value_objects import RedisConfig
 
 
 @final
-@attrs.define(slots=True)
-class RoutedRedisClient(RedisClientPort):
+@attrs.define(slots=True, kw_only=True)
+class RoutedRedisClient(DsnRoutedTenantClientBase[RedisClient], RedisClientPort):
     """Routes each call to a lazily created :class:`RedisClient` for the current tenant.
 
     DSN strings are resolved via :meth:`SecretsPort.resolve_str` and
@@ -48,71 +43,17 @@ class RoutedRedisClient(RedisClientPort):
     tenant_provider: Callable[[], UUID | None]
     pool_config: RedisConfig = attrs.field(factory=RedisConfig)
     max_cached_tenants: int = 100
+    dsn_backend: str = attrs.field(default="Redis", init=False)
+    tenant_required_message: str = attrs.field(
+        default="Tenant ID is required for routed Redis access",
+        init=False,
+    )
 
-    # ....................... #
-
-    __pool: TenantClientRegistry[RedisClient, str] = attrs.field(init=False)
-
-    # ....................... #
-
-    def __attrs_post_init__(self) -> None:
-        self.__pool = TenantClientRegistry(
-            max_entries=self.max_cached_tenants,
-            create=self._create_client,
-            dispose=lambda client: client.close(),
-            guarded=False,
-        )
-
-    # ....................... #
-
-    async def startup(self) -> None:
-        await self.__pool.startup()
-
-    # ....................... #
-
-    async def close(self) -> None:
-        await self.__pool.close()
-
-    # ....................... #
-
-    async def evict_tenant(self, tenant_id: UUID) -> None:
-        await self.__pool.evict(tenant_id)
-
-    # ....................... #
-
-    async def _create_client(self, tid: UUID) -> RedisClient:
-        dsn = await resolve_dsn_for_tenant(
-            tenant_id=tid,
-            secrets=self.secrets,
-            ref_for_tenant=self.secret_ref_for_tenant,
-            backend="Redis",
-        )
-
+    async def initialize_client(self, tenant_id: UUID, creds: str) -> RedisClient:
         client = RedisClient()
-        await client.initialize(dsn, config=self.pool_config)
+        await client.initialize(creds, config=self.pool_config)
 
         return client
-
-    # ....................... #
-
-    async def _get_client(self) -> RedisClient:
-        tenant_id = require_tenant_id(
-            self.tenant_provider,
-            message="Tenant ID is required for routed Redis access",
-        )
-
-        await ensure_dsn_fingerprint(
-            self.__pool.get_fingerprint,
-            self.__pool.set_fingerprint,
-            tenant_id=tenant_id,
-            secrets=self.secrets,
-            ref_for_tenant=self.secret_ref_for_tenant,
-            backend="Redis",
-        )
-
-        return await self.__pool.get(tenant_id)
-
-    # ....................... #
 
     async def health(self) -> tuple[str, bool]:
         inner = await self._get_client()

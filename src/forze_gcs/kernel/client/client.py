@@ -21,7 +21,7 @@ from forze.application.integrations.storage.client import (
     ObjectStorageListedObject,
 )
 from forze.base.exceptions import exc
-from forze.base.primitives.gcp_service_file import release_service_file
+from forze.base.primitives.owned_temp_path import OwnedTempPath
 
 from .errors import exc_interceptor
 from .port import GCSClientPort
@@ -43,8 +43,10 @@ class GCSClient(GCSClientPort):
     __storage: Storage | None = attrs.field(default=None, init=False)
     __project_id: str | None = attrs.field(default=None, init=False)
     __config: GCSConfig | None = attrs.field(default=None, init=False)
-    __service_file: str | None = attrs.field(default=None, init=False)
-    __service_file_owned: bool = attrs.field(default=False, init=False)
+    __credential_path: OwnedTempPath = attrs.field(
+        factory=OwnedTempPath.empty,
+        init=False,
+    )
 
     __ctx_depth: ContextVar[int] = attrs.field(
         factory=lambda: ContextVar("gcs_depth", default=0),
@@ -83,8 +85,7 @@ class GCSClient(GCSClientPort):
         if key_file is None and config is not None:
             key_file = config.service_file
 
-        self.__service_file = key_file
-        self.__service_file_owned = service_file_owned
+        self.__credential_path = OwnedTempPath(path=key_file, owned=service_file_owned)
 
         self.__storage = Storage(
             service_file=key_file,
@@ -102,12 +103,8 @@ class GCSClient(GCSClientPort):
             await storage.close()
             self.__storage = None
 
-        release_service_file(
-            self.__service_file,
-            owned=self.__service_file_owned,
-        )
-        self.__service_file = None
-        self.__service_file_owned = False
+        self.__credential_path.release()
+        self.__credential_path = OwnedTempPath.empty()
         self.__project_id = None
         self.__config = None
 

@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from forze.base.exceptions import CoreException
-from forze.base.primitives.gcp_service_file import materialize_service_account_json
+from forze.base.primitives.owned_temp_path import OwnedTempPath
 
 from forze_gcs.kernel.client.client import GCSClient
 from forze_gcs.kernel.client.value_objects import GCSConfig
@@ -171,7 +171,7 @@ async def test_head_object_maps_download_metadata() -> None:
 @pytest.mark.asyncio
 async def test_close_unlinks_owned_service_file() -> None:
     sa_json = '{"type":"service_account","project_id":"p"}'
-    path, owned = materialize_service_account_json(sa_json, prefix="forze-gcs-test-")
+    credential_path = OwnedTempPath.materialize_text(sa_json, prefix="forze-gcs-test-")
     client = GCSClient()
     fake_storage = MagicMock()
     fake_storage.close = AsyncMock()
@@ -182,9 +182,10 @@ async def test_close_unlinks_owned_service_file() -> None:
     ):
         await client.initialize(
             "test-project",
-            service_file=path,
-            service_file_owned=owned,
+            service_file=credential_path.path,
+            service_file_owned=credential_path.owned,
         )
         await client.close()
 
-    assert not Path(path).exists()
+    assert credential_path.path is not None
+    assert not Path(credential_path.path).exists()

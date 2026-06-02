@@ -1,13 +1,11 @@
 """Helpers for Temporal ``server start-dev`` testcontainers."""
 
-from __future__ import annotations
-
 import time
 import urllib.error
 import urllib.request
-from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+import attrs
 import pytest
 from docker import from_env
 from docker.errors import DockerException
@@ -22,7 +20,7 @@ TEMPORAL_HTTP_PORT = 8233
 TEMPORAL_READY_TIMEOUT_SEC = 120.0
 
 
-@dataclass(frozen=True, slots=True)
+@attrs.define(frozen=True, slots=True)
 class TemporalDevTarget:
     """Connection target for a running Temporal dev server container."""
 

@@ -1,12 +1,16 @@
 """Resolve effective grants from catalog documents and binding edges."""
 
-from dataclasses import dataclass
 from uuid import UUID
 
 import attrs
 from pydantic import BaseModel
 
-from forze.application.contracts.authz import AuthzScope, EffectiveGrants, PermissionRef, RoleRef
+from forze.application.contracts.authz import (
+    AuthzScope,
+    EffectiveGrants,
+    PermissionRef,
+    RoleRef,
+)
 from forze.application.contracts.document import DocumentQueryPort
 from forze.application.contracts.querying import QueryFilterExpression
 from forze.application.integrations.document._limits import (
@@ -30,7 +34,7 @@ from ..domain.models.role_definition import ReadRoleDefinition
 # ----------------------- #
 
 
-@dataclass(frozen=True, slots=True)
+@attrs.define(frozen=True, slots=True)
 class AuthzGrantResolverDeps:
     """Document query ports required to compute grants."""
 

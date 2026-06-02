@@ -26,9 +26,15 @@ from forze.application.contracts.search import (
     normalize_search_queries,
 )
 from forze.application.integrations.search import SearchResultSnapshot
+from forze.application.integrations.search.offset_executor import (
+    OffsetFetchWindow,
+    OffsetRowsResult,
+    execute_simple_offset_search_with_snapshot,
+    offset_from_dict,
+    snapshot_materialize_and_paginate,
+)
 
 from ...kernel.gateways import PostgresGateway
-from ._materialize_hits import materialize_search_page
 from ._search_count import effective_search_count
 
 # ----------------------- #
@@ -78,15 +84,100 @@ class RankedOffsetPlan:
 # ....................... #
 
 
-def _offset_from_dict(pagination_dict: dict[str, Any]) -> int:
-    """Read ``offset`` from a pagination mapping (``dict(pagination)``)."""
+@attrs.define(slots=True)
+class _PostgresSimpleOffsetHooks:
+    gw: PostgresGateway[Any]
+    plan: RankedOffsetPlan
+    return_type: type[BaseModel] | None
+    return_fields: Sequence[str] | None
+    return_count: bool
+    count_policy: str
+    pagination_dict: dict[str, Any]
 
-    raw = pagination_dict.get("offset")
+    async def fetch_count(self) -> int | None:
+        if not self.return_count or self.count_policy == "none":
+            return None
 
-    if raw is None:
-        return 0
+        if self.count_policy == "approximate" and self.plan.approximate_total is not None:
+            return int(self.plan.approximate_total)
 
-    return int(raw)
+        use_uncapped_count = (
+            self.count_policy == "exact"
+            and self.plan.count_with_clause is not None
+            and self.plan.count_from_outer is not None
+        )
+
+        if use_uncapped_count:
+            count_with = self.plan.count_with_clause
+            count_from = self.plan.count_from_outer
+            count_params = (
+                self.plan.count_params
+                if self.plan.count_params is not None
+                else self.plan.params
+            )
+
+        else:
+            count_with = self.plan.with_clause
+            count_from = self.plan.from_outer
+            count_params = (
+                self.plan.count_params
+                if self.plan.count_params is not None
+                else self.plan.params
+            )
+
+        count_stmt = sql.SQL(
+            """
+            {with_clause}
+            SELECT COUNT(*) {from_outer}
+            """
+        ).format(with_clause=count_with, from_outer=count_from)
+
+        return int(
+            await self.gw.client.fetch_value(count_stmt, count_params, default=0),
+        )
+
+    async def fetch_rows(
+        self,
+        window: OffsetFetchWindow,
+        *,
+        want_snap: bool,
+    ) -> OffsetRowsResult:
+        cols = self.gw.return_clause(
+            self.return_type,
+            self.return_fields,
+            table_alias=self.plan.select_table_alias,
+        )
+
+        data_stmt = sql.SQL(
+            """
+            {with_clause}
+            SELECT {cols} {from_outer}
+            ORDER BY {order}
+            """
+        ).format(
+            with_clause=self.plan.with_clause,
+            cols=cols,
+            from_outer=self.plan.from_outer,
+            order=self.plan.order_sql,
+        )
+
+        params = list(self.plan.params)
+
+        if window.fetch_limit is not None:
+            data_stmt += sql.SQL(" LIMIT {}").format(sql.Placeholder())
+            params.append(int(window.fetch_limit))
+
+        if want_snap:
+            data_stmt += sql.SQL(" OFFSET {}").format(sql.Placeholder())
+            params.append(int(window.fetch_offset))
+
+        elif self.pagination_dict.get("offset") is not None:
+            data_stmt += sql.SQL(" OFFSET {}").format(sql.Placeholder())
+            params.append(offset_from_dict(self.pagination_dict))
+
+        rows = await self.gw.client.fetch_all(data_stmt, params, row_factory="dict")
+
+        return OffsetRowsResult(rows=list(rows))
 
 
 # ....................... #
@@ -114,174 +205,36 @@ async def execute_simple_ranked_offset_search(
 ) -> Any:
     """Run count (optional), data fetch, snapshot materialization for simple search adapters."""
 
-    rs_spec = spec.snapshot
     count_policy = effective_search_count(options)
-    snapshot_return_count = return_count and count_policy != "none"
-
-    fp_fingerprint = SearchResultSnapshot.simple_search_fingerprint(
-        query,
-        filters,
-        sorts,
-        spec_name=spec.name,
-        variant=variant,
-        extras=fingerprint_extras,
-    )
-
-    if result_snapshot is not None and rs_spec is not None:
-        maybe_snap: Any = await result_snapshot.read_simple_result_snapshot(
-            rs_spec=rs_spec,
-            snap_opt=snapshot,
-            fp_computed=fp_fingerprint,
-            spec=spec,
-            pagination=dict(pagination or {}),
-            return_type=return_type,
-            return_fields=return_fields,
-            return_count=snapshot_return_count,
-        )
-
-        if maybe_snap is not None:
-            return maybe_snap
-
-    use_uncapped_count = (
-        return_count
-        and count_policy == "exact"
-        and plan.count_with_clause is not None
-        and plan.count_from_outer is not None
-    )
-
-    if use_uncapped_count:
-        count_with = plan.count_with_clause
-        count_from = plan.count_from_outer
-        count_params = (
-            plan.count_params if plan.count_params is not None else plan.params
-        )
-
-    else:
-        count_with = plan.with_clause
-        count_from = plan.from_outer
-        count_params = (
-            plan.count_params if plan.count_params is not None else plan.params
-        )
-
-    count_stmt = sql.SQL(
-        """
-            {with_clause}
-            SELECT COUNT(*) {from_outer}
-            """
-    ).format(with_clause=count_with, from_outer=count_from)
-
-    total = 0
-
-    if return_count and count_policy != "none":
-        if count_policy == "approximate" and plan.approximate_total is not None:
-            total = int(plan.approximate_total)
-
-        else:
-            total = int(
-                await gw.client.fetch_value(count_stmt, count_params, default=0),
-            )
-
-            if total == 0:
-                return page_from_limit_offset(  # pyright: ignore[reportUnknownVariableType]
-                    [],
-                    pagination or {},
-                    total=0,
-                )
-
-    cols = gw.return_clause(
-        return_type,
-        return_fields,
-        table_alias=plan.select_table_alias,
-    )
-
-    data_stmt = sql.SQL(
-        """
-            {with_clause}
-            SELECT {cols} {from_outer}
-            ORDER BY {order}
-            """
-    ).format(
-        with_clause=plan.with_clause,
-        cols=cols,
-        from_outer=plan.from_outer,
-        order=plan.order_sql,
-    )
-
-    params = list(plan.params)
     pagination_dict: dict[str, Any] = dict(pagination or {})
 
-    want_snap = (
-        result_snapshot is not None
-        and rs_spec is not None
-        and result_snapshot.should_write_result_snapshot(snapshot, rs_spec)
-    )
-    max_nw = (
-        result_snapshot.effective_snapshot_max_ids(snapshot, rs_spec)
-        if want_snap and result_snapshot is not None
-        else 0
-    )
-    sql_limit, sql_offset, page_limit = SearchResultSnapshot.snapshot_pagination(
-        want_snap, max_nw, pagination_dict
-    )
-
-    if sql_limit is not None:
-        data_stmt += sql.SQL(" LIMIT {}").format(sql.Placeholder())
-        params.append(int(sql_limit))
-
-    if want_snap:
-        data_stmt += sql.SQL(" OFFSET {}").format(sql.Placeholder())
-        params.append(int(sql_offset))
-
-    elif pagination_dict.get("offset") is not None:
-        data_stmt += sql.SQL(" OFFSET {}").format(sql.Placeholder())
-        params.append(_offset_from_dict(pagination_dict))
-
-    rows = await gw.client.fetch_all(data_stmt, params, row_factory="dict")
-
-    handle_out = None
-    pool_snap: list[M] | None = None
-    u_off = _offset_from_dict(pagination_dict)
-
-    if want_snap and result_snapshot is not None and rs_spec is not None:
-        pool_len = len(rows)
-        pool_snap = spec.resolved_read_codec.decode_mapping_many(
-            rows,
-            trust_source=trust_source,
-        )
-        handle_out = await result_snapshot.put_simple_ordered_hits(
-            pool_snap,
-            snap_opt=snapshot,
-            rs_spec=rs_spec,
-            fp_computed=fp_fingerprint,
-            pool_len_before_cap=pool_len,
-        )
-        rows = rows[u_off : u_off + page_limit]
-
-    page = materialize_search_page(
-        page_rows=rows,
-        pool=pool_snap,
-        u=u_off,
-        page_limit=page_limit,
+    return await execute_simple_offset_search_with_snapshot(
+        query=query,
+        filters=filters,
+        sorts=sorts,
+        spec=spec,
+        variant=variant,
+        fingerprint_extras=fingerprint_extras,
+        pagination=pagination,
+        snapshot=snapshot,
+        return_count=return_count,
+        snapshot_return_count=return_count and count_policy != "none",
+        page_return_count=return_count and count_policy != "none",
         return_type=return_type,
         return_fields=return_fields,
         model_type=model_type,
         codec=spec.resolved_read_codec,
+        result_snapshot=result_snapshot,
+        hooks=_PostgresSimpleOffsetHooks(
+            gw=gw,
+            plan=plan,
+            return_type=return_type,
+            return_fields=return_fields,
+            return_count=return_count,
+            count_policy=count_policy,
+            pagination_dict=pagination_dict,
+        ),
         trust_source=trust_source,
-    )
-
-    if return_count:
-        return page_from_limit_offset(
-            page,
-            pagination_dict,
-            total=total if count_policy != "none" else None,
-            snapshot=handle_out,
-        )
-
-    return page_from_limit_offset(
-        page,
-        pagination_dict,
-        total=None,
-        snapshot=handle_out,
     )
 
 
@@ -359,6 +312,7 @@ async def execute_hub_ranked_offset_search(
     )
 
     total = 0
+    pagination_dict: dict[str, Any] = dict(pagination or {})
 
     if return_count and count_policy != "none":
         if count_policy == "approximate" and plan.approximate_total is not None:
@@ -408,7 +362,6 @@ async def execute_hub_ranked_offset_search(
     )
 
     params = list(plan.params)
-    pagination_dict: dict[str, Any] = dict(pagination or {})
 
     want_sn = (
         result_snapshot is not None
@@ -420,66 +373,38 @@ async def execute_hub_ranked_offset_search(
         if want_sn and result_snapshot is not None
         else 0
     )
-    sql_limit, sql_offset, page_limit = SearchResultSnapshot.snapshot_pagination(
+    fetch_limit, fetch_offset, page_limit = SearchResultSnapshot.snapshot_pagination(
         want_sn, max_nh, pagination_dict
     )
 
-    if sql_limit is not None:
+    if fetch_limit is not None:
         data_stmt += sql.SQL(" LIMIT {}").format(sql.Placeholder())
-        params.append(int(sql_limit))
+        params.append(int(fetch_limit))
 
     if want_sn:
         data_stmt += sql.SQL(" OFFSET {}").format(sql.Placeholder())
-        params.append(int(sql_offset))
+        params.append(int(fetch_offset))
 
     elif pagination_dict.get("offset") is not None:
         data_stmt += sql.SQL(" OFFSET {}").format(sql.Placeholder())
-        params.append(_offset_from_dict(pagination_dict))
+        params.append(offset_from_dict(pagination_dict))
 
     rows = await gw.client.fetch_all(data_stmt, params, row_factory="dict")
 
-    handle_h = None
-    pool_h: list[M] | None = None
-    u_h = _offset_from_dict(pagination_dict)
-
-    if want_sn and result_snapshot is not None and rs_spec is not None:
-        plh = len(rows)
-        pool_h = hub_spec.resolved_read_codec.decode_mapping_many(
-            rows,
-            trust_source=trust_source,
-        )
-        handle_h = await result_snapshot.put_simple_ordered_hits(
-            pool_h,
-            snap_opt=snapshot,
-            rs_spec=rs_spec,
-            fp_computed=fp_fingerprint,
-            pool_len_before_cap=plh,
-        )
-        rows = rows[u_h : u_h + page_limit]
-
-    page = materialize_search_page(
-        page_rows=rows,
-        pool=pool_h,
-        u=u_h,
+    return await snapshot_materialize_and_paginate(
+        rows=list(rows),
+        want_snap=want_sn,
+        result_snapshot=result_snapshot,
+        rs_spec=rs_spec,
+        snapshot=snapshot,
+        fp_fingerprint=fp_fingerprint,
+        pagination_dict=pagination_dict,
         page_limit=page_limit,
+        return_count=return_count,
+        total=total if count_policy != "none" else None,
         return_type=return_type,
         return_fields=return_fields,
         model_type=model_type,
         codec=hub_spec.resolved_read_codec,
         trust_source=trust_source,
-    )
-
-    if return_count:
-        return page_from_limit_offset(
-            page,
-            pagination_dict,
-            total=total if count_policy != "none" else None,
-            snapshot=handle_h,
-        )
-
-    return page_from_limit_offset(
-        page,
-        pagination_dict,
-        total=None,
-        snapshot=handle_h,
     )

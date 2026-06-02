@@ -4,22 +4,22 @@ import os
 import socket
 import threading
 import time
-from dataclasses import dataclass, field
 from collections.abc import Mapping
 from typing import Any, Sequence
 
+import attrs
 import httpx
 import uvicorn
 from fastapi import FastAPI
 
 from forze.application.execution import Deps, ExecutionContext
 from forze.application.execution.context import ExecutionContextFactory
-from tests.support.execution_context import context_from_deps, context_from_modules, frozen_deps_from_deps
 from forze_inngest import InngestFunctionBinding
 from forze_inngest.execution.deps import InngestDepsModule
 from forze_inngest.execution.deps.configs import InngestEventConfig
 from forze_inngest.fastapi import serve
 from forze_inngest.kernel.client import InngestClient, InngestClientPort
+from tests.support.execution_context import context_from_deps
 
 from .inngest_dev_server import InngestDevTarget
 
@@ -34,7 +34,10 @@ def free_tcp_port() -> int:
     return port
 
 
-@dataclass(kw_only=True)
+# ....................... #
+
+
+@attrs.define(kw_only=True)
 class InngestAppHarness:
     """Running FastAPI app registered with a dev server."""
 
@@ -42,9 +45,9 @@ class InngestAppHarness:
     deps: Deps
     ctx_factory: ExecutionContextFactory
     port: int
-    outcomes: list[Any] = field(default_factory=list)
-    _server: uvicorn.Server = field(repr=False)
-    _thread: threading.Thread = field(repr=False)
+    outcomes: list[Any] = attrs.field(factory=list)
+    _server: uvicorn.Server = attrs.field(repr=False)
+    _thread: threading.Thread = attrs.field(repr=False)
 
     @property
     def serve_origin(self) -> str:

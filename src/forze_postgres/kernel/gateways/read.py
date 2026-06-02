@@ -45,6 +45,8 @@ from forze_postgres.kernel.sql import (
     decode_keyset_v1,
 )
 
+from forze.application.integrations.persistence import ReadValidationCodecMixin
+
 from .base import PostgresGateway
 
 # ----------------------- #
@@ -69,53 +71,23 @@ def _for_update_sql(mode: RowLockMode) -> sql.SQL | None:
 # ----------------------- #
 
 T = TypeVar("T", bound=BaseModel)
+M = TypeVar("M", bound=BaseModel)
 
 # ....................... #
 
 
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class PostgresReadGateway[M: BaseModel](PostgresGateway[M]):
+class PostgresReadGateway[M: BaseModel](
+    ReadValidationCodecMixin[M],
+    PostgresGateway[M],
+):
     """Read-only gateway providing single/batch lookups, filtered queries, and counting."""
 
     read_validation: Literal["strict", "trusted"] = attrs.field(
         default="strict",
         kw_only=True,
     )
-    """Row decode mode for SELECT results from this gateway (``trusted`` skips validation)."""
-
-    def _decode_row(
-        self,
-        row: JsonDict,
-        *,
-        model: type[BaseModel] | None = None,
-        trust_source: bool | None = None,
-    ) -> Any:
-        eff_trust = (
-            self.read_validation == "trusted"
-            if trust_source is None
-            else trust_source
-        )
-
-        return self._codec_for(model).decode_mapping(row, trust_source=eff_trust)
-
-    def _decode_rows(
-        self,
-        rows: Sequence[JsonDict],
-        *,
-        model: type[BaseModel] | None = None,
-        trust_source: bool | None = None,
-    ) -> list[Any]:
-        eff_trust = (
-            self.read_validation == "trusted"
-            if trust_source is None
-            else trust_source
-        )
-
-        return self._codec_for(model).decode_mapping_many(
-            rows,
-            trust_source=eff_trust,
-        )
 
     def _effective_sql_limit(self, limit: int | None) -> int | None:
         """Apply :attr:`~forze_postgres.kernel.gateways.base.PostgresGateway.find_many_implicit_limit` when *limit* is omitted."""
