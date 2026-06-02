@@ -34,7 +34,7 @@ from forze_postgres.kernel.sql.query.nested import sort_key_expr
 
 from .._cursor_run import parse_search_cursor
 from .constants import COMBO_ALIAS, HUB_RANK
-from .sql import HubSearchSqlMixin
+from .parallel import HubParallelSearchMixin
 
 # ----------------------- #
 
@@ -43,7 +43,7 @@ T = TypeVar("T", bound=BaseModel)
 # ....................... #
 
 
-class HubSearchCursorMixin[M: BaseModel](HubSearchSqlMixin[M]):
+class HubSearchCursorMixin[M: BaseModel](HubParallelSearchMixin[M]):
     """Keyset cursor over the hub ``combo`` CTE."""
 
     async def _cursor_search_impl(
@@ -83,13 +83,24 @@ class HubSearchCursorMixin[M: BaseModel](HubSearchSqlMixin[M]):
         c = dict(cursor or {})
         lim, use_after, use_before = parse_search_cursor(cursor)
 
-        if getattr(self._hub_host, "execution", "sql") == "parallel":
-            raise exc.internal(
-                "Hub cursor search requires execution='sql'; parallel hub "
-                "supports offset pagination only.",
-            )
-
         from .._pgroonga_plan import effective_combo_limit
+
+        terms_tuple = tuple(terms)
+        active = [i for i, w in enumerate(member_weights_list) if w > 0.0]
+        do_legs_parallel = bool(terms_tuple) and bool(active)
+
+        if getattr(self._hub_host, "execution", "sql") == "parallel" and do_legs_parallel:
+            return await self._hub_parallel_cursor_search(
+                query=query,
+                filters=filters,
+                cursor=cursor,
+                sorts=sorts,
+                options=options,
+                return_type=return_type,
+                return_fields=return_fields,
+                hub_spec=self._hub_host.hub_spec,
+                member_weights_list=member_weights_list,
+            )
 
         hub_spec = self._hub_host.hub_spec
         rs_spec = hub_spec.snapshot

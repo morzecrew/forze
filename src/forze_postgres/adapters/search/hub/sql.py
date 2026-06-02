@@ -24,6 +24,10 @@ from forze.application.contracts.search import (
 from forze.domain.constants import ID_FIELD
 from forze_postgres.kernel.sql.query.nested import sort_key_expr
 
+from ._leg_sql import HubLegSqlContext, build_hub_cte, build_hub_leg_sql_parts
+
+# Re-export for parallel and tests.
+from ._leg_sql import hub_leg_order_limit as hub_leg_order_limit
 from ._typing_host import HubSearchHost
 from .constants import (
     COMBO_ALIAS,
@@ -34,10 +38,6 @@ from .constants import (
     HUB_RANK,
     HUB_ROW_ALIAS,
 )
-from ._leg_sql import HubLegSqlContext, build_hub_cte, build_hub_leg_sql_parts
-
-# Re-export for parallel and tests.
-from ._leg_sql import hub_leg_order_limit as hub_leg_order_limit
 
 # ----------------------- #
 
@@ -179,7 +179,7 @@ class HubSearchSqlMixin[M: BaseModel]:
         filters: QueryFilterExpression | None,  # type: ignore[valid-type]
         leg_options: SearchOptions | None,
         member_weights_list: Sequence[float],
-        per_leg_limit: int,
+        per_leg_limit: int | None,
         combo_limit: int | None = None,
         sorts: QuerySortExpression | None = None,  # type: ignore[valid-type]
     ) -> tuple[sql.Composable, list[Any], bool, str, str]:
@@ -360,6 +360,46 @@ class HubSearchSqlMixin[M: BaseModel]:
         )
 
         return with_clause, params, do_legs, count_relation, data_relation
+
+    # ....................... #
+
+    async def _hub_sql_combo_count(
+        self,
+        *,
+        query_terms: tuple[str, ...],
+        filters: QueryFilterExpression | None,  # type: ignore[valid-type]
+        leg_options: SearchOptions | None,
+        member_weights_list: Sequence[float],
+        per_leg_limit: int,
+        sorts: QuerySortExpression | None = None,  # type: ignore[valid-type]
+        combo_alias: str = COMBO_ALIAS,
+    ) -> int:
+        """Exact ``COUNT(*)`` over the SQL ``combo`` CTE (no ``combo_top`` cap)."""
+
+        with_clause, params, _do_legs, count_relation, _data_rel = (
+            await self._hub_build_with_clause(
+                query_terms=query_terms,
+                filters=filters,
+                leg_options=leg_options,
+                member_weights_list=member_weights_list,
+                per_leg_limit=None,
+                combo_limit=None,
+                sorts=sorts,
+            )
+        )
+        count_stmt = sql.SQL(
+            """
+            {with_clause}
+            SELECT COUNT(*) FROM {combo} {ca}
+            """
+        ).format(
+            with_clause=with_clause,
+            combo=sql.Identifier(count_relation),
+            ca=sql.Identifier(combo_alias),
+        )
+        return int(
+            await self._hub_host.client.fetch_value(count_stmt, params, default=0),
+        )
 
     # ....................... #
 

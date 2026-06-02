@@ -36,7 +36,6 @@ from .._port import PostgresSearchPortMixin
 from .._search_count import effective_search_count, resolve_ranked_approximate_total
 from .constants import COMBO_ALIAS
 from .cursor import HubSearchCursorMixin
-from .parallel import HubParallelSearchMixin
 from .runtime import HubLegRuntime
 
 # ----------------------- #
@@ -47,7 +46,6 @@ from .runtime import HubLegRuntime
 class PostgresHubSearchAdapter[M: BaseModel](
     PostgresGateway[M],
     HubSearchCursorMixin[M],
-    HubParallelSearchMixin[M],
     PostgresSearchPortMixin[M],
     SearchQueryPort[M],
 ):
@@ -77,6 +75,7 @@ class PostgresHubSearchAdapter[M: BaseModel](
 
     def __attrs_post_init__(self) -> None:
         super().__attrs_post_init__()
+
         if self.per_leg_limit < 1:
             raise exc.internal("per_leg_limit must be at least 1.")
 
@@ -119,12 +118,7 @@ class PostgresHubSearchAdapter[M: BaseModel](
             if member_weights_list[i] > 0.0
         ]
         do_legs = bool(terms) and bool(active)
-        use_parallel = (
-            self.execution == "parallel"
-            and do_legs
-            and sorts is None
-            and all(len(leg.hub_fk_columns) == 1 for _, leg in active)
-        )
+        use_parallel = self.execution == "parallel" and do_legs and sorts is None
 
         if use_parallel:
             return await self._hub_parallel_offset_search(
@@ -149,6 +143,8 @@ class PostgresHubSearchAdapter[M: BaseModel](
             )
 
         rs_spec = self.hub_spec.snapshot
+        effective_sorts = sorts if sorts else self.hub_spec.default_sort
+
         resolved_combo = effective_combo_limit(
             config_limit=self.combo_limit,
             per_leg_limit=self.per_leg_limit,
@@ -167,7 +163,7 @@ class PostgresHubSearchAdapter[M: BaseModel](
                 member_weights_list=member_weights_list,
                 per_leg_limit=self.per_leg_limit,
                 combo_limit=resolved_combo if do_legs else None,
-                sorts=sorts,
+                sorts=effective_sorts,
             )
         )
 

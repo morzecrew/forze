@@ -34,6 +34,7 @@ from forze.base.serialization import default_model_codec
 
 from ...kernel.client import PostgresClientPort, gather_db_work
 from ._port import PostgresSearchPortMixin
+from ._search_count import effective_search_count
 
 # ----------------------- #
 
@@ -217,6 +218,9 @@ class PostgresFederatedSearchAdapter[M: BaseModel](
         offset = int((pagination or {}).get("offset") or 0)
         limit = (pagination or {}).get("limit")
 
+        count_policy = effective_search_count(options)
+        snapshot_return_count = return_count and count_policy != "none"
+
         fp_computed = SearchResultSnapshot.federated_fingerprint(
             query,
             filters,
@@ -239,7 +243,7 @@ class PostgresFederatedSearchAdapter[M: BaseModel](
                     fp_computed=fp_computed,
                     pagination=dict(pagination or {}),
                     return_type=return_type,
-                    return_count=return_count,
+                    return_count=snapshot_return_count,
                 )
             )
             if maybe_page is not None:

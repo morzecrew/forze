@@ -8,7 +8,7 @@ import pytest
 from forze.base.exceptions import CoreException
 from pydantic import BaseModel
 
-from forze.application.contracts.base import CountlessPage, page_from_limit_offset
+from forze.application.contracts.base import CountlessPage, Page, page_from_limit_offset
 from forze.application.contracts.search import (
     FederatedSearchReadModel,
     FederatedSearchSpec,
@@ -187,6 +187,49 @@ async def test_federated_search_reads_snapshot_without_running_legs() -> None:
     store.get_id_range.assert_awaited_once()
     get_kw = store.get_id_range.call_args[1]
     assert get_kw.get("expected_fingerprint") == fp
+
+
+@pytest.mark.asyncio
+async def test_federated_snapshot_honors_search_count_none() -> None:
+    h = _Hit(id=1, label="x")
+    row_key = SearchResultSnapshot.federated_record_key_string("a", h)
+    fp = SearchResultSnapshot.federated_fingerprint(
+        "q", None, None, spec_name="fed", rrf_k=60
+    )
+    store = MagicMock()
+    store.get_id_range = AsyncMock(return_value=[row_key])
+    store.get_meta = AsyncMock(
+        return_value=SearchResultSnapshotMeta(
+            run_id="run-1",
+            fingerprint=fp,
+            total=99,
+            chunk_size=100,
+            complete=True,
+        )
+    )
+    pa = MagicMock()
+    pa.search = AsyncMock()
+    pb = MagicMock()
+    pb.search = AsyncMock()
+    adapter = PostgresFederatedSearchAdapter(
+        federated_spec=_fed_with_result_snapshot(),
+        legs=(("a", pa), ("b", pb)),
+        rrf_per_leg_limit=10,
+        result_snapshot=SearchResultSnapshot(store=store),
+    )
+    page = await adapter.search_page(
+        "q",
+        pagination={"offset": 0, "limit": 5},
+        options={"search_count": "none"},
+        snapshot={
+            "id": "run-1",
+            "fingerprint": fp,
+        },
+    )
+    pa.search.assert_not_called()
+    pb.search.assert_not_called()
+    assert isinstance(page, CountlessPage)
+    assert not isinstance(page, Page)
 
 
 @pytest.mark.asyncio

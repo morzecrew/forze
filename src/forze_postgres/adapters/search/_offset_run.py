@@ -23,6 +23,7 @@ from forze.application.contracts.search import (
     SearchOptions,
     SearchResultSnapshotOptions,
     SearchSpec,
+    normalize_search_queries,
 )
 from forze.application.integrations.search import SearchResultSnapshot
 
@@ -65,10 +66,10 @@ class RankedOffsetPlan:
     """When set, used for ``search_count=approximate`` instead of ``COUNT(*)``."""
 
     count_relation: str = "combo"
-    """Hub: relation name for ``COUNT(*)`` (defaults to full ``combo``)."""
+    """Hub - relation name for ``COUNT(*)`` (defaults to full ``combo``)."""
 
     data_relation: str = "combo"
-    """Hub: relation name for the ranked data ``SELECT`` (e.g. ``combo_top``)."""
+    """Hub - relation name for the ranked data ``SELECT`` (e.g. ``combo_top``)."""
 
     select_table_alias: str
     """Table alias passed to :meth:`~PostgresGateway.return_clause`."""
@@ -153,10 +154,13 @@ async def execute_simple_ranked_offset_search(
         count_params = (
             plan.count_params if plan.count_params is not None else plan.params
         )
+
     else:
         count_with = plan.with_clause
         count_from = plan.from_outer
-        count_params = plan.count_params if plan.count_params is not None else plan.params
+        count_params = (
+            plan.count_params if plan.count_params is not None else plan.params
+        )
 
     count_stmt = sql.SQL(
         """
@@ -170,6 +174,7 @@ async def execute_simple_ranked_offset_search(
     if return_count and count_policy != "none":
         if count_policy == "approximate" and plan.approximate_total is not None:
             total = int(plan.approximate_total)
+
         else:
             total = int(
                 await gw.client.fetch_value(count_stmt, count_params, default=0),
@@ -214,10 +219,8 @@ async def execute_simple_ranked_offset_search(
         if want_snap and result_snapshot is not None
         else 0
     )
-    sql_limit, sql_offset, page_limit = (
-        SearchResultSnapshot.snapshot_pagination(
-            want_snap, max_nw, pagination_dict
-        )
+    sql_limit, sql_offset, page_limit = SearchResultSnapshot.snapshot_pagination(
+        want_snap, max_nw, pagination_dict
     )
 
     if sql_limit is not None:
@@ -354,15 +357,29 @@ async def execute_hub_ranked_offset_search(
     if return_count and count_policy != "none":
         if count_policy == "approximate" and plan.approximate_total is not None:
             total = int(plan.approximate_total)
+
+        elif count_policy == "exact" and hasattr(gw, "_hub_sql_combo_count"):
+            hub_count = getattr(gw, "_hub_sql_combo_count")
+            total = int(
+                await hub_count(
+                    query_terms=tuple(normalize_search_queries(query)),
+                    filters=filters,
+                    leg_options=options,
+                    member_weights_list=[float(w) for _name, w in members_weighted],
+                    per_leg_limit=per_leg_limit,
+                    sorts=sorts if sorts else hub_spec.default_sort,
+                )
+            )
+
         else:
             total = int(await gw.client.fetch_value(count_stmt, plan.params, default=0))
 
-            if total == 0:
-                return page_from_limit_offset(  # pyright: ignore[reportUnknownVariableType]
-                    [],
-                    pagination or {},
-                    total=0,
-                )
+        if return_count and total == 0:
+            return page_from_limit_offset(  # pyright: ignore[reportUnknownVariableType]
+                [],
+                pagination or {},
+                total=0,
+            )
 
     cols = gw.return_clause(
         return_type,
@@ -397,10 +414,8 @@ async def execute_hub_ranked_offset_search(
         if want_sn and result_snapshot is not None
         else 0
     )
-    sql_limit, sql_offset, page_limit = (
-        SearchResultSnapshot.snapshot_pagination(
-            want_sn, max_nh, pagination_dict
-        )
+    sql_limit, sql_offset, page_limit = SearchResultSnapshot.snapshot_pagination(
+        want_sn, max_nh, pagination_dict
     )
 
     if sql_limit is not None:

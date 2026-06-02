@@ -1,7 +1,5 @@
 """Pure-Python hub leg score merge (parallel execution path)."""
 
-from __future__ import annotations
-
 from typing import Any, Literal, Sequence
 
 from forze.domain.constants import ID_FIELD
@@ -11,12 +9,19 @@ from forze.domain.constants import ID_FIELD
 HubCombine = Literal["or", "and"]
 HubScoreMerge = Literal["max", "sum"]
 
+# ....................... #
 
-def _hub_row_key(row: dict[str, Any], *, read_fields: frozenset[str]) -> tuple[Any, ...]:
+
+def _hub_row_key(
+    row: dict[str, Any], *, read_fields: frozenset[str]
+) -> tuple[Any, ...]:
     if ID_FIELD in read_fields:
         return (row[ID_FIELD],)
 
     return tuple(row[f] for f in sorted(read_fields))
+
+
+# ....................... #
 
 
 def merge_hub_leg_rows(

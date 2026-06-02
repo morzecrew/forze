@@ -70,6 +70,47 @@ async def test_search_adapter_resolves_dynamic_index_and_heap() -> None:
 
 
 @pytest.mark.asyncio
+async def test_pgroonga_adapter_resolves_dynamic_read_and_heap() -> None:
+    from unittest.mock import MagicMock
+    from uuid import uuid4
+
+    from pydantic import BaseModel
+
+    from forze.application.contracts.search import SearchSpec
+    from forze_postgres.adapters.search import PostgresPGroongaSearchAdapter
+
+    class _Row(BaseModel):
+        id: str
+        a: str
+
+    tid = uuid4()
+    spec = SearchSpec(name="s", model_type=_Row, fields=["a"])
+
+    adapter = PostgresPGroongaSearchAdapter(
+        spec=spec,
+        codec=spec.resolved_read_codec,
+        relation=("public", "index_tbl"),
+        read_relation=lambda t: (f"t_{t}", "read_v") if t else ("public", "read_v"),
+        index_relation=("public", "index_tbl"),
+        heap_relation_spec=lambda t: (f"t_{t}", "heap_tbl") if t else ("public", "heap_tbl"),
+        index_heap_relation=("public", "heap_tbl"),
+        client=MagicMock(),
+        model_type=_Row,
+        introspector=MagicMock(),
+        tenant_provider=lambda: type("T", (), {"tenant_id": tid})(),
+        tenant_aware=False,
+    )
+
+    read_qn = await adapter._pipeline_read_qname()
+    heap_qn = await adapter._pipeline_heap_qname()
+
+    assert read_qn.schema == f"t_{tid}"
+    assert read_qn.name == "read_v"
+    assert heap_qn.schema == f"t_{tid}"
+    assert heap_qn.name == "heap_tbl"
+
+
+@pytest.mark.asyncio
 async def test_analytics_adapter_resolves_dynamic_ingest_relation() -> None:
     from unittest.mock import MagicMock
     from uuid import uuid4

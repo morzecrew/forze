@@ -45,9 +45,12 @@ class HubLegSqlContext:
     tenant_id: UUID | None
     query_terms: tuple[str, ...]
     leg_options: SearchOptions | None
-    per_leg_limit: int
+    per_leg_limit: int | None
     introspector: Any
     vector_embedders: dict[int, Any]
+
+
+# ....................... #
 
 
 @attrs.define(frozen=True, slots=True, kw_only=True)
@@ -110,19 +113,24 @@ async def build_hub_leg_sql_parts(
     """Build leg CTE suffix(es) and parallel ``leg_from`` for one active hub leg."""
 
     heap_t_alias = "t"
+
     t_alias = (
         heap_t_alias
         if leg.same_heap_as_hub and leg.engine == "pgroonga"
         else (HUB_ROW_ALIAS if leg.same_heap_as_hub else f"t{leg_index}")
     )
-    leg_order = hub_leg_order_limit(
-        engine=leg.engine,
-        per_leg_limit=ctx.per_leg_limit,
+
+    leg_order = (
+        hub_leg_order_limit(
+            engine=leg.engine,
+            per_leg_limit=ctx.per_leg_limit,
+        )
+        if ctx.per_leg_limit is not None
+        else sql.SQL("")
     )
 
-    v_emb = (
-        ctx.vector_embedders.get(leg_index) if leg.engine == "vector" else None
-    )
+    v_emb = ctx.vector_embedders.get(leg_index) if leg.engine == "vector" else None
+
     sw, rank_expr, sp = await hub_leg_engine_for(
         leg,
         vector_embedder=v_emb,

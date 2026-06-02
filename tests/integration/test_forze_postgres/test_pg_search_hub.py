@@ -50,12 +50,18 @@ def _hub_config(
     members: dict[object, PostgresHubSearchMemberConfig],
     combine_strategy: str = "or",
     merge_strategy: str = "max",
+    per_leg_limit: int = 5000,
+    combo_limit: int | None = None,
+    execution: str = "sql",
 ) -> PostgresHubSearchConfig:
     return PostgresHubSearchConfig(
         hub=hub,
         members=members,
         combine_strategy=combine_strategy,  # type: ignore[arg-type]
         merge_strategy=merge_strategy,  # type: ignore[arg-type]
+        per_leg_limit=per_leg_limit,
+        combo_limit=combo_limit,
+        execution=execution,  # type: ignore[arg-type]
     )
 
 
@@ -1828,3 +1834,78 @@ async def test_postgres_hub_search_with_cursor_browse_no_sorts(
 
     off = await adapter.search("", pagination={"limit": 100, "offset": 0})
     assert [r.id for r in off.hits] == collected
+
+
+@pytest.mark.asyncio
+async def test_hub_exact_total_exceeds_leg_and_combo_caps(
+    pg_client: PostgresClient,
+) -> None:
+    """Low ``per_leg_limit`` / ``combo_limit`` still allow exact combo COUNT totals."""
+    await pg_client.execute("CREATE EXTENSION IF NOT EXISTS pgroonga;")
+
+    suffix = uuid4().hex[:8]
+    ht = f"hub_cap_{suffix}"
+    token = "hubcap"
+    await pg_client.execute(
+        f"""
+        CREATE TABLE {ht} (
+            id uuid PRIMARY KEY,
+            name text NOT NULL,
+            display_name text NOT NULL
+        );
+        CREATE INDEX idx_{suffix}_cap ON {ht}
+        USING pgroonga ((ARRAY[name, display_name]));
+        """
+    )
+    for i in range(14):
+        await pg_client.execute(
+            f"""
+            INSERT INTO {ht} (id, name, display_name)
+            VALUES (%(id)s, %(n)s, %(d)s)
+            """,
+            {"id": uuid4(), "n": f"{token}-{i}", "d": "d"},
+        )
+
+    leg_n = f"cap_{suffix}"
+    doc_leg = SearchSpec(
+        name=leg_n,
+        model_type=_HubLegTxt,
+        fields=["name", "display_name"],
+    )
+    hub_spec = HubSearchSpec(
+        name=f"hub_cap_spec_{suffix}",
+        model_type=_SameHeapHubRow,
+        members=(doc_leg,),
+    )
+    hub_cfg = _hub_config(
+        hub=("public", ht),
+        members={
+            leg_n: _hub_member(
+                index=("public", f"idx_{suffix}_cap"),
+                read=("public", ht),
+                hub_fk="id",
+                same_heap_as_hub=True,
+                engine="pgroonga",
+            ),
+        },
+        per_leg_limit=4,
+        combo_limit=5,
+        execution="parallel",
+    )
+    ctx = context_from_deps(
+        Deps.plain(
+            {
+                PostgresClientDepKey: pg_client,
+                PostgresIntrospectorDepKey: PostgresIntrospector(client=pg_client),
+            }
+        )
+    )
+    adapter = ConfigurablePostgresHubSearch(config=hub_cfg)(ctx, hub_spec)
+
+    page = await adapter.search_page(
+        token,
+        pagination={"limit": 3},
+        options={"search_count": "exact"},
+    )
+    assert page.count == 14
+    assert len(page.hits) == 3
