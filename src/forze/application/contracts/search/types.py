@@ -8,6 +8,9 @@ PhraseCombine = Literal["any", "all"]
 PgroongaPlan = Literal["filter_first", "index_first", "auto"]
 """PGroonga ranked search SQL shape (Postgres adapter)."""
 
+SearchCountPolicy = Literal["exact", "approximate", "none"]
+"""How ranked search populates page totals when ``return_count=True``."""
+
 # ....................... #
 
 ResultSnapshotMode: TypeAlias = bool | Literal["auto"]
@@ -89,3 +92,9 @@ class SearchOptions(TypedDict, total=False):
 
     groonga_query: str
     """Raw Groonga query string for ``pgroonga_condition`` (skips phrase combiner)."""
+
+    search_count: SearchCountPolicy
+    """Ranked search total: ``exact`` (``COUNT(*)``), ``approximate`` (planner/stats), ``none``."""
+
+    combo_limit: int
+    """Cap rows in hub ``combo_top`` before outer pagination (Postgres hub search)."""

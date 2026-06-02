@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import math
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from typing import TYPE_CHECKING, Any, Literal
 
 from forze.application.contracts.querying import QueryExpr
+from forze.application.contracts.querying.internal import QueryAnd, QueryField
 from forze.application.contracts.resolution import is_static_relation
 from forze.application.contracts.search import PgroongaPlan, SearchOptions
 from forze.domain.constants import ID_FIELD
@@ -23,6 +25,8 @@ ResolvedPgroongaPlan = Literal["filter_first", "index_first"]
 
 _DEFAULT_CANDIDATE_MARGIN = 50
 
+_INDEX_FIRST_ELIGIBLE_OPS = frozenset({"$eq", "$neq", "$in", "$nin"})
+
 # ....................... #
 
 
@@ -30,6 +34,21 @@ def is_trivial_filter(parsed: QueryExpr | None) -> bool:
     """Return whether the parsed filter AST is absent (filterless browse semantics)."""
 
     return parsed is None
+
+
+def is_index_first_eligible_filter(parsed: QueryExpr | None) -> bool:
+    """Return whether filters are safe as post-filters after a heap top-K (conservative)."""
+
+    if parsed is None:
+        return True
+
+    if isinstance(parsed, QueryAnd):
+        return all(is_index_first_eligible_filter(item) for item in parsed.items)
+
+    if isinstance(parsed, QueryField):
+        return parsed.op in _INDEX_FIRST_ELIGIBLE_OPS
+
+    return False
 
 
 def is_coalesced_read_heap(
@@ -70,7 +89,7 @@ def effective_pgroonga_plan_option(
     return None
 
 
-def effective_candidate_limit(
+def effective_ranked_candidate_limit(
     *,
     config_limit: int | None,
     options: SearchOptions | None,
@@ -79,7 +98,7 @@ def effective_candidate_limit(
     result_snapshot: SearchResultSnapshot | None,
     rs_spec: Any | None,
 ) -> int | None:
-    """Resolve the ranked-row cap for PGroonga pipelines (``None`` disables)."""
+    """Resolve the ranked-row cap for PGroonga, FTS, and vector pipelines (``None`` disables)."""
 
     opt_raw = (options or {}).get("candidate_limit")
 
@@ -109,6 +128,100 @@ def effective_candidate_limit(
     return max(cap, 1)
 
 
+def effective_candidate_limit(
+    *,
+    config_limit: int | None,
+    options: SearchOptions | None,
+    pagination: Mapping[str, Any] | None,
+    snapshot: SearchResultSnapshotOptions | None,
+    result_snapshot: SearchResultSnapshot | None,
+    rs_spec: Any | None,
+) -> int | None:
+    """Alias for :func:`effective_ranked_candidate_limit` (PGroonga naming)."""
+
+    return effective_ranked_candidate_limit(
+        config_limit=config_limit,
+        options=options,
+        pagination=pagination,
+        snapshot=snapshot,
+        result_snapshot=result_snapshot,
+        rs_spec=rs_spec,
+    )
+
+
+def effective_combo_limit(
+    *,
+    config_limit: int | None,
+    per_leg_limit: int,
+    options: SearchOptions | None,
+    pagination: Mapping[str, Any] | None,
+    snapshot: SearchResultSnapshotOptions | None,
+    result_snapshot: SearchResultSnapshot | None,
+    rs_spec: Any | None,
+) -> int | None:
+    """Resolve hub ``combo_top`` cap (``None`` disables the extra CTE)."""
+
+    opt_raw = (options or {}).get("combo_limit")
+
+    if opt_raw is not None:
+        cap = int(opt_raw)
+
+    elif config_limit is not None:
+        cap = int(config_limit)
+
+    else:
+        cap = max(int(per_leg_limit), 1)
+        pag = dict(pagination or {})
+        page_need = int(pag.get("limit") or 0) + int(pag.get("offset") or 0)
+
+        if page_need > 0:
+            cap = max(cap, page_need + _DEFAULT_CANDIDATE_MARGIN)
+
+        if (
+            result_snapshot is not None
+            and rs_spec is not None
+            and result_snapshot.should_write_result_snapshot(snapshot, rs_spec)
+        ):
+            max_ids = result_snapshot.effective_snapshot_max_ids(snapshot, rs_spec)
+            cap = max(cap, int(max_ids))
+
+        return max(cap, 1)
+
+    pag = dict(pagination or {})
+    page_need = int(pag.get("limit") or 0) + int(pag.get("offset") or 0)
+
+    if page_need > 0:
+        cap = max(cap, page_need + _DEFAULT_CANDIDATE_MARGIN)
+
+    if (
+        result_snapshot is not None
+        and rs_spec is not None
+        and result_snapshot.should_write_result_snapshot(snapshot, rs_spec)
+    ):
+        max_ids = result_snapshot.effective_snapshot_max_ids(snapshot, rs_spec)
+        cap = max(cap, int(max_ids))
+
+    return max(cap, 1)
+
+
+def index_first_heap_limit(
+    candidate_cap: int,
+    *,
+    has_projection_filters: bool,
+    filter_margin: float,
+) -> int:
+    """Heap ``LIMIT`` for index-first (overshoot when projection post-filters shrink rows)."""
+
+    cap = max(int(candidate_cap), 1)
+
+    if not has_projection_filters:
+        return cap
+
+    margin = max(float(filter_margin), 1.0)
+
+    return max(cap, int(math.ceil(cap * margin)))
+
+
 def ensure_pgroonga_plan_with_candidate_cap(
     resolved_plan: ResolvedPgroongaPlan,
     candidate_cap: int | None,
@@ -129,8 +242,11 @@ async def resolve_pgroonga_plan(
     read_qname: PostgresQualifiedName,
     introspector: PostgresIntrospector,
     auto_index_first_min_rows: int,
+    auto_filter_first_max_rows: int,
+    auto_with_filters: bool,
     auto_use_exact_count: bool,
     count_filtered_rows: Callable[[], Awaitable[int]] | None = None,
+    estimate_filtered_rows: Callable[[], Awaitable[int]] | None = None,
 ) -> ResolvedPgroongaPlan:
     """Pick ``filter_first`` or ``index_first`` for one ranked PGroonga query."""
 
@@ -142,23 +258,52 @@ async def resolve_pgroonga_plan(
     if plan == "index_first":
         return "index_first"
 
-    if not is_trivial_filter(parsed_filters):
-        return "filter_first"
+    if is_trivial_filter(parsed_filters):
+        if auto_use_exact_count and count_filtered_rows is not None:
+            filtered_count = await count_filtered_rows()
 
-    if auto_use_exact_count and count_filtered_rows is not None:
-        filtered_count = await count_filtered_rows()
+            if filtered_count >= auto_index_first_min_rows:
+                return "index_first"
 
-        if filtered_count >= auto_index_first_min_rows:
+            return "filter_first"
+
+        estimate = await introspector.estimate_relation_rows(
+            schema=read_qname.schema,
+            relation=read_qname.name,
+        )
+
+        if estimate >= auto_index_first_min_rows:
             return "index_first"
 
         return "filter_first"
 
-    estimate = await introspector.estimate_relation_rows(
-        schema=read_qname.schema,
-        relation=read_qname.name,
-    )
+    if not auto_with_filters or not is_index_first_eligible_filter(parsed_filters):
+        return "filter_first"
 
-    if estimate >= auto_index_first_min_rows:
-        return "index_first"
+    filtered_estimate: int | None = None
+
+    if auto_use_exact_count and count_filtered_rows is not None:
+        filtered_estimate = await count_filtered_rows()
+
+    elif estimate_filtered_rows is not None:
+        filtered_estimate = await estimate_filtered_rows()
+
+    if filtered_estimate is not None:
+        if filtered_estimate <= auto_filter_first_max_rows:
+            return "filter_first"
+
+        if filtered_estimate >= auto_index_first_min_rows:
+            return "index_first"
+
+        return "filter_first"
+
+    if estimate_filtered_rows is not None:
+        filtered_estimate = await estimate_filtered_rows()
+
+        if filtered_estimate <= auto_filter_first_max_rows:
+            return "filter_first"
+
+        if filtered_estimate >= auto_index_first_min_rows:
+            return "index_first"
 
     return "filter_first"

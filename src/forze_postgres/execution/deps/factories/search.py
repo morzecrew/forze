@@ -87,6 +87,9 @@ def postgres_search_port_for_config(
                 pgroonga_candidate_limit=c.pgroonga_candidate_limit,
                 pgroonga_auto_index_first_min_rows=c.pgroonga_auto_index_first_min_rows,
                 pgroonga_auto_use_exact_count=c.pgroonga_auto_use_exact_count,
+                pgroonga_auto_with_filters=c.pgroonga_auto_with_filters,
+                pgroonga_auto_filter_first_max_rows=c.pgroonga_auto_filter_first_max_rows,
+                pgroonga_index_first_filter_margin=c.pgroonga_index_first_filter_margin,
                 read_relation=c.read,
                 heap_relation_spec=c.heap_relation,
             )
@@ -99,9 +102,13 @@ def postgres_search_port_for_config(
 
             validate_fts_groups_for_search_spec(member_spec, fts_groups)
 
+            # ``pgroonga_candidate_limit`` is the shared ranked-heap cap for FTS/vector too.
             return PostgresFTSSearchAdapter[Any](
                 **common,  # type: ignore[arg-type]
                 fts_groups=fts_groups,
+                ranked_candidate_limit=c.pgroonga_candidate_limit,
+                read_relation=c.read,
+                heap_relation_spec=c.heap_relation,
             )
 
         case "vector":
@@ -125,4 +132,7 @@ def postgres_search_port_for_config(
                 embeddings_spec=es,
                 vector_column=str(vcol),
                 vector_distance=c.vector_distance,
+                ranked_candidate_limit=c.pgroonga_candidate_limit,
+                read_relation=c.read,
+                heap_relation_spec=c.heap_relation,
             )

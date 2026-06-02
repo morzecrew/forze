@@ -37,6 +37,8 @@ from ._cursor_run import (
 )
 from ._engine import RankedPipelineSql
 from ._offset_run import RankedOffsetPlan, execute_simple_ranked_offset_search
+from ._search_count import effective_search_count, resolve_ranked_approximate_total
+from ._pgroonga_plan import is_coalesced_read_heap
 from ._pipeline_sql import PipelineAliases, build_rank_first_order
 from ._port import PostgresSearchPortMixin
 
@@ -98,6 +100,30 @@ class PostgresRankedPipelineSearchAdapter[M: BaseModel](
         object.__setattr__(self, "_index_qname_resolved", resolved)
 
         return resolved
+
+    # ....................... #
+
+    async def _pipeline_read_qname(self) -> PostgresQualifiedName:
+        """Read projection qname; honors ``read_relation`` when set on the adapter."""
+
+        read = getattr(self, "read_relation", None)
+
+        if read is not None:
+            return await resolve_postgres_qname(read, self._tenant_id_for_resolve())
+
+        return await self._qname()
+
+    # ....................... #
+
+    async def _pipeline_heap_qname(self) -> PostgresQualifiedName:
+        """Index heap qname; honors ``heap_relation_spec`` when set on the adapter."""
+
+        heap = getattr(self, "heap_relation_spec", None)
+
+        if heap is not None:
+            return await resolve_postgres_qname(heap, self._tenant_id_for_resolve())
+
+        return await self._index_heap_qname()
 
     # ....................... #
 
@@ -177,6 +203,29 @@ class PostgresRankedPipelineSearchAdapter[M: BaseModel](
 
     # ....................... #
 
+    def _read_heap_relation_specs(self) -> tuple[RelationSpec, RelationSpec]:
+        read = getattr(self, "read_relation", None)
+        heap = getattr(self, "heap_relation_spec", None)
+
+        if read is None:
+            read = self.relation
+
+        if heap is None:
+            heap = self.index_heap_relation
+
+        return read, heap
+
+    # ....................... #
+
+    def _is_coalesced_read_heap_for(
+        self,
+        join_pairs: Sequence[tuple[str, str]] | None,
+    ) -> bool:
+        read, heap = self._read_heap_relation_specs()
+        return is_coalesced_read_heap(read, heap, join_pairs)
+
+    # ....................... #
+
     async def _projection_order_by_clause(
         self,
         sorts: QuerySortExpression | None,  # type: ignore[valid-type]
@@ -219,12 +268,28 @@ class PostgresRankedPipelineSearchAdapter[M: BaseModel](
             extra_order=extra_ob,
         )
 
+        approximate_total: int | None = None
+        count_policy = effective_search_count(options)
+
+        if return_count and count_policy == "approximate" and not terms:
+            proj_qname = await self._qname()
+            approximate_total = await resolve_ranked_approximate_total(
+                introspector=self.introspector,
+                schema=proj_qname.schema,
+                relation=proj_qname.name,
+                where_sql=fw,
+                params=fp,
+            )
+
         plan = RankedOffsetPlan(
             with_clause=pipeline_sql.with_clause,
             from_outer=pipeline_sql.from_outer,
             order_sql=order_sql,
             params=pipeline_sql.params_body,
             count_params=pipeline_sql.count_params,
+            count_with_clause=pipeline_sql.count_with_clause,
+            count_from_outer=pipeline_sql.count_from_outer,
+            approximate_total=approximate_total,
             select_table_alias=self.projection_alias,
         )
 
@@ -250,6 +315,7 @@ class PostgresRankedPipelineSearchAdapter[M: BaseModel](
             return_fields=return_fields,
             model_type=self.model_type,
             result_snapshot=self.result_snapshot,
+            options=options,
         )
 
     # ....................... #

@@ -6,14 +6,16 @@ require_psycopg()
 
 # ....................... #
 
+import hashlib
+import json
 from datetime import timedelta
-from typing import Any, Callable, TypeVar, cast, final
+from typing import Any, Callable, Sequence, TypeVar, cast, final
 
 import attrs
 from psycopg import sql
 
 from forze.base.exceptions import exc
-from forze.base.primitives import CachedInflightLane, CacheLane, InflightLane
+from forze.base.primitives import CachedInflightLane, CacheLane, InflightLane, JsonDict
 from forze_postgres.kernel.client import PostgresClientPort
 
 from .types import (
@@ -89,6 +91,7 @@ class PostgresIntrospector:
     )
     __index_lane: CacheLane[CacheKey, PostgresIndexInfo] = attrs.field(init=False)
     __row_estimate_lane: CacheLane[CacheKey, int] = attrs.field(init=False)
+    __filtered_row_estimate_lane: CacheLane[CacheKey, int] = attrs.field(init=False)
 
     # ....................... #
 
@@ -127,6 +130,10 @@ class PostgresIntrospector:
             ttl_seconds=ttl,
         )
         self.__row_estimate_lane = CacheLane(
+            max_entries=mx,
+            ttl_seconds=ttl,
+        )
+        self.__filtered_row_estimate_lane = CacheLane(
             max_entries=mx,
             ttl_seconds=ttl,
         )
@@ -848,6 +855,120 @@ class PostgresIntrospector:
 
     # ....................... #
 
+    @staticmethod
+    def _where_cache_fingerprint(
+        where_sql: sql.Composable,
+        params: Sequence[Any],
+    ) -> str:
+        raw = f"{where_sql!s}:{params!r}"
+        return hashlib.sha256(raw.encode()).hexdigest()[:24]
+
+    # ....................... #
+
+    @staticmethod
+    def _plan_rows_from_explain_payload(payload: Any) -> int | None:
+        if not isinstance(payload, list) or not payload:
+            return None
+
+        payload = cast(list[Any], payload)  # type: ignore[redundant-cast]
+        root = payload[0]
+
+        if not isinstance(root, dict):
+            return None
+
+        root = cast(JsonDict, root)
+        plan = root.get("Plan")
+
+        if not isinstance(plan, dict):
+            return None
+
+        plan = cast(JsonDict, plan)
+        rows = plan.get("Plan Rows")
+
+        if rows is None:
+            return None
+
+        try:
+            return max(int(rows), 0)
+        except (TypeError, ValueError):
+            return None
+
+    # ....................... #
+
+    async def _fetch_filtered_row_estimate_uncached(
+        self,
+        *,
+        schema: str,
+        relation: str,
+        where_sql: sql.Composable,
+        params: Sequence[Any],
+        cache_key: CacheKey,
+    ) -> int:
+        rel_ident = sql.Identifier(schema, relation)
+        stmt = sql.SQL(
+            "EXPLAIN (FORMAT JSON) SELECT 1 FROM {} WHERE {}",
+        ).format(rel_ident, where_sql)
+
+        raw = await self.client.fetch_value(stmt, list(params), default=None)
+        estimate: int | None = None
+
+        if raw is not None:
+            if isinstance(raw, str):
+                try:
+                    payload = json.loads(raw)
+                except json.JSONDecodeError:
+                    payload = None
+            else:
+                payload = raw
+
+            estimate = self._plan_rows_from_explain_payload(payload)
+
+        if estimate is None:
+            estimate = await self._fetch_relation_row_estimate_uncached(
+                schema,
+                relation,
+                self._rel_key(schema, relation),
+            )
+
+        self.__filtered_row_estimate_lane.store(cache_key, estimate)
+        return estimate
+
+    # ....................... #
+
+    async def estimate_filtered_rows(
+        self,
+        *,
+        schema: str | None,
+        relation: str,
+        where_sql: sql.Composable,
+        params: Sequence[Any],
+    ) -> int:
+        """Approximate rows matching ``where_sql`` via ``EXPLAIN (FORMAT JSON)``.
+
+        Falls back to :meth:`estimate_relation_rows` when the planner returns no row estimate.
+        """
+
+        schema = self.__normalize_schema(schema)
+        fp = self._where_cache_fingerprint(where_sql, params)
+        key: CacheKey = (self._partition(), schema, f"{relation}:{fp}")
+        hit = self.__filtered_row_estimate_lane.lookup(key)
+
+        if hit is not None:
+            return hit
+
+        return await self.__inflight.run(
+            ("pg_filt_est", *key),
+            lambda: self._fetch_filtered_row_estimate_uncached(
+                schema=schema,
+                relation=relation,
+                where_sql=where_sql,
+                params=params,
+                cache_key=key,
+            ),
+        )
+
+    # ....................... #
+
     def invalidate_relation(self, *, schema: str | None, relation: str) -> None:
         """Evict cached relation kind and column types for a specific relation."""
 
@@ -860,6 +981,7 @@ class PostgresIntrospector:
         self.__pk_lane.invalidate(rk)
         self.__unique_sets_lane.invalidate(rk)
         self.__row_estimate_lane.invalidate(rk)
+        self.__filtered_row_estimate_lane.clear()
 
     # ....................... #
 
@@ -882,5 +1004,6 @@ class PostgresIntrospector:
         self.__unique_sets_lane.clear()
         self.__index_lane.clear()
         self.__row_estimate_lane.clear()
+        self.__filtered_row_estimate_lane.clear()
         self.__inflight.clear()
         self.__coalesce.clear_inflight()

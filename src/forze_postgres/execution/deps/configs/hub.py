@@ -22,6 +22,7 @@ from .search import PostgresSearchConfig
 
 HubCombineStrategy = Literal["or", "and"]
 HubMergeStrategy = Literal["max", "sum"]
+HubExecutionMode = Literal["sql", "parallel"]
 
 # ....................... #
 
@@ -67,6 +68,15 @@ class PostgresHubSearchConfig(TenantAwareIntegrationConfig):
     per_leg_limit: int = 5000
     """Max ranked rows retained per hub leg before merge."""
 
+    combo_limit: int | None = None
+    """Cap merged hub rows before outer pagination; ``None`` derives from :attr:`per_leg_limit` and pagination."""
+
+    execution: HubExecutionMode = "sql"
+    """``sql``: single ``WITH`` query; ``parallel``: one ranked query per leg merged in the app."""
+
+    parallel_hub_cte_materialized: bool = True
+    """Use ``MATERIALIZED`` on the hub filter CTE in per-leg parallel statements (planning hint only)."""
+
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
@@ -84,6 +94,12 @@ class PostgresHubSearchConfig(TenantAwareIntegrationConfig):
 
         if self.per_leg_limit < 1:
             raise exc.internal("per_leg_limit must be at least 1.")
+
+        if self.combo_limit is not None and self.combo_limit < 1:
+            raise exc.internal("combo_limit must be at least 1 when set.")
+
+        if self.execution not in ("sql", "parallel"):
+            raise exc.internal("execution must be 'sql' or 'parallel'.")
 
         fk_seen: set[str] = set()
 

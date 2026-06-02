@@ -92,6 +92,31 @@ def test_fingerprints_accepts_string_or_list_query() -> None:
     assert h1 != h2
 
 
+def test_hub_search_fingerprint_includes_execution_and_search_count() -> None:
+    base = SearchResultSnapshot.hub_search_fingerprint(
+        "q",
+        None,
+        None,
+        spec_name="hub",
+        members_weighted=[("a", 1.0)],
+        score_merge="max",
+        combine="or",
+    )
+    with_opts = SearchResultSnapshot.hub_search_fingerprint(
+        "q",
+        None,
+        None,
+        spec_name="hub",
+        members_weighted=[("a", 1.0)],
+        score_merge="max",
+        combine="or",
+        execution="parallel",
+        combo_limit=50,
+        search_count="approximate",
+    )
+    assert base != with_opts
+
+
 def test_snapshot_pagination() -> None:
     assert SearchResultSnapshot.snapshot_pagination(True, 500, None) == (
         500,

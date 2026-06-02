@@ -22,41 +22,24 @@ from forze.application.contracts.search import (
     ranked_search_cursor_key_spec,
 )
 from forze.domain.constants import ID_FIELD
+from forze_postgres.kernel.sql.query.nested import sort_key_expr
 
 from ._typing_host import HubSearchHost
 from .constants import (
     COMBO_ALIAS,
+    COMBO_TOP_RELATION,
     HUB_CTE,
     HUB_GROONGA_CTID,
     HUB_GROONGA_TABLEOID,
     HUB_RANK,
     HUB_ROW_ALIAS,
-    LEG_EID,
-    LEG_SCORE,
 )
-from .runtime import hub_leg_engine_for
+from ._leg_sql import HubLegSqlContext, build_hub_cte, build_hub_leg_sql_parts
+
+# Re-export for parallel and tests.
+from ._leg_sql import hub_leg_order_limit as hub_leg_order_limit
 
 # ----------------------- #
-
-
-def _hub_leg_order_limit(*, engine: str, per_leg_limit: int) -> sql.Composable:
-    """``ORDER BY … LIMIT`` suffix for capped hub leg CTEs."""
-
-    score = sql.Identifier(LEG_SCORE)
-
-    if engine == "vector":
-        return sql.SQL(" ORDER BY {} ASC NULLS LAST LIMIT {}").format(
-            score,
-            sql.Literal(int(per_leg_limit)),
-        )
-
-    return sql.SQL(" ORDER BY {} DESC NULLS LAST LIMIT {}").format(
-        score,
-        sql.Literal(int(per_leg_limit)),
-    )
-
-
-# ....................... #
 
 
 class HubSearchSqlMixin[M: BaseModel]:
@@ -140,6 +123,55 @@ class HubSearchSqlMixin[M: BaseModel]:
 
     # ....................... #
 
+    async def _hub_combo_top_order_by(
+        self,
+        sorts: QuerySortExpression | None,  # type: ignore[valid-type]
+    ) -> sql.Composable | None:
+        """User sort keys on bare ``combo`` column names (matches ``SELECT * FROM combo``)."""
+
+        if not sorts:
+            return None
+
+        host = self._hub_host
+        types = await host.column_types()
+        parts: list[sql.Composable] = []
+
+        for field, order in sorts.items():
+            key = sort_key_expr(
+                field=field,
+                column_types=types,
+                model_type=host.model_type,
+                nested_field_hints=host.nested_field_hints,
+                table_alias=None,
+            )
+            parts.append(sql.SQL("{} {}").format(key, sql.SQL(order.upper())))
+
+        return sql.SQL(", ").join(parts)
+
+    # ....................... #
+
+    async def _hub_combo_top_order_sql(
+        self,
+        do_legs: bool,
+        sorts: QuerySortExpression | None,  # type: ignore[valid-type]
+    ) -> sql.Composable:
+        """ORDER BY for ``combo_top`` (rank + user keys, aligned with outer hub read)."""
+
+        if do_legs:
+            order_parts: list[sql.Composable] = [
+                sql.SQL("{} DESC NULLS LAST").format(sql.Identifier(HUB_RANK)),
+            ]
+            ob = await self._hub_combo_top_order_by(sorts)
+
+            if ob is not None:
+                order_parts.append(ob)
+
+            return sql.SQL(", ").join(order_parts)
+
+        return await self._hub_order_sql_for_search(do_legs, sorts)
+
+    # ....................... #
+
     async def _hub_build_with_clause(
         self,
         *,
@@ -148,7 +180,9 @@ class HubSearchSqlMixin[M: BaseModel]:
         leg_options: SearchOptions | None,
         member_weights_list: Sequence[float],
         per_leg_limit: int,
-    ) -> tuple[sql.Composable, list[Any], bool]:
+        combo_limit: int | None = None,
+        sorts: QuerySortExpression | None = None,  # type: ignore[valid-type]
+    ) -> tuple[sql.Composable, list[Any], bool, str, str]:
         fw, fp = await self._hub_host.where_clause(filters)
         tenant_id = (
             self._hub_host._tenant_id_for_resolve()  # pyright: ignore[reportPrivateUsage]
@@ -164,19 +198,9 @@ class HubSearchSqlMixin[M: BaseModel]:
         do_legs = bool(query_terms) and bool(active)
         need_groonga_sys = False
 
-        hub_cte = sql.SQL(
-            """
-            {hub_cte} AS (
-                SELECT {hub_cols}
-                FROM {hub_rel} {ha}
-                WHERE {fw}
-            )
-            """
-        ).format(
-            hub_cte=sql.Identifier(HUB_CTE),
+        hub_cte = build_hub_cte(
             hub_cols=self._hub_select_list(include_groonga_sys=need_groonga_sys),
-            hub_rel=hub_qn.ident(),
-            ha=sql.Identifier(HUB_ROW_ALIAS),
+            hub_rel_ident=hub_qn.ident(),
             fw=fw,
         )
 
@@ -184,148 +208,28 @@ class HubSearchSqlMixin[M: BaseModel]:
         leg_cte_parts: list[sql.Composable] = []
         leg_aliases = [f"lr{i}" for i in range(len(self._hub_host.members))]
 
+        leg_ctx = HubLegSqlContext(
+            hub_rel_ident=hub_qn.ident(),
+            fw=fw,
+            tenant_id=tenant_id,
+            query_terms=query_terms,
+            leg_options=leg_options,
+            per_leg_limit=per_leg_limit,
+            introspector=self._hub_host.introspector,
+            vector_embedders=dict(self._hub_host.vector_embedders),
+        )
+
         if do_legs:
             for i, leg, _ in active:
-                heap_t_alias = "t"
-                t_alias = (
-                    heap_t_alias
-                    if leg.same_heap_as_hub and leg.engine == "pgroonga"
-                    else (HUB_ROW_ALIAS if leg.same_heap_as_hub else f"t{i}")
-                )
                 lr_alias = leg_aliases[i]
-                leg_order = _hub_leg_order_limit(
-                    engine=leg.engine,
-                    per_leg_limit=per_leg_limit,
+                parts = await build_hub_leg_sql_parts(
+                    leg_ctx,
+                    leg_index=i,
+                    leg=leg,
+                    lr_alias=lr_alias,
                 )
-
-                v_emb = (
-                    self._hub_host.vector_embedders.get(i)
-                    if leg.engine == "vector"
-                    else None
-                )
-                sw, rank_expr, sp = await hub_leg_engine_for(
-                    leg,
-                    vector_embedder=v_emb,
-                ).build_leg(
-                    leg,
-                    tenant_id=tenant_id,
-                    introspector=self._hub_host.introspector,
-                    index_alias=t_alias,
-                    queries=query_terms,
-                    options=leg_options,
-                    score_column=LEG_SCORE,
-                )
-                params.extend(sp)
-
-                if leg.same_heap_as_hub and leg.engine == "pgroonga" and query_terms:
-                    rank_expr = sql.SQL(
-                        "pgroonga_score({}.tableoid, {}.ctid) AS {}"
-                    ).format(
-                        sql.Identifier(heap_t_alias),
-                        sql.Identifier(heap_t_alias),
-                        sql.Identifier(LEG_SCORE),
-                    )
-
-                sel_pk = sql.SQL("{} AS {}").format(
-                    sql.SQL("{}.{}").format(
-                        sql.Identifier(t_alias),
-                        sql.Identifier(leg.heap_pk_column),
-                    ),
-                    sql.Identifier(LEG_EID),
-                )
-
-                if leg.same_heap_as_hub and leg.engine == "pgroonga":
-                    pk_join = sql.SQL("{} = {}").format(
-                        sql.SQL("{}.{}").format(
-                            sql.Identifier(HUB_ROW_ALIAS),
-                            sql.Identifier(leg.heap_pk_column),
-                        ),
-                        sql.SQL("{}.{}").format(
-                            sql.Identifier(heap_t_alias),
-                            sql.Identifier(leg.heap_pk_column),
-                        ),
-                    )
-                    leg_cte = sql.SQL(
-                        """
-                        ,
-                        {lr} AS (
-                            SELECT {sel_pk}, {rank_expr}
-                            FROM {hub_rel} {t}
-                            INNER JOIN {hf} {ha} ON ({pk_join})
-                            WHERE {sw}{leg_order}
-                        )
-                        """
-                    ).format(
-                        lr=sql.Identifier(lr_alias),
-                        sel_pk=sel_pk,
-                        rank_expr=rank_expr,
-                        hub_rel=hub_qn.ident(),
-                        t=sql.Identifier(heap_t_alias),
-                        hf=sql.Identifier(HUB_CTE),
-                        ha=sql.Identifier(HUB_ROW_ALIAS),
-                        pk_join=pk_join,
-                        sw=sw,
-                        leg_order=leg_order,
-                    )
-
-                elif leg.same_heap_as_hub:
-                    leg_cte = sql.SQL(
-                        """
-                        ,
-                        {lr} AS (
-                            SELECT {sel_pk}, {rank_expr}
-                            FROM {hf} {t}
-                            WHERE {sw}{leg_order}
-                        )
-                        """
-                    ).format(
-                        lr=sql.Identifier(lr_alias),
-                        sel_pk=sel_pk,
-                        rank_expr=rank_expr,
-                        hf=sql.Identifier(HUB_CTE),
-                        t=sql.Identifier(t_alias),
-                        sw=sw,
-                        leg_order=leg_order,
-                    )
-
-                else:
-                    heap_qn = await leg.resolve_index_heap_qname(tenant_id)
-                    cand_sub = leg.candidate_subquery(csub_alias=f"csub{i}")
-                    join_on = sql.SQL("{} = {}").format(
-                        sql.Identifier(t_alias, leg.heap_pk_column),
-                        sql.Identifier(f"csub{i}", "cand_id"),
-                    )
-                    leg_cte = sql.SQL(
-                        """
-                        ,
-                        {lr} AS (
-                            SELECT {sel_pk}, {rank_expr}
-                            FROM {heap} {t}
-                            INNER JOIN {cand} ON ({join_on})
-                            WHERE {sw}{leg_order}
-                        )
-                        """
-                    ).format(
-                        lr=sql.Identifier(lr_alias),
-                        sel_pk=sel_pk,
-                        rank_expr=rank_expr,
-                        heap=heap_qn.ident(),
-                        t=sql.Identifier(t_alias),
-                        sw=sw,
-                        cand=cand_sub,
-                        join_on=join_on,
-                        leg_order=leg_order,
-                    )
-
-                leg_cte_parts.append(leg_cte)
-
-                if len(leg.hub_fk_columns) > 1:
-                    leg_cte_parts.append(
-                        leg.leg_u_cte(
-                            leg_cte_alias=lr_alias,
-                            u_cte_name=f"{lr_alias}_u",
-                        ),
-                    )
+                params.extend(parts.leg_params)
+                leg_cte_parts.extend(parts.leg_cte_fragments)
 
         hf_cols = sql.SQL(", ").join(
             [
@@ -423,13 +327,39 @@ class HubSearchSqlMixin[M: BaseModel]:
                 combine=combine_sql,
             )
 
-        with_clause = sql.SQL("WITH {}{}{}").format(
+        count_relation = "combo"
+        data_relation = "combo"
+        combo_tail: sql.Composable = sql.SQL("")
+
+        if combo_limit is not None and do_legs:
+            combo_top_order = await self._hub_combo_top_order_sql(do_legs, sorts)
+            combo_top_cte = sql.SQL(
+                """
+                ,
+                {combo_top} AS (
+                    SELECT *
+                    FROM {combo}
+                    ORDER BY {order}
+                    LIMIT {lim}
+                )
+                """
+            ).format(
+                combo_top=sql.Identifier(COMBO_TOP_RELATION),
+                combo=sql.Identifier("combo"),
+                order=combo_top_order,
+                lim=sql.Literal(int(combo_limit)),
+            )
+            combo_tail = combo_top_cte
+            data_relation = COMBO_TOP_RELATION
+
+        with_clause = sql.SQL("WITH {}{}{}{}").format(
             hub_cte,
             sql.SQL("").join(leg_cte_parts),
             combo_cte,
+            combo_tail,
         )
 
-        return with_clause, params, do_legs
+        return with_clause, params, do_legs, count_relation, data_relation
 
     # ....................... #
 

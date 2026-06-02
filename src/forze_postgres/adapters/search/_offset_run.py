@@ -20,6 +20,7 @@ from forze.application.contracts.querying import (
 )
 from forze.application.contracts.search import (
     HubSearchSpec,
+    SearchOptions,
     SearchResultSnapshotOptions,
     SearchSpec,
 )
@@ -27,6 +28,7 @@ from forze.application.integrations.search import SearchResultSnapshot
 
 from ...kernel.gateways import PostgresGateway
 from ._materialize_hits import materialize_search_page
+from ._search_count import effective_search_count
 
 # ----------------------- #
 
@@ -53,6 +55,20 @@ class RankedOffsetPlan:
 
     count_params: list[Any] | None = None
     """When set, used for ``COUNT(*)`` only (e.g. FTS empty-query uses filter params only)."""
+
+    count_with_clause: sql.Composable | None = None
+    """Uncapped ranked ``WITH`` for exact totals when data pipeline uses a candidate cap."""
+
+    count_from_outer: sql.Composable | None = None
+
+    approximate_total: int | None = None
+    """When set, used for ``search_count=approximate`` instead of ``COUNT(*)``."""
+
+    count_relation: str = "combo"
+    """Hub: relation name for ``COUNT(*)`` (defaults to full ``combo``)."""
+
+    data_relation: str = "combo"
+    """Hub: relation name for the ranked data ``SELECT`` (e.g. ``combo_top``)."""
 
     select_table_alias: str
     """Table alias passed to :meth:`~PostgresGateway.return_clause`."""
@@ -92,10 +108,14 @@ async def execute_simple_ranked_offset_search(
     return_fields: Sequence[str] | None,
     model_type: type[M],
     result_snapshot: SearchResultSnapshot | None,
+    options: SearchOptions | None = None,
 ) -> Any:
     """Run count (optional), data fetch, snapshot materialization for simple search adapters."""
 
     rs_spec = spec.snapshot
+    count_policy = effective_search_count(options)
+    snapshot_return_count = return_count and count_policy != "none"
+
     fp_fingerprint = SearchResultSnapshot.simple_search_fingerprint(
         query,
         filters,
@@ -114,34 +134,53 @@ async def execute_simple_ranked_offset_search(
             pagination=dict(pagination or {}),
             return_type=return_type,
             return_fields=return_fields,
-            return_count=return_count,
+            return_count=snapshot_return_count,
         )
 
         if maybe_snap is not None:
             return maybe_snap
 
-    count_params = plan.count_params if plan.count_params is not None else plan.params
+    use_uncapped_count = (
+        return_count
+        and count_policy == "exact"
+        and plan.count_with_clause is not None
+        and plan.count_from_outer is not None
+    )
+
+    if use_uncapped_count:
+        count_with = plan.count_with_clause
+        count_from = plan.count_from_outer
+        count_params = (
+            plan.count_params if plan.count_params is not None else plan.params
+        )
+    else:
+        count_with = plan.with_clause
+        count_from = plan.from_outer
+        count_params = plan.count_params if plan.count_params is not None else plan.params
 
     count_stmt = sql.SQL(
         """
             {with_clause}
             SELECT COUNT(*) {from_outer}
             """
-    ).format(with_clause=plan.with_clause, from_outer=plan.from_outer)
+    ).format(with_clause=count_with, from_outer=count_from)
 
     total = 0
 
-    if return_count:
-        total = int(
-            await gw.client.fetch_value(count_stmt, count_params, default=0),
-        )
-
-        if total == 0:
-            return page_from_limit_offset(  # pyright: ignore[reportUnknownVariableType]
-                [],
-                pagination or {},
-                total=0,
+    if return_count and count_policy != "none":
+        if count_policy == "approximate" and plan.approximate_total is not None:
+            total = int(plan.approximate_total)
+        else:
+            total = int(
+                await gw.client.fetch_value(count_stmt, count_params, default=0),
             )
+
+            if total == 0:
+                return page_from_limit_offset(  # pyright: ignore[reportUnknownVariableType]
+                    [],
+                    pagination or {},
+                    total=0,
+                )
 
     cols = gw.return_clause(
         return_type,
@@ -226,7 +265,7 @@ async def execute_simple_ranked_offset_search(
         return page_from_limit_offset(
             page,
             pagination_dict,
-            total=total,
+            total=total if count_policy != "none" else None,
             snapshot=handle_out,
         )
 
@@ -261,10 +300,15 @@ async def execute_hub_ranked_offset_search(
     model_type: type[M],
     result_snapshot: SearchResultSnapshot | None,
     combo_alias: str = "comb",
+    options: SearchOptions | None = None,
+    execution: str | None = None,
+    combo_limit: int | None = None,
 ) -> Any:
     """Ranked offset search for :class:`~forze_postgres.adapters.search.hub.PostgresHubSearchAdapter`."""
 
     rs_spec = hub_spec.snapshot
+    count_policy = effective_search_count(options)
+    snapshot_return_count = return_count and count_policy != "none"
     fp_fingerprint = SearchResultSnapshot.hub_search_fingerprint(
         query,
         filters,
@@ -274,6 +318,9 @@ async def execute_hub_ranked_offset_search(
         score_merge=score_merge,
         combine=combine,
         per_leg_limit=per_leg_limit,
+        execution=execution,
+        combo_limit=combo_limit,
+        search_count=count_policy,
     )
 
     if result_snapshot is not None and rs_spec is not None:
@@ -285,7 +332,7 @@ async def execute_hub_ranked_offset_search(
             pagination=dict(pagination or {}),
             return_type=return_type,
             return_fields=return_fields,
-            return_count=return_count,
+            return_count=snapshot_return_count,
         )
 
         if read_page is not None:
@@ -298,21 +345,24 @@ async def execute_hub_ranked_offset_search(
             """
     ).format(
         with_clause=plan.with_clause,
-        combo=sql.Identifier("combo"),
+        combo=sql.Identifier(plan.count_relation),
         ca=sql.Identifier(combo_alias),
     )
 
     total = 0
 
-    if return_count:
-        total = int(await gw.client.fetch_value(count_stmt, plan.params, default=0))
+    if return_count and count_policy != "none":
+        if count_policy == "approximate" and plan.approximate_total is not None:
+            total = int(plan.approximate_total)
+        else:
+            total = int(await gw.client.fetch_value(count_stmt, plan.params, default=0))
 
-        if total == 0:
-            return page_from_limit_offset(  # pyright: ignore[reportUnknownVariableType]
-                [],
-                pagination or {},
-                total=0,
-            )
+            if total == 0:
+                return page_from_limit_offset(  # pyright: ignore[reportUnknownVariableType]
+                    [],
+                    pagination or {},
+                    total=0,
+                )
 
     cols = gw.return_clause(
         return_type,
@@ -329,7 +379,7 @@ async def execute_hub_ranked_offset_search(
     ).format(
         with_clause=plan.with_clause,
         cols=cols,
-        combo=sql.Identifier("combo"),
+        combo=sql.Identifier(plan.data_relation),
         ca=sql.Identifier(combo_alias),
         order=plan.order_sql,
     )
@@ -398,7 +448,7 @@ async def execute_hub_ranked_offset_search(
         return page_from_limit_offset(
             page,
             pagination_dict,
-            total=total,
+            total=total if count_policy != "none" else None,
             snapshot=handle_h,
         )
 

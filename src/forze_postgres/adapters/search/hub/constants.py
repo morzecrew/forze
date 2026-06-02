@@ -7,6 +7,7 @@ from typing import Final
 HUB_CTE: Final[str] = "hf"
 HUB_ROW_ALIAS: Final[str] = "h"
 COMBO_ALIAS: Final[str] = "comb"
+COMBO_TOP_RELATION: Final[str] = "combo_top"
 HUB_RANK: Final[str] = "_hub_rank"
 LEG_SCORE: Final[str] = "s"
 LEG_EID: Final[str] = "eid"
