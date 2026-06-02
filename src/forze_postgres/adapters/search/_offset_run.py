@@ -252,6 +252,7 @@ async def execute_hub_ranked_offset_search(
     members_weighted: list[tuple[str, float]],
     score_merge: str,
     combine: str,
+    per_leg_limit: int,
     pagination: PaginationExpression | None,
     snapshot: SearchResultSnapshotOptions | None,
     return_count: bool,
@@ -272,6 +273,7 @@ async def execute_hub_ranked_offset_search(
         members_weighted=members_weighted,
         score_merge=score_merge,
         combine=combine,
+        per_leg_limit=per_leg_limit,
     )
 
     if result_snapshot is not None and rs_spec is not None:

@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
 from forze.base.exceptions import exc
 
 from .payloads import (
@@ -14,14 +12,10 @@ from .payloads import (
 )
 from .senders import NotificationSenders
 
-if TYPE_CHECKING:
-    from forze.application.execution.context import ExecutionContext
-
 # ----------------------- #
 
 
 async def dispatch_notification(
-    ctx: ExecutionContext,  # noqa: ARG001 — reserved for tracing/tenant-aware senders
     command: NotificationCommand,
     senders: NotificationSenders,
 ) -> None:

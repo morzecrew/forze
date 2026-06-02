@@ -13,14 +13,13 @@ from psycopg import sql
 from forze.application.contracts.search import (
     SearchOptions,
     SearchSpec,
-    effective_phrase_combine,
 )
 
 from ...kernel.catalog.introspect import PostgresIntrospector
 from ...kernel.gateways import PostgresQualifiedName
 from ._pgroonga_sql import (
     pgroonga_match_clause,
-    pgroonga_phrase_match_text,
+    pgroonga_match_query_text,
     pgroonga_score_rank_expr,
 )
 
@@ -53,10 +52,7 @@ async def build_pgroonga_leg(
             [],
         )
 
-    mq = pgroonga_phrase_match_text(
-        queries,
-        combine=effective_phrase_combine(options),
-    )
+    mq = pgroonga_match_query_text(queries, options)
     sw, sp = await pgroonga_match_clause(
         search=search,
         index_field_map=index_field_map,

@@ -161,7 +161,9 @@ from forze_mock.adapters.identity import (
     MockTokenVerifierPort,
 )
 from forze_mock.embeddings import MockHashEmbeddingsProvider
-from forze_mock.outbox_adapter import MockOutboxAdapter
+from forze.application.integrations.outbox import StagingOutboxCommand
+from forze.application.execution.outbox import build_staging_outbox_command_for_store
+from forze_mock.outbox_adapter import MockOutboxStore
 from forze_mock.tenancy import MockRoutedStateRegistry, resolve_mock_namespace_sync
 from forze_mock.tenancy.routed import MockRoutedStateDepKey
 
@@ -508,20 +510,37 @@ class ConfigurableMockStreamGroup(_MockFactoryBase):
 
 @final
 @attrs.define(slots=True, kw_only=True)
-class ConfigurableMockOutbox(_MockFactoryBase):
+class ConfigurableMockOutboxQuery(_MockFactoryBase):
     def __call__(
         self,
         context: ExecutionContext,
         spec: OutboxSpec[Any],
-    ) -> MockOutboxAdapter[Any]:
+    ) -> MockOutboxStore[Any]:
         cfg = self._route(spec.name)
-        return MockOutboxAdapter(
-            ctx=context,
+        return MockOutboxStore(
             spec=spec,
             state=self._state(context),
             tenant_aware=cfg.tenant_aware if cfg else False,
             tenant_provider=_tenant_provider(context),
         )
+
+
+@final
+@attrs.define(slots=True, kw_only=True)
+class ConfigurableMockOutboxCommand(_MockFactoryBase):
+    def __call__(
+        self,
+        context: ExecutionContext,
+        spec: OutboxSpec[Any],
+    ) -> StagingOutboxCommand[Any]:
+        cfg = self._route(spec.name)
+        store = MockOutboxStore(
+            spec=spec,
+            state=self._state(context),
+            tenant_aware=cfg.tenant_aware if cfg else False,
+            tenant_provider=_tenant_provider(context),
+        )
+        return build_staging_outbox_command_for_store(context, spec, store)
 
 
 @final
@@ -665,8 +684,8 @@ class MockDepsModule(DepsModule):
             StreamQueryDepKey: ConfigurableMockStream(module=self),
             StreamCommandDepKey: ConfigurableMockStream(module=self),
             StreamGroupQueryDepKey: ConfigurableMockStreamGroup(module=self),
-            OutboxCommandDepKey: ConfigurableMockOutbox(module=self),
-            OutboxQueryDepKey: ConfigurableMockOutbox(module=self),
+            OutboxCommandDepKey: ConfigurableMockOutboxCommand(module=self),
+            OutboxQueryDepKey: ConfigurableMockOutboxQuery(module=self),
             DistributedLockQueryDepKey: dlock,
             DistributedLockCommandDepKey: dlock,
             EmbeddingsProviderDepKey: ConfigurableMockEmbeddings(

@@ -94,7 +94,7 @@ senders = AppNotificationSenders()
 async for message in ctx.deps.resolve_configurable(
     ctx, QueueQueryDepKey, notifications_spec, route=notifications_spec.name
 ).consume("notifications"):
-    await process_notification_message(ctx, message, router=router, senders=senders)
+    await process_notification_message(message, router=router, senders=senders)
     await query.ack("notifications", [message.id])
 ```
 

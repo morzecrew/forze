@@ -44,6 +44,7 @@ class ConfigurablePostgresHubSearch(HubSearchQueryDepPort):
             vector_embedders=vector_embedders,
             combine=self.config.combine_strategy,
             score_merge=self.config.merge_strategy,
+            per_leg_limit=self.config.per_leg_limit,
             relation=self.config.hub,
             client=context.deps.provide(PostgresClientDepKey),
             codec=spec.resolved_read_codec,

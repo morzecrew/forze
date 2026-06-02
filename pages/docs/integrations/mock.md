@@ -46,7 +46,8 @@ The package supplies a single `MockDepsModule` that registers in-memory adapters
 | `MockStreamAdapter` | `StreamQueryPort`, `StreamCommandPort` |
 | `MockStreamGroupAdapter` | `StreamGroupQueryPort` |
 | `MockAnalyticsAdapter` | `AnalyticsQueryPort`, `AnalyticsIngestPort` |
-| `MockOutboxAdapter` | `OutboxCommandPort`, `OutboxQueryPort` |
+| `MockOutboxStore` | `OutboxQueryPort` (+ `persist_rows` for staging flush) |
+| `StagingOutboxCommand` (via `OutboxCommandDepKey`) | `OutboxCommandPort` |
 | `MockDistributedLockAdapter` | `DistributedLockQueryPort`, `DistributedLockCommandPort` |
 | `MockSearchCommandAdapter` | `SearchCommandPort` |
 | `MockSearchResultSnapshotAdapter` | `SearchResultSnapshotPort` (chunked in-memory) |

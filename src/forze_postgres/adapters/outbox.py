@@ -1,4 +1,4 @@
-"""Postgres transactional outbox adapter."""
+"""Postgres transactional outbox store."""
 
 from __future__ import annotations
 
@@ -13,17 +13,13 @@ from psycopg.types.json import Jsonb
 from pydantic import BaseModel
 
 from forze.application.contracts.outbox import (
-    IntegrationEvent,
     OutboxClaim,
-    OutboxCommandPort,
     OutboxQueryPort,
     OutboxSpec,
     OutboxStatus,
     StagedOutboxEntry,
 )
 from forze.application.contracts.tenancy import TenancyMixin
-from forze.application.integrations.outbox import OutboxStaging
-from forze.application.execution.context import ExecutionContext
 from forze.base.exceptions import exc
 from forze.base.primitives import utcnow, uuid7
 from forze_postgres.execution.deps.configs.outbox import PostgresOutboxConfig
@@ -36,32 +32,12 @@ from forze_postgres.kernel.relation import resolve_postgres_qname
 
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class PostgresOutboxAdapter[M: BaseModel](
-    TenancyMixin,
-    OutboxCommandPort[M],
-    OutboxQueryPort,
-):
-    """Postgres-backed outbox command and query port."""
+class PostgresOutboxStore[M: BaseModel](TenancyMixin, OutboxQueryPort):
+    """Postgres-backed outbox persistence and query port."""
 
-    ctx: ExecutionContext
     client: PostgresClientPort
     spec: OutboxSpec[M]
     config: PostgresOutboxConfig
-
-    _staging: OutboxStaging[M] = attrs.field(init=False)
-
-    # ....................... #
-
-    def __attrs_post_init__(self) -> None:
-        object.__setattr__(
-            self,
-            "_staging",
-            OutboxStaging(
-                ctx=self.ctx,
-                spec=self.spec,
-                flush_rows=self._persist_rows,
-            ),
-        )
 
     # ....................... #
 
@@ -71,7 +47,7 @@ class PostgresOutboxAdapter[M: BaseModel](
 
     # ....................... #
 
-    async def _persist_rows(self, rows: Sequence[StagedOutboxEntry]) -> int:
+    async def persist_rows(self, rows: Sequence[StagedOutboxEntry]) -> int:
         if not rows:
             return 0
 
@@ -138,37 +114,6 @@ class PostgresOutboxAdapter[M: BaseModel](
 
         rowcount = await self.client.execute(stmt, flat_params, return_rowcount=True)
         return int(rowcount or 0)
-
-    # ....................... #
-
-    async def stage(
-        self,
-        event_type: str,
-        payload: M,
-        *,
-        event_id: UUID | None = None,
-        occurred_at: datetime | None = None,
-    ) -> None:
-        await self._staging.stage(
-            event_type,
-            payload,
-            event_id=event_id,
-            occurred_at=occurred_at,
-        )
-
-    async def stage_many(
-        self,
-        events: Sequence[tuple[str, M]],
-        *,
-        event_ids: Sequence[UUID] | None = None,
-    ) -> None:
-        await self._staging.stage_many(events, event_ids=event_ids)
-
-    async def stage_event(self, event: IntegrationEvent[M]) -> None:
-        await self._staging.stage_event(event)
-
-    async def flush(self) -> int:
-        return await self._staging.flush()
 
     # ....................... #
 

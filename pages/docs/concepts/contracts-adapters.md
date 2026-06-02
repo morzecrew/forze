@@ -200,6 +200,8 @@ Resolve with `ctx.search.command(search_spec)` when the integration registers `S
 
 **`OutboxCommandPort`** / **`OutboxQueryPort`**: stage integration events in the same transaction as your writes, flush in one batch, then relay to a queue. Resolve with `ctx.outbox.command(spec)` / `ctx.outbox.query(spec)`. See [Outbox contracts](../core-package/contracts/outbox.md).
 
+Integration **stores** (`PostgresOutboxStore`, `MongoOutboxStore`, `MockOutboxStore`) implement query/relay operations and `persist_rows` only—like `PostgresDocumentAdapter`, they take narrow deps (client, config, tenancy), not `ExecutionContext`. Dep factories compose **`StagingOutboxCommand`** (buffer + enricher + flush callback) for the command port and the store for the query port.
+
 ### Idempotency
 
 **`IdempotencyPort`**: deduplicate HTTP requests:

@@ -447,3 +447,58 @@ async def test_postgres_search_configurable_uses_heap_and_field_map(
     n = __p.count
     assert n == 1
     assert rows[0].title == "hello"
+
+
+@pytest.mark.asyncio
+async def test_postgres_pgroonga_index_first_plan(
+    pg_client: PostgresClient,
+) -> None:
+    """``pgroonga_plan='index_first'`` returns ranked hits on a coalesced table."""
+
+    await pg_client.execute("CREATE EXTENSION IF NOT EXISTS pgroonga;")
+
+    await pg_client.execute(
+        """
+        CREATE TABLE idx1_docs (
+            id uuid PRIMARY KEY,
+            title text NOT NULL,
+            content text NOT NULL
+        );
+        CREATE INDEX idx_idx1_docs ON idx1_docs USING pgroonga ((ARRAY[title, content]));
+        """
+    )
+    ids = [uuid4(), uuid4()]
+    await pg_client.execute(
+        "INSERT INTO idx1_docs (id, title, content) VALUES (%(id)s, %(t)s, %(c)s)",
+        {"id": ids[0], "t": "alpha bravo", "c": "first"},
+    )
+    await pg_client.execute(
+        "INSERT INTO idx1_docs (id, title, content) VALUES (%(id)s, %(t)s, %(c)s)",
+        {"id": ids[1], "t": "bravo charlie", "c": "second"},
+    )
+
+    ctx = context_from_deps(
+        Deps.plain(
+            {
+                PostgresClientDepKey: pg_client,
+                PostgresIntrospectorDepKey: PostgresIntrospector(client=pg_client),
+                SearchQueryDepKey: ConfigurablePostgresSearch(
+                    config=PostgresSearchConfig(
+                        index=("public", "idx_idx1_docs"),
+                        read=("public", "idx1_docs"),
+                        engine="pgroonga",
+                        pgroonga_plan="index_first",
+                        pgroonga_candidate_limit=10,
+                    )
+                ),
+            }
+        )
+    )
+    spec = SearchSpec(
+        name="idx1",
+        model_type=SearchableModel,
+        fields=["title", "content"],
+    )
+    page = await ctx.search.query(spec).search_page("bravo", pagination={"limit": 5})
+    assert len(page.hits) == 2
+    assert {h.title for h in page.hits} == {"alpha bravo", "bravo charlie"}

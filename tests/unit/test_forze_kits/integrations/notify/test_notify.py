@@ -10,7 +10,6 @@ from pydantic import BaseModel
 
 from forze.application.contracts.outbox import IntegrationEvent
 from forze.application.contracts.queue import QueueMessage
-from forze.application.execution import DepsRegistry, ExecutionRuntime
 from forze_kits.integrations.notify import (
     EmailNotification,
     NotificationRouter,
@@ -18,9 +17,6 @@ from forze_kits.integrations.notify import (
     process_notification_message,
 )
 from forze_kits.integrations.notify.payloads import WebhookNotification
-from forze_mock import MockDepsModule
-
-
 class _ProjectCreated(BaseModel):
     project_id: str
 
@@ -66,14 +62,10 @@ async def test_router_maps_event_to_commands() -> None:
 @pytest.mark.asyncio
 async def test_dispatch_notification_calls_sender() -> None:
     senders = _RecordingSenders()
-    runtime = ExecutionRuntime(deps=DepsRegistry.from_modules(MockDepsModule()))
-    async with runtime.scope():
-        ctx = runtime.get_context()
-        await dispatch_notification(
-            ctx,
-            EmailNotification(to="a@b.c", subject="hi", body="there"),
-            senders,
-        )
+    await dispatch_notification(
+        EmailNotification(to="a@b.c", subject="hi", body="there"),
+        senders,
+    )
     assert len(senders.emails) == 1
 
 
@@ -101,15 +93,11 @@ async def test_process_notification_message_uses_queue_type_and_key() -> None:
         enqueued_at=datetime.now(),
     )
 
-    runtime = ExecutionRuntime(deps=DepsRegistry.from_modules(MockDepsModule()))
-    async with runtime.scope():
-        ctx = runtime.get_context()
-        count = await process_notification_message(
-            ctx,
-            message,
-            router=router,
-            senders=senders,
-        )
+    count = await process_notification_message(
+        message,
+        router=router,
+        senders=senders,
+    )
 
     assert count == 1
     assert senders.emails[0].body == "abc"
@@ -125,15 +113,11 @@ async def test_process_notification_message_skips_unmapped() -> None:
         type="unknown.event",
     )
 
-    runtime = ExecutionRuntime(deps=DepsRegistry.from_modules(MockDepsModule()))
-    async with runtime.scope():
-        ctx = runtime.get_context()
-        count = await process_notification_message(
-            ctx,
-            message,
-            router=NotificationRouter(),
-            senders=senders,
-        )
+    count = await process_notification_message(
+        message,
+        router=NotificationRouter(),
+        senders=senders,
+    )
 
     assert count == 0
     assert senders.emails == []

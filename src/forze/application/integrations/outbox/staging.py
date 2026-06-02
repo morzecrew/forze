@@ -1,10 +1,7 @@
-"""Buffer integration events and delegate durable flush to adapters."""
-
-from __future__ import annotations
+"""Buffer integration events and delegate durable flush to stores."""
 
 from collections.abc import Awaitable, Callable, Sequence
 from datetime import datetime
-from typing import TYPE_CHECKING
 from uuid import UUID
 
 import attrs
@@ -15,13 +12,10 @@ from forze.application.contracts.outbox import (
     OutboxSpec,
     StagedOutboxEntry,
 )
+from forze.application.contracts.outbox.staging_context import OutboxStagingContext
 from forze.base.exceptions import exc
-from forze.base.primitives import utcnow, uuid7
 
-
-if TYPE_CHECKING:
-    from forze.application.execution.context import ExecutionContext
-    from forze.application.execution.context import OutboxStagingContext
+from .enrichment import OutboxEventEnricher
 
 # ----------------------- #
 
@@ -32,46 +26,19 @@ FlushRowsFn = Callable[[Sequence[StagedOutboxEntry]], Awaitable[int]]
 
 @attrs.define(slots=True, kw_only=True)
 class OutboxStaging[M: BaseModel]:
-    """Request-scoped staging buffer with adapter-specific flush."""
+    """Request-scoped staging buffer with store-specific flush."""
 
-    ctx: ExecutionContext
-    """Active execution context."""
+    staging: OutboxStagingContext
+    """Per-request buffer and flush flag."""
 
     spec: OutboxSpec[M]
     """Outbox route specification."""
 
+    enricher: OutboxEventEnricher
+    """Builds integration events with invocation envelope fields."""
+
     flush_rows: FlushRowsFn
     """Persist buffered rows; invoked by :meth:`flush`."""
-
-    # ....................... #
-
-    def _staging(self) -> OutboxStagingContext:
-        return self.ctx.outbox_staging
-
-    # ....................... #
-
-    def _enrich_event(
-        self,
-        event_type: str,
-        payload: M,
-        *,
-        event_id: UUID | None,
-        occurred_at: datetime | None,
-    ) -> IntegrationEvent[M]:
-        event_id = event_id or uuid7()
-        metadata = self.ctx.inv_ctx.get_metadata()
-        tenant = self.ctx.inv_ctx.get_tenant()
-
-        return IntegrationEvent(
-            event_type=event_type,
-            payload=payload,
-            event_id=event_id,
-            occurred_at=occurred_at or utcnow(),
-            tenant_id=tenant.tenant_id if tenant is not None else None,
-            execution_id=metadata.execution_id if metadata is not None else None,
-            correlation_id=metadata.correlation_id if metadata is not None else None,
-            causation_id=metadata.causation_id if metadata is not None else None,
-        )
 
     # ....................... #
 
@@ -94,7 +61,7 @@ class OutboxStaging[M: BaseModel]:
     ) -> None:
         """Buffer an integration event."""
 
-        event = self._enrich_event(
+        event = self.enricher.enrich(
             event_type,
             payload,
             event_id=event_id,
@@ -124,29 +91,25 @@ class OutboxStaging[M: BaseModel]:
     async def stage_event(self, event: IntegrationEvent[M]) -> None:
         """Buffer a fully built integration event."""
 
-        staging = self._staging()
-
-        if staging.flushed:
+        if self.staging.flushed:
             raise exc.internal("Cannot stage outbox events after flush")
 
-        staging.buffer.push([self._to_entry(event)])
+        self.staging.buffer.push([self._to_entry(event)])
 
     # ....................... #
 
     async def flush(self) -> int:
         """Persist buffered events."""
 
-        staging = self._staging()
-
-        if staging.flushed:
+        if self.staging.flushed:
             return 0
 
-        rows = staging.buffer.pop()
+        rows = self.staging.buffer.pop()
 
         if not rows:
-            staging.flushed = True
+            self.staging.flushed = True
             return 0
 
         written = await self.flush_rows(rows)
-        staging.flushed = True
+        self.staging.flushed = True
         return written

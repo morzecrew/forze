@@ -31,3 +31,7 @@ class RankedPipelineSql:
     pipeline: "PipelineAliases"
     rank_column: str
     projection_alias: str
+    resolved_plan: str | None = None
+    """Resolved PGroonga plan name when applicable."""
+    candidate_limit: int | None = None
+    """Effective ranked-row cap when applicable."""

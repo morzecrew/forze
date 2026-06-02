@@ -19,6 +19,7 @@ from forze.application.contracts.querying import (
     QuerySortExpression,
 )
 from forze.application.contracts.search import (
+    PgroongaPlan,
     SearchOptions,
     SearchResultSnapshotOptions,
     SearchSpec,
@@ -27,15 +28,26 @@ from forze.application.contracts.search import (
     search_options_for_simple_adapter,
 )
 from forze.application.integrations.search import SearchResultSnapshot
+from forze.base.exceptions import exc
 from forze.domain.constants import ID_FIELD
+from forze_postgres.kernel.relation import RelationSpec
 
 from ._engine import RankedPipelineSql
 from ._leg_pgroonga import build_pgroonga_leg
 from ._materialize_hits import materialize_search_page
+from ._pgroonga_plan import (
+    effective_candidate_limit,
+    ensure_pgroonga_plan_with_candidate_cap,
+    is_coalesced_read_heap,
+    is_trivial_filter,
+    resolve_pgroonga_plan,
+)
+from ._pgroonga_sql import pgroonga_match_query_text, pgroonga_score_call
 from ._pipeline_sql import (
     PipelineAliases,
     build_filtered_cte,
     build_outer_from,
+    build_pgroonga_index_first_pipeline,
     build_pipeline_with_clause,
     build_scored_cte,
     filtered_select_list,
@@ -75,6 +87,24 @@ class PostgresPGroongaSearchAdapter[M: BaseModel](
     pgroonga_score_version: Literal["v1", "v2"] = "v2"
     """``pgroonga_score`` form (``v1`` heap alias vs ``v2`` tableoid/ctid)."""
 
+    pgroonga_plan: PgroongaPlan = "filter_first"
+    """Ranked search SQL plan (``filter_first``, ``index_first``, ``auto``)."""
+
+    pgroonga_candidate_limit: int | None = 5000
+    """Default cap on ranked heap rows; ``None`` disables."""
+
+    pgroonga_auto_index_first_min_rows: int = 100_000
+    """``auto`` plan: ``index_first`` when read estimate is at least this size."""
+
+    pgroonga_auto_use_exact_count: bool = False
+    """``auto`` plan: use ``COUNT(*)`` on filtered projection to pick the plan."""
+
+    read_relation: RelationSpec | None = attrs.field(default=None)
+    """Read relation spec (for coalesced read/heap detection)."""
+
+    heap_relation_spec: RelationSpec | None = attrs.field(default=None)
+    """Heap relation spec (for coalesced read/heap detection)."""
+
     search_variant: str = attrs.field(default="pgroonga", init=False)
     pipeline: PipelineAliases = attrs.field(default=_PIPELINE, init=False)
     search_rank_column: str = attrs.field(default=_RANK_COLUMN, init=False)
@@ -94,11 +124,24 @@ class PostgresPGroongaSearchAdapter[M: BaseModel](
 
     # ....................... #
 
-    def _fingerprint_extras(
+    def _fingerprint_extras(  # type: ignore[override]
         self,
         options: SearchOptions | None,
+        *,
+        resolved_plan: str | None = None,
+        candidate_limit: int | None = None,
     ) -> dict[str, object] | None:
-        return {"phrase_combine": str(effective_phrase_combine(options))}
+        extras: dict[str, object] = {
+            "phrase_combine": str(effective_phrase_combine(options)),
+        }
+
+        if resolved_plan is not None:
+            extras["pgroonga_plan"] = resolved_plan
+
+        if candidate_limit is not None:
+            extras["candidate_limit"] = candidate_limit
+
+        return extras
 
     # ....................... #
 
@@ -256,10 +299,8 @@ class PostgresPGroongaSearchAdapter[M: BaseModel](
             if want_sn and self.result_snapshot is not None
             else 0
         )
-        sql_limit, sql_offset, page_limit = (
-            SearchResultSnapshot.snapshot_pagination(
-                want_sn, max_n0, dict(pagination)
-            )
+        sql_limit, sql_offset, page_limit = SearchResultSnapshot.snapshot_pagination(
+            want_sn, max_n0, dict(pagination)
         )
         if sql_limit is not None:
             data_stmt += sql.SQL(" LIMIT {}").format(sql.Placeholder())
@@ -328,12 +369,18 @@ class PostgresPGroongaSearchAdapter[M: BaseModel](
         fw: sql.Composable,
         fp: list[Any],
         terms: tuple[str, ...],
+        pagination: PaginationExpression | None = None,
+        snapshot: SearchResultSnapshotOptions | None = None,
+        parsed_filters: Any = None,
     ) -> RankedPipelineSql:
         _ = query, filters
         join = self._safe_join_pairs
         index_qname = await self._index_qname()
         index_heap_qname = await self._index_heap_qname()
         proj_qname = await self._qname()
+        rs_spec = self.spec.snapshot
+
+        mq = pgroonga_match_query_text(terms, options)
 
         sw, scored_rank, leg_params = await build_pgroonga_leg(
             introspector=self.introspector,
@@ -347,42 +394,163 @@ class PostgresPGroongaSearchAdapter[M: BaseModel](
             pgroonga_score_version=self.pgroonga_score_version,
         )
         scored_keys = scored_key_columns(join, index_alias=self.pipeline.index)
-        params_body = [*fp, *leg_params]
-
-        key_sel = filtered_select_list(
-            join,
-            projection_alias=self.pipeline.projection,
-        )
-        filtered_cte = build_filtered_cte(
-            aliases=self.pipeline,
-            key_sel=key_sel,
-            proj_ident=proj_qname.ident(),
-            fw=fw,
-        )
-        join_sf = scored_join_on_filtered(
-            join,
+        scored_order = pgroonga_score_call(
             index_alias=self.pipeline.index,
-            filtered_alias=self.pipeline.filtered,
+            query=mq,
+            score_version=self.pgroonga_score_version,
         )
-        scored_cte = build_scored_cte(
-            aliases=self.pipeline,
-            scored_keys=scored_keys,
-            scored_rank=scored_rank,
-            heap_ident=index_heap_qname.ident(),
-            join_sf=join_sf,
-            sw=sw,
+
+        read_spec = (
+            self.read_relation if self.read_relation is not None else self.relation
         )
+        heap_spec = (
+            self.heap_relation_spec
+            if self.heap_relation_spec is not None
+            else self.index_heap_relation
+        )
+        coalesced = is_coalesced_read_heap(read_spec, heap_spec, self.join_pairs)
+
+        async def _count_filtered() -> int:
+            count_stmt = sql.SQL("SELECT COUNT(*) FROM {proj} {pa} WHERE {fw}").format(
+                proj=proj_qname.ident(),
+                pa=sql.Identifier(self.pipeline.projection),
+                fw=fw,
+            )
+            return int(await self.client.fetch_value(count_stmt, list(fp), default=0))
+
+        resolved_plan = await resolve_pgroonga_plan(
+            configured=self.pgroonga_plan,
+            options=options,
+            parsed_filters=parsed_filters,
+            read_qname=proj_qname,
+            introspector=self.introspector,
+            auto_index_first_min_rows=self.pgroonga_auto_index_first_min_rows,
+            auto_use_exact_count=self.pgroonga_auto_use_exact_count,
+            count_filtered_rows=(
+                _count_filtered if self.pgroonga_auto_use_exact_count else None
+            ),
+        )
+
+        candidate_cap = effective_candidate_limit(
+            config_limit=self.pgroonga_candidate_limit,
+            options=options,
+            pagination=dict(pagination or {}),
+            snapshot=snapshot,
+            result_snapshot=self.result_snapshot,
+            rs_spec=rs_spec,
+        )
+
+        resolved_plan = ensure_pgroonga_plan_with_candidate_cap(
+            resolved_plan,
+            candidate_cap,
+        )
+
         join_vs = outer_join_on_scored(
             join,
             projection_alias=self.pipeline.projection,
             scored_alias=self.pipeline.scored,
         )
-        from_outer = build_outer_from(
-            aliases=self.pipeline,
-            proj_ident=proj_qname.ident(),
-            join_vs=join_vs,
-        )
-        with_clause = build_pipeline_with_clause(filtered_cte, scored_cte)
+
+        if resolved_plan == "index_first":
+            if candidate_cap is None:
+                raise exc.internal("candidate_cap is None")
+
+            with_clause, from_outer = build_pgroonga_index_first_pipeline(
+                aliases=self.pipeline,
+                scored_keys=scored_keys,
+                scored_rank=scored_rank,
+                heap_ident=index_heap_qname.ident(),
+                sw=sw,
+                join_vs=join_vs,
+                proj_ident=proj_qname.ident(),
+                proj_fw=fw,
+                candidate_limit=int(candidate_cap),
+                scored_order=scored_order,
+            )
+            params_body = [*leg_params, *fp]
+
+            return RankedPipelineSql(
+                with_clause=with_clause,
+                from_outer=from_outer,
+                params_body=params_body,
+                count_params=None,
+                pipeline=self.pipeline,
+                rank_column=self.search_rank_column,
+                projection_alias=self.projection_alias,
+                resolved_plan=resolved_plan,
+                candidate_limit=candidate_cap,
+            )
+
+        cap_kw: dict[str, Any] = {}
+
+        if candidate_cap is not None:
+            cap_kw = {
+                "candidate_limit": candidate_cap,
+                "scored_order": scored_order,
+            }
+
+        if coalesced:
+            heap_fw: sql.Composable | None = None
+            heap_fp: list[Any] = []
+
+            if not is_trivial_filter(parsed_filters):
+                heap_fw, heap_fp = await self.where_clause(
+                    filters,
+                    parsed=parsed_filters,
+                    table_alias=self.pipeline.index,
+                )
+
+            scored_cte = build_scored_cte(
+                aliases=self.pipeline,
+                scored_keys=scored_keys,
+                scored_rank=scored_rank,
+                heap_ident=index_heap_qname.ident(),
+                join_sf=None,
+                sw=sw,
+                heap_fw=heap_fw,
+                first_in_with=True,
+                **cap_kw,
+            )
+            with_clause = sql.SQL("WITH {}{}").format(scored_cte, sql.SQL(""))
+            from_outer = build_outer_from(
+                aliases=self.pipeline,
+                proj_ident=index_heap_qname.ident(),
+                join_vs=join_vs,
+            )
+            params_body = [*heap_fp, *leg_params]
+
+        else:
+            key_sel = filtered_select_list(
+                join,
+                projection_alias=self.pipeline.projection,
+            )
+            filtered_cte = build_filtered_cte(
+                aliases=self.pipeline,
+                key_sel=key_sel,
+                proj_ident=proj_qname.ident(),
+                fw=fw,
+            )
+            join_sf = scored_join_on_filtered(
+                join,
+                index_alias=self.pipeline.index,
+                filtered_alias=self.pipeline.filtered,
+            )
+            scored_cte = build_scored_cte(
+                aliases=self.pipeline,
+                scored_keys=scored_keys,
+                scored_rank=scored_rank,
+                heap_ident=index_heap_qname.ident(),
+                join_sf=join_sf,
+                sw=sw,
+                **cap_kw,
+            )
+            with_clause = build_pipeline_with_clause(filtered_cte, scored_cte)
+            from_outer = build_outer_from(
+                aliases=self.pipeline,
+                proj_ident=proj_qname.ident(),
+                join_vs=join_vs,
+            )
+            params_body = [*fp, *leg_params]
 
         return RankedPipelineSql(
             with_clause=with_clause,
@@ -392,4 +560,6 @@ class PostgresPGroongaSearchAdapter[M: BaseModel](
             pipeline=self.pipeline,
             rank_column=self.search_rank_column,
             projection_alias=self.projection_alias,
+            resolved_plan=resolved_plan,
+            candidate_limit=candidate_cap,
         )

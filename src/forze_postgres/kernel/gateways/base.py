@@ -352,6 +352,7 @@ class PostgresGateway[M: BaseModel](TenancyMixin):
         filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
         *,
         parsed: QueryExpr | None = None,
+        table_alias: str | None = None,
     ) -> tuple[sql.Composable, list[Any]]:
         query = sql.SQL("TRUE")
         params: list[Any] = []
@@ -361,11 +362,13 @@ class PostgresGateway[M: BaseModel](TenancyMixin):
         if expr is not None:
             types = await self.column_types()
 
+            alias = self.filter_table_alias if table_alias is None else table_alias
+
             r = PsycopgQueryRenderer(
                 types=types,
                 model_type=self.model_type,
                 nested_field_hints=self.nested_field_hints,
-                table_alias=self.filter_table_alias,
+                table_alias=alias,
             )
 
             query, params = r.render(expr)  # type: ignore[assignment]

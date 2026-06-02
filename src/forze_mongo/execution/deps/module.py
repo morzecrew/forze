@@ -25,7 +25,8 @@ from .configs import (
 )
 from .factories import (
     ConfigurableMongoDocument,
-    ConfigurableMongoOutbox,
+    ConfigurableMongoOutboxCommand,
+    ConfigurableMongoOutboxQuery,
     ConfigurableMongoReadOnlyDocument,
     ConfigurableMongoSearch,
     mongo_txmanager,
@@ -200,11 +201,11 @@ class MongoDepsModule(DepsModule):
                 Deps.routed(
                     {
                         OutboxCommandDepKey: {
-                            name: ConfigurableMongoOutbox(config=config)
+                            name: ConfigurableMongoOutboxCommand(config=config)
                             for name, config in self.outboxes.items()
                         },
                         OutboxQueryDepKey: {
-                            name: ConfigurableMongoOutbox(config=config)
+                            name: ConfigurableMongoOutboxQuery(config=config)
                             for name, config in self.outboxes.items()
                         },
                     }

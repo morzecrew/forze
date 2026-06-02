@@ -14,7 +14,7 @@ from forze.application.contracts.tenancy import TenantAwareIntegrationConfig
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class MongoOutboxConfig(TenantAwareIntegrationConfig):
-    """Mongo configuration for :class:`~forze_mongo.adapters.outbox.MongoOutboxAdapter`."""
+    """Mongo configuration for :class:`~forze_mongo.adapters.outbox.MongoOutboxStore`."""
 
     collection: RelationSpec = attrs.field(converter=coerce_relation_spec)
     """Database and collection for outbox documents."""

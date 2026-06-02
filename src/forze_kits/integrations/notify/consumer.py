@@ -6,8 +6,6 @@ from uuid import UUID, uuid4
 
 from forze.application.contracts.outbox import IntegrationEvent
 from forze.application.contracts.queue import QueueMessage
-from forze.application.execution.context import ExecutionContext
-
 from .dispatch import dispatch_notification
 from .routing import NotificationRouter
 from .senders import NotificationSenders
@@ -41,7 +39,6 @@ def integration_event_from_queue_message[M](
 
 
 async def process_notification_message[M](
-    ctx: ExecutionContext,
     message: QueueMessage[M],
     *,
     router: NotificationRouter,
@@ -67,6 +64,6 @@ async def process_notification_message[M](
         commands = router.resolve_or_raise(event)
 
     for command in commands:
-        await dispatch_notification(ctx, command, senders)
+        await dispatch_notification(command, senders)
 
     return len(commands)

@@ -44,7 +44,8 @@ from .configs import (
 )
 from .factories import (
     ConfigurablePostgresAnalytics,
-    ConfigurablePostgresOutbox,
+    ConfigurablePostgresOutboxCommand,
+    ConfigurablePostgresOutboxQuery,
     ConfigurablePostgresDocument,
     ConfigurablePostgresFederatedSearch,
     ConfigurablePostgresHubSearch,
@@ -376,11 +377,11 @@ class PostgresDepsModule(DepsModule):
                 Deps.routed(
                     {
                         OutboxCommandDepKey: {
-                            name: ConfigurablePostgresOutbox(config=config)
+                            name: ConfigurablePostgresOutboxCommand(config=config)
                             for name, config in self.outboxes.items()
                         },
                         OutboxQueryDepKey: {
-                            name: ConfigurablePostgresOutbox(config=config)
+                            name: ConfigurablePostgresOutboxQuery(config=config)
                             for name, config in self.outboxes.items()
                         },
                     }

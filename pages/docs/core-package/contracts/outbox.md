@@ -12,12 +12,21 @@ Transactional outbox for **integration events**: stage in the same database tran
 
 ## Ports
 
+### Store vs command (implementation)
+
+| Piece | Role | Typical type |
+|-------|------|----------------|
+| **Store** | `persist_rows`, `claim_pending`, `mark_*` | `PostgresOutboxStore`, `MongoOutboxStore`, `MockOutboxStore` |
+| **Command** | `stage` / `flush` via request-scoped buffer | `StagingOutboxCommand` (`forze.application.integrations.outbox`) |
+
+Dep factories compose them: `OutboxCommandDepKey` → `StagingOutboxCommand`; `OutboxQueryDepKey` → store. Stores do **not** take `ExecutionContext`—only client/config, tenancy, and `OutboxStagingContext` + `InvocationContext` are wired at the factory.
+
 ### `OutboxCommandPort`
 
 | Method | Purpose |
 |--------|---------|
-| `stage` / `stage_many` / `stage_event` | Buffer events (in-memory per request via `forze.application.integrations.outbox.OutboxStaging`) |
-| `flush` | Persist buffered rows; returns count of **new** rows inserted |
+| `stage` / `stage_many` / `stage_event` | Buffer events (in-memory per request via `OutboxStagingContext`) |
+| `flush` | Persist buffered rows via the store; returns count of **new** rows inserted |
 
 Wire **tx `on_success`** to flush before commit:
 

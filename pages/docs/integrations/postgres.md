@@ -227,6 +227,23 @@ Document adapters map Pydantic read/create/update models to PostgreSQL rows. Sea
 
 For `engine="pgroonga"`, multi-column indexes use `ARRAY[col1, col2, ...]` in migrations. Forze reads that order from the index catalog at query time and aligns heap columns and PGroonga `weights` to it. **`SearchSpec.fields` order does not matter**; per-field weights (`default_weights`, `options.weights`) stay keyed by logical field name. Every column in the index must be listed in `SearchSpec.fields` (use `field_map` in `PostgresSearchConfig` when logical names differ from heap columns). Extra spec fields are allowed and are not passed to the PGroonga match clause. If the index expression cannot be parsed (`ARRAY[...]` or a single column reference), search raises `CoreError` at query time.
 
+### PGroonga search performance
+
+`PostgresSearchConfig` (PGroonga engine) and optional per-request `SearchOptions` tune ranked search SQL:
+
+| Config / option | Purpose |
+|-----------------|--------|
+| `pgroonga_plan` | `filter_first` (default), `index_first`, or `auto`. |
+| `pgroonga_candidate_limit` | Cap ranked heap rows per query (default `5000`; `None` disables). |
+| `pgroonga_auto_index_first_min_rows` | With `auto` and no filters, use `index_first` when the read relation estimate is at least this many rows (default `100_000`). |
+| `pgroonga_auto_use_exact_count` | When `auto`, run `COUNT(*)` on the filtered projection to pick the plan (off by default). |
+| `SearchOptions.pgroonga_plan` / `candidate_limit` | Per-request overrides. |
+| `SearchOptions.groonga_query` | Raw Groonga query string (skips phrase combiner). |
+
+`PostgresHubSearchConfig.per_leg_limit` caps each hub leg before score merge (default `5000`). Ranking is exact only within these caps; raise them for deep paging or export-style searches.
+
+With `pgroonga_plan: auto`, non-empty query DSL filters always use `filter_first`; only filterless searches (no parsed filter AST) consult the introspector row estimate. `index_first` requires a candidate cap (`pgroonga_candidate_limit` or `SearchOptions.candidate_limit`); when the cap is disabled (`None`), Forze falls back to `filter_first` even if the configured plan is `index_first` or `auto` would otherwise pick `index_first`.
+
 ### JSON filters and GIN-friendly indexes
 
 Filters that drill into JSON/JSONB with nested `->` / `->>` paths are rendered as plain SQL expressions by the Postgres query layer (`PsycopgQueryRenderer`, nested field helpers). Read-model types drive scalar coercion: nested Pydantic fields use model metadata; parameterized `dict[str, V]` / `Mapping[str, V]` treat one dot segment as the JSON object key and infer `V` (including nested models and nested mappings). A **generic** GIN index on the whole JSON column only helps when the indexed expression matches how you filter (for example `@>` / containment-style predicates with `jsonb_ops` or `jsonb_path_ops`). Dot-path filters on nested keys often need a **matching** expression index or a dedicated generated column that you query instead of ad-hoc `->>` chains, or the planner may fall back to sequential scans.
