@@ -25,7 +25,7 @@ from forze.application.contracts.queue import (
     QueueQueryDepKey,
     QueueSpec,
 )
-from forze.base.serialization import PydanticRecordMappingCodec
+from forze.base.serialization import PydanticModelCodec
 
 
 class ResourceName(StrEnum):
@@ -39,7 +39,7 @@ class OrderPayload(BaseModel):
 
 order_queue = QueueSpec(
     name=ResourceName.ORDERS,
-    codec=PydanticRecordMappingCodec(OrderPayload),
+    codec=PydanticModelCodec(OrderPayload),
 )
 
 writer = ctx.deps.resolve_configurable(
@@ -88,7 +88,7 @@ from forze.application.contracts.pubsub import PubSubCommandDepKey, PubSubSpec
 
 events = PubSubSpec(
     name=ResourceName.ORDERS,
-    codec=PydanticRecordMappingCodec(OrderPayload),
+    codec=PydanticModelCodec(OrderPayload),
 )
 publisher = ctx.deps.resolve_configurable(
     ctx, PubSubCommandDepKey, events, route=events.name
@@ -107,7 +107,7 @@ from forze.application.contracts.stream import StreamCommandDepKey, StreamSpec
 
 stream_spec = StreamSpec(
     name=ResourceName.ORDERS,
-    codec=PydanticRecordMappingCodec(OrderPayload),
+    codec=PydanticModelCodec(OrderPayload),
 )
 stream = ctx.deps.resolve_configurable(
     ctx, StreamCommandDepKey, stream_spec, route=stream_spec.name

@@ -15,7 +15,7 @@ forze_kits/
   aggregates/       # document, search, storage, authn (+ handlers/ per aggregate)
   mapping/          # Pydantic pipeline mapper factory
   dto/              # pagination request/response DTOs
-  integrations/     # outbox (notify planned)
+  integrations/     # outbox relay, notify routing
   adapters/         # secrets (local SecretsPort)
   scopes/           # lock scopes, …
 ```
@@ -34,6 +34,7 @@ forze_kits/
 | Integration flow | `forze_kits.integrations.outbox` |
 | Local port adapter | `forze_kits.adapters.secrets` |
 | Runtime ergonomics | `forze_kits.scopes` |
+| Notification routing | `forze_kits.integrations.notify` |
 
 Operation registry mechanics (`.bind()`, `.freeze()`, stage hooks) are documented under [Operation composition](../concepts/operation-composition.md)—that is **execution**, not this package.
 
@@ -157,7 +158,17 @@ Hub and federated search use `build_hub_search_registry` and `build_federated_se
 
 ## Outbox kit
 
-See [Outbox contracts](../core-package/contracts/outbox.md) and [Transactional outbox](../recipes/transactional-outbox.md). Helpers live in `forze_kits.integrations.outbox` (`outbox_flush_tx_on_success_factory`, `relay_outbox_to_queue`, `outbox_relay_background_lifecycle_step`).
+See [Outbox contracts](../core-package/contracts/outbox.md), [Transactional outbox](../recipes/transactional-outbox.md), and [Transactional notifications](../recipes/transactional-notifications.md).
+
+**Outbox** (`forze_kits.integrations.outbox`): `outbox_flush_tx_on_success_factory`, `relay_outbox_to_queue`, `relay_outbox_to_stream`, `relay_outbox_to_pubsub`, `relay_outbox`, `outbox_relay_background_lifecycle_step`.
+
+**Notify** (`forze_kits.integrations.notify`): `NotificationRouter`, `NotificationSenders`, `process_notification_message` (no core `NotificationPort`).
+
+| Transport | Use for |
+|-----------|---------|
+| Queue | Email, push, webhooks, retryable workers |
+| Stream | Ordered log, consumer groups, replay |
+| Pub/Sub | Live broadcast to subscribers |
 
 ## Secrets kit (local)
 

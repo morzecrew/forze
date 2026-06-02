@@ -9,11 +9,7 @@ from pydantic import BaseModel
 from forze.application.contracts.cache import CachePort
 from forze.application.contracts.transaction import AfterCommitPort
 from forze.base.primitives import JsonDict
-from forze.base.serialization import (
-    CACHE_DUMP_EXCLUDE_OPTS,
-    PydanticRecordMappingCodec,
-    RecordMappingCodec,
-)
+from forze.base.serialization import CACHE_DUMP_EXCLUDE_OPTS, ModelCodec
 from forze.domain.constants import ID_FIELD, REV_FIELD
 
 from ..._logger import logger
@@ -48,13 +44,8 @@ class DocumentCache[R: BaseModel]:
     read_model_type: type[R]
     """Read model used to validate presence of ``id`` and ``rev`` fields."""
 
-    row_codec: RecordMappingCodec[R, Any] | None = attrs.field(
-        kw_only=True,
-        default=None,
-        eq=False,
-        repr=False,
-    )
-    """Codec for cache bodies; defaults to :class:`PydanticRecordMappingCodec`."""
+    read_codec: ModelCodec[R, Any] = attrs.field(kw_only=True, eq=False, repr=False)
+    """Codec for cache bodies (pass from the document read gateway)."""
 
     document_name: str
     """Document kind used in logs (typically :attr:`~forze.application.contracts.document.DocumentSpec.name`)."""
@@ -67,31 +58,17 @@ class DocumentCache[R: BaseModel]:
 
     # ....................... #
 
-    def __attrs_post_init__(self) -> None:
-        if self.row_codec is None:
-            object.__setattr__(
-                self,
-                "row_codec",
-                PydanticRecordMappingCodec(self.read_model_type),
-            )
-
-    # ....................... #
-
     def _encode_for_cache(self, doc: R) -> bytes:
-        codec = cast(RecordMappingCodec[R, Any], self.row_codec)
-
-        return codec.encode_json_bytes(doc, exclude=CACHE_DUMP_EXCLUDE_OPTS)
+        return self.read_codec.encode_json_bytes(doc, exclude=CACHE_DUMP_EXCLUDE_OPTS)
 
     # ....................... #
 
     def _decode_from_cache(self, cached: Any) -> R:
-        codec = cast(RecordMappingCodec[R, Any], self.row_codec)
-
         if isinstance(cached, bytes):
-            return codec.decode_json_bytes(cached)
+            return self.read_codec.decode_json_bytes(cached)
 
         if isinstance(cached, dict):
-            return codec.decode_mapping(cast(JsonDict, cached))
+            return self.read_codec.decode_mapping(cast(JsonDict, cached))
 
         msg = f"Unsupported cache payload type: {type(cached)!r}"
         raise TypeError(msg)

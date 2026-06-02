@@ -96,12 +96,12 @@ For FastAPI idempotency, either register a plain `idempotency` config or use a r
 from forze.application.contracts.queue import QueueSpec
 from forze.application.contracts.storage import StorageSpec
 from forze.application.contracts.durable.workflow import DurableWorkflowSpec
-from forze.base.serialization import PydanticRecordMappingCodec
+from forze.base.serialization import PydanticModelCodec
 
 attachments = StorageSpec(name=ResourceName.PROJECT_ATTACHMENTS)
 orders = QueueSpec(
     name=ResourceName.ORDERS,
-    codec=PydanticRecordMappingCodec(OrderPayload),
+    codec=PydanticModelCodec(OrderPayload),
 )
 workflow_spec: DurableWorkflowSpec[StartOrderIn, OrderResult] = ...
 

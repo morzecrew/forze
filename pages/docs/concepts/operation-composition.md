@@ -83,7 +83,7 @@ Stage hooks may raise; they do not replace the handler result. Capability metada
 | `on_failure` / `finally_` | Around the outer chain outcome | cleanup, error hooks |
 | `tx_before` | Inside the transaction, before the handler | locks, preconditions |
 | `on_success` (tx scope) | Inside the transaction, after successful handler | writes that must commit |
-| `after_commit` | After a successful root commit | notifications, event publishing |
+| `after_commit` | After a successful root commit | best-effort follow-up (prefer [transactional outbox](../recipes/transactional-outbox.md) + [notifications](../recipes/transactional-notifications.md) for reliable delivery) |
 | `on_success` (outer) | After everything else succeeded | out-of-tx follow-up work |
 
 Inspect merged plans on a frozen registry via internal explain helpers in tests, or trace resolution with `FrozenOperationRegistry.resolve`.

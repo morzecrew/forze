@@ -46,7 +46,7 @@ def test_configurable_event_command_builds_adapter() -> None:
 
     ctx = context_from_deps(deps)
     from forze.application.contracts.durable.function import DurableFunctionEventSpec
-    from forze.base.serialization import PydanticRecordMappingCodec
+    from forze.base.serialization import PydanticModelCodec
     from pydantic import BaseModel
 
     class _Payload(BaseModel):
@@ -54,7 +54,7 @@ def test_configurable_event_command_builds_adapter() -> None:
 
     spec = DurableFunctionEventSpec(
         name="app/test",
-        codec=PydanticRecordMappingCodec(model_type=_Payload),
+        codec=PydanticModelCodec(model_type=_Payload),
     )
 
     factory = ConfigurableInngestEventCommand(

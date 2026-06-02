@@ -46,6 +46,7 @@ class ConfigurablePostgresHubSearch(HubSearchQueryDepPort):
             score_merge=self.config.merge_strategy,
             relation=self.config.hub,
             client=context.deps.provide(PostgresClientDepKey),
+            codec=spec.resolved_read_codec,
             model_type=spec.model_type,
             introspector=context.deps.provide(PostgresIntrospectorDepKey),
             tenant_provider=context.inv_ctx.get_tenant,

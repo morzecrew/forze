@@ -48,6 +48,7 @@ async def test_search_adapter_resolves_dynamic_index_and_heap() -> None:
 
     adapter = PostgresFTSSearchAdapter(
         spec=spec,
+        codec=spec.resolved_read_codec,
         relation=("public", "v"),
         index_relation=lambda t: (f"t_{t}", "idx") if t else ("public", "idx"),
         index_heap_relation=lambda t: (f"t_{t}", "heap") if t else ("public", "heap"),

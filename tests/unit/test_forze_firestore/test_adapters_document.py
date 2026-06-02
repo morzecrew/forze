@@ -10,7 +10,7 @@ from forze.base.exceptions import CoreException
 
 from forze.application.contracts.document import DocumentSpec
 from forze.application.integrations.document import DocumentCache
-from forze.base.serialization import PydanticRecordMappingCodec
+from tests.unit._gateway_codec_helpers import codec_for
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
 from forze_firestore.adapters.document import FirestoreDocumentAdapter
 from forze_firestore.kernel.gateways import FirestoreReadGateway, FirestoreWriteGateway
@@ -57,6 +57,7 @@ def test_write_gateway_requires_same_client() -> None:
     spec = _doc_spec()
     cc = DocumentCache(
         read_model_type=MyReadDoc,
+        read_codec=codec_for(MyReadDoc),
         document_name=spec.name,
         cache=None,
     )
@@ -84,6 +85,7 @@ def test_write_gateway_requires_matching_tenant_awareness() -> None:
     spec = _doc_spec()
     cc = DocumentCache(
         read_model_type=MyReadDoc,
+        read_codec=codec_for(MyReadDoc),
         document_name=spec.name,
         cache=None,
     )
@@ -115,7 +117,7 @@ async def test_create_in_transaction_uses_write_gateway_directly() -> None:
     read_gw.client = MagicMock()
     read_gw.client.is_in_transaction.return_value = True
     read_gw.tenant_aware = False
-    read_gw.effective_row_codec = PydanticRecordMappingCodec(MyReadDoc)
+    read_gw.read_codec = codec_for(MyReadDoc)
 
     write_gw = MagicMock(spec=FirestoreWriteGateway)
     write_gw.client = read_gw.client
@@ -126,6 +128,7 @@ async def test_create_in_transaction_uses_write_gateway_directly() -> None:
     spec = _doc_spec()
     cache_coord = DocumentCache(
         read_model_type=MyReadDoc,
+        read_codec=codec_for(MyReadDoc),
         document_name=spec.name,
         cache=None,
     )
@@ -150,7 +153,7 @@ async def test_create_many_in_transaction_returns_validated_reads() -> None:
     read_gw.client = MagicMock()
     read_gw.client.is_in_transaction.return_value = True
     read_gw.tenant_aware = False
-    read_gw.effective_row_codec = PydanticRecordMappingCodec(MyReadDoc)
+    read_gw.read_codec = codec_for(MyReadDoc)
 
     write_gw = MagicMock(spec=FirestoreWriteGateway)
     write_gw.client = read_gw.client
@@ -161,6 +164,7 @@ async def test_create_many_in_transaction_returns_validated_reads() -> None:
     spec = _doc_spec()
     cache_coord = DocumentCache(
         read_model_type=MyReadDoc,
+        read_codec=codec_for(MyReadDoc),
         document_name=spec.name,
         cache=None,
     )

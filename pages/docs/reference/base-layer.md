@@ -298,46 +298,33 @@ Helpers for dict diffing, merging, and Pydantic model utilities. Import from `fo
 
 These are used internally by `Document.update()` to compute minimal diffs and by `validate_historical_consistency()` to detect concurrent update conflicts.
 
-### Pydantic helpers
+### Model codecs (public API)
 
-    :::python
-    from forze.base.serialization import (
-        pydantic_validate,
-        pydantic_dump,
-        pydantic_field_names,
-        pydantic_model_hash,
-    )
+Prefer `ModelCodec` implementations over direct `pydantic_*` / `msgspec_*` helpers. Application specs use `forze.application.contracts.codecs.default_model_codec` and `DocumentSpec.resolved_codecs` for document aggregates.
 
-| Function | Purpose |
-|----------|---------|
-| `pydantic_validate(...)` | Validate raw data into a model instance |
-| `pydantic_dump(...)` | Dump a model to a dict with fine-grained exclusion |
-| `pydantic_field_names(...)` | Return the set of field names on a model class |
-| `pydantic_model_hash(...)` | Compute a stable SHA-256 hash of a serialized model |
+Low-level Pydantic/msgspec functions remain in `forze.base.serialization.pydantic` and `forze.base.serialization.msgspec` for framework internals and tests.
 
-The `exclude` parameter for `pydantic_dump` accepts a `TypedDict` with optional keys: `unset`, `none`, `defaults`, `computed_fields` (all `bool`).
-
-### Record mapping codecs
+### Model codecs
 
     :::python
     import msgspec
     from forze.base.serialization import (
-        MsgspecRecordMappingCodec,
-        PydanticRecordMappingCodec,
-        RecordMappingCodec,
+        MsgspecModelCodec,
+        PydanticModelCodec,
+        ModelCodec,
     )
 
-    pydantic_codec: RecordMappingCodec[MyPydanticModel, MyPydanticSource]
-    pydantic_codec = PydanticRecordMappingCodec(MyPydanticModel)
+    pydantic_codec: ModelCodec[MyPydanticModel, MyPydanticSource]
+    pydantic_codec = PydanticModelCodec(MyPydanticModel)
 
-    msgspec_codec: RecordMappingCodec[MyMsgspecStruct, msgspec.Struct]
-    msgspec_codec = MsgspecRecordMappingCodec(MyMsgspecStruct)
+    msgspec_codec: ModelCodec[MyMsgspecStruct, msgspec.Struct]
+    msgspec_codec = MsgspecModelCodec(MyMsgspecStruct)
 
 | Type / factory | Purpose |
 |----------------|---------|
-| `RecordMappingCodec[...]` | Protocol for mapping decode/encode, JSON bytes wire helpers, batched operations, transforms, and stored-field introspection |
-| `PydanticRecordMappingCodec[...]` | Frozen default implementation backed by the `pydantic_*` helper functions |
-| `MsgspecRecordMappingCodec[...]` | Frozen msgspec implementation backed by the `msgspec_*` helper functions |
+| `ModelCodec[...]` | Protocol for mapping decode/encode, JSON bytes wire helpers, batched operations, transforms, and stored-field introspection |
+| `PydanticModelCodec[...]` | Frozen default implementation backed by the `pydantic_*` helper functions |
+| `MsgspecModelCodec[...]` | Frozen msgspec implementation backed by the `msgspec_*` helper functions |
 
 Use the codec API when a component should depend on a record-mapping abstraction. The `pydantic_*` and `msgspec_*` helpers remain available as the low-level function APIs and are the single behavior sources used by the codec classes.
 

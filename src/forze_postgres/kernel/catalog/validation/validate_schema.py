@@ -7,7 +7,7 @@ from pydantic import BaseModel
 
 from forze.application.contracts.tenancy import TENANT_ID_FIELD
 from forze.base.exceptions import exc
-from forze.base.serialization import pydantic_field_names
+from forze.application.contracts.codecs import stored_field_names_for
 from forze.domain.models import DocumentHistory
 from forze_postgres.kernel._logger import logger
 from forze_postgres.kernel.catalog.introspect import PostgresIntrospector, PostgresType
@@ -27,13 +27,13 @@ def _write_field_names_union(
     create: type[BaseModel],
     update: type[BaseModel] | None,
 ) -> frozenset[str]:
-    names = pydantic_field_names(domain, include_computed=False) | pydantic_field_names(
+    names = stored_field_names_for(domain, include_computed=False) | stored_field_names_for(
         create,
         include_computed=False,
     )
 
     if update is not None:
-        names |= pydantic_field_names(update, include_computed=False)
+        names |= stored_field_names_for(update, include_computed=False)
 
     return frozenset(names)
 
@@ -216,7 +216,7 @@ def _warn_read_not_subset_of_write(
         return
 
     read_fields = (
-        pydantic_field_names(spec.read_model, include_computed=False)
+        stored_field_names_for(spec.read_model, include_computed=False)
         - spec.read_omit_fields
     )
     write_cols = frozenset(write_column_types.keys())
@@ -270,7 +270,7 @@ async def validate_postgres_document_schemas(
 
     for spec in specs:
         read_need = frozenset(
-            pydantic_field_names(spec.read_model, include_computed=False)
+            stored_field_names_for(spec.read_model, include_computed=False)
             - spec.read_omit_fields,
         )
         await _require_columns(
@@ -375,7 +375,7 @@ async def validate_postgres_document_schemas(
 
         if spec.history_relation is not None:
             hist_need = (
-                frozenset(pydantic_field_names(DocumentHistory, include_computed=False))
+                frozenset(stored_field_names_for(DocumentHistory, include_computed=False))
                 - spec.history_omit_fields
             )
 

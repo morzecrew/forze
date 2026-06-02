@@ -14,7 +14,7 @@ plain reads and consumer-group reads with acknowledgments.
 | Returned values | Passed to stream dep factories. |
 | Common implementations | Mock stream adapter, Redis / Valkey streams. |
 | Related dependency keys | `StreamQueryDepKey`, `StreamCommandDepKey`, `StreamGroupQueryDepKey`. |
-| Minimal example | `audit_stream = StreamSpec(name="audit", codec=PydanticRecordMappingCodec(AuditEntry))` |
+| Minimal example | `audit_stream = StreamSpec(name="audit", codec=default_model_codec(AuditEntry))` |
 | Related pages | [Redis / Valkey](../../integrations/redis.md). |
 
 ## `StreamQueryPort[M]`
@@ -75,11 +75,11 @@ plain reads and consumer-group reads with acknowledgments.
 
     :::python
     from forze.application.contracts.stream import StreamCommandDepKey, StreamSpec
-    from forze.base.serialization import PydanticRecordMappingCodec
+    from forze.base.serialization import default_model_codec
 
     audit_stream = StreamSpec(
         name="audit",
-        codec=PydanticRecordMappingCodec(AuditEntry),
+        codec=default_model_codec(AuditEntry),
     )
     writer = ctx.deps.resolve_configurable(ctx, StreamCommandDepKey, audit_stream, route=audit_stream.name)
     entry_id = await writer.append("audit", AuditEntry(action="created"))

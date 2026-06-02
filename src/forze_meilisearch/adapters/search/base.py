@@ -150,7 +150,7 @@ class MeilisearchSearchGateway[M: BaseModel](TenancyMixin):
     # ....................... #
 
     def to_index_document(self, model: M) -> dict[str, Any]:
-        data = self.spec.resolved_row_codec.encode_mapping(model)
+        data = self.spec.resolved_read_codec.encode_mapping(model)
         out: dict[str, Any] = {}
 
         for key, value in data.items():

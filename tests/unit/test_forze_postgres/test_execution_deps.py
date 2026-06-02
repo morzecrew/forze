@@ -439,9 +439,11 @@ def test_read_gw_factory() -> None:
 
 def test_doc_write_gw_without_history() -> None:
     ctx = _ctx()
+    spec = _rw_spec()
     gw = doc_write_gw(
         ctx,
-        write_types=_rw_spec().write,  # type: ignore[arg-type]
+        write_types=spec.write,  # type: ignore[arg-type]
+        codecs=spec.resolved_codecs,
         write_relation=("public", "w"),
         history_relation=None,
         history_enabled=False,
@@ -455,9 +457,11 @@ def test_doc_write_gw_without_history() -> None:
 
 def test_doc_write_gw_with_history() -> None:
     ctx = _ctx()
+    spec = _rw_spec(history_enabled=True)
     gw = doc_write_gw(
         ctx,
-        write_types=_rw_spec().write,  # type: ignore[arg-type]
+        write_types=spec.write,  # type: ignore[arg-type]
+        codecs=spec.resolved_codecs,
         write_relation=("public", "w"),
         history_relation=("public", "h"),
         history_enabled=True,

@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field
 
 from forze.application.integrations.document import DocumentCache
 from forze.base.primitives import uuid7
-from forze.base.serialization import PydanticRecordMappingCodec
+from tests.unit._gateway_codec_helpers import codec_for
 
 _pk = UUID("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
 
@@ -27,6 +27,10 @@ class DocModel(BaseModel):
     payload: str = ""
 
 
+_DOC_CODEC = codec_for(DocModel)
+_BARE_CODEC = codec_for(BareModel)
+
+
 def _coord(
     *,
     cache,
@@ -36,6 +40,7 @@ def _coord(
 ):
     return DocumentCache(
         read_model_type=model_type,
+        read_codec=codec_for(model_type),
         document_name=name,
         cache=cache,
         after_commit=after_commit,
@@ -84,6 +89,7 @@ async def test_set_one_versioned_writes_cache() -> None:
     doc = DocModel(id=_pk, rev=4, payload="x")
     coord = DocumentCache[DocModel](
         read_model_type=DocModel,
+        read_codec=_DOC_CODEC,
         document_name="widgets",
         cache=cache,
     )
@@ -100,10 +106,10 @@ async def test_set_one_versioned_writes_cache() -> None:
 @pytest.mark.asyncio
 async def test_cache_bytes_roundtrip() -> None:
     doc = DocModel(id=_pk, rev=2, payload="bytes")
-    codec = PydanticRecordMappingCodec(DocModel)
+    codec = codec_for(DocModel)
     coord = DocumentCache[DocModel](
         read_model_type=DocModel,
-        row_codec=codec,
+        read_codec=codec,
         document_name="w",
         cache=AsyncMock(),
     )
@@ -115,11 +121,12 @@ async def test_cache_bytes_roundtrip() -> None:
 
 @pytest.mark.asyncio
 async def test_cache_legacy_dict_hit() -> None:
-    dumped = PydanticRecordMappingCodec(DocModel).encode_mapping(
+    dumped = codec_for(DocModel).encode_mapping(
         DocModel(id=_pk, rev=1, payload="legacy"),
     )
     coord = DocumentCache[DocModel](
         read_model_type=DocModel,
+        read_codec=_DOC_CODEC,
         document_name="w",
         cache=AsyncMock(),
     )
@@ -136,6 +143,7 @@ async def test_set_many_empty_noop() -> None:
 
     coord = DocumentCache[DocModel](
         read_model_type=DocModel,
+        read_codec=_DOC_CODEC,
         document_name="widgets",
         cache=backend,
     )
@@ -152,6 +160,7 @@ async def test_set_many_bulk_versioned() -> None:
     docs = [DocModel(id=_pk, rev=i, payload=str(i)) for i in range(2)]
     coord = DocumentCache[DocModel](
         read_model_type=DocModel,
+        read_codec=_DOC_CODEC,
         document_name="widgets",
         cache=backend,
     )
@@ -169,6 +178,7 @@ async def test_clear_delete_many_when_capable() -> None:
 
     coord = DocumentCache[DocModel](
         read_model_type=DocModel,
+        read_codec=_DOC_CODEC,
         document_name="widgets",
         cache=backend,
     )
@@ -187,6 +197,7 @@ async def test_clear_delete_many_when_capable() -> None:
 def test_id_rev_capable_false_without_rev() -> None:
     coord = DocumentCache[BareModel](
         read_model_type=BareModel,
+        read_codec=_BARE_CODEC,
         document_name="bare",
         cache=AsyncMock(),
     )
@@ -197,6 +208,7 @@ def test_id_rev_capable_false_without_rev() -> None:
 def test_id_rev_capable_true() -> None:
     coord = DocumentCache[DocModel](
         read_model_type=DocModel,
+        read_codec=_DOC_CODEC,
         document_name="ok",
         cache=AsyncMock(),
     )
@@ -207,6 +219,7 @@ def test_id_rev_capable_true() -> None:
 def test_read_through_eligible() -> None:
     coord = DocumentCache[DocModel](
         read_model_type=DocModel,
+        read_codec=_DOC_CODEC,
         document_name="w",
         cache=AsyncMock(),
     )
@@ -220,6 +233,7 @@ def test_read_through_eligible() -> None:
 
     no_cache_coord = DocumentCache[DocModel](
         read_model_type=DocModel,
+        read_codec=_DOC_CODEC,
         document_name="z",
         cache=None,
     )
@@ -232,7 +246,7 @@ def test_read_through_eligible() -> None:
 
 @pytest.mark.asyncio
 async def test_get_read_through_cache_hit() -> None:
-    dumped = PydanticRecordMappingCodec(DocModel).encode_mapping(
+    dumped = codec_for(DocModel).encode_mapping(
         DocModel(id=_pk, rev=1, payload="a"),
     )
     backend = AsyncMock()
@@ -241,6 +255,7 @@ async def test_get_read_through_cache_hit() -> None:
 
     coord = DocumentCache[DocModel](
         read_model_type=DocModel,
+        read_codec=_DOC_CODEC,
         document_name="w",
         cache=backend,
     )
@@ -271,6 +286,7 @@ async def test_get_read_through_miss_sets_cache_immediately() -> None:
 
     coord = DocumentCache[DocModel](
         read_model_type=DocModel,
+        read_codec=_DOC_CODEC,
         document_name="w",
         cache=backend,
         after_commit=None,
@@ -301,13 +317,14 @@ async def test_get_many_read_through_merges_order() -> None:
 
     backend.get_many = AsyncMock(
         return_value=(
-            {str(pk0): PydanticRecordMappingCodec(DocModel).encode_mapping(doc0)},
+            {str(pk0): codec_for(DocModel).encode_mapping(doc0)},
             [str(pk1)],
         ),
     )
 
     coord = DocumentCache[DocModel](
         read_model_type=DocModel,
+        read_codec=_DOC_CODEC,
         document_name="w",
         cache=backend,
         after_commit=None,
@@ -333,6 +350,7 @@ async def test_get_read_through_fallback_when_cache_raises() -> None:
 
     coord = DocumentCache[DocModel](
         read_model_type=DocModel,
+        read_codec=_DOC_CODEC,
         document_name="w",
         cache=backend,
     )

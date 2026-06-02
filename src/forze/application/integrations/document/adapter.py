@@ -136,7 +136,7 @@ class DocumentAdapter(
 
     async def _to_read(self, domain: D | None, *, pk: UUID | None = None) -> R:
         if self.hydrate_from_write and domain is not None:
-            return self.read_gw.effective_row_codec.transform(domain)
+            return self.read_gw.read_codec.transform(domain)
 
         doc_pk = domain.id if domain is not None else pk
 
@@ -163,7 +163,7 @@ class DocumentAdapter(
             return []
 
         if self.hydrate_from_write and all(d is not None for d in domains):
-            return self.read_gw.effective_row_codec.transform_many(domains)  # type: ignore[arg-type]
+            return self.read_gw.read_codec.transform_many(domains)  # type: ignore[arg-type]
 
         if pks is not None and len(pks) != len(domains):
             raise exc.internal(

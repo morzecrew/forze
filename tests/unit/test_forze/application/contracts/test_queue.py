@@ -12,7 +12,7 @@ from forze.application.contracts.queue import (
     QueueQueryPort,
     QueueSpec,
 )
-from forze.base.serialization import PydanticRecordMappingCodec
+from forze.base.serialization import PydanticModelCodec
 
 # ----------------------- #
 
@@ -74,7 +74,7 @@ class _StubQueue(QueueQueryPort[_QueuePayload], QueueCommandPort[_QueuePayload])
 class TestQueueSpec:
     def test_spec_contains_name_and_codec(self) -> None:
         spec = QueueSpec(
-            name="jobs", codec=PydanticRecordMappingCodec(model_type=_QueuePayload)
+            name="jobs", codec=PydanticModelCodec(model_type=_QueuePayload)
         )
 
         assert spec.name == "jobs"

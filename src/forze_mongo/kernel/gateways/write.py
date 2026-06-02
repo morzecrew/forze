@@ -16,10 +16,7 @@ from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponen
 from forze.application.contracts.querying import QueryFilterExpression
 from forze.base.exceptions import CoreException, ExceptionKind, exc
 from forze.base.primitives import JsonDict
-from forze.base.serialization import (
-    pydantic_transform,
-    pydantic_transform_many,
-)
+from forze.base.serialization import ModelCodec
 from forze.domain.constants import ID_FIELD, REV_FIELD
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document
 
@@ -75,6 +72,10 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](MongoGate
     update_cmd_type: type[U] | None = attrs.field(default=None)
     """Pydantic model for update payloads."""
 
+    create_codec: ModelCodec[D, Any] = attrs.field(kw_only=True, eq=False, repr=False)
+
+    update_codec: ModelCodec[U, Any] | None = attrs.field(kw_only=True, eq=False, repr=False)
+
     history_gw: MongoHistoryGateway[D] | None = attrs.field(default=None)
     """Optional history gateway for revision snapshots."""
 
@@ -113,6 +114,8 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](MongoGate
                 raise exc.configuration(
                     "Tenant awareness mismatch. Write gateway and nested history gateway must have the same tenant awareness."
                 )
+
+    # ....................... #
 
     # ....................... #
 
@@ -232,15 +235,26 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](MongoGate
 
     # ....................... #
 
-    #! TODO: canonical mapper from there
     def _from_cdto(self, dto: C) -> D:
-        return pydantic_transform(self.model_type, dto)
+        return self.create_codec.transform(dto)
 
     # ....................... #
 
-    #! TODO: canonical batch mapper from there
     def _from_cdto_many(self, dtos: Sequence[C]) -> Sequence[D]:
-        return pydantic_transform_many(self.model_type, dtos)
+        return self.create_codec.transform_many(dtos)
+
+    # ....................... #
+
+    def _patch_codec(self) -> ModelCodec[Any, Any]:
+        if self.update_codec is not None:
+            return self.update_codec
+
+        if self.update_cmd_type is not None:
+            raise exc.configuration(
+                "Update codec is required when update commands are supported"
+            )
+
+        return self.read_codec
 
     # ....................... #
 
@@ -253,7 +267,7 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](MongoGate
         """
 
         model = self._from_cdto(dto)
-        data = self.effective_row_codec.encode_persistence_mapping(model)
+        data = self.read_codec.encode_persistence_mapping(model)
         data = self.adapt_payload_for_write(data, create=True)
 
         await self.client.insert_one(await self.coll(), self._storage_doc(data))
@@ -281,7 +295,7 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](MongoGate
             return []
 
         models = self._from_cdto_many(dtos)
-        raw_payloads = self.effective_row_codec.encode_persistence_mapping_many(models)
+        raw_payloads = self.read_codec.encode_persistence_mapping_many(models)
         payloads = self.adapt_many_payload_for_write(raw_payloads, create=True)
         payloads = list(map(self._storage_doc, payloads))
 
@@ -301,7 +315,7 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](MongoGate
         """Insert a document when missing using ``$setOnInsert`` upsert; no field updates on match."""
 
         model = self._from_cdto(dto)
-        data = self.effective_row_codec.encode_persistence_mapping(model)
+        data = self.read_codec.encode_persistence_mapping(model)
         data = self.adapt_payload_for_write(data, create=True)
         storage = self._storage_doc(data)
         res: Any = await self.client.update_one_upsert(
@@ -331,7 +345,7 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](MongoGate
             return []
 
         models = self._from_cdto_many(dtos)
-        raw_payloads = self.effective_row_codec.encode_persistence_mapping_many(models)
+        raw_payloads = self.read_codec.encode_persistence_mapping_many(models)
         payloads = self.adapt_many_payload_for_write(raw_payloads, create=True)
 
         inserted_idx: set[int] = set()
@@ -366,7 +380,7 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](MongoGate
         self._require_update_cmd()
 
         model = self._from_cdto(create_dto)
-        data = self.effective_row_codec.encode_persistence_mapping(model)
+        data = self.read_codec.encode_persistence_mapping(model)
         data = self.adapt_payload_for_write(data, create=True)
         storage = self._storage_doc(data)
 
@@ -400,7 +414,7 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](MongoGate
             return []
 
         models = self._from_cdto_many([c for c, _ in pairs])
-        raw_payloads = self.effective_row_codec.encode_persistence_mapping_many(models)
+        raw_payloads = self.read_codec.encode_persistence_mapping_many(models)
         payloads = self.adapt_many_payload_for_write(raw_payloads, create=True)
         u_all = [u for _, u in pairs]
 
@@ -580,7 +594,7 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](MongoGate
 
         self._require_update_cmd()
 
-        update_data = self.effective_row_codec.encode_persistence_mapping(
+        update_data = self._patch_codec().encode_persistence_mapping(
             cast(Any, dto),
             exclude={"unset": True},
         )
@@ -617,7 +631,7 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](MongoGate
         if revs is not None and len(revs) != len(pks):
             raise exc.precondition("Length mismatch between primary keys and revisions")
 
-        updates = self.effective_row_codec.encode_persistence_mapping_many(
+        updates = self._patch_codec().encode_persistence_mapping_many(
             cast(Any, dtos),
             exclude={"unset": True},
         )
@@ -642,7 +656,7 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](MongoGate
 
         self._require_update_cmd()
 
-        update_data = self.effective_row_codec.encode_persistence_mapping(
+        update_data = self._patch_codec().encode_persistence_mapping(
             cast(Any, dto),
             exclude={"unset": True},
         )

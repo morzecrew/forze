@@ -2,12 +2,18 @@
 
 from forze.base.exceptions import CoreException
 import asyncio
+from unittest.mock import MagicMock
 from uuid import UUID
 
 import pytest
 from pydantic import BaseModel
 
-from forze.application.contracts.document import DocumentSpec, DocumentWriteTypes
+from forze.application.contracts.document import (
+    DocumentCodecs,
+    DocumentSpec,
+    DocumentWriteTypes,
+)
+from forze.application.contracts.codecs import default_model_codec
 from forze.application.contracts.search import SearchSpec
 from forze_kits.domain.soft_deletion.models import DocWithSoftDeletion
 from forze.domain.models import BaseDTO, CreateDocumentCmd, ReadDocument
@@ -17,6 +23,7 @@ from forze_mock.adapters import (
     MockSearchAdapter,
     MockState,
 )
+from tests.unit._gateway_codec_helpers import write_codecs_for
 
 # ----------------------- #
 
@@ -222,6 +229,56 @@ async def test_document_aggregates_group_and_validate_return_type() -> None:
             expensive_revenue=30.0,
         ),
     ]
+
+@pytest.mark.asyncio
+async def test_document_create_and_update_use_spec_codecs() -> None:
+    """Create/update paths use resolved create and update codecs from DocumentSpec."""
+    state = MockState()
+    read_codec = default_model_codec(_ProductRead)
+    domain_codec, real_create, real_update = write_codecs_for(
+        domain_type=_ProductDoc,
+        create_type=_ProductCreate,
+        update_type=_ProductUpdate,
+    )
+    create_codec = MagicMock()
+    create_codec.transform.side_effect = real_create.transform
+    update_codec = MagicMock()
+    update_codec.encode_persistence_mapping.side_effect = (
+        real_update.encode_persistence_mapping
+    )
+    spec = DocumentSpec(
+        name="products",
+        read=_ProductRead,
+        write=DocumentWriteTypes(
+            domain=_ProductDoc,
+            create_cmd=_ProductCreate,
+            update_cmd=_ProductUpdate,
+        ),
+        codecs=DocumentCodecs(
+            read=read_codec,
+            domain=domain_codec,
+            create=create_codec,
+            update=update_codec,
+        ),
+    )
+    doc = MockDocumentAdapter(
+        spec=spec,
+        state=state,
+        namespace="products",
+        read_model=_ProductRead,
+        domain_model=_ProductDoc,
+    )
+    dto = _ProductCreate(title="Codec Test", category="books")
+    created = await doc.create(dto)
+    create_codec.transform.assert_called_once_with(dto)
+    assert created.title == "Codec Test"
+
+    await doc.update(created.id, created.rev, _ProductUpdate(title="Renamed"))
+    update_codec.encode_persistence_mapping.assert_called_once()
+    assert update_codec.encode_persistence_mapping.call_args.kwargs == {
+        "exclude": {"unset": True},
+    }
+
 
 @pytest.mark.asyncio
 async def test_document_update_detects_revision_conflict() -> None:

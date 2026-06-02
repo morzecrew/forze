@@ -80,7 +80,7 @@ class PostgresAnalyticsCursorMixin[R: BaseModel, Ing: BaseModel](
             )
             hits = shape_rows(
                 rows,
-                read_codec=host.spec.read_codec,
+                read_codec=host.spec.resolved_read_codec,
                 read_type=host.spec.read,
                 return_type=return_type,
                 return_fields=return_fields,
@@ -106,7 +106,7 @@ class PostgresAnalyticsCursorMixin[R: BaseModel, Ing: BaseModel](
             )
             hits = shape_rows(
                 rows,
-                read_codec=host.spec.read_codec,
+                read_codec=host.spec.resolved_read_codec,
                 read_type=host.spec.read,
                 return_type=return_type,
                 return_fields=return_fields,

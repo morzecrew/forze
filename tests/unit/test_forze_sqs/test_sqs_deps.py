@@ -10,7 +10,7 @@ from forze.application.contracts.queue import (
 )
 from tests.support.execution_context import context_from_deps, context_from_modules, frozen_deps_from_deps
 from forze.application.execution import Deps, ExecutionContext
-from forze.base.serialization import PydanticRecordMappingCodec
+from forze.base.serialization import PydanticModelCodec
 from forze_sqs.adapters import SQSQueueAdapter
 from forze_sqs.execution.deps import (
     ConfigurableSQSQueueRead,
@@ -37,7 +37,7 @@ def test_sqs_queue_factory_builds_adapter() -> None:
     context = context_from_deps(deps)
     spec = QueueSpec(
         name="events",
-        codec=PydanticRecordMappingCodec(model_type=_QueuePayload),
+        codec=PydanticModelCodec(model_type=_QueuePayload),
     )
 
     reader = ConfigurableSQSQueueRead(

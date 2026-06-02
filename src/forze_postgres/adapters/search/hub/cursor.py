@@ -28,7 +28,7 @@ from forze.application.contracts.search import (
 )
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
-from forze.base.serialization import PydanticRecordMappingCodec
+from forze.base.serialization import default_model_codec
 from forze_postgres.kernel.sql import build_seek_condition
 from forze_postgres.kernel.sql.query.nested import sort_key_expr
 
@@ -234,7 +234,7 @@ class HubSearchCursorMixin[M: BaseModel](HubSearchSqlMixin[M]):
             prv = None
 
         if return_type is not None:
-            v = PydanticRecordMappingCodec(return_type).decode_mapping_many(rows)
+            v = default_model_codec(return_type).decode_mapping_many(rows)
 
             return CursorPage(
                 hits=v,
@@ -252,7 +252,7 @@ class HubSearchCursorMixin[M: BaseModel](HubSearchSqlMixin[M]):
                 has_more=has_more,
             )
 
-        m = self._hub_host.hub_spec.resolved_row_codec.decode_mapping_many(rows)
+        m = self._hub_host.hub_spec.resolved_read_codec.decode_mapping_many(rows)
 
         return CursorPage(
             hits=m,

@@ -17,7 +17,7 @@ from forze.application.contracts.querying import (
 from forze.base.codecs import B64UrlJsonCodec
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict, StrKey
-from forze.base.serialization import PydanticRecordMappingCodec, RecordMappingCodec
+from forze.base.serialization import ModelCodec, default_model_codec
 
 # ----------------------- #
 
@@ -45,7 +45,7 @@ def validated_params(
         return params
 
     if isinstance(params, BaseModel):  # pyright: ignore[reportUnnecessaryIsInstance]
-        return PydanticRecordMappingCodec(defn.params).decode_mapping(
+        return default_model_codec(defn.params).decode_mapping(
             params.model_dump(),
         )
 
@@ -95,7 +95,7 @@ def pagination_window(
 def shape_rows(
     rows: list[JsonDict],
     *,
-    read_codec: RecordMappingCodec[Any, Any] | None,
+    read_codec: ModelCodec[Any, Any] | None,
     read_type: type[BaseModel],
     return_type: type[T] | None,
     return_fields: Sequence[str] | None,
@@ -104,9 +104,9 @@ def shape_rows(
         return [{k: row.get(k) for k in return_fields} for row in rows]
 
     if return_type is not None:
-        return PydanticRecordMappingCodec(return_type).decode_mapping_many(rows)
+        return default_model_codec(return_type).decode_mapping_many(rows)
 
-    codec = read_codec or PydanticRecordMappingCodec(read_type)
+    codec = read_codec or default_model_codec(read_type)
 
     return codec.decode_mapping_many(rows)
 

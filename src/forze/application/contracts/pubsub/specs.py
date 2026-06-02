@@ -2,7 +2,7 @@ from typing import Any, final
 
 import attrs
 
-from forze.base.serialization import RecordMappingCodec
+from forze.base.serialization import ModelCodec
 
 from ..base import BaseSpec
 
@@ -14,7 +14,7 @@ from ..base import BaseSpec
 class PubSubSpec[M](BaseSpec):
     """Specification binding a pubsub namespace to its payload record codec."""
 
-    codec: RecordMappingCodec[M, Any]
+    codec: ModelCodec[M, Any]
     """Payload record codec for messages in this pubsub channel."""
 
     # ....................... #

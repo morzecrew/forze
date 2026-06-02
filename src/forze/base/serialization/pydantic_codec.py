@@ -1,36 +1,33 @@
-"""Msgspec-backed implementation of the record-mapping codec protocol."""
+"""Pydantic-backed implementation of the model codec protocol."""
 
-from typing import Iterator, Sequence, cast
+from typing import Iterator, Literal, Sequence, cast
 
 import attrs
-import msgspec
 from pydantic import BaseModel
 
 from ..primitives import JsonDict
-from .model_codec import EncodeMode, RecordMappingCodec, RecordMappingDumpExcludeOptions
-from .msgspec import (
-    msgspec_decode_json_bytes,
-    msgspec_dump,
-    msgspec_dump_many,
-    msgspec_dump_many_batched,
-    msgspec_encode_json_bytes,
-    msgspec_field_names,
-    msgspec_transform,
-    msgspec_transform_many,
-    msgspec_validate,
-    msgspec_validate_many,
-    msgspec_validate_many_batched,
+from .model_codec import ModelCodec, ModelDumpExcludeOptions
+from .pydantic import (
+    PERSISTENCE_DUMP_EXCLUDE_OPTS,
+    pydantic_decode_json_bytes,
+    pydantic_dump,
+    pydantic_dump_many,
+    pydantic_dump_many_batched,
+    pydantic_encode_json_bytes,
+    pydantic_field_names,
+    pydantic_transform,
+    pydantic_transform_many,
+    pydantic_validate,
+    pydantic_validate_many,
+    pydantic_validate_many_batched,
 )
-from .pydantic import PERSISTENCE_DUMP_EXCLUDE_OPTS
 
 # ----------------------- #
 
-SourceType = msgspec.Struct | BaseModel
-
 
 @attrs.define(slots=True, frozen=True)
-class MsgspecRecordMappingCodec[T: msgspec.Struct](RecordMappingCodec[T, SourceType]):
-    """Record-mapping codec that delegates to the msgspec helper layer."""
+class PydanticModelCodec[T: BaseModel](ModelCodec[T, BaseModel]):
+    """Model codec that delegates to the Pydantic helper layer."""
 
     model_type: type[T]  # pyright: ignore[reportIncompatibleMethodOverride]
     """The model type this codec is bound to."""
@@ -44,14 +41,11 @@ class MsgspecRecordMappingCodec[T: msgspec.Struct](RecordMappingCodec[T, SourceT
         forbid_extra: bool = False,
         trust_source: bool = False,
     ) -> T:
-        if trust_source:
-            msg = "MsgspecRecordMappingCodec does not support trust_source=True"
-            raise NotImplementedError(msg)
-
-        return msgspec_validate(
+        return pydantic_validate(
             self.model_type,
             data,
             forbid_extra=forbid_extra,
+            trust_source=trust_source,
         )
 
     # ....................... #
@@ -63,14 +57,11 @@ class MsgspecRecordMappingCodec[T: msgspec.Struct](RecordMappingCodec[T, SourceT
         forbid_extra: bool = False,
         trust_source: bool = False,
     ) -> list[T]:
-        if trust_source:
-            msg = "MsgspecRecordMappingCodec does not support trust_source=True"
-            raise NotImplementedError(msg)
-
-        return msgspec_validate_many(
+        return pydantic_validate_many(
             self.model_type,
             data,
             forbid_extra=forbid_extra,
+            trust_source=trust_source,
         )
 
     # ....................... #
@@ -83,15 +74,12 @@ class MsgspecRecordMappingCodec[T: msgspec.Struct](RecordMappingCodec[T, SourceT
         forbid_extra: bool = False,
         trust_source: bool = False,
     ) -> Iterator[list[T]]:
-        if trust_source:
-            msg = "MsgspecRecordMappingCodec does not support trust_source=True"
-            raise NotImplementedError(msg)
-
-        return msgspec_validate_many_batched(
+        return pydantic_validate_many_batched(
             self.model_type,
             data,
             batch_size=batch_size,
             forbid_extra=forbid_extra,
+            trust_source=trust_source,
         )
 
     # ....................... #
@@ -100,10 +88,10 @@ class MsgspecRecordMappingCodec[T: msgspec.Struct](RecordMappingCodec[T, SourceT
         self,
         obj: T,
         *,
-        mode: EncodeMode = "python",
-        exclude: RecordMappingDumpExcludeOptions = {},
+        mode: Literal["json", "python"] = "python",
+        exclude: ModelDumpExcludeOptions = {},
     ) -> JsonDict:
-        return msgspec_dump(obj, mode=mode, exclude=exclude)
+        return pydantic_dump(obj, mode=mode, exclude=exclude)
 
     # ....................... #
 
@@ -111,10 +99,10 @@ class MsgspecRecordMappingCodec[T: msgspec.Struct](RecordMappingCodec[T, SourceT
         self,
         objs: Sequence[T],
         *,
-        mode: EncodeMode = "python",
-        exclude: RecordMappingDumpExcludeOptions = {},
+        mode: Literal["json", "python"] = "python",
+        exclude: ModelDumpExcludeOptions = {},
     ) -> list[JsonDict]:
-        return msgspec_dump_many(objs, mode=mode, exclude=exclude)
+        return pydantic_dump_many(objs, mode=mode, exclude=exclude)
 
     # ....................... #
 
@@ -123,10 +111,10 @@ class MsgspecRecordMappingCodec[T: msgspec.Struct](RecordMappingCodec[T, SourceT
         objs: Sequence[T],
         *,
         batch_size: int = 2000,
-        mode: EncodeMode = "python",
-        exclude: RecordMappingDumpExcludeOptions = {},
+        mode: Literal["json", "python"] = "python",
+        exclude: ModelDumpExcludeOptions = {},
     ) -> Iterator[list[JsonDict]]:
-        return msgspec_dump_many_batched(
+        return pydantic_dump_many_batched(
             objs,
             batch_size=batch_size,
             mode=mode,
@@ -137,12 +125,12 @@ class MsgspecRecordMappingCodec[T: msgspec.Struct](RecordMappingCodec[T, SourceT
 
     def transform(
         self,
-        source: SourceType,
+        source: BaseModel,
         *,
-        mode: EncodeMode = "python",
-        exclude: RecordMappingDumpExcludeOptions = {},
+        mode: Literal["json", "python"] = "python",
+        exclude: ModelDumpExcludeOptions = {"unset": True},
     ) -> T:
-        return msgspec_transform(
+        return pydantic_transform(
             self.model_type,
             source,
             mode=mode,
@@ -153,12 +141,12 @@ class MsgspecRecordMappingCodec[T: msgspec.Struct](RecordMappingCodec[T, SourceT
 
     def transform_many(
         self,
-        sources: Sequence[SourceType],
+        sources: Sequence[BaseModel],
         *,
-        mode: EncodeMode = "python",
-        exclude: RecordMappingDumpExcludeOptions = {},
+        mode: Literal["json", "python"] = "python",
+        exclude: ModelDumpExcludeOptions = {"unset": True},
     ) -> list[T]:
-        return msgspec_transform_many(
+        return pydantic_transform_many(
             self.model_type,
             sources,
             mode=mode,
@@ -172,7 +160,7 @@ class MsgspecRecordMappingCodec[T: msgspec.Struct](RecordMappingCodec[T, SourceT
         *,
         include_computed: bool = True,
     ) -> frozenset[str]:
-        return msgspec_field_names(
+        return pydantic_field_names(
             self.model_type,
             include_computed=include_computed,
         )
@@ -183,9 +171,9 @@ class MsgspecRecordMappingCodec[T: msgspec.Struct](RecordMappingCodec[T, SourceT
         self,
         obj: T,
         *,
-        exclude: RecordMappingDumpExcludeOptions = {},
+        exclude: ModelDumpExcludeOptions = {},
     ) -> bytes:
-        return msgspec_encode_json_bytes(obj, exclude=exclude)
+        return pydantic_encode_json_bytes(obj, exclude=exclude)
 
     # ....................... #
 
@@ -193,11 +181,11 @@ class MsgspecRecordMappingCodec[T: msgspec.Struct](RecordMappingCodec[T, SourceT
         self,
         obj: T,
         *,
-        mode: EncodeMode = "python",
-        exclude: RecordMappingDumpExcludeOptions = {},
+        mode: Literal["json", "python"] = "python",
+        exclude: ModelDumpExcludeOptions = {},
     ) -> JsonDict:
         merged = cast(
-            RecordMappingDumpExcludeOptions,
+            ModelDumpExcludeOptions,
             {**PERSISTENCE_DUMP_EXCLUDE_OPTS, **exclude},
         )
         return self.encode_mapping(obj, mode=mode, exclude=merged)
@@ -208,11 +196,11 @@ class MsgspecRecordMappingCodec[T: msgspec.Struct](RecordMappingCodec[T, SourceT
         self,
         objs: Sequence[T],
         *,
-        mode: EncodeMode = "python",
-        exclude: RecordMappingDumpExcludeOptions = {},
+        mode: Literal["json", "python"] = "python",
+        exclude: ModelDumpExcludeOptions = {},
     ) -> list[JsonDict]:
         merged = cast(
-            RecordMappingDumpExcludeOptions,
+            ModelDumpExcludeOptions,
             {**PERSISTENCE_DUMP_EXCLUDE_OPTS, **exclude},
         )
         return self.encode_mapping_many(objs, mode=mode, exclude=merged)
@@ -226,7 +214,7 @@ class MsgspecRecordMappingCodec[T: msgspec.Struct](RecordMappingCodec[T, SourceT
         forbid_extra: bool = False,
         encoding: str = "utf-8",
     ) -> T:
-        return msgspec_decode_json_bytes(
+        return pydantic_decode_json_bytes(
             self.model_type,
             raw,
             forbid_extra=forbid_extra,

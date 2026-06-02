@@ -17,7 +17,7 @@ from forze.application.contracts.outbox import (
 from forze.application.contracts.queue import QueueSpec
 from forze.application.execution import DepsRegistry, ExecutionRuntime
 from forze.base.primitives import utcnow
-from forze.base.serialization import PydanticRecordMappingCodec
+from forze.base.serialization import PydanticModelCodec
 from forze_kits.integrations.outbox import relay_outbox_to_queue
 from forze_mock import MockDepsModule, MockStateDepKey
 from forze_mock.outbox_adapter import MockOutboxRow
@@ -29,11 +29,11 @@ class _EventPayload(BaseModel):
 
 @pytest.mark.asyncio
 async def test_mock_outbox_flush_and_relay_to_queue() -> None:
-    codec = PydanticRecordMappingCodec(_EventPayload)
+    codec = PydanticModelCodec(_EventPayload)
     outbox_spec = OutboxSpec(
         name="events",
         codec=codec,
-        destination=OutboxDestination(queue_route="jobs", queue="jobs"),
+        destination=OutboxDestination.queue(route="jobs", channel="jobs"),
     )
     queue_spec = QueueSpec(name="jobs", codec=codec)
 
@@ -61,7 +61,7 @@ async def test_mock_outbox_flush_and_relay_to_queue() -> None:
 
 @pytest.mark.asyncio
 async def test_mock_outbox_duplicate_event_id_skips_second_flush() -> None:
-    codec = PydanticRecordMappingCodec(_EventPayload)
+    codec = PydanticModelCodec(_EventPayload)
     outbox_spec = OutboxSpec(name="events", codec=codec)
     event_id = uuid4()
 
@@ -101,7 +101,7 @@ async def test_mock_outbox_duplicate_event_id_skips_second_flush() -> None:
 
 @pytest.mark.asyncio
 async def test_mock_outbox_reclaim_stale_processing() -> None:
-    codec = PydanticRecordMappingCodec(_EventPayload)
+    codec = PydanticModelCodec(_EventPayload)
     outbox_spec = OutboxSpec(name="events", codec=codec)
 
     module = MockDepsModule()
@@ -139,7 +139,7 @@ async def test_mock_outbox_reclaim_stale_processing() -> None:
 
 @pytest.mark.asyncio
 async def test_mock_outbox_requeue_failed() -> None:
-    codec = PydanticRecordMappingCodec(_EventPayload)
+    codec = PydanticModelCodec(_EventPayload)
     outbox_spec = OutboxSpec(name="events", codec=codec)
     row_id = uuid4()
 

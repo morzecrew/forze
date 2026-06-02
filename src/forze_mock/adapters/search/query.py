@@ -41,7 +41,7 @@ from forze.application.contracts.search import (
 from forze.application.integrations.search import SearchResultSnapshot
 from forze.base.primitives import JsonDict
 from forze.base.serialization import (
-    PydanticRecordMappingCodec,
+    default_model_codec,
 )
 from forze_mock.query._types import (
     M,
@@ -351,7 +351,7 @@ class MockSearchAdapter(MockTenancyMixin, SearchQueryPort[M]):
             return page_from_limit_offset(proj, pagination, total=None)
 
         if return_type is not None:
-            out = PydanticRecordMappingCodec(return_type).decode_mapping_many(ordered)
+            out = default_model_codec(return_type).decode_mapping_many(ordered)
             if return_count:
                 return page_from_limit_offset(out, pagination, total=total)
             return page_from_limit_offset(out, pagination, total=None)
@@ -360,7 +360,7 @@ class MockSearchAdapter(MockTenancyMixin, SearchQueryPort[M]):
         typed_docs = [{k: v for k, v in doc.items() if k in allowed} for doc in ordered]
         out = cast(
             list[Any],
-            self.spec.resolved_row_codec.decode_mapping_many(typed_docs),
+            self.spec.resolved_read_codec.decode_mapping_many(typed_docs),
         )
 
         if return_count:
@@ -575,7 +575,7 @@ class MockSearchAdapter(MockTenancyMixin, SearchQueryPort[M]):
             )
 
         if return_type is not None:
-            hits_T = PydanticRecordMappingCodec(return_type).decode_mapping_many(page)
+            hits_T = default_model_codec(return_type).decode_mapping_many(page)
 
             return CursorPage(
                 hits=hits_T,
@@ -586,7 +586,7 @@ class MockSearchAdapter(MockTenancyMixin, SearchQueryPort[M]):
 
         allowed = set(self.spec.model_type.model_fields.keys())
         typed_docs = [{k: v for k, v in doc.items() if k in allowed} for doc in page]
-        hits = self.spec.resolved_row_codec.decode_mapping_many(typed_docs)
+        hits = self.spec.resolved_read_codec.decode_mapping_many(typed_docs)
 
         return CursorPage(
             hits=hits,

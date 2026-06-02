@@ -48,7 +48,7 @@ class MockSearchCommandAdapter(MockTenancyMixin, SearchCommandPort[BaseModel]):
         with self.state.lock:
             store = self._store()
             for doc in documents:
-                data = self.spec.resolved_row_codec.encode_persistence_mapping(doc)
+                data = self.spec.resolved_read_codec.encode_persistence_mapping(doc)
                 doc_id = data.get("id")
                 if doc_id is None:
                     continue

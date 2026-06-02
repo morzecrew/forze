@@ -3,7 +3,7 @@ from typing import Any, final
 import attrs
 
 from forze.application.contracts.queue import QueueMessage
-from forze.base.serialization import RecordMappingCodec
+from forze.base.serialization import ModelCodec
 
 from ..kernel.client import SQSQueueMessage
 
@@ -15,7 +15,7 @@ from ..kernel.client import SQSQueueMessage
 class SQSQueueCodec[M]:
     """SQS queue payload codec backed by a record-mapping codec."""
 
-    payload_codec: RecordMappingCodec[M, Any]
+    payload_codec: ModelCodec[M, Any]
     """Codec for queue message payloads."""
 
     # ....................... #

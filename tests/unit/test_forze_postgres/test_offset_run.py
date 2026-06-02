@@ -37,8 +37,10 @@ def _gateway() -> PostgresFTSSearchAdapter[_M]:
     )
     intro = MagicMock()
     intro.get_column_types = AsyncMock(return_value={})
+    spec = SearchSpec(name="t", model_type=_M, fields=["id", "label"])
     return PostgresFTSSearchAdapter(
-        spec=SearchSpec(name="t", model_type=_M, fields=["id", "label"]),
+        spec=spec,
+        codec=spec.resolved_read_codec,
         index_relation=("public", "idx"),
         relation=("public", "v"),
         index_heap_relation=("public", "h"),

@@ -15,11 +15,11 @@ Use when your application emits events from HTTP handlers and runs memoized step
 
 ```python
 from forze.application.contracts.durable.function import DurableFunctionEventSpec
-from forze.base.serialization import PydanticRecordMappingCodec
+from forze.base.serialization import PydanticModelCodec
 
 invoice_paid = DurableFunctionEventSpec(
     name="app/invoice.paid",
-    codec=PydanticRecordMappingCodec(model_type=InvoicePaidPayload),
+    codec=PydanticModelCodec(model_type=InvoicePaidPayload),
 )
 ```
 

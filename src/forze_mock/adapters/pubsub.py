@@ -21,7 +21,7 @@ from forze.application.contracts.pubsub import (
 )
 from forze.base.primitives import utcnow
 from forze.base.serialization import (
-    RecordMappingCodec,
+    ModelCodec,
 )
 from forze_mock.adapters.queue import (
     _sleep_interval,  # type: ignore[reportPrivateUsage]
@@ -38,7 +38,7 @@ class MockPubSubAdapter(MockTenancyMixin, PubSubCommandPort[M], PubSubQueryPort[
 
     state: MockState
     namespace: str
-    codec: RecordMappingCodec[M, Any]
+    codec: ModelCodec[M, Any]
 
     # ....................... #
 

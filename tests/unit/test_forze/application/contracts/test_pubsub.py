@@ -11,7 +11,7 @@ from forze.application.contracts.pubsub import (
     PubSubQueryPort,
     PubSubSpec,
 )
-from forze.base.serialization import PydanticRecordMappingCodec
+from forze.base.serialization import PydanticModelCodec
 
 # ----------------------- #
 
@@ -47,7 +47,7 @@ class _StubPubSub(PubSubCommandPort[_PubSubPayload], PubSubQueryPort[_PubSubPayl
 class TestPubSubSpec:
     def test_spec_contains_name_and_codec(self) -> None:
         spec = PubSubSpec(
-            name="events", codec=PydanticRecordMappingCodec(model_type=_PubSubPayload)
+            name="events", codec=PydanticModelCodec(model_type=_PubSubPayload)
         )
 
         assert spec.name == "events"

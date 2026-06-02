@@ -7,7 +7,7 @@ from forze.application.contracts.pubsub import PubSubMessage
 from forze.application.contracts.stream import StreamMessage
 from forze.base.codecs import JsonCodec, TextCodec
 from forze.base.exceptions import exc
-from forze.base.serialization import RecordMappingCodec
+from forze.base.serialization import ModelCodec
 
 # ----------------------- #
 
@@ -73,7 +73,7 @@ class RedisPubSubCodec[M]:
     from the raw channel bytes.
     """
 
-    payload_codec: RecordMappingCodec[M, Any]
+    payload_codec: ModelCodec[M, Any]
     """Codec for pubsub message payloads."""
 
     # ....................... #
@@ -153,7 +153,7 @@ class RedisStreamCodec[M]:
     bytes-keyed field map returned by ``XREAD`` / ``XREADGROUP``.
     """
 
-    payload_codec: RecordMappingCodec[M, Any]
+    payload_codec: ModelCodec[M, Any]
     """Codec for stream message payloads."""
 
     # ....................... #

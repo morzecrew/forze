@@ -25,12 +25,7 @@ from forze.application.contracts.querying import (
 from forze.application.contracts.tenancy import TENANT_ID_FIELD, TenancyMixin
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
-from forze.base.serialization import (
-    PydanticRecordMappingCodec,
-    RecordMappingCodec,
-    pydantic_field_names,
-    resolve_row_codec,
-)
+from forze.base.serialization import ModelCodec, default_model_codec
 from forze.domain.constants import ID_FIELD
 from forze_postgres.kernel.catalog.introspect import (
     PostgresColumnTypes,
@@ -133,13 +128,8 @@ class PostgresGateway[M: BaseModel](TenancyMixin):
     model_type: type[M]
     """Pydantic model used for deserialization."""
 
-    row_codec: RecordMappingCodec[M, Any] | None = attrs.field(
-        kw_only=True,
-        default=None,
-        eq=False,
-        repr=False,
-    )
-    """Row decode/encode codec; defaults to :class:`PydanticRecordMappingCodec` for :attr:`model_type`."""
+    codec: ModelCodec[M, Any] = attrs.field(kw_only=True, eq=False, repr=False)
+    """Row decode/encode codec (inject via ``read_gw`` or ``default_model_codec``)."""
 
     introspector: PostgresIntrospector
     """Postgres introspector instance."""
@@ -166,13 +156,6 @@ class PostgresGateway[M: BaseModel](TenancyMixin):
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
-        if self.row_codec is None:
-            object.__setattr__(
-                self,
-                "row_codec",
-                PydanticRecordMappingCodec(self.model_type),
-            )
-
         cap = self.find_many_implicit_limit
 
         if cap is not None and cap < 1:
@@ -192,10 +175,10 @@ class PostgresGateway[M: BaseModel](TenancyMixin):
     # ....................... #
 
     @property
-    def effective_row_codec(self) -> RecordMappingCodec[M, Any]:
-        """Non-optional row codec (set in :meth:`__attrs_post_init__`)."""
+    def read_codec(self) -> ModelCodec[M, Any]:
+        """Row codec (:attr:`codec`; required at construction)."""
 
-        return resolve_row_codec(self.row_codec, self.model_type)
+        return self.codec
 
     # ....................... #
 
@@ -203,19 +186,17 @@ class PostgresGateway[M: BaseModel](TenancyMixin):
     def read_fields(self) -> frozenset[str]:
         """Pydantic field names for :attr:`model_type` (safe for frozen attrs subclasses)."""
 
-        return frozenset(
-            pydantic_field_names(self.model_type, include_computed=False),
-        )
+        return self.read_codec.stored_field_names(include_computed=False)
 
     # ....................... #
 
-    def _codec_for(self, model: type[BaseModel] | None = None) -> RecordMappingCodec[Any, Any]:
-        """Return :attr:`row_codec` or a codec bound to an alternate read model."""
+    def _codec_for(self, model: type[BaseModel] | None = None) -> ModelCodec[Any, Any]:
+        """Return :attr:`codec` or a codec bound to an alternate read model."""
 
         if model is None or model is self.model_type:
-            return cast(RecordMappingCodec[Any, Any], self.effective_row_codec)
+            return cast(ModelCodec[Any, Any], self.read_codec)
 
-        return PydanticRecordMappingCodec(model)
+        return default_model_codec(model)
 
     # ....................... #
 
@@ -441,7 +422,9 @@ class PostgresGateway[M: BaseModel](TenancyMixin):
 
         elif return_type is not None:
             use = list(
-                pydantic_field_names(return_type, include_computed=False),
+                default_model_codec(return_type).stored_field_names(
+                    include_computed=False,
+                ),
             )
 
         else:

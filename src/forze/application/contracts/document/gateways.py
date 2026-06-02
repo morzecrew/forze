@@ -23,7 +23,7 @@ from forze.application.contracts.querying import (
     QuerySortExpression,
 )
 from forze.base.primitives import JsonDict
-from forze.base.serialization import RecordMappingCodec
+from forze.base.serialization import ModelCodec
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document
 
 M = TypeVar("M", bound=BaseModel)
@@ -45,7 +45,7 @@ class DocumentReadGatewayPort(Protocol, Generic[M]):
     def model_type(self) -> type[M]: ...
 
     @property
-    def effective_row_codec(self) -> RecordMappingCodec[M, Any]:
+    def read_codec(self) -> ModelCodec[M, Any]:
         """Row decode/encode codec for this gateway's read model."""
 
         ...

@@ -11,7 +11,7 @@ from forze.application.contracts.idempotency import IdempotencySnapshot
 from forze.application.contracts.pubsub import PubSubSpec
 from forze.application.contracts.queue import QueueSpec
 from forze.application.contracts.stream.specs import StreamSpec
-from forze.base.serialization import PydanticRecordMappingCodec
+from forze.base.serialization import PydanticModelCodec
 from forze_mock.adapters import (
     MockCacheAdapter,
     MockIdempotencyAdapter,
@@ -90,7 +90,7 @@ async def test_mock_queue_receive_ack_nack_requeue() -> None:
         state=st,
         namespace="q",
         codec=QueueSpec(
-            name="q", codec=PydanticRecordMappingCodec(model_type=_Msg)
+            name="q", codec=PydanticModelCodec(model_type=_Msg)
         ).codec,
     )
     mid = await q.enqueue("jobs", _Msg(body="x"))
@@ -110,7 +110,7 @@ async def test_mock_queue_delayed_enqueue_not_visible_until_delay() -> None:
         state=st,
         namespace="q-delay",
         codec=QueueSpec(
-            name="q-delay", codec=PydanticRecordMappingCodec(model_type=_Msg)
+            name="q-delay", codec=PydanticModelCodec(model_type=_Msg)
         ).codec,
     )
     mid = await q.enqueue("jobs", _Msg(body="later"), delay=timedelta(hours=1))
@@ -129,7 +129,7 @@ async def test_mock_queue_enqueue_many() -> None:
         state=st,
         namespace="q2",
         codec=QueueSpec(
-            name="q2", codec=PydanticRecordMappingCodec(model_type=_Msg)
+            name="q2", codec=PydanticModelCodec(model_type=_Msg)
         ).codec,
     )
     ids = await q.enqueue_many("q", [_Msg(body="a"), _Msg(body="b")])
@@ -142,7 +142,7 @@ async def test_mock_stream_read_and_group_ack() -> None:
         state=st,
         namespace="s",
         codec=StreamSpec(
-            name="s", codec=PydanticRecordMappingCodec(model_type=_Msg)
+            name="s", codec=PydanticModelCodec(model_type=_Msg)
         ).codec,
     )
     sg = MockStreamGroupAdapter(stream=sa, state=st, namespace="s")
@@ -160,7 +160,7 @@ async def test_mock_pubsub_subscribe_receives_new_messages() -> None:
         state=st,
         namespace="ps",
         codec=PubSubSpec(
-            name="ps", codec=PydanticRecordMappingCodec(model_type=_Msg)
+            name="ps", codec=PydanticModelCodec(model_type=_Msg)
         ).codec,
     )
     sub = ps.subscribe(["t1"], timeout=timedelta(milliseconds=50))

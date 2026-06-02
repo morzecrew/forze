@@ -1,4 +1,4 @@
-"""Record-mapping codec protocol for pluggable serialization backends.
+"""Model codec protocol for pluggable serialization backends.
 
 This module defines the single extension seam for non-Pydantic backends.
 ``forze.base.serialization.pydantic`` remains the low-level Pydantic
@@ -17,8 +17,8 @@ EncodeMode = Literal["json", "python"]
 # ....................... #
 
 
-class RecordMappingDumpExcludeOptions(TypedDict, total=False):
-    """Options controlling which fields to exclude from record dumps."""
+class ModelDumpExcludeOptions(TypedDict, total=False):
+    """Options controlling which fields to exclude from model dumps."""
 
     unset: bool
     """Exclude fields that were never explicitly set."""
@@ -36,8 +36,8 @@ class RecordMappingDumpExcludeOptions(TypedDict, total=False):
 # ....................... #
 
 
-class RecordMappingCodec[T, TSource](Protocol):
-    """Codec protocol for mapping-based record serialization and transforms."""
+class ModelCodec[T, TSource](Protocol):
+    """Codec protocol for mapping-based model serialization and transforms."""
 
     @property
     def model_type(self) -> type[T]: ...
@@ -72,7 +72,7 @@ class RecordMappingCodec[T, TSource](Protocol):
         obj: T,
         *,
         mode: EncodeMode = "python",
-        exclude: RecordMappingDumpExcludeOptions = {},
+        exclude: ModelDumpExcludeOptions = {},
     ) -> JsonDict: ...
 
     def encode_mapping_many(
@@ -80,7 +80,7 @@ class RecordMappingCodec[T, TSource](Protocol):
         objs: Sequence[T],
         *,
         mode: EncodeMode = "python",
-        exclude: RecordMappingDumpExcludeOptions = {},
+        exclude: ModelDumpExcludeOptions = {},
     ) -> list[JsonDict]: ...
 
     def encode_mapping_many_batched(
@@ -89,7 +89,7 @@ class RecordMappingCodec[T, TSource](Protocol):
         *,
         batch_size: int = 2000,
         mode: EncodeMode = "python",
-        exclude: RecordMappingDumpExcludeOptions = {},
+        exclude: ModelDumpExcludeOptions = {},
     ) -> Iterator[list[JsonDict]]: ...
 
     def transform(
@@ -97,7 +97,7 @@ class RecordMappingCodec[T, TSource](Protocol):
         source: TSource,
         *,
         mode: EncodeMode = "python",
-        exclude: RecordMappingDumpExcludeOptions = {"unset": True},
+        exclude: ModelDumpExcludeOptions = {"unset": True},
     ) -> T: ...
 
     def transform_many(
@@ -105,7 +105,7 @@ class RecordMappingCodec[T, TSource](Protocol):
         sources: Sequence[TSource],
         *,
         mode: EncodeMode = "python",
-        exclude: RecordMappingDumpExcludeOptions = {"unset": True},
+        exclude: ModelDumpExcludeOptions = {"unset": True},
     ) -> list[T]: ...
 
     def stored_field_names(
@@ -118,7 +118,7 @@ class RecordMappingCodec[T, TSource](Protocol):
         self,
         obj: T,
         *,
-        exclude: RecordMappingDumpExcludeOptions = {},
+        exclude: ModelDumpExcludeOptions = {},
     ) -> bytes: ...
 
     def encode_persistence_mapping(
@@ -126,7 +126,7 @@ class RecordMappingCodec[T, TSource](Protocol):
         obj: T,
         *,
         mode: EncodeMode = "python",
-        exclude: RecordMappingDumpExcludeOptions = {},
+        exclude: ModelDumpExcludeOptions = {},
     ) -> JsonDict: ...
 
     def encode_persistence_mapping_many(
@@ -134,7 +134,7 @@ class RecordMappingCodec[T, TSource](Protocol):
         objs: Sequence[T],
         *,
         mode: EncodeMode = "python",
-        exclude: RecordMappingDumpExcludeOptions = {},
+        exclude: ModelDumpExcludeOptions = {},
     ) -> list[JsonDict]: ...
 
     def decode_json_bytes(

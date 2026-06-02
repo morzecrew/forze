@@ -47,7 +47,7 @@ class PostgresAnalyticsIngestMixin[R: BaseModel, Ing: BaseModel](
                 f"Analytics append batch exceeds max_append_rows ({max_append})."
             )
 
-        ingest_codec = host.spec.ingest_codec
+        ingest_codec = host.spec.resolved_ingest_codec
         if ingest_codec is None:
             raise exc.internal(
                 f"Analytics ingest codec is not configured for route {host.spec.name!r}."

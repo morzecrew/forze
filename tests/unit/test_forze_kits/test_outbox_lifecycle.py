@@ -12,7 +12,7 @@ from pydantic import BaseModel
 from forze.application.contracts.outbox import OutboxSpec
 from forze.application.contracts.queue import QueueSpec
 from forze.application.execution import DepsRegistry, ExecutionRuntime
-from forze.base.serialization import PydanticRecordMappingCodec
+from forze.base.serialization import PydanticModelCodec
 from forze_kits.integrations.outbox import outbox_relay_background_lifecycle_step
 from forze_kits.integrations.outbox.lifecycle import _OutboxRelayBackgroundStartup
 from forze_mock import MockDepsModule
@@ -24,7 +24,7 @@ class _Payload(BaseModel):
 
 @pytest.mark.asyncio
 async def test_background_lifecycle_starts_and_stops_task() -> None:
-    codec = PydanticRecordMappingCodec(_Payload)
+    codec = PydanticModelCodec(_Payload)
     outbox_spec = OutboxSpec(name="events", codec=codec)
     queue_spec = QueueSpec(name="jobs", codec=codec)
     step = outbox_relay_background_lifecycle_step(

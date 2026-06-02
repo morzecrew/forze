@@ -14,7 +14,7 @@ pytest.importorskip("testcontainers.localstack")
 
 from forze_sqs.adapters import SQSQueueAdapter, SQSQueueCodec
 from forze_sqs.kernel.client import SQSClient
-from forze.base.serialization import PydanticRecordMappingCodec
+from forze.base.serialization import PydanticModelCodec
 
 
 def _ensure_docker_available() -> None:
@@ -79,7 +79,7 @@ async def sqs_queue(sqs_client: SQSClient) -> SQSQueueAdapter[_QueuePayload]:
 
     return SQSQueueAdapter(
         client=sqs_client,
-        codec=SQSQueueCodec(payload_codec=PydanticRecordMappingCodec(_QueuePayload)),
+        codec=SQSQueueCodec(payload_codec=PydanticModelCodec(_QueuePayload)),
         namespace=namespace,
     )
 

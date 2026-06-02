@@ -62,6 +62,7 @@ def postgres_search_port_for_config(
 
     common = dict(
         spec=member_spec,
+        codec=member_spec.resolved_read_codec,
         relation=c.read,
         index_relation=c.index,
         index_heap_relation=c.heap_relation,

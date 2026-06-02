@@ -36,7 +36,7 @@ from forze.application.contracts.tenancy import TenantProviderPort
 from forze.base.codecs import B64UrlJsonCodec
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
-from forze.base.serialization import PydanticRecordMappingCodec
+from forze.base.serialization import default_model_codec
 from forze_bigquery.execution.deps.configs import (
     BigQueryAnalyticsConfig,
     BigQueryQueryConfig,
@@ -512,7 +512,7 @@ class BigQueryAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
             timeout=self._run_timeout(options),
             fetch_batch_size=fetch_batch_size,
         )
-        typed = PydanticRecordMappingCodec(return_type).decode_mapping_many(rows)
+        typed = default_model_codec(return_type).decode_mapping_many(rows)
         for offset in range(0, len(typed), fetch_batch_size):
             yield typed[offset : offset + fetch_batch_size]
 
@@ -643,7 +643,7 @@ class BigQueryAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
                 f"Analytics append batch exceeds max_append_rows ({max_append})."
             )
 
-        ingest_codec = self.spec.ingest_codec
+        ingest_codec = self.spec.resolved_ingest_codec
         if ingest_codec is None:
             raise exc.internal(
                 f"Analytics ingest codec is not configured for route {self.spec.name!r}."

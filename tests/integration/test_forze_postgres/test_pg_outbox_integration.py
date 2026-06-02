@@ -29,7 +29,7 @@ from forze.application.contracts.queue import (
 )
 from forze.application.execution import Deps, DepsRegistry, ExecutionRuntime
 from forze.base.primitives import utcnow
-from forze.base.serialization import PydanticRecordMappingCodec
+from forze.base.serialization import PydanticModelCodec
 from forze_kits.integrations.outbox import relay_outbox_to_queue
 from forze_mock import MockStateDepKey
 from forze_mock.adapters import MockState
@@ -102,7 +102,7 @@ async def test_outbox_flush_commits_with_transaction(
     pg_client: PostgresClient,
     outbox_table: str,
 ) -> None:
-    codec = PydanticRecordMappingCodec(_OutboxPayload)
+    codec = PydanticModelCodec(_OutboxPayload)
     outbox_spec = OutboxSpec(name="integration", codec=codec)
     pg_module = PostgresDepsModule(
         client=pg_client,
@@ -138,7 +138,7 @@ async def test_outbox_rollback_discards_staged_rows(
     pg_client: PostgresClient,
     outbox_table: str,
 ) -> None:
-    codec = PydanticRecordMappingCodec(_OutboxPayload)
+    codec = PydanticModelCodec(_OutboxPayload)
     outbox_spec = OutboxSpec(name="integration", codec=codec)
     pg_module = PostgresDepsModule(
         client=pg_client,
@@ -175,11 +175,11 @@ async def test_outbox_relay_to_mock_queue(
     pg_client: PostgresClient,
     outbox_table: str,
 ) -> None:
-    codec = PydanticRecordMappingCodec(_OutboxPayload)
+    codec = PydanticModelCodec(_OutboxPayload)
     outbox_spec = OutboxSpec(
         name="integration",
         codec=codec,
-        destination=OutboxDestination(queue_route="relay", queue="relay"),
+        destination=OutboxDestination.queue(route="relay", channel="relay"),
     )
     queue_spec = QueueSpec(name="relay", codec=codec)
     pg_module = PostgresDepsModule(
@@ -223,7 +223,7 @@ async def test_outbox_bulk_flush_writes_multiple_rows(
     pg_client: PostgresClient,
     outbox_table: str,
 ) -> None:
-    codec = PydanticRecordMappingCodec(_OutboxPayload)
+    codec = PydanticModelCodec(_OutboxPayload)
     outbox_spec = OutboxSpec(name="integration", codec=codec)
     pg_module = PostgresDepsModule(
         client=pg_client,
@@ -264,7 +264,7 @@ async def test_outbox_duplicate_event_id_flush_is_idempotent(
     pg_client: PostgresClient,
     outbox_table: str,
 ) -> None:
-    codec = PydanticRecordMappingCodec(_OutboxPayload)
+    codec = PydanticModelCodec(_OutboxPayload)
     outbox_spec = OutboxSpec(name="integration", codec=codec)
     pg_module = PostgresDepsModule(
         client=pg_client,
@@ -320,11 +320,11 @@ async def test_outbox_relay_reclaims_stale_processing(
     pg_client: PostgresClient,
     outbox_table: str,
 ) -> None:
-    codec = PydanticRecordMappingCodec(_OutboxPayload)
+    codec = PydanticModelCodec(_OutboxPayload)
     outbox_spec = OutboxSpec(
         name="integration",
         codec=codec,
-        destination=OutboxDestination(queue_route="relay", queue="relay"),
+        destination=OutboxDestination.queue(route="relay", channel="relay"),
     )
     queue_spec = QueueSpec(name="relay", codec=codec)
     pg_module = PostgresDepsModule(
@@ -390,11 +390,11 @@ async def test_outbox_requeue_failed_then_relay(
     pg_client: PostgresClient,
     outbox_table: str,
 ) -> None:
-    codec = PydanticRecordMappingCodec(_OutboxPayload)
+    codec = PydanticModelCodec(_OutboxPayload)
     outbox_spec = OutboxSpec(
         name="integration",
         codec=codec,
-        destination=OutboxDestination(queue_route="relay", queue="relay"),
+        destination=OutboxDestination.queue(route="relay", channel="relay"),
     )
     queue_spec = QueueSpec(name="relay", codec=codec)
     pg_module = PostgresDepsModule(

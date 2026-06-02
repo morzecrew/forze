@@ -25,6 +25,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`forze.application.handlers.*`:** use `forze_kits.aggregates.{document,search,storage,authn}.handlers`.
 - **`forze.application.mapping`:** use `forze_kits.mapping` (`PydanticPipelineMapperFactory`, pipeline steps). `Mapper` / `MapperFactory` protocols stay on `forze.application.contracts.mapping`.
 - **`forze.application.dto`:** use `forze_kits.dto` (`Pagination`, `Paginated`, `CursorPagination`, `CursorPaginated`, and related types).
+- **`OutboxDestination(queue_route, queue)`:** use discriminated `OutboxDestination` with `kind` and `OutboxDestination.queue(route=..., channel=...)` (also `.stream`, `.pubsub`).
+- **`RecordMappingCodec` / `PydanticRecordMappingCodec` / `MsgspecRecordMappingCodec`:** use `ModelCodec` / `PydanticModelCodec` / `MsgspecModelCodec` (`forze.base.serialization`).
+- **`forze.base.serialization` public `pydantic_*` / `msgspec_*` helpers:** use `ModelCodec` methods or import from `forze.base.serialization.pydantic` / `.msgspec` for low-level access.
+- **`pydantic_cache_dump` / `pydantic_cache_dump_many`:** use `PydanticModelCodec(...).encode_json_bytes(..., exclude=CACHE_DUMP_EXCLUDE_OPTS)`.
+- **`SearchSpec.row_codec` / `resolved_row_codec`:** use `read_codec` / `resolved_read_codec`.
+- **`DocumentReadGatewayPort.effective_row_codec`:** use `read_codec`.
+- **`forze_mock._adapters_monolith`:** unused duplicate of `forze_mock.adapters`; production mock wiring uses `forze_mock.adapters.document` only.
+- **`codec_for_model`:** use `default_model_codec`.
 
 | Old import | New import |
 |------------|------------|
@@ -39,23 +47,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 | `forze.application.handlers.authn` | `forze_kits.aggregates.authn.handlers` |
 | `forze.application.mapping` | `forze_kits.mapping` |
 | `forze.application.dto` | `forze_kits.dto` |
+| `OutboxDestination(queue_route=..., queue=...)` | `OutboxDestination.queue(route=..., channel=...)` |
+| `RecordMappingCodec` | `ModelCodec` |
+| `PydanticRecordMappingCodec` | `PydanticModelCodec` |
+| `MsgspecRecordMappingCodec` | `MsgspecModelCodec` |
+| `SearchSpec.row_codec` | `SearchSpec.read_codec` |
+| `resolve_row_codec` | `resolve_model_codec` |
+| `PostgresReadGateway(...)` without `codec=` | Pass `codec=` or build via `read_gw` |
+| `PostgresWriteGateway(...)` without write codecs | Pass `create_codec` / `update_codec` / `codec=` or use `doc_write_gw` |
+| `PostgresWriteGateway(..., domain_codec=...)` | Remove `domain_codec`; pass `codec=` (row/domain read codec) plus `create_codec` / `update_codec` |
+| `PostgresHistoryGateway(...)` without `history_codec` | Pass `history_codec` and `codec=` or use `_doc_history_gw` / `doc_write_gw` |
 
 See [Kits reference](pages/docs/reference/kits.md).
 
 ### Changed
 
-- **`forze_postgres`:** document gateways decode SELECT rows through `RecordMappingCodec` (default `PydanticRecordMappingCodec`; behavior unchanged unless `read_validation="trusted"`).
-- **`forze_mongo` / `forze_firestore`:** document gateways and factories use `row_codec` + optional `read_validation` (same pattern as Postgres).
+- **`forze_postgres`:** document gateways decode SELECT rows through `ModelCodec` (default `PydanticModelCodec`; behavior unchanged unless `read_validation="trusted"`).
+- **`forze_mongo` / `forze_firestore`:** document gateways and factories use spec-owned codecs + optional `read_validation` (same pattern as Postgres).
 - **`forze.application.integrations.document`:** versioned document cache stores compact JSON bytes; legacy dict cache entries remain readable until TTL expiry.
-- **`forze.application.integrations.document`:** post-write hydration uses `read_gw.row_codec.transform` instead of direct `pydantic_*` dumps.
-- **`SearchSpec` / `HubSearchSpec`:** optional `row_codec` (defaults to `PydanticRecordMappingCodec`); search adapters materialize hits through the codec.
+- **`forze.application.integrations.document`:** post-write hydration uses `read_gw.read_codec.transform` instead of direct `pydantic_*` dumps.
+- **`DocumentSpec`:** codecs are derived from model types via `resolved_codecs` (override with `DocumentSpec.codecs`); Postgres/Mongo/Firestore factories pass them into gateways.
+- **`SearchSpec` / `HubSearchSpec`:** optional `read_codec` (auto-derived via `default_model_codec`); search adapters materialize hits through the codec.
 - **`AnalyticsSpec`:** optional `read_codec` / `ingest_codec`; warehouse and mock analytics adapters route row encode/decode through codecs.
-- **`forze_mock`:** in-memory document adapter uses `row_codec` for read/write/search paths.
-- **`forze_kits.mapping`:** `PydanticPipelineMapper` uses `PydanticRecordMappingCodec.transform` when no pipeline steps are configured.
+- **`forze_mock`:** in-memory document adapter uses spec/search codecs for read/write/search paths.
+- **`forze_kits.mapping`:** `PydanticPipelineMapper` uses `PydanticModelCodec.transform` when no pipeline steps are configured.
+- **`default_model_codec` / `stored_field_names_for`:** live in `forze.base.serialization`; `resolve_model_codec` delegates to the same policy (Pydantic or msgspec).
+- **Document kernel gateways (Postgres/Mongo/Firestore):** `codec`, write `domain_codec` / `create_codec`, and `history_codec` are required at construction; use `read_gw` / `doc_write_gw` or pass explicit codecs (no silent `PydanticModelCodec` in `__attrs_post_init__`).
+- **`SearchSpec` / `AnalyticsSpec`:** `resolved_read_codec` / `resolved_ingest_codec` resolve without mutating optional override fields.
+- **`DocumentCache`:** requires `read_codec` (factories pass it from the read gateway).
+- **Document write gateways (Postgres/Mongo/Firestore):** create/ensure/upsert insert legs use `create_codec`; patch/update uses `update_codec` (falls back to `read_codec` when unset).
+- **`forze_mock` document adapter:** create/update/read paths use `DocumentSpec.resolved_codecs` (`create`, `update`, `domain`, `read`); optional per-adapter `codec=` override removed.
+- **`DocumentSpec.supports_update()`:** uses `stored_field_names_for` (Pydantic and msgspec update commands).
+- **Document write gateways (Postgres/Mongo/Firestore):** `domain_codec` constructor argument removed (use `codec` / `create_codec` / `update_codec` via `doc_write_gw`).
 
 ### Deprecated
 
-- **`forze.base.serialization`:** `pydantic_cache_dump` / `pydantic_cache_dump_many` — use `PydanticRecordMappingCodec(...).encode_json_bytes(..., exclude=CACHE_DUMP_EXCLUDE_OPTS)` (or `encode_mapping` for dict-shaped cache fixtures).
 - **`forze_identity.oidc`:** `OidcTokenVerifier.enforce_issuer_and_audience` defaults to `True` (construction requires both `issuer` and `audience` unless explicitly opted out).
 - **`forze_kits` layout:** modules live under `domain/`, `aggregates/` (with per-aggregate `handlers/`), `mapping/`, `dto/`, `integrations/`, `adapters/`, and `scopes/` (e.g. `forze_kits.aggregates.document.handlers`, `forze_kits.mapping`, `forze_kits.integrations.outbox`, `forze_kits.adapters.secrets`). Core `forze.application` keeps contracts, execution, hooks, and integrations only.
 
@@ -68,8 +94,12 @@ See [Kits reference](pages/docs/reference/kits.md).
 - **Outbox (Mongo):** `MongoOutboxAdapter`, `MongoOutboxConfig`, and `outboxes={}` on `MongoDepsModule`; `MongoClientPort.find_one_and_update` for atomic claim.
 - **`forze_kits`:** consolidated package for domain kits, aggregate registries/facades, outbox helpers, and runtime ergonomics (see migration table under **Removed**).
 - **Outbox (kits):** `outbox_relay_background_lifecycle_step` for optional in-process relay polling.
+- **Outbox (kits):** `relay_outbox_to_stream`, `relay_outbox_to_pubsub`, and `relay_outbox` dispatcher; lifecycle step supports `transport` (`queue`, `stream`, `pubsub`).
+- **Notify (kits):** `forze_kits.integrations.notify` — typed notification commands, routing, dispatch, and queue consumer helper (no `NotificationPort` in core).
 - **`forze_mock`:** Tenancy helpers (`partition_namespace`, `resolve_mock_namespace`, `MockTenancyMixin`, `MockRoutedStateRegistry`), extended `MockState` buckets (dlocks, search snapshots, durable workflow/function, identity), new adapters (distributed lock, search command/snapshot/hub/federated, durable workflow/schedule/function, identity stubs), and `MockDepsModule` registration for all related dep keys. Docs updated under [Mock integration](pages/docs/integrations/mock.md) and [Multi-tenancy](pages/docs/concepts/multi-tenancy.md).
 - **`forze_postgres`:** `PostgresReadOnlyDocumentConfig.read_validation` (`"strict"` | `"trusted"`) for faster read-model materialization from trusted SQL rows.
+- **`forze.application.contracts.codecs`:** `default_model_codec`, `stored_field_names_for` (Pydantic or msgspec by model type).
+- **`forze.application.contracts.document`:** `DocumentCodecs`, `document_codecs_for_spec`, `DocumentSpec.resolved_codecs`.
 
 ### Changed
 
@@ -263,7 +293,7 @@ See [Kits reference](pages/docs/reference/kits.md).
 - **Postgres startup validation:** Pydantic↔column compatibility, bookkeeping triggers, and tenancy wiring checks on `PostgresDepsModule`.
 - **Scrubbing:** `forze.base.scrubbing` with `sanitize(value, context="egress"|"log")` and default structlog field scrubbing via `configure_logging(sanitize_logs=True)`.
 - **Console logging:** `ForzeConsoleRenderer.max_traceback_frames` for Rich traceback frame collapsing (default `20`; `0` shows all frames).
-- **Integrations:** Redis distributed locks; `PydanticRecordMappingCodec` and `MsgspecRecordMappingCodec`; `StrKeySelector` and `StrKeyNamespace`; optional domain mixins in `forze_kits`.
+- **Integrations:** Redis distributed locks; `PydanticModelCodec` and `MsgspecModelCodec`; `StrKeySelector` and `StrKeyNamespace`; optional domain mixins in `forze_kits`.
 
 ### Changed
 
@@ -281,7 +311,7 @@ See [Kits reference](pages/docs/reference/kits.md).
 - **Breaking — Mongo:** `MongoClient.db` / `collection` and `MongoGateway.coll` are async.
 - **Document/search pagination:** omitting `sorts` no longer emits `ORDER BY id` when the read model has no `id` field; configure `default_sort` or pass explicit `sorts`.
 - **Document gateways (Postgres/Mongo/Firestore/Mock):** Pydantic `@computed_field` names excluded from persistence; `ensure` / `upsert` skip redundant read round-trips on insert.
-- **Messaging contracts:** `QueueMessage`, `PubSubMessage`, and `StreamMessage` are frozen attrs value objects; queue/pubsub/stream specs require a `RecordMappingCodec`.
+- **Messaging contracts:** `QueueMessage`, `PubSubMessage`, and `StreamMessage` are frozen attrs value objects; queue/pubsub/stream specs require a `ModelCodec`.
 - **`forze_gcs`:** native async `gcloud-aio-storage` instead of threaded `google-cloud-storage`.
 - **Postgres PGroonga search:** match and `weights` follow index declaration order; every indexed column must appear in `SearchSpec.fields`.
 - **Postgres & Redis:** safer batched writes, implicit read limits, routed pool locking, `get`/`mget` returning `bytes | None`, atomic `mset` with `NX`/`XX`, and concurrent cache adapter I/O.

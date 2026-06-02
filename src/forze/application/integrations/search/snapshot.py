@@ -36,7 +36,7 @@ from forze.application.contracts.search import (
 )
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
-from forze.base.serialization import PydanticRecordMappingCodec
+from forze.base.serialization import default_model_codec
 
 # ----------------------- #
 
@@ -153,15 +153,17 @@ class SearchResultSnapshot:
         *,
         spec_name: str,
         variant: str,
-        extras: dict[str, object] | None = None,
+        extras: JsonDict | None = None,
     ) -> str:
+        qpart: list[str] | str
+
         if isinstance(query, (list, tuple)):
-            qpart: object = [str(x) for x in query]
+            qpart = [str(x) for x in query]
 
         else:
             qpart = str(query)
 
-        payload: dict[str, object] = {
+        payload: JsonDict = {
             "kind": "simple",
             "variant": variant,
             "spec": spec_name,
@@ -493,7 +495,8 @@ class SearchResultSnapshot:
         ]
 
         if return_type is not None:
-            v = PydanticRecordMappingCodec(return_type).decode_mapping_many([h.model_dump(mode="json") for h in hydrated]
+            v = default_model_codec(return_type).decode_mapping_many(
+                [h.model_dump(mode="json") for h in hydrated]
             )
 
             if return_count:
@@ -674,7 +677,7 @@ class SearchResultSnapshot:
                 }
                 for it in hydrated
             ]
-            v2 = PydanticRecordMappingCodec(return_type).decode_mapping_many(rows2)
+            v2 = default_model_codec(return_type).decode_mapping_many(rows2)
 
             if return_count:
 

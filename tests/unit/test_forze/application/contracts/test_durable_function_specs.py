@@ -10,7 +10,7 @@ from forze.application.contracts.durable.function import (
     DurableFunctionInvokeSpec,
     DurableFunctionSpec,
 )
-from forze.base.serialization import PydanticRecordMappingCodec
+from forze.base.serialization import PydanticModelCodec
 
 
 class _Payload(BaseModel):
@@ -29,7 +29,7 @@ class TestDurableFunctionEventSpec:
     def test_spec_contains_name_and_codec(self) -> None:
         spec = DurableFunctionEventSpec(
             name="app/test",
-            codec=PydanticRecordMappingCodec(model_type=_Payload),
+            codec=PydanticModelCodec(model_type=_Payload),
         )
 
         assert spec.name == "app/test"

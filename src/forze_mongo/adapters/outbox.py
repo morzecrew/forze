@@ -46,6 +46,9 @@ def _as_uuid(value: Any) -> UUID:
     return UUID(str(value))
 
 
+# ....................... #
+
+
 def _claim_from_doc(doc: JsonDict) -> OutboxClaim:
     return OutboxClaim(
         id=_as_uuid(doc["id"]),

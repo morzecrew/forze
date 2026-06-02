@@ -8,7 +8,7 @@ from .deps import (
     OutboxQueryDepPort,
 )
 from .ports import OutboxCommandPort, OutboxQueryPort
-from .specs import OutboxDestination, OutboxSpec
+from .specs import OutboxDestination, OutboxDestinationKind, OutboxSpec
 from .value_objects import (
     IntegrationEvent,
     OutboxClaim,
@@ -27,6 +27,7 @@ __all__ = [
     "OutboxCommandPort",
     "OutboxDeps",
     "OutboxDestination",
+    "OutboxDestinationKind",
     "OutboxQueryDepKey",
     "OutboxQueryDepPort",
     "OutboxQueryPort",

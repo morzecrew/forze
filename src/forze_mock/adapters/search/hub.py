@@ -108,7 +108,7 @@ class MockHubSearchAdapter[M: BaseModel](
             page = page[: int(limit)]
         allowed = set(self.hub_spec.model_type.model_fields.keys())
         typed = [{k: v for k, v in doc.items() if k in allowed} for doc in page]
-        hits = self.hub_spec.resolved_row_codec.decode_mapping_many(typed)
+        hits = self.hub_spec.resolved_read_codec.decode_mapping_many(typed)
         return page_from_limit_offset(hits, pagination, total=None)
 
     async def search_page(
@@ -131,5 +131,5 @@ class MockHubSearchAdapter[M: BaseModel](
             page = page[: int(limit)]
         allowed = set(self.hub_spec.model_type.model_fields.keys())
         typed = [{k: v for k, v in doc.items() if k in allowed} for doc in page]
-        hits = self.hub_spec.resolved_row_codec.decode_mapping_many(typed)
+        hits = self.hub_spec.resolved_read_codec.decode_mapping_many(typed)
         return page_from_limit_offset(hits, pagination, total=len(ordered))

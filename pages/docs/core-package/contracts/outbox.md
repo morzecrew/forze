@@ -7,8 +7,8 @@ Transactional outbox for **integration events**: stage in the same database tran
 | Field | Purpose |
 |-------|---------|
 | `name` | Logical route (deps key route) |
-| `codec` | `RecordMappingCodec` for payload models |
-| `destination` | Optional `OutboxDestination(queue_route, queue)` for `relay_outbox_to_queue` |
+| `codec` | `ModelCodec` for payload models |
+| `destination` | Optional `OutboxDestination` (`queue`, `stream`, or `pubsub`) for relay helpers |
 
 ## Ports
 
@@ -48,12 +48,27 @@ Use `.set_route("mongo")` with `MongoTxScopeKey` when flushing via `MongoDepsMod
 | `mark_failed` | On relay errors (only from `processing`) |
 | `requeue_failed` | Reset `failed` rows to `pending` for re-drive |
 
+## `OutboxDestination`
+
+Discriminated relay target on :class:`OutboxSpec`:
+
+| `kind` | Factory | Relay function |
+|--------|---------|----------------|
+| `queue` | `OutboxDestination.queue(route=..., channel=...)` | `relay_outbox_to_queue` |
+| `stream` | `OutboxDestination.stream(route=..., channel=...)` | `relay_outbox_to_stream` |
+| `pubsub` | `OutboxDestination.pubsub(route=..., channel=...)` | `relay_outbox_to_pubsub` |
+
+- `route` must match the registered spec name (`QueueSpec.name`, `StreamSpec.name`, or `PubSubSpec.name`).
+- `channel` is the logical queue name, stream name, or pub/sub topic.
+
+Use :func:`~forze_kits.integrations.outbox.relay_outbox` to dispatch from `outbox_spec.destination.kind`.
+
 ## Relay
 
 ```python
 from datetime import timedelta
 
-from forze_kits.integrations.outbox import relay_outbox_to_queue
+from forze_kits.integrations.outbox import relay_outbox, relay_outbox_to_queue
 
 result = await relay_outbox_to_queue(
     ctx,
@@ -62,9 +77,19 @@ result = await relay_outbox_to_queue(
     reclaim_stale_after=timedelta(minutes=5),  # None to disable
 )
 # result.claimed, .published, .failed, .reclaimed
+
+# Or dispatch from OutboxSpec.destination:
+result = await relay_outbox(
+    ctx,
+    outbox_spec=events_spec,
+    queue_spec=jobs_spec,
+    reclaim_stale_after=timedelta(minutes=5),
+)
 ```
 
-Delivery is **at-least-once**: each claim is enqueued with `key=str(event_id)` when the queue backend supports deduplication. Enqueue and `mark_published` are not atomic.
+Delivery is **at-least-once**: each claim is published with `type=event_type` and `key=str(event_id)` when the backend supports metadata. Publish and `mark_published` are not atomic.
+
+For notifications after relay, see [Transactional notifications](../../recipes/transactional-notifications.md).
 
 Optional in-process polling (long-running apps only):
 

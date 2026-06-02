@@ -7,7 +7,7 @@ from pydantic import BaseModel
 
 from forze.application.contracts.outbox import OutboxSpec
 from forze.application.execution import DepsRegistry, ExecutionRuntime
-from forze.base.serialization import PydanticRecordMappingCodec
+from forze.base.serialization import PydanticModelCodec
 from forze_kits.integrations.outbox import outbox_flush_tx_on_success_factory
 from forze_mock import MockDepsModule, MockStateDepKey
 
@@ -18,7 +18,7 @@ class _Payload(BaseModel):
 
 @pytest.mark.asyncio
 async def test_outbox_flush_factory_flushes_staged_rows() -> None:
-    spec = OutboxSpec(name="events", codec=PydanticRecordMappingCodec(_Payload))
+    spec = OutboxSpec(name="events", codec=PydanticModelCodec(_Payload))
     module = MockDepsModule()
     runtime = ExecutionRuntime(deps=DepsRegistry.from_modules(module))
 

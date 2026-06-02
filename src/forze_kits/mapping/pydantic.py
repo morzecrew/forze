@@ -5,7 +5,7 @@ from pydantic import BaseModel
 
 from forze.application.contracts.mapping import Mapper, MapperFactory
 from forze.base.primitives import JsonDict
-from forze.base.serialization import PydanticRecordMappingCodec, apply_dict_patch
+from forze.base.serialization import PydanticModelCodec, apply_dict_patch
 from forze.domain.models import BaseDTO
 
 if TYPE_CHECKING:
@@ -53,9 +53,9 @@ class PydanticPipelineMapper[In: BaseModel, Out: BaseDTO](Mapper[In, Out]):
             return cast(Out, source)
 
         if not self.steps:
-            return PydanticRecordMappingCodec(self.out).transform(source)
+            return PydanticModelCodec(self.out).transform(source)
 
-        payload = PydanticRecordMappingCodec(self.in_).encode_mapping(
+        payload = PydanticModelCodec(self.in_).encode_mapping(
             source,
             exclude={"unset": True},
         )
@@ -64,7 +64,7 @@ class PydanticPipelineMapper[In: BaseModel, Out: BaseDTO](Mapper[In, Out]):
             patch = await step((source, payload))
             payload = apply_dict_patch(payload, patch)
 
-        return PydanticRecordMappingCodec(self.out).decode_mapping(payload)
+        return PydanticModelCodec(self.out).decode_mapping(payload)
 
 
 # ....................... #

@@ -69,7 +69,7 @@ class PostgresAnalyticsChunkedMixin[R: BaseModel, Ing: BaseModel](
             if not rows:
                 break
 
-            read_codec = cast(Any, host.spec.read_codec)
+            read_codec = cast(Any, host.spec.resolved_read_codec)
             typed = read_codec.decode_mapping_many(rows)
             collected += len(typed)
             offset += len(typed)

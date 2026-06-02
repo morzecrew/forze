@@ -22,7 +22,7 @@ from forze_kits.integrations.outbox import (
 from forze.application.contracts.execution import OnSuccessStep
 from forze.application.contracts.outbox import OutboxDestination, OutboxSpec
 from forze.application.contracts.queue import QueueSpec
-from forze.base.serialization import PydanticRecordMappingCodec
+from forze.base.serialization import PydanticModelCodec
 from forze_postgres import PostgresDepsModule
 from forze_postgres.execution.deps.configs import PostgresOutboxConfig
 
@@ -31,8 +31,8 @@ class ProjectCreated(BaseModel):
 
 events_spec = OutboxSpec(
     name="events",
-    codec=PydanticRecordMappingCodec(ProjectCreated),
-    destination=OutboxDestination(queue_route="jobs", queue="jobs"),
+    codec=PydanticModelCodec(ProjectCreated),
+    destination=OutboxDestination.queue(route="jobs", channel="jobs"),
 )
 jobs_spec = QueueSpec(name="jobs", codec=events_spec.codec)
 

@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from forze.domain.models import Document
+from tests.unit._gateway_codec_helpers import codec_for
 from forze_postgres.kernel.gateways import PostgresQualifiedName, PostgresReadGateway
 from forze_postgres.kernel.catalog.introspect import PostgresIntrospector
 from forze_postgres.kernel.client import PostgresClient
@@ -31,6 +32,7 @@ async def test_find_many_applies_implicit_limit_when_omitted() -> None:
         relation=("public", "t"),
         client=client,
         model_type=_Row,
+        codec=codec_for(_Row),
         introspector=intro,
         tenant_aware=False,
         find_many_implicit_limit=42,

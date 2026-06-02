@@ -138,7 +138,7 @@ async def execute_mongo_ranked_offset_search[M: BaseModel](
 
     if want_snap and result_snapshot is not None and rs_spec is not None:
         pool_len = len(normalized)
-        pool_snap = gw.spec.resolved_row_codec.decode_mapping_many(normalized)
+        pool_snap = gw.spec.resolved_read_codec.decode_mapping_many(normalized)
         handle_out = await result_snapshot.put_simple_ordered_hits(
             pool_snap,
             snap_opt=snapshot,
@@ -162,7 +162,7 @@ async def execute_mongo_ranked_offset_search[M: BaseModel](
         return_type=return_type,
         return_fields=return_fields,
         model_type=gw.model_type,
-        row_codec=gw.spec.resolved_row_codec,
+        codec=gw.spec.resolved_read_codec,
     )
 
     if return_count:

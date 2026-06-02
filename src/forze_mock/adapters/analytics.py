@@ -33,7 +33,7 @@ from forze.application.contracts.querying import (
 )
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
-from forze.base.serialization import PydanticRecordMappingCodec
+from forze.base.serialization import default_model_codec
 from forze_mock.query._types import T
 from forze_mock.query.cursors import (
     _mock_cursor_start_and_limit,  # type: ignore[reportPrivateUsage]
@@ -80,7 +80,7 @@ class MockAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
         if isinstance(
             params, BaseModel
         ):  # pyright: ignore[reportUnnecessaryIsInstance]
-            return PydanticRecordMappingCodec(defn.params).decode_mapping(
+            return default_model_codec(defn.params).decode_mapping(
                 params.model_dump(),
             )
         raise exc.internal("Analytics params must be a Pydantic model instance.")
@@ -148,7 +148,7 @@ class MockAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
         if return_fields is not None:
             data: list[Any] = self._to_projected(rows, return_fields)
         elif return_type is not None:
-            data = PydanticRecordMappingCodec(return_type).decode_mapping_many(rows)
+            data = default_model_codec(return_type).decode_mapping_many(rows)
         else:
             data = self._to_typed(rows)
 
@@ -186,7 +186,7 @@ class MockAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
         if return_fields is not None:
             hits: list[Any] = self._to_projected(page_rows, return_fields)
         elif return_type is not None:
-            hits = PydanticRecordMappingCodec(return_type).decode_mapping_many(page_rows)
+            hits = default_model_codec(return_type).decode_mapping_many(page_rows)
         else:
             hits = self._to_typed(page_rows)
 

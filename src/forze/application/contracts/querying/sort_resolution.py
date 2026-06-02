@@ -2,15 +2,14 @@
 
 from pydantic import BaseModel
 
+from forze.application.contracts.codecs import stored_field_names_for
 from forze.application.contracts.querying.expressions import QuerySortExpression
 from forze.base.exceptions import exc
-from forze.base.serialization import pydantic_field_names
 from forze.domain.constants import ID_FIELD
 
 # ----------------------- #
 
 _DIRECTIONS = ("asc", "desc")
-
 
 # ....................... #
 
@@ -18,7 +17,7 @@ _DIRECTIONS = ("asc", "desc")
 def read_fields_for_model(model: type[BaseModel]) -> frozenset[str]:
     """Pydantic field names on *model* (excludes computed fields)."""
 
-    return frozenset(pydantic_field_names(model, include_computed=False))
+    return stored_field_names_for(model, include_computed=False)
 
 
 # ....................... #

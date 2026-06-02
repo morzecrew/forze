@@ -44,12 +44,8 @@ from forze.application.integrations.document._limits import (
 )
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict, utcnow
-from forze.base.serialization import (
-    PydanticRecordMappingCodec,
-    RecordMappingCodec,
-    pydantic_transform,
-    resolve_row_codec,
-)
+from forze.application.contracts.codecs import default_model_codec
+from forze.base.serialization import ModelCodec
 from forze.domain.constants import ID_FIELD, REV_FIELD
 from forze_mock.query._types import (
     C,
@@ -87,21 +83,7 @@ class MockDocumentAdapter(
     read_model: type[R]
     domain_model: type[D] | None = None
 
-    row_codec: RecordMappingCodec[R, Any] | None = attrs.field(
-        default=None,
-        eq=False,
-        repr=False,
-    )
-
     # ....................... #
-
-    def __attrs_post_init__(self) -> None:
-        if self.row_codec is None:
-            object.__setattr__(
-                self,
-                "row_codec",
-                PydanticRecordMappingCodec(self.read_model),
-            )
 
     def _store(self) -> dict[UUID, JsonDict]:
         ns = partition_namespace(self.require_tenant_if_aware(), self.namespace)
@@ -119,12 +101,11 @@ class MockDocumentAdapter(
 
     # ....................... #
 
-    @property
-    def _read_codec(self) -> RecordMappingCodec[R, Any]:
-        return resolve_row_codec(self.row_codec, self.read_model)
+    def _read_codec(self) -> ModelCodec[R, Any]:
+        return self.spec.resolved_codecs.read
 
     def _to_read(self, doc: JsonDict) -> R:
-        return self._read_codec.decode_mapping(dict(doc))
+        return self._read_codec().decode_mapping(dict(doc))
 
     # ....................... #
 
@@ -135,8 +116,30 @@ class MockDocumentAdapter(
 
     # ....................... #
 
-    def _domain_codec(self) -> PydanticRecordMappingCodec[D]:
-        return PydanticRecordMappingCodec(self._require_domain_model())
+    def _domain_codec(self) -> ModelCodec[D, Any]:
+        domain = self.spec.resolved_codecs.domain
+        if domain is None:
+            raise exc.internal("Domain codec is required when write is enabled")
+        return domain
+
+    def _create_codec(self) -> ModelCodec[D, Any]:
+        create = self.spec.resolved_codecs.create
+        if create is None:
+            raise exc.internal("Create codec is required when write is enabled")
+        return create
+
+    def _patch_codec(self) -> ModelCodec[Any, Any]:
+        codecs = self.spec.resolved_codecs
+        if codecs.update is not None:
+            return codecs.update
+        if self.spec.write is not None:
+            domain = codecs.domain
+            if domain is None:
+                raise exc.internal(
+                    "Domain codec is required when update codec is not configured"
+                )
+            return domain
+        return self._read_codec()
 
     def _to_domain(self, doc: JsonDict) -> D:
         return self._domain_codec().decode_mapping(dict(doc))
@@ -425,7 +428,7 @@ class MockDocumentAdapter(
             total = len(aggregate_rows)
             ordered_rows = _sort_docs(aggregate_rows, sorts)
             rows = (
-                PydanticRecordMappingCodec(return_type).decode_mapping_many(ordered_rows)
+                default_model_codec(return_type).decode_mapping_many(ordered_rows)
                 if return_type is not None
                 else ordered_rows
             )
@@ -445,7 +448,7 @@ class MockDocumentAdapter(
                     else:
                         dict_rows.append(dict(row))
 
-                rows = PydanticRecordMappingCodec(return_type).decode_mapping_many(dict_rows)
+                rows = default_model_codec(return_type).decode_mapping_many(dict_rows)
             else:
                 rows = [
                     self._to_read_or_projection(doc, return_fields)
@@ -680,7 +683,7 @@ class MockDocumentAdapter(
     ) -> CursorPage[T]:
         page = await self.find_cursor(filters=filters, cursor=cursor, sorts=sorts)
         return CursorPage(
-            hits=[PydanticRecordMappingCodec(return_type).decode_mapping(hit.model_dump(mode="json")) for hit in page.hits],  # type: ignore[union-attr]
+            hits=[default_model_codec(return_type).decode_mapping(hit.model_dump(mode="json")) for hit in page.hits],  # type: ignore[union-attr]
             next_cursor=page.next_cursor,
             prev_cursor=page.prev_cursor,
             has_more=page.has_more,
@@ -888,9 +891,9 @@ class MockDocumentAdapter(
     async def create(self, dto: C, *, return_new: Literal[False]) -> None: ...
 
     async def create(self, dto: C, *, return_new: bool = True) -> R | None:
-        domain_model = self._require_domain_model()
-        domain = pydantic_transform(domain_model, dto)
-        serialized = PydanticRecordMappingCodec(domain_model).encode_persistence_mapping(domain)
+        self._require_domain_model()
+        domain = self._create_codec().transform(dto)
+        serialized = self._domain_codec().encode_persistence_mapping(domain)
 
         if self.tenant_aware:
             tid = self.require_tenant_if_aware()
@@ -961,8 +964,8 @@ class MockDocumentAdapter(
     async def ensure(self, dto: C, *, return_new: bool = True) -> R | None:
         require_create_id(dto)
 
-        domain_model = self._require_domain_model()
-        domain = pydantic_transform(domain_model, dto)
+        self._require_domain_model()
+        domain = self._create_codec().transform(dto)
 
         with self.state.lock:
             store = self._store()
@@ -1042,8 +1045,8 @@ class MockDocumentAdapter(
     ) -> R | None:
         require_create_id(create_dto)
 
-        domain_model = self._require_domain_model()
-        domain = pydantic_transform(domain_model, create_dto)
+        self._require_domain_model()
+        domain = self._create_codec().transform(create_dto)
         with self.state.lock:
             if domain.id in self._store():
                 rev = self._to_domain(dict(self._store()[domain.id])).rev
@@ -1152,7 +1155,7 @@ class MockDocumentAdapter(
         return_new: bool = True,
         return_diff: bool = False,
     ) -> R | JsonDict | None | tuple[R, JsonDict]:
-        patch = self._domain_codec().encode_mapping(
+        patch = self._patch_codec().encode_persistence_mapping(
             cast(Any, dto),
             exclude={"unset": True},
         )
@@ -1295,7 +1298,7 @@ class MockDocumentAdapter(
         if not self.spec.supports_update():
             raise exc.internal("Update command type is not supported for this model")
 
-        patch = self._domain_codec().encode_mapping(
+        patch = self._patch_codec().encode_persistence_mapping(
             cast(Any, dto),
             exclude={"unset": True},
         )

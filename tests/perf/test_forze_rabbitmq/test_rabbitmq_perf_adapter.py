@@ -11,7 +11,7 @@ pytest.importorskip("aio_pika")
 
 from forze_rabbitmq.adapters import RabbitMQQueueAdapter, RabbitMQQueueCodec
 from forze_rabbitmq.kernel.client import RabbitMQClient
-from forze.base.serialization import PydanticRecordMappingCodec
+from forze.base.serialization import PydanticModelCodec
 
 
 class _QueuePayload(BaseModel):
@@ -31,7 +31,7 @@ async def rabbitmq_queue(
     """Provide a RabbitMQQueueAdapter with a unique namespace per test."""
     return RabbitMQQueueAdapter(
         client=rabbitmq_client,
-        codec=RabbitMQQueueCodec(payload_codec=PydanticRecordMappingCodec(_QueuePayload)),
+        codec=RabbitMQQueueCodec(payload_codec=PydanticModelCodec(_QueuePayload)),
         namespace=_perf_namespace("queue"),
     )
 

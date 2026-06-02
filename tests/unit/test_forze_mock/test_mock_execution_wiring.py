@@ -34,7 +34,7 @@ from forze.application.contracts.search import (
     SearchSpec,
 )
 from forze.application.contracts.secrets import SecretsDepKey
-from forze.base.serialization import PydanticRecordMappingCodec
+from forze.base.serialization import PydanticModelCodec
 from datetime import timedelta
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
 from tests.support.execution_context import context_from_deps
@@ -119,7 +119,7 @@ def test_mock_deps_module_resolves_shared_state_and_core_ports() -> None:
 
     evt_spec = DurableFunctionEventSpec(
         name="evt",
-        codec=PydanticRecordMappingCodec(model_type=_S),
+        codec=PydanticModelCodec(model_type=_S),
     )
     assert ctx.deps.provide(DurableFunctionEventCommandDepKey)(ctx, evt_spec) is not None
     assert ctx.deps.provide(DurableFunctionStepDepKey) is not None

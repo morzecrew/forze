@@ -7,7 +7,7 @@ import pytest
 from forze.base.exceptions import CoreException
 from pydantic import BaseModel
 
-from forze.base.serialization import PydanticRecordMappingCodec
+from forze.base.serialization import PydanticModelCodec
 from forze_redis.adapters.pubsub import RedisPubSubAdapter, RedisPubSubCodec
 from forze_redis.kernel.client import RedisClient
 
@@ -17,7 +17,7 @@ class _Payload(BaseModel):
 
 
 def test_pubsub_codec_encode_decode_roundtrip() -> None:
-    codec = RedisPubSubCodec(payload_codec=PydanticRecordMappingCodec(_Payload))
+    codec = RedisPubSubCodec(payload_codec=PydanticModelCodec(_Payload))
     payload = _Payload(value="hello")
     now = datetime(2025, 1, 1, 12, 0, 0)
 
@@ -37,7 +37,7 @@ def test_pubsub_codec_encode_decode_roundtrip() -> None:
 
 
 def test_pubsub_codec_decode_without_payload_raises() -> None:
-    codec = RedisPubSubCodec(payload_codec=PydanticRecordMappingCodec(_Payload))
+    codec = RedisPubSubCodec(payload_codec=PydanticModelCodec(_Payload))
 
     with pytest.raises(CoreException, match="has no payload"):
         codec.decode("orders", b'{"type":"created"}')
@@ -49,7 +49,7 @@ async def test_pubsub_adapter_publish_calls_client_publish() -> None:
     client.publish = AsyncMock(return_value=1)
     adapter = RedisPubSubAdapter(
         client=client,
-        codec=RedisPubSubCodec(payload_codec=PydanticRecordMappingCodec(_Payload)),
+        codec=RedisPubSubCodec(payload_codec=PydanticModelCodec(_Payload)),
     )
 
     await adapter.publish("orders", _Payload(value="hello"))
@@ -60,7 +60,7 @@ async def test_pubsub_adapter_publish_calls_client_publish() -> None:
 @pytest.mark.asyncio
 async def test_pubsub_adapter_subscribe_decodes_messages() -> None:
     client = Mock(spec=RedisClient)
-    codec = RedisPubSubCodec(payload_codec=PydanticRecordMappingCodec(_Payload))
+    codec = RedisPubSubCodec(payload_codec=PydanticModelCodec(_Payload))
     captured: dict[str, object] = {}
 
     async def _iter():
@@ -87,7 +87,7 @@ async def test_pubsub_adapter_subscribe_decodes_messages() -> None:
 @pytest.mark.asyncio
 async def test_pubsub_adapter_subscribe_passes_timeout() -> None:
     client = Mock(spec=RedisClient)
-    codec = RedisPubSubCodec(payload_codec=PydanticRecordMappingCodec(_Payload))
+    codec = RedisPubSubCodec(payload_codec=PydanticModelCodec(_Payload))
     captured: dict[str, object] = {}
 
     async def _iter():

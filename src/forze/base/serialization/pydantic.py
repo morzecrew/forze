@@ -1,7 +1,6 @@
 """Serialization and utility helpers around Pydantic models."""
 
 import hashlib
-import warnings
 from decimal import Decimal
 from functools import lru_cache
 from typing import Any, Final, Iterator, Literal, Sequence
@@ -12,7 +11,7 @@ from pydantic import BaseModel, SecretStr, TypeAdapter
 from .._logger import logger
 from ..exceptions import exc
 from ..primitives import JsonDict
-from .model_codec import RecordMappingDumpExcludeOptions
+from .model_codec import ModelDumpExcludeOptions
 
 # ----------------------- #
 
@@ -180,7 +179,7 @@ def pydantic_dump(
     obj: BaseModel,
     *,
     mode: Literal["json", "python"] = "python",
-    exclude: RecordMappingDumpExcludeOptions = {},
+    exclude: ModelDumpExcludeOptions = {},
 ) -> JsonDict:
     """Dump a Pydantic model into a JSON-compatible ``dict``.
 
@@ -212,7 +211,7 @@ def pydantic_dump(
 def pydantic_encode_json_bytes(
     obj: BaseModel,
     *,
-    exclude: RecordMappingDumpExcludeOptions = {},
+    exclude: ModelDumpExcludeOptions = {},
 ) -> bytes:
     """Serialize a Pydantic model to JSON UTF-8 bytes for wire transport."""
 
@@ -264,7 +263,7 @@ def pydantic_dump_many(
     objs: Sequence[BaseModel],
     *,
     mode: Literal["json", "python"] = "python",
-    exclude: RecordMappingDumpExcludeOptions = {},
+    exclude: ModelDumpExcludeOptions = {},
 ) -> list[JsonDict]:
     """Dump a list of Pydantic models into a list of JSON-compatible ``dict``.
 
@@ -307,7 +306,7 @@ def pydantic_dump_many_batched(
     *,
     batch_size: int = 2000,
     mode: Literal["json", "python"] = "python",
-    exclude: RecordMappingDumpExcludeOptions = {},
+    exclude: ModelDumpExcludeOptions = {},
 ) -> Iterator[list[JsonDict]]:
     """Dump models in fixed-size chunks to cap peak memory.
 
@@ -404,7 +403,7 @@ def _normalize_for_hashing(value: Any) -> Any:
 def pydantic_model_hash(
     model: BaseModel,
     *,
-    exclude: RecordMappingDumpExcludeOptions = {},
+    exclude: ModelDumpExcludeOptions = {},
 ) -> str:
     """Return a stable SHA-256 hash for the serialized model.
 
@@ -429,8 +428,8 @@ def pydantic_model_hash(
 
 # ....................... #
 
-CACHE_DUMP_EXCLUDE_OPTS: Final[RecordMappingDumpExcludeOptions] = (
-    RecordMappingDumpExcludeOptions(
+CACHE_DUMP_EXCLUDE_OPTS: Final[ModelDumpExcludeOptions] = (
+    ModelDumpExcludeOptions(
         none=True,
         defaults=True,
         computed_fields=True,
@@ -440,31 +439,10 @@ CACHE_DUMP_EXCLUDE_OPTS: Final[RecordMappingDumpExcludeOptions] = (
 _CACHE_EXCLUDE_OPTS = CACHE_DUMP_EXCLUDE_OPTS
 
 
-@warnings.deprecated(
-    "Use PydanticRecordMappingCodec(model).encode_json_bytes("
-    "obj, exclude=CACHE_DUMP_EXCLUDE_OPTS) instead.",
-    category=DeprecationWarning,
-)
-def pydantic_cache_dump(obj: BaseModel) -> JsonDict:
-    """Convenience helper for dumping a Pydantic model for cache storage."""
-
-    return pydantic_dump(obj, exclude=_CACHE_EXCLUDE_OPTS, mode="json")
-
-
-@warnings.deprecated(
-    "Use PydanticRecordMappingCodec(model).encode_json_bytes per row instead.",
-    category=DeprecationWarning,
-)
-def pydantic_cache_dump_many(objs: Sequence[BaseModel]) -> list[JsonDict]:
-    """Convenience helper for dumping a list of Pydantic models for cache storage."""
-
-    return pydantic_dump_many(objs, exclude=_CACHE_EXCLUDE_OPTS, mode="json")
-
-
 # ....................... #
 
-PERSISTENCE_DUMP_EXCLUDE_OPTS: Final[RecordMappingDumpExcludeOptions] = (
-    RecordMappingDumpExcludeOptions(
+PERSISTENCE_DUMP_EXCLUDE_OPTS: Final[ModelDumpExcludeOptions] = (
+    ModelDumpExcludeOptions(
         computed_fields=True,
     )
 )
@@ -473,17 +451,17 @@ _PERSISTENCE_EXCLUDE_OPTS = PERSISTENCE_DUMP_EXCLUDE_OPTS
 
 
 def _merge_dump_exclude(
-    exclude: RecordMappingDumpExcludeOptions,
-    base: RecordMappingDumpExcludeOptions,
-) -> RecordMappingDumpExcludeOptions:
-    return RecordMappingDumpExcludeOptions({**base, **exclude})
+    exclude: ModelDumpExcludeOptions,
+    base: ModelDumpExcludeOptions,
+) -> ModelDumpExcludeOptions:
+    return ModelDumpExcludeOptions({**base, **exclude})
 
 
 def pydantic_persistence_dump(
     obj: BaseModel,
     *,
     mode: Literal["json", "python"] = "python",
-    exclude: RecordMappingDumpExcludeOptions = {},
+    exclude: ModelDumpExcludeOptions = {},
 ) -> JsonDict:
     """Dump a Pydantic model for document store read/write (omits computed fields)."""
 
@@ -498,7 +476,7 @@ def pydantic_persistence_dump_many(
     objs: Sequence[BaseModel],
     *,
     mode: Literal["json", "python"] = "python",
-    exclude: RecordMappingDumpExcludeOptions = {},
+    exclude: ModelDumpExcludeOptions = {},
 ) -> list[JsonDict]:
     """Dump models for document store bulk operations (omits computed fields)."""
 
@@ -517,7 +495,7 @@ def pydantic_transform[Out: BaseModel](
     model: BaseModel,
     *,
     mode: Literal["json", "python"] = "python",
-    exclude: RecordMappingDumpExcludeOptions = {"unset": True},
+    exclude: ModelDumpExcludeOptions = {"unset": True},
 ) -> Out:
     """Convenience helper for model-to-model transformations."""
 
@@ -534,7 +512,7 @@ def pydantic_transform_many[Out: BaseModel](
     models: Sequence[BaseModel],
     *,
     mode: Literal["json", "python"] = "python",
-    exclude: RecordMappingDumpExcludeOptions = {"unset": True},
+    exclude: ModelDumpExcludeOptions = {"unset": True},
 ) -> list[Out]:
     """Batch model-to-model transformation.
 

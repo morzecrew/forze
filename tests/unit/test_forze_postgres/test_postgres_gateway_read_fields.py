@@ -5,6 +5,7 @@ from unittest.mock import MagicMock
 from forze.domain.models import Document
 
 from forze_postgres.kernel.gateways import PostgresGateway, PostgresQualifiedName
+from tests.unit._gateway_codec_helpers import codec_for
 from forze_postgres.kernel.catalog.introspect import PostgresIntrospector
 
 
@@ -19,6 +20,7 @@ def test_read_fields_is_frozenset_and_stable() -> None:
         relation=("public", "items"),
         client=MagicMock(),
         model_type=_Doc,
+        codec=codec_for(_Doc),
         introspector=intro,
         tenant_aware=False,
     )

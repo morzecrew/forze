@@ -12,6 +12,7 @@ from forze.domain.models import Document
 from forze_postgres.kernel.gateways import PostgresHistoryGateway, PostgresQualifiedName
 from forze_postgres.kernel.catalog.introspect import PostgresIntrospector, PostgresType
 from forze_postgres.kernel.client.client import PostgresClient
+from tests.unit._gateway_codec_helpers import history_codecs_for
 
 pytest.importorskip("psycopg")
 
@@ -46,6 +47,7 @@ def _gw(
 ) -> PostgresHistoryGateway[_HDom]:
     intro = introspector or MagicMock(spec=PostgresIntrospector)
     intro.get_column_types = AsyncMock(return_value=_history_column_types())
+    domain_codec, history_codec = history_codecs_for(_HDom)
 
     return PostgresHistoryGateway(
         relation=("public", "hist_t"),
@@ -53,6 +55,8 @@ def _gw(
         strategy=strategy,  # type: ignore[arg-type]
         client=client,  # type: ignore[arg-type]
         model_type=_HDom,
+        codec=domain_codec,
+        history_codec=history_codec,
         introspector=intro,
         tenant_aware=False,
         tenant_provider=lambda: None,
@@ -67,6 +71,8 @@ class TestPostgresHistoryGatewayInit:
         intro = MagicMock(spec=PostgresIntrospector)
         intro.get_column_types = AsyncMock(return_value=_history_column_types())
 
+        domain_codec, history_codec = history_codecs_for(_HDom)
+
         with pytest.raises(CoreException, match="Invalid bookkeeping strategy"):
             PostgresHistoryGateway(
                 relation=("public", "h"),
@@ -74,6 +80,8 @@ class TestPostgresHistoryGatewayInit:
                 strategy="invalid",  # type: ignore[arg-type]
                 client=client,
                 model_type=_HDom,
+                codec=domain_codec,
+                history_codec=history_codec,
                 introspector=intro,
             )
 

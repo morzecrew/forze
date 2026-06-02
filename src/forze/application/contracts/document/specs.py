@@ -1,6 +1,6 @@
 """Specifications for document models and storage layout."""
 
-from typing import Any, Generic, NotRequired, TypedDict, TypeVar, final
+from typing import Any, Generic, TypeVar, final
 
 import attrs
 from pydantic import BaseModel
@@ -11,6 +11,9 @@ from ..base import BaseSpec
 from ..cache import CacheSpec
 from ..querying import QuerySortExpression
 from ..querying.sort_resolution import read_fields_for_model, validate_sort_fields
+from ..codecs import stored_field_names_for
+from .codecs import DocumentCodecs, document_codecs_for_spec
+from .write_types import DocumentWriteTypes
 
 # ----------------------- #
 
@@ -20,23 +23,6 @@ R = TypeVar("R", bound=BaseModel)
 D = TypeVar("D", bound=Document, default=Any)
 C = TypeVar("C", bound=CreateDocumentCmd, default=Any)
 U = TypeVar("U", bound=BaseDTO, default=Any)
-
-# ....................... #
-
-
-@final
-class DocumentWriteTypes(TypedDict, Generic[D, C, U]):
-    """Write models for a document aggregate."""
-
-    domain: type[D]
-    """Model type for the domain model."""
-
-    create_cmd: type[C]
-    """Model type for the create command."""
-
-    update_cmd: NotRequired[type[U]]
-    """Model type for the update command."""
-
 
 # ....................... #
 
@@ -61,6 +47,28 @@ class DocumentSpec(BaseSpec, Generic[R, D, C, U]):
     default_sort: QuerySortExpression | None = attrs.field(default=None)
     """Default ``sorts`` when callers omit them (required for read models without ``id``)."""
 
+    codecs: DocumentCodecs[R, D, C, U] | None = attrs.field(
+        default=None,
+        eq=False,
+        repr=False,
+    )
+    """Optional codec overrides; defaults are derived from model types."""
+
+    # ....................... #
+
+    @property
+    def resolved_codecs(self) -> DocumentCodecs[R, D, C, U]:
+        """Codecs for this aggregate (explicit or auto-derived)."""
+
+        if self.codecs is not None:
+            return self.codecs
+
+        return document_codecs_for_spec(
+            read=self.read,
+            write=self.write,
+            history_enabled=self.history_enabled,
+        )
+
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
@@ -82,4 +90,9 @@ class DocumentSpec(BaseSpec, Generic[R, D, C, U]):
         if "update_cmd" not in self.write:
             return False
 
-        return self.write["update_cmd"].model_fields != {}
+        return bool(
+            stored_field_names_for(
+                self.write["update_cmd"],
+                include_computed=False,
+            )
+        )

@@ -115,7 +115,7 @@ See [Background Workflow](../recipes/background-workflow.md) for the long-form b
 
 ### Serialization settings
 
-The adapter encodes message bodies safely for SQS and stores message metadata in SQS message attributes. Bind a `RecordMappingCodec` on `QueueSpec` (for example `PydanticRecordMappingCodec`) to validate payloads after receive.
+The adapter encodes message bodies safely for SQS and stores message metadata in SQS message attributes. Bind a `ModelCodec` on `QueueSpec` (for example `PydanticModelCodec`) to validate payloads after receive.
 
 ### Delayed delivery
 

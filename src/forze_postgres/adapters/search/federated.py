@@ -30,7 +30,7 @@ from forze.application.contracts.search import (
 )
 from forze.application.integrations.search import SearchResultSnapshot
 from forze.base.exceptions import exc
-from forze.base.serialization import PydanticRecordMappingCodec
+from forze.base.serialization import default_model_codec
 
 from ...kernel.client import PostgresClientPort, gather_db_work
 from ._port import PostgresSearchPortMixin
@@ -347,7 +347,7 @@ class PostgresFederatedSearchAdapter[M: BaseModel](
                 }
                 for it in window
             ]
-            v = PydanticRecordMappingCodec(return_type).decode_mapping_many(rows)
+            v = default_model_codec(return_type).decode_mapping_many(rows)
             if return_count:
                 return page_from_limit_offset(
                     v,

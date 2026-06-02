@@ -2,7 +2,7 @@
 
 from pydantic import BaseModel
 
-from forze.base.serialization import pydantic_field_names
+from forze.application.contracts.codecs import stored_field_names_for
 
 # ----------------------- #
 
@@ -23,7 +23,7 @@ def can_hydrate_read_from_write_domain(
     if read_source_key != write_source_key:
         return False
 
-    read_fields = pydantic_field_names(read_model, include_computed=False)
-    domain_fields = pydantic_field_names(domain_model, include_computed=False)
+    read_fields = stored_field_names_for(read_model, include_computed=False)
+    domain_fields = stored_field_names_for(domain_model, include_computed=False)
 
     return read_fields <= domain_fields

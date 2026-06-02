@@ -13,7 +13,7 @@ import attrs
 from psycopg import sql
 
 from forze.base.exceptions import exc
-from forze.base.serialization import PydanticRecordMappingCodec
+from forze.base.serialization import ModelCodec
 from forze.domain.constants import (
     HISTORY_DATA_FIELD,
     HISTORY_SOURCE_FIELD,
@@ -40,6 +40,9 @@ class PostgresHistoryGateway[D: Document](PostgresGateway[D]):
     target_relation: RelationSpec
     """Write-table relation (schema, name) or resolver for ``HISTORY_SOURCE_FIELD``."""
 
+    history_codec: ModelCodec[Any, Any] = attrs.field(kw_only=True, eq=False, repr=False)
+    """Codec for :class:`~forze.domain.models.DocumentHistory` persistence rows."""
+
     _target_qname_resolved: PostgresQualifiedName | None = attrs.field(
         default=None,
         init=False,
@@ -54,6 +57,8 @@ class PostgresHistoryGateway[D: Document](PostgresGateway[D]):
 
         if self.strategy not in get_args(PostgresBookkeepingStrategy):
             raise exc.internal(f"Invalid bookkeeping strategy: {self.strategy}")
+
+    # ....................... #
 
     # ....................... #
 
@@ -155,11 +160,7 @@ class PostgresHistoryGateway[D: Document](PostgresGateway[D]):
             return
 
         record = await self._from_data(data)
-        insert_data_raw = PydanticRecordMappingCodec(
-            DocumentHistory[D]
-        ).encode_persistence_mapping(
-            record,
-        )
+        insert_data_raw = self.history_codec.encode_persistence_mapping(record)
         insert_data = await self.adapt_payload_for_write(insert_data_raw)
 
         cols = [sql.Identifier(k) for k in insert_data.keys()]
@@ -181,9 +182,7 @@ class PostgresHistoryGateway[D: Document](PostgresGateway[D]):
             return
 
         records = [await self._from_data(item) for item in data]
-        insert_data_raw = PydanticRecordMappingCodec(
-            DocumentHistory[D],
-        ).encode_persistence_mapping_many(records)
+        insert_data_raw = self.history_codec.encode_persistence_mapping_many(records)
 
         insert_data = await self.adapt_many_payload_for_write(insert_data_raw)
 

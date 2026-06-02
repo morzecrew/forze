@@ -1,4 +1,4 @@
-"""Parity between PydanticRecordMappingCodec and direct pydantic helpers."""
+"""Parity between PydanticModelCodec and direct pydantic helpers."""
 
 from datetime import datetime
 from decimal import Decimal
@@ -6,11 +6,8 @@ from uuid import UUID, uuid4
 
 from pydantic import BaseModel
 
-from forze.base.serialization import (
-    PydanticRecordMappingCodec,
-    pydantic_validate,
-    pydantic_validate_many,
-)
+from forze.base.serialization import PydanticModelCodec
+from forze.base.serialization.pydantic import pydantic_validate, pydantic_validate_many
 
 
 class _RowModel(BaseModel):
@@ -29,7 +26,7 @@ def test_codec_decode_matches_pydantic_validate() -> None:
         "amount": Decimal("1.25"),
         "created_at": datetime(2024, 6, 1, 12, 0, 0),
     }
-    codec = PydanticRecordMappingCodec(_RowModel)
+    codec = PydanticModelCodec(_RowModel)
 
     assert codec.decode_mapping(row) == pydantic_validate(_RowModel, row)
 
@@ -45,6 +42,6 @@ def test_codec_decode_many_matches_pydantic_validate_many() -> None:
         }
         for i in range(5)
     ]
-    codec = PydanticRecordMappingCodec(_RowModel)
+    codec = PydanticModelCodec(_RowModel)
 
     assert codec.decode_mapping_many(rows) == pydantic_validate_many(_RowModel, rows)

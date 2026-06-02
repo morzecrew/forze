@@ -337,6 +337,7 @@ async def test_fts_adapter_v2_direct_projection_heap_and_index_field_map(
         index_field_map={"title": "c1", "content": "c2"},
         client=pg_client,
         model_type=FtsArticle,
+        codec=spec.resolved_read_codec,
         introspector=introspector,
         tenant_provider=None,
         tenant_aware=False,

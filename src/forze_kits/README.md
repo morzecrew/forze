@@ -11,7 +11,7 @@ forze_kits/
   aggregates/       # document, search, storage, authn (registry, facade, handlers/)
   mapping/          # Pydantic pipeline mapper factory and steps
   dto/              # shared pagination request/response DTOs
-  integrations/     # outbox (notify planned)
+  integrations/     # outbox relay, notify routing
   adapters/         # secrets (local SecretsPort backends)
   scopes/           # DistributedLockScope, …
 ```
@@ -25,7 +25,7 @@ forze_kits/
 | Default handlers | `forze_kits.aggregates.<name>.handlers` |
 | DTO mapping | `forze_kits.mapping` |
 | Pagination DTOs | `forze_kits.dto` |
-| Integration flow | `forze_kits.integrations.outbox` |
+| Integration flow | `forze_kits.integrations.outbox`, `forze_kits.integrations.notify` |
 | Local port adapter | `forze_kits.adapters.secrets` |
 | Runtime ergonomics | `forze_kits.scopes` |
 

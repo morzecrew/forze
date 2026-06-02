@@ -18,6 +18,7 @@ from forze_postgres.kernel.gateways import (
 )
 from forze_postgres.kernel.catalog.introspect import PostgresIntrospector, PostgresType
 from forze_postgres.kernel.client import PostgresClient
+from tests.unit._gateway_codec_helpers import write_codecs_for
 
 class MyDoc(Document):
     name: str
@@ -48,14 +49,23 @@ def _build_gateway() -> (
     read.client = client
     read.tenant_aware = False
 
+    domain_codec, create_codec, update_codec = write_codecs_for(
+        domain_type=MyDoc,
+        create_type=MyCreateDoc,
+        update_type=MyUpdateDoc,
+    )
+
     gw = PostgresWriteGateway(
         relation=("public", "docs"),
         client=client,
         model_type=MyDoc,
+        codec=domain_codec,
         introspector=introspector,
         read_gw=read,
         create_cmd_type=MyCreateDoc,
         update_cmd_type=MyUpdateDoc,
+        create_codec=create_codec,
+        update_codec=update_codec,
         strategy="application",
     )
     return gw, client
@@ -296,14 +306,23 @@ def _build_tenant_aware_gateway() -> (
     read.client = client
     read.tenant_aware = True
 
+    domain_codec, create_codec, update_codec = write_codecs_for(
+        domain_type=MyDoc,
+        create_type=MyCreateDoc,
+        update_type=MyUpdateDoc,
+    )
+
     gw = PostgresWriteGateway(
         relation=("public", "docs"),
         client=client,
         model_type=MyDoc,
+        codec=domain_codec,
         introspector=introspector,
         read_gw=read,
         create_cmd_type=MyCreateDoc,
         update_cmd_type=MyUpdateDoc,
+        create_codec=create_codec,
+        update_codec=update_codec,
         strategy="application",
         tenant_aware=True,
         tenant_provider=lambda: TenantIdentity(tenant_id=tid),
@@ -363,3 +382,82 @@ async def test_update_tenant_aware_includes_tenant_in_where_params() -> None:
 
     params = client.fetch_one.await_args.args[1]
     assert tid in params
+
+
+@pytest.mark.asyncio
+async def test_create_and_update_use_dedicated_codecs() -> None:
+    """Create/update paths must use create_codec and update_codec, not domain_codec alone."""
+    ts = datetime(2025, 1, 1, tzinfo=UTC)
+    pk = UUID("11111111-1111-1111-1111-111111111111")
+    dto = MyCreateDoc(id=pk, created_at=ts, name="new")
+    model = MyDoc(id=pk, rev=1, created_at=ts, last_update_at=ts, name="new")
+    current = MyDoc(id=pk, rev=1, created_at=ts, last_update_at=ts, name="before")
+
+    create_codec = MagicMock()
+    create_codec.transform.return_value = model
+    create_codec.transform_many.return_value = [model]
+
+    update_codec = MagicMock()
+    update_codec.encode_persistence_mapping.return_value = {"name": "after"}
+
+    read_codec = MagicMock()
+    read_codec.encode_persistence_mapping.return_value = {
+        "id": pk,
+        "rev": 1,
+        "created_at": ts,
+        "last_update_at": ts,
+        "name": "new",
+    }
+
+    client = MagicMock(spec=PostgresClient)
+    client.fetch_one = AsyncMock(return_value=_row(pk=pk, name="new", ts=ts))
+    client.gather_concurrency_semaphore = MagicMock(
+        return_value=asyncio.Semaphore(8),
+    )
+
+    introspector = MagicMock(spec=PostgresIntrospector)
+    introspector.get_column_types = AsyncMock(return_value={})
+    introspector.get_primary_key_columns = AsyncMock(return_value=(ID_FIELD,))
+    introspector.constraint_exists_for_columns = AsyncMock(return_value=True)
+
+    read = MagicMock(spec=PostgresReadGateway)
+    read.relation = ("public", "docs")
+    read.client = client
+    read.tenant_aware = False
+    read.get = AsyncMock(return_value=current)
+
+    gw = PostgresWriteGateway(
+        relation=("public", "docs"),
+        client=client,
+        model_type=MyDoc,
+        codec=read_codec,
+        introspector=introspector,
+        read_gw=read,
+        create_cmd_type=MyCreateDoc,
+        update_cmd_type=MyUpdateDoc,
+        create_codec=create_codec,
+        update_codec=update_codec,
+        strategy="application",
+    )
+
+    await gw.create(dto)
+
+    create_codec.transform.assert_called_once_with(dto)
+    read_codec.encode_persistence_mapping.assert_called_once_with(model)
+
+    client.fetch_one = AsyncMock(
+        return_value={
+            "id": pk,
+            "rev": 2,
+            "created_at": ts,
+            "last_update_at": ts,
+            "name": "after",
+        }
+    )
+
+    await gw.update(pk, MyUpdateDoc(name="after"))
+
+    update_codec.encode_persistence_mapping.assert_called_once_with(
+        MyUpdateDoc(name="after"),
+        exclude={"unset": True},
+    )

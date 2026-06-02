@@ -8,7 +8,7 @@ from pydantic import SecretStr
 from forze.application.contracts.execution import LifecycleHook, LifecycleStep
 from forze.application.execution import ExecutionContext
 from forze.application.execution.lifecycle.builtin import routed_client_lifecycle_step
-from forze.base.serialization import pydantic_secret_converter
+from forze.base.serialization.pydantic import pydantic_secret_converter
 from forze_meilisearch.execution.deps.keys import MeilisearchClientDepKey
 from forze_meilisearch.kernel.client import (
     MeilisearchClient,

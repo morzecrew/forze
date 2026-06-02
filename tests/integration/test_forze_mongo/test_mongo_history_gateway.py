@@ -18,6 +18,7 @@ from forze_kits.domain.soft_deletion import SoftDeletionMixin
 from forze.domain.models import Document
 from forze_mongo.kernel.gateways.history import MongoHistoryGateway
 from forze_mongo.kernel.client import MongoClient
+from tests.unit._gateway_codec_helpers import history_codecs_for
 
 class HistDoc(Document, SoftDeletionMixin):
     title: str
@@ -39,11 +40,14 @@ async def _gw(
     target_coll: str,
 ) -> MongoHistoryGateway[HistDoc]:
     db_name = (await client.db()).name
+    domain_codec, history_codec = history_codecs_for(HistDoc)
     return MongoHistoryGateway(
         relation=(db_name, hist_coll),
         target_relation=(db_name, target_coll),
         client=client,
         model_type=HistDoc,
+        codec=domain_codec,
+        history_codec=history_codec,
         tenant_aware=False,
     )
 

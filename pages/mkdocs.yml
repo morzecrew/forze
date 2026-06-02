@@ -75,6 +75,7 @@ nav:
     - Background Workflow: recipes/background-workflow.md
     - Scheduled Queue Jobs: recipes/scheduled-queue-jobs.md
     - Transactional outbox: recipes/transactional-outbox.md
+    - Transactional notifications: recipes/transactional-notifications.md
 
   - Reference:
     - Overview: reference/index.md

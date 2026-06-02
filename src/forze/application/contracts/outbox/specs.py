@@ -1,15 +1,17 @@
 """Outbox and integration-event specifications."""
 
-from typing import Any, final
+from typing import Any, Literal, Self, final
 
 import attrs
 
 from forze.base.primitives import StrKey
-from forze.base.serialization import RecordMappingCodec
+from forze.base.serialization import ModelCodec
 
 from ..base import BaseSpec
 
 # ----------------------- #
+
+OutboxDestinationKind = Literal["queue", "stream", "pubsub"]
 
 
 @final
@@ -17,11 +19,34 @@ from ..base import BaseSpec
 class OutboxDestination:
     """Relay target for staged integration events."""
 
-    queue_route: StrKey
-    """Route name of the registered :class:`~forze.application.contracts.queue.QueueSpec`."""
+    kind: OutboxDestinationKind
+    """Transport kind: queue, stream, or pubsub."""
 
-    queue: str
-    """Logical queue channel passed to :meth:`~forze.application.contracts.queue.QueueCommandPort.enqueue`."""
+    route: StrKey
+    """Deps route name of the registered transport spec (``QueueSpec``, ``StreamSpec``, ``PubSubSpec``)."""
+
+    channel: str
+    """Logical channel: queue name, stream name, or pubsub topic."""
+
+    # ....................... #
+
+    @classmethod
+    def queue(cls, *, route: StrKey, channel: str) -> Self:
+        """Target a :class:`~forze.application.contracts.queue.QueueCommandPort`."""
+
+        return cls(kind="queue", route=route, channel=channel)
+
+    @classmethod
+    def stream(cls, *, route: StrKey, channel: str) -> Self:
+        """Target a :class:`~forze.application.contracts.stream.StreamCommandPort`."""
+
+        return cls(kind="stream", route=route, channel=channel)
+
+    @classmethod
+    def pubsub(cls, *, route: StrKey, channel: str) -> Self:
+        """Target a :class:`~forze.application.contracts.pubsub.PubSubCommandPort`."""
+
+        return cls(kind="pubsub", route=route, channel=channel)
 
 
 # ....................... #
@@ -32,11 +57,11 @@ class OutboxDestination:
 class OutboxSpec[M](BaseSpec):
     """Specification binding an outbox route to its integration-event payload codec."""
 
-    codec: RecordMappingCodec[M, Any]
+    codec: ModelCodec[M, Any]
     """Payload record codec for staged integration events."""
 
     destination: OutboxDestination | None = None
-    """Optional default relay target for :func:`~forze_kits.integrations.outbox.relay_outbox_to_queue`."""
+    """Optional default relay target for :func:`~forze_kits.integrations.outbox.relay_outbox`."""
 
     # ....................... #
 

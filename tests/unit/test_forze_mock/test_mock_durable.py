@@ -6,7 +6,7 @@ from pydantic import BaseModel
 
 import pytest
 
-from forze.base.serialization import PydanticRecordMappingCodec
+from forze.base.serialization import PydanticModelCodec
 
 from forze.application.contracts.durable.function import DurableFunctionEventSpec
 from forze.application.contracts.durable.workflow import (
@@ -76,7 +76,7 @@ async def test_schedule_and_event_and_step_memo() -> None:
 
     evt_spec = DurableFunctionEventSpec(
         name="evt",
-        codec=PydanticRecordMappingCodec(model_type=_Evt),
+        codec=PydanticModelCodec(model_type=_Evt),
     )
     evt = MockDurableFunctionEventAdapter(spec=evt_spec, state=state)
     eid = await evt.send(_Evt(k="x"))

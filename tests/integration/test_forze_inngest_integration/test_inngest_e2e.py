@@ -16,7 +16,7 @@ from forze.application.contracts.durable.function import (
 )
 from forze.application.execution import ExecutionContext, InvocationMetadata
 from forze.base.primitives import uuid7
-from forze.base.serialization import PydanticRecordMappingCodec
+from forze.base.serialization import PydanticModelCodec
 from forze_inngest import InngestFunctionBinding
 from forze_inngest.execution.deps.configs import InngestEventConfig
 
@@ -50,7 +50,7 @@ class _CorrelationOut(BaseModel):
 def _event_spec() -> DurableFunctionEventSpec[_Payload]:
     return DurableFunctionEventSpec(
         name=_EVENT_NAME,
-        codec=PydanticRecordMappingCodec(model_type=_Payload),
+        codec=PydanticModelCodec(model_type=_Payload),
     )
 
 

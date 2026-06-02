@@ -6,7 +6,7 @@ from pydantic import BaseModel
 from forze.application.contracts.base import BaseSpec
 from forze.base.exceptions import exc
 from forze.base.primitives import StrKey
-from forze.base.serialization import RecordMappingCodec
+from forze.base.serialization import ModelCodec
 
 # ----------------------- #
 
@@ -21,7 +21,7 @@ Out = TypeVar("Out", bound=BaseModel)
 class DurableFunctionEventSpec[M](BaseSpec):
     """Specification binding a logical event name to its payload record codec."""
 
-    codec: RecordMappingCodec[M, Any]
+    codec: ModelCodec[M, Any]
     """Payload record codec for events with this name."""
 
     # ....................... #

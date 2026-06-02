@@ -13,6 +13,9 @@ from forze.application.contracts.tenancy import TENANT_ID_FIELD
 from forze.domain.constants import ID_FIELD
 from forze_firestore.kernel.gateways.base import FirestoreGateway
 from tests.support.factories import IntegrationDocument
+from tests.unit._gateway_codec_helpers import codec_for
+
+_INTEGRATION_CODEC = codec_for(IntegrationDocument)
 
 
 class _Gw(FirestoreGateway[IntegrationDocument]):
@@ -23,6 +26,7 @@ def test_static_relation_database_and_collection() -> None:
     gw = _Gw(
         client=MagicMock(),
         model_type=IntegrationDocument,
+        codec=_INTEGRATION_CODEC,
         relation=("mydb", "mycoll"),
     )
     assert gw.database == "mydb"
@@ -36,6 +40,7 @@ def test_dynamic_relation_database_raises_before_resolve() -> None:
     gw = _Gw(
         client=MagicMock(),
         model_type=IntegrationDocument,
+        codec=_INTEGRATION_CODEC,
         relation=resolver,
     )
     with pytest.raises(CoreException, match="static relations"):
@@ -48,6 +53,7 @@ async def test_resolved_collection_caches_relation() -> None:
     gw = _Gw(
         client=client,
         model_type=IntegrationDocument,
+        codec=_INTEGRATION_CODEC,
         relation=("db", "items"),
     )
     first = await gw._resolved_collection()
@@ -61,6 +67,7 @@ def test_coerce_query_value_uuid_and_nested() -> None:
     gw = _Gw(
         client=MagicMock(),
         model_type=IntegrationDocument,
+        codec=_INTEGRATION_CODEC,
         relation=("db", "c"),
     )
     out = gw._coerce_query_value({"ids": [uid], "n": 1})
@@ -72,6 +79,7 @@ def test_from_storage_doc_maps_id_field() -> None:
     gw = _Gw(
         client=MagicMock(),
         model_type=IntegrationDocument,
+        codec=_INTEGRATION_CODEC,
         relation=("db", "c"),
     )
     out = gw._from_storage_doc({"id": "doc-1", "name": "x"})
@@ -84,6 +92,7 @@ def test_add_tenant_filter_and_tenant_id() -> None:
     gw = _Gw(
         client=MagicMock(),
         model_type=IntegrationDocument,
+        codec=_INTEGRATION_CODEC,
         relation=("db", "c"),
         tenant_aware=True,
         tenant_provider=lambda: tid,  # noqa: ARG005 — gateway stores raw tenant id
@@ -100,6 +109,7 @@ def test_tenant_aware_requires_provider() -> None:
     gw = _Gw(
         client=MagicMock(),
         model_type=IntegrationDocument,
+        codec=_INTEGRATION_CODEC,
         relation=("db", "c"),
         tenant_aware=True,
         tenant_provider=None,

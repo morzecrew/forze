@@ -6,11 +6,8 @@ import pytest
 from pydantic import BaseModel, Field
 
 from forze.base.exceptions import CoreException, ExceptionKind
-from forze.base.serialization import (
-    PydanticRecordMappingCodec,
-    pydantic_validate,
-    pydantic_validate_trusted,
-)
+from forze.base.serialization import PydanticModelCodec
+from forze.base.serialization.pydantic import pydantic_validate, pydantic_validate_trusted
 
 
 class _Model(BaseModel):
@@ -37,6 +34,6 @@ def test_trusted_rejects_unknown_columns() -> None:
 
 def test_codec_trusted_mode() -> None:
     row = {"id": "1", "name": "ok"}
-    codec = PydanticRecordMappingCodec(_Model)
+    codec = PydanticModelCodec(_Model)
 
     assert codec.decode_mapping(row, trust_source=True).name == "ok"

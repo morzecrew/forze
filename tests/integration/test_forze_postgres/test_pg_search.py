@@ -1,42 +1,27 @@
-from typing import Any
 from uuid import UUID, uuid4
 
 import pytest
-
-from forze.base.exceptions import CoreException
-from tests.support.execution_context import context_from_deps, context_from_modules, frozen_deps_from_deps
 from pydantic import BaseModel
 
-from forze.application.contracts.base import CountlessPage, CursorPage, Page
-from forze.application.contracts.querying import QueryFilterExpression
 from forze.application.contracts.search import (
-    HubSearchQueryDepKey,
-    HubSearchSpec,
     SearchQueryDepKey,
     SearchSpec,
 )
 from forze.application.execution import Deps, ExecutionContext
 from forze_postgres.adapters.search import PostgresPGroongaSearchAdapter
-from forze_postgres.execution.deps.configs import (
-    PostgresHubSearchConfig,
-    PostgresHubSearchMemberConfig,
-    PostgresSearchConfig,
-)
-import attrs
-
-
-
 from forze_postgres.execution.deps import (
-    ConfigurablePostgresHubSearch,
     ConfigurablePostgresSearch,
+)
+from forze_postgres.execution.deps.configs import (
+    PostgresSearchConfig,
 )
 from forze_postgres.execution.deps.keys import (
     PostgresClientDepKey,
     PostgresIntrospectorDepKey,
 )
-from forze_postgres.kernel.gateways import PostgresQualifiedName
 from forze_postgres.kernel.catalog.introspect import PostgresIntrospector
 from forze_postgres.kernel.client.client import PostgresClient
+from tests.support.execution_context import context_from_deps
 
 
 class SearchableModel(BaseModel):
@@ -85,7 +70,8 @@ async def test_postgres_pgroonga_single_column_index(
         {"id": uuid4(), "t": "singleton pgroonga row"},
     )
 
-    ctx = context_from_deps(Deps.plain(
+    ctx = context_from_deps(
+        Deps.plain(
             {
                 PostgresClientDepKey: pg_client,
                 PostgresIntrospectorDepKey: PostgresIntrospector(client=pg_client),
@@ -276,7 +262,8 @@ async def test_pgroonga_search_spec_field_order_does_not_change_ranking(
             row,
         )
 
-    ctx = context_from_deps(Deps.plain(
+    ctx = context_from_deps(
+        Deps.plain(
             {
                 PostgresClientDepKey: pg_client,
                 PostgresIntrospectorDepKey: PostgresIntrospector(client=pg_client),
@@ -386,6 +373,7 @@ async def test_postgres_pgroonga_search_adapter_v2_projection_vs_heap(
         index_heap_relation=("public", "search_heap"),
         client=pg_client,
         model_type=SearchableModel,
+        codec=spec.resolved_read_codec,
         introspector=introspector,
         tenant_provider=None,
         tenant_aware=False,
@@ -429,7 +417,8 @@ async def test_postgres_search_configurable_uses_heap_and_field_map(
         {"id": uuid4()},
     )
 
-    ctx = context_from_deps(Deps.plain(
+    ctx = context_from_deps(
+        Deps.plain(
             {
                 PostgresClientDepKey: pg_client,
                 PostgresIntrospectorDepKey: PostgresIntrospector(client=pg_client),

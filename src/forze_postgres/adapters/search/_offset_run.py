@@ -201,7 +201,7 @@ async def execute_simple_ranked_offset_search(
 
     if want_snap and result_snapshot is not None and rs_spec is not None:
         pool_len = len(rows)
-        pool_snap = spec.resolved_row_codec.decode_mapping_many(rows)
+        pool_snap = spec.resolved_read_codec.decode_mapping_many(rows)
         handle_out = await result_snapshot.put_simple_ordered_hits(
             pool_snap,
             snap_opt=snapshot,
@@ -219,7 +219,7 @@ async def execute_simple_ranked_offset_search(
         return_type=return_type,
         return_fields=return_fields,
         model_type=model_type,
-        row_codec=spec.resolved_row_codec,
+        codec=spec.resolved_read_codec,
     )
 
     if return_count:
@@ -371,7 +371,7 @@ async def execute_hub_ranked_offset_search(
 
     if want_sn and result_snapshot is not None and rs_spec is not None:
         plh = len(rows)
-        pool_h = hub_spec.resolved_row_codec.decode_mapping_many(rows)
+        pool_h = hub_spec.resolved_read_codec.decode_mapping_many(rows)
         handle_h = await result_snapshot.put_simple_ordered_hits(
             pool_h,
             snap_opt=snapshot,
@@ -389,7 +389,7 @@ async def execute_hub_ranked_offset_search(
         return_type=return_type,
         return_fields=return_fields,
         model_type=model_type,
-        row_codec=hub_spec.resolved_row_codec,
+        codec=hub_spec.resolved_read_codec,
     )
 
     if return_count:

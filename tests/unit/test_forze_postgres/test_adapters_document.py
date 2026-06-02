@@ -10,7 +10,8 @@ from pydantic import BaseModel
 
 from forze.application.contracts.document import DocumentSpec
 from forze.application.integrations.document import DocumentCache
-from forze.base.serialization import PydanticRecordMappingCodec
+from forze.base.serialization import PydanticModelCodec
+from tests.unit._gateway_codec_helpers import codec_for
 from forze.domain.constants import ID_FIELD
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
 from forze_postgres.adapters.document import PostgresDocumentAdapter
@@ -40,6 +41,7 @@ def _pg_cc(
 ):
     return DocumentCache(
         read_model_type=read_gw.model_type,
+        read_codec=codec_for(read_gw.model_type),
         document_name=spec.name,
         cache=cache,
         after_commit=after_commit,
@@ -101,7 +103,7 @@ class TestPostgresDocumentAdapter:
 
         cache = MagicMock()
         cache.get = AsyncMock(
-            return_value=PydanticRecordMappingCodec(ReadDocument).encode_mapping(expected),
+            return_value=PydanticModelCodec(ReadDocument).encode_mapping(expected),
         )
         cache.set_versioned = AsyncMock()
 
@@ -129,7 +131,7 @@ class TestPostgresDocumentAdapter:
         cache.get_many = AsyncMock(
             return_value=(
                 {
-                    str(pks[0]): PydanticRecordMappingCodec(ReadDocument).encode_mapping(
+                    str(pks[0]): PydanticModelCodec(ReadDocument).encode_mapping(
                         expected[0],
                     ),
                 },
@@ -371,7 +373,7 @@ class TestPostgresDocumentAdapterGetPaths:
 
         cache = MagicMock()
         cache.get = AsyncMock(
-            return_value=PydanticRecordMappingCodec(ReadDocument).encode_mapping(doc),
+            return_value=PydanticModelCodec(ReadDocument).encode_mapping(doc),
         )
 
         adapter = PostgresDocumentAdapter(
@@ -400,10 +402,10 @@ class TestPostgresDocumentAdapterGetManyOrdering:
         cache.get_many = AsyncMock(
             return_value=(
                 {
-                    str(pks[0]): PydanticRecordMappingCodec(ReadDocument).encode_mapping(
+                    str(pks[0]): PydanticModelCodec(ReadDocument).encode_mapping(
                         d0,
                     ),
-                    str(pks[2]): PydanticRecordMappingCodec(ReadDocument).encode_mapping(
+                    str(pks[2]): PydanticModelCodec(ReadDocument).encode_mapping(
                         d2,
                     ),
                 },
@@ -1005,10 +1007,10 @@ class TestPostgresDocumentAdapterGetManyBranches:
         cache.get_many = AsyncMock(
             return_value=(
                 {
-                    str(pks[0]): PydanticRecordMappingCodec(ReadDocument).encode_mapping(
+                    str(pks[0]): PydanticModelCodec(ReadDocument).encode_mapping(
                         d0,
                     ),
-                    str(pks[1]): PydanticRecordMappingCodec(ReadDocument).encode_mapping(
+                    str(pks[1]): PydanticModelCodec(ReadDocument).encode_mapping(
                         d1,
                     ),
                 },

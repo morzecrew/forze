@@ -32,8 +32,10 @@ def _spec() -> SearchSpec[_Entity]:
 @pytest.mark.asyncio
 async def test_pgroonga_v2_match_combined_empty_string_is_true_predicate() -> None:
     """Empty match text skips PGroonga clause construction (filter-only path uses ``TRUE`` elsewhere)."""
+    spec = _spec()
     adapter = PostgresPGroongaSearchAdapter(
-        spec=_spec(),
+        spec=spec,
+        codec=spec.resolved_read_codec,
         relation=("public", "v"),
         index_relation=("public", "i"),
         index_heap_relation=("public", "h"),
@@ -59,9 +61,11 @@ async def test_pgroonga_v2_match_combined_empty_string_is_true_predicate() -> No
 
 
 def test_pgroonga_v2_rejects_duplicate_projection_join_columns() -> None:
+    spec = _spec()
     with pytest.raises(CoreException, match="unique"):
         PostgresPGroongaSearchAdapter(
-            spec=_spec(),
+            spec=spec,
+            codec=spec.resolved_read_codec,
             relation=("public", "v"),
             index_relation=("public", "i"),
             index_heap_relation=("public", "h"),
@@ -75,9 +79,11 @@ def test_pgroonga_v2_rejects_duplicate_projection_join_columns() -> None:
 
 
 def test_fts_v2_rejects_duplicate_projection_join_columns() -> None:
+    spec = _spec()
     with pytest.raises(CoreException, match="unique"):
         PostgresFTSSearchAdapter(
-            spec=_spec(),
+            spec=spec,
+            codec=spec.resolved_read_codec,
             index_relation=("public", "i"),
             relation=("public", "v"),
             index_heap_relation=("public", "h"),

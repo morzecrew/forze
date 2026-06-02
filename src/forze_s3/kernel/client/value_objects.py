@@ -9,7 +9,7 @@ from forze.application.integrations.storage.client import (
     ObjectStorageHead,
     ObjectStorageListedObject,
 )
-from forze.base.serialization import pydantic_secret_converter
+from forze.base.serialization.pydantic import pydantic_secret_converter
 
 S3Head = ObjectStorageHead
 S3ListedObject = ObjectStorageListedObject

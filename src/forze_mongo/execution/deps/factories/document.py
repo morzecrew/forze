@@ -50,11 +50,14 @@ class ConfigurableMongoReadOnlyDocument(DocumentQueryDepPort[R]):
     ) -> MongoDocumentAdapter[R, Any, Any, Any]:
         cache = ctx.cache(spec.cache) if spec.cache is not None else None
 
+        codecs = spec.resolved_codecs
+
         read = read_gw(
             ctx,
             read_type=spec.read,
             read_relation=self.config.read,
             tenant_aware=self.config.tenant_aware,
+            codec=codecs.read,
             read_validation=self.config.read_validation,
         )
 
@@ -68,7 +71,7 @@ class ConfigurableMongoReadOnlyDocument(DocumentQueryDepPort[R]):
             document_name=spec.name,
             cache=cache,
             after_commit=after_commit,
-            row_codec=read.row_codec,
+            read_codec=read.read_codec,
         )
 
         return MongoDocumentAdapter(
@@ -109,11 +112,14 @@ class ConfigurableMongoDocument(DocumentCommandDepPort[R, D, C, U]):
                 "Write relation is required for non read-only documents."
             )
 
+        codecs = spec.resolved_codecs
+
         read = read_gw(
             ctx,
             read_type=spec.read,
             read_relation=config.read,
             tenant_aware=tenant_aware,
+            codec=codecs.read,
             read_validation=config.read_validation,
         )
 
@@ -134,6 +140,7 @@ class ConfigurableMongoDocument(DocumentCommandDepPort[R, D, C, U]):
         write = doc_write_gw(
             ctx,
             write_types=spec.write,
+            codecs=codecs,
             write_relation=write_relation,
             history_relation=history_relation,
             history_enabled=spec.history_enabled,
@@ -150,7 +157,7 @@ class ConfigurableMongoDocument(DocumentCommandDepPort[R, D, C, U]):
             document_name=spec.name,
             cache=cache,
             after_commit=after_commit,
-            row_codec=read.row_codec,
+            read_codec=read.read_codec,
         )
 
         return MongoDocumentAdapter(

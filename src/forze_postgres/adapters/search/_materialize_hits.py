@@ -6,8 +6,8 @@ from pydantic import BaseModel
 
 from forze.base.primitives import JsonDict
 from forze.base.serialization import (
-    PydanticRecordMappingCodec,
-    RecordMappingCodec,
+    ModelCodec,
+    default_model_codec,
     materialize_mapping_rows,
 )
 
@@ -25,7 +25,7 @@ def materialize_search_page(
     return_type: type[BaseModel] | None,
     return_fields: Sequence[str] | None,
     model_type: type[M],
-    row_codec: RecordMappingCodec[Any, Any] | None,
+    codec: ModelCodec[Any, Any] | None,
 ) -> list[Any] | list[JsonDict]:
     """Build the API page payload after optional snapshot storage.
 
@@ -40,14 +40,14 @@ def materialize_search_page(
     :param return_type: Optional projection model; when ``None``, use ``model_type``.
     :param return_fields: When set, build plain dict projections from ``page_rows``.
     :param model_type: Default read model for this adapter.
-    :param row_codec: Search spec row codec for decode/materialization.
+    :param codec: Search spec row codec for decode/materialization.
     :returns: Either a list of Pydantic models or plain dict projections.
     """
 
-    codec = row_codec or PydanticRecordMappingCodec(model_type)
+    resolved = codec or default_model_codec(model_type)
 
     return materialize_mapping_rows(
-        row_codec=codec,
+        codec=resolved,
         model_type=model_type,
         page_rows=page_rows,
         pool=pool,

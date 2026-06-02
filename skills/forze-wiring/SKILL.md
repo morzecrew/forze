@@ -296,6 +296,25 @@ facade = SearchFacade(
 result = await facade.search(SearchRequestDTO(query="roadmap", limit=20))
 ```
 
+## Transactional notifications
+
+```python
+from forze.application.contracts.outbox import OutboxDestination, OutboxSpec
+from forze_kits.integrations.outbox import outbox_flush_tx_on_success_factory, relay_outbox_to_queue
+from forze_kits.integrations.notify import EmailNotification, NotificationRouter, process_notification_message
+
+events_spec = OutboxSpec(
+    name="events",
+    codec=...,
+    destination=OutboxDestination.queue(route="notifications", channel="notifications"),
+)
+router = NotificationRouter()
+router.register("project.created", lambda e: [EmailNotification(...)])
+# stage in handler; flush via outbox_flush_tx_on_success_factory; relay; worker calls process_notification_message
+```
+
+See [Transactional notifications](https://morzecrew.github.io/forze/docs/recipes/transactional-notifications/).
+
 ## Anti-patterns
 
 1. **Hand-building `Deps` for production** — prefer `DepsPlan.from_modules` and integration modules.

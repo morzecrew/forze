@@ -10,7 +10,7 @@ from pydantic import BaseModel
 from forze.application.integrations.outbox import OutboxStaging
 from forze.application.contracts.outbox import OutboxSpec, StagedOutboxEntry
 from forze.application.execution import DepsRegistry, ExecutionContext
-from forze.base.serialization import PydanticRecordMappingCodec
+from forze.base.serialization import PydanticModelCodec
 
 
 class _Payload(BaseModel):
@@ -27,7 +27,7 @@ async def test_flush_delegates_buffered_rows() -> None:
 
     spec = OutboxSpec(
         name="events",
-        codec=PydanticRecordMappingCodec(_Payload),
+        codec=PydanticModelCodec(_Payload),
     )
     ctx = ExecutionContext(deps=DepsRegistry().freeze().resolve())
     coord = OutboxStaging(ctx=ctx, spec=spec, flush_rows=_flush)
@@ -45,7 +45,7 @@ async def test_flush_delegates_buffered_rows() -> None:
 async def test_cannot_stage_after_flush() -> None:
     spec = OutboxSpec(
         name="events",
-        codec=PydanticRecordMappingCodec(_Payload),
+        codec=PydanticModelCodec(_Payload),
     )
     ctx = ExecutionContext(deps=DepsRegistry().freeze().resolve())
 

@@ -5,7 +5,7 @@ import attrs
 from botocore.config import Config as AioConfig
 from pydantic import SecretStr
 
-from forze.base.serialization import pydantic_secret_converter
+from forze.base.serialization.pydantic import pydantic_secret_converter
 
 # ----------------------- #
 

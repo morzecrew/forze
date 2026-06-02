@@ -20,7 +20,7 @@ from forze.application.contracts.queue import (
 )
 from forze.base.primitives import utcnow
 from forze.base.serialization import (
-    RecordMappingCodec,
+    ModelCodec,
 )
 from forze_mock.query._types import M
 from forze_mock.state import MockState
@@ -49,7 +49,7 @@ class MockQueueAdapter(MockTenancyMixin, QueueQueryPort[M], QueueCommandPort[M])
 
     state: MockState
     namespace: str
-    codec: RecordMappingCodec[M, Any]
+    codec: ModelCodec[M, Any]
 
     # ....................... #
 

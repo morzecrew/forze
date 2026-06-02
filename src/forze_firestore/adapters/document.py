@@ -86,7 +86,7 @@ class FirestoreDocumentAdapter(DocumentAdapter[R, D, C, U]):
         domain = await write_gw.create(dto)
         await self.document_cache.invalidate_keys_now(domain.id)
 
-        res = self.read_gw.effective_row_codec.transform(domain)
+        res = self.read_gw.read_codec.transform(domain)
 
         await self.document_cache.after_commit_or_now(
             lambda: self.document_cache.set_one(res)
@@ -134,7 +134,7 @@ class FirestoreDocumentAdapter(DocumentAdapter[R, D, C, U]):
         pks_new = [doc.id for doc in domains]
         await self.document_cache.invalidate_keys_now(*pks_new)
 
-        res = self.read_gw.effective_row_codec.transform_many(domains)
+        res = self.read_gw.read_codec.transform_many(domains)
 
         await self.document_cache.after_commit_or_now(
             lambda: self.document_cache.set_many(res)

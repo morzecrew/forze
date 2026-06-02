@@ -8,7 +8,13 @@ from .deps import (
 from .gateways import DocumentReadGatewayPort, DocumentWriteGatewayPort
 from .helpers import require_create_id, require_create_id_for_many
 from .ports import DocumentCommandPort, DocumentQueryPort
-from .specs import DocumentSpec, DocumentWriteTypes
+from .codecs import (
+    DocumentCodecs,
+    document_codecs_for_spec,
+    document_codecs_for_write_types,
+)
+from .specs import DocumentSpec
+from .write_types import DocumentWriteTypes
 from .types import RowLockMode
 
 # ----------------------- #
@@ -21,6 +27,9 @@ __all__ = [
     "RowLockMode",
     "require_create_id_for_many",
     "require_create_id",
+    "DocumentCodecs",
+    "document_codecs_for_spec",
+    "document_codecs_for_write_types",
     "DocumentSpec",
     "DocumentWriteTypes",
     "DocumentQueryDepKey",

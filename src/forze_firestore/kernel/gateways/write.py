@@ -20,10 +20,7 @@ from tenacity import (
 from forze.application.contracts.querying import QueryFilterExpression
 from forze.base.exceptions import CoreException, ExceptionKind, exc
 from forze.base.primitives import JsonDict
-from forze.base.serialization import (
-    pydantic_transform,
-    pydantic_transform_many,
-)
+from forze.base.serialization import ModelCodec
 from forze.domain.constants import REV_FIELD
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document
 
@@ -60,6 +57,8 @@ class FirestoreWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
     read_gw: FirestoreReadGateway[D]
     create_cmd_type: type[C]
     update_cmd_type: type[U] | None = attrs.field(default=None)
+    create_codec: ModelCodec[D, Any] = attrs.field(kw_only=True, eq=False, repr=False)
+    update_codec: ModelCodec[U, Any] | None = attrs.field(kw_only=True, eq=False, repr=False)
     history_gw: FirestoreHistoryGateway[D] | None = attrs.field(default=None)
 
     # ....................... #
@@ -97,6 +96,8 @@ class FirestoreWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
                 raise exc.configuration(
                     "Tenant awareness mismatch. Write gateway and nested history gateway must have the same tenant awareness."
                 )
+
+    # ....................... #
 
     # ....................... #
 
@@ -171,19 +172,32 @@ class FirestoreWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
     # ....................... #
 
     def _from_cdto(self, dto: C) -> D:
-        return pydantic_transform(self.model_type, dto)
+        return self.create_codec.transform(dto)
 
     # ....................... #
 
     def _from_cdto_many(self, dtos: Sequence[C]) -> Sequence[D]:
-        return pydantic_transform_many(self.model_type, dtos)
+        return self.create_codec.transform_many(dtos)
+
+    # ....................... #
+
+    def _patch_codec(self) -> ModelCodec[Any, Any]:
+        if self.update_codec is not None:
+            return self.update_codec
+
+        if self.update_cmd_type is not None:
+            raise exc.internal(
+                "Update codec is required when update commands are supported"
+            )
+
+        return self.read_codec
 
     # ....................... #
 
     @optimistic_retry()  # type: ignore[untyped-decorator]
     async def create(self, dto: C) -> D:
         model = self._from_cdto(dto)
-        data = self.effective_row_codec.encode_persistence_mapping(model)
+        data = self.read_codec.encode_persistence_mapping(model)
         data = self.adapt_payload_for_write(data, create=True)
         coll = await self.coll()
         await self.client.set_document(coll, self._storage_pk(model.id), data)
@@ -207,7 +221,7 @@ class FirestoreWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
             return []
 
         models = self._from_cdto_many(dtos)
-        raw_payloads = self.effective_row_codec.encode_persistence_mapping_many(models)
+        raw_payloads = self.read_codec.encode_persistence_mapping_many(models)
         payloads = self.adapt_many_payload_for_write(raw_payloads, create=True)
         documents = [
             (self._storage_pk(m.id), dict(p))
@@ -254,7 +268,7 @@ class FirestoreWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
             return current, diff
 
         diff = self._bump_rev(current, diff)
-        merged = self.effective_row_codec.encode_persistence_mapping(current)
+        merged = self.read_codec.encode_persistence_mapping(current)
         merged.update(self.adapt_payload_for_write(diff, create=False))
 
         coll = await self.coll()
@@ -275,7 +289,7 @@ class FirestoreWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
         rev: int | None = None,
     ) -> tuple[D, JsonDict]:
         self._require_update_cmd()
-        update_data = self.effective_row_codec.encode_persistence_mapping(
+        update_data = self._patch_codec().encode_persistence_mapping(
             cast(Any, dto),
             exclude={"unset": True},
         )

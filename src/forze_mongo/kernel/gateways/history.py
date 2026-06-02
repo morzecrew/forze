@@ -12,7 +12,7 @@ from uuid import UUID
 import attrs
 
 from forze.base.exceptions import exc
-from forze.base.serialization import PydanticRecordMappingCodec
+from forze.base.serialization import ModelCodec
 from forze.domain.constants import (
     HISTORY_DATA_FIELD,
     HISTORY_SOURCE_FIELD,
@@ -40,12 +40,20 @@ class MongoHistoryGateway[D: Document](MongoGateway[D]):
     target_relation: RelationSpec
     """Write collection ``(database, collection)`` this history tracks."""
 
+    history_codec: ModelCodec[Any, Any] = attrs.field(kw_only=True, eq=False, repr=False)
+    """Codec for :class:`~forze.domain.models.DocumentHistory` persistence rows."""
+
     _target_resolved: tuple[str, str] | None = attrs.field(
         default=None,
         init=False,
         eq=False,
         repr=False,
     )
+
+    # ....................... #
+
+    def __attrs_post_init__(self) -> None:
+        super().__attrs_post_init__()
 
     # ....................... #
 
@@ -162,11 +170,7 @@ class MongoHistoryGateway[D: Document](MongoGateway[D]):
         """
 
         record = await self._from_data(data)
-        raw_payload = PydanticRecordMappingCodec(
-            DocumentHistory[D]
-        ).encode_persistence_mapping(
-            record,
-        )
+        raw_payload = self.history_codec.encode_persistence_mapping(record)
         raw_payload = self.adapt_payload_for_write(raw_payload)
 
         payload = self._coerce_query_value(raw_payload)
@@ -194,9 +198,7 @@ class MongoHistoryGateway[D: Document](MongoGateway[D]):
             )
             for item in data
         ]
-        raw_payloads = PydanticRecordMappingCodec(
-            DocumentHistory[D],
-        ).encode_persistence_mapping_many(records)
+        raw_payloads = self.history_codec.encode_persistence_mapping_many(records)
         raw_payloads = list(map(self.adapt_payload_for_write, raw_payloads))
 
         payloads = list(map(self._coerce_query_value, raw_payloads))

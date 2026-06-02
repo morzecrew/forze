@@ -52,12 +52,15 @@ class ConfigurablePostgresReadOnlyDocument(DocumentQueryDepPort[R]):
     ) -> PostgresDocumentAdapter[R, Any, Any, Any]:
         cache = ctx.cache(spec.cache) if spec.cache is not None else None
 
+        codecs = spec.resolved_codecs
+
         read = read_gw(
             ctx,
             read_type=spec.read,
             read_relation=self.config.read,
             tenant_aware=self.config.tenant_aware,
             nested_field_hints=self.config.nested_field_hints,
+            codec=codecs.read,
             read_validation=self.config.read_validation,
         )
 
@@ -68,7 +71,7 @@ class ConfigurablePostgresReadOnlyDocument(DocumentQueryDepPort[R]):
 
         cc = DocumentCache[R](
             read_model_type=read.model_type,
-            row_codec=read.row_codec,
+            read_codec=read.read_codec,
             document_name=spec.name,
             cache=cache,
             after_commit=after_commit,
@@ -111,12 +114,15 @@ class ConfigurablePostgresDocument(DocumentCommandDepPort[R, D, C, U]):
                 "Write relation is required for non read-only documents."
             )
 
+        codecs = spec.resolved_codecs
+
         read = read_gw(
             ctx,
             read_type=spec.read,
             read_relation=self.config.read,
             tenant_aware=tenant_aware,
             nested_field_hints=self.config.nested_field_hints,
+            codec=codecs.read,
             read_validation=self.config.read_validation,
         )
 
@@ -136,6 +142,7 @@ class ConfigurablePostgresDocument(DocumentCommandDepPort[R, D, C, U]):
         write = doc_write_gw(
             ctx,
             write_types=spec.write,
+            codecs=codecs,
             write_relation=self.config.write,
             history_relation=history_relation,
             history_enabled=spec.history_enabled,
@@ -152,7 +159,7 @@ class ConfigurablePostgresDocument(DocumentCommandDepPort[R, D, C, U]):
 
         cc = DocumentCache[R](
             read_model_type=read.model_type,
-            row_codec=read.row_codec,
+            read_codec=read.read_codec,
             document_name=spec.name,
             cache=cache,
             after_commit=after_commit,

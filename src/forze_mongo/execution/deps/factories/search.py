@@ -84,6 +84,7 @@ def _mongo_search_port_for_config(
         case "text":
             return MongoTextSearchAdapter(
                 spec=member_spec,
+                codec=member_spec.resolved_read_codec,
                 model_type=member_spec.model_type,
                 relation=c.read,
                 client=client,
@@ -101,6 +102,7 @@ def _mongo_search_port_for_config(
 
             return MongoAtlasSearchAdapter(
                 spec=member_spec,
+                codec=member_spec.resolved_read_codec,
                 model_type=member_spec.model_type,
                 relation=c.read,
                 client=client,
@@ -127,6 +129,7 @@ def _mongo_search_port_for_config(
 
             return MongoVectorSearchAdapter(
                 spec=member_spec,
+                codec=member_spec.resolved_read_codec,
                 model_type=member_spec.model_type,
                 relation=c.read,
                 client=client,

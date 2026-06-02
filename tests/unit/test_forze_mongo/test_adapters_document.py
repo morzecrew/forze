@@ -13,6 +13,7 @@ from forze.application.integrations.document import DocumentCache
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
 from forze_mongo.adapters.document import MongoDocumentAdapter
 from forze_mongo.kernel.gateways import MongoReadGateway, MongoWriteGateway
+from tests.unit._gateway_codec_helpers import codec_for
 
 
 class MyDoc(Document):
@@ -60,6 +61,7 @@ def _build_read_gateway() -> MagicMock:
 def _mongo_cc(read_gw, spec: DocumentSpec, *, cache=None, after_commit=None):
     return DocumentCache(
         read_model_type=read_gw.model_type,
+        read_codec=codec_for(read_gw.model_type),
         document_name=spec.name,
         cache=cache,
         after_commit=after_commit,
