@@ -9,6 +9,7 @@ import pytest
 from forze_postgres.adapters.search._pgroonga_plan import (
     effective_candidate_limit,
     effective_pgroonga_plan_option,
+    ensure_pgroonga_plan_with_candidate_cap,
     is_coalesced_read_heap,
     is_trivial_filter,
     resolve_pgroonga_plan,
@@ -107,3 +108,12 @@ def test_is_trivial_filter_and_plan_option() -> None:
     assert is_trivial_filter(None) is True
     assert effective_pgroonga_plan_option({"pgroonga_plan": "auto"}) == "auto"
     assert effective_pgroonga_plan_option({}) is None
+
+
+def test_ensure_pgroonga_plan_with_candidate_cap() -> None:
+    assert (
+        ensure_pgroonga_plan_with_candidate_cap("index_first", None)
+        == "filter_first"
+    )
+    assert ensure_pgroonga_plan_with_candidate_cap("index_first", 100) == "index_first"
+    assert ensure_pgroonga_plan_with_candidate_cap("filter_first", None) == "filter_first"

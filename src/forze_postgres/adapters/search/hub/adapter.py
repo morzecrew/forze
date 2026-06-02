@@ -27,6 +27,7 @@ from forze.application.contracts.search import (
     prepare_hub_search_options,
 )
 from forze.application.integrations.search import SearchResultSnapshot
+from forze.base.exceptions import exc
 
 from ....kernel.gateways import PostgresGateway
 from .._offset_run import RankedOffsetPlan, execute_hub_ranked_offset_search
@@ -58,6 +59,13 @@ class PostgresHubSearchAdapter[M: BaseModel](
     score_merge: Literal["max", "sum"] = "max"
     per_leg_limit: int = 5000
     """Max ranked rows retained per hub leg before merge."""
+
+    # ....................... #
+
+    def __attrs_post_init__(self) -> None:
+        super().__attrs_post_init__()
+        if self.per_leg_limit < 1:
+            raise exc.internal("per_leg_limit must be at least 1.")
 
     # ....................... #
 

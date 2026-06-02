@@ -28,6 +28,7 @@ from forze.application.contracts.search import (
     search_options_for_simple_adapter,
 )
 from forze.application.integrations.search import SearchResultSnapshot
+from forze.base.exceptions import exc
 from forze.domain.constants import ID_FIELD
 from forze_postgres.kernel.relation import RelationSpec
 
@@ -36,6 +37,7 @@ from ._leg_pgroonga import build_pgroonga_leg
 from ._materialize_hits import materialize_search_page
 from ._pgroonga_plan import (
     effective_candidate_limit,
+    ensure_pgroonga_plan_with_candidate_cap,
     is_coalesced_read_heap,
     is_trivial_filter,
     resolve_pgroonga_plan,
@@ -438,6 +440,11 @@ class PostgresPGroongaSearchAdapter[M: BaseModel](
             rs_spec=rs_spec,
         )
 
+        resolved_plan = ensure_pgroonga_plan_with_candidate_cap(
+            resolved_plan,
+            candidate_cap,
+        )
+
         join_vs = outer_join_on_scored(
             join,
             projection_alias=self.pipeline.projection,
@@ -445,6 +452,9 @@ class PostgresPGroongaSearchAdapter[M: BaseModel](
         )
 
         if resolved_plan == "index_first":
+            if candidate_cap is None:
+                raise exc.internal("candidate_cap is None")
+
             with_clause, from_outer = build_pgroonga_index_first_pipeline(
                 aliases=self.pipeline,
                 scored_keys=scored_keys,
@@ -454,7 +464,7 @@ class PostgresPGroongaSearchAdapter[M: BaseModel](
                 join_vs=join_vs,
                 proj_ident=proj_qname.ident(),
                 proj_fw=fw,
-                candidate_limit=int(candidate_cap or 5000),
+                candidate_limit=int(candidate_cap),
                 scored_order=scored_order,
             )
             params_body = [*leg_params, *fp]

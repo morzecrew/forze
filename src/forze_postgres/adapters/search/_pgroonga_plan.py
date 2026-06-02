@@ -27,7 +27,7 @@ _DEFAULT_CANDIDATE_MARGIN = 50
 
 
 def is_trivial_filter(parsed: QueryExpr | None) -> bool:
-    """Return whether the parsed filter AST is absent (filter-only browse semantics)."""
+    """Return whether the parsed filter AST is absent (filterless browse semantics)."""
 
     return parsed is None
 
@@ -107,6 +107,18 @@ def effective_candidate_limit(
         cap = max(cap, int(max_ids))
 
     return max(cap, 1)
+
+
+def ensure_pgroonga_plan_with_candidate_cap(
+    resolved_plan: ResolvedPgroongaPlan,
+    candidate_cap: int | None,
+) -> ResolvedPgroongaPlan:
+    """``index_first`` always applies a ranked-row ``LIMIT``; without a cap use ``filter_first``."""
+
+    if resolved_plan == "index_first" and candidate_cap is None:
+        return "filter_first"
+
+    return resolved_plan
 
 
 async def resolve_pgroonga_plan(

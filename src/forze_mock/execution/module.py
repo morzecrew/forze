@@ -543,9 +543,6 @@ class ConfigurableMockOutboxCommand(_MockFactoryBase):
         return build_staging_outbox_command_for_store(context, spec, store)
 
 
-ConfigurableMockOutbox = ConfigurableMockOutboxQuery
-
-
 @final
 @attrs.define(slots=True, kw_only=True)
 class ConfigurableMockDistributedLock(_MockFactoryBase):

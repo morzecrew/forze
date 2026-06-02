@@ -242,7 +242,7 @@ For `engine="pgroonga"`, multi-column indexes use `ARRAY[col1, col2, ...]` in mi
 
 `PostgresHubSearchConfig.per_leg_limit` caps each hub leg before score merge (default `5000`). Ranking is exact only within these caps; raise them for deep paging or export-style searches.
 
-With `pgroonga_plan: auto`, non-empty query DSL filters always use `filter_first`; only filter-only searches consult the introspector row estimate.
+With `pgroonga_plan: auto`, non-empty query DSL filters always use `filter_first`; only filterless searches (no parsed filter AST) consult the introspector row estimate. `index_first` requires a candidate cap (`pgroonga_candidate_limit` or `SearchOptions.candidate_limit`); when the cap is disabled (`None`), Forze falls back to `filter_first` even if the configured plan is `index_first` or `auto` would otherwise pick `index_first`.
 
 ### JSON filters and GIN-friendly indexes
 
