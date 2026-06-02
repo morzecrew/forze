@@ -7,9 +7,10 @@ from uuid import uuid4
 import pytest
 from pydantic import BaseModel
 
-from forze.application.integrations.outbox import OutboxStaging
 from forze.application.contracts.outbox import OutboxSpec, StagedOutboxEntry
 from forze.application.execution import DepsRegistry, ExecutionContext
+from forze.application.execution.outbox import InvocationOutboxEnricher
+from forze.application.integrations.outbox import OutboxStaging
 from forze.base.serialization import PydanticModelCodec
 
 
@@ -30,7 +31,12 @@ async def test_flush_delegates_buffered_rows() -> None:
         codec=PydanticModelCodec(_Payload),
     )
     ctx = ExecutionContext(deps=DepsRegistry().freeze().resolve())
-    coord = OutboxStaging(ctx=ctx, spec=spec, flush_rows=_flush)
+    coord = OutboxStaging(
+        staging=ctx.outbox_staging,
+        spec=spec,
+        enricher=InvocationOutboxEnricher(inv=ctx.inv_ctx),
+        flush_rows=_flush,
+    )
 
     await coord.stage("demo.created", _Payload(value="a"))
     count = await coord.flush()
@@ -52,7 +58,12 @@ async def test_cannot_stage_after_flush() -> None:
     async def _flush(_rows: list[StagedOutboxEntry]) -> int:
         return 0
 
-    coord = OutboxStaging(ctx=ctx, spec=spec, flush_rows=_flush)
+    coord = OutboxStaging(
+        staging=ctx.outbox_staging,
+        spec=spec,
+        enricher=InvocationOutboxEnricher(inv=ctx.inv_ctx),
+        flush_rows=_flush,
+    )
     await coord.flush()
 
     with pytest.raises(Exception, match="after flush"):

@@ -9,6 +9,7 @@ from .deps import (
 )
 from .ports import OutboxCommandPort, OutboxQueryPort
 from .specs import OutboxDestination, OutboxDestinationKind, OutboxSpec
+from .staging_context import OutboxStagingContext
 from .value_objects import (
     IntegrationEvent,
     OutboxClaim,
@@ -33,6 +34,7 @@ __all__ = [
     "OutboxQueryPort",
     "OutboxRelayResult",
     "OutboxSpec",
+    "OutboxStagingContext",
     "OutboxStatus",
     "StagedOutboxEntry",
 ]

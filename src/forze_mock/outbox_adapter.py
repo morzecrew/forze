@@ -1,4 +1,4 @@
-"""In-memory outbox command and query adapters."""
+"""In-memory outbox store."""
 
 from __future__ import annotations
 
@@ -11,16 +11,12 @@ import attrs
 from pydantic import BaseModel
 
 from forze.application.contracts.outbox import (
-    IntegrationEvent,
     OutboxClaim,
-    OutboxCommandPort,
     OutboxQueryPort,
     OutboxSpec,
     OutboxStatus,
     StagedOutboxEntry,
 )
-from forze.application.execution.context import ExecutionContext
-from forze.application.integrations.outbox import OutboxStaging
 from forze.base.primitives import utcnow, uuid7
 from forze_mock.state import MockState
 from forze_mock.tenancy import MockTenancyMixin, partition_namespace
@@ -55,14 +51,9 @@ class MockOutboxRow:
 
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class MockOutboxAdapter[M: BaseModel](
-    MockTenancyMixin,
-    OutboxCommandPort[M],
-    OutboxQueryPort,
-):
-    """In-memory outbox staging, flush, claim, and mark adapters."""
+class MockOutboxStore[M: BaseModel](MockTenancyMixin, OutboxQueryPort):
+    """In-memory outbox persistence and query port."""
 
-    ctx: ExecutionContext
     spec: OutboxSpec[M]
     state: MockState
 
@@ -72,22 +63,9 @@ class MockOutboxAdapter[M: BaseModel](
             str(self.spec.name),
         )
 
-    _staging: OutboxStaging[M] = attrs.field(init=False)
-
-    def __attrs_post_init__(self) -> None:
-        object.__setattr__(
-            self,
-            "_staging",
-            OutboxStaging(
-                ctx=self.ctx,
-                spec=self.spec,
-                flush_rows=self._persist_rows,
-            ),
-        )
-
     # ....................... #
 
-    async def _persist_rows(self, rows: Sequence[StagedOutboxEntry]) -> int:
+    async def persist_rows(self, rows: Sequence[StagedOutboxEntry]) -> int:
         route = self._route()
         written = 0
 
@@ -123,37 +101,6 @@ class MockOutboxAdapter[M: BaseModel](
                 written += 1
 
         return written
-
-    # ....................... #
-
-    async def stage(
-        self,
-        event_type: str,
-        payload: M,
-        *,
-        event_id: UUID | None = None,
-        occurred_at: datetime | None = None,
-    ) -> None:
-        await self._staging.stage(
-            event_type,
-            payload,
-            event_id=event_id,
-            occurred_at=occurred_at,
-        )
-
-    async def stage_many(
-        self,
-        events: Sequence[tuple[str, M]],
-        *,
-        event_ids: Sequence[UUID] | None = None,
-    ) -> None:
-        await self._staging.stage_many(events, event_ids=event_ids)
-
-    async def stage_event(self, event: IntegrationEvent[M]) -> None:
-        await self._staging.stage_event(event)
-
-    async def flush(self) -> int:
-        return await self._staging.flush()
 
     # ....................... #
 

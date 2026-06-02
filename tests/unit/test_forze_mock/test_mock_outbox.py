@@ -1,4 +1,4 @@
-"""Unit tests for :class:`~forze_mock.outbox_adapter.MockOutboxAdapter`."""
+"""Unit tests for :class:`~forze_mock.outbox_adapter.MockOutboxStore`."""
 
 from __future__ import annotations
 

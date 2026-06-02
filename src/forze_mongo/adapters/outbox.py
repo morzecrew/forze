@@ -1,4 +1,4 @@
-"""Mongo transactional outbox adapter."""
+"""Mongo transactional outbox store."""
 
 from __future__ import annotations
 
@@ -19,17 +19,13 @@ from pymongo.asynchronous.collection import AsyncCollection
 from pymongo.errors import BulkWriteError
 
 from forze.application.contracts.outbox import (
-    IntegrationEvent,
     OutboxClaim,
-    OutboxCommandPort,
     OutboxQueryPort,
     OutboxSpec,
     OutboxStatus,
     StagedOutboxEntry,
 )
 from forze.application.contracts.tenancy import TenancyMixin
-from forze.application.execution.context import ExecutionContext
-from forze.application.integrations.outbox import OutboxStaging
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict, utcnow, uuid7
 from forze_mongo.execution.deps.configs.outbox import MongoOutboxConfig
@@ -83,30 +79,12 @@ def _claim_from_doc(doc: JsonDict) -> OutboxClaim:
 
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class MongoOutboxAdapter[M: BaseModel](
-    TenancyMixin,
-    OutboxCommandPort[M],
-    OutboxQueryPort,
-):
-    """Mongo-backed outbox command and query port."""
+class MongoOutboxStore[M: BaseModel](TenancyMixin, OutboxQueryPort):
+    """Mongo-backed outbox persistence and query port."""
 
-    ctx: ExecutionContext
     client: MongoClientPort
     spec: OutboxSpec[M]
     config: MongoOutboxConfig
-
-    _staging: OutboxStaging[M] = attrs.field(init=False)
-
-    def __attrs_post_init__(self) -> None:
-        object.__setattr__(
-            self,
-            "_staging",
-            OutboxStaging(
-                ctx=self.ctx,
-                spec=self.spec,
-                flush_rows=self._persist_rows,
-            ),
-        )
 
     # ....................... #
 
@@ -129,7 +107,7 @@ class MongoOutboxAdapter[M: BaseModel](
 
     # ....................... #
 
-    async def _persist_rows(self, rows: Sequence[StagedOutboxEntry]) -> int:
+    async def persist_rows(self, rows: Sequence[StagedOutboxEntry]) -> int:
         if not rows:
             return 0
 
@@ -211,37 +189,6 @@ class MongoOutboxAdapter[M: BaseModel](
                 return len(inserted_ids)  # type: ignore[arg-type]
 
             return 0
-
-    # ....................... #
-
-    async def stage(
-        self,
-        event_type: str,
-        payload: M,
-        *,
-        event_id: UUID | None = None,
-        occurred_at: datetime | None = None,
-    ) -> None:
-        await self._staging.stage(
-            event_type,
-            payload,
-            event_id=event_id,
-            occurred_at=occurred_at,
-        )
-
-    async def stage_many(
-        self,
-        events: Sequence[tuple[str, M]],
-        *,
-        event_ids: Sequence[UUID] | None = None,
-    ) -> None:
-        await self._staging.stage_many(events, event_ids=event_ids)
-
-    async def stage_event(self, event: IntegrationEvent[M]) -> None:
-        await self._staging.stage_event(event)
-
-    async def flush(self) -> int:
-        return await self._staging.flush()
 
     # ....................... #
 

@@ -14,7 +14,7 @@ from forze.application.contracts.tenancy import TenantAwareIntegrationConfig
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class PostgresOutboxConfig(TenantAwareIntegrationConfig):
-    """Postgres configuration for :class:`~forze_postgres.adapters.outbox.PostgresOutboxAdapter`."""
+    """Postgres configuration for :class:`~forze_postgres.adapters.outbox.PostgresOutboxStore`."""
 
     relation: RelationSpec = attrs.field(converter=coerce_relation_spec)
     """Schema-qualified outbox table."""

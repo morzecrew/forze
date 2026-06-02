@@ -105,12 +105,19 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      id-token: write
 
     steps:
       - name: Harden the runner (Audit all outbound calls)
         uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
         with:
           egress-policy: audit
+
+      - name: Download package artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: python-package
+          path: dist/
 
       - name: Checkout code
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
@@ -130,10 +137,17 @@ jobs:
           version: ${{ steps.ver.outputs.version }}
           path: ./CHANGELOG.md
 
-      - name: Create GitHub Release (no files)
+      - name: Create GitHub Release
         uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda # v3.0.0
         with:
+          files: dist/*
           body: |
             ## Changelog
 
             ${{ steps.changelog.outputs.changes }}
+
+      - name: Sign GitHub Release artifacts
+        uses: sigstore/gh-action-sigstore-python@04cffa1d795717b140764e8b640de88853c92acc # v3.3.0
+        with:
+          inputs: dist/*
+          release-signing-artifacts: true

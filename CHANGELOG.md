@@ -48,6 +48,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 | `forze.application.mapping` | `forze_kits.mapping` |
 | `forze.application.dto` | `forze_kits.dto` |
 | `OutboxDestination(queue_route=..., queue=...)` | `OutboxDestination.queue(route=..., channel=...)` |
+| `PostgresOutboxAdapter` / `MongoOutboxAdapter` / `MockOutboxAdapter` | `PostgresOutboxStore` / `MongoOutboxStore` / `MockOutboxStore` |
 | `RecordMappingCodec` | `ModelCodec` |
 | `PydanticRecordMappingCodec` | `PydanticModelCodec` |
 | `MsgspecRecordMappingCodec` | `MsgspecModelCodec` |
@@ -104,6 +105,7 @@ See [Kits reference](pages/docs/reference/kits.md).
 ### Changed
 
 - **`forze[oidc]` extra:** now includes `httpx` (used by `forze_identity.builtin.idp.vk` and `.telegram` authorization-code exchange helpers).
+- **Outbox:** `PostgresOutboxAdapter` / `MongoOutboxAdapter` / `MockOutboxAdapter` renamed to `*OutboxStore` (persistence only; no `ExecutionContext` on stores). `OutboxCommandDepKey` resolves `StagingOutboxCommand` composed in dep factories with `InvocationOutboxEnricher` and per-request `OutboxStagingContext`; `OutboxQueryDepKey` resolves the store.
 - **Outbox:** Postgres `flush` uses a single bulk `INSERT … ON CONFLICT DO NOTHING`; `claim_pending` sets `processing_at`; `OutboxQueryPort.reclaim_stale_processing` resets stuck `processing` rows; `relay_outbox_to_queue` reclaims before claim (`reclaim_stale_after`, default 5 minutes) and reports `OutboxRelayResult.reclaimed`; mock adapter matches Postgres idempotency and claim/mark semantics; docs cover `processing_at` DDL, at-least-once relay, and worker patterns; `OutboxQueryPort.requeue_failed`; relay passes `key=str(event_id)` per enqueue; Mongo outbox adapter and docs.
 - **Integrations:** Shared storage adapter base, object-storage client port, metadata/path helpers, and warehouse analytics adapter helpers moved from `forze.application.contracts` to `forze.application.integrations` (`integrations.storage`, `integrations.analytics`); contracts retain ports, specs, and value objects only.
 - **S3 / GCS:** MIME sniffing via `python-magic` stays in `S3StorageAdapter` / `GCSStorageAdapter` (optional extras); shared `ObjectStorageAdapter` uses stdlib `mimetypes` only. Public `S3StorageAdapter`, `GCSStorageAdapter`, `S3ClientPort`, and `GCSClientPort` unchanged.
