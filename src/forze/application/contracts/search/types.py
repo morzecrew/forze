@@ -5,6 +5,9 @@ from typing import Literal, Sequence, TypeAlias, TypedDict
 PhraseCombine = Literal["any", "all"]
 """``any``: at least one list phrase matches (disjunction). ``all``: every phrase must match."""
 
+PgroongaPlan = Literal["filter_first", "index_first", "auto"]
+"""PGroonga ranked search SQL shape (Postgres adapter)."""
+
 # ....................... #
 
 ResultSnapshotMode: TypeAlias = bool | Literal["auto"]
@@ -77,3 +80,12 @@ class SearchOptions(TypedDict, total=False):
     ``any`` (default): disjunction (match if any phrase matches).
     ``all``: conjunction (match every phrase).
     """
+
+    pgroonga_plan: PgroongaPlan
+    """Override Postgres PGroonga plan (``filter_first``, ``index_first``, ``auto``)."""
+
+    candidate_limit: int
+    """Cap ranked heap rows per PGroonga leg or simple search pipeline."""
+
+    groonga_query: str
+    """Raw Groonga query string for ``pgroonga_condition`` (skips phrase combiner)."""

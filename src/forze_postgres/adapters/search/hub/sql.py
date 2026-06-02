@@ -39,6 +39,26 @@ from .runtime import hub_leg_engine_for
 # ----------------------- #
 
 
+def _hub_leg_order_limit(*, engine: str, per_leg_limit: int) -> sql.Composable:
+    """``ORDER BY … LIMIT`` suffix for capped hub leg CTEs."""
+
+    score = sql.Identifier(LEG_SCORE)
+
+    if engine == "vector":
+        return sql.SQL(" ORDER BY {} ASC NULLS LAST LIMIT {}").format(
+            score,
+            sql.Literal(int(per_leg_limit)),
+        )
+
+    return sql.SQL(" ORDER BY {} DESC NULLS LAST LIMIT {}").format(
+        score,
+        sql.Literal(int(per_leg_limit)),
+    )
+
+
+# ....................... #
+
+
 class HubSearchSqlMixin[M: BaseModel]:
     """SQL building methods shared by hub offset and cursor search."""
 
@@ -127,6 +147,7 @@ class HubSearchSqlMixin[M: BaseModel]:
         filters: QueryFilterExpression | None,  # type: ignore[valid-type]
         leg_options: SearchOptions | None,
         member_weights_list: Sequence[float],
+        per_leg_limit: int,
     ) -> tuple[sql.Composable, list[Any], bool]:
         fw, fp = await self._hub_host.where_clause(filters)
         tenant_id = (
@@ -141,9 +162,7 @@ class HubSearchSqlMixin[M: BaseModel]:
         ]
 
         do_legs = bool(query_terms) and bool(active)
-        need_groonga_sys = do_legs and any(
-            leg.same_heap_as_hub and leg.engine == "pgroonga" for _, leg, _ in active
-        )
+        need_groonga_sys = False
 
         hub_cte = sql.SQL(
             """
@@ -167,8 +186,17 @@ class HubSearchSqlMixin[M: BaseModel]:
 
         if do_legs:
             for i, leg, _ in active:
-                t_alias = HUB_ROW_ALIAS if leg.same_heap_as_hub else f"t{i}"
+                heap_t_alias = "t"
+                t_alias = (
+                    heap_t_alias
+                    if leg.same_heap_as_hub and leg.engine == "pgroonga"
+                    else (HUB_ROW_ALIAS if leg.same_heap_as_hub else f"t{i}")
+                )
                 lr_alias = leg_aliases[i]
+                leg_order = _hub_leg_order_limit(
+                    engine=leg.engine,
+                    per_leg_limit=per_leg_limit,
+                )
 
                 v_emb = (
                     self._hub_host.vector_embedders.get(i)
@@ -190,11 +218,11 @@ class HubSearchSqlMixin[M: BaseModel]:
                 params.extend(sp)
 
                 if leg.same_heap_as_hub and leg.engine == "pgroonga" and query_terms:
-                    rank_expr = sql.SQL("pgroonga_score({}.{}, {}.{}) AS {}").format(
-                        sql.Identifier(t_alias),
-                        sql.Identifier(HUB_GROONGA_TABLEOID),
-                        sql.Identifier(t_alias),
-                        sql.Identifier(HUB_GROONGA_CTID),
+                    rank_expr = sql.SQL(
+                        "pgroonga_score({}.tableoid, {}.ctid) AS {}"
+                    ).format(
+                        sql.Identifier(heap_t_alias),
+                        sql.Identifier(heap_t_alias),
                         sql.Identifier(LEG_SCORE),
                     )
 
@@ -206,14 +234,48 @@ class HubSearchSqlMixin[M: BaseModel]:
                     sql.Identifier(LEG_EID),
                 )
 
-                if leg.same_heap_as_hub:
+                if leg.same_heap_as_hub and leg.engine == "pgroonga":
+                    pk_join = sql.SQL("{} = {}").format(
+                        sql.SQL("{}.{}").format(
+                            sql.Identifier(HUB_ROW_ALIAS),
+                            sql.Identifier(leg.heap_pk_column),
+                        ),
+                        sql.SQL("{}.{}").format(
+                            sql.Identifier(heap_t_alias),
+                            sql.Identifier(leg.heap_pk_column),
+                        ),
+                    )
+                    leg_cte = sql.SQL(
+                        """
+                        ,
+                        {lr} AS (
+                            SELECT {sel_pk}, {rank_expr}
+                            FROM {hub_rel} {t}
+                            INNER JOIN {hf} {ha} ON ({pk_join})
+                            WHERE {sw}{leg_order}
+                        )
+                        """
+                    ).format(
+                        lr=sql.Identifier(lr_alias),
+                        sel_pk=sel_pk,
+                        rank_expr=rank_expr,
+                        hub_rel=hub_qn.ident(),
+                        t=sql.Identifier(heap_t_alias),
+                        hf=sql.Identifier(HUB_CTE),
+                        ha=sql.Identifier(HUB_ROW_ALIAS),
+                        pk_join=pk_join,
+                        sw=sw,
+                        leg_order=leg_order,
+                    )
+
+                elif leg.same_heap_as_hub:
                     leg_cte = sql.SQL(
                         """
                         ,
                         {lr} AS (
                             SELECT {sel_pk}, {rank_expr}
                             FROM {hf} {t}
-                            WHERE {sw}
+                            WHERE {sw}{leg_order}
                         )
                         """
                     ).format(
@@ -223,6 +285,7 @@ class HubSearchSqlMixin[M: BaseModel]:
                         hf=sql.Identifier(HUB_CTE),
                         t=sql.Identifier(t_alias),
                         sw=sw,
+                        leg_order=leg_order,
                     )
 
                 else:
@@ -239,7 +302,7 @@ class HubSearchSqlMixin[M: BaseModel]:
                             SELECT {sel_pk}, {rank_expr}
                             FROM {heap} {t}
                             INNER JOIN {cand} ON ({join_on})
-                            WHERE {sw}
+                            WHERE {sw}{leg_order}
                         )
                         """
                     ).format(
@@ -251,6 +314,7 @@ class HubSearchSqlMixin[M: BaseModel]:
                         sw=sw,
                         cand=cand_sub,
                         join_on=join_on,
+                        leg_order=leg_order,
                     )
 
                 leg_cte_parts.append(leg_cte)

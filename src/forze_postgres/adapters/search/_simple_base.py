@@ -157,6 +157,9 @@ class PostgresRankedPipelineSearchAdapter[M: BaseModel](
         fw: sql.Composable,
         fp: list[Any],
         terms: tuple[str, ...],
+        pagination: PaginationExpression | None = None,
+        snapshot: SearchResultSnapshotOptions | None = None,
+        parsed_filters: Any = None,
     ) -> RankedPipelineSql:
         """Assemble pipeline CTEs; engine-specific leg SQL is built inside subclasses."""
 
@@ -167,7 +170,9 @@ class PostgresRankedPipelineSearchAdapter[M: BaseModel](
     def _fingerprint_extras(
         self,
         options: SearchOptions | None,
+        **kwargs: object,
     ) -> dict[str, object] | None:
+        _ = options, kwargs
         return None
 
     # ....................... #
@@ -194,7 +199,8 @@ class PostgresRankedPipelineSearchAdapter[M: BaseModel](
         return_fields: Sequence[str] | None = None,
     ) -> Any:
         options = search_options_for_simple_adapter(options)
-        fw, fp = await self.where_clause(filters)
+        parsed_filters = self.compile_filters(filters)
+        fw, fp = await self.where_clause(filters, parsed=parsed_filters)
         terms = tuple(normalize_search_queries(query))
         pipeline_sql = await self._build_ranked_pipeline_sql(
             query=query,
@@ -203,6 +209,9 @@ class PostgresRankedPipelineSearchAdapter[M: BaseModel](
             fw=fw,
             fp=fp,
             terms=terms,
+            pagination=pagination,
+            snapshot=snapshot,
+            parsed_filters=parsed_filters,
         )
         extra_ob = await self._projection_order_by_clause(sorts)
         order_sql = build_rank_first_order(
@@ -219,6 +228,12 @@ class PostgresRankedPipelineSearchAdapter[M: BaseModel](
             select_table_alias=self.projection_alias,
         )
 
+        fp_extras = self._fingerprint_extras(
+            options,
+            resolved_plan=getattr(pipeline_sql, "resolved_plan", None),
+            candidate_limit=getattr(pipeline_sql, "candidate_limit", None),
+        )
+
         return await execute_simple_ranked_offset_search(
             self,
             plan=plan,
@@ -227,7 +242,7 @@ class PostgresRankedPipelineSearchAdapter[M: BaseModel](
             sorts=sorts,
             spec=self.spec,
             variant=self.search_variant,
-            fingerprint_extras=self._fingerprint_extras(options),
+            fingerprint_extras=fp_extras,
             pagination=pagination,
             snapshot=snapshot,
             return_count=return_count,
@@ -251,7 +266,7 @@ class PostgresRankedPipelineSearchAdapter[M: BaseModel](
         return_fields: Sequence[str] | None = None,
     ) -> Any:
         options = search_options_for_simple_adapter(options)
-        parse_search_cursor(cursor)
+        lim, _, _ = parse_search_cursor(cursor)
         terms = tuple(normalize_search_queries(query))
         parsed_filters = self.compile_filters(filters)
 
@@ -276,6 +291,9 @@ class PostgresRankedPipelineSearchAdapter[M: BaseModel](
             fw=fw,
             fp=fp,
             terms=terms,
+            pagination={"limit": lim},
+            snapshot=None,
+            parsed_filters=parsed_filters,
         )
 
         return await execute_ranked_pipeline_cursor(

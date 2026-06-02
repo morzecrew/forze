@@ -88,6 +88,7 @@ class PostgresIntrospector:
         init=False,
     )
     __index_lane: CacheLane[CacheKey, PostgresIndexInfo] = attrs.field(init=False)
+    __row_estimate_lane: CacheLane[CacheKey, int] = attrs.field(init=False)
 
     # ....................... #
 
@@ -122,6 +123,10 @@ class PostgresIntrospector:
             ttl_seconds=ttl,
         )
         self.__index_lane = CacheLane(
+            max_entries=mx,
+            ttl_seconds=ttl,
+        )
+        self.__row_estimate_lane = CacheLane(
             max_entries=mx,
             ttl_seconds=ttl,
         )
@@ -787,6 +792,62 @@ class PostgresIntrospector:
 
     # ....................... #
 
+    async def _fetch_relation_row_estimate_uncached(
+        self,
+        schema: str,
+        relation: str,
+        key: CacheKey,
+    ) -> int:
+        stmt = sql.SQL(
+            """
+            SELECT COALESCE(
+                NULLIF(c.reltuples, -1)::bigint,
+                s.n_live_tup,
+                0
+            ) AS estimate
+            FROM pg_class c
+            JOIN pg_namespace n ON n.oid = c.relnamespace
+            LEFT JOIN pg_stat_user_tables s
+                ON s.relid = c.oid
+            WHERE n.nspname = {schema}
+                AND c.relname = {relation}
+            LIMIT 1
+            """
+        ).format(schema=sql.Placeholder(), relation=sql.Placeholder())
+
+        val = await self.client.fetch_value(stmt, [schema, relation], default=0)
+        estimate = max(int(val or 0), 0)
+        self.__row_estimate_lane.store(key, estimate)
+
+        return estimate
+
+    # ....................... #
+
+    async def estimate_relation_rows(
+        self,
+        *,
+        schema: str | None,
+        relation: str,
+    ) -> int:
+        """Return an approximate live row count for a relation (cached).
+
+        Uses ``pg_class.reltuples`` when available, otherwise ``pg_stat_user_tables.n_live_tup``.
+        """
+
+        schema = self.__normalize_schema(schema)
+        key = self._rel_key(schema, relation)
+        hit = self.__row_estimate_lane.lookup(key)
+
+        if hit is not None:
+            return hit
+
+        return await self.__inflight.run(
+            ("pg_row_est", *key),
+            lambda: self._fetch_relation_row_estimate_uncached(schema, relation, key),
+        )
+
+    # ....................... #
+
     def invalidate_relation(self, *, schema: str | None, relation: str) -> None:
         """Evict cached relation kind and column types for a specific relation."""
 
@@ -798,6 +859,7 @@ class PostgresIntrospector:
         self.__trigger_lane.invalidate(rk)
         self.__pk_lane.invalidate(rk)
         self.__unique_sets_lane.invalidate(rk)
+        self.__row_estimate_lane.invalidate(rk)
 
     # ....................... #
 
@@ -819,5 +881,6 @@ class PostgresIntrospector:
         self.__pk_lane.clear()
         self.__unique_sets_lane.clear()
         self.__index_lane.clear()
+        self.__row_estimate_lane.clear()
         self.__inflight.clear()
         self.__coalesce.clear_inflight()

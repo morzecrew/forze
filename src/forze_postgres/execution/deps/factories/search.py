@@ -83,6 +83,12 @@ def postgres_search_port_for_config(
             return PostgresPGroongaSearchAdapter[Any](
                 **common,  # type: ignore[arg-type]
                 pgroonga_score_version=c.pgroonga_score_version,
+                pgroonga_plan=c.pgroonga_plan,
+                pgroonga_candidate_limit=c.pgroonga_candidate_limit,
+                pgroonga_auto_index_first_min_rows=c.pgroonga_auto_index_first_min_rows,
+                pgroonga_auto_use_exact_count=c.pgroonga_auto_use_exact_count,
+                read_relation=c.read,
+                heap_relation_spec=c.heap_relation,
             )
 
         case "fts":

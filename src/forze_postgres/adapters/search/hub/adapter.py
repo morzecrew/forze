@@ -56,6 +56,8 @@ class PostgresHubSearchAdapter[M: BaseModel](
     result_snapshot: SearchResultSnapshot | None = None
     combine: Literal["or", "and"] = "or"
     score_merge: Literal["max", "sum"] = "max"
+    per_leg_limit: int = 5000
+    """Max ranked rows retained per hub leg before merge."""
 
     # ....................... #
 
@@ -89,6 +91,7 @@ class PostgresHubSearchAdapter[M: BaseModel](
             filters=filters,
             leg_options=leg_options,
             member_weights_list=member_weights_list,
+            per_leg_limit=self.per_leg_limit,
         )
 
         order_sql = await self._hub_order_sql_for_search(do_legs, sorts)
@@ -111,6 +114,7 @@ class PostgresHubSearchAdapter[M: BaseModel](
             members_weighted=members_weighted,
             score_merge=str(self.score_merge),
             combine=str(self.combine),
+            per_leg_limit=self.per_leg_limit,
             pagination=pagination,
             snapshot=snapshot,
             return_count=return_count,

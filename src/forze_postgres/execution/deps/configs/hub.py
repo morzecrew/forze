@@ -64,6 +64,9 @@ class PostgresHubSearchConfig(TenantAwareIntegrationConfig):
     nested_field_hints: Mapping[str, Any] | None = None
     """Per-path type hints for filters/sorts on the hub read projection."""
 
+    per_leg_limit: int = 5000
+    """Max ranked rows retained per hub leg before merge."""
+
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
@@ -78,6 +81,9 @@ class PostgresHubSearchConfig(TenantAwareIntegrationConfig):
 
         if not legs:
             raise exc.internal("Hub search requires at least one leg configuration.")
+
+        if self.per_leg_limit < 1:
+            raise exc.internal("per_leg_limit must be at least 1.")
 
         fk_seen: set[str] = set()
 

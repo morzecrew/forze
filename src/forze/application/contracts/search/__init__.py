@@ -31,6 +31,7 @@ from .specs import (
 )
 from .types import (
     PhraseCombine,
+    PgroongaPlan,
     ResultSnapshotMode,
     SearchOptions,
     SearchResultSnapshotOptions,
@@ -46,6 +47,7 @@ from .value_objects import SearchResultSnapshotMeta
 
 __all__ = [
     "PhraseCombine",
+    "PgroongaPlan",
     "ResultSnapshotMode",
     "SearchSpec",
     "calculate_effective_field_weights",

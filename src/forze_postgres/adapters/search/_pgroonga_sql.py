@@ -193,3 +193,53 @@ def pgroonga_score_rank_expr(
         )
 
     return sql.SQL("{} AS {}").format(score_call, sql.Identifier(rank_column))
+
+
+# ....................... #
+
+
+def pgroonga_score_call(
+    *,
+    index_alias: str,
+    query: str,
+    score_version: Literal["v1", "v2"] = "v2",
+) -> sql.Composable:
+    """``pgroonga_score`` expression without a result column alias (for ``ORDER BY``)."""
+
+    if not query.strip():
+        return sql.SQL("(0)::double precision")
+
+    if score_version == "v1":
+        return sql.SQL("pgroonga_score({})").format(sql.Identifier(index_alias))
+
+    return sql.Composed(
+        [
+            sql.SQL("pgroonga_score("),
+            sql.Identifier(index_alias),
+            sql.SQL(".tableoid, "),
+            sql.Identifier(index_alias),
+            sql.SQL(".ctid)"),
+        ]
+    )
+
+
+def pgroonga_match_query_text(
+    queries: tuple[str, ...],
+    options: SearchOptions | None,
+) -> str:
+    """Resolve the Groonga query string (raw override or phrase combiner)."""
+
+    from forze.application.contracts.search import effective_phrase_combine
+
+    raw = (options or {}).get("groonga_query")
+
+    if raw is not None:
+        s = str(raw).strip()
+
+        if s:
+            return s
+
+    return pgroonga_phrase_match_text(
+        queries,
+        combine=effective_phrase_combine(options),
+    )

@@ -89,10 +89,12 @@ class PostgresFTSSearchAdapter[M: BaseModel](PostgresRankedPipelineSearchAdapter
 
     # ....................... #
 
-    def _fingerprint_extras(
+    def _fingerprint_extras(  # type: ignore[override]
         self,
         options: SearchOptions | None,
+        **kwargs: object,
     ) -> dict[str, object] | None:
+        _ = kwargs
         return {"phrase_combine": str(effective_phrase_combine(options))}
 
     # ....................... #
@@ -106,8 +108,11 @@ class PostgresFTSSearchAdapter[M: BaseModel](PostgresRankedPipelineSearchAdapter
         fw: sql.Composable,
         fp: list[Any],
         terms: tuple[str, ...],
+        pagination: Any = None,
+        snapshot: Any = None,
+        parsed_filters: Any = None,
     ) -> RankedPipelineSql:
-        _ = query, filters
+        _ = query, filters, pagination, snapshot, parsed_filters
         join = self._safe_join_pairs
         index_qname = await self._index_qname()
         index_heap_qname = await self._index_heap_qname()

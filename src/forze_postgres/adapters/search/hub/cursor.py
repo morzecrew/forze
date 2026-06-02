@@ -88,6 +88,7 @@ class HubSearchCursorMixin[M: BaseModel](HubSearchSqlMixin[M]):
             filters=filters,
             leg_options=leg_options,
             member_weights_list=member_weights_list,
+            per_leg_limit=self._hub_host.per_leg_limit,
         )
 
         key_spec = self._hub_cursor_key_spec(do_legs=do_legs, sorts=sorts)

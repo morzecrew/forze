@@ -42,6 +42,7 @@ class HubSearchHost(Protocol[M]):
     vector_embedders: Mapping[int, EmbeddingsProviderPort]
     combine: Literal["or", "and"]
     score_merge: Literal["max", "sum"]
+    per_leg_limit: int
     read_fields: frozenset[str]
     model_type: type[M]
     nested_field_hints: Mapping[str, Any] | None

@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Postgres PGroonga search:** optional plan modes (`filter_first`, `index_first`, `auto`), candidate row caps, hub `per_leg_limit`, coalesced read/heap fast path, and `SearchOptions` overrides (`pgroonga_plan`, `candidate_limit`, `groonga_query`). `auto` uses cached relation row estimates from the introspector (no extra `COUNT` unless configured).
+
 ### Security
 
 - **`forze_identity.tenancy`:** `TenantResolverAdapter` rejects invalid tenant hints (`tenant_mismatch`) and inactive tenants (`tenant_inactive`) instead of silently returning `None`.

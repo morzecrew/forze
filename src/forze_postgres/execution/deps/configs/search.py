@@ -22,7 +22,13 @@ VectorEngineDistance = Literal["l2", "cosine", "inner_product"]
 PgroongaScoreVersion = Literal["v1", "v2"]
 """``v1``: ``pgroonga_score(heap_alias)``. ``v2``: ``pgroonga_score(tableoid, ctid)`` (default)."""
 
+PgroongaPlan = Literal["filter_first", "index_first", "auto"]
+"""PGroonga ranked search SQL shape."""
+
 SearchEngine = Literal["pgroonga", "fts", "vector"]
+
+_DEFAULT_PGROONGA_CANDIDATE_LIMIT = 5000
+_DEFAULT_PGROONGA_AUTO_INDEX_FIRST_MIN_ROWS = 100_000
 
 # ....................... #
 
@@ -83,6 +89,18 @@ class PostgresSearchConfig(TenantAwareIntegrationConfig):
     pgroonga_score_version: PgroongaScoreVersion = "v2"
     """PGroonga score overload when :attr:`engine` is ``pgroonga``."""
 
+    pgroonga_plan: PgroongaPlan = "filter_first"
+    """PGroonga ranked search plan (``filter_first``, ``index_first``, ``auto``)."""
+
+    pgroonga_candidate_limit: int | None = _DEFAULT_PGROONGA_CANDIDATE_LIMIT
+    """Max heap rows scored per query; ``None`` disables the cap."""
+
+    pgroonga_auto_index_first_min_rows: int = _DEFAULT_PGROONGA_AUTO_INDEX_FIRST_MIN_ROWS
+    """When :attr:`pgroonga_plan` is ``auto`` and filters are empty, use ``index_first`` if the read relation estimate is at least this many rows."""
+
+    pgroonga_auto_use_exact_count: bool = False
+    """When :attr:`pgroonga_plan` is ``auto``, run ``COUNT(*)`` on the filtered projection to pick the plan (extra round trip)."""
+
     # ....................... #
 
     @property
@@ -121,6 +139,22 @@ class PostgresSearchConfig(TenantAwareIntegrationConfig):
             case "pgroonga":
                 if self.pgroonga_score_version not in ("v1", "v2"):
                     raise exc.internal("pgroonga_score_version must be 'v1' or 'v2'.")
+
+                if self.pgroonga_plan not in ("filter_first", "index_first", "auto"):
+                    raise exc.internal(
+                        "pgroonga_plan must be 'filter_first', 'index_first', or 'auto'."
+                    )
+
+                if (
+                    self.pgroonga_candidate_limit is not None
+                    and self.pgroonga_candidate_limit < 1
+                ):
+                    raise exc.internal("pgroonga_candidate_limit must be at least 1.")
+
+                if self.pgroonga_auto_index_first_min_rows < 1:
+                    raise exc.internal(
+                        "pgroonga_auto_index_first_min_rows must be at least 1."
+                    )
 
 
 # ....................... #

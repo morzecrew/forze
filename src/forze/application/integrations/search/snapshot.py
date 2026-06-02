@@ -187,6 +187,7 @@ class SearchResultSnapshot:
         members_weighted: list[tuple[str, float]],
         score_merge: str,
         combine: str,
+        per_leg_limit: int | None = None,
     ) -> str:
         if isinstance(query, (list, tuple)):
             qpart: object = [str(x) for x in query]
@@ -203,6 +204,7 @@ class SearchResultSnapshot:
             "members": members_weighted,
             "score_merge": score_merge,
             "combine": combine,
+            "per_leg_limit": per_leg_limit,
         }
 
         return _sha256_fingerprint_payload(payload)

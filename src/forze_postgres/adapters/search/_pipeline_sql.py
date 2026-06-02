@@ -157,19 +157,101 @@ def build_scored_cte(
     scored_keys: sql.Composable,
     scored_rank: sql.Composable,
     heap_ident: sql.Composable,
-    join_sf: sql.Composable,
+    join_sf: sql.Composable | None,
     sw: sql.Composable,
+    heap_fw: sql.Composable | None = None,
+    candidate_limit: int | None = None,
+    scored_order: sql.Composable | None = None,
+    first_in_with: bool = False,
 ) -> sql.Composable:
-    """``, scored AS (SELECT keys, rank FROM heap JOIN filtered WHERE match)``."""
+    """``, scored AS (SELECT keys, rank FROM heap [JOIN filtered] WHERE match)``."""
+
+    prefix = sql.SQL("") if first_in_with else sql.SQL(",")
+
+    if join_sf is not None:
+        from_sql = sql.SQL(
+            """
+                FROM {heap} {ia}
+                INNER JOIN {filtered} {fa} ON ({join_sf})
+                """
+        ).format(
+            heap=heap_ident,
+            ia=sql.Identifier(aliases.index),
+            filtered=sql.Identifier(aliases.filtered),
+            fa=sql.Identifier(aliases.filtered),
+            join_sf=join_sf,
+        )
+
+    else:
+        from_sql = sql.SQL(" FROM {heap} {ia} ").format(
+            heap=heap_ident,
+            ia=sql.Identifier(aliases.index),
+        )
+
+    where_parts: list[sql.Composable] = [sw]
+
+    if heap_fw is not None:
+        where_parts.append(heap_fw)
+
+    where_sql = sql.SQL(" AND ").join(where_parts)
+
+    tail = sql.SQL("")
+
+    if candidate_limit is not None and scored_order is not None:
+        tail = sql.SQL(" ORDER BY {ord} DESC NULLS LAST LIMIT {lim}").format(  # type: ignore[assignment]
+            ord=scored_order,
+            lim=sql.Literal(int(candidate_limit)),
+        )
 
     return sql.SQL(
         """
-            ,
+            {prefix}
+            {scored} AS (
+                SELECT {scored_keys}, {scored_rank}
+                {from_sql}
+                WHERE {where_sql}{tail}
+            )"""
+    ).format(
+        prefix=prefix,
+        scored=sql.Identifier(aliases.scored),
+        scored_keys=scored_keys,
+        scored_rank=scored_rank,
+        from_sql=from_sql,
+        where_sql=where_sql,
+        tail=tail,
+    )
+
+
+# ....................... #
+
+
+def build_pgroonga_index_first_pipeline(
+    *,
+    aliases: PipelineAliases,
+    scored_keys: sql.Composable,
+    scored_rank: sql.Composable,
+    heap_ident: sql.Composable,
+    sw: sql.Composable,
+    join_vs: sql.Composable,
+    proj_ident: sql.Composable,
+    proj_fw: sql.Composable,
+    candidate_limit: int,
+    scored_order: sql.Composable,
+) -> tuple[sql.Composable, sql.Composable]:
+    """Index-first PGroonga: top-K on heap, then join projection with filters.
+
+    Returns ``(with_clause, from_outer)``.
+    """
+
+    where_parts: list[sql.Composable] = [sw]
+    scored_cte = sql.SQL(
+        """
             {scored} AS (
                 SELECT {scored_keys}, {scored_rank}
                 FROM {heap} {ia}
-                INNER JOIN {filtered} {fa} ON ({join_sf})
                 WHERE {sw}
+                ORDER BY {ord} DESC NULLS LAST
+                LIMIT {lim}
             )"""
     ).format(
         scored=sql.Identifier(aliases.scored),
@@ -177,11 +259,29 @@ def build_scored_cte(
         scored_rank=scored_rank,
         heap=heap_ident,
         ia=sql.Identifier(aliases.index),
-        filtered=sql.Identifier(aliases.filtered),
-        fa=sql.Identifier(aliases.filtered),
-        join_sf=join_sf,
-        sw=sw,
+        sw=sql.SQL(" AND ").join(where_parts),
+        ord=scored_order,
+        lim=sql.Literal(int(candidate_limit)),
     )
+
+    from_outer = sql.SQL(
+        """
+            FROM {proj} {pa}
+            INNER JOIN {scored} {sa} ON ({join_vs})
+            WHERE {fw}
+            """
+    ).format(
+        proj=proj_ident,
+        pa=sql.Identifier(aliases.projection),
+        scored=sql.Identifier(aliases.scored),
+        sa=sql.Identifier(aliases.scored),
+        join_vs=join_vs,
+        fw=proj_fw,
+    )
+
+    with_clause = sql.SQL("WITH {}{}").format(scored_cte, sql.SQL(""))
+
+    return with_clause, from_outer
 
 
 # ....................... #
