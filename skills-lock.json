@@ -6,6 +6,18 @@
       "sourceType": "github",
       "computedHash": "e2c6c594828cbbf4f0c181eedcf2bd39a2a49b4f087942b295faf36cdc88c423"
     },
+    "autofix": {
+      "source": "coderabbitai/skills",
+      "sourceType": "github",
+      "skillPath": "skills/autofix/SKILL.md",
+      "computedHash": "421f9102c20fb1c91d87a10ca9bee2e91c7e632e644dfdd3dc013e53865df6c1"
+    },
+    "code-review": {
+      "source": "coderabbitai/skills",
+      "sourceType": "github",
+      "skillPath": "skills/code-review/SKILL.md",
+      "computedHash": "6d117c3f8797e0c770c6b00a646a07028f3440b5d8042e8f841e88ed1116788f"
+    },
     "gitmoji-conventional": {
       "source": "morzecrew/agent-skills",
       "sourceType": "github",
