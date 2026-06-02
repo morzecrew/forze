@@ -47,6 +47,7 @@ class ConfigurablePostgresHubSearch(HubSearchQueryDepPort):
             per_leg_limit=self.config.per_leg_limit,
             combo_limit=self.config.combo_limit,
             execution=self.config.execution,
+            parallel_hub_cte_materialized=self.config.parallel_hub_cte_materialized,
             relation=self.config.hub,
             client=context.deps.provide(PostgresClientDepKey),
             codec=spec.resolved_read_codec,

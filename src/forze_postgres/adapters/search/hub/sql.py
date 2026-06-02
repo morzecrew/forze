@@ -32,32 +32,13 @@ from .constants import (
     HUB_GROONGA_TABLEOID,
     HUB_RANK,
     HUB_ROW_ALIAS,
-    LEG_EID,
-    LEG_SCORE,
 )
-from .runtime import hub_leg_engine_for
+from ._leg_sql import HubLegSqlContext, build_hub_cte, build_hub_leg_sql_parts
+
+# Re-export for parallel and tests.
+from ._leg_sql import hub_leg_order_limit as hub_leg_order_limit
 
 # ----------------------- #
-
-
-def hub_leg_order_limit(*, engine: str, per_leg_limit: int) -> sql.Composable:
-    """``ORDER BY … LIMIT`` suffix for capped hub leg CTEs."""
-
-    score = sql.Identifier(LEG_SCORE)
-
-    if engine == "vector":
-        return sql.SQL(" ORDER BY {} ASC NULLS LAST LIMIT {}").format(
-            score,
-            sql.Literal(int(per_leg_limit)),
-        )
-
-    return sql.SQL(" ORDER BY {} DESC NULLS LAST LIMIT {}").format(
-        score,
-        sql.Literal(int(per_leg_limit)),
-    )
-
-
-# ....................... #
 
 
 class HubSearchSqlMixin[M: BaseModel]:
@@ -166,19 +147,9 @@ class HubSearchSqlMixin[M: BaseModel]:
         do_legs = bool(query_terms) and bool(active)
         need_groonga_sys = False
 
-        hub_cte = sql.SQL(
-            """
-            {hub_cte} AS (
-                SELECT {hub_cols}
-                FROM {hub_rel} {ha}
-                WHERE {fw}
-            )
-            """
-        ).format(
-            hub_cte=sql.Identifier(HUB_CTE),
+        hub_cte = build_hub_cte(
             hub_cols=self._hub_select_list(include_groonga_sys=need_groonga_sys),
-            hub_rel=hub_qn.ident(),
-            ha=sql.Identifier(HUB_ROW_ALIAS),
+            hub_rel_ident=hub_qn.ident(),
             fw=fw,
         )
 
@@ -186,148 +157,28 @@ class HubSearchSqlMixin[M: BaseModel]:
         leg_cte_parts: list[sql.Composable] = []
         leg_aliases = [f"lr{i}" for i in range(len(self._hub_host.members))]
 
+        leg_ctx = HubLegSqlContext(
+            hub_rel_ident=hub_qn.ident(),
+            fw=fw,
+            tenant_id=tenant_id,
+            query_terms=query_terms,
+            leg_options=leg_options,
+            per_leg_limit=per_leg_limit,
+            introspector=self._hub_host.introspector,
+            vector_embedders=dict(self._hub_host.vector_embedders),
+        )
+
         if do_legs:
             for i, leg, _ in active:
-                heap_t_alias = "t"
-                t_alias = (
-                    heap_t_alias
-                    if leg.same_heap_as_hub and leg.engine == "pgroonga"
-                    else (HUB_ROW_ALIAS if leg.same_heap_as_hub else f"t{i}")
-                )
                 lr_alias = leg_aliases[i]
-                leg_order = hub_leg_order_limit(
-                    engine=leg.engine,
-                    per_leg_limit=per_leg_limit,
+                parts = await build_hub_leg_sql_parts(
+                    leg_ctx,
+                    leg_index=i,
+                    leg=leg,
+                    lr_alias=lr_alias,
                 )
-
-                v_emb = (
-                    self._hub_host.vector_embedders.get(i)
-                    if leg.engine == "vector"
-                    else None
-                )
-                sw, rank_expr, sp = await hub_leg_engine_for(
-                    leg,
-                    vector_embedder=v_emb,
-                ).build_leg(
-                    leg,
-                    tenant_id=tenant_id,
-                    introspector=self._hub_host.introspector,
-                    index_alias=t_alias,
-                    queries=query_terms,
-                    options=leg_options,
-                    score_column=LEG_SCORE,
-                )
-                params.extend(sp)
-
-                if leg.same_heap_as_hub and leg.engine == "pgroonga" and query_terms:
-                    rank_expr = sql.SQL(
-                        "pgroonga_score({}.tableoid, {}.ctid) AS {}"
-                    ).format(
-                        sql.Identifier(heap_t_alias),
-                        sql.Identifier(heap_t_alias),
-                        sql.Identifier(LEG_SCORE),
-                    )
-
-                sel_pk = sql.SQL("{} AS {}").format(
-                    sql.SQL("{}.{}").format(
-                        sql.Identifier(t_alias),
-                        sql.Identifier(leg.heap_pk_column),
-                    ),
-                    sql.Identifier(LEG_EID),
-                )
-
-                if leg.same_heap_as_hub and leg.engine == "pgroonga":
-                    pk_join = sql.SQL("{} = {}").format(
-                        sql.SQL("{}.{}").format(
-                            sql.Identifier(HUB_ROW_ALIAS),
-                            sql.Identifier(leg.heap_pk_column),
-                        ),
-                        sql.SQL("{}.{}").format(
-                            sql.Identifier(heap_t_alias),
-                            sql.Identifier(leg.heap_pk_column),
-                        ),
-                    )
-                    leg_cte = sql.SQL(
-                        """
-                        ,
-                        {lr} AS (
-                            SELECT {sel_pk}, {rank_expr}
-                            FROM {hub_rel} {t}
-                            INNER JOIN {hf} {ha} ON ({pk_join})
-                            WHERE {sw}{leg_order}
-                        )
-                        """
-                    ).format(
-                        lr=sql.Identifier(lr_alias),
-                        sel_pk=sel_pk,
-                        rank_expr=rank_expr,
-                        hub_rel=hub_qn.ident(),
-                        t=sql.Identifier(heap_t_alias),
-                        hf=sql.Identifier(HUB_CTE),
-                        ha=sql.Identifier(HUB_ROW_ALIAS),
-                        pk_join=pk_join,
-                        sw=sw,
-                        leg_order=leg_order,
-                    )
-
-                elif leg.same_heap_as_hub:
-                    leg_cte = sql.SQL(
-                        """
-                        ,
-                        {lr} AS (
-                            SELECT {sel_pk}, {rank_expr}
-                            FROM {hf} {t}
-                            WHERE {sw}{leg_order}
-                        )
-                        """
-                    ).format(
-                        lr=sql.Identifier(lr_alias),
-                        sel_pk=sel_pk,
-                        rank_expr=rank_expr,
-                        hf=sql.Identifier(HUB_CTE),
-                        t=sql.Identifier(t_alias),
-                        sw=sw,
-                        leg_order=leg_order,
-                    )
-
-                else:
-                    heap_qn = await leg.resolve_index_heap_qname(tenant_id)
-                    cand_sub = leg.candidate_subquery(csub_alias=f"csub{i}")
-                    join_on = sql.SQL("{} = {}").format(
-                        sql.Identifier(t_alias, leg.heap_pk_column),
-                        sql.Identifier(f"csub{i}", "cand_id"),
-                    )
-                    leg_cte = sql.SQL(
-                        """
-                        ,
-                        {lr} AS (
-                            SELECT {sel_pk}, {rank_expr}
-                            FROM {heap} {t}
-                            INNER JOIN {cand} ON ({join_on})
-                            WHERE {sw}{leg_order}
-                        )
-                        """
-                    ).format(
-                        lr=sql.Identifier(lr_alias),
-                        sel_pk=sel_pk,
-                        rank_expr=rank_expr,
-                        heap=heap_qn.ident(),
-                        t=sql.Identifier(t_alias),
-                        sw=sw,
-                        cand=cand_sub,
-                        join_on=join_on,
-                        leg_order=leg_order,
-                    )
-
-                leg_cte_parts.append(leg_cte)
-
-                if len(leg.hub_fk_columns) > 1:
-                    leg_cte_parts.append(
-                        leg.leg_u_cte(
-                            leg_cte_alias=lr_alias,
-                            u_cte_name=f"{lr_alias}_u",
-                        ),
-                    )
+                params.extend(parts.leg_params)
+                leg_cte_parts.extend(parts.leg_cte_fragments)
 
         hf_cols = sql.SQL(", ").join(
             [

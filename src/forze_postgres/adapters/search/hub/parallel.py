@@ -23,11 +23,12 @@ from forze.base.exceptions import exc
 
 from .._materialize_hits import materialize_search_page
 from .._pgroonga_plan import effective_combo_limit
-from .._search_count import effective_search_count
+from .._search_count import effective_search_count, resolve_ranked_approximate_total
+from ._leg_sql import HubLegSqlContext, build_hub_cte, build_hub_leg_sql_parts
 from ._typing_host import HubSearchHost
 from .constants import HUB_CTE, HUB_RANK, HUB_ROW_ALIAS, LEG_EID, LEG_SCORE
 from .merge import merge_hub_leg_rows
-from .runtime import HubLegRuntime, hub_leg_engine_for
+from .runtime import HubLegRuntime
 from .sql import HubSearchSqlMixin, hub_leg_order_limit
 
 M = TypeVar("M", bound=BaseModel)
@@ -79,6 +80,28 @@ class HubParallelSearchMixin(HubSearchSqlMixin[M]):
             sql.Identifier(HUB_ROW_ALIAS, f) for f in sorted(host.read_fields)
         )
 
+        materialized = bool(
+            getattr(host, "parallel_hub_cte_materialized", True),
+        )
+
+        leg_ctx = HubLegSqlContext(
+            hub_rel_ident=hub_qn.ident(),
+            fw=fw,
+            tenant_id=tenant_id,
+            query_terms=tuple(terms),
+            leg_options=leg_options,
+            per_leg_limit=per_leg_limit,
+            introspector=host.introspector,
+            vector_embedders=vector_embedders,
+        )
+
+        hub_cte_body = build_hub_cte(
+            hub_cols=hub_cols,
+            hub_rel_ident=hub_qn.ident(),
+            fw=fw,
+            materialized=materialized,
+        )
+
         async def _run_leg(
             leg_index: int,
             leg: HubLegRuntime,
@@ -88,103 +111,22 @@ class HubParallelSearchMixin(HubSearchSqlMixin[M]):
                     "parallel hub execution requires single-column hub_fk on each leg.",
                 )
 
-            heap_t_alias = "t"
-            t_alias = (
-                heap_t_alias
-                if leg.same_heap_as_hub and leg.engine == "pgroonga"
-                else (HUB_ROW_ALIAS if leg.same_heap_as_hub else f"t{leg_index}")
+            parts = await build_hub_leg_sql_parts(
+                leg_ctx,
+                leg_index=leg_index,
+                leg=leg,
+                lr_alias="leg",
+                off_heap_csub_alias="csub",
             )
             leg_order = hub_leg_order_limit(
                 engine=leg.engine,
                 per_leg_limit=per_leg_limit,
             )
 
-            v_emb = vector_embedders.get(leg_index) if leg.engine == "vector" else None
-            sw, rank_expr, sp = await hub_leg_engine_for(
-                leg,
-                vector_embedder=v_emb,
-            ).build_leg(
-                leg,
-                tenant_id=tenant_id,
-                introspector=host.introspector,
-                index_alias=t_alias,
-                queries=terms,
-                options=leg_options,
-                score_column=LEG_SCORE,
-            )
-
-            if leg.same_heap_as_hub and leg.engine == "pgroonga":
-                rank_expr = sql.SQL(
-                    "pgroonga_score({}.tableoid, {}.ctid) AS {}"
-                ).format(
-                    sql.Identifier(heap_t_alias),
-                    sql.Identifier(heap_t_alias),
-                    sql.Identifier(LEG_SCORE),
-                )
-
-            sel_pk = sql.SQL("{} AS {}").format(
-                sql.SQL("{}.{}").format(
-                    sql.Identifier(t_alias),
-                    sql.Identifier(leg.heap_pk_column),
-                ),
-                sql.Identifier(LEG_EID),
-            )
-
-            if leg.same_heap_as_hub and leg.engine == "pgroonga":
-                pk_join = sql.SQL("{} = {}").format(
-                    sql.SQL("{}.{}").format(
-                        sql.Identifier(HUB_ROW_ALIAS),
-                        sql.Identifier(leg.heap_pk_column),
-                    ),
-                    sql.SQL("{}.{}").format(
-                        sql.Identifier(heap_t_alias),
-                        sql.Identifier(leg.heap_pk_column),
-                    ),
-                )
-                leg_from = sql.SQL(
-                    """
-                    FROM {hub_rel} {t}
-                    INNER JOIN {hf} {ha} ON ({pk_join})
-                    """
-                ).format(
-                    hub_rel=hub_qn.ident(),
-                    t=sql.Identifier(heap_t_alias),
-                    hf=sql.Identifier(HUB_CTE),
-                    ha=sql.Identifier(HUB_ROW_ALIAS),
-                    pk_join=pk_join,
-                )
-            elif leg.same_heap_as_hub:
-                leg_from = sql.SQL(" FROM {hf} {t} ").format(
-                    hf=sql.Identifier(HUB_CTE),
-                    t=sql.Identifier(t_alias),
-                )
-            else:
-                heap_qn = await leg.resolve_index_heap_qname(tenant_id)
-                cand_sub = leg.candidate_subquery(csub_alias="csub")
-                join_on = sql.SQL("{} = {}").format(
-                    sql.Identifier(t_alias, leg.heap_pk_column),
-                    sql.Identifier("csub", "cand_id"),
-                )
-                leg_from = sql.SQL(
-                    """
-                    FROM {heap} {t}
-                    INNER JOIN {cand} ON ({join_on})
-                    """
-                ).format(
-                    heap=heap_qn.ident(),
-                    t=sql.Identifier(t_alias),
-                    cand=cand_sub,
-                    join_on=join_on,
-                )
-
             fk_join = leg.hub_fk_columns[0]
             stmt = sql.SQL(
                 """
-                WITH {hf} AS (
-                    SELECT {hub_cols}
-                    FROM {hub_rel} {ha}
-                    WHERE {fw}
-                ),
+                WITH {hub_cte},
                 leg AS (
                     SELECT {sel_pk}, {rank_expr}
                     {leg_from}
@@ -196,23 +138,22 @@ class HubParallelSearchMixin(HubSearchSqlMixin[M]):
                 INNER JOIN leg ON {ha}.{fk} = leg.{eid}
                 """
             ).format(
-                hf=sql.Identifier(HUB_CTE),
-                hub_cols=hub_cols,
-                hub_rel=hub_qn.ident(),
-                ha=sql.Identifier(HUB_ROW_ALIAS),
-                fw=fw,
-                sel_pk=sel_pk,
-                rank_expr=rank_expr,
-                leg_from=leg_from,
-                sw=sw,
+                hub_cte=hub_cte_body,
+                sel_pk=parts.sel_pk,
+                rank_expr=parts.rank_expr,
+                leg_from=parts.leg_from,
+                sw=parts.sw,
                 leg_order=leg_order,
+                hub_cols=hub_cols,
+                hf=sql.Identifier(HUB_CTE),
+                ha=sql.Identifier(HUB_ROW_ALIAS),
                 sc=sql.Identifier(LEG_SCORE),
                 hr=sql.Identifier(HUB_RANK),
                 fk=sql.Identifier(fk_join),
                 eid=sql.Identifier(LEG_EID),
             )
 
-            params = [*fp, *sp]
+            params = [*fp, *parts.leg_params]
             return await host.client.fetch_all(stmt, params, row_factory="dict")
 
         leg_row_lists = await asyncio.gather(
@@ -246,11 +187,13 @@ class HubParallelSearchMixin(HubSearchSqlMixin[M]):
         total = len(merged) if return_count and count_policy != "none" else 0
 
         if return_count and count_policy == "approximate":
-            total = await host.introspector.estimate_filtered_rows(
+            total = await resolve_ranked_approximate_total(
+                introspector=host.introspector,
                 schema=hub_qn.schema,
                 relation=hub_qn.name,
                 where_sql=fw,
                 params=fp,
+                combo_limit=resolved_combo,
             )
 
         pagination_dict: dict[str, Any] = dict(pagination or {})

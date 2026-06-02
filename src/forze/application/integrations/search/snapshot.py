@@ -188,6 +188,9 @@ class SearchResultSnapshot:
         score_merge: str,
         combine: str,
         per_leg_limit: int | None = None,
+        execution: str | None = None,
+        combo_limit: int | None = None,
+        search_count: str | None = None,
     ) -> str:
         if isinstance(query, (list, tuple)):
             qpart: object = [str(x) for x in query]
@@ -206,6 +209,15 @@ class SearchResultSnapshot:
             "combine": combine,
             "per_leg_limit": per_leg_limit,
         }
+
+        if execution is not None:
+            payload["execution"] = execution
+
+        if combo_limit is not None:
+            payload["combo_limit"] = combo_limit
+
+        if search_count is not None:
+            payload["search_count"] = search_count
 
         return _sha256_fingerprint_payload(payload)
 

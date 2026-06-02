@@ -56,6 +56,11 @@ class RankedOffsetPlan:
     count_params: list[Any] | None = None
     """When set, used for ``COUNT(*)`` only (e.g. FTS empty-query uses filter params only)."""
 
+    count_with_clause: sql.Composable | None = None
+    """Uncapped ranked ``WITH`` for exact totals when data pipeline uses a candidate cap."""
+
+    count_from_outer: sql.Composable | None = None
+
     approximate_total: int | None = None
     """When set, used for ``search_count=approximate`` instead of ``COUNT(*)``."""
 
@@ -132,17 +137,34 @@ async def execute_simple_ranked_offset_search(
         if maybe_snap is not None:
             return maybe_snap
 
-    count_params = plan.count_params if plan.count_params is not None else plan.params
+    count_policy = effective_search_count(options)
+
+    use_uncapped_count = (
+        return_count
+        and count_policy == "exact"
+        and plan.count_with_clause is not None
+        and plan.count_from_outer is not None
+    )
+
+    if use_uncapped_count:
+        count_with = plan.count_with_clause
+        count_from = plan.count_from_outer
+        count_params = (
+            plan.count_params if plan.count_params is not None else plan.params
+        )
+    else:
+        count_with = plan.with_clause
+        count_from = plan.from_outer
+        count_params = plan.count_params if plan.count_params is not None else plan.params
 
     count_stmt = sql.SQL(
         """
             {with_clause}
             SELECT COUNT(*) {from_outer}
             """
-    ).format(with_clause=plan.with_clause, from_outer=plan.from_outer)
+    ).format(with_clause=count_with, from_outer=count_from)
 
     total = 0
-    count_policy = effective_search_count(options)
 
     if return_count and count_policy != "none":
         if count_policy == "approximate" and plan.approximate_total is not None:
@@ -278,10 +300,13 @@ async def execute_hub_ranked_offset_search(
     result_snapshot: SearchResultSnapshot | None,
     combo_alias: str = "comb",
     options: SearchOptions | None = None,
+    execution: str | None = None,
+    combo_limit: int | None = None,
 ) -> Any:
     """Ranked offset search for :class:`~forze_postgres.adapters.search.hub.PostgresHubSearchAdapter`."""
 
     rs_spec = hub_spec.snapshot
+    count_policy = effective_search_count(options)
     fp_fingerprint = SearchResultSnapshot.hub_search_fingerprint(
         query,
         filters,
@@ -291,6 +316,9 @@ async def execute_hub_ranked_offset_search(
         score_merge=score_merge,
         combine=combine,
         per_leg_limit=per_leg_limit,
+        execution=execution,
+        combo_limit=combo_limit,
+        search_count=count_policy,
     )
 
     if result_snapshot is not None and rs_spec is not None:

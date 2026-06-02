@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Postgres PGroonga search:** optional plan modes (`filter_first`, `index_first`, `auto`), candidate row caps, hub `per_leg_limit`, coalesced read/heap fast path, and `SearchOptions` overrides (`pgroonga_plan`, `candidate_limit`, `groonga_query`). `auto` uses cached relation row estimates from the introspector (no extra `COUNT` unless configured).
 - **Postgres search (phase 2):** `auto` can choose `index_first` for eligible filters using `EXPLAIN`-based filtered row estimates; index-first heap cap overshoot when projection post-filters apply; hub `combo_top` cap, optional `execution: parallel` per-leg hub queries, `SearchOptions.search_count` (`exact` / `approximate` / `none`), FTS/vector ranked caps via `pgroonga_candidate_limit`, and hub `combo_limit` / `SearchOptions.combo_limit`.
+- **Postgres search (phase 3):** shared `_ranked_pipeline` builder for filter-first ranked SQL with uncapped exact-count fragments; hub leg SQL in `hub/_leg_sql.py`; hub snapshot fingerprints include `execution`, `combo_limit`, and `search_count`; `parallel_hub_cte_materialized` on hub config.
 
 ### Security
 
@@ -20,6 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - **Postgres PGroonga search:** `index_first` no longer silently applies a 5000-row cap when `pgroonga_candidate_limit` is disabled; the plan falls back to `filter_first` and snapshot metadata matches SQL.
+- **Postgres ranked search:** `search_count=exact` with a candidate cap no longer under-counts matches; FTS/vector coalesced read==heap paths apply non-trivial filters on the heap; hub approximate totals respect `combo_limit`.
 - **`forze_identity.authn`:** password provisioning rejects duplicate logins (`password_account_exists`); login lookup detects ambiguous duplicate accounts (`password_account_ambiguous`); `MappingTableResolver` re-reads mappings after create conflicts when `provision_on_first_sight=True`.
 
 ### Removed

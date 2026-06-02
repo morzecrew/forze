@@ -74,6 +74,9 @@ class PostgresHubSearchConfig(TenantAwareIntegrationConfig):
     execution: HubExecutionMode = "sql"
     """``sql``: single ``WITH`` query; ``parallel``: one ranked query per leg merged in the app."""
 
+    parallel_hub_cte_materialized: bool = True
+    """Use ``MATERIALIZED`` on the hub filter CTE in per-leg parallel statements (planning hint only)."""
+
     # ....................... #
 
     def __attrs_post_init__(self) -> None:

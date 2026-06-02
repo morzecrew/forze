@@ -33,7 +33,7 @@ from ....kernel.gateways import PostgresGateway
 from .._offset_run import RankedOffsetPlan, execute_hub_ranked_offset_search
 from .._pgroonga_plan import effective_combo_limit
 from .._port import PostgresSearchPortMixin
-from .._search_count import effective_search_count
+from .._search_count import effective_search_count, resolve_ranked_approximate_total
 from .constants import COMBO_ALIAS
 from .cursor import HubSearchCursorMixin
 from .parallel import HubParallelSearchMixin
@@ -69,6 +69,9 @@ class PostgresHubSearchAdapter[M: BaseModel](
 
     execution: Literal["sql", "parallel"] = "sql"
     """``sql``: one ``WITH`` query; ``parallel``: per-leg queries merged in Python."""
+
+    parallel_hub_cte_materialized: bool = True
+    """When ``execution=parallel``, use ``MATERIALIZED`` on the hub filter CTE per leg statement."""
 
     # ....................... #
 
@@ -174,11 +177,13 @@ class PostgresHubSearchAdapter[M: BaseModel](
         if return_count and count_policy == "approximate":
             fw, fp = await self.where_clause(filters)
             hub_qn = await self._qname()
-            approximate_total = await self.introspector.estimate_filtered_rows(
+            approximate_total = await resolve_ranked_approximate_total(
+                introspector=self.introspector,
                 schema=hub_qn.schema,
                 relation=hub_qn.name,
                 where_sql=fw,
                 params=fp,
+                combo_limit=resolved_combo,
             )
 
         plan = RankedOffsetPlan(
@@ -212,4 +217,6 @@ class PostgresHubSearchAdapter[M: BaseModel](
             result_snapshot=self.result_snapshot,
             combo_alias=COMBO_ALIAS,
             options=leg_options,
+            execution=str(self.execution),
+            combo_limit=resolved_combo,
         )

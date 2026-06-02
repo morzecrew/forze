@@ -37,7 +37,8 @@ from ._cursor_run import (
 )
 from ._engine import RankedPipelineSql
 from ._offset_run import RankedOffsetPlan, execute_simple_ranked_offset_search
-from ._search_count import effective_search_count
+from ._search_count import effective_search_count, resolve_ranked_approximate_total
+from ._pgroonga_plan import is_coalesced_read_heap
 from ._pipeline_sql import PipelineAliases, build_rank_first_order
 from ._port import PostgresSearchPortMixin
 
@@ -178,6 +179,29 @@ class PostgresRankedPipelineSearchAdapter[M: BaseModel](
 
     # ....................... #
 
+    def _read_heap_relation_specs(self) -> tuple[RelationSpec, RelationSpec]:
+        read = getattr(self, "read_relation", None)
+        heap = getattr(self, "heap_relation_spec", None)
+
+        if read is None:
+            read = self.relation
+
+        if heap is None:
+            heap = self.index_heap_relation
+
+        return read, heap
+
+    # ....................... #
+
+    def _is_coalesced_read_heap_for(
+        self,
+        join_pairs: Sequence[tuple[str, str]] | None,
+    ) -> bool:
+        read, heap = self._read_heap_relation_specs()
+        return is_coalesced_read_heap(read, heap, join_pairs)
+
+    # ....................... #
+
     async def _projection_order_by_clause(
         self,
         sorts: QuerySortExpression | None,  # type: ignore[valid-type]
@@ -225,7 +249,8 @@ class PostgresRankedPipelineSearchAdapter[M: BaseModel](
 
         if return_count and count_policy == "approximate":
             proj_qname = await self._qname()
-            approximate_total = await self.introspector.estimate_filtered_rows(
+            approximate_total = await resolve_ranked_approximate_total(
+                introspector=self.introspector,
                 schema=proj_qname.schema,
                 relation=proj_qname.name,
                 where_sql=fw,
@@ -238,6 +263,8 @@ class PostgresRankedPipelineSearchAdapter[M: BaseModel](
             order_sql=order_sql,
             params=pipeline_sql.params_body,
             count_params=pipeline_sql.count_params,
+            count_with_clause=pipeline_sql.count_with_clause,
+            count_from_outer=pipeline_sql.count_from_outer,
             approximate_total=approximate_total,
             select_table_alias=self.projection_alias,
         )
