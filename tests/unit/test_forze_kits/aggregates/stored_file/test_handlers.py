@@ -18,6 +18,7 @@ from forze_kits.aggregates.stored_file.handlers import (
 )
 from forze_kits.aggregates.stored_file.handlers._helpers import (
     complete_stored_file_upload,
+    merge_list_filters,
     purge_stored_file_blob,
 )
 from forze_kits.domain.stored_file import (
@@ -106,7 +107,7 @@ class TestStoredFileHandlers:
         )
 
         storage = stub_ctx.storage(kit.resolved_storage)
-        listed, total = await storage.list(limit=10, offset=0)
+        _, total = await storage.list(limit=10, offset=0)
         assert total == 0
 
         get = GetStoredFile(doc=stub_ctx.doc.query(kit.document))
@@ -161,3 +162,43 @@ class TestStoredFileHandlers:
         )
         assert listed.count == 1
         assert listed.hits[0].filename == "a.txt"
+
+
+class TestMergeListFilters:
+    def _statuses(self, expr) -> set[str]:
+        return set(expr["$values"]["status"]["$in"])
+
+    def test_include_deleted_keeps_deleted_when_pending_excluded(self) -> None:
+        # Regression: include_deleted must not be silently dropped when
+        # include_pending=False. Both READY and DELETED rows stay allowed.
+        expr = merge_list_filters(
+            None,
+            prefix=None,
+            include_deleted=True,
+            include_pending=False,
+        )
+        assert self._statuses(expr) == {
+            StoredFileStatus.READY.value,
+            StoredFileStatus.DELETED.value,
+        }
+
+    def test_default_excludes_only_deleted(self) -> None:
+        expr = merge_list_filters(
+            None,
+            prefix=None,
+            include_deleted=False,
+            include_pending=True,
+        )
+        assert StoredFileStatus.DELETED.value not in self._statuses(expr)
+        assert StoredFileStatus.PENDING.value in self._statuses(expr)
+
+    def test_all_included_returns_no_status_constraint(self) -> None:
+        assert (
+            merge_list_filters(
+                None,
+                prefix=None,
+                include_deleted=True,
+                include_pending=True,
+            )
+            is None
+        )

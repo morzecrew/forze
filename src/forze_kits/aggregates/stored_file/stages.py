@@ -29,8 +29,6 @@ def stored_file_outbox_flush_factory(
 
 def stored_file_complete_upload_after_commit_factory(
     kit: StoredFileKitSpec,
-    *,
-    step_id: StrKey = "stored_file_complete_upload",
 ) -> OnSuccessFactory:
     """After-commit hook that uploads blob bytes and marks the row ``ready``."""
 
@@ -63,8 +61,6 @@ def stored_file_complete_upload_after_commit_factory(
 
 def stored_file_purge_blob_after_commit_factory(
     kit: StoredFileKitSpec,
-    *,
-    step_id: StrKey = "stored_file_purge_blob",
 ) -> OnSuccessFactory:
     """After-commit hook that deletes blob storage for a soft-deleted file."""
 

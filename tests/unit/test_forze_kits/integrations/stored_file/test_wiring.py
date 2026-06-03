@@ -2,7 +2,7 @@
 
 from forze.application.execution.operations.registry import FrozenOperationRegistry
 from forze_kits.domain.stored_file import StoredFileKitSpec
-from forze_kits.aggregates.stored_file import freeze_stored_file_registry
+from forze_kits.integrations.stored_file import freeze_stored_file_registry
 
 
 def test_freeze_stored_file_registry_returns_frozen_registry() -> None:

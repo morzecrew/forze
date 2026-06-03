@@ -39,11 +39,17 @@ def merge_list_filters(
 
     parts: list[QueryFilterExpression] = []
 
-    if not include_deleted:
-        parts.append({"$values": {"status": {"$neq": StoredFileStatus.DELETED.value}}})
-
-    if not include_pending:
-        parts.append({"$values": {"status": StoredFileStatus.READY.value}})
+    allowed = [
+        s.value
+        for s in StoredFileStatus
+        if (include_deleted or s is not StoredFileStatus.DELETED)
+        and (
+            include_pending
+            or s not in (StoredFileStatus.PENDING, StoredFileStatus.FAILED)
+        )
+    ]
+    if len(allowed) < len(StoredFileStatus):
+        parts.append({"$values": {"status": {"$in": allowed}}})
 
     if prefix is not None:
         parts.append({"$values": {"prefix": prefix}})
