@@ -81,17 +81,25 @@ class BigQueryClient(BigQueryClientPort):
     # ....................... #
 
     async def close(self) -> None:
-        session = self.__session
+        session_error: BaseException | None = None
 
-        if session is not None:
-            await session.close()
+        try:
+            session = self.__session
+
+            if session is not None:
+                await session.close()
+        except BaseException as exc:
+            session_error = exc
+        finally:
             self.__session = None
+            self.__credential_path.release()
+            self.__credential_path = OwnedTempPath.empty()
+            self.__project_id = None
+            self.__config = None
+            self.__api_root = None
 
-        self.__credential_path.release()
-        self.__credential_path = OwnedTempPath.empty()
-        self.__project_id = None
-        self.__config = None
-        self.__api_root = None
+        if session_error is not None:
+            raise session_error
 
     # ....................... #
 

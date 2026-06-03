@@ -98,13 +98,16 @@ class GCSClient(GCSClientPort):
         """Release the underlying storage client and HTTP session."""
 
         storage = self.__storage
-        close_error: BaseException | None = None
+        close_error: Exception | None = None
+        cred_error: Exception | None = None
 
         if storage is not None:
             try:
                 await storage.close()
-            except BaseException as exc:
+
+            except Exception as exc:
                 close_error = exc
+
             finally:
                 self.__storage = None
 
@@ -113,9 +116,17 @@ class GCSClient(GCSClientPort):
             self.__credential_path = OwnedTempPath.empty()
             self.__project_id = None
             self.__config = None
-        finally:
-            if close_error is not None:
-                raise close_error
+
+        except Exception as exc:
+            cred_error = exc
+
+        errors = [e for e in (close_error, cred_error) if e is not None]
+
+        if len(errors) == 1:
+            raise errors[0]
+
+        if len(errors) > 1:
+            raise ExceptionGroup("GCS client close failed", errors) from errors[0]
 
     # ....................... #
 

@@ -1,4 +1,4 @@
-"""Sanity checks for codec perf tier fixtures."""
+"""Sanity checks for codec benchmark tier fixtures."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ import pytest
 
 from forze.base.serialization import MsgspecModelCodec, PydanticModelCodec
 from forze.base.serialization.pydantic import pydantic_validate_many
-from tests.perf.support.codec_benchmark_models import (
+from tests.support.codec_benchmark_models import (
     CODEC_BENCHMARK_TIERS,
     CodecBenchmarkTier,
     SimpleCodecRow,
@@ -60,7 +60,13 @@ def test_tier_msgspec_trust_source_matches_convert_many(tier: CodecBenchmarkTier
 def test_simple_tier_trusted_matches_strict() -> None:
     """Scalars only: trusted construct matches strict validation."""
 
-    rows = CODEC_BENCHMARK_TIERS[0].sample_rows(8)
+    try:
+        simple_tier = next(t for t in CODEC_BENCHMARK_TIERS if t.name == "simple")
+    except StopIteration as exc:
+        msg = 'codec benchmark tier "simple" is not registered'
+        raise AssertionError(msg) from exc
+
+    rows = simple_tier.sample_rows(8)
     strict = pydantic_validate_many(SimpleCodecRow, rows, trust_source=False)
     trusted = pydantic_validate_many(SimpleCodecRow, rows, trust_source=True)
     assert strict == trusted

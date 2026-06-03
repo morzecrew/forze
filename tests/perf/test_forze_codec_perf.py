@@ -22,7 +22,7 @@ Save a baseline (optional)::
 
     just perf tests/perf/test_forze_codec_perf.py --benchmark-save=codec-decode
 
-Tiers: :mod:`tests.perf.support.codec_benchmark_models` (shared ``JsonDict`` fixtures).
+Tiers: :mod:`tests.support.codec_benchmark_models` (shared ``JsonDict`` fixtures).
 """
 
 from __future__ import annotations
@@ -32,7 +32,7 @@ from typing import Any
 import pytest
 
 from forze.base.serialization import MsgspecModelCodec, PydanticModelCodec
-from tests.perf.support.codec_benchmark_models import (
+from tests.support.codec_benchmark_models import (
     CODEC_BENCHMARK_TIERS,
     CodecBenchmarkTier,
     CodecTierName,

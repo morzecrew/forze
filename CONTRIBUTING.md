@@ -224,6 +224,7 @@ Test layout:
 tests/
   unit/
   integration/
+  perf/           # benchmarks; run with `just perf` (excluded from `just test` / CI)
 ```
 
 Mirror the `src` structure when possible:

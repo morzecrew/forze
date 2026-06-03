@@ -7,7 +7,7 @@ from uuid import UUID, uuid4
 
 import attrs
 import pytest
-from google.cloud.firestore_v1.base_query import FieldFilter
+from google.cloud.firestore_v1.base_query import And, FieldFilter
 
 from forze.base.exceptions import CoreException
 from forze.application.contracts.tenancy import TENANT_ID_FIELD
@@ -105,7 +105,14 @@ def test_add_tenant_filter_and_tenant_id() -> None:
     )
     base = FieldFilter("status", "==", "open")
     merged = gw._add_tenant_filter(base)
-    assert merged is not None
+    assert isinstance(merged, And)
+    tenant_filters = [
+        filt
+        for filt in merged.filters
+        if isinstance(filt, FieldFilter) and filt.field_path == TENANT_ID_FIELD
+    ]
+    assert len(tenant_filters) == 1
+    assert tenant_filters[0].value == tid
 
     data = gw._add_tenant_id({"name": "a"})
     assert data[TENANT_ID_FIELD] == tid

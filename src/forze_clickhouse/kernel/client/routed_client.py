@@ -19,7 +19,11 @@ from forze.base.primitives import JsonDict
 from .client import ClickHouseClient
 from .port import ClickHouseClientPort
 from .routing_credentials import ClickHouseRoutingCredentials, routing_fingerprint
-from .value_objects import ClickHouseConfig, ClickHouseInsertResult, ClickHouseQueryResult
+from .value_objects import (
+    ClickHouseConfig,
+    ClickHouseInsertResult,
+    ClickHouseQueryResult,
+)
 
 # ----------------------- #
 
