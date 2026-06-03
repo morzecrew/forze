@@ -7,22 +7,22 @@ from pydantic import BaseModel
 
 from forze.application.contracts.document import DocumentSpec
 from forze.application.contracts.search import SearchSpec
-from forze_kits.dto.paginated import CursorPaginated, Paginated
+from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
+from forze_kits.aggregates.search import (
+    CursorSearchRequestDTO,
+    ProjectedCursorSearchRequestDTO,
+    ProjectedSearchPaginated,
+    ProjectedSearchRequestDTO,
+    SearchPaginated,
+    SearchRequestDTO,
+)
 from forze_kits.aggregates.search.handlers import (
     CursorSearch,
     ProjectedCursorSearch,
     ProjectedSearch,
     Search,
 )
-from forze_kits.aggregates.search.handlers.dto import (
-    CursorSearchRequestDTO,
-    ProjectedCursorSearchRequestDTO,
-    ProjectedSearchRequestDTO,
-    ProjectedSearchPaginated,
-    SearchPaginated,
-    SearchRequestDTO,
-)
-from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
+from forze_kits.dto.paginated import CursorPaginated
 
 # ----------------------- #
 

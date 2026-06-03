@@ -15,7 +15,7 @@ from forze.base.exceptions import exc
 from forze.application.contracts.document import DocumentSpec
 from forze.application.execution.operations.registry import OperationRegistry
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
-from forze_kits.domain.soft_deletion.composition import (
+from forze_kits.aggregates.soft_deletion import (
     SoftDeletionKernelOp,
     build_soft_deletion_registry,
 )

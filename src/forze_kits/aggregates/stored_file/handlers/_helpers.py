@@ -20,7 +20,7 @@ from forze_kits.domain.stored_file import (
     StoredFileUpdateCmd,
 )
 
-from .dto import UploadStoredFileRequestDTO
+from ..dto import UploadStoredFileRequestDTO
 
 if TYPE_CHECKING:
     from forze.application.execution.context import ExecutionContext
@@ -96,7 +96,9 @@ def ensure_downloadable(file: StoredFileRead) -> None:
 # ....................... #
 
 
-def upload_request_to_create_cmd(args: UploadStoredFileRequestDTO) -> StoredFileCreateCmd:
+def upload_request_to_create_cmd(
+    args: UploadStoredFileRequestDTO,
+) -> StoredFileCreateCmd:
     """Map an upload request to a pending create command."""
 
     return StoredFileCreateCmd(

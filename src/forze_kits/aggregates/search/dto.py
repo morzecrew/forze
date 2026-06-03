@@ -13,14 +13,14 @@ from forze.application.contracts.search import (
     SearchOptions,
     SearchResultSnapshotOptions,
 )
+from forze.base.primitives import JsonDict
+from forze.domain.models import BaseDTO
 from forze_kits.dto.paginated import (
     CursorPagination,
     Paginated,
     Pagination,
     ProjectedPaginated,
 )
-from forze.base.primitives import JsonDict
-from forze.domain.models import BaseDTO
 
 # ----------------------- #
 

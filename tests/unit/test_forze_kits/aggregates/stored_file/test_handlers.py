@@ -5,7 +5,7 @@ import pytest
 from forze.application.contracts.outbox import OutboxSpec
 from forze.base.exceptions import CoreException
 from forze.base.serialization import PydanticModelCodec
-from forze_kits.aggregates.stored_file.handlers import (
+from forze_kits.aggregates.stored_file import (
     DownloadStoredFile,
     GetStoredFile,
     ListStoredFiles,
@@ -23,9 +23,9 @@ from forze_kits.aggregates.stored_file.handlers._helpers import (
 )
 from forze_kits.domain.stored_file import (
     StoredFileKitSpec,
+    StoredFileOutboxPayload,
     StoredFileStatus,
 )
-from forze_kits.domain.stored_file import StoredFileOutboxPayload
 
 
 def _kit(*, with_search: bool = False, with_outbox: bool = False) -> StoredFileKitSpec:
@@ -119,9 +119,7 @@ class TestStoredFileHandlers:
         kit = _kit()
         doc_cmd = stub_ctx.doc.command(kit.document)
         upload = UploadStoredFile(doc=doc_cmd)
-        pending = await upload(
-            UploadStoredFileRequestDTO(filename="a.txt", data=b"a")
-        )
+        pending = await upload(UploadStoredFileRequestDTO(filename="a.txt", data=b"a"))
         ready = await complete_stored_file_upload(
             kit=kit,
             ctx=stub_ctx,

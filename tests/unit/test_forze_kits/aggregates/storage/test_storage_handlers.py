@@ -3,16 +3,15 @@
 import pytest
 
 from forze.application.contracts.storage import StorageSpec
+from forze_kits.aggregates.storage import (
+    ListObjectsRequestDTO,
+    UploadObjectRequestDTO,
+)
 from forze_kits.aggregates.storage.handlers import (
     DeleteObject,
     DownloadObject,
     ListObjects,
     UploadObject,
-)
-from forze.application.contracts.storage import UploadedObject
-from forze_kits.aggregates.storage.handlers.dto import (
-    ListObjectsRequestDTO,
-    UploadObjectRequestDTO,
 )
 
 # ----------------------- #

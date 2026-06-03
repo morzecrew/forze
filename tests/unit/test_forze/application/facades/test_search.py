@@ -3,13 +3,11 @@
 import attrs
 import pytest
 
-from forze.base.exceptions import CoreException
-
-from forze_kits.aggregates.search import SearchFacade, SearchKernelOp
 from forze.application.contracts.execution import Handler
 from forze.application.execution.operations.registry import OperationRegistry
-from forze_kits.aggregates.search.handlers.dto import SearchRequestDTO
+from forze.base.exceptions import CoreException
 from forze.base.primitives import StrKeyNamespace
+from forze_kits.aggregates.search import SearchFacade, SearchKernelOp, SearchRequestDTO
 
 # ----------------------- #
 

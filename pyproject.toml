@@ -318,6 +318,12 @@ type = "layers"
 layers = ["forze.domain.models", "forze.domain.validation"]
 
 [[tool.importlinter.contracts]]
+name = "forze_kits.domain must not import forze_kits.aggregates"
+type = "forbidden"
+source_modules = ["forze_kits.domain"]
+forbidden_modules = ["forze_kits.aggregates"]
+
+[[tool.importlinter.contracts]]
 name = "Protect integration subpackages"
 type = "protected"
 protected_modules = [

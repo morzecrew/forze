@@ -12,8 +12,10 @@ from forze.application.contracts.authn.value_objects import (
     CredentialLifetime,
     RefreshTokenCredentials,
 )
-from forze_kits.aggregates.authn.handlers._utils import token_response_from_issued_tokens
-from forze_kits.aggregates.authn.handlers.dto import AuthnTokenResponseDTO
+from forze_kits.aggregates.authn import AuthnTokenResponseDTO
+from forze_kits.aggregates.authn.handlers._utils import (
+    token_response_from_issued_tokens,
+)
 
 
 class TestTokenResponseFromIssuedTokens:

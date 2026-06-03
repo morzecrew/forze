@@ -4,15 +4,13 @@ import pytest
 
 from forze.application.contracts.outbox import OutboxSpec
 from forze.base.serialization import PydanticModelCodec
-from forze_kits.aggregates.stored_file.handlers import (
-    UploadStoredFile,
-    UploadStoredFileRequestDTO,
-)
-from forze_kits.domain.stored_file import StoredFileKitSpec, StoredFileStatus
 from forze_kits.aggregates.stored_file import (
     StoredFileOutboxPayload,
+    UploadStoredFile,
+    UploadStoredFileRequestDTO,
     stored_file_complete_upload_after_commit_factory,
 )
+from forze_kits.domain.stored_file import StoredFileKitSpec, StoredFileStatus
 
 
 def _kit() -> StoredFileKitSpec:

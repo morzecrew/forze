@@ -14,13 +14,13 @@ from forze.application.contracts.authn import (
 from forze.application.contracts.execution import Handler
 from forze.base.exceptions import exc
 
-from ._utils import token_response_from_issued_tokens
-from .dto import (
+from ..dto import (
     AuthnChangePasswordRequestDTO,
     AuthnLoginRequestDTO,
     AuthnRefreshRequestDTO,
     AuthnTokenResponseDTO,
 )
+from ._utils import token_response_from_issued_tokens
 
 # ----------------------- #
 

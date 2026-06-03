@@ -9,7 +9,7 @@ from forze_kits.domain.stored_file import StoredFileKitSpec, StoredFileRead
 from forze_kits.integrations.outbox import outbox_flush_tx_on_success_factory
 
 from .handlers._helpers import complete_stored_file_upload, purge_stored_file_blob
-from .handlers.dto import UploadStoredFileRequestDTO
+from .dto import UploadStoredFileRequestDTO
 
 # ----------------------- #
 
