@@ -32,6 +32,7 @@
         "skills-lock.json": true,
         "SECURITY.md": true,
         ".gitleaks.toml": true,
+        ".coderabbit.yaml": true,
     },
     "cursorpyright.analysis.diagnosticMode": "workspace",
     "cursorpyright.analysis.typeCheckingMode": "strict",
