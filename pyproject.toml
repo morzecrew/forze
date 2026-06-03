@@ -135,6 +135,7 @@ vault = [
 ]
 inngest = ["inngest>=0.5.18"]
 meilisearch = ["meilisearch-python-sdk>=7.2.1"]
+http = ["httpx>=0.28.0"]
 
 # ....................... #
 
@@ -185,6 +186,7 @@ packages = [
     "src/forze_inngest",
     "src/forze_vault",
     "src/forze_meilisearch",
+    "src/forze_http",
 ]
 
 [tool.hatch.build.hooks.vcs]
@@ -279,6 +281,7 @@ root_packages = [
     "forze_identity",
     "forze_vault",
     "forze_meilisearch",
+    "forze_http",
 ]
 exclude_type_checking_imports = true
 
@@ -335,6 +338,7 @@ protected_modules = [
     "forze_sqs",
     "forze_vault",
     "forze_meilisearch",
+    "forze_http",
 ]
 allowed_importers = []
 as_packages = true
@@ -364,6 +368,7 @@ paths = [
     "src/forze_identity",
     "src/forze_vault",
     "src/forze_meilisearch",
+    "src/forze_http",
 ]
 sort_by_size = true
 min_confidence = 80
@@ -401,6 +406,7 @@ known_first_party = [
     "forze_identity",
     "forze_vault",
     "forze_meilisearch",
+    "forze_http",
 ]
 ignore_notebooks = true
 

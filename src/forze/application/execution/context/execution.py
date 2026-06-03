@@ -10,6 +10,7 @@ from forze.application.contracts.counter import CounterDeps
 from forze.application.contracts.dlock import DistributedLockDeps
 from forze.application.contracts.document import DocumentDeps
 from forze.application.contracts.embeddings import EmbeddingsDeps
+from forze.application.contracts.http import HttpServiceDeps
 from forze.application.contracts.search import SearchDeps
 from forze.application.contracts.storage import StorageDeps
 from forze.application.contracts.tenancy import TenancyDeps
@@ -59,6 +60,9 @@ class ExecutionContext:
     search: SearchDeps = attrs.field(factory=SearchDeps, init=False)
     """Search dependencies."""
 
+    http: HttpServiceDeps = attrs.field(factory=HttpServiceDeps, init=False)
+    """Outbound HTTP service dependencies."""
+
     analytics: AnalyticsDeps = attrs.field(factory=AnalyticsDeps, init=False)
     """Analytics dependencies."""
 
@@ -107,6 +111,7 @@ class ExecutionContext:
         self.outbox.lock(self)
         self.document.lock(self)
         self.search.lock(self)
+        self.http.lock(self)
         self.analytics.lock(self)
         self.cache.lock(self)
         self.counter.lock(self)
