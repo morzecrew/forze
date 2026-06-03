@@ -490,9 +490,6 @@ CACHE_DUMP_EXCLUDE_OPTS: Final[ModelDumpExcludeOptions] = (
     )
 )
 
-_CACHE_EXCLUDE_OPTS = CACHE_DUMP_EXCLUDE_OPTS
-
-
 # ....................... #
 
 PERSISTENCE_DUMP_EXCLUDE_OPTS: Final[ModelDumpExcludeOptions] = (
@@ -500,45 +497,6 @@ PERSISTENCE_DUMP_EXCLUDE_OPTS: Final[ModelDumpExcludeOptions] = (
         computed_fields=True,
     )
 )
-
-_PERSISTENCE_EXCLUDE_OPTS = PERSISTENCE_DUMP_EXCLUDE_OPTS
-
-
-def _merge_dump_exclude(
-    exclude: ModelDumpExcludeOptions,
-    base: ModelDumpExcludeOptions,
-) -> ModelDumpExcludeOptions:
-    return ModelDumpExcludeOptions({**base, **exclude})
-
-
-def pydantic_persistence_dump(
-    obj: BaseModel,
-    *,
-    mode: Literal["json", "python"] = "python",
-    exclude: ModelDumpExcludeOptions = {},
-) -> JsonDict:
-    """Dump a Pydantic model for document store read/write (omits computed fields)."""
-
-    return pydantic_dump(
-        obj,
-        mode=mode,
-        exclude=_merge_dump_exclude(exclude, _PERSISTENCE_EXCLUDE_OPTS),
-    )
-
-
-def pydantic_persistence_dump_many(
-    objs: Sequence[BaseModel],
-    *,
-    mode: Literal["json", "python"] = "python",
-    exclude: ModelDumpExcludeOptions = {},
-) -> list[JsonDict]:
-    """Dump models for document store bulk operations (omits computed fields)."""
-
-    return pydantic_dump_many(
-        objs,
-        mode=mode,
-        exclude=_merge_dump_exclude(exclude, _PERSISTENCE_EXCLUDE_OPTS),
-    )
 
 
 # ....................... #

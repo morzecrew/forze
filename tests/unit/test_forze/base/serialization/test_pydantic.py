@@ -1,14 +1,13 @@
 from typing import Any
 
 import pytest
-from pydantic import BaseModel, computed_field
+from pydantic import BaseModel
 
 from forze.base.serialization.pydantic import (
     pydantic_dump,
     pydantic_dump_many_batched,
     pydantic_field_names,
     pydantic_model_hash,
-    pydantic_persistence_dump,
     pydantic_transform_many,
     pydantic_validate,
     pydantic_validate_many,
@@ -104,28 +103,3 @@ def test_pydantic_model_hash_is_stable_for_same_data() -> None:
     h1 = pydantic_model_hash(m1)
     h2 = pydantic_model_hash(m2)
     assert h1 == h2
-
-
-class _ComputedModel(BaseModel):
-    value: int
-
-    @computed_field
-    @property
-    def doubled(self) -> int:
-        return self.value * 2
-
-
-def test_pydantic_persistence_dump_omits_computed_fields() -> None:
-    model = _ComputedModel(value=3)
-    full = pydantic_dump(model)
-    stored = pydantic_persistence_dump(model)
-    assert full["doubled"] == 6
-    assert "doubled" not in stored
-    assert stored["value"] == 3
-
-
-def test_pydantic_persistence_dump_round_trip_restores_computed() -> None:
-    model = _ComputedModel(value=4)
-    stored = pydantic_persistence_dump(model)
-    restored = pydantic_validate(_ComputedModel, stored)
-    assert restored.doubled == 8

@@ -14,10 +14,11 @@ from forze.application.contracts.analytics import (
     AnalyticsRunOptions,
     AnalyticsSpec,
 )
+from forze.application.integrations.analytics import AnalyticsQueryPortMixin
 from forze.application.integrations.analytics.adapter_common import (
     dry_run_enabled,
     dry_run_offset_page,
-    pagination_window,
+    execute_analytics_offset_page,
     parse_count_row,
     shape_rows,
     validated_params,
@@ -26,7 +27,6 @@ from forze.application.contracts.base import (
     CountlessPage,
     CursorPage,
     Page,
-    page_from_limit_offset,
 )
 from forze.application.contracts.querying import (
     CursorPaginationExpression,
@@ -62,6 +62,7 @@ _CURSOR_CODEC = B64UrlJsonCodec()
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class BigQueryAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
+    AnalyticsQueryPortMixin[R],
     AnalyticsQueryPort[R],
     AnalyticsIngestPort[Ing],
 ):
@@ -276,73 +277,28 @@ class BigQueryAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
         if dry_run_enabled(options):
             return dry_run_offset_page(pagination, return_count=return_count)
 
-        max_results, start_index = pagination_window(pagination)
-        result = await self._fetch_rows(
-            query_key,
-            params,
-            options=options,
-            max_results=max_results,
-            start_index=start_index,
-            page_token=None,
-        )
-        data = shape_rows(
-            result.rows,
-            read_codec=self.spec.resolved_read_codec,
-            read_type=self.spec.read,
-            return_type=return_type,
-            return_fields=return_fields,
-        )
-
-        if return_count:
-            if self._skip_total(query_key):
-                return page_from_limit_offset(data, pagination, total=None)
-
-            total = await self._total_count(query_key, params, options=options)
-            return page_from_limit_offset(data, pagination, total=total)
-
-        return page_from_limit_offset(data, pagination, total=None)
-
-    # ....................... #
-
-    async def run(
-        self,
-        query_key: str,
-        params: BaseModel,
-        pagination: PaginationExpression | None = None,
-        *,
-        options: AnalyticsRunOptions | None = None,
-    ) -> CountlessPage[R]:
-        return await self._offset_page(
-            query_key,
-            params,
-            pagination,
-            options=options,
-            return_count=False,
-            return_type=None,
-            return_fields=None,
-        )
-
-    # ....................... #
-
-    async def run_page(
-        self,
-        query_key: str,
-        params: BaseModel,
-        pagination: PaginationExpression | None = None,
-        *,
-        options: AnalyticsRunOptions | None = None,
-    ) -> Page[R]:
-        return cast(
-            Page[R],
-            await self._offset_page(
+        async def _fetch(limit: int | None, offset: int | None) -> list[JsonDict]:
+            result = await self._fetch_rows(
                 query_key,
                 params,
-                pagination,
                 options=options,
-                return_count=True,
-                return_type=None,
-                return_fields=None,
-            ),
+                max_results=limit,
+                start_index=offset,
+                page_token=None,
+            )
+
+            return result.rows
+
+        return await execute_analytics_offset_page(
+            pagination=pagination,
+            return_count=return_count,
+            return_type=return_type,
+            return_fields=return_fields,
+            read_codec=self.spec.resolved_read_codec,
+            read_type=self.spec.read,
+            skip_total=self._skip_total(query_key),
+            fetch_rows=_fetch,
+            total_count=lambda: self._total_count(query_key, params, options=options),
         )
 
     # ....................... #
@@ -375,117 +331,6 @@ class BigQueryAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
 
         for offset in range(0, len(typed), fetch_batch_size):
             yield typed[offset : offset + fetch_batch_size]
-
-    # ....................... #
-
-    async def project_run(
-        self,
-        fields: Sequence[str],
-        query_key: str,
-        params: BaseModel,
-        pagination: PaginationExpression | None = None,
-        *,
-        options: AnalyticsRunOptions | None = None,
-    ) -> CountlessPage[JsonDict]:
-        return await self._offset_page(
-            query_key,
-            params,
-            pagination,
-            options=options,
-            return_count=False,
-            return_type=None,
-            return_fields=fields,
-        )
-
-    # ....................... #
-
-    async def project_run_page(
-        self,
-        fields: Sequence[str],
-        query_key: str,
-        params: BaseModel,
-        pagination: PaginationExpression | None = None,
-        *,
-        options: AnalyticsRunOptions | None = None,
-    ) -> Page[JsonDict]:
-        return cast(
-            Page[JsonDict],
-            await self._offset_page(
-                query_key,
-                params,
-                pagination,
-                options=options,
-                return_count=True,
-                return_type=None,
-                return_fields=fields,
-            ),
-        )
-
-    # ....................... #
-
-    async def project_run_chunked(
-        self,
-        fields: Sequence[str],
-        query_key: str,
-        params: BaseModel,
-        pagination: PaginationExpression | None = None,
-        *,
-        options: AnalyticsRunOptions | None = None,
-        fetch_batch_size: int = 2000,
-    ) -> AsyncGenerator[Sequence[JsonDict]]:
-        async for chunk in self.run_chunked(
-            query_key,
-            params,
-            pagination,
-            options=options,
-            fetch_batch_size=fetch_batch_size,
-        ):
-            yield [{k: row.model_dump().get(k) for k in fields} for row in chunk]
-
-    # ....................... #
-
-    async def select_run(
-        self,
-        return_type: type[T],
-        query_key: str,
-        params: BaseModel,
-        pagination: PaginationExpression | None = None,
-        *,
-        options: AnalyticsRunOptions | None = None,
-    ) -> CountlessPage[T]:
-        return await self._offset_page(
-            query_key,
-            params,
-            pagination,
-            options=options,
-            return_count=False,
-            return_type=return_type,
-            return_fields=None,
-        )
-
-    # ....................... #
-
-    async def select_run_page(
-        self,
-        return_type: type[T],
-        query_key: str,
-        params: BaseModel,
-        pagination: PaginationExpression | None = None,
-        *,
-        options: AnalyticsRunOptions | None = None,
-    ) -> Page[T]:
-        return cast(
-            Page[T],
-            await self._offset_page(
-                query_key,
-                params,
-                pagination,
-                options=options,
-                return_count=True,
-                return_type=return_type,
-                return_fields=None,
-            ),
-        )
 
     # ....................... #
 
@@ -559,65 +404,6 @@ class BigQueryAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
             next_cursor=next_c,
             prev_cursor=prev_c,
             has_more=has_more,
-        )
-
-    # ....................... #
-
-    async def run_cursor(
-        self,
-        query_key: str,
-        params: BaseModel,
-        cursor: CursorPaginationExpression | None = None,
-        *,
-        options: AnalyticsRunOptions | None = None,
-    ) -> CursorPage[R]:
-        return await self._cursor_page(
-            query_key,
-            params,
-            cursor,
-            options=options,
-            return_type=None,
-            return_fields=None,
-        )
-
-    # ....................... #
-
-    async def project_run_cursor(
-        self,
-        fields: Sequence[str],
-        query_key: str,
-        params: BaseModel,
-        cursor: CursorPaginationExpression | None = None,
-        *,
-        options: AnalyticsRunOptions | None = None,
-    ) -> CursorPage[JsonDict]:
-        return await self._cursor_page(
-            query_key,
-            params,
-            cursor,
-            options=options,
-            return_type=None,
-            return_fields=fields,
-        )
-
-    # ....................... #
-
-    async def select_run_cursor(
-        self,
-        return_type: type[T],
-        query_key: str,
-        params: BaseModel,
-        cursor: CursorPaginationExpression | None = None,
-        *,
-        options: AnalyticsRunOptions | None = None,
-    ) -> CursorPage[T]:
-        return await self._cursor_page(
-            query_key,
-            params,
-            cursor,
-            options=options,
-            return_type=return_type,
-            return_fields=None,
         )
 
     # ....................... #

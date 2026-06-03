@@ -1,6 +1,6 @@
 """Shared helpers for warehouse analytics adapters."""
 
-from typing import Any, Sequence, TypeVar, cast
+from typing import Any, Awaitable, Callable, Sequence, TypeVar, cast
 
 from pydantic import BaseModel
 
@@ -125,6 +125,59 @@ def dry_run_offset_page(
         return page_from_limit_offset(empty, pagination, total=0)
 
     return page_from_limit_offset(empty, pagination, total=None)
+
+
+# ....................... #
+
+
+async def execute_analytics_offset_page(
+    *,
+    pagination: PaginationExpression | None,
+    return_count: bool,
+    return_type: type[BaseModel] | None,
+    return_fields: Sequence[str] | None,
+    read_codec: ModelCodec[Any, Any] | None,
+    read_type: type[BaseModel],
+    skip_total: bool,
+    fetch_rows: Callable[[int | None, int | None], Awaitable[list[JsonDict]]],
+    total_count: Callable[[], Awaitable[int]],
+) -> CountlessPage[Any] | Page[Any]:
+    """Run the shared offset-page flow: window, fetch, shape, optional total, page.
+
+    Backends supply :paramref:`fetch_rows` (mapping the resolved ``(limit, offset)``
+    window to their driver query) and :paramref:`total_count`. Parameter
+    validation and dry-run short-circuiting stay in the adapter so error ordering
+    and dry-run semantics are unchanged.
+
+    :param pagination: Offset pagination expression (``limit`` / ``offset``).
+    :param return_count: When true, attach a total unless :paramref:`skip_total`.
+    :param return_type: Optional model type for ``select_*`` projections.
+    :param return_fields: Optional field subset for ``project_*`` projections.
+    :param read_codec: Read codec for the spec, or ``None`` to derive from ``read_type``.
+    :param read_type: Default read model type.
+    :param skip_total: When true, never compute a total even if ``return_count``.
+    :param fetch_rows: Async ``(limit, offset) -> rows`` fetch callback.
+    :param total_count: Async total-count callback, invoked only when needed.
+    :returns: A :class:`~forze.application.contracts.base.Page` when a total is
+        attached, otherwise a :class:`~forze.application.contracts.base.CountlessPage`.
+    """
+
+    limit, offset = pagination_window(pagination)
+    rows = await fetch_rows(limit, offset)
+    data = shape_rows(
+        rows,
+        read_codec=read_codec,
+        read_type=read_type,
+        return_type=return_type,
+        return_fields=return_fields,
+    )
+
+    if return_count and not skip_total:
+        total = await total_count()
+
+        return page_from_limit_offset(data, pagination, total=total)
+
+    return page_from_limit_offset(data, pagination, total=None)
 
 
 # ....................... #
