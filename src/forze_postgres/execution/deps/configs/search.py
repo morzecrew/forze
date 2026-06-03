@@ -124,6 +124,12 @@ class PostgresSearchConfig(TenantAwareIntegrationConfig):
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
+        if self.read_validation not in ("strict", "trusted"):
+            raise ValueError(
+                "read_validation must be 'strict' or 'trusted', "
+                f"got {self.read_validation!r}",
+            )
+
         match self.engine:
             case "vector":
                 if not self.vector_column:

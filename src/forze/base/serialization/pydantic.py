@@ -55,6 +55,26 @@ def pydantic_validate[M: BaseModel](
 # ....................... #
 
 
+def _trusted_unknown_field_names(
+    row: JsonDict,
+    allowed: frozenset[str],
+) -> set[str]:
+    """Return row keys that are not declared on the model (empty when row is valid)."""
+
+    return row.keys() - allowed
+
+
+def _raise_trusted_unknown_fields[M: BaseModel](
+    cls: type[M],
+    unknown: set[str],
+) -> None:
+    msg = (
+        f"Trusted decode for {cls.__name__} rejected unknown field(s): "
+        f"{sorted(unknown)}"
+    )
+    raise exc.precondition(msg)
+
+
 def pydantic_validate_trusted[M: BaseModel](
     cls: type[M],
     data: JsonDict,
@@ -67,19 +87,51 @@ def pydantic_validate_trusted[M: BaseModel](
     :class:`~forze.base.exceptions.exc.PreconditionError` (or when ``forbid_extra``).
     """
 
+    _ = forbid_extra
     allowed = pydantic_field_names(cls, include_computed=False)
-    unknown = set(data.keys()) - allowed
+    unknown = _trusted_unknown_field_names(data, allowed)
 
     if unknown:
-        msg = (
-            f"Trusted decode for {cls.__name__} rejected unknown field(s): "
-            f"{sorted(unknown)}"
-        )
-        raise exc.precondition(msg)
+        _raise_trusted_unknown_fields(cls, unknown)
 
     logger.trace("Trusted construct into %s", cls.__name__)
 
     return cls.model_construct(**data)
+
+
+def pydantic_validate_many_trusted[M: BaseModel](
+    cls: type[M],
+    data: Sequence[JsonDict],
+    *,
+    forbid_extra: bool = False,
+) -> list[M]:
+    """Trusted bulk decode: one allowed-field set, tight construct loop (no per-row helper calls)."""
+
+    _ = forbid_extra
+    payload = _sequence_as_list(data)
+
+    if not payload:
+        return []
+
+    allowed = pydantic_field_names(cls, include_computed=False)
+    construct = cls.model_construct
+    logger.trace(
+        "Trusted construct %s rows into list[%s]",
+        len(payload),
+        cls.__name__,
+    )
+
+    out: list[M] = []
+
+    for row in payload:
+        unknown = _trusted_unknown_field_names(row, allowed)
+
+        if unknown:
+            _raise_trusted_unknown_fields(cls, unknown)
+
+        out.append(construct(**row))
+
+    return out
 
 
 # ....................... #
@@ -102,10 +154,11 @@ def pydantic_validate_many[M: BaseModel](
     trust_source: bool = False,
 ) -> list[M]:
     if trust_source:
-        return [
-            pydantic_validate_trusted(cls, row, forbid_extra=forbid_extra)
-            for row in data
-        ]
+        return pydantic_validate_many_trusted(
+            cls,
+            data,
+            forbid_extra=forbid_extra,
+        )
 
     logger.trace(
         "Validating %s data items into list[%s] (forbid_extra=%s)",
@@ -156,10 +209,11 @@ def pydantic_validate_many_batched[M: BaseModel](
     if trust_source:
         for start in range(0, len(seq), batch_size):
             chunk = seq[start : start + batch_size]
-            yield [
-                pydantic_validate_trusted(cls, row, forbid_extra=forbid_extra)
-                for row in chunk
-            ]
+            yield pydantic_validate_many_trusted(
+                cls,
+                chunk,
+                forbid_extra=forbid_extra,
+            )
         return
 
     adapter = _list_adapter(cls)

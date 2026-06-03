@@ -4,11 +4,17 @@
 
 ```text
 tests/
-  unit/           # No external I/O; mocks and pure logic
-  integration/    # Testcontainers / real services (Docker required)
-  perf/           # Benchmarks (`-m perf`, excluded from default `just test`)
+  unit/           # No external I/O; mocks and pure logic (CI default)
+  integration/    # Testcontainers / real services (Docker required; CI default)
+  perf/           # Performance benchmarks (`-m perf`; excluded from default `just test`)
   support/        # Shared fixtures, factories, scenarios
 ```
+
+**CI default** (`just test`): `unit` + `integration` only (`-m "not perf"`).
+
+**Perf tier** (`just perf`): throughput/latency benchmarks. Most modules under `tests/perf/` use
+Docker testcontainers; some (e.g. codec decode) are in-process only. Perf is about measuring
+overall performance, not requiring Docker for every benchmark.
 
 Mirror `src/` under `tests/unit/` when possible (see [CONTRIBUTING.md](../CONTRIBUTING.md)).
 
@@ -20,6 +26,7 @@ Mirror `src/` under `tests/unit/` when possible (see [CONTRIBUTING.md](../CONTRI
 | L1 | `tests/unit/` + `forze_mock` | Lifecycle hooks, `ExecutionContext`, routed client wiring |
 | L2 | `tests/integration/test_forze_*/` | One backend, smoke + adapter paths |
 | L3 | Cross-package integration | e.g. Postgres + Redis snapshots, authn + authz + PG |
+| Perf | `tests/perf/` | Benchmarks; optional Docker per package conftest |
 
 ## Running subsets
 
@@ -29,9 +36,15 @@ just test tests/integration
 just test -m integration
 just test -m "not perf"
 just test tests/unit/test_forze_redis/test_redis_lifecycle.py
+just perf                              # all @pytest.mark.perf benchmarks
+just perf tests/perf/test_forze_codec_perf.py   # pydantic + msgspec tiers
+just perf tests/perf/test_forze_codec_perf.py -k pydantic_strict
+just perf tests/perf/test_forze_codec_perf.py -k msgspec
+just perf tests/perf/test_forze_codec_perf.py -k "simple"
+just perf tests/perf/test_forze_codec_perf.py --benchmark-compare
 ```
 
-Integration tests use shared Docker checks from [`integration/conftest.py`](integration/conftest.py) and [`support/docker.py`](support/docker.py).
+Integration tests use shared Docker checks from [`integration/conftest.py`](integration/conftest.py) and [`support/docker.py`](support/docker.py). Perf subpackages that start containers use the same pattern in their local `conftest.py`; perf tests without a container fixture run without Docker.
 
 ## Integration smoke matrix (per package)
 

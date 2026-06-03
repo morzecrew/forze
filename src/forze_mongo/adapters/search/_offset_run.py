@@ -22,7 +22,6 @@ from forze.application.integrations.search.offset_executor import (
     OffsetFetchWindow,
     OffsetRowsResult,
     execute_simple_offset_search_with_snapshot,
-    offset_from_dict,
 )
 from forze.base.primitives import JsonDict
 from forze_mongo.kernel.client.port import MongoClientPort
@@ -69,16 +68,8 @@ class _MongoOffsetHooks:
         want_snap: bool,
     ) -> OffsetRowsResult:
         coll = await self._collection()
-        offset = (
-            window.fetch_offset
-            if want_snap
-            else offset_from_dict(self.pagination_dict)
-        )
-        limit = (
-            window.fetch_limit
-            if want_snap
-            else self.pagination_dict.get("limit")
-        )
+        offset = window.fetch_offset
+        limit = int(window.fetch_limit) if window.fetch_limit is not None else None
 
         data_pipeline = append_pagination_stages(
             self.ranked_pipeline,

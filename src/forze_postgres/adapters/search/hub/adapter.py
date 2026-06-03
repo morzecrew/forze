@@ -132,7 +132,7 @@ class PostgresHubSearchAdapter[M: BaseModel](
 
         combo_cap = plan.resolved_combo if plan.do_legs else None
 
-        #! do_legs (_) is not used for some reason
+        # do_legs (_) is not used for some reason
         with_clause, params, _, count_relation, data_relation = (
             await self._hub_build_with_clause_from_plan(
                 plan,

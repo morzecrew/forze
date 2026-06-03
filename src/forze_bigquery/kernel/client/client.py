@@ -91,6 +91,7 @@ class BigQueryClient(BigQueryClientPort):
         self.__credential_path = OwnedTempPath.empty()
         self.__project_id = None
         self.__config = None
+        self.__api_root = None
 
     # ....................... #
 

@@ -104,6 +104,12 @@ class PostgresHubSearchConfig(TenantAwareIntegrationConfig):
         if self.execution not in ("sql", "parallel"):
             raise exc.internal("execution must be 'sql' or 'parallel'.")
 
+        if self.read_validation not in ("strict", "trusted"):
+            raise ValueError(
+                "read_validation must be 'strict' or 'trusted', "
+                f"got {self.read_validation!r}",
+            )
+
         fk_seen: set[str] = set()
 
         for i, leg in enumerate(legs):

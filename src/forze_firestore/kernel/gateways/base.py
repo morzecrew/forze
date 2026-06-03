@@ -170,7 +170,7 @@ class FirestoreGateway[M: BaseModel](
         if self.tenant_provider is None:
             raise exc.internal("Tenant provider is required for the gateway")
 
-        tenant_id = self.tenant_provider()
+        tenant_id = self.require_tenant_if_aware()
 
         if tenant_id is None:
             raise exc.internal("Tenant ID is required for the gateway")
@@ -193,7 +193,7 @@ class FirestoreGateway[M: BaseModel](
             if self.tenant_provider is None:
                 raise exc.internal("Tenant provider is required for the gateway")
 
-            tenant_id = self.tenant_provider()
+            tenant_id = self.require_tenant_if_aware()
 
             if tenant_id is None:
                 raise exc.internal("Tenant ID is required for the gateway")

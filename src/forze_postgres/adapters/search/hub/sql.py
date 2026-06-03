@@ -205,7 +205,9 @@ class HubSearchSqlMixin[M: BaseModel]:
         uncapped_legs: bool = False,
     ) -> tuple[sql.Composable, list[Any], bool, str, str]:
         fw, fp = await self._hub_host.where_clause(filters)
-        tenant_id = self._hub_host._tenant_id_for_resolve()  # pyright: ignore[reportPrivateUsage]
+        tenant_id = (
+            self._hub_host._tenant_id_for_resolve()  # pyright: ignore[reportPrivateUsage]
+        )
         hub_qn = await self._hub_host._qname()  # pyright: ignore[reportPrivateUsage]
 
         do_legs = plan.do_legs
@@ -327,7 +329,9 @@ class HubSearchSqlMixin[M: BaseModel]:
         data_relation = "combo"
         combo_tail: sql.Composable = sql.SQL("")
 
-        effective_combo = combo_limit if combo_limit is not None else plan.resolved_combo
+        effective_combo = (
+            combo_limit if combo_limit is not None else plan.resolved_combo
+        )
 
         if effective_combo is not None and do_legs:
             combo_top_order = await self._hub_combo_top_order_sql(plan)
@@ -397,7 +401,9 @@ class HubSearchSqlMixin[M: BaseModel]:
             score_merge=self._hub_host.score_merge,  # type: ignore[arg-type]
             read_fields=self._hub_host.read_fields,
             rank_field=HUB_RANK,
-            per_leg_limit=per_leg_limit or self._hub_host.per_leg_limit,
+            per_leg_limit=(
+                self._hub_host.per_leg_limit if per_leg_limit is None else per_leg_limit
+            ),
             resolved_combo=combo_limit,
             effective_sorts=effective_sorts,
             order_key_spec=tuple(key_spec),
@@ -405,10 +411,12 @@ class HubSearchSqlMixin[M: BaseModel]:
             count_policy="none",
             execution="sql",
         )
+
         return await self._hub_build_with_clause_from_plan(
             plan,
             filters=filters,
             combo_limit=combo_limit,
+            uncapped_legs=per_leg_limit is None,
         )
 
     # ....................... #

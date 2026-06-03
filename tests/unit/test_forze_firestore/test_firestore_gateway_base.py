@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 from unittest.mock import MagicMock
-from uuid import uuid4
+from uuid import UUID, uuid4
 
+import attrs
 import pytest
 from google.cloud.firestore_v1.base_query import FieldFilter
 
@@ -89,13 +90,18 @@ def test_from_storage_doc_maps_id_field() -> None:
 
 def test_add_tenant_filter_and_tenant_id() -> None:
     tid = uuid4()
+
+    @attrs.define
+    class _Tenant:
+        tenant_id: UUID
+
     gw = _Gw(
         client=MagicMock(),
         model_type=IntegrationDocument,
         codec=_INTEGRATION_CODEC,
         relation=("db", "c"),
         tenant_aware=True,
-        tenant_provider=lambda: tid,  # noqa: ARG005 — gateway stores raw tenant id
+        tenant_provider=lambda: _Tenant(tenant_id=tid),
     )
     base = FieldFilter("status", "==", "open")
     merged = gw._add_tenant_filter(base)

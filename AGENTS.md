@@ -105,7 +105,7 @@ Use them for:
 - `src/forze_sqs/`: SQS integration package.
 - `tests/unit/`: unit tests, typically mirroring `src` layout.
 - `tests/integration/`: integration tests with external dependencies.
-- `tests/perf/`: performance benchmarks (require Docker).
+- `tests/perf/`: performance benchmarks (`-m perf`, excluded from `just test`; many use Docker, some in-process only).
 - `pages/`: documentation source and build files.
 - `examples/`: usage examples and tutorials.
 - `skills/`: published [Agent Skills](https://agentskills.io/) for **app authors** (`SKILL.md` per skill; see `skills/AUTHORING.md`); install via README **Agent Skills** (e.g. `npx skills add morzecrew/forze`). Framework contribution uses `.claude/skills/` and canonical docs.
@@ -146,12 +146,12 @@ See `justfile` and `CONTRIBUTING.md` for the full list. Quick reference:
 
 - **Unit tests:** `just test tests/unit`
 - **All tests (unit + integration):** `just test` (integration tests need Docker for testcontainers)
-- **Performance tests:** `just perf` (requires Docker)
+- **Performance tests:** `just perf` (benchmarks; Docker for container-backed perf, not required for every file)
 - **Quality checks (lint/imports/dead-code/deps/security):** `just quality` (or `just quality -s` for strict)
 - **Docs:** `just pages serve`
 
 ### Caveats
 
-- Integration tests (`tests/integration/`) and performance tests (`tests/perf/`) require Docker and pull container images for Postgres, Valkey, MinIO, MongoDB, RabbitMQ, and LocalStack (SQS) via testcontainers. They will fail without a running Docker daemon.
+- Integration tests (`tests/integration/`) require Docker (testcontainers). Many performance tests under `tests/perf/` also use Docker; perf tests without container fixtures (e.g. codec benchmarks) run in-process. Default CI (`just test`) excludes `-m perf`.
 - The package version is derived from git tags via `hatch-vcs`; importing `forze.__version__` does not work—use `forze._version.__version__` instead.
 - `uv sync` is called automatically by `justfile` recipes before test/quality commands, so manual re-sync is rarely needed.

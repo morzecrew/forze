@@ -157,6 +157,7 @@ def test_document_config_to_read_only_preserves_batch_size() -> None:
         read=("db", "c"),
         write=("db", "c"),
         batch_size=999,
+        tenant_aware=True,
     )
     ro = derive_read_only_document_config(
         rw,
@@ -165,6 +166,7 @@ def test_document_config_to_read_only_preserves_batch_size() -> None:
 
     assert ro.read == ("db", "c")
     assert ro.batch_size == 999
+    assert ro.tenant_aware is True
 
 
 def test_mongo_txmanager() -> None:

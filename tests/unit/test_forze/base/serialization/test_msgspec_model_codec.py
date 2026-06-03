@@ -11,6 +11,9 @@ from pydantic import BaseModel
 
 from forze.base.serialization import MsgspecModelCodec
 from forze.base.serialization.msgspec import (
+    msgspec_convert,
+    msgspec_convert_many,
+    msgspec_convert_many_batched,
     msgspec_decode_json_bytes,
     msgspec_dump,
     msgspec_dump_many,
@@ -77,6 +80,36 @@ def test_decode_mapping_many_matches_msgspec_validate_many() -> None:
     data = [{"a": 1}, {"a": "2", "b": 3}]
 
     assert codec.decode_mapping_many(data) == msgspec_validate_many(SampleStruct, data)
+
+
+def test_decode_mapping_trust_source_uses_convert() -> None:
+    codec = MsgspecModelCodec(SampleStruct)
+    data = {"a": "2", "b": 3}
+
+    assert codec.decode_mapping(data, trust_source=True) == msgspec_convert(
+        SampleStruct,
+        data,
+    )
+
+
+def test_decode_mapping_many_trust_source_uses_convert_many() -> None:
+    codec = MsgspecModelCodec(SampleStruct)
+    data = [{"a": 1}, {"a": "2", "b": 3}]
+
+    assert codec.decode_mapping_many(data, trust_source=True) == msgspec_convert_many(
+        SampleStruct,
+        data,
+    )
+
+
+def test_decode_mapping_many_batched_trust_source_uses_convert_many_batched() -> None:
+    codec = MsgspecModelCodec(SampleStruct)
+    data = [{"a": i} for i in range(5)]
+
+    actual = list(codec.decode_mapping_many_batched(data, batch_size=2, trust_source=True))
+    expected = list(msgspec_convert_many_batched(SampleStruct, data, batch_size=2))
+
+    assert actual == expected
 
 def test_decode_mapping_many_batched_matches_msgspec_validate_many_batched() -> None:
     codec = MsgspecModelCodec(SampleStruct)

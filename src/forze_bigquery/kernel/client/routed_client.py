@@ -87,10 +87,11 @@ class RoutedBigQueryClient(
     def _peek_client(self, tenant_id: UUID | None = None) -> BigQueryClient:  # type: ignore[override]
         self._pool.require_started()
 
-        tenant_id = require_tenant_id(
-            self.tenant_provider,
-            message="Tenant ID is required for routed BigQuery access",
-        )
+        if tenant_id is None:
+            tenant_id = require_tenant_id(
+                self.tenant_provider,
+                message="Tenant ID is required for routed BigQuery access",
+            )
         inner = self._pool.peek(tenant_id)
 
         if inner is None:

@@ -46,11 +46,20 @@ class OwnedTempPath:
         """Write *content* to a new temp file and mark it owned by Forze."""
 
         fd, path = tempfile.mkstemp(prefix=prefix, suffix=suffix)
+        content_bytes = content.encode("utf-8")
 
         try:
-            os.write(fd, content.encode("utf-8"))
+            written = 0
 
-        finally:
+            while written < len(content_bytes):
+                written += os.write(fd, content_bytes[written:])
+
+        except Exception:
+            os.close(fd)
+            Path(path).unlink(missing_ok=True)
+            raise
+
+        else:
             os.close(fd)
 
         return cls(path=path, owned=True)
@@ -66,9 +75,8 @@ class OwnedTempPath:
 
         try:
             Path(self.path).unlink(missing_ok=True)
-
         except OSError:
-            pass
+            raise
 
         self.path = None
         self.owned = False

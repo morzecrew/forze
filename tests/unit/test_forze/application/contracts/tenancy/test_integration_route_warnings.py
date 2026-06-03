@@ -45,7 +45,8 @@ def test_warn_integration_routes_skips_none_mapping() -> None:
 
 
 def test_warn_integration_routes_delegates_per_route() -> None:
-    bucket_resolver = lambda _tenant_id: "tenant-bucket"
+    def bucket_resolver(_tenant_id: object) -> str:
+        return "tenant-bucket"
 
     with patch(
         "forze.application.contracts.tenancy.wiring.warn_dynamic_relation_with_tenant_aware",

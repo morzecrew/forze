@@ -38,10 +38,10 @@ def routing_credential_dedup_tag(
 ) -> str:
     """Return a dedup tag for routed credential sources (never embeds raw JSON)."""
 
-    if key_file is not None:
+    if key_file:
         return f"file:{key_file}"
 
-    if inline_key_json is not None:
+    if inline_key_json:
         return f"inline:{secret_dedup_fingerprint(inline_key_json)}"
 
     return "default-credentials"
@@ -66,10 +66,10 @@ def credential_file_for_init(
 ) -> OwnedTempPath:
     """Materialize inline key JSON to a temp file when the client needs a path."""
 
-    if creds.service_file is not None:
+    if creds.service_file:
         return OwnedTempPath.unowned(creds.service_file)
 
-    if creds.service_account_json is None:
+    if not creds.service_account_json:
         return OwnedTempPath.empty()
 
     return OwnedTempPath.materialize_text(

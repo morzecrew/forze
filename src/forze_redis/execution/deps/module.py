@@ -63,8 +63,11 @@ def _is_idem_routed(config: Any) -> TypeGuard[Mapping[Any, RedisIdempotencyConfi
     return all(isinstance(v, RedisIdempotencyConfig) for v in routes.values())
 
 
-def _is_idem_plain(config: Any) -> TypeGuard[RedisIdempotencyConfig]:
-    return isinstance(config, RedisIdempotencyConfig)
+def _is_idem_plain(config: Any) -> TypeGuard[RedisIdempotencyConfig | RedisUniversalConfig]:
+    if isinstance(config, RedisIdempotencyConfig):
+        return True
+
+    return type(config) is RedisUniversalConfig
 
 
 # ....................... #

@@ -310,8 +310,7 @@ class MongoGateway[M: BaseModel](
     ) -> Sequence[JsonDict]:
         out = list(map(dict, payloads))
 
-        for payload in out:
-            if create:
-                payload = self._add_tenant_id(payload)
+        if create:
+            out = [self._add_tenant_id(payload) for payload in out]
 
         return out

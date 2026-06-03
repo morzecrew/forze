@@ -208,7 +208,7 @@ pythonpath = ["src", "tests"]
 addopts = ["--tb=short", "--strict-markers", "--strict-config"]
 asyncio_mode = "auto"
 markers = [
-    "perf: Performance test",
+    "perf: Performance benchmark (excluded from default just test; not all perf tests need Docker)",
     "integration: Integration test",
     "unit: Unit test",
     "asyncio: Async test",

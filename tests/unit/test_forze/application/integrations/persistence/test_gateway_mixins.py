@@ -19,6 +19,7 @@ from forze.application.integrations.persistence import (
     ModelCodecGatewayMixin,
     TenantResolvedRelationMixin,
 )
+from forze.base.exceptions import CoreException
 from forze.base.serialization import ModelCodec, default_model_codec
 
 
@@ -64,7 +65,7 @@ def test_filter_parser_compile_filters_none() -> None:
 
 def test_tenant_id_for_resolve_requires_tenant_when_aware() -> None:
     gw = _TenantGateway(tenant_provider=lambda: None)
-    with pytest.raises(Exception, match="Tenant ID is required"):
+    with pytest.raises(CoreException, match="Tenant ID is required"):
         gw._tenant_id_for_resolve()
 
 

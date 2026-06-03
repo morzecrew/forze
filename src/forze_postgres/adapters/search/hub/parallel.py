@@ -364,7 +364,7 @@ class HubParallelSearchMixin(HubSearchSqlMixin[M]):
             ]
 
         has_more = len(merged) > lim
-        rows = merged[:lim]
+        rows = merged[-lim:] if use_before else merged[:lim]
 
         if use_before:
             rows = list(reversed(rows))
