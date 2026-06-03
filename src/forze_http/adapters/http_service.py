@@ -73,7 +73,7 @@ class HttpxHttpServiceAdapter(HttpServicePort):
 
             return self._parse_response(operation, response.content)
 
-        except BaseException as error:
+        except Exception as error:
             logger.debug(
                 "http.invoke.failed",
                 site=site,

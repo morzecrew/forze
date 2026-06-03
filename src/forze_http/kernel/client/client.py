@@ -119,11 +119,11 @@ class HttpxClient(HttpxClientPort):
         if url.startswith("http://") or url.startswith("https://"):
             request_url = url
         elif self.__base_url is not None:
-            request_url = url
-        else:
             request_url = _merge_url(self.__base_url, url)
+        else:
+            raise exc.configuration("Relative HTTP URL requires a configured base_url")
 
-        request_timeout = timeout if timeout is not None else None
+        request_timeout = timeout if timeout is not None else httpx.USE_CLIENT_DEFAULT
 
         response = await client.request(
             method,

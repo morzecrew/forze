@@ -86,7 +86,7 @@ class HttpOperationSpec(Generic[In, Out]):
                     f"are not fields on {self.args_type.__name__}",
                 )
 
-        if self.method == "GET" and self.query_from:
+        if self.query_from:
             if self.args_type is None:
                 raise exc.configuration(
                     f"HTTP operation {self.name!r}: query_from requires args_type",
@@ -120,16 +120,7 @@ class HttpServiceSpec(BaseSpec):
                 f"HttpServiceSpec {self.name!r} must declare at least one operation",
             )
 
-        seen: set[StrKey] = set()
-
         for key, op in self.operations.items():
-            if key in seen:
-                raise exc.configuration(
-                    f"HttpServiceSpec {self.name!r}: duplicate operation {key!r}",
-                )
-
-            seen.add(key)
-
             if str(op.name) != str(key):
                 raise exc.configuration(
                     f"HttpServiceSpec {self.name!r}: operation key {key!r} "

@@ -28,7 +28,7 @@ def test_path_placeholder_requires_args_type() -> None:
         )
 
 
-def test_duplicate_operation_names_rejected() -> None:
+def test_operation_key_name_mismatch_rejected() -> None:
     op = HttpOperationSpec(
         name="dup",
         method="GET",
@@ -40,7 +40,22 @@ def test_duplicate_operation_names_rejected() -> None:
     with pytest.raises(CoreException):
         HttpServiceSpec(
             name="svc",
-            operations={"a": op, "b": op},
+            operations={"a": op},
+        )
+
+
+def test_query_from_validated_for_non_get() -> None:
+    class _Body(BaseModel):
+        name: str
+
+    with pytest.raises(CoreException):
+        HttpOperationSpec(
+            name="create",
+            method="POST",
+            path="/items",
+            args_type=_Body,
+            return_type=_Out,
+            query_from=frozenset({"unknown_field"}),
         )
 
 

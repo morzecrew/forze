@@ -51,6 +51,20 @@ def test_path_placeholders() -> None:
     assert body is None
 
 
+def test_path_placeholders_are_url_encoded() -> None:
+    op = HttpOperationSpec(
+        name="get",
+        method="GET",
+        path="/v1/orders/{order_id}",
+        args_type=OrderPath,
+        return_type=OrderPath,
+    )
+
+    path, _, _ = request_parts(op, OrderPath(order_id="a/b"))
+
+    assert path == "/v1/orders/a%2Fb"
+
+
 def test_post_body_remainder() -> None:
     class CreateBody(BaseModel):
         name: str

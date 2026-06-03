@@ -36,10 +36,10 @@ class HttpxStartupHook(LifecycleHook):
         headers = dict(self.default_headers)
 
         if self.auth_token is not None:
-            headers.setdefault(
-                "Authorization",
-                f"Bearer {self.auth_token.get_secret_value()}",
-            )
+            token = self.auth_token.get_secret_value()
+
+            if token:
+                headers.setdefault("Authorization", f"Bearer {token}")
 
         await client.initialize(
             self.base_url,

@@ -1,6 +1,7 @@
 """Split request models into HTTP path, query, and body parts."""
 
 from typing import Any
+from urllib.parse import quote
 
 from pydantic import BaseModel
 
@@ -48,7 +49,8 @@ def request_parts(
                 f"HTTP operation {op.name!r}: missing path parameter {name!r}",
             )
 
-        path = path.replace(f"{{{name}}}", str(data.pop(name)))
+        segment = quote(str(data.pop(name)), safe="")
+        path = path.replace(f"{{{name}}}", segment)
 
     query: JsonDict | None = None
     body: JsonDict | None = None
