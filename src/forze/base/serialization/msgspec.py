@@ -386,6 +386,68 @@ def msgspec_validate[T: msgspec.Struct](
 # ....................... #
 
 
+def msgspec_convert[M: msgspec.Struct](
+    cls: type[M],
+    data: JsonDict,
+) -> M:
+    """Convert a trusted mapping into a struct without unknown-field scanning."""
+
+    logger.trace("Msgspec convert into %s", cls.__name__)
+
+    return msgspec.convert(data, cls, strict=False)
+
+
+# ....................... #
+
+
+def msgspec_convert_many[T: msgspec.Struct](
+    cls: type[T],
+    data: Sequence[JsonDict],
+) -> list[T]:
+    """Bulk convert trusted rows via one ``msgspec.convert`` (no ``forbid_extra`` walk)."""
+
+    payload = _sequence_as_list(data)
+
+    if not payload:
+        return []
+
+    logger.trace(
+        "Msgspec convert %s rows into list[%s]",
+        len(payload),
+        cls.__name__,
+    )
+
+    return msgspec.convert(payload, list[cls], strict=False)  # type: ignore[valid-type]
+
+
+# ....................... #
+
+
+def msgspec_convert_many_batched[T: msgspec.Struct](
+    cls: type[T],
+    data: Sequence[JsonDict],
+    *,
+    batch_size: int = 2000,
+) -> Iterator[list[T]]:
+    """Yield struct chunks using trusted bulk convert only."""
+
+    if batch_size < 1:
+        msg = "batch_size must be >= 1"
+        raise ValueError(msg)
+
+    seq = _sequence_as_list(data)
+
+    if not seq:
+        return
+
+    for start in range(0, len(seq), batch_size):
+        chunk = seq[start : start + batch_size]
+        yield msgspec_convert_many(cls, chunk)
+
+
+# ....................... #
+
+
 def msgspec_validate_many[T: msgspec.Struct](
     cls: type[T],
     data: Sequence[JsonDict],

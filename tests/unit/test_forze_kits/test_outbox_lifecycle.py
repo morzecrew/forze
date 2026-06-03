@@ -35,7 +35,9 @@ async def test_background_lifecycle_starts_and_stops_task() -> None:
     )
 
     relay_mock = AsyncMock()
-    runtime = ExecutionRuntime(deps=DepsRegistry.from_modules(MockDepsModule()))
+    runtime = ExecutionRuntime(
+        deps=DepsRegistry.from_modules(MockDepsModule()).freeze()
+    )
 
     with patch(
         "forze_kits.integrations.outbox.lifecycle.relay_outbox_to_queue",

@@ -77,6 +77,9 @@ class PostgresHubSearchConfig(TenantAwareIntegrationConfig):
     parallel_hub_cte_materialized: bool = True
     """Use ``MATERIALIZED`` on the hub filter CTE in per-leg parallel statements (planning hint only)."""
 
+    read_validation: Literal["strict", "trusted"] = "strict"
+    """Row decode mode for hub search hits (``trusted`` skips Pydantic validation)."""
+
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
@@ -100,6 +103,12 @@ class PostgresHubSearchConfig(TenantAwareIntegrationConfig):
 
         if self.execution not in ("sql", "parallel"):
             raise exc.internal("execution must be 'sql' or 'parallel'.")
+
+        if self.read_validation not in ("strict", "trusted"):
+            raise ValueError(
+                "read_validation must be 'strict' or 'trusted', "
+                f"got {self.read_validation!r}",
+            )
 
         fk_seen: set[str] = set()
 

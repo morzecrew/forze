@@ -6,7 +6,7 @@ require_psycopg()
 
 # ....................... #
 
-from typing import Any, Mapping, Self, Sequence, cast, final
+from typing import Any, Mapping, Self, Sequence, final
 from uuid import UUID
 
 import attrs
@@ -22,7 +22,12 @@ from forze.application.contracts.querying import (
     QueryFilterLimits,
     QuerySortExpression,
 )
-from forze.application.contracts.tenancy import TENANT_ID_FIELD, TenancyMixin
+from forze.application.contracts.tenancy import TENANT_ID_FIELD
+from forze.application.integrations.persistence import (
+    FilterParserMixin,
+    ModelCodecGatewayMixin,
+    TenantResolvedRelationMixin,
+)
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
 from forze.base.serialization import ModelCodec, default_model_codec
@@ -109,7 +114,11 @@ class PostgresQualifiedName:
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class PostgresGateway[M: BaseModel](TenancyMixin):
+class PostgresGateway[M: BaseModel](
+    ModelCodecGatewayMixin[M],
+    FilterParserMixin,
+    TenantResolvedRelationMixin,
+):
     """Base gateway providing shared query-building helpers for a single Postgres relation."""
 
     relation: RelationSpec
@@ -129,7 +138,7 @@ class PostgresGateway[M: BaseModel](TenancyMixin):
     """Pydantic model used for deserialization."""
 
     codec: ModelCodec[M, Any] = attrs.field(kw_only=True, eq=False, repr=False)
-    """Row decode/encode codec (inject via ``read_gw`` or ``default_model_codec``)."""
+    """Row decode/encode codec."""
 
     introspector: PostgresIntrospector
     """Postgres introspector instance."""
@@ -148,10 +157,7 @@ class PostgresGateway[M: BaseModel](TenancyMixin):
     """
 
     filter_limits: QueryFilterLimits | None = attrs.field(default=None)
-    """Optional filter DSL abuse limits; defaults to :class:`QueryFilterLimits` factory values."""
-
     filter_parser: QueryFilterExpressionParser = attrs.field(init=False)
-    """Parser built from :attr:`filter_limits` during initialization."""
 
     # ....................... #
 
@@ -161,67 +167,7 @@ class PostgresGateway[M: BaseModel](TenancyMixin):
         if cap is not None and cap < 1:
             raise exc.internal("find_many_implicit_limit must be at least 1 when set")
 
-        limits = (
-            self.filter_limits
-            if self.filter_limits is not None
-            else QueryFilterLimits()
-        )
-        object.__setattr__(
-            self,
-            "filter_parser",
-            QueryFilterExpressionParser(limits=limits),
-        )
-
-    # ....................... #
-
-    @property
-    def read_codec(self) -> ModelCodec[M, Any]:
-        """Row codec (:attr:`codec`; required at construction)."""
-
-        return self.codec
-
-    # ....................... #
-
-    @property
-    def read_fields(self) -> frozenset[str]:
-        """Pydantic field names for :attr:`model_type` (safe for frozen attrs subclasses)."""
-
-        return self.read_codec.stored_field_names(include_computed=False)
-
-    # ....................... #
-
-    def _codec_for(self, model: type[BaseModel] | None = None) -> ModelCodec[Any, Any]:
-        """Return :attr:`codec` or a codec bound to an alternate read model."""
-
-        if model is None or model is self.model_type:
-            return cast(ModelCodec[Any, Any], self.read_codec)
-
-        return default_model_codec(model)
-
-    # ....................... #
-
-    def _decode_row(
-        self,
-        row: JsonDict,
-        *,
-        model: type[BaseModel] | None = None,
-        trust_source: bool = False,
-    ) -> Any:
-        return self._codec_for(model).decode_mapping(row, trust_source=trust_source)
-
-    # ....................... #
-
-    def _decode_rows(
-        self,
-        rows: Sequence[JsonDict],
-        *,
-        model: type[BaseModel] | None = None,
-        trust_source: bool = False,
-    ) -> list[Any]:
-        return self._codec_for(model).decode_mapping_many(
-            rows,
-            trust_source=trust_source,
-        )
+        self.init_filter_parser()
 
     # ....................... #
 
@@ -235,33 +181,14 @@ class PostgresGateway[M: BaseModel](TenancyMixin):
 
     # ....................... #
 
-    def _tenant_id_for_resolve(self) -> UUID | None:
-        if self.tenant_provider is None:
-            return None
-
-        tenant = self.tenant_provider()
-
-        if tenant is None:
-            if self.tenant_aware:
-                return self.require_tenant_if_aware()
-
-            return None
-
-        return tenant.tenant_id
-
-    # ....................... #
-
     async def _qname(self) -> PostgresQualifiedName:
-        if self._qname_resolved is not None:
-            return self._qname_resolved
+        async def _factory() -> PostgresQualifiedName:
+            return await resolve_postgres_qname(
+                self.relation,
+                self._tenant_id_for_resolve(),
+            )
 
-        resolved = await resolve_postgres_qname(
-            self.relation,
-            self._tenant_id_for_resolve(),
-        )
-        object.__setattr__(self, "_qname_resolved", resolved)
-
-        return resolved
+        return await self._resolve_and_cache("_qname_resolved", _factory)
 
     # ....................... #
 
@@ -331,19 +258,6 @@ class PostgresGateway[M: BaseModel](TenancyMixin):
             out[TENANT_ID_FIELD] = tenant_id
 
         return out
-
-    # ....................... #
-
-    def compile_filters(
-        self,
-        filters: QueryFilterExpression | None,  # type: ignore[valid-type]
-    ) -> QueryExpr | None:
-        """Parse *filters* into an AST using :attr:`filter_parser`."""
-
-        if not filters:
-            return None
-
-        return self.filter_parser.parse_filter(filters)
 
     # ....................... #
 

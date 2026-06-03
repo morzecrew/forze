@@ -58,4 +58,5 @@ class ConfigurablePostgresHubSearch(HubSearchQueryDepPort):
             filter_table_alias="h",
             nested_field_hints=self.config.nested_field_hints,
             result_snapshot=result_snapshot(context, spec.snapshot),
+            read_validation=self.config.read_validation,
         )

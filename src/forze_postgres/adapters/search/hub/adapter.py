@@ -6,7 +6,7 @@ require_psycopg()
 
 # ....................... #
 
-from typing import Any, Literal, Mapping, Sequence, final
+from typing import Any, Literal, Mapping, Sequence, cast, final
 
 import attrs
 from psycopg import sql
@@ -23,20 +23,19 @@ from forze.application.contracts.search import (
     SearchOptions,
     SearchQueryPort,
     SearchResultSnapshotOptions,
-    normalize_search_queries,
-    prepare_hub_search_options,
 )
 from forze.application.integrations.search import SearchResultSnapshot
 from forze.base.exceptions import exc
 
 from ....kernel.gateways import PostgresGateway
+from .._materialize_hits import search_trust_source
 from .._offset_run import RankedOffsetPlan, execute_hub_ranked_offset_search
-from .._pgroonga_plan import effective_combo_limit
 from .._port import PostgresSearchPortMixin
-from .._search_count import effective_search_count, resolve_ranked_approximate_total
+from .._search_count import resolve_ranked_approximate_total
+from ._typing_host import HubSearchHost
 from .constants import COMBO_ALIAS
 from .cursor import HubSearchCursorMixin
-from .parallel import HubParallelSearchMixin
+from .plan import build_hub_search_plan, hub_members_weighted
 from .runtime import HubLegRuntime
 
 # ----------------------- #
@@ -47,7 +46,6 @@ from .runtime import HubLegRuntime
 class PostgresHubSearchAdapter[M: BaseModel](
     PostgresGateway[M],
     HubSearchCursorMixin[M],
-    HubParallelSearchMixin[M],
     PostgresSearchPortMixin[M],
     SearchQueryPort[M],
 ):
@@ -73,10 +71,14 @@ class PostgresHubSearchAdapter[M: BaseModel](
     parallel_hub_cte_materialized: bool = True
     """When ``execution=parallel``, use ``MATERIALIZED`` on the hub filter CTE per leg statement."""
 
+    read_validation: Literal["strict", "trusted"] = "strict"
+    """Row decode mode for hub search hits (``trusted`` skips Pydantic validation)."""
+
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
         super().__attrs_post_init__()
+
         if self.per_leg_limit < 1:
             raise exc.internal("per_leg_limit must be at least 1.")
 
@@ -101,82 +103,49 @@ class PostgresHubSearchAdapter[M: BaseModel](
         return_type: type[BaseModel] | None = None,
         return_fields: Sequence[str] | None = None,
     ) -> Any:
-        terms = normalize_search_queries(query)
-
-        leg_options, member_weights_list = prepare_hub_search_options(
-            self.hub_spec,
-            options,
+        plan = await build_hub_search_plan(
+            cast(HubSearchHost[Any], self),
+            query=query,
+            options=options,
+            sorts=sorts,
+            pagination_or_cursor=dict(pagination or {}),
+            snapshot=snapshot,
+            result_snapshot=self.result_snapshot,
+            mode="offset",
         )
 
-        members_weighted: list[tuple[str, float]] = [
-            (self.hub_spec.members[i].name, float(member_weights_list[i]))
-            for i in range(len(self.hub_spec.members))
-        ]
-
-        active = [
-            (i, leg)
-            for i, leg in enumerate(self.members)
-            if member_weights_list[i] > 0.0
-        ]
-        do_legs = bool(terms) and bool(active)
-        use_parallel = (
-            self.execution == "parallel"
-            and do_legs
-            and sorts is None
-            and all(len(leg.hub_fk_columns) == 1 for _, leg in active)
-        )
-
-        if use_parallel:
+        if plan.use_parallel:
             return await self._hub_parallel_offset_search(
+                plan=plan,
                 query=query,
                 filters=filters,
                 pagination=pagination,
                 sorts=sorts,
-                options=leg_options,
+                options=plan.leg_options,
                 snapshot=snapshot,
                 return_count=return_count,
                 return_type=return_type,
                 return_fields=return_fields,
                 hub_spec=self.hub_spec,
-                members=self.members,
-                vector_embedders=dict(self.vector_embedders),
-                member_weights_list=member_weights_list,
-                score_merge=self.score_merge,
-                combine=self.combine,
-                per_leg_limit=self.per_leg_limit,
-                combo_limit_config=self.combo_limit,
                 result_snapshot=self.result_snapshot,
             )
 
-        rs_spec = self.hub_spec.snapshot
-        resolved_combo = effective_combo_limit(
-            config_limit=self.combo_limit,
-            per_leg_limit=self.per_leg_limit,
-            options=leg_options,
-            pagination=dict(pagination or {}),
-            snapshot=snapshot,
-            result_snapshot=self.result_snapshot,
-            rs_spec=rs_spec,
-        )
+        combo_cap = plan.resolved_combo if plan.do_legs else None
 
-        with_clause, params, do_legs, count_relation, data_relation = (
-            await self._hub_build_with_clause(
-                query_terms=terms,
+        # do_legs (_) is not used for some reason
+        with_clause, params, _, count_relation, data_relation = (
+            await self._hub_build_with_clause_from_plan(
+                plan,
                 filters=filters,
-                leg_options=leg_options,
-                member_weights_list=member_weights_list,
-                per_leg_limit=self.per_leg_limit,
-                combo_limit=resolved_combo if do_legs else None,
-                sorts=sorts,
+                combo_limit=combo_cap,
             )
         )
 
-        order_sql = await self._hub_order_sql_for_search(do_legs, sorts)
+        order_sql = await self.render_hub_order_sql(plan)
 
         approximate_total: int | None = None
-        count_policy = effective_search_count(leg_options)
 
-        if return_count and count_policy == "approximate":
+        if return_count and plan.count_policy == "approximate":
             fw, fp = await self.where_clause(filters)
             hub_qn = await self._qname()
             approximate_total = await resolve_ranked_approximate_total(
@@ -185,10 +154,10 @@ class PostgresHubSearchAdapter[M: BaseModel](
                 relation=hub_qn.name,
                 where_sql=fw,
                 params=fp,
-                combo_limit=resolved_combo,
+                combo_limit=combo_cap,
             )
 
-        plan = RankedOffsetPlan(
+        ranked_plan = RankedOffsetPlan(
             with_clause=with_clause,
             from_outer=sql.SQL(""),
             order_sql=order_sql,
@@ -199,9 +168,14 @@ class PostgresHubSearchAdapter[M: BaseModel](
             select_table_alias=COMBO_ALIAS,
         )
 
+        members_weighted = hub_members_weighted(
+            self.hub_spec,
+            plan.member_weights_list,
+        )
+
         return await execute_hub_ranked_offset_search(
             self,
-            plan=plan,
+            plan=ranked_plan,
             query=query,
             filters=filters,
             sorts=sorts,
@@ -218,7 +192,8 @@ class PostgresHubSearchAdapter[M: BaseModel](
             model_type=self.model_type,
             result_snapshot=self.result_snapshot,
             combo_alias=COMBO_ALIAS,
-            options=leg_options,
+            options=plan.leg_options,
             execution=str(self.execution),
-            combo_limit=resolved_combo,
+            combo_limit=combo_cap,
+            trust_source=search_trust_source(self.read_validation),
         )

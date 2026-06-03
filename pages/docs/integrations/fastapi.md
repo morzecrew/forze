@@ -36,11 +36,16 @@ FastAPI does not require a network client. The Forze runtime is the object that 
 
 ```python
 from fastapi import FastAPI
-from forze.application.execution import ExecutionRuntime
+from forze.application.execution import DepsRegistry, ExecutionRuntime, LifecyclePlan
 
-runtime = ExecutionRuntime(...)
+runtime = ExecutionRuntime(
+    deps=deps_registry.freeze(),
+    lifecycle=lifecycle_plan.freeze(),
+)
 app = FastAPI(title="Projects API")
 ```
+
+`ExecutionRuntime` accepts only frozen deps and lifecycle registries — call `.freeze()` on authoring plans before construction.
 
 ### Config
 
@@ -80,7 +85,7 @@ file_registry = (
 
 ### Deps module
 
-FastAPI routes do not register storage dependencies themselves. Register the adapters needed by the handlers in your normal `DepsPlan` and expose the current context as a FastAPI dependency.
+FastAPI routes do not register storage dependencies themselves. Register the adapters needed by the handlers in your normal `DepsRegistry` and expose the current context as a FastAPI dependency.
 
 ```python
 def context_dependency():
@@ -246,6 +251,6 @@ HTTP server timeouts are owned by the ASGI server or ingress. Use Forze adapter 
 | Mutating requests return a validation/error response because `Idempotency-Key` is missing. | Idempotency is enabled for the endpoint, but the client did not send the required stable header. | Send the same `Idempotency-Key` for retries of the same operation and register an idempotency adapter such as Redis. | [Idempotency](#idempotency) |
 | Domain or application exceptions return generic 500 responses instead of Forze error JSON. | `register_exception_handlers(app)` was not called on the FastAPI app. | Register Forze exception handlers during app setup before serving requests. | [Operational notes](#operational-notes) |
 | Document and search endpoints shadow each other or OpenAPI shows unexpected paths. | Generated document/search routes share the same router prefix and default or overridden paths. | Use separate router prefixes or set explicit `path_override` values so document and search paths are unique. | [Contract coverage table](#contract-coverage-table) |
-| `DepKey` resolution fails inside a route. | The FastAPI dependency returned a context whose `DepsPlan` does not contain the needed adapter route. | Register the backing integration module and ensure the route/spec name matches. | [Deps module](#deps-module) |
+| `DepKey` resolution fails inside a route. | The FastAPI dependency returned a context whose `DepsRegistry` does not contain the needed adapter route. | Register the backing integration module and ensure the route/spec name matches. | [Deps module](#deps-module) |
 | Endpoint returns 422 for a valid business command. | The request DTO does not match the endpoint body mode or Pydantic model. | Check `DocumentDTOs`, `SearchDTOs`, or the custom endpoint spec and align the client payload. | [Minimal setup](#minimal-setup) |
 | Generated soft-delete or restore routes are missing. | The document spec does not advertise soft-deletion support or the endpoint was disabled. | Enable the feature in the document spec/endpoint spec or remove the route from docs and clients. | [Contract coverage table](#contract-coverage-table) |

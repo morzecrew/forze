@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 from unittest.mock import MagicMock
-from uuid import uuid4
+from uuid import UUID, uuid4
 
+import attrs
 import pytest
-from google.cloud.firestore_v1.base_query import FieldFilter
+from google.cloud.firestore_v1.base_query import And, FieldFilter
 
 from forze.base.exceptions import CoreException
 from forze.application.contracts.tenancy import TENANT_ID_FIELD
@@ -89,17 +90,29 @@ def test_from_storage_doc_maps_id_field() -> None:
 
 def test_add_tenant_filter_and_tenant_id() -> None:
     tid = uuid4()
+
+    @attrs.define
+    class _Tenant:
+        tenant_id: UUID
+
     gw = _Gw(
         client=MagicMock(),
         model_type=IntegrationDocument,
         codec=_INTEGRATION_CODEC,
         relation=("db", "c"),
         tenant_aware=True,
-        tenant_provider=lambda: tid,  # noqa: ARG005 — gateway stores raw tenant id
+        tenant_provider=lambda: _Tenant(tenant_id=tid),
     )
     base = FieldFilter("status", "==", "open")
     merged = gw._add_tenant_filter(base)
-    assert merged is not None
+    assert isinstance(merged, And)
+    tenant_filters = [
+        filt
+        for filt in merged.filters
+        if isinstance(filt, FieldFilter) and filt.field_path == TENANT_ID_FIELD
+    ]
+    assert len(tenant_filters) == 1
+    assert tenant_filters[0].value == tid
 
     data = gw._add_tenant_id({"name": "a"})
     assert data[TENANT_ID_FIELD] == tid

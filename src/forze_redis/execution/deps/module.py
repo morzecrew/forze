@@ -13,12 +13,24 @@ from forze.application.contracts.dlock import (
 )
 from forze.application.contracts.idempotency import IdempotencyDepKey
 from forze.application.contracts.search import SearchResultSnapshotDepKey
-from forze.application.contracts.tenancy import warn_dynamic_relation_with_tenant_aware
+from forze.application.contracts.tenancy import warn_integration_routes
 from forze.application.execution import Deps, DepsModule
+from forze.application.execution.deps.builders import (
+    merge_deps,
+    routed_from_mapping,
+    routed_shared_factories,
+)
 from forze.base.primitives import StrKey
 
 from ...kernel._logger import logger
 from ...kernel.client import RedisClientPort
+from ._warnings import (
+    REDIS_CACHE_WARNING,
+    REDIS_COUNTER_WARNING,
+    REDIS_DLOCK_WARNING,
+    REDIS_IDEMPOTENCY_WARNING,
+    REDIS_SEARCH_SNAPSHOT_WARNING,
+)
 from .configs import (
     RedisCacheConfig,
     RedisCounterConfig,
@@ -39,7 +51,13 @@ from .keys import RedisBlockingClientDepKey, RedisClientDepKey
 # ----------------------- #
 
 
-def _is_idem_routed(config: Any) -> TypeGuard[Mapping[Any, RedisIdempotencyConfig]]:
+def _is_idem_route_value(value: Any) -> bool:
+    return isinstance(value, (RedisIdempotencyConfig, RedisUniversalConfig))
+
+
+def _is_idem_routed(
+    config: Any,
+) -> TypeGuard[Mapping[Any, RedisIdempotencyConfig | RedisUniversalConfig]]:
     if not isinstance(config, MappingABC):
         return False
 
@@ -48,11 +66,14 @@ def _is_idem_routed(config: Any) -> TypeGuard[Mapping[Any, RedisIdempotencyConfi
     if len(routes) < 1:
         return False
 
-    return all(isinstance(v, RedisIdempotencyConfig) for v in routes.values())
+    return all(_is_idem_route_value(v) for v in routes.values())
 
 
-def _is_idem_plain(config: Any) -> TypeGuard[RedisIdempotencyConfig]:
-    return isinstance(config, RedisIdempotencyConfig)
+def _is_idem_plain(config: Any) -> TypeGuard[RedisIdempotencyConfig | RedisUniversalConfig]:
+    if isinstance(config, RedisIdempotencyConfig):
+        return True
+
+    return type(config) is RedisUniversalConfig
 
 
 # ....................... #
@@ -111,44 +132,48 @@ class RedisDepsModule(DepsModule):
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
-        def _warn_route(
-            route_name: str,
-            *,
-            kind: str,
-            config: RedisUniversalConfig,
-        ) -> None:
-            warn_dynamic_relation_with_tenant_aware(
-                integration="Redis",
-                route_name=route_name,
-                kind=kind,
-                tenant_aware=config.tenant_aware,
-                named_fields=[("namespace", config.namespace)],
-                log_warning=logger.warning,
-            )
-
-        if self.caches:
-            for name, cfg in self.caches.items():
-                _warn_route(str(name), kind="cache", config=cfg)
-
-        if self.counters:
-            for name, cfg in self.counters.items():
-                _warn_route(str(name), kind="counter", config=cfg)
+        warn_integration_routes(
+            integration="Redis",
+            routes=self.caches,
+            warning=REDIS_CACHE_WARNING,
+            log_warning=logger.warning,
+        )
+        warn_integration_routes(
+            integration="Redis",
+            routes=self.counters,
+            warning=REDIS_COUNTER_WARNING,
+            log_warning=logger.warning,
+        )
 
         if self.idempotency:
             if _is_idem_routed(self.idempotency):
-                for name, cfg in self.idempotency.items():
-                    _warn_route(str(name), kind="idempotency", config=cfg)
+                warn_integration_routes(
+                    integration="Redis",
+                    routes=self.idempotency,
+                    warning=REDIS_IDEMPOTENCY_WARNING,
+                    log_warning=logger.warning,
+                )
 
             elif _is_idem_plain(self.idempotency):
-                _warn_route("idempotency", kind="idempotency", config=self.idempotency)
+                warn_integration_routes(
+                    integration="Redis",
+                    routes={"idempotency": self.idempotency},
+                    warning=REDIS_IDEMPOTENCY_WARNING,
+                    log_warning=logger.warning,
+                )
 
-        if self.search_snapshots:
-            for name, cfg in self.search_snapshots.items():
-                _warn_route(str(name), kind="search_snapshot", config=cfg)
-
-        if self.dlocks:
-            for name, cfg in self.dlocks.items():
-                _warn_route(str(name), kind="dlock", config=cfg)
+        warn_integration_routes(
+            integration="Redis",
+            routes=self.search_snapshots,
+            warning=REDIS_SEARCH_SNAPSHOT_WARNING,
+            log_warning=logger.warning,
+        )
+        warn_integration_routes(
+            integration="Redis",
+            routes=self.dlocks,
+            warning=REDIS_DLOCK_WARNING,
+            log_warning=logger.warning,
+        )
 
     # ....................... #
 
@@ -160,92 +185,45 @@ class RedisDepsModule(DepsModule):
         if self.blocking_client is not None:
             plain[RedisBlockingClientDepKey] = self.blocking_client
 
-        plain_deps = Deps.plain(plain)
-
-        cache_deps = Deps()
-        counter_deps = Deps()
         idempotency_deps = Deps()
-        search_snapshot_deps = Deps()
-        dlock_deps = Deps()
-
-        if self.caches:
-            cache_deps = cache_deps.merge(
-                Deps.routed(
-                    {
-                        CacheDepKey: {
-                            name: ConfigurableRedisCache(config=config)
-                            for name, config in self.caches.items()
-                        }
-                    }
-                )
-            )
-
-        if self.counters:
-            counter_deps = counter_deps.merge(
-                Deps.routed(
-                    {
-                        CounterDepKey: {
-                            name: ConfigurableRedisCounter(config=config)
-                            for name, config in self.counters.items()
-                        }
-                    }
-                )
-            )
 
         if self.idempotency:
             if _is_idem_routed(self.idempotency):
-                idempotency_deps = idempotency_deps.merge(
-                    Deps.routed(
-                        {
-                            IdempotencyDepKey: {
-                                name: ConfigurableRedisIdempotency(config=config)
-                                for name, config in self.idempotency.items()
-                            }
-                        }
-                    )
+                idempotency_deps = routed_from_mapping(
+                    self.idempotency,
+                    bindings=[(IdempotencyDepKey, ConfigurableRedisIdempotency)],
                 )
 
             elif _is_idem_plain(self.idempotency):
-                idempotency_deps = idempotency_deps.merge(
-                    Deps.plain(
-                        {
-                            IdempotencyDepKey: ConfigurableRedisIdempotency(
-                                config=self.idempotency
-                            )
-                        }
-                    )
-                )
-
-        if self.search_snapshots:
-            search_snapshot_deps = search_snapshot_deps.merge(
-                Deps.routed(
+                idempotency_deps = Deps.plain(
                     {
-                        SearchResultSnapshotDepKey: {
-                            name: ConfigurableRedisSearchResultSnapshot(config=config)
-                            for name, config in self.search_snapshots.items()
-                        }
+                        IdempotencyDepKey: ConfigurableRedisIdempotency(
+                            config=self.idempotency
+                        )
                     }
                 )
-            )
 
-        if self.dlocks:
-            dlock_factories = {
-                name: ConfigurableRedisDistributedLock(config=config)
-                for name, config in self.dlocks.items()
-            }
-            dlock_deps = dlock_deps.merge(
-                Deps.routed(
-                    {
-                        DistributedLockQueryDepKey: dlock_factories,
-                        DistributedLockCommandDepKey: dlock_factories,
-                    }
-                )
-            )
-
-        return plain_deps.merge(
-            cache_deps,
-            counter_deps,
+        return merge_deps(
+            routed_from_mapping(
+                self.caches,
+                bindings=[(CacheDepKey, ConfigurableRedisCache)],
+            ),
+            routed_from_mapping(
+                self.counters,
+                bindings=[(CounterDepKey, ConfigurableRedisCounter)],
+            ),
             idempotency_deps,
-            search_snapshot_deps,
-            dlock_deps,
+            routed_from_mapping(
+                self.search_snapshots,
+                bindings=[(SearchResultSnapshotDepKey, ConfigurableRedisSearchResultSnapshot)],
+            ),
+            routed_shared_factories(
+                self.dlocks,
+                dep_keys=[
+                    DistributedLockQueryDepKey,
+                    DistributedLockCommandDepKey,
+                ],
+                factory=ConfigurableRedisDistributedLock,
+            ),
+            plain=plain,
         )

@@ -22,11 +22,13 @@ from .ports import TenantManagementPort, TenantProviderPort, TenantResolverPort
 from .registry import TenantClientRegistry
 from .value_objects import TenantIdentity
 from .wiring import (
+    IntegrationRouteWarning,
     TenancyRouteSpec,
     TenantIsolationMode,
     derive_tenant_isolation_mode,
     validate_routed_client_tenancy_wiring,
     warn_dynamic_relation_with_tenant_aware,
+    warn_integration_routes,
 )
 
 # ----------------------- #
@@ -49,10 +51,12 @@ __all__ = [
     "parse_tenant_hint",
     "require_tenant_id",
     "TenancyRouteSpec",
+    "IntegrationRouteWarning",
     "TenantIsolationMode",
     "derive_tenant_isolation_mode",
     "validate_routed_client_tenancy_wiring",
     "warn_dynamic_relation_with_tenant_aware",
+    "warn_integration_routes",
     "TenantClientRegistry",
     "ensure_dsn_fingerprint",
     "resolve_dsn_for_tenant",

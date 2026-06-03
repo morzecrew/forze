@@ -76,6 +76,7 @@ def postgres_search_port_for_config(
         filter_table_alias="v",
         nested_field_hints=c.nested_field_hints,
         result_snapshot=snap,
+        read_validation=c.read_validation,
     )
 
     match c.engine:

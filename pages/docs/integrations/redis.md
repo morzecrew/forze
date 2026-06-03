@@ -53,7 +53,7 @@ Each Redis resource needs a namespace. Set `tenant_aware=True` when keys must in
 ### Deps module
 
 ```python
-from forze.application.execution import DepsPlan
+from forze.application.execution import DepsRegistry
 from forze_redis import (
     RedisCacheConfig,
     RedisDepsModule,
@@ -72,7 +72,7 @@ redis_module = RedisDepsModule(
     dlocks={"project-locks": RedisDistributedLockConfig(namespace="locks")},
 )
 
-deps_plan = DepsPlan.from_modules(redis_module)
+deps_registry = DepsRegistry.from_modules(redis_module)
 ```
 
 Use routed mappings when the contract is named, and a plain `idempotency` config when all idempotency specs share one Redis namespace.

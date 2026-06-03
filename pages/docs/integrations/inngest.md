@@ -53,7 +53,7 @@ For per-tenant Inngest apps or keys, register `RoutedInngestClient` and `routed_
 ### Deps module (emit events from API)
 
 ```python
-from forze.application.execution import DepsPlan
+from forze.application.execution import DepsRegistry
 from forze_inngest import InngestDepsModule
 
 inngest_module = InngestDepsModule(
@@ -63,7 +63,7 @@ inngest_module = InngestDepsModule(
     },
 )
 
-deps_plan = DepsPlan.from_modules(inngest_module)
+deps_registry = DepsRegistry.from_modules(inngest_module)
 ```
 
 Route keys must match `DurableFunctionEventSpec.name`.

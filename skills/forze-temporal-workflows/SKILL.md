@@ -44,7 +44,7 @@ The spec name is the dependency route and should match `TemporalDepsModule.workf
 ## Runtime wiring
 
 ```python
-from forze.application.execution import DepsPlan, LifecyclePlan
+from forze.application.execution import DepsRegistry, LifecyclePlan
 from forze_temporal import (
     TemporalClient,
     TemporalConfig,
@@ -63,7 +63,7 @@ temporal_module = TemporalDepsModule(
     },
 )
 
-deps = DepsPlan.from_modules(temporal_module)
+deps = DepsRegistry.from_modules(temporal_module)
 lifecycle = LifecyclePlan.from_steps(
     temporal_lifecycle_step(
         host="localhost:7233",
@@ -182,7 +182,7 @@ Schedules require a Temporal server with the Schedules API (not the time-skippin
 
 ## Testing
 
-For handlers that only need to verify a workflow command was issued, register fake `DurableWorkflowCommandDepKey` / `DurableWorkflowQueryDepKey` factories in `Deps` (for example via `MockDepsModule` or a test `DepsPlan`). Schedule handlers can use fake `DurableWorkflowScheduleCommandDepKey` / `DurableWorkflowScheduleQueryDepKey` factories similarly. For workflow definition tests, follow the [Temporal integration](https://morzecrew.github.io/forze/docs/integrations/temporal/) testing section.
+For handlers that only need to verify a workflow command was issued, register fake `DurableWorkflowCommandDepKey` / `DurableWorkflowQueryDepKey` factories in `Deps` (for example via `MockDepsModule` or a test `DepsRegistry`). Schedule handlers can use fake `DurableWorkflowScheduleCommandDepKey` / `DurableWorkflowScheduleQueryDepKey` factories similarly. For workflow definition tests, follow the [Temporal integration](https://morzecrew.github.io/forze/docs/integrations/temporal/) testing section.
 
 ## Anti-patterns
 

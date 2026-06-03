@@ -224,6 +224,7 @@ Test layout:
 tests/
   unit/
   integration/
+  perf/           # benchmarks; run with `just perf` (excluded from `just test` / CI)
 ```
 
 Mirror the `src` structure when possible:
@@ -257,9 +258,14 @@ Use fixtures from `tests/integration/conftest.py` (shared Docker check via `test
 
 - `integration` — applied to all tests under `tests/integration/` via root conftest
 - `unit` — use `pytestmark = pytest.mark.unit` on focused unit modules (authn/authz pattern)
-- `perf` — excluded from default `just test`
+- `perf` — performance benchmarks under `tests/perf/`; **excluded from default `just test` (CI)**.
+  Run with `just perf`. Perf measures overall throughput/latency; many perf tests use Docker
+  testcontainers, but not all (e.g. codec micro-benchmarks are in-process only).
 
-Run subsets: `just test -m integration`, `just test tests/unit`.
+**CI vs perf:** `just test` runs unit + integration (`-m "not perf"`). `just perf` runs
+`@pytest.mark.perf` with pytest-benchmark (`--benchmark-only`).
+
+Run subsets: `just test -m integration`, `just test tests/unit`, `just perf tests/perf/...`.
 
 New pytest markers must be registered in `pyproject.toml` before use.
 

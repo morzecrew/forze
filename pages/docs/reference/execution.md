@@ -3,8 +3,8 @@
 The execution engine manages dependency injection, context creation, and application lifecycle. It connects domain models and contracts to infrastructure adapters at runtime. For the conceptual overview, see [Application Layer](../concepts/application-layer.md). Stage hooks and operation plans live on `OperationRegistry`; see [Middleware & Plans](middleware-plans.md) and [Capability execution](capability-execution.md).
 
 <div class="d2-diagram">
-  <img class="d2-light" src="/forze/assets/diagrams/light/deps-resolution.svg" alt="Dependency resolution from DepsPlan through modules, Deps, keys, and ports">
-  <img class="d2-dark" src="/forze/assets/diagrams/dark/deps-resolution.svg" alt="Dependency resolution from DepsPlan through modules, Deps, keys, and ports">
+  <img class="d2-light" src="/forze/assets/diagrams/light/deps-resolution.svg" alt="Dependency resolution from DepsRegistry through modules, Deps, keys, and ports">
+  <img class="d2-dark" src="/forze/assets/diagrams/dark/deps-resolution.svg" alt="Dependency resolution from DepsRegistry through modules, Deps, keys, and ports">
 </div>
 
 ## ExecutionContext
@@ -111,13 +111,13 @@ Plain singleton lookups (lifecycle hooks fetching a shared client) use `provide(
 
 #### Observed resolution graph (development)
 
-Enable resolution tracing on the **plan** (preferred) or a one-off container:
+Enable resolution tracing on the **registry** (preferred) or a one-off container:
 
     :::python
-    plan = DepsPlan.from_modules(postgres_module).with_tracing(resolution=True)
-    deps = plan.build()
+    registry = DepsRegistry.from_modules(postgres_module).with_tracing(resolution=True)
+    frozen = registry.freeze()
 
-Or set `FORZE_DEPS_TRACE=1` (or `true` / `yes`) and call `plan.build()` (unless `build(trace_resolution=False)` overrides env). `Deps.plain(..., trace_resolution=True)` still works for tests.
+Or set `FORZE_DEPS_TRACE=1` (or `true` / `yes`) and call `registry.freeze()` (unless `freeze(trace_resolution=False)` overrides env).
 
 While resolving, Forze records directed edges `(parent, child)` where the child depends on the parent — on scope push and on `provide()` under an active stack. Recording is handled by `ResolutionTracer` on `Deps` (`resolution_tracer`); cycle detection stays on the container stack regardless of tracing.
 
@@ -125,13 +125,13 @@ Read the current task's trace with `deps.resolution_trace()` and export via `tra
 
 #### Runtime tracing (development)
 
-Enable runtime tracing on the plan:
+Enable runtime tracing on the registry:
 
     :::python
-    plan = DepsPlan.from_modules(mock_module).with_tracing(runtime=True)
-    deps = plan.build()
+    registry = DepsRegistry.from_modules(mock_module).with_tracing(runtime=True)
+    frozen = registry.freeze()
 
-Or set `FORZE_RUNTIME_TRACE=1` (or `true` / `yes`) before `plan.build()` (unless `build(trace_runtime=False)` overrides env). Recording is handled by `RuntimeTracer` on `Deps` (`runtime_tracer`).
+Or set `FORZE_RUNTIME_TRACE=1` (or `true` / `yes`) before `registry.freeze()` (unless `freeze(trace_runtime=False)` overrides env).
 
 Root transaction scope boundaries use `TxTracer` on `TransactionContext`, wired from `ExecutionContext` via `tx_tracer_from_runtime(deps.runtime_tracer)` when runtime tracing is enabled — no separate flag. Only root `ctx.tx_ctx.scope(...)` enter/exit is recorded (nested scopes do not emit extra tx events).
 
@@ -148,7 +148,7 @@ Read the current task's sequence with `deps.runtime_trace()` and log-friendly li
 | `FORZE_RUNTIME_TRACE_LOG=1` | Log full trace at DEBUG after `run_traced_operation` (or call `log_runtime_trace(deps)`) |
 | `tests.support.runtime_tracing` | `traced_deps`, `traced_ctx`, `assert_deps_runtime_trace_valid` for pytest |
 
-`ExecutionRuntime` picks up tracing when `FORZE_RUNTIME_TRACE` is set before `DepsPlan.build()`, or use `DepsPlan(...).with_tracing(runtime=True).build()`.
+`ExecutionRuntime` picks up tracing when `FORZE_RUNTIME_TRACE` is set before `DepsRegistry.freeze()`, or use `DepsRegistry(...).with_tracing(runtime=True).freeze()`.
 
 **Limitations:** port/coordinator boundary only (not gateway internals); `resolve_simple` records `op=resolve` (dependency lookup, not port methods); sync and async port methods are traced; buffer capped at `RuntimeTrace.MAX_EVENTS` (10_000) with a `tracing truncated` marker. Tracing is diagnostic only; production code should not rely on it.
 
@@ -219,31 +219,32 @@ Protocol for a callable that produces a `Deps` container. Integration packages e
             TxManagerDepKey: pg_tx_factory,
         })
 
-### DepsPlan
+### DepsRegistry
 
-Declarative plan that collects `DepsModule` callables and merges them into a single `Deps` on build:
+Authoring registry that collects `DepsModule` callables and merges them into a `FrozenDepsRegistry` on `freeze()`:
 
     :::python
-    from forze.application.execution import DepsPlan
+    from forze.application.execution import DepsRegistry
 
-    plan = DepsPlan.from_modules(
+    registry = DepsRegistry.from_modules(
         postgres_module,
         redis_module,
     )
 
     # Or build incrementally
-    plan = DepsPlan.from_modules(base_module)
-    plan = plan.with_modules(cache_module, search_module)
+    registry = DepsRegistry.from_modules(base_module)
+    registry = registry.with_modules(cache_module, search_module)
 
 | Method | Purpose |
 |--------|---------|
-| `from_modules(*modules)` | Create a plan from modules |
-| `with_modules(*modules)` | Return a new plan with additional modules |
-| `with_deps(*deps)` | Append pre-built registry fragments |
-| `with_tracing(resolution=..., runtime=...)` | Attach tracers when `build()` runs (`bool` or tracer instance) |
-| `build(trace_resolution=..., trace_runtime=...)` | Merge modules; apply tracers (plan fields override env/kwargs) |
+| `from_modules(*modules)` | Create a registry from modules |
+| `from_deps(*deps)` | Create a registry from pre-built registration blobs |
+| `with_modules(*modules)` | Return a new registry with additional modules |
+| `with_deps(*deps)` | Append pre-built registration fragments |
+| `with_tracing(resolution=..., runtime=...)` | Attach tracers when `freeze()` runs (`bool` or tracer instance) |
+| `freeze(trace_resolution=..., trace_runtime=...)` | Merge modules; apply tracers; return `FrozenDepsRegistry` |
 
-When `build()` is called, each module callable is invoked, registries are merged via `Deps.merge()`, and tracing policy is applied once on the final container.
+When `freeze()` is called, each module callable is invoked, provider stores are merged, and tracing policy is applied once on the frozen registry. Pass the result to `ExecutionRuntime`; per-scope resolution happens via `FrozenDepsRegistry.resolve()` inside `create_context()`.
 
 ## Lifecycle
 
@@ -325,21 +326,21 @@ After `freeze()`, the plan exposes an `ExecutionGraph` with `waves`. Call `resol
 | `FrozenLifecyclePlan` | Validated graph + `concurrent` flag; `resolve(ctx)` → `ResolvedLifecyclePlan` |
 | `ResolvedLifecyclePlan` | Runnable plan; runs startup forward by wave, shutdown reverse by wave |
 
-`ExecutionRuntime` accepts `LifecyclePlan` or `FrozenLifecyclePlan`, freezes when needed, and resolves per scope. Startup behavior: if a hook fails, completed steps are shut down in reverse wave order before re-raising. Shutdown behavior: exceptions are swallowed so all steps are attempted. When `concurrent=True`, steps within the same wave run in parallel (`asyncio.gather`); waves still run sequentially.
+`ExecutionRuntime` accepts only `FrozenDepsRegistry` and `FrozenLifecyclePlan` (call `DepsRegistry.freeze()` and `LifecyclePlan.freeze()` first). It does not coerce authoring plans. Startup behavior: if a hook fails, completed steps are shut down in reverse wave order before re-raising. Shutdown behavior: exceptions are swallowed so all steps are attempted. When `concurrent=True`, steps within the same wave run in parallel (`asyncio.gather`); waves still run sequentially.
 
 ## Three execution plans
 
-Forze uses three declarative plans in the execution layer. They are siblings: only `DepsPlan` and `LifecyclePlan` are held by `ExecutionRuntime`; `OperationRegistry` is built and frozen separately (facades, HTTP attach, workers).
+Forze uses three declarative plans in the execution layer. They are siblings: `ExecutionRuntime` holds **frozen** deps and lifecycle registries only; `OperationRegistry` is built and frozen separately (facades, HTTP attach, workers).
 
 | Plan | Collects | Terminal step | Typical enablement |
 |------|----------|-----------------|-------------------|
-| `DepsPlan` | modules, pre-built `Deps` | `build()` → `Deps` | `DepsPlan.from_modules(...).with_tracing(...)`; env `FORZE_DEPS_TRACE` |
-| `LifecyclePlan` | modules, `LifecycleStep` | `freeze()` → `FrozenLifecyclePlan` → `resolve` → run | `LifecyclePlan.from_modules(...)` or `from_steps(...)` in app lifespan |
+| `DepsRegistry` | modules, pre-built `Deps` | `freeze()` → `FrozenDepsRegistry` → `resolve()` → `FrozenDeps` | `DepsRegistry.from_modules(...).with_tracing(...).freeze()`; env `FORZE_DEPS_TRACE` |
+| `LifecyclePlan` | modules, `LifecycleStep` | `freeze()` → `FrozenLifecyclePlan` → `resolve` → run | `LifecyclePlan.from_modules(...).freeze()` or `from_steps(...).freeze()` in app lifespan |
 | `OperationRegistry` | handlers, plans, `PlanPatch` | `freeze()` → `FrozenOperationRegistry` | `.patch(selector)` / `.bind(...)` / `OperationRegistry.merge` |
 
 **Where do I enable X?**
 
-- Port and dependency wiring → `DepsPlan` + `DepsModule`
+- Port and dependency wiring → `DepsRegistry` + `DepsModule` (`.freeze()` before `ExecutionRuntime`)
 - Database and client startup → `LifecyclePlan`
 - Middleware, transaction routes, dispatch → `OperationRegistry` (then `.freeze()`)
 
@@ -352,14 +353,14 @@ See [Operation composition](../concepts/operation-composition.md) for registry a
 
 ## ExecutionRuntime
 
-Combines the dependency plan and lifecycle plan into a scoped runtime (operation registry is separate; see [Three execution plans](#three-execution-plans)):
+Combines frozen dependency and lifecycle registries into a scoped runtime (operation registry is separate; see [Three execution plans](#three-execution-plans)). Authoring plans must be frozen first — the runtime does not coerce `DepsRegistry` or `LifecyclePlan` instances:
 
     :::python
-    from forze.application.execution import ExecutionRuntime
+    from forze.application.execution import DepsRegistry, ExecutionRuntime
 
     runtime = ExecutionRuntime(
-        deps=deps_plan,
-        lifecycle=lifecycle_plan,
+        deps=deps_registry.freeze(),
+        lifecycle=lifecycle_plan.freeze(),
     )
 
 Use `scope()` as an async context manager:
@@ -371,7 +372,7 @@ Use `scope()` as an async context manager:
 
 ### Scope lifecycle
 
-1. **Create context** — build `Deps` from the deps plan, store in a `RuntimeVar`
+1. **Create context** — resolve `FrozenDeps` from the frozen deps registry, store in a `RuntimeVar`
 2. **Startup** — run lifecycle startup hooks by wave (forward)
 3. **Yield** — the application runs
 4. **Shutdown** — run lifecycle shutdown hooks by wave (reverse)
@@ -382,7 +383,7 @@ Use `scope()` as an async context manager:
 | Method | Purpose |
 |--------|---------|
 | `get_context()` | Return the current `ExecutionContext`; raises if not in scope |
-| `create_context()` | Build and store the context (idempotent within a scope) |
+| `create_context()` | Resolve per-scope `FrozenDeps` and store the context (idempotent within a scope) |
 | `startup()` | Run lifecycle startup hooks |
 | `shutdown()` | Run lifecycle shutdown hooks and reset context |
 | `scope()` | Async context manager combining all of the above |
@@ -432,7 +433,7 @@ A complete wiring example showing deps, lifecycle, runtime, and operation regist
     :::python
     from forze.application.execution import (
         Deps,
-        DepsPlan,
+        DepsRegistry,
         ExecutionRuntime,
         OperationRegistry,
     )
@@ -446,8 +447,8 @@ A complete wiring example showing deps, lifecycle, runtime, and operation regist
             redis_deps_module(),
         )
 
-    # 2. Build plans
-    deps_plan = DepsPlan.from_modules(infra_module)
+    # 2. Build and freeze plans
+    deps_registry = DepsRegistry.from_modules(infra_module)
 
     lifecycle_plan = LifecyclePlan.from_steps(
         LifecycleStep(
@@ -472,10 +473,10 @@ A complete wiring example showing deps, lifecycle, runtime, and operation regist
         .freeze()
     )
 
-    # 4. Create runtime
+    # 4. Create runtime (frozen registries only)
     runtime = ExecutionRuntime(
-        deps=deps_plan,
-        lifecycle=lifecycle_plan,
+        deps=deps_registry.freeze(),
+        lifecycle=lifecycle_plan.freeze(),
     )
 
     # 5. Use in application
@@ -491,7 +492,8 @@ A complete wiring example showing deps, lifecycle, runtime, and operation regist
 | Symptom | Likely cause | Fix | See also |
 |---------|--------------|-----|----------|
 | A lifecycle startup step did not run before a request or handler. | The runtime scope was not entered, or `startup()` was not called from the application lifespan. | Use `async with runtime.scope()` for tests and workers, or call `runtime.startup()`/`runtime.shutdown()` from the framework lifespan. | [FastAPI integration](../integrations/fastapi.md#lifecycle-step) |
-| Resolving `ctx.document.query(...)`, `ctx.deps.provide(...)`, or another helper raises a missing dependency error. | The `DepsPlan` does not include the module that registers that key/route, or the route does not match the spec name. | Add the correct integration deps module and verify the spec name, dependency key, and route are registered together. | [Specs and wiring](../concepts/specs-and-wiring.md) |
+| Resolving `ctx.document.query(...)`, `ctx.deps.provide(...)`, or another helper raises a missing dependency error. | The `DepsRegistry` does not include the module that registers that key/route, or the route does not match the spec name. | Add the correct integration deps module and verify the spec name, dependency key, and route are registered together. | [Specs and wiring](../concepts/specs-and-wiring.md) |
+| `ExecutionRuntime` construction fails or type errors on `deps` / `lifecycle`. | An authoring `DepsRegistry` or `LifecyclePlan` was passed without `.freeze()`. | Call `.freeze()` on both plans before `ExecutionRuntime(...)`; the runtime accepts only frozen registries. | [ExecutionRuntime](#executionruntime) |
 | `Cyclic dependency resolution: ...` from `Deps`. | A factory calls back into a dependency that is already on the resolution stack (same key and route). | Break the cycle in module wiring or split dependencies; do not rely on infinite recursion. | [Cycle detection](#cycle-detection) |
 | `Deps.merge()` raises a key collision while building the plan. | Multiple modules provide the same dependency key and route. | Register only one provider per key/route, or separate providers with routed names before merging modules. | [Dependencies](#dependencies) |
 | FastAPI attach raises about unfrozen registry. | `attach_*_endpoints` requires `FrozenOperationRegistry`. | Call `.freeze()` after `.finish(deep=True)` on the registry binder chain. | [FastAPI integration](../integrations/fastapi.md) |

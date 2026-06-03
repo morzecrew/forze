@@ -7,7 +7,6 @@ from pydantic import BaseModel
 
 from forze.application.contracts.outbox import OutboxDestination, OutboxSpec
 from forze.application.contracts.queue import QueueSpec
-from forze.application.contracts.stream import StreamSpec
 from forze.application.execution import DepsRegistry, ExecutionRuntime
 from forze.base.serialization import PydanticModelCodec
 from forze_kits.integrations.outbox import relay_outbox
@@ -29,7 +28,7 @@ async def test_relay_outbox_dispatches_queue() -> None:
     queue_spec = QueueSpec(name="jobs", codec=codec)
 
     module = MockDepsModule()
-    runtime = ExecutionRuntime(deps=DepsRegistry.from_modules(module))
+    runtime = ExecutionRuntime(deps=DepsRegistry.from_modules(module).freeze())
     async with runtime.scope():
         ctx = runtime.get_context()
         state = ctx.deps.provide(MockStateDepKey)
@@ -57,7 +56,7 @@ async def test_relay_outbox_queue_kind_without_queue_spec_raises() -> None:
     )
 
     module = MockDepsModule()
-    runtime = ExecutionRuntime(deps=DepsRegistry.from_modules(module))
+    runtime = ExecutionRuntime(deps=DepsRegistry.from_modules(module).freeze())
     async with runtime.scope():
         ctx = runtime.get_context()
         with pytest.raises(Exception, match="queue_spec is required"):
@@ -79,7 +78,7 @@ async def test_relay_outbox_stream_kind_with_queue_spec_only_raises() -> None:
     queue_spec = QueueSpec(name="jobs", codec=codec)
 
     module = MockDepsModule()
-    runtime = ExecutionRuntime(deps=DepsRegistry.from_modules(module))
+    runtime = ExecutionRuntime(deps=DepsRegistry.from_modules(module).freeze())
     async with runtime.scope():
         ctx = runtime.get_context()
         with pytest.raises(Exception, match="stream_spec is required"):

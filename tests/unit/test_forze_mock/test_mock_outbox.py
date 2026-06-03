@@ -38,7 +38,7 @@ async def test_mock_outbox_flush_and_relay_to_queue() -> None:
     queue_spec = QueueSpec(name="jobs", codec=codec)
 
     module = MockDepsModule()
-    runtime = ExecutionRuntime(deps=DepsRegistry.from_modules(module))
+    runtime = ExecutionRuntime(deps=DepsRegistry.from_modules(module).freeze())
     async with runtime.scope():
         ctx = runtime.get_context()
         state = ctx.deps.provide(MockStateDepKey)
@@ -66,7 +66,7 @@ async def test_mock_outbox_duplicate_event_id_skips_second_flush() -> None:
     event_id = uuid4()
 
     module = MockDepsModule()
-    runtime = ExecutionRuntime(deps=DepsRegistry.from_modules(module))
+    runtime = ExecutionRuntime(deps=DepsRegistry.from_modules(module).freeze())
     state_holder: list = []
 
     async with runtime.scope():
@@ -105,7 +105,7 @@ async def test_mock_outbox_reclaim_stale_processing() -> None:
     outbox_spec = OutboxSpec(name="events", codec=codec)
 
     module = MockDepsModule()
-    runtime = ExecutionRuntime(deps=DepsRegistry.from_modules(module))
+    runtime = ExecutionRuntime(deps=DepsRegistry.from_modules(module).freeze())
     async with runtime.scope():
         ctx = runtime.get_context()
         state = ctx.deps.provide(MockStateDepKey)
@@ -144,7 +144,7 @@ async def test_mock_outbox_requeue_failed() -> None:
     row_id = uuid4()
 
     module = MockDepsModule()
-    runtime = ExecutionRuntime(deps=DepsRegistry.from_modules(module))
+    runtime = ExecutionRuntime(deps=DepsRegistry.from_modules(module).freeze())
     async with runtime.scope():
         ctx = runtime.get_context()
         state = ctx.deps.provide(MockStateDepKey)

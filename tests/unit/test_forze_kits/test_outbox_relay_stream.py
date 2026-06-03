@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from uuid import uuid4
-
 import pytest
 from pydantic import BaseModel
 
@@ -30,11 +28,13 @@ async def test_relay_appends_to_stream() -> None:
     stream_spec = StreamSpec(name="audit", codec=codec)
 
     module = MockDepsModule()
-    runtime = ExecutionRuntime(deps=DepsRegistry.from_modules(module))
+    runtime = ExecutionRuntime(deps=DepsRegistry.from_modules(module).freeze())
     async with runtime.scope():
         ctx = runtime.get_context()
         state = ctx.deps.provide(MockStateDepKey)
-        await ctx.outbox.command(outbox_spec).stage("project.created", _EventPayload(n=3))
+        await ctx.outbox.command(outbox_spec).stage(
+            "project.created", _EventPayload(n=3)
+        )
         await ctx.outbox.command(outbox_spec).flush()
 
         result = await relay_outbox_to_stream(
@@ -63,7 +63,7 @@ async def test_relay_stream_wrong_spec_route_raises() -> None:
     stream_spec = StreamSpec(name="other", codec=codec)
 
     module = MockDepsModule()
-    runtime = ExecutionRuntime(deps=DepsRegistry.from_modules(module))
+    runtime = ExecutionRuntime(deps=DepsRegistry.from_modules(module).freeze())
     async with runtime.scope():
         ctx = runtime.get_context()
         with pytest.raises(Exception, match="spec.name must match"):

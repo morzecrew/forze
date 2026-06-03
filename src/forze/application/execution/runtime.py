@@ -9,22 +9,10 @@ from forze.application._logger import logger
 from forze.base.primitives import RuntimeVar
 
 from .context import ExecutionContext
-from .deps import DepsRegistry, FrozenDepsRegistry
+from .deps import FrozenDepsRegistry
 from .lifecycle import FrozenLifecyclePlan
 
 # ----------------------- #
-
-
-def _frozen_deps_registry(
-    deps: DepsRegistry | FrozenDepsRegistry,
-) -> FrozenDepsRegistry:
-    if isinstance(deps, FrozenDepsRegistry):
-        return deps
-
-    return deps.freeze()
-
-
-# ....................... #
 
 
 @final
@@ -37,7 +25,7 @@ class ExecutionRuntime:
     stored in a :class:`RuntimeVar` for per-request or per-task access.
     """
 
-    deps: DepsRegistry | FrozenDepsRegistry = attrs.field(factory=DepsRegistry)
+    deps: FrozenDepsRegistry = attrs.field(factory=FrozenDepsRegistry)
     """Registry for building and freezing dependency providers."""
 
     lifecycle: FrozenLifecyclePlan = attrs.field(factory=FrozenLifecyclePlan)
@@ -73,8 +61,7 @@ class ExecutionRuntime:
 
         logger.info("Creating execution context")
 
-        frozen_registry = _frozen_deps_registry(self.deps)
-        resolved_deps = frozen_registry.resolve()
+        resolved_deps = self.deps.resolve()
 
         ctx = ExecutionContext(deps=resolved_deps)
         self.__ctx.set_once(ctx)

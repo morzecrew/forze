@@ -1,10 +1,11 @@
 """Timezone and calendar bucketing helpers for aggregate time windows."""
 
 import re
-from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from typing import Literal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+import attrs
 
 from forze.base.exceptions import exc
 
@@ -17,7 +18,7 @@ TimeBucketMode = Literal["iana", "fixed"]
 # ....................... #
 
 
-@dataclass(frozen=True, slots=True)
+@attrs.define(frozen=True, slots=True)
 class ResolvedTimeBucketTimezone:
     """Normalized timezone for aggregate bucketing."""
 

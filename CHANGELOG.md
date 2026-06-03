@@ -7,11 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Postgres hub search:** canonical combo merge/order/cursor semantics in `hub/semantics.py` and per-request `HubSearchPlan`; SQL and `execution: parallel` paths share the same rules (removed `hub/parallel_merge.py`).
+- **Search (offset + snapshots):** Postgres, Mongo, and Meilisearch simple offset search share orchestration in `forze.application.integrations.search.offset_executor`; Meilisearch snapshot writes now use the same capped pool window and in-memory page slice as SQL/document backends.
+- **Persistence gateways:** Mongo, Firestore, and Postgres gateways share codec, filter-parser, and tenant-relation helpers via `forze.application.integrations.persistence.gateway_mixins`.
+- **Routed clients:** Postgres, Redis, GCS, and BigQuery tenant-routed clients share pooling/fingerprint scaffolding in `forze.application.contracts.tenancy.routed_client_base` (`StructuredSecretRoutedTenantClientBase` with per-integration `credential_fingerprint` hooks).
+- **Base primitives:** `OwnedTempPath` replaces GCP-named temp credential helpers; GCS/BigQuery routed clients materialize inline JSON via `OwnedTempPath.materialize_text`.
+
 ### Added
 
+- **Postgres search / hub:** `read_validation` on `PostgresSearchConfig` and `PostgresHubSearchConfig` (`"strict"` | `"trusted"`) for faster hit materialization from trusted SQL rows (offset, cursor, parallel hub, snapshot paths).
 - **Postgres PGroonga search:** optional plan modes (`filter_first`, `index_first`, `auto`), candidate row caps, hub `per_leg_limit`, coalesced read/heap fast path, and `SearchOptions` overrides (`pgroonga_plan`, `candidate_limit`, `groonga_query`). `auto` uses cached relation row estimates from the introspector (no extra `COUNT` unless configured).
 - **Postgres search (phase 2):** `auto` can choose `index_first` for eligible filters using `EXPLAIN`-based filtered row estimates; index-first heap cap overshoot when projection post-filters apply; hub `combo_top` cap, optional `execution: parallel` per-leg hub queries, `SearchOptions.search_count` (`exact` / `approximate` / `none`), FTS/vector ranked caps via `pgroonga_candidate_limit`, and hub `combo_limit` / `SearchOptions.combo_limit`.
 - **Postgres search (phase 3):** shared `_ranked_pipeline` builder for filter-first ranked SQL with uncapped exact-count fragments; hub leg SQL in `hub/_leg_sql.py`; hub snapshot fingerprints include `execution`, `combo_limit`, and `search_count`; `parallel_hub_cte_materialized` on hub config.
+- **Postgres search (phase 4):** parallel hub exact totals via SQL `combo` COUNT; hub offset `effective_sorts` parity with cursor; multi-FK parallel merge implementation and sort-aware in-memory merge; hub cursor with `execution: parallel`; federated snapshot reads honor `search_count=none`.
 
 ### Security
 
@@ -20,8 +30,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`forze.base.serialization`:** trusted bulk decode (`trust_source=True` / `decode_mapping_many`) uses a single hoisted field-name set and construct loop instead of per-row helper calls, improving large-page materialization performance.
+- **Codec perf tests:** tiered benchmark models (`simple` / `medium` / `complex` / `nested`) for Pydantic strict/trusted and msgspec convert/forbid_extra decode (`tests/perf/test_forze_codec_perf.py`).
+- **`MsgspecModelCodec`:** `trust_source=True` uses bulk `msgspec_convert` / `msgspec_convert_many` (no unknown-field pre-scan); aligns with trusted read paths that pass `trust_source` from search/document config.
 - **Postgres PGroonga search:** `index_first` no longer silently applies a 5000-row cap when `pgroonga_candidate_limit` is disabled; the plan falls back to `filter_first` and snapshot metadata matches SQL.
 - **Postgres ranked search:** `search_count=exact` with a candidate cap no longer under-counts matches; FTS/vector coalesced read==heap paths apply non-trivial filters on the heap; hub approximate totals respect `combo_limit`.
+- **Postgres hub parallel:** exact page totals no longer use `len(merged)` under leg/combo caps; SQL hub exact `COUNT` uses uncapped leg CTEs (data queries still respect `per_leg_limit` / `combo_limit`); offset `combo_top` ordering matches cursor when default/user sorts apply.
+- **Postgres hub parallel trusted reads:** strip internal hub row keys (e.g. `_hub_rank`) before hit materialization so `read_validation="trusted"` matches SQL-path semantics.
+- **Postgres hub parallel cursor:** compare UUID (and other encoded) sort keys using cursor wire canonicalization so page-2+ keyset seek works in Python merge paths; align parallel in-memory row order with ranked cursor key specs (including ``DESC`` user sorts).
 - **`forze_identity.authn`:** password provisioning rejects duplicate logins (`password_account_exists`); login lookup detects ambiguous duplicate accounts (`password_account_ambiguous`); `MappingTableResolver` re-reads mappings after create conflicts when `provision_on_first_sight=True`.
 
 ### Removed
@@ -73,6 +89,7 @@ See [Kits reference](pages/docs/reference/kits.md).
 
 ### Changed
 
+- **Performance tests:** shared PGroonga search corpus helpers; hub parallel/cursor benchmarks; strict vs trusted decode baselines for search, hub, and document reads; codec micro-benchmark for `ModelCodec` trusted decode.
 - **`forze_postgres`:** document gateways decode SELECT rows through `ModelCodec` (default `PydanticModelCodec`; behavior unchanged unless `read_validation="trusted"`).
 - **`forze_mongo` / `forze_firestore`:** document gateways and factories use spec-owned codecs + optional `read_validation` (same pattern as Postgres).
 - **`forze.application.integrations.document`:** versioned document cache stores compact JSON bytes; legacy dict cache entries remain readable until TTL expiry.

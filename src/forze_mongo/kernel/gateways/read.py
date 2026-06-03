@@ -27,6 +27,7 @@ from forze.application.contracts.querying import (
     decode_keyset_v1,
     normalize_sorts_for_keyset,
 )
+from forze.application.integrations.persistence import ReadValidationCodecMixin
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
 from forze.domain.constants import ID_FIELD
@@ -36,6 +37,7 @@ from .base import MongoGateway
 # ----------------------- #
 
 T = TypeVar("T", bound=BaseModel)
+M = TypeVar("M", bound=BaseModel)
 
 # ....................... #
 
@@ -52,7 +54,10 @@ def _empty_global_aggregate_row(parsed: ParsedAggregates) -> JsonDict:
 
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class MongoReadGateway[M: BaseModel](MongoGateway[M]):
+class MongoReadGateway[M: BaseModel](
+    ReadValidationCodecMixin[M],
+    MongoGateway[M],
+):
     """Read-only Mongo gateway for single-document and multi-document queries.
 
     Supports fetching by primary key, filter-based lookups, paginated listing,
@@ -65,39 +70,6 @@ class MongoReadGateway[M: BaseModel](MongoGateway[M]):
         kw_only=True,
     )
     """Row decode mode for query results (``trusted`` skips validation)."""
-
-    def _decode_row(
-        self,
-        row: JsonDict,
-        *,
-        model: type[BaseModel] | None = None,
-        trust_source: bool | None = None,
-    ) -> Any:
-        eff_trust = (
-            self.read_validation == "trusted"
-            if trust_source is None
-            else trust_source
-        )
-
-        return self._codec_for(model).decode_mapping(row, trust_source=eff_trust)
-
-    def _decode_rows(
-        self,
-        rows: Sequence[JsonDict],
-        *,
-        model: type[BaseModel] | None = None,
-        trust_source: bool | None = None,
-    ) -> list[Any]:
-        eff_trust = (
-            self.read_validation == "trusted"
-            if trust_source is None
-            else trust_source
-        )
-
-        return self._codec_for(model).decode_mapping_many(
-            rows,
-            trust_source=eff_trust,
-        )
 
     async def get(
         self,

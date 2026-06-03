@@ -12,7 +12,7 @@ Use this when MongoDB is your document store or when you need collection-oriente
 
 1. Install the matching optional extra.
 2. Create the integration client or module configuration.
-3. Register the module in `DepsPlan` with routes that match your specs.
+3. Register the module in `DepsRegistry` with routes that match your specs.
 4. Add lifecycle steps when the integration opens network connections.
 5. Resolve ports from `ExecutionContext`; do not import adapters in handlers.
 
@@ -29,7 +29,7 @@ Kernel `DocumentSpec` names must match keys in `MongoDepsModule.rw_documents` / 
 ## Runtime wiring
 
     :::python
-    from forze.application.execution import DepsPlan, ExecutionRuntime, LifecyclePlan
+    from forze.application.execution import DepsRegistry, ExecutionRuntime, LifecyclePlan
     from forze_mongo import (
         MongoClient,
         MongoConfig,
@@ -52,14 +52,14 @@ Kernel `DocumentSpec` names must match keys in `MongoDepsModule.rw_documents` / 
     )
 
     runtime = ExecutionRuntime(
-        deps=DepsPlan.from_modules(module),
+        deps=DepsRegistry.from_modules(module).freeze(),
         lifecycle=LifecyclePlan.from_steps(
             mongo_lifecycle_step(
                 uri="mongodb://localhost:27017",
                 db_name="app",
                 config=MongoConfig(max_pool_size=100, min_pool_size=5),
             )
-        ),
+        ).freeze(),
     )
 
 ### MongoConfig options
@@ -68,6 +68,17 @@ Kernel `DocumentSpec` names must match keys in `MongoDepsModule.rw_documents` / 
 |--------|------|---------|---------|
 | `max_pool_size` | `int` | `100` | Maximum connections in the pool |
 | `min_pool_size` | `int` | `0` | Minimum connections in the pool |
+
+#### `read_validation` (read throughput)
+
+`MongoReadOnlyDocumentConfig` and `MongoDocumentConfig` accept `read_validation`:
+
+| Value | Behavior |
+|-------|----------|
+| `"strict"` (default) | Full Pydantic validation on every document returned from reads. |
+| `"trusted"` | Build read models with `model_construct` when stored fields match the read model (no validator run). |
+
+Use `"trusted"` only when collection fields match `DocumentSpec.read` and the driver already returns correct Python types. Extra fields not on the read model raise a precondition error. History blobs, cache payloads, and write paths stay strict.
 
 ### What gets registered
 
@@ -243,7 +254,7 @@ The adapter manages `rev` in application space: fetch, validate patch, increment
 ## Combining with Redis
 
     :::python
-    deps_plan = DepsPlan.from_modules(
+    deps_registry = DepsRegistry.from_modules(
         lambda: Deps.merge(
             MongoDepsModule(client=mongo, rw_documents={...})(),
             RedisDepsModule(

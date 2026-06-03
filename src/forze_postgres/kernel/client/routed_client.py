@@ -21,12 +21,7 @@ from psycopg import AsyncConnection
 from psycopg.abc import Params, QueryNoTemplate
 
 from forze.application.contracts.secrets import SecretRef, SecretsPort
-from forze.application.contracts.tenancy import (
-    TenantClientRegistry,
-    ensure_dsn_fingerprint,
-    require_tenant_id,
-    resolve_dsn_for_tenant,
-)
+from forze.application.contracts.tenancy.routed_client_base import DsnRoutedTenantClientBase
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
 
@@ -38,8 +33,8 @@ from .value_objects import PostgresConfig, PostgresTransactionOptions
 # ----------------------- #
 
 
-@attrs.define(slots=True)
-class RoutedPostgresClient(PostgresClientPort):
+@attrs.define(slots=True, kw_only=True)
+class RoutedPostgresClient(DsnRoutedTenantClientBase[PostgresClient], PostgresClientPort):
     """Routes each call to a lazily created :class:`PostgresClient` for the current tenant.
 
     The tenant is read from ``tenant_provider`` (typically
@@ -78,20 +73,14 @@ class RoutedPostgresClient(PostgresClientPort):
     max_cached_tenants: int = 100
     """Maximum number of tenant pools to retain; LRU eviction closes overflow pools."""
 
-    # ....................... #
+    guarded: bool = attrs.field(default=True, init=False)
+    dsn_backend: str = attrs.field(default="database", init=False)
+    tenant_required_message: str = attrs.field(
+        default="Tenant ID is required for routed Postgres access",
+        init=False,
+    )
 
-    __pool: TenantClientRegistry[PostgresClient, str] = attrs.field(init=False)
     _gather_sem: asyncio.Semaphore | None = attrs.field(default=None, init=False)
-
-    # ....................... #
-
-    def __attrs_post_init__(self) -> None:
-        self.__pool = TenantClientRegistry(
-            max_entries=self.max_cached_tenants,
-            create=self._create_client,
-            dispose=lambda client: client.close(),
-            guarded=True,
-        )
 
     # ....................... #
 
@@ -105,66 +94,25 @@ class RoutedPostgresClient(PostgresClientPort):
             else max(1, cfg.max_size - cfg.pool_headroom)
         )
         self._gather_sem = asyncio.Semaphore(lim)
-        await self.__pool.startup()
+        await super().startup()
 
     # ....................... #
 
     async def close(self) -> None:
         """Close all per-tenant pools and reset startup state."""
 
-        await self.__pool.close()
+        await super().close()
         self._gather_sem = None
 
-    # ....................... #
-
-    async def evict_tenant(self, tenant_id: UUID) -> None:
-        """Close and remove the pool for one tenant (e.g. after credential rotation)."""
-
-        await self.__pool.evict(tenant_id)
-
-    # ....................... #
-
-    async def _create_client(self, tid: UUID) -> PostgresClient:
-        dsn = await resolve_dsn_for_tenant(
-            tenant_id=tid,
-            secrets=self.secrets,
-            ref_for_tenant=self.secret_ref_for_tenant,
-            backend="database",
-        )
-
+    async def initialize_client(self, tenant_id: UUID, creds: str) -> PostgresClient:
         client = PostgresClient()
         await client.initialize(
-            dsn,
+            creds,
             config=self.pool_config,
             acquire_timeout=self.acquire_timeout,
         )
 
         return client
-
-    # ....................... #
-
-    @asynccontextmanager
-    async def _client_scope(self) -> AsyncGenerator[PostgresClient]:
-        """Resolve the tenant slot and yield its client with refcount protection."""
-
-        tenant_id = require_tenant_id(
-            self.tenant_provider,
-            message="Tenant ID is required for routed Postgres access",
-        )
-
-        await ensure_dsn_fingerprint(
-            self.__pool.get_fingerprint,
-            self.__pool.set_fingerprint,
-            tenant_id=tenant_id,
-            secrets=self.secrets,
-            ref_for_tenant=self.secret_ref_for_tenant,
-            backend="database",
-        )
-
-        async with self.__pool.use(tenant_id) as client:
-            yield client
-
-    # ....................... #
 
     async def health(self) -> tuple[str, bool]:
         async with self._client_scope() as inner:
@@ -185,7 +133,7 @@ class RoutedPostgresClient(PostgresClientPort):
         if tid is None:
             return False
 
-        client = self.__pool.peek(tid)
+        client = self._pool.peek(tid)
 
         if client is None:
             return False
@@ -198,7 +146,7 @@ class RoutedPostgresClient(PostgresClientPort):
         tid = self.tenant_provider()
 
         if tid is not None:
-            client = self.__pool.peek(tid)
+            client = self._pool.peek(tid)
 
             if client is not None:
                 return client.query_concurrency_limit()
@@ -214,7 +162,7 @@ class RoutedPostgresClient(PostgresClientPort):
 
     def gather_concurrency_semaphore(self) -> asyncio.Semaphore:
         if self._gather_sem is None:
-            self.__pool.require_started()
+            self._pool.require_started()
 
         if self._gather_sem is None:
             raise exc.internal("Tenant client registry is not started")
@@ -229,7 +177,7 @@ class RoutedPostgresClient(PostgresClientPort):
         if tid is None:
             raise exc.internal("Transactional context is required")
 
-        client = self.__pool.peek(tid)
+        client = self._pool.peek(tid)
 
         if client is None:
             raise exc.internal("Transactional context is required")

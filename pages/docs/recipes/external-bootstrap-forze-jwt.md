@@ -26,7 +26,7 @@ flowchart LR
 ## Wiring sketch
 
 ```python
-from forze.application.execution import Deps, DepsPlan
+from forze.application.execution import Deps, DepsRegistry
 from forze_identity.authn import AuthnDepsModule, AuthnKernelConfig
 from forze_identity.builtin.idp.google import GoogleOidcConfig, google_identity_deps
 
@@ -43,7 +43,7 @@ api_authn = AuthnDepsModule(
     authn={"api": frozenset({"token"})},
 )
 
-deps_plan = DepsPlan.from_modules(
+deps_registry = DepsRegistry.from_modules(
     lambda: Deps.merge(google_bootstrap, api_authn()),
 )
 ```

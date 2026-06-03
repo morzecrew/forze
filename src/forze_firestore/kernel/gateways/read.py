@@ -31,6 +31,8 @@ from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
 from forze.domain.constants import ID_FIELD
 
+from forze.application.integrations.persistence import ReadValidationCodecMixin
+
 from .base import FirestoreGateway
 
 # ----------------------- #
@@ -43,45 +45,16 @@ M = TypeVar("M", bound=BaseModel)
 
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class FirestoreReadGateway[M: BaseModel](FirestoreGateway[M]):
+class FirestoreReadGateway[M: BaseModel](
+    ReadValidationCodecMixin[M],
+    FirestoreGateway[M],
+):
     """Read-only Firestore gateway."""
 
     read_validation: Literal["strict", "trusted"] = attrs.field(
         default="strict",
         kw_only=True,
     )
-    """Row decode mode for query results (``trusted`` skips validation)."""
-
-    def _decode_row(
-        self,
-        row: JsonDict,
-        *,
-        model: type[BaseModel] | None = None,
-        trust_source: bool | None = None,
-    ) -> Any:
-        eff_trust = (
-            self.read_validation == "trusted"
-            if trust_source is None
-            else trust_source
-        )
-        return self._codec_for(model).decode_mapping(row, trust_source=eff_trust)
-
-    def _decode_rows(
-        self,
-        rows: Sequence[JsonDict],
-        *,
-        model: type[BaseModel] | None = None,
-        trust_source: bool | None = None,
-    ) -> list[Any]:
-        eff_trust = (
-            self.read_validation == "trusted"
-            if trust_source is None
-            else trust_source
-        )
-        return self._codec_for(model).decode_mapping_many(
-            rows,
-            trust_source=eff_trust,
-        )
 
     async def get(self, pk: UUID, *, for_update: RowLockMode = False) -> M:
         if row_lock_requires_transaction(for_update):

@@ -9,6 +9,9 @@ from pydantic import BaseModel
 from ..primitives import JsonDict
 from .model_codec import EncodeMode, ModelCodec, ModelDumpExcludeOptions
 from .msgspec import (
+    msgspec_convert,
+    msgspec_convert_many,
+    msgspec_convert_many_batched,
     msgspec_decode_json_bytes,
     msgspec_dump,
     msgspec_dump_many,
@@ -30,7 +33,12 @@ SourceType = msgspec.Struct | BaseModel
 
 @attrs.define(slots=True, frozen=True)
 class MsgspecModelCodec[T: msgspec.Struct](ModelCodec[T, SourceType]):
-    """Model codec that delegates to the msgspec helper layer."""
+    """Model codec that delegates to the msgspec helper layer.
+
+    Structs have no Pydantic-style validators. ``trust_source=True`` uses bulk
+    :func:`~forze.base.serialization.msgspec.msgspec_convert_many` (no unknown-field
+    scan). ``trust_source=False`` with ``forbid_extra=True`` scans keys before convert.
+    """
 
     model_type: type[T]  # pyright: ignore[reportIncompatibleMethodOverride]
     """The model type this codec is bound to."""
@@ -45,8 +53,7 @@ class MsgspecModelCodec[T: msgspec.Struct](ModelCodec[T, SourceType]):
         trust_source: bool = False,
     ) -> T:
         if trust_source:
-            msg = "MsgspecModelCodec does not support trust_source=True"
-            raise NotImplementedError(msg)
+            return msgspec_convert(self.model_type, data)
 
         return msgspec_validate(
             self.model_type,
@@ -64,8 +71,7 @@ class MsgspecModelCodec[T: msgspec.Struct](ModelCodec[T, SourceType]):
         trust_source: bool = False,
     ) -> list[T]:
         if trust_source:
-            msg = "MsgspecModelCodec does not support trust_source=True"
-            raise NotImplementedError(msg)
+            return msgspec_convert_many(self.model_type, data)
 
         return msgspec_validate_many(
             self.model_type,
@@ -84,8 +90,11 @@ class MsgspecModelCodec[T: msgspec.Struct](ModelCodec[T, SourceType]):
         trust_source: bool = False,
     ) -> Iterator[list[T]]:
         if trust_source:
-            msg = "MsgspecModelCodec does not support trust_source=True"
-            raise NotImplementedError(msg)
+            return msgspec_convert_many_batched(
+                self.model_type,
+                data,
+                batch_size=batch_size,
+            )
 
         return msgspec_validate_many_batched(
             self.model_type,

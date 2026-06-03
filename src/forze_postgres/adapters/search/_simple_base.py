@@ -6,7 +6,7 @@ require_psycopg()
 
 # ....................... #
 
-from typing import Any, Sequence
+from typing import Any, Literal, Sequence
 
 import attrs
 from psycopg import sql
@@ -36,6 +36,7 @@ from ._cursor_run import (
     parse_search_cursor,
 )
 from ._engine import RankedPipelineSql
+from ._materialize_hits import search_trust_source
 from ._offset_run import RankedOffsetPlan, execute_simple_ranked_offset_search
 from ._search_count import effective_search_count, resolve_ranked_approximate_total
 from ._pgroonga_plan import is_coalesced_read_heap
@@ -86,6 +87,9 @@ class PostgresRankedPipelineSearchAdapter[M: BaseModel](
 
     result_snapshot: SearchResultSnapshot | None = attrs.field(default=None)
     """Optional result-ID snapshot coordinator."""
+
+    read_validation: Literal["strict", "trusted"] = "strict"
+    """Row decode mode for search hits (``trusted`` skips Pydantic validation)."""
 
     # ....................... #
 
@@ -316,6 +320,7 @@ class PostgresRankedPipelineSearchAdapter[M: BaseModel](
             model_type=self.model_type,
             result_snapshot=self.result_snapshot,
             options=options,
+            trust_source=search_trust_source(self.read_validation),
         )
 
     # ....................... #
@@ -347,6 +352,7 @@ class PostgresRankedPipelineSearchAdapter[M: BaseModel](
                 parsed_filters=parsed_filters,
                 return_type=return_type,
                 return_fields=return_fields,
+                trust_source=search_trust_source(self.read_validation),
             )
 
         fw, fp = await self.where_clause(filters, parsed=parsed_filters)
@@ -371,4 +377,5 @@ class PostgresRankedPipelineSearchAdapter[M: BaseModel](
             spec=self.spec,
             return_type=return_type,
             return_fields=return_fields,
+            trust_source=search_trust_source(self.read_validation),
         )

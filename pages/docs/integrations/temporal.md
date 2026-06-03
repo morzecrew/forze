@@ -50,7 +50,7 @@ The `queue` value must match the Temporal task queue your workers poll.
 ### Deps module
 
 ```python
-from forze.application.execution import DepsPlan
+from forze.application.execution import DepsRegistry
 from forze_temporal import TemporalDepsModule
 
 temporal_module = TemporalDepsModule(
@@ -58,7 +58,7 @@ temporal_module = TemporalDepsModule(
     workflows={"project-workflow": workflow_config},
 )
 
-deps_plan = DepsPlan.from_modules(temporal_module)
+deps_registry = DepsRegistry.from_modules(temporal_module)
 ```
 
 The route key should match your `DurableWorkflowSpec.name`.

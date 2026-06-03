@@ -1,50 +1,37 @@
 """GCS client that resolves GCP credentials per tenant via :class:`~forze.application.contracts.secrets.SecretsPort`."""
 
 from contextlib import asynccontextmanager
-from typing import AsyncGenerator, Callable, Mapping, final
+from typing import AsyncGenerator, Callable, Mapping, cast, final
 from uuid import UUID
 
 import attrs
 from gcloud.aio.storage import Storage
+from pydantic import BaseModel
 
 from forze.application.contracts.secrets import SecretRef, SecretsPort
+from forze.application.contracts.tenancy.routed_client_base import (
+    StructuredSecretRoutedTenantClientBase,
+)
 from forze.application.integrations.storage.client import (
     ObjectStorageHead,
     ObjectStorageListedObject,
 )
-from forze.application.contracts.tenancy import (
-    TenantClientRegistry,
-    ensure_structured_fingerprint,
-    require_tenant_id,
-    resolve_structured_for_tenant,
-)
-from forze.base.primitives.fingerprint import gcp_credential_dedup_tag, stable_fingerprint
-from forze.base.primitives.gcp_service_file import materialize_service_account_json
 
 from .client import GCSClient
 from .port import GCSClientPort
-from .routing_credentials import GCSRoutingCredentials
+from .routing_credentials import (
+    GCSRoutingCredentials,
+    credential_file_for_init,
+    routing_fingerprint,
+)
 from .value_objects import GCSConfig
 
 # ----------------------- #
 
 
-def _service_file_for_init(creds: GCSRoutingCredentials) -> tuple[str | None, bool]:
-    if creds.service_file is not None:
-        return creds.service_file, False
-
-    if creds.service_account_json is None:
-        return None, False
-
-    return materialize_service_account_json(
-        creds.service_account_json,
-        prefix="forze-gcs-",
-    )
-
-
 @final
-@attrs.define(slots=True)
-class RoutedGCSClient(GCSClientPort):
+@attrs.define(slots=True, kw_only=True)
+class RoutedGCSClient(StructuredSecretRoutedTenantClientBase[GCSClient], GCSClientPort):
     """Routes each operation to a lazily created :class:`GCSClient` for the current tenant.
 
     Credentials are JSON secrets (see :class:`GCSRoutingCredentials`) resolved via
@@ -59,93 +46,36 @@ class RoutedGCSClient(GCSClientPort):
     tenant_provider: Callable[[], UUID | None]
     client_config: GCSConfig | None = None
     max_cached_tenants: int = 100
+    creds_type: type[BaseModel] = attrs.field(default=GCSRoutingCredentials, init=False)
+    backend: str = attrs.field(default="GCS", init=False)
+    credential_file_prefix: str = attrs.field(default="forze-gcs-", init=False)
+    tenant_required_message: str = attrs.field(
+        default="Tenant ID is required for routed GCS access",
+        init=False,
+    )
 
-    __pool: TenantClientRegistry[GCSClient, str] = attrs.field(init=False)
+    def credential_fingerprint(self, creds: BaseModel) -> str:
+        return routing_fingerprint(cast(GCSRoutingCredentials, creds))
 
-    # ....................... #
-
-    def __attrs_post_init__(self) -> None:
-        self.__pool = TenantClientRegistry(
-            max_entries=self.max_cached_tenants,
-            create=self._create_client,
-            dispose=lambda client: client.close(),
-            guarded=False,
-        )
-
-    # ....................... #
-
-    async def startup(self) -> None:
-        await self.__pool.startup()
-
-    # ....................... #
-
-    async def close(self) -> None:
-        await self.__pool.close()
-
-    # ....................... #
-
-    async def evict_tenant(self, tenant_id: UUID) -> None:
-        await self.__pool.evict(tenant_id)
-
-    # ....................... #
-
-    async def _fingerprint_for(self, tenant_id: UUID) -> str:
-        creds = await resolve_structured_for_tenant(
-            GCSRoutingCredentials,
-            tenant_id=tenant_id,
-            secrets=self.secrets,
-            ref_for_tenant=self.secret_ref_for_tenant,
-            backend="GCS",
-        )
-
-        return stable_fingerprint(
-            creds.project_id,
-            gcp_credential_dedup_tag(
-                service_file=creds.service_file,
-                service_account_json=creds.service_account_json,
-            ),
-        )
-
-    # ....................... #
-
-    async def _create_client(self, tid: UUID) -> GCSClient:
-        creds = await resolve_structured_for_tenant(
-            GCSRoutingCredentials,
-            tenant_id=tid,
-            secrets=self.secrets,
-            ref_for_tenant=self.secret_ref_for_tenant,
-            backend="GCS",
-        )
+    async def initialize_client(
+        self,
+        tenant_id: UUID,
+        creds: GCSRoutingCredentials,
+    ) -> GCSClient:
         client = GCSClient()
-        service_file, service_file_owned = _service_file_for_init(creds)
+        credential_path = credential_file_for_init(
+            creds,
+            prefix=self.credential_file_prefix,
+        )
 
         await client.initialize(
             creds.project_id,
-            service_file=service_file,
-            service_file_owned=service_file_owned,
+            service_file=credential_path.path,
+            service_file_owned=credential_path.owned,
             config=self.client_config,
         )
 
         return client
-
-    # ....................... #
-
-    async def _get_client(self) -> GCSClient:
-        tenant_id = require_tenant_id(
-            self.tenant_provider,
-            message="Tenant ID is required for routed GCS access",
-        )
-
-        await ensure_structured_fingerprint(
-            self.__pool.get_fingerprint,
-            self.__pool.set_fingerprint,
-            tenant_id=tenant_id,
-            fingerprint=lambda: self._fingerprint_for(tenant_id),
-        )
-
-        return await self.__pool.get(tenant_id)
-
-    # ....................... #
 
     @asynccontextmanager
     async def client(self) -> AsyncGenerator[Storage]:

@@ -10,7 +10,7 @@ description: >-
 
 # Forze specs and infrastructure wiring
 
-Logical **specs** declare model types and `name`. Integration **configs** on dependency modules map each `name` to physical infrastructure (relations, collections, Redis namespaces, buckets, queues, task queues, transaction routes). At runtime, handlers obtain **`DocumentQueryPort`**, **`DocumentCommandPort`**, **`SearchQueryPort`**, and other ports from **`ExecutionContext`** once those modules are merged into a `DepsPlan`; specs only supply the route (`name`) and types the factories receive. Use with [`forze-domain-aggregates`](../forze-domain-aggregates/SKILL.md) for spec fields, [`forze-deps-consumption`](../forze-deps-consumption/SKILL.md) for resolution, [`forze-custom-deps`](../forze-custom-deps/SKILL.md) for private integrations, and [`forze-wiring`](../forze-wiring/SKILL.md) for runtime setup.
+Logical **specs** declare model types and `name`. Integration **configs** on dependency modules map each `name` to physical infrastructure (relations, collections, Redis namespaces, buckets, queues, task queues, transaction routes). At runtime, handlers obtain **`DocumentQueryPort`**, **`DocumentCommandPort`**, **`SearchQueryPort`**, and other ports from **`ExecutionContext`** once those modules are merged into a `DepsRegistry`; specs only supply the route (`name`) and types the factories receive. Use with [`forze-domain-aggregates`](../forze-domain-aggregates/SKILL.md) for spec fields, [`forze-deps-consumption`](../forze-deps-consumption/SKILL.md) for resolution, [`forze-custom-deps`](../forze-custom-deps/SKILL.md) for private integrations, and [`forze-wiring`](../forze-wiring/SKILL.md) for runtime setup.
 
 ## Prefer `StrEnum` names
 

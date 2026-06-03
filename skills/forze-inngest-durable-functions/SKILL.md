@@ -42,7 +42,7 @@ on_invoice_paid = DurableFunctionSpec(
 ## Runtime wiring (API)
 
 ```python
-from forze.application.execution import DepsPlan, LifecyclePlan
+from forze.application.execution import DepsRegistry, LifecyclePlan
 from forze_inngest import InngestClient, InngestDepsModule, inngest_lifecycle_step
 
 client = InngestClient(app_id="my-app")
@@ -51,7 +51,7 @@ module = InngestDepsModule(
     events={invoice_paid.name: {}},
 )
 
-deps = DepsPlan.from_modules(module)
+deps = DepsRegistry.from_modules(module)
 lifecycle = LifecyclePlan.from_steps(inngest_lifecycle_step())
 ```
 

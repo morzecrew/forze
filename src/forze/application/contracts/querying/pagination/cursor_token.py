@@ -41,6 +41,74 @@ def _jsonify_value(v: Any) -> Any:
 # ....................... #
 
 
+def keyset_canonical_value(v: Any) -> Any:
+    """Normalize a sort-key value to the wire form used in cursor tokens."""
+
+    return _jsonify_value(v)
+
+
+# ....................... #
+
+
+def compare_keyset_sort_values(left: Any, right: Any) -> int:
+    """Compare two sort-key values (-1, 0, 1) using cursor wire canonicalization."""
+
+    lc = keyset_canonical_value(left)
+    rc = keyset_canonical_value(right)
+
+    if lc == rc:
+        return 0
+
+    if lc is None:
+        return -1
+
+    if rc is None:
+        return 1
+
+    if lc < rc:
+        return -1
+
+    return 1
+
+
+# ....................... #
+
+
+def row_passes_keyset_seek(
+    row: dict[str, Any],
+    *,
+    sort_keys: Sequence[str],
+    directions: Sequence[str],
+    cursor_values: Sequence[Any],
+    after: bool,
+) -> bool:
+    """Return whether *row* is strictly after/before the cursor tuple (composite keyset)."""
+
+    for key, direction, cursor_value in zip(
+        sort_keys,
+        directions,
+        cursor_values,
+        strict=True,
+    ):
+        cmp = compare_keyset_sort_values(
+            row_value_for_sort_key(row, key),
+            cursor_value,
+        )
+
+        if cmp == 0:
+            continue
+
+        if direction == "asc":
+            return cmp > 0 if after else cmp < 0
+
+        return cmp < 0 if after else cmp > 0
+
+    return False
+
+
+# ....................... #
+
+
 def _parse_value(v: Any) -> Any:
     if v is None:
         return None

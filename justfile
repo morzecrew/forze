@@ -59,7 +59,7 @@ test *args='':
 
     uv run pytest -m "not perf" {{ args }}
 
-# Run performance tests (requires Docker for testcontainers)
+# Run performance benchmarks (-m perf; Docker only where a perf conftest starts containers)
 perf *args='tests/perf':
     {{ _uv_sync }}
 

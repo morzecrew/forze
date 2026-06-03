@@ -28,11 +28,13 @@ async def test_relay_publishes_to_topic() -> None:
     pubsub_spec = PubSubSpec(name="live", codec=codec)
 
     module = MockDepsModule()
-    runtime = ExecutionRuntime(deps=DepsRegistry.from_modules(module))
+    runtime = ExecutionRuntime(deps=DepsRegistry.from_modules(module).freeze())
     async with runtime.scope():
         ctx = runtime.get_context()
         state = ctx.deps.provide(MockStateDepKey)
-        await ctx.outbox.command(outbox_spec).stage("project.created", _EventPayload(n=5))
+        await ctx.outbox.command(outbox_spec).stage(
+            "project.created", _EventPayload(n=5)
+        )
         await ctx.outbox.command(outbox_spec).flush()
 
         result = await relay_outbox_to_pubsub(
@@ -56,7 +58,7 @@ async def test_relay_pubsub_missing_destination_raises() -> None:
     pubsub_spec = PubSubSpec(name="live", codec=codec)
 
     module = MockDepsModule()
-    runtime = ExecutionRuntime(deps=DepsRegistry.from_modules(module))
+    runtime = ExecutionRuntime(deps=DepsRegistry.from_modules(module).freeze())
     async with runtime.scope():
         ctx = runtime.get_context()
         with pytest.raises(Exception, match="destination is required"):

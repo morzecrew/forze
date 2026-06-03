@@ -502,3 +502,69 @@ async def test_postgres_pgroonga_index_first_plan(
     page = await ctx.search.query(spec).search_page("bravo", pagination={"limit": 5})
     assert len(page.hits) == 2
     assert {h.title for h in page.hits} == {"alpha bravo", "bravo charlie"}
+
+
+@pytest.mark.asyncio
+async def test_pgroonga_exact_total_exceeds_candidate_cap(
+    pg_client: PostgresClient,
+) -> None:
+    """Capped ranked heap still reports full exact total via uncapped COUNT."""
+    await pg_client.execute("CREATE EXTENSION IF NOT EXISTS pgroonga;")
+
+    suffix = uuid4().hex[:10]
+    table = f"cap_docs_{suffix}"
+    index_name = f"idx_cap_{suffix}"
+    await pg_client.execute(
+        f"""
+        CREATE TABLE {table} (
+            id uuid PRIMARY KEY,
+            title text NOT NULL,
+            content text NOT NULL
+        );
+        CREATE INDEX {index_name} ON {table}
+        USING pgroonga ((ARRAY[title, content]));
+        """
+    )
+    token = "capmatch"
+    for i in range(15):
+        await pg_client.execute(
+            f"""
+            INSERT INTO {table} (id, title, content)
+            VALUES (%(id)s, %(t)s, %(c)s)
+            """,
+            {
+                "id": uuid4(),
+                "t": f"{token} {i}",
+                "c": "body",
+            },
+        )
+
+    ctx = context_from_deps(
+        Deps.plain(
+            {
+                PostgresClientDepKey: pg_client,
+                PostgresIntrospectorDepKey: PostgresIntrospector(client=pg_client),
+                SearchQueryDepKey: ConfigurablePostgresSearch(
+                    config=PostgresSearchConfig(
+                        index=("public", index_name),
+                        read=("public", table),
+                        engine="pgroonga",
+                        pgroonga_plan="filter_first",
+                        pgroonga_candidate_limit=5,
+                    )
+                ),
+            }
+        )
+    )
+    spec = SearchSpec(
+        name="cap",
+        model_type=SearchableModel,
+        fields=["title", "content"],
+    )
+    page = await ctx.search.query(spec).search_page(
+        token,
+        pagination={"limit": 3},
+        options={"search_count": "exact"},
+    )
+    assert page.count == 15
+    assert len(page.hits) == 3
