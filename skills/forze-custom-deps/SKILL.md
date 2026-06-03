@@ -61,7 +61,7 @@ class WidgetDepsModule[K: str | StrEnum](DepsModule[K]):
         return plain.merge(routed)
 ```
 
-Register the module with `DepsPlan.from_modules(WidgetDepsModule(...), ...)`.
+Register the module with `DepsRegistry.from_modules(WidgetDepsModule(...), ...)`.
 
 ## Dep factories
 

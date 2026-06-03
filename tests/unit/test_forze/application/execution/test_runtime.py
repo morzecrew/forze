@@ -15,7 +15,7 @@ class TestExecutionRuntime:
 
     def test_create_context_builds_from_deps_registry(self) -> None:
         registration = Deps.plain({})
-        rt = ExecutionRuntime(deps=DepsRegistry.from_deps(registration))
+        rt = ExecutionRuntime(deps=DepsRegistry.from_deps(registration).freeze())
         rt.create_context()
         ctx = rt.get_context()
         assert ctx is not None
@@ -67,7 +67,7 @@ class TestExecutionRuntime:
     @pytest.mark.asyncio
     async def test_scope_resets_context_on_exit(self) -> None:
 
-        rt = ExecutionRuntime(deps=DepsRegistry())
+        rt = ExecutionRuntime(deps=DepsRegistry().freeze())
         async with rt.scope():
             ctx = rt.get_context()
             assert ctx is not None

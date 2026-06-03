@@ -88,12 +88,12 @@ The kernel spec names your aggregate and wires model types. **Table names and Re
 
 ## Step 3: Wire the runtime
 
-The runtime has two parts: a **dependency plan** that assembles the container and a **lifecycle plan** that manages startup and shutdown of infrastructure clients.
+The runtime has two parts: a **dependency registry** that assembles providers and a **lifecycle plan** that manages startup and shutdown of infrastructure clients.
 
     :::python
     from forze.application.execution import (
         Deps,
-        DepsPlan,
+        DepsRegistry,
         ExecutionRuntime,
         LifecyclePlan,
     )
@@ -133,7 +133,7 @@ The runtime has two parts: a **dependency plan** that assembles the container an
         idempotency={"default": {"namespace": "app:idempotency"}},
     )
 
-    deps_plan = DepsPlan.from_modules(
+    deps_registry = DepsRegistry.from_modules(
         lambda: Deps.merge(postgres_module(), redis_module()),
     )
 
@@ -148,9 +148,9 @@ The runtime has two parts: a **dependency plan** that assembles the container an
         ),
     )
 
-    runtime = ExecutionRuntime(deps=deps_plan, lifecycle=lifecycle_plan)
+    runtime = ExecutionRuntime(deps=deps_registry.freeze(), lifecycle=lifecycle_plan.freeze())
 
-`DepsPlan.from_modules` accepts callables that return a `Deps` container. `Deps.merge` combines the containers from both modules, raising if any dependency key collides.
+`DepsRegistry.from_modules` accepts callables that return a `Deps` container. `Deps.merge` combines the containers from both modules, raising if any dependency key collides. Pass `.freeze()` on both plans before `ExecutionRuntime` — the runtime does not coerce authoring registries.
 
 ## Step 4: Create the FastAPI application
 
@@ -279,7 +279,7 @@ Optionally add a history table for audit trails:
     from forze.application.contracts.document import DocumentSpec
     from forze.application.execution import (
         Deps,
-        DepsPlan,
+        DepsRegistry,
         ExecutionRuntime,
         LifecyclePlan,
     )
@@ -343,7 +343,7 @@ Optionally add a history table for audit trails:
     redis = RedisClient()
 
     runtime = ExecutionRuntime(
-        deps=DepsPlan.from_modules(
+        deps=DepsRegistry.from_modules(
             lambda: Deps.merge(
                 PostgresDepsModule(
                     client=pg,
@@ -363,7 +363,7 @@ Optionally add a history table for audit trails:
                     idempotency={"default": {"namespace": "app:idempotency"}},
                 )(),
             ),
-        ),
+        ).freeze(),
         lifecycle=LifecyclePlan.from_steps(
             postgres_lifecycle_step(
                 dsn="postgresql://app:app@localhost:5432/app",
@@ -373,7 +373,7 @@ Optionally add a history table for audit trails:
                 dsn="redis://localhost:6379/0",
                 config=RedisConfig(max_size=20),
             ),
-        ),
+        ).freeze(),
     )
 
     app = FastAPI(title="Projects API")

@@ -14,7 +14,7 @@ Use `RoutedFirestoreClient` when tenant identity selects Firestore `project_id` 
 
 1. Install the matching optional extra.
 2. Create the integration client or module configuration.
-3. Register the module in `DepsPlan` with routes that match your specs.
+3. Register the module in `DepsRegistry` with routes that match your specs.
 4. Add lifecycle steps when the integration opens network connections.
 5. Resolve ports from `ExecutionContext`; do not import adapters in handlers.
 
@@ -30,7 +30,7 @@ Kernel `DocumentSpec` names must match keys in `FirestoreDepsModule.rw_documents
 ## Runtime wiring
 
     :::python
-    from forze.application.execution import DepsPlan, ExecutionRuntime, LifecyclePlan
+    from forze.application.execution import DepsRegistry, ExecutionRuntime, LifecyclePlan
     from forze_firestore import (
         FirestoreClient,
         FirestoreConfig,
@@ -56,14 +56,14 @@ Kernel `DocumentSpec` names must match keys in `FirestoreDepsModule.rw_documents
     os.environ["FIRESTORE_EMULATOR_HOST"] = "127.0.0.1:19280"
 
     runtime = ExecutionRuntime(
-        deps=DepsPlan.from_modules(module),
+        deps=DepsRegistry.from_modules(module).freeze(),
         lifecycle=LifecyclePlan.from_steps(
             firestore_lifecycle_step(
                 project_id="my-gcp-project",
                 database="(default)",
                 config=FirestoreConfig(),
             )
-        ),
+        ).freeze(),
     )
 
 ### FirestoreConfig options
@@ -161,7 +161,7 @@ Use `ctx.tx_ctx.scope("firestore")` (or your configured tx route). Firestore req
 
 Keep transaction scope small (operation count and contention limits apply on the real service).
 
-During development, enable runtime tracing (`FORZE_RUNTIME_TRACE` or `DepsPlan(...).with_tracing(runtime=True).build()`) and run `validate_runtime_trace(deps.runtime_trace(), validator=validate_reads_before_writes_in_tx)` (from `forze_firestore.execution.trace_validation`) to catch handlers that call `document_query` reads after `document_command` writes in the same transaction segment. See [Execution reference](../reference/execution.md#runtime-tracing-development).
+During development, enable runtime tracing (`FORZE_RUNTIME_TRACE` or `DepsRegistry(...).with_tracing(runtime=True).freeze()`) and run `validate_runtime_trace(deps.runtime_trace(), validator=validate_reads_before_writes_in_tx)` (from `forze_firestore.execution.trace_validation`) to catch handlers that call `document_query` reads after `document_command` writes in the same transaction segment. See [Execution reference](../reference/execution.md#runtime-tracing-development).
 
     :::python
     async with ctx.tx_ctx.scope("firestore"):

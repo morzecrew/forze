@@ -38,7 +38,7 @@ async def test_relay_reclaims_stale_processing_before_publish() -> None:
     queue_spec = QueueSpec(name="jobs", codec=codec)
 
     module = MockDepsModule()
-    runtime = ExecutionRuntime(deps=DepsRegistry.from_modules(module))
+    runtime = ExecutionRuntime(deps=DepsRegistry.from_modules(module).freeze())
     async with runtime.scope():
         ctx = runtime.get_context()
         state = ctx.deps.provide(MockStateDepKey)
@@ -83,7 +83,7 @@ async def test_relay_marks_invalid_payload_failed() -> None:
     queue_spec = QueueSpec(name="jobs", codec=codec)
 
     module = MockDepsModule()
-    runtime = ExecutionRuntime(deps=DepsRegistry.from_modules(module))
+    runtime = ExecutionRuntime(deps=DepsRegistry.from_modules(module).freeze())
     async with runtime.scope():
         ctx = runtime.get_context()
         state = ctx.deps.provide(MockStateDepKey)
@@ -131,7 +131,7 @@ async def test_relay_twice_does_not_duplicate_queue_messages() -> None:
     queue_spec = QueueSpec(name="jobs", codec=codec)
 
     module = MockDepsModule()
-    runtime = ExecutionRuntime(deps=DepsRegistry.from_modules(module))
+    runtime = ExecutionRuntime(deps=DepsRegistry.from_modules(module).freeze())
     async with runtime.scope():
         ctx = runtime.get_context()
         state = ctx.deps.provide(MockStateDepKey)
@@ -169,7 +169,7 @@ async def test_relay_enqueue_uses_event_id_as_queue_key() -> None:
     queue_spec = QueueSpec(name="jobs", codec=codec)
 
     module = MockDepsModule()
-    runtime = ExecutionRuntime(deps=DepsRegistry.from_modules(module))
+    runtime = ExecutionRuntime(deps=DepsRegistry.from_modules(module).freeze())
     async with runtime.scope():
         ctx = runtime.get_context()
         state = ctx.deps.provide(MockStateDepKey)

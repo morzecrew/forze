@@ -20,7 +20,7 @@ class _Payload(BaseModel):
 async def test_outbox_flush_factory_flushes_staged_rows() -> None:
     spec = OutboxSpec(name="events", codec=PydanticModelCodec(_Payload))
     module = MockDepsModule()
-    runtime = ExecutionRuntime(deps=DepsRegistry.from_modules(module))
+    runtime = ExecutionRuntime(deps=DepsRegistry.from_modules(module).freeze())
 
     async with runtime.scope():
         ctx = runtime.get_context()

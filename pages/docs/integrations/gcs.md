@@ -14,7 +14,7 @@ Use `RoutedGCSClient` when tenant identity selects GCP project and credentials (
 
 1. Install the matching optional extra.
 2. Create the integration client or module configuration.
-3. Register the module in `DepsPlan` with routes that match your specs.
+3. Register the module in `DepsRegistry` with routes that match your specs.
 4. Add lifecycle steps when the integration opens network connections.
 5. Resolve ports from `ExecutionContext`; do not import adapters in handlers.
 
@@ -28,7 +28,7 @@ Use `RoutedGCSClient` when tenant identity selects GCP project and credentials (
 ## Runtime wiring
 
     :::python
-    from forze.application.execution import DepsPlan, ExecutionRuntime, LifecyclePlan
+    from forze.application.execution import DepsRegistry, ExecutionRuntime, LifecyclePlan
     from forze_gcs import GCSClient, GCSDepsModule, GCSStorageConfig, gcs_lifecycle_step
 
     client = GCSClient()
@@ -38,10 +38,10 @@ Use `RoutedGCSClient` when tenant identity selects GCP project and credentials (
     )
 
     runtime = ExecutionRuntime(
-        deps=DepsPlan.from_modules(module),
+        deps=DepsRegistry.from_modules(module).freeze(),
         lifecycle=LifecyclePlan.from_steps(
             gcs_lifecycle_step(project_id="my-gcp-project"),
-        ),
+        ).freeze(),
     )
 
 ### Emulator (fake-gcs-server)

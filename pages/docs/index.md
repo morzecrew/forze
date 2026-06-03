@@ -19,7 +19,7 @@ Forze helps you keep business logic stable while storage and framework choices e
 
 - **Layered** — four clean layers (domain, application, infrastructure, interface) with strict dependency rules
 - **Explicit** — contracts (ports) describe what the app needs; adapters deliver it
-- **Composable** — adapters are wired declaratively via dependency plans
+- **Composable** — adapters are wired declaratively via dependency registries
 - **Testable** — handlers run with fake or in-memory dependencies
 - **Framework-agnostic** — core modules are not tied to any web framework, database, or cloud service
 

@@ -98,7 +98,7 @@ For search, use `PostgresSearchConfig`, `PostgresHubSearchConfig`, or `PostgresF
 ### Deps module
 
 ```python
-from forze.application.execution import DepsPlan
+from forze.application.execution import DepsRegistry
 from forze_postgres import PostgresDepsModule
 
 postgres_module = PostgresDepsModule(
@@ -108,7 +108,7 @@ postgres_module = PostgresDepsModule(
     tx={"projects"},
 )
 
-deps_plan = DepsPlan.from_modules(postgres_module)
+deps_registry = DepsRegistry.from_modules(postgres_module)
 ```
 
 Routes such as `"projects"` should match the names used by your `DocumentSpec`, `SearchSpec`, and transaction wiring.

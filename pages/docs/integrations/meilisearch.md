@@ -23,7 +23,7 @@ Integration tests require Docker and `uv sync --extra meilisearch`.
 ## Runtime wiring
 
 ```python
-from forze.application.execution import DepsPlan, ExecutionRuntime, LifecyclePlan
+from forze.application.execution import DepsRegistry, ExecutionRuntime, LifecyclePlan
 from forze_meilisearch import (
     MeilisearchClient,
     MeilisearchConfig,
@@ -53,14 +53,14 @@ module = MeilisearchDepsModule(
 )
 
 runtime = ExecutionRuntime(
-    deps=DepsPlan.from_modules(module),
+    deps=DepsRegistry.from_modules(module).freeze(),
     lifecycle=LifecyclePlan.from_steps(
         meilisearch_lifecycle_step(
             url="http://localhost:7700",
             api_key="masterKey",
             config=MeilisearchConfig(timeout=30.0),
         )
-    ),
+    ).freeze(),
 )
 ```
 

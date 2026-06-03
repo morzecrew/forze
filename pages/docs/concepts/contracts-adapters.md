@@ -20,10 +20,10 @@ Forze follows **hexagonal architecture** (ports and adapters). The core idea is 
 
 1. The application layer defines **contracts**: protocol interfaces describing required capabilities
 2. Infrastructure packages provide **adapters**: concrete implementations of those protocols
-3. A **dependency plan** wires adapters to contracts at startup
+3. A **dependency registry** wires adapters to contracts at startup
 4. Handlers resolve contracts from execution context; they never import adapter classes
 
-Switching from Postgres to Mongo means changing the dependency plan, not the handler code.
+Switching from Postgres to Mongo means changing the dependency registry, not the handler code.
 
 ## Contract catalog
 
@@ -256,12 +256,12 @@ For contracts without convenience methods on `ExecutionContext`, use `ctx.deps.r
 
 ## Wiring adapters
 
-Integration modules register their adapters at dependency plan build time:
+Integration modules register their adapters when the dependency registry is frozen:
 
     :::python
-    from forze.application.execution import Deps, DepsPlan
+    from forze.application.execution import Deps, DepsRegistry
 
-    deps_plan = DepsPlan.from_modules(
+    deps_registry = DepsRegistry.from_modules(
         lambda: Deps.merge(
             PostgresDepsModule(client=pg_client, rw_documents={...})(),
             RedisDepsModule(client=redis_client, caches={...})(),
@@ -276,12 +276,12 @@ Integration modules register their adapters at dependency plan build time:
 Tests stub contracts with in-memory or fake implementations. The `forze_mock` package provides ready-made adapters for all contracts, backed by shared in-memory state:
 
     :::python
-    from forze.application.execution import Deps, DepsPlan, ExecutionContext
+    from forze.application.execution import Deps, DepsRegistry, ExecutionContext
     from forze_mock import MockDepsModule
 
     module = MockDepsModule()
-    deps_plan = DepsPlan.from_modules(module)
-    ctx = ExecutionContext(deps=deps_plan.build())
+    deps_registry = DepsRegistry.from_modules(module)
+    ctx = ExecutionContext(deps=deps_registry.freeze().resolve())
 
     doc = ctx.document.query(project_spec)
     result = await doc.get(some_uuid)

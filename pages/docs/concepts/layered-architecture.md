@@ -81,7 +81,7 @@ The dependency rules are enforced by design:
 - Infrastructure imports from application and domain
 - Interface imports from application and infrastructure
 
-This means you can swap Postgres for Mongo by changing the dependency plan, not the handlers. You can replace FastAPI with a CLI without touching business logic.
+This means you can swap Postgres for Mongo by changing the dependency registry, not the handlers. You can replace FastAPI with a CLI without touching business logic.
 
 ## Practical impact
 

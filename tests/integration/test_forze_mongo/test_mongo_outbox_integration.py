@@ -92,7 +92,7 @@ async def test_mongo_outbox_flush_commits_with_transaction(
             ),
         },
     )
-    runtime = ExecutionRuntime(deps=DepsRegistry.from_modules(mongo_module))
+    runtime = ExecutionRuntime(deps=DepsRegistry.from_modules(mongo_module).freeze())
 
     async with runtime.scope():
         ctx = runtime.get_context()
@@ -128,7 +128,7 @@ async def test_mongo_outbox_rollback_discards_staged_rows(
             ),
         },
     )
-    runtime = ExecutionRuntime(deps=DepsRegistry.from_modules(mongo_module))
+    runtime = ExecutionRuntime(deps=DepsRegistry.from_modules(mongo_module).freeze())
 
     async with runtime.scope():
         ctx = runtime.get_context()
@@ -163,7 +163,7 @@ async def test_mongo_outbox_bulk_flush(
             ),
         },
     )
-    runtime = ExecutionRuntime(deps=DepsRegistry.from_modules(mongo_module))
+    runtime = ExecutionRuntime(deps=DepsRegistry.from_modules(mongo_module).freeze())
 
     async with runtime.scope():
         ctx = runtime.get_context()
@@ -204,7 +204,7 @@ async def test_mongo_outbox_duplicate_event_id_flush_is_idempotent(
             ),
         },
     )
-    runtime = ExecutionRuntime(deps=DepsRegistry.from_modules(mongo_module))
+    runtime = ExecutionRuntime(deps=DepsRegistry.from_modules(mongo_module).freeze())
     event_id = uuid4()
 
     async with runtime.scope():
@@ -265,9 +265,9 @@ async def test_mongo_outbox_relay_to_mock_queue(
     )
     shared_state = MockState()
     runtime = ExecutionRuntime(
-        deps=DepsRegistry.from_modules(mongo_module).with_deps(
-            _mock_queue_deps(shared_state)
-        ),
+        deps=DepsRegistry.from_modules(mongo_module)
+        .with_deps(_mock_queue_deps(shared_state))
+        .freeze(),
     )
 
     async with runtime.scope():
@@ -313,9 +313,9 @@ async def test_mongo_outbox_relay_reclaims_stale_processing(
     )
     shared_state = MockState()
     runtime = ExecutionRuntime(
-        deps=DepsRegistry.from_modules(mongo_module).with_deps(
-            _mock_queue_deps(shared_state)
-        ),
+        deps=DepsRegistry.from_modules(mongo_module)
+        .with_deps(_mock_queue_deps(shared_state))
+        .freeze(),
     )
     row_id = uuid4()
     event_id = uuid4()
@@ -382,9 +382,9 @@ async def test_mongo_outbox_requeue_failed_then_relay(
     )
     shared_state = MockState()
     runtime = ExecutionRuntime(
-        deps=DepsRegistry.from_modules(mongo_module).with_deps(
-            _mock_queue_deps(shared_state)
-        ),
+        deps=DepsRegistry.from_modules(mongo_module)
+        .with_deps(_mock_queue_deps(shared_state))
+        .freeze(),
     )
     row_id = uuid4()
     event_id = uuid4()

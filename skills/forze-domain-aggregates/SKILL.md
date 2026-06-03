@@ -117,7 +117,7 @@ project_spec = DocumentSpec(
 )
 ```
 
-Once a `DepsPlan` registers document adapters for that `name`, handlers obtain **`DocumentQueryPort`** / **`DocumentCommandPort`** via **`ctx.document.query(project_spec)`** / **`ctx.document.command(project_spec)`** — see [`forze-framework-usage`](../forze-framework-usage/SKILL.md) and [Document contracts](https://morzecrew.github.io/forze/docs/core-package/contracts/document/).
+Once a `DepsRegistry` registers document adapters for that `name`, handlers obtain **`DocumentQueryPort`** / **`DocumentCommandPort`** via **`ctx.document.query(project_spec)`** / **`ctx.document.command(project_spec)`** — see [`forze-framework-usage`](../forze-framework-usage/SKILL.md) and [Document contracts](https://morzecrew.github.io/forze/docs/core-package/contracts/document/).
 
 | Field | Purpose |
 |-------|---------|

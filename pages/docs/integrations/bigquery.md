@@ -28,7 +28,7 @@ Use `RoutedBigQueryClient` when tenant identity selects GCP project and credenti
 ## Runtime wiring
 
     :::python
-    from forze.application.execution import DepsPlan, ExecutionRuntime, LifecyclePlan
+    from forze.application.execution import DepsRegistry, ExecutionRuntime, LifecyclePlan
     from forze_bigquery import BigQueryClient, BigQueryDepsModule, bigquery_lifecycle_step
 
     client = BigQueryClient()
@@ -52,10 +52,10 @@ Use `RoutedBigQueryClient` when tenant identity selects GCP project and credenti
     )
 
     runtime = ExecutionRuntime(
-        deps=DepsPlan.from_modules(module),
+        deps=DepsRegistry.from_modules(module).freeze(),
         lifecycle=LifecyclePlan.from_steps(
             bigquery_lifecycle_step(project_id="my-gcp-project"),
-        ),
+        ).freeze(),
     )
 
 ### Emulator (goccy/bigquery-emulator)

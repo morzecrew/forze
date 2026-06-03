@@ -12,7 +12,7 @@ Use this when you want fast tests, demos, or a partial runtime without external 
 
 1. Install the matching optional extra.
 2. Create the integration client or module configuration.
-3. Register the module in `DepsPlan` with routes that match your specs.
+3. Register the module in `DepsRegistry` with routes that match your specs.
 4. Add lifecycle steps when the integration opens network connections.
 5. Resolve ports from `ExecutionContext`; do not import adapters in handlers.
 
@@ -61,13 +61,13 @@ The package supplies a single `MockDepsModule` that registers in-memory adapters
 Create a module and build a runtime exactly as you would with real infrastructure:
 
     :::python
-    from forze.application.execution import DepsPlan, ExecutionRuntime
+    from forze.application.execution import DepsRegistry, ExecutionRuntime
     from forze_mock import MockDepsModule
 
     module = MockDepsModule()
 
     runtime = ExecutionRuntime(
-        deps=DepsPlan.from_modules(module),
+        deps=DepsRegistry.from_modules(module).freeze(),
     )
 
 No lifecycle plan is needed — mock adapters have no connections to manage.
@@ -128,11 +128,11 @@ Access the state directly for test assertions:
 ## Using in tests
 
     :::python
-    from forze.application.execution import DepsPlan, ExecutionContext
+    from forze.application.execution import DepsRegistry, ExecutionContext
     from forze_mock import MockDepsModule
 
     module = MockDepsModule()
-    deps = DepsPlan.from_modules(module).build()
+    deps = DepsRegistry.from_modules(module).freeze().resolve()
     ctx = ExecutionContext(deps=deps)
 
     doc = ctx.document.command(project_spec)
@@ -152,12 +152,12 @@ Replace real infrastructure modules with mock for local development or testing:
     )
     from fastapi import APIRouter
 
-    from forze.application.execution import DepsPlan, ExecutionRuntime
+    from forze.application.execution import DepsRegistry, ExecutionRuntime
     from forze_fastapi.endpoints.document import attach_document_endpoints
     from forze_mock import MockDepsModule
 
     module = MockDepsModule()
-    runtime = ExecutionRuntime(deps=DepsPlan.from_modules(module))
+    runtime = ExecutionRuntime(deps=DepsRegistry.from_modules(module).freeze())
 
     project_dtos = DocumentDTOs(
         read=ProjectReadModel,
@@ -193,7 +193,7 @@ You can pre-seed state by passing an existing `MockState`:
 Mix mock and real adapters by merging dependency containers:
 
     :::python
-    from forze.application.execution import Deps, DepsPlan
+    from forze.application.execution import Deps, DepsRegistry
     from forze_mock import MockDepsModule
     from forze_postgres import PostgresDepsModule
 
@@ -209,7 +209,7 @@ Mix mock and real adapters by merging dependency containers:
         },
     )
 
-    deps_plan = DepsPlan.from_modules(
+    deps_registry = DepsRegistry.from_modules(
         lambda: Deps.merge(pg_module(), mock_module()),
     )
 
