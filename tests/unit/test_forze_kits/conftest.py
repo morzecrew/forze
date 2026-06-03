@@ -18,6 +18,7 @@ from forze_mock.adapters import (
     MockStorageAdapter,
 )
 from forze_mock.execution import MockStateDepKey
+from forze_kits.domain.stored_file import StoredFileKitSpec
 
 # ----------------------- #
 
@@ -100,6 +101,12 @@ def _minimal_search_spec() -> SearchSpec[ReadDocument]:
         model_type=ReadDocument,
         fields=["id"],
     )
+
+
+@pytest.fixture
+def stored_file_kit_spec() -> StoredFileKitSpec:
+    """Minimal stored-file kit spec for composition tests."""
+    return StoredFileKitSpec(name="files")
 
 
 @pytest.fixture

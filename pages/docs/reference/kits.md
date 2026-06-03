@@ -12,7 +12,7 @@ The **`forze_kits`** package ships with the default wheel. It provides canonical
 ```text
 forze_kits/
   domain/           # mixins, mapping steps
-  aggregates/       # document, search, storage, authn (+ handlers/ per aggregate)
+  aggregates/       # document, search, storage, stored_file, authn (+ handlers/ per aggregate)
   mapping/          # Pydantic pipeline mapper factory
   dto/              # pagination request/response DTOs
   integrations/     # outbox relay, notify routing
@@ -27,7 +27,7 @@ forze_kits/
 | Kind | Import path |
 |------|-------------|
 | Domain shape | `forze_kits.domain.*` |
-| Aggregate ops | `forze_kits.aggregates.{document,search,storage,authn}` |
+| Aggregate ops | `forze_kits.aggregates.{document,search,storage,stored_file,authn}` |
 | Default handlers | `forze_kits.aggregates.<name>.handlers` |
 | DTO mapping impl | `forze_kits.mapping` |
 | Pagination DTOs | `forze_kits.dto` |
@@ -151,6 +151,41 @@ Hub and federated search use `build_hub_search_registry` and `build_federated_se
 ## Storage kit
 
 `build_storage_registry(storage_spec)` registers `upload`, `list`, `download`, and `delete` handlers. `StorageFacade` resolves them through `registry` + `namespace`. Bind tx routes for write operations, then `.freeze()` before `attach_storage_endpoints`.
+
+## Stored file kit
+
+Document-backed object storage with a **closed schema** (no mixins): metadata in a document table, bytes in object storage, optional search index sync and outbox events.
+
+### Models and spec
+
+    :::python
+    from forze_kits.domain.stored_file import StoredFileKitSpec
+
+    kit = StoredFileKitSpec(
+        name="files",
+        search=StoredFileKitSpec.default_search("files"),
+        outbox=OutboxSpec(name="files", codec=PydanticModelCodec(StoredFileOutboxPayload)),
+    )
+
+Register Postgres/Mongo document config, S3/GCS storage, search index, and outbox under the same `name` route.
+
+### Registry and wiring
+
+    :::python
+    from forze_kits.aggregates.stored_file import (
+        StoredFileFacade,
+        build_stored_file_registry,
+        freeze_stored_file_registry,
+    )
+
+    registry = freeze_stored_file_registry(kit, tx_route="default")
+    facade = StoredFileFacade(ctx=ctx, registry=registry, namespace=kit.document.default_namespace)
+
+**Upload flow:** handler creates a `pending` document row and stages `stored_file.upload_pending` in the transaction; after commit, blob upload runs, the row becomes `ready`, search index upserts, and `stored_file.uploaded` is staged.
+
+**Delete flow:** soft-delete (`status=deleted`) in the transaction; after commit, blob and search index entries are removed.
+
+Use `build_stored_file_registry(kit)` alone when you need custom operation-plan patches without the default freeze helper.
 
 ## Authn kit
 
