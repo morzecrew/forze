@@ -10,7 +10,7 @@ from forze.application.integrations.http.descriptors import (
     BaseHttpIntegration,
     async_http_op,
 )
-from forze.base.exceptions import CoreException
+from forze.base.exceptions import CoreException, ExceptionKind
 from forze_http.adapters.http_service import HttpxHttpServiceAdapter
 from forze_http.execution.deps.configs import HttpxHttpServiceConfig
 from forze_http.kernel.client import HttpxClient
@@ -59,6 +59,37 @@ async def test_invoke_static_base_url() -> None:
     result = await adapter.invoke("list_items")
 
     assert result.items[0].id == "1"
+    await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_invoke_invalid_response_is_validation_error() -> None:
+    spec = build_http_service_spec(DemoClient, name="demo")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"not_items": []})
+
+    transport = httpx.MockTransport(handler)
+    client = HttpxClient()
+    await client.initialize(
+        base_url="https://api.example.com",
+        transport=transport,
+    )
+
+    adapter = HttpxHttpServiceAdapter(
+        client=client,
+        config=HttpxHttpServiceConfig(base_url="https://api.example.com"),
+        spec=spec,
+    )
+
+    with pytest.raises(CoreException) as raised:
+        await adapter.invoke("list_items")
+
+    assert raised.value.kind == ExceptionKind.VALIDATION
+    assert raised.value.code == "http.response.validation"
+    assert raised.value.details is not None
+    assert "errors" in raised.value.details
+
     await client.aclose()
 
 

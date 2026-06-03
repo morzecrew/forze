@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any, final
 
 import attrs
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from forze.application.contracts.http import (
     HttpOperationSpec,
@@ -16,6 +16,7 @@ from forze.application.integrations.http import request_parts
 from forze.base.exceptions import exc
 from forze.base.exceptions._utils import reraise_mapped
 from forze.base.primitives import StrKey
+from forze.base.scrubbing import sanitize_pydantic_errors
 from forze_http.adapters._logger import logger
 from forze_http.execution.deps.configs import HttpxHttpServiceConfig
 from forze_http.kernel.client import HttpxClientPort
@@ -86,7 +87,15 @@ class HttpxHttpServiceAdapter(HttpServicePort):
 
     def _parse_response(self, operation: HttpOperationSpec[Any, Any], content: bytes) -> BaseModel:
         if content:
-            return operation.return_type.model_validate_json(content)
+            try:
+                return operation.return_type.model_validate_json(content)
+
+            except ValidationError as error:
+                raise exc.validation(
+                    f"HTTP operation {operation.name!r}: response failed validation",
+                    code="http.response.validation",
+                    details={"errors": sanitize_pydantic_errors(list(error.errors()))},
+                ) from error
 
         if operation.allows_empty_body or _return_type_allows_empty(operation.return_type):
             return operation.return_type.model_construct()
