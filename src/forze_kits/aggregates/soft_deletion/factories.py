@@ -1,31 +1,22 @@
-from enum import StrEnum
-from typing import Any, TypeVar, final
+"""Factories for soft-deletion document registries."""
+
+from typing import Any, TypeVar
 
 from forze.application.contracts.document import DocumentSpec
 from forze.application.execution.operations.registry import OperationRegistry
 from forze.base.primitives import StrKeyNamespace
+from forze_kits.domain.soft_deletion.models import (
+    DocWithSoftDeletion,
+    UpdateCmdWithSoftDeletion,
+)
 
 from .handlers import DeleteDocument, RestoreDocument
-from .models import DocWithSoftDeletion, UpdateCmdWithSoftDeletion
+from .operations import SoftDeletionKernelOp
 
 # ----------------------- #
 
 D = TypeVar("D", bound=DocWithSoftDeletion)
 U = TypeVar("U", bound=UpdateCmdWithSoftDeletion)
-
-# ....................... #
-
-
-@final
-class SoftDeletionKernelOp(StrEnum):
-    """Kernel segments (suffix only) for soft-deletion document usecase operation keys."""
-
-    DELETE = "delete"
-    """Soft-delete a document."""
-
-    RESTORE = "restore"
-    """Restore a soft-deleted document."""
-
 
 # ....................... #
 

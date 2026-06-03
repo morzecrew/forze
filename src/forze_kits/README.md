@@ -8,7 +8,7 @@ integration flows, local port adapters, and runtime ergonomics.
 ```text
 forze_kits/
   domain/           # field/entity shape kits (mixins, mapping steps, …)
-  aggregates/       # document, search, storage, authn (registry, facade, handlers/)
+  aggregates/       # document, search, storage, stored_file, authn (registry, facade, handlers/)
   mapping/          # Pydantic pipeline mapper factory and steps
   dto/              # shared pagination request/response DTOs
   integrations/     # outbox relay, notify routing
@@ -20,12 +20,12 @@ forze_kits/
 
 | Kind | Import path |
 |------|-------------|
-| Domain shape | `forze_kits.domain.*` |
-| Aggregate ops | `forze_kits.aggregates.{document,search,storage,authn}` |
+| Domain shape | `forze_kits.domain.*` (including `forze_kits.domain.stored_file`) |
+| Aggregate ops | `forze_kits.aggregates.{document,search,storage,stored_file,authn}` |
 | Default handlers | `forze_kits.aggregates.<name>.handlers` |
 | DTO mapping | `forze_kits.mapping` |
 | Pagination DTOs | `forze_kits.dto` |
-| Integration flow | `forze_kits.integrations.outbox`, `forze_kits.integrations.notify` |
+| Integration flow | `forze_kits.integrations.outbox`, `forze_kits.integrations.notify` (stored-file wiring lives in `forze_kits.aggregates.stored_file`) |
 | Local port adapter | `forze_kits.adapters.secrets` |
 | Runtime ergonomics | `forze_kits.scopes` |
 

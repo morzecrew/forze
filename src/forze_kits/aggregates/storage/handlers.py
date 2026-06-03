@@ -7,9 +7,15 @@ from forze.application.contracts.storage import (
     StoredObject,
     UploadedObject,
 )
-from forze.domain.models import BaseDTO
 
-from .dto import ListObjectsRequestDTO, StoredObjectDTO, UploadObjectRequestDTO
+from .dto import (
+    ListedObjects,
+    ListObjectsRequestDTO,
+    StoredObjectDTO,
+    UploadObjectRequestDTO,
+)
+
+# ----------------------- #
 
 
 def _stored_object_to_dto(obj: StoredObject) -> StoredObjectDTO:
@@ -23,7 +29,8 @@ def _stored_object_to_dto(obj: StoredObject) -> StoredObjectDTO:
         tags=dict(obj.tags) if obj.tags is not None else None,
     )
 
-# ----------------------- #
+
+# ....................... #
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
@@ -57,25 +64,6 @@ class DownloadObject(Handler[str, DownloadedObject]):
         """Download an object by storage key."""
 
         return await self.storage.download(args)
-
-
-# ....................... #
-
-
-class ListedObjects(BaseDTO):
-    """Paginated listing response for storage objects."""
-
-    hits: list[StoredObjectDTO]
-    """Objects for the current page."""
-
-    page: int
-    """One-based page number."""
-
-    size: int
-    """Page size (number of records per page)."""
-
-    count: int
-    """Total number of matching objects."""
 
 
 # ....................... #

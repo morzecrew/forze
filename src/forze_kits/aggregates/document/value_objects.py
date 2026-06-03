@@ -4,14 +4,15 @@ import attrs
 from pydantic import BaseModel
 
 from forze.application.contracts.mapping import MapperFactory
-from .handlers import (
+from forze.domain.models import BaseDTO, CreateDocumentCmd
+
+from .dto import (
     AggregatedListRequestDTO,
     CursorListRequestDTO,
     ListRequestDTO,
     ProjectedCursorListRequestDTO,
     ProjectedListRequestDTO,
 )
-from forze.domain.models import BaseDTO, CreateDocumentCmd
 
 # ----------------------- #
 

@@ -2,7 +2,8 @@ import attrs
 from pydantic import BaseModel
 
 from forze.application.contracts.mapping import MapperFactory
-from .handlers import (
+
+from .dto import (
     CursorSearchRequestDTO,
     ProjectedCursorSearchRequestDTO,
     ProjectedSearchRequestDTO,

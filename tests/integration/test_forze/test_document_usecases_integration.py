@@ -1,21 +1,19 @@
 """Integration tests for document handlers with in-memory adapters."""
 
 import pytest
-
-from forze.application.contracts.document import DocumentSpec
-from forze.application.execution import Deps, ExecutionContext
-from forze_kits.aggregates.document.handlers import GetDocument
-from forze_kits.aggregates.document.handlers.dto import DocumentIdDTO, DocumentIdRevDTO
-from tests.support.execution_context import context_from_deps, context_from_modules, frozen_deps_from_deps
 from pydantic import PositiveInt
 
-from forze_kits.domain.soft_deletion import DeleteDocument, RestoreDocument
+from forze.application.contracts.document import DocumentSpec
+from forze.application.execution import Deps
+from forze.domain.models import CreateDocumentCmd, Document, ReadDocument
+from forze_kits.aggregates.document import DocumentIdDTO, DocumentIdRevDTO, GetDocument
+from forze_kits.aggregates.soft_deletion import DeleteDocument, RestoreDocument
 from forze_kits.domain.soft_deletion.models import (
     DocWithSoftDeletion,
     UpdateCmdWithSoftDeletion,
 )
-from forze.domain.models import CreateDocumentCmd, Document, ReadDocument
 from forze_mock import MockDepsModule, MockState
+from tests.support.execution_context import context_from_deps
 
 # ----------------------- #
 

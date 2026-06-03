@@ -2,7 +2,7 @@
 
 from forze.application.contracts.authn import CredentialLifetime, IssuedTokens
 
-from .dto import AuthnTokenResponseDTO
+from ..dto import AuthnTokenResponseDTO
 
 # ----------------------- #
 

@@ -11,7 +11,7 @@ from forze_kits.aggregates.document import (
 from forze.application.contracts.document import DocumentSpec
 from forze.application.execution.operations.registry import OperationRegistry
 from forze.base.primitives import StrKeyNamespace
-from forze_kits.domain.soft_deletion.composition import (
+from forze_kits.aggregates.soft_deletion import (
     SoftDeletionKernelOp,
     build_soft_deletion_registry,
 )

@@ -1,6 +1,6 @@
 """Tests for authn handler DTOs."""
 
-from forze_kits.aggregates.authn.handlers.dto import (
+from forze_kits.aggregates.authn import (
     AuthnChangePasswordRequestDTO,
     AuthnLoginRequestDTO,
     AuthnRefreshRequestDTO,

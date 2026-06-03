@@ -1,9 +1,3 @@
-from .dto import (
-    AuthnChangePasswordRequestDTO,
-    AuthnLoginRequestDTO,
-    AuthnRefreshRequestDTO,
-    AuthnTokenResponseDTO,
-)
 from .handlers import (
     AuthnChangePassword,
     AuthnLogout,
@@ -18,8 +12,4 @@ __all__ = [
     "AuthnLogout",
     "AuthnPasswordLogin",
     "AuthnRefreshTokens",
-    "AuthnChangePasswordRequestDTO",
-    "AuthnLoginRequestDTO",
-    "AuthnRefreshRequestDTO",
-    "AuthnTokenResponseDTO",
 ]

@@ -2,8 +2,8 @@
 
 from datetime import datetime
 
-from forze_kits.dto.paginated import Pagination
 from forze.domain.models import BaseDTO
+from forze_kits.dto.paginated import Pagination
 
 # ----------------------- #
 
@@ -47,3 +47,22 @@ class StoredObjectDTO(BaseDTO):
     content_type: str
     description: str | None = None
     tags: dict[str, str] | None = None
+
+
+# ....................... #
+
+
+class ListedObjects(BaseDTO):
+    """Paginated listing response for storage objects."""
+
+    hits: list[StoredObjectDTO]
+    """Objects for the current page."""
+
+    page: int
+    """One-based page number."""
+
+    size: int
+    """Page size (number of records per page)."""
+
+    count: int
+    """Total number of matching objects."""

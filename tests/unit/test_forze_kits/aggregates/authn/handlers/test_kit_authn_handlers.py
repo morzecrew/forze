@@ -9,29 +9,25 @@ from uuid import uuid4
 import pytest
 
 from forze.application.contracts.authn import (
+    AccessTokenCredentials,
+    AuthnIdentity,
     AuthnResult,
+    CredentialLifetime,
     IssuedAccessToken,
     IssuedRefreshToken,
     IssuedTokens,
-)
-from forze.application.contracts.authn.value_objects import (
-    AccessTokenCredentials,
-    AuthnIdentity,
-    CredentialLifetime,
     RefreshTokenCredentials,
 )
-from forze_kits.aggregates.authn.handlers.dto import (
+from forze.base.exceptions import CoreException
+from forze_kits.aggregates.authn import (
+    AuthnChangePassword,
     AuthnChangePasswordRequestDTO,
     AuthnLoginRequestDTO,
-    AuthnRefreshRequestDTO,
-)
-from forze_kits.aggregates.authn.handlers.handlers import (
-    AuthnChangePassword,
     AuthnLogout,
     AuthnPasswordLogin,
+    AuthnRefreshRequestDTO,
     AuthnRefreshTokens,
 )
-from forze.base.exceptions import CoreException
 
 
 def _issued_tokens() -> IssuedTokens:
