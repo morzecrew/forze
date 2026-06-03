@@ -7,7 +7,7 @@ to look first for authoritative rules before editing code, tests, docs, or relea
 
 ## Project overview
 
-Forze is a Python library for Domain-Driven Design and Hexagonal Architecture in backend services. It provides core framework layers (application, domain, utils, base) and optional integrations (FastAPI, Postgres, Redis, S3, Temporal, Mongo, RabbitMQ, Socket.IO, SQS). Development validation means running tests and quality checks—there is no runnable application or server to start.
+Forze is a Python library for Domain-Driven Design and Hexagonal Architecture in backend services. It provides core framework layers (application, domain, utils, base) and optional integrations (FastAPI, Postgres, Redis, S3, Temporal, Mongo, HTTP outbound, RabbitMQ, Socket.IO, SQS). Development validation means running tests and quality checks—there is no runnable application or server to start.
 
 ## Agent workflow (quick checklist)
 
@@ -99,6 +99,7 @@ Use them for:
 - `src/forze_temporal/`: Temporal integration package.
 - `src/forze_inngest/`: Inngest integration package (durable functions).
 - `src/forze_mongo/`: Mongo integration package.
+- `src/forze_http/`: outbound HTTP integration (`httpx`; `HttpServiceSpec`, `HttpxDepsModule`, declarative `BaseHttpIntegration`).
 - `src/forze_mock/`: in-memory mock adapters (`MockState`, optional `MockRoutedStateRegistry`, `tenancy/`, `execution/` deps module with identity/durable/search/dlock stubs).
 - `src/forze_rabbitmq/`: RabbitMQ integration package.
 - `src/forze_socketio/`: Socket.IO integration package.

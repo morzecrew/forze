@@ -12,7 +12,7 @@ A logical aggregate name needs to map cleanly to physical infrastructure such as
 Use this when a spec and an integration config need to agree on routes and names.
 
 
-Kernel **specs** (`DocumentSpec`, `SearchSpec`, `CacheSpec`, …) describe *what* the application works with: model types, logical `name`, optional cache/history flags. They stay free of database URLs and table names.
+Kernel **specs** (`DocumentSpec`, `SearchSpec`, `CacheSpec`, `HttpServiceSpec`, …) describe *what* the application works with: model types, logical `name`, optional cache/history flags. They stay free of database URLs, HTTP base URLs, and table names.
 
 Integration packages register **infrastructure configs** on dependency modules. Those configs map each logical `name` to concrete relations, Redis key namespaces, S3 buckets, and so on. At runtime, `ExecutionContext` combines a spec with the matching routed adapter.
 
@@ -20,8 +20,8 @@ Integration packages register **infrastructure configs** on dependency modules. 
 
 Use the **same string** for:
 
-- `DocumentSpec(name=..., ...)` / `SearchSpec(name=..., ...)` / `CacheSpec(name=..., ...)`
-- The corresponding entry in `PostgresDepsModule.rw_documents`, `MongoDepsModule.rw_documents`, `RedisDepsModule.caches`, …
+- `DocumentSpec(name=..., ...)` / `SearchSpec(name=..., ...)` / `CacheSpec(name=..., ...)` / `HttpServiceSpec(name=..., ...)`
+- The corresponding entry in `PostgresDepsModule.rw_documents`, `MongoDepsModule.rw_documents`, `RedisDepsModule.caches`, `HttpxDepsModule.services`, …
 
 `ExecutionContext` resolves `DocumentQueryDepKey` / `DocumentCommandDepKey` (and other keys) **by route** `spec.name`, then passes the spec into the factory so adapters can read model types and flags.
 
@@ -63,6 +63,10 @@ Each `PostgresDocumentConfig` supplies `(schema, table)` tuples for `read`, `wri
 - `counters`, `idempotency` — same pattern
 
 `CacheSpec(name="projects", ...)` must match the key used in `caches` so `ctx.cache(spec)` resolves the right Redis adapter.
+
+## HTTP outbound wiring
+
+`HttpServiceSpec` carries operation definitions (method, path template, Pydantic types) only. `HttpxHttpServiceConfig` supplies static `base_url` or, when `tenant_aware=True`, `secret_ref_for_tenant` (plus auth and `timeout`) keyed by the same `name` as the spec. See [HTTP integration](../integrations/http.md).
 
 ## Resolution sketch
 

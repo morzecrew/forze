@@ -99,6 +99,7 @@ nav:
       - Idempotency: core-package/contracts/idempotency.md
       - Outbox: core-package/contracts/outbox.md
       - Analytics: core-package/contracts/analytics.md
+      - HTTP: core-package/contracts/http.md
     - Execution: reference/execution.md
     - Middleware & Plans: reference/middleware-plans.md
     - Capability execution: reference/capability-execution.md
@@ -117,6 +118,7 @@ nav:
     - ClickHouse: integrations/clickhouse.md
     - MongoDB: integrations/mongo.md
     - Meilisearch: integrations/meilisearch.md
+    - HTTP (outbound): integrations/http.md
     - Cloud Firestore: integrations/firestore.md
     - Temporal: integrations/temporal.md
     - Inngest: integrations/inngest.md

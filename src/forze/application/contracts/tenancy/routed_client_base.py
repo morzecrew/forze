@@ -16,6 +16,7 @@ from .helpers import (
     resolve_dsn_for_tenant,
     resolve_structured_for_tenant,
 )
+from .value_objects import TenantIdentity
 from .registry import TenantClientRegistry
 
 # ----------------------- #
@@ -37,7 +38,7 @@ class RoutedTenantClientBase(Generic[C]):
 
     secrets: SecretsPort
     secret_ref_for_tenant: Callable[[UUID], SecretRef] | Mapping[UUID, SecretRef]
-    tenant_provider: Callable[[], UUID | None]
+    tenant_provider: Callable[[], UUID | TenantIdentity | None]
     max_cached_tenants: int = 100
     guarded: bool = False
     tenant_required_message: str = "Tenant ID is required for routed access"
@@ -108,10 +109,15 @@ class RoutedTenantClientBase(Generic[C]):
     # ....................... #
 
     def _peek_client(self, tenant_id: UUID | None = None) -> C | None:
-        tid = tenant_id if tenant_id is not None else self.tenant_provider()
+        if tenant_id is not None:
+            return self._pool.peek(tenant_id)
 
-        if tid is None:
+        value = self.tenant_provider()
+
+        if value is None:
             return None
+
+        tid = value.tenant_id if isinstance(value, TenantIdentity) else value
 
         return self._pool.peek(tid)
 
