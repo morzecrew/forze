@@ -13,7 +13,7 @@ import attrs
 
 from forze.application.contracts.cache import CachePort
 from forze_mock.state import MockState
-from forze_mock.tenancy import MockTenancyMixin, partition_namespace
+from forze_mock.tenancy import MockTenancyMixin
 
 from ..query._types import _MISSING  # type: ignore[reportPrivateUsage]
 
@@ -29,7 +29,7 @@ class MockCacheAdapter(MockTenancyMixin, CachePort):
     # ....................... #
 
     def _ns(self) -> str:
-        return partition_namespace(self.require_tenant_if_aware(), self.namespace)
+        return self._partitioned_namespace(self.namespace)
 
     def _kv(self) -> dict[str, Any]:
         return self.state.cache_kv.setdefault(self._ns(), {})

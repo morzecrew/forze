@@ -11,10 +11,12 @@ from typing import final
 from uuid import UUID
 
 import attrs
-import magic
 
 from forze.application.contracts.resolution import NamedResourceSpec
-from forze.application.integrations.storage import ObjectStorageAdapter
+from forze.application.integrations.storage import (
+    ObjectStorageAdapter,
+    guess_content_type_with_magic,
+)
 
 from ..kernel.relation import resolve_gcs_bucket
 
@@ -38,13 +40,4 @@ class GCSStorageAdapter(ObjectStorageAdapter):
 
     @staticmethod
     def _guess_content_type(filename: str, data: bytes) -> str:
-        try:
-            ct_magic = magic.from_buffer(data, mime=True)
-
-            if ct_magic:
-                return ct_magic
-
-        except Exception:  # nosec B110
-            pass
-
-        return ObjectStorageAdapter._guess_content_type(filename, data)
+        return guess_content_type_with_magic(filename, data)

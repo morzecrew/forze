@@ -51,6 +51,15 @@ class InngestClient(InngestClientPort):
 
     # ....................... #
 
+    async def close(self) -> None:
+        """Release client resources.
+
+        No-op: the Inngest SDK holds no persistent connection (events are sent
+        over per-call HTTP), matching the previous routed-pool disposal.
+        """
+
+    # ....................... #
+
     async def send(
         self,
         events: inngest.Event | list[inngest.Event],

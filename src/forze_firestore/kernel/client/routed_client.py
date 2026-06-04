@@ -1,19 +1,26 @@
 """Firestore client that resolves project/database per tenant via :class:`~forze.application.contracts.secrets.SecretsPort`."""
 
 from contextlib import asynccontextmanager
-from typing import Any, AsyncContextManager, AsyncGenerator, Callable, Mapping, Sequence, final
+from typing import (
+    Any,
+    AsyncContextManager,
+    AsyncGenerator,
+    Callable,
+    Mapping,
+    Sequence,
+    cast,
+    final,
+)
 from uuid import UUID
 
 import attrs
 from google.cloud.firestore_v1.async_collection import AsyncCollectionReference
 from google.cloud.firestore_v1.base_query import BaseFilter
+from pydantic import BaseModel
 
 from forze.application.contracts.secrets import SecretRef, SecretsPort
-from forze.application.contracts.tenancy import (
-    TenantClientRegistry,
-    ensure_structured_fingerprint,
-    require_tenant_id,
-    resolve_structured_for_tenant,
+from forze.application.contracts.tenancy.routed_client_base import (
+    StructuredSecretRoutedTenantClientBase,
 )
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
@@ -27,8 +34,11 @@ from .routing_credentials import FirestoreRoutingCredentials
 
 
 @final
-@attrs.define(slots=True)
-class RoutedFirestoreClient(FirestoreClientPort):
+@attrs.define(slots=True, kw_only=True)
+class RoutedFirestoreClient(
+    StructuredSecretRoutedTenantClientBase[FirestoreClient],
+    FirestoreClientPort,
+):
     """Routes each operation to a lazily created :class:`FirestoreClient` for the current tenant.
 
     Project and database ids are JSON secrets (see :class:`FirestoreRoutingCredentials`)
@@ -42,57 +52,30 @@ class RoutedFirestoreClient(FirestoreClientPort):
     secret_ref_for_tenant: Callable[[UUID], SecretRef] | Mapping[UUID, SecretRef]
     tenant_provider: Callable[[], UUID | None]
     max_cached_tenants: int = 100
-
-    __pool: TenantClientRegistry[FirestoreClient, str] = attrs.field(init=False)
-
-    # ....................... #
-
-    def __attrs_post_init__(self) -> None:
-        self.__pool = TenantClientRegistry(
-            max_entries=self.max_cached_tenants,
-            create=self._create_client,
-            dispose=lambda client: client.close(),
-            guarded=False,
-        )
+    creds_type: type[BaseModel] = attrs.field(
+        default=FirestoreRoutingCredentials,
+        init=False,
+    )
+    backend: str = attrs.field(default="Firestore", init=False)
+    tenant_required_message: str = attrs.field(
+        default="Tenant ID is required for routed Firestore access",
+        init=False,
+    )
 
     # ....................... #
 
-    async def startup(self) -> None:
-        await self.__pool.startup()
+    def credential_fingerprint(self, creds: BaseModel) -> str:
+        c = cast(FirestoreRoutingCredentials, creds)
+
+        return stable_fingerprint(c.project_id, c.database)
 
     # ....................... #
 
-    async def close(self) -> None:
-        await self.__pool.close()
-
-    # ....................... #
-
-    async def evict_tenant(self, tenant_id: UUID) -> None:
-        await self.__pool.evict(tenant_id)
-
-    # ....................... #
-
-    async def _fingerprint_for(self, tenant_id: UUID) -> str:
-        creds = await resolve_structured_for_tenant(
-            FirestoreRoutingCredentials,
-            tenant_id=tenant_id,
-            secrets=self.secrets,
-            ref_for_tenant=self.secret_ref_for_tenant,
-            backend="Firestore",
-        )
-
-        return stable_fingerprint(creds.project_id, creds.database)
-
-    # ....................... #
-
-    async def _create_client(self, tid: UUID) -> FirestoreClient:
-        creds = await resolve_structured_for_tenant(
-            FirestoreRoutingCredentials,
-            tenant_id=tid,
-            secrets=self.secrets,
-            ref_for_tenant=self.secret_ref_for_tenant,
-            backend="Firestore",
-        )
+    async def initialize_client(
+        self,
+        tenant_id: UUID,
+        creds: FirestoreRoutingCredentials,
+    ) -> FirestoreClient:
         client = FirestoreClient()
 
         await client.initialize(
@@ -101,23 +84,6 @@ class RoutedFirestoreClient(FirestoreClientPort):
         )
 
         return client
-
-    # ....................... #
-
-    async def _get_client(self) -> FirestoreClient:
-        tenant_id = require_tenant_id(
-            self.tenant_provider,
-            message="Tenant ID is required for routed Firestore access",
-        )
-
-        await ensure_structured_fingerprint(
-            self.__pool.get_fingerprint,
-            self.__pool.set_fingerprint,
-            tenant_id=tenant_id,
-            fingerprint=lambda: self._fingerprint_for(tenant_id),
-        )
-
-        return await self.__pool.get(tenant_id)
 
     # ....................... #
 
@@ -140,7 +106,7 @@ class RoutedFirestoreClient(FirestoreClientPort):
         if tid is None:
             return False
 
-        inner = self.__pool.peek(tid)
+        inner = self._peek_client(tid)
 
         if inner is None:
             return False
@@ -153,7 +119,7 @@ class RoutedFirestoreClient(FirestoreClientPort):
         if tid is None:
             raise exc.internal("Transactional context is required")
 
-        inner = self.__pool.peek(tid)
+        inner = self._peek_client(tid)
 
         if inner is None:
             raise exc.internal("Transactional context is required")

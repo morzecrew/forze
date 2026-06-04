@@ -1,13 +1,17 @@
 """Lifecycle hooks for httpx client initialization and shutdown."""
 
-from typing import cast, final
+from typing import Any, cast, final
 
 import attrs
 from pydantic import SecretStr
 
+from forze.application.contracts.deps import DepKey
 from forze.application.contracts.execution import LifecycleHook, LifecycleStep
 from forze.application.execution import ExecutionContext
-from forze.application.execution.lifecycle.builtin import routed_client_lifecycle_step
+from forze.application.execution.lifecycle.builtin import (
+    ClientShutdownHook,
+    routed_client_lifecycle_step,
+)
 from forze.base.serialization.pydantic import pydantic_secret_converter
 from forze_http.execution.deps.keys import HttpxClientDepKey
 from forze_http.kernel.client import HttpxClient, HttpxConfig, RoutedHttpxClient
@@ -53,12 +57,11 @@ class HttpxStartupHook(LifecycleHook):
 
 @final
 @attrs.define(slots=True, frozen=True, kw_only=True)
-class HttpxShutdownHook(LifecycleHook):
+class HttpxShutdownHook(ClientShutdownHook):
     """Close the httpx client."""
 
-    async def __call__(self, ctx: ExecutionContext) -> None:
-        client = ctx.deps.provide(HttpxClientDepKey)
-        await client.aclose()
+    dep_key: DepKey[Any] = attrs.field(default=HttpxClientDepKey, init=False)
+    close_method: str = attrs.field(default="aclose", init=False)
 
 
 # ....................... #

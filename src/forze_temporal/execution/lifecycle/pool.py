@@ -8,9 +8,13 @@ from forze.application.contracts.durable.workflow import (
     DurableWorkflowInvokeSpec,
     DurableWorkflowSpec,
 )
+from forze.application.contracts.deps import DepKey
 from forze.application.contracts.execution import LifecycleHook, LifecycleStep
 from forze.application.execution.context import ExecutionContext
-from forze.application.execution.lifecycle.builtin import routed_client_lifecycle_step
+from forze.application.execution.lifecycle.builtin import (
+    ClientShutdownHook,
+    routed_client_lifecycle_step,
+)
 from forze.base.exceptions import exc
 
 from ...adapters.schedule import TemporalWorkflowScheduleCommandAdapter
@@ -57,12 +61,10 @@ class TemporalStartupHook(LifecycleHook):
 
 @final
 @attrs.define(slots=True, frozen=True, kw_only=True)
-class TemporalShutdownHook(LifecycleHook):
+class TemporalShutdownHook(ClientShutdownHook):
     """Shutdown hook that releases the Temporal client reference."""
 
-    async def __call__(self, ctx: ExecutionContext) -> None:
-        temporal_client = ctx.deps.provide(TemporalClientDepKey)
-        await temporal_client.close()
+    dep_key: DepKey[Any] = attrs.field(default=TemporalClientDepKey, init=False)
 
 
 # ....................... #

@@ -6,8 +6,9 @@ import attrs
 
 from forze.application.contracts.execution import Before, BeforeFactory, BeforeStep
 from forze.application.execution.context import ExecutionContext
-from forze.base.exceptions import exc
 from forze.base.primitives import StrKey
+
+from .._base import authentication_guard_before, required_guard_step
 
 # ----------------------- #
 
@@ -18,16 +19,12 @@ class TenantRequired(BeforeFactory):
     """Before-hook factory that requires a bound :class:`~forze.application.contracts.tenancy.TenantIdentity`."""
 
     def __call__(self, ctx: ExecutionContext) -> Before[Any]:
-        async def _before(args: Any) -> None:
-            _ = args
-
-            if ctx.inv_ctx.get_tenant() is None:
-                raise exc.authentication(
-                    "Tenant identity is required",
-                    code="tenant_required",
-                )
-
-        return _before
+        return authentication_guard_before(
+            ctx,
+            lambda c: c.inv_ctx.get_tenant(),
+            message="Tenant identity is required",
+            code="tenant_required",
+        )
 
     # ....................... #
 
@@ -41,9 +38,9 @@ class TenantRequired(BeforeFactory):
     ) -> BeforeStep:
         """Build a :class:`BeforeStep` using this factory."""
 
-        return BeforeStep(
-            id=step_id,
-            factory=self,
+        return required_guard_step(
+            self,
+            step_id=step_id,
             requires=requires,
             depends_on=depends_on,
             priority=priority,

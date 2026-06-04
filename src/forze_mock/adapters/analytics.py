@@ -40,7 +40,7 @@ from forze_mock.query.cursors import (
     _mock_cursor_tokens,  # type: ignore[reportPrivateUsage]
 )
 from forze_mock.state import MockState
-from forze_mock.tenancy import MockTenancyMixin, partition_namespace
+from forze_mock.tenancy import MockTenancyMixin
 
 
 @final
@@ -58,10 +58,7 @@ class MockAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
     # ....................... #
 
     def _route(self) -> str:
-        return partition_namespace(
-            self.require_tenant_if_aware(),
-            str(self.spec.name),
-        )
+        return self._partitioned_namespace(str(self.spec.name))
 
     # ....................... #
 

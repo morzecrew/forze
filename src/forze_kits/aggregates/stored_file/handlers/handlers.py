@@ -96,8 +96,6 @@ class ListStoredFiles(Handler[ListStoredFilesRequestDTO, Paginated[StoredFileRea
     async def __call__(
         self, args: ListStoredFilesRequestDTO
     ) -> Paginated[StoredFileRead]:
-        page = args.page
-        size = args.size
         filters = merge_list_filters(
             args.filters,
             prefix=args.prefix,
@@ -108,7 +106,7 @@ class ListStoredFiles(Handler[ListStoredFilesRequestDTO, Paginated[StoredFileRea
         res = await self.doc.find_page(
             filters=filters,
             sorts=args.sorts,
-            pagination={"limit": size, "offset": (page - 1) * size},
+            pagination=args.to_offset_expression(),
         )
 
         return Paginated.from_page(res)

@@ -62,6 +62,36 @@ _F_TIMESTAMP: Final[str] = "timestamp"
 # ....................... #
 
 
+def _encode_envelope[M](
+    payload_codec: ModelCodec[M, Any],
+    payload: M,
+    *,
+    type: str | None,
+    key: str | None,
+    time_field: str,
+    time_value: datetime | None,
+) -> dict[str, str]:
+    """Build the field envelope shared by the pubsub and stream encoders."""
+
+    data: dict[str, str] = {
+        _F_PAYLOAD: payload_codec.encode_json_bytes(payload).decode(),
+    }
+
+    if type is not None:
+        data[_F_TYPE] = type
+
+    if key is not None:
+        data[_F_KEY] = key
+
+    if time_value is not None:
+        data[time_field] = time_value.isoformat()
+
+    return data
+
+
+# ....................... #
+
+
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class RedisPubSubCodec[M]:
@@ -86,18 +116,14 @@ class RedisPubSubCodec[M]:
         key: str | None = None,
         published_at: datetime | None = None,
     ) -> bytes:
-        data: dict[str, str] = {
-            _F_PAYLOAD: self.payload_codec.encode_json_bytes(payload).decode(),
-        }
-
-        if type is not None:
-            data[_F_TYPE] = type
-
-        if key is not None:
-            data[_F_KEY] = key
-
-        if published_at is not None:
-            data[_F_PUBLISHED_AT] = published_at.isoformat()
+        data = _encode_envelope(
+            self.payload_codec,
+            payload,
+            type=type,
+            key=key,
+            time_field=_F_PUBLISHED_AT,
+            time_value=published_at,
+        )
 
         return default_json_codec.dumps(data)
 
@@ -166,20 +192,14 @@ class RedisStreamCodec[M]:
         key: str | None = None,
         timestamp: datetime | None = None,
     ) -> dict[str, str]:
-        data: dict[str, str] = {
-            _F_PAYLOAD: self.payload_codec.encode_json_bytes(payload).decode(),
-        }
-
-        if type is not None:
-            data[_F_TYPE] = type
-
-        if key is not None:
-            data[_F_KEY] = key
-
-        if timestamp is not None:
-            data[_F_TIMESTAMP] = timestamp.isoformat()
-
-        return data
+        return _encode_envelope(
+            self.payload_codec,
+            payload,
+            type=type,
+            key=key,
+            time_field=_F_TIMESTAMP,
+            time_value=timestamp,
+        )
 
     # ....................... #
 

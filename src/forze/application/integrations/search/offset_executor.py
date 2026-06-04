@@ -199,49 +199,22 @@ async def execute_simple_offset_search_with_snapshot[M: BaseModel](
                 total=0,
             )
 
-    rows = outcome.rows
-    handle_out = None
-    pool_snap: list[M] | None = None
-
-    if want_snap and result_snapshot is not None and rs_spec is not None:
-        pool_len = len(rows)
-        pool_snap = codec.decode_mapping_many(rows, trust_source=trust_source)
-        handle_out = await result_snapshot.put_simple_ordered_hits(
-            pool_snap,
-            snap_opt=snapshot,
-            rs_spec=rs_spec,
-            fp_computed=fp_fingerprint,
-            pool_len_before_cap=pool_len,
-        )
-        rows = rows[page_offset : page_offset + page_limit]
-
-    effective_page_limit = (
-        page_limit
-        if want_snap
-        else (
-            int(pagination_dict["limit"])
-            if pagination_dict.get("limit") is not None
-            else len(rows)
-        )
-    )
-
-    page = materialize_mapping_rows(
-        codec=codec,
-        model_type=model_type,
-        page_rows=rows,
-        pool=pool_snap,
-        u=page_offset,
-        page_limit=effective_page_limit,
+    return await snapshot_materialize_and_paginate(
+        rows=outcome.rows,
+        want_snap=want_snap,
+        result_snapshot=result_snapshot,
+        rs_spec=rs_spec,
+        snapshot=snapshot,
+        fp_fingerprint=fp_fingerprint,
+        pagination_dict=pagination_dict,
+        page_limit=page_limit,
+        return_count=emit_total,
+        total=total,
         return_type=return_type,
         return_fields=return_fields,
+        model_type=model_type,
+        codec=codec,
         trust_source=trust_source,
-    )
-
-    return page_from_limit_offset(
-        page,
-        pagination_dict,
-        total=total if emit_total else None,
-        snapshot=handle_out,
     )
 
 

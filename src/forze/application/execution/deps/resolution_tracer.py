@@ -1,9 +1,10 @@
 """Optional recorder for observed dependency resolution edges."""
 
-from contextvars import ContextVar
 from typing import Protocol, final, runtime_checkable
 
 import attrs
+
+from forze.base.primitives import ContextVarTrace
 
 from .resolution import ResolutionFrame
 from .trace import DepsResolutionTrace
@@ -73,8 +74,8 @@ NOOP_RESOLUTION_TRACER = NoopResolutionTracer()
 class RecordingResolutionTracer:
     """Per-:class:`~forze.application.execution.deps.container.Deps` resolution edge recorder."""
 
-    _trace: ContextVar[DepsResolutionTrace | None] = attrs.field(
-        factory=lambda: ContextVar("deps_resolution_trace", default=None),
+    _trace: ContextVarTrace[DepsResolutionTrace] = attrs.field(
+        factory=lambda: ContextVarTrace(DepsResolutionTrace, "deps_resolution_trace"),
         init=False,
         repr=False,
         eq=False,
@@ -90,19 +91,7 @@ class RecordingResolutionTracer:
     # ....................... #
 
     def init_task(self) -> None:
-        if self._trace.get() is None:
-            self._trace.set(DepsResolutionTrace())
-
-    # ....................... #
-
-    def _trace_get_or_create(self) -> DepsResolutionTrace:
-        trace = self._trace.get()
-
-        if trace is None:
-            trace = DepsResolutionTrace()
-            self._trace.set(trace)
-
-        return trace
+        self._trace.init_task()
 
     # ....................... #
 
@@ -111,10 +100,10 @@ class RecordingResolutionTracer:
         parent: ResolutionFrame,
         child: ResolutionFrame,
     ) -> None:
-        self._trace_get_or_create().add_edge(parent, child)
+        self._trace.get_or_create().add_edge(parent, child)
 
     def snapshot(self) -> DepsResolutionTrace | None:
-        return self._trace.get()
+        return self._trace.snapshot()
 
 
 # ....................... #

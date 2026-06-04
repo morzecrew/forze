@@ -88,20 +88,6 @@ class hybridmethod(Generic[OwnerT, P, R]):
 
     # ....................... #
 
-    @property
-    def cls_method(self) -> Callable[Concatenate[type[OwnerT], P], R]:
-        """Class-level callable used when accessed on the owner type."""
-
-        return self._cls_method
-
-    @property
-    def inst_method(self) -> Callable[Concatenate[OwnerT, P], R] | None:
-        """Instance-level callable, or ``None`` if not registered."""
-
-        return self._instance_method
-
-    # ....................... #
-
     @overload
     def __get__(
         self,
@@ -148,7 +134,7 @@ class hybridmethod(Generic[OwnerT, P, R]):
             return bound
 
         if self._instance_method is None:
-            name = getattr(self.cls_method, "__name__", "<unknown>")
+            name = getattr(self._cls_method, "__name__", "<unknown>")
             owner_name = type(obj).__name__
             raise AttributeError(
                 f"'{owner_name}.{name}' is not available on instances: "
@@ -162,34 +148,6 @@ class hybridmethod(Generic[OwnerT, P, R]):
 
             update_wrapper(bound, self._instance_method)
             return bound
-
-    # ....................... #
-
-    def _bind_class(self, owner: type[Any]) -> Callable[..., Any]:
-        """Bind the class method to the given owner type."""
-
-        func = self._cls_method
-
-        def bound(*args: Any, **kwargs: Any) -> Any:
-            return func(owner, *args, **kwargs)
-
-        update_wrapper(bound, func)
-        return bound
-
-    # ....................... #
-
-    def _bind_instance(self, obj: Any) -> Callable[..., Any]:
-        """Bind the instance method to the given instance."""
-
-        func = self._instance_method
-        if func is None:
-            raise RuntimeError("Instance function is unexpectedly missing")
-
-        def bound(*args: Any, **kwargs: Any) -> Any:
-            return func(obj, *args, **kwargs)
-
-        update_wrapper(bound, func)
-        return bound
 
     # ....................... #
 

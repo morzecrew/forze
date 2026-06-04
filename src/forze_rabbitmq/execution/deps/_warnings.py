@@ -1,19 +1,14 @@
 """Private tenancy warning descriptors for RabbitMQ deps module."""
 
-from forze.application.contracts.tenancy import IntegrationRouteWarning
+from forze.application.contracts.tenancy import namespace_route_warning
 
 from .configs import RabbitMQQueueConfig
 
 # ----------------------- #
 
-
-def _queue_warning(*, kind: str) -> IntegrationRouteWarning[RabbitMQQueueConfig]:
-    return IntegrationRouteWarning(
-        kind=kind,
-        tenant_aware=lambda config: config.tenant_aware,
-        named_fields=lambda config: [("namespace", config.namespace)],
-    )
-
-
-RABBITMQ_QUEUE_READER_WARNING = _queue_warning(kind="queue_reader")
-RABBITMQ_QUEUE_WRITER_WARNING = _queue_warning(kind="queue_writer")
+RABBITMQ_QUEUE_READER_WARNING = namespace_route_warning(
+    RabbitMQQueueConfig, kind="queue_reader"
+)
+RABBITMQ_QUEUE_WRITER_WARNING = namespace_route_warning(
+    RabbitMQQueueConfig, kind="queue_writer"
+)

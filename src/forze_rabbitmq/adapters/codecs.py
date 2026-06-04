@@ -1,40 +1,13 @@
-from typing import Any, final
+from typing import final
 
 import attrs
 
-from forze.application.contracts.queue import QueueMessage
-from forze.base.serialization import ModelCodec
-
-from ..kernel.client import RabbitMQQueueMessage
+from forze.application.integrations.queue import QueueMessageCodec
 
 # ----------------------- #
 
 
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class RabbitMQQueueCodec[M]:
+class RabbitMQQueueCodec[M](QueueMessageCodec[M]):
     """RabbitMQ queue payload codec backed by a record-mapping codec."""
-
-    payload_codec: ModelCodec[M, Any]
-    """Codec for queue message payloads."""
-
-    # ....................... #
-
-    def encode(self, payload: M) -> bytes:
-        """Encode a payload into a bytes string."""
-
-        return self.payload_codec.encode_json_bytes(payload)
-
-    # ....................... #
-
-    def decode(self, queue: str, raw: RabbitMQQueueMessage) -> QueueMessage[M]:
-        """Decode a raw RabbitMQ queue message into a QueueMessage."""
-
-        return QueueMessage(
-            queue=queue,
-            id=raw.id,
-            payload=self.payload_codec.decode_json_bytes(raw.body),
-            type=raw.type,
-            enqueued_at=raw.enqueued_at,
-            key=raw.key,
-        )

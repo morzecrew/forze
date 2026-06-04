@@ -1,7 +1,7 @@
 """Stable fingerprints for deduplicating pooled resources."""
 
+import binascii
 import hashlib
-import hmac
 from urllib.parse import parse_qs, urlparse
 
 from pydantic import SecretStr
@@ -9,6 +9,15 @@ from pydantic import SecretStr
 # ----------------------- #
 
 _POOL_DEDUP_DOMAIN = b"forze.pool-dedup.v1"
+
+# scrypt cost parameters for secret dedup tags — intentionally minimal. These tags are
+# in-memory LRU pool-dedup keys: never persisted, never transmitted, so the offline
+# brute-force threat that warrants a high work factor does not apply. scrypt (a
+# recognized one-way KDF) is used only so secret material never reaches a fast hash.
+# Do NOT reuse these parameters for credential storage.
+_SECRET_DEDUP_SCRYPT_N = 2
+_SECRET_DEDUP_SCRYPT_R = 8
+_SECRET_DEDUP_SCRYPT_P = 1
 
 # ....................... #
 
@@ -32,9 +41,12 @@ def stable_fingerprint(*parts: str | bytes) -> str:
 
 
 def secret_dedup_fingerprint(value: str | SecretStr | None) -> str:
-    """Return a one-way tag for secret material in LRU pool dedup (not credential storage).
+    """Return a deterministic one-way tag for secret material in LRU pool dedup.
 
-    Uses HMAC-SHA256 with a fixed domain key. Returns ``""`` for ``None`` or empty values.
+    Uses ``scrypt`` with a fixed domain salt and minimal cost parameters: a recognized
+    one-way KDF keeps secret material out of fast hashes, while the low work factor
+    suits an in-memory dedup key (see the cost-parameter note above). Tags stay stable
+    for the same secret. Returns ``""`` for ``None`` or empty values.
     """
 
     if value is None:
@@ -45,11 +57,34 @@ def secret_dedup_fingerprint(value: str | SecretStr | None) -> str:
     if not raw:
         return ""
 
-    return hmac.new(
-        _POOL_DEDUP_DOMAIN,
+    derived = hashlib.scrypt(
         raw.encode("utf-8"),
-        hashlib.sha256,
-    ).hexdigest()  # codeql[py/weak-sensitive-data-hashing]
+        salt=_POOL_DEDUP_DOMAIN,
+        n=_SECRET_DEDUP_SCRYPT_N,
+        r=_SECRET_DEDUP_SCRYPT_R,
+        p=_SECRET_DEDUP_SCRYPT_P,
+    )
+    return binascii.hexlify(derived).decode("ascii")
+
+
+# ....................... #
+
+
+def combine_fingerprint(base: str, *secret_tags: str) -> str:
+    """Append already-hashed secret dedup tags to *base* without re-hashing them.
+
+    *base* is a :func:`stable_fingerprint` of non-secret fields; each tag comes from
+    :func:`secret_dedup_fingerprint` (a strong PBKDF2 digest). Joining the digests
+    (instead of re-hashing) keeps the combined key unique while ensuring secret-derived
+    data never passes through the fast cache hash again. Empty tags are ignored.
+    """
+
+    tags = [tag for tag in secret_tags if tag]
+
+    if not tags:
+        return base
+
+    return "\x1f".join((base, *tags))
 
 
 # ....................... #
@@ -86,11 +121,9 @@ def connection_string_fingerprint(dsn: str) -> str:
     sslmode = query.get("sslmode", [""])[0]
     options = query.get("options", [""])[0]
     password_tag = secret_dedup_fingerprint(parsed.password) if parsed.password else ""
-    query_canonical = "&".join(
-        f"{key}={query[key][0]}" for key in sorted(query)
-    )
+    query_canonical = "&".join(f"{key}={query[key][0]}" for key in sorted(query))
 
-    return stable_fingerprint(
+    base_fp = stable_fingerprint(
         parsed.scheme or "",
         parsed.hostname or "",
         str(parsed.port or ""),
@@ -98,6 +131,7 @@ def connection_string_fingerprint(dsn: str) -> str:
         parsed.username or "",
         sslmode,
         options,
-        password_tag,
         query_canonical,
     )
+
+    return combine_fingerprint(base_fp, password_tag)

@@ -6,6 +6,7 @@ import attrs
 from forze.application.contracts.authn import PrincipalEligibilityPort
 from forze.application.contracts.document import DocumentQueryPort
 from forze.base.exceptions import exc
+from forze_identity._secure_spec import forbid_cache_and_history
 from forze_identity.authz.domain.models.policy_principal import ReadPolicyPrincipal
 
 # ----------------------- #
@@ -24,15 +25,7 @@ class PolicyPrincipalEligibilityAdapter(PrincipalEligibilityPort):
     def __attrs_post_init__(self) -> None:
         spec = self.principal_qry.spec
 
-        if spec.cache is not None:
-            raise exc.internal(
-                "Policy principal caching is forbidden by security reasons",
-            )
-
-        if spec.history_enabled:
-            raise exc.internal(
-                "Policy principal history is forbidden by security reasons",
-            )
+        forbid_cache_and_history(spec, label="Policy principal")
 
     # ....................... #
 

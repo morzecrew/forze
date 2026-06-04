@@ -5,6 +5,8 @@ from __future__ import annotations
 from datetime import timedelta
 from typing import TYPE_CHECKING, Any
 
+from forze.application.contracts.base import BaseSpec
+from forze.application.contracts.deps import DepKey
 from forze.application.contracts.outbox import (
     OutboxDestinationKind,
     OutboxRelayResult,
@@ -56,6 +58,81 @@ def _assert_route_matches(destination: OutboxDestination, spec_name: str) -> Non
 # ....................... #
 
 
+def _resolve_channel(
+    outbox_spec: OutboxSpec[Any],
+    *,
+    spec_name: str,
+    expected_kind: OutboxDestinationKind,
+    allow_unset: bool = False,
+) -> str:
+    """Validate the outbox destination against *expected_kind* and return its channel.
+
+    When *allow_unset* is set and no destination is configured, *spec_name* is used
+    as the channel (queue fallback).
+    """
+
+    destination = outbox_spec.destination
+
+    if destination is None and allow_unset:
+        return spec_name
+
+    dest = _require_destination(destination, expected_kind=expected_kind)
+    _assert_route_matches(dest, spec_name)
+
+    return dest.channel
+
+
+# ....................... #
+
+
+async def _relay_outbox_to(
+    ctx: ExecutionContext,
+    *,
+    outbox_spec: OutboxSpec[Any],
+    spec: BaseSpec,
+    dep_key: DepKey[Any],
+    expected_kind: OutboxDestinationKind,
+    method: str,
+    allow_unset_destination: bool = False,
+    limit: int | None,
+    reclaim_stale_after: timedelta | None,
+) -> OutboxRelayResult:
+    """Claim pending outbox rows and relay each via ``command.<method>(channel, ...)``.
+
+    The command-port method (``enqueue``/``append``/``publish``) shares the same
+    ``(channel, payload, *, type, key)`` signature across queue, stream, and pubsub,
+    so only the resolved command, dep key, and method name differ per transport.
+    """
+
+    channel = _resolve_channel(
+        outbox_spec,
+        spec_name=str(spec.name),
+        expected_kind=expected_kind,
+        allow_unset=allow_unset_destination,
+    )
+
+    command = ctx.deps.resolve_configurable(ctx, dep_key, spec, route=spec.name)
+
+    async def _publish(claim: OutboxClaim, payload: Any) -> None:
+        await getattr(command, method)(
+            channel,
+            payload,
+            type=claim.event_type,
+            key=str(claim.event_id),
+        )
+
+    return await relay_outbox_claims(
+        ctx,
+        outbox_spec=outbox_spec,
+        publish_one=_publish,
+        limit=limit,
+        reclaim_stale_after=reclaim_stale_after,
+    )
+
+
+# ....................... #
+
+
 async def relay_outbox_to_queue(
     ctx: ExecutionContext,
     *,
@@ -85,33 +162,14 @@ async def relay_outbox_to_queue(
     otherwise *queue_spec* ``name`` is used as the channel.
     """
 
-    destination = outbox_spec.destination
-    if destination is not None:
-        _require_destination(destination, expected_kind="queue")
-        _assert_route_matches(destination, str(queue_spec.name))
-        queue_channel = destination.channel
-    else:
-        queue_channel = str(queue_spec.name)
-
-    command = ctx.deps.resolve_configurable(
-        ctx,
-        QueueCommandDepKey,
-        queue_spec,
-        route=queue_spec.name,
-    )
-
-    async def _publish(claim: OutboxClaim, payload: Any) -> None:
-        await command.enqueue(
-            queue_channel,
-            payload,
-            key=str(claim.event_id),
-            type=claim.event_type,
-        )
-
-    return await relay_outbox_claims(
+    return await _relay_outbox_to(
         ctx,
         outbox_spec=outbox_spec,
-        publish_one=_publish,
+        spec=queue_spec,
+        dep_key=QueueCommandDepKey,
+        expected_kind="queue",
+        method="enqueue",
+        allow_unset_destination=True,
         limit=limit,
         reclaim_stale_after=reclaim_stale_after,
     )
@@ -130,28 +188,13 @@ async def relay_outbox_to_stream(
 ) -> OutboxRelayResult:
     """Claim pending outbox rows, append to a stream, and mark published or failed."""
 
-    destination = _require_destination(outbox_spec.destination, expected_kind="stream")
-    _assert_route_matches(destination, str(stream_spec.name))
-
-    command = ctx.deps.resolve_configurable(
-        ctx,
-        StreamCommandDepKey,
-        stream_spec,
-        route=stream_spec.name,
-    )
-
-    async def _publish(claim: OutboxClaim, payload: Any) -> None:
-        await command.append(
-            destination.channel,
-            payload,
-            type=claim.event_type,
-            key=str(claim.event_id),
-        )
-
-    return await relay_outbox_claims(
+    return await _relay_outbox_to(
         ctx,
         outbox_spec=outbox_spec,
-        publish_one=_publish,
+        spec=stream_spec,
+        dep_key=StreamCommandDepKey,
+        expected_kind="stream",
+        method="append",
         limit=limit,
         reclaim_stale_after=reclaim_stale_after,
     )
@@ -170,28 +213,13 @@ async def relay_outbox_to_pubsub(
 ) -> OutboxRelayResult:
     """Claim pending outbox rows, publish to a topic, and mark published or failed."""
 
-    destination = _require_destination(outbox_spec.destination, expected_kind="pubsub")
-    _assert_route_matches(destination, str(pubsub_spec.name))
-
-    command = ctx.deps.resolve_configurable(
-        ctx,
-        PubSubCommandDepKey,
-        pubsub_spec,
-        route=pubsub_spec.name,
-    )
-
-    async def _publish(claim: OutboxClaim, payload: Any) -> None:
-        await command.publish(
-            destination.channel,
-            payload,
-            type=claim.event_type,
-            key=str(claim.event_id),
-        )
-
-    return await relay_outbox_claims(
+    return await _relay_outbox_to(
         ctx,
         outbox_spec=outbox_spec,
-        publish_one=_publish,
+        spec=pubsub_spec,
+        dep_key=PubSubCommandDepKey,
+        expected_kind="pubsub",
+        method="publish",
         limit=limit,
         reclaim_stale_after=reclaim_stale_after,
     )

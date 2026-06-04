@@ -4,93 +4,54 @@ require_clickhouse()
 
 # ....................... #
 
-from typing import Any, Mapping
+from collections.abc import Mapping
+from typing import Any
 
 import aiohttp
 
-from forze.base.conformity import static_fn_conformity
 from forze.base.exceptions import (
     CoreException,
     ExceptionInterceptor,
-    ExceptionMapper,
     default_chain_exc_mapper,
+    make_http_exception_mapper,
 )
 
 # ----------------------- #
 
 
-def _response_status(exc: BaseException) -> int | None:
-    status = getattr(exc, "status", None)
-
-    if status is not None:
-        return int(status)
-
-    code = getattr(exc, "code", None)
-
-    if code is not None:
-        return int(code)
-
-    return None
+def _clickhouse_http_message(status: int | None) -> str:
+    return f"ClickHouse request failed ({status})."
 
 
 # ....................... #
 
 
-@static_fn_conformity(ExceptionMapper)  # type: ignore[type-abstract]
-def _clickhouse_eh(
-    exc: BaseException,
-    *,
-    site: str,
-    details: Mapping[str, Any] | None = None,
-) -> CoreException | None:
-    """Normalize clickhouse-connect / aiohttp errors."""
+def _clickhouse_fallback(
+    exc: BaseException, site: str, details: Mapping[str, Any] | None
+) -> CoreException:
+    msg = str(exc).lower()
 
-    match exc:
-        case CoreException():
-            return exc
+    if "authentication" in msg or "password" in msg:
+        return CoreException.infrastructure(
+            "ClickHouse access denied.",
+            details=details,
+        )
 
-        case aiohttp.ClientResponseError() as cre:
-            status = _response_status(cre)
-
-            if status == 404:
-                return CoreException.infrastructure(
-                    "ClickHouse resource not found.",
-                    details=details,
-                )
-
-            if status in {401, 403}:
-                return CoreException.infrastructure(
-                    "ClickHouse access denied.",
-                    details=details,
-                )
-
-            if status == 429:
-                return CoreException.infrastructure(
-                    "ClickHouse request throttled.",
-                    details=details,
-                )
-
-            return CoreException.infrastructure(
-                f"ClickHouse request failed ({status}).",
-                details=details,
-            )
-
-        case _:
-            msg = str(exc).lower()
-
-            if "authentication" in msg or "password" in msg:
-                return CoreException.infrastructure(
-                    "ClickHouse access denied.",
-                    details=details,
-                )
-
-            return CoreException.infrastructure(
-                f"ClickHouse error during {site}.",
-                details=details,
-            )
+    return CoreException.infrastructure(
+        f"ClickHouse error during {site}.",
+        details=details,
+    )
 
 
 # ....................... #
+
+_clickhouse_eh = make_http_exception_mapper(
+    label="ClickHouse",
+    response_error_type=aiohttp.ClientResponseError,
+    http_status_message=_clickhouse_http_message,
+    fallback=_clickhouse_fallback,
+)
+"""Normalize clickhouse-connect / aiohttp errors into the :class:`exc.internal` hierarchy."""
 
 _clickhouse_chain = default_chain_exc_mapper.chain(_clickhouse_eh)
 exc_interceptor = ExceptionInterceptor(mapper=_clickhouse_chain)

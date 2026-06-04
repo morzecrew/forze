@@ -17,6 +17,7 @@ from types_aiobotocore_s3.client import S3Client as AsyncS3Client
 from forze.application.integrations.storage.client import (
     ObjectStorageHead,
     ObjectStorageListedObject,
+    normalize_list_window,
 )
 from forze.base.exceptions import exc
 
@@ -373,15 +374,7 @@ class S3Client(S3ClientPort):
         paginator = c.get_paginator("list_objects_v2")
         _prefix = prefix or ""
 
-        if limit is not None and limit <= 0:
-            raise exc.internal("limit must be > 0")  # Validation ?
-
-        if offset is not None and offset < 0:
-            raise exc.internal("offset must be >= 0")  # Validation ?
-
-        # Defaults
-        _limit = limit if limit is not None else 10_000_000  # effectively "no limit"
-        _offset = offset or 0
+        _limit, _offset = normalize_list_window(limit, offset)
 
         items: list[ObjectStorageListedObject] = []
         total_count = 0

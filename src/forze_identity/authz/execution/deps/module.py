@@ -14,6 +14,7 @@ from forze.application.contracts.authz import (
 from forze.application.execution import Deps, DepsModule
 from forze.base.exceptions import exc
 from forze.base.primitives import StrKey
+from forze_identity._routes import normalize_route_set as _normalize_route_set
 
 from .configs import AuthzKernelConfig, build_authz_shared_services
 from .deps import (
@@ -25,12 +26,6 @@ from .deps import (
 )
 
 # ----------------------- #
-
-
-def _normalize_route_set(
-    routes: Collection[StrKey] | None,
-) -> frozenset[StrKey]:
-    return frozenset(routes) if routes else frozenset()
 
 
 @final

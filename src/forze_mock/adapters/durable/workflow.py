@@ -29,6 +29,11 @@ def _route(spec_name: str) -> str:
     return str(spec_name)
 
 
+def _workflow_runs(state: MockState, spec_name: str) -> dict[str, Any]:
+    with state.lock:
+        return state.durable_workflows.setdefault(_route(spec_name), {})
+
+
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class MockDurableWorkflowCommandAdapter[In: BaseModel, Out: BaseModel](
@@ -38,8 +43,7 @@ class MockDurableWorkflowCommandAdapter[In: BaseModel, Out: BaseModel](
     state: MockState
 
     def _runs(self) -> dict[str, Any]:
-        with self.state.lock:
-            return self.state.durable_workflows.setdefault(_route(self.spec.name), {})
+        return _workflow_runs(self.state, self.spec.name)
 
     async def start(
         self,
@@ -116,8 +120,7 @@ class MockDurableWorkflowQueryAdapter[In: BaseModel, Out: BaseModel](
     state: MockState
 
     def _runs(self) -> dict[str, Any]:
-        with self.state.lock:
-            return self.state.durable_workflows.setdefault(_route(self.spec.name), {})
+        return _workflow_runs(self.state, self.spec.name)
 
     async def query[Q: BaseModel, Res: BaseModel](
         self,

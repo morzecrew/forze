@@ -1,12 +1,16 @@
 """Firestore client pool lifecycle hooks and step factories."""
 
-from typing import cast, final
+from typing import Any, cast, final
 
 import attrs
 
+from forze.application.contracts.deps import DepKey
 from forze.application.contracts.execution import LifecycleHook, LifecycleStep
 from forze.application.execution import ExecutionContext
-from forze.application.execution.lifecycle.builtin import routed_client_lifecycle_step
+from forze.application.execution.lifecycle.builtin import (
+    ClientShutdownHook,
+    routed_client_lifecycle_step,
+)
 
 from ...kernel.client import FirestoreClient, RoutedFirestoreClient
 from ..deps import FirestoreClientDepKey
@@ -41,12 +45,10 @@ class FirestoreStartupHook(LifecycleHook):
 
 @final
 @attrs.define(slots=True, frozen=True, kw_only=True)
-class FirestoreShutdownHook(LifecycleHook):
+class FirestoreShutdownHook(ClientShutdownHook):
     """Shutdown hook that closes the Firestore client."""
 
-    async def __call__(self, ctx: ExecutionContext) -> None:
-        client = ctx.deps.provide(FirestoreClientDepKey)
-        await client.close()
+    dep_key: DepKey[Any] = attrs.field(default=FirestoreClientDepKey, init=False)
 
 
 # ....................... #

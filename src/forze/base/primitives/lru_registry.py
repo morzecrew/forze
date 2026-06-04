@@ -40,6 +40,14 @@ _creating_slot: ContextVar[Any | None] = ContextVar(
 # ....................... #
 
 
+def _validate_max_entries(max_entries: int) -> None:
+    if max_entries < 1:
+        raise exc.internal("max_entries must be at least 1")
+
+
+# ....................... #
+
+
 @attrs.define(slots=True)
 class _DedupIndex(Generic[K, R]):
     """Maps logical keys to deduplicated slot keys with refcounting."""
@@ -142,8 +150,7 @@ class SimpleLruRegistry(Generic[K, V, R]):
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
-        if self.max_entries < 1:
-            raise exc.internal("max_entries must be at least 1")
+        _validate_max_entries(self.max_entries)
 
         self._dedup = _DedupIndex(dedup_key=self.dedup_key)
 
@@ -408,8 +415,7 @@ class GuardedLruRegistry(Generic[K, V, R]):
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
-        if self.max_entries < 1:
-            raise exc.internal("max_entries must be at least 1")
+        _validate_max_entries(self.max_entries)
 
         self._dedup = _DedupIndex(dedup_key=self.dedup_key)
 

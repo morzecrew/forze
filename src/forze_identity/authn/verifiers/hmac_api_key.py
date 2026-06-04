@@ -9,6 +9,7 @@ from forze.application.contracts.authn import (
 )
 from forze.application.contracts.document import DocumentQueryPort
 from forze.base.exceptions import exc
+from forze_identity._secure_spec import forbid_cache_and_history
 from forze.base.primitives import utcnow
 
 from ..adapters._utils import find_api_key_account_by_key_hash
@@ -35,15 +36,7 @@ class HmacApiKeyVerifier(ApiKeyVerifierPort):
     def __attrs_post_init__(self) -> None:
         spec = self.ak_qry.spec
 
-        if spec.cache is not None:
-            raise exc.internal(
-                "API key account caching is forbidden by security reasons"
-            )
-
-        if spec.history_enabled:
-            raise exc.internal(
-                "API key account history is forbidden by security reasons"
-            )
+        forbid_cache_and_history(spec, label="API key account")
 
     # ....................... #
 
