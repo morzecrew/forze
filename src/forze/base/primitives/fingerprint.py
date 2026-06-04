@@ -9,7 +9,15 @@ from pydantic import SecretStr
 # ----------------------- #
 
 _POOL_DEDUP_DOMAIN = b"forze.pool-dedup.v1"
-_SECRET_DEDUP_PBKDF2_ITERATIONS = 200_000
+
+# scrypt cost parameters for secret dedup tags — intentionally minimal. These tags are
+# in-memory LRU pool-dedup keys: never persisted, never transmitted, so the offline
+# brute-force threat that warrants a high work factor does not apply. scrypt (a
+# recognized one-way KDF) is used only so secret material never reaches a fast hash.
+# Do NOT reuse these parameters for credential storage.
+_SECRET_DEDUP_SCRYPT_N = 2
+_SECRET_DEDUP_SCRYPT_R = 8
+_SECRET_DEDUP_SCRYPT_P = 1
 
 # ....................... #
 
@@ -35,8 +43,10 @@ def stable_fingerprint(*parts: str | bytes) -> str:
 def secret_dedup_fingerprint(value: str | SecretStr | None) -> str:
     """Return a deterministic one-way tag for secret material in LRU pool dedup.
 
-    Uses PBKDF2-HMAC-SHA256 with a fixed domain salt to keep tags stable for dedup.
-    Returns ``""`` for ``None`` or empty values.
+    Uses ``scrypt`` with a fixed domain salt and minimal cost parameters: a recognized
+    one-way KDF keeps secret material out of fast hashes, while the low work factor
+    suits an in-memory dedup key (see the cost-parameter note above). Tags stay stable
+    for the same secret. Returns ``""`` for ``None`` or empty values.
     """
 
     if value is None:
@@ -47,11 +57,12 @@ def secret_dedup_fingerprint(value: str | SecretStr | None) -> str:
     if not raw:
         return ""
 
-    derived = hashlib.pbkdf2_hmac(
-        "sha256",
+    derived = hashlib.scrypt(
         raw.encode("utf-8"),
-        _POOL_DEDUP_DOMAIN,
-        _SECRET_DEDUP_PBKDF2_ITERATIONS,
+        salt=_POOL_DEDUP_DOMAIN,
+        n=_SECRET_DEDUP_SCRYPT_N,
+        r=_SECRET_DEDUP_SCRYPT_R,
+        p=_SECRET_DEDUP_SCRYPT_P,
     )
     return binascii.hexlify(derived).decode("ascii")
 
