@@ -1,7 +1,7 @@
 """Shared tenancy wiring validation for integration deps modules."""
 
 from collections.abc import Mapping
-from typing import Callable, Literal, Sequence, TypeVar
+from typing import Any, Callable, Literal, Protocol, Sequence, TypeVar
 
 import attrs
 
@@ -88,6 +88,45 @@ class IntegrationRouteWarning[ConfigT]:
         Sequence[tuple[str, NamedResourceSpec | None]],
     ] = lambda _config: ()
     """Return named resource fields to inspect for dynamic resolvers."""
+
+
+# ....................... #
+
+
+class _NamespacedRouteConfig(Protocol):
+    """Structural config exposing a base namespace and a row-level tenant flag."""
+
+    @property
+    def tenant_aware(self) -> bool: ...
+
+    @property
+    def namespace(self) -> Any:
+        # ``Any`` (not ``NamedResourceSpec``) so attrs ``converter=`` fields, which
+        # type checkers model as an opaque descriptor, still satisfy the protocol.
+        ...
+
+
+# ....................... #
+
+
+def namespace_route_warning[C: _NamespacedRouteConfig](
+    config_type: type[C],
+    *,
+    kind: str,
+) -> IntegrationRouteWarning[C]:
+    """Build a route warning for a namespaced, tenant-aware integration config.
+
+    Shared by namespace-based integrations (Redis, SQS, RabbitMQ); *config_type*
+    only pins the generic config type for the returned descriptor.
+    """
+
+    _ = config_type
+
+    return IntegrationRouteWarning[C](
+        kind=kind,
+        tenant_aware=lambda config: config.tenant_aware,
+        named_fields=lambda config: [("namespace", config.namespace)],
+    )
 
 
 # ....................... #

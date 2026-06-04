@@ -26,6 +26,8 @@ from forze.base.exceptions import exc
 from forze.base.primitives import StrKey
 from forze.domain.models import BaseDTO
 
+from .._base import required_guard_step
+
 # ----------------------- #
 
 
@@ -121,9 +123,9 @@ class AuthzBeforeAuthorize(BeforeFactory):
     ) -> BeforeStep:
         """Build a :class:`BeforeStep` using this factory."""
 
-        return BeforeStep(
-            id=step_id,
-            factory=self,
+        return required_guard_step(
+            self,
+            step_id=step_id,
             requires=requires,
             depends_on=depends_on,
             priority=priority,

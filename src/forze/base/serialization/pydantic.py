@@ -11,6 +11,7 @@ from pydantic import BaseModel, SecretStr, TypeAdapter
 from .._logger import logger
 from ..exceptions import exc
 from ..primitives import JsonDict
+from ._common import sequence_as_list, validate_batch_size
 from .model_codec import ModelDumpExcludeOptions
 
 # ----------------------- #
@@ -108,7 +109,7 @@ def pydantic_validate_many_trusted[M: BaseModel](
     """Trusted bulk decode: one allowed-field set, tight construct loop (no per-row helper calls)."""
 
     _ = forbid_extra
-    payload = _sequence_as_list(data)
+    payload = sequence_as_list(data)
 
     if not payload:
         return []
@@ -137,15 +138,6 @@ def pydantic_validate_many_trusted[M: BaseModel](
 # ....................... #
 
 
-def _sequence_as_list[T](seq: Sequence[T]) -> list[T]:
-    """Return ``seq`` as a ``list`` without copying when already a list."""
-
-    return seq if isinstance(seq, list) else list(seq)
-
-
-# ....................... #
-
-
 def pydantic_validate_many[M: BaseModel](
     cls: type[M],
     data: Sequence[JsonDict],
@@ -167,7 +159,7 @@ def pydantic_validate_many[M: BaseModel](
         forbid_extra,
     )
     adapter = _list_adapter(cls)
-    payload = _sequence_as_list(data)
+    payload = sequence_as_list(data)
 
     return adapter.validate_python(
         payload,
@@ -198,11 +190,9 @@ def pydantic_validate_many_batched[M: BaseModel](
     :yields: Consecutive ``list[M]`` chunks covering all of ``data``.
     """
 
-    if batch_size < 1:
-        msg = "batch_size must be >= 1"
-        raise ValueError(msg)
+    validate_batch_size(batch_size)
 
-    seq = _sequence_as_list(data)
+    seq = sequence_as_list(data)
     if not seq:
         return
 
@@ -341,7 +331,7 @@ def pydantic_dump_many(
 
     adapter = _list_adapter(cls)
     dumped = adapter.dump_python(
-        _sequence_as_list(objs),
+        sequence_as_list(objs),
         mode=mode,
         exclude_unset=exclude.get("unset", False),
         exclude_none=exclude.get("none", False),
@@ -371,14 +361,12 @@ def pydantic_dump_many_batched(
     :yields: Consecutive ``list[JsonDict]`` chunks in original order.
     """
 
-    if batch_size < 1:
-        msg = "batch_size must be >= 1"
-        raise ValueError(msg)
+    validate_batch_size(batch_size)
 
     if not objs:
         return
 
-    seq = _sequence_as_list(objs)
+    seq = sequence_as_list(objs)
     cls = type(seq[0])
     adapter = _list_adapter(cls)
     exclude_unset = exclude.get("unset", False)

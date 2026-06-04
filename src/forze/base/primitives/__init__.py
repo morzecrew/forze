@@ -1,6 +1,6 @@
 """Primitive types and helpers shared across the application."""
 
-from .buffer import ContextualBuffer
+from .buffer import ContextualBuffer, ContextVarTrace
 from .datetime import utcnow
 from .fingerprint import (
     connection_string_fingerprint,
@@ -34,6 +34,7 @@ __all__ = [
     "GuardedLruRegistry",
     "SimpleLruRegistry",
     "ContextualBuffer",
+    "ContextVarTrace",
     "normalize_string",
     "JsonDict",
     "StrKey",
