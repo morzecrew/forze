@@ -1,3 +1,4 @@
+import time
 from collections import OrderedDict
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator, Awaitable, Callable
@@ -44,6 +45,13 @@ class TenantClientRegistry[C, R = str]:
     process; an evicted entry is simply recomputed on the tenant's next access.
     """
 
+    __fingerprint_times: dict[UUID, float] = attrs.field(
+        factory=dict,
+        init=False,
+        repr=False,
+    )
+    """Monotonic timestamps for cached fingerprints, used for optional TTL refresh."""
+
     __started: bool = attrs.field(default=False, init=False)
 
     __registry: GuardedLruRegistry[UUID, C, R] | SimpleLruRegistry[UUID, C, R] = (
@@ -84,6 +92,7 @@ class TenantClientRegistry[C, R = str]:
 
     async def evict(self, tenant_id: UUID) -> None:
         self.__fingerprints.pop(tenant_id, None)
+        self.__fingerprint_times.pop(tenant_id, None)
         await self.__registry.evict(tenant_id)
 
     # ....................... #
@@ -93,9 +102,11 @@ class TenantClientRegistry[C, R = str]:
 
         self.__fingerprints[tenant_id] = fingerprint
         self.__fingerprints.move_to_end(tenant_id)
+        self.__fingerprint_times[tenant_id] = time.monotonic()
 
         while len(self.__fingerprints) > self.max_entries:
-            self.__fingerprints.popitem(last=False)
+            evicted, _ = self.__fingerprints.popitem(last=False)
+            self.__fingerprint_times.pop(evicted, None)
 
     # ....................... #
 
@@ -106,6 +117,18 @@ class TenantClientRegistry[C, R = str]:
             self.__fingerprints.move_to_end(tenant_id)
 
         return fingerprint
+
+    # ....................... #
+
+    def is_fingerprint_expired(self, tenant_id: UUID, ttl: float) -> bool:
+        """Whether *tenant_id*'s cached fingerprint is older than *ttl* seconds.
+
+        Returns ``True`` when no timestamp is recorded (treat as expired).
+        """
+
+        stamped = self.__fingerprint_times.get(tenant_id)
+
+        return stamped is None or (time.monotonic() - stamped) > ttl
 
     # ....................... #
 

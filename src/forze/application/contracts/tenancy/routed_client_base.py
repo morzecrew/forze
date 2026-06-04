@@ -40,11 +40,12 @@ class RoutedTenantClientBase(Generic[C]):
     fields, including secrets (see :meth:`credential_fingerprint` /
     :func:`~forze.base.primitives.build_routing_fingerprint`), so rotated credentials
     produce a different fingerprint. The fingerprint and pooled client are cached until
-    explicitly invalidated, so rotation is **signal-driven**: wire your secret store's
-    rotation notification to :meth:`evict_tenant`, which drops both the cached
-    fingerprint and the client so the next access rebuilds with fresh credentials.
-    There is intentionally no time-based polling, which would add periodic secret-store
-    load for every pooled tenant.
+    explicitly invalidated, so rotation is **signal-driven** by default: wire your
+    secret store's rotation notification to :meth:`evict_tenant`, which drops both the
+    cached fingerprint and the client so the next access rebuilds with fresh
+    credentials. For deployments without such a signal, set :attr:`fingerprint_ttl`
+    (seconds) to periodically re-resolve credentials and rebuild only when the
+    fingerprint actually changed.
     """
 
     secrets: SecretsPort
@@ -53,6 +54,15 @@ class RoutedTenantClientBase(Generic[C]):
     max_cached_tenants: int = 100
     guarded: bool = False
     tenant_required_message: str = "Tenant ID is required for routed access"
+    fingerprint_ttl: float | None = None
+    """Optional seconds-based TTL for credential-rotation refresh.
+
+    When set, a tenant's cached fingerprint is re-resolved on first access after it ages
+    past *fingerprint_ttl*; if the credentials changed, the pooled client is evicted and
+    rebuilt. ``None`` (default) keeps fingerprints cached until :meth:`evict_tenant`
+    (signal-driven rotation). Adds periodic secret-store load per active tenant, so
+    prefer the signal-driven path when a rotation notification is available.
+    """
 
     _pool: TenantClientRegistry[C, str] = attrs.field(init=False)
 
@@ -105,6 +115,18 @@ class RoutedTenantClientBase(Generic[C]):
             self.tenant_provider,
             message=self.tenant_required_message,
         )
+
+    # ....................... #
+
+    def _fingerprint_expiry_check(self) -> Callable[[UUID], bool] | None:
+        """Return a per-tenant staleness predicate when :attr:`fingerprint_ttl` is set."""
+
+        ttl = self.fingerprint_ttl
+
+        if ttl is None:
+            return None
+
+        return lambda tenant_id: self._pool.is_fingerprint_expired(tenant_id, ttl)
 
     # ....................... #
 
@@ -169,6 +191,8 @@ class DsnRoutedTenantClientBase(RoutedTenantClientBase[C]):
             secrets=self.secrets,
             ref_for_tenant=self.secret_ref_for_tenant,
             backend=self.dsn_backend,
+            is_expired=self._fingerprint_expiry_check(),
+            on_change=self._pool.evict,
         )
 
 
@@ -223,4 +247,6 @@ class StructuredSecretRoutedTenantClientBase(RoutedTenantClientBase[C]):
             self._pool.set_fingerprint,
             tenant_id=tenant_id,
             fingerprint=_fingerprint,
+            is_expired=self._fingerprint_expiry_check(),
+            on_change=self._pool.evict,
         )

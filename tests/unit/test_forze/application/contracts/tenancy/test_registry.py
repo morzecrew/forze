@@ -90,5 +90,23 @@ def test_fingerprint_cache_get_is_lru_touch() -> None:
     assert registry.get_fingerprint(c) == "fp-c"
 
 
+def test_is_fingerprint_expired() -> None:
+    registry: TenantClientRegistry[str, str] = TenantClientRegistry(
+        max_entries=4,
+        create=lambda tid: _async_return("x"),
+        dispose=lambda _c: _async_return(None),
+    )
+    tid = UUID(int=1)
+
+    # No fingerprint cached yet -> treated as expired.
+    assert registry.is_fingerprint_expired(tid, 60.0) is True
+
+    registry.set_fingerprint(tid, "fp")
+
+    # Just stamped -> within a generous TTL, but past a negative TTL.
+    assert registry.is_fingerprint_expired(tid, 60.0) is False
+    assert registry.is_fingerprint_expired(tid, -1.0) is True
+
+
 async def _async_return[T](value: T) -> T:
     return value
