@@ -2,7 +2,6 @@
 
 import binascii
 import hashlib
-import hmac
 from urllib.parse import parse_qs, urlparse
 
 from pydantic import SecretStr
@@ -27,9 +26,7 @@ def stable_fingerprint(*parts: str | bytes) -> str:
         else:
             normalized.append(part)
 
-    return hashlib.sha256(
-        b"\x1f".join(normalized),  # codeql[py/weak-sensitive-data-hashing]
-    ).hexdigest()
+    return hashlib.sha256(b"\x1f".join(normalized)).hexdigest()
 
 
 # ....................... #
@@ -57,6 +54,26 @@ def secret_dedup_fingerprint(value: str | SecretStr | None) -> str:
         _SECRET_DEDUP_PBKDF2_ITERATIONS,
     )
     return binascii.hexlify(derived).decode("ascii")
+
+
+# ....................... #
+
+
+def combine_fingerprint(base: str, *secret_tags: str) -> str:
+    """Append already-hashed secret dedup tags to *base* without re-hashing them.
+
+    *base* is a :func:`stable_fingerprint` of non-secret fields; each tag comes from
+    :func:`secret_dedup_fingerprint` (a strong PBKDF2 digest). Joining the digests
+    (instead of re-hashing) keeps the combined key unique while ensuring secret-derived
+    data never passes through the fast cache hash again. Empty tags are ignored.
+    """
+
+    tags = [tag for tag in secret_tags if tag]
+
+    if not tags:
+        return base
+
+    return "\x1f".join((base, *tags))
 
 
 # ....................... #
@@ -106,11 +123,4 @@ def connection_string_fingerprint(dsn: str) -> str:
         query_canonical,
     )
 
-    if not password_tag:
-        return base_fp
-
-    return hmac.new(
-        _POOL_DEDUP_DOMAIN,
-        f"{base_fp}\x1f{password_tag}".encode("utf-8"),
-        hashlib.sha256,
-    ).hexdigest()
+    return combine_fingerprint(base_fp, password_tag)

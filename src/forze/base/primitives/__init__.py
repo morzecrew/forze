@@ -3,6 +3,7 @@
 from .buffer import ContextualBuffer, ContextVarTrace
 from .datetime import utcnow
 from .fingerprint import (
+    combine_fingerprint,
     connection_string_fingerprint,
     gcp_credential_dedup_tag,
     secret_dedup_fingerprint,
@@ -29,6 +30,7 @@ __all__ = [
     "CachedInflightLane",
     "stable_fingerprint",
     "secret_dedup_fingerprint",
+    "combine_fingerprint",
     "gcp_credential_dedup_tag",
     "connection_string_fingerprint",
     "GuardedLruRegistry",

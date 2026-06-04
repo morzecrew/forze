@@ -13,6 +13,7 @@ from forze.application.contracts.tenancy.routed_client_base import (
 )
 from forze.base.exceptions import exc
 from forze.base.primitives.fingerprint import (
+    combine_fingerprint,
     secret_dedup_fingerprint,
     stable_fingerprint,
 )
@@ -95,12 +96,10 @@ class RoutedInngestClient(
             else ""
         )
 
-        return stable_fingerprint(
-            c.app_id,
+        return combine_fingerprint(
+            stable_fingerprint(c.app_id, str(c.is_production), timeout_fp),
             secret_dedup_fingerprint(c.event_key),
             secret_dedup_fingerprint(c.signing_key),
-            str(c.is_production),
-            timeout_fp,
         )
 
     # ....................... #
