@@ -1,13 +1,17 @@
 """Lifecycle hooks for Postgres client initialization and shutdown."""
 
-from typing import cast, final
+from typing import Any, cast, final
 
 import attrs
 from pydantic import SecretStr
 
+from forze.application.contracts.deps import DepKey
 from forze.application.contracts.execution import LifecycleHook, LifecycleStep
 from forze.application.execution.context import ExecutionContext
-from forze.application.execution.lifecycle.builtin import routed_client_lifecycle_step
+from forze.application.execution.lifecycle.builtin import (
+    ClientShutdownHook,
+    routed_client_lifecycle_step,
+)
 from forze.base.serialization.pydantic import pydantic_secret_converter
 
 from ...kernel.client import PostgresClient, PostgresConfig, RoutedPostgresClient
@@ -40,15 +44,13 @@ class PostgresStartupHook(LifecycleHook):
 
 @final
 @attrs.define(slots=True, frozen=True, kw_only=True)
-class PostgresShutdownHook(LifecycleHook):
+class PostgresShutdownHook(ClientShutdownHook):
     """Shutdown hook that closes the Postgres client pool.
 
     Resolves :data:`PostgresClientDepKey` and calls :meth:`PostgresClient.close`.
     """
 
-    async def __call__(self, ctx: ExecutionContext) -> None:
-        postgres_client = ctx.deps.provide(PostgresClientDepKey)
-        await postgres_client.close()
+    dep_key: DepKey[Any] = attrs.field(default=PostgresClientDepKey, init=False)
 
 
 # ....................... #

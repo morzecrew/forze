@@ -8,7 +8,7 @@ from psycopg.abc import QueryNoTemplate
 from pydantic import BaseModel
 
 from forze.application.contracts.analytics import AnalyticsRunOptions, AnalyticsSpec
-from forze.application.contracts.tenancy import TenantProviderPort
+from forze.application.contracts.tenancy import TenantProviderPort, soft_tenant_id
 from forze.application.integrations.analytics.adapter_common import (
     dry_run_enabled,
     dry_run_offset_page,
@@ -74,12 +74,7 @@ class PostgresAnalyticsQueryMixin[R: BaseModel, Ing: BaseModel]:
     # ....................... #
 
     def _tenant_id_for_resolve(self) -> UUID | None:
-        if self.tenant_provider is None:
-            return None
-
-        tenant = self.tenant_provider()
-
-        return tenant.tenant_id if tenant is not None else None
+        return soft_tenant_id(self.tenant_provider)
 
     # ....................... #
 

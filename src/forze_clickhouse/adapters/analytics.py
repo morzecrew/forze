@@ -37,7 +37,7 @@ from forze.application.contracts.querying import (
     CursorPaginationExpression,
     PaginationExpression,
 )
-from forze.application.contracts.tenancy import TenantProviderPort
+from forze.application.contracts.tenancy import TenantProviderPort, soft_tenant_id
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
 from forze.base.serialization import default_model_codec
@@ -89,12 +89,7 @@ class ClickHouseAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
     # ....................... #
 
     def _tenant_id_for_resolve(self) -> UUID | None:
-        if self.tenant_provider is None:
-            return None
-
-        tenant = self.tenant_provider()
-
-        return tenant.tenant_id if tenant is not None else None
+        return soft_tenant_id(self.tenant_provider)
 
     # ....................... #
 

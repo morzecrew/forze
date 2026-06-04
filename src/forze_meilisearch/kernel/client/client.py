@@ -77,6 +77,13 @@ class MeilisearchClient(MeilisearchClientPort):
 
     # ....................... #
 
+    async def close(self) -> None:
+        """Alias for :meth:`aclose` (the standard ``close()`` disposal contract)."""
+
+        await self.aclose()
+
+    # ....................... #
+
     @exc_interceptor.coroutine("meilisearch.health")  # type: ignore[untyped-decorator]
     async def health(self) -> bool:
         client = self._require_client()

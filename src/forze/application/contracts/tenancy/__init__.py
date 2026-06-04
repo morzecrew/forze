@@ -15,6 +15,7 @@ from .helpers import (
     require_tenant_id,
     resolve_dsn_for_tenant,
     resolve_structured_for_tenant,
+    soft_tenant_id,
 )
 from .integration_config import TenantAwareIntegrationConfig
 from .mixins import TenancyMixin
@@ -62,4 +63,5 @@ __all__ = [
     "resolve_dsn_for_tenant",
     "resolve_structured_for_tenant",
     "ensure_structured_fingerprint",
+    "soft_tenant_id",
 ]

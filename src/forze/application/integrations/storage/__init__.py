@@ -6,6 +6,7 @@ from .client import (
 )
 from .codec import ObjectStoragePathCodec, default_path_codec
 from .metadata import object_metadata_from_user_metadata
+from .routed_client import RoutedObjectStorageClientBase
 
 # ----------------------- #
 
@@ -15,6 +16,7 @@ __all__ = [
     "ObjectStorageHead",
     "ObjectStorageListedObject",
     "ObjectStoragePathCodec",
+    "RoutedObjectStorageClientBase",
     "default_path_codec",
     "object_metadata_from_user_metadata",
 ]

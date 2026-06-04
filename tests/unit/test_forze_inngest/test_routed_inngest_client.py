@@ -74,6 +74,7 @@ async def test_routed_inngest_eviction() -> None:
         inst = MagicMock()
         inst.send = AsyncMock(return_value=["evt-1"])
         inst.native = MagicMock()
+        inst.close = AsyncMock()
         instances.append(inst)
         return inst
 

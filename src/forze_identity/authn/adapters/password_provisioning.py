@@ -11,6 +11,7 @@ from forze.application.contracts.authn import (
 )
 from forze.application.contracts.document import DocumentCommandPort, DocumentQueryPort
 from forze.base.exceptions import exc
+from forze_identity._secure_spec import forbid_cache_and_history
 
 from ..domain.models.account import (
     CreatePasswordAccountCmd,
@@ -51,25 +52,7 @@ class PasswordAccountProvisioningAdapter(PasswordAccountProvisioningPort):
         qry_spec = self.password_account_qry.spec
         cmd_spec = self.password_account_cmd.spec
 
-        if qry_spec.cache is not None:
-            raise exc.internal(
-                "Password account caching is forbidden by security reasons"
-            )
-
-        if cmd_spec.cache is not None:
-            raise exc.internal(
-                "Password account caching is forbidden by security reasons"
-            )
-
-        if qry_spec.history_enabled:
-            raise exc.internal(
-                "Password account history is forbidden by security reasons"
-            )
-
-        if cmd_spec.history_enabled:
-            raise exc.internal(
-                "Password account history is forbidden by security reasons"
-            )
+        forbid_cache_and_history(qry_spec, cmd_spec, label="Password account")
 
     # ....................... #
 
