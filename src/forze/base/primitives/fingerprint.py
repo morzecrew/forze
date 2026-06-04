@@ -90,7 +90,7 @@ def connection_string_fingerprint(dsn: str) -> str:
     password_tag = secret_dedup_fingerprint(parsed.password) if parsed.password else ""
     query_canonical = "&".join(f"{key}={query[key][0]}" for key in sorted(query))
 
-    return stable_fingerprint(
+    base_fp = stable_fingerprint(
         parsed.scheme or "",
         parsed.hostname or "",
         str(parsed.port or ""),
@@ -98,6 +98,14 @@ def connection_string_fingerprint(dsn: str) -> str:
         parsed.username or "",
         sslmode,
         options,
-        password_tag,
         query_canonical,
     )
+
+    if not password_tag:
+        return base_fp
+
+    return hmac.new(
+        _POOL_DEDUP_DOMAIN,
+        f"{base_fp}\x1f{password_tag}".encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
