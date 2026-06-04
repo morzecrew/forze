@@ -25,7 +25,9 @@ def stable_fingerprint(*parts: str | bytes) -> str:
         else:
             normalized.append(part)
 
-    return hashlib.sha256(b"\x1f".join(normalized)).hexdigest()
+    return hashlib.sha256(
+        b"\x1f".join(normalized),  # codeql[py/weak-sensitive-data-hashing]
+    ).hexdigest()
 
 
 # ....................... #
@@ -47,9 +49,9 @@ def secret_dedup_fingerprint(value: str | SecretStr | None) -> str:
 
     return hmac.new(
         _POOL_DEDUP_DOMAIN,
-        raw.encode("utf-8"),
+        raw.encode("utf-8"),  # codeql[py/weak-sensitive-data-hashing]
         hashlib.sha256,
-    ).hexdigest()  # codeql[py/weak-sensitive-data-hashing]
+    ).hexdigest()
 
 
 # ....................... #
@@ -86,9 +88,7 @@ def connection_string_fingerprint(dsn: str) -> str:
     sslmode = query.get("sslmode", [""])[0]
     options = query.get("options", [""])[0]
     password_tag = secret_dedup_fingerprint(parsed.password) if parsed.password else ""
-    query_canonical = "&".join(
-        f"{key}={query[key][0]}" for key in sorted(query)
-    )
+    query_canonical = "&".join(f"{key}={query[key][0]}" for key in sorted(query))
 
     return stable_fingerprint(
         parsed.scheme or "",
