@@ -33,6 +33,11 @@
         "SECURITY.md": true,
         ".gitleaks.toml": true,
         ".coderabbit.yaml": true,
+        "coverage.json": true,
+        "entities.json": true,
+        "mempalace.yaml": true,
+        ".pre-commit-config.yaml": true,
+        "**/.hypothesis": true
     },
     "cursorpyright.analysis.diagnosticMode": "workspace",
     "cursorpyright.analysis.typeCheckingMode": "strict",
