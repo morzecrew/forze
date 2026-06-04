@@ -34,7 +34,18 @@ C = TypeVar("C", bound=_CloseableClient)
 
 @attrs.define(slots=True, kw_only=True)
 class RoutedTenantClientBase(Generic[C]):
-    """LRU tenant pool with fingerprint dedup and optional guarded eviction."""
+    """LRU tenant pool with fingerprint dedup and optional guarded eviction.
+
+    **Credential rotation.** A tenant's access fingerprint covers *all* credential
+    fields, including secrets (see :meth:`credential_fingerprint` /
+    :func:`~forze.base.primitives.build_routing_fingerprint`), so rotated credentials
+    produce a different fingerprint. The fingerprint and pooled client are cached until
+    explicitly invalidated, so rotation is **signal-driven**: wire your secret store's
+    rotation notification to :meth:`evict_tenant`, which drops both the cached
+    fingerprint and the client so the next access rebuilds with fresh credentials.
+    There is intentionally no time-based polling, which would add periodic secret-store
+    load for every pooled tenant.
+    """
 
     secrets: SecretsPort
     secret_ref_for_tenant: Callable[[UUID], SecretRef] | Mapping[UUID, SecretRef]
@@ -62,6 +73,13 @@ class RoutedTenantClientBase(Generic[C]):
         await self._pool.close()
 
     async def evict_tenant(self, tenant_id: UUID) -> None:
+        """Drop the cached client and fingerprint for *tenant_id*.
+
+        The credential-rotation hook: call this when a tenant's credentials change so
+        the next access re-resolves the secret and rebuilds the client (see the class
+        rotation contract).
+        """
+
         await self._pool.evict(tenant_id)
 
     async def resolve_credentials(self, tenant_id: UUID) -> Any:
@@ -182,6 +200,14 @@ class StructuredSecretRoutedTenantClientBase(RoutedTenantClientBase[C]):
     # ....................... #
 
     def credential_fingerprint(self, creds: BaseModel) -> str:
+        """Return the LRU pool dedup key for *creds*.
+
+        Build it with :func:`~forze.base.primitives.build_routing_fingerprint`,
+        declaring **every** credential field — including secrets — so that rotating any
+        field (a secret in particular) changes the key. Omitting a secret silently
+        defeats rotation detection: the pool would keep serving the stale client.
+        """
+
         raise NotImplementedError
 
     # ....................... #

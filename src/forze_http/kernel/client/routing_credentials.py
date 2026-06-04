@@ -3,8 +3,7 @@
 from pydantic import BaseModel, Field, SecretStr
 
 from forze.base.primitives.fingerprint import (
-    combine_fingerprint,
-    secret_dedup_fingerprint,
+    build_routing_fingerprint,
     stable_fingerprint,
 )
 
@@ -37,7 +36,7 @@ def routing_fingerprint(creds: HttpRoutingCredentials) -> str:
         *[f"{k}:{v}" for k, v in sorted((creds.headers or {}).items())],
     )
 
-    return combine_fingerprint(
-        stable_fingerprint(creds.base_url, header_fp),
-        secret_dedup_fingerprint(creds.bearer_token),
+    return build_routing_fingerprint(
+        public=[creds.base_url, header_fp],
+        secret=[creds.bearer_token],
     )

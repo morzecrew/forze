@@ -3,6 +3,7 @@
 from pydantic import SecretStr
 
 from forze.base.primitives.fingerprint import (
+    build_routing_fingerprint,
     connection_string_fingerprint,
     gcp_credential_dedup_tag,
     secret_dedup_fingerprint,
@@ -102,3 +103,56 @@ def test_clickhouse_routing_fingerprint_excludes_plaintext_password() -> None:
     fp = routing_fingerprint(creds)
 
     assert password not in fp
+
+
+# ....................... #
+
+
+def test_build_routing_fingerprint_is_deterministic() -> None:
+    a = build_routing_fingerprint(public=["host", "5432"], secret=["pw"])
+    b = build_routing_fingerprint(public=["host", "5432"], secret=["pw"])
+
+    assert a == b
+
+
+def test_build_routing_fingerprint_differs_by_public_field() -> None:
+    a = build_routing_fingerprint(public=["host-a"], secret=["pw"])
+    b = build_routing_fingerprint(public=["host-b"], secret=["pw"])
+
+    assert a != b
+
+
+def test_build_routing_fingerprint_detects_secret_rotation() -> None:
+    a = build_routing_fingerprint(public=["host"], secret=["pw-a"])
+    b = build_routing_fingerprint(public=["host"], secret=["pw-b"])
+
+    assert a != b
+
+
+def test_build_routing_fingerprint_ignores_empty_secrets() -> None:
+    base = build_routing_fingerprint(public=["host"])
+
+    assert base == build_routing_fingerprint(public=["host"], secret=[None])
+    assert base == build_routing_fingerprint(public=["host"], secret=[""])
+    assert base == build_routing_fingerprint(public=["host"], secret=[None, ""])
+
+
+def test_build_routing_fingerprint_presence_of_secret_changes_key() -> None:
+    assert build_routing_fingerprint(public=["host"]) != build_routing_fingerprint(
+        public=["host"],
+        secret=["pw"],
+    )
+
+
+def test_build_routing_fingerprint_never_embeds_plaintext_secret() -> None:
+    secret = "super-secret-value"
+    fp = build_routing_fingerprint(public=["host"], secret=[secret])
+
+    assert secret not in fp
+
+
+def test_build_routing_fingerprint_accepts_secret_str() -> None:
+    assert build_routing_fingerprint(
+        public=["h"],
+        secret=[SecretStr("pw")],
+    ) == build_routing_fingerprint(public=["h"], secret=["pw"])

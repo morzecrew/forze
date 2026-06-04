@@ -1,3 +1,4 @@
+from collections import OrderedDict
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator, Awaitable, Callable
 from uuid import UUID
@@ -32,7 +33,16 @@ class TenantClientRegistry[C, R = str]:
     guarded: bool = attrs.field(default=False, on_setattr=attrs.setters.frozen)
     """Whether to use a guarded LRU registry underneath."""
 
-    __fingerprints: dict[UUID, R] = attrs.field(factory=dict, init=False, repr=False)
+    __fingerprints: "OrderedDict[UUID, R]" = attrs.field(
+        factory=OrderedDict,
+        init=False,
+        repr=False,
+    )
+    """LRU-bounded (to ``max_entries``) cache of per-tenant dedup fingerprints.
+
+    Capped so it cannot grow without bound across the lifetime of a long-lived
+    process; an evicted entry is simply recomputed on the tenant's next access.
+    """
 
     __started: bool = attrs.field(default=False, init=False)
 
@@ -82,11 +92,20 @@ class TenantClientRegistry[C, R = str]:
         """Call before first get/create so dedup_key is defined."""
 
         self.__fingerprints[tenant_id] = fingerprint
+        self.__fingerprints.move_to_end(tenant_id)
+
+        while len(self.__fingerprints) > self.max_entries:
+            self.__fingerprints.popitem(last=False)
 
     # ....................... #
 
     def get_fingerprint(self, tenant_id: UUID) -> R | None:
-        return self.__fingerprints.get(tenant_id)
+        fingerprint = self.__fingerprints.get(tenant_id)
+
+        if fingerprint is not None:
+            self.__fingerprints.move_to_end(tenant_id)
+
+        return fingerprint
 
     # ....................... #
 

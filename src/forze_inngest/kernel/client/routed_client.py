@@ -12,11 +12,7 @@ from forze.application.contracts.tenancy.routed_client_base import (
     StructuredSecretRoutedTenantClientBase,
 )
 from forze.base.exceptions import exc
-from forze.base.primitives.fingerprint import (
-    combine_fingerprint,
-    secret_dedup_fingerprint,
-    stable_fingerprint,
-)
+from forze.base.primitives.fingerprint import build_routing_fingerprint
 
 from .client import InngestClient
 from .config import InngestConfig
@@ -96,10 +92,9 @@ class RoutedInngestClient(
             else ""
         )
 
-        return combine_fingerprint(
-            stable_fingerprint(c.app_id, str(c.is_production), timeout_fp),
-            secret_dedup_fingerprint(c.event_key),
-            secret_dedup_fingerprint(c.signing_key),
+        return build_routing_fingerprint(
+            public=[c.app_id, str(c.is_production), timeout_fp],
+            secret=[c.event_key, c.signing_key],
         )
 
     # ....................... #

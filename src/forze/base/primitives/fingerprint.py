@@ -2,6 +2,7 @@
 
 import binascii
 import hashlib
+from collections.abc import Sequence
 from urllib.parse import parse_qs, urlparse
 
 from pydantic import SecretStr
@@ -74,7 +75,7 @@ def combine_fingerprint(base: str, *secret_tags: str) -> str:
     """Append already-hashed secret dedup tags to *base* without re-hashing them.
 
     *base* is a :func:`stable_fingerprint` of non-secret fields; each tag comes from
-    :func:`secret_dedup_fingerprint` (a strong PBKDF2 digest). Joining the digests
+    :func:`secret_dedup_fingerprint` (a one-way KDF digest). Joining the digests
     (instead of re-hashing) keeps the combined key unique while ensuring secret-derived
     data never passes through the fast cache hash again. Empty tags are ignored.
     """
@@ -85,6 +86,30 @@ def combine_fingerprint(base: str, *secret_tags: str) -> str:
         return base
 
     return "\x1f".join((base, *tags))
+
+
+# ....................... #
+
+
+def build_routing_fingerprint(
+    *,
+    public: Sequence[str],
+    secret: Sequence[str | SecretStr | None] = (),
+) -> str:
+    """Build an LRU pool dedup key from non-secret fields plus secret material.
+
+    *public* fields are hashed together via :func:`stable_fingerprint`; each *secret*
+    is reduced to a one-way tag via :func:`secret_dedup_fingerprint` and concatenated on
+    via :func:`combine_fingerprint`, so secret material never reaches a fast hash. Routed
+    clients should build ``credential_fingerprint`` with this rather than hand-assembling
+    hashes: declaring **every** credential field (including secrets) keeps rotation
+    detection correct, since a changed secret then changes the key.
+    """
+
+    return combine_fingerprint(
+        stable_fingerprint(*public),
+        *(secret_dedup_fingerprint(item) for item in secret),
+    )
 
 
 # ....................... #
@@ -120,18 +145,18 @@ def connection_string_fingerprint(dsn: str) -> str:
     query = parse_qs(parsed.query)
     sslmode = query.get("sslmode", [""])[0]
     options = query.get("options", [""])[0]
-    password_tag = secret_dedup_fingerprint(parsed.password) if parsed.password else ""
     query_canonical = "&".join(f"{key}={query[key][0]}" for key in sorted(query))
 
-    base_fp = stable_fingerprint(
-        parsed.scheme or "",
-        parsed.hostname or "",
-        str(parsed.port or ""),
-        parsed.path or "",
-        parsed.username or "",
-        sslmode,
-        options,
-        query_canonical,
+    return build_routing_fingerprint(
+        public=[
+            parsed.scheme or "",
+            parsed.hostname or "",
+            str(parsed.port or ""),
+            parsed.path or "",
+            parsed.username or "",
+            sslmode,
+            options,
+            query_canonical,
+        ],
+        secret=[parsed.password],
     )
-
-    return combine_fingerprint(base_fp, password_tag)
