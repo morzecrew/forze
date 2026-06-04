@@ -20,6 +20,7 @@ from forze_kits.dto.paginated import (
     Paginated,
     Pagination,
     ProjectedPaginated,
+    offset_page_fields,
 )
 
 # ----------------------- #
@@ -148,10 +149,7 @@ class SearchPaginated[T: BaseModel](Paginated[T]):
         out = cast(type[SearchPaginated[X]], cls)
 
         return out(
-            hits=page.hits,
-            page=page.page,
-            size=page.size,
-            count=page.count,
+            **offset_page_fields(page),
             snapshot=SearchSnapshotHandleDTO.from_handle(page.snapshot),
         )
 
@@ -170,9 +168,6 @@ class ProjectedSearchPaginated(ProjectedPaginated):
     @classmethod
     def from_page(cls, page: Page[JsonDict]) -> ProjectedSearchPaginated:
         return cls(
-            hits=page.hits,
-            page=page.page,
-            size=page.size,
-            count=page.count,
+            **offset_page_fields(page),
             snapshot=SearchSnapshotHandleDTO.from_handle(page.snapshot),
         )

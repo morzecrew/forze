@@ -92,6 +92,26 @@ def require_tenant_id(
 # ....................... #
 
 
+def soft_tenant_id(
+    provider: Callable[[], TenantIdentity | None] | None,
+) -> UUID | None:
+    """Return the current tenant id, or ``None`` (never raises).
+
+    The soft counterpart to :func:`require_tenant_id`, for adapters that resolve
+    tenant context opportunistically (e.g. analytics ingest-target resolution).
+    """
+
+    if provider is None:
+        return None
+
+    tenant = provider()
+
+    return tenant.tenant_id if tenant is not None else None
+
+
+# ....................... #
+
+
 async def ensure_dsn_fingerprint(
     get_fingerprint: Callable[[UUID], str | None],
     set_fingerprint: Callable[[UUID, str], None],

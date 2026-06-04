@@ -20,8 +20,10 @@ from forze.application.contracts.document import (
     DocumentSpec,
 )
 from forze.application.integrations.document import DocumentCache, DocumentAdapter
-from forze.application.integrations.document.hydration import can_hydrate_read_from_write_domain
-from forze.base.exceptions import exc
+from forze.application.integrations.document.hydration import (
+    can_hydrate_read_from_write_domain,
+    validate_read_write_gateway_compat,
+)
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document
 
 from ..kernel.gateways import MongoReadGateway, MongoWriteGateway
@@ -62,13 +64,7 @@ class MongoDocumentAdapter(DocumentAdapter[R, D, C, U]):
         super().__attrs_post_init__()
 
         if self.write_gw is not None:
-            if self.write_gw.client is not self.read_gw.client:
-                raise exc.internal("Write and read gateways must use the same client")
-
-            if self.write_gw.tenant_aware != self.read_gw.tenant_aware:
-                raise exc.internal(
-                    "Write and read gateways must have the same tenant awareness."
-                )
+            validate_read_write_gateway_compat(self.read_gw, self.write_gw)
 
             if self.spec.write is not None:
                 hydrate = can_hydrate_read_from_write_domain(

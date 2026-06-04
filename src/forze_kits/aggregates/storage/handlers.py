@@ -81,10 +81,7 @@ class ListObjects(Handler[ListObjectsRequestDTO, ListedObjects]):
     async def __call__(self, args: ListObjectsRequestDTO) -> ListedObjects:
         """List objects for the requested page and optional prefix."""
 
-        page = args.page
-        size = args.size
-        limit = size
-        offset = (page - 1) * limit
+        limit, offset = args.offset_limit
 
         hits, count = await self.storage.list(
             limit=limit,
@@ -94,8 +91,8 @@ class ListObjects(Handler[ListObjectsRequestDTO, ListedObjects]):
 
         return ListedObjects(
             hits=[_stored_object_to_dto(h) for h in hits],
-            page=page,
-            size=size,
+            page=args.page,
+            size=args.size,
             count=count,
         )
 

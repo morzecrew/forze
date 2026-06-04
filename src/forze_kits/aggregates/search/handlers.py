@@ -46,10 +46,6 @@ class Search[Out: Bm](Handler[Sr, SearchPaginated[Out]]):
         :returns: Paginated list of read models.
         """
 
-        page = args.page
-        size = args.size
-        limit = size
-        offset = (page - 1) * limit
         body = args
 
         if self.mapper:
@@ -58,10 +54,7 @@ class Search[Out: Bm](Handler[Sr, SearchPaginated[Out]]):
         res = await self.search.search_page(
             query=body.query,
             filters=body.filters,
-            pagination={
-                "limit": limit,
-                "offset": offset,
-            },
+            pagination=body.to_offset_expression(),
             sorts=body.sorts,
             options=body.options,
             snapshot=body.snapshot,
@@ -92,10 +85,6 @@ class ProjectedSearch(Handler[Psr, ProjectedSearchPaginated]):
         :returns: Paginated list of raw results.
         """
 
-        page = args.page
-        size = args.size
-        limit = size
-        offset = (page - 1) * limit
         body = args
 
         if self.mapper:
@@ -105,10 +94,7 @@ class ProjectedSearch(Handler[Psr, ProjectedSearchPaginated]):
             tuple(body.return_fields),
             query=body.query,
             filters=body.filters,
-            pagination={
-                "limit": limit,
-                "offset": offset,
-            },
+            pagination=body.to_offset_expression(),
             sorts=body.sorts,
             options=body.options,
             snapshot=body.snapshot,

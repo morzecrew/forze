@@ -19,6 +19,7 @@ from gcloud.aio.storage import Storage
 from forze.application.integrations.storage.client import (
     ObjectStorageHead,
     ObjectStorageListedObject,
+    normalize_list_window,
 )
 from forze.base.exceptions import exc
 from forze.base.primitives.owned_temp_path import OwnedTempPath
@@ -302,15 +303,8 @@ class GCSClient(GCSClientPort):
         limit: int | None = None,
         offset: int | None = None,
     ) -> tuple[list[ObjectStorageListedObject], int]:
-        if limit is not None and limit <= 0:
-            raise exc.internal("limit must be > 0")
-
-        if offset is not None and offset < 0:
-            raise exc.internal("offset must be >= 0")
-
         _prefix = prefix or ""
-        _limit = limit if limit is not None else 10_000_000
-        _offset = offset or 0
+        _limit, _offset = normalize_list_window(limit, offset)
 
         storage = self.__require_storage()
         bucket_ref = storage.get_bucket(bucket)

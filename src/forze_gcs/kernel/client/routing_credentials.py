@@ -2,7 +2,11 @@
 
 from pydantic import BaseModel, Field, model_validator
 
-from forze.base.primitives.fingerprint import secret_dedup_fingerprint, stable_fingerprint
+from forze.base.primitives.fingerprint import (
+    combine_fingerprint,
+    secret_dedup_fingerprint,
+    stable_fingerprint,
+)
 from forze.base.primitives.owned_temp_path import OwnedTempPath
 
 # ----------------------- #
@@ -50,8 +54,8 @@ def routing_credential_dedup_tag(
 def routing_fingerprint(creds: GCSRoutingCredentials) -> str:
     """Stable fingerprint for LRU deduplication."""
 
-    return stable_fingerprint(
-        creds.project_id,
+    return combine_fingerprint(
+        stable_fingerprint(creds.project_id),
         routing_credential_dedup_tag(
             key_file=creds.service_file,
             inline_key_json=creds.service_account_json,

@@ -1,13 +1,13 @@
 """Telegram Login authorization-code exchange (server-side only)."""
 
-from typing import cast, final
+from typing import final
 
 import attrs
-import httpx
 
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
 
+from .._exchange import oidc_code_exchange
 from .config import TelegramLoginOidcConfig
 
 # ----------------------- #
@@ -83,44 +83,16 @@ async def exchange_authorization_code(
         "code_verifier": code_verifier,
     }
 
-    try:
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            response = await client.post(
-                config.token_endpoint,
-                data=data,
-                headers={
-                    "Content-Type": "application/x-www-form-urlencoded",
-                    "Authorization": f"Basic {config.basic_auth_header()}",
-                },
-            )
-
-    except httpx.HTTPError as e:
-        raise exc.infrastructure(
-            "Telegram token exchange request failed",
-            code="telegram_token_exchange_failed",
-        ) from e
-
-    if response.status_code >= 400:
-        raise exc.authentication(
-            "Telegram token exchange rejected the authorization code",
-            code="telegram_token_exchange_failed",
-        )
-
-    try:
-        payload = response.json()
-
-    except ValueError as e:
-        raise exc.infrastructure(
-            "Telegram token response is not valid JSON",
-            code="telegram_token_exchange_failed",
-        ) from e
-
-    if not isinstance(payload, dict):
-        raise exc.infrastructure(
-            "Telegram token response must be a JSON object",
-            code="telegram_token_exchange_failed",
-        )
-
-    payload = cast(JsonDict, payload)
+    payload = await oidc_code_exchange(
+        token_endpoint=config.token_endpoint,
+        data=data,
+        headers={
+            "Content-Type": "application/x-www-form-urlencoded",
+            "Authorization": f"Basic {config.basic_auth_header()}",
+        },
+        provider="Telegram",
+        error_code="telegram_token_exchange_failed",
+        timeout=timeout,
+    )
 
     return _parse_token_response(payload)

@@ -24,6 +24,7 @@ from pydantic import BaseModel
 from .._logger import logger
 from ..exceptions import exc
 from ..primitives import JsonDict
+from ._common import sequence_as_list, validate_batch_size
 from .model_codec import EncodeMode, ModelDumpExcludeOptions
 from .pydantic import pydantic_dump
 
@@ -57,15 +58,6 @@ def _struct_fields_cached(
 @lru_cache(maxsize=256)
 def _struct_field_names_cached(cls: type[msgspec.Struct]) -> frozenset[str]:
     return frozenset(field.encode_name for field in _struct_fields_cached(cls))
-
-
-# ....................... #
-
-
-def _sequence_as_list[T](seq: Sequence[T]) -> list[T]:
-    """Return ``seq`` as a ``list`` without copying when already a list."""
-
-    return seq if isinstance(seq, list) else list(seq)
 
 
 # ....................... #
@@ -406,7 +398,7 @@ def msgspec_convert_many[T: msgspec.Struct](
 ) -> list[T]:
     """Bulk convert trusted rows via one ``msgspec.convert`` (no ``forbid_extra`` walk)."""
 
-    payload = _sequence_as_list(data)
+    payload = sequence_as_list(data)
 
     if not payload:
         return []
@@ -431,11 +423,9 @@ def msgspec_convert_many_batched[T: msgspec.Struct](
 ) -> Iterator[list[T]]:
     """Yield struct chunks using trusted bulk convert only."""
 
-    if batch_size < 1:
-        msg = "batch_size must be >= 1"
-        raise ValueError(msg)
+    validate_batch_size(batch_size)
 
-    seq = _sequence_as_list(data)
+    seq = sequence_as_list(data)
 
     if not seq:
         return
@@ -456,7 +446,7 @@ def msgspec_validate_many[T: msgspec.Struct](
 ) -> list[T]:
     """Validate raw mapping rows into a list of msgspec structs."""
 
-    payload = _sequence_as_list(data)
+    payload = sequence_as_list(data)
 
     logger.trace(
         "Validating %s data items into list[%s] (forbid_extra=%s)",
@@ -484,11 +474,9 @@ def msgspec_validate_many_batched[T: msgspec.Struct](
 ) -> Iterator[list[T]]:
     """Validate raw mapping rows into msgspec structs in fixed-size chunks."""
 
-    if batch_size < 1:
-        msg = "batch_size must be >= 1"
-        raise ValueError(msg)
+    validate_batch_size(batch_size)
 
-    seq = _sequence_as_list(data)
+    seq = sequence_as_list(data)
 
     if not seq:
         return
@@ -565,11 +553,9 @@ def msgspec_dump_many_batched(
 
     _ensure_unset_not_requested(exclude)
 
-    if batch_size < 1:
-        msg = "batch_size must be >= 1"
-        raise ValueError(msg)
+    validate_batch_size(batch_size)
 
-    seq = _sequence_as_list(objs)
+    seq = sequence_as_list(objs)
 
     if not seq:
         return

@@ -13,12 +13,8 @@ from forze.application.contracts.durable.workflow import (
     DurableWorkflowScheduleTiming,
 )
 from forze.application.contracts.secrets import SecretRef, SecretsPort
-from forze.application.contracts.tenancy import (
-    TenantClientRegistry,
-    ensure_dsn_fingerprint,
-    require_tenant_id,
-    resolve_dsn_for_tenant,
-)
+from forze.application.contracts.tenancy import ensure_dsn_fingerprint
+from forze.application.contracts.tenancy.routed_client_base import DsnRoutedTenantClientBase
 from forze.base.exceptions import exc
 
 from .client import TemporalClient
@@ -30,8 +26,8 @@ from .value_objects import TemporalConfig
 
 
 @final
-@attrs.define(slots=True)
-class RoutedTemporalClient(TemporalClientPort):
+@attrs.define(slots=True, kw_only=True)
+class RoutedTemporalClient(DsnRoutedTenantClientBase[TemporalClient], TemporalClientPort):
     """Routes each call to a lazily created :class:`TemporalClient` for the current tenant.
 
     Host strings (for example ``localhost:7233``) are resolved via
@@ -50,68 +46,32 @@ class RoutedTemporalClient(TemporalClientPort):
     tenant_provider: Callable[[], UUID | None]
     connection_config: TemporalConfig = attrs.field(factory=TemporalConfig)
     max_cached_tenants: int = 100
-
-    __pool: TenantClientRegistry[TemporalClient, str] = attrs.field(init=False)
-
-    # ....................... #
-
-    def __attrs_post_init__(self) -> None:
-        self.__pool = TenantClientRegistry(
-            max_entries=self.max_cached_tenants,
-            create=self._create_client,
-            dispose=lambda client: client.close(),
-            guarded=False,
-        )
+    dsn_backend: str = attrs.field(default="Temporal", init=False)
+    tenant_required_message: str = attrs.field(
+        default="Tenant ID is required for routed Temporal access",
+        init=False,
+    )
 
     # ....................... #
 
-    async def startup(self) -> None:
-        await self.__pool.startup()
-
-    # ....................... #
-
-    async def close(self) -> None:
-        await self.__pool.close()
-
-    # ....................... #
-
-    async def evict_tenant(self, tenant_id: UUID) -> None:
-        await self.__pool.evict(tenant_id)
-
-    # ....................... #
-
-    async def _create_client(self, tid: UUID) -> TemporalClient:
-        host = await resolve_dsn_for_tenant(
-            tenant_id=tid,
-            secrets=self.secrets,
-            ref_for_tenant=self.secret_ref_for_tenant,
-            backend="Temporal",
-        )
-
+    async def initialize_client(self, tenant_id: UUID, creds: str) -> TemporalClient:
         client = TemporalClient()
-        await client.initialize(host, config=self.connection_config)
+        await client.initialize(creds, config=self.connection_config)
 
         return client
 
     # ....................... #
 
-    async def _get_client(self) -> TemporalClient:
-        tenant_id = require_tenant_id(
-            self.tenant_provider,
-            message="Tenant ID is required for routed Temporal access",
-        )
-
+    async def ensure_access_fingerprint(self, tenant_id: UUID) -> None:
         await ensure_dsn_fingerprint(
-            self.__pool.get_fingerprint,
-            self.__pool.set_fingerprint,
+            self._pool.get_fingerprint,
+            self._pool.set_fingerprint,
             tenant_id=tenant_id,
             secrets=self.secrets,
             ref_for_tenant=self.secret_ref_for_tenant,
-            backend="Temporal",
+            backend=self.dsn_backend,
             extra_parts=[self.connection_config.namespace],
         )
-
-        return await self.__pool.get(tenant_id)
 
     # ....................... #
 
@@ -148,13 +108,10 @@ class RoutedTemporalClient(TemporalClientPort):
         *,
         run_id: str | None = None,
     ) -> WorkflowHandle[Any, Any]:
-        self.__pool.require_started()
+        self._pool.require_started()
 
-        tid = require_tenant_id(
-            self.tenant_provider,
-            message="Tenant ID is required for routed Temporal access",
-        )
-        inner = self.__pool.peek(tid)
+        tid = self._require_tenant_id()
+        inner = self._peek_client(tid)
 
         if inner is None:
             raise exc.internal(

@@ -2,7 +2,8 @@ from typing import Any
 from uuid import UUID
 
 from forze.application.contracts.document import DocumentQueryPort, DocumentSpec
-from forze.base.exceptions import exc
+
+from forze_identity._secure_spec import forbid_cache_and_history
 
 from ..domain.models.policy_principal import ReadPolicyPrincipal
 
@@ -12,11 +13,7 @@ from ..domain.models.policy_principal import ReadPolicyPrincipal
 def validate_secure_authz_document_spec(spec: DocumentSpec[Any, Any, Any, Any]) -> None:
     """Reject cache/history on authz documents (same rationale as authn principal docs)."""
 
-    if spec.cache is not None:
-        raise exc.internal("Authz document caching is forbidden by security reasons")
-
-    if spec.history_enabled:
-        raise exc.internal("Authz document history is forbidden by security reasons")
+    forbid_cache_and_history(spec, label="Authz document")
 
 
 validate_policy_principal_spec = validate_secure_authz_document_spec

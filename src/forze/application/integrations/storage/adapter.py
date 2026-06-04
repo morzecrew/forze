@@ -324,9 +324,41 @@ class ObjectStorageAdapter(StoragePort, TenancyMixin):
     @staticmethod
     def _guess_content_type(filename: str, data: bytes) -> str:
         _ = data
-        ct_mimetypes, _ = mimetypes.guess_type(filename)
 
-        if ct_mimetypes:
-            return ct_mimetypes
+        return _guess_content_type_from_name(filename)
 
-        return "application/octet-stream"
+
+# ....................... #
+
+
+def _guess_content_type_from_name(filename: str) -> str:
+    """Guess a MIME type from *filename* alone, defaulting to ``application/octet-stream``."""
+
+    ct_mimetypes, _ = mimetypes.guess_type(filename)
+
+    return ct_mimetypes or "application/octet-stream"
+
+
+# ....................... #
+
+
+def guess_content_type_with_magic(filename: str, data: bytes) -> str:
+    """Sniff the MIME type from *data* via ``python-magic``, else guess from *filename*.
+
+    Shared by content-sniffing object-storage adapters (S3, GCS). ``python-magic`` is
+    imported lazily so core carries no hard dependency on it; on any failure (including
+    the package being absent) this falls back to extension-based guessing.
+    """
+
+    try:
+        import magic
+
+        ct_magic = magic.from_buffer(data, mime=True)
+
+        if ct_magic:
+            return ct_magic
+
+    except Exception:  # nosec B110
+        pass
+
+    return _guess_content_type_from_name(filename)

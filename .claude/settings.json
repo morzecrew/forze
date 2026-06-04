@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(uv run pytest:*)",
+      "Bash(uv run mypy:*)",
+      "Bash(uv run lint-imports:*)",
+      "Bash(uv run ruff check:*)",
+      "Bash(uv run vulture:*)",
+      "Bash(just test:*)",
+      "Bash(just quality:*)",
+      "mcp__plugin_mempalace_mempalace__mempalace_status"
+    ]
+  }
+}

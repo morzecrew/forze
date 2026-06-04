@@ -1,13 +1,17 @@
 """RabbitMQ client pool lifecycle hooks and step factories."""
 
-from typing import cast, final
+from typing import Any, cast, final
 
 import attrs
 from pydantic import SecretStr
 
+from forze.application.contracts.deps import DepKey
 from forze.application.contracts.execution import LifecycleHook, LifecycleStep
 from forze.application.execution.context import ExecutionContext
-from forze.application.execution.lifecycle.builtin import routed_client_lifecycle_step
+from forze.application.execution.lifecycle.builtin import (
+    ClientShutdownHook,
+    routed_client_lifecycle_step,
+)
 from forze.base.serialization.pydantic import pydantic_secret_converter
 
 from ...kernel.client import RabbitMQClient, RabbitMQConfig, RoutedRabbitMQClient
@@ -36,12 +40,10 @@ class RabbitMQStartupHook(LifecycleHook):
 
 @final
 @attrs.define(slots=True, frozen=True, kw_only=True)
-class RabbitMQShutdownHook(LifecycleHook):
+class RabbitMQShutdownHook(ClientShutdownHook):
     """Shutdown hook that closes the RabbitMQ connection."""
 
-    async def __call__(self, ctx: ExecutionContext) -> None:
-        rabbitmq_client = ctx.deps.provide(RabbitMQClientDepKey)
-        await rabbitmq_client.close()
+    dep_key: DepKey[Any] = attrs.field(default=RabbitMQClientDepKey, init=False)
 
 
 # ....................... #

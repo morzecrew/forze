@@ -1,18 +1,15 @@
 """ClickHouse client that resolves connection settings per tenant via :class:`~forze.application.contracts.secrets.SecretsPort`."""
 
 from datetime import timedelta
-from typing import Callable, Mapping, final
+from typing import Callable, Mapping, cast, final
 from uuid import UUID
 
 import attrs
 from pydantic import BaseModel
 
 from forze.application.contracts.secrets import SecretRef, SecretsPort
-from forze.application.contracts.tenancy import (
-    TenantClientRegistry,
-    ensure_structured_fingerprint,
-    require_tenant_id,
-    resolve_structured_for_tenant,
+from forze.application.contracts.tenancy.routed_client_base import (
+    StructuredSecretRoutedTenantClientBase,
 )
 from forze.base.primitives import JsonDict
 
@@ -29,8 +26,11 @@ from .value_objects import (
 
 
 @final
-@attrs.define(slots=True)
-class RoutedClickHouseClient(ClickHouseClientPort):
+@attrs.define(slots=True, kw_only=True)
+class RoutedClickHouseClient(
+    StructuredSecretRoutedTenantClientBase[ClickHouseClient],
+    ClickHouseClientPort,
+):
     """Routes each operation to a lazily created :class:`ClickHouseClient` for the current tenant.
 
     Connection settings are JSON secrets (see :class:`ClickHouseRoutingCredentials`) resolved
@@ -51,33 +51,15 @@ class RoutedClickHouseClient(ClickHouseClientPort):
     """Optional defaults merged into each tenant secret (tenant fields win)."""
 
     max_cached_tenants: int = 100
-
-    __pool: TenantClientRegistry[ClickHouseClient, str] = attrs.field(init=False)
-
-    # ....................... #
-
-    def __attrs_post_init__(self) -> None:
-        self.__pool = TenantClientRegistry(
-            max_entries=self.max_cached_tenants,
-            create=self._create_client,
-            dispose=lambda client: client.close(),
-            guarded=False,
-        )
-
-    # ....................... #
-
-    async def startup(self) -> None:
-        await self.__pool.startup()
-
-    # ....................... #
-
-    async def close(self) -> None:
-        await self.__pool.close()
-
-    # ....................... #
-
-    async def evict_tenant(self, tenant_id: UUID) -> None:
-        await self.__pool.evict(tenant_id)
+    creds_type: type[BaseModel] = attrs.field(
+        default=ClickHouseRoutingCredentials,
+        init=False,
+    )
+    backend: str = attrs.field(default="ClickHouse", init=False)
+    tenant_required_message: str = attrs.field(
+        default="Tenant ID is required for routed ClickHouse access",
+        init=False,
+    )
 
     # ....................... #
 
@@ -107,48 +89,20 @@ class RoutedClickHouseClient(ClickHouseClientPort):
 
     # ....................... #
 
-    async def _fingerprint_for(self, tenant_id: UUID) -> str:
-        creds = await resolve_structured_for_tenant(
-            ClickHouseRoutingCredentials,
-            tenant_id=tenant_id,
-            secrets=self.secrets,
-            ref_for_tenant=self.secret_ref_for_tenant,
-            backend="ClickHouse",
-        )
-
-        return routing_fingerprint(creds)
+    def credential_fingerprint(self, creds: BaseModel) -> str:
+        return routing_fingerprint(cast(ClickHouseRoutingCredentials, creds))
 
     # ....................... #
 
-    async def _create_client(self, tid: UUID) -> ClickHouseClient:
-        creds = await resolve_structured_for_tenant(
-            ClickHouseRoutingCredentials,
-            tenant_id=tid,
-            secrets=self.secrets,
-            ref_for_tenant=self.secret_ref_for_tenant,
-            backend="ClickHouse",
-        )
+    async def initialize_client(
+        self,
+        tenant_id: UUID,
+        creds: ClickHouseRoutingCredentials,
+    ) -> ClickHouseClient:
         client = ClickHouseClient()
         await client.initialize(self._merge_config(creds))
 
         return client
-
-    # ....................... #
-
-    async def _get_client(self) -> ClickHouseClient:
-        tenant_id = require_tenant_id(
-            self.tenant_provider,
-            message="Tenant ID is required for routed ClickHouse access",
-        )
-
-        await ensure_structured_fingerprint(
-            self.__pool.get_fingerprint,
-            self.__pool.set_fingerprint,
-            tenant_id=tenant_id,
-            fingerprint=lambda: self._fingerprint_for(tenant_id),
-        )
-
-        return await self.__pool.get(tenant_id)
 
     # ....................... #
 

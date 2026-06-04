@@ -10,6 +10,7 @@ from forze.application.contracts.authn import (
 )
 from forze.application.contracts.document import DocumentCommandPort, DocumentQueryPort
 from forze.base.exceptions import CoreException, ExceptionKind, exc
+from forze_identity._secure_spec import forbid_cache_and_history
 
 from ..domain.models.identity_mapping import (
     CreateIdentityMappingCmd,
@@ -57,15 +58,7 @@ class MappingTableResolver(PrincipalResolverPort):
     def __attrs_post_init__(self) -> None:
         spec = self.qry.spec
 
-        if spec.cache is not None:
-            raise exc.configuration(
-                "Identity mapping caching is forbidden by security reasons"
-            )
-
-        if spec.history_enabled:
-            raise exc.configuration(
-                "Identity mapping history is forbidden by security reasons"
-            )
+        forbid_cache_and_history(spec, label="Identity mapping", error=exc.configuration)
 
         if self.provision_on_first_sight and self.cmd is None:
             raise exc.configuration(

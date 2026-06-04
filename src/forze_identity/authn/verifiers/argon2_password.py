@@ -9,6 +9,7 @@ from forze.application.contracts.authn import (
 )
 from forze.application.contracts.document import DocumentQueryPort
 from forze.base.exceptions import exc
+from forze_identity._secure_spec import forbid_cache_and_history
 
 from ..adapters._utils import find_password_account_by_login
 from ..domain.constants import ISSUER_FORZE_PASSWORD
@@ -40,15 +41,7 @@ class Argon2PasswordVerifier(PasswordVerifierPort):
     def __attrs_post_init__(self) -> None:
         spec = self.pa_qry.spec
 
-        if spec.cache is not None:
-            raise exc.internal(
-                "Password account caching is forbidden by security reasons"
-            )
-
-        if spec.history_enabled:
-            raise exc.internal(
-                "Password account history is forbidden by security reasons"
-            )
+        forbid_cache_and_history(spec, label="Password account")
 
     # ....................... #
 

@@ -1,13 +1,17 @@
 """Redis client pool lifecycle hooks and step factories."""
 
-from typing import cast, final
+from typing import Any, cast, final
 
 import attrs
 from pydantic import SecretStr
 
+from forze.application.contracts.deps import DepKey
 from forze.application.contracts.execution import LifecycleHook, LifecycleStep
 from forze.application.execution.context import ExecutionContext
-from forze.application.execution.lifecycle.builtin import routed_client_lifecycle_step
+from forze.application.execution.lifecycle.builtin import (
+    ClientShutdownHook,
+    routed_client_lifecycle_step,
+)
 from forze.base.serialization.pydantic import pydantic_secret_converter
 
 from ...kernel.client import RedisClient, RedisConfig, RoutedRedisClient
@@ -43,15 +47,13 @@ class RedisStartupHook(LifecycleHook):
 
 @final
 @attrs.define(slots=True, frozen=True, kw_only=True)
-class RedisShutdownHook(LifecycleHook):
+class RedisShutdownHook(ClientShutdownHook):
     """Shutdown hook that closes the Redis client connection pool.
 
     Resolves :data:`RedisClientDepKey` and calls :meth:`RedisClient.close`.
     """
 
-    async def __call__(self, ctx: ExecutionContext) -> None:
-        redis_client = ctx.deps.provide(RedisClientDepKey)
-        await redis_client.close()
+    dep_key: DepKey[Any] = attrs.field(default=RedisClientDepKey, init=False)
 
 
 # ....................... #

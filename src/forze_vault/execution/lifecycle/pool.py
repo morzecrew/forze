@@ -1,10 +1,12 @@
 """Lifecycle hooks for Vault client initialization and shutdown."""
 
-from typing import cast, final
+from typing import Any, cast, final
 
 import attrs
 
+from forze.application.contracts.deps import DepKey
 from forze.application.contracts.execution import LifecycleHook, LifecycleStep
+from forze.application.execution.lifecycle.builtin import ClientShutdownHook
 from forze.application.execution import ExecutionContext
 
 from ...kernel.client import VaultClient
@@ -28,12 +30,10 @@ class VaultStartupHook(LifecycleHook):
 
 @final
 @attrs.define(slots=True, frozen=True, kw_only=True)
-class VaultShutdownHook(LifecycleHook):
+class VaultShutdownHook(ClientShutdownHook):
     """Shutdown hook that releases the Vault client."""
 
-    async def __call__(self, ctx: ExecutionContext) -> None:
-        vault_client = ctx.deps.provide(VaultClientDepKey)
-        await vault_client.close()
+    dep_key: DepKey[Any] = attrs.field(default=VaultClientDepKey, init=False)
 
 
 # ....................... #

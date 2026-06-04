@@ -2,7 +2,7 @@
 
 from contextlib import contextmanager
 from contextvars import ContextVar
-from typing import Iterator, Sequence, final
+from typing import Callable, Iterator, Sequence, final
 
 import attrs
 
@@ -92,3 +92,61 @@ class ContextualBuffer[T]:
             )
 
             self.__buffer.reset(token)
+
+
+# ....................... #
+
+
+@attrs.define(slots=True)
+class ContextVarTrace[T]:
+    """Lazily-created, per-task trace value stored in a :class:`~contextvars.ContextVar`.
+
+    A fresh ``T`` is built via *factory* on first access within a task and reused
+    for the remainder of that task. Backs the recording deps tracers.
+    """
+
+    factory: Callable[[], T]
+    """Builds a new trace value when one does not yet exist for the task."""
+
+    var_name: str
+    """Name for the underlying :class:`~contextvars.ContextVar`."""
+
+    _var: ContextVar[T | None] = attrs.field(
+        init=False,
+        repr=False,
+        eq=False,
+        hash=False,
+    )
+
+    # ....................... #
+
+    def __attrs_post_init__(self) -> None:
+        self._var = ContextVar(self.var_name, default=None)
+
+    # ....................... #
+
+    def init_task(self) -> None:
+        """Ensure a trace value exists for the current task."""
+
+        if self._var.get() is None:
+            self._var.set(self.factory())
+
+    # ....................... #
+
+    def get_or_create(self) -> T:
+        """Return the task trace value, creating it when absent."""
+
+        trace = self._var.get()
+
+        if trace is None:
+            trace = self.factory()
+            self._var.set(trace)
+
+        return trace
+
+    # ....................... #
+
+    def snapshot(self) -> T | None:
+        """Return the current task trace value, or ``None`` when unset."""
+
+        return self._var.get()

@@ -1,7 +1,7 @@
 """ClickHouse implementation of analytics query and ingest ports."""
 
 from datetime import timedelta
-from typing import Any, AsyncGenerator, Sequence, TypeVar, cast, final
+from typing import Any, AsyncGenerator, Sequence, TypeVar, final
 from uuid import UUID
 
 import attrs
@@ -14,13 +14,14 @@ from forze.application.contracts.analytics import (
     AnalyticsRunOptions,
     AnalyticsSpec,
 )
+from forze.application.integrations.analytics import AnalyticsQueryPortMixin
 from forze.application.integrations.analytics.adapter_common import (
     dry_run_enabled,
     dry_run_offset_page,
     encode_keyset_cursor_next,
     encode_offset_cursor_next_prev,
+    execute_analytics_offset_page,
     merge_forze_after_params,
-    pagination_window,
     parse_count_row,
     parse_keyset_cursor_after,
     parse_offset_cursor_after,
@@ -31,13 +32,12 @@ from forze.application.contracts.base import (
     CountlessPage,
     CursorPage,
     Page,
-    page_from_limit_offset,
 )
 from forze.application.contracts.querying import (
     CursorPaginationExpression,
     PaginationExpression,
 )
-from forze.application.contracts.tenancy import TenantProviderPort
+from forze.application.contracts.tenancy import TenantProviderPort, soft_tenant_id
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
 from forze.base.serialization import default_model_codec
@@ -67,6 +67,7 @@ _CH_BACKWARD_CURSOR = "Backward analytics cursors are not supported on ClickHous
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class ClickHouseAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
+    AnalyticsQueryPortMixin[R],
     AnalyticsQueryPort[R],
     AnalyticsIngestPort[Ing],
 ):
@@ -88,12 +89,7 @@ class ClickHouseAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
     # ....................... #
 
     def _tenant_id_for_resolve(self) -> UUID | None:
-        if self.tenant_provider is None:
-            return None
-
-        tenant = self.tenant_provider()
-
-        return tenant.tenant_id if tenant is not None else None
+        return soft_tenant_id(self.tenant_provider)
 
     # ....................... #
 
@@ -227,72 +223,27 @@ class ClickHouseAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
         if dry_run_enabled(options):
             return dry_run_offset_page(pagination, return_count=return_count)
 
-        limit, offset = pagination_window(pagination)
-        result = await self._fetch_rows(
-            query_key,
-            params,
-            options=options,
-            limit=limit,
-            offset=offset,
-        )
-        data = shape_rows(
-            result.rows,
-            read_codec=self.spec.resolved_read_codec,
-            read_type=self.spec.read,
-            return_type=return_type,
-            return_fields=return_fields,
-        )
-
-        if return_count:
-            if self._skip_total(query_key):
-                return page_from_limit_offset(data, pagination, total=None)
-
-            total = await self._total_count(query_key, params, options=options)
-            return page_from_limit_offset(data, pagination, total=total)
-
-        return page_from_limit_offset(data, pagination, total=None)
-
-    # ....................... #
-
-    async def run(
-        self,
-        query_key: str,
-        params: BaseModel,
-        pagination: PaginationExpression | None = None,
-        *,
-        options: AnalyticsRunOptions | None = None,
-    ) -> CountlessPage[R]:
-        return await self._offset_page(
-            query_key,
-            params,
-            pagination,
-            options=options,
-            return_count=False,
-            return_type=None,
-            return_fields=None,
-        )
-
-    # ....................... #
-
-    async def run_page(
-        self,
-        query_key: str,
-        params: BaseModel,
-        pagination: PaginationExpression | None = None,
-        *,
-        options: AnalyticsRunOptions | None = None,
-    ) -> Page[R]:
-        return cast(
-            Page[R],
-            await self._offset_page(
+        async def _fetch(limit: int | None, offset: int | None) -> list[JsonDict]:
+            result = await self._fetch_rows(
                 query_key,
                 params,
-                pagination,
                 options=options,
-                return_count=True,
-                return_type=None,
-                return_fields=None,
-            ),
+                limit=limit,
+                offset=offset,
+            )
+
+            return result.rows
+
+        return await execute_analytics_offset_page(
+            pagination=pagination,
+            return_count=return_count,
+            return_type=return_type,
+            return_fields=return_fields,
+            read_codec=self.spec.resolved_read_codec,
+            read_type=self.spec.read,
+            skip_total=self._skip_total(query_key),
+            fetch_rows=_fetch,
+            total_count=lambda: self._total_count(query_key, params, options=options),
         )
 
     # ....................... #
@@ -325,117 +276,6 @@ class ClickHouseAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
 
         for offset in range(0, len(typed), fetch_batch_size):
             yield typed[offset : offset + fetch_batch_size]
-
-    # ....................... #
-
-    async def project_run(
-        self,
-        fields: Sequence[str],
-        query_key: str,
-        params: BaseModel,
-        pagination: PaginationExpression | None = None,
-        *,
-        options: AnalyticsRunOptions | None = None,
-    ) -> CountlessPage[JsonDict]:
-        return await self._offset_page(
-            query_key,
-            params,
-            pagination,
-            options=options,
-            return_count=False,
-            return_type=None,
-            return_fields=fields,
-        )
-
-    # ....................... #
-
-    async def project_run_page(
-        self,
-        fields: Sequence[str],
-        query_key: str,
-        params: BaseModel,
-        pagination: PaginationExpression | None = None,
-        *,
-        options: AnalyticsRunOptions | None = None,
-    ) -> Page[JsonDict]:
-        return cast(
-            Page[JsonDict],
-            await self._offset_page(
-                query_key,
-                params,
-                pagination,
-                options=options,
-                return_count=True,
-                return_type=None,
-                return_fields=fields,
-            ),
-        )
-
-    # ....................... #
-
-    async def project_run_chunked(
-        self,
-        fields: Sequence[str],
-        query_key: str,
-        params: BaseModel,
-        pagination: PaginationExpression | None = None,
-        *,
-        options: AnalyticsRunOptions | None = None,
-        fetch_batch_size: int = 2000,
-    ) -> AsyncGenerator[Sequence[JsonDict]]:
-        async for chunk in self.run_chunked(
-            query_key,
-            params,
-            pagination,
-            options=options,
-            fetch_batch_size=fetch_batch_size,
-        ):
-            yield [{k: row.model_dump().get(k) for k in fields} for row in chunk]
-
-    # ....................... #
-
-    async def select_run(
-        self,
-        return_type: type[T],
-        query_key: str,
-        params: BaseModel,
-        pagination: PaginationExpression | None = None,
-        *,
-        options: AnalyticsRunOptions | None = None,
-    ) -> CountlessPage[T]:
-        return await self._offset_page(
-            query_key,
-            params,
-            pagination,
-            options=options,
-            return_count=False,
-            return_type=return_type,
-            return_fields=None,
-        )
-
-    # ....................... #
-
-    async def select_run_page(
-        self,
-        return_type: type[T],
-        query_key: str,
-        params: BaseModel,
-        pagination: PaginationExpression | None = None,
-        *,
-        options: AnalyticsRunOptions | None = None,
-    ) -> Page[T]:
-        return cast(
-            Page[T],
-            await self._offset_page(
-                query_key,
-                params,
-                pagination,
-                options=options,
-                return_count=True,
-                return_type=return_type,
-                return_fields=None,
-            ),
-        )
 
     # ....................... #
 
@@ -554,65 +394,6 @@ class ClickHouseAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
             next_cursor=next_c,
             prev_cursor=prev_c,
             has_more=has_more,
-        )
-
-    # ....................... #
-
-    async def run_cursor(
-        self,
-        query_key: str,
-        params: BaseModel,
-        cursor: CursorPaginationExpression | None = None,
-        *,
-        options: AnalyticsRunOptions | None = None,
-    ) -> CursorPage[R]:
-        return await self._cursor_page(
-            query_key,
-            params,
-            cursor,
-            options=options,
-            return_type=None,
-            return_fields=None,
-        )
-
-    # ....................... #
-
-    async def project_run_cursor(
-        self,
-        fields: Sequence[str],
-        query_key: str,
-        params: BaseModel,
-        cursor: CursorPaginationExpression | None = None,
-        *,
-        options: AnalyticsRunOptions | None = None,
-    ) -> CursorPage[JsonDict]:
-        return await self._cursor_page(
-            query_key,
-            params,
-            cursor,
-            options=options,
-            return_type=None,
-            return_fields=fields,
-        )
-
-    # ....................... #
-
-    async def select_run_cursor(
-        self,
-        return_type: type[T],
-        query_key: str,
-        params: BaseModel,
-        cursor: CursorPaginationExpression | None = None,
-        *,
-        options: AnalyticsRunOptions | None = None,
-    ) -> CursorPage[T]:
-        return await self._cursor_page(
-            query_key,
-            params,
-            cursor,
-            options=options,
-            return_type=return_type,
-            return_fields=None,
         )
 
     # ....................... #

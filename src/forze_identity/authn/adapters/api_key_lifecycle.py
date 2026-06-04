@@ -13,6 +13,7 @@ from forze.application.contracts.authn import (
 )
 from forze.application.contracts.document import DocumentCommandPort, DocumentQueryPort
 from forze.base.exceptions import exc
+from forze_identity._secure_spec import forbid_cache_and_history
 from forze.base.primitives import utcnow
 
 from ..domain.models.account import (
@@ -56,25 +57,7 @@ class ApiKeyLifecycleAdapter(ApiKeyLifecyclePort):
         qry_spec = self.ak_qry.spec
         cmd_spec = self.ak_cmd.spec
 
-        if qry_spec.cache is not None:
-            raise exc.internal(
-                "API key account caching is forbidden by security reasons"
-            )
-
-        if cmd_spec.cache is not None:
-            raise exc.internal(
-                "API key account caching is forbidden by security reasons"
-            )
-
-        if qry_spec.history_enabled:
-            raise exc.internal(
-                "API key account history is forbidden by security reasons"
-            )
-
-        if cmd_spec.history_enabled:
-            raise exc.internal(
-                "API key account history is forbidden by security reasons"
-            )
+        forbid_cache_and_history(qry_spec, cmd_spec, label="API key account")
 
     # ....................... #
 

@@ -17,6 +17,7 @@ from forze.application.contracts.authn import (
 )
 from forze.application.contracts.document import DocumentCommandPort, DocumentQueryPort
 from forze.base.exceptions import exc
+from forze_identity._secure_spec import forbid_cache_and_history
 from forze.base.primitives import utcnow
 
 from ..domain.constants import ACCESS_TOKEN_SCHEME
@@ -62,17 +63,7 @@ class TokenLifecycleAdapter(TokenLifecyclePort):
         qry_spec = self.session_qry.spec
         cmd_spec = self.session_cmd.spec
 
-        if qry_spec.cache is not None:
-            raise exc.internal("Session caching is forbidden by security reasons")
-
-        if cmd_spec.cache is not None:
-            raise exc.internal("Session caching is forbidden by security reasons")
-
-        if qry_spec.history_enabled:
-            raise exc.internal("Session history is forbidden by security reasons")
-
-        if cmd_spec.history_enabled:
-            raise exc.internal("Session history is forbidden by security reasons")
+        forbid_cache_and_history(qry_spec, cmd_spec, label="Session")
 
     # ....................... #
 
