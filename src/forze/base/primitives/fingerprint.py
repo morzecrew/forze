@@ -2,6 +2,7 @@
 
 import binascii
 import hashlib
+import hmac
 from urllib.parse import parse_qs, urlparse
 
 from pydantic import SecretStr
