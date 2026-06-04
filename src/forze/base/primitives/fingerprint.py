@@ -1,7 +1,7 @@
 """Stable fingerprints for deduplicating pooled resources."""
 
+import binascii
 import hashlib
-import hmac
 from urllib.parse import parse_qs, urlparse
 
 from pydantic import SecretStr
@@ -9,6 +9,7 @@ from pydantic import SecretStr
 # ----------------------- #
 
 _POOL_DEDUP_DOMAIN = b"forze.pool-dedup.v1"
+_SECRET_DEDUP_PBKDF2_ITERATIONS = 200_000
 
 # ....................... #
 
@@ -34,9 +35,10 @@ def stable_fingerprint(*parts: str | bytes) -> str:
 
 
 def secret_dedup_fingerprint(value: str | SecretStr | None) -> str:
-    """Return a one-way tag for secret material in LRU pool dedup (not credential storage).
+    """Return a deterministic one-way tag for secret material in LRU pool dedup.
 
-    Uses HMAC-SHA256 with a fixed domain key. Returns ``""`` for ``None`` or empty values.
+    Uses PBKDF2-HMAC-SHA256 with a fixed domain salt to keep tags stable for dedup.
+    Returns ``""`` for ``None`` or empty values.
     """
 
     if value is None:
@@ -47,11 +49,13 @@ def secret_dedup_fingerprint(value: str | SecretStr | None) -> str:
     if not raw:
         return ""
 
-    return hmac.new(
+    derived = hashlib.pbkdf2_hmac(
+        "sha256",
+        raw.encode("utf-8"),
         _POOL_DEDUP_DOMAIN,
-        raw.encode("utf-8"),  # codeql[py/weak-sensitive-data-hashing]
-        hashlib.sha256,
-    ).hexdigest()
+        _SECRET_DEDUP_PBKDF2_ITERATIONS,
+    )
+    return binascii.hexlify(derived).decode("ascii")
 
 
 # ....................... #
