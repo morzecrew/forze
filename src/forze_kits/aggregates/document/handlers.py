@@ -179,7 +179,7 @@ class ListDocuments[Out: Bm](Handler[Lr, Paginated[Out]]):
         res = await self.doc.find_page(
             filters=body.filters,
             sorts=body.sorts,
-            pagination=args.to_offset_expression(),
+            pagination=body.to_offset_expression(),
         )
 
         return Paginated.from_page(res)
@@ -216,7 +216,7 @@ class ProjectedListDocuments(Handler[Plr, ProjectedPaginated]):
             tuple(body.return_fields),
             filters=body.filters,
             sorts=body.sorts,
-            pagination=args.to_offset_expression(),
+            pagination=body.to_offset_expression(),
         )
 
         return ProjectedPaginated.from_page(res)
@@ -308,7 +308,7 @@ class AggregatedListDocuments(Handler[Alr, ProjectedPaginated]):
             body.aggregates,
             filters=body.filters,
             sorts=body.sorts,
-            pagination=args.to_offset_expression(),
+            pagination=body.to_offset_expression(),
         )
 
         return ProjectedPaginated.from_page(res)

@@ -54,7 +54,7 @@ class Search[Out: Bm](Handler[Sr, SearchPaginated[Out]]):
         res = await self.search.search_page(
             query=body.query,
             filters=body.filters,
-            pagination=args.to_offset_expression(),
+            pagination=body.to_offset_expression(),
             sorts=body.sorts,
             options=body.options,
             snapshot=body.snapshot,
@@ -94,7 +94,7 @@ class ProjectedSearch(Handler[Psr, ProjectedSearchPaginated]):
             tuple(body.return_fields),
             query=body.query,
             filters=body.filters,
-            pagination=args.to_offset_expression(),
+            pagination=body.to_offset_expression(),
             sorts=body.sorts,
             options=body.options,
             snapshot=body.snapshot,

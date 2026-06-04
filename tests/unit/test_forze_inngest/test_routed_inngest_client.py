@@ -88,7 +88,14 @@ async def test_routed_inngest_eviction() -> None:
         await routed.send([])
         assert len(instances) == 2
 
+        # Adding T2 over capacity=1 evicts and closes the idle T1 client.
+        instances[0].close.assert_awaited()
+
     await routed.close()
+
+    # close() disposes every remaining pooled client.
+    for inst in instances:
+        inst.close.assert_awaited()
 
 
 def test_routed_inngest_rejects_zero_max_cached_tenants() -> None:
