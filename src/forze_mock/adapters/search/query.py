@@ -58,7 +58,7 @@ from forze_mock.query.matching import (
     _sort_docs,  # type: ignore[reportPrivateUsage]
 )
 from forze_mock.state import MockState
-from forze_mock.tenancy import MockTenancyMixin, partition_namespace
+from forze_mock.tenancy import MockTenancyMixin
 
 
 @final
@@ -73,7 +73,7 @@ class MockSearchAdapter(MockTenancyMixin, SearchQueryPort[M]):
     # ....................... #
 
     def _store(self) -> dict[UUID, JsonDict]:
-        ns = partition_namespace(self.require_tenant_if_aware(), str(self.spec.name))
+        ns = self._partitioned_namespace(str(self.spec.name))
         with self.state.lock:
             return self.state.documents.setdefault(ns, {})
 

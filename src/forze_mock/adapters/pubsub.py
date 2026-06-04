@@ -28,7 +28,7 @@ from forze_mock.adapters.queue import (
 )
 from forze_mock.query._types import M
 from forze_mock.state import MockState
-from forze_mock.tenancy import MockTenancyMixin, partition_namespace
+from forze_mock.tenancy import MockTenancyMixin
 
 
 @final
@@ -43,7 +43,7 @@ class MockPubSubAdapter(MockTenancyMixin, PubSubCommandPort[M], PubSubQueryPort[
     # ....................... #
 
     def _ns(self) -> str:
-        return partition_namespace(self.require_tenant_if_aware(), self.namespace)
+        return self._partitioned_namespace(self.namespace)
 
     def _topic_store(self) -> dict[str, list[PubSubMessage[M]]]:
         return cast(

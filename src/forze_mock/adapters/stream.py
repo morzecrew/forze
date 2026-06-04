@@ -30,7 +30,7 @@ from forze_mock.adapters.queue import (
 )
 from forze_mock.query._types import M
 from forze_mock.state import MockState
-from forze_mock.tenancy import MockTenancyMixin, partition_namespace
+from forze_mock.tenancy import MockTenancyMixin
 
 
 @final
@@ -45,7 +45,7 @@ class MockStreamAdapter(MockTenancyMixin, StreamQueryPort[M], StreamCommandPort[
     # ....................... #
 
     def _ns(self) -> str:
-        return partition_namespace(self.require_tenant_if_aware(), self.namespace)
+        return self._partitioned_namespace(self.namespace)
 
     def _stream_store(self) -> dict[str, list[StreamMessage[M]]]:
         return cast(

@@ -14,7 +14,7 @@ from forze.application.contracts.search import (
 )
 from forze.base.exceptions import exc
 from forze_mock.state import MockState
-from forze_mock.tenancy import MockTenancyMixin, partition_namespace
+from forze_mock.tenancy import MockTenancyMixin
 
 # ----------------------- #
 
@@ -39,7 +39,7 @@ class MockSearchResultSnapshotAdapter(MockTenancyMixin, SearchResultSnapshotPort
     # ....................... #
 
     def _route(self) -> str:
-        return partition_namespace(self.require_tenant_if_aware(), self.namespace)
+        return self._partitioned_namespace(self.namespace)
 
     def _meta_store(self) -> dict[str, Any]:
         with self.state.lock:

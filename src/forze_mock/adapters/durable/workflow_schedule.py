@@ -21,6 +21,14 @@ from forze_mock.state import MockState
 # ----------------------- #
 
 
+def _workflow_schedules(state: MockState, spec_name: str) -> dict[str, Any]:
+    with state.lock:
+        return state.durable_schedules.setdefault(str(spec_name), {})
+
+
+# ....................... #
+
+
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class MockDurableWorkflowScheduleCommandAdapter[In: BaseModel](
@@ -30,8 +38,7 @@ class MockDurableWorkflowScheduleCommandAdapter[In: BaseModel](
     state: MockState
 
     def _schedules(self) -> dict[str, Any]:
-        with self.state.lock:
-            return self.state.durable_schedules.setdefault(str(self.spec.name), {})
+        return _workflow_schedules(self.state, self.spec.name)
 
     async def create(
         self,
@@ -131,8 +138,7 @@ class MockDurableWorkflowScheduleQueryAdapter[In: BaseModel](
     state: MockState
 
     def _schedules(self) -> dict[str, Any]:
-        with self.state.lock:
-            return self.state.durable_schedules.setdefault(str(self.spec.name), {})
+        return _workflow_schedules(self.state, self.spec.name)
 
     async def describe(
         self,

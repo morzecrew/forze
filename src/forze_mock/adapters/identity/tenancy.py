@@ -19,9 +19,10 @@ from forze_mock.state import MockState
 # ----------------------- #
 
 
-@final
 @attrs.define(slots=True, kw_only=True)
-class MockTenantResolverPort(TenantResolverPort):
+class _TenantRouteStore:
+    """Shared per-route tenant store accessor for the mock tenancy ports."""
+
     state: MockState
     route: str = "main"
 
@@ -31,6 +32,13 @@ class MockTenantResolverPort(TenantResolverPort):
         assert isinstance(tenants, dict)  # nosec: B101
         return tenants.setdefault(self.route, {})  # type: ignore[return-value]
 
+
+# ----------------------- #
+
+
+@final
+@attrs.define(slots=True, kw_only=True)
+class MockTenantResolverPort(_TenantRouteStore, TenantResolverPort):
     async def resolve_from_principal(
         self,
         principal_id: UUID,
@@ -59,16 +67,7 @@ class MockTenantResolverPort(TenantResolverPort):
 
 @final
 @attrs.define(slots=True, kw_only=True)
-class MockTenantManagementPort(TenantManagementPort):
-    state: MockState
-    route: str = "main"
-
-    def _tenants(self) -> dict[str, dict[str, object]]:
-        identity = self.state.identity
-        tenants = identity.setdefault("tenants", {})
-        assert isinstance(tenants, dict)  # nosec: B101
-        return tenants.setdefault(self.route, {})  # type: ignore[return-value]
-
+class MockTenantManagementPort(_TenantRouteStore, TenantManagementPort):
     async def provision_tenant(
         self,
         *,

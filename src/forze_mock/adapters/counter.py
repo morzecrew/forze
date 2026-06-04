@@ -9,7 +9,7 @@ import attrs
 from forze.application.contracts.counter import CounterPort
 from forze.base.exceptions import exc
 from forze_mock.state import MockState
-from forze_mock.tenancy import MockTenancyMixin, partition_namespace
+from forze_mock.tenancy import MockTenancyMixin
 
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
@@ -22,7 +22,7 @@ class MockCounterAdapter(MockTenancyMixin, CounterPort):
     # ....................... #
 
     def _key(self, suffix: str | None) -> tuple[str, str | None]:
-        ns = partition_namespace(self.require_tenant_if_aware(), self.namespace)
+        ns = self._partitioned_namespace(self.namespace)
         return ns, suffix
 
     # ....................... #
