@@ -20,9 +20,10 @@ __all__ = [
 # ....................... #
 
 
-def default_model_codec[T](model_type: type[T]) -> ModelCodec[T, Any]:
-    """Return the default :class:`ModelCodec` for *model_type* (Pydantic or msgspec)."""
+_CODEC_CACHE: dict[type, ModelCodec[Any, Any]] = {}
 
+
+def _build_codec(model_type: type) -> ModelCodec[Any, Any]:
     if issubclass(model_type, BaseModel):
         return PydanticModelCodec(model_type)  # type: ignore[return-value]
 
@@ -33,6 +34,22 @@ def default_model_codec[T](model_type: type[T]) -> ModelCodec[T, Any]:
         f"Unsupported model type {model_type!r}; "
         "expected pydantic.BaseModel or msgspec.Struct subclass"
     )
+
+
+def default_model_codec[T](model_type: type[T]) -> ModelCodec[T, Any]:
+    """Return the default :class:`ModelCodec` for *model_type* (Pydantic or msgspec).
+
+    Cached per *model_type* (the codecs are stateless, so one instance is reused).
+    The cache is keyed by the application's fixed set of model classes.
+    """
+
+    codec = _CODEC_CACHE.get(model_type)
+
+    if codec is None:
+        codec = _build_codec(model_type)
+        _CODEC_CACHE[model_type] = codec
+
+    return codec
 
 
 # ....................... #
