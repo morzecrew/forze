@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
-from typing import cast
+from typing import Any, cast
 
 from pydantic import BaseModel, PositiveInt
 
 from forze.application.contracts.base import CursorPage, Page
-from forze.application.contracts.querying import CursorPaginationExpression
+from forze.application.contracts.querying import (
+    CursorPaginationExpression,
+    PaginationExpression,
+)
 from forze.base.primitives import JsonDict
 from forze.domain.models import BaseDTO
 
@@ -22,6 +25,23 @@ class Pagination(BaseDTO):
 
     size: PositiveInt = 10
     """Page size (number of records per page)."""
+
+    # ....................... #
+
+    @property
+    def offset_limit(self) -> tuple[int, int]:
+        """Return ``(limit, offset)`` for the requested one-based page."""
+
+        return self.size, (self.page - 1) * self.size
+
+    # ....................... #
+
+    def to_offset_expression(self) -> PaginationExpression:
+        """Offset/limit pagination expression for the requested page."""
+
+        limit, offset = self.offset_limit
+
+        return {"limit": limit, "offset": offset}
 
 
 # ....................... #
@@ -58,6 +78,34 @@ class CursorPagination(BaseDTO):
 # ....................... #
 
 
+def offset_page_fields(page: Page[Any]) -> dict[str, Any]:
+    """Shared response fields for offset ``from_page`` builders."""
+
+    return {
+        "hits": page.hits,
+        "page": page.page,
+        "size": page.size,
+        "count": page.count,
+    }
+
+
+# ....................... #
+
+
+def cursor_page_fields(page: CursorPage[Any]) -> dict[str, Any]:
+    """Shared response fields for cursor ``from_page`` builders."""
+
+    return {
+        "hits": page.hits,
+        "next_cursor": page.next_cursor,
+        "prev_cursor": page.prev_cursor,
+        "has_more": page.has_more,
+    }
+
+
+# ....................... #
+
+
 class Paginated[T: BaseModel](BaseDTO):
     """Paginated response with typed hit records.
 
@@ -84,12 +132,7 @@ class Paginated[T: BaseModel](BaseDTO):
     def from_page[X: BaseModel](cls, page: Page[X]) -> Paginated[X]:
         out = cast(type[Paginated[X]], cls)
 
-        return out(
-            hits=page.hits,
-            page=page.page,
-            size=page.size,
-            count=page.count,
-        )
+        return out(**offset_page_fields(page))
 
 
 # ....................... #
@@ -118,12 +161,7 @@ class ProjectedPaginated(BaseDTO):
 
     @classmethod
     def from_page(cls, page: Page[JsonDict]) -> ProjectedPaginated:
-        return cls(
-            hits=page.hits,
-            page=page.page,
-            size=page.size,
-            count=page.count,
-        )
+        return cls(**offset_page_fields(page))
 
 
 # ....................... #
@@ -150,12 +188,7 @@ class CursorPaginated[T: BaseModel](BaseDTO):
     def from_page[X: BaseModel](cls, page: CursorPage[X]) -> CursorPaginated[X]:
         out = cast(type[CursorPaginated[X]], cls)
 
-        return out(
-            hits=page.hits,
-            next_cursor=page.next_cursor,
-            prev_cursor=page.prev_cursor,
-            has_more=page.has_more,
-        )
+        return out(**cursor_page_fields(page))
 
 
 # ....................... #
@@ -180,9 +213,4 @@ class ProjectedCursorPaginated(BaseDTO):
 
     @classmethod
     def from_page(cls, page: CursorPage[JsonDict]) -> ProjectedCursorPaginated:
-        return cls(
-            hits=page.hits,
-            next_cursor=page.next_cursor,
-            prev_cursor=page.prev_cursor,
-            has_more=page.has_more,
-        )
+        return cls(**cursor_page_fields(page))

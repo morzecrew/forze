@@ -34,6 +34,25 @@ class RawQueueMessage(Protocol):
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
+class BaseQueueMessage:
+    """Backend-agnostic raw queue message envelope.
+
+    Concrete backend message types subclass this; the field shape conforms to
+    :class:`RawQueueMessage`.
+    """
+
+    queue: str
+    id: str
+    body: bytes
+    type: str | None = None
+    enqueued_at: datetime | None = None
+    key: str | None = None
+
+
+# ....................... #
+
+
+@attrs.define(slots=True, kw_only=True, frozen=True)
 class QueueMessageCodec[M]:
     """Queue payload codec backed by a record-mapping :class:`ModelCodec`.
 

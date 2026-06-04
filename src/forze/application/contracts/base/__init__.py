@@ -1,4 +1,4 @@
-from .specs import BaseSpec
+from .specs import BaseSpec, MessageCodecSpec
 from .value_objects import (
     CountlessPage,
     CursorPage,
@@ -13,6 +13,7 @@ __all__ = [
     "BaseSpec",
     "CountlessPage",
     "CursorPage",
+    "MessageCodecSpec",
     "Page",
     "SearchSnapshotHandle",
     "page_from_limit_offset",

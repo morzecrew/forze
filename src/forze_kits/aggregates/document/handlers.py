@@ -171,10 +171,6 @@ class ListDocuments[Out: Bm](Handler[Lr, Paginated[Out]]):
         :returns: Paginated list of read models.
         """
 
-        page = args.page
-        size = args.size
-        limit = size
-        offset = (page - 1) * limit
         body = args
 
         if self.mapper:
@@ -183,10 +179,7 @@ class ListDocuments[Out: Bm](Handler[Lr, Paginated[Out]]):
         res = await self.doc.find_page(
             filters=body.filters,
             sorts=body.sorts,
-            pagination={
-                "limit": limit,
-                "offset": offset,
-            },
+            pagination=args.to_offset_expression(),
         )
 
         return Paginated.from_page(res)
@@ -214,10 +207,6 @@ class ProjectedListDocuments(Handler[Plr, ProjectedPaginated]):
         :returns: Paginated list of raw results.
         """
 
-        page = args.page
-        size = args.size
-        limit = size
-        offset = (page - 1) * limit
         body = args
 
         if self.mapper:
@@ -227,10 +216,7 @@ class ProjectedListDocuments(Handler[Plr, ProjectedPaginated]):
             tuple(body.return_fields),
             filters=body.filters,
             sorts=body.sorts,
-            pagination={
-                "limit": limit,
-                "offset": offset,
-            },
+            pagination=args.to_offset_expression(),
         )
 
         return ProjectedPaginated.from_page(res)
@@ -313,10 +299,6 @@ class AggregatedListDocuments(Handler[Alr, ProjectedPaginated]):
     # ....................... #
 
     async def __call__(self, args: Alr) -> ProjectedPaginated:
-        page = args.page
-        size = args.size
-        limit = size
-        offset = (page - 1) * limit
         body = args
 
         if self.mapper:
@@ -326,10 +308,7 @@ class AggregatedListDocuments(Handler[Alr, ProjectedPaginated]):
             body.aggregates,
             filters=body.filters,
             sorts=body.sorts,
-            pagination={
-                "limit": limit,
-                "offset": offset,
-            },
+            pagination=args.to_offset_expression(),
         )
 
         return ProjectedPaginated.from_page(res)

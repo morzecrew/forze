@@ -1,4 +1,4 @@
-from .adapter import ObjectStorageAdapter
+from .adapter import ObjectStorageAdapter, guess_content_type_with_magic
 from .client import (
     ObjectStorageClientPort,
     ObjectStorageHead,
@@ -18,5 +18,6 @@ __all__ = [
     "ObjectStoragePathCodec",
     "RoutedObjectStorageClientBase",
     "default_path_codec",
+    "guess_content_type_with_magic",
     "object_metadata_from_user_metadata",
 ]

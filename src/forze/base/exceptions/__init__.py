@@ -1,4 +1,5 @@
 from .egress import exception_egress_policy
+from .http_mapper import make_http_exception_mapper, response_status
 from .interceptor import ExceptionInterceptor
 from .mapping import ChainExceptionMapper, default_chain_exc_mapper, map_pydantic
 from .model import CoreException, ExceptionKind
@@ -19,6 +20,8 @@ __all__ = [
     "ExceptionMapper",
     "exception_egress_policy",
     "ExceptionInterceptor",
+    "make_http_exception_mapper",
     "map_pydantic",
     "default_chain_exc_mapper",
+    "response_status",
 ]
