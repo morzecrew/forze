@@ -17,6 +17,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`forze_identity.authn` API key refresh:** `ApiKeyLifecycleAdapter.refresh_api_key` is implemented as rotation — it validates the presented key (active, unexpired, digest match), issues a fresh key for the same principal, and retires the old one. Previously raised `NotImplementedError`.
+- **`forze_identity.authn` password invites:** single-use invite flow for `PasswordAccountProvisioningPort`. New `issue_password_invite(operator, principal_id) -> IssuedInvite` on the port issues an opaque token (only its HMAC digest is persisted in the new `authn_password_invites` document); `accept_invite_with_password` verifies the token (principal match, unconsumed, unexpired), provisions the password account, then marks the invite `consumed_at`. Wired via optional `kernel.invite_token_pepper` / `InviteTokenConfig` and an `InviteTokenService`; provisioning routes without the pepper keep working and raise a clear configuration error if invites are used.
+
 - **`forze_kits` stored-file kit:** closed-schema document-backed object storage with `StoredFileKitSpec`, fixed domain/read/cmd models (`forze_kits.domain.stored_file`), orchestration handlers and `freeze_stored_file_registry` wiring (`forze_kits.aggregates.stored_file`), optional search merge and outbox events. Upload uses record-then-upload (pending row in tx, blob upload after commit); delete is soft-delete with blob purge after commit.
 - **`forze[http]` / `forze_http`:** outbound HTTP integration with `HttpServiceSpec`, `HttpServicePort`, `HttpxDepsModule`, `HttpxClient` / `RoutedHttpxClient`, and declarative `BaseHttpIntegration` + `async_http_op` toolkit in `forze.application.integrations.http`. `ExecutionContext.http` resolves configured remote services by spec name. Refinements: Forze `Logger` names (`FORZE_HTTP_LOGGER_NAMES`), attrs-based descriptors/facade, MRO-safe `build_http_service_spec`, tenant routing via `RoutedHttpxClient` (factory-scoped per service or global dep) without `tenant_provider` on the adapter, per-operation exception sites, `HttpxHttpServiceConfig.timeout`, `HttpAuthConfig.auth_headers`, and `allows_empty_body` on operations.
 - **Postgres search / hub:** `read_validation` on `PostgresSearchConfig` and `PostgresHubSearchConfig` (`"strict"` | `"trusted"`) for faster hit materialization from trusted SQL rows (offset, cursor, parallel hub, snapshot paths).
@@ -44,6 +47,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
+- **`forze[casbin]` extra:** dropped the unused `casbin` optional dependency (no integration package or adapter shipped against it).
 - **`forze_patterns`:** use `forze_kits.domain.*` (mixins, mapping steps, soft-deletion registry).
 - **`forze.application.composition`:** use `forze_kits.aggregates.document`, `forze_kits.aggregates.search`, `forze_kits.aggregates.storage`, `forze_kits.aggregates.authn`, `forze_kits.integrations.outbox`.
 - **`forze.application.kit`:** use `forze_kits.scopes` (`DistributedLockScope`).

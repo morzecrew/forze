@@ -43,6 +43,7 @@ from ...application.specs import (
     api_key_account_spec,
     identity_mapping_spec,
     password_account_spec,
+    password_invite_spec,
     session_spec,
 )
 from ...orchestrator import AuthnOrchestrator
@@ -447,9 +448,20 @@ class ConfigurablePasswordAccountProvisioning:
         if self.shared.password_svc is None:
             raise exc.internal("Password provisioning requires kernel.password")
 
+        invite_svc = self.shared.invite_svc
+        invite_qry = (
+            ctx.doc.query(password_invite_spec) if invite_svc is not None else None
+        )
+        invite_cmd = (
+            ctx.doc.command(password_invite_spec) if invite_svc is not None else None
+        )
+
         return PasswordAccountProvisioningAdapter(
             password_svc=self.shared.password_svc,
             password_account_qry=ctx.doc.query(password_account_spec),
             password_account_cmd=ctx.doc.command(password_account_spec),
             eligibility=_resolve_eligibility(ctx, spec),
+            invite_svc=invite_svc,
+            invite_qry=invite_qry,
+            invite_cmd=invite_cmd,
         )

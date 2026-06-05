@@ -110,6 +110,8 @@ from forze.application.contracts.transaction import (
     TransactionManagerPort,
 )
 from forze.application.execution import Deps, DepsModule, ExecutionContext
+from forze.application.execution.outbox import build_staging_outbox_command_for_store
+from forze.application.integrations.outbox import StagingOutboxCommand
 from forze.application.integrations.search import SearchResultSnapshot
 from forze.base.exceptions import exc
 from forze.base.primitives import StrKey
@@ -161,8 +163,6 @@ from forze_mock.adapters.identity import (
     MockTokenVerifierPort,
 )
 from forze_mock.embeddings import MockHashEmbeddingsProvider
-from forze.application.integrations.outbox import StagingOutboxCommand
-from forze.application.execution.outbox import build_staging_outbox_command_for_store
 from forze_mock.outbox_adapter import MockOutboxStore
 from forze_mock.tenancy import MockRoutedStateRegistry, resolve_mock_namespace_sync
 from forze_mock.tenancy.routed import MockRoutedStateDepKey
@@ -760,7 +760,9 @@ class MockDepsModule(DepsModule):
                 PasswordLifecycleDepKey: _route_stubs(
                     MockPasswordLifecyclePort, authn_keys
                 ),
-                ApiKeyLifecycleDepKey: _route_stubs(MockApiKeyLifecyclePort, authn_keys),
+                ApiKeyLifecycleDepKey: _route_stubs(
+                    MockApiKeyLifecyclePort, authn_keys
+                ),
                 PasswordAccountProvisioningDepKey: _route_stubs(
                     MockPasswordAccountProvisioningPort, authn_keys
                 ),

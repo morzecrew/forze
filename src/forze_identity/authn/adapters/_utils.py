@@ -5,6 +5,7 @@ from forze.application.contracts.document import DocumentQueryPort
 from forze.base.exceptions import exc
 
 from ..domain.models.account import ReadApiKeyAccount, ReadPasswordAccount
+from ..domain.models.invite import ReadPasswordInvite
 
 # ----------------------- #
 
@@ -88,6 +89,22 @@ async def find_api_key_account_by_id(
         filters={
             "$values": {
                 "id": key_id,
+            },
+        }
+    )
+
+
+# ....................... #
+
+
+async def find_password_invite_by_digest(
+    qry: DocumentQueryPort[ReadPasswordInvite],
+    token_digest: str,
+) -> ReadPasswordInvite | None:
+    return await qry.find(
+        filters={
+            "$values": {
+                "token_digest": token_digest,
             },
         }
     )

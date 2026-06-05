@@ -23,7 +23,7 @@ from ..domain.models.account import (
     UpdateApiKeyAccountCmd,
 )
 from ..services import ApiKeyService
-from ._utils import find_api_key_account_by_id
+from ._utils import find_api_key_account_by_id, find_api_key_account_by_key_hash
 
 # ----------------------- #
 #! TODO: configurable prefix
@@ -64,6 +64,48 @@ class ApiKeyLifecycleAdapter(ApiKeyLifecyclePort):
     async def issue_api_key(self, identity: AuthnIdentity) -> IssuedApiKey:
         await self.eligibility.require_authentication_allowed(identity.principal_id)
 
+        return await self._issue_for_principal(identity.principal_id)
+
+    # ....................... #
+
+    async def refresh_api_key(
+        self,
+        credentials: ApiKeyCredentials,
+    ) -> IssuedApiKey:
+        digest = self.api_key_svc.calculate_key_digest(credentials.key)
+        account = await find_api_key_account_by_key_hash(self.ak_qry, digest)
+
+        if account is None or not account.is_active:
+            raise exc.authentication("API key not found")
+
+        if account.expires_at is not None and account.expires_at <= utcnow():
+            raise exc.authentication("API key not found")
+
+        if not self.api_key_svc.verify_key(
+            key=credentials.key,
+            expected_digest=account.key_hash,
+        ):
+            raise exc.authentication("Invalid API key")
+
+        await self.eligibility.require_authentication_allowed(account.principal_id)
+
+        # Rotate: issue a fresh key, then retire the presented one. Account fields
+        # (prefix/expires_at/key_hash) are immutable, so refresh mints a new document
+        # rather than mutating the existing key in place.
+        issued = await self._issue_for_principal(account.principal_id)
+
+        await self.ak_cmd.update(
+            account.id,
+            account.rev,
+            UpdateApiKeyAccountCmd(is_active=False),
+            return_new=False,
+        )
+
+        return issued
+
+    # ....................... #
+
+    async def _issue_for_principal(self, principal_id: UUID) -> IssuedApiKey:
         now = utcnow()
         expires_in = self.api_key_svc.config.expires_in
         expires_at = (now + expires_in) if expires_in is not None else None
@@ -80,7 +122,7 @@ class ApiKeyLifecycleAdapter(ApiKeyLifecyclePort):
         key_hash = self.api_key_svc.calculate_key_digest(key)
 
         create_cmd = CreateApiKeyAccountCmd(
-            principal_id=identity.principal_id,
+            principal_id=principal_id,
             key_hash=key_hash,
             prefix=prefix,
             expires_at=expires_at,
@@ -99,14 +141,6 @@ class ApiKeyLifecycleAdapter(ApiKeyLifecyclePort):
                 expires_at=expires_at,
             ),
         )
-
-    # ....................... #
-
-    async def refresh_api_key(
-        self,
-        credentials: ApiKeyCredentials,  # noqa: F841
-    ) -> IssuedApiKey:
-        raise NotImplementedError("Not implemented")
 
     # ....................... #
 

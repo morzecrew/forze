@@ -126,7 +126,6 @@ authn = [
     "pyjwt[crypto]>=2.12.1",
 ]
 oidc = ["pyjwt[crypto]>=2.12.1", "httpx>=0.28.0"]
-casbin = ["pycasbin>=2.8.0"]
 vault = [
     "hvac[parser]>=2.4.0",
     "requests>=2.34.2",
@@ -429,7 +428,6 @@ DEP002 = [
     #! Added temporarily
     "neo4j",
     "python-arango-async",
-    "pycasbin",
     "uvicorn",
     "types-hvac",
 ]
