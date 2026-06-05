@@ -82,8 +82,8 @@ class RedisSearchResultSnapshotAdapter(
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
-        if self.default_ttl.total_seconds() <= 0:
-            raise exc.configuration("Default TTL must be positive")
+        if self.default_ttl.total_seconds() < 1:
+            raise exc.configuration("Default TTL must be at least 1 second")
 
         if self.default_max_ids < 1:
             raise exc.configuration("Default max IDs must be at least 1")

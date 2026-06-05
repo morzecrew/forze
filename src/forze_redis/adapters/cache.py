@@ -67,14 +67,14 @@ class RedisCacheAdapter(CachePort, RedisBaseAdapter):
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
-        if self.ttl_pointer.total_seconds() <= 0:
-            raise exc.configuration("TTL pointer must be positive")
+        if self.ttl_pointer.total_seconds() < 1:
+            raise exc.configuration("TTL pointer must be at least 1 second")
 
-        if self.ttl_body.total_seconds() <= 0:
-            raise exc.configuration("TTL body must be positive")
+        if self.ttl_body.total_seconds() < 1:
+            raise exc.configuration("TTL body must be at least 1 second")
 
-        if self.ttl_kv.total_seconds() <= 0:
-            raise exc.configuration("TTL kv must be positive")
+        if self.ttl_kv.total_seconds() < 1:
+            raise exc.configuration("TTL kv must be at least 1 second")
 
     # ....................... #
     # Helpers

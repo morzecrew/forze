@@ -87,7 +87,7 @@ class ClickHouseConfig:
             raise exc.configuration("Timeout must be positive")
 
         if self.keepalive_timeout.total_seconds() <= 0:
-            raise exc.configuration("Poll interval must be positive")
+            raise exc.configuration("Keepalive timeout must be positive")
 
         if self.read_retry_base_delay.total_seconds() <= 0:
             raise exc.configuration("Read retry base delay must be positive")
