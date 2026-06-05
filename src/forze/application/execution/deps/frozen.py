@@ -70,6 +70,10 @@ class FrozenDeps:
     """Optional recorder for runtime port and transaction events."""
 
     _resolution: ResolutionContext = attrs.field(
+        default=attrs.Factory(
+            lambda self: ResolutionContext(self.resolution_tracer),
+            takes_self=True,
+        ),
         init=False,
         repr=False,
         eq=False,
@@ -101,15 +105,6 @@ class FrozenDeps:
         """Whether runtime event recording is enabled (compat shim)."""
 
         return self.runtime_tracer.enabled
-
-    # ....................... #
-
-    def __attrs_post_init__(self) -> None:
-        object.__setattr__(
-            self,
-            "_resolution",
-            ResolutionContext(self.resolution_tracer),
-        )
 
     # ....................... #
 

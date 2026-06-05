@@ -27,6 +27,7 @@ from forze.application.contracts.search import (
 )
 from forze.application.integrations.search import SearchResultSnapshot
 from forze.base.exceptions import exc
+from forze.base.primitives import OnceCell
 from forze_postgres.kernel.relation import RelationSpec, is_static_relation, resolve_postgres_qname
 
 from ...kernel.gateways import PostgresGateway, PostgresQualifiedName
@@ -60,14 +61,14 @@ class PostgresRankedPipelineSearchAdapter[M: BaseModel](
     index_heap_relation: RelationSpec
     """Heap relation the index is defined on."""
 
-    _index_qname_resolved: PostgresQualifiedName | None = attrs.field(
-        default=None,
+    _index_qname_cell: OnceCell[PostgresQualifiedName] = attrs.field(
+        factory=OnceCell,
         init=False,
         eq=False,
         repr=False,
     )
-    _index_heap_qname_resolved: PostgresQualifiedName | None = attrs.field(
-        default=None,
+    _index_heap_qname_cell: OnceCell[PostgresQualifiedName] = attrs.field(
+        factory=OnceCell,
         init=False,
         eq=False,
         repr=False,
@@ -100,10 +101,9 @@ class PostgresRankedPipelineSearchAdapter[M: BaseModel](
                 self._tenant_id_for_resolve(),
             )
 
-        return await self._resolve_and_cache(
-            "_index_qname_resolved",
+        return await self._index_qname_cell.resolve(
             _factory,
-            cacheable=is_static_relation(self.index_relation),
+            cache=is_static_relation(self.index_relation),
         )
 
     # ....................... #
@@ -139,10 +139,9 @@ class PostgresRankedPipelineSearchAdapter[M: BaseModel](
                 self._tenant_id_for_resolve(),
             )
 
-        return await self._resolve_and_cache(
-            "_index_heap_qname_resolved",
+        return await self._index_heap_qname_cell.resolve(
             _factory,
-            cacheable=is_static_relation(self.index_heap_relation),
+            cache=is_static_relation(self.index_heap_relation),
         )
 
     # ....................... #
@@ -151,8 +150,10 @@ class PostgresRankedPipelineSearchAdapter[M: BaseModel](
     def index_qname(self) -> PostgresQualifiedName:
         """Best-effort sync access when :attr:`index_relation` is static."""
 
-        if self._index_qname_resolved is not None:
-            return self._index_qname_resolved
+        resolved = self._index_qname_cell.peek()
+
+        if resolved is not None:
+            return resolved
 
         if is_static_relation(self.index_relation):
             return PostgresQualifiedName(*self.index_relation)
@@ -167,8 +168,10 @@ class PostgresRankedPipelineSearchAdapter[M: BaseModel](
     def index_heap_qname(self) -> PostgresQualifiedName:
         """Best-effort sync access when :attr:`index_heap_relation` is static."""
 
-        if self._index_heap_qname_resolved is not None:
-            return self._index_heap_qname_resolved
+        resolved = self._index_heap_qname_cell.peek()
+
+        if resolved is not None:
+            return resolved
 
         if is_static_relation(self.index_heap_relation):
             return PostgresQualifiedName(*self.index_heap_relation)

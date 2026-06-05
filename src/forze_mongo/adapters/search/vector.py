@@ -13,6 +13,7 @@ from forze.application.contracts.resolution import (
     NamedResourceSpec,
     is_static_named_resource,
 )
+from forze.base.primitives import OnceCell
 from forze_mongo.kernel.relation import resolve_mongo_named_resource
 from forze.application.contracts.querying import QuerySortExpression
 from forze.application.contracts.search import SearchOptions
@@ -55,8 +56,8 @@ class MongoVectorSearchAdapter[M: BaseModel](MongoSimpleSearchAdapter[M]):
     index_name: NamedResourceSpec
     """Atlas Vector Search index name (``$vectorSearch`` stage)."""
 
-    _index_name_resolved: str | None = attrs.field(
-        default=None,
+    _index_name_cell: OnceCell[str] = attrs.field(
+        factory=OnceCell,
         init=False,
         eq=False,
         repr=False,
@@ -73,25 +74,23 @@ class MongoVectorSearchAdapter[M: BaseModel](MongoSimpleSearchAdapter[M]):
     # ....................... #
 
     async def _resolved_index_name(self) -> str:
-        if self._index_name_resolved is not None:
-            return self._index_name_resolved
+        async def _factory() -> str:
+            tenant_id: UUID | None = None
 
-        tenant_id: UUID | None = None
+            if self.tenant_provider is not None:
+                tenant = self.tenant_provider()
 
-        if self.tenant_provider is not None:
-            tenant = self.tenant_provider()
+                if tenant is not None:
+                    tenant_id = tenant.tenant_id
 
-            if tenant is not None:
-                tenant_id = tenant.tenant_id
-
-        resolved = await resolve_mongo_named_resource(self.index_name, tenant_id)
+            return await resolve_mongo_named_resource(self.index_name, tenant_id)
 
         # Only memoize tenant-independent (static) index names; a dynamic resolver
         # depends on the bound tenant and the adapter may be shared across tenants.
-        if is_static_named_resource(self.index_name):
-            object.__setattr__(self, "_index_name_resolved", resolved)
-
-        return resolved
+        return await self._index_name_cell.resolve(
+            _factory,
+            cache=is_static_named_resource(self.index_name),
+        )
 
     # ....................... #
 

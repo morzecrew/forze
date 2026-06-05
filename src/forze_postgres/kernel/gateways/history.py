@@ -13,6 +13,7 @@ import attrs
 from psycopg import sql
 
 from forze.base.exceptions import exc
+from forze.base.primitives import OnceCell
 from forze.base.serialization import ModelCodec
 from forze.domain.constants import (
     HISTORY_DATA_FIELD,
@@ -47,8 +48,8 @@ class PostgresHistoryGateway[D: Document](PostgresGateway[D]):
     history_codec: ModelCodec[Any, Any] = attrs.field(kw_only=True, eq=False, repr=False)
     """Codec for :class:`~forze.domain.models.DocumentHistory` persistence rows."""
 
-    _target_qname_resolved: PostgresQualifiedName | None = attrs.field(
-        default=None,
+    _target_qname_cell: OnceCell[PostgresQualifiedName] = attrs.field(
+        factory=OnceCell,
         init=False,
         eq=False,
         repr=False,
@@ -73,10 +74,9 @@ class PostgresHistoryGateway[D: Document](PostgresGateway[D]):
                 self._tenant_id_for_resolve(),
             )
 
-        return await self._resolve_and_cache(
-            "_target_qname_resolved",
+        return await self._target_qname_cell.resolve(
             _factory,
-            cacheable=is_static_relation(self.target_relation),
+            cache=is_static_relation(self.target_relation),
         )
 
     # ....................... #

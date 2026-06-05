@@ -48,7 +48,10 @@ class ExecutionContext:
     # ....................... #
 
     _resolved_op_cache: dict[StrKey, Any] | None = attrs.field(
-        default=None,
+        default=attrs.Factory(
+            lambda self: {} if self.cache_operations else None,
+            takes_self=True,
+        ),
         init=False,
         repr=False,
         eq=False,
@@ -57,7 +60,10 @@ class ExecutionContext:
     """Per-scope resolved-operation memo (``None`` when caching is disabled)."""
 
     _resolved_port_cache: dict[Any, tuple[Any, Any]] | None = attrs.field(
-        default=None,
+        default=attrs.Factory(
+            lambda self: {} if self.cache_ports else None,
+            takes_self=True,
+        ),
         init=False,
         repr=False,
         eq=False,
@@ -194,17 +200,6 @@ class ExecutionContext:
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
-        object.__setattr__(
-            self,
-            "_resolved_op_cache",
-            {} if self.cache_operations else None,
-        )
-        object.__setattr__(
-            self,
-            "_resolved_port_cache",
-            {} if self.cache_ports else None,
-        )
-
         bind_active_deps(self.deps)
         init_runtime_tracing(self.deps)
 

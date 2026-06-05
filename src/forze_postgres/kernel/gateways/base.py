@@ -29,7 +29,7 @@ from forze.application.integrations.persistence import (
     TenantResolvedRelationMixin,
 )
 from forze.base.exceptions import exc
-from forze.base.primitives import JsonDict
+from forze.base.primitives import JsonDict, OnceCell
 from forze.base.serialization import ModelCodec, default_model_codec
 from forze.domain.constants import ID_FIELD
 from forze_postgres.kernel.catalog.introspect import (
@@ -124,8 +124,8 @@ class PostgresGateway[M: BaseModel](
     relation: RelationSpec
     """Static ``(schema, relation)`` or tenant-scoped resolver."""
 
-    _qname_resolved: PostgresQualifiedName | None = attrs.field(
-        default=None,
+    _qname_cell: OnceCell[PostgresQualifiedName] = attrs.field(
+        factory=OnceCell,
         init=False,
         eq=False,
         repr=False,
@@ -165,7 +165,10 @@ class PostgresGateway[M: BaseModel](
     """
 
     filter_limits: QueryFilterLimits | None = attrs.field(default=None)
-    filter_parser: QueryFilterExpressionParser = attrs.field(init=False)
+    filter_parser: QueryFilterExpressionParser = attrs.field(
+        default=attrs.Factory(lambda self: self.build_filter_parser(), takes_self=True),
+        init=False,
+    )
 
     # ....................... #
 
@@ -174,8 +177,6 @@ class PostgresGateway[M: BaseModel](
 
         if cap is not None and cap < 1:
             raise exc.internal("find_many_implicit_limit must be at least 1 when set")
-
-        self.init_filter_parser()
 
     # ....................... #
 
@@ -196,10 +197,9 @@ class PostgresGateway[M: BaseModel](
                 self._tenant_id_for_resolve(),
             )
 
-        return await self._resolve_and_cache(
-            "_qname_resolved",
+        return await self._qname_cell.resolve(
             _factory,
-            cacheable=is_static_relation(self.relation),
+            cache=is_static_relation(self.relation),
         )
 
     # ....................... #
@@ -212,8 +212,10 @@ class PostgresGateway[M: BaseModel](
         resolvers require :meth:`_qname` on async paths.
         """
 
-        if self._qname_resolved is not None:
-            return self._qname_resolved
+        resolved = self._qname_cell.peek()
+
+        if resolved is not None:
+            return resolved
 
         if is_static_relation(self.relation):
             return PostgresQualifiedName(*self.relation)

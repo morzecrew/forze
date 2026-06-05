@@ -2,7 +2,7 @@
 
 import asyncio
 from functools import partial
-from typing import Any, Final, Literal, NoReturn, Sequence, TypeVar, final, overload
+from typing import Any, Final, Literal, NoReturn, Sequence, TypeVar, cast, final, overload
 
 import attrs
 from pydantic import BaseModel
@@ -89,18 +89,21 @@ class PostgresFederatedSearchAdapter[M: BaseModel](
     result_snapshot: SearchResultSnapshot | None = None
     """Federation snapshot run helper."""
 
-    spec: FederatedSearchSpec[M] = attrs.field(init=False)
-    """Set in :meth:`__attrs_post_init__` from :attr:`federated_spec` (port mixin)."""
+    spec: FederatedSearchSpec[M] = attrs.field(
+        default=attrs.Factory(lambda self: self.federated_spec, takes_self=True),
+        init=False,
+    )
+    """Alias of :attr:`federated_spec` exposed for the port mixin."""
 
-    model_type: type[FederatedSearchReadModel[M]] = attrs.field(init=False)
-    """Set in :meth:`__attrs_post_init__` for port mixin typing."""
+    model_type: type[FederatedSearchReadModel[M]] = attrs.field(
+        default=cast("type[FederatedSearchReadModel[M]]", FederatedSearchReadModel),
+        init=False,
+    )
+    """Read model for port mixin typing."""
 
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
-        object.__setattr__(self, "spec", self.federated_spec)
-        object.__setattr__(self, "model_type", FederatedSearchReadModel)
-
         if len(self.legs) != len(self.federated_spec.members):
             raise exc.internal(
                 "Federated adapter legs must match FederatedSearchSpec.members length.",

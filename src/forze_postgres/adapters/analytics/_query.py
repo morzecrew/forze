@@ -20,7 +20,7 @@ from forze.application.integrations.analytics.adapter_common import (
 from forze.application.contracts.base import CountlessPage, Page
 from forze.application.contracts.querying import PaginationExpression
 from forze.base.exceptions import exc
-from forze.base.primitives import JsonDict, StrKey
+from forze.base.primitives import JsonDict, OnceCell, StrKey
 from forze_postgres.execution.deps.configs import (
     PostgresAnalyticsConfig,
     PostgresQueryConfig,
@@ -50,7 +50,7 @@ class PostgresAnalyticsQueryMixin[R: BaseModel, Ing: BaseModel]:
     spec: AnalyticsSpec[R, Ing]
     config: PostgresAnalyticsConfig
     tenant_provider: TenantProviderPort | None
-    _ingest_qname_resolved: PostgresQualifiedName | None
+    _ingest_qname_cell: OnceCell[PostgresQualifiedName]
 
     # ....................... #
 
@@ -86,17 +86,15 @@ class PostgresAnalyticsQueryMixin[R: BaseModel, Ing: BaseModel]:
                 f"Postgres ingest relation is required for route {self.spec.name!r}."
             )
 
-        if self._ingest_qname_resolved is not None:
-            return self._ingest_qname_resolved
-
-        resolved = await resolve_postgres_qname(spec, self._tenant_id_for_resolve())
+        async def _factory() -> PostgresQualifiedName:
+            return await resolve_postgres_qname(spec, self._tenant_id_for_resolve())
 
         # Only memoize tenant-independent (static) relations; a dynamic resolver
         # depends on the bound tenant and the adapter may be shared across tenants.
-        if is_static_relation(spec):
-            object.__setattr__(self, "_ingest_qname_resolved", resolved)
-
-        return resolved
+        return await self._ingest_qname_cell.resolve(
+            _factory,
+            cache=is_static_relation(spec),
+        )
 
     # ....................... #
 

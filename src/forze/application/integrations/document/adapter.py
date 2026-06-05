@@ -58,7 +58,6 @@ class DocumentAdapter(
     document_cache: DocumentCache[R]
     batch_size: int = 200
     enforce_primary_key_cursor_sort: bool = False
-    hydrate_from_write: bool = False
 
     max_scan_pages: int | None = DEFAULT_MAX_SCAN_PAGES  # type: ignore[override]
     """Max offset-scan pages when ``limit`` is omitted; ``None`` for unlimited."""
@@ -83,6 +82,24 @@ class DocumentAdapter(
             raise exc.configuration(
                 "Document document cache name mismatches document specification name."
             )
+
+    # ....................... #
+
+    @cached_property
+    def hydrate_from_write(self) -> bool:  # type: ignore[override]
+        """Whether reads hydrate missing domain state from the write model.
+
+        Computed once on first access via :meth:`_compute_hydrate_from_write`;
+        subclasses override that hook (default ``False``)."""
+
+        return self._compute_hydrate_from_write()
+
+    # ....................... #
+
+    def _compute_hydrate_from_write(self) -> bool:
+        """Hook for backends that can hydrate reads from the write model."""
+
+        return False
 
     # ....................... #
 

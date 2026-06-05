@@ -1,6 +1,7 @@
 """Primitive types and helpers shared across the application."""
 
 from .buffer import ContextualBuffer, ContextVarTrace
+from .cell import OnceCell
 from .datetime import utcnow
 from .fingerprint import (
     build_routing_fingerprint,
@@ -43,6 +44,7 @@ __all__ = [
     "SimpleLruRegistry",
     "ContextualBuffer",
     "ContextVarTrace",
+    "OnceCell",
     "normalize_string",
     "JsonDict",
     "StrKey",

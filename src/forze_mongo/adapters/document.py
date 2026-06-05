@@ -66,14 +66,18 @@ class MongoDocumentAdapter(DocumentAdapter[R, D, C, U]):
         if self.write_gw is not None:
             validate_read_write_gateway_compat(self.read_gw, self.write_gw)
 
-            if self.spec.write is not None:
-                hydrate = can_hydrate_read_from_write_domain(
-                    read_model=self.read_gw.model_type,
-                    domain_model=self.spec.write["domain"],
-                    read_source_key=_mongo_source_key(self.read_gw),
-                    write_source_key=_mongo_source_key(self.write_gw),
-                )
-                object.__setattr__(self, "hydrate_from_write", hydrate)
+    # ....................... #
+
+    def _compute_hydrate_from_write(self) -> bool:
+        if self.write_gw is None or self.spec.write is None:
+            return False
+
+        return can_hydrate_read_from_write_domain(
+            read_model=self.read_gw.model_type,
+            domain_model=self.spec.write["domain"],
+            read_source_key=_mongo_source_key(self.read_gw),
+            write_source_key=_mongo_source_key(self.write_gw),
+        )
 
 
 def _mongo_source_key(

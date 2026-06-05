@@ -41,10 +41,10 @@ class MockHubSearchAdapter[M: BaseModel](
     score_merge: Literal["max", "sum"] = "max"
     result_snapshot: SearchResultSnapshot | None = None
 
-    spec: HubSearchSpec[M] = attrs.field(init=False)
-
-    def __attrs_post_init__(self) -> None:
-        object.__setattr__(self, "spec", self.hub_spec)
+    spec: HubSearchSpec[M] = attrs.field(
+        default=attrs.Factory(lambda self: self.hub_spec, takes_self=True),
+        init=False,
+    )
 
     # ....................... #
 

@@ -37,7 +37,7 @@ class async_http_op(Generic[In, Out]):  # noqa: N801
     idempotent: bool = False
     site: str | None = None
     allows_empty_body: bool = False
-    op_name: str | None = attrs.field(default=None, init=False)
+    op_name: str | None = None
 
     # ....................... #
 
@@ -67,7 +67,10 @@ class async_http_op(Generic[In, Out]):  # noqa: N801
     # ....................... #
 
     def __set_name__(self, owner: type[BaseHttpIntegration], name: str) -> None:
-        object.__setattr__(self, "op_name", name)
+        # Bind the operation name (supplied by the descriptor protocol after
+        # construction) by replacing the class attribute with an evolved copy,
+        # keeping the descriptor frozen.
+        setattr(owner, name, attrs.evolve(self, op_name=name))
 
 
 # ....................... #
