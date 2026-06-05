@@ -910,7 +910,6 @@ dependencies = [
     { name = "orjson" },
     { name = "pydantic" },
     { name = "pydantic-extra-types" },
-    { name = "python-dateutil" },
     { name = "pyyaml" },
     { name = "rich" },
     { name = "structlog" },
@@ -1027,7 +1026,6 @@ dev = [
     { name = "radon" },
     { name = "ruff" },
     { name = "testcontainers", extra = ["clickhouse", "google", "minio", "rabbitmq"] },
-    { name = "types-python-dateutil" },
     { name = "types-pyyaml" },
     { name = "vulture" },
     { name = "zensical" },
@@ -1080,7 +1078,6 @@ requires-dist = [
     { name = "pyjwt", extras = ["crypto"], marker = "extra == 'oidc'", specifier = ">=2.12.1" },
     { name = "pymongo", marker = "extra == 'mongo'", specifier = ">=4.16.0" },
     { name = "python-arango-async", marker = "extra == 'arango'", specifier = ">=1.2.2" },
-    { name = "python-dateutil", specifier = ">=2.9.0.post0" },
     { name = "python-magic", marker = "extra == 'gcs'", specifier = ">=0.4.27" },
     { name = "python-magic", marker = "extra == 's3'", specifier = ">=0.4.27" },
     { name = "python-multipart", marker = "extra == 'fastapi'", specifier = ">=0.0.22" },
@@ -1125,7 +1122,6 @@ dev = [
     { name = "radon", specifier = ">=6.0.1" },
     { name = "ruff", specifier = ">=0.15.5" },
     { name = "testcontainers", extras = ["minio", "rabbitmq", "vault", "google", "clickhouse"], specifier = ">=4.14.1" },
-    { name = "types-python-dateutil", specifier = ">=2.9.0.20260305" },
     { name = "types-pyyaml", specifier = ">=6.0.12.20250915" },
     { name = "vulture", specifier = ">=2.14" },
     { name = "zensical", specifier = ">=0.0.43" },
@@ -3508,15 +3504,6 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/5f/e2/9aa4a3b2469508bd7b4e2ae11cbedaf419222a09a1b94daffcd5efca4023/types_protobuf-6.32.1.20260221.tar.gz", hash = "sha256:6d5fb060a616bfb076cbb61b4b3c3969f5fc8bec5810f9a2f7e648ee5cbcbf6e", size = 64408, upload-time = "2026-02-21T03:55:13.916Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/2e/e8/1fd38926f9cf031188fbc5a96694203ea6f24b0e34bd64a225ec6f6291ba/types_protobuf-6.32.1.20260221-py3-none-any.whl", hash = "sha256:da7cdd947975964a93c30bfbcc2c6841ee646b318d3816b033adc2c4eb6448e4", size = 77956, upload-time = "2026-02-21T03:55:12.894Z" },
-]
-
-[[package]]
-name = "types-python-dateutil"
-version = "2.9.0.20260518"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/8d/e8/c01bdf0d7c3659428c091fbd693177093639565bcbc86bc20098e6d37cc6/types_python_dateutil-2.9.0.20260518.tar.gz", hash = "sha256:51f02dc03b61c7f6a07df45797d4dfe8a1aa47f0b7db9ad89f6fd3a1a70e1b51", size = 17082, upload-time = "2026-05-18T06:05:24.508Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/36/22/169273273ca34e9ab0ae2f387ba72ed7e09faaaf834da01d6b89c2bea71a/types_python_dateutil-2.9.0.20260518-py3-none-any.whl", hash = "sha256:d6a9c5bd0de61460c8fdef8ab2b400f956a1a1075cce08d4e2b4434e478c50b8", size = 18431, upload-time = "2026-05-18T06:05:23.641Z" },
 ]
 
 [[package]]

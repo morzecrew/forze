@@ -6,7 +6,6 @@ federated rank fusion, and ``SearchResultSnapshotPort`` access here.
 
 from __future__ import annotations
 
-import hashlib
 import json
 import uuid
 from datetime import timedelta
@@ -35,7 +34,7 @@ from forze.application.contracts.search import (
     SearchSpec,
 )
 from forze.base.exceptions import exc
-from forze.base.primitives import JsonDict
+from forze.base.primitives import JsonDict, stable_payload_fingerprint
 from forze.base.serialization import default_model_codec
 
 # ----------------------- #
@@ -47,10 +46,7 @@ T_co = TypeVar("T_co", bound=BaseModel)
 
 
 def _sha256_fingerprint_payload(payload: dict[str, object]) -> str:
-    body = json.dumps(payload, sort_keys=True, default=str, ensure_ascii=False)
-    h = hashlib.sha256(body.encode("utf-8")).hexdigest()
-
-    return f"sha256:{h}"
+    return stable_payload_fingerprint(payload)
 
 
 # ....................... #
@@ -251,10 +247,8 @@ class SearchResultSnapshot:
 
         if extras:
             payload.update(dict(extras))
-        body = json.dumps(payload, sort_keys=True, default=str, ensure_ascii=False)
-        h = hashlib.sha256(body.encode("utf-8")).hexdigest()
 
-        return f"sha256:{h}"
+        return stable_payload_fingerprint(payload)
 
     # ....................... #
     # Record keys (serialized projection hits / federation partitions)

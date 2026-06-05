@@ -22,7 +22,6 @@ from uuid import uuid4 as uuid4_func
 from zoneinfo import ZoneInfo
 
 import orjson
-from dateutil.parser import parse as dt_parse
 
 from ..exceptions import exc
 
@@ -155,14 +154,15 @@ def datetime_to_uuid7(dt: datetime | str) -> UUID:
     """Generate a PostgreSQL-compatible UUIDv7 from a given datetime.
 
     Args:
-        dt (datetime | str): The datetime to encode (can be string or datetime instance).
+        dt (datetime | str): The datetime to encode. Strings must be ISO-8601
+            (a trailing ``Z`` is accepted); parsed via :func:`datetime.fromisoformat`.
 
     Returns:
         UUID: PostgreSQL-compatible UUIDv7 with embedded timestamp.
     """
 
     if isinstance(dt, str):
-        dt_obj = dt_parse(dt)
+        dt_obj = datetime.fromisoformat(dt.strip().replace("Z", "+00:00"))
 
     else:
         dt_obj = dt

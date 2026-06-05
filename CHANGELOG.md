@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Engine — per-scope operation cache:** `FrozenOperationRegistry.resolve(op, ctx)` now memoizes the `ResolvedOperation` per operation on the (scope-stable, immutable) `ExecutionContext`, so hooks/middleware/handler factories are built once per scope instead of on every invocation. Safe because operation factories defer all per-request reads (identity/tenant/tx) to execution time. New `ExecutionRuntime.cache_resolved_operations` knob (default `True`) disables it for stateful-factory escape hatches.
+- **Logging perf:** JSON log rendering now serializes via `orjson` (`structlog.processors.JSONRenderer(serializer=...)`) instead of stdlib `json`; output is equivalent compact JSON.
+- **Deps resolution perf:** `frame_for(key, route)` resolution frames are memoized (`lru_cache`) — immutable frames are reused across resolutions instead of reallocated per call.
+- **Search snapshot fingerprints:** computed via the shared `orjson`-based `stable_payload_fingerprint` (`forze.base.primitives`) instead of stdlib `json.dumps`. **Behavior change:** the digest bytes differ from the previous encoding, so persisted snapshot fingerprints are re-baselined once (a one-time, self-healing snapshot rewrite).
 - **Postgres hub search:** canonical combo merge/order/cursor semantics in `hub/semantics.py` and per-request `HubSearchPlan`; SQL and `execution: parallel` paths share the same rules (removed `hub/parallel_merge.py`).
 - **Search (offset + snapshots):** Postgres, Mongo, and Meilisearch simple offset search share orchestration in `forze.application.integrations.search.offset_executor`; Meilisearch snapshot writes now use the same capped pool window and in-memory page slice as SQL/document backends.
 - **Persistence gateways:** Mongo, Firestore, and Postgres gateways share codec, filter-parser, and tenant-relation helpers via `forze.application.integrations.persistence.gateway_mixins`.
@@ -17,6 +21,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`forze.base.primitives` fingerprint helpers:** `stable_json_bytes(payload)` (canonical key-sorted `orjson` bytes) and `stable_payload_fingerprint(payload)` (SHA-256 of those bytes) — a shared structural-fingerprint primitive for cache/dedup keys (not for secret/credential hashing).
+- **`ExecutionRuntime.cache_resolved_operations`:** boolean knob (default `True`) controlling the per-scope resolved-operation cache.
 - **`forze_identity.authn` API key refresh:** `ApiKeyLifecycleAdapter.refresh_api_key` is implemented as rotation — it validates the presented key (active, unexpired, digest match), issues a fresh key for the same principal, and retires the old one. Previously raised `NotImplementedError`.
 - **`forze_identity.authn` password invites:** single-use invite flow for `PasswordAccountProvisioningPort`. New `issue_password_invite(operator, principal_id) -> IssuedInvite` on the port issues an opaque token (only its HMAC digest is persisted in the new `authn_password_invites` document); `accept_invite_with_password` verifies the token (principal match, unconsumed, unexpired), provisions the password account, then marks the invite `consumed_at`. Wired via optional `kernel.invite_token_pepper` / `InviteTokenConfig` and an `InviteTokenService`; provisioning routes without the pepper keep working and raise a clear configuration error if invites are used.
 
@@ -47,6 +53,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
+- **`python-dateutil` core dependency:** dropped. The only use (`datetime_to_uuid7` string parsing) now uses stdlib `datetime.fromisoformat` (ISO-8601 strings, trailing `Z` accepted), which is faster and removes a runtime dependency.
 - **`forze[casbin]` extra:** dropped the unused `casbin` optional dependency (no integration package or adapter shipped against it).
 - **`forze_patterns`:** use `forze_kits.domain.*` (mixins, mapping steps, soft-deletion registry).
 - **`forze.application.composition`:** use `forze_kits.aggregates.document`, `forze_kits.aggregates.search`, `forze_kits.aggregates.storage`, `forze_kits.aggregates.authn`, `forze_kits.integrations.outbox`.

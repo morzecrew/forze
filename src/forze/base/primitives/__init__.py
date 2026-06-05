@@ -9,6 +9,8 @@ from .fingerprint import (
     gcp_credential_dedup_tag,
     secret_dedup_fingerprint,
     stable_fingerprint,
+    stable_json_bytes,
+    stable_payload_fingerprint,
 )
 from .graph import DirectedAcyclicGraph
 from .lanes import CachedInflightLane, CacheLane, InflightLane
@@ -30,6 +32,8 @@ __all__ = [
     "InflightLane",
     "CachedInflightLane",
     "stable_fingerprint",
+    "stable_json_bytes",
+    "stable_payload_fingerprint",
     "secret_dedup_fingerprint",
     "build_routing_fingerprint",
     "combine_fingerprint",

@@ -1,5 +1,6 @@
 """Resolution frame types and cycle error formatting."""
 
+from functools import lru_cache
 from typing import final
 
 import attrs
@@ -35,8 +36,15 @@ class ResolutionFrame:
 # ....................... #
 
 
+@lru_cache(maxsize=None)
 def frame_for[T](key: DepKey[T], route: StrKey | None) -> ResolutionFrame:
-    """Build a resolution frame from a dep key and optional route."""
+    """Build a resolution frame from a dep key and optional route.
+
+    Memoized: ``(key, route)`` is a finite, hashable space (registered keys ×
+    routes), and :class:`ResolutionFrame` is immutable, so frames are reused
+    across resolutions instead of reallocated per call. Cycle detection compares
+    frames by value, so sharing instances does not change behavior.
+    """
 
     return ResolutionFrame(
         key_name=key.name,

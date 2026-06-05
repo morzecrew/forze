@@ -8,6 +8,8 @@ from forze.base.primitives.fingerprint import (
     gcp_credential_dedup_tag,
     secret_dedup_fingerprint,
     stable_fingerprint,
+    stable_json_bytes,
+    stable_payload_fingerprint,
 )
 from forze_clickhouse.kernel.client.routing_credentials import (
     ClickHouseRoutingCredentials,
@@ -15,6 +17,33 @@ from forze_clickhouse.kernel.client.routing_credentials import (
 )
 
 # ----------------------- #
+
+
+def test_stable_json_bytes_is_key_order_independent() -> None:
+    assert stable_json_bytes({"a": 1, "b": 2}) == stable_json_bytes({"b": 2, "a": 1})
+
+
+def test_stable_json_bytes_falls_back_to_str() -> None:
+    # Non-JSON-native values are coerced via ``default=str`` rather than raising.
+    assert stable_json_bytes({"x": object}) == stable_json_bytes({"x": object})
+
+
+def test_stable_payload_fingerprint_is_deterministic_and_prefixed() -> None:
+    fp = stable_payload_fingerprint({"b": 2, "a": 1})
+
+    assert fp == stable_payload_fingerprint({"a": 1, "b": 2})
+    assert fp.startswith("sha256:")
+
+
+def test_stable_payload_fingerprint_differs_by_content() -> None:
+    assert stable_payload_fingerprint({"a": 1}) != stable_payload_fingerprint({"a": 2})
+
+
+def test_stable_payload_fingerprint_bare_digest_when_no_prefix() -> None:
+    bare = stable_payload_fingerprint({"a": 1}, prefix="")
+
+    assert ":" not in bare
+    assert len(bare) == 64  # sha256 hex
 
 
 def test_stable_fingerprint_is_deterministic() -> None:

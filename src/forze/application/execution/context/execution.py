@@ -1,6 +1,8 @@
-from typing import Callable, final
+from typing import Any, Callable, final
 
 import attrs
+
+from forze.base.primitives import StrKey
 
 from forze.application.contracts.analytics import AnalyticsDeps
 from forze.application.contracts.authn import AuthnDeps
@@ -34,6 +36,21 @@ class ExecutionContext:
 
     deps: FrozenDeps
     """Dependencies container."""
+
+    cache_operations: bool = attrs.field(default=True)
+    """Whether resolved operations are memoized for this scope (see
+    :attr:`~forze.application.execution.runtime.ExecutionRuntime.cache_resolved_operations`)."""
+
+    # ....................... #
+
+    _resolved_op_cache: dict[StrKey, Any] | None = attrs.field(
+        default=None,
+        init=False,
+        repr=False,
+        eq=False,
+        hash=False,
+    )
+    """Per-scope resolved-operation memo (``None`` when caching is disabled)."""
 
     # ....................... #
 
@@ -104,7 +121,36 @@ class ExecutionContext:
 
     # ....................... #
 
+    def cached_operation(self, op: StrKey) -> Any | None:
+        """Return a memoized resolved operation for this scope, or ``None``.
+
+        ``None`` means either a cache miss or caching disabled; callers resolve
+        and then call :meth:`store_operation`.
+        """
+
+        cache = self._resolved_op_cache
+
+        return cache.get(op) if cache is not None else None
+
+    # ....................... #
+
+    def store_operation(self, op: StrKey, resolved: Any) -> None:
+        """Memoize a resolved operation for this scope (no-op when disabled)."""
+
+        cache = self._resolved_op_cache
+
+        if cache is not None:
+            cache[op] = resolved
+
+    # ....................... #
+
     def __attrs_post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "_resolved_op_cache",
+            {} if self.cache_operations else None,
+        )
+
         bind_active_deps(self.deps)
         init_runtime_tracing(self.deps)
 

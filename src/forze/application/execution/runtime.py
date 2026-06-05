@@ -31,6 +31,16 @@ class ExecutionRuntime:
     lifecycle: FrozenLifecyclePlan = attrs.field(factory=FrozenLifecyclePlan)
     """Plan for startup and shutdown hooks."""
 
+    cache_resolved_operations: bool = attrs.field(default=True)
+    """Memoize resolved operations per scope (build once per op, then reuse).
+
+    Safe by default: the scope's :class:`ExecutionContext` is created once and is
+    immutable, and operation hook/handler factories defer every per-request read
+    (identity/tenant/tx) to execution time, so a resolved operation is a pure
+    function of its key within a scope. Disable only if you wire a *stateful*
+    handler or hook factory that must rebuild on every invocation.
+    """
+
     # Non initable fields
     __ctx: RuntimeVar[ExecutionContext] = attrs.field(
         factory=lambda: RuntimeVar("execution_context"),
@@ -63,7 +73,10 @@ class ExecutionRuntime:
 
         resolved_deps = self.deps.resolve()
 
-        ctx = ExecutionContext(deps=resolved_deps)
+        ctx = ExecutionContext(
+            deps=resolved_deps,
+            cache_operations=self.cache_resolved_operations,
+        )
         self.__ctx.set_once(ctx)
 
         logger.info("Execution context created")
