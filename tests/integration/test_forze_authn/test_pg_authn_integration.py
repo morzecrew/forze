@@ -448,7 +448,9 @@ async def test_pg_change_password(pg_client: PostgresClient) -> None:
     )
 
     with ctx.inv_ctx.bind(metadata=_invocation_metadata()):
-        await plc.change_password(AuthnIdentity(principal_id=pid), "new-secret")
+        await plc.change_password(
+            AuthnIdentity(principal_id=pid), "old-secret", "new-secret"
+        )
 
     authn = _orchestrator(
         eligibility=_eligibility(ctx),

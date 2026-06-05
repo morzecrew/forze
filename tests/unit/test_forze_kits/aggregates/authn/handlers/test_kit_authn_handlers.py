@@ -114,9 +114,13 @@ class TestAuthnChangePassword:
             password_lifecycle=password_lifecycle,
         )
 
-        await handler(AuthnChangePasswordRequestDTO(new_password="new"))
+        await handler(
+            AuthnChangePasswordRequestDTO(current_password="old", new_password="new"),
+        )
 
-        password_lifecycle.change_password.assert_awaited_once_with(identity, "new")
+        password_lifecycle.change_password.assert_awaited_once_with(
+            identity, "old", "new"
+        )
 
     @pytest.mark.asyncio
     async def test_raises_when_identity_missing(self) -> None:
@@ -126,4 +130,6 @@ class TestAuthnChangePassword:
         )
 
         with pytest.raises(CoreException, match="Authentication required"):
-            await handler(AuthnChangePasswordRequestDTO(new_password="x"))
+            await handler(
+                AuthnChangePasswordRequestDTO(current_password="old", new_password="x"),
+            )

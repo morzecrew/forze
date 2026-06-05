@@ -1,5 +1,6 @@
 """Render :class:`QueryExpr` trees into Meilisearch filter strings."""
 
+import re
 from datetime import date, datetime
 from typing import Any
 from uuid import UUID
@@ -36,10 +37,27 @@ _UNSUPPORTED_OPS = frozenset(
     }
 )
 
+# Meilisearch attribute names are alphanumeric/underscore with dotted nesting.
+# Anything else (spaces, quotes, parens, operators) is rejected so user-supplied
+# filter field names cannot inject filter-expression fragments.
+_SAFE_ATTRIBUTE = re.compile(r"[A-Za-z0-9_]+(?:\.[A-Za-z0-9_]+)*")
+
 # ....................... #
 
 
-def _format_literal(value: Any) -> str:
+def safe_attribute(attr: str) -> str:
+    if not _SAFE_ATTRIBUTE.fullmatch(attr):
+        raise exc.precondition(
+            f"Unsafe Meilisearch filter attribute name: {attr!r}.",
+        )
+
+    return attr
+
+
+# ....................... #
+
+
+def format_literal(value: Any) -> str:
     if value is None:
         return "NULL"
 
@@ -66,7 +84,7 @@ def _format_array(values: Any) -> str:
     if not isinstance(values, (list, tuple)):
         raise exc.internal("Meilisearch filter IN operand must be an array.")
 
-    parts = [_format_literal(v) for v in values]  # type: ignore[arg-type]
+    parts = [format_literal(v) for v in values]  # type: ignore[arg-type]
     return f"[{', '.join(parts)}]"
 
 
@@ -165,24 +183,26 @@ class MeilisearchFilterRenderer:
                         "Array element filters are not supported for Meilisearch.",
                     )
 
+                attr = safe_attribute(attr)
+
                 match op:
                     case "$eq":
-                        return f"{attr} = {_format_literal(value)}"
+                        return f"{attr} = {format_literal(value)}"
 
                     case "$neq":
-                        return f"{attr} != {_format_literal(value)}"
+                        return f"{attr} != {format_literal(value)}"
 
                     case "$gt":
-                        return f"{attr} > {_format_literal(value)}"
+                        return f"{attr} > {format_literal(value)}"
 
                     case "$gte":
-                        return f"{attr} >= {_format_literal(value)}"
+                        return f"{attr} >= {format_literal(value)}"
 
                     case "$lt":
-                        return f"{attr} < {_format_literal(value)}"
+                        return f"{attr} < {format_literal(value)}"
 
                     case "$lte":
-                        return f"{attr} <= {_format_literal(value)}"
+                        return f"{attr} <= {format_literal(value)}"
 
                     case "$in":
                         return f"{attr} IN {_format_array(value)}"

@@ -85,6 +85,18 @@ class DocumentAdapter(
 
     # ....................... #
 
+    @property
+    def tenant_aware(self) -> bool:
+        """Whether the backing storage partitions rows by tenant.
+
+        Delegates to the read gateway; the read and write gateways are validated to
+        share tenant-awareness, so this reflects the adapter as a whole.
+        """
+
+        return self.read_gw.tenant_aware
+
+    # ....................... #
+
     @cached_property
     def hydrate_from_write(self) -> bool:  # type: ignore[override]
         """Whether reads hydrate missing domain state from the write model.

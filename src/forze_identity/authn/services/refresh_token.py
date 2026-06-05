@@ -35,7 +35,7 @@ class RefreshTokenConfig:
 class RefreshTokenService:
     """Refresh token service."""
 
-    pepper: bytes = attrs.field(validator=attrs.validators.min_len(32))
+    pepper: bytes = attrs.field(repr=False, validator=attrs.validators.min_len(32))
     config: RefreshTokenConfig = attrs.field(factory=RefreshTokenConfig)
 
     # ....................... #

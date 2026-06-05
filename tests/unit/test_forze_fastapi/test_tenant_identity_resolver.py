@@ -163,24 +163,46 @@ async def test_resolve_tenant_identity_malformed_hint_ignored() -> None:
 
 
 @pytest.mark.asyncio
-async def test_resolve_tenant_identity_hint_only_fallback_from_header() -> None:
+async def test_resolve_tenant_identity_verified_issuer_trusted_without_resolver() -> None:
+    # A tenant from a verified credential (issuer hint) is honored even with no resolver.
     tid = uuid4()
     pid = uuid4()
     ctx = context_from_deps(Deps.plain({}))
-    req = _request(headers=[_tenant_header(tid)])
+    req = _request()
 
-    out = await resolve_tenant_identity(_authn(pid), request=req, ctx=ctx)
+    out = await resolve_tenant_identity(
+        _authn(pid, issuer_tenant_hint=str(tid)),
+        request=req,
+        ctx=ctx,
+    )
 
     assert out == TenantIdentity(tenant_id=tid)
 
 
 @pytest.mark.asyncio
-async def test_resolve_tenant_identity_hint_only_fallback_without_authn() -> None:
+async def test_resolve_tenant_identity_header_only_denied_by_default() -> None:
+    # A header-only tenant is unauthenticated input: denied unless explicitly trusted.
+    tid = uuid4()
+    pid = uuid4()
+    ctx = context_from_deps(Deps.plain({}))
+    req = _request(headers=[_tenant_header(tid)])
+
+    assert await resolve_tenant_identity(_authn(pid), request=req, ctx=ctx) is None
+    assert await resolve_tenant_identity(None, request=req, ctx=ctx) is None
+
+
+@pytest.mark.asyncio
+async def test_resolve_tenant_identity_header_trusted_when_opted_in() -> None:
     tid = uuid4()
     ctx = context_from_deps(Deps.plain({}))
     req = _request(headers=[_tenant_header(tid)])
 
-    out = await resolve_tenant_identity(None, request=req, ctx=ctx)
+    out = await resolve_tenant_identity(
+        None,
+        request=req,
+        ctx=ctx,
+        trust_tenant_header=True,
+    )
 
     assert out == TenantIdentity(tenant_id=tid)
 

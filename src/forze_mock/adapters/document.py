@@ -22,6 +22,7 @@ from forze.application.contracts.base import (
     Page,
     page_from_limit_offset,
 )
+from forze.application.contracts.codecs import default_model_codec
 from forze.application.contracts.document import (
     DocumentCommandPort,
     DocumentQueryPort,
@@ -44,7 +45,6 @@ from forze.application.integrations.document._limits import (
 )
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict, utcnow
-from forze.application.contracts.codecs import default_model_codec
 from forze.base.serialization import ModelCodec
 from forze.domain.constants import ID_FIELD, REV_FIELD
 from forze_mock.query._types import (
@@ -70,7 +70,7 @@ from forze_mock.tenancy import MockTenancyMixin, partition_namespace
 
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class MockDocumentAdapter(
+class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride]
     MockTenancyMixin,
     DocumentQueryPort[R],
     DocumentCommandPort[R, D, C, U],

@@ -61,7 +61,7 @@ class VaultClient(VaultClientPort):
 
         client = hvac.Client(
             url=self.config.url,
-            token=self.config.token,
+            token=self.config.token.get_secret_value(),
             namespace=self.config.namespace,
             verify=self.config.verify,
             session=session,

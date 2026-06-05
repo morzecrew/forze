@@ -36,6 +36,7 @@ class AuthnKernelConfig:
 
     access_token_secret: bytes | None = attrs.field(
         default=None,
+        repr=False,
         validator=attrs.validators.optional(attrs.validators.min_len(32)),
     )
     """Minimum 32 bytes when set; required for token authentication and token lifecycle."""
@@ -45,6 +46,7 @@ class AuthnKernelConfig:
 
     refresh_token_pepper: bytes | None = attrs.field(
         default=None,
+        repr=False,
         validator=attrs.validators.optional(attrs.validators.min_len(32)),
     )
     """Minimum 32 bytes when set; required for token lifecycle."""
@@ -57,6 +59,7 @@ class AuthnKernelConfig:
 
     invite_token_pepper: bytes | None = attrs.field(
         default=None,
+        repr=False,
         validator=attrs.validators.optional(attrs.validators.min_len(32)),
     )
     """Minimum 32 bytes when set; required to issue/accept password provisioning invites."""
@@ -66,6 +69,7 @@ class AuthnKernelConfig:
 
     api_key_pepper: bytes | None = attrs.field(
         default=None,
+        repr=False,
         validator=attrs.validators.optional(attrs.validators.min_len(32)),
     )
     """Minimum 32 bytes when set; required for API key authentication and API key lifecycle."""

@@ -13,6 +13,7 @@ from forze.application.contracts.tenancy import (
     TENANT_ID_HEADER,
     TenantIdentity,
     coalesce_tenant_request_hints,
+    parse_tenant_hint,
 )
 from forze.application.execution.context import ExecutionContext
 from forze.base.exceptions import exc
@@ -182,6 +183,7 @@ async def resolve_tenant_identity(
     *,
     request: Request,
     ctx: ExecutionContext,
+    trust_tenant_header: bool = False,
 ) -> TenantIdentity | None:
     issuer_hint = authn.issuer_tenant_hint if authn is not None else None
     header_hint = request.headers.get(TENANT_ID_HEADER)
@@ -198,7 +200,17 @@ async def resolve_tenant_identity(
             requested_tenant_id=requested,
         )
 
-    if requested is not None:
+    if requested is None:
+        return None
+
+    # No tenancy resolver validated the request. A tenant derived from a verified
+    # credential (issuer hint) is trustworthy, but a tenant taken from the raw
+    # ``X-Tenant-Id`` header is unauthenticated client input: an attacker could set
+    # it to any tenant. Honor the header-only path only when the deployment has
+    # explicitly opted in (e.g. it sits behind a gateway that sets the header).
+    from_verified_credential = parse_tenant_hint(issuer_hint) is not None
+
+    if from_verified_credential or trust_tenant_header:
         return TenantIdentity(tenant_id=requested)
 
     return None

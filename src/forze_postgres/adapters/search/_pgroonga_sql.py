@@ -24,19 +24,41 @@ from ._pgroonga_index_fields import resolve_pgroonga_index_alignment
 # ----------------------- #
 
 
+def pgroonga_literal_phrase(term: str) -> str:
+    """Quote a user term as a literal Groonga phrase (escaping ``\\`` and ``"``).
+
+    User-supplied terms must never be interpreted as Groonga query syntax (boolean
+    operators, column references, wildcards, weights): that is a search-language
+    injection surface. Double-quoting turns the whole term into a literal phrase, so
+    operator characters lose their special meaning. Trusted advanced queries should use
+    the ``groonga_query`` :class:`~forze.application.contracts.search.SearchOptions`
+    override, which bypasses this path and is passed to PGroonga verbatim.
+    """
+
+    escaped = term.replace("\\", "\\\\").replace('"', '\\"')
+    return f'"{escaped}"'
+
+
 def pgroonga_phrase_match_text(
     terms: tuple[str, ...], *, combine: PhraseCombine
 ) -> str:
-    """Build one PGroonga query string: ``OR`` between phrases, or implicit AND (whitespace) for ``all``."""
+    """Build one PGroonga query string from literal phrases: ``OR`` (any) or implicit AND (all).
 
-    if not terms:
+    Each term is quoted as a literal phrase (:func:`pgroonga_literal_phrase`) so user
+    input cannot inject Groonga query operators; only the combiner between terms is
+    framework-controlled.
+    """
+
+    phrases = [pgroonga_literal_phrase(t) for t in terms if t]
+
+    if not phrases:
         return ""
-    if len(terms) == 1:
-        return terms[0]
+    if len(phrases) == 1:
+        return phrases[0]
     if combine == "any":
-        return " OR ".join(f"({t})" for t in terms)
+        return " OR ".join(f"({p})" for p in phrases)
     # AND: Groonga / PGroonga use implicit AND (whitespace), not the ``AND`` keyword.
-    return " ".join(f"({t})" for t in terms)
+    return " ".join(f"({p})" for p in phrases)
 
 
 def pgroonga_disjunctive_match_text(terms: tuple[str, ...]) -> str:

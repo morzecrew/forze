@@ -47,6 +47,17 @@ class BaseDocumentPort(Protocol[R, D, C, U]):
     spec: DocumentSpec[R, D, C, U]
     """Document specification."""
 
+    # ....................... #
+
+    @property
+    def tenant_aware(self) -> bool:
+        """Whether the backing storage partitions rows by tenant.
+
+        Callers that depend on tenant isolation (e.g. authz grant resolution) can
+        assert this is ``True`` to fail closed instead of querying across tenants.
+        """
+        ...  # pragma: no cover
+
 
 # ....................... #
 
