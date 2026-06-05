@@ -102,3 +102,6 @@ class HttpxHttpServiceConfig(TenantAwareIntegrationConfig):
                 "HttpxHttpServiceConfig: secret_ref_for_tenant applies only when "
                 "tenant_aware=True",
             )
+
+        if self.timeout.total_seconds() <= 0:
+            raise exc.configuration("Timeout must be positive")

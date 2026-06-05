@@ -9,14 +9,19 @@ from forze.application.integrations.storage.client import (
     ObjectStorageHead,
     ObjectStorageListedObject,
 )
+from forze.base.exceptions import exc
 from forze.base.serialization.pydantic import pydantic_secret_converter
+
+# ----------------------- #
 
 S3Head = ObjectStorageHead
 S3ListedObject = ObjectStorageListedObject
 
-# ----------------------- #
+# ....................... #
 
 _DEFAULT_RETRIES: Mapping[str, Any] = {"max_attempts": 3, "mode": "adaptive"}
+
+# ....................... #
 
 
 @final
@@ -43,6 +48,18 @@ class S3Config:
     ignore_configured_endpoint_urls: bool | None = None
     tcp_keepalive: bool | None = None
     request_min_compression_size_bytes: int | None = None
+
+    # ....................... #
+
+    def __attrs_post_init__(self) -> None:
+        if (
+            self.connect_timeout is not None
+            and self.connect_timeout.total_seconds() <= 0
+        ):
+            raise exc.configuration("Connect timeout must be positive")
+
+        if self.read_timeout is not None and self.read_timeout.total_seconds() <= 0:
+            raise exc.configuration("Read timeout must be positive")
 
     # ....................... #
 

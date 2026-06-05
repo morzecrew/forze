@@ -1,6 +1,7 @@
 """Shared tenant-routed client pooling for integration packages."""
 
 from contextlib import asynccontextmanager
+from datetime import timedelta
 from typing import Any, AsyncGenerator, Callable, Generic, Mapping, Protocol, TypeVar
 from uuid import UUID
 
@@ -8,6 +9,7 @@ import attrs
 from pydantic import BaseModel
 
 from forze.application.contracts.secrets import SecretRef, SecretsPort
+from forze.base.exceptions import exc
 
 from .helpers import (
     ensure_dsn_fingerprint,
@@ -16,8 +18,8 @@ from .helpers import (
     resolve_dsn_for_tenant,
     resolve_structured_for_tenant,
 )
-from .value_objects import TenantIdentity
 from .registry import TenantClientRegistry
+from .value_objects import TenantIdentity
 
 # ----------------------- #
 
@@ -49,13 +51,25 @@ class RoutedTenantClientBase(Generic[C]):
     """
 
     secrets: SecretsPort
+    """Backend used to resolve connection strings."""
+
     secret_ref_for_tenant: Callable[[UUID], SecretRef] | Mapping[UUID, SecretRef]
+    """Build a :class:`SecretRef` for a tenant's database DSN."""
+
     tenant_provider: Callable[[], UUID | TenantIdentity | None]
+    """Return the current tenant id (or ``None`` if unauthenticated)."""
+
     max_cached_tenants: int = 100
+    """Maximum number of tenant pools to retain; LRU eviction closes overflow pools."""
+
     guarded: bool = False
+    """Whether to use a guarded LRU registry underneath."""
+
     tenant_required_message: str = "Tenant ID is required for routed access"
-    fingerprint_ttl: float | None = None
-    """Optional seconds-based TTL for credential-rotation refresh.
+    """Message to raise when a tenant ID is required but not provided."""
+
+    fingerprint_ttl: timedelta | None = None
+    """Optional TTL for credential-rotation refresh.
 
     When set, a tenant's cached fingerprint is re-resolved on first access after it ages
     past *fingerprint_ttl*; if the credentials changed, the pooled client is evicted and
@@ -76,11 +90,23 @@ class RoutedTenantClientBase(Generic[C]):
             guarded=self.guarded,
         )
 
+        if (
+            self.fingerprint_ttl is not None
+            and self.fingerprint_ttl.total_seconds() <= 0
+        ):
+            raise exc.configuration("Fingerprint TTL must be positive")
+
+    # ....................... #
+
     async def startup(self) -> None:
         await self._pool.startup()
 
+    # ....................... #
+
     async def close(self) -> None:
         await self._pool.close()
+
+    # ....................... #
 
     async def evict_tenant(self, tenant_id: UUID) -> None:
         """Drop the cached client and fingerprint for *tenant_id*.
@@ -91,6 +117,8 @@ class RoutedTenantClientBase(Generic[C]):
         """
 
         await self._pool.evict(tenant_id)
+
+    # ....................... #
 
     async def resolve_credentials(self, tenant_id: UUID) -> Any:
         raise NotImplementedError

@@ -6,6 +6,7 @@ from typing import Final, final
 import attrs
 from pydantic import SecretStr
 
+from forze.base.exceptions import exc
 from forze_identity.oidc import OidcIdpPreset
 
 # ----------------------- #
@@ -42,15 +43,26 @@ class VkIdOidcConfig:
     """JWKS URI for ``id_token`` signature verification."""
 
     tenant_claim: str | None = attrs.field(default=None)
+    """Optional claim mapped to ``issuer_tenant_hint``."""
+
     leeway: timedelta = attrs.field(default=timedelta(seconds=10))
+    """Clock-skew leeway for JWT validation."""
+
+    # ....................... #
+
+    def __attrs_post_init__(self) -> None:
+        if self.leeway.total_seconds() <= 0:
+            raise exc.configuration("Leeway must be positive")
 
     # ....................... #
 
     def client_secret_value(self) -> str | None:
         if self.client_secret is None:
             return None
+
         if isinstance(self.client_secret, SecretStr):
             return self.client_secret.get_secret_value()
+
         return self.client_secret
 
     # ....................... #

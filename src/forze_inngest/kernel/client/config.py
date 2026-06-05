@@ -3,6 +3,8 @@ from typing import final
 
 import attrs
 
+from forze.base.exceptions import exc
+
 # ----------------------- #
 
 
@@ -22,3 +24,12 @@ class InngestConfig:
 
     request_timeout: timedelta | None = attrs.field(default=None)
     """HTTP request timeout for the Inngest SDK client."""
+
+    # ....................... #
+
+    def __attrs_post_init__(self) -> None:
+        if (
+            self.request_timeout is not None
+            and self.request_timeout.total_seconds() <= 0
+        ):
+            raise exc.configuration("Request timeout must be positive")

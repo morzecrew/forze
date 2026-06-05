@@ -73,6 +73,15 @@ class JwksKeyProvider(SigningKeyProviderPort):
 
     # ....................... #
 
+    def __attrs_post_init__(self) -> None:
+        if self.cache_ttl.total_seconds() <= 0:
+            raise exc.configuration("Cache TTL must be positive")
+
+        if self.timeout.total_seconds() <= 0:
+            raise exc.configuration("Timeout must be positive")
+
+    # ....................... #
+
     def _require_client(self) -> PyJWKClient:
         if self._client is not None:
             return self._client

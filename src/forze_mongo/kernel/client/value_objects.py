@@ -12,6 +12,8 @@ from pymongo.read_concern import ReadConcern
 from pymongo.read_preferences import _ServerMode  # pyright: ignore[reportPrivateUsage]
 from pymongo.write_concern import WriteConcern
 
+from forze.base.exceptions import exc
+
 # ----------------------- #
 
 
@@ -52,3 +54,12 @@ class MongoConfig:
 
     min_pool_size: int = 2
     """Minimum pool size."""
+
+    # ....................... #
+
+    def __attrs_post_init__(self) -> None:
+        if self.connect_timeout.total_seconds() <= 0:
+            raise exc.configuration("Connect timeout must be positive")
+
+        if self.server_selection_timeout.total_seconds() <= 0:
+            raise exc.configuration("Server selection timeout must be positive")

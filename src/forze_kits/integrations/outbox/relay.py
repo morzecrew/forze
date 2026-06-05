@@ -104,6 +104,9 @@ async def _relay_outbox_to(
     so only the resolved command, dep key, and method name differ per transport.
     """
 
+    if reclaim_stale_after is not None and reclaim_stale_after.total_seconds() <= 0:
+        raise exc.internal("Reclaim stale after must be positive")
+
     channel = _resolve_channel(
         outbox_spec,
         spec_name=str(spec.name),

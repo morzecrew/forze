@@ -43,6 +43,12 @@ class SearchResultSnapshotSpec(BaseSpec):
     chunk_size: int = 5_000
     """Size of each KV chunk when materializing ID lists."""
 
+    # ....................... #
+
+    def __attrs_post_init__(self) -> None:
+        if self.ttl.total_seconds() <= 0:
+            raise exc.configuration("TTL must be positive")
+
 
 # ....................... #
 

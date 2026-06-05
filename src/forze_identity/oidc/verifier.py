@@ -70,9 +70,12 @@ class OidcTokenVerifier(TokenVerifierPort):
         if self.enforce_issuer_and_audience and (
             self.issuer is None or self.audience is None
         ):
-            raise ValueError(
+            raise exc.configuration(
                 "enforce_issuer_and_audience requires both issuer and audience",
             )
+
+        if self.leeway.total_seconds() <= 0:
+            raise exc.configuration("Leeway must be positive")
 
     # ....................... #
 

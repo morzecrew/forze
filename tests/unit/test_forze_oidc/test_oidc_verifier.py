@@ -6,12 +6,13 @@ IdP integration plug into the same dependency keys without touching core contrac
 
 from __future__ import annotations
 
-from forze.base.exceptions import CoreException
 import secrets
 from datetime import timedelta
 from uuid import uuid4
 
 import pytest
+
+from forze.base.exceptions import CoreException
 
 pytest.importorskip("jwt")
 
@@ -29,6 +30,7 @@ from forze_identity.oidc import (
 )
 
 # ----------------------- #
+
 
 def _hs256_token(
     secret: bytes,
@@ -52,7 +54,9 @@ def _hs256_token(
 
     return jwt.encode(payload, secret, algorithm="HS256")
 
+
 # ....................... #
+
 
 class TestOidcClaimMapper:
     def test_default_mapping(self) -> None:
@@ -100,23 +104,25 @@ class TestOidcClaimMapper:
         with pytest.raises(ValueError, match="iss"):
             mapper.map({"sub": "u"})
 
+
 # ....................... #
+
 
 class TestOidcTokenVerifier:
     def test_enforce_issuer_and_audience_requires_both(self) -> None:
         secret = secrets.token_bytes(32)
-        with pytest.raises(ValueError, match="issuer and audience"):
+        with pytest.raises(CoreException, match="issuer and audience"):
             OidcTokenVerifier(
                 key_provider=StaticKeyProvider(key=secret),
             )
 
-        with pytest.raises(ValueError, match="issuer and audience"):
+        with pytest.raises(CoreException, match="issuer and audience"):
             OidcTokenVerifier(
                 key_provider=StaticKeyProvider(key=secret),
                 issuer="https://issuer.example",
             )
 
-        with pytest.raises(ValueError, match="issuer and audience"):
+        with pytest.raises(CoreException, match="issuer and audience"):
             OidcTokenVerifier(
                 key_provider=StaticKeyProvider(key=secret),
                 enforce_issuer_and_audience=True,

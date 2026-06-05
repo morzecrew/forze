@@ -41,6 +41,18 @@ class _OutboxRelayBackgroundStartup(LifecycleHook):
 
     # ....................... #
 
+    def __attrs_post_init__(self) -> None:
+        if self.interval.total_seconds() <= 0:
+            raise exc.configuration("Interval must be positive")
+
+        if (
+            self.reclaim_stale_after is not None
+            and self.reclaim_stale_after.total_seconds() <= 0
+        ):
+            raise exc.configuration("Reclaim stale after must be positive")
+
+    # ....................... #
+
     async def _relay_once(self, ctx: ExecutionContext) -> None:
         if self.transport == "queue":
             if self.queue_spec is None:

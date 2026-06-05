@@ -1,6 +1,7 @@
 import time
 from collections import OrderedDict
 from contextlib import asynccontextmanager
+from datetime import timedelta
 from typing import AsyncGenerator, Awaitable, Callable
 from uuid import UUID
 
@@ -86,6 +87,8 @@ class TenantClientRegistry[C, R = str]:
 
     async def close(self) -> None:
         await self.__registry.close_all()
+        self.__fingerprints.clear()
+        self.__fingerprint_times.clear()
         self.__started = False
 
     # ....................... #
@@ -120,15 +123,15 @@ class TenantClientRegistry[C, R = str]:
 
     # ....................... #
 
-    def is_fingerprint_expired(self, tenant_id: UUID, ttl: float) -> bool:
-        """Whether *tenant_id*'s cached fingerprint is older than *ttl* seconds.
+    def is_fingerprint_expired(self, tenant_id: UUID, ttl: timedelta) -> bool:
+        """Whether *tenant_id*'s cached fingerprint is older than *ttl*.
 
         Returns ``True`` when no timestamp is recorded (treat as expired).
         """
 
         stamped = self.__fingerprint_times.get(tenant_id)
 
-        return stamped is None or (time.monotonic() - stamped) > ttl
+        return stamped is None or (time.monotonic() - stamped) > ttl.total_seconds()
 
     # ....................... #
 

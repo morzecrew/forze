@@ -1,13 +1,12 @@
 """Postgres outbox integration configuration."""
 
-from __future__ import annotations
-
 from datetime import timedelta
 
 import attrs
 
 from forze.application.contracts.resolution import RelationSpec, coerce_relation_spec
 from forze.application.contracts.tenancy import TenantAwareIntegrationConfig
+from forze.base.exceptions import exc
 
 # ----------------------- #
 
@@ -29,3 +28,9 @@ class PostgresOutboxConfig(TenantAwareIntegrationConfig):
         factory=lambda: timedelta(minutes=5)
     )
     """Suggested lease for :func:`~forze_kits.integrations.outbox.relay_outbox_to_queue` ``reclaim_stale_after`` (documentation default)."""
+
+    # ....................... #
+
+    def __attrs_post_init__(self) -> None:
+        if self.default_processing_lease.total_seconds() <= 0:
+            raise exc.configuration("Default processing lease must be positive")

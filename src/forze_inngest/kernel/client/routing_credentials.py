@@ -4,6 +4,8 @@ from datetime import timedelta
 
 from pydantic import BaseModel, Field, SecretStr
 
+from forze.base.exceptions import exc
+
 # ----------------------- #
 
 
@@ -18,3 +20,12 @@ class InngestRoutingCredentials(BaseModel):
     signing_key: str | SecretStr | None = None
     is_production: bool | None = None
     request_timeout: timedelta | None = None
+
+    # ....................... #
+
+    def __attrs_post_init__(self) -> None:
+        if (
+            self.request_timeout is not None
+            and self.request_timeout.total_seconds() <= 0
+        ):
+            raise exc.configuration("Request timeout must be positive")

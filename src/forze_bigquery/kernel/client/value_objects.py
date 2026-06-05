@@ -5,6 +5,7 @@ from typing import final
 
 import attrs
 
+from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
 
 # ----------------------- #
@@ -49,6 +50,15 @@ class BigQueryConfig:
 
     max_append_rows: int = 10_000
     """Soft cap enforced by analytics adapter ``append``."""
+
+    # ....................... #
+
+    def __attrs_post_init__(self) -> None:
+        if self.timeout.total_seconds() <= 0:
+            raise exc.configuration("Timeout must be positive")
+
+        if self.poll_interval.total_seconds() <= 0:
+            raise exc.configuration("Poll interval must be positive")
 
 
 # ....................... #

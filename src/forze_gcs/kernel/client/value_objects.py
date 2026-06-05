@@ -7,6 +7,7 @@ from forze.application.integrations.storage.client import (
     ObjectStorageHead,
     ObjectStorageListedObject,
 )
+from forze.base.exceptions import exc
 
 GCSHead = ObjectStorageHead
 GCSListedObject = ObjectStorageListedObject
@@ -28,3 +29,9 @@ class GCSConfig:
 
     timeout: timedelta = attrs.field(default=DEFAULT_TIMEOUT)
     """Request timeout for GCS API calls."""
+
+    # ....................... #
+
+    def __attrs_post_init__(self) -> None:
+        if self.timeout.total_seconds() <= 0:
+            raise exc.configuration("Timeout must be positive")

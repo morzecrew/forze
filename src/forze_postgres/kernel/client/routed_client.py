@@ -21,7 +21,9 @@ from psycopg import AsyncConnection
 from psycopg.abc import Params, QueryNoTemplate
 
 from forze.application.contracts.secrets import SecretRef, SecretsPort
-from forze.application.contracts.tenancy.routed_client_base import DsnRoutedTenantClientBase
+from forze.application.contracts.tenancy.routed_client_base import (
+    DsnRoutedTenantClientBase,
+)
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
 
@@ -34,7 +36,9 @@ from .value_objects import PostgresConfig, PostgresTransactionOptions
 
 
 @attrs.define(slots=True, kw_only=True)
-class RoutedPostgresClient(DsnRoutedTenantClientBase[PostgresClient], PostgresClientPort):
+class RoutedPostgresClient(
+    DsnRoutedTenantClientBase[PostgresClient], PostgresClientPort
+):
     """Routes each call to a lazily created :class:`PostgresClient` for the current tenant.
 
     The tenant is read from ``tenant_provider`` (typically
@@ -81,6 +85,14 @@ class RoutedPostgresClient(DsnRoutedTenantClientBase[PostgresClient], PostgresCl
     )
 
     _gather_sem: asyncio.Semaphore | None = attrs.field(default=None, init=False)
+
+    # ....................... #
+
+    def __attrs_post_init__(self) -> None:
+        super().__attrs_post_init__()
+
+        if self.acquire_timeout.total_seconds() <= 0:
+            raise exc.configuration("Acquire timeout must be positive")
 
     # ....................... #
 

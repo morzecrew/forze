@@ -5,6 +5,8 @@ from typing import final
 
 import attrs
 
+from forze.base.exceptions import exc
+
 # ----------------------- #
 
 
@@ -15,3 +17,9 @@ class MeilisearchConfig:
 
     timeout: timedelta = attrs.field(default=timedelta(seconds=30))
     """HTTP client timeout."""
+
+    # ....................... #
+
+    def __attrs_post_init__(self) -> None:
+        if self.timeout.total_seconds() <= 0:
+            raise exc.configuration("Timeout must be positive")

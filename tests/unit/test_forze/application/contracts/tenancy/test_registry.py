@@ -1,5 +1,6 @@
 """Unit tests for :class:`~forze.application.contracts.tenancy.registry.TenantClientRegistry`."""
 
+from datetime import timedelta
 from uuid import UUID
 
 import pytest
@@ -99,13 +100,13 @@ def test_is_fingerprint_expired() -> None:
     tid = UUID(int=1)
 
     # No fingerprint cached yet -> treated as expired.
-    assert registry.is_fingerprint_expired(tid, 60.0) is True
+    assert registry.is_fingerprint_expired(tid, timedelta(seconds=60)) is True
 
     registry.set_fingerprint(tid, "fp")
 
     # Just stamped -> within a generous TTL, but past a negative TTL.
-    assert registry.is_fingerprint_expired(tid, 60.0) is False
-    assert registry.is_fingerprint_expired(tid, -1.0) is True
+    assert registry.is_fingerprint_expired(tid, timedelta(seconds=60)) is False
+    assert registry.is_fingerprint_expired(tid, timedelta(seconds=-1)) is True
 
 
 async def _async_return[T](value: T) -> T:

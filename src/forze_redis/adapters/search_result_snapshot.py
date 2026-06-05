@@ -81,6 +81,18 @@ class RedisSearchResultSnapshotAdapter(
 
     # ....................... #
 
+    def __attrs_post_init__(self) -> None:
+        if self.default_ttl.total_seconds() <= 0:
+            raise exc.configuration("Default TTL must be positive")
+
+        if self.default_max_ids < 1:
+            raise exc.configuration("Default max IDs must be at least 1")
+
+        if self.default_chunk_size < 1:
+            raise exc.configuration("Default chunk size must be at least 1")
+
+    # ....................... #
+
     def _resolve_ttl(self, ttl: timedelta | None) -> timedelta:
         return self.default_ttl if ttl is None else ttl
 

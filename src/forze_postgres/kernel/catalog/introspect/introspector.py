@@ -173,7 +173,12 @@ class PostgresIntrospector:
         if self.cache_ttl is None:
             return None
 
-        return self.cache_ttl.total_seconds()
+        res = self.cache_ttl.total_seconds()
+
+        if res <= 0:
+            raise exc.configuration("Cache TTL must be positive")
+
+        return res
 
     # ....................... #
 

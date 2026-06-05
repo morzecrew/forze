@@ -38,6 +38,24 @@ class DistributedLockScope:
 
     # ....................... #
 
+    def __attrs_post_init__(self) -> None:
+        if self.retry_interval.total_seconds() <= 0:
+            raise exc.configuration("Retry interval must be positive")
+
+        if self.retry_jitter.total_seconds() < 0:
+            raise exc.configuration("Retry jitter must be non-negative")
+
+        if self.wait_timeout is not None and self.wait_timeout.total_seconds() <= 0:
+            raise exc.configuration("Wait timeout must be positive")
+
+        if (
+            self.extend_interval is not None
+            and self.extend_interval.total_seconds() <= 0
+        ):
+            raise exc.configuration("Extend interval must be positive")
+
+    # ....................... #
+
     @asynccontextmanager
     async def scope(self, key: str) -> AsyncGenerator[bool]:
         loop = asyncio.get_running_loop()

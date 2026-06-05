@@ -111,3 +111,29 @@ class PostgresConfig:
             raise exc.configuration(
                 "application_name must be at most 63 characters for Postgres"
             )
+
+        if self.max_lifetime.total_seconds() <= 0:
+            raise exc.configuration("Max lifetime must be positive")
+
+        if self.max_idle.total_seconds() <= 0:
+            raise exc.configuration("Max idle must be positive")
+
+        if self.reconnect_timeout.total_seconds() <= 0:
+            raise exc.configuration("Reconnect timeout must be positive")
+
+        if (
+            self.statement_timeout is not None
+            and self.statement_timeout.total_seconds() <= 0
+        ):
+            raise exc.configuration("Statement timeout must be positive")
+
+        if self.lock_timeout is not None and self.lock_timeout.total_seconds() <= 0:
+            raise exc.configuration("Lock timeout must be positive")
+
+        if (
+            self.idle_in_transaction_session_timeout is not None
+            and self.idle_in_transaction_session_timeout.total_seconds() <= 0
+        ):
+            raise exc.configuration(
+                "Idle in transaction session timeout must be positive"
+            )
