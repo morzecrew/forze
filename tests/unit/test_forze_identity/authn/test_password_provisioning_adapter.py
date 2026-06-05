@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import secrets
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
@@ -19,6 +20,19 @@ from forze_identity.authn.domain.models.account import (
 )
 from forze_identity.authn.domain.models.invite import ReadPasswordInvite
 from forze_identity.authn.services import InviteTokenConfig, InviteTokenService
+
+# ----------------------- #
+
+
+def get_test_password() -> str:
+    """Return a generated throwaway password for credential fixtures.
+
+    The concrete value is irrelevant to these tests (it is hashed via a mock or
+    the flow raises before it is used); generating it avoids hardcoded literals.
+    """
+
+    return secrets.token_urlsafe(16)
+
 
 # ----------------------- #
 
@@ -65,13 +79,13 @@ class TestPasswordAccountProvisioningInit:
     async def test_invites_require_configuration(self) -> None:
         adapter = _adapter()
 
-        with pytest.raises(CoreException, match="kernel.invite_token_pepper"):
+        with pytest.raises(CoreException, match=r"kernel\.invite_token_pepper"):
             await adapter.issue_password_invite(
                 AuthnIdentity(principal_id=uuid4()),
                 uuid4(),
             )
 
-        with pytest.raises(CoreException, match="kernel.invite_token_pepper"):
+        with pytest.raises(CoreException, match=r"kernel\.invite_token_pepper"):
             await adapter.accept_invite_with_password(
                 "token",
                 uuid4(),
@@ -94,7 +108,7 @@ class TestPasswordAccountProvisioningRegister:
         with pytest.raises(CoreException, match="already exists") as ei:
             await adapter.register_with_password(
                 uuid4(),
-                PasswordCredentials(login="alice", password="secret"),
+                PasswordCredentials(login="alice", password=get_test_password()),
             )
 
         assert ei.value.kind is ExceptionKind.CONFLICT
@@ -221,7 +235,7 @@ class TestPasswordInviteAccept:
         await adapter.accept_invite_with_password(
             token,
             principal_id,
-            PasswordCredentials(login="alice", password="secret"),
+            PasswordCredentials(login="alice", password=get_test_password()),
         )
 
         pwd_cmd.create.assert_awaited_once()
@@ -237,7 +251,7 @@ class TestPasswordInviteAccept:
             await adapter.accept_invite_with_password(
                 "",
                 uuid4(),
-                PasswordCredentials(login="alice", password="secret"),
+                PasswordCredentials(login="alice", password=get_test_password()),
             )
 
     @pytest.mark.asyncio
@@ -252,7 +266,7 @@ class TestPasswordInviteAccept:
             await adapter.accept_invite_with_password(
                 svc.generate_token(),
                 uuid4(),
-                PasswordCredentials(login="alice", password="secret"),
+                PasswordCredentials(login="alice", password=get_test_password()),
             )
 
     @pytest.mark.asyncio
@@ -275,7 +289,7 @@ class TestPasswordInviteAccept:
             await adapter.accept_invite_with_password(
                 token,
                 principal_id,
-                PasswordCredentials(login="alice", password="secret"),
+                PasswordCredentials(login="alice", password=get_test_password()),
             )
 
     @pytest.mark.asyncio
@@ -296,7 +310,7 @@ class TestPasswordInviteAccept:
             await adapter.accept_invite_with_password(
                 token,
                 uuid4(),
-                PasswordCredentials(login="alice", password="secret"),
+                PasswordCredentials(login="alice", password=get_test_password()),
             )
 
     @pytest.mark.asyncio
@@ -318,6 +332,6 @@ class TestPasswordInviteAccept:
             await adapter.accept_invite_with_password(
                 token,
                 principal_id,
-                PasswordCredentials(login="alice", password="secret"),
+                PasswordCredentials(login="alice", password=get_test_password()),
             )
         adapter.password_account_cmd.create.assert_not_called()

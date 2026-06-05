@@ -161,6 +161,15 @@ class PasswordAccountProvisioningAdapter(PasswordAccountProvisioningPort):
         principal_id: UUID,
         credentials: PasswordCredentials,
     ) -> None:
+        """Provision a password account from a valid invite, then mark it consumed.
+
+        Two writes (provision the account, then consume the invite). Run this within a
+        transaction scope so both commit or roll back together — the document gateways
+        join the ambient transaction when one is open. The order is recovery-safe even
+        without a transaction: a failed provisioning leaves the invite open for a retry,
+        and the consume is rev-conditional (optimistic concurrency) against double use.
+        """
+
         svc, qry, cmd = self._require_invites()
 
         if not invite_token:

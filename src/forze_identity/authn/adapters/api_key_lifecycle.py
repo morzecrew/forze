@@ -72,6 +72,16 @@ class ApiKeyLifecycleAdapter(ApiKeyLifecyclePort):
         self,
         credentials: ApiKeyCredentials,
     ) -> IssuedApiKey:
+        """Rotate the presented API key: mint a fresh key, then retire the old one.
+
+        Two writes (create the new key, then deactivate the presented one). Run this
+        within a transaction scope so both commit or roll back together — the document
+        gateways join the ambient transaction when one is open. The order is
+        recovery-safe even without a transaction: a failed retire leaves the old key
+        briefly valid alongside the new one rather than losing access, and the retire is
+        rev-conditional (optimistic concurrency) against concurrent rotation.
+        """
+
         digest = self.api_key_svc.calculate_key_digest(credentials.key)
         account = await find_api_key_account_by_key_hash(self.ak_qry, digest)
 
