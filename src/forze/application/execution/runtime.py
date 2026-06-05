@@ -41,6 +41,21 @@ class ExecutionRuntime:
     handler or hook factory that must rebuild on every invocation.
     """
 
+    cache_resolved_ports: bool = attrs.field(default=True)
+    """Memoize resolved configurable ports (document/search/cache/storage/... adapters)
+    per scope, so each ``ctx.<x>.query(spec)`` reuses one gateway/adapter (and its codecs,
+    filter renderers, key codecs) instead of rebuilding it on every call.
+
+    Safe by default for the same reason as :attr:`cache_resolved_operations`: port
+    factories are synchronous, scope-stable builders that capture only scope-stable
+    deps (clients/config) and defer every per-request read (tenant via the bound
+    ``inv_ctx.get_tenant``, the DB connection via the client at call time) to execution
+    time. Keyed by ``(dep key, route)`` and validated against the presented spec, so a
+    different spec on the same route rebuilds. Bypassed automatically while resolution
+    tracing is enabled (to keep per-task resolution traces complete). Disable only for a
+    *stateful* port factory that must rebuild per call.
+    """
+
     # Non initable fields
     __ctx: RuntimeVar[ExecutionContext] = attrs.field(
         factory=lambda: RuntimeVar("execution_context"),
@@ -76,6 +91,7 @@ class ExecutionRuntime:
         ctx = ExecutionContext(
             deps=resolved_deps,
             cache_operations=self.cache_resolved_operations,
+            cache_ports=self.cache_resolved_ports,
         )
         self.__ctx.set_once(ctx)
 

@@ -187,7 +187,21 @@ class FrozenDeps:
         *,
         route: StrKey | None = None,
     ) -> Any:
-        """Resolve a configurable dependency: lookup factory and invoke with ``spec``."""
+        """Resolve a configurable dependency: lookup factory and invoke with ``spec``.
+
+        Resolved ports are memoized per scope on ``ctx`` (keyed by ``(key, route)`` and
+        validated against ``spec``) when port caching is enabled. Caching is bypassed
+        while resolution tracing is active so per-task resolution traces stay complete.
+        """
+
+        cache_key = (key, route)
+        use_cache = not self.resolution_tracer.enabled
+
+        if use_cache:
+            cached = ctx.cached_port(cache_key, spec)
+
+            if cached is not None:
+                return cached
 
         frame = frame_for(key, route)
         token = self._resolution.push(frame)
@@ -195,10 +209,15 @@ class FrozenDeps:
         try:
             factory = self.store.get_provider(key, route=route)
             result = factory(ctx, spec)
-            return maybe_wrap_configurable(self, ctx, key, spec, route, result)
+            port = maybe_wrap_configurable(self, ctx, key, spec, route, result)
 
         finally:
             self._resolution.pop(token)
+
+        if use_cache:
+            ctx.store_port(cache_key, spec, port)
+
+        return port
 
     # ....................... #
 

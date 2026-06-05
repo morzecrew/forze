@@ -94,6 +94,84 @@ class TestFrozenDepsCycleDetection:
             resolved.resolve_configurable(ctx, _A, _SPEC_A, route="a")
 
 
+class TestFrozenDepsPortCache:
+    def _counting_reg(self) -> tuple[Deps, list[int]]:
+        calls = [0]
+
+        def factory(ctx: ExecutionContext, spec: _NamedSpec) -> object:
+            calls[0] += 1
+            return object()
+
+        return Deps.routed({_A: {_SPEC_A.name: factory}}), calls
+
+    def _ctx(
+        self,
+        reg: Deps,
+        *,
+        cache_ports: bool = True,
+        tracing: bool = False,
+    ) -> ExecutionContext:
+        fd = (
+            DepsRegistry.from_deps(reg)
+            .with_tracing(resolution=tracing)
+            .freeze()
+            .resolve()
+        )
+
+        return ExecutionContext(deps=fd, cache_ports=cache_ports)
+
+    def test_caching_on_reuses_resolved_port(self) -> None:
+        reg, calls = self._counting_reg()
+        ctx = self._ctx(reg)
+
+        first = ctx.deps.resolve_configurable(ctx, _A, _SPEC_A, route=_SPEC_A.name)
+        second = ctx.deps.resolve_configurable(ctx, _A, _SPEC_A, route=_SPEC_A.name)
+
+        assert first is second
+        assert calls[0] == 1
+
+    def test_caching_off_rebuilds_each_time(self) -> None:
+        reg, calls = self._counting_reg()
+        ctx = self._ctx(reg, cache_ports=False)
+
+        first = ctx.deps.resolve_configurable(ctx, _A, _SPEC_A, route=_SPEC_A.name)
+        second = ctx.deps.resolve_configurable(ctx, _A, _SPEC_A, route=_SPEC_A.name)
+
+        assert first is not second
+        assert calls[0] == 2
+
+    def test_different_spec_on_same_route_rebuilds(self) -> None:
+        reg, calls = self._counting_reg()
+        ctx = self._ctx(reg)
+        other_spec = _NamedSpec("a")  # same route name, different object
+
+        first = ctx.deps.resolve_configurable(ctx, _A, _SPEC_A, route=_SPEC_A.name)
+        second = ctx.deps.resolve_configurable(ctx, _A, other_spec, route=_SPEC_A.name)
+
+        assert first is not second
+        assert calls[0] == 2
+
+    def test_resolution_tracing_bypasses_cache(self) -> None:
+        reg, calls = self._counting_reg()
+        ctx = self._ctx(reg, tracing=True)
+
+        first = ctx.deps.resolve_configurable(ctx, _A, _SPEC_A, route=_SPEC_A.name)
+        second = ctx.deps.resolve_configurable(ctx, _A, _SPEC_A, route=_SPEC_A.name)
+
+        assert first is not second
+        assert calls[0] == 2
+
+    def test_cache_is_per_scope(self) -> None:
+        reg, _ = self._counting_reg()
+        ctx_a = self._ctx(reg)
+        ctx_b = self._ctx(reg)
+
+        port_a = ctx_a.deps.resolve_configurable(ctx_a, _A, _SPEC_A, route=_SPEC_A.name)
+        port_b = ctx_b.deps.resolve_configurable(ctx_b, _A, _SPEC_A, route=_SPEC_A.name)
+
+        assert port_a is not port_b
+
+
 class TestFrozenDepsResolutionTrace:
     def test_trace_records_scope_and_provide_edges(self) -> None:
         resolved = (

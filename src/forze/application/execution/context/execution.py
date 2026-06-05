@@ -41,6 +41,10 @@ class ExecutionContext:
     """Whether resolved operations are memoized for this scope (see
     :attr:`~forze.application.execution.runtime.ExecutionRuntime.cache_resolved_operations`)."""
 
+    cache_ports: bool = attrs.field(default=True)
+    """Whether resolved configurable ports are memoized for this scope (see
+    :attr:`~forze.application.execution.runtime.ExecutionRuntime.cache_resolved_ports`)."""
+
     # ....................... #
 
     _resolved_op_cache: dict[StrKey, Any] | None = attrs.field(
@@ -51,6 +55,16 @@ class ExecutionContext:
         hash=False,
     )
     """Per-scope resolved-operation memo (``None`` when caching is disabled)."""
+
+    _resolved_port_cache: dict[Any, tuple[Any, Any]] | None = attrs.field(
+        default=None,
+        init=False,
+        repr=False,
+        eq=False,
+        hash=False,
+    )
+    """Per-scope resolved-port memo: ``(dep key, route) -> (spec, port)`` (``None`` when
+    caching is disabled)."""
 
     # ....................... #
 
@@ -144,11 +158,51 @@ class ExecutionContext:
 
     # ....................... #
 
+    def cached_port(self, key: Any, spec: Any) -> Any | None:
+        """Return a memoized port for ``key`` if cached for the *same* ``spec``.
+
+        Returns ``None`` on a miss, a spec mismatch, or when caching is disabled;
+        callers resolve and then call :meth:`store_port`.
+        """
+
+        cache = self._resolved_port_cache
+
+        if cache is None:
+            return None
+
+        entry = cache.get(key)
+
+        if entry is not None and entry[0] is spec:
+            return entry[1]
+
+        return None
+
+    # ....................... #
+
+    def store_port(self, key: Any, spec: Any, port: Any) -> None:
+        """Memoize a resolved port for this scope (no-op when disabled).
+
+        Stores ``(spec, port)`` keyed by ``(dep key, route)``; a later resolve with a
+        different spec object on the same key rebuilds and replaces the entry.
+        """
+
+        cache = self._resolved_port_cache
+
+        if cache is not None:
+            cache[key] = (spec, port)
+
+    # ....................... #
+
     def __attrs_post_init__(self) -> None:
         object.__setattr__(
             self,
             "_resolved_op_cache",
             {} if self.cache_operations else None,
+        )
+        object.__setattr__(
+            self,
+            "_resolved_port_cache",
+            {} if self.cache_ports else None,
         )
 
         bind_active_deps(self.deps)

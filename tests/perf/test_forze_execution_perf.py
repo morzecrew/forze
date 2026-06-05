@@ -32,12 +32,17 @@ from typing import Any, Awaitable, Callable
 import attrs
 import pytest
 
+from forze.application.contracts.deps import DepKey
 from forze.application.contracts.execution import (
     BeforeStep,
     Handler,
     MiddlewareStep,
 )
-from forze.application.execution import Deps, ExecutionContext
+from forze.application.execution import (
+    Deps,
+    DepsRegistry,
+    ExecutionContext,
+)
 from forze.application.execution.operations.planning import OperationPlan
 from forze.application.execution.operations.registry import OperationRegistry
 from forze.application.execution.operations.registry.registries import (
@@ -165,3 +170,73 @@ async def test_invoke_cache_off_benchmark(async_benchmark: Any) -> None:
         return await reg.resolve(_OP, ctx)("x")
 
     await async_benchmark(_run)
+
+
+# ----------------------- #
+# Port resolution (resolve_configurable: ctx.<x>.query(spec))
+# ----------------------- #
+
+_PORT_KEY = DepKey[object]("perf.port")
+_PORT_ROUTE = "perf.port"
+
+
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class _PortSpec:
+    name: str = _PORT_ROUTE
+
+
+_PORT_SPEC = _PortSpec()
+
+
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class _FakeGateway:
+    """Stand-in for an integration gateway built per resolution."""
+
+    client: object
+    codec: object
+    field_map: dict[str, str]
+
+
+def _port_factory(_ctx: ExecutionContext, _spec: _PortSpec) -> _FakeGateway:
+    # Representative per-resolution construction (codec/field-map/wiring).
+    return _FakeGateway(
+        client=object(),
+        codec=object(),
+        field_map={f"f{i}": f"col{i}" for i in range(8)},
+    )
+
+
+def _port_context(*, cache: bool) -> ExecutionContext:
+    deps = (
+        DepsRegistry.from_deps(Deps.routed({_PORT_KEY: {_PORT_ROUTE: _port_factory}}))
+        .freeze()
+        .resolve()
+    )
+
+    return ExecutionContext(deps=deps, cache_ports=cache)
+
+
+@pytest.mark.perf
+def test_resolve_port_cache_on_benchmark(benchmark: Any) -> None:
+    """Cached port resolution: build the gateway once per scope, then dict hit."""
+
+    ctx = _port_context(cache=True)
+
+    benchmark(
+        lambda: ctx.deps.resolve_configurable(
+            ctx, _PORT_KEY, _PORT_SPEC, route=_PORT_ROUTE
+        ),
+    )
+
+
+@pytest.mark.perf
+def test_resolve_port_cache_off_benchmark(benchmark: Any) -> None:
+    """Uncached port resolution: rebuild the gateway (codec/field-map/wiring) every call."""
+
+    ctx = _port_context(cache=False)
+
+    benchmark(
+        lambda: ctx.deps.resolve_configurable(
+            ctx, _PORT_KEY, _PORT_SPEC, route=_PORT_ROUTE
+        ),
+    )
