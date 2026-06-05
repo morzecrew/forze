@@ -26,22 +26,20 @@ class InngestClient(InngestClientPort):
     config: InngestConfig = attrs.field(factory=InngestConfig)
     """Optional client configuration."""
 
-    _sdk: inngest.Inngest = attrs.field(init=False, repr=False)
-
-    # ....................... #
-
-    def __attrs_post_init__(self) -> None:
-        object.__setattr__(
-            self,
-            "_sdk",
-            inngest.Inngest(
+    _sdk: inngest.Inngest = attrs.field(
+        default=attrs.Factory(
+            lambda self: inngest.Inngest(
                 app_id=self.app_id,
                 is_production=self.config.is_production,
                 event_key=self.config.event_key,
                 signing_key=self.config.signing_key,
                 request_timeout=self.config.request_timeout,
             ),
-        )
+            takes_self=True,
+        ),
+        init=False,
+        repr=False,
+    )
 
     # ....................... #
 

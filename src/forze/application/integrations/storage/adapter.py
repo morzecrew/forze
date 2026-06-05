@@ -28,7 +28,7 @@ from forze.application.integrations.storage.metadata import (
 )
 from forze.base.codecs import AsciiB64Codec
 from forze.base.exceptions import CoreException, exc
-from forze.base.primitives import JsonDict, utcnow, uuid7
+from forze.base.primitives import JsonDict, OnceCell, utcnow, uuid7
 
 # ----------------------- #
 
@@ -56,8 +56,8 @@ class ObjectStorageAdapter(StoragePort, TenancyMixin):
     resolve_bucket: Callable[[NamedResourceSpec, UUID | None], Awaitable[str]]
     """Resolve :attr:`bucket_spec` to a physical bucket name."""
 
-    _bucket_resolved: str | None = attrs.field(
-        default=None,
+    _bucket_cell: OnceCell[str] = attrs.field(
+        factory=OnceCell,
         init=False,
         eq=False,
         repr=False,
@@ -85,16 +85,18 @@ class ObjectStorageAdapter(StoragePort, TenancyMixin):
     # ....................... #
 
     async def _resolved_bucket(self) -> str:
-        if self._bucket_resolved is not None:
-            return self._bucket_resolved
+        async def _factory() -> str:
+            return await self.resolve_bucket(
+                self.bucket_spec,
+                self._tenant_id_for_resolve(),
+            )
 
-        resolved = await self.resolve_bucket(
-            self.bucket_spec,
-            self._tenant_id_for_resolve(),
+        # Only memoize tenant-independent (static) bucket names; a dynamic resolver
+        # depends on the bound tenant and the adapter may be shared across tenants.
+        return await self._bucket_cell.resolve(
+            _factory,
+            cache=is_static_named_resource(self.bucket_spec),
         )
-        object.__setattr__(self, "_bucket_resolved", resolved)
-
-        return resolved
 
     # ....................... #
 
@@ -105,8 +107,10 @@ class ObjectStorageAdapter(StoragePort, TenancyMixin):
         if is_static_named_resource(self.bucket_spec):
             return self.bucket_spec
 
-        if self._bucket_resolved is not None:
-            return self._bucket_resolved
+        resolved = self._bucket_cell.peek()
+
+        if resolved is not None:
+            return resolved
 
         raise exc.internal(
             "bucket is only available for static bucket names; await _resolved_bucket()",

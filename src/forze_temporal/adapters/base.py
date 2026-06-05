@@ -12,7 +12,7 @@ import attrs
 from forze.application.contracts.resolution import NamedResourceSpec, is_static_named_resource
 from forze.application.contracts.tenancy import TenancyMixin
 from forze.base.exceptions import exc
-from forze.base.primitives import uuid4
+from forze.base.primitives import OnceCell, uuid4
 
 from ..kernel.client import TemporalClientPort
 from ..kernel.relation import resolve_temporal_queue
@@ -33,8 +33,8 @@ class TemporalBaseAdapter(TenancyMixin):
     workflow_id_factory: Callable[[], str] = attrs.field(default=lambda: str(uuid4))
     """Callable to generate a unique workflow ID."""
 
-    _queue_resolved: str | None = attrs.field(
-        default=None,
+    _queue_cell: OnceCell[str] = attrs.field(
+        factory=OnceCell,
         init=False,
         eq=False,
         repr=False,
@@ -59,16 +59,18 @@ class TemporalBaseAdapter(TenancyMixin):
     # ....................... #
 
     async def _resolved_queue(self) -> str:
-        if self._queue_resolved is not None:
-            return self._queue_resolved
+        async def _factory() -> str:
+            return await resolve_temporal_queue(
+                self.queue,
+                self._tenant_id_for_resolve(),
+            )
 
-        resolved = await resolve_temporal_queue(
-            self.queue,
-            self._tenant_id_for_resolve(),
+        # Only memoize tenant-independent (static) queues; a dynamic resolver
+        # depends on the bound tenant and the adapter may be shared across tenants.
+        return await self._queue_cell.resolve(
+            _factory,
+            cache=is_static_named_resource(self.queue),
         )
-        object.__setattr__(self, "_queue_resolved", resolved)
-
-        return resolved
 
     # ....................... #
 

@@ -37,10 +37,10 @@ class _CodecGateway(ModelCodecGatewayMixin[_Model]):
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class _FilterGateway(FilterParserMixin):
     filter_limits: QueryFilterLimits | None = None
-    filter_parser: QueryFilterExpressionParser = attrs.field(init=False)
-
-    def __attrs_post_init__(self) -> None:
-        self.init_filter_parser()
+    filter_parser: QueryFilterExpressionParser = attrs.field(
+        default=attrs.Factory(lambda self: self.build_filter_parser(), takes_self=True),
+        init=False,
+    )
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)

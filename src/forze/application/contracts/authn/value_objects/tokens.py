@@ -1,3 +1,5 @@
+from uuid import UUID
+
 import attrs
 
 from .credentials import (
@@ -23,6 +25,28 @@ class IssuedApiKey:
 
     lifetime: CredentialLifetime | None = attrs.field(default=None)
     """Lifetime of the API key."""
+
+
+# ....................... #
+# Password invite
+
+
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class IssuedInvite:
+    """A single-use invite token freshly issued for a known principal.
+
+    The raw ``token`` is delivered to the invitee out of band and presented back
+    via ``accept_invite_with_password``; only its digest is persisted.
+    """
+
+    token: str
+    """Opaque invite token string (only shown at issuance time)."""
+
+    principal_id: UUID
+    """Principal the invite provisions an account for once accepted."""
+
+    lifetime: CredentialLifetime | None = attrs.field(default=None)
+    """Lifetime of the invite."""
 
 
 # ....................... #

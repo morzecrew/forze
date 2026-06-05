@@ -98,15 +98,18 @@ class MeilisearchFederatedSearchAdapter[M: BaseModel](
     rrf_per_leg_limit: int = _DEFAULT_PER_LEG_LIMIT
     result_snapshot: SearchResultSnapshot | None = None
 
-    spec: FederatedSearchSpec[M] = attrs.field(init=False)
-    model_type: type[FederatedSearchReadModel[M]] = attrs.field(init=False)
+    spec: FederatedSearchSpec[M] = attrs.field(
+        default=attrs.Factory(lambda self: self.federated_spec, takes_self=True),
+        init=False,
+    )
+    model_type: type[FederatedSearchReadModel[M]] = attrs.field(
+        default=cast("type[FederatedSearchReadModel[M]]", FederatedSearchReadModel),
+        init=False,
+    )
 
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
-        object.__setattr__(self, "spec", self.federated_spec)
-        object.__setattr__(self, "model_type", FederatedSearchReadModel)
-
         if len(self.legs) != len(self.federated_spec.members):
             raise exc.internal(
                 "Federated adapter legs must match FederatedSearchSpec.members length.",

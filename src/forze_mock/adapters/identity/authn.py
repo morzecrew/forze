@@ -37,6 +37,7 @@ from forze.application.contracts.authn.value_objects.credentials import (
 from forze.application.contracts.authn.value_objects.identity import AuthnIdentity
 from forze.application.contracts.authn.value_objects.tokens import (
     IssuedApiKey,
+    IssuedInvite,
     IssuedTokens,
 )
 from forze.base.exceptions import exc
@@ -225,6 +226,14 @@ class MockPasswordAccountProvisioningPort(PasswordAccountProvisioningPort):
         credentials: PasswordCredentials,
     ) -> None:
         _ = operator, principal_id, credentials
+        raise exc.internal("Mock password provisioning not configured")
+
+    async def issue_password_invite(
+        self,
+        operator: AuthnIdentity,
+        principal_id: UUID,
+    ) -> IssuedInvite:
+        _ = operator, principal_id
         raise exc.internal("Mock password provisioning not configured")
 
     async def accept_invite_with_password(

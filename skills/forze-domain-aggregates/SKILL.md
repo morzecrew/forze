@@ -55,7 +55,7 @@ class ProjectReadModel(ReadDocument):
 | Mixin | Adds | Use when |
 |-------|------|----------|
 | `SoftDeletionMixin` | `is_deleted` | Soft-delete support |
-| `NumberIdMixin` | `number_id` | Human-readable IDs (combine with `NumberIdStep` in mapping) |
+| `NumberIdMixin` | `number_id` | Human-readable IDs (combine with `NumberIdMappingStep` in mapping) |
 | `CreatorIdMixin` (`forze_kits.domain.creator_id`) | `creator_id` | Audit (`CreatorIdMappingStep`) |
 | `MetadataMixin` (`forze_kits.domain.metadata`) | `name`, `display_name`, … | Named entities |
 
@@ -76,7 +76,7 @@ Enforce rules during `Document.update()`:
 
 ```python
 from forze.domain.validation import update_validator
-from forze.base.errors import ValidationError
+from forze.base.exceptions import exc
 
 class Project(Document):
     status: str = "draft"
@@ -85,7 +85,7 @@ class Project(Document):
     def _validate_transition(before, after, diff):
         allowed = {"draft": {"active"}, "active": {"archived"}}
         if after.status not in allowed.get(before.status, set()):
-            raise ValidationError("Invalid status transition.")
+            raise exc.validation("Invalid status transition.")
 ```
 
 ## DocumentSpec (logical)

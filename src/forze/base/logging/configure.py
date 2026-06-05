@@ -5,8 +5,9 @@ Some code taken from: https://gist.github.com/nymous/f138c7f06062b7c43c060bf0375
 
 import logging
 import sys
-from typing import Literal, Sequence, TextIO, TypedDict
+from typing import Any, Callable, Literal, Sequence, TextIO, TypedDict
 
+import orjson
 import structlog
 from structlog.types import Processor
 
@@ -46,12 +47,33 @@ class OpenTelemetryConfig(TypedDict, total=False):
 # ....................... #
 
 
+def _orjson_serializer(
+    obj: Any,
+    *,
+    default: Callable[[Any], Any] | None = None,
+    **_: Any,
+) -> str:
+    """orjson-backed serializer for :class:`structlog.processors.JSONRenderer`.
+
+    ``orjson.dumps`` returns UTF-8 ``bytes``; we decode to ``str`` because the
+    configured :class:`structlog.stdlib.ProcessorFormatter` bridges into stdlib
+    logging, which expects text. ``default`` is forwarded from structlog's JSON
+    fallback handler. Output is equivalent compact JSON to ``json.dumps`` (no key
+    sorting, no extra whitespace).
+    """
+
+    return orjson.dumps(obj, default=default).decode("utf-8")
+
+
+# ....................... #
+
+
 def build_renderer(
     render_mode: RenderMode,
     custom_console_renderer: structlog.types.Processor | None = None,
 ) -> structlog.types.Processor:
     if render_mode == "json":
-        return structlog.processors.JSONRenderer()
+        return structlog.processors.JSONRenderer(serializer=_orjson_serializer)
 
     elif custom_console_renderer:
         return custom_console_renderer

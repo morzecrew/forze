@@ -31,6 +31,31 @@ class ExecutionRuntime:
     lifecycle: FrozenLifecyclePlan = attrs.field(factory=FrozenLifecyclePlan)
     """Plan for startup and shutdown hooks."""
 
+    cache_resolved_operations: bool = attrs.field(default=True)
+    """Memoize resolved operations per scope (build once per op, then reuse).
+
+    Safe by default: the scope's :class:`ExecutionContext` is created once and is
+    immutable, and operation hook/handler factories defer every per-request read
+    (identity/tenant/tx) to execution time, so a resolved operation is a pure
+    function of its key within a scope. Disable only if you wire a *stateful*
+    handler or hook factory that must rebuild on every invocation.
+    """
+
+    cache_resolved_ports: bool = attrs.field(default=True)
+    """Memoize resolved configurable ports (document/search/cache/storage/... adapters)
+    per scope, so each ``ctx.<x>.query(spec)`` reuses one gateway/adapter (and its codecs,
+    filter renderers, key codecs) instead of rebuilding it on every call.
+
+    Safe by default for the same reason as :attr:`cache_resolved_operations`: port
+    factories are synchronous, scope-stable builders that capture only scope-stable
+    deps (clients/config) and defer every per-request read (tenant via the bound
+    ``inv_ctx.get_tenant``, the DB connection via the client at call time) to execution
+    time. Keyed by ``(dep key, route)`` and validated against the presented spec, so a
+    different spec on the same route rebuilds. Bypassed automatically while resolution
+    tracing is enabled (to keep per-task resolution traces complete). Disable only for a
+    *stateful* port factory that must rebuild per call.
+    """
+
     # Non initable fields
     __ctx: RuntimeVar[ExecutionContext] = attrs.field(
         factory=lambda: RuntimeVar("execution_context"),
@@ -63,7 +88,11 @@ class ExecutionRuntime:
 
         resolved_deps = self.deps.resolve()
 
-        ctx = ExecutionContext(deps=resolved_deps)
+        ctx = ExecutionContext(
+            deps=resolved_deps,
+            cache_operations=self.cache_resolved_operations,
+            cache_ports=self.cache_resolved_ports,
+        )
         self.__ctx.set_once(ctx)
 
         logger.info("Execution context created")

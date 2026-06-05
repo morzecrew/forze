@@ -23,7 +23,7 @@ from tenacity import (
 
 from forze.application.contracts.querying import QueryFilterExpression
 from forze.base.exceptions import CoreException, ExceptionKind, exc
-from forze.base.primitives import JsonDict
+from forze.base.primitives import JsonDict, OnceCell
 from forze.base.serialization import ModelCodec
 from forze.domain.constants import ID_FIELD, REV_FIELD
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document
@@ -133,8 +133,8 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
     conflict_target: tuple[str, ...] | None = attrs.field(default=None)
     """``ON CONFLICT`` columns for :meth:`ensure` / :meth:`upsert`; ``None`` infers PRIMARY KEY."""
 
-    _conflict_target_resolved: tuple[str, ...] | None = attrs.field(
-        default=None,
+    _conflict_target_cell: OnceCell[tuple[str, ...]] = attrs.field(
+        factory=OnceCell,
         init=False,
         eq=False,
         repr=False,
@@ -273,20 +273,17 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
     # ....................... #
 
     async def _resolved_conflict_target(self) -> tuple[str, ...]:
-        cached = self._conflict_target_resolved
+        async def _factory() -> tuple[str, ...]:
+            return await resolve_write_conflict_target(
+                self.introspector,
+                schema=(await self._qname()).schema,
+                relation=(await self._qname()).name,
+                configured=self.conflict_target,
+            )
 
-        if cached is not None:
-            return cached
-
-        resolved = await resolve_write_conflict_target(
-            self.introspector,
-            schema=(await self._qname()).schema,
-            relation=(await self._qname()).name,
-            configured=self.conflict_target,
-        )
-        object.__setattr__(self, "_conflict_target_resolved", resolved)
-
-        return resolved
+        # Conflict columns are the table's PK/unique columns — identical across
+        # tenant schemas (tenant-independent), so always memoized.
+        return await self._conflict_target_cell.resolve(_factory)
 
     async def _ident_conflict_target(self) -> sql.Composable:
         cols = await self._resolved_conflict_target()

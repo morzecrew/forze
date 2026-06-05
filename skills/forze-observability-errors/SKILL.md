@@ -1,9 +1,9 @@
 ---
 name: forze-observability-errors
 description: >-
-  Applies Forze structured errors, handled decorators, logging configuration,
-  call-context binding, OpenTelemetry context injection, and FastAPI error
-  mapping. Use when adding error handling, diagnostics, or logging.
+  Applies Forze structured errors (CoreException / exc factories), logging
+  configuration, call-context binding, OpenTelemetry context injection, and
+  FastAPI error mapping. Use when adding error handling, diagnostics, or logging.
 ---
 
 # Forze observability and errors
@@ -12,25 +12,26 @@ Use when surfacing domain/application failures, mapping infrastructure exception
 
 ## Error model
 
-All expected domain/application failures should derive from `CoreError`.
+Raise expected domain/application failures as `CoreException`, built through the `exc` factory. Each kind maps to an HTTP status in the FastAPI integration.
 
-| Error | HTTP mapping in FastAPI | Use when |
-|-------|-------------------------|----------|
-| `NotFoundError` | 404 | resource is missing |
-| `ConflictError` | 409 | duplicate key, revision conflict |
-| `ValidationError` | 422 | invalid user or external input |
-| `DomainError` | 400 | domain invariant violation |
-| `InvalidOperationError` | 400 | application invariant violation |
-| `AuthenticationError` | 401 | authentication failed |
-| `AuthorizationError` | 403 | permission denied |
-| `InfrastructureError` | 500 | backend/service failure |
+| Factory | Kind | HTTP status | Use when |
+|---------|------|-------------|----------|
+| `exc.not_found(...)` | `not_found` | 404 | resource is missing |
+| `exc.conflict(...)` | `conflict` | 409 | duplicate key, revision conflict |
+| `exc.validation(...)` | `validation` | 422 | invalid user or external input |
+| `exc.domain(...)` | `domain` | 400 | domain invariant violation |
+| `exc.precondition(...)` | `precondition` | 400 | precondition not met |
+| `exc.authentication(...)` | `authentication` | 401 | authentication failed |
+| `exc.authorization(...)` | `authorization` | 403 | permission denied |
+| `exc.infrastructure(...)` | `infrastructure` | 500 | backend/service failure |
+| `exc.internal(...)` / `exc.concurrency(...)` / `exc.configuration(...)` | — | 500 | unexpected/internal failures |
 
-Set stable `code` values for machine handling and use `details` for structured context.
+Each factory takes `(summary, *, code=None, details=None)`. Set a stable `code` for machine handling and use `details` for structured context.
 
 ```python
-from forze.base.errors import ConflictError
+from forze.base.exceptions import exc
 
-raise ConflictError(
+raise exc.conflict(
     "Project slug already exists",
     code="project_slug_conflict",
     details={"slug": slug},
@@ -39,24 +40,25 @@ raise ConflictError(
 
 ## Adapter exception mapping
 
-When you implement a **custom adapter** in your application, use `@handled(...)` on adapter methods to convert provider exceptions into `CoreError` subclasses. Let existing `CoreError` values pass through. Shipped `forze_*` adapters already map common provider errors.
+Shipped `forze_*` adapters already translate common provider errors into `CoreException`. When you implement a **custom adapter** in your application, catch provider exceptions and raise the matching `exc.*` kind; let any existing `CoreException` propagate unchanged.
 
 ```python
-from forze.base.errors import ConflictError, CoreError, InfrastructureError, error_handler, handled
-
-
-@error_handler
-def pg_errors(exc: Exception, op: str, **kwargs) -> CoreError:
-    if isinstance(exc, UniqueViolation):
-        return ConflictError(f"Duplicate during {op}", code="duplicate")
-    return InfrastructureError(f"Postgres failed during {op}")
+from forze.base.exceptions import CoreException, exc
 
 
 class ProjectAdapter:
-    @handled(pg_errors)
     async def create(self, dto: CreateProjectCmd) -> ProjectRead:
-        ...
+        try:
+            ...
+        except CoreException:
+            raise
+        except UniqueViolation as e:
+            raise exc.conflict("Duplicate project", code="duplicate") from e
+        except Exception as e:
+            raise exc.infrastructure("Postgres create failed") from e
 ```
+
+For declarative mapping (what shipped adapters use internally), Forze also exposes `ExceptionInterceptor` and `ChainExceptionMapper` from `forze.base.exceptions`.
 
 ## Logging
 
@@ -90,7 +92,7 @@ logger.info("project_created", project_id=str(project_id))
 
 ## FastAPI mapping
 
-Call `register_exception_handlers(app)` once. It converts `CoreError` to JSON and emits the error code in `X-Error-Code`.
+Call `register_exception_handlers(app)` once. It converts `CoreException` to a JSON response (and maps unhandled exceptions to 500).
 
 ```python
 from forze_fastapi.exceptions import register_exception_handlers
@@ -100,11 +102,11 @@ register_exception_handlers(app)
 
 ## Anti-patterns
 
-1. **Raising raw provider exceptions from adapters** — map them to `CoreError`.
+1. **Raising raw provider exceptions from adapters** — map them to `CoreException`.
 2. **Using plain strings as error categories** — use `code` and `details`.
 3. **Logging secrets or raw credentials** — log logical refs and ids only.
 4. **Binding log context manually in handlers** — bind request identity at the boundary.
-5. **Catching `CoreError` only to re-raise it unchanged** — let middleware/presentation layers handle it.
+5. **Catching `CoreException` only to re-raise it unchanged** — let middleware/presentation layers handle it.
 
 ## Reference
 

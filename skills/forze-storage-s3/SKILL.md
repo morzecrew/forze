@@ -63,6 +63,7 @@ Use a secrets-backed or environment-backed configuration layer for real credenti
 
 ```python
 from forze.application.contracts.execution import Handler
+from forze.application.contracts.storage import StoragePort, StoredObject, UploadedObject
 
 class UploadAttachment(Handler[UploadAttachmentCmd, StoredObject]):
     doc: DocumentQueryPort[ProjectRead]
@@ -71,10 +72,12 @@ class UploadAttachment(Handler[UploadAttachmentCmd, StoredObject]):
     async def __call__(self, args: UploadAttachmentCmd) -> StoredObject:
         await self.doc.get(args.project_id)
         return await self.storage.upload(
-            args.filename,
-            args.data,
-            description=args.description,
-            prefix=f"projects/{args.project_id}",
+            UploadedObject(
+                filename=args.filename,
+                data=args.data,
+                description=args.description,
+                prefix=f"projects/{args.project_id}",
+            )
         )
 ```
 

@@ -3,8 +3,10 @@
 import binascii
 import hashlib
 from collections.abc import Sequence
+from typing import Any
 from urllib.parse import parse_qs, urlparse
 
+import orjson
 from pydantic import SecretStr
 
 # ----------------------- #
@@ -19,6 +21,37 @@ _POOL_DEDUP_DOMAIN = b"forze.pool-dedup.v1"
 _SECRET_DEDUP_SCRYPT_N = 2
 _SECRET_DEDUP_SCRYPT_R = 8
 _SECRET_DEDUP_SCRYPT_P = 1
+
+# ....................... #
+
+
+def stable_json_bytes(payload: Any) -> bytes:
+    """Return canonical, key-sorted UTF-8 JSON bytes for fingerprinting.
+
+    Keys are sorted at every level (``OPT_SORT_KEYS``) for determinism; values
+    orjson cannot serialize natively fall back to ``str``. For cache/dedup
+    fingerprints only — the exact byte layout is not a stable wire format across
+    orjson versions/options (notably ``datetime`` is serialized natively, so a
+    payload's bytes differ from a ``str``-coerced encoding).
+    """
+
+    return orjson.dumps(payload, option=orjson.OPT_SORT_KEYS, default=str)
+
+
+# ....................... #
+
+
+def stable_payload_fingerprint(payload: Any, *, prefix: str = "sha256") -> str:
+    """SHA-256 fingerprint of a payload's canonical JSON (for cache/dedup keys).
+
+    Returns ``"{prefix}:{hexdigest}"`` (or the bare digest when ``prefix`` is
+    empty). Uses :func:`stable_json_bytes` for deterministic, key-sorted input.
+    """
+
+    digest = hashlib.sha256(stable_json_bytes(payload)).hexdigest()
+
+    return f"{prefix}:{digest}" if prefix else digest
+
 
 # ....................... #
 

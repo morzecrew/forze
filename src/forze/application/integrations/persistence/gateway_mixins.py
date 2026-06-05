@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Sequence
 from functools import cached_property
 from typing import TYPE_CHECKING, Any, Generic, Literal, TypeVar, overload
 from uuid import UUID
@@ -23,7 +23,6 @@ from forze.base.serialization import ModelCodec, default_model_codec
 
 M = TypeVar("M", bound=BaseModel)
 TModel = TypeVar("TModel", bound=BaseModel)
-TResolved = TypeVar("TResolved")
 ReadValidation = Literal["strict", "trusted"]
 
 # ....................... #
@@ -232,17 +231,20 @@ class FilterParserMixin:
 
     # ....................... #
 
-    def init_filter_parser(self) -> None:
+    def build_filter_parser(self) -> QueryFilterExpressionParser:
+        """Build the filter DSL parser from :attr:`filter_limits`.
+
+        Used as an attrs ``Factory(takes_self=True)`` default for the gateway's
+        ``filter_parser`` field, so no post-init mutation is needed.
+        """
+
         limits = (
             self.filter_limits
             if self.filter_limits is not None
             else QueryFilterLimits()
         )
-        object.__setattr__(
-            self,
-            "filter_parser",
-            QueryFilterExpressionParser(limits=limits),
-        )
+
+        return QueryFilterExpressionParser(limits=limits)
 
     # ....................... #
 
@@ -277,20 +279,3 @@ class TenantResolvedRelationMixin(TenancyMixin):
             return None
 
         return tenant.tenant_id
-
-    # ....................... #
-
-    async def _resolve_and_cache(
-        self,
-        attr: str,
-        factory: Callable[[], Awaitable[TResolved]],
-    ) -> TResolved:
-        current = getattr(self, attr, None)
-
-        if current is not None:
-            return current
-
-        resolved = await factory()
-        object.__setattr__(self, attr, resolved)
-
-        return resolved

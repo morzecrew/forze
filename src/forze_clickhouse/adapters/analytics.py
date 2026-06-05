@@ -51,6 +51,8 @@ from forze_clickhouse.kernel.client import (
 )
 from forze_clickhouse.kernel.client.query import parameters_from_model
 from forze_clickhouse.kernel.client.value_objects import ClickHouseQueryResult
+from forze.application.contracts.resolution import is_static_relation
+from forze.base.primitives import OnceCell
 from forze_clickhouse.kernel.relation import resolve_clickhouse_ingest_target
 
 # ----------------------- #
@@ -79,8 +81,8 @@ class ClickHouseAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
     tenant_provider: TenantProviderPort | None = None
     """Tenant context for dynamic ingest :class:`~forze_clickhouse.kernel.relation.RelationSpec` resolvers."""
 
-    _ingest_target_resolved: tuple[str, str] | None = attrs.field(
-        default=None,
+    _ingest_target_cell: OnceCell[tuple[str, str]] = attrs.field(
+        factory=OnceCell,
         init=False,
         eq=False,
         repr=False,
@@ -101,16 +103,18 @@ class ClickHouseAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
                 f"ClickHouse ingest relation is required for route {self.spec.name!r}."
             )
 
-        if self._ingest_target_resolved is not None:
-            return self._ingest_target_resolved
+        async def _factory() -> tuple[str, str]:
+            return await resolve_clickhouse_ingest_target(
+                spec,
+                self._tenant_id_for_resolve(),
+            )
 
-        resolved = await resolve_clickhouse_ingest_target(
-            spec,
-            self._tenant_id_for_resolve(),
+        # Only memoize tenant-independent (static) relations; a dynamic resolver
+        # depends on the bound tenant and the adapter may be shared across tenants.
+        return await self._ingest_target_cell.resolve(
+            _factory,
+            cache=is_static_relation(spec),
         )
-        object.__setattr__(self, "_ingest_target_resolved", resolved)
-
-        return resolved
 
     # ....................... #
 

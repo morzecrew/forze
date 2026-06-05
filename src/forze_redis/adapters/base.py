@@ -4,6 +4,7 @@ require_redis()
 
 # ....................... #
 
+from contextvars import ContextVar
 from typing import Any
 from uuid import UUID
 
@@ -12,6 +13,7 @@ import attrs
 from forze.application.contracts.resolution import NamedResourceSpec, is_static_named_resource
 from forze.application.contracts.tenancy import TenancyMixin
 from forze.base.exceptions import exc
+from forze.base.primitives import OnceCell
 
 from ..kernel.client import RedisClientPort
 from ..kernel.relation import resolve_redis_namespace
@@ -33,12 +35,27 @@ class RedisBaseAdapter(TenancyMixin):
     key_sep: str = KEY_SEP
     """Separator between key parts."""
 
-    _namespace_resolved: str | None = attrs.field(
-        default=None,
+    _namespace_cell: OnceCell[str] = attrs.field(
+        factory=OnceCell,
         init=False,
         eq=False,
         repr=False,
     )
+    """Memo for a static namespace (tenant-independent; resolved once)."""
+
+    _namespace_cv: ContextVar[str | None] = attrs.field(
+        factory=lambda: ContextVar[str | None]("redis_namespace", default=None),
+        init=False,
+        eq=False,
+        repr=False,
+        hash=False,
+    )
+    """Task-local scratchpad for a dynamic (tenant-scoped) namespace.
+
+    The adapter may be shared across tenants/requests (per-scope port cache), and
+    operations build keys via the sync :attr:`key_codec` after ``await`` points, so a
+    shared instance field would be clobbered by concurrent other-tenant operations. A
+    context var keeps each task reading its own resolved namespace."""
 
     # ....................... #
 
@@ -69,14 +86,24 @@ class RedisBaseAdapter(TenancyMixin):
     # ....................... #
 
     async def _resolved_namespace(self) -> str:
-        if self._namespace_resolved is not None:
-            return self._namespace_resolved
+        if is_static_named_resource(self.namespace):
 
+            async def _factory() -> str:
+                return await resolve_redis_namespace(
+                    self.namespace,
+                    self._tenant_id_for_resolve(),
+                )
+
+            return await self._namespace_cell.resolve(_factory)
+
+        # Dynamic: resolve per call and stash in a task-local var so the shared
+        # adapter's sync key_codec reads the current task's tenant namespace, even
+        # across awaits and concurrent operations for other tenants.
         resolved = await resolve_redis_namespace(
             self.namespace,
             self._tenant_id_for_resolve(),
         )
-        object.__setattr__(self, "_namespace_resolved", resolved)
+        self._namespace_cv.set(resolved)
 
         return resolved
 
@@ -84,17 +111,21 @@ class RedisBaseAdapter(TenancyMixin):
 
     @property
     def key_codec(self) -> RedisKeyCodec:
-        """Key codec using the static or cached resolved namespace."""
-
-        if self._namespace_resolved is not None:
-            return RedisKeyCodec(namespace=self._namespace_resolved, sep=self.key_sep)
+        """Key codec using the static memo or the task-local resolved namespace."""
 
         if is_static_named_resource(self.namespace):
-            return RedisKeyCodec(namespace=self.namespace, sep=self.key_sep)
+            cached = self._namespace_cell.peek()
+            static_ns = cached if cached is not None else self.namespace
+            return RedisKeyCodec(namespace=static_ns, sep=self.key_sep)
 
-        raise exc.internal(
-            "key_codec requires a resolved namespace; await _resolved_namespace() first",
-        )
+        dynamic_ns = self._namespace_cv.get()
+
+        if dynamic_ns is None:
+            raise exc.internal(
+                "key_codec requires a resolved namespace; await _resolved_namespace() first",
+            )
+
+        return RedisKeyCodec(namespace=dynamic_ns, sep=self.key_sep)
 
     # ....................... #
 

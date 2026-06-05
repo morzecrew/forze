@@ -13,6 +13,7 @@ import attrs
 from psycopg import sql
 
 from forze.base.exceptions import exc
+from forze.base.primitives import OnceCell
 from forze.base.serialization import ModelCodec
 from forze.domain.constants import (
     HISTORY_DATA_FIELD,
@@ -21,7 +22,11 @@ from forze.domain.constants import (
     REV_FIELD,
 )
 from forze.domain.models import Document, DocumentHistory
-from forze_postgres.kernel.relation import RelationSpec, resolve_postgres_qname
+from forze_postgres.kernel.relation import (
+    RelationSpec,
+    is_static_relation,
+    resolve_postgres_qname,
+)
 
 from .base import PostgresGateway, PostgresQualifiedName
 from .types import PostgresBookkeepingStrategy
@@ -43,8 +48,8 @@ class PostgresHistoryGateway[D: Document](PostgresGateway[D]):
     history_codec: ModelCodec[Any, Any] = attrs.field(kw_only=True, eq=False, repr=False)
     """Codec for :class:`~forze.domain.models.DocumentHistory` persistence rows."""
 
-    _target_qname_resolved: PostgresQualifiedName | None = attrs.field(
-        default=None,
+    _target_qname_cell: OnceCell[PostgresQualifiedName] = attrs.field(
+        factory=OnceCell,
         init=False,
         eq=False,
         repr=False,
@@ -63,16 +68,16 @@ class PostgresHistoryGateway[D: Document](PostgresGateway[D]):
     # ....................... #
 
     async def _target_qname(self) -> PostgresQualifiedName:
-        if self._target_qname_resolved is not None:
-            return self._target_qname_resolved
+        async def _factory() -> PostgresQualifiedName:
+            return await resolve_postgres_qname(
+                self.target_relation,
+                self._tenant_id_for_resolve(),
+            )
 
-        resolved = await resolve_postgres_qname(
-            self.target_relation,
-            self._tenant_id_for_resolve(),
+        return await self._target_qname_cell.resolve(
+            _factory,
+            cache=is_static_relation(self.target_relation),
         )
-        object.__setattr__(self, "_target_qname_resolved", resolved)
-
-        return resolved
 
     # ....................... #
 

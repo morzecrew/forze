@@ -16,6 +16,11 @@ repos:
   - id: trailing-whitespace
 - repo: local
   hooks:
+  - id: no-frozen-setattr-bypass
+    name: Ban object.__setattr__ in src (use attrs Factory/property/OnceCell)
+    entry: object\.__setattr__
+    language: pygrep
+    files: ^src/.*\.py$
   - id: quality
     name: Run quality checks
     entry: just quality

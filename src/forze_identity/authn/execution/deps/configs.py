@@ -13,6 +13,8 @@ from ...services import (
     AccessTokenService,
     ApiKeyConfig,
     ApiKeyService,
+    InviteTokenConfig,
+    InviteTokenService,
     PasswordConfig,
     PasswordService,
     RefreshTokenConfig,
@@ -53,6 +55,15 @@ class AuthnKernelConfig:
     password: PasswordConfig | None = attrs.field(default=None)
     """When set, builds a single shared :class:`~forze_authn.services.password.PasswordService`."""
 
+    invite_token_pepper: bytes | None = attrs.field(
+        default=None,
+        validator=attrs.validators.optional(attrs.validators.min_len(32)),
+    )
+    """Minimum 32 bytes when set; required to issue/accept password provisioning invites."""
+
+    invite_token: InviteTokenConfig = attrs.field(factory=InviteTokenConfig)
+    """Password invite token service configuration."""
+
     api_key_pepper: bytes | None = attrs.field(
         default=None,
         validator=attrs.validators.optional(attrs.validators.min_len(32)),
@@ -78,6 +89,7 @@ class AuthnSharedServices:
     access_svc: AccessTokenService | None
     refresh_svc: RefreshTokenService | None
     password_svc: PasswordService | None
+    invite_svc: InviteTokenService | None
     api_key_svc: ApiKeyService | None
 
 
@@ -108,6 +120,14 @@ def build_authn_shared_services(kernel: AuthnKernelConfig) -> AuthnSharedService
         PasswordService(config=kernel.password) if kernel.password is not None else None
     )
 
+    invite_svc = (
+        InviteTokenService(
+            pepper=kernel.invite_token_pepper, config=kernel.invite_token
+        )
+        if kernel.invite_token_pepper is not None
+        else None
+    )
+
     api_key_svc = (
         ApiKeyService(pepper=kernel.api_key_pepper, config=kernel.api_key)
         if kernel.api_key_pepper is not None
@@ -118,6 +138,7 @@ def build_authn_shared_services(kernel: AuthnKernelConfig) -> AuthnSharedService
         access_svc=access_svc,
         refresh_svc=refresh_svc,
         password_svc=password_svc,
+        invite_svc=invite_svc,
         api_key_svc=api_key_svc,
     )
 

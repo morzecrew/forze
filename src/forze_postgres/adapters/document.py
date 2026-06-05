@@ -70,11 +70,15 @@ class PostgresDocumentAdapter(DocumentAdapter[R, D, C, U]):
         if self.write_gw is not None:
             validate_read_write_gateway_compat(self.read_gw, self.write_gw)
 
-            if self.spec.write is not None:
-                hydrate = can_hydrate_read_from_write_domain(
-                    read_model=self.read_gw.model_type,
-                    domain_model=self.spec.write["domain"],
-                    read_source_key=_relation_cache_key(self.read_gw.relation),
-                    write_source_key=_relation_cache_key(self.write_gw.relation),
-                )
-                object.__setattr__(self, "hydrate_from_write", hydrate)
+    # ....................... #
+
+    def _compute_hydrate_from_write(self) -> bool:
+        if self.write_gw is None or self.spec.write is None:
+            return False
+
+        return can_hydrate_read_from_write_domain(
+            read_model=self.read_gw.model_type,
+            domain_model=self.spec.write["domain"],
+            read_source_key=_relation_cache_key(self.read_gw.relation),
+            write_source_key=_relation_cache_key(self.write_gw.relation),
+        )

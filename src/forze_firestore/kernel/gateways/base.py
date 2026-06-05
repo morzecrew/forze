@@ -27,7 +27,7 @@ from forze.application.integrations.persistence import (
     TenantResolvedRelationMixin,
 )
 from forze.base.exceptions import exc
-from forze.base.primitives import JsonDict
+from forze.base.primitives import JsonDict, OnceCell
 from forze.base.serialization import ModelCodec
 from forze.domain.constants import ID_FIELD
 
@@ -55,8 +55,8 @@ class FirestoreGateway[M: BaseModel](
     relation: RelationSpec
     """Static ``(database, collection)`` or tenant-scoped resolver."""
 
-    _relation_resolved: tuple[str, str] | None = attrs.field(
-        default=None,
+    _relation_cell: OnceCell[tuple[str, str]] = attrs.field(
+        factory=OnceCell,
         init=False,
         eq=False,
         repr=False,
@@ -65,12 +65,15 @@ class FirestoreGateway[M: BaseModel](
     client: FirestoreClientPort
     renderer: FirestoreQueryRenderer = attrs.field(factory=FirestoreQueryRenderer)
     filter_limits: QueryFilterLimits | None = attrs.field(default=None)
-    filter_parser: QueryFilterExpressionParser = attrs.field(init=False)
+    filter_parser: QueryFilterExpressionParser = attrs.field(
+        default=attrs.Factory(lambda self: self.build_filter_parser(), takes_self=True),
+        init=False,
+    )
 
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
-        self.init_filter_parser()
+        """Post-init hook for subclasses; ``filter_parser`` is built via its factory."""
 
     # ....................... #
 
@@ -81,7 +84,10 @@ class FirestoreGateway[M: BaseModel](
                 self._tenant_id_for_resolve(),
             )
 
-        return await self._resolve_and_cache("_relation_resolved", _factory)
+        return await self._relation_cell.resolve(
+            _factory,
+            cache=is_static_relation(self.relation),
+        )
 
     # ....................... #
 
@@ -92,8 +98,10 @@ class FirestoreGateway[M: BaseModel](
         if is_static_relation(self.relation):
             return self.relation[0]
 
-        if self._relation_resolved is not None:
-            return self._relation_resolved[0]
+        resolved = self._relation_cell.peek()
+
+        if resolved is not None:
+            return resolved[0]
 
         raise exc.internal(
             "database is only available for static relations; await _resolved_collection()",
@@ -108,8 +116,10 @@ class FirestoreGateway[M: BaseModel](
         if is_static_relation(self.relation):
             return self.relation[1]
 
-        if self._relation_resolved is not None:
-            return self._relation_resolved[1]
+        resolved = self._relation_cell.peek()
+
+        if resolved is not None:
+            return resolved[1]
 
         raise exc.internal(
             "collection is only available for static relations; await _resolved_collection()",

@@ -65,32 +65,29 @@ class SocketIOCommandRoute[Args, Ack]:
     ack_type: Any = None
     """Optional validation type for acknowledgement payload."""
 
-    _payload_adapter: TypeAdapter[Any] = attrs.field(init=False, repr=False, eq=False)
+    _payload_adapter: TypeAdapter[Any] = attrs.field(
+        default=attrs.Factory(
+            lambda self: TypeAdapter[Any](self.payload_type),
+            takes_self=True,
+        ),
+        init=False,
+        repr=False,
+        eq=False,
+    )
     """Cached :class:`~pydantic.TypeAdapter` for ``payload_type``."""
 
     _ack_adapter: TypeAdapter[Any] | None = attrs.field(
+        default=attrs.Factory(
+            lambda self: (
+                TypeAdapter[Any](self.ack_type) if self.ack_type is not None else None
+            ),
+            takes_self=True,
+        ),
         init=False,
         repr=False,
         eq=False,
     )
     """Cached adapter for ``ack_type``, or :obj:`None` when acknowledgements are untyped."""
-
-    # ....................... #
-
-    def __attrs_post_init__(self) -> None:
-        object.__setattr__(
-            self,
-            "_payload_adapter",
-            TypeAdapter[Any](self.payload_type),
-        )
-        if self.ack_type is None:
-            object.__setattr__(self, "_ack_adapter", None)
-        else:
-            object.__setattr__(
-                self,
-                "_ack_adapter",
-                TypeAdapter[Any](self.ack_type),
-            )
 
     # ....................... #
 

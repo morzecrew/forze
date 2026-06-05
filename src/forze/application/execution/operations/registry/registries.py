@@ -294,6 +294,11 @@ class FrozenOperationRegistry:
         op: StrKey,
         ctx: "ExecutionContext",
     ) -> ResolvedOperation[Any, Any]:
+        cached = ctx.cached_operation(op)
+
+        if cached is not None:
+            return cached
+
         if op not in self.handlers:
             raise exc.internal(f"Handler factory not found for operation: {op}")
 
@@ -302,10 +307,14 @@ class FrozenOperationRegistry:
 
         resolved_plan = plan.resolve(ctx, self._dispatch)
 
-        return ResolvedOperation(
+        resolved = ResolvedOperation(
             op=op,
             handler=handler(ctx),
             plan=resolved_plan,
             tx_runner=ctx.tx_ctx.scope,
             defer_after_commit=ctx.tx_ctx.run_or_defer,
         )
+
+        ctx.store_operation(op, resolved)
+
+        return resolved
