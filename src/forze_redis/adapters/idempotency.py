@@ -57,6 +57,12 @@ class RedisIdempotencyAdapter(IdempotencyPort, RedisBaseAdapter):
 
     # ....................... #
 
+    def __attrs_post_init__(self) -> None:
+        if int(self.ttl.total_seconds()) < 1:
+            raise exc.configuration("TTL must be at least 1 second")
+
+    # ....................... #
+
     def __meta_key(self, op: str, key: str) -> str:
         return self.construct_key(_IDEMPOTENCY_SCOPE, op, key)
 

@@ -8,6 +8,7 @@ import attrs
 
 from forze.application.contracts.authn import AuthnSpec, TokenVerifierPort
 from forze.application.execution import ExecutionContext
+from forze.base.exceptions import exc
 
 from .claims import OidcClaimMapper
 from .keys import JwksKeyProvider
@@ -38,6 +39,12 @@ class OidcIdpPreset:
 
     leeway: timedelta = attrs.field(default=timedelta(seconds=10))
     """Clock-skew leeway for JWT validation."""
+
+    # ....................... #
+
+    def __attrs_post_init__(self) -> None:
+        if self.leeway.total_seconds() <= 0:
+            raise exc.configuration("Leeway must be positive")
 
 
 # ....................... #

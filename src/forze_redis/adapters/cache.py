@@ -14,6 +14,7 @@ from typing import Any, Callable, Final, Iterable, Mapping, Sequence, final
 import attrs
 
 from forze.application.contracts.cache import CachePort
+from forze.base.exceptions import exc
 
 from ._logger import logger
 from .base import RedisBaseAdapter
@@ -62,6 +63,18 @@ class RedisCacheAdapter(CachePort, RedisBaseAdapter):
 
     ttl_kv: timedelta = timedelta(seconds=300)
     """TTL for the cache key-value pairs (when using plain cache)."""
+
+    # ....................... #
+
+    def __attrs_post_init__(self) -> None:
+        if self.ttl_pointer.total_seconds() < 1:
+            raise exc.configuration("TTL pointer must be at least 1 second")
+
+        if self.ttl_body.total_seconds() < 1:
+            raise exc.configuration("TTL body must be at least 1 second")
+
+        if self.ttl_kv.total_seconds() < 1:
+            raise exc.configuration("TTL kv must be at least 1 second")
 
     # ....................... #
     # Helpers
@@ -170,9 +183,9 @@ class RedisCacheAdapter(CachePort, RedisBaseAdapter):
             return
 
         redis_mapping = {
-            self.__body_key(k, v): val
-            if isinstance(val, bytes)
-            else default_json_codec.dumps(val)
+            self.__body_key(k, v): (
+                val if isinstance(val, bytes) else default_json_codec.dumps(val)
+            )
             for (k, v), val in mapping.items()
         }
         await self.client.mset(redis_mapping, ex=int(ttl.total_seconds()))
@@ -213,9 +226,7 @@ class RedisCacheAdapter(CachePort, RedisBaseAdapter):
             return
 
         redis_mapping = {
-            self.__kv_key(k): v
-            if isinstance(v, bytes)
-            else default_json_codec.dumps(v)
+            self.__kv_key(k): v if isinstance(v, bytes) else default_json_codec.dumps(v)
             for k, v in mapping.items()
         }
         await self.client.mset(redis_mapping, ex=int(ttl.total_seconds()))

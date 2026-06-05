@@ -7,6 +7,7 @@ from typing import Final, final
 import attrs
 from pydantic import SecretStr
 
+from forze.base.exceptions import exc
 from forze_identity.oidc import OidcIdpPreset
 
 # ----------------------- #
@@ -47,6 +48,12 @@ class TelegramLoginOidcConfig:
 
     leeway: timedelta = attrs.field(default=timedelta(seconds=10))
     """Clock-skew leeway for JWT validation."""
+
+    # ....................... #
+
+    def __attrs_post_init__(self) -> None:
+        if self.leeway.total_seconds() <= 0:
+            raise exc.configuration("Leeway must be positive")
 
     # ....................... #
 

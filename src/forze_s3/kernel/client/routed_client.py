@@ -10,7 +10,7 @@ from types_aiobotocore_s3.client import S3Client as AsyncS3Client
 
 from forze.application.contracts.secrets import SecretRef, SecretsPort
 from forze.application.integrations.storage import RoutedObjectStorageClientBase
-from forze.base.primitives.fingerprint import stable_fingerprint
+from forze.base.primitives.fingerprint import build_routing_fingerprint
 
 from .client import S3Client
 from .port import S3ClientPort
@@ -52,7 +52,10 @@ class RoutedS3Client(RoutedObjectStorageClientBase[S3Client], S3ClientPort):
     def credential_fingerprint(self, creds: BaseModel) -> str:
         c = cast(S3RoutingCredentials, creds)
 
-        return stable_fingerprint(c.endpoint, c.access_key_id)
+        return build_routing_fingerprint(
+            public=[c.endpoint, c.access_key_id],
+            secret=[c.secret_access_key],
+        )
 
     # ....................... #
 

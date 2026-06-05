@@ -118,6 +118,29 @@ class TestSimpleLruRegistry:
         await reg.evict("b")
         dispose.assert_awaited_once_with("v-a")
 
+    @pytest.mark.asyncio
+    async def test_overflow_eviction_releases_dedup_index(self) -> None:
+        create = AsyncMock(side_effect=lambda k: f"v-{k}")
+        dispose = AsyncMock()
+        reg = SimpleLruRegistry(
+            max_entries=2,
+            create=create,
+            dispose=dispose,
+            dedup_key=lambda k: k,
+        )
+
+        for key in ("a", "b", "c", "d", "e"):
+            await reg.get_or_create(key)
+
+        # Dedup index and init-lock maps must not retain evicted slots, or they would
+        # grow unbounded with the number of distinct logical keys ever seen.
+        assert len(reg._dedup.logical_to_resource) <= reg.max_entries
+        assert len(reg._dedup.resource_refcount) <= reg.max_entries
+        assert len(reg._dedup.resource_to_keys) <= reg.max_entries
+        assert len(reg._init_locks) <= reg.max_entries
+        assert "a" not in reg._dedup.logical_to_resource
+        assert "e" in reg._dedup.logical_to_resource
+
 
 class TestGuardedLruRegistry:
     def test_rejects_zero_max_entries(self) -> None:
@@ -262,6 +285,27 @@ class TestGuardedLruRegistry:
                 assert v1 == v2 == "v-a"
 
         create.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_overflow_eviction_releases_dedup_index(self) -> None:
+        create = AsyncMock(side_effect=lambda k: f"v-{k}")
+        dispose = AsyncMock()
+        reg = GuardedLruRegistry(
+            max_entries=2,
+            create=create,
+            dispose=dispose,
+            dedup_key=lambda k: k,
+        )
+
+        for key in ("a", "b", "c", "d", "e"):
+            async with reg.use(key):
+                pass
+
+        assert len(reg._dedup.logical_to_resource) <= reg.max_entries
+        assert len(reg._dedup.resource_refcount) <= reg.max_entries
+        assert len(reg._dedup.resource_to_keys) <= reg.max_entries
+        assert len(reg._init_locks) <= reg.max_entries
+        assert "a" not in reg._dedup.logical_to_resource
 
 
 class TestLruRegistryReentrancy:

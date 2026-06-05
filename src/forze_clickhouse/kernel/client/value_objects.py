@@ -6,6 +6,7 @@ from typing import final
 import attrs
 from pydantic import SecretStr
 
+from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
 
 # ----------------------- #
@@ -78,6 +79,18 @@ class ClickHouseConfig:
 
     max_append_rows: int = 10_000
     """Soft cap enforced by analytics adapter ``append`` (raises when exceeded)."""
+
+    # ....................... #
+
+    def __attrs_post_init__(self) -> None:
+        if self.timeout.total_seconds() <= 0:
+            raise exc.configuration("Timeout must be positive")
+
+        if self.keepalive_timeout.total_seconds() <= 0:
+            raise exc.configuration("Keepalive timeout must be positive")
+
+        if self.read_retry_base_delay.total_seconds() <= 0:
+            raise exc.configuration("Read retry base delay must be positive")
 
 
 # ....................... #

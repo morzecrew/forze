@@ -45,8 +45,8 @@ class OwnedTempPath:
     ) -> OwnedTempPath:
         """Write *content* to a new temp file and mark it owned by Forze."""
 
-        fd, path = tempfile.mkstemp(prefix=prefix, suffix=suffix)
         content_bytes = content.encode("utf-8")
+        fd, path = tempfile.mkstemp(prefix=prefix, suffix=suffix)
 
         try:
             written = 0

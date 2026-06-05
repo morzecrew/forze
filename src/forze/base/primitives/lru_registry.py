@@ -56,6 +56,7 @@ class _DedupIndex(Generic[K, R]):
 
     logical_to_resource: dict[K, R] = attrs.field(factory=dict)
     resource_refcount: dict[R, int] = attrs.field(factory=dict)
+    resource_to_keys: dict[R, set[K]] = attrs.field(factory=dict)
 
     # ....................... #
 
@@ -71,6 +72,7 @@ class _DedupIndex(Generic[K, R]):
         slot = self.dedup_key(key)
         self.logical_to_resource[key] = slot
         self.resource_refcount[slot] = self.resource_refcount.get(slot, 0) + 1
+        self.resource_to_keys.setdefault(slot, set()).add(key)
 
         return slot
 
@@ -87,6 +89,14 @@ class _DedupIndex(Generic[K, R]):
         if slot is None:
             return None
 
+        keys = self.resource_to_keys.get(slot)
+
+        if keys is not None:
+            keys.discard(key)
+
+            if not keys:
+                del self.resource_to_keys[slot]
+
         self.resource_refcount[slot] -= 1
 
         if self.resource_refcount[slot] <= 0:
@@ -97,9 +107,28 @@ class _DedupIndex(Generic[K, R]):
 
     # ....................... #
 
+    def release_slot(self, slot: R) -> None:
+        """Drop every logical key mapped to *slot* (called when the slot is LRU-evicted).
+
+        Without this, the forward and refcount maps would retain entries for evicted
+        slots and grow unbounded with the number of distinct logical keys ever seen.
+        Callers must hold the registry lock so the captured key set is consistent.
+        """
+
+        if self.dedup_key is None:
+            return
+
+        for key in self.resource_to_keys.pop(slot, set()):
+            self.logical_to_resource.pop(key, None)
+
+        self.resource_refcount.pop(slot, None)
+
+    # ....................... #
+
     def clear(self) -> None:
         self.logical_to_resource.clear()
         self.resource_refcount.clear()
+        self.resource_to_keys.clear()
 
 
 # ....................... #
@@ -239,7 +268,9 @@ class SimpleLruRegistry(Generic[K, V, R]):
                 self._entries.move_to_end(slot)
 
                 while len(self._entries) > self.max_entries:
-                    _, old = self._entries.popitem(last=False)
+                    evicted_slot, old = self._entries.popitem(last=False)
+                    self._dedup.release_slot(evicted_slot)
+                    self._init_locks.pop(evicted_slot, None)
                     evicted.append(old)
 
             for old in evicted:
@@ -522,6 +553,8 @@ class GuardedLruRegistry(Generic[K, V, R]):
         async with self._registry_lock:
             while len(self._slots) > self.max_entries:
                 old_key, old_entry = self._slots.popitem(last=False)
+                self._dedup.release_slot(old_key)
+                self._init_locks.pop(old_key, None)
 
                 if old_entry.refcount == 0:
                     immediate_close.append(old_entry.value)

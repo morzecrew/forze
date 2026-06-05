@@ -7,6 +7,7 @@ redacted; use ``text_scrub=False`` on :func:`~forze.base.scrubbing.sanitize` or
 """
 
 import re
+from collections.abc import Sequence
 
 # ----------------------- #
 
@@ -64,32 +65,75 @@ _LOG_STRING_EXTRAS: tuple[str, ...] = (
 
 _SCRUB_FLAGS = re.IGNORECASE | re.DOTALL
 
-_SENSITIVE_KEY_RE = re.compile(
-    "|".join((*_LOGFIRE_SENSITIVE_FRAGMENTS, *_FORZE_KEY_EXTRAS)),
-    _SCRUB_FLAGS,
-)
-
-_LOG_STRING_RE = re.compile(
-    "|".join(
-        (
-            *_LOG_ASSIGNMENT_FRAGMENTS,
-            *_LOGFIRE_SENSITIVE_FRAGMENTS,
-            *_LOG_STRING_EXTRAS,
-        )
-    ),
-    _SCRUB_FLAGS,
-)
+# Deployment-registered extra patterns (see :func:`register_sensitive_patterns`).
+_EXTRA_SENSITIVE_KEY_PATTERNS: list[str] = []
+_EXTRA_LOG_STRING_PATTERNS: list[str] = []
 
 # ....................... #
+
+
+def _compile_sensitive_key_re() -> re.Pattern[str]:
+    return re.compile(
+        "|".join(
+            (
+                *_LOGFIRE_SENSITIVE_FRAGMENTS,
+                *_FORZE_KEY_EXTRAS,
+                *_EXTRA_SENSITIVE_KEY_PATTERNS,
+            )
+        ),
+        _SCRUB_FLAGS,
+    )
+
+
+def _compile_log_string_re() -> re.Pattern[str]:
+    return re.compile(
+        "|".join(
+            (
+                *_LOG_ASSIGNMENT_FRAGMENTS,
+                *_LOGFIRE_SENSITIVE_FRAGMENTS,
+                *_LOG_STRING_EXTRAS,
+                *_EXTRA_LOG_STRING_PATTERNS,
+            )
+        ),
+        _SCRUB_FLAGS,
+    )
+
+
+_sensitive_key_re = _compile_sensitive_key_re()
+_log_string_re = _compile_log_string_re()
+
+# ....................... #
+
+
+def register_sensitive_patterns(
+    *,
+    keys: Sequence[str] = (),
+    log_strings: Sequence[str] = (),
+) -> None:
+    """Register deployment-specific scrub patterns (case-insensitive regex fragments).
+
+    *keys* extend the sensitive-key heuristic (:func:`is_sensitive_key`, used for both
+    log-field and API-egress masking); *log_strings* extend the log-context string
+    rules (:func:`scrub_log_string`). This mutates process-global scrub state and
+    recompiles the matchers, so call it once during startup — before logging or serving
+    begins. Empty fragments are ignored (an empty pattern would match everything).
+    """
+
+    _EXTRA_SENSITIVE_KEY_PATTERNS.extend(pattern for pattern in keys if pattern)
+    _EXTRA_LOG_STRING_PATTERNS.extend(pattern for pattern in log_strings if pattern)
+
+    global _sensitive_key_re, _log_string_re
+    _sensitive_key_re = _compile_sensitive_key_re()
+    _log_string_re = _compile_log_string_re()
 
 
 def is_sensitive_key(key: str) -> bool:
     """Return whether *key* matches the sensitive-key heuristic."""
 
-    return bool(_SENSITIVE_KEY_RE.search(key))
+    return bool(_sensitive_key_re.search(key))
 
 
 def scrub_log_string(text: str) -> str:
     """Apply log-context string rules to *text* (Logfire-aligned patterns and extras)."""
 
-    return _LOG_STRING_RE.sub(SECRET_PLACEHOLDER, text)
+    return _log_string_re.sub(SECRET_PLACEHOLDER, text)

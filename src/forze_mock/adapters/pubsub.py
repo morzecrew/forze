@@ -1,7 +1,5 @@
 """In-memory pub/sub adapter."""
 
-from __future__ import annotations
-
 import asyncio
 from datetime import datetime, timedelta
 from typing import (
@@ -19,6 +17,7 @@ from forze.application.contracts.pubsub import (
     PubSubMessage,
     PubSubQueryPort,
 )
+from forze.base.exceptions import exc
 from forze.base.primitives import utcnow
 from forze.base.serialization import (
     ModelCodec,
@@ -80,6 +79,9 @@ class MockPubSubAdapter(MockTenancyMixin, PubSubCommandPort[M], PubSubQueryPort[
         *,
         timeout: timedelta | None = None,
     ) -> AsyncGenerator[PubSubMessage[M]]:
+        if timeout is not None and timeout.total_seconds() <= 0:
+            raise exc.internal("Timeout must be positive")
+
         with self.state.lock:
             cursors = {
                 topic: len(self._topic_store().get(topic, [])) for topic in topics

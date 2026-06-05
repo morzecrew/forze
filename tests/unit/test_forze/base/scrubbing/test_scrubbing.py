@@ -1,5 +1,7 @@
 """Unit tests for forze.base.scrubbing."""
 
+from collections.abc import Iterator
+
 import pytest
 from hypothesis import given
 from hypothesis import strategies as st
@@ -11,6 +13,7 @@ from forze.base.scrubbing import (
     SECRET_PLACEHOLDER,
     dump_bound_args_for_errors,
     dump_for_error_context,
+    register_sensitive_patterns,
     sanitize,
     sanitize_pydantic_errors,
 )
@@ -130,3 +133,50 @@ def test_sanitize_log_masks_nested_sensitive_keys(key: str, value: str) -> None:
     result = sanitize(data, context="log")
     assert result["outer"]["safe"] == "ok"
     assert result["outer"][sensitive_key] == SECRET_PLACEHOLDER
+
+
+class TestRegisterSensitivePatterns:
+    @pytest.fixture(autouse=True)
+    def _restore_policy(self) -> Iterator[None]:
+        from forze.base.scrubbing import policy
+
+        keys = list(policy._EXTRA_SENSITIVE_KEY_PATTERNS)
+        logs = list(policy._EXTRA_LOG_STRING_PATTERNS)
+        key_re = policy._sensitive_key_re
+        log_re = policy._log_string_re
+
+        try:
+            yield
+
+        finally:
+            policy._EXTRA_SENSITIVE_KEY_PATTERNS[:] = keys
+            policy._EXTRA_LOG_STRING_PATTERNS[:] = logs
+            policy._sensitive_key_re = key_re
+            policy._log_string_re = log_re
+
+    def test_custom_key_pattern_masks_value(self) -> None:
+        field = "acme_widget_handle"
+
+        assert sanitize({field: "v"}, context="log") == {field: "v"}
+
+        register_sensitive_patterns(keys=[r"widget[._ -]?handle"])
+
+        assert sanitize({field: "v"}, context="log") == {field: SECRET_PLACEHOLDER}
+
+    def test_custom_log_string_pattern_is_scrubbed(self) -> None:
+        text = "issued ACME-TOKEN-abc123"
+
+        assert scrub_log_string(text) == text
+
+        register_sensitive_patterns(log_strings=[r"ACME-TOKEN-\S+"])
+        result = scrub_log_string(text)
+
+        assert "abc123" not in result
+        assert SECRET_PLACEHOLDER in result
+
+    def test_empty_patterns_are_ignored(self) -> None:
+        register_sensitive_patterns(keys=[""], log_strings=[""])
+
+        # An empty fragment would otherwise match everything; it must be dropped.
+        assert sanitize({"plain_field": "v"}, context="log") == {"plain_field": "v"}
+        assert scrub_log_string("nothing sensitive here") == "nothing sensitive here"

@@ -13,7 +13,7 @@ from forze.application.contracts.secrets import SecretRef, SecretsPort
 from forze.application.contracts.tenancy.routed_client_base import (
     StructuredSecretRoutedTenantClientBase,
 )
-from forze.base.primitives.fingerprint import stable_fingerprint
+from forze.base.primitives.fingerprint import build_routing_fingerprint
 
 from .client import SQSClient
 from .port import SQSClientPort
@@ -56,7 +56,10 @@ class RoutedSQSClient(StructuredSecretRoutedTenantClientBase[SQSClient], SQSClie
     def credential_fingerprint(self, creds: BaseModel) -> str:
         c = cast(SQSRoutingCredentials, creds)
 
-        return stable_fingerprint(c.endpoint, c.region_name, c.access_key_id)
+        return build_routing_fingerprint(
+            public=[c.endpoint, c.region_name, c.access_key_id],
+            secret=[c.secret_access_key],
+        )
 
     # ....................... #
 

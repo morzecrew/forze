@@ -1,6 +1,7 @@
 """Shared tenant-routed client pooling for integration packages."""
 
 from contextlib import asynccontextmanager
+from datetime import timedelta
 from typing import Any, AsyncGenerator, Callable, Generic, Mapping, Protocol, TypeVar
 from uuid import UUID
 
@@ -8,6 +9,7 @@ import attrs
 from pydantic import BaseModel
 
 from forze.application.contracts.secrets import SecretRef, SecretsPort
+from forze.base.exceptions import exc
 
 from .helpers import (
     ensure_dsn_fingerprint,
@@ -16,8 +18,8 @@ from .helpers import (
     resolve_dsn_for_tenant,
     resolve_structured_for_tenant,
 )
-from .value_objects import TenantIdentity
 from .registry import TenantClientRegistry
+from .value_objects import TenantIdentity
 
 # ----------------------- #
 
@@ -34,14 +36,47 @@ C = TypeVar("C", bound=_CloseableClient)
 
 @attrs.define(slots=True, kw_only=True)
 class RoutedTenantClientBase(Generic[C]):
-    """LRU tenant pool with fingerprint dedup and optional guarded eviction."""
+    """LRU tenant pool with fingerprint dedup and optional guarded eviction.
+
+    **Credential rotation.** A tenant's access fingerprint covers *all* credential
+    fields, including secrets (see :meth:`credential_fingerprint` /
+    :func:`~forze.base.primitives.build_routing_fingerprint`), so rotated credentials
+    produce a different fingerprint. The fingerprint and pooled client are cached until
+    explicitly invalidated, so rotation is **signal-driven** by default: wire your
+    secret store's rotation notification to :meth:`evict_tenant`, which drops both the
+    cached fingerprint and the client so the next access rebuilds with fresh
+    credentials. For deployments without such a signal, set :attr:`fingerprint_ttl`
+    (seconds) to periodically re-resolve credentials and rebuild only when the
+    fingerprint actually changed.
+    """
 
     secrets: SecretsPort
+    """Backend used to resolve connection strings."""
+
     secret_ref_for_tenant: Callable[[UUID], SecretRef] | Mapping[UUID, SecretRef]
+    """Build a :class:`SecretRef` for a tenant's database DSN."""
+
     tenant_provider: Callable[[], UUID | TenantIdentity | None]
+    """Return the current tenant id (or ``None`` if unauthenticated)."""
+
     max_cached_tenants: int = 100
+    """Maximum number of tenant pools to retain; LRU eviction closes overflow pools."""
+
     guarded: bool = False
+    """Whether to use a guarded LRU registry underneath."""
+
     tenant_required_message: str = "Tenant ID is required for routed access"
+    """Message to raise when a tenant ID is required but not provided."""
+
+    fingerprint_ttl: timedelta | None = None
+    """Optional TTL for credential-rotation refresh.
+
+    When set, a tenant's cached fingerprint is re-resolved on first access after it ages
+    past *fingerprint_ttl*; if the credentials changed, the pooled client is evicted and
+    rebuilt. ``None`` (default) keeps fingerprints cached until :meth:`evict_tenant`
+    (signal-driven rotation). Adds periodic secret-store load per active tenant, so
+    prefer the signal-driven path when a rotation notification is available.
+    """
 
     _pool: TenantClientRegistry[C, str] = attrs.field(init=False)
 
@@ -55,14 +90,35 @@ class RoutedTenantClientBase(Generic[C]):
             guarded=self.guarded,
         )
 
+        if (
+            self.fingerprint_ttl is not None
+            and self.fingerprint_ttl.total_seconds() <= 0
+        ):
+            raise exc.configuration("Fingerprint TTL must be positive")
+
+    # ....................... #
+
     async def startup(self) -> None:
         await self._pool.startup()
+
+    # ....................... #
 
     async def close(self) -> None:
         await self._pool.close()
 
+    # ....................... #
+
     async def evict_tenant(self, tenant_id: UUID) -> None:
+        """Drop the cached client and fingerprint for *tenant_id*.
+
+        The credential-rotation hook: call this when a tenant's credentials change so
+        the next access re-resolves the secret and rebuilds the client (see the class
+        rotation contract).
+        """
+
         await self._pool.evict(tenant_id)
+
+    # ....................... #
 
     async def resolve_credentials(self, tenant_id: UUID) -> Any:
         raise NotImplementedError
@@ -87,6 +143,18 @@ class RoutedTenantClientBase(Generic[C]):
             self.tenant_provider,
             message=self.tenant_required_message,
         )
+
+    # ....................... #
+
+    def _fingerprint_expiry_check(self) -> Callable[[UUID], bool] | None:
+        """Return a per-tenant staleness predicate when :attr:`fingerprint_ttl` is set."""
+
+        ttl = self.fingerprint_ttl
+
+        if ttl is None:
+            return None
+
+        return lambda tenant_id: self._pool.is_fingerprint_expired(tenant_id, ttl)
 
     # ....................... #
 
@@ -151,6 +219,8 @@ class DsnRoutedTenantClientBase(RoutedTenantClientBase[C]):
             secrets=self.secrets,
             ref_for_tenant=self.secret_ref_for_tenant,
             backend=self.dsn_backend,
+            is_expired=self._fingerprint_expiry_check(),
+            on_change=self._pool.evict,
         )
 
 
@@ -182,6 +252,14 @@ class StructuredSecretRoutedTenantClientBase(RoutedTenantClientBase[C]):
     # ....................... #
 
     def credential_fingerprint(self, creds: BaseModel) -> str:
+        """Return the LRU pool dedup key for *creds*.
+
+        Build it with :func:`~forze.base.primitives.build_routing_fingerprint`,
+        declaring **every** credential field — including secrets — so that rotating any
+        field (a secret in particular) changes the key. Omitting a secret silently
+        defeats rotation detection: the pool would keep serving the stale client.
+        """
+
         raise NotImplementedError
 
     # ....................... #
@@ -197,4 +275,6 @@ class StructuredSecretRoutedTenantClientBase(RoutedTenantClientBase[C]):
             self._pool.set_fingerprint,
             tenant_id=tenant_id,
             fingerprint=_fingerprint,
+            is_expired=self._fingerprint_expiry_check(),
+            on_change=self._pool.evict,
         )

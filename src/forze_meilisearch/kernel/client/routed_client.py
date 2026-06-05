@@ -17,11 +17,7 @@ from forze.application.contracts.tenancy.routed_client_base import (
 )
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
-from forze.base.primitives.fingerprint import (
-    combine_fingerprint,
-    secret_dedup_fingerprint,
-    stable_fingerprint,
-)
+from forze.base.primitives.fingerprint import build_routing_fingerprint
 
 from .client import MeilisearchClient
 from .port import MeilisearchClientPort
@@ -66,10 +62,7 @@ class RoutedMeilisearchClient(
     def credential_fingerprint(self, creds: BaseModel) -> str:
         c = cast(MeilisearchRoutingCredentials, creds)
 
-        return combine_fingerprint(
-            stable_fingerprint(c.url),
-            secret_dedup_fingerprint(c.api_key),
-        )
+        return build_routing_fingerprint(public=[c.url], secret=[c.api_key])
 
     # ....................... #
 

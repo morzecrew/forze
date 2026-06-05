@@ -5,6 +5,8 @@ from typing import final
 
 import attrs
 
+from forze.base.exceptions import exc
+
 # ----------------------- #
 
 
@@ -18,3 +20,9 @@ class HttpxConfig:
 
     follow_redirects: bool = True
     """Whether to follow redirects."""
+
+    # ....................... #
+
+    def __attrs_post_init__(self) -> None:
+        if self.timeout.total_seconds() <= 0:
+            raise exc.configuration("Timeout must be positive")

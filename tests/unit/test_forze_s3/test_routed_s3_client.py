@@ -1,6 +1,6 @@
 """Unit tests for :class:`~forze_s3.kernel.client.RoutedS3Client`."""
 
-from forze.base.exceptions import CoreException, exc
+from forze.base.exceptions import CoreException
 import json
 from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -10,6 +10,7 @@ import pytest
 
 from forze.application.contracts.secrets import SecretRef
 from forze_s3.kernel.client import RoutedS3Client
+from forze_s3.kernel.client.routing_credentials import S3RoutingCredentials
 
 # ----------------------- #
 
@@ -119,3 +120,26 @@ async def test_routed_s3_requires_tenant() -> None:
     await routed.startup()
     with pytest.raises(CoreException, match="Tenant ID"):
         await routed.health()
+
+
+def test_routed_s3_credential_fingerprint_detects_secret_rotation() -> None:
+    routed = RoutedS3Client(
+        secrets=_MemSecrets({}),
+        secret_ref_for_tenant=_ref,
+        tenant_provider=lambda: None,
+    )
+    common = {"endpoint": "http://localhost:9000", "access_key_id": "AKIA"}
+
+    fp_a = routed.credential_fingerprint(
+        S3RoutingCredentials(**common, secret_access_key="secret-a")
+    )
+    fp_b = routed.credential_fingerprint(
+        S3RoutingCredentials(**common, secret_access_key="secret-b")
+    )
+    fp_a2 = routed.credential_fingerprint(
+        S3RoutingCredentials(**common, secret_access_key="secret-a")
+    )
+
+    assert fp_a != fp_b  # rotating only the secret key changes the dedup key
+    assert fp_a == fp_a2  # stable for identical credentials
+    assert "secret-a" not in fp_a  # raw secret never embedded

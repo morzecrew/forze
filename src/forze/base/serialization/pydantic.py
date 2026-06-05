@@ -25,6 +25,14 @@ def _list_adapter[M: BaseModel](cls: type[M]) -> TypeAdapter[list[M]]:
 # ....................... #
 
 
+@lru_cache(maxsize=128)
+def _single_adapter[M: BaseModel](cls: type[M]) -> TypeAdapter[M]:
+    return TypeAdapter(cls)
+
+
+# ....................... #
+
+
 def pydantic_validate[M: BaseModel](
     cls: type[M],
     data: JsonDict,
@@ -293,7 +301,7 @@ def pydantic_decode_json_bytes[M: BaseModel](
         forbid_extra,
     )
 
-    adapter = TypeAdapter(cls)  # type: ignore[valid-type]
+    adapter = _single_adapter(cls)
     return adapter.validate_json(
         raw,
         extra="forbid" if forbid_extra else "ignore",

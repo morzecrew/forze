@@ -83,6 +83,9 @@ class HttpxHttpServiceConfig(TenantAwareIntegrationConfig):
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
+        if self.timeout.total_seconds() <= 0:
+            raise exc.configuration("Timeout must be positive")
+
         if self.tenant_aware:
             if self.base_url is not None:
                 raise exc.configuration(

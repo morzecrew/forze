@@ -5,6 +5,7 @@ from typing import Final, final
 
 import attrs
 
+from forze.base.exceptions import exc
 from forze_identity.oidc import OidcIdpPreset
 
 # ----------------------- #
@@ -28,6 +29,12 @@ class GoogleOidcConfig:
 
     leeway: timedelta = attrs.field(default=timedelta(seconds=10))
     """JWT clock-skew leeway."""
+
+    # ....................... #
+
+    def __attrs_post_init__(self) -> None:
+        if self.leeway.total_seconds() <= 0:
+            raise exc.configuration("Leeway must be positive")
 
     # ....................... #
 

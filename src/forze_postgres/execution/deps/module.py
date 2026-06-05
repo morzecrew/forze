@@ -21,6 +21,7 @@ from forze.application.contracts.search import (
 )
 from forze.application.contracts.transaction import TransactionManagerDepKey
 from forze.application.execution import Deps, DepsModule
+from forze.base.exceptions import exc
 from forze.base.primitives import StrKey
 
 from ...kernel.catalog.introspect import PostgresIntrospector
@@ -34,21 +35,21 @@ from ...kernel.catalog.validation.validate_tenancy import (
 from ...kernel.client import PostgresClientPort, RoutedPostgresClient
 from .configs import (
     PostgresAnalyticsConfig,
-    PostgresOutboxConfig,
     PostgresDocumentConfig,
     PostgresFederatedSearchConfig,
     PostgresFederatedSearchLegHub,
     PostgresHubSearchConfig,
+    PostgresOutboxConfig,
     PostgresReadOnlyDocumentConfig,
     PostgresSearchConfig,
 )
 from .factories import (
     ConfigurablePostgresAnalytics,
-    ConfigurablePostgresOutboxCommand,
-    ConfigurablePostgresOutboxQuery,
     ConfigurablePostgresDocument,
     ConfigurablePostgresFederatedSearch,
     ConfigurablePostgresHubSearch,
+    ConfigurablePostgresOutboxCommand,
+    ConfigurablePostgresOutboxQuery,
     ConfigurablePostgresReadOnlyDocument,
     ConfigurablePostgresSearch,
     postgres_txmanager,
@@ -117,6 +118,12 @@ class PostgresDepsModule(DepsModule):
 
     def __attrs_post_init__(self) -> None:
         routes: list[PostgresTenancyRouteSpec] = []
+
+        if (
+            self.introspector_cache_ttl is not None
+            and self.introspector_cache_ttl.total_seconds() <= 0
+        ):
+            raise exc.configuration("Introspector cache TTL must be positive")
 
         if self.ro_documents:
             for name, cfg in self.ro_documents.items():
