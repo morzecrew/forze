@@ -51,6 +51,7 @@ from forze_clickhouse.kernel.client import (
 )
 from forze_clickhouse.kernel.client.query import parameters_from_model
 from forze_clickhouse.kernel.client.value_objects import ClickHouseQueryResult
+from forze.application.contracts.resolution import is_static_relation
 from forze_clickhouse.kernel.relation import resolve_clickhouse_ingest_target
 
 # ----------------------- #
@@ -108,7 +109,11 @@ class ClickHouseAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
             spec,
             self._tenant_id_for_resolve(),
         )
-        object.__setattr__(self, "_ingest_target_resolved", resolved)
+
+        # Only memoize tenant-independent (static) relations; a dynamic resolver
+        # depends on the bound tenant and the adapter may be shared across tenants.
+        if is_static_relation(spec):
+            object.__setattr__(self, "_ingest_target_resolved", resolved)
 
         return resolved
 

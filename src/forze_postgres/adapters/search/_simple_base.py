@@ -94,20 +94,17 @@ class PostgresRankedPipelineSearchAdapter[M: BaseModel](
     # ....................... #
 
     async def _index_qname(self) -> PostgresQualifiedName:
-        if self._index_qname_resolved is not None:
-            return self._index_qname_resolved
+        async def _factory() -> PostgresQualifiedName:
+            return await resolve_postgres_qname(
+                self.index_relation,
+                self._tenant_id_for_resolve(),
+            )
 
-        resolved = await resolve_postgres_qname(
-            self.index_relation,
-            self._tenant_id_for_resolve(),
+        return await self._resolve_and_cache(
+            "_index_qname_resolved",
+            _factory,
+            cacheable=is_static_relation(self.index_relation),
         )
-
-        # Only memoize tenant-independent (static) relations; a dynamic resolver
-        # depends on the bound tenant and the adapter may be shared across tenants.
-        if is_static_relation(self.index_relation):
-            object.__setattr__(self, "_index_qname_resolved", resolved)
-
-        return resolved
 
     # ....................... #
 
@@ -136,18 +133,17 @@ class PostgresRankedPipelineSearchAdapter[M: BaseModel](
     # ....................... #
 
     async def _index_heap_qname(self) -> PostgresQualifiedName:
-        if self._index_heap_qname_resolved is not None:
-            return self._index_heap_qname_resolved
+        async def _factory() -> PostgresQualifiedName:
+            return await resolve_postgres_qname(
+                self.index_heap_relation,
+                self._tenant_id_for_resolve(),
+            )
 
-        resolved = await resolve_postgres_qname(
-            self.index_heap_relation,
-            self._tenant_id_for_resolve(),
+        return await self._resolve_and_cache(
+            "_index_heap_qname_resolved",
+            _factory,
+            cacheable=is_static_relation(self.index_heap_relation),
         )
-
-        if is_static_relation(self.index_heap_relation):
-            object.__setattr__(self, "_index_heap_qname_resolved", resolved)
-
-        return resolved
 
     # ....................... #
 

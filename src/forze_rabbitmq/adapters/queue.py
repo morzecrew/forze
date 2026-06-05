@@ -81,7 +81,11 @@ class RabbitMQQueueAdapter[M: BaseModel](
             self.namespace,
             self._tenant_id_for_resolve(),
         )
-        object.__setattr__(self, "_namespace_resolved", resolved)
+
+        # Only memoize tenant-independent (static) namespaces; a dynamic resolver
+        # depends on the bound tenant and the adapter may be shared across tenants.
+        if is_static_named_resource(self.namespace):
+            object.__setattr__(self, "_namespace_resolved", resolved)
 
         return resolved
 

@@ -67,20 +67,17 @@ class PostgresHistoryGateway[D: Document](PostgresGateway[D]):
     # ....................... #
 
     async def _target_qname(self) -> PostgresQualifiedName:
-        if self._target_qname_resolved is not None:
-            return self._target_qname_resolved
+        async def _factory() -> PostgresQualifiedName:
+            return await resolve_postgres_qname(
+                self.target_relation,
+                self._tenant_id_for_resolve(),
+            )
 
-        resolved = await resolve_postgres_qname(
-            self.target_relation,
-            self._tenant_id_for_resolve(),
+        return await self._resolve_and_cache(
+            "_target_qname_resolved",
+            _factory,
+            cacheable=is_static_relation(self.target_relation),
         )
-
-        # Only memoize tenant-independent (static) relations; a dynamic resolver
-        # depends on the bound tenant and the adapter may be shared across tenants.
-        if is_static_relation(self.target_relation):
-            object.__setattr__(self, "_target_qname_resolved", resolved)
-
-        return resolved
 
     # ....................... #
 

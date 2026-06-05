@@ -66,7 +66,11 @@ class TemporalBaseAdapter(TenancyMixin):
             self.queue,
             self._tenant_id_for_resolve(),
         )
-        object.__setattr__(self, "_queue_resolved", resolved)
+
+        # Only memoize tenant-independent (static) queues; a dynamic resolver
+        # depends on the bound tenant and the adapter may be shared across tenants.
+        if is_static_named_resource(self.queue):
+            object.__setattr__(self, "_queue_resolved", resolved)
 
         return resolved
 

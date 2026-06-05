@@ -46,6 +46,7 @@ from forze_bigquery.kernel.client import (
     build_count_sql,
 )
 from forze_bigquery.kernel.client.value_objects import BigQueryQueryResult
+from forze.application.contracts.resolution import is_static_relation
 from forze_bigquery.kernel.relation import resolve_bigquery_ingest_target
 
 # ----------------------- #
@@ -103,7 +104,11 @@ class BigQueryAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
             spec,
             self._tenant_id_for_resolve(),
         )
-        object.__setattr__(self, "_ingest_target_resolved", resolved)
+
+        # Only memoize tenant-independent (static) relations; a dynamic resolver
+        # depends on the bound tenant and the adapter may be shared across tenants.
+        if is_static_relation(spec):
+            object.__setattr__(self, "_ingest_target_resolved", resolved)
 
         return resolved
 
