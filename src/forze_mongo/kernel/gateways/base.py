@@ -94,7 +94,11 @@ class MongoGateway[M: BaseModel](
                 self._tenant_id_for_resolve(),
             )
 
-        return await self._resolve_and_cache("_relation_resolved", _factory)
+        return await self._resolve_and_cache(
+            "_relation_resolved",
+            _factory,
+            cacheable=is_static_relation(self.relation),
+        )
 
     # ....................... #
 

@@ -27,7 +27,7 @@ from forze_postgres.execution.deps.configs import (
 )
 from forze_postgres.kernel.client import PostgresClientPort
 from forze_postgres.kernel.gateways import PostgresQualifiedName
-from forze_postgres.kernel.relation import resolve_postgres_qname
+from forze_postgres.kernel.relation import is_static_relation, resolve_postgres_qname
 from forze_postgres.kernel.sql import (
     apply_limit_offset,
     build_count_sql,
@@ -90,7 +90,11 @@ class PostgresAnalyticsQueryMixin[R: BaseModel, Ing: BaseModel]:
             return self._ingest_qname_resolved
 
         resolved = await resolve_postgres_qname(spec, self._tenant_id_for_resolve())
-        object.__setattr__(self, "_ingest_qname_resolved", resolved)
+
+        # Only memoize tenant-independent (static) relations; a dynamic resolver
+        # depends on the bound tenant and the adapter may be shared across tenants.
+        if is_static_relation(spec):
+            object.__setattr__(self, "_ingest_qname_resolved", resolved)
 
         return resolved
 

@@ -131,6 +131,14 @@ class PostgresGateway[M: BaseModel](
         repr=False,
     )
 
+    _return_clause_cache: dict[
+        tuple[type[BaseModel] | None, str | None], sql.Composable
+    ] = attrs.field(factory=dict, init=False, eq=False, repr=False, hash=False)
+    """Per-gateway memo of column-list composables for the non-projection cases
+    (default read fields / explicit ``return_type``), keyed by ``(return_type, alias)``.
+    Schema-independent (derived from read-model field names), so it is safe for the
+    gateway's lifetime. Explicit ``return_fields`` projections are not cached."""
+
     client: PostgresClientPort
     """Shared :class:`~forze_postgres.kernel.client.PostgresClientPort` instance."""
 
@@ -188,7 +196,11 @@ class PostgresGateway[M: BaseModel](
                 self._tenant_id_for_resolve(),
             )
 
-        return await self._resolve_and_cache("_qname_resolved", _factory)
+        return await self._resolve_and_cache(
+            "_qname_resolved",
+            _factory,
+            cacheable=is_static_relation(self.relation),
+        )
 
     # ....................... #
 
@@ -327,17 +339,30 @@ class PostgresGateway[M: BaseModel](
         *,
         table_alias: str | None = None,
     ) -> sql.Composable:
-        """Build a SQL expression for selecting fields from a table."""
+        """Build a SQL expression for selecting fields from a table.
+
+        The non-projection cases (default read fields / explicit ``return_type``) are
+        memoized per ``(return_type, table_alias)``: the field set is derived from
+        read-model names and is fixed for the gateway's lifetime. Explicit
+        ``return_fields`` projections are built each call (caller-controlled, possibly
+        dynamic, so left uncached to keep the memo bounded).
+        """
 
         if return_fields is not None and return_type is not None:
             raise exc.internal(
                 "Fields and model for mapping cannot be specified simultaneously"
             )
 
-        elif return_fields is not None:
-            use = list(return_fields)
+        if return_fields is not None:
+            return self._build_return_clause(list(return_fields), table_alias)
 
-        elif return_type is not None:
+        cache_key = (return_type, table_alias)
+        cached = self._return_clause_cache.get(cache_key)
+
+        if cached is not None:
+            return cached
+
+        if return_type is not None:
             use = list(
                 default_model_codec(return_type).stored_field_names(
                     include_computed=False,
@@ -347,6 +372,18 @@ class PostgresGateway[M: BaseModel](
         else:
             use = list(self.read_fields)
 
+        clause = self._build_return_clause(use, table_alias)
+        self._return_clause_cache[cache_key] = clause
+
+        return clause
+
+    # ....................... #
+
+    def _build_return_clause(
+        self,
+        use: list[str],
+        table_alias: str | None,
+    ) -> sql.Composable:
         bad = [f for f in use if f not in self.read_fields]
 
         #!? explicitly exclude bad fields or not ?!

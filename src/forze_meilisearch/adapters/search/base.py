@@ -77,7 +77,11 @@ class MeilisearchSearchGateway[M: BaseModel](TenancyMixin):
             self.config.index_uid,
             self._tenant_id_for_resolve(),
         )
-        object.__setattr__(self, "_index_uid_resolved", resolved)
+
+        # Only memoize tenant-independent (static) index uids; a dynamic resolver
+        # depends on the bound tenant and the adapter may be shared across tenants.
+        if is_static_named_resource(self.config.index_uid):
+            object.__setattr__(self, "_index_uid_resolved", resolved)
 
         return resolved
 

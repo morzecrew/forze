@@ -23,7 +23,7 @@ from forze.domain.constants import (
 )
 from forze.domain.models import Document, DocumentHistory
 
-from ..relation import RelationSpec, resolve_firestore_collection
+from ..relation import RelationSpec, is_static_relation, resolve_firestore_collection
 from .base import FirestoreGateway
 
 # ----------------------- #
@@ -63,7 +63,11 @@ class FirestoreHistoryGateway[D: Document](FirestoreGateway[D]):
                 self.target_relation,
                 self._tenant_id_for_resolve(),
             )
-            object.__setattr__(self, "_target_resolved", (database, collection))
+
+            # Only memoize tenant-independent (static) relations; a dynamic resolver
+            # depends on the bound tenant and the adapter may be shared across tenants.
+            if is_static_relation(self.target_relation):
+                object.__setattr__(self, "_target_resolved", (database, collection))
 
         return f"{database}.{collection}"
 

@@ -21,7 +21,11 @@ from forze.domain.constants import (
     REV_FIELD,
 )
 from forze.domain.models import Document, DocumentHistory
-from forze_postgres.kernel.relation import RelationSpec, resolve_postgres_qname
+from forze_postgres.kernel.relation import (
+    RelationSpec,
+    is_static_relation,
+    resolve_postgres_qname,
+)
 
 from .base import PostgresGateway, PostgresQualifiedName
 from .types import PostgresBookkeepingStrategy
@@ -70,7 +74,11 @@ class PostgresHistoryGateway[D: Document](PostgresGateway[D]):
             self.target_relation,
             self._tenant_id_for_resolve(),
         )
-        object.__setattr__(self, "_target_qname_resolved", resolved)
+
+        # Only memoize tenant-independent (static) relations; a dynamic resolver
+        # depends on the bound tenant and the adapter may be shared across tenants.
+        if is_static_relation(self.target_relation):
+            object.__setattr__(self, "_target_qname_resolved", resolved)
 
         return resolved
 

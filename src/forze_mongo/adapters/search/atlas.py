@@ -9,7 +9,10 @@ import attrs
 from pydantic import BaseModel
 
 from forze.application.contracts.querying import QuerySortExpression
-from forze.application.contracts.resolution import NamedResourceSpec
+from forze.application.contracts.resolution import (
+    NamedResourceSpec,
+    is_static_named_resource,
+)
 from forze_mongo.kernel.relation import resolve_mongo_named_resource
 from forze.application.contracts.search import SearchOptions
 
@@ -51,7 +54,11 @@ class MongoAtlasSearchAdapter[M: BaseModel](MongoSimpleSearchAdapter[M]):
                 tenant_id = tenant.tenant_id
 
         resolved = await resolve_mongo_named_resource(self.index_name, tenant_id)
-        object.__setattr__(self, "_index_name_resolved", resolved)
+
+        # Only memoize tenant-independent (static) index names; a dynamic resolver
+        # depends on the bound tenant and the adapter may be shared across tenants.
+        if is_static_named_resource(self.index_name):
+            object.__setattr__(self, "_index_name_resolved", resolved)
 
         return resolved
 

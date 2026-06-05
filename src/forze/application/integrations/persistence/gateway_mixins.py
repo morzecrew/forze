@@ -284,7 +284,21 @@ class TenantResolvedRelationMixin(TenancyMixin):
         self,
         attr: str,
         factory: Callable[[], Awaitable[TResolved]],
+        *,
+        cacheable: bool = True,
     ) -> TResolved:
+        """Resolve via *factory*, memoizing on *attr* only when ``cacheable``.
+
+        Tenant-scoped (dynamic resolver) relations resolve to a *different* value per
+        bound tenant, and a gateway may be shared across tenants (per-scope port cache),
+        so they must resolve fresh each call. Callers pass
+        ``cacheable=is_static_relation(self.relation)`` so only tenant-independent
+        (static) relations are cached once.
+        """
+
+        if not cacheable:
+            return await factory()
+
         current = getattr(self, attr, None)
 
         if current is not None:

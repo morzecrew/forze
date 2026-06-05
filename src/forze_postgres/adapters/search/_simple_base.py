@@ -101,7 +101,11 @@ class PostgresRankedPipelineSearchAdapter[M: BaseModel](
             self.index_relation,
             self._tenant_id_for_resolve(),
         )
-        object.__setattr__(self, "_index_qname_resolved", resolved)
+
+        # Only memoize tenant-independent (static) relations; a dynamic resolver
+        # depends on the bound tenant and the adapter may be shared across tenants.
+        if is_static_relation(self.index_relation):
+            object.__setattr__(self, "_index_qname_resolved", resolved)
 
         return resolved
 
@@ -139,7 +143,9 @@ class PostgresRankedPipelineSearchAdapter[M: BaseModel](
             self.index_heap_relation,
             self._tenant_id_for_resolve(),
         )
-        object.__setattr__(self, "_index_heap_qname_resolved", resolved)
+
+        if is_static_relation(self.index_heap_relation):
+            object.__setattr__(self, "_index_heap_qname_resolved", resolved)
 
         return resolved
 
