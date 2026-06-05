@@ -27,6 +27,7 @@ invoice_paid = DurableFunctionEventSpec(
 
 ```python
 from forze.application.contracts.durable.function import (
+    DurableFunctionCronTrigger,
     DurableFunctionEventTrigger,
     DurableFunctionInvokeSpec,
     DurableFunctionSpec,

@@ -18,7 +18,7 @@ Use when your **application** needs a private integration that no shipped `forze
 | `Deps.routed({DepKey: {route: value}})` | one provider per key + route | specs resolved by `spec.name` |
 | `Deps.routed_group({...}, routes={...})` | same provider for many routes | one backend, many logical resources |
 
-`Deps.merge(...)` raises `CoreError` on conflicts — fix duplicate keys or routes in your module composition.
+`Deps.merge(...)` raises `CoreException` on conflicts — fix duplicate keys or routes in your module composition.
 
 ## Module shape
 
@@ -30,7 +30,7 @@ from typing import Mapping, final
 
 import attrs
 
-from forze.application.contracts.base import DepKey
+from forze.application.contracts.deps import DepKey
 from forze.application.execution import Deps, DepsModule
 
 

@@ -38,7 +38,7 @@ port = ctx.deps.resolve_configurable(
 
 ## Merge conflicts
 
-`Deps.merge(...)` raises `CoreError` on duplicate plain keys, plain-vs-routed conflicts, or duplicate routed keys. Treat that as a wiring bug: two modules registered the same key/route, or you merged overlapping maps twice.
+`Deps.merge(...)` raises `CoreException` on duplicate plain keys, plain-vs-routed conflicts, or duplicate routed keys. Treat that as a wiring bug: two modules registered the same key/route, or you merged overlapping maps twice.
 
 ## Lifecycle vs deps
 

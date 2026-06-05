@@ -19,7 +19,7 @@ Logical **specs** (`DocumentSpec`, `SearchSpec`, `CacheSpec`, …) declare model
 
 ### Dependency registry
 
-Pass **`DepsModule` instances** to `DepsRegistry.from_modules`. Each module’s `__call__` returns a `Deps` container; the plan merges them (conflicting keys raise `CoreError`).
+Pass **`DepsModule` instances** to `DepsRegistry.from_modules`. Each module’s `__call__` returns a `Deps` container; the plan merges them (conflicting keys raise `CoreException`).
 
 ```python
 from enum import StrEnum
@@ -216,21 +216,20 @@ def context_dependency():
     return runtime.get_context()
 ```
 
-### Document endpoints
+### Endpoints
+
+> **Note:** the former `forze_fastapi.endpoints.*` router helpers (`attach_document_endpoints`, `attach_search_endpoints`, `attach_http_endpoint`, …) have been removed. Define your own FastAPI routes that resolve a context with the dependency above, dispatch through your operation registry / facade (see [Search composition](#search-composition)), and return the result. Use `SecurityContextMiddleware` for identity binding and `register_exception_handlers(app)` for error mapping (see [`forze-auth-tenancy-secrets`](../forze-auth-tenancy-secrets/SKILL.md) and [`forze-observability-errors`](../forze-observability-errors/SKILL.md)). A canonical endpoint pattern is being reworked alongside the docs refresh.
 
 ```python
 from fastapi import APIRouter
 
-from forze_fastapi.endpoints.document import attach_document_endpoints
-
 router = APIRouter(prefix="/projects", tags=["projects"])
-attach_document_endpoints(
-    router,
-    document=project_spec,
-    dtos=project_dtos,
-    registry=registry,
-    ctx_dep=context_dependency,
-)
+
+
+@router.get("/{project_id}")
+async def get_project(project_id: UUID, ctx=Depends(context_dependency)):
+    return await ctx.document.query(project_spec).get(project_id)
+
 
 app.include_router(router)
 ```
@@ -257,14 +256,28 @@ app = FastAPI(lifespan=lifespan)
 Inject computed fields (e.g. `number_id`, `creator_id`) before the handler runs:
 
 ```python
-from forze_kits.aggregates.document import build_document_create_mapper
-from forze_kits.mapping import CreatorIdStep, NumberIdStep
+from forze_kits.aggregates.document import DocumentMappers, build_document_registry
+from forze_kits.domain.creator_id import CreatorIdMappingStepFactory
+from forze_kits.domain.number_id import NumberIdMappingStepFactory
+from forze_kits.mapping import PydanticPipelineMapperFactory
 
-mapper = (
-    build_document_create_mapper(project_spec, project_dtos)
-    .with_steps(NumberIdStep(), CreatorIdStep())
+create_mapper = PydanticPipelineMapperFactory(
+    in_=CreateProjectRequest,
+    out=CreateProjectCmd,
+    step_factories=(
+        NumberIdMappingStepFactory(spec=project_counter_spec),
+        CreatorIdMappingStepFactory(),  # configured per your identity resolver
+    ),
 )
+
+registry = build_document_registry(
+    project_spec,
+    project_dtos,
+    DocumentMappers(create=create_mapper),
+).freeze()
 ```
+
+See [`forze-domain-aggregates`](../forze-domain-aggregates/SKILL.md) and the mapping reference for step configuration.
 
 ## Testing with Mock
 
@@ -286,8 +299,7 @@ async with runtime.scope():
 ## Search composition
 
 ```python
-from forze_kits.aggregates.search import SearchFacade, build_search_registry
-from forze_kits.aggregates.search.handlers.dto import SearchRequestDTO
+from forze_kits.aggregates.search import SearchFacade, SearchRequestDTO, build_search_registry
 
 search_registry = build_search_registry(project_search_spec).freeze()
 
