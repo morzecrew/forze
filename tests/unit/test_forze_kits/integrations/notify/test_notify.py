@@ -10,13 +10,17 @@ from pydantic import BaseModel
 
 from forze.application.contracts.outbox import IntegrationEvent
 from forze.application.contracts.queue import QueueMessage
+from forze.base.exceptions import CoreException
 from forze_kits.integrations.notify import (
     EmailNotification,
     NotificationRouter,
     dispatch_notification,
     process_notification_message,
 )
-from forze_kits.integrations.notify.payloads import WebhookNotification
+from forze_kits.integrations.notify.payloads import (
+    PushNotification,
+    WebhookNotification,
+)
 class _ProjectCreated(BaseModel):
     project_id: str
 
@@ -24,13 +28,14 @@ class _ProjectCreated(BaseModel):
 class _RecordingSenders:
     def __init__(self) -> None:
         self.emails: list[EmailNotification] = []
+        self.pushes: list[PushNotification] = []
         self.webhooks: list[WebhookNotification] = []
 
     async def send_email(self, notification: EmailNotification) -> None:
         self.emails.append(notification)
 
-    async def send_push(self, notification) -> None:  # noqa: ANN001
-        raise NotImplementedError
+    async def send_push(self, notification: PushNotification) -> None:
+        self.pushes.append(notification)
 
     async def send_webhook(self, notification: WebhookNotification) -> None:
         self.webhooks.append(notification)
@@ -67,6 +72,38 @@ async def test_dispatch_notification_calls_sender() -> None:
         senders,
     )
     assert len(senders.emails) == 1
+
+
+@pytest.mark.asyncio
+async def test_dispatch_notification_routes_push() -> None:
+    senders = _RecordingSenders()
+    await dispatch_notification(
+        PushNotification(device_token="tok", title="t", body="b"),
+        senders,
+    )
+    assert len(senders.pushes) == 1
+    assert senders.emails == []
+
+
+@pytest.mark.asyncio
+async def test_dispatch_notification_routes_webhook() -> None:
+    senders = _RecordingSenders()
+    await dispatch_notification(
+        WebhookNotification(url="https://example.com/hook"),
+        senders,
+    )
+    assert len(senders.webhooks) == 1
+
+
+@pytest.mark.asyncio
+async def test_dispatch_notification_rejects_unsupported_command() -> None:
+    senders = _RecordingSenders()
+
+    class _Unknown(BaseModel):
+        kind: str = "mystery"
+
+    with pytest.raises(CoreException, match="unsupported notification command"):
+        await dispatch_notification(_Unknown(), senders)  # type: ignore[arg-type]
 
 
 @pytest.mark.asyncio
