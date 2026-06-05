@@ -15,7 +15,7 @@ require_psycopg()
 # ....................... #
 
 import asyncio
-from contextlib import asynccontextmanager
+from contextlib import AbstractAsyncContextManager, asynccontextmanager, nullcontext
 from contextvars import ContextVar
 from datetime import timedelta
 from typing import Any, AsyncGenerator, Literal, Sequence, final, overload
@@ -603,33 +603,54 @@ class PostgresClient(PostgresClientPort):
     ) -> AsyncGenerator[list[JsonDict] | list[tuple[Any, ...]]]:
         """Execute *query* and yield row chunks of at most *batch_size* rows.
 
-        Uses :meth:`psycopg.AsyncCursor.fetchmany` on a forward-only cursor so
-        rows are materialized incrementally. Prefer :meth:`transaction` for long
-        scans so the connection remains scoped for the full iteration.
+        Uses a **server-side (named) cursor** so the database streams rows in
+        ``FETCH FORWARD`` batches and the full result set is never buffered
+        client-side — client memory stays bounded regardless of result size (a
+        plain cursor would have libpq buffer every row before the first chunk).
+
+        Server-side cursors require an open transaction: an existing context
+        transaction (see :meth:`transaction`) is reused, otherwise a short-lived
+        transaction wraps the scan. ``commit`` is accepted for API symmetry — the
+        wrapping transaction is committed when the scan completes; when a context
+        transaction is reused, its owner controls commit/rollback as before.
         """
 
         if batch_size < 1:
             msg = "batch_size must be >= 1"
             raise ValueError(msg)
 
+        _ = commit
+
+        # A server-side cursor needs a transaction. Reuse an active context
+        # transaction (its owner controls commit/rollback); otherwise scope a
+        # short-lived one to the scan. The cursor loop is inlined here — and not
+        # delegated to a sub-generator — so that on early termination the ``yield``
+        # shares a frame with the ``async with`` blocks and the cursor ``CLOSE`` /
+        # transaction unwind run promptly, leaving the connection clean.
         async with self.__acquire_conn() as conn:
-            async with conn.cursor() as cur:
-                await cur.execute(query, params)
+            tx_cm: AbstractAsyncContextManager[Any] = (
+                nullcontext()
+                if self.is_in_transaction()
+                else conn.transaction()
+            )
 
-                while True:
-                    chunk = await cur.fetchmany(batch_size)
+            async with tx_cm:
+                name = f"forze_stream_{uuid4().hex}"
 
-                    if not chunk:
-                        break
+                async with conn.cursor(name=name) as cur:
+                    await cur.execute(query, params)
 
-                    if row_factory == "tuple":
-                        yield list(chunk)
+                    while True:
+                        chunk = await cur.fetchmany(batch_size)
 
-                    else:
-                        yield self._rows_to_dicts(cur.description, chunk)
+                        if not chunk:
+                            break
 
-            if commit and self.__current_conn() is None:
-                await conn.commit()
+                        if row_factory == "tuple":
+                            yield list(chunk)
+
+                        else:
+                            yield self._rows_to_dicts(cur.description, chunk)
 
     # ....................... #
 

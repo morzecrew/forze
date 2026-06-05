@@ -60,8 +60,10 @@ async def _run_scope_body[Args, R](
         raise
 
     finally:
-        outcome = Success(value=result) if exc is None else Failure(exc=exc)
-        await run_pipeline_finally(scope.finally_, args, outcome)
+        # Only materialize the outcome when a finally hook will observe it.
+        if not scope.finally_.is_empty():
+            outcome = Success(value=result) if exc is None else Failure(exc=exc)
+            await run_pipeline_finally(scope.finally_, args, outcome)
 
     return cast(R, result)  # type: ignore[redundant-cast]
 
@@ -75,6 +77,11 @@ async def run_resolved_scope[R](
     args: Any,
 ) -> R:
     """Run a resolved scope around an inner callable."""
+
+    # Fast path: a scope with no body stages adds no behavior, so invoke the inner
+    # callable directly and skip the wrap/finally machinery and its allocations.
+    if scope.body_is_empty():
+        return await inner()
 
     async def _wrapped(a: Any) -> R:
         return await inner()
@@ -101,11 +108,18 @@ async def run_resolved_tx_scope[Args, R](
         raise exc.internal("Transaction route is required to run a transaction scope")
 
     async with tx_runner(route):
+        if tx.body_is_empty():
+            # No transaction-scope body hooks: run the handler directly inside the
+            # transaction (after-commit stages are still handled below).
+            result = await handler(args)
 
-        async def _handler_call(a: Args) -> R:
-            return await handler(a)
+        else:
 
-        result = await _run_scope_body(tx, args, inner=_handler_call)
+            async def _handler_call(a: Args) -> R:
+                return await handler(a)
+
+            result = await _run_scope_body(tx, args, inner=_handler_call)
+
         captured_result = result
 
         async def _after_commit() -> None:

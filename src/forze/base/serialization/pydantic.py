@@ -434,17 +434,22 @@ def _pydantic_field_names_cached(
 # ....................... #
 
 
-def _normalize_for_hashing(value: Any) -> Any:
-    if isinstance(value, dict):
-        return {k: _normalize_for_hashing(v) for k, v in value.items()}  # type: ignore[return-value]
+def _orjson_hashing_default(value: Any) -> Any:
+    """``orjson`` fallback for the few types it cannot serialize natively.
 
-    if isinstance(value, list | tuple | set):
-        return [_normalize_for_hashing(v) for v in value]  # type: ignore[arg-type]
+    Mirrors the previous recursive normalization: ``Decimal`` → its string form,
+    ``set`` / ``frozenset`` → a list. Everything else orjson already handles (dict,
+    list, tuple, ``datetime``, ``date``, ``UUID``), so no whole-structure pre-pass
+    is needed — the callback is only invoked for these leaf types.
+    """
 
     if isinstance(value, Decimal):
         return str(value)
 
-    return value
+    if isinstance(value, (set, frozenset)):
+        return list(value)  # type: ignore[arg-type]
+
+    raise TypeError(f"Cannot hash value of type {type(value).__name__}")
 
 
 # ....................... #
@@ -469,8 +474,11 @@ def pydantic_model_hash(
     )
 
     data = pydantic_dump(model, exclude=exclude)
-    norm_data = _normalize_for_hashing(data)
-    raw = orjson.dumps(norm_data, option=orjson.OPT_SORT_KEYS)
+    raw = orjson.dumps(
+        data,
+        option=orjson.OPT_SORT_KEYS,
+        default=_orjson_hashing_default,
+    )
     digest = hashlib.sha256(raw).hexdigest()
 
     return digest

@@ -91,22 +91,36 @@ async def run_pipeline_on_success[Args, R](
 # ....................... #
 
 
+def _wrap_step[Args, R](
+    middleware: Middleware[Any, Any],
+    nxt: Callable[[Args], Awaitable[R]],
+) -> Callable[[Args], Awaitable[R]]:
+    async def _call(call_args: Args) -> R:
+        return await middleware(nxt, call_args)
+
+    return _call
+
+
 async def run_wrap_pipeline[Args, R](
     pipeline: ExecutionPipeline[Middleware[Any, Any]],
     args: Args,
     inner: Callable[[Args], Awaitable[R]],
 ) -> R:
-    """Run middleware wrap chain; higher priority is closer to the handler."""
+    """Run middleware wrap chain; higher priority is closer to the handler.
 
-    async def invoke(index: int, call_args: Args) -> R:
-        if index >= len(pipeline.steps):
-            return await inner(call_args)
+    Folds the chain iteratively from the innermost handler outward instead of
+    recursing per request, so there is no recursion frame or repeated ``len()`` per
+    middleware, and a chain with no middleware calls the handler directly.
+    """
 
-        middleware = pipeline.steps[index]
+    steps = pipeline.steps
 
-        async def next_call(next_args: Args) -> R:
-            return await invoke(index + 1, next_args)
+    if not steps:
+        return await inner(args)
 
-        return await middleware(next_call, call_args)
+    call = inner
 
-    return await invoke(0, args)
+    for middleware in reversed(steps):
+        call = _wrap_step(middleware, call)
+
+    return await call(args)

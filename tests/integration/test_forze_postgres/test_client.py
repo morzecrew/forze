@@ -314,3 +314,81 @@ async def test_bound_connection_rejects_nested_bind(pg_client: PostgresClient) -
         with pytest.raises(CoreException, match="already bound"):
             async with pg_client.bound_connection():
                 pass
+
+
+@pytest.mark.asyncio
+async def test_fetch_all_batched_streams_all_rows(pg_client: PostgresClient) -> None:
+    """Server-side cursor streams every row across multiple FETCH FORWARD batches."""
+
+    await pg_client.execute(
+        """
+        CREATE TABLE test_stream (id serial PRIMARY KEY, v integer NOT NULL);
+        """
+    )
+    await pg_client.execute(
+        "INSERT INTO test_stream (v) SELECT g FROM generate_series(1, 250) AS g",
+    )
+
+    batches: list[int] = []
+    seen: list[int] = []
+
+    async for chunk in pg_client.fetch_all_batched(
+        "SELECT v FROM test_stream ORDER BY v",
+        batch_size=100,
+    ):
+        batches.append(len(chunk))
+        seen.extend(row["v"] for row in chunk)  # type: ignore[index]
+
+    assert seen == list(range(1, 251))
+    # 250 rows / batch 100 -> chunked, not one buffered slab.
+    assert batches == [100, 100, 50]
+
+
+@pytest.mark.asyncio
+async def test_fetch_all_batched_reuses_context_transaction(
+    pg_client: PostgresClient,
+) -> None:
+    """Streaming inside an open transaction declares the cursor in that transaction."""
+
+    await pg_client.execute(
+        "CREATE TABLE test_stream_tx (id serial PRIMARY KEY, v integer NOT NULL);"
+    )
+
+    async with pg_client.transaction():
+        await pg_client.execute(
+            "INSERT INTO test_stream_tx (v) SELECT g FROM generate_series(1, 30) AS g",
+        )
+
+        seen: list[int] = []
+        async for chunk in pg_client.fetch_all_batched(
+            "SELECT v FROM test_stream_tx ORDER BY v",
+            batch_size=10,
+        ):
+            seen.extend(row["v"] for row in chunk)  # type: ignore[index]
+
+        # Sees uncommitted rows written earlier in the same transaction.
+        assert seen == list(range(1, 31))
+
+
+@pytest.mark.asyncio
+async def test_fetch_all_batched_early_break_leaves_conn_usable(
+    pg_client: PostgresClient,
+) -> None:
+    """Abandoning the stream early closes the cursor; the connection stays usable."""
+
+    await pg_client.execute(
+        "CREATE TABLE test_stream_break (id serial PRIMARY KEY, v integer NOT NULL);"
+    )
+    await pg_client.execute(
+        "INSERT INTO test_stream_break (v) SELECT g FROM generate_series(1, 500) AS g",
+    )
+
+    async for _chunk in pg_client.fetch_all_batched(
+        "SELECT v FROM test_stream_break ORDER BY v",
+        batch_size=50,
+    ):
+        break  # consume only the first batch, then abandon the generator
+
+    # The pool connection is clean and immediately reusable.
+    total = await pg_client.fetch_value("SELECT count(*) FROM test_stream_break")
+    assert total == 500
