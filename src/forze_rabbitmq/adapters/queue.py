@@ -90,14 +90,6 @@ class RabbitMQQueueAdapter[M: BaseModel](
 
     # ....................... #
 
-    async def _prepare_queue_names(self) -> None:
-        if is_static_named_resource(self.namespace):
-            return
-
-        await self._resolved_namespace()
-
-    # ....................... #
-
     async def __queue_name(self, queue: str) -> str:
         tenant_id = self.require_tenant_if_aware()
 
@@ -130,7 +122,6 @@ class RabbitMQQueueAdapter[M: BaseModel](
         delay: timedelta | None = None,
         not_before: datetime | None = None,
     ) -> str:
-        await self._prepare_queue_names()
         physical_queue = await self.__queue_name(queue)
         body = self.codec.encode(payload)
 
@@ -161,7 +152,6 @@ class RabbitMQQueueAdapter[M: BaseModel](
         if not payloads:
             return []
 
-        await self._prepare_queue_names()
         physical_queue = await self.__queue_name(queue)
         bodies = [self.codec.encode(payload) for payload in payloads]
 
@@ -185,7 +175,6 @@ class RabbitMQQueueAdapter[M: BaseModel](
         limit: int | None = None,
         timeout: timedelta | None = None,
     ) -> list[QueueMessage[M]]:
-        await self._prepare_queue_names()
         physical_queue = await self.__queue_name(queue)
         raw = await self.client.receive(physical_queue, limit=limit, timeout=timeout)
 
@@ -199,7 +188,6 @@ class RabbitMQQueueAdapter[M: BaseModel](
         *,
         timeout: timedelta | None = None,
     ) -> AsyncGenerator[QueueMessage[M]]:
-        await self._prepare_queue_names()
         physical_queue = await self.__queue_name(queue)
 
         async for msg in self.client.consume(physical_queue, timeout=timeout):
@@ -208,7 +196,6 @@ class RabbitMQQueueAdapter[M: BaseModel](
     # ....................... #
 
     async def ack(self, queue: str, ids: Sequence[str]) -> int:
-        await self._prepare_queue_names()
         physical_queue = await self.__queue_name(queue)
         return await self.client.ack(physical_queue, ids)
 
@@ -221,6 +208,5 @@ class RabbitMQQueueAdapter[M: BaseModel](
         *,
         requeue: bool = True,
     ) -> int:
-        await self._prepare_queue_names()
         physical_queue = await self.__queue_name(queue)
         return await self.client.nack(physical_queue, ids, requeue=requeue)

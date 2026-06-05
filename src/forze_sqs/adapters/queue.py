@@ -93,14 +93,6 @@ class SQSQueueAdapter[M: BaseModel](
 
     # ....................... #
 
-    async def _prepare_queue_names(self) -> None:
-        if is_static_named_resource(self.namespace):
-            return
-
-        await self._resolved_namespace()
-
-    # ....................... #
-
     async def __queue_name(self, queue: str) -> str:
         if self.__is_queue_url(queue):
             return queue
@@ -136,7 +128,6 @@ class SQSQueueAdapter[M: BaseModel](
         delay: timedelta | None = None,
         not_before: datetime | None = None,
     ) -> str:
-        await self._prepare_queue_names()
         physical_queue = await self.__queue_name(queue)
         body = self.codec.encode(payload)
 
@@ -167,7 +158,6 @@ class SQSQueueAdapter[M: BaseModel](
         if not payloads:
             return []
 
-        await self._prepare_queue_names()
         physical_queue = await self.__queue_name(queue)
         bodies = [self.codec.encode(payload) for payload in payloads]
 
@@ -191,7 +181,6 @@ class SQSQueueAdapter[M: BaseModel](
         limit: int | None = None,
         timeout: timedelta | None = None,
     ) -> list[QueueMessage[M]]:
-        await self._prepare_queue_names()
         physical_queue = await self.__queue_name(queue)
 
         async with self.client.client():
@@ -211,7 +200,6 @@ class SQSQueueAdapter[M: BaseModel](
         *,
         timeout: timedelta | None = None,
     ) -> AsyncGenerator[QueueMessage[M]]:
-        await self._prepare_queue_names()
         physical_queue = await self.__queue_name(queue)
 
         async with self.client.client():
@@ -221,7 +209,6 @@ class SQSQueueAdapter[M: BaseModel](
     # ....................... #
 
     async def ack(self, queue: str, ids: Sequence[str]) -> int:
-        await self._prepare_queue_names()
         physical_queue = await self.__queue_name(queue)
 
         async with self.client.client():
@@ -236,7 +223,6 @@ class SQSQueueAdapter[M: BaseModel](
         *,
         requeue: bool = True,
     ) -> int:
-        await self._prepare_queue_names()
         physical_queue = await self.__queue_name(queue)
 
         async with self.client.client():
