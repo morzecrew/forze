@@ -35,7 +35,7 @@ async def test_initialize_is_idempotent(
     await client.initialize(clickhouse_connection)
     # Second call must early-return without replacing the client.
     await client.initialize(clickhouse_connection)
-    message, ok = await client.health()
+    _, ok = await client.health()
     assert ok is True
     await client.close()
 

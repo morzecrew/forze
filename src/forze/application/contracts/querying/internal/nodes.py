@@ -110,6 +110,13 @@ def elem_inner_is_scalar(inner: QueryExpr) -> bool:
     object element. Backend renderers branch on this to choose scalar-vs-object element
     SQL/operator shapes; kept here (with the AST nodes) so every backend shares one
     definition.
+
+    The branches are intentionally asymmetric: ``QueryAnd`` accepts only **flat**
+    scalar-element leaves (the parser only ever emits direct ``$`` ``QueryField``
+    conjunctions for scalar element predicates), whereas ``QueryOr`` recurses to allow
+    nested disjunctions. This matches the original per-backend renderer behavior; do
+    not widen the ``QueryAnd`` case to recurse without re-validating element-quantifier
+    rendering across backends.
     """
 
     match inner:

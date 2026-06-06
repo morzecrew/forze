@@ -185,7 +185,7 @@ def test_keyset_page_bounds_after_trims_and_emits_next() -> None:
 
 
 def test_keyset_page_bounds_after_page_emits_prev() -> None:
-    rows, has_more, nxt, prv = keyset_page_bounds(
+    _, has_more, nxt, prv = keyset_page_bounds(
         _rows(4), 3, sort_keys=["id"], directions=["asc"], use_after=True, use_before=False
     )
     assert has_more is True
@@ -205,7 +205,7 @@ def test_keyset_page_bounds_before_reverses_then_trims() -> None:
 
 
 def test_keyset_page_bounds_exact_fit_has_no_more() -> None:
-    rows, has_more, nxt, prv = keyset_page_bounds(
+    rows, has_more, nxt, _ = keyset_page_bounds(
         _rows(3), 3, sort_keys=["id"], directions=["asc"], use_after=False, use_before=False
     )
     assert [r["id"] for r in rows] == [0, 1, 2]

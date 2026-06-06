@@ -610,9 +610,10 @@ class PostgresClient(PostgresClientPort):
 
         Server-side cursors require an open transaction: an existing context
         transaction (see :meth:`transaction`) is reused, otherwise a short-lived
-        transaction wraps the scan. ``commit`` is accepted for API symmetry — the
-        wrapping transaction is committed when the scan completes; when a context
-        transaction is reused, its owner controls commit/rollback as before.
+        transaction wraps the scan. ``commit`` is accepted for API symmetry only and
+        has **no effect** here — the scan always runs inside (and is committed by) the
+        reused or wrapping transaction; a reused context transaction's owner controls
+        its own commit/rollback as before.
         """
 
         if batch_size < 1:

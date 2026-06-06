@@ -58,7 +58,7 @@ async def test_initialize_with_secret_dsn_and_idempotent(
     await client.initialize(dsn=SecretStr(_dsn(rabbitmq_container)))
     # Second initialize while the connection is open early-returns.
     await client.initialize(dsn=SecretStr(_dsn(rabbitmq_container)))
-    msg, ok = await client.health()
+    _, ok = await client.health()
     assert ok is True
     await client.close()
 

@@ -89,8 +89,11 @@ class DocumentAdapter(
     def tenant_aware(self) -> bool:
         """Whether the backing storage partitions rows by tenant.
 
-        Delegates to the read gateway; the read and write gateways are validated to
-        share tenant-awareness, so this reflects the adapter as a whole.
+        Simply returns ``self.read_gw.tenant_aware``; this property performs no
+        validation itself. When a ``write_gw`` is present, read/write tenant-awareness
+        consistency is enforced separately by
+        :func:`~forze.application.integrations.document.hydration.validate_read_write_gateway_compat`,
+        so the read gateway's value reflects the adapter as a whole.
         """
 
         return self.read_gw.tenant_aware

@@ -1148,7 +1148,7 @@ class TestQueryFilterParserBranches:
 
     def test_element_values_field_multiple_element_ops_raises(self) -> None:
         with pytest.raises(
-            CoreException, match="must declare exactly\n? *one operator"
+            CoreException, match=r"must declare exactly\n? *one operator"
         ):
             QueryFilterExpressionParser.parse(
                 {

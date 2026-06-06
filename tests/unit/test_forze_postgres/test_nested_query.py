@@ -494,7 +494,7 @@ def test_walk_bare_list_returns_none() -> None:
 
 def test_resolve_non_string_mapping_key_with_filter_path_raises() -> None:
     # ``filter_path`` set -> ``_mapping_key_must_be_str_for_json_path`` raises.
-    with pytest.raises(CoreException, match="is not\n? *supported"):
+    with pytest.raises(CoreException, match=r"is not\n? *supported"):
         walk_pydantic_path(_RowIntKeyDict, ["data", "1", "x"], filter_path="data.1.x")
 
 
