@@ -50,6 +50,12 @@ class DocumentReadGatewayPort(Protocol, Generic[M]):
 
         ...
 
+    @property
+    def tenant_aware(self) -> bool:
+        """Whether the backing storage partitions rows by tenant."""
+
+        ...
+
     # ....................... #
 
     def compile_filters(

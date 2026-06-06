@@ -129,4 +129,8 @@ class AuthnChangePassword(Handler[AuthnChangePasswordRequestDTO, None]):
                 code="auth_required",
             )
 
-        await self.password_lifecycle.change_password(identity, args.new_password)
+        await self.password_lifecycle.change_password(
+            identity,
+            args.current_password,
+            args.new_password,
+        )

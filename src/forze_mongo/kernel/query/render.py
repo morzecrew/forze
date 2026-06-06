@@ -26,6 +26,7 @@ from forze.application.contracts.querying import (
     QuerySortExpression,
     QueryValue,
     QueryValueCaster,
+    elem_inner_is_scalar,
 )
 from forze.application.contracts.querying.internal.text_pattern import (
     like_pattern_to_regex,
@@ -534,7 +535,7 @@ class MongoQueryRenderer:
         quantifier: str,
         inner: QueryExpr,
     ) -> JsonDict:
-        if self._elem_inner_is_scalar(inner):
+        if elem_inner_is_scalar(inner):
             return self._render_elem_scalar_match(path, quantifier, inner)
 
         elem_match = self._render_elem_object_match(inner)
@@ -550,24 +551,6 @@ class MongoQueryRenderer:
         return {"$nor": [{path: {"$elemMatch": elem_match}}]}
 
     # ....................... #
-
-    @staticmethod
-    def _elem_inner_is_scalar(inner: QueryExpr) -> bool:
-        match inner:
-            case QueryField(name, _, _):
-                return name == ELEM_SCALAR_FIELD
-
-            case QueryAnd(items):
-                return all(
-                    isinstance(i, QueryField) and i.name == ELEM_SCALAR_FIELD
-                    for i in items
-                )
-
-            case QueryOr(items):
-                return all(MongoQueryRenderer._elem_inner_is_scalar(i) for i in items)
-
-            case _:
-                return False
 
     # ....................... #
 

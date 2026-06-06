@@ -20,6 +20,7 @@ from forze.application.contracts.querying.internal import (
     QueryNot,
     QueryOr,
     QueryValueCaster,
+    elem_inner_is_scalar,
 )
 from forze.base.exceptions import CoreException
 
@@ -186,6 +187,126 @@ class TestAggregatesExpressionParser:
                     "$computed": {"n": {"$count": None}},
                 },
             )
+
+    # Branch coverage for validation / error paths ............. #
+
+    def test_rejects_non_mapping_computed(self) -> None:
+        with pytest.raises(CoreException, match=r"Invalid aggregate \$computed"):
+            AggregatesExpressionParser.parse({"$computed": 5})  # type: ignore[arg-type]
+
+    def test_rejects_missing_computed(self) -> None:
+        with pytest.raises(CoreException, match="requires \\$computed"):
+            AggregatesExpressionParser.parse({"$computed": {}})
+
+    def test_rejects_invalid_group_map_value_type(self) -> None:
+        with pytest.raises(CoreException, match=r"Invalid \$groups map value"):
+            AggregatesExpressionParser.parse(
+                {
+                    "$groups": {"x": 5},
+                    "$computed": {"n": {"$count": None}},
+                },
+            )
+
+    def test_rejects_non_mapping_trunc_spec(self) -> None:
+        with pytest.raises(CoreException, match=r"Invalid \$trunc spec"):
+            AggregatesExpressionParser.parse(
+                {
+                    "$groups": {"x": {"$trunc": "ts"}},
+                    "$computed": {"n": {"$count": None}},
+                },
+            )
+
+    def test_rejects_unknown_trunc_keys(self) -> None:
+        with pytest.raises(CoreException, match=r"Invalid \$trunc keys"):
+            AggregatesExpressionParser.parse(
+                {
+                    "$groups": {"x": {"$trunc": {"field": "ts", "bad": 1}}},
+                    "$computed": {"n": {"$count": None}},
+                },
+            )
+
+    def test_rejects_trunc_empty_field(self) -> None:
+        with pytest.raises(CoreException, match=r"\$trunc.field must be"):
+            AggregatesExpressionParser.parse(
+                {
+                    "$groups": {"x": {"$trunc": {"field": "  ", "unit": "day"}}},
+                    "$computed": {"n": {"$count": None}},
+                },
+            )
+
+    def test_rejects_trunc_invalid_unit(self) -> None:
+        with pytest.raises(CoreException, match=r"\$trunc.unit must be"):
+            AggregatesExpressionParser.parse(
+                {
+                    "$groups": {"x": {"$trunc": {"field": "ts", "unit": "year"}}},
+                    "$computed": {"n": {"$count": None}},
+                },
+            )
+
+    def test_rejects_trunc_non_string_timezone(self) -> None:
+        with pytest.raises(CoreException, match=r"\$trunc.timezone must be a string"):
+            AggregatesExpressionParser.parse(
+                {
+                    "$groups": {
+                        "x": {"$trunc": {"field": "ts", "unit": "day", "timezone": 5}},
+                    },
+                    "$computed": {"n": {"$count": None}},
+                },
+            )
+
+    def test_rejects_invalid_alias(self) -> None:
+        with pytest.raises(CoreException, match="Invalid aggregate alias"):
+            AggregatesExpressionParser.parse(
+                {
+                    "$groups": {"1bad": "category"},
+                    "$computed": {"n": {"$count": None}},
+                },
+            )
+
+    def test_rejects_empty_field_path(self) -> None:
+        with pytest.raises(CoreException, match="Invalid aggregate field path"):
+            AggregatesExpressionParser.parse(
+                {
+                    "$groups": {"a": "  "},
+                    "$computed": {"n": {"$count": None}},
+                },
+            )
+
+    def test_rejects_non_mapping_computed_spec(self) -> None:
+        with pytest.raises(CoreException, match="Invalid aggregate computed field spec"):
+            AggregatesExpressionParser.parse({"$computed": {"a": 5}})
+
+    def test_rejects_computed_multiple_functions(self) -> None:
+        with pytest.raises(CoreException, match="exactly one function"):
+            AggregatesExpressionParser.parse(
+                {"$computed": {"a": {"$sum": "x", "$avg": "y"}}},
+            )
+
+    def test_rejects_unknown_function(self) -> None:
+        with pytest.raises(CoreException, match="Invalid aggregate function"):
+            AggregatesExpressionParser.parse(
+                {"$computed": {"a": {"$unknown": "x"}}},
+            )
+
+    def test_rejects_invalid_function_keys(self) -> None:
+        with pytest.raises(CoreException, match="Invalid aggregate function keys"):
+            AggregatesExpressionParser.parse(
+                {"$computed": {"a": {"$sum": {"field": "x", "bad": 1}}}},
+            )
+
+    def test_rejects_count_with_field_in_mapping_form(self) -> None:
+        with pytest.raises(CoreException, match="expects no field"):
+            AggregatesExpressionParser.parse(
+                {"$computed": {"a": {"$count": {"field": "x"}}}},
+            )
+
+    def test_mapping_form_without_filter_ok(self) -> None:
+        # Covers the ``filter is None`` branch of the mapping argument form.
+        parsed = AggregatesExpressionParser.parse(
+            {"$computed": {"revenue": {"$sum": {"field": "price"}}}},
+        )
+        assert parsed.computed_fields[0].field == "price"
+        assert parsed.computed_fields[0].parsed_filter is None
 
 
 # ----------------------- #
@@ -878,6 +999,183 @@ class TestQueryCompareExpressionParser:
 
 
 # ----------------------- #
+# Extra branch coverage for the filter parser (error/edge paths).
+
+
+class TestQueryFilterParserBranches:
+    def test_empty_and_yields_empty_conjunction(self) -> None:
+        # Hits the early-return in ``_add_clauses`` when ``count <= 0``.
+        result = QueryFilterExpressionParser.parse({"$and": []})
+        assert isinstance(result, QueryAnd)
+        assert result.items == ()
+
+    def test_not_requires_object(self) -> None:
+        with pytest.raises(CoreException, match=r"\$not requires a filter expression"):
+            QueryFilterExpressionParser.parse({"$not": "nope"})
+
+    def test_empty_values_map_raises(self) -> None:
+        with pytest.raises(CoreException, match=r"Empty \$values map"):
+            QueryFilterExpressionParser.parse({"$values": {}})
+
+    def test_empty_fields_compare_map_raises(self) -> None:
+        with pytest.raises(CoreException, match=r"Empty \$fields compare map"):
+            QueryFilterExpressionParser.parse({"$fields": {"a": {}}})
+
+    def test_invalid_fields_map_value_raises(self) -> None:
+        with pytest.raises(CoreException, match=r"Invalid \$fields map value"):
+            QueryFilterExpressionParser.parse({"$fields": {"a": 1}})
+
+    def test_in_shortcut_non_collection_skips_size_check(self) -> None:
+        # frozenset is not list/tuple/set -> ``_check_in_size`` early-returns.
+        result = QueryFilterExpressionParser.parse(
+            {"$values": {"x": frozenset({1, 2})}},
+        )
+        f = result.items[0]
+        assert isinstance(f, QueryField)
+        assert f.op == "$in"
+
+    def test_validate_op_static_entrypoint(self) -> None:
+        node = QueryFilterExpressionParser._validate_op("f", "$eq", 1)
+        assert isinstance(node, QueryField)
+        assert node.op == "$eq" and node.value == 1
+
+    # Element-constraint edge cases ............................. #
+
+    def test_element_constraint_non_scalar_non_dict_raises(self) -> None:
+        with pytest.raises(CoreException, match="Invalid element constraint"):
+            QueryFilterExpressionParser.parse(
+                {"$values": {"tags": {"$any": ["a"]}}},
+            )
+
+    def test_element_empty_values_map_raises(self) -> None:
+        with pytest.raises(CoreException, match=r"Empty \$values map in element"):
+            QueryFilterExpressionParser.parse(
+                {"$values": {"items": {"$any": {"$values": {}}}}},
+            )
+
+    def test_element_empty_constraint_map_raises(self) -> None:
+        with pytest.raises(CoreException, match="Empty element constraint map"):
+            QueryFilterExpressionParser.parse(
+                {"$values": {"tags": {"$any": {}}}},
+            )
+
+    def test_element_scalar_constraint_multiple_ops_raises(self) -> None:
+        with pytest.raises(
+            CoreException, match="must declare exactly one operator"
+        ):
+            QueryFilterExpressionParser.parse(
+                {"$values": {"scores": {"$any": {"$gt": 1, "$lt": 5}}}},
+            )
+
+    def test_element_scalar_eq_invalid_value_raises(self) -> None:
+        with pytest.raises(CoreException, match="Invalid value for"):
+            QueryFilterExpressionParser.parse(
+                {"$values": {"scores": {"$any": {"$eq": [1, 2]}}}},
+            )
+
+    def test_element_scalar_ord_invalid_value_raises(self) -> None:
+        with pytest.raises(CoreException, match="Invalid value for"):
+            QueryFilterExpressionParser.parse(
+                {"$values": {"scores": {"$any": {"$gt": "abc"}}}},
+            )
+
+    def test_element_scalar_text_op_sequence_desugars_to_or(self) -> None:
+        result = QueryFilterExpressionParser.parse(
+            {"$values": {"tags": {"$any": {"$ilike": ["%a%", "%b%"]}}}},
+        )
+        elem = result.items[0]
+        assert isinstance(elem, QueryElem)
+        assert isinstance(elem.inner, QueryOr)
+        assert len(elem.inner.items) == 2
+
+    # Object-array element $values edge cases .................. #
+
+    def test_element_values_quantifier_inside_raises(self) -> None:
+        with pytest.raises(
+            CoreException, match="cannot use element quantifiers inside"
+        ):
+            QueryFilterExpressionParser.parse(
+                {
+                    "$values": {
+                        "items": {"$any": {"$values": {"f": {"$any": "x"}}}},
+                    },
+                },
+            )
+
+    def test_element_values_null_shortcut_raises(self) -> None:
+        with pytest.raises(CoreException, match="cannot use null shortcut"):
+            QueryFilterExpressionParser.parse(
+                {"$values": {"items": {"$any": {"$values": {"f": None}}}}},
+            )
+
+    def test_element_values_array_shortcut_raises(self) -> None:
+        with pytest.raises(CoreException, match="cannot use array shortcut"):
+            QueryFilterExpressionParser.parse(
+                {"$values": {"items": {"$any": {"$values": {"f": ["a"]}}}}},
+            )
+
+    def test_element_values_scalar_shortcut_ok(self) -> None:
+        result = QueryFilterExpressionParser.parse(
+            {"$values": {"items": {"$any": {"$values": {"f": "x"}}}}},
+        )
+        elem = result.items[0]
+        assert isinstance(elem, QueryElem)
+        assert isinstance(elem.inner, QueryAnd)
+        field = elem.inner.items[0]
+        assert isinstance(field, QueryField)
+        assert field.op == "$eq" and field.value == "x"
+
+    def test_element_values_empty_field_map_raises(self) -> None:
+        with pytest.raises(CoreException, match="Empty element \\$values field map"):
+            QueryFilterExpressionParser.parse(
+                {"$values": {"items": {"$any": {"$values": {"f": {}}}}}},
+            )
+
+    def test_element_values_nested_quantifier_in_conjunction_raises(self) -> None:
+        # dict with a quantifier key plus extra key -> conjunction, then rejected.
+        with pytest.raises(CoreException, match="Nested element quantifiers"):
+            QueryFilterExpressionParser.parse(
+                {
+                    "$values": {
+                        "items": {
+                            "$any": {
+                                "$values": {"f": {"$any": "x", "extra": 1}},
+                            },
+                        },
+                    },
+                },
+            )
+
+    def test_element_values_field_multiple_element_ops_raises(self) -> None:
+        with pytest.raises(
+            CoreException, match=r"must declare exactly\n? *one operator"
+        ):
+            QueryFilterExpressionParser.parse(
+                {
+                    "$values": {
+                        "items": {
+                            "$any": {"$values": {"f": {"$gt": 1, "$lt": 5}}},
+                        },
+                    },
+                },
+            )
+
+    def test_element_values_field_mixed_ops_invalid_op_raises(self) -> None:
+        # Not all keys are element ops -> falls to the multi-op branch, then
+        # ``$in`` is rejected as an invalid element operator.
+        with pytest.raises(CoreException, match="Invalid element operator"):
+            QueryFilterExpressionParser.parse(
+                {
+                    "$values": {
+                        "items": {
+                            "$any": {"$values": {"f": {"$gt": 1, "$in": [1]}}},
+                        },
+                    },
+                },
+            )
+
+
+# ----------------------- #
 
 
 class TestMockElementQuantifiers:
@@ -1040,3 +1338,42 @@ class TestQueryNodes:
         assert issubclass(QueryOr, QueryExpr)
         assert issubclass(QueryNot, QueryExpr)
         assert issubclass(QueryElem, QueryExpr)
+
+
+# ----------------------- #
+# elem_inner_is_scalar (shared by backend renderers)
+
+
+def test_elem_inner_is_scalar_single_scalar_field() -> None:
+    assert elem_inner_is_scalar(QueryField(ELEM_SCALAR_FIELD, "$eq", "x")) is True
+    assert elem_inner_is_scalar(QueryField("name", "$eq", "x")) is False
+
+
+def test_elem_inner_is_scalar_and_all_scalar() -> None:
+    expr = QueryAnd(
+        (
+            QueryField(ELEM_SCALAR_FIELD, "$gte", 1),
+            QueryField(ELEM_SCALAR_FIELD, "$lt", 10),
+        )
+    )
+    assert elem_inner_is_scalar(expr) is True
+
+    mixed = QueryAnd(
+        (QueryField(ELEM_SCALAR_FIELD, "$gte", 1), QueryField("qty", "$lt", 10))
+    )
+    assert elem_inner_is_scalar(mixed) is False
+
+
+def test_elem_inner_is_scalar_or_recurses() -> None:
+    expr = QueryOr(
+        (
+            QueryField(ELEM_SCALAR_FIELD, "$eq", "a"),
+            QueryAnd((QueryField(ELEM_SCALAR_FIELD, "$eq", "b"),)),
+        )
+    )
+    assert elem_inner_is_scalar(expr) is True
+
+
+def test_elem_inner_is_scalar_object_predicate_is_false() -> None:
+    assert elem_inner_is_scalar(QueryField("sku", "$eq", "x")) is False
+    assert elem_inner_is_scalar(QueryNot(QueryField(ELEM_SCALAR_FIELD, "$eq", "x"))) is False

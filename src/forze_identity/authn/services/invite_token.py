@@ -35,7 +35,7 @@ class InviteTokenConfig:
 class InviteTokenService:
     """Password invite token generation and verification service."""
 
-    pepper: bytes = attrs.field(validator=attrs.validators.min_len(32))
+    pepper: bytes = attrs.field(repr=False, validator=attrs.validators.min_len(32))
     config: InviteTokenConfig = attrs.field(factory=InviteTokenConfig)
 
     # ....................... #

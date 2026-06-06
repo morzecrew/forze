@@ -120,15 +120,25 @@ async def execute_simple_offset_search_with_snapshot[M: BaseModel](
     """Run fingerprint, snapshot read, count, fetch, materialize, and page wrapping."""
 
     rs_spec = spec.snapshot
-    fp_sorts = fingerprint_sorts if fingerprint_sorts is not None else sorts
-    fp_fingerprint = SearchResultSnapshot.simple_search_fingerprint(
-        query,
-        filters,
-        fp_sorts,
-        spec_name=spec.name,
-        variant=variant,
-        extras=fingerprint_extras,
-    )
+
+    # The fingerprint is only consumed on the snapshot read/write paths below, which
+    # require both a snapshot port and a snapshot spec. Skip hashing the whole filter
+    # (orjson dump + SHA-256) entirely when snapshots are not configured.
+    snapshots_enabled = result_snapshot is not None and rs_spec is not None
+
+    if snapshots_enabled:
+        fp_sorts = fingerprint_sorts if fingerprint_sorts is not None else sorts
+        fp_fingerprint = SearchResultSnapshot.simple_search_fingerprint(
+            query,
+            filters,
+            fp_sorts,
+            spec_name=spec.name,
+            variant=variant,
+            extras=fingerprint_extras,
+        )
+
+    else:
+        fp_fingerprint = ""
 
     pagination_dict: dict[str, Any] = dict(pagination or {})
     snap_return_count = (

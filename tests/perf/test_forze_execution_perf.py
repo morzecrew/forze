@@ -109,6 +109,17 @@ def _registry() -> FrozenOperationRegistry:
     ).freeze()
 
 
+def _hookless_registry() -> FrozenOperationRegistry:
+    """Registry for one op with no hooks/middleware (exercises the empty-scope fast path)."""
+
+    plan = OperationPlan().bind_outer().finish(deep=False)
+
+    return OperationRegistry(
+        handlers={_OP: lambda _ctx: _EchoHandler()},
+        plans={_OP: plan},
+    ).freeze()
+
+
 def _context(*, cache: bool) -> ExecutionContext:
     return ExecutionContext(
         deps=frozen_deps_from_deps(Deps()),
@@ -165,6 +176,24 @@ async def test_invoke_cache_off_benchmark(async_benchmark: Any) -> None:
 
     reg = _registry()
     ctx = _context(cache=False)
+
+    async def _run() -> str:
+        return await reg.resolve(_OP, ctx)("x")
+
+    await async_benchmark(_run)
+
+
+@pytest.mark.perf
+async def test_invoke_hookless_benchmark(async_benchmark: Any) -> None:
+    """End-to-end resolve + run for an op with no hooks/middleware.
+
+    Exercises the empty-scope fast path that skips ``_run_scope_body`` (closures,
+    empty graph/pipeline iterations, and the ``Outcome`` allocation). Compare with
+    :func:`test_invoke_cache_on_benchmark` (3 before hooks + 2 middleware).
+    """
+
+    reg = _hookless_registry()
+    ctx = _context(cache=True)
 
     async def _run() -> str:
         return await reg.resolve(_OP, ctx)("x")

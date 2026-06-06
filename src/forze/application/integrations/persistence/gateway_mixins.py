@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Awaitable, Sequence
 from functools import cached_property
-from typing import TYPE_CHECKING, Any, Generic, Literal, TypeVar, overload
+from typing import TYPE_CHECKING, Any, Generic, Literal, Protocol, TypeVar, overload
 from uuid import UUID
 
 from pydantic import BaseModel
@@ -16,13 +16,16 @@ from forze.application.contracts.querying import (
     QueryFilterLimits,
 )
 from forze.application.contracts.tenancy.mixins import TenancyMixin
+from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
 from forze.base.serialization import ModelCodec, default_model_codec
+from forze.domain.models import Document
 
 # ----------------------- #
 
 M = TypeVar("M", bound=BaseModel)
 TModel = TypeVar("TModel", bound=BaseModel)
+D = TypeVar("D", bound=Document)
 ReadValidation = Literal["strict", "trusted"]
 
 # ....................... #
@@ -279,3 +282,104 @@ class TenantResolvedRelationMixin(TenancyMixin):
             return None
 
         return tenant.tenant_id
+
+
+# ....................... #
+
+
+class _HistoryGatewayPort(Protocol[D]):
+    """Minimal history-gateway surface used for OCC validation."""
+
+    def write_many(self, data: Sequence[D]) -> Awaitable[None]: ...
+
+    def read_many(
+        self,
+        pks: Sequence[UUID],
+        revs: Sequence[int],
+    ) -> Awaitable[Sequence[D]]: ...
+
+
+# ....................... #
+
+
+class HistoryOccMixin(Generic[D]):
+    """Revision-history persistence and optimistic-concurrency validation.
+
+    Backend-neutral: operates only on the domain model's
+    :meth:`~forze.domain.models.Document.validate_historical_consistency` and the
+    history gateway's ``read_many`` / ``write_many``. Shared by the Postgres and Mongo
+    write gateways so the OCC algorithm — and its error semantics — stays identical
+    across backends.
+    """
+
+    if TYPE_CHECKING:
+
+        @property
+        def history_gw(self) -> _HistoryGatewayPort[D] | None:
+            """Optional history gateway (declared read-only so subclasses can narrow it)."""
+            ...
+
+    # ....................... #
+
+    async def _write_history(self, *data: D) -> None:
+        if self.history_gw is not None:
+            await self.history_gw.write_many(data)
+
+    # ....................... #
+
+    async def _validate_history(self, *data: tuple[D, int, JsonDict]) -> None:
+        """Validate optimistic-concurrency revisions against persisted history.
+
+        For each ``(current, presented_rev, update)`` whose presented revision differs
+        from the stored one, rejects a future revision outright, then confirms the
+        presented revision's history snapshot exists and is consistent with the update.
+        A missing history snapshot is a stale-revision precondition (retryable), not a
+        missing resource.
+        """
+
+        if self.history_gw is None:
+            for current, rev, _ in data:
+                if rev != current.rev:
+                    raise exc.precondition(
+                        "Revision mismatch",
+                        code="revision_mismatch",
+                    )
+
+            return
+
+        to_check = [
+            (current, rev, update)
+            for current, rev, update in data
+            if rev != current.rev
+        ]
+        bad_records = [rev for current, rev, _ in to_check if rev > current.rev]
+
+        if bad_records:
+            raise exc.precondition(
+                "Invalid revision number",
+                code="revision_mismatch",
+            )
+
+        if not to_check:
+            return
+
+        pks_to_check = [current.id for current, _, _ in to_check]
+        revs_to_check = [rev for _, rev, _ in to_check]
+        hist_records = await self.history_gw.read_many(pks_to_check, revs_to_check)
+
+        if len(hist_records) != len(to_check):
+            raise exc.precondition(
+                "History records not found. Please retry with actual revision number.",
+                code="history_not_found_retry",
+            )
+
+        for (current, _, update), historical in zip(
+            to_check,
+            hist_records,
+            strict=True,
+        ):
+            if not current.validate_historical_consistency(historical, update):
+                raise exc.conflict(
+                    "Historical consistency violation during update",
+                    code="historical_consistency_violation",
+                )

@@ -26,6 +26,7 @@ from .processors import (
     RedundantKeysDropper,
     TraceLevelResolver,
 )
+from .logger import set_configured_min_rank
 from .renderers import ForzeConsoleRenderer
 
 # ----------------------- #
@@ -209,6 +210,8 @@ def configure_logging(
     :param text_scrub: Apply scrub to string values in log extras when ``sanitize_logs`` is true.
     :param include_exception_stack: When false, omit ``error.stack`` from structured logs.
     """
+
+    set_configured_min_rank(level)
 
     wrapper_class = (
         structlog.make_filtering_bound_logger(level)

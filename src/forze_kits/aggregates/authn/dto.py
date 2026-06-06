@@ -29,6 +29,9 @@ class AuthnRefreshRequestDTO(BaseDTO):
 class AuthnChangePasswordRequestDTO(BaseDTO):
     """DTO for authentication change-password request."""
 
+    current_password: str
+    """Current plaintext password; re-authenticated before the change is applied."""
+
     new_password: str
     """New plaintext password to set on the current identity's password account."""
 

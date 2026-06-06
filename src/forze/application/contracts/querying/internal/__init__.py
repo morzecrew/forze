@@ -18,6 +18,7 @@ from .nodes import (
     QueryField,
     QueryNot,
     QueryOr,
+    elem_inner_is_scalar,
 )
 from .parse import QueryFilterExpressionParser, QueryFilterLimits
 from .text_pattern import like_pattern_to_regex, validate_text_pattern
@@ -42,6 +43,7 @@ __all__ = [
     "QueryField",
     "QueryNot",
     "QueryOr",
+    "elem_inner_is_scalar",
     "like_pattern_to_regex",
     "validate_text_pattern",
 ]

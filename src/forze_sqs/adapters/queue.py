@@ -95,6 +95,14 @@ class SQSQueueAdapter[M: BaseModel](
 
     async def __queue_name(self, queue: str) -> str:
         if self.__is_queue_url(queue):
+            # An absolute queue URL skips namespace + tenant prefixing entirely.
+            # On a tenant-aware adapter that is a tenant-isolation bypass, so reject it.
+            if self.tenant_aware:
+                raise exc.precondition(
+                    "Absolute SQS queue URLs are not allowed on a tenant-aware "
+                    "adapter: they bypass tenant prefixing and isolation.",
+                )
+
             return queue
 
         tenant_id = self.require_tenant_if_aware()

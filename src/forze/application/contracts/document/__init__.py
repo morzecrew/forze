@@ -7,7 +7,7 @@ from .deps import (
 )
 from .gateways import DocumentReadGatewayPort, DocumentWriteGatewayPort
 from .helpers import require_create_id, require_create_id_for_many
-from .ports import DocumentCommandPort, DocumentQueryPort
+from .ports import BaseDocumentPort, DocumentCommandPort, DocumentQueryPort
 from .codecs import (
     DocumentCodecs,
     document_codecs_for_spec,
@@ -22,6 +22,7 @@ from .types import RowLockMode
 __all__ = [
     "DocumentReadGatewayPort",
     "DocumentWriteGatewayPort",
+    "BaseDocumentPort",
     "DocumentQueryPort",
     "DocumentCommandPort",
     "RowLockMode",

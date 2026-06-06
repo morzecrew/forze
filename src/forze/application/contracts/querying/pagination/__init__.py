@@ -15,8 +15,10 @@ from .cursor_token import (
     decode_keyset_v1,
     encode_keyset_v1,
     keyset_canonical_value,
+    keyset_page_bounds,
     row_passes_keyset_seek,
     row_value_for_sort_key,
+    validate_cursor_token,
 )
 
 # ----------------------- #
@@ -28,6 +30,7 @@ __all__ = [
     "decode_keyset_v1",
     "encode_keyset_v1",
     "keyset_canonical_value",
+    "keyset_page_bounds",
     "normalize_sorts_for_keyset",
     "normalize_sorts_with_id",
     "read_fields_for_model",
@@ -35,5 +38,6 @@ __all__ = [
     "resolved_cursor_limit",
     "row_passes_keyset_seek",
     "row_value_for_sort_key",
+    "validate_cursor_token",
     "validate_sort_fields",
 ]

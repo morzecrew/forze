@@ -167,6 +167,25 @@ class ObjectStorageAdapter(StoragePort, TenancyMixin):
 
     # ....................... #
 
+    def _validate_key(self, key: str) -> None:
+        """Reject object keys that could escape the bucket/tenant prefix.
+
+        Keys minted by this adapter are a validated prefix plus a generated id, so a
+        well-formed key matches the same safe charset and contains no ``..`` segments.
+        A ``key`` supplied to :meth:`download` / :meth:`delete` that fails this check
+        (path traversal, absolute path, control characters) is rejected instead of
+        being forwarded to the object store, blunting cross-object access from
+        untrusted input.
+        """
+
+        if not key or not re.match(r"^[a-zA-Z0-9!\-_.*'()/]+$", key):
+            raise exc.precondition(f"Invalid object storage key: {key!r}")
+
+        if key.startswith("/") or ".." in key.split("/"):
+            raise exc.precondition(f"Unsafe object storage key: {key!r}")
+
+    # ....................... #
+
     async def upload(self, obj: UploadedObject) -> StoredObject:
         """Upload a file and return its stored representation."""
 
@@ -220,6 +239,7 @@ class ObjectStorageAdapter(StoragePort, TenancyMixin):
     async def download(self, key: str) -> DownloadedObject:
         """Download an object by key and return its data with metadata."""
 
+        self._validate_key(key)
         bucket = await self._resolved_bucket()
 
         async with self.client.client():
@@ -250,6 +270,7 @@ class ObjectStorageAdapter(StoragePort, TenancyMixin):
     async def delete(self, key: str) -> None:
         """Delete an object from the bucket by key."""
 
+        self._validate_key(key)
         bucket = await self._resolved_bucket()
 
         async with self.client.client():

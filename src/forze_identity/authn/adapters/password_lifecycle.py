@@ -57,6 +57,7 @@ class PasswordLifecycleAdapter(PasswordLifecyclePort):
     async def change_password(
         self,
         identity: AuthnIdentity,
+        current_password: str,
         new_password: str,
     ) -> None:
         await self.eligibility.require_authentication_allowed(identity.principal_id)
@@ -68,6 +69,18 @@ class PasswordLifecycleAdapter(PasswordLifecyclePort):
 
         if pa is None or not pa.is_active:
             raise exc.authentication("Password account not found")
+
+        # Re-authenticate with the current password before allowing the change, so a
+        # hijacked session (a valid bearer identity) cannot escalate to a full account
+        # takeover by silently resetting the password.
+        if not self.password_svc.verify_password(
+            password_hash=pa.password_hash,
+            password=current_password,
+        ):
+            raise exc.authentication(
+                "Current password is incorrect",
+                code="invalid_credentials",
+            )
 
         new_pwd_hash = self.password_svc.hash_password(new_password)
         upd_cmd = UpdatePasswordAccountCmd(password_hash=new_pwd_hash)

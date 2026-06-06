@@ -22,15 +22,16 @@ from tenacity import (
 )
 
 from forze.application.contracts.querying import QueryFilterExpression
+from forze.application.integrations.persistence import HistoryOccMixin
 from forze.base.exceptions import CoreException, ExceptionKind, exc
 from forze.base.primitives import JsonDict, OnceCell
 from forze.base.serialization import ModelCodec
 from forze.domain.constants import ID_FIELD, REV_FIELD
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document
-
 from forze_postgres.kernel.catalog.introspect import PostgresColumnTypes, PostgresType
 from forze_postgres.kernel.client import gather_db_work
 from forze_postgres.kernel.sql.conflict_target import resolve_write_conflict_target
+
 from .base import PostgresGateway
 from .history import PostgresHistoryGateway
 from .read import PostgresReadGateway
@@ -100,7 +101,8 @@ def _values_placeholder_for_patch_group(
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
-    PostgresGateway[D]
+    HistoryOccMixin[D],
+    PostgresGateway[D],
 ):
     """Write gateway for document mutations with optimistic concurrency control.
 
@@ -121,10 +123,12 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
     create_codec: ModelCodec[D, Any] = attrs.field(kw_only=True, eq=False, repr=False)
     """Codec for create commands."""
 
-    update_codec: ModelCodec[U, Any] | None = attrs.field(kw_only=True, eq=False, repr=False)
+    update_codec: ModelCodec[U, Any] | None = attrs.field(
+        kw_only=True, eq=False, repr=False
+    )
     """Codec for update commands when :attr:`update_cmd_type` is set; else ``None``."""
 
-    history_gw: PostgresHistoryGateway[D] | None = attrs.field(default=None)
+    history_gw: PostgresHistoryGateway[D] | None = attrs.field(default=None)  # type: ignore[override]
     """Optional history gateway for revision snapshots."""
 
     strategy: PostgresBookkeepingStrategy
@@ -205,55 +209,11 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
             return self.update_codec
 
         if self.update_cmd_type is not None:
-            raise exc.internal("Update codec is required when update commands are supported")
+            raise exc.internal(
+                "Update codec is required when update commands are supported"
+            )
 
         return self.read_codec
-
-    # ....................... #
-
-    async def _write_history(self, *data: D) -> None:
-        if self.history_gw is not None:
-            await self.history_gw.write_many(data)
-
-    # ....................... #
-
-    async def _validate_history(self, *data: tuple[D, int, JsonDict]) -> None:
-        if self.history_gw is None:
-            for current, rev, _ in data:
-                if rev != current.rev:
-                    raise exc.precondition(
-                        "Revision mismatch", code="revision_mismatch"
-                    )
-
-            return
-
-        to_check = [
-            (current, rev, update)
-            for current, rev, update in data
-            if rev != current.rev
-        ]
-        bad_records = [rev for current, rev, _ in to_check if rev > current.rev]
-
-        if bad_records:
-            raise exc.precondition("Invalid revision number")
-
-        if to_check:
-            pks_to_check = [c.id for c, _, _ in to_check]
-            revs_to_check = [r for _, r, _ in to_check]
-            hist_records = await self.history_gw.read_many(pks_to_check, revs_to_check)
-
-            if len(hist_records) != len(to_check):
-                raise exc.precondition(
-                    "History records not found. Please retry with actual revision number.",
-                    code="history_not_found_retry",
-                )
-
-            for (c, _, u), h in zip(to_check, hist_records, strict=True):
-                if not c.validate_historical_consistency(h, u):
-                    raise exc.conflict(
-                        "Historical consistency violation during update",
-                        code="historical_consistency_violation",
-                    )
 
     # ....................... #
 
@@ -383,7 +343,9 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
             for offset in range(0, len(dtos), batch_size):
                 dto_batch = dtos[offset : offset + batch_size]
                 models = self._from_create_dto_many(dto_batch)
-                insert_data_raw = self.read_codec.encode_persistence_mapping_many(models)
+                insert_data_raw = self.read_codec.encode_persistence_mapping_many(
+                    models
+                )
                 insert_data = await self.adapt_many_payload_for_write(
                     insert_data_raw,
                     create=True,
@@ -574,7 +536,9 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
             for offset in range(0, len(dtos), batch_size):
                 dto_batch = dtos[offset : offset + batch_size]
                 models = self._from_create_dto_many(dto_batch)
-                insert_data_raw = self.read_codec.encode_persistence_mapping_many(models)
+                insert_data_raw = self.read_codec.encode_persistence_mapping_many(
+                    models
+                )
                 insert_data = await self.adapt_many_payload_for_write(
                     insert_data_raw,
                     create=True,
@@ -774,7 +738,9 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
                 batch_pairs = pairs[offset : offset + batch_size]
                 creates = [c for c, _ in batch_pairs]
                 models = self._from_create_dto_many(creates)
-                insert_data_raw = self.read_codec.encode_persistence_mapping_many(models)
+                insert_data_raw = self.read_codec.encode_persistence_mapping_many(
+                    models
+                )
                 insert_data = await self.adapt_many_payload_for_write(
                     insert_data_raw,
                     create=True,

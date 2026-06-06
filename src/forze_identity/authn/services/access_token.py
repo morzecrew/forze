@@ -57,7 +57,7 @@ class AccessTokenClaims(TypedDict):
 class AccessTokenService:
     """Access token service."""
 
-    secret_key: bytes = attrs.field(validator=attrs.validators.min_len(32))
+    secret_key: bytes = attrs.field(repr=False, validator=attrs.validators.min_len(32))
     config: AccessTokenConfig = attrs.field(factory=AccessTokenConfig)
 
     # ....................... #
@@ -135,6 +135,20 @@ class AccessTokenService:
         *,
         leeway: timedelta = timedelta(seconds=10),
     ) -> AccessTokenClaims | None:
+        """Verify only the signature and return claims **without** validating them.
+
+        .. warning::
+
+            This is **not** an authentication gate. The signature is checked, but
+            ``exp`` / ``iss`` / ``aud`` / ``nbf`` are **not** verified and no claims are
+            required, so this accepts expired or wrong-audience tokens. Use it only to
+            read claims out of a structurally valid token (e.g. to surface a session id
+            during logout); use :meth:`verify_token` to authenticate.
+
+        :returns: The decoded claims, or ``None`` if the signature is invalid or the
+            token is malformed.
+        """
+
         try:
             res = jwt.decode(  # pyright: ignore[reportUnknownMemberType]
                 jwt=token,

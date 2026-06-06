@@ -10,7 +10,8 @@ from forze.base.exceptions import CoreException
 from forze_meilisearch.adapters.search._filter_render import (
     MeilisearchFilterRenderer,
     _format_array,
-    _format_literal,
+    format_literal,
+    safe_attribute,
 )
 
 # ----------------------- #
@@ -49,16 +50,38 @@ def test_like_unsupported() -> None:
         r._render_expr(expr)
 
 
+def test_safe_attribute_accepts_identifiers_and_nested_paths() -> None:
+    assert safe_attribute("status") == "status"
+    assert safe_attribute("meta.kind") == "meta.kind"
+
+
+def test_safe_attribute_rejects_injection_payloads() -> None:
+    for bad in ("id = 1 OR _geoRadius(0,0,9e9)", 'x" OR "1', "a b", "x;y", "(a)"):
+        with pytest.raises(CoreException):
+            safe_attribute(bad)
+
+
+def test_filter_rejects_injected_field_name() -> None:
+    # A user-controlled filter key cannot inject filter-expression fragments.
+    r = MeilisearchFilterRenderer()
+    expr = QueryFilterExpressionParser.parse(
+        {"$values": {"id = 1 OR _geoRadius(0,0,9e9)": {"$eq": "x"}}},
+    )
+
+    with pytest.raises(CoreException):
+        r._render_expr(expr)
+
+
 def test_format_literals() -> None:
-    assert _format_literal(None) == "NULL"
-    assert _format_literal(True) == "true"
-    assert _format_literal(False) == "false"
-    assert _format_literal(3) == "3"
+    assert format_literal(None) == "NULL"
+    assert format_literal(True) == "true"
+    assert format_literal(False) == "false"
+    assert format_literal(3) == "3"
     uid = UUID("00000000-0000-0000-0000-000000000001")
-    assert _format_literal(uid) == '"00000000-0000-0000-0000-000000000001"'
-    assert _format_literal('say "hi"') == r'"say \"hi\""'
-    assert _format_literal(datetime(2024, 1, 2, 3, 4, 5, tzinfo=UTC)) == '"2024-01-02T03:04:05+00:00"'
-    assert _format_literal(date(2024, 1, 2)) == '"2024-01-02"'
+    assert format_literal(uid) == '"00000000-0000-0000-0000-000000000001"'
+    assert format_literal('say "hi"') == r'"say \"hi\""'
+    assert format_literal(datetime(2024, 1, 2, 3, 4, 5, tzinfo=UTC)) == '"2024-01-02T03:04:05+00:00"'
+    assert format_literal(date(2024, 1, 2)) == '"2024-01-02"'
 
 
 def test_format_array_requires_sequence() -> None:

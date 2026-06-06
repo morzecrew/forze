@@ -20,7 +20,11 @@ from forze.application.contracts.tenancy.mixins import TenancyMixin
 from forze.base.exceptions import exc
 from forze.base.primitives import OnceCell
 from forze.domain.constants import ID_FIELD
-from forze_meilisearch.adapters.search._filter_render import MeilisearchFilterRenderer
+from forze_meilisearch.adapters.search._filter_render import (
+    MeilisearchFilterRenderer,
+    format_literal,
+    safe_attribute,
+)
 from forze_meilisearch.execution.deps.configs import MeilisearchSearchConfig
 from forze_meilisearch.kernel.relation import resolve_meilisearch_index_uid
 
@@ -149,8 +153,8 @@ class MeilisearchSearchGateway[M: BaseModel](TenancyMixin):
         if tenant_id is None:
             return None
 
-        attr = self.physical_path(TENANT_ID_FIELD)
-        return f'{attr} = "{tenant_id}"'
+        attr = safe_attribute(self.physical_path(TENANT_ID_FIELD))
+        return f"{attr} = {format_literal(tenant_id)}"
 
     # ....................... #
 

@@ -38,6 +38,13 @@ class SecurityContextMiddleware:
     when_multiple_credentials: Literal["first_in_order", "reject"]
     """Policy for handling more than one resolver returning a non-``None`` identity."""
 
+    trust_tenant_header: bool = attrs.field(default=False, kw_only=True)
+    """Trust the raw ``X-Tenant-Id`` header when no tenancy resolver validates it.
+
+    Default ``False`` (deny): an unvalidated header tenant is unauthenticated input.
+    Enable only behind a trusted gateway that sets the header authoritatively.
+    """
+
     # ....................... #
 
     async def _resolve_authn(
@@ -79,7 +86,12 @@ class SecurityContextMiddleware:
 
         authn_res = await self._resolve_authn(request, ctx)
         authn = authn_res.identity if authn_res is not None else None
-        tenant = await resolve_tenant_identity(authn_res, request=request, ctx=ctx)
+        tenant = await resolve_tenant_identity(
+            authn_res,
+            request=request,
+            ctx=ctx,
+            trust_tenant_header=self.trust_tenant_header,
+        )
 
         with ctx.inv_ctx.bind_identity(authn=authn, tenant=tenant):
             await self.app(scope, receive, send)

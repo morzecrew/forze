@@ -1,6 +1,6 @@
 """Structured secrets for tenant-routed GCS clients."""
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, SecretStr, model_validator
 
 from forze.base.primitives.fingerprint import (
     combine_fingerprint,
@@ -20,7 +20,7 @@ class GCSRoutingCredentials(BaseModel):
 
     project_id: str = Field(..., min_length=1)
     service_file: str | None = None
-    service_account_json: str | None = None
+    service_account_json: SecretStr | None = None
 
     @model_validator(mode="after")
     def _one_credential_source(self) -> "GCSRoutingCredentials":
@@ -38,15 +38,21 @@ class GCSRoutingCredentials(BaseModel):
 def routing_credential_dedup_tag(
     *,
     key_file: str | None = None,
-    inline_key_json: str | None = None,
+    inline_key_json: str | SecretStr | None = None,
 ) -> str:
     """Return a dedup tag for routed credential sources (never embeds raw JSON)."""
 
     if key_file:
         return f"file:{key_file}"
 
-    if inline_key_json:
-        return f"inline:{secret_dedup_fingerprint(inline_key_json)}"
+    raw = (
+        inline_key_json.get_secret_value()
+        if isinstance(inline_key_json, SecretStr)
+        else inline_key_json
+    )
+
+    if raw:
+        return f"inline:{secret_dedup_fingerprint(raw)}"
 
     return "default-credentials"
 
@@ -73,10 +79,16 @@ def credential_file_for_init(
     if creds.service_file:
         return OwnedTempPath.unowned(creds.service_file)
 
-    if not creds.service_account_json:
+    inline_json = (
+        creds.service_account_json.get_secret_value()
+        if creds.service_account_json is not None
+        else None
+    )
+
+    if not inline_json:
         return OwnedTempPath.empty()
 
     return OwnedTempPath.materialize_text(
-        creds.service_account_json,
+        inline_json,
         prefix=prefix,
     )

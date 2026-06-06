@@ -19,7 +19,11 @@ class TestAuthnDTOs:
         assert dto.refresh_token == "rtok"
 
     def test_change_password_request(self) -> None:
-        dto = AuthnChangePasswordRequestDTO(new_password="new-secret")
+        dto = AuthnChangePasswordRequestDTO(
+            current_password="old-secret",
+            new_password="new-secret",
+        )
+        assert dto.current_password == "old-secret"
         assert dto.new_password == "new-secret"
 
     def test_token_response_defaults(self) -> None:

@@ -407,8 +407,7 @@ class TestSecurityContextMiddleware:
         assert isinstance(captured["tenant"], TenantIdentity)
         assert captured["tenant"].tenant_id == tid
 
-    def test_binds_tenant_from_header_hint_without_resolver(self) -> None:
-        tid = uuid4()
+    def _run_with_tenant_header(self, tid: UUID, *, trust_tenant_header: bool):
         ctx = context_from_deps(Deps.plain({AuthnDepKey: _TokenAuthFactory()}))
         captured: dict[str, object] = {}
 
@@ -424,6 +423,7 @@ class TestSecurityContextMiddleware:
                 ingress=(HeaderTokenAuthn(authn_spec=_TOKEN_SPEC, header_name="Authorization"),)
             ),
             when_multiple_credentials="first_in_order",
+            trust_tenant_header=trust_tenant_header,
         )
         response = TestClient(mw).get(
             "/",
@@ -434,8 +434,18 @@ class TestSecurityContextMiddleware:
         )
 
         assert response.status_code == 200
-        assert isinstance(captured["tenant"], TenantIdentity)
-        assert captured["tenant"].tenant_id == tid
+        return captured["tenant"]
+
+    def test_header_tenant_denied_by_default_without_resolver(self) -> None:
+        # Unvalidated X-Tenant-Id header is not trusted unless opted in.
+        tenant = self._run_with_tenant_header(uuid4(), trust_tenant_header=False)
+        assert tenant is None
+
+    def test_binds_header_tenant_when_trust_tenant_header_opted_in(self) -> None:
+        tid = uuid4()
+        tenant = self._run_with_tenant_header(tid, trust_tenant_header=True)
+        assert isinstance(tenant, TenantIdentity)
+        assert tenant.tenant_id == tid
 
     def test_first_in_order_short_circuits(self) -> None:
         ctx = context_from_deps(Deps.plain({AuthnDepKey: _BothFactory()}))

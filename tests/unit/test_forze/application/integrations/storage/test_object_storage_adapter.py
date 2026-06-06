@@ -49,6 +49,55 @@ def test_validate_prefix_invalid(storage_adapter: ObjectStorageAdapter) -> None:
         assert f"Invalid object storage prefix: {prefix}" in str(excinfo.value)
 
 
+def test_validate_key_accepts_minted_keys(
+    storage_adapter: ObjectStorageAdapter,
+) -> None:
+    # Keys this adapter produces (validated prefix + generated id) pass.
+    storage_adapter._validate_key("018f-uuid7-id")
+    storage_adapter._validate_key("tenant-abc/prefix/018f-uuid7-id")
+    storage_adapter._validate_key(storage_adapter.construct_key("docs"))
+
+
+def test_validate_key_rejects_unsafe_keys(
+    storage_adapter: ObjectStorageAdapter,
+) -> None:
+    for bad in (
+        "",
+        "../etc/passwd",
+        "a/../../b",
+        "/absolute/key",
+        "key with space",
+        "key@bad",
+        "ctrl\nchar",
+    ):
+        with pytest.raises(CoreException):
+            storage_adapter._validate_key(bad)
+
+
+@pytest.mark.asyncio
+async def test_delete_rejects_traversal_key(
+    storage_adapter: ObjectStorageAdapter,
+) -> None:
+    storage_adapter.client.delete_object = AsyncMock()
+
+    with pytest.raises(CoreException):
+        await storage_adapter.delete("../../secret")
+
+    storage_adapter.client.delete_object.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_download_rejects_traversal_key(
+    storage_adapter: ObjectStorageAdapter,
+) -> None:
+    storage_adapter.client.head_object = AsyncMock()
+
+    with pytest.raises(CoreException):
+        await storage_adapter.download("../../secret")
+
+    storage_adapter.client.head_object.assert_not_called()
+
+
 @pytest.mark.asyncio
 async def test_upload_invalid_prefix_raises(
     storage_adapter: ObjectStorageAdapter,

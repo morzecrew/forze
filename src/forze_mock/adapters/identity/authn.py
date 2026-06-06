@@ -180,9 +180,10 @@ class MockPasswordLifecyclePort(PasswordLifecyclePort):
     async def change_password(
         self,
         identity: AuthnIdentity,
+        current_password: str,
         new_password: str,
     ) -> None:
-        _ = identity, new_password
+        _ = identity, current_password, new_password
         raise exc.internal("Mock password lifecycle not configured")
 
 

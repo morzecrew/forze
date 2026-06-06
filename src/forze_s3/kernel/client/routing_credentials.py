@@ -1,6 +1,6 @@
 """Structured secret payload for per-tenant S3-compatible storage credentials."""
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, SecretStr
 
 # ----------------------- #
 
@@ -13,4 +13,4 @@ class S3RoutingCredentials(BaseModel):
 
     endpoint: str = Field(..., min_length=1)
     access_key_id: str = Field(..., min_length=1)
-    secret_access_key: str = Field(..., min_length=1)
+    secret_access_key: SecretStr = Field(..., min_length=1)

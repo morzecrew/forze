@@ -61,6 +61,16 @@ class OidcTokenVerifier(TokenVerifierPort):
     leeway: timedelta = attrs.field(default=timedelta(seconds=10))
     """Clock-skew leeway for ``iat``/``exp``/``nbf`` validation."""
 
+    require_nonce: bool = False
+    """When ``True``, reject tokens missing a ``nonce`` claim.
+
+    Presence-only. Binding the ``nonce`` *value* to the per-request nonce remains the
+    responsibility of the redirect/callback handler, because this stateless verifier
+    holds no per-authentication-request state. Enabling this forces the IdP to issue
+    the token through an interactive flow that carried a nonce, which blocks replaying
+    a nonce-less token (e.g. minted via a non-interactive grant) into a login slot.
+    """
+
     claim_mapper: OidcClaimMapper = attrs.field(factory=OidcClaimMapper)
     """Maps the verified claim payload onto the canonical assertion shape."""
 
@@ -89,6 +99,11 @@ class OidcTokenVerifier(TokenVerifierPort):
                 credentials.token,
             )
 
+            required_claims = ["iss", "sub", "exp"]
+
+            if self.require_nonce:
+                required_claims.append("nonce")
+
             claims = jwt_decode(  # pyright: ignore[reportUnknownMemberType]
                 jwt=credentials.token,
                 key=key,
@@ -96,7 +111,7 @@ class OidcTokenVerifier(TokenVerifierPort):
                 audience=self.audience,
                 issuer=self.issuer,
                 leeway=self.leeway,
-                options={"require": ["iss", "sub", "exp"]},
+                options={"require": required_claims},
             )
 
         except ExpiredSignatureError as e:

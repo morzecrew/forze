@@ -38,7 +38,7 @@ class ApiKeyConfig:
 class ApiKeyService:
     """API key generation and verification service."""
 
-    pepper: bytes = attrs.field(validator=attrs.validators.min_len(32))
+    pepper: bytes = attrs.field(repr=False, validator=attrs.validators.min_len(32))
     config: ApiKeyConfig = attrs.field(factory=ApiKeyConfig)
 
     # ....................... #
