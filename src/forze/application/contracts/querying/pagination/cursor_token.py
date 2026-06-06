@@ -206,3 +206,83 @@ def decode_keyset_v1(token: str) -> tuple[list[str], list[str], list[Any]]:
     vals = [_parse_value(v) for v in x]  # type: ignore[arg-type]
 
     return keys, dirs, vals
+
+
+# ....................... #
+
+
+def validate_cursor_token(
+    token: str,
+    *,
+    sort_keys: Sequence[str],
+    directions: Sequence[str],
+) -> list[Any]:
+    """Decode a keyset *token* and verify it matches the active sort; return its values.
+
+    Raises :func:`~forze.base.exceptions.exc.internal` when the token's keys or
+    directions do not align with the current search sort (a stale or mismatched
+    cursor). Shared by every keyset-cursor search path so the validation is identical.
+    """
+
+    tk, td, tv = decode_keyset_v1(token)
+
+    if list(tk) != list(sort_keys) or len(td) != len(directions):
+        raise exc.internal("Cursor does not match current search sort")
+
+    for i, di in enumerate(directions):
+        if (td[i] or "").lower() != di:
+            raise exc.internal("Cursor does not match current search sort")
+
+    return list(tv)
+
+
+# ....................... #
+
+
+def keyset_page_bounds(
+    raw_rows: list[dict[str, Any]],
+    limit: int,
+    *,
+    sort_keys: Sequence[str],
+    directions: Sequence[str],
+    use_after: bool,
+    use_before: bool,
+) -> tuple[list[dict[str, Any]], bool, str | None, str | None]:
+    """Trim an over-fetched keyset result to one page and compute next/prev cursors.
+
+    *raw_rows* holds up to ``limit + 1`` rows — the extra row signals more pages. For a
+    ``before`` page the rows are reversed back into ascending order first. Returns
+    ``(rows, has_more, next_cursor, prev_cursor)``. Shared by the keyset-cursor search
+    paths so the page-boundary and token-emission logic is single-sourced.
+    """
+
+    if use_before:
+        raw_rows = list(reversed(raw_rows))
+
+    has_more = len(raw_rows) > limit
+    rows = raw_rows[:limit]
+
+    def _row_token_vals(row: dict[str, Any]) -> list[Any]:
+        return [row_value_for_sort_key(row, k) for k in sort_keys]
+
+    nxt = (
+        encode_keyset_v1(
+            sort_keys=sort_keys,
+            directions=directions,
+            values=_row_token_vals(rows[-1]),
+        )
+        if has_more and rows
+        else None
+    )
+
+    prv = (
+        encode_keyset_v1(
+            sort_keys=sort_keys,
+            directions=directions,
+            values=_row_token_vals(rows[0]),
+        )
+        if rows and (use_after or (use_before and has_more))
+        else None
+    )
+
+    return rows, has_more, nxt, prv

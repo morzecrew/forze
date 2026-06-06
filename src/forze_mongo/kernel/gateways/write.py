@@ -14,6 +14,7 @@ from pymongo import UpdateOne
 from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
 
 from forze.application.contracts.querying import QueryFilterExpression
+from forze.application.integrations.persistence import HistoryOccMixin
 from forze.base.exceptions import CoreException, ExceptionKind, exc
 from forze.base.primitives import JsonDict
 from forze.base.serialization import ModelCodec
@@ -53,7 +54,10 @@ def optimistic_retry(*, attempts: int = 3):  # type: ignore[no-untyped-def]
 
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](MongoGateway[D]):
+class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
+    HistoryOccMixin[D],
+    MongoGateway[D],
+):
     """Write gateway for Mongo documents with optimistic concurrency and optional history.
 
     Uses a :class:`MongoReadGateway` for read-before-write patterns and
@@ -74,9 +78,11 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](MongoGate
 
     create_codec: ModelCodec[D, Any] = attrs.field(kw_only=True, eq=False, repr=False)
 
-    update_codec: ModelCodec[U, Any] | None = attrs.field(kw_only=True, eq=False, repr=False)
+    update_codec: ModelCodec[U, Any] | None = attrs.field(
+        kw_only=True, eq=False, repr=False
+    )
 
-    history_gw: MongoHistoryGateway[D] | None = attrs.field(default=None)
+    history_gw: MongoHistoryGateway[D] | None = attrs.field(default=None)  # type: ignore[override]
     """Optional history gateway for revision snapshots."""
 
     # ....................... #
@@ -185,53 +191,6 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](MongoGate
             raise
 
         return {d.id: d for d in fetched}
-
-    # ....................... #
-
-    async def _write_history(self, *data: D) -> None:
-        if self.history_gw is not None:
-            await self.history_gw.write_many(data)
-
-    # ....................... #
-
-    async def _validate_history(self, *data: tuple[D, int, JsonDict]) -> None:
-        if self.history_gw is None:
-            for current, rev, _ in data:
-                if rev != current.rev:
-                    raise exc.precondition(
-                        "Revision mismatch", code="revision_mismatch"
-                    )
-
-            return
-
-        to_check = [
-            (current, rev, update)
-            for current, rev, update in data
-            if rev != current.rev
-        ]
-        bad_records = [rev for current, rev, _ in to_check if rev > current.rev]
-
-        if bad_records:
-            raise exc.precondition("Invalid revision number")
-
-        if to_check:
-            pks_to_check = [current.id for current, _, _ in to_check]
-            revs_to_check = [rev for _, rev, _ in to_check]
-            hist_records = await self.history_gw.read_many(pks_to_check, revs_to_check)
-
-            if len(hist_records) != len(to_check):
-                raise exc.not_found(
-                    "History records not found. Please retry with actual revision number."
-                )
-
-            for (current, _, update), historical in zip(
-                to_check, hist_records, strict=True
-            ):
-                if not current.validate_historical_consistency(historical, update):
-                    raise exc.conflict(
-                        "Historical consistency violation during update",
-                        code="historical_consistency_violation",
-                    )
 
     # ....................... #
 

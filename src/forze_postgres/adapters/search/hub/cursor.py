@@ -16,16 +16,13 @@ from forze.application.contracts.querying import (
     CursorPaginationExpression,
     QueryFilterExpression,
     QuerySortExpression,
-    decode_keyset_v1,
-    encode_keyset_v1,
-    row_value_for_sort_key,
+    keyset_page_bounds,
+    validate_cursor_token,
 )
 from forze.application.contracts.search import (
     SearchOptions,
     cursor_return_fields_for_select,
 )
-from forze.base.exceptions import exc
-from forze.base.primitives import JsonDict
 
 from .._cursor_run import parse_search_cursor
 from .._materialize_hits import decode_search_hits, search_trust_source
@@ -131,19 +128,16 @@ class HubSearchCursorMixin[T: BaseModel](HubParallelSearchMixin[T]):
 
         if use_after or use_before:
             token = str(c["after" if use_after else "before"])
-            tk, td, tv = decode_keyset_v1(token)
-
-            if tk != sort_keys or len(td) != len(directions):
-                raise exc.internal("Cursor does not match current search sort")
-
-            for i, di in enumerate(directions):
-                if (td[i] or "").lower() != di:
-                    raise exc.internal("Cursor does not match current search sort")
+            tv = validate_cursor_token(
+                token,
+                sort_keys=sort_keys,
+                directions=directions,
+            )
 
             sk, sp = build_seek_condition(
                 exprs,
                 directions,
-                list(tv),
+                tv,
                 "before" if use_before else "after",
             )
 
@@ -221,34 +215,14 @@ class HubSearchCursorMixin[T: BaseModel](HubParallelSearchMixin[T]):
             ),
         )  # type: ignore[assignment, arg-type]
 
-        if use_before:
-            raw_rows = list(reversed(raw_rows))
-
-        has_more = len(raw_rows) > lim
-        rows = raw_rows[:lim]
-
-        def _row_token_vals(row: JsonDict) -> list[Any]:
-            return [row_value_for_sort_key(row, k) for k in sort_keys]
-
-        if has_more and rows:
-            nxt = encode_keyset_v1(
-                sort_keys=sort_keys,
-                directions=directions,
-                values=_row_token_vals(rows[-1]),
-            )
-
-        else:
-            nxt = None
-
-        if rows and (use_after or (use_before and has_more)):
-            prv = encode_keyset_v1(
-                sort_keys=sort_keys,
-                directions=directions,
-                values=_row_token_vals(rows[0]),
-            )
-
-        else:
-            prv = None
+        rows, has_more, nxt, prv = keyset_page_bounds(
+            raw_rows,
+            lim,
+            sort_keys=sort_keys,
+            directions=directions,
+            use_after=use_after,
+            use_before=use_before,
+        )
 
         trust = search_trust_source(self._hub_host.read_validation)
 

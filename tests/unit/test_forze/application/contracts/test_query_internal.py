@@ -20,6 +20,7 @@ from forze.application.contracts.querying.internal import (
     QueryNot,
     QueryOr,
     QueryValueCaster,
+    elem_inner_is_scalar,
 )
 from forze.base.exceptions import CoreException
 
@@ -1040,3 +1041,42 @@ class TestQueryNodes:
         assert issubclass(QueryOr, QueryExpr)
         assert issubclass(QueryNot, QueryExpr)
         assert issubclass(QueryElem, QueryExpr)
+
+
+# ----------------------- #
+# elem_inner_is_scalar (shared by backend renderers)
+
+
+def test_elem_inner_is_scalar_single_scalar_field() -> None:
+    assert elem_inner_is_scalar(QueryField(ELEM_SCALAR_FIELD, "$eq", "x")) is True
+    assert elem_inner_is_scalar(QueryField("name", "$eq", "x")) is False
+
+
+def test_elem_inner_is_scalar_and_all_scalar() -> None:
+    expr = QueryAnd(
+        (
+            QueryField(ELEM_SCALAR_FIELD, "$gte", 1),
+            QueryField(ELEM_SCALAR_FIELD, "$lt", 10),
+        )
+    )
+    assert elem_inner_is_scalar(expr) is True
+
+    mixed = QueryAnd(
+        (QueryField(ELEM_SCALAR_FIELD, "$gte", 1), QueryField("qty", "$lt", 10))
+    )
+    assert elem_inner_is_scalar(mixed) is False
+
+
+def test_elem_inner_is_scalar_or_recurses() -> None:
+    expr = QueryOr(
+        (
+            QueryField(ELEM_SCALAR_FIELD, "$eq", "a"),
+            QueryAnd((QueryField(ELEM_SCALAR_FIELD, "$eq", "b"),)),
+        )
+    )
+    assert elem_inner_is_scalar(expr) is True
+
+
+def test_elem_inner_is_scalar_object_predicate_is_false() -> None:
+    assert elem_inner_is_scalar(QueryField("sku", "$eq", "x")) is False
+    assert elem_inner_is_scalar(QueryNot(QueryField(ELEM_SCALAR_FIELD, "$eq", "x"))) is False

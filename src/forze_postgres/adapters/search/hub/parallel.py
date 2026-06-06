@@ -14,14 +14,13 @@ from forze.application.contracts.querying import (
     PaginationExpression,
     QueryFilterExpression,
     QuerySortExpression,
-    decode_keyset_v1,
     encode_keyset_v1,
     row_passes_keyset_seek,
     row_value_for_sort_key,
+    validate_cursor_token,
 )
 from forze.application.contracts.search import SearchOptions, SearchResultSnapshotOptions
 from forze.application.integrations.search import SearchResultSnapshot
-from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
 
 from .._cursor_run import parse_search_cursor
@@ -340,16 +339,11 @@ class HubParallelSearchMixin(HubSearchSqlMixin[M]):
 
         if use_after or use_before:
             token = str(c["after" if use_after else "before"])
-            tk, td, tv = decode_keyset_v1(token)
-
-            if tk != sort_keys or len(td) != len(directions):
-                raise exc.internal("Cursor does not match current search sort")
-
-            for i, di in enumerate(directions):
-                if (td[i] or "").lower() != di:
-                    raise exc.internal("Cursor does not match current search sort")
-
-            cursor_vals = list(tv)
+            cursor_vals = validate_cursor_token(
+                token,
+                sort_keys=sort_keys,
+                directions=directions,
+            )
 
             merged = [
                 r

@@ -53,6 +53,7 @@ from .internal import (
     QueryNot,
     QueryOr,
     QueryValueCaster,
+    elem_inner_is_scalar,
 )
 from .pagination import (
     assemble_keyset_cursor_page,
@@ -61,6 +62,7 @@ from .pagination import (
     decode_keyset_v1,
     encode_keyset_v1,
     keyset_canonical_value,
+    keyset_page_bounds,
     normalize_sorts_for_keyset,
     normalize_sorts_with_id,
     read_fields_for_model,
@@ -68,6 +70,7 @@ from .pagination import (
     resolved_cursor_limit,
     row_passes_keyset_seek,
     row_value_for_sort_key,
+    validate_cursor_token,
     validate_sort_fields,
 )
 from .types import ElementOp, QueryElementQuantifier, QueryOp, QueryValue
@@ -129,16 +132,19 @@ __all__ = [
     "QueryOr",
     "QueryOp",
     "QueryValue",
+    "elem_inner_is_scalar",
     "compare_keyset_sort_values",
     "decode_keyset_v1",
     "encode_keyset_v1",
     "keyset_canonical_value",
+    "keyset_page_bounds",
     "normalize_sorts_for_keyset",
     "normalize_sorts_with_id",
     "read_fields_for_model",
     "resolve_effective_sorts",
     "resolved_cursor_limit",
     "row_passes_keyset_seek",
+    "validate_cursor_token",
     "validate_sort_fields",
     "row_value_for_sort_key",
     "QueryConjunction",

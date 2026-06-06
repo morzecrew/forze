@@ -97,3 +97,33 @@ class QueryElem(QueryExpr):
 
     inner: QueryExpr
     """Element predicate (often :class:`QueryAnd` of element-relative :class:`QueryField` nodes)."""
+
+
+# ....................... #
+
+
+def elem_inner_is_scalar(inner: QueryExpr) -> bool:
+    """Whether an element-quantifier's inner predicate targets the scalar element itself.
+
+    A scalar inner predicate references only the sentinel :data:`ELEM_SCALAR_FIELD`
+    (a primitive array element, e.g. ``tags`` of strings) rather than sub-fields of an
+    object element. Backend renderers branch on this to choose scalar-vs-object element
+    SQL/operator shapes; kept here (with the AST nodes) so every backend shares one
+    definition.
+    """
+
+    match inner:
+        case QueryField(name, _, _):
+            return name == ELEM_SCALAR_FIELD
+
+        case QueryAnd(items):
+            return all(
+                isinstance(i, QueryField) and i.name == ELEM_SCALAR_FIELD
+                for i in items
+            )
+
+        case QueryOr(items):
+            return all(elem_inner_is_scalar(i) for i in items)
+
+        case _:
+            return False

@@ -34,6 +34,7 @@ from forze.application.contracts.querying import (
     QueryOr,
     QueryValue,
     QueryValueCaster,
+    elem_inner_is_scalar,
 )
 from forze.base.exceptions import exc
 
@@ -923,30 +924,10 @@ class PsycopgQueryRenderer:
         t: PostgresType | None,
         path: str,
     ) -> sql.Composable:
-        if self._elem_inner_is_scalar(inner):
+        if elem_inner_is_scalar(inner):
             return self._render_elem_scalar_inner(inner, t)
 
         return self._render_elem_object_inner(inner, col, t, path)
-
-    # ....................... #
-
-    @staticmethod
-    def _elem_inner_is_scalar(inner: QueryExpr) -> bool:
-        match inner:
-            case QueryField(name, _, _):
-                return name == ELEM_SCALAR_FIELD
-
-            case QueryAnd(items):
-                return all(
-                    isinstance(i, QueryField) and i.name == ELEM_SCALAR_FIELD
-                    for i in items
-                )
-
-            case QueryOr(items):
-                return all(PsycopgQueryRenderer._elem_inner_is_scalar(i) for i in items)
-
-            case _:
-                return False
 
     # ....................... #
 
