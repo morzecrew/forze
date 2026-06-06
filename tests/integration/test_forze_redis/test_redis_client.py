@@ -1,8 +1,9 @@
 from uuid import uuid4
 
 import pytest
+from pydantic import SecretStr
 
-from forze_redis.kernel.client import RedisClient
+from forze_redis.kernel.client import RedisClient, RedisConfig
 
 
 @pytest.mark.asyncio
@@ -99,3 +100,146 @@ async def test_mset_nx_all_or_nothing(redis_client: RedisClient) -> None:
     assert await redis_client.mset({a: "x", b: "y"}, ex=60, nx=True) is True
     assert await redis_client.get(a) == b"x"
     assert await redis_client.get(b) == b"y"
+
+
+@pytest.mark.asyncio
+async def test_mset_nx_and_xx_together_raises(redis_client: RedisClient) -> None:
+    """mset rejects nx and xx at the same time."""
+    from forze.base.exceptions import CoreException
+
+    prefix = f"it:redis-client:mset-nxxx:{uuid4()}"
+    with pytest.raises(CoreException):
+        await redis_client.mset({f"{prefix}:a": "1"}, ex=60, nx=True, xx=True)
+
+
+@pytest.mark.asyncio
+async def test_mset_empty_mapping_is_noop(redis_client: RedisClient) -> None:
+    assert await redis_client.mset({}) is True
+
+
+@pytest.mark.asyncio
+async def test_empty_arg_methods_short_circuit(redis_client: RedisClient) -> None:
+    """delete/unlink with no keys, mget with no keys, xdel/xack with no ids."""
+    assert await redis_client.delete() == 0
+    assert await redis_client.unlink() == 0
+    assert await redis_client.mget([]) == []
+    assert await redis_client.xdel(f"it:redis-client:nostream:{uuid4()}", []) == 0
+    assert (
+        await redis_client.xack(
+            f"it:redis-client:nostream:{uuid4()}", "g", []
+        )
+        == 0
+    )
+
+
+@pytest.mark.asyncio
+async def test_mget_chunks_large_key_sets(redis_client: RedisClient) -> None:
+    """mget splits requests larger than the chunk size (2000) into batches."""
+    prefix = f"it:redis-client:mget-chunk:{uuid4()}"
+    total = 2500
+    mapping = {f"{prefix}:{i}": str(i) for i in range(total)}
+
+    assert await redis_client.mset(mapping) is True
+
+    keys = list(mapping.keys()) + [f"{prefix}:missing"]
+    values = await redis_client.mget(keys)
+
+    assert len(values) == total + 1
+    assert values[0] == b"0"
+    assert values[total - 1] == str(total - 1).encode()
+    assert values[-1] is None
+
+
+@pytest.mark.asyncio
+async def test_read_methods_inside_pipeline(redis_client: RedisClient) -> None:
+    """Reads issued inside a pipeline route through the pipeline (no retry wrapper)."""
+    prefix = f"it:redis-client:pipe-read:{uuid4()}"
+    key = f"{prefix}:k"
+
+    await redis_client.set(key, "v")
+
+    async with redis_client.pipeline(transaction=True):
+        await redis_client.get(key)
+        await redis_client.exists(key)
+
+
+@pytest.mark.asyncio
+async def test_pttl_variants(redis_client: RedisClient) -> None:
+    """pttl returns None for persistent/missing keys and a positive value with TTL."""
+    prefix = f"it:redis-client:pttl:{uuid4()}"
+    persistent = f"{prefix}:persistent"
+    with_ttl = f"{prefix}:ttl"
+    missing = f"{prefix}:missing"
+
+    await redis_client.set(persistent, "v")
+    await redis_client.set(with_ttl, "v", ex=3600)
+
+    assert await redis_client.pttl(persistent) is None
+    assert await redis_client.pttl(missing) is None
+    raw = await redis_client.pttl(with_ttl)
+    assert raw is not None and raw > 0
+
+    assert await redis_client.pttl_raw_ms(persistent) == -1
+    assert await redis_client.pttl_raw_ms(missing) == -2
+
+
+@pytest.mark.asyncio
+async def test_expire_sets_ttl(redis_client: RedisClient) -> None:
+    prefix = f"it:redis-client:expire:{uuid4()}"
+    key = f"{prefix}:k"
+
+    await redis_client.set(key, "v")
+    assert await redis_client.expire(key, 3600) is True
+    assert await redis_client.pttl(key) is not None
+
+    assert await redis_client.expire(f"{prefix}:missing", 10) is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("script", "expected"),
+    [
+        # Lua ``true`` is converted to integer 1 by Redis.
+        ("return true", "1"),
+        ("return 42", "42"),
+        ("return 'hello'", "hello"),
+    ],
+)
+async def test_run_script_return_types(
+    redis_client: RedisClient,
+    script: str,
+    expected: str,
+) -> None:
+    """run_script normalises Lua return values (int/string) to strings."""
+    assert await redis_client.run_script(script, [], []) == expected
+
+
+@pytest.mark.asyncio
+async def test_run_script_inside_pipeline_uses_eval(redis_client: RedisClient) -> None:
+    """Inside a pipeline run_script goes through pipe.eval, writing the key."""
+    prefix = f"it:redis-client:script-pipe:{uuid4()}"
+    key = f"{prefix}:k"
+
+    async with redis_client.pipeline(transaction=True):
+        await redis_client.run_script(
+            "redis.call('SET', KEYS[1], ARGV[1]); return 1",
+            [key],
+            ["scripted"],
+        )
+
+    assert await redis_client.get(key) == b"scripted"
+
+
+@pytest.mark.asyncio
+async def test_initialize_accepts_secret_str_dsn(redis_container) -> None:
+    """initialize unwraps a SecretStr DSN before building the pool."""
+    host = redis_container.get_container_host_ip()
+    port = redis_container.get_exposed_port(6379)
+    dsn = SecretStr(f"redis://{host}:{port}/0")
+
+    client = RedisClient()
+    await client.initialize(dsn=dsn, config=RedisConfig(max_size=3))
+    try:
+        assert (await client.health())[1] is True
+    finally:
+        await client.close()
