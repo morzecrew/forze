@@ -44,7 +44,7 @@ def build_stored_file_registry(
             ),
             ns.key(StoredFileKernelOp.DOWNLOAD): lambda ctx: DownloadStoredFile(
                 doc=ctx.doc.query(doc_spec),
-                storage=ctx.storage(kit.resolved_storage),
+                storage=ctx.storage.query(kit.resolved_storage),
             ),
             ns.key(StoredFileKernelOp.DELETE): lambda ctx: SoftDeleteStoredFile(
                 doc=ctx.doc.command(doc_spec),

@@ -25,16 +25,16 @@ def build_storage_registry(
     return OperationRegistry(
         handlers={
             ns.key(StorageKernelOp.UPLOAD): lambda ctx: UploadObject(
-                storage=ctx.storage(spec),
+                storage=ctx.storage.command(spec),
             ),
             ns.key(StorageKernelOp.LIST): lambda ctx: ListObjects(
-                storage=ctx.storage(spec),
+                storage=ctx.storage.query(spec),
             ),
             ns.key(StorageKernelOp.DOWNLOAD): lambda ctx: DownloadObject(
-                storage=ctx.storage(spec),
+                storage=ctx.storage.query(spec),
             ),
             ns.key(StorageKernelOp.DELETE): lambda ctx: DeleteObject(
-                storage=ctx.storage(spec),
+                storage=ctx.storage.command(spec),
             ),
         }
     )

@@ -67,7 +67,7 @@ class TestStoredFileHandlers:
 
         download = DownloadStoredFile(
             doc=stub_ctx.doc.query(kit.document),
-            storage=stub_ctx.storage(kit.resolved_storage),
+            storage=stub_ctx.storage.query(kit.resolved_storage),
         )
         result = await download(StoredFileIdDTO(id=ready.id))
         assert result.data == b"hello"
@@ -106,7 +106,7 @@ class TestStoredFileHandlers:
             search=stub_ctx.search.command(kit.search_spec),
         )
 
-        storage = stub_ctx.storage(kit.resolved_storage)
+        storage = stub_ctx.storage.query(kit.resolved_storage)
         _, total = await storage.list(limit=10, offset=0)
         assert total == 0
 

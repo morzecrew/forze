@@ -41,7 +41,7 @@ class TestStoredFileStages:
         assert ready.status == StoredFileStatus.READY
         assert ready.storage_key is not None
 
-        downloaded = await stub_ctx.storage(kit.resolved_storage).download(
+        downloaded = await stub_ctx.storage.query(kit.resolved_storage).download(
             ready.storage_key
         )
         assert downloaded.data == b"payload"

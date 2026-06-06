@@ -14,7 +14,7 @@ well-known dependency keys.
 | Send work to one consumer or worker pool | [Queue](contracts/queue.md) | `QueueSpec`, `QueueQueryPort`, `QueueCommandPort` | Mock, SQS, RabbitMQ | `QueueQueryDepKey`, `QueueCommandDepKey` |
 | Broadcast messages to subscribers | [Pub/Sub](contracts/pubsub.md) | `PubSubSpec`, `PubSubCommandPort`, `PubSubQueryPort` | Mock, Redis / Valkey | `PubSubCommandDepKey`, `PubSubQueryDepKey` |
 | Append ordered events and consume by stream or group | [Stream](contracts/stream.md) | `StreamSpec`, stream ports | Mock, Redis / Valkey | `StreamQueryDepKey`, `StreamCommandDepKey`, `StreamGroupQueryDepKey` |
-| Store and retrieve binary objects | [Storage](contracts/storage.md) | `StorageSpec`, `StoragePort` | Mock, S3-compatible storage | `StorageDepKey` |
+| Store and retrieve binary objects | [Storage](contracts/storage.md) | `StorageSpec`, `StorageQueryPort`, `StorageCommandPort` | Mock, S3-compatible storage | `StorageQueryDepKey`, `StorageCommandDepKey` |
 | Long-running orchestration (Temporal-style) | [Durable workflow](contracts/durable-workflow.md) | `DurableWorkflowSpec`, workflow ports | Temporal | `DurableWorkflowCommandDepKey`, `DurableWorkflowQueryDepKey` |
 | Recurring durable workflow starts | [Durable workflow schedule](contracts/durable-workflow-schedule.md) | `DurableWorkflowScheduleTiming`, schedule ports | Temporal | `DurableWorkflowScheduleCommandDepKey`, `DurableWorkflowScheduleQueryDepKey` |
 | Event-driven durable functions (steps) | [Durable function](contracts/durable-function.md) | `DurableFunctionEventSpec`, `DurableFunctionSpec`, event/step ports | [Inngest](../integrations/inngest.md) | `DurableFunctionEventCommandDepKey`, `DurableFunctionStepDepKey` |
@@ -45,7 +45,8 @@ Prefer `ExecutionContext` convenience methods when available:
     doc_q = ctx.document.query(project_spec)
     doc_c = ctx.document.command(project_spec)
     cache = ctx.cache(cache_spec)
-    storage = ctx.storage(storage_spec)
+    storage_q = ctx.storage.query(storage_spec)
+    storage_c = ctx.storage.command(storage_spec)
     analytics_q = ctx.analytics.query(metrics_spec)
 
 For domains without a convenience helper, resolve the factory by dependency key

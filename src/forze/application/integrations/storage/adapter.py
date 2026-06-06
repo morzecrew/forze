@@ -1,4 +1,4 @@
-"""Shared object-storage adapter implementing :class:`~forze.application.contracts.storage.StoragePort`."""
+"""Shared object-storage adapter implementing the storage query and command ports."""
 
 import asyncio
 import mimetypes
@@ -13,7 +13,10 @@ from forze.application.contracts.resolution import (
     NamedResourceSpec,
     is_static_named_resource,
 )
-from forze.application.contracts.storage.ports import StoragePort
+from forze.application.contracts.storage.ports import (
+    StorageCommandPort,
+    StorageQueryPort,
+)
 from forze.application.contracts.storage.value_objects import (
     DownloadedObject,
     ObjectMetadata,
@@ -38,10 +41,11 @@ default_b64_codec = AsciiB64Codec()
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class ObjectStorageAdapter(StoragePort, TenancyMixin):
+class ObjectStorageAdapter(StorageQueryPort, StorageCommandPort, TenancyMixin):
     """Storage adapter that persists files in an object-storage bucket.
 
-    Implements :class:`~forze.application.contracts.storage.StoragePort`.
+    Implements both :class:`~forze.application.contracts.storage.StorageQueryPort`
+    and :class:`~forze.application.contracts.storage.StorageCommandPort`.
     Object keys are built from an optional tenant prefix, a user-supplied
     prefix, and a key generator (defaults to UUID v7). Filenames and
     descriptions are base-64 encoded into user metadata.

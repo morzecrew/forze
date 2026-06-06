@@ -5,7 +5,11 @@ import pytest
 from forze.application.contracts.counter import CounterDepKey, CounterPort, CounterSpec
 from forze.application.contracts.document import DocumentSpec
 from forze.application.contracts.search import SearchSpec
-from forze.application.contracts.storage import StorageDepKey, StorageSpec
+from forze.application.contracts.storage import (
+    StorageCommandDepKey,
+    StorageQueryDepKey,
+    StorageSpec,
+)
 from forze.application.execution import Deps, ExecutionContext
 from forze.domain.models import CreateDocumentCmd, Document, ReadDocument
 from tests.support.execution_context import context_from_deps, context_from_modules, frozen_deps_from_deps
@@ -43,7 +47,8 @@ def composition_deps(composition_mock_state: MockState) -> Deps:
     base = MockDepsModule(state=composition_mock_state)()
     plain = dict(base.plain_deps)
     plain[CounterDepKey] = _composition_counter
-    plain[StorageDepKey] = _composition_storage
+    plain[StorageQueryDepKey] = _composition_storage
+    plain[StorageCommandDepKey] = _composition_storage
     return Deps.plain(plain)
 
 
@@ -67,7 +72,8 @@ def stub_deps(mock_state: MockState) -> Deps:
     base = MockDepsModule(state=mock_state)()
     plain = dict(base.plain_deps)
     plain[CounterDepKey] = _stub_counter_fac
-    plain[StorageDepKey] = _stub_storage_fac
+    plain[StorageQueryDepKey] = _stub_storage_fac
+    plain[StorageCommandDepKey] = _stub_storage_fac
     return Deps.plain(plain)
 
 
@@ -124,4 +130,4 @@ def stub_search_port(stub_ctx: ExecutionContext) -> MockSearchAdapter:
 @pytest.fixture
 def stub_storage_port(stub_ctx: ExecutionContext) -> MockStorageAdapter:
     """Storage port for handler tests."""
-    return stub_ctx.storage(StorageSpec(name="test-bucket"))
+    return stub_ctx.storage.command(StorageSpec(name="test-bucket"))

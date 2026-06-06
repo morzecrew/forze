@@ -1,16 +1,24 @@
-"""Storage dependency keys and routers."""
+"""Storage dependency keys and resolvers."""
 
 from ..deps import ConfigurableDepPort, ConvenientDeps, DepKey
-from .ports import StoragePort
+from .ports import StorageCommandPort, StorageQueryPort
 from .specs import StorageSpec
 
 # ----------------------- #
 
-StorageDepPort = ConfigurableDepPort[StorageSpec, StoragePort]
-"""Storage dependency port."""
+StorageQueryDepPort = ConfigurableDepPort[StorageSpec, StorageQueryPort]
+"""Storage query dependency port."""
 
-StorageDepKey = DepKey[StorageDepPort]("storage")
-"""Key used to register the :class:`StoragePort` builder implementation."""
+StorageCommandDepPort = ConfigurableDepPort[StorageSpec, StorageCommandPort]
+"""Storage command dependency port."""
+
+# ....................... #
+
+StorageQueryDepKey = DepKey[StorageQueryDepPort]("storage_query")
+"""Key used to register the :class:`StorageQueryPort` builder implementation."""
+
+StorageCommandDepKey = DepKey[StorageCommandDepPort]("storage_command")
+"""Key used to register the :class:`StorageCommandPort` builder implementation."""
 
 # ....................... #
 
@@ -18,7 +26,14 @@ StorageDepKey = DepKey[StorageDepPort]("storage")
 class StorageDeps(ConvenientDeps):
     """Convenience wrapper for storage dependencies."""
 
-    def __call__(self, spec: StorageSpec) -> StoragePort:
-        """Resolve a storage port for the given spec."""
+    def query(self, spec: StorageSpec) -> StorageQueryPort:
+        """Resolve a storage query port for the given spec."""
 
-        return self._resolve_configurable(StorageDepKey, spec, route=spec.name)
+        return self._resolve_configurable(StorageQueryDepKey, spec, route=spec.name)
+
+    # ....................... #
+
+    def command(self, spec: StorageSpec) -> StorageCommandPort:
+        """Resolve a storage command port for the given spec."""
+
+        return self._resolve_configurable(StorageCommandDepKey, spec, route=spec.name)

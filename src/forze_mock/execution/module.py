@@ -93,7 +93,13 @@ from forze.application.contracts.search import (
     SearchSpec,
 )
 from forze.application.contracts.secrets import SecretsDepKey
-from forze.application.contracts.storage import StorageDepKey, StoragePort, StorageSpec
+from forze.application.contracts.storage import (
+    StorageCommandDepKey,
+    StorageCommandPort,
+    StorageQueryDepKey,
+    StorageQueryPort,
+    StorageSpec,
+)
 from forze.application.contracts.stream import (
     StreamCommandDepKey,
     StreamGroupQueryDepKey,
@@ -427,8 +433,25 @@ class ConfigurableMockIdempotency(_MockFactoryBase):
 
 @final
 @attrs.define(slots=True, kw_only=True)
-class ConfigurableMockStorage(_MockFactoryBase):
-    def __call__(self, context: ExecutionContext, spec: StorageSpec) -> StoragePort:
+class ConfigurableMockStorageQuery(_MockFactoryBase):
+    def __call__(
+        self, context: ExecutionContext, spec: StorageSpec
+    ) -> StorageQueryPort:
+        cfg = self._route(spec.name)
+        return MockStorageAdapter(
+            state=self._state(context),
+            bucket=self._namespace_for(context, spec.name, default=str(spec.name)),
+            tenant_aware=cfg.tenant_aware if cfg else False,
+            tenant_provider=_tenant_provider(context),
+        )
+
+
+@final
+@attrs.define(slots=True, kw_only=True)
+class ConfigurableMockStorageCommand(_MockFactoryBase):
+    def __call__(
+        self, context: ExecutionContext, spec: StorageSpec
+    ) -> StorageCommandPort:
         cfg = self._route(spec.name)
         return MockStorageAdapter(
             state=self._state(context),
@@ -684,7 +707,8 @@ class MockDepsModule(DepsModule):
             CounterDepKey: ConfigurableMockCounter(module=self),
             CacheDepKey: ConfigurableMockCache(module=self),
             IdempotencyDepKey: ConfigurableMockIdempotency(module=self),
-            StorageDepKey: ConfigurableMockStorage(module=self),
+            StorageQueryDepKey: ConfigurableMockStorageQuery(module=self),
+            StorageCommandDepKey: ConfigurableMockStorageCommand(module=self),
             TransactionManagerDepKey: mock_txmanager,
             QueueQueryDepKey: ConfigurableMockQueue(module=self),
             QueueCommandDepKey: ConfigurableMockQueue(module=self),

@@ -314,16 +314,16 @@ Result shape and pagination mode are encoded in the method name:
 
 ## Object storage
 
-### StoragePort
+### StorageQueryPort / StorageCommandPort
 
-S3-style blob storage:
+S3-style blob storage, split into read (query) and write (command) ports:
 
-| Method | Signature | Returns |
-|--------|-----------|---------|
-| `upload` | `(filename, data, description?, *, prefix?)` | `StoredObject` |
-| `download` | `(key)` | `DownloadedObject` |
-| `delete` | `(key)` | `None` |
-| `list` | `(limit, offset, *, prefix?)` | `(list[ObjectMetadata], int)` |
+| Port | Method | Signature | Returns |
+|------|--------|-----------|---------|
+| `StorageCommandPort` | `upload` | `(UploadedObject)` | `StoredObject` |
+| `StorageCommandPort` | `delete` | `(key)` | `None` |
+| `StorageQueryPort` | `download` | `(key)` | `DownloadedObject` |
+| `StorageQueryPort` | `list` | `(limit, offset, *, prefix?)` | `(list[ObjectMetadata], int)` |
 
 ### Storage types
 
@@ -337,7 +337,8 @@ S3-style blob storage:
 
 | Key | Resolved via |
 |-----|-------------|
-| `StorageDepKey` | `ctx.storage(StorageSpec(name=...))` |
+| `StorageQueryDepKey` | `ctx.storage.query(StorageSpec(name=...))` |
+| `StorageCommandDepKey` | `ctx.storage.command(StorageSpec(name=...))` |
 
 ## Queue
 
@@ -620,7 +621,8 @@ All ports are resolved through `ExecutionContext`. Contracts with convenience me
     doc_c = ctx.document.command(project_spec)
     cache = ctx.cache(cache_spec)
     counter = ctx.counter(CounterSpec(name="tickets"))
-    storage = ctx.storage(StorageSpec(name="attachments"))
+    storage_q = ctx.storage.query(StorageSpec(name="attachments"))
+    storage_c = ctx.storage.command(StorageSpec(name="attachments"))
     search = ctx.search.query(search_spec)
     tx = ctx.tx_ctx.resolver("default")
 
