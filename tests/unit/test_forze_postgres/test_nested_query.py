@@ -401,3 +401,160 @@ def test_sort_key_expr_nested_delegates() -> None:
         table_alias="d",
     )
     assert expr is not None
+
+
+def test_sort_key_expr_top_level_without_alias() -> None:
+    expr = sort_key_expr(
+        field="id",
+        column_types={},
+        model_type=_Row,
+        nested_field_hints=None,
+        table_alias=None,
+    )
+    assert expr.as_string(None) == '"id"'
+
+
+def test_sort_key_expr_nested_renders_json_extraction_with_cast() -> None:
+    col_types = {"meta": PostgresType(base="jsonb", is_array=False, not_null=True)}
+    expr = sort_key_expr(
+        field="meta.inner.score",
+        column_types=col_types,
+        model_type=_Row,
+        nested_field_hints=None,
+        table_alias="d",
+    )
+    rendered = expr.as_string(None)
+    assert '"d"."meta"->\'inner\'->>\'score\'' in rendered
+    assert "CAST(" in rendered
+
+
+# ----------------------- #
+# Additional branch coverage for the nested path walker / type mapping.
+
+
+class _AnyKeyDict(BaseModel):
+    meta: "dict[Any, str]"
+
+
+class _BareDict(BaseModel):
+    meta: dict  # type: ignore[type-arg]
+
+
+class _ListOfModels(BaseModel):
+    items: list[_Inner]
+
+
+class _ListOfScalars(BaseModel):
+    items: list[int]
+
+
+class _ListOfDicts(BaseModel):
+    items: list[dict[str, str]]
+
+
+class _BareList(BaseModel):
+    items: list  # type: ignore[type-arg]
+
+
+class _PureEnum(Enum):
+    a = 1
+
+
+def test_walk_bare_dict_annotation_returns_none() -> None:
+    # ``dict`` without parameters -> ``_mapping_key_value_types`` len(args) < 2.
+    assert walk_pydantic_path(_BareDict, ["meta", "k"]) is None
+
+
+def test_walk_any_key_mapping_allowed() -> None:
+    # ``Any`` mapping key is treated as string-like (``_is_str_like_mapping_key``).
+    assert walk_pydantic_path(_AnyKeyDict, ["meta", "k"]) is str
+
+
+def test_walk_empty_segments_returns_none() -> None:
+    # ``_walk_field_chain`` guards against empty segment lists.
+    assert walk_pydantic_path(_Row, []) is None
+
+
+def test_walk_list_of_models_into_field() -> None:
+    assert walk_pydantic_path(_ListOfModels, ["items", "score"]) is int
+
+
+def test_walk_list_of_scalars_extra_segment_returns_none() -> None:
+    # Scalar list element with a further segment is not walkable (recurses to None).
+    assert walk_pydantic_path(_ListOfScalars, ["items", "elem"]) is None
+
+
+def test_walk_list_of_dicts_value() -> None:
+    assert walk_pydantic_path(_ListOfDicts, ["items", "k"]) is str
+
+
+def test_walk_bare_list_returns_none() -> None:
+    assert walk_pydantic_path(_BareList, ["items", "k"]) is None
+
+
+def test_resolve_non_string_mapping_key_with_filter_path_raises() -> None:
+    # ``filter_path`` set -> ``_mapping_key_must_be_str_for_json_path`` raises.
+    with pytest.raises(CoreException, match="is not\n? *supported"):
+        walk_pydantic_path(_RowIntKeyDict, ["data", "1", "x"], filter_path="data.1.x")
+
+
+def test_resolve_mapping_str_value_optional_unwraps() -> None:
+    class _OptMapping(BaseModel):
+        meta: dict[str, int | None]
+
+    assert resolve_leaf_python_type(
+        model_type=_OptMapping,
+        path="meta.count",
+        segments=["meta", "count"],
+        nested_field_hints=None,
+    ) is int
+
+
+def test_is_any_like_three_member_union_uses_hint() -> None:
+    class _TriLeaf(BaseModel):
+        meta: int | str | bytes
+
+    t = resolve_leaf_python_type(
+        model_type=_TriLeaf,
+        path="meta",
+        segments=["meta"],
+        nested_field_hints={"meta": float},
+    )
+    assert t is float
+
+
+def test_python_type_pure_enum_maps_to_text() -> None:
+    assert python_type_to_postgres_scalar(_PureEnum).base == "text"
+
+
+def test_python_type_unknown_returns_none() -> None:
+    assert python_type_to_postgres_scalar(complex) is None
+
+
+def test_python_type_generic_alias_returns_none() -> None:
+    # ``list[int]`` is not a plain ``type`` -> falls through to ``return None``.
+    assert python_type_to_postgres_scalar(list[int]) is None
+
+
+def test_resolve_any_leaf_without_hint_is_ambiguous() -> None:
+    # ``walked`` is ``Any`` -> ``_is_any_like`` is True, so resolution is ambiguous.
+    class _AnyRoot(BaseModel):
+        meta: Any
+
+    with pytest.raises(CoreException, match="ambiguous type"):
+        resolve_leaf_python_type(
+            model_type=_AnyRoot,
+            path="meta",
+            segments=["meta"],
+            nested_field_hints=None,
+        )
+
+
+def test_walk_str_keyed_mapping_with_filter_path_ok() -> None:
+    # ``filter_path`` set and the mapping key is str-like -> no raise, walks through.
+    assert (
+        walk_pydantic_path(
+            _RowDictStrInt, ["meta", "k"], filter_path="meta.k"
+        )
+        is int
+    )

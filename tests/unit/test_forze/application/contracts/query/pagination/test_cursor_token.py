@@ -8,6 +8,7 @@ import pytest
 
 from forze.application.contracts.querying.pagination.cursor_token import (
     compare_keyset_sort_values,
+    keyset_canonical_value,
     decode_keyset_v1,
     encode_keyset_v1,
     keyset_page_bounds,
@@ -210,3 +211,61 @@ def test_keyset_page_bounds_exact_fit_has_no_more() -> None:
     assert [r["id"] for r in rows] == [0, 1, 2]
     assert has_more is False
     assert nxt is None
+
+
+# ----------------------- #
+# Canonicalization + comparison branch coverage
+
+
+class _Weird:
+    def __str__(self) -> str:
+        return "weird"
+
+
+@pytest.mark.parametrize(
+    "value,expected",
+    [
+        ([1, 2], [1, 2]),  # list passthrough
+        ({"a": 1}, {"a": 1}),  # dict passthrough
+        (_Weird(), "weird"),  # fallback str()
+        ("s", "s"),
+        (3, 3),
+    ],
+)
+def test_keyset_canonical_value(value: object, expected: object) -> None:
+    assert keyset_canonical_value(value) == expected
+
+
+@pytest.mark.parametrize(
+    "left,right,expected",
+    [
+        (None, 1, -1),  # lc is None
+        (1, None, 1),  # rc is None
+        (1, 1, 0),  # equal
+        (1, 2, -1),  # lc < rc
+        (2, 1, 1),  # lc > rc
+        (None, None, 0),  # both None -> equal
+    ],
+)
+def test_compare_keyset_sort_values(left: object, right: object, expected: int) -> None:
+    assert compare_keyset_sort_values(left, right) == expected
+
+
+def test_decode_keyset_rejects_non_list_payload() -> None:
+    import base64
+    import json
+
+    raw = json.dumps({"v": 1, "k": "notlist", "d": ["asc"], "x": [1]}).encode()
+    token = base64.urlsafe_b64encode(raw).decode().rstrip("=")
+    with pytest.raises(CoreException, match="Invalid cursor token"):
+        decode_keyset_v1(token)
+
+
+def test_decode_keyset_rejects_length_mismatch() -> None:
+    import base64
+    import json
+
+    raw = json.dumps({"v": 1, "k": ["a", "b"], "d": ["asc"], "x": [1]}).encode()
+    token = base64.urlsafe_b64encode(raw).decode().rstrip("=")
+    with pytest.raises(CoreException, match="Invalid cursor token"):
+        decode_keyset_v1(token)

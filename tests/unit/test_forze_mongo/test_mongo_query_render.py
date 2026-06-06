@@ -12,6 +12,7 @@ from pydantic import BaseModel
 
 from forze.application.contracts.querying import (
     ELEM_SCALAR_FIELD,
+    AggregateComputedField,
     QueryAnd,
     QueryCompare,
     QueryElem,
@@ -274,6 +275,11 @@ class TestMongoQueryRenderer:
         r = MongoQueryRenderer()
         out = r.render(QueryField("title", "$ilike", "%road%"))
         assert out == {"title": {"$regex": "^.*road.*$", "$options": "i"}}
+
+    def test_like_field_renders_regex_without_options(self) -> None:
+        r = MongoQueryRenderer()
+        out = r.render(QueryField("title", "$like", "%road%"))
+        assert out == {"title": {"$regex": "^.*road.*$"}}
 
     def test_ilike_sequence_parsed_as_or(self) -> None:
         expr = QueryFilterExpressionParser.parse(
@@ -557,3 +563,435 @@ class TestMongoQueryRendererExprPredicate:
         }
         with pytest.raises(CoreException, match="expects list"):
             r.render_expr_predicate(QueryField("t", "$in", 1))
+
+
+class TestMongoComparePredicate:
+    """Field-to-field compare rendering (``$expr``) and error branches."""
+
+    @pytest.mark.parametrize(
+        ("op", "mongo"),
+        [
+            ("$eq", "$eq"),
+            ("$neq", "$ne"),
+            ("$gt", "$gt"),
+            ("$gte", "$gte"),
+            ("$lt", "$lt"),
+            ("$lte", "$lte"),
+        ],
+    )
+    def test_compare_operators(self, op: str, mongo: str) -> None:
+        r = MongoQueryRenderer()
+        out = r.render(QueryCompare("a", op, "b"))  # type: ignore[arg-type]
+        assert out == {"$expr": {mongo: ["$a", "$b"]}}
+
+    def test_compare_neq_predicate(self) -> None:
+        r = MongoQueryRenderer()
+        out = r.render_expr_predicate(QueryCompare("a", "$neq", "b"))
+        assert out == {"$expr": {"$ne": ["$a", "$b"]}}
+
+    def test_compare_unknown_operator_raises(self) -> None:
+        r = MongoQueryRenderer()
+        with pytest.raises(CoreException, match="Unknown compare operator"):
+            r.render(QueryCompare("a", "$bogus", "b"))  # type: ignore[arg-type]
+
+
+class TestMongoExprPredicateBranches:
+    """Remaining :meth:`render_expr_predicate` branches."""
+
+    def test_and_empty_const_true(self) -> None:
+        r = MongoQueryRenderer()
+        assert r.render_expr_predicate(QueryAnd(())) == {"$const": True}
+
+    def test_unknown_expression_raises(self) -> None:
+        r = MongoQueryRenderer()
+        with pytest.raises(CoreException, match="Unknown expression"):
+            r.render_expr_predicate(_UnknownExpr())
+
+    def test_field_neq_predicate(self) -> None:
+        r = MongoQueryRenderer()
+        assert r.render_expr_predicate(QueryField("n", "$neq", 3)) == {
+            "$ne": ["$n", 3],
+        }
+
+    def test_nin_predicate(self) -> None:
+        r = MongoQueryRenderer()
+        assert r.render_expr_predicate(QueryField("t", "$nin", [1, 2])) == {
+            "$not": [{"$in": ["$t", [1, 2]]}],
+        }
+
+    def test_superset_predicate(self) -> None:
+        r = MongoQueryRenderer()
+        assert r.render_expr_predicate(QueryField("s", "$superset", [1, 2])) == {
+            "$setIsSubset": [[1, 2], "$s"],
+        }
+
+    def test_subset_predicate(self) -> None:
+        r = MongoQueryRenderer()
+        assert r.render_expr_predicate(QueryField("s", "$subset", [1, 2])) == {
+            "$setIsSubset": ["$s", [1, 2]],
+        }
+
+    @pytest.mark.parametrize(
+        "op",
+        ["$nin", "$superset", "$subset", "$overlaps", "$disjoint"],
+    )
+    def test_list_predicate_scalar_raises(self, op: str) -> None:
+        r = MongoQueryRenderer()
+        with pytest.raises(CoreException, match="expects list"):
+            r.render_expr_predicate(QueryField("s", op, 1))  # type: ignore[arg-type]
+
+    @pytest.mark.parametrize(
+        ("op", "expected"),
+        [
+            (
+                "$like",
+                {"$regexMatch": {"input": "$t", "regex": "^a.*$"}},
+            ),
+            (
+                "$ilike",
+                {"$regexMatch": {"input": "$t", "regex": "^a.*$", "options": "i"}},
+            ),
+            (
+                "$regex",
+                {"$regexMatch": {"input": "$t", "regex": "a.*"}},
+            ),
+        ],
+    )
+    def test_text_predicate(self, op: str, expected: dict) -> None:
+        r = MongoQueryRenderer()
+        pattern = "a.*" if op == "$regex" else "a%"
+        out = r.render_expr_predicate(QueryField("t", op, pattern))  # type: ignore[arg-type]
+        assert out == expected
+
+
+class TestMongoScalarElementMatch:
+    """Scalar element-quantifier inner-predicate shapes (via ``render``)."""
+
+    @staticmethod
+    def _elem(quantifier: str, inner: QueryExpr) -> dict:
+        r = MongoQueryRenderer()
+        return r.render(QueryElem("tags", quantifier, inner))["$or"][1]["$and"][1]
+
+    def test_scalar_and_single_field(self) -> None:
+        inner = QueryAnd((QueryField(ELEM_SCALAR_FIELD, "$eq", "x"),))
+        assert self._elem("$any", inner) == {"tags": "x"}
+
+    def test_scalar_and_multiple_fields_raises(self) -> None:
+        inner = QueryAnd(
+            (
+                QueryField(ELEM_SCALAR_FIELD, "$eq", "x"),
+                QueryField(ELEM_SCALAR_FIELD, "$gt", 1),
+            ),
+        )
+        r = MongoQueryRenderer()
+        with pytest.raises(CoreException, match="one comparison only"):
+            r.render(QueryElem("tags", "$any", inner))
+
+    def test_scalar_or_single_collapses(self) -> None:
+        inner = QueryOr((QueryField(ELEM_SCALAR_FIELD, "$eq", "x"),))
+        assert self._elem("$any", inner) == {"tags": "x"}
+
+    def test_scalar_or_any_uses_or(self) -> None:
+        inner = QueryOr(
+            (
+                QueryField(ELEM_SCALAR_FIELD, "$eq", "x"),
+                QueryField(ELEM_SCALAR_FIELD, "$eq", "y"),
+            ),
+        )
+        out = self._elem("$any", inner)
+        assert out == {"$or": [{"tags": "x"}, {"tags": "y"}]}
+
+    def test_scalar_or_none_uses_and(self) -> None:
+        inner = QueryOr(
+            (
+                QueryField(ELEM_SCALAR_FIELD, "$eq", "x"),
+                QueryField(ELEM_SCALAR_FIELD, "$eq", "y"),
+            ),
+        )
+        out = self._elem("$none", inner)
+        assert out == {"$and": [{"$nor": [{"tags": "x"}]}, {"$nor": [{"tags": "y"}]}]}
+
+    def test_scalar_or_all_uses_and(self) -> None:
+        inner = QueryOr(
+            (
+                QueryField(ELEM_SCALAR_FIELD, "$eq", "x"),
+                QueryField(ELEM_SCALAR_FIELD, "$eq", "y"),
+            ),
+        )
+        out = self._elem("$all", inner)
+        assert "$and" in out
+        assert len(out["$and"]) == 2
+
+    def test_scalar_invalid_inner_raises(self) -> None:
+        # A scalar inner that is neither field/and/or (an empty QueryAnd is scalar
+        # per ``elem_inner_is_scalar`` but hits the field-count guard); use a
+        # QueryElem nested inner which is "scalar" only if it recurses — instead
+        # force the default branch with a Compare wrapped where scalar detection
+        # passes vacuously.
+        r = MongoQueryRenderer()
+        # empty QueryAnd -> elem_inner_is_scalar True, fields == [] -> count guard
+        with pytest.raises(CoreException, match="one comparison only"):
+            r.render(QueryElem("tags", "$any", QueryAnd(())))
+
+    @pytest.mark.parametrize(
+        ("op", "quantifier", "expected"),
+        [
+            ("$eq", "$any", {"tags": "v"}),
+            ("$eq", "$none", {"$nor": [{"tags": "v"}]}),
+        ],
+    )
+    def test_scalar_eq_quantifiers(
+        self,
+        op: str,
+        quantifier: str,
+        expected: dict,
+    ) -> None:
+        inner = QueryField(ELEM_SCALAR_FIELD, op, "v")  # type: ignore[arg-type]
+        assert self._elem(quantifier, inner) == expected
+
+    def test_scalar_eq_all_min_max(self) -> None:
+        inner = QueryField(ELEM_SCALAR_FIELD, "$eq", "v")
+        out = self._elem("$all", inner)
+        assert out == {
+            "$expr": {
+                "$and": [
+                    {"$eq": [{"$min": "$tags"}, "v"]},
+                    {"$eq": [{"$max": "$tags"}, "v"]},
+                ],
+            },
+        }
+
+    @pytest.mark.parametrize(
+        ("op", "quantifier", "expected"),
+        [
+            # $any -> agg "$max"; $all/$none -> agg "$min" (default)
+            ("$gt", "$any", {"$expr": {"$gt": [{"$max": "$tags"}, 5]}}),
+            ("$gte", "$all", {"$expr": {"$gte": [{"$min": "$tags"}, 5]}}),
+            ("$gt", "$none", {"$expr": {"$gt": [{"$min": "$tags"}, 5]}}),
+        ],
+    )
+    def test_scalar_ordinal_aggregations(
+        self,
+        op: str,
+        quantifier: str,
+        expected: dict,
+    ) -> None:
+        inner = QueryField(ELEM_SCALAR_FIELD, op, 5)  # type: ignore[arg-type]
+        out = self._elem(quantifier, inner)
+        assert out == expected
+
+    def test_scalar_lt_any_uses_min(self) -> None:
+        inner = QueryField(ELEM_SCALAR_FIELD, "$lt", 5)
+        out = self._elem("$any", inner)
+        assert out == {"$expr": {"$lt": [{"$min": "$tags"}, 5]}}
+
+    def test_scalar_lte_all_uses_max(self) -> None:
+        inner = QueryField(ELEM_SCALAR_FIELD, "$lte", 5)
+        out = self._elem("$all", inner)
+        assert out == {"$expr": {"$lte": [{"$max": "$tags"}, 5]}}
+
+    @pytest.mark.parametrize(
+        ("op", "quantifier", "expect_substr"),
+        [
+            ("$like", "$any", "$gt"),
+            ("$ilike", "$none", "$eq"),
+            ("$regex", "$all", "$size"),
+        ],
+    )
+    def test_scalar_text_quantifiers(
+        self,
+        op: str,
+        quantifier: str,
+        expect_substr: str,
+    ) -> None:
+        pattern = "a.*" if op == "$regex" else "%a%"
+        inner = QueryField(ELEM_SCALAR_FIELD, op, pattern)  # type: ignore[arg-type]
+        out = self._elem(quantifier, inner)
+        assert "$expr" in out
+        assert expect_substr in str(out)
+        assert "$filter" in str(out)
+
+    def test_scalar_ilike_carries_options(self) -> None:
+        inner = QueryField(ELEM_SCALAR_FIELD, "$ilike", "%a%")
+        out = self._elem("$any", inner)
+        assert "options" in str(out)
+
+    def test_scalar_neq_any_uses_filter(self) -> None:
+        inner = QueryField(ELEM_SCALAR_FIELD, "$neq", "v")
+        out = self._elem("$any", inner)
+        assert out == {
+            "$expr": {
+                "$gt": [
+                    {
+                        "$size": {
+                            "$filter": {
+                                "input": "$tags",
+                                "cond": {"$ne": ["$$this", "v"]},
+                            },
+                        },
+                    },
+                    0,
+                ],
+            },
+        }
+
+    def test_scalar_neq_all_unsupported_raises(self) -> None:
+        inner = QueryField(ELEM_SCALAR_FIELD, "$neq", "v")
+        r = MongoQueryRenderer()
+        with pytest.raises(CoreException, match="Unsupported scalar element operator"):
+            r.render(QueryElem("tags", "$all", inner))
+
+
+class TestMongoObjectElementMatch:
+    """Object element-quantifier inner-predicate shapes."""
+
+    @staticmethod
+    def _match(inner: QueryExpr) -> dict:
+        r = MongoQueryRenderer()
+        return r.render(QueryElem("items", "$any", inner))["$or"][1]["$and"][1]
+
+    def test_single_field(self) -> None:
+        inner = QueryField("status", "$eq", "open")
+        assert self._match(inner) == {"items": {"$elemMatch": {"status": "open"}}}
+
+    def test_and_fields(self) -> None:
+        inner = QueryAnd(
+            (
+                QueryField("status", "$eq", "open"),
+                QueryField("qty", "$gte", 1),
+            ),
+        )
+        assert self._match(inner) == {
+            "items": {"$elemMatch": {"status": "open", "qty": {"$gte": 1}}},
+        }
+
+    def test_field_text_op(self) -> None:
+        inner = QueryField("name", "$ilike", "%x%")
+        out = self._match(inner)
+        spec = out["items"]["$elemMatch"]["name"]
+        assert spec == {"$regex": "^.*x.*$", "$options": "i"}
+
+    def test_field_text_op_no_options(self) -> None:
+        inner = QueryField("name", "$like", "%x%")
+        out = self._match(inner)
+        spec = out["items"]["$elemMatch"]["name"]
+        assert spec == {"$regex": "^.*x.*$"}
+
+    def test_or_branches(self) -> None:
+        inner = QueryOr(
+            (
+                QueryField("status", "$eq", "open"),
+                QueryField("status", "$eq", "closed"),
+            ),
+        )
+        out = self._match(inner)
+        em = out["items"]["$elemMatch"]
+        assert em == {"$or": [{"status": "open"}, {"status": "closed"}]}
+
+    def test_invalid_object_inner_raises(self) -> None:
+        r = MongoQueryRenderer()
+        with pytest.raises(CoreException, match="Invalid object element inner"):
+            r.render(QueryElem("items", "$any", QueryCompare("a", "$eq", "b")))
+
+    def test_none_object_uses_nor_elem_match(self) -> None:
+        r = MongoQueryRenderer()
+        inner = QueryAnd((QueryField("status", "$eq", "open"),))
+        out = r.render(QueryElem("items", "$none", inner))["$or"][1]["$and"][1]
+        assert out == {"$nor": [{"items": {"$elemMatch": {"status": "open"}}}]}
+
+
+class TestMongoRenderExprEmptyParts:
+    """``_render_expr`` branches where all child parts render empty."""
+
+    def test_and_all_children_empty(self) -> None:
+        r = MongoQueryRenderer()
+        expr = QueryAnd((QueryAnd(()), QueryAnd(())))
+        assert r.render(expr) == {}
+
+    def test_or_all_children_empty(self) -> None:
+        r = MongoQueryRenderer()
+        expr = QueryOr((QueryAnd(()), QueryAnd(())))
+        assert r.render(expr) == {"$expr": False}
+
+
+class TestMongoRendererInternalEdges:
+    """Hard-to-reach internal branches exercised via direct calls."""
+
+    def test_unknown_text_operator_raises(self) -> None:
+        r = MongoQueryRenderer()
+        with pytest.raises(CoreException, match="Unknown text operator"):
+            r._text_regex_and_options("$nope", "p")  # type: ignore[arg-type]  # noqa: SLF001
+
+    def test_invalid_scalar_inner_default_raises(self) -> None:
+        r = MongoQueryRenderer()
+        with pytest.raises(CoreException, match="Invalid scalar element inner"):
+            r._render_elem_scalar_match(  # noqa: SLF001
+                "tags",
+                "$any",
+                QueryCompare("a", "$eq", "b"),
+            )
+
+
+class TestMongoConfigFlags:
+    """Config-flag-dependent null/empty rendering branches."""
+
+    def test_null_explicit_with_exists_guard(self) -> None:
+        r = MongoQueryRenderer(null_matches_missing=False)
+        assert r.render(QueryField("z", "$null", True)) == {
+            "$and": [{"z": None}, {"z": {"$exists": True}}],
+        }
+
+    def test_not_null_without_exists_guard(self) -> None:
+        r = MongoQueryRenderer(require_exists_for_not_null=False)
+        assert r.render(QueryField("z", "$null", False)) == {"z": {"$ne": None}}
+
+    def test_not_empty_without_exists_guard(self) -> None:
+        r = MongoQueryRenderer(require_exists_for_not_null=False)
+        assert r.render(QueryField("e", "$empty", False)) == {"e": {"$ne": []}}
+
+
+class TestMongoAggregateInternals:
+    """Directly-constructed computed fields for hard-to-reach branches."""
+
+    def test_iana_timezone_in_trunc(self) -> None:
+        renderer = MongoQueryRenderer()
+        _parsed, pipeline = renderer.render_aggregates(
+            {
+                "$groups": {
+                    "wk": {
+                        "$trunc": {
+                            "field": "created_at",
+                            "unit": "week",
+                            "timezone": "Europe/Paris",
+                        },
+                    },
+                },
+                "$computed": {"n": {"$count": None}},
+            },
+        )
+        tz = pipeline[0]["$group"]["_id"]["wk"]["$dateTrunc"]["timezone"]
+        assert tz == "Europe/Paris"
+
+    def test_computed_field_without_path_raises(self) -> None:
+        renderer = MongoQueryRenderer()
+        computed = AggregateComputedField(
+            alias="bad",
+            function="$sum",
+            field=None,
+        )
+        with pytest.raises(CoreException, match="no field path"):
+            renderer._render_aggregate_function(computed)  # noqa: SLF001
+
+    def test_conditional_value_parses_filter_when_not_prepared(self) -> None:
+        renderer = MongoQueryRenderer()
+        computed = AggregateComputedField(
+            alias="c",
+            function="$count",
+            field=None,
+            filter={"$values": {"category": "books"}},
+            parsed_filter=None,
+        )
+        out = renderer._conditional_value(computed, 1, 0)  # noqa: SLF001
+        assert out == {
+            "$cond": [{"$eq": ["$category", "books"]}, 1, 0],
+        }

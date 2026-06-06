@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any, cast
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import attrs
 import pytest
@@ -23,8 +23,12 @@ from forze.application.contracts.querying import (
     QueryNot,
     QueryOr,
 )
+from forze.application.contracts.querying import QueryValue
 from forze_postgres.kernel.catalog.introspect import PostgresColumnTypes, PostgresType
-from forze_postgres.kernel.sql.query.render import PsycopgQueryRenderer
+from forze_postgres.kernel.sql.query.render import (
+    PsycopgQueryRenderer,
+    PsycopgValueCoercer,
+)
 
 # ----------------------- #
 
@@ -610,3 +614,602 @@ class TestPostgresAggregateRendering:
 
         with pytest.raises(CoreException, match="Invalid aggregate sort fields"):
             renderer.render_aggregate_order_by(parsed, {"missing": "asc"})
+
+    def test_trunc_with_fixed_offset_timezone(self) -> None:
+        """A numeric-offset timezone renders the AT TIME ZONE 'UTC' + offset form."""
+        renderer = PsycopgQueryRenderer(
+            types={
+                "item_id": _t("text"),
+                "ts": _t("timestamptz"),
+                "price": _t("numeric"),
+            },
+            model_type=_TsRow,
+        )
+        parsed, select_clause, group_clause, params = renderer.render_aggregates(
+            {
+                "$groups": {
+                    "bucket": {
+                        "$trunc": {
+                            "field": "ts",
+                            "unit": "hour",
+                            "timezone": "+03:00",
+                        },
+                    },
+                },
+                "$computed": {"avg_p": {"$avg": "price"}},
+            },
+        )
+        sel = select_clause.as_string(None)
+        assert "date_trunc" in sel
+        assert "AT TIME ZONE 'UTC'" in sel
+        assert group_clause is not None
+        assert len(parsed.groups) == 1
+        assert params == []
+
+    @pytest.mark.parametrize(
+        ("function", "marker"),
+        [
+            ("$min", "MIN"),
+            ("$max", "MAX"),
+        ],
+    )
+    def test_min_max_aggregate_functions(self, function: str, marker: str) -> None:
+        """$min / $max aggregate functions render their SQL wrappers."""
+        renderer = PsycopgQueryRenderer(
+            types={"category": _t("text"), "price": _t("numeric")},
+            model_type=_OrderRow,
+        )
+        _parsed, select_clause, _group_clause, _params = renderer.render_aggregates(
+            {"$computed": {"result": {function: "price"}}},
+        )
+        assert marker in select_clause.as_string(None)
+
+    def test_aggregate_order_by_ascending(self) -> None:
+        """An ``asc`` sort renders the ASC direction keyword."""
+        renderer = PsycopgQueryRenderer(
+            types={"category": _t("text"), "price": _t("numeric")},
+            model_type=_OrderRow,
+        )
+        parsed, _select, _group, _params = renderer.render_aggregates(
+            {"$computed": {"orders": {"$count": None}}},
+        )
+        sort_clause = renderer.render_aggregate_order_by(parsed, {"orders": "asc"})
+        assert sort_clause is not None
+        assert "ASC" in sort_clause.as_string(None)
+
+    def test_aggregate_order_by_none_when_no_sorts(self) -> None:
+        renderer = PsycopgQueryRenderer(
+            types={"category": _t("text")},
+            model_type=_OrderRow,
+        )
+        parsed, _select, _group, _params = renderer.render_aggregates(
+            {"$computed": {"orders": {"$count": None}}},
+        )
+        assert renderer.render_aggregate_order_by(parsed, None) is None
+
+    def test_median_aggregate_function(self) -> None:
+        renderer = PsycopgQueryRenderer(
+            types={"price": _t("numeric")},
+            model_type=_OrderRow,
+        )
+        _parsed, select_clause, _group, _params = renderer.render_aggregates(
+            {"$computed": {"med": {"$median": "price"}}},
+        )
+        assert "percentile_cont(0.5)" in select_clause.as_string(None)
+
+    def test_aggregate_filter_parses_raw_filter_when_unparsed(self) -> None:
+        """A computed field with a raw (not pre-parsed) filter is parsed lazily."""
+        renderer = PsycopgQueryRenderer(
+            types={"category": _t("text"), "price": _t("numeric")},
+            model_type=_OrderRow,
+        )
+        # Construct a computed field whose ``parsed_filter`` is None to force the
+        # lazy parse branch in ``_render_aggregate_filter``.
+        from forze.application.contracts.querying import AggregateComputedField
+
+        computed = AggregateComputedField(
+            alias="hits",
+            function="$count",
+            field=None,
+            filter={"$values": {"category": "books"}},
+            parsed_filter=None,
+        )
+        expr = renderer._render_aggregate_function(computed)
+        assert "FILTER (WHERE" in expr.as_string(None)
+        assert renderer.binder.values() == ["books"]
+
+
+class TestPostgresAggregateRenderingErrors:
+    """Error branches in aggregate/source-expression rendering."""
+
+    def test_source_expr_requires_types(self) -> None:
+        from forze.application.contracts.querying import AggregateComputedField
+
+        renderer = PsycopgQueryRenderer(model_type=_OrderRow)
+        computed = AggregateComputedField(
+            alias="s",
+            function="$sum",
+            field="price",
+            filter=None,
+            parsed_filter=None,
+        )
+        with pytest.raises(CoreException, match="column type metadata"):
+            renderer._render_aggregate_function(computed)
+
+    def test_source_expr_requires_model_type(self) -> None:
+        from forze.application.contracts.querying import AggregateComputedField
+
+        renderer = PsycopgQueryRenderer(types={"price": _t("numeric")})
+        computed = AggregateComputedField(
+            alias="s",
+            function="$sum",
+            field="price",
+            filter=None,
+            parsed_filter=None,
+        )
+        with pytest.raises(CoreException, match="model_type"):
+            renderer._render_aggregate_function(computed)
+
+    def test_computed_field_without_field_path_raises(self) -> None:
+        from forze.application.contracts.querying import AggregateComputedField
+
+        renderer = PsycopgQueryRenderer(
+            types={"price": _t("numeric")},
+            model_type=_OrderRow,
+        )
+        computed = AggregateComputedField(
+            alias="s",
+            function="$sum",
+            field=None,
+            filter=None,
+            parsed_filter=None,
+        )
+        with pytest.raises(CoreException, match="no field path"):
+            renderer._render_aggregate_function(computed)
+
+
+class _CompareInner(BaseModel):
+    score: int
+    min_score: int = 0
+
+
+class _CompareOuter(BaseModel):
+    meta: _CompareInner
+
+
+class TestCompareErrorBranches:
+    """Error branches in field-to-field compare resolution."""
+
+    def test_nested_compare_requires_types(self) -> None:
+        r = PsycopgQueryRenderer(model_type=_CompareOuter)
+        with pytest.raises(CoreException, match="column type metadata"):
+            r.render(QueryCompare("meta.score", "$gte", "meta.min_score"))
+
+    def test_nested_compare_requires_model_type(self) -> None:
+        r = PsycopgQueryRenderer(types={"meta": _t("jsonb")})
+        with pytest.raises(CoreException, match="model_type"):
+            r.render(QueryCompare("meta.score", "$gte", "meta.min_score"))
+
+    def test_compare_unknown_column_raises(self) -> None:
+        r = PsycopgQueryRenderer(types={"a": _t("int4")})
+        with pytest.raises(CoreException, match="Unknown column"):
+            r.render(QueryCompare("a", "$eq", "missing"))
+
+    def test_compare_compatible_numeric_group(self) -> None:
+        """Different bases within a compatibility group compare without error."""
+        r = PsycopgQueryRenderer(types={"a": _t("int2"), "b": _t("int8")})
+        _sql, params = r.render(QueryCompare("a", "$eq", "b"))
+        assert params == []
+
+    def test_compare_unknown_operator_raises(self) -> None:
+        r = PsycopgQueryRenderer(types={"a": _t("int4"), "b": _t("int4")})
+        bad = QueryCompare("a", cast(Any, "$bogus"), "b")
+        with pytest.raises(CoreException, match="Unknown compare operator"):
+            r.render(bad)
+
+
+class TestNestedFilterErrorBranches:
+    """Error branches in single-field nested-path filter rendering."""
+
+    def test_nested_filter_requires_types(self) -> None:
+        r = PsycopgQueryRenderer(model_type=_CompareOuter)
+        with pytest.raises(CoreException, match="column type metadata"):
+            r.render(QueryField("meta.score", "$eq", 1))
+
+    def test_nested_filter_requires_model_type(self) -> None:
+        r = PsycopgQueryRenderer(types={"meta": _t("jsonb")})
+        with pytest.raises(CoreException, match="model_type"):
+            r.render(QueryField("meta.score", "$eq", 1))
+
+
+class TestTextOperatorGuards:
+    """Text operator coverage and column guards."""
+
+    def test_like_renders_sql(self) -> None:
+        r = PsycopgQueryRenderer(types={"title": _t("text")})
+        _sql, params = r.render(QueryField("title", "$like", "ro%"))
+        assert params == ["ro%"]
+        assert "LIKE" in _sql.as_string(None)
+
+    def test_text_op_without_types_is_allowed(self) -> None:
+        """No type metadata means the text-column guard is a no-op."""
+        r = PsycopgQueryRenderer()
+        _sql, params = r.render(QueryField("title", "$like", "ro%"))
+        assert params == ["ro%"]
+        assert "LIKE" in _sql.as_string(None)
+
+    def test_text_op_on_array_column_raises(self) -> None:
+        r = PsycopgQueryRenderer(types={"tags": _t("text", is_array=True)})
+        with pytest.raises(CoreException, match="array column"):
+            r.render(QueryField("tags", "$like", "x%"))
+
+    def test_text_op_on_non_text_column_raises(self) -> None:
+        r = PsycopgQueryRenderer(types={"n": _t("int8")})
+        with pytest.raises(CoreException, match="text-like"):
+            r.render(QueryField("n", "$like", "x%"))
+
+
+class TestElementErrorBranches:
+    """Element quantifier resolution and inner-predicate error branches."""
+
+    def test_elem_on_non_array_non_json_column_raises(self) -> None:
+        r = PsycopgQueryRenderer(types={"n": _t("int8")})
+        with pytest.raises(CoreException, match="array or jsonb"):
+            r.render(QueryElem("n", "$any", QueryField(ELEM_SCALAR_FIELD, "$eq", 1)))
+
+    def test_nested_elem_path_requires_types_and_model(self) -> None:
+        r = PsycopgQueryRenderer()
+        with pytest.raises(CoreException, match="column types and model_type"):
+            r.render(
+                QueryElem("a.b", "$any", QueryField(ELEM_SCALAR_FIELD, "$eq", 1)),
+            )
+
+    def test_elem_unknown_column_raises(self) -> None:
+        r = PsycopgQueryRenderer(types={"tags": _t("text", is_array=True)})
+        with pytest.raises(CoreException, match="Unknown column"):
+            r.render(
+                QueryElem("missing", "$any", QueryField(ELEM_SCALAR_FIELD, "$eq", 1)),
+            )
+
+    def test_elem_without_types_renders(self) -> None:
+        """No type metadata falls through to the json-array element shape."""
+        r = PsycopgQueryRenderer()
+        _sql, params = r.render(
+            QueryElem("tags", "$any", QueryField(ELEM_SCALAR_FIELD, "$eq", "x")),
+        )
+        assert params == ["x"]
+        assert "jsonb_array_elements" in _sql.as_string(None)
+
+    def test_scalar_inner_and_multiple_fields(self) -> None:
+        """A QueryAnd scalar inner with multiple fields joins predicates with AND."""
+        r = PsycopgQueryRenderer(types={"scores": _t("int4", is_array=True)})
+        inner = QueryAnd(
+            (
+                QueryField(ELEM_SCALAR_FIELD, "$gte", 1),
+                QueryField(ELEM_SCALAR_FIELD, "$lte", 10),
+            ),
+        )
+        _sql, params = r.render(QueryElem("scores", "$any", inner))
+        s = _sql.as_string(None)
+        assert params == [1, 10]
+        assert " AND " in s
+
+    def test_scalar_inner_or_branch(self) -> None:
+        """A QueryOr scalar inner renders an OR of element predicates."""
+        r = PsycopgQueryRenderer(types={"scores": _t("int4", is_array=True)})
+        inner = QueryOr(
+            (
+                QueryField(ELEM_SCALAR_FIELD, "$eq", 1),
+                QueryField(ELEM_SCALAR_FIELD, "$eq", 2),
+            ),
+        )
+        _sql, params = r.render(QueryElem("scores", "$any", inner))
+        s = _sql.as_string(None)
+        assert params == [1, 2]
+        assert " OR " in s
+
+    def test_scalar_inner_or_single_child(self) -> None:
+        """A single-child OR scalar inner renders directly (no extra grouping)."""
+        r = PsycopgQueryRenderer(types={"scores": _t("int4", is_array=True)})
+        inner = QueryOr((QueryField(ELEM_SCALAR_FIELD, "$eq", 5),))
+        _sql, params = r.render(QueryElem("scores", "$any", inner))
+        assert params == [5]
+
+    def test_non_scalar_inner_node_routes_to_object_path_and_raises(self) -> None:
+        """A QueryNot inner is not scalar, so it routes to the object path and is rejected."""
+        r = PsycopgQueryRenderer(types={"scores": _t("int4", is_array=True)})
+        bad_inner = QueryNot(QueryField(ELEM_SCALAR_FIELD, "$eq", 1))
+        with pytest.raises(CoreException, match="Invalid object element inner"):
+            r.render(QueryElem("scores", "$any", bad_inner))
+
+    def test_object_inner_single_field(self) -> None:
+        class _Item(BaseModel):
+            status: str
+
+        class _Row(BaseModel):
+            items: list[_Item]
+
+        r = PsycopgQueryRenderer(types={"items": _t("jsonb")}, model_type=_Row)
+        inner = QueryField("status", "$eq", "open")
+        _sql, params = r.render(QueryElem("items", "$any", inner))
+        assert params == ["open"]
+        assert "_fz_elem ->>" in _sql.as_string(None)
+
+    def test_object_inner_or_branch(self) -> None:
+        class _Item(BaseModel):
+            status: str
+
+        class _Row(BaseModel):
+            items: list[_Item]
+
+        r = PsycopgQueryRenderer(types={"items": _t("jsonb")}, model_type=_Row)
+        inner = QueryOr(
+            (
+                QueryField("status", "$eq", "open"),
+                QueryField("status", "$eq", "done"),
+            ),
+        )
+        _sql, params = r.render(QueryElem("items", "$any", inner))
+        s = _sql.as_string(None)
+        assert params == ["open", "done"]
+        assert " OR " in s
+
+    def test_object_inner_or_single_child(self) -> None:
+        class _Item(BaseModel):
+            status: str
+
+        class _Row(BaseModel):
+            items: list[_Item]
+
+        r = PsycopgQueryRenderer(types={"items": _t("jsonb")}, model_type=_Row)
+        inner = QueryOr((QueryField("status", "$eq", "open"),))
+        _sql, params = r.render(QueryElem("items", "$any", inner))
+        assert params == ["open"]
+
+    def test_object_inner_without_model_type_no_cast(self) -> None:
+        """Object inner on a jsonb column without a model skips leaf-type inference."""
+        r = PsycopgQueryRenderer(types={"items": _t("jsonb")})
+        inner = QueryField("status", "$eq", "open")
+        _sql, params = r.render(QueryElem("items", "$any", inner))
+        s = _sql.as_string(None)
+        assert params == ["open"]
+        assert "(_fz_elem ->> 'status')" in s
+
+    def test_object_inner_unwalkable_field_no_cast(self) -> None:
+        """A field not present on the element model resolves to text (no cast)."""
+
+        class _Item(BaseModel):
+            status: str
+
+        class _Row(BaseModel):
+            items: list[_Item]
+
+        r = PsycopgQueryRenderer(types={"items": _t("jsonb")}, model_type=_Row)
+        inner = QueryField("unknown_field", "$eq", "v")
+        _sql, params = r.render(QueryElem("items", "$any", inner))
+        assert params == ["v"]
+        assert "(_fz_elem ->> 'unknown_field')" in _sql.as_string(None)
+
+    def test_object_inner_invalid_node_raises(self) -> None:
+        class _Item(BaseModel):
+            status: str
+
+        class _Row(BaseModel):
+            items: list[_Item]
+
+        r = PsycopgQueryRenderer(types={"items": _t("jsonb")}, model_type=_Row)
+        with pytest.raises(CoreException, match="Invalid object element inner"):
+            r.render(QueryElem("items", "$any", _UnknownExpr()))
+
+    def test_object_inner_nested_segment_path(self) -> None:
+        """A dotted object-inner field path uses the ``#>>`` JSON extraction form."""
+
+        class _Inner(BaseModel):
+            code: str
+
+        class _Item(BaseModel):
+            attr: _Inner
+
+        class _Row(BaseModel):
+            items: list[_Item]
+
+        r = PsycopgQueryRenderer(types={"items": _t("jsonb")}, model_type=_Row)
+        inner = QueryField("attr.code", "$eq", "x")
+        _sql, params = r.render(QueryElem("items", "$any", inner))
+        s = _sql.as_string(None)
+        assert params == ["x"]
+        assert "_fz_elem #>>" in s
+
+    def test_object_inner_leaf_type_resolution_failure_is_swallowed(self) -> None:
+        """A leaf whose type resolution raises falls back to text (no cast)."""
+
+        class _Item(BaseModel):
+            # ``walk_pydantic_path`` resolves ``codes`` to ``list[str]`` (non-None),
+            # but ``resolve_leaf_python_type`` rejects array-typed JSON leaves; the
+            # renderer swallows that and treats the field as untyped text.
+            codes: list[str]
+
+        class _Row(BaseModel):
+            items: list[_Item]
+
+        r = PsycopgQueryRenderer(types={"items": _t("jsonb")}, model_type=_Row)
+        inner = QueryField("codes", "$eq", "v")
+        _sql, params = r.render(QueryElem("items", "$any", inner))
+        assert params == ["v"]
+        # No per-field cast on the extracted value (leaf type stayed unresolved):
+        # the extraction uses ``->>`` (text) with no trailing ``)::<type>`` cast.
+        assert "(_fz_elem ->> 'codes')" in _sql.as_string(None)
+
+    def test_object_inner_typed_field_applies_cast(self) -> None:
+        """A resolvable non-text leaf type applies a SQL cast to the extracted value."""
+
+        class _Item(BaseModel):
+            qty: int
+
+        class _Row(BaseModel):
+            items: list[_Item]
+
+        r = PsycopgQueryRenderer(types={"items": _t("jsonb")}, model_type=_Row)
+        inner = QueryField("qty", "$gte", "3")
+        _sql, params = r.render(QueryElem("items", "$any", inner))
+        s = _sql.as_string(None)
+        assert params == [3]
+        assert "::int8" in s
+
+    def test_object_inner_multiple_fields_joined_with_and(self) -> None:
+        """Multiple object-inner fields are joined with AND."""
+
+        class _Item(BaseModel):
+            status: str
+            qty: int
+
+        class _Row(BaseModel):
+            items: list[_Item]
+
+        r = PsycopgQueryRenderer(types={"items": _t("jsonb")}, model_type=_Row)
+        inner = QueryAnd(
+            (
+                QueryField("status", "$eq", "open"),
+                QueryField("qty", "$gte", 1),
+            ),
+        )
+        _sql, params = r.render(QueryElem("items", "$any", inner))
+        s = _sql.as_string(None)
+        assert params == ["open", 1]
+        assert " AND " in s
+
+    def test_nested_elem_path_array_leaf_rejected(self) -> None:
+        """A dotted element path resolving to an array leaf is rejected by the builder."""
+
+        class _Outer(BaseModel):
+            tags: list[str]
+
+        class _Row(BaseModel):
+            meta: _Outer
+
+        r = PsycopgQueryRenderer(types={"meta": _t("jsonb")}, model_type=_Row)
+        with pytest.raises(CoreException, match="array-typed leaves"):
+            r.render(
+                QueryElem(
+                    "meta.tags",
+                    "$any",
+                    QueryField(ELEM_SCALAR_FIELD, "$eq", "x"),
+                ),
+            )
+
+
+class TestPythonAnnToPostgresType:
+    """Coverage for the python-annotation to PostgresType mapping."""
+
+    @pytest.mark.parametrize(
+        ("py_type", "expected_base"),
+        [
+            (UUID, "uuid"),
+            (bool, "bool"),
+            (int, "int8"),
+            (float, "float8"),
+            (datetime, "timestamptz"),
+            (date, "date"),
+            (str, "text"),
+        ],
+    )
+    def test_known_annotations_map_to_bases(
+        self,
+        py_type: type,
+        expected_base: str,
+    ) -> None:
+        result = PsycopgQueryRenderer._python_ann_to_postgres_type(py_type)
+        assert result is not None
+        assert result.base == expected_base
+        assert result.is_array is False
+
+    def test_none_annotation_returns_none(self) -> None:
+        assert PsycopgQueryRenderer._python_ann_to_postgres_type(None) is None
+
+    def test_unknown_annotation_returns_none(self) -> None:
+        assert PsycopgQueryRenderer._python_ann_to_postgres_type(complex) is None
+
+
+class TestPsycopgValueCoercer:
+    """Direct coverage for the value coercer used by the renderer."""
+
+    def test_scalar_none_returns_none(self) -> None:
+        c = PsycopgValueCoercer()
+        assert c.scalar(None, t=_t("int4")) is None
+
+    def test_scalar_no_type_passes_through(self) -> None:
+        c = PsycopgValueCoercer()
+        assert c.scalar("raw", t=None) == "raw"
+
+    def test_scalar_array_type_raises(self) -> None:
+        c = PsycopgValueCoercer()
+        with pytest.raises(CoreException, match="Array type not supported"):
+            c.scalar("x", t=_t("text", is_array=True))
+
+    @pytest.mark.parametrize(
+        ("base", "value", "expected"),
+        [
+            ("text", 5, "5"),
+            ("bool", "true", True),
+            ("int4", "7", 7),
+            ("float8", "1.5", 1.5),
+        ],
+    )
+    def test_scalar_base_coercions(
+        self,
+        base: str,
+        value: Any,
+        expected: Any,
+    ) -> None:
+        c = PsycopgValueCoercer()
+        assert c.scalar(value, t=_t(base)) == expected
+
+    def test_scalar_unknown_base_passthrough(self) -> None:
+        c = PsycopgValueCoercer()
+        assert c.scalar("v", t=_t("bytea")) == "v"
+
+    def test_scalar_uuid_coercion(self) -> None:
+        c = PsycopgValueCoercer()
+        u = uuid4()
+        assert c.scalar(str(u), t=_t("uuid")) == u
+
+    def test_scalar_date_coercion(self) -> None:
+        c = PsycopgValueCoercer()
+        assert c.scalar("2024-01-02", t=_t("date")) == date(2024, 1, 2)
+
+    def test_scalar_timestamptz_coercion(self) -> None:
+        c = PsycopgValueCoercer()
+        out = c.scalar("2024-01-02T03:04:05+00:00", t=_t("timestamptz"))
+        assert isinstance(out, datetime)
+        assert out.tzinfo is not None
+
+    def test_scalar_timestamp_coercion(self) -> None:
+        c = PsycopgValueCoercer()
+        out = c.scalar("2024-01-02T03:04:05", t=_t("timestamp"))
+        assert isinstance(out, datetime)
+
+    def test_array_none_returns_empty(self) -> None:
+        c = PsycopgValueCoercer()
+        assert c.array(None, t=_t("int4", is_array=True)) == []
+
+    def test_array_scalar_value_raises(self) -> None:
+        c = PsycopgValueCoercer()
+        with pytest.raises(CoreException, match="Scalar value not supported"):
+            c.array(5, t=None)
+
+    def test_array_no_type_coerces_elements(self) -> None:
+        c = PsycopgValueCoercer()
+        assert c.array([1, "a"], t=None) == [1, "a"]
+
+    def test_array_raise_on_scalar_type(self) -> None:
+        c = PsycopgValueCoercer()
+        with pytest.raises(CoreException, match="Expected array column"):
+            c.array([1, 2], t=_t("int4"), raise_on_scalar_t=True)
+
+    def test_array_typed_elements_coerced(self) -> None:
+        c = PsycopgValueCoercer()
+        assert c.array(["1", "2"], t=_t("int4", is_array=True)) == [1, 2]
+
+    def test_scalar_is_a_query_value_scalar(self) -> None:
+        # Sanity: the alias used by ``array`` recognizes plain scalars.
+        assert isinstance(5, QueryValue.Scalar)
