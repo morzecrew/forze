@@ -91,6 +91,22 @@ transaction is read-only-enforced on the replica too:
 > Deferred: read-replica *auto*-routing from kind (picking a replica without a separate route bind) and
 > per-kind default plans.
 
+#### What a query op may and may not do
+
+The guard covers every **first-class state-write** accessor uniformly — not just `*.command(...)`. The
+rule is *pragmatic*: a query may not mutate domain/auth **state**, but writes that legitimately happen
+*during* a read (caching, metrics, result snapshots) are allowed.
+
+| Accessor | Class | In a `QUERY` op |
+|----------|-------|-----------------|
+| `document/outbox/search/graph/dlock/storage.command`, `analytics.ingest`, `authz.principal_registry`/`role_assignment`, `authn.*_lifecycle` | **state write** | **forbidden** (`precondition`) |
+| `*.query` / `*.get` / `search.hub`/`federated` / decision & verify ports | read | allowed |
+| `cache` (read-through), `counter` (metrics), `search.snapshot` (result cache) | write-during-read | **allowed** (by design) |
+| `inbox` (`mark_if_unseen`), `idempotency` (`begin`/`commit`) | framework-internal | unguarded (only ever run in command ops) |
+
+Single-purpose ports (`transaction`, `resilience`, `domain` dispatcher, `http`, `embeddings`) carry no
+read/write split — they're neither query nor command in the CQRS sense.
+
 ### Stage methods (on scope binders)
 
 | Stage method | When it runs | Typical use |

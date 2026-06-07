@@ -52,9 +52,9 @@ class AuthzDeps(ConvenientDeps):
     # ....................... #
 
     def principal_registry(self, spec: AuthzSpec) -> PrincipalRegistryPort:
-        """Resolve the principal registry port for ``spec``."""
+        """Resolve the principal registry port for ``spec`` (a write — guarded)."""
 
-        return self._resolve_configurable(
+        return self._resolve_command(
             PrincipalRegistryDepKey,
             spec,
             route=spec.name,
@@ -63,6 +63,6 @@ class AuthzDeps(ConvenientDeps):
     # ....................... #
 
     def role_assignment(self, spec: AuthzSpec) -> RoleAssignmentPort:
-        """Resolve the role assignment port for ``spec``."""
+        """Resolve the role assignment port for ``spec`` (a write — guarded)."""
 
-        return self._resolve_configurable(RoleAssignmentDepKey, spec, route=spec.name)
+        return self._resolve_command(RoleAssignmentDepKey, spec, route=spec.name)

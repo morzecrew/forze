@@ -5,6 +5,13 @@ from __future__ import annotations
 import attrs
 import pytest
 
+from forze.application.contracts.analytics import (
+    AnalyticsQueryDefinition,
+    AnalyticsSpec,
+)
+from forze.application.contracts.authn import AuthnSpec
+from forze.application.contracts.cache import CacheSpec
+from forze.application.contracts.counter import CounterSpec
 from forze.application.contracts.document import DocumentSpec, DocumentWriteTypes
 from forze.application.contracts.execution import Handler
 from forze.application.contracts.outbox import OutboxSpec
@@ -59,6 +66,17 @@ class _EventPayload(BaseModel):
 OUTBOX_SPEC = OutboxSpec(name="things-events", codec=PydanticModelCodec(_EventPayload))
 
 
+class _AnalyticsRow(BaseModel):
+    n: str = ""
+
+
+ANALYTICS_SPEC = AnalyticsSpec(
+    name="events",
+    read=_AnalyticsRow,
+    queries={"q": AnalyticsQueryDefinition(params=_AnalyticsRow)},
+)
+
+
 @attrs.define(slots=True)
 class _AcquireDocumentCommand(Handler[None, str]):
     ctx: ExecutionContext
@@ -98,6 +116,42 @@ class _ReadFlag(Handler[None, bool]):
 class _Noop(Handler[None, None]):
     async def __call__(self, _args: None) -> None:
         return None
+
+
+@attrs.define(slots=True)
+class _AcquireAnalyticsIngest(Handler[None, str]):
+    ctx: ExecutionContext
+
+    async def __call__(self, _args: None) -> str:
+        self.ctx.analytics.ingest(ANALYTICS_SPEC)
+        return "ingested"
+
+
+@attrs.define(slots=True)
+class _AcquireTokenLifecycle(Handler[None, str]):
+    ctx: ExecutionContext
+
+    async def __call__(self, _args: None) -> str:
+        self.ctx.authn.token_lifecycle(AuthnSpec(name="auth"))
+        return "issued"
+
+
+@attrs.define(slots=True)
+class _AcquireCache(Handler[None, str]):
+    ctx: ExecutionContext
+
+    async def __call__(self, _args: None) -> str:
+        self.ctx.cache(CacheSpec(name="c"))
+        return "cached"
+
+
+@attrs.define(slots=True)
+class _AcquireCounter(Handler[None, str]):
+    ctx: ExecutionContext
+
+    async def __call__(self, _args: None) -> str:
+        self.ctx.counter(CounterSpec(name="c"))
+        return "counted"
 
 
 def _frozen(op: str, factory, *, query: bool):
@@ -191,3 +245,37 @@ class TestReadOnlyTransaction:
             pass
 
         assert state.tx_read_only_calls == [False]
+
+
+class TestUniformWriteGuard:
+    """The read-only guard covers every first-class state-write accessor, not just docs."""
+
+    async def test_query_op_cannot_ingest_analytics(self) -> None:
+        ctx = context_from_modules(MockDepsModule())
+        reg = _frozen("q", lambda c: _AcquireAnalyticsIngest(ctx=c), query=True)
+
+        with pytest.raises(CoreException) as ei:
+            await run_operation(reg, "q", None, ctx)
+        assert ei.value.kind is ExceptionKind.PRECONDITION
+
+    async def test_query_op_cannot_run_identity_lifecycle(self) -> None:
+        ctx = context_from_modules(MockDepsModule())
+        reg = _frozen("q", lambda c: _AcquireTokenLifecycle(ctx=c), query=True)
+
+        with pytest.raises(CoreException) as ei:
+            await run_operation(reg, "q", None, ctx)
+        assert ei.value.kind is ExceptionKind.PRECONDITION
+
+    async def test_query_op_may_use_read_through_cache(self) -> None:
+        # Pragmatic line: read-through cache writes are allowed in a query.
+        ctx = context_from_modules(MockDepsModule())
+        reg = _frozen("q", lambda c: _AcquireCache(ctx=c), query=True)
+
+        assert await run_operation(reg, "q", None, ctx) == "cached"
+
+    async def test_query_op_may_increment_a_counter(self) -> None:
+        # Pragmatic line: in-read metric counters are allowed in a query.
+        ctx = context_from_modules(MockDepsModule())
+        reg = _frozen("q", lambda c: _AcquireCounter(ctx=c), query=True)
+
+        assert await run_operation(reg, "q", None, ctx) == "counted"
