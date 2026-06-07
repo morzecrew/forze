@@ -39,8 +39,9 @@ A saga is a `SagaDefinition` of typed `SagaStep`s, each with an `action` and an 
 | `compensation` | Undo a committed step (receives the context *as of that step's completion*). |
 | `kind` | The step's role relative to the pivot (see below); defaults to `COMPENSATABLE`. |
 | `tx_route` | Commit this step's work in its own transaction on this route. |
-| `retry_policy` | Named resilience policy retried around the action (fresh tx per attempt; for a `RETRYABLE` step it drives retry-forward — the action must be idempotent). Use a policy with a `TimeoutStrategy` for a per-step timeout. |
+| `retry_policy` | Named resilience policy retried around the action (fresh tx per attempt; for a `RETRYABLE` step it drives retry-forward). Use a policy with a `TimeoutStrategy` for a per-step timeout. |
 | `compensation_policy` | Named resilience policy retried around the compensation (it must eventually succeed). |
+| `idempotent` | Affirm the action is safe to re-execute. **Required** (validated) when the step is retried — i.e. declares `retry_policy` or is `RETRYABLE` — so opting into re-execution is a conscious decision. |
 
 ## The pivot — step kinds
 
@@ -77,10 +78,48 @@ fails you must *not* refund and un-reserve; the saga *committed* at the charge, 
 ## Executor
 
 `run_saga(ctx, definition, initial)` runs the saga via the resolved `SagaExecutorPort` — the
-in-process `InProcessSagaExecutor` by default (no registration needed). Register a custom executor
-(e.g. a durable/Temporal adapter for crash-resumable orchestration) via
-`SagaDepsModule(executor=...)`.
+in-process `InProcessSagaExecutor` by default (no registration needed).
 
-**Not crash-resumable (in-process).** A process crash mid-saga leaves committed steps
-un-compensated; for resumable orchestration use a durable executor (follow-on) — the same
-`SagaDefinition` runs on either.
+## Durability — one brain, two drivers
+
+The pivot/compensation **decision logic** lives in a backend-agnostic coordinator,
+`SagaProgress` (pure, ctx-free: it tracks the completed steps and the pivot, decides
+compensate-vs-forward, and builds the `saga.*` errors). A *driver* supplies the I/O. This keeps the
+semantics identical across execution backends instead of forking into two engines:
+
+- **In-process** (`InProcessSagaExecutor`) drives `SagaProgress` with the callable steps +
+  `ctx.tx_ctx.scope` transactions. Synchronous; **not crash-resumable** — a process crash mid-saga
+  leaves committed steps un-compensated.
+- **Temporal** (`forze_temporal.TemporalSaga`) drives the *same* `SagaProgress` from inside a
+  workflow, with steps as activities. **Temporal owns durability** — persistence, resume, retries,
+  and timeouts (per-activity `RetryPolicy`/timeouts and the workflow history); Forze contributes only
+  the saga semantics. Use it inside `@workflow.run`:
+
+      :::python
+      saga = TemporalSaga(name="checkout")
+      await saga.step("reserve", lambda: workflow.execute_activity(reserve, inp, ...),
+                      compensation=lambda: workflow.execute_activity(unreserve, inp, ...))
+      await saga.step("charge", lambda: workflow.execute_activity(charge, inp, ...),
+                      kind=SagaStepKind.PIVOT)
+      await saga.step("ship", lambda: workflow.execute_activity(ship, inp, ...),
+                      kind=SagaStepKind.RETRYABLE)
+
+The shared asset is the **coordinator**, not the definition: a Temporal saga's steps are
+**activities** (registered, Pydantic-serializable I/O, deterministic workflow code), not the
+callable `SagaDefinition`. That divergence is intrinsic to Temporal's model, so the Temporal path is
+a workflow helper (started via `DurableWorkflowCommandPort`), not a `SagaExecutorPort`. An in-core
+durable store was deliberately **not** built — it would reinvent what Temporal already does.
+
+## Limits of the in-process driver
+
+Two things are **durability features** — reach for the Temporal driver when you need them:
+
+- **`forward_incomplete` is terminal in-process.** A retryable step that exhausts its `retry_policy`
+  raises; there is no in-process mechanism to resume it forward later. True retry-to-completion needs
+  the durable workflow (Temporal keeps retrying per the activity `RetryPolicy`).
+- **No in-flight visibility in-process.** You get `domain="saga"` tracer events
+  (`saga_started`/`step_completed`/`saga_committed`/`compensated`/`saga_completed` …), but no queryable
+  registry of running sagas — Temporal's history/UI is the answer for operating long-running sagas.
+
+**Deferred:** parallel/fan-out step branches (which change the strictly-sequential model) and a
+saga-level deadline (which needs careful mid-step cancellation) are out of scope for now.

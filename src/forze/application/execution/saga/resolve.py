@@ -1,16 +1,16 @@
 """Resolve the saga executor with an in-process default."""
 
-from __future__ import annotations
-
 from typing import TYPE_CHECKING
 
-from forze.application.contracts.saga import SagaExecutorDepKey
+from forze.application.contracts.saga import (
+    SagaDefinition,
+    SagaExecutorDepKey,
+    SagaExecutorPort,
+)
 
 from .executor import InProcessSagaExecutor
 
 if TYPE_CHECKING:
-    from forze.application.contracts.saga import SagaDefinition, SagaExecutorPort
-
     from ..context import ExecutionContext
 
 # ----------------------- #
@@ -18,11 +18,16 @@ if TYPE_CHECKING:
 _DEFAULT_SAGA_EXECUTOR: SagaExecutorPort = InProcessSagaExecutor()
 """Process-wide in-process executor used when no app executor is registered."""
 
+# ....................... #
+
 
 def default_saga_executor() -> SagaExecutorPort:
     """Return the shared in-process saga executor."""
 
     return _DEFAULT_SAGA_EXECUTOR
+
+
+# ....................... #
 
 
 def resolve_saga_executor(ctx: ExecutionContext) -> SagaExecutorPort:
@@ -32,6 +37,9 @@ def resolve_saga_executor(ctx: ExecutionContext) -> SagaExecutorPort:
         return ctx.deps.provide(SagaExecutorDepKey)
 
     return _DEFAULT_SAGA_EXECUTOR
+
+
+# ....................... #
 
 
 async def run_saga[Ctx](

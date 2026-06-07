@@ -1,22 +1,21 @@
 """In-process saga executor: per-step transactions, reverse compensation on failure."""
 
-from __future__ import annotations
-
-from typing import TYPE_CHECKING, final
+from typing import TYPE_CHECKING, Awaitable, Callable, final
 
 import attrs
 
-from forze.application.contracts.saga import SagaStepKind
-from forze.base.exceptions import CoreException, exc
+from forze.application.contracts.saga import (
+    SagaDefinition,
+    SagaProgress,
+    SagaStep,
+    SagaStepKind,
+)
+from forze.base.exceptions import exc
 
 from ..resilience import resolve_resilience_executor
 from ..tracing import record
 
 if TYPE_CHECKING:
-    from collections.abc import Awaitable, Callable
-
-    from forze.application.contracts.saga import SagaDefinition, SagaStep
-
     from ..context import ExecutionContext
 
 # ----------------------- #
@@ -47,31 +46,37 @@ class InProcessSagaExecutor:
 
         self._emit("saga_started", definition, None)
 
-        state = initial
-        completed: list[tuple[SagaStep[Ctx], Ctx]] = []
-        committed = False
+        progress = SagaProgress(saga_name=str(definition.name))
 
         for step in definition.steps:
+            progress.register(str(step.name), step.kind)
+
+        state = initial
+        states: dict[int, Ctx] = {}  # context as of each completed step, by index
+
+        for index, step in enumerate(definition.steps):
             try:
                 state = await self._run_step(ctx, step, state)
 
             except Exception as error:
                 self._emit("step_failed", definition, step)
 
-                if committed:
+                if progress.committed:
                     # Past the pivot: the saga is committed. Do NOT compensate — it must
                     # complete forward (manually / asynchronously) instead.
-                    raise self._forward_incomplete(definition, step, error) from error
+                    raise progress.forward_incomplete_error(index, error) from error
 
-                comp_errors = await self._compensate(ctx, definition, completed)
-                raise self._saga_error(definition, step, error, comp_errors) from error
+                comp_errors = await self._compensate(ctx, definition, progress, states)
+                raise progress.step_failed_error(index, error, comp_errors) from error
 
-            completed.append((step, state))
+            progress.record_success(index)
+            states[index] = state
             self._emit("step_completed", definition, step)
 
             if step.kind is SagaStepKind.PIVOT:
-                committed = True
                 self._emit("saga_committed", definition, step)
+
+        self._emit("saga_completed", definition, None)
 
         return state
 
@@ -103,20 +108,20 @@ class InProcessSagaExecutor:
         self,
         ctx: ExecutionContext,
         definition: SagaDefinition[Ctx],
-        completed: list[tuple[SagaStep[Ctx], Ctx]],
+        progress: SagaProgress,
+        states: dict[int, Ctx],
     ) -> list[BaseException]:
         errors: list[BaseException] = []
 
-        for step, state_at_completion in reversed(completed):
+        for index in progress.steps_to_compensate():
+            step = definition.steps[index]
             compensation = step.compensation
 
             if compensation is None:
                 continue
 
             try:
-                await self._run_compensation(
-                    ctx, step, compensation, state_at_completion
-                )
+                await self._run_compensation(ctx, step, compensation, states[index])
                 self._emit("compensated", definition, step)
 
             except Exception as comp_error:  # noqa: BLE001 — best-effort; collect all
@@ -149,58 +154,6 @@ class InProcessSagaExecutor:
 
         else:
             await _comp()
-
-    # ....................... #
-
-    def _forward_incomplete[Ctx](
-        self,
-        definition: SagaDefinition[Ctx],
-        step: SagaStep[Ctx],
-        error: BaseException,
-    ) -> CoreException:
-        return exc.infrastructure(
-            f"Saga {definition.name!r} committed at its pivot but could not complete "
-            f"forward at step {step.name!r}; it must be completed, not compensated.",
-            code="saga.forward_incomplete",
-        ).enrich(
-            cause={"error": str(error)},
-            saga=str(definition.name),
-            step=str(step.name),
-        )
-
-    # ....................... #
-
-    def _saga_error[Ctx](
-        self,
-        definition: SagaDefinition[Ctx],
-        step: SagaStep[Ctx],
-        error: BaseException,
-        comp_errors: list[BaseException],
-    ) -> CoreException:
-        if comp_errors:
-            return exc.infrastructure(
-                f"Saga {definition.name!r} failed at step {step.name!r} and "
-                f"compensation failed for {len(comp_errors)} step(s); manual "
-                "intervention required.",
-                code="saga.compensation_failed",
-            ).enrich(
-                cause={
-                    "error": str(error),
-                    "compensation_errors": [str(e) for e in comp_errors],
-                },
-                saga=str(definition.name),
-                step=str(step.name),
-            )
-
-        return exc.domain(
-            f"Saga {definition.name!r} failed at step {step.name!r}; completed steps "
-            "were compensated.",
-            code="saga.step_failed",
-        ).enrich(
-            cause={"error": str(error)},
-            saga=str(definition.name),
-            step=str(step.name),
-        )
 
     # ....................... #
 

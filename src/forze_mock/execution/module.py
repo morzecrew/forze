@@ -45,6 +45,7 @@ from forze.application.contracts.document import (
     DocumentQueryDepKey,
     DocumentSpec,
 )
+from forze.application.contracts.domain import DomainEventDispatcherDepKey
 from forze.application.contracts.durable.function import (
     DurableFunctionEventCommandDepKey,
     DurableFunctionEventSpec,
@@ -60,6 +61,12 @@ from forze.application.contracts.durable.workflow import (
 from forze.application.contracts.embeddings import (
     EmbeddingsProviderDepKey,
     EmbeddingsSpec,
+)
+from forze.application.contracts.graph import (
+    GraphCommandDepKey,
+    GraphModuleSpec,
+    GraphQueryDepKey,
+    GraphRawQueryDepKey,
 )
 from forze.application.contracts.idempotency import (
     IdempotencyDepKey,
@@ -82,6 +89,7 @@ from forze.application.contracts.queue import (
     QueueQueryDepKey,
     QueueSpec,
 )
+from forze.application.contracts.resilience import ResilienceExecutorDepKey
 from forze.application.contracts.search import (
     FederatedSearchQueryDepKey,
     FederatedSearchSpec,
@@ -94,12 +102,6 @@ from forze.application.contracts.search import (
     SearchSpec,
 )
 from forze.application.contracts.secrets import SecretsDepKey
-from forze.application.contracts.graph import (
-    GraphCommandDepKey,
-    GraphModuleSpec,
-    GraphQueryDepKey,
-    GraphRawQueryDepKey,
-)
 from forze.application.contracts.storage import (
     StorageCommandDepKey,
     StorageCommandPort,
@@ -122,8 +124,6 @@ from forze.application.contracts.transaction import (
     TransactionManagerDepKey,
     TransactionManagerPort,
 )
-from forze.application.contracts.domain import DomainEventDispatcherDepKey
-from forze.application.contracts.resilience import ResilienceExecutorDepKey
 from forze.application.execution import (
     Deps,
     DepsModule,

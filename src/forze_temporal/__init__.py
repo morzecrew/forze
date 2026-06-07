@@ -20,6 +20,7 @@ from .kernel.client import (
     TemporalClientPort,
     TemporalConfig,
 )
+from .saga import TemporalSaga
 
 # ----------------------- #
 
@@ -34,4 +35,5 @@ __all__ = [
     "temporal_lifecycle_step",
     "routed_temporal_lifecycle_step",
     "ExecutionContextInterceptor",
+    "TemporalSaga",
 ]

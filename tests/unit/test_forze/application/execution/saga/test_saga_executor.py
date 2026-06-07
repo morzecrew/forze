@@ -43,6 +43,7 @@ def _step(
         compensation=compensation if comp else None,
         kind=kind,
         tx_route=tx_route,
+        idempotent=kind is SagaStepKind.RETRYABLE,  # retryable steps must affirm this
     )
 
 
@@ -129,7 +130,11 @@ class TestSagaExecutor:
             name="s",
             steps=(
                 SagaStep(
-                    name="flaky", action=flaky, tx_route="mock", retry_policy="occ"
+                    name="flaky",
+                    action=flaky,
+                    tx_route="mock",
+                    retry_policy="occ",
+                    idempotent=True,
                 ),
             ),
         )
@@ -242,3 +247,31 @@ class TestDefinitionValidation:
                     _step("p2", rec, kind=SagaStepKind.PIVOT),
                 ),
             )
+
+    def test_retried_step_must_declare_idempotent(self) -> None:
+        async def act(_ctx: ExecutionContext, state: State) -> State:
+            return state
+
+        # A retry_policy step without idempotent=True is rejected.
+        with pytest.raises(CoreException) as ei:
+            SagaDefinition(
+                name="s",
+                steps=(
+                    SagaStep(name="a", action=act, retry_policy="occ", tx_route="mock"),
+                ),
+            )
+        assert ei.value.kind is ExceptionKind.CONFIGURATION
+
+        # Same step with idempotent=True is accepted.
+        SagaDefinition(
+            name="s",
+            steps=(
+                SagaStep(
+                    name="a",
+                    action=act,
+                    retry_policy="occ",
+                    tx_route="mock",
+                    idempotent=True,
+                ),
+            ),
+        )

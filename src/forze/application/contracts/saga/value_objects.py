@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from enum import StrEnum
 from typing import TYPE_CHECKING, Generic, TypeVar, final
 
@@ -81,6 +81,51 @@ class SagaStep(Generic[Ctx]):
     """Optional named resilience policy retried around the compensation (it must
     eventually succeed, so retry it harder)."""
 
+    idempotent: bool = False
+    """Affirm the action is safe to re-execute. Required when the step is retried — i.e.
+    it declares ``retry_policy`` or is ``RETRYABLE`` (validated by :class:`SagaDefinition`)."""
+
+
+# ....................... #
+
+
+def validate_saga_order(
+    kinds: Sequence[SagaStepKind],
+    step_names: Sequence[str],
+    saga_name: str,
+) -> None:
+    """Enforce the canonical step order ``compensatable* pivot? retryable*``.
+
+    Shared by :class:`SagaDefinition` (up-front) and the incremental
+    ``SagaProgress.register`` so both drivers apply the same rule.
+    """
+
+    seen_pivot = False
+    seen_retryable = False
+
+    for kind, name in zip(kinds, step_names, strict=True):
+        if kind is SagaStepKind.COMPENSATABLE:
+            if seen_pivot or seen_retryable:
+                raise exc.configuration(
+                    f"Saga {saga_name!r}: compensatable step {name!r} must come before "
+                    "the pivot."
+                )
+
+        elif kind is SagaStepKind.PIVOT:
+            if seen_pivot:
+                raise exc.configuration(
+                    f"Saga {saga_name!r}: at most one pivot step is allowed."
+                )
+            seen_pivot = True
+
+        else:  # RETRYABLE
+            if not seen_pivot:
+                raise exc.configuration(
+                    f"Saga {saga_name!r}: retryable step {name!r} requires a preceding "
+                    "pivot step."
+                )
+            seen_retryable = True
+
 
 # ....................... #
 
@@ -99,29 +144,25 @@ class SagaDefinition(BaseSpec, Generic[Ctx]):
         if not self.steps:
             raise exc.configuration("Saga definition must declare at least one step")
 
-        # Enforce the canonical order: compensatable* pivot? retryable*.
-        seen_pivot = False
-        seen_retryable = False
+        validate_saga_order(
+            [step.kind for step in self.steps],
+            [str(step.name) for step in self.steps],
+            str(self.name),
+        )
 
+        # A re-executed step must affirm it is safe to re-run.
         for step in self.steps:
-            if step.kind is SagaStepKind.COMPENSATABLE:
-                if seen_pivot or seen_retryable:
-                    raise exc.configuration(
-                        f"Saga {self.name!r}: compensatable step {step.name!r} must "
-                        "come before the pivot."
-                    )
+            retried = (
+                step.retry_policy is not None or step.kind is SagaStepKind.RETRYABLE
+            )
 
-            elif step.kind is SagaStepKind.PIVOT:
-                if seen_pivot:
-                    raise exc.configuration(
-                        f"Saga {self.name!r}: at most one pivot step is allowed."
-                    )
-                seen_pivot = True
-
-            else:  # RETRYABLE
-                if not seen_pivot:
-                    raise exc.configuration(
-                        f"Saga {self.name!r}: retryable step {step.name!r} requires a "
-                        "preceding pivot step."
-                    )
-                seen_retryable = True
+            if retried and not step.idempotent:
+                reason = (
+                    "is retryable"
+                    if step.kind is SagaStepKind.RETRYABLE
+                    else "declares retry_policy"
+                )
+                raise exc.configuration(
+                    f"Saga {self.name!r}: step {step.name!r} {reason} and must declare "
+                    "idempotent=True (re-execution must be safe)."
+                )
