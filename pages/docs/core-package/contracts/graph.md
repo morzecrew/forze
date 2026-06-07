@@ -33,6 +33,27 @@ query = ctx.deps.resolve_configurable(
 )
 ```
 
+## Raw queries & tenancy
+
+The structured ports inject tenant isolation automatically. The escape hatches do not — so
+each has an explicit trust model:
+
+- **`ctx.graph.raw(spec)` (`GraphRawQueryPort`)** — engine-specific Cypher. In a **tenant-aware**
+  module it *fails closed* (raises if no tenant is bound, instead of running unscoped across all
+  tenants) and binds the current tenant as `$tenant`. You must place the filter yourself:
+
+  ```python
+  await ctx.graph.raw(spec).run(
+      "MATCH (n:User {tenant_id: $tenant}) RETURN n.id AS id", {}
+  )
+  ```
+
+- **Kernel client ports** (`PostgresClientPort`, `Neo4jClientPort`, resolved via their DepKeys) —
+  full bypass; you own all scoping. Get the tenant with `ctx.tenancy.require_current_id()`
+  (raises if none bound) rather than reaching into `inv_ctx`. Routed Postgres is already isolated
+  per-tenant pool. A query that must legitimately span tenants belongs in a **non**-tenant-aware
+  module by construction.
+
 ## Related pages
 
 - [Specs and wiring](../../concepts/specs-and-wiring.md)

@@ -23,6 +23,7 @@ from forze.application.contracts.graph import (
     VertexRef,
 )
 from forze.application.contracts.tenancy import TenantIdentity
+from forze.base.exceptions import CoreException
 from forze_neo4j.adapters import Neo4jGraphAdapter
 from forze_neo4j.kernel.client import Neo4jClient
 
@@ -199,3 +200,24 @@ async def test_raw_escape_hatch(neo4j_client: Neo4jClient) -> None:
 
     rows = await a.run("MATCH (n:User) RETURN count(n) AS total")
     assert rows[0]["total"] == 2
+
+
+async def test_raw_query_is_tenant_scoped(neo4j_client: Neo4jClient) -> None:
+    t1, t2 = uuid4(), uuid4()
+    current: dict[str, TenantIdentity | None] = {"id": TenantIdentity(tenant_id=t1)}
+    a = _adapter(
+        neo4j_client, tenant_aware=True, tenant_provider=lambda: current["id"]
+    )
+
+    await a.create_vertex("User", UserCreate(id="t1u"))
+    current["id"] = TenantIdentity(tenant_id=t2)
+    await a.create_vertex("User", UserCreate(id="t2u"))
+
+    # A raw query scoped on $tenant sees only the current tenant's nodes.
+    rows = await a.run("MATCH (n:User {tenant_id: $tenant}) RETURN n.id AS id")
+    assert {r["id"] for r in rows} == {"t2u"}
+
+    # Fail-closed: no bound tenant raises rather than running unscoped across tenants.
+    current["id"] = None
+    with pytest.raises(CoreException):
+        await a.run("MATCH (n:User) RETURN n")

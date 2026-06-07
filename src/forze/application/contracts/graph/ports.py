@@ -295,9 +295,14 @@ class GraphRawQueryPort(BaseGraphModulePort, Protocol):
 
     Use only for power features the neutral ports cannot express (Cypher path
     predicates, GDS, APOC, AQL traversal options). The query string is engine-specific,
-    so any code using this is **not** portable across graph backends, and the adapter's
-    neutral guarantees do **not** apply: tenancy filtering and result codec
-    materialization are the caller's responsibility. Prefer the structured ports.
+    so any code using this is **not** portable across graph backends, and result codec
+    materialization is the caller's responsibility. Prefer the structured ports.
+
+    Tenancy: in a **tenant-aware** module the adapter fails closed (raises if no tenant is
+    bound, rather than running unscoped) and binds the current tenant as ``$tenant`` — so
+    you must scope the query yourself, e.g. ``MATCH (n {tenant_id: $tenant})``. The adapter
+    cannot rewrite arbitrary engine queries, so the filter placement is on you; a query that
+    must legitimately span tenants belongs in a **non**-tenant-aware module by construction.
     """
 
     def run(

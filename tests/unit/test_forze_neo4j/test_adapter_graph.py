@@ -7,7 +7,6 @@ import pytest
 from pydantic import BaseModel
 
 from forze.application.contracts.graph import (
-    EdgeRef,
     GraphCommandPort,
     GraphDirection,
     GraphEdgeDirectionality,
@@ -208,6 +207,40 @@ async def test_tenant_required_when_aware_without_provider_value() -> None:
     )
     with pytest.raises(CoreException):
         await adapter.get_vertex(VertexRef(kind="User", key="a"))
+
+
+@pytest.mark.asyncio
+async def test_raw_query_binds_tenant_when_aware() -> None:
+    tid = uuid4()
+    adapter, client = _adapter(
+        rows=[], tenant_aware=True, tenant_provider=lambda: TenantIdentity(tenant_id=tid)
+    )
+
+    await adapter.run("MATCH (n {tenant_id: $tenant}) RETURN n", {"x": 1})
+
+    _, params = client.calls[-1]
+    assert params == {"x": 1, "tenant": str(tid)}
+
+
+@pytest.mark.asyncio
+async def test_raw_query_fails_closed_without_tenant() -> None:
+    # A tenant-aware raw query with no bound tenant raises instead of running unscoped.
+    adapter, client = _adapter(rows=[], tenant_aware=True, tenant_provider=lambda: None)
+
+    with pytest.raises(CoreException):
+        await adapter.run("MATCH (n) RETURN n")
+
+    assert client.calls == []  # never reached the client
+
+
+@pytest.mark.asyncio
+async def test_raw_query_passthrough_when_not_tenant_aware() -> None:
+    adapter, client = _adapter(rows=[])
+
+    await adapter.run("MATCH (n) RETURN n", {"x": 1})
+
+    _, params = client.calls[-1]
+    assert params == {"x": 1}  # unchanged — no tenant injected
 
 
 @pytest.mark.asyncio

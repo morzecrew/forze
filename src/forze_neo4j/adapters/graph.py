@@ -489,7 +489,16 @@ class Neo4jGraphAdapter(TenancyMixin):
     async def run(
         self, query: str, params: JsonDict | None = None
     ) -> Sequence[JsonDict]:
-        return await self.client.run(query, params, database=self.database)
+        # Tenant-aware raw queries fail closed: ``_tenant_str`` →
+        # ``require_tenant_if_aware`` raises if no tenant is bound (was: silent
+        # cross-tenant access). The framework tenant is bound as ``$tenant`` (authoritative
+        # over any caller-supplied key) so the query can ``MATCH (... {tenant_id: $tenant})``.
+        merged = dict(params or {})
+
+        if self.tenant_aware:
+            merged["tenant"] = self._tenant_str()
+
+        return await self.client.run(query, merged or None, database=self.database)
 
     # ....................... #
     # Deferred GraphQueryPort methods
