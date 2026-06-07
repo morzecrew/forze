@@ -22,6 +22,13 @@ from .runtime import RuntimeVar
 from .selector import StrKeySelector, str_key_selector
 from .sequence import AbstractSequence
 from .string import normalize_string
+from .time_source import (
+    FrozenTimeSource,
+    SystemTimeSource,
+    TimeSource,
+    bind_time_source,
+    current_time_source,
+)
 from .types import JsonDict, StrKey
 from .uuid import uuid4, uuid7
 
@@ -29,6 +36,11 @@ from .uuid import uuid4, uuid7
 
 __all__ = [
     "utcnow",
+    "TimeSource",
+    "SystemTimeSource",
+    "FrozenTimeSource",
+    "bind_time_source",
+    "current_time_source",
     "CacheLane",
     "InflightLane",
     "CachedInflightLane",

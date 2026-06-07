@@ -54,6 +54,22 @@ class ItContextProbeWorkflow:
         )
 
 
+@workflow.defn(name="ItClockProbeWorkflow")
+class ItClockProbeWorkflow:
+    @workflow.run
+    async def run(self) -> str:
+        # Under the ExecutionContextInterceptor's bound workflow clock, utcnow() must
+        # route to workflow.now() (deterministic) and uuid7() to workflow.uuid4()
+        # (a version-4 id) — never the non-deterministic system clock / secrets.
+        with workflow.unsafe.imports_passed_through():
+            from forze.base.primitives import utcnow, uuid7
+
+        same_now = utcnow() == workflow.now()
+        version = uuid7().version
+
+        return f"{same_now}:{version}"
+
+
 class SumIn(BaseModel):
     """Pydantic input for :class:`ItSumWorkflow`."""
 
