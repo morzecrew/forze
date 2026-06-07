@@ -8,19 +8,15 @@ from __future__ import annotations
 
 import pytest
 
-from forze.application.execution import run_saga
 from forze.base.exceptions import CoreException, ExceptionKind
 
 from examples.order_fulfillment import (
     INVENTORY_SPEC,
     ORDER_SPEC,
     SHIPMENT_SPEC,
-    CheckoutCtx,
-    InventoryCreate,
-    OrderCreate,
-    build_checkout_saga,
     build_context,
     deliver,
+    place_order,
     relay_once,
     run_checkout,
 )
@@ -32,7 +28,8 @@ class TestOrderFulfillmentExample:
     async def test_happy_path_confirms_relays_and_ships(self) -> None:
         ctx = build_context()
 
-        order_id, inventory_id = await run_checkout(ctx)
+        order_id, inventory_id = await place_order(ctx)
+        await run_checkout(ctx, order_id, inventory_id)
         messages = await relay_once(ctx)
 
         assert len(messages) == 1  # exactly one order.confirmed staged + claimed
@@ -50,7 +47,8 @@ class TestOrderFulfillmentExample:
     async def test_redelivery_is_deduped_by_the_inbox(self) -> None:
         ctx = build_context()
 
-        await run_checkout(ctx)
+        order_id, inventory_id = await place_order(ctx)
+        await run_checkout(ctx, order_id, inventory_id)
         messages = await relay_once(ctx)
         assert len(messages) == 1
 
@@ -66,25 +64,16 @@ class TestOrderFulfillmentExample:
     async def test_pivot_failure_compensates_and_emits_nothing(self) -> None:
         ctx = build_context()
 
-        order = await ctx.document.command(ORDER_SPEC).create(OrderCreate())
-        inventory = await ctx.document.command(INVENTORY_SPEC).create(
-            InventoryCreate(sku="WIDGET", reserved=0)
-        )
-        saga_ctx = CheckoutCtx(
-            order_id=order.id,
-            inventory_id=inventory.id,
-            qty=2,
-            simulate_failure=True,
-        )
+        order_id, inventory_id = await place_order(ctx)
 
         with pytest.raises(CoreException) as ei:
-            await run_saga(ctx, build_checkout_saga(), saga_ctx)
+            await run_checkout(ctx, order_id, inventory_id, simulate_failure=True)
 
         assert ei.value.kind is ExceptionKind.DOMAIN  # step_failed -> compensated
 
         # reserve was compensated; order never confirmed; nothing staged/relayed/shipped.
-        inventory_after = await ctx.document.query(INVENTORY_SPEC).get(inventory.id)
-        order_after = await ctx.document.query(ORDER_SPEC).get(order.id)
+        inventory_after = await ctx.document.query(INVENTORY_SPEC).get(inventory_id)
+        order_after = await ctx.document.query(ORDER_SPEC).get(order_id)
         shipments = await ctx.document.query(SHIPMENT_SPEC).find_many()
 
         assert inventory_after.reserved == 0

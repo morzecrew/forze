@@ -7,8 +7,12 @@ evolves (an example that doesn't run is worse than no example).
 Run one:
 
 ```bash
-uv run python -m examples.order_fulfillment
+uv run python -m examples.order_fulfillment        # info-level narrative
+uv run python -m examples.order_fulfillment debug  # also show debug lines
 ```
+
+Each demo configures logging so it prints its own readable narrative instead of the
+framework's verbose trace logs, and runs **both** the happy path and the compensation path.
 
 ## `order_fulfillment.py` — the whole stack in one story
 
