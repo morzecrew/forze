@@ -128,4 +128,5 @@ nav:
     - SQS: integrations/sqs.md
     - RabbitMQ: integrations/rabbitmq.md
     - OIDC: integrations/oidc.md
+    - OpenTelemetry: integrations/otel.md
     - Mock: integrations/mock.md

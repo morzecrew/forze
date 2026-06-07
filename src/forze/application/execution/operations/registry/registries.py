@@ -51,6 +51,17 @@ class OperationRegistry:
 
     # ....................... #
 
+    def operation_keys(self) -> frozenset[StrKey]:
+        """Return every registered operation key (one per handler factory).
+
+        Useful for cross-cutting instrumentation that targets all operations — e.g.
+        ``forze_otel.instrument_operations``.
+        """
+
+        return frozenset(self._handlers)
+
+    # ....................... #
+
     def get_patches(self) -> tuple[PlanPatch, ...]:
         """Read-only access to plan patches."""
 
