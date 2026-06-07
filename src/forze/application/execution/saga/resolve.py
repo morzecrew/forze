@@ -1,5 +1,7 @@
 """Resolve the saga executor with an in-process default."""
 
+from __future__ import annotations
+
 from typing import TYPE_CHECKING
 
 from forze.application.contracts.saga import (

@@ -1,5 +1,7 @@
 """In-process saga executor: per-step transactions, reverse compensation on failure."""
 
+from __future__ import annotations
+
 from typing import TYPE_CHECKING, Awaitable, Callable, final
 
 import attrs

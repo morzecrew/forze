@@ -123,3 +123,10 @@ Two things are **durability features** — reach for the Temporal driver when yo
 
 **Deferred:** parallel/fan-out step branches (which change the strictly-sequential model) and a
 saga-level deadline (which needs careful mid-step cancellation) are out of scope for now.
+
+## Worked example
+
+`examples/order_fulfillment.py` runs a saga end to end through the whole stack — a pivot saga
+confirms an `Order` aggregate, whose `@event_emitter` dispatches `OrderConfirmed` in the step's
+transaction → outbox → relay → inbox dedup → a downstream `Shipment` — plus the compensation path.
+It is test-backed (`tests/unit/test_examples/`), so it stays correct.
