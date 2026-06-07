@@ -81,58 +81,58 @@ class DocumentReadGatewayPort(Protocol, Generic[M]):
     # ....................... #
 
     @overload
-    async def find(
+    def find(
         self,
         filters: QueryFilterExpression,  # type: ignore[valid-type]
         *,
         for_update: RowLockMode = ...,
         return_model: None = ...,
         return_fields: None = ...,
-    ) -> M | None: ...
+    ) -> Awaitable[M | None]: ...
 
     @overload
-    async def find(
+    def find(
         self,
         filters: QueryFilterExpression,  # type: ignore[valid-type]
         *,
         for_update: RowLockMode = ...,
         return_model: type[T],
         return_fields: None = ...,
-    ) -> T | None: ...
+    ) -> Awaitable[T | None]: ...
 
     @overload
-    async def find(
+    def find(
         self,
         filters: QueryFilterExpression,  # type: ignore[valid-type]
         *,
         for_update: RowLockMode = ...,
         return_model: None = ...,
         return_fields: Sequence[str],
-    ) -> JsonDict | None: ...
+    ) -> Awaitable[JsonDict | None]: ...
 
     @overload
-    async def find(
+    def find(
         self,
         filters: QueryFilterExpression,  # type: ignore[valid-type]
         *,
         for_update: RowLockMode = ...,
         return_model: type[T],
         return_fields: Sequence[str],
-    ) -> Never: ...
+    ) -> Awaitable[Never]: ...
 
-    async def find(
+    def find(
         self,
         filters: QueryFilterExpression,  # type: ignore[valid-type]
         *,
         for_update: RowLockMode = False,
         return_model: type[T] | None = None,
         return_fields: Sequence[str] | None = None,
-    ) -> M | T | JsonDict | None: ...
+    ) -> Awaitable[M | T | JsonDict | None]: ...
 
     # ....................... #
 
     @overload
-    async def find_many(
+    def find_many(
         self,
         filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
         limit: int | None = ...,
@@ -143,10 +143,10 @@ class DocumentReadGatewayPort(Protocol, Generic[M]):
         return_model: None = ...,
         return_fields: None = ...,
         parsed: QueryExpr | None = ...,
-    ) -> list[JsonDict]: ...
+    ) -> Awaitable[list[JsonDict]]: ...
 
     @overload
-    async def find_many(
+    def find_many(
         self,
         filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
         limit: int | None = ...,
@@ -157,10 +157,10 @@ class DocumentReadGatewayPort(Protocol, Generic[M]):
         return_model: type[T],
         return_fields: None = ...,
         parsed: QueryExpr | None = ...,
-    ) -> list[T]: ...
+    ) -> Awaitable[list[T]]: ...
 
     @overload
-    async def find_many(
+    def find_many(
         self,
         filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
         limit: int | None = ...,
@@ -171,10 +171,10 @@ class DocumentReadGatewayPort(Protocol, Generic[M]):
         return_model: None = ...,
         return_fields: None = ...,
         parsed: QueryExpr | None = ...,
-    ) -> list[M]: ...
+    ) -> Awaitable[list[M]]: ...
 
     @overload
-    async def find_many(
+    def find_many(
         self,
         filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
         limit: int | None = ...,
@@ -185,10 +185,10 @@ class DocumentReadGatewayPort(Protocol, Generic[M]):
         return_model: type[T],
         return_fields: None = ...,
         parsed: QueryExpr | None = ...,
-    ) -> list[T]: ...
+    ) -> Awaitable[list[T]]: ...
 
     @overload
-    async def find_many(
+    def find_many(
         self,
         filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
         limit: int | None = ...,
@@ -199,10 +199,10 @@ class DocumentReadGatewayPort(Protocol, Generic[M]):
         return_model: None = ...,
         return_fields: Sequence[str],
         parsed: QueryExpr | None = ...,
-    ) -> list[JsonDict]: ...
+    ) -> Awaitable[list[JsonDict]]: ...
 
     @overload
-    async def find_many(
+    def find_many(
         self,
         filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
         limit: int | None = ...,
@@ -213,9 +213,9 @@ class DocumentReadGatewayPort(Protocol, Generic[M]):
         return_model: type[T],
         return_fields: Sequence[str],
         parsed: QueryExpr | None = ...,
-    ) -> Never: ...
+    ) -> Awaitable[Never]: ...
 
-    async def find_many(
+    def find_many(
         self,
         filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
         limit: int | None = None,
@@ -226,11 +226,11 @@ class DocumentReadGatewayPort(Protocol, Generic[M]):
         return_model: type[T] | None = None,
         return_fields: Sequence[str] | None = None,
         parsed: QueryExpr | None = None,
-    ) -> list[M] | list[T] | list[JsonDict]: ...
+    ) -> Awaitable[list[M] | list[T] | list[JsonDict]]: ...
 
     # ....................... #
 
-    async def find_many_aggregates(
+    def find_many_aggregates(
         self,
         filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
         limit: int | None = None,
@@ -241,22 +241,22 @@ class DocumentReadGatewayPort(Protocol, Generic[M]):
         return_model: type[T] | None = None,
         return_fields: Sequence[str] | None = None,
         parsed: QueryExpr | None = None,
-    ) -> list[T] | list[JsonDict]: ...
+    ) -> Awaitable[list[T] | list[JsonDict]]: ...
 
     # ....................... #
 
-    async def count_aggregates(
+    def count_aggregates(
         self,
         filters: QueryFilterExpression | None,  # type: ignore[valid-type]
         *,
         aggregates: AggregatesExpression,
         parsed: QueryExpr | None = None,
-    ) -> int: ...
+    ) -> Awaitable[int]: ...
 
     # ....................... #
 
     @overload
-    async def find_many_with_cursor(
+    def find_many_with_cursor(
         self,
         filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
         cursor: CursorPaginationExpression | None = ...,
@@ -264,10 +264,10 @@ class DocumentReadGatewayPort(Protocol, Generic[M]):
         *,
         return_model: None = ...,
         return_fields: None = ...,
-    ) -> list[M]: ...
+    ) -> Awaitable[list[M]]: ...
 
     @overload
-    async def find_many_with_cursor(
+    def find_many_with_cursor(
         self,
         filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
         cursor: CursorPaginationExpression | None = ...,
@@ -275,10 +275,10 @@ class DocumentReadGatewayPort(Protocol, Generic[M]):
         *,
         return_model: type[T],
         return_fields: None = ...,
-    ) -> list[T]: ...
+    ) -> Awaitable[list[T]]: ...
 
     @overload
-    async def find_many_with_cursor(
+    def find_many_with_cursor(
         self,
         filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
         cursor: CursorPaginationExpression | None = ...,
@@ -286,10 +286,10 @@ class DocumentReadGatewayPort(Protocol, Generic[M]):
         *,
         return_model: None = ...,
         return_fields: Sequence[str],
-    ) -> list[JsonDict]: ...
+    ) -> Awaitable[list[JsonDict]]: ...
 
     @overload
-    async def find_many_with_cursor(
+    def find_many_with_cursor(
         self,
         filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
         cursor: CursorPaginationExpression | None = ...,
@@ -297,9 +297,9 @@ class DocumentReadGatewayPort(Protocol, Generic[M]):
         *,
         return_model: type[T],
         return_fields: Sequence[str],
-    ) -> Never: ...
+    ) -> Awaitable[Never]: ...
 
-    async def find_many_with_cursor(
+    def find_many_with_cursor(
         self,
         filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
         cursor: CursorPaginationExpression | None = None,
@@ -307,16 +307,16 @@ class DocumentReadGatewayPort(Protocol, Generic[M]):
         *,
         return_model: type[T] | None = None,
         return_fields: Sequence[str] | None = None,
-    ) -> list[M] | list[T] | list[JsonDict]: ...
+    ) -> Awaitable[list[M] | list[T] | list[JsonDict]]: ...
 
     # ....................... #
 
-    async def count(
+    def count(
         self,
         filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
         *,
         parsed: QueryExpr | None = None,
-    ) -> int: ...
+    ) -> Awaitable[int]: ...
 
 
 # ....................... #
@@ -325,67 +325,67 @@ class DocumentReadGatewayPort(Protocol, Generic[M]):
 class DocumentWriteGatewayPort(Protocol, Generic[D_co, C_co, U_co]):
     """Write gateway operations required by :class:`~forze.application.integrations.document.adapter.DocumentAdapter`."""
 
-    async def create(self, dto: C_co) -> D_co: ...
+    def create(self, dto: C_co) -> Awaitable[D_co]: ...
 
-    async def create_many(
+    def create_many(
         self,
         dtos: Sequence[C_co],
         *,
         batch_size: int,
-    ) -> Sequence[D_co]: ...
+    ) -> Awaitable[Sequence[D_co]]: ...
 
-    async def ensure(self, dto: C_co) -> D_co: ...
+    def ensure(self, dto: C_co) -> Awaitable[D_co]: ...
 
-    async def ensure_many(
+    def ensure_many(
         self,
         dtos: Sequence[C_co],
         *,
         batch_size: int,
-    ) -> Sequence[D_co]: ...
+    ) -> Awaitable[Sequence[D_co]]: ...
 
-    async def upsert(self, create_dto: C_co, update_dto: U_co) -> D_co: ...
+    def upsert(self, create_dto: C_co, update_dto: U_co) -> Awaitable[D_co]: ...
 
-    async def upsert_many(
+    def upsert_many(
         self,
         pairs: Sequence[tuple[C_co, U_co]],
         *,
         batch_size: int,
-    ) -> Sequence[D_co]: ...
+    ) -> Awaitable[Sequence[D_co]]: ...
 
-    async def update(
+    def update(
         self,
         pk: UUID,
         dto: U_co,
         *,
         rev: int | None = None,
-    ) -> tuple[D_co, JsonDict]: ...
+    ) -> Awaitable[tuple[D_co, JsonDict]]: ...
 
-    async def update_many(
+    def update_many(
         self,
         pks: Sequence[UUID],
         dtos: Sequence[U_co],
         *,
         revs: Sequence[int] | None = None,
         batch_size: int,
-    ) -> tuple[Sequence[D_co], Sequence[JsonDict]]: ...
+    ) -> Awaitable[tuple[Sequence[D_co], Sequence[JsonDict]]]: ...
 
-    async def update_matching(
+    def update_matching(
         self,
         filters: QueryFilterExpression,  # type: ignore[valid-type]
         dto: U_co,
         *,
         batch_size: int,
-    ) -> tuple[int, Sequence[D_co]]: ...
+    ) -> Awaitable[tuple[int, Sequence[D_co]]]: ...
 
-    async def touch(self, pk: UUID) -> D_co: ...
+    def touch(self, pk: UUID) -> Awaitable[D_co]: ...
 
-    async def touch_many(
+    def touch_many(
         self,
         pks: Sequence[UUID],
         *,
         batch_size: int,
-    ) -> Sequence[D_co]: ...
+    ) -> Awaitable[Sequence[D_co]]: ...
 
-    async def kill(self, pk: UUID) -> None: ...
+    def kill(self, pk: UUID) -> Awaitable[None]: ...
 
-    async def kill_many(self, pks: Sequence[UUID], *, batch_size: int) -> None: ...
+    def kill_many(self, pks: Sequence[UUID], *, batch_size: int) -> Awaitable[None]: ...

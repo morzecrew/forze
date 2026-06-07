@@ -1,14 +1,15 @@
-from .deps import IdempotencyDepKey, IdempotencyDepPort
+from .deps import IdempotencyDepKey, IdempotencyDepPort, IdempotencyDeps
 from .ports import IdempotencyPort
 from .specs import IdempotencySpec
-from .value_objects import IdempotencySnapshot
+from .value_objects import IdempotencyRecord
 
 # ----------------------- #
 
 __all__ = [
-    "IdempotencyPort",
-    "IdempotencyDepPort",
     "IdempotencyDepKey",
-    "IdempotencySnapshot",
+    "IdempotencyDepPort",
+    "IdempotencyDeps",
+    "IdempotencyPort",
+    "IdempotencyRecord",
     "IdempotencySpec",
 ]

@@ -117,6 +117,7 @@ nav:
     - Google BigQuery: integrations/bigquery.md
     - ClickHouse: integrations/clickhouse.md
     - MongoDB: integrations/mongo.md
+    - Neo4j (graph): integrations/neo4j.md
     - Meilisearch: integrations/meilisearch.md
     - HTTP (outbound): integrations/http.md
     - Cloud Firestore: integrations/firestore.md

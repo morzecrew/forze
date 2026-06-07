@@ -1,24 +1,45 @@
 # Add idempotency
 
-Use this recipe when clients may retry mutating requests and you need duplicate submissions to resolve safely.
+Use this recipe when clients may retry mutating requests and you need duplicate
+submissions to resolve safely — by replaying the original result rather than re-running
+the operation.
 
 ## Ingredients
 
-- [FastAPI Integration](../integrations/fastapi.md) route features
-- [Redis / Valkey Integration](../integrations/redis.md) idempotency storage
-- A stable client-provided idempotency key
+- An idempotency store: [Redis / Valkey Integration](../integrations/redis.md) or the mock adapter (`IdempotencySpec`, `IdempotencyDepKey`)
+- The engine wrap `IdempotencyWrap` ([Idempotency contracts](../core-package/contracts/idempotency.md))
+- A boundary that supplies a stable client-provided idempotency key
 
 ## Steps
 
-1. Configure Redis idempotency dependencies.
-2. Enable idempotency on the FastAPI endpoint or route helper.
-3. Require callers to send an idempotency key for unsafe operations.
-4. Return the stored result for duplicate requests with the same key and compatible request body.
+1. Register an idempotency store (`IdempotencySpec` + a `Configurable*Idempotency` factory).
+2. Attach `IdempotencyWrap` to each unsafe operation, declaring its result type:
 
-## Where to configure it
+        :::python
+        registry.bind("orders.create").bind_outer().wrap(
+            IdempotencyWrap(op="orders.create", spec=idem_spec, result_type=OrderRead).to_step()
+        )
 
-Keep idempotency at the interface/adapter boundary. Handlers should model business intent and should not need to know whether the HTTP request was retried.
+3. Have the boundary supply the key. FastAPI reads the canonical `Idempotency-Key` header
+   into the invocation context automatically; other boundaries call
+   `ctx.inv_ctx.bind_idempotency(key)`.
+4. Duplicate requests with the same key replay the stored typed result; a different
+   payload under the same key is rejected as a conflict.
+
+## Where it runs
+
+Idempotency is an **engine-level** concern: the boundary supplies only the key, and the
+operation-plan wrap does the dedup and early-return — handlers model business intent and
+need not know the request was retried. The engine computes the payload hash from the
+operation arguments.
+
+## Notes
+
+- This is result-level idempotency (re-serializes the typed result), not byte-identical
+  HTTP response replay.
+- The result is stored after the operation's transaction commits.
 
 ## Learn more
 
-See [FastAPI Integration](../integrations/fastapi.md#idempotency) and [Redis / Valkey Integration](../integrations/redis.md#idempotency).
+See [Idempotency contracts](../core-package/contracts/idempotency.md) and
+[FastAPI Integration](../integrations/fastapi.md).

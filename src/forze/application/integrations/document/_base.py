@@ -14,6 +14,7 @@ from forze.application.contracts.querying import QuerySortExpression
 
 from .cache import DocumentCache
 from ._types import C, D, R, U
+from collections.abc import Awaitable
 
 if TYPE_CHECKING:
     from forze.application.contracts.base import CountlessPage
@@ -53,40 +54,40 @@ class DocumentAdapterProtocol(Protocol, Generic[R, D, C, U]):
         sorts: QuerySortExpression | None,
     ) -> QuerySortExpression: ...
 
-    async def _to_read(self, domain: D | None, *, pk: UUID | None = None) -> R: ...
+    def _to_read(self, domain: D | None, *, pk: UUID | None = None) -> Awaitable[R]: ...
 
-    async def _to_read_many(
+    def _to_read_many(
         self,
         domains: Sequence[D | None],
         *,
         pks: Sequence[UUID] | None = None,
-    ) -> Sequence[R]: ...
+    ) -> Awaitable[Sequence[R]]: ...
 
     def _require_write(self) -> DocumentWriteGatewayPort[D, C, U]: ...
 
-    async def _finalize_single_write(
+    def _finalize_single_write(
         self,
         domain: D,
         *,
         return_new: bool,
         pk: UUID | None = None,
-    ) -> R | None: ...
+    ) -> Awaitable[R | None]: ...
 
-    async def _finalize_bulk_write(
+    def _finalize_bulk_write(
         self,
         domains: Sequence[D],
         *,
         return_new: bool,
         pks: Sequence[UUID] | None = None,
-    ) -> Sequence[R] | None: ...
+    ) -> Awaitable[Sequence[R] | None]: ...
 
-    async def project_many(
+    def project_many(
         self,
         fields: Sequence[str],
         filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
         pagination: PaginationExpression | None = None,
         sorts: QuerySortExpression | None = None,
-    ) -> CountlessPage[JsonDict]: ...
+    ) -> Awaitable[CountlessPage[JsonDict]]: ...
 
 
 # ....................... #

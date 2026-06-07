@@ -486,22 +486,22 @@ S3-style blob storage, split into read (query) and write (command) ports:
 
 ## Idempotency
 
+Engine-level result idempotency. See [Idempotency contracts](../core-package/contracts/idempotency.md) for the full model (`IdempotencyWrap`, `Idempotency-Key` header).
+
 ### IdempotencyPort
 
-Deduplicate operations by caching responses keyed by operation name, idempotency key, and payload hash:
+Store and replay a completed operation's result, keyed by operation name, idempotency key, and payload hash:
 
 | Method | Signature | Purpose |
 |--------|-----------|---------|
-| `begin` | `(op, key, payload_hash)` | Check for a cached response; returns `IdempotencySnapshot \| None` |
-| `commit` | `(op, key, payload_hash, snapshot)` | Store the response for future dedup |
+| `begin` | `(op, key, payload_hash)` | Return the stored `IdempotencyRecord` on replay, or `None` after a fresh claim; raises on payload-hash mismatch or an in-progress duplicate |
+| `commit` | `(op, key, payload_hash, record)` | Store the result record for future replays |
 
-### IdempotencySnapshot
+### IdempotencyRecord
 
 | Field | Type | Purpose |
 |-------|------|---------|
-| `status_code` | `int` | HTTP status code |
-| `body` | `bytes` | Serialized response body |
-| `headers` | `dict[str, str]` | Response headers |
+| `result` | `bytes` | The serialized operation result (encoded by the operation's result codec) |
 
 ### Dependency keys
 

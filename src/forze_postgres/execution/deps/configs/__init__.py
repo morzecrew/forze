@@ -9,6 +9,7 @@ from .federated import (
     PostgresFederatedSearchLegSearch,
 )
 from .hub import PostgresHubSearchConfig, PostgresHubSearchMemberConfig
+from .inbox import PostgresInboxConfig
 from .outbox import PostgresOutboxConfig
 from .search import (
     PgroongaScoreVersion,
@@ -30,6 +31,7 @@ __all__ = [
     "PostgresFederatedSearchLegSearch",
     "PostgresHubSearchConfig",
     "PostgresHubSearchMemberConfig",
+    "PostgresInboxConfig",
     "PostgresOutboxConfig",
     "PostgresQueryConfig",
     "PostgresReadOnlyDocumentConfig",

@@ -13,6 +13,7 @@ from .client import (
     ObjectStorageHead,
     ObjectStorageListedObject,
 )
+from collections.abc import Awaitable
 
 # ----------------------- #
 
@@ -20,7 +21,7 @@ from .client import (
 class _RoutedStorageInnerClient(ObjectStorageClientPort, Protocol):
     """Inner storage client whose ``close`` is a coroutine (for pool disposal)."""
 
-    async def close(self) -> None: ...
+    def close(self) -> Awaitable[None]: ...
 
 
 # ....................... #

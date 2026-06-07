@@ -39,7 +39,6 @@ dependencies = [
     "pyyaml>=6.0.3",
     "rich>=14.0.0",
     "structlog>=25.0.0",
-    "tenacity>=9.1.4",
 ]
 
 [dependency-groups]
@@ -57,7 +56,7 @@ dev = [
     "pytest-xdist>=3.8.0",
     "radon>=6.0.1",
     "ruff>=0.15.5",
-    "testcontainers[minio,rabbitmq,vault,google,clickhouse]>=4.14.1",
+    "testcontainers[minio,rabbitmq,vault,google,clickhouse,neo4j]>=4.14.1",
     "types-pyyaml>=6.0.12.20250915",
     "vulture>=2.14",
     "pre-commit>=4.5.1",
@@ -184,6 +183,7 @@ packages = [
     "src/forze_vault",
     "src/forze_meilisearch",
     "src/forze_http",
+    "src/forze_neo4j",
 ]
 
 [tool.hatch.build.hooks.vcs]
@@ -228,6 +228,7 @@ omit = [
     # Redis deps module is exercised with a full SDK runtime.
     "*/forze_redis/execution/deps/module.py",
     "*/forze_meilisearch/execution/deps/module.py",
+    "*/forze_neo4j/execution/deps/module.py",
     # Mock
     "*/forze_mock/*",
 ]
@@ -279,6 +280,7 @@ root_packages = [
     "forze_vault",
     "forze_meilisearch",
     "forze_http",
+    "forze_neo4j",
 ]
 exclude_type_checking_imports = true
 
@@ -308,6 +310,30 @@ name = "Authz contracts do not import execution contracts"
 type = "forbidden"
 source_modules = ["forze.application.contracts.authz"]
 forbidden_modules = ["forze.application.contracts.execution"]
+
+[[tool.importlinter.contracts]]
+name = "Resilience contracts do not import execution"
+type = "forbidden"
+source_modules = ["forze.application.contracts.resilience"]
+forbidden_modules = ["forze.application.execution"]
+
+[[tool.importlinter.contracts]]
+name = "Domain contracts do not import execution"
+type = "forbidden"
+source_modules = ["forze.application.contracts.domain"]
+forbidden_modules = ["forze.application.execution"]
+
+[[tool.importlinter.contracts]]
+name = "Idempotency contracts do not import execution"
+type = "forbidden"
+source_modules = ["forze.application.contracts.idempotency"]
+forbidden_modules = ["forze.application.execution"]
+
+[[tool.importlinter.contracts]]
+name = "Inbox contracts do not import execution"
+type = "forbidden"
+source_modules = ["forze.application.contracts.inbox"]
+forbidden_modules = ["forze.application.execution"]
 
 [[tool.importlinter.contracts]]
 name = "Layered `forze.domain` module architecture"
@@ -342,6 +368,7 @@ protected_modules = [
     "forze_vault",
     "forze_meilisearch",
     "forze_http",
+    "forze_neo4j",
 ]
 allowed_importers = []
 as_packages = true
@@ -372,6 +399,7 @@ paths = [
     "src/forze_vault",
     "src/forze_meilisearch",
     "src/forze_http",
+    "src/forze_neo4j",
 ]
 sort_by_size = true
 min_confidence = 80
@@ -410,6 +438,7 @@ known_first_party = [
     "forze_vault",
     "forze_meilisearch",
     "forze_http",
+    "forze_neo4j",
 ]
 ignore_notebooks = true
 

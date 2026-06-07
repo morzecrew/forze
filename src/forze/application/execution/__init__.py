@@ -1,6 +1,14 @@
 """Execution kernel, dependency injection, and lifecycle."""
 
 from .context import ExecutionContext, InvocationMetadata
+from .domain import (
+    DomainEventHandler,
+    DomainEventHandlerFactory,
+    DomainEventRegistry,
+    DomainEventsDepsModule,
+    InProcessDomainEventDispatcher,
+    outbox_event_handler,
+)
 from .deps import (
     Deps,
     DepsModule,
@@ -19,6 +27,14 @@ from .lifecycle import (
 )
 from .operations import OperationPlan
 from .operations.registry import FrozenOperationRegistry, OperationRegistry
+from .resilience import (
+    InProcessResilienceExecutor,
+    ResilienceDepsModule,
+    builtin_default_policies,
+    default_resilience_executor,
+    occ_retry,
+    resolve_resilience_executor,
+)
 from .runtime import ExecutionRuntime
 from .tracing import (
     RuntimeTrace,
@@ -50,13 +66,25 @@ __all__ = [
     "RuntimeTracer",
     "resolution_tracer_from_flag",
     "runtime_tracer_from_flag",
+    "DomainEventHandler",
+    "DomainEventHandlerFactory",
+    "DomainEventRegistry",
+    "DomainEventsDepsModule",
     "ExecutionContext",
     "ExecutionRuntime",
     "FrozenOperationRegistry",
+    "InProcessDomainEventDispatcher",
+    "InProcessResilienceExecutor",
     "LifecycleModule",
+    "outbox_event_handler",
     "LifecyclePlan",
     "OperationPlan",
     "OperationRegistry",
+    "ResilienceDepsModule",
+    "builtin_default_policies",
+    "default_resilience_executor",
+    "occ_retry",
+    "resolve_resilience_executor",
     "RuntimeTrace",
     "RuntimeTraceValidationError",
     "RuntimeTraceValidator",

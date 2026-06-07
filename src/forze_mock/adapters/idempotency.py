@@ -6,10 +6,11 @@ from typing import (
     final,
 )
 import attrs
-from forze.application.contracts.idempotency import IdempotencyPort, IdempotencySnapshot
+from forze.application.contracts.idempotency import IdempotencyPort, IdempotencyRecord
 from forze.base.exceptions import exc
 from forze_mock.state import MockState
 from forze_mock.tenancy import MockTenancyMixin, partition_namespace
+
 
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
@@ -32,7 +33,7 @@ class MockIdempotencyAdapter(MockTenancyMixin, IdempotencyPort):
         op: str,
         key: str | None,
         payload_hash: str,
-    ) -> IdempotencySnapshot | None:
+    ) -> IdempotencyRecord | None:
         if not key:
             return None
 
@@ -44,15 +45,15 @@ class MockIdempotencyAdapter(MockTenancyMixin, IdempotencyPort):
                 self.state.idempotency[k] = ("pending", payload_hash, None)
                 return None
 
-            status, existing_hash, snapshot = current
+            status, existing_hash, record = current
 
             if existing_hash != payload_hash:
                 raise exc.conflict("Payload hash mismatch")
 
-            if status != "done" or snapshot is None:
+            if status != "done" or record is None:
                 raise exc.conflict("Idempotency is in progress")
 
-            return snapshot
+            return record
 
     # ....................... #
 
@@ -61,7 +62,7 @@ class MockIdempotencyAdapter(MockTenancyMixin, IdempotencyPort):
         op: str,
         key: str | None,
         payload_hash: str,
-        snapshot: IdempotencySnapshot,
+        record: IdempotencyRecord,
     ) -> None:
         if not key:
             return
@@ -78,8 +79,8 @@ class MockIdempotencyAdapter(MockTenancyMixin, IdempotencyPort):
             if existing_hash != payload_hash:
                 raise exc.conflict("Payload hash mismatch")
 
-            self.state.idempotency[k] = (  # type: ignore[assignment]
+            self.state.idempotency[k] = (
                 "done",
                 payload_hash,
-                snapshot,
+                record,
             )

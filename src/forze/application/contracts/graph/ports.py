@@ -131,6 +131,17 @@ class GraphQueryPort(BaseGraphModulePort, Protocol):
         """Return one of the shortest paths, or ``None`` if no path within *params* exists."""
         ...  # pragma: no cover
 
+    def k_shortest_paths(
+        self,
+        from_ref: VertexRef,  # noqa: F841
+        to_ref: VertexRef,  # noqa: F841
+        params: ShortestPathParams,
+        *,
+        k: int,
+    ) -> Awaitable[Sequence[ShortestPathResult]]:
+        """Return up to *k* shortest paths in increasing length (may be empty)."""
+        ...  # pragma: no cover
+
     def find_vertices(
         self,
         node_kind: str,  # noqa: F841
@@ -273,3 +284,26 @@ class GraphCommandPort(BaseGraphModulePort, Protocol):
         self,
         refs: Sequence[EdgeRef],  # noqa: F841
     ) -> Awaitable[None]: ...  # pragma: no cover
+
+
+# ....................... #
+
+
+@runtime_checkable
+class GraphRawQueryPort(BaseGraphModulePort, Protocol):
+    """Opt-in, engine-specific raw query escape hatch.
+
+    Use only for power features the neutral ports cannot express (Cypher path
+    predicates, GDS, APOC, AQL traversal options). The query string is engine-specific,
+    so any code using this is **not** portable across graph backends, and the adapter's
+    neutral guarantees do **not** apply: tenancy filtering and result codec
+    materialization are the caller's responsibility. Prefer the structured ports.
+    """
+
+    def run(
+        self,
+        query: str,  # noqa: F841
+        params: JsonDict | None = None,  # noqa: F841
+    ) -> Awaitable[Sequence[JsonDict]]:
+        """Execute *query* with *params* and return raw result rows as mappings."""
+        ...  # pragma: no cover

@@ -18,8 +18,11 @@ well-known dependency keys.
 | Long-running orchestration (Temporal-style) | [Durable workflow](contracts/durable-workflow.md) | `DurableWorkflowSpec`, workflow ports | Temporal | `DurableWorkflowCommandDepKey`, `DurableWorkflowQueryDepKey` |
 | Recurring durable workflow starts | [Durable workflow schedule](contracts/durable-workflow-schedule.md) | `DurableWorkflowScheduleTiming`, schedule ports | Temporal | `DurableWorkflowScheduleCommandDepKey`, `DurableWorkflowScheduleQueryDepKey` |
 | Event-driven durable functions (steps) | [Durable function](contracts/durable-function.md) | `DurableFunctionEventSpec`, `DurableFunctionSpec`, event/step ports | [Inngest](../integrations/inngest.md) | `DurableFunctionEventCommandDepKey`, `DurableFunctionStepDepKey` |
-| Replay duplicate HTTP-style requests safely | [Idempotency](contracts/idempotency.md) | `IdempotencySpec`, `IdempotencyPort` | Mock, Redis / Valkey | `IdempotencyDepKey` |
+| Replay a duplicate operation's stored result safely | [Idempotency](contracts/idempotency.md) | `IdempotencySpec`, `IdempotencyPort`, `IdempotencyWrap` | Mock, Redis / Valkey | `IdempotencyDepKey` |
+| Dedup redelivered messages (consumer-side, exactly-once effect) | [Inbox](contracts/inbox.md) | `InboxSpec`, `InboxPort`, `process_with_inbox` | Mock, Postgres | `InboxDepKey` |
 | Query warehouse tables or append analytics rows | [Analytics](contracts/analytics.md) | `AnalyticsSpec`, `AnalyticsQueryPort`, `AnalyticsIngestPort` | Mock, BigQuery, ClickHouse | `AnalyticsQueryDepKey`, `AnalyticsIngestDepKey` |
+| Retry / timeout / circuit-break calls and operations | [Resilience](contracts/resilience.md) | `ResiliencePolicy`, `ResilienceExecutorPort`, `ResilienceWrap` | In-process executor | `ResilienceExecutorDepKey` |
+| Raise domain events from aggregates and bridge to the outbox | [Domain events](contracts/domain.md) | `DomainEvent`, `AggregateRoot`, `DomainEventDispatcherPort` | In-process dispatcher | `DomainEventDispatcherDepKey` |
 
 ## Contract pattern
 

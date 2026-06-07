@@ -26,6 +26,7 @@ from forze_postgres.kernel.client import PostgresClientPort
 from forze_postgres.kernel.gateways import PostgresQualifiedName
 
 from .runtime import HubLegRuntime
+from collections.abc import Awaitable
 
 # ----------------------- #
 
@@ -58,29 +59,29 @@ class HubSearchHost(Protocol[M]):
 
     # ....................... #
 
-    async def _qname(self) -> PostgresQualifiedName: ...
+    def _qname(self) -> Awaitable[PostgresQualifiedName]: ...
 
     # ....................... #
 
-    async def where_clause(
+    def where_clause(
         self,
         filters: QueryFilterExpression | None,
         *,
         parsed: Any | None = None,
-    ) -> tuple[sql.Composable, list[Any]]: ...
+    ) -> Awaitable[tuple[sql.Composable, list[Any]]]: ...
 
     # ....................... #
 
-    async def order_by_clause(
+    def order_by_clause(
         self,
         sorts: QuerySortExpression | None,
         *,
         table_alias: str,
-    ) -> sql.Composable | None: ...
+    ) -> Awaitable[sql.Composable | None]: ...
 
     # ....................... #
 
-    async def column_types(self) -> PostgresColumnTypes: ...
+    def column_types(self) -> Awaitable[PostgresColumnTypes]: ...
 
     # ....................... #
 

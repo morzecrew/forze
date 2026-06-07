@@ -14,7 +14,6 @@ from forze_mongo.kernel.gateways import (
     MongoReadGateway,
     MongoWriteGateway,
 )
-from forze_mongo.kernel.gateways.write import optimistic_retry
 from forze_mongo.kernel.client import MongoClient
 from tests.unit._gateway_codec_helpers import history_codecs_for, write_codecs_for
 
@@ -272,11 +271,6 @@ class TestMongoWriteGateway:
 
         assert err.value.kind is ExceptionKind.CONFLICT
         assert err.value.code == "mongo_ensure_bulk_miss"
-
-class TestOptimisticRetry:
-    def test_optimistic_retry_returns_tenacity_decorator(self) -> None:
-        decorator = optimistic_retry(attempts=5)
-        assert callable(decorator)
 
 class TestMongoWriteGatewayPostInit:
     def test_rejects_mismatched_read_collection(self) -> None:

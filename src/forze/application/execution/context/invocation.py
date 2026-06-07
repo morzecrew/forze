@@ -16,6 +16,7 @@ CORR_ID_KEY: Final = "correlation_id"
 CAUS_ID_KEY: Final = "causation_id"
 PRINCIPAL_ID_KEY: Final = "principal_id"
 TENANT_ID_KEY: Final = "tenant_id"
+IDEMPOTENCY_KEY_KEY: Final = "idempotency_key"
 
 # ....................... #
 
@@ -64,6 +65,13 @@ class InvocationContext:
     )
     """Current tenant identity."""
 
+    __idempotency_key: ContextVar[str | None] = attrs.field(
+        factory=lambda: ContextVar("idempotency_key", default=None),
+        init=False,
+        repr=False,
+    )
+    """Idempotency key supplied by the boundary for the current invocation."""
+
     # ....................... #
 
     def get_metadata(self) -> InvocationMetadata | None:
@@ -84,6 +92,33 @@ class InvocationContext:
         """Return the current tenant identity."""
 
         return self.__tenant.get()
+
+    # ....................... #
+
+    def get_idempotency_key(self) -> str | None:
+        """Return the idempotency key bound by the boundary, if any."""
+
+        return self.__idempotency_key.get()
+
+    # ....................... #
+
+    @contextmanager
+    def bind_idempotency(self, key: str | None) -> Iterator[None]:
+        """Bind the idempotency key for the current invocation."""
+
+        token = self.__idempotency_key.set(key)
+
+        bound: dict[str, Any] = {}
+
+        if key is not None:
+            bound[IDEMPOTENCY_KEY_KEY] = key
+
+        try:
+            with bound_contextvars(**bound):
+                yield
+
+        finally:
+            self.__idempotency_key.reset(token)
 
     # ....................... #
 

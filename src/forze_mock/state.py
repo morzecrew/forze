@@ -27,6 +27,7 @@ class MockState:
     idempotency: dict[
         tuple[str, str, str], tuple[str, str, Any | None]
     ] = attrs.field(factory=dict)
+    inbox: set[tuple[str, str, str]] = attrs.field(factory=set)
     storage: dict[str, dict[str, Any]] = attrs.field(factory=dict)
     storage_bytes: dict[str, dict[str, bytes]] = attrs.field(factory=dict)
     queues: dict[str, dict[str, list[Any]]] = attrs.field(factory=dict)
@@ -49,6 +50,14 @@ class MockState:
         factory=dict,
     )
     """Route → (run_id, chunk_index) → ordered ids."""
+
+    graph_vertices: dict[str, dict[tuple[str, str], dict[str, Any]]] = attrs.field(
+        factory=dict,
+    )
+    """Namespace → (vertex kind, key) → properties."""
+
+    graph_edges: dict[str, list[dict[str, Any]]] = attrs.field(factory=dict)
+    """Namespace → list of edge records (kind, endpoints, properties)."""
 
     durable_workflows: dict[str, dict[str, Any]] = attrs.field(factory=dict)
     durable_schedules: dict[str, dict[str, Any]] = attrs.field(factory=dict)

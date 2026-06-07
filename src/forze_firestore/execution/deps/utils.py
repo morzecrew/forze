@@ -9,7 +9,7 @@ from forze.application.contracts.document import (
     document_codecs_for_write_types,
 )
 from forze.application.contracts.resolution import RelationSpec
-from forze.application.execution import ExecutionContext
+from forze.application.execution import ExecutionContext, resolve_resilience_executor
 from forze.base.serialization import ModelCodec
 
 from ...kernel.gateways import (
@@ -148,4 +148,5 @@ def doc_write_gw(
         history_gw=hist,
         tenant_provider=ctx.inv_ctx.get_tenant,
         tenant_aware=tenant_aware,
+        resilience=resolve_resilience_executor(ctx),
     )

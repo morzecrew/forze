@@ -1,25 +1,16 @@
-from typing import Mapping
-
 import attrs
 
 # ----------------------- #
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class IdempotencySnapshot:
-    """Serialized response snapshot stored for idempotent operations.
+class IdempotencyRecord:
+    """Stored result of a completed idempotent operation.
 
-    Used to replay a previous response when a duplicate request is detected.
+    Replayed when a duplicate request with the same idempotency key is detected.
+    :attr:`result` is the operation's return value encoded by the operation's
+    result codec; the boundary is responsible for any protocol-specific framing.
     """
 
-    code: int
-    """HTTP status code."""
-
-    content_type: str
-    """Response content type."""
-
-    body: bytes
-    """Response body bytes."""
-
-    headers: Mapping[str, str] | None = attrs.field(default=None)
-    """Response headers."""
+    result: bytes
+    """Serialized operation result."""
