@@ -14,10 +14,11 @@ from forze.application.contracts.querying import QuerySortExpression
 
 from .cache import DocumentCache
 from ._types import C, D, R, U
-from collections.abc import Awaitable
+from collections.abc import Awaitable, Callable
 
 if TYPE_CHECKING:
     from forze.application.contracts.base import CountlessPage
+    from forze.application.contracts.domain import DomainEventDispatcherPort
     from forze.application.contracts.querying import (
         PaginationExpression,
         QueryFilterExpression,
@@ -40,6 +41,7 @@ class DocumentAdapterProtocol(Protocol, Generic[R, D, C, U]):
     max_scan_pages: int | None
     max_stream_pages: int | None
     max_chunked_command_pages: int | None
+    dispatcher_provider: Callable[[], DomainEventDispatcherPort | None]
 
     @property
     def _read_fields(self) -> frozenset[str]: ...
@@ -129,6 +131,7 @@ class DocumentAdapterMixinBase(Generic[R, D, C, U]):
         max_scan_pages: int | None
         max_stream_pages: int | None
         max_chunked_command_pages: int | None
+        dispatcher_provider: Callable[[], DomainEventDispatcherPort | None]
 
         @property
         def _read_fields(self) -> frozenset[str]: ...

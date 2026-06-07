@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import (
     Any,
     AsyncGenerator,
@@ -15,6 +16,8 @@ from uuid import UUID
 
 import attrs
 from pydantic import BaseModel
+
+from forze.application.contracts.domain import DomainEventDispatcherPort
 
 from forze.application.contracts.base import (
     CountlessPage,
@@ -86,6 +89,9 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
     namespace: str
     read_model: type[R]
     domain_model: type[D] | None = None
+    dispatcher_provider: Callable[[], DomainEventDispatcherPort | None] = attrs.field(
+        default=lambda: None
+    )
 
     # ....................... #
 

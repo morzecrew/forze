@@ -133,6 +133,7 @@ from forze.application.execution import (
     InProcessResilienceExecutor,
     builtin_default_policies,
 )
+from forze.application.execution.domain import domain_dispatcher_provider
 from forze.application.execution.outbox import build_staging_outbox_command_for_store
 from forze.application.integrations.outbox import StagingOutboxCommand
 from forze.application.integrations.search import SearchResultSnapshot
@@ -274,6 +275,7 @@ class ConfigurableMockDocument(_MockFactoryBase):
             namespace=self._namespace_for(context, spec.name, default=str(spec.name)),
             read_model=spec.read,
             domain_model=domain_model,
+            dispatcher_provider=domain_dispatcher_provider(context),
             tenant_aware=cfg.tenant_aware if cfg else False,
             tenant_provider=_tenant_provider(context),
         )

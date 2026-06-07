@@ -13,19 +13,22 @@ from forze.application.contracts.querying import QueryFilterExpression
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict, utcnow
 from forze.domain.constants import ID_FIELD, REV_FIELD
+from forze.domain.models import AggregateRoot
 from forze_mock.query._types import C, D, R, U
 from forze_mock.query.matching import _match_filters  # type: ignore[reportPrivateUsage]
 
 if TYPE_CHECKING:
-    from collections.abc import Awaitable
+    from collections.abc import Awaitable, Callable
 
     from forze.application.contracts.base import CountlessPage
     from forze.application.contracts.document import DocumentSpec
+    from forze.application.contracts.domain import DomainEventDispatcherPort
     from forze.application.contracts.querying import (
         PaginationExpression,
         QuerySortExpression,
     )
     from forze.base.serialization import ModelCodec
+    from forze.domain.models import DomainEvent
     from forze_mock.state import MockState
 
 # ----------------------- #
@@ -44,6 +47,7 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
         state: MockState
         domain_model: type[D] | None
         tenant_aware: bool
+        dispatcher_provider: Callable[[], DomainEventDispatcherPort | None]
 
         def require_tenant_if_aware(self) -> UUID | None: ...
         def _store(self) -> dict[UUID, JsonDict]: ...
@@ -62,6 +66,34 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
             pagination: PaginationExpression | None = None,
             sorts: QuerySortExpression | None = None,  # type: ignore[valid-type]
         ) -> Awaitable[CountlessPage[JsonDict]]: ...
+
+    # ....................... #
+
+    async def _dispatch_domain_events(self, domains: Sequence[D | None]) -> None:
+        """Drain and dispatch domain events from any aggregate-root domains, in-tx.
+
+        Mirrors the integration adapter: a no-op for non-aggregate documents; raises if
+        an aggregate emitted events but no dispatcher is registered.
+        """
+
+        events: list[DomainEvent] = []
+
+        for domain in domains:
+            if isinstance(domain, AggregateRoot) and domain.has_pending_events:
+                events.extend(domain.collect_events())
+
+        if not events:
+            return
+
+        dispatcher = self.dispatcher_provider()
+
+        if dispatcher is None:
+            raise exc.configuration(
+                f"Aggregate emitted domain events for document {self.spec.name!r} but "
+                "no DomainEventsDepsModule is registered to dispatch them."
+            )
+
+        await dispatcher.dispatch(events)
 
     # ....................... #
 
@@ -84,6 +116,8 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
         with self.state.lock:
             store = self._store()
             store[domain.id] = serialized
+
+        await self._dispatch_domain_events([domain])
 
         if not return_new:
             return None
@@ -358,6 +392,8 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
             else:
                 write_diff = {}
 
+        await self._dispatch_domain_events([updated])
+
         if not return_new:
             if return_diff:
                 return write_diff
@@ -488,6 +524,7 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
             return [] if return_new else 0
 
         results: list[R] = []
+        mutated: list[D | None] = []
         n = 0
 
         with self.state.lock:
@@ -505,10 +542,13 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
                 updated = updated.model_copy(update={"rev": current.rev + 1}, deep=True)
                 serialized = self._domain_codec().encode_persistence_mapping(updated)
                 store[pk] = serialized
+                mutated.append(updated)
                 n += 1
 
                 if return_new:
                     results.append(self._to_read(serialized))
+
+        await self._dispatch_domain_events(mutated)
 
         if return_new:
             return results

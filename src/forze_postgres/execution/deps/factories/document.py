@@ -9,6 +9,7 @@ from forze.application.contracts.document import (
     DocumentCommandDepPort,
     DocumentQueryDepPort,
 )
+from forze.application.execution.domain import domain_dispatcher_provider
 from forze.application.integrations.document import DocumentCache
 from forze.base.exceptions import exc
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document
@@ -171,4 +172,5 @@ class ConfigurablePostgresDocument(DocumentCommandDepPort[R, D, C, U]):
             write_gw=write,
             document_cache=cc,
             batch_size=self.config.batch_size,
+            dispatcher_provider=domain_dispatcher_provider(ctx),
         )

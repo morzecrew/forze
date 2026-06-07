@@ -45,17 +45,51 @@ touching those fields.
 **Imperative (alternative):** call `record_event` directly inside a behavior method when the
 event isn't a simple function of the state transition.
 
-## `DomainEventDispatcherPort`
+## Events flow on persistence (no manual dispatch)
 
-Resolved as `ctx.domain`. Call it from inside the handler (in-transaction) after
-persisting the aggregate:
+You do **not** drain and dispatch events by hand. The document command flow does it:
+persisting an aggregate (`ctx.document.command(spec).create/update/...`) drains the
+aggregate's `collect_events()` and dispatches them **in the operation's transaction** via
+the registered dispatcher — so an aggregate's `@event_emitter` reactions reach their
+handlers (and the outbox) atomically with the write. Plain (non-aggregate) documents are
+unaffected; an aggregate that emits events without a `DomainEventsDepsModule` registered
+raises rather than dropping them.
 
     :::python
-    order = order.confirm()
-    await self.doc.update(...)                            # persist
-    await ctx.domain().dispatch(order.collect_events())   # drain + dispatch in-tx
+    # status pending -> confirmed fires the @event_emitter; the command flow dispatches it
+    await ctx.document.command(order_spec).update(pk, rev, OrderUpdate(status="confirmed"))
 
-`ctx.domain()` resolves the dispatcher; `dispatch(events)` runs the registered handlers.
+`ctx.domain()` resolves the dispatcher directly if you ever need it, but handlers should
+not call it — let persistence drive dispatch.
+
+## Functional decider — `AggregateRepository`
+
+For behavior-rich aggregates, `forze_kits.aggregates.AggregateRepository` lets a handler
+decide *on the aggregate* while persistence stays command-shaped (merge-patch + OCC):
+
+    :::python
+    from forze_kits.aggregates import aggregate_repository
+
+    class Order(Document, AggregateRoot):
+        status: str = "pending"
+
+        def confirm(self) -> OrderUpdate:        # decider: pure decision -> patch
+            if self.status != "pending":
+                raise exc.domain("only pending orders can be confirmed")
+            return OrderUpdate(status="confirmed")
+
+    # handler:
+    repo  = aggregate_repository(ctx, order_spec)
+    order = await repo.load(args.id)             # reconstruct the domain aggregate
+    patch = order.confirm()                       # decision + invariants on the aggregate
+    return await repo.apply(order, patch)         # command.update -> emitters -> dispatch
+
+The decider is a *pure* method (decision + invariants, no I/O); the `@event_emitter`
+reactions turn the resulting diff into events, dispatched by the command flow. `load`
+reconstructs the aggregate from its read model, so the read model must carry the domain's
+fields. **Invariants** use the existing pre-persist mechanisms — Pydantic `@model_validator`
+(create-time) and [`@update_validator`](document.md) (update-time) — both raise before the
+write.
 
 ## Dispatcher, registry, and the outbox bridge
 
