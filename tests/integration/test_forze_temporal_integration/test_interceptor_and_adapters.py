@@ -8,23 +8,23 @@ from temporalio.contrib.pydantic import pydantic_data_converter
 from temporalio.testing import WorkflowEnvironment
 from temporalio.worker import Worker
 
+from forze.application.contracts.authn import AuthnIdentity
 from forze.application.contracts.durable.workflow import (
     DurableWorkflowHandle,
     DurableWorkflowRunStatus,
     DurableWorkflowSpec,
 )
 from forze.application.contracts.durable.workflow.specs import DurableWorkflowInvokeSpec
-from forze.application.contracts.authn import AuthnIdentity
-from forze.application.execution import ExecutionContext, InvocationMetadata
+from forze.application.execution import InvocationMetadata
 from forze.application.execution.deps import Deps
 from forze.base.primitives import uuid7
-from tests.support.execution_context import context_from_deps, context_from_modules, frozen_deps_from_deps
 from forze_temporal.adapters.workflow import (
     TemporalWorkflowCommandAdapter,
     TemporalWorkflowQueryAdapter,
 )
 from forze_temporal.interceptors.context import ExecutionContextInterceptor
 from forze_temporal.kernel.client.client import TemporalClient
+from tests.support.execution_context import context_from_deps
 
 from ._workflow_defs import (
     CTX_BOX,
@@ -39,7 +39,9 @@ from ._workflow_defs import (
 
 @pytest.mark.integration
 @pytest.mark.asyncio
-async def test_execution_context_interceptor_propagates_correlation_to_activity() -> None:
+async def test_execution_context_interceptor_propagates_correlation_to_activity() -> (
+    None
+):
     """Inbound activity interceptor binds :class:`ExecutionContext` from Temporal headers."""
 
     fixed = uuid7()
@@ -125,7 +127,9 @@ async def test_temporal_workflow_adapters_end_to_end() -> None:
                 activities=[it_sum_pair],
             ):
                 with exec_ctx.inv_ctx.bind(
-                    metadata=InvocationMetadata(execution_id=uuid7(), correlation_id=uuid7(), causation_id=None),
+                    metadata=InvocationMetadata(
+                        execution_id=uuid7(), correlation_id=uuid7(), causation_id=None
+                    ),
                 ):
                     handle: DurableWorkflowHandle = await cmd.start(SumIn(a=40, b=2))
                     running = await qry.describe(handle)

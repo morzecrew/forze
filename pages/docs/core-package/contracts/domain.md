@@ -87,9 +87,29 @@ decide *on the aggregate* while persistence stays command-shaped (merge-patch + 
 The decider is a *pure* method (decision + invariants, no I/O); the `@event_emitter`
 reactions turn the resulting diff into events, dispatched by the command flow. `load`
 reconstructs the aggregate from its read model, so the read model must carry the domain's
-fields. **Invariants** use the existing pre-persist mechanisms — Pydantic `@model_validator`
-(create-time) and [`@update_validator`](document.md) (update-time) — both raise before the
-write.
+fields.
+
+## Invariants — `@invariant`
+
+An invariant is an always-true rule on an aggregate's **state**. Declare it once with
+`@invariant` and it is enforced on **both** create and update:
+
+    :::python
+    from forze.domain.models import Document, invariant
+
+    class Account(Document):
+        balance: int = 0
+
+        @invariant
+        def _non_negative(self) -> None:        # (self) -> None, raises on violation
+            if self.balance < 0:
+                raise exc.domain("balance must be non-negative")
+
+| Use | When |
+|-----|------|
+| `@invariant(self)` | Always-true **state** rule — create + every update. The default for invariants. |
+| [`@update_validator(before, after, diff)`](document.md) | A **transition** rule that needs the delta (e.g. "status may only move forward"). |
+| Pydantic `@model_validator` | Raw escape hatch. **Note:** it runs on create but **not** on Forze's merge-patch update (which uses `model_copy`), so it does *not* enforce an invariant across updates — use `@invariant`. |
 
 ## Dispatcher, registry, and the outbox bridge
 

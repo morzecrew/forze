@@ -21,6 +21,34 @@ from .temporal_dev_server import (
 )
 
 
+@pytest.fixture(scope="session", autouse=True)
+def _reap_orphaned_time_skipping_servers():
+    """Reap orphaned ``temporal-test-server`` subprocesses before the session.
+
+    Each ``WorkflowEnvironment.start_time_skipping()`` spawns a test-server subprocess that
+    ``env.shutdown()`` tears down in a ``finally``. If a previous pytest run was hard-killed
+    mid-test, that ``finally`` never ran and the subprocess **orphans** — and a stray can
+    wedge a fresh run at the first time-skipping test. Clear any strays before this session
+    starts its own (no server exists yet at this point, so the kill is safe).
+
+    Skipped under ``pytest-xdist``: parallel workers each run their own server, so a blanket
+    kill could tear down a sibling worker's live one. The default (serial) run is unaffected.
+    """
+
+    import os
+    import shutil
+    import subprocess
+
+    if "PYTEST_XDIST_WORKER" not in os.environ:
+        pkill = shutil.which("pkill")
+        if pkill is not None:
+            subprocess.run(
+                [pkill, "-f", "temporal-test-server-sdk-python"], check=False
+            )
+
+    yield
+
+
 @pytest_asyncio.fixture
 async def workflow_env():
     """Temporal test environment with time skipping (no Docker)."""

@@ -23,6 +23,7 @@ from zoneinfo import ZoneInfo
 import orjson
 
 from ..exceptions import exc
+from .time_source import current_time_source
 
 # ----------------------- #
 
@@ -66,9 +67,9 @@ def uuid7(
 
     if timestamp_ms is None and timestamp_ns is None:
         # No explicit timestamp: read the context-active time source (system clock by
-        # default), so a bound source controls every "current time" id read.
-        from .time_source import current_time_source
-
+        # default), so a bound source controls every "current time" id read. Imported at
+        # module level (not lazily here) so calling uuid7() inside a Temporal workflow does
+        # not run an import statement — which the workflow sandbox would reject.
         return current_time_source().uuid()
 
     if (timestamp_ms == 0 and timestamp_ns is None) or (
