@@ -72,6 +72,13 @@ class InvocationContext:
     )
     """Idempotency key supplied by the boundary for the current invocation."""
 
+    __read_only: ContextVar[bool] = attrs.field(
+        factory=lambda: ContextVar("read_only", default=False),
+        init=False,
+        repr=False,
+    )
+    """Whether the current operation is read-only (a ``QUERY`` operation)."""
+
     # ....................... #
 
     def get_metadata(self) -> InvocationMetadata | None:
@@ -99,6 +106,27 @@ class InvocationContext:
         """Return the idempotency key bound by the boundary, if any."""
 
         return self.__idempotency_key.get()
+
+    # ....................... #
+
+    def is_read_only(self) -> bool:
+        """Return whether the current operation is read-only (a ``QUERY`` operation)."""
+
+        return self.__read_only.get()
+
+    # ....................... #
+
+    @contextmanager
+    def bind_read_only(self) -> Iterator[None]:
+        """Bind the current operation as read-only for its duration (a ``QUERY`` op)."""
+
+        token = self.__read_only.set(True)
+
+        try:
+            yield
+
+        finally:
+            self.__read_only.reset(token)
 
     # ....................... #
 

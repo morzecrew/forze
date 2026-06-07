@@ -37,7 +37,7 @@ class OutboxDeps(ConvenientDeps):
     def command(self, spec: OutboxSpec[M]) -> OutboxCommandPort[M]:
         """Resolve an outbox command port for the given spec."""
 
-        return self._resolve_configurable(
+        return self._resolve_command(
             OutboxCommandDepKey,
             spec,
             route=spec.name,

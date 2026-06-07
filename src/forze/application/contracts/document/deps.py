@@ -62,7 +62,7 @@ class DocumentDeps(ConvenientDeps):
     ) -> DocumentCommandPort[R, D, C, U]:
         """Resolve a document command port for the given spec."""
 
-        return self._resolve_configurable(
+        return self._resolve_command(
             DocumentCommandDepKey,
             spec,
             route=spec.name,

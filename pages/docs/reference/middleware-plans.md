@@ -54,6 +54,7 @@ Register handler factories on `OperationRegistry` with `set_handler` or the `han
 |--------|---------|
 | `set_handler(op, factory)` | Register or replace a handler factory |
 | `bind(*ops)` | Start a plan binder for one or more operation keys |
+| `as_query()` / `as_command()` | Tag the operation read-only (`QUERY`) or read-write (`COMMAND`, default) |
 | `bind_outer()` | Author outer-scope stages (`before`, `wrap`, `on_success`, …) |
 | `bind_tx()` | Author transaction scope (`tx_before`, `after_commit`, `set_route`, …) |
 | `finish(deep=False)` | Commit scope changes to the parent binder |
@@ -61,6 +62,23 @@ Register handler factories on `OperationRegistry` with `set_handler` or the `han
 | `freeze()` | Validate patches, resolved plans, dispatch graph; return `FrozenOperationRegistry` |
 
 Built-in composition helpers (`build_document_registry`, `build_search_registry`, …) return an `OperationRegistry` with handlers pre-registered. Bind transaction routes and outer stages, then call `.freeze()` before `attach_*_endpoints`.
+
+### Command vs query operations
+
+An operation is read-write (`COMMAND`, the default) or read-only (`QUERY`). Tag it early in the chain:
+
+    :::python
+    registry.bind("projects.get").as_query().bind_tx().set_route("default").finish(deep=True)
+
+A `QUERY` operation runs under a read-only flag for its duration, and **a command (write) port
+cannot be acquired by construction** — `ctx.document.command(...)`, `ctx.outbox.command(...)`, and the
+other `*.command(...)` accessors raise `precondition` inside a query op (read/`query` accessors are
+unaffected). This makes the CQRS split structural rather than a naming convention. Untagged operations
+default to `COMMAND`, so existing code is unchanged.
+
+> Deferred (Phase 2): routing `QUERY` operations to a read replica automatically, DB-level read-only
+> transactions (`BEGIN READ ONLY`, which also covers raw-query writes), and per-kind default plans.
+> Explicit replica routing already works today via `bind_tx().set_route("pg_replica")`.
 
 ### Stage methods (on scope binders)
 

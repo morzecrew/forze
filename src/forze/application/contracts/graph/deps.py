@@ -42,7 +42,7 @@ class GraphDeps(ConvenientDeps):
     def command(self, spec: GraphModuleSpec) -> GraphCommandPort:
         """Resolve a graph command port for the given module spec."""
 
-        return self._resolve_configurable(GraphCommandDepKey, spec, route=spec.name)
+        return self._resolve_command(GraphCommandDepKey, spec, route=spec.name)
 
     # ....................... #
 

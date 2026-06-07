@@ -313,6 +313,7 @@ class FrozenOperationRegistry:
             plan=resolved_plan,
             tx_runner=ctx.tx_ctx.scope,
             defer_after_commit=ctx.tx_ctx.run_or_defer,
+            inv_ctx=ctx.inv_ctx,
         )
 
         ctx.store_operation(op, resolved)

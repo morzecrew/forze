@@ -36,4 +36,4 @@ class StorageDeps(ConvenientDeps):
     def command(self, spec: StorageSpec) -> StorageCommandPort:
         """Resolve a storage command port for the given spec."""
 
-        return self._resolve_configurable(StorageCommandDepKey, spec, route=spec.name)
+        return self._resolve_command(StorageCommandDepKey, spec, route=spec.name)

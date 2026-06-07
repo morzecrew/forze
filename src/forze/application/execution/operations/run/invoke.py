@@ -12,11 +12,12 @@ from forze.application.contracts.transaction import AfterCommitPort
 from forze.base.exceptions import exc
 from forze.base.primitives import StrKey
 
-from ..planning.plans import ResolvedOperationPlan
+from ..planning.plans import OperationKind, ResolvedOperationPlan
 from .plan import run_resolved_operation_plan
 
 if TYPE_CHECKING:
     from ...context import ExecutionContext
+    from ...context.invocation import InvocationContext
     from ..registry import FrozenOperationRegistry
 
 # ----------------------- #
@@ -42,11 +43,12 @@ class ResolvedOperation[Args, R](Handler[Args, R]):
     defer_after_commit: AfterCommitPort
     """Defer work until after a successful root transaction commit."""
 
+    inv_ctx: InvocationContext
+    """Invocation context — used to bind the read-only flag for a QUERY operation."""
+
     # ....................... #
 
-    async def __call__(self, args: Args) -> R:
-        """Call the operation."""
-
+    async def _run(self, args: Args) -> R:
         return await run_resolved_operation_plan(
             self.plan,
             self.handler,
@@ -54,6 +56,21 @@ class ResolvedOperation[Args, R](Handler[Args, R]):
             tx_runner=self.tx_runner,
             defer_after_commit=self.defer_after_commit,
         )
+
+    # ....................... #
+
+    async def __call__(self, args: Args) -> R:
+        """Call the operation.
+
+        A QUERY operation runs under a read-only flag, so a command (write) port cannot be
+        acquired for its duration (enforced in ``ConvenientDeps._resolve_command``).
+        """
+
+        if self.plan.kind is OperationKind.QUERY:
+            with self.inv_ctx.bind_read_only():
+                return await self._run(args)
+
+        return await self._run(args)
 
 
 # ....................... #
