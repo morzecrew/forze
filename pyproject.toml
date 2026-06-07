@@ -336,6 +336,12 @@ source_modules = ["forze.application.contracts.inbox"]
 forbidden_modules = ["forze.application.execution"]
 
 [[tool.importlinter.contracts]]
+name = "Saga contracts do not import execution"
+type = "forbidden"
+source_modules = ["forze.application.contracts.saga"]
+forbidden_modules = ["forze.application.execution"]
+
+[[tool.importlinter.contracts]]
 name = "Layered `forze.domain` module architecture"
 type = "layers"
 layers = ["forze.domain.models", "forze.domain.validation"]

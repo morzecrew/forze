@@ -38,6 +38,13 @@ from .resilience import (
     resolve_resilience_executor,
 )
 from .runtime import ExecutionRuntime
+from .saga import (
+    InProcessSagaExecutor,
+    SagaDepsModule,
+    default_saga_executor,
+    resolve_saga_executor,
+    run_saga,
+)
 from .tracing import (
     RuntimeTrace,
     RuntimeTraceValidationError,
@@ -89,6 +96,11 @@ __all__ = [
     "default_resilience_executor",
     "occ_retry",
     "resolve_resilience_executor",
+    "InProcessSagaExecutor",
+    "SagaDepsModule",
+    "default_saga_executor",
+    "resolve_saga_executor",
+    "run_saga",
     "RuntimeTrace",
     "RuntimeTraceValidationError",
     "RuntimeTraceValidator",

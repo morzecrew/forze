@@ -98,6 +98,7 @@ nav:
       - Durable function: core-package/contracts/durable-function.md
       - Idempotency: core-package/contracts/idempotency.md
       - Deterministic time & ids: core-package/contracts/clock.md
+      - Saga: core-package/contracts/saga.md
       - Outbox: core-package/contracts/outbox.md
       - Analytics: core-package/contracts/analytics.md
       - HTTP: core-package/contracts/http.md
