@@ -203,8 +203,7 @@ DocSpec = DocumentSpec[Any, Any, Any, Any]
 
 
 def mock_txmanager(context: ExecutionContext) -> TransactionManagerPort:
-    del context
-    return MockTxManagerAdapter()
+    return MockTxManagerAdapter(state=context.deps.provide(MockStateDepKey))
 
 
 def _tenant_provider(ctx: ExecutionContext) -> TenantProviderPort:

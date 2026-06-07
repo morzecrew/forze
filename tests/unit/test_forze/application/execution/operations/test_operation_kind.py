@@ -21,7 +21,7 @@ from forze.domain.models import (
 )
 from pydantic import BaseModel
 
-from forze_mock import MockDepsModule
+from forze_mock import MockDepsModule, MockState
 from tests.support.execution_context import context_from_modules
 
 # ----------------------- #
@@ -94,6 +94,12 @@ class _ReadFlag(Handler[None, bool]):
         return self.ctx.inv_ctx.is_read_only()
 
 
+@attrs.define(slots=True)
+class _Noop(Handler[None, None]):
+    async def __call__(self, _args: None) -> None:
+        return None
+
+
 def _frozen(op: str, factory, *, query: bool):
     binder = OperationRegistry(handlers={op: factory}).bind(op)
     if query:
@@ -152,3 +158,36 @@ class TestOperationKind:
 
         assert q.resolve("q", ctx).plan.kind is OperationKind.QUERY
         assert c.resolve("c", ctx).plan.kind is OperationKind.COMMAND  # default
+
+
+class TestReadOnlyTransaction:
+    def _txn_op(self, op: str, *, query: bool):
+        binder = OperationRegistry(handlers={op: lambda _c: _Noop()}).bind(op)
+        if query:
+            binder = binder.as_query()
+        return binder.bind_tx().set_route("mock").finish(deep=True).freeze()
+
+    async def test_query_op_opens_a_read_only_transaction(self) -> None:
+        state = MockState()
+        ctx = context_from_modules(MockDepsModule(state=state))
+
+        await run_operation(self._txn_op("q", query=True), "q", None, ctx)
+
+        assert state.tx_read_only_calls == [True]
+
+    async def test_command_op_opens_a_read_write_transaction(self) -> None:
+        state = MockState()
+        ctx = context_from_modules(MockDepsModule(state=state))
+
+        await run_operation(self._txn_op("c", query=False), "c", None, ctx)
+
+        assert state.tx_read_only_calls == [False]
+
+    async def test_direct_scope_defaults_to_read_write(self) -> None:
+        state = MockState()
+        ctx = context_from_modules(MockDepsModule(state=state))
+
+        async with ctx.tx_ctx.scope("mock"):
+            pass
+
+        assert state.tx_read_only_calls == [False]

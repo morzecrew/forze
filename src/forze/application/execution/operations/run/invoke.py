@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from contextlib import AbstractAsyncContextManager
 from typing import TYPE_CHECKING, Any, Callable, cast, final
 
 import attrs
@@ -13,7 +12,7 @@ from forze.base.exceptions import exc
 from forze.base.primitives import StrKey
 
 from ..planning.plans import OperationKind, ResolvedOperationPlan
-from .plan import run_resolved_operation_plan
+from .plan import TransactionRunner, run_resolved_operation_plan
 
 if TYPE_CHECKING:
     from ...context import ExecutionContext
@@ -37,8 +36,8 @@ class ResolvedOperation[Args, R](Handler[Args, R]):
     plan: ResolvedOperationPlan
     """Resolved operation plan."""
 
-    tx_runner: Callable[[StrKey], AbstractAsyncContextManager[None]]
-    """Callable that returns an async context manager that scopes a transaction."""
+    tx_runner: TransactionRunner
+    """Opens a transaction scope on a route (optionally read-only)."""
 
     defer_after_commit: AfterCommitPort
     """Defer work until after a successful root transaction commit."""

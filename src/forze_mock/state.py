@@ -28,6 +28,8 @@ class MockState:
         tuple[str, str, str], tuple[str, str, Any | None]
     ] = attrs.field(factory=dict)
     inbox: set[tuple[str, str, str]] = attrs.field(factory=set)
+    tx_read_only_calls: list[bool] = attrs.field(factory=list)
+    """Records the ``read_only`` flag of each mock transaction (test observability)."""
     storage: dict[str, dict[str, Any]] = attrs.field(factory=dict)
     storage_bytes: dict[str, dict[str, bytes]] = attrs.field(factory=dict)
     queues: dict[str, dict[str, list[Any]]] = attrs.field(factory=dict)

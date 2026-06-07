@@ -70,15 +70,26 @@ An operation is read-write (`COMMAND`, the default) or read-only (`QUERY`). Tag 
     :::python
     registry.bind("projects.get").as_query().bind_tx().set_route("default").finish(deep=True)
 
-A `QUERY` operation runs under a read-only flag for its duration, and **a command (write) port
-cannot be acquired by construction** — `ctx.document.command(...)`, `ctx.outbox.command(...)`, and the
-other `*.command(...)` accessors raise `precondition` inside a query op (read/`query` accessors are
-unaffected). This makes the CQRS split structural rather than a naming convention. Untagged operations
-default to `COMMAND`, so existing code is unchanged.
+A `QUERY` operation is enforced read-only at two layers:
 
-> Deferred (Phase 2): routing `QUERY` operations to a read replica automatically, DB-level read-only
-> transactions (`BEGIN READ ONLY`, which also covers raw-query writes), and per-kind default plans.
-> Explicit replica routing already works today via `bind_tx().set_route("pg_replica")`.
+- **Port (application):** a command (write) port cannot be acquired by construction —
+  `ctx.document.command(...)`, `ctx.outbox.command(...)`, and the other `*.command(...)` accessors raise
+  `precondition` inside a query op (read/`query` accessors are unaffected).
+- **Transaction (database):** the operation's transaction is opened **read-only**
+  (Postgres `BEGIN ... READ ONLY`), so the database itself rejects writes — including those via the
+  raw-query escape hatch, which the port guard can't see.
+
+This makes the CQRS split structural rather than a naming convention. Untagged operations default to
+`COMMAND`, so existing code is unchanged.
+
+**Routing queries to a read replica:** bind the query op's transaction to a replica route — the
+transaction is read-only-enforced on the replica too:
+
+    :::python
+    registry.bind("projects.get").as_query().bind_tx().set_route("pg_replica").finish(deep=True)
+
+> Deferred: read-replica *auto*-routing from kind (picking a replica without a separate route bind) and
+> per-kind default plans.
 
 ### Stage methods (on scope binders)
 
