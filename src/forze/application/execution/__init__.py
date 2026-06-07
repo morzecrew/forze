@@ -28,6 +28,8 @@ from .lifecycle import (
 from .operations import OperationPlan
 from .operations.registry import FrozenOperationRegistry, OperationRegistry
 from .resilience import (
+    CircuitBreakerStore,
+    InMemoryCircuitBreakerStore,
     InProcessResilienceExecutor,
     ResilienceDepsModule,
     builtin_default_policies,
@@ -72,7 +74,9 @@ __all__ = [
     "DomainEventsDepsModule",
     "ExecutionContext",
     "ExecutionRuntime",
+    "CircuitBreakerStore",
     "FrozenOperationRegistry",
+    "InMemoryCircuitBreakerStore",
     "InProcessDomainEventDispatcher",
     "InProcessResilienceExecutor",
     "LifecycleModule",

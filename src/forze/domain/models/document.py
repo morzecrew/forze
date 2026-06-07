@@ -22,7 +22,9 @@ from ..validation import (
     UpdateValidatorMetadata,
     collect_update_validators,
 )
+from .aggregate import AggregateRoot
 from .base import BaseDTO, CoreModel
+from .emitters import has_event_emitters
 
 # ----------------------- #
 
@@ -72,6 +74,12 @@ class Document(CoreModel):
             len(cls._update_validators_),
             cls.__qualname__,
         )
+
+        if has_event_emitters(cls) and not issubclass(cls, AggregateRoot):
+            raise exc.configuration(
+                f"{cls.__qualname__} declares @event_emitter methods but is not an "
+                "AggregateRoot; domain events have no buffer on a plain Document."
+            )
 
     # ....................... #
 
@@ -177,6 +185,12 @@ class Document(CoreModel):
             after = self
 
         self._run_update_validators(after, diff)
+
+        # Run domain-event emitters when `after` is an AggregateRoot (no-op otherwise);
+        # events are recorded on the returned instance and drained by the caller.
+        emit = getattr(after, "_emit_domain_events", None)
+        if emit is not None:
+            emit(self, diff)
 
         return after, diff
 

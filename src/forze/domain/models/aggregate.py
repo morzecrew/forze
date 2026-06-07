@@ -1,10 +1,14 @@
 """Aggregate root base with in-process domain-event collection."""
 
-from typing import Any, Mapping, Self
+from collections.abc import Mapping
+from typing import Any, ClassVar, Self
 
 from pydantic import PrivateAttr
 
+from forze.base.primitives import JsonDict
+
 from .base import CoreModel
+from .emitters import EventEmitterMetadata, collect_event_emitters
 from .events import DomainEvent
 
 # ----------------------- #
@@ -20,10 +24,21 @@ class AggregateRoot(CoreModel):
 
         class Order(Document, AggregateRoot): ...
 
-    Behavior methods record events on the instance they return.
+    Behavior methods record events on the instance they return, or declare
+    :func:`~forze.domain.models.emitters.event_emitter` methods that raise an event
+    from an ``(before, after, diff)`` transition on :meth:`Document.update`.
     """
 
     _pending_events: list[DomainEvent] = PrivateAttr(default_factory=list)
+
+    _event_emitters_: ClassVar[list[tuple[str, EventEmitterMetadata]]] = []
+    """Domain-event emitters collected from this class and its bases."""
+
+    # ....................... #
+
+    def __init_subclass__(cls, **kwargs: Any) -> None:
+        super().__init_subclass__(**kwargs)
+        cls._event_emitters_ = collect_event_emitters(cls)
 
     # ....................... #
 
@@ -49,6 +64,27 @@ class AggregateRoot(CoreModel):
         """Whether any domain events are pending dispatch."""
 
         return bool(self._pending_events)
+
+    # ....................... #
+
+    def _emit_domain_events(self, before: Self, diff: JsonDict) -> None:
+        """Run the declared emitters and record their events on this instance.
+
+        Called by :meth:`Document.update` on the **result** instance (``self`` is
+        ``after``); each emitter is a pure ``(before, after, diff) -> event | None``.
+        """
+
+        keys = diff.keys()
+        cls = type(self)
+
+        for name, meta in cls._event_emitters_:
+            if meta.fields is not None and keys.isdisjoint(meta.fields):
+                continue
+
+            event = getattr(cls, name)(before, self, diff)
+
+            if event is not None:
+                self.record_event(event)
 
     # ....................... #
 

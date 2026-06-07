@@ -21,7 +21,8 @@ from forze.base.primitives import StrKey
 
 from ..tracing import record
 from .backoff import compute_delay
-from .state import BreakerState, BudgetState, BulkheadState, Transition
+from .state import BudgetState, BulkheadState, Transition
+from .store import CircuitBreakerStore, InMemoryCircuitBreakerStore
 
 # ----------------------- #
 
@@ -33,12 +34,13 @@ _StateKey = tuple[StrKey, StrKey | None]
 
 @attrs.define(slots=True, kw_only=True)
 class InProcessResilienceExecutor:
-    """Process-wide singleton applying named policies with process-local state.
+    """Process-wide singleton applying named policies.
 
-    Breaker/bulkhead/budget state lives on this instance keyed by
-    ``(policy_name, route)`` and therefore persists across execution scopes. The
-    instance must be registered once via :meth:`Deps.plain` (not a per-scope
-    factory), or breaker state would reset every request.
+    Bulkhead/budget state lives on this instance keyed by ``(policy_name, route)``;
+    breaker state lives behind :attr:`breaker_store` (process-local by default, or a
+    distributed store so the fleet trips together). The instance must be registered
+    once via :meth:`Deps.plain` (not a per-scope factory), or that state would reset
+    every request.
     """
 
     policies: Mapping[StrKey, ResiliencePolicy]
@@ -46,7 +48,13 @@ class InProcessResilienceExecutor:
     rng: random.Random = attrs.field(factory=random.Random)
     sleep: Callable[[float], Awaitable[None]] = attrs.field(default=asyncio.sleep)
 
-    _breakers: dict[_StateKey, BreakerState] = attrs.field(factory=dict, init=False)
+    breaker_store: CircuitBreakerStore = attrs.field(
+        default=attrs.Factory(
+            lambda self: InMemoryCircuitBreakerStore(clock=self.clock),
+            takes_self=True,
+        ),
+    )
+
     _bulkheads: dict[_StateKey, BulkheadState] = attrs.field(factory=dict, init=False)
     _budgets: dict[_StateKey, BudgetState] = attrs.field(factory=dict, init=False)
 
@@ -91,8 +99,8 @@ class InProcessResilienceExecutor:
         route: StrKey | None,
     ) -> T:
         call: Callable[[], Awaitable[T]] = fn
-
         timeout = pol.timeout
+
         if timeout is not None:
             t, t_inner = timeout, call
 
@@ -102,6 +110,7 @@ class InProcessResilienceExecutor:
             call = with_timeout
 
         retry = pol.retry
+
         if retry is not None:
             r, r_inner = retry, call
 
@@ -111,6 +120,7 @@ class InProcessResilienceExecutor:
             call = with_retry
 
         breaker = pol.circuit_breaker
+
         if breaker is not None:
             b, b_inner = breaker, call
 
@@ -120,6 +130,7 @@ class InProcessResilienceExecutor:
             call = with_breaker
 
         bulkhead = pol.bulkhead
+
         if bulkhead is not None:
             bh, bh_inner = bulkhead, call
 
@@ -200,8 +211,8 @@ class InProcessResilienceExecutor:
         pol: ResiliencePolicy,
         route: StrKey | None,
     ) -> T:
-        state = self._breaker_for(strat, pol, route)
-        allowed, transition = state.try_admit(self.clock())
+        key = (pol.name, route)
+        allowed, transition = await self.breaker_store.admit(key, strat)
 
         if transition == "half_open":
             self._emit("breaker_half_open", pol, route)
@@ -214,19 +225,21 @@ class InProcessResilienceExecutor:
             result = await inner()
 
         except CoreException as error:
-            if exception_egress_policy(error.kind).retryable:
-                self._breaker_outcome(state.on_failure(self.clock()), pol, route)
-
-            else:
-                self._breaker_outcome(state.on_success(self.clock()), pol, route)
-
+            ok = not exception_egress_policy(error.kind).retryable
+            self._breaker_outcome(
+                await self.breaker_store.record(key, strat, ok), pol, route
+            )
             raise
 
         except Exception:
-            self._breaker_outcome(state.on_failure(self.clock()), pol, route)
+            self._breaker_outcome(
+                await self.breaker_store.record(key, strat, False), pol, route
+            )
             raise
 
-        self._breaker_outcome(state.on_success(self.clock()), pol, route)
+        self._breaker_outcome(
+            await self.breaker_store.record(key, strat, True), pol, route
+        )
         return result
 
     # ....................... #
@@ -271,30 +284,6 @@ class InProcessResilienceExecutor:
 
         elif transition == "closed":
             self._emit("breaker_close", pol, route)
-
-    # ....................... #
-
-    def _breaker_for(
-        self,
-        strat: CircuitBreakerStrategy,
-        pol: ResiliencePolicy,
-        route: StrKey | None,
-    ) -> BreakerState:
-        key = (pol.name, route)
-        state = self._breakers.get(key)
-
-        if state is None:
-            state = BreakerState(
-                failure_ratio=strat.failure_ratio,
-                window=strat.sampling_window.total_seconds(),
-                min_throughput=strat.min_throughput,
-                break_duration=strat.break_duration.total_seconds(),
-                half_open_max_calls=strat.half_open_max_calls,
-                window_start=self.clock(),
-            )
-            self._breakers[key] = state
-
-        return state
 
     # ....................... #
 

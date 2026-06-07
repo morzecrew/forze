@@ -3,6 +3,7 @@
 from .aggregate import AggregateRoot
 from .base import BaseDTO, CoreModel
 from .document import CreateDocumentCmd, Document, DocumentHistory, ReadDocument
+from .emitters import event_emitter
 from .events import DomainEvent
 
 # ----------------------- #
@@ -17,4 +18,5 @@ __all__ = [
     "ReadDocument",
     "DocumentHistory",
     "DomainEvent",
+    "event_emitter",
 ]

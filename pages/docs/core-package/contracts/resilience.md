@@ -41,6 +41,36 @@ module is required), or `resolve_resilience_executor(ctx)` for the shared-defaul
         route="reports",
     )
 
+## Distributed breaker — `CircuitBreakerStore`
+
+Breaker state lives behind a `CircuitBreakerStore` seam (the executor touches it only at
+**admit** before a call and **record** after). The default `InMemoryCircuitBreakerStore` is
+process-local — fine for a single replica, but in a fleet each pod trips and recovers
+independently, so a dead downstream eats ~`threshold × replicas` probes. Swap in a shared
+store so the fleet trips and recovers together:
+
+    :::python
+    from forze.application.execution.resilience import ResilienceDepsModule
+    from forze_redis import redis_circuit_breaker_store
+
+    store = redis_circuit_breaker_store(redis_client)   # same client singleton as RedisDepsModule
+    ResilienceDepsModule(spec=my_spec, breaker_store=store)
+
+`RedisCircuitBreakerStore` keeps the counters/phase in a Redis hash per `(policy, route)`,
+mutated **atomically by Lua** using the server clock (no replica skew). Semantics and
+trade-offs:
+
+- **Two-tier** — a short local cache (`local_cache_ttl`, default 250 ms) fast-paths the
+  *closed* admit, so a healthy breaker doesn't pay a Redis read per call. Every outcome is
+  still recorded to Redis (that's how counts are shared) — `record` is a hot-path write.
+- **Propagation lag** — a trip set by one replica reaches others within `local_cache_ttl`.
+  Tune it for trip-speed vs Redis load.
+- **Fail-open** — on *any* Redis error the store degrades to a process-local fallback (emits
+  a `breaker_store_degraded` trace event). The breaker never becomes a per-call SPOF.
+- **Global** — keyed per `(policy, route)`, not per tenant (a downstream is down for all).
+
+Bulkhead and retry-budget remain process-local; distribute the breaker first.
+
 ## Adapter boundary — `occ_retry`
 
 `forze.application.execution.resilience.occ_retry` decorates a read-modify-write gateway

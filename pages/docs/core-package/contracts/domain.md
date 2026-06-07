@@ -12,14 +12,21 @@ Both live in `forze.domain.models`.
 |------|---------|
 | `DomainEvent` | Frozen value object recording something that happened (`event_id`, `occurred_at`; subclasses add the aggregate id and payload). |
 | `AggregateRoot` | Mixin collecting events in a transient, non-persisted buffer: `record_event(event)`, `collect_events()`, `has_pending_events`. |
+| `event_emitter` | Decorator declaring which event an update transition raises (mirrors `update_validator`). |
 
 Compose `AggregateRoot` with [`Document`](document.md) for a persisted aggregate. The
 aggregate stays pure — it only records events; the application layer drains and dispatches
 them. `AggregateRoot` overrides `model_copy` so events stay independent across
 `Document.update` copies (no aliasing or double-dispatch).
 
+**Declarative (preferred):** an `@event_emitter` is a pure
+`(before, after, diff) -> DomainEvent | None` collected like `update_validator` and run on
+`Document.update` — no bespoke behavior method that re-does update logic. It must be declared
+on an `AggregateRoot` (enforced at class creation); optional `fields=` restricts it to updates
+touching those fields.
+
     :::python
-    from forze.domain.models import AggregateRoot, Document, DomainEvent
+    from forze.domain.models import AggregateRoot, Document, DomainEvent, event_emitter
 
     class OrderConfirmed(DomainEvent):
         aggregate_id: UUID
@@ -27,9 +34,16 @@ them. `AggregateRoot` overrides `model_copy` so events stay independent across
     class Order(Document, AggregateRoot):
         status: str = "pending"
 
-        def confirm(self) -> "Order":
-            new, _ = self.update({"status": "confirmed"})
-            return new.record_event(OrderConfirmed(aggregate_id=new.id))
+        @event_emitter(fields={"status"})
+        def _on_confirm(before, after, diff) -> DomainEvent | None:
+            if after.status == "confirmed" and before.status != "confirmed":
+                return OrderConfirmed(aggregate_id=after.id)
+            return None
+
+    order, _ = order.update({"status": "confirmed"})   # auto-records OrderConfirmed
+
+**Imperative (alternative):** call `record_event` directly inside a behavior method when the
+event isn't a simple function of the state transition.
 
 ## `DomainEventDispatcherPort`
 

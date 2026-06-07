@@ -13,6 +13,7 @@ from forze.application.contracts.resilience import (
 from ..deps import Deps
 from .executor import InProcessResilienceExecutor
 from .policies import builtin_default_policies
+from .store import CircuitBreakerStore
 
 # ----------------------- #
 
@@ -25,6 +26,9 @@ class ResilienceDepsModule:
     spec: ResilienceSpec | None = None
     """App-provided named-policy catalog merged over :func:`builtin_default_policies`."""
 
+    breaker_store: CircuitBreakerStore | None = None
+    """Optional shared breaker store (e.g. Redis). Defaults to process-local."""
+
     # ....................... #
 
     def __call__(self) -> Deps:
@@ -35,7 +39,15 @@ class ResilienceDepsModule:
             **builtin_default_policies(),
             **(self.spec.policies if self.spec is not None else {}),
         }
-        executor = InProcessResilienceExecutor(policies=policies)
+
+        executor = (
+            InProcessResilienceExecutor(
+                policies=policies,
+                breaker_store=self.breaker_store,
+            )
+            if self.breaker_store is not None
+            else InProcessResilienceExecutor(policies=policies)
+        )
         deps: dict[DepKey[Any], Any] = {ResilienceExecutorDepKey: executor}
 
         return Deps.plain(deps)
