@@ -1,6 +1,7 @@
 """Resilience policy value objects: strategies and the composed policy."""
 
 from datetime import timedelta
+from enum import StrEnum
 from typing import Literal, final
 
 import attrs
@@ -12,6 +13,19 @@ from forze.base.primitives import StrKey
 
 JitterMode = Literal["none", "full", "equal", "decorrelated"]
 """Jitter applied to retry backoff delays (``decorrelated`` is the modern default)."""
+
+
+# ....................... #
+
+
+class HedgeSafety(StrEnum):
+    """Why hedging is safe on an operation (concurrent duplicates require it)."""
+
+    READ_ONLY = "read_only"
+    """The operation has no side effects."""
+
+    IDEMPOTENT = "idempotent"
+    """Duplicate effects collapse (idempotency key, OCC, or natural idempotency)."""
 
 
 # ....................... #
@@ -208,6 +222,38 @@ class FallbackStrategy:
 
 # ....................... #
 
+
+@final
+@attrs.define(slots=True, frozen=True, kw_only=True)
+class HedgeStrategy:
+    """Concurrent redundant attempts to cut tail latency (parallel-on-slowness).
+
+    A meta-strategy applied *outside* the policy pipeline (by ``run_hedged`` via
+    :class:`~forze.application.hooks.resilience.HedgeWrap`), not composed into the
+    outer-to-inner strategy order. Only safe on idempotent / read-only operations.
+    """
+
+    delay: timedelta
+    """Wait before firing the next concurrent copy (~p95 latency)."""
+
+    max_attempts: int
+    """Total concurrent attempts including the primary (``>= 2``)."""
+
+    budget: RetryBudget | None = None
+    """Optional token-bucket cap on extra attempts (load amplification)."""
+
+    # ....................... #
+
+    def __attrs_post_init__(self) -> None:
+        if self.delay.total_seconds() < 0:
+            raise exc.configuration("Hedge delay must be >= 0")
+
+        if self.max_attempts < 2:
+            raise exc.configuration("Hedge max_attempts must be >= 2")
+
+
+# ....................... #
+
 Strategy = (
     BulkheadStrategy
     | CircuitBreakerStrategy
@@ -239,6 +285,9 @@ class ResiliencePolicy:
 
     strategies: tuple[Strategy, ...]
     """Strategies in canonical order; the fallback marker may appear anywhere."""
+
+    hedge: HedgeStrategy | None = None
+    """Optional hedging meta-strategy applied outer to the pipeline by ``run_hedged``."""
 
     # ....................... #
 

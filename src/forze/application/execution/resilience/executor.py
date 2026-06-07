@@ -12,6 +12,7 @@ import attrs
 from forze.application.contracts.resilience import (
     BulkheadStrategy,
     CircuitBreakerStrategy,
+    HedgeStrategy,
     ResiliencePolicy,
     RetryStrategy,
     TimeoutStrategy,
@@ -57,6 +58,7 @@ class InProcessResilienceExecutor:
 
     _bulkheads: dict[_StateKey, BulkheadState] = attrs.field(factory=dict, init=False)
     _budgets: dict[_StateKey, BudgetState] = attrs.field(factory=dict, init=False)
+    _hedge_budgets: dict[_StateKey, BudgetState] = attrs.field(factory=dict, init=False)
 
     # ....................... #
 
@@ -89,6 +91,88 @@ class InProcessResilienceExecutor:
                 return await fallback(error)
 
             raise
+
+    # ....................... #
+
+    async def run_hedged[T](
+        self,
+        fn: Callable[[], Awaitable[T]],
+        *,
+        policy: StrKey,
+        route: StrKey | None = None,
+    ) -> T:
+        """Run ``fn`` with hedging: staggered concurrent attempts, first success wins."""
+
+        pol = self.policies.get(policy)
+
+        if pol is None:
+            raise exc.configuration(f"Unknown resilience policy {policy!r}")
+
+        hedge = pol.hedge
+
+        if hedge is None:
+            raise exc.configuration(f"Policy {policy!r} declares no HedgeStrategy")
+
+        budget = self._hedge_budget_for(hedge, pol, route)
+
+        if budget is not None:
+            budget.on_call()
+
+        delay = hedge.delay.total_seconds()
+        tasks: set[asyncio.Future[T]] = set()
+        errors: list[BaseException] = []
+        attempts = 0
+        budget_spent = False
+
+        def spawn() -> None:
+            nonlocal attempts
+            attempts += 1
+            tasks.add(asyncio.ensure_future(fn()))
+
+            if attempts > 1:
+                self._emit("hedge_attempt", pol, route)
+
+        spawn()  # primary attempt
+
+        try:
+            while tasks:
+                can_hedge = attempts < hedge.max_attempts and not budget_spent
+                timeout = delay if can_hedge else None
+
+                done, _ = await asyncio.wait(
+                    tasks,
+                    timeout=timeout,
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+
+                if not done:
+                    # The hedge delay elapsed with no completion -> fire another copy.
+                    if budget is not None and not budget.try_spend():
+                        self._emit("hedge_budget_exhausted", pol, route)
+                        budget_spent = True
+                        continue
+
+                    spawn()
+                    continue
+
+                for task in done:
+                    tasks.discard(task)
+                    error = task.exception()
+
+                    if error is None:
+                        self._emit("hedge_won", pol, route)
+                        return task.result()
+
+                    errors.append(error)
+
+            raise errors[-1]
+
+        finally:
+            for task in tasks:
+                task.cancel()
+
+            if tasks:
+                await asyncio.gather(*tasks, return_exceptions=True)
 
     # ....................... #
 
@@ -325,6 +409,29 @@ class InProcessResilienceExecutor:
                 min_throughput=strat.budget.min_throughput,
             )
             self._budgets[key] = state
+
+        return state
+
+    # ....................... #
+
+    def _hedge_budget_for(
+        self,
+        strat: HedgeStrategy,
+        pol: ResiliencePolicy,
+        route: StrKey | None,
+    ) -> BudgetState | None:
+        if strat.budget is None:
+            return None
+
+        key = (pol.name, route)
+        state = self._hedge_budgets.get(key)
+
+        if state is None:
+            state = BudgetState(
+                ratio=strat.budget.ratio,
+                min_throughput=strat.budget.min_throughput,
+            )
+            self._hedge_budgets[key] = state
 
         return state
 

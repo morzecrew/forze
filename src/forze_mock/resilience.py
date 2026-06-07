@@ -38,3 +38,16 @@ class PassthroughResilienceExecutor:
                 return await fallback(error)
 
             raise
+
+    # ....................... #
+
+    async def run_hedged[T](
+        self,
+        fn: Callable[[], Awaitable[T]],
+        *,
+        policy: StrKey,
+        route: StrKey | None = None,
+    ) -> T:
+        """Run ``fn`` once; no hedging in the test double."""
+
+        return await fn()

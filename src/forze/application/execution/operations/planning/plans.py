@@ -4,7 +4,11 @@ from typing import TYPE_CHECKING, Any, Callable, Iterable, Never, Self
 
 import attrs
 
-from forze.application.contracts.execution import DispatchStep, OnSuccess
+from forze.application.contracts.execution import (
+    DispatchStep,
+    MiddlewareStep,
+    OnSuccess,
+)
 from forze.base.descriptors import hybridmethod
 from forze.base.exceptions import exc
 from forze.base.primitives import StrKey
@@ -67,6 +71,14 @@ class OperationPlan:
         """Transaction route for this plan, if set."""
 
         return self._tx.route
+
+    # ....................... #
+
+    def iter_wrap_steps(self) -> Iterable[MiddlewareStep]:
+        """Yield every middleware wrap step across the plan's scopes."""
+
+        yield from self._outer.wrap.items
+        yield from self._tx.wrap.items
 
     # ....................... #
 

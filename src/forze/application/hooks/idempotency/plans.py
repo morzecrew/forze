@@ -103,6 +103,13 @@ class IdempotencyWrap(MiddlewareFactory):
 
     # ....................... #
 
+    def provides_idempotency(self) -> bool:
+        """Marker (``ProvidesIdempotency``): this wrap deduplicates the op's effects."""
+
+        return True
+
+    # ....................... #
+
     def to_step(
         self,
         *,

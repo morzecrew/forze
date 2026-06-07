@@ -29,3 +29,22 @@ class ResilienceExecutorPort(Protocol):
         """
 
         ...  # pragma: no cover
+
+    # ....................... #
+
+    def run_hedged[T](
+        self,
+        fn: Callable[[], Awaitable[T]],
+        *,
+        policy: StrKey,
+        route: StrKey | None = None,
+    ) -> Awaitable[T]:
+        """Run ``fn`` with hedging: concurrent staggered attempts, first success wins.
+
+        Uses the named policy's
+        :class:`~forze.application.contracts.resilience.HedgeStrategy`. Each attempt
+        is an independent call of ``fn``; losers are cancelled. Only safe for
+        idempotent / read-only operations.
+        """
+
+        ...  # pragma: no cover

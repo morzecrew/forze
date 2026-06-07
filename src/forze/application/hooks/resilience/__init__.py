@@ -1,9 +1,10 @@
 """Resilience operation-plan hooks."""
 
-from .plans import ResilienceWrap
+from .plans import HedgeWrap, ResilienceWrap
 
 # ----------------------- #
 
 __all__ = [
+    "HedgeWrap",
     "ResilienceWrap",
 ]

@@ -94,3 +94,46 @@ so transactional side effects roll back between attempts. Only attach a retry-be
 policy to operations that tolerate re-execution: read-only, fully transactional, or
 guarded by [`IdempotencyWrap`](idempotency.md). Use a timeout/breaker-only policy for
 operations with non-transactional external side effects.
+
+## Hedging — `HedgeWrap`
+
+Hedging cuts **tail latency**: fire the request, and if it hasn't answered by the policy's
+`HedgeStrategy.delay` (~p95), fire a concurrent copy, race them, take the first success, and
+cancel the losers. It's the parallel-on-slowness complement to retry (sequential-on-failure).
+Declare a `hedge` on the named policy and attach `HedgeWrap` per operation:
+
+    :::python
+    from datetime import timedelta
+    from forze.application.contracts.resilience import (
+        HedgeStrategy, HedgeSafety, ResiliencePolicy, RetryBudget, TimeoutStrategy,
+    )
+    from forze.application.hooks.resilience import HedgeWrap
+
+    policy = ResiliencePolicy(
+        name="reads",
+        strategies=(TimeoutStrategy(timeout=timedelta(seconds=2)),),
+        hedge=HedgeStrategy(
+            delay=timedelta(milliseconds=50),
+            max_attempts=2,
+            budget=RetryBudget(ratio=0.1),   # cap the extra load to ~10%
+        ),
+    )
+
+    registry.bind("catalog.get").bind_outer().wrap(
+        HedgeWrap(policy="reads", route="catalog", safety=HedgeSafety.READ_ONLY).to_step()
+    )
+
+`HedgeWrap` (priority 15) nests just inside `IdempotencyWrap` (10) and outside `ResilienceWrap`
+(20): a replayed idempotent result skips hedging, and each hedge attempt re-runs the full
+resilience pipeline (breaker/retry/timeout).
+
+**Safety gate (enforced at registry freeze):** hedging sends concurrent duplicates, so it's
+only safe on idempotent / read-only operations. The freeze validator **hard-refuses** a hedged
+operation unless it carries an `IdempotencyWrap` (auto-detected) **or** the `HedgeWrap` declares
+an explicit `safety=READ_ONLY | IDEMPOTENT`. There is no blanket override — to hedge a write,
+add idempotency (the same idempotency key on every copy makes the duplicates collapse).
+
+**Caveats:** hedging multiplies downstream load up to `max_attempts`× (cap it with the
+`RetryBudget`); cancellation is best-effort across the network (a cancelled HTTP attempt may
+still be processed server-side — only the idempotency key makes write-hedging truly safe); and
+with the breaker inner to the hedge, each attempt is an independent admit/record.
