@@ -50,3 +50,30 @@ class TestBuildStoredFileRegistry:
             namespace=kit.document.default_namespace,
         )
         assert facade.upload is not None
+
+    def test_catalog_classifies_read_vs_write(self) -> None:
+        kit = _kit(with_search=True)
+        ns = kit.document.default_namespace
+        cat = build_stored_file_registry(kit).freeze().catalog()
+
+        # Reads (incl. the merged search ops).
+        assert cat[ns.key(StoredFileKernelOp.GET)].is_read_only is True
+        assert cat[ns.key(StoredFileKernelOp.LIST)].is_read_only is True
+        assert cat[ns.key(StoredFileKernelOp.DOWNLOAD)].is_read_only is True
+        assert cat[ns.key(StoredFileKernelOp.SEARCH)].is_read_only is True
+        assert cat[ns.key(SearchKernelOp.TYPED)].is_read_only is True
+
+        # Writes.
+        assert cat[ns.key(StoredFileKernelOp.UPLOAD)].is_read_only is False
+        assert cat[ns.key(StoredFileKernelOp.DELETE)].is_read_only is False
+
+    def test_descriptors_present_for_core_ops(self) -> None:
+        kit = _kit()
+        ns = kit.document.default_namespace
+        cat = build_stored_file_registry(kit).freeze().catalog()
+
+        get = cat[ns.key(StoredFileKernelOp.GET)].descriptor
+        assert get is not None and get.output_schema() is not None
+        list_ = cat[ns.key(StoredFileKernelOp.LIST)].descriptor
+        assert list_ is not None
+        assert "hits" in (list_.output_schema() or {}).get("properties", {})

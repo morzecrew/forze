@@ -3,8 +3,10 @@
 from typing import Any, TypeVar
 
 from forze.application.contracts.document import DocumentSpec
+from forze.application.execution.operations import OperationDescriptor
 from forze.application.execution.operations.registry import OperationRegistry
 from forze.base.primitives import StrKeyNamespace
+from forze_kits.aggregates.document.dto import DocumentIdRevDTO
 from forze_kits.domain.soft_deletion.models import (
     DocWithSoftDeletion,
     UpdateCmdWithSoftDeletion,
@@ -36,7 +38,7 @@ def build_soft_deletion_registry(
     ns = ns or spec.default_namespace
 
     if spec.write is not None and spec.supports_update():
-        return OperationRegistry(
+        reg = OperationRegistry(
             handlers={
                 ns.key(SoftDeletionKernelOp.DELETE): lambda ctx: DeleteDocument(
                     doc=ctx.doc.command(spec),
@@ -45,6 +47,23 @@ def build_soft_deletion_registry(
                     doc=ctx.doc.command(spec),
                 ),
             },
+        )
+
+        # Both operations write (they update the soft-deletion flag) — kept COMMAND.
+        return reg.set_descriptors(
+            {
+                SoftDeletionKernelOp.DELETE: OperationDescriptor(
+                    input_type=DocumentIdRevDTO,
+                    output_type=spec.read,
+                    description="Soft-delete a document by primary key.",
+                ),
+                SoftDeletionKernelOp.RESTORE: OperationDescriptor(
+                    input_type=DocumentIdRevDTO,
+                    output_type=spec.read,
+                    description="Restore a soft-deleted document by primary key.",
+                ),
+            },
+            namespace=ns,
         )
 
     return OperationRegistry()
