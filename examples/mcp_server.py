@@ -19,6 +19,11 @@ teach how to build ``notes.list`` filters/sorts/pagination. (For a stdio Inspect
 instead, change the transport at the bottom to ``"stdio"`` and launch this module as the
 Inspector command.)
 
+Logging is routed through Forze's structured logger: ``LoggingMiddleware`` emits an access
+line per MCP message (method, tool/resource target, duration, outcome), and uvicorn's own
+loggers are reattached so its startup/HTTP lines share that format instead of the default
+``INFO:     ...`` plaintext.
+
 It is also executed by ``tests/unit/test_examples/test_mcp_server_example.py`` — the example
 is the spec, and the test proves operations are preserved as tools and round-trip over MCP.
 """
@@ -39,7 +44,9 @@ from forze.domain.models import BaseDTO, Document, ReadDocument
 from forze_kits.aggregates.document.factories import build_document_registry
 from forze_kits.aggregates.document.operations import DocumentKernelOp
 from forze_kits.aggregates.document.value_objects import DocumentDTOs
+from forze.base.logging import attach_foreign_loggers, configure_logging
 from forze_mcp import (
+    LoggingMiddleware,
     build_mcp_server,
     register_dsl_query_prompts,
     register_schema_resources,
@@ -139,6 +146,8 @@ def build_server(
     )
     register_dsl_query_prompts(server)
     register_schema_resources(server, SPEC)
+    # Structured access log per MCP message (method, tool/resource target, duration, outcome).
+    server.add_middleware(LoggingMiddleware())
 
     return server
 
@@ -147,6 +156,16 @@ def build_server(
 
 
 def main() -> None:
+    # Route everything through Forze's structured logging. ``configure_logging`` sets up our
+    # own logs (incl. the LoggingMiddleware access lines); ``attach_foreign_loggers`` takes
+    # over the loggers owned by FastMCP (``fastmcp.*`` — configured at import) and uvicorn so
+    # their lines share the same format instead of the default ``INFO:     ...`` plaintext.
+    configure_logging(render_mode="console")
+    attach_foreign_loggers(
+        ["fastmcp", "uvicorn", "uvicorn.error", "uvicorn.access"],
+        render_mode="console",
+    )
+
     registry = build_registry()
     ctx_factory, _ = build_context_factory()
 
@@ -154,7 +173,15 @@ def main() -> None:
     asyncio.run(seed(registry, ctx_factory))
 
     server = build_server(registry, ctx_factory)
-    server.run(transport="streamable-http", host="127.0.0.1", port=8000)
+    # ``log_config=None`` stops uvicorn from running its own ``dictConfig`` on startup, which
+    # would otherwise reset the handlers ``attach_foreign_loggers`` just installed.
+    server.run(
+        transport="streamable-http",
+        host="127.0.0.1",
+        port=8000,
+        show_banner=False,  # the (forze-formatted) "Starting MCP server" line already has the URL
+        uvicorn_config={"log_config": None},
+    )
 
 
 if __name__ == "__main__":

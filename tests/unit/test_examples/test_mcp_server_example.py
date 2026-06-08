@@ -53,6 +53,23 @@ class TestMcpExample:
 
         assert "schema://notes" in uris
 
+    async def test_logging_middleware_emits_access_line(self) -> None:
+        import structlog
+
+        registry = build_registry()
+        ctx_factory, _ = build_context_factory()
+        server = build_server(registry, ctx_factory)
+
+        with structlog.testing.capture_logs() as logs:
+            async with Client(server) as client:
+                await client.call_tool(NS.key(DocumentKernelOp.LIST), {})
+
+        assert any(
+            entry.get("event") == "Processed MCP request"
+            and entry.get("mcp", {}).get("method") == "tools/call"
+            for entry in logs
+        )
+
     async def test_seeded_notes_are_listable_over_mcp(self) -> None:
         registry = build_registry()
         ctx_factory, _ = build_context_factory()

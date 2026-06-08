@@ -29,6 +29,7 @@ from .identity import (  # noqa: E402
     MCPIdentityResolver,
     StaticIdentityResolver,
 )
+from .middlewares import LoggingMiddleware  # noqa: E402
 from .projection import exposed_operations  # noqa: E402
 from .prompts import register_dsl_query_prompts  # noqa: E402
 from .registration import register_tools  # noqa: E402
@@ -39,6 +40,7 @@ from .server import build_mcp_server  # noqa: E402
 
 __all__ = [
     "DelegatedIdentityResolver",
+    "LoggingMiddleware",
     "MCPIdentityResolver",
     "StaticIdentityResolver",
     "build_mcp_server",

@@ -254,6 +254,33 @@ class TestQueryPrompts:
         assert "$values" in text and "$and" in text and '"asc"' in text
 
 
+class TestLoggingMiddleware:
+    async def test_logs_access_per_message_with_target_and_outcome(self) -> None:
+        import structlog
+
+        from forze_mcp import LoggingMiddleware
+
+        server = build_mcp_server(_registry(), _ctx_factory, name="calc-mcp")
+        server.add_middleware(LoggingMiddleware())
+
+        with structlog.testing.capture_logs() as logs:
+            async with Client(server) as client:
+                await client.call_tool("calc.double", {"n": 21})
+
+        access = [
+            entry
+            for entry in logs
+            if entry.get("event") == "Processed MCP request"
+            and entry.get("mcp", {}).get("method") == "tools/call"
+        ]
+        assert len(access) == 1
+        record = access[0]
+        assert record["mcp"]["target"] == "calc.double"
+        assert record["outcome"] == "ok"
+        assert isinstance(record["duration"], int)
+        assert record["log_level"] == "info"
+
+
 class TestRoundTrip:
     async def test_client_lists_and_calls_a_read_only_tool(self) -> None:
         server = build_mcp_server(_registry(), _ctx_factory, name="calc-mcp")
