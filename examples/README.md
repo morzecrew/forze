@@ -9,6 +9,7 @@ Run one:
 ```bash
 uv run python -m examples.order_fulfillment        # info-level narrative
 uv run python -m examples.order_fulfillment debug  # also show debug lines
+uv run python -m examples.mcp_server               # serve a mock aggregate over MCP
 ```
 
 Each demo configures logging so it prints its own readable narrative instead of the
@@ -33,3 +34,23 @@ inventory and stages nothing downstream.
 
 See [tests/unit/test_examples/test_order_fulfillment.py](../tests/unit/test_examples/test_order_fulfillment.py)
 for the assertions (happy path, idempotent redelivery, compensation).
+
+## `mcp_server.py` — a mock aggregate exposed over MCP
+
+Requires the `mcp` extra (`uv sync --extra mcp`). Wires an in-memory `forze_mock` "Notes"
+document aggregate into a `FastMCP` server via `forze_mcp` — every document operation becomes
+an MCP tool that runs through the normal Forze pipeline. Inspect it with the official
+[MCP Inspector](https://github.com/modelcontextprotocol/inspector):
+
+```bash
+uv run python -m examples.mcp_server        # Streamable HTTP on http://127.0.0.1:8000/mcp
+npx -y @modelcontextprotocol/inspector      # choose "Streamable HTTP" + the URL above
+```
+
+Two notes are seeded at startup, and `include_writes=True` exposes `notes.create` /
+`update` / `kill` alongside the reads — so you can list, fetch, create, and mutate notes from
+the Inspector and watch each call flow through a real operation. (Switch the transport at the
+bottom of the module to `"stdio"` to launch it as an Inspector stdio command instead.)
+
+See [tests/unit/test_examples/test_mcp_server_example.py](../tests/unit/test_examples/test_mcp_server_example.py)
+for the assertions (operations preserved as tools; seed/list and create→list round-trips).
