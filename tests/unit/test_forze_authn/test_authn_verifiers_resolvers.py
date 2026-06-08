@@ -534,3 +534,19 @@ class TestDelegationActorClaim:
 
         # Once for the user (subject), once for the agent (actor).
         assert eligibility.require_authentication_allowed.await_count == 2
+
+    @pytest.mark.asyncio
+    async def test_deeply_nested_actor_chain_is_rejected(self) -> None:
+        # A chain deeper than the cap must be refused, not recursed unbounded.
+        root: dict[str, object] = {"sub": str(uuid4())}
+        node = root
+        for _ in range(12):
+            nxt: dict[str, object] = {"sub": str(uuid4())}
+            node["act"] = nxt
+            node = nxt
+
+        orch = self._orch({"act": root})
+
+        with pytest.raises(CoreException) as exc_info:
+            await orch.authenticate_with_token(AccessTokenCredentials(token="t"))
+        assert exc_info.value.code == "actor_chain_too_deep"

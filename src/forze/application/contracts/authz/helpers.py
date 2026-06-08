@@ -1,3 +1,4 @@
+from typing import Final
 from uuid import UUID
 
 from forze.application.contracts.authn import AuthnIdentity
@@ -7,6 +8,12 @@ from .specs import AuthzSpec
 from .value_objects import AuthzScope, AuthzSubject, PrincipalRef
 
 # ----------------------- #
+
+MAX_DELEGATION_DEPTH: Final = 16
+"""Backstop on the delegation (actor) chain length when converting or traversing it. Sits
+above the token-derived cap (the orchestrator bounds RFC 8693 ``act`` chains lower); exceeding
+it signals a malformed or abusive chain. No cycle check is needed — the identity value objects
+are immutable, so an actor chain cannot reference itself."""
 
 
 def resolve_policy_scope(
@@ -66,13 +73,31 @@ def subject_from_authn(identity: AuthnIdentity) -> AuthzSubject:
     """Build an :class:`AuthzSubject` from a bound :class:`AuthnIdentity`.
 
     Carries the delegation chain: a bound ``actor`` (the agent acting on behalf of the
-    subject) becomes the subject's :attr:`AuthzSubject.actor`.
+    subject) becomes the subject's :attr:`AuthzSubject.actor`. Built iteratively and bounded
+    by :data:`MAX_DELEGATION_DEPTH` so a pathologically deep chain is rejected rather than
+    overflowing.
     """
 
-    return AuthzSubject(
-        principal_id=identity.principal_id,
-        actor=subject_from_authn(identity.actor) if identity.actor is not None else None,
-    )
+    chain: list[AuthnIdentity] = []
+    node: AuthnIdentity | None = identity
+
+    while node is not None:
+        if len(chain) >= MAX_DELEGATION_DEPTH:
+            raise exc.precondition(
+                f"Delegation chain exceeds the maximum depth ({MAX_DELEGATION_DEPTH}).",
+                code="delegation_chain_too_deep",
+            )
+
+        chain.append(node)
+        node = node.actor
+
+    # Build from the innermost actor outward so each link's ``actor`` is already built.
+    subject = AuthzSubject(principal_id=chain[-1].principal_id)
+
+    for hop in reversed(chain[:-1]):
+        subject = AuthzSubject(principal_id=hop.principal_id, actor=subject)
+
+    return subject
 
 
 def subject_from_principal_ref(principal: PrincipalRef) -> AuthzSubject:

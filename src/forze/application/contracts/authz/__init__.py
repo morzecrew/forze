@@ -16,6 +16,7 @@ from .deps import (
     RoleAssignmentDepPort,
 )
 from .helpers import (
+    MAX_DELEGATION_DEPTH,
     resolve_policy_scope,
     subject_for_grant_query,
     subject_from_authn,
@@ -75,6 +76,7 @@ __all__ = [
     "DelegationGrantPort",
     "DelegationPort",
     "EffectiveGrants",
+    "MAX_DELEGATION_DEPTH",
     "GrantQueryDepKey",
     "GrantQueryDepPort",
     "GrantQueryPort",

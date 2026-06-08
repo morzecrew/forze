@@ -1,5 +1,5 @@
 from collections.abc import Mapping
-from typing import Any, cast, final
+from typing import Any, Final, cast, final
 
 import attrs
 
@@ -19,6 +19,12 @@ from forze.application.contracts.authn import (
     VerifiedAssertion,
 )
 from forze.base.exceptions import exc
+
+# ----------------------- #
+
+_MAX_ACTOR_CHAIN_DEPTH: Final = 10
+"""Bound on the RFC 8693 ``act`` delegation chain depth (defends against a deeply nested
+``act`` claim driving unbounded recursion and resolver/eligibility query amplification)."""
 
 # ----------------------- #
 
@@ -161,13 +167,22 @@ class AuthnOrchestrator(AuthnPort):
         self,
         parent: VerifiedAssertion,
         act: Mapping[str, Any],
+        depth: int = 0,
     ) -> AuthnIdentity:
         """Resolve a delegation actor from an RFC 8693 ``act`` claim (chainable).
 
         The actor is asserted in the *same* issuer's namespace, so a derived assertion is
         resolved through the same :class:`PrincipalResolverPort`. A nested ``act`` (multi-hop
-        delegation) recurses, building the actor chain on :attr:`AuthnIdentity.actor`.
+        delegation) recurses, building the actor chain on :attr:`AuthnIdentity.actor` — bounded
+        by :data:`_MAX_ACTOR_CHAIN_DEPTH` to cap recursion and resolver/eligibility calls.
         """
+
+        if depth >= _MAX_ACTOR_CHAIN_DEPTH:
+            raise exc.authentication(
+                "Delegation actor chain exceeds the maximum depth "
+                f"({_MAX_ACTOR_CHAIN_DEPTH})",
+                code="actor_chain_too_deep",
+            )
 
         actor_subject = act.get("sub")
 
@@ -191,7 +206,7 @@ class AuthnOrchestrator(AuthnPort):
             actor = attrs.evolve(
                 actor,
                 actor=await self._resolve_actor(
-                    actor_assertion, cast("Mapping[str, Any]", nested)
+                    actor_assertion, cast("Mapping[str, Any]", nested), depth + 1
                 ),
             )
 
