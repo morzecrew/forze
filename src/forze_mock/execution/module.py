@@ -28,6 +28,8 @@ from forze.application.contracts.authn import (
 from forze.application.contracts.authz import (
     AuthzDecisionDepKey,
     AuthzScopeDepKey,
+    DelegationDepKey,
+    DelegationGrantDepKey,
     GrantQueryDepKey,
     PrincipalRegistryDepKey,
     RoleAssignmentDepKey,
@@ -173,6 +175,8 @@ from forze_mock.adapters.identity import (
     MockAuthnPort,
     MockAuthzDecisionPort,
     MockAuthzScopePort,
+    MockDelegationGrantPort,
+    MockDelegationPort,
     MockGrantQueryPort,
     MockPasswordAccountProvisioningPort,
     MockPasswordLifecyclePort,
@@ -869,6 +873,12 @@ class MockDepsModule(DepsModule):
                 ),
                 RoleAssignmentDepKey: _route_stubs(MockRoleAssignmentPort, authz_keys),
                 GrantQueryDepKey: _route_stubs(MockGrantQueryPort, authz_keys),
+                DelegationGrantDepKey: _route_stubs(
+                    MockDelegationGrantPort, authz_keys, state=self.state
+                ),
+                DelegationDepKey: _route_stubs(
+                    MockDelegationPort, authz_keys, state=self.state
+                ),
                 AuthzDecisionDepKey: _route_stubs(MockAuthzDecisionPort, authz_keys),
                 AuthzScopeDepKey: _route_stubs(MockAuthzScopePort, authz_keys),
                 TenantResolverDepKey: _route_stubs(

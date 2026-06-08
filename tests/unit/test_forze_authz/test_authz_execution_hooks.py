@@ -37,6 +37,16 @@ class _AllowExceptPrincipal:
             return AuthzDecision(allowed=False, reason="actor not permitted")
         return AuthzDecision(allowed=True, matched_permission_key="x.read")
 
+class _AllowDelegation:
+    async def may_act(self, actor_id, subject_id, *, scope=None):  # noqa: ANN001
+        _ = actor_id, subject_id, scope
+        return True
+
+class _DenyDelegation:
+    async def may_act(self, actor_id, subject_id, *, scope=None):  # noqa: ANN001
+        _ = actor_id, subject_id, scope
+        return False
+
 def test_merge_query_filters_and() -> None:
     merged = merge_query_filters({"$values": {"a": 1}}, {"$values": {"b": 2}})
     assert merged == {"$and": [{"$values": {"a": 1}}, {"$values": {"b": 2}}]}
@@ -98,3 +108,91 @@ async def test_before_authorize_denies_delegated_when_actor_not_permitted() -> N
                 await hook(None)
             assert exc_info.value.kind == ExceptionKind.AUTHORIZATION
             assert exc_info.value.code == "delegate_denied"
+
+
+@pytest.mark.asyncio
+async def test_before_authorize_denies_multi_hop_when_inner_actor_not_permitted() -> None:
+    ctx = context_from_deps(Deps())
+    system = AuthnIdentity(principal_id=uuid4())
+    agent = AuthnIdentity(principal_id=uuid4(), actor=system)
+    user = AuthnIdentity(principal_id=uuid4(), actor=agent)
+    metadata = InvocationMetadata(execution_id=uuid4(), correlation_id=uuid4())
+
+    # user + agent permitted, but the innermost actor (system) is not — the chain walk denies.
+    decision = _AllowExceptPrincipal(system.principal_id)
+
+    with patch.object(ctx.authz, "decision", return_value=decision):
+        with ctx.inv_ctx.bind(metadata=metadata, authn=user):
+            hook = AuthzBeforeAuthorize(spec=AuthzSpec(name="z"), action="x.read")(ctx)
+
+            with pytest.raises(CoreException) as exc_info:
+                await hook(None)
+            assert exc_info.value.code == "delegate_denied"
+
+
+@pytest.mark.asyncio
+async def test_delegation_grant_enforced_allows_when_granted() -> None:
+    ctx = context_from_deps(Deps())
+    agent = AuthnIdentity(principal_id=uuid4())
+    user = AuthnIdentity(principal_id=uuid4(), actor=agent)
+    metadata = InvocationMetadata(execution_id=uuid4(), correlation_id=uuid4())
+    spec = AuthzSpec(name="z", enforce_delegation_grant=True)
+
+    with (
+        patch.object(ctx.authz, "decision", return_value=_AllowDecision()),
+        patch.object(ctx.authz, "delegation", return_value=_AllowDelegation()),
+    ):
+        with ctx.inv_ctx.bind(metadata=metadata, authn=user):
+            hook = AuthzBeforeAuthorize(spec=spec, action="x.read")(ctx)
+            await hook(None)  # intersection OK and may_act granted
+
+
+@pytest.mark.asyncio
+async def test_delegation_grant_enforced_denies_when_not_granted() -> None:
+    ctx = context_from_deps(Deps())
+    agent = AuthnIdentity(principal_id=uuid4())
+    user = AuthnIdentity(principal_id=uuid4(), actor=agent)
+    metadata = InvocationMetadata(execution_id=uuid4(), correlation_id=uuid4())
+    spec = AuthzSpec(name="z", enforce_delegation_grant=True)
+
+    # Both independently permitted (intersection passes), but no may_act grant.
+    with (
+        patch.object(ctx.authz, "decision", return_value=_AllowDecision()),
+        patch.object(ctx.authz, "delegation", return_value=_DenyDelegation()),
+    ):
+        with ctx.inv_ctx.bind(metadata=metadata, authn=user):
+            hook = AuthzBeforeAuthorize(spec=spec, action="x.read")(ctx)
+
+            with pytest.raises(CoreException) as exc_info:
+                await hook(None)
+            assert exc_info.value.kind == ExceptionKind.AUTHORIZATION
+            assert exc_info.value.code == "delegation_not_granted"
+
+
+@pytest.mark.asyncio
+async def test_delegation_enforcement_fails_loud_when_port_unwired() -> None:
+    # enforce_delegation_grant=True but no DelegationPort wired → fail at hook build,
+    # never silently skip the may_act check.
+    ctx = context_from_deps(Deps())
+    spec = AuthzSpec(name="z", enforce_delegation_grant=True)
+
+    with patch.object(ctx.authz, "decision", return_value=_AllowDecision()):
+        with pytest.raises(CoreException):
+            AuthzBeforeAuthorize(spec=spec, action="x.read")(ctx)
+
+
+@pytest.mark.asyncio
+async def test_delegation_not_consulted_when_not_enforced() -> None:
+    # Default spec (enforce_delegation_grant=False): a denying delegation port is irrelevant.
+    ctx = context_from_deps(Deps())
+    agent = AuthnIdentity(principal_id=uuid4())
+    user = AuthnIdentity(principal_id=uuid4(), actor=agent)
+    metadata = InvocationMetadata(execution_id=uuid4(), correlation_id=uuid4())
+
+    with (
+        patch.object(ctx.authz, "decision", return_value=_AllowDecision()),
+        patch.object(ctx.authz, "delegation", return_value=_DenyDelegation()),
+    ):
+        with ctx.inv_ctx.bind(metadata=metadata, authn=user):
+            hook = AuthzBeforeAuthorize(spec=AuthzSpec(name="z"), action="x.read")(ctx)
+            await hook(None)  # passes despite denying delegation port (not consulted)

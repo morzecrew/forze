@@ -345,6 +345,19 @@ class _CountingResolver:
 
         return AuthnIdentity(principal_id=UUID(assertion.subject))
 
+class _StubDelegatedTokenVerifier:
+    """Token verifier whose assertion carries an RFC 8693 ``act`` (actor) claim."""
+
+    def __init__(self, subject: str, claims: dict[str, object]) -> None:
+        self._subject = subject
+        self._claims = claims
+
+    async def verify_token(self, c: AccessTokenCredentials) -> VerifiedAssertion:
+        _ = c
+        return VerifiedAssertion(
+            issuer="stub:token", subject=self._subject, claims=self._claims
+        )
+
 # ....................... #
 
 def _noop_eligibility() -> MagicMock:
@@ -444,3 +457,80 @@ class TestAuthnOrchestrator:
 
         issuers = [a.issuer for a in resolver.calls]
         assert issuers == ["stub:token", "stub:password", "stub:api_key"]
+
+
+# ....................... #
+
+
+class TestDelegationActorClaim:
+    """The orchestrator reads an RFC 8693 ``act`` claim into ``AuthnIdentity.actor``."""
+
+    USER = "00000000-0000-0000-0000-000000000002"
+    AGENT = "00000000-0000-0000-0000-0000000000aa"
+    SYSTEM = "00000000-0000-0000-0000-0000000000bb"
+
+    def _orch(
+        self,
+        claims: dict[str, object],
+        *,
+        actor_claim: str | None = "act",
+        eligibility: object | None = None,
+    ) -> AuthnOrchestrator:
+        return AuthnOrchestrator(
+            resolver=_CountingResolver(),
+            eligibility=eligibility or _noop_eligibility(),  # type: ignore[arg-type]
+            enabled_methods=frozenset({"token"}),
+            token_verifier=_StubDelegatedTokenVerifier(self.USER, claims),  # type: ignore[arg-type]
+            actor_claim=actor_claim,
+        )
+
+    @pytest.mark.asyncio
+    async def test_actor_attached_from_act_claim(self) -> None:
+        orch = self._orch({"act": {"sub": self.AGENT}})
+
+        result = await orch.authenticate_with_token(AccessTokenCredentials(token="t"))
+
+        assert result.identity.principal_id == UUID(self.USER)
+        assert result.identity.is_delegated is True
+        assert result.identity.actor is not None
+        assert result.identity.actor.principal_id == UUID(self.AGENT)
+        assert result.identity.actor.actor is None
+
+    @pytest.mark.asyncio
+    async def test_nested_act_builds_delegation_chain(self) -> None:
+        orch = self._orch({"act": {"sub": self.AGENT, "act": {"sub": self.SYSTEM}}})
+
+        result = await orch.authenticate_with_token(AccessTokenCredentials(token="t"))
+
+        actor = result.identity.actor
+        assert actor is not None
+        assert actor.principal_id == UUID(self.AGENT)
+        assert actor.actor is not None
+        assert actor.actor.principal_id == UUID(self.SYSTEM)
+
+    @pytest.mark.asyncio
+    async def test_act_claim_ignored_when_actor_claim_unset(self) -> None:
+        orch = self._orch({"act": {"sub": self.AGENT}}, actor_claim=None)
+
+        result = await orch.authenticate_with_token(AccessTokenCredentials(token="t"))
+
+        assert result.identity.actor is None
+        assert result.identity.is_delegated is False
+
+    @pytest.mark.asyncio
+    async def test_missing_actor_sub_raises(self) -> None:
+        orch = self._orch({"act": {"not_sub": "x"}})
+
+        with pytest.raises(CoreException) as exc_info:
+            await orch.authenticate_with_token(AccessTokenCredentials(token="t"))
+        assert exc_info.value.code == "invalid_actor_claim"
+
+    @pytest.mark.asyncio
+    async def test_eligibility_checked_for_subject_and_actor(self) -> None:
+        eligibility = _noop_eligibility()
+        orch = self._orch({"act": {"sub": self.AGENT}}, eligibility=eligibility)
+
+        await orch.authenticate_with_token(AccessTokenCredentials(token="t"))
+
+        # Once for the user (subject), once for the agent (actor).
+        assert eligibility.require_authentication_allowed.await_count == 2

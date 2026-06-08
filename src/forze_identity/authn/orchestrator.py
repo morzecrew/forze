@@ -1,4 +1,5 @@
-from typing import final
+from collections.abc import Mapping
+from typing import Any, cast, final
 
 import attrs
 
@@ -6,6 +7,7 @@ from forze.application.contracts.authn import (
     AccessTokenCredentials,
     ApiKeyCredentials,
     ApiKeyVerifierPort,
+    AuthnIdentity,
     AuthnPort,
     AuthnResult,
     AuthnSpec,
@@ -14,6 +16,7 @@ from forze.application.contracts.authn import (
     PrincipalEligibilityPort,
     PrincipalResolverPort,
     TokenVerifierPort,
+    VerifiedAssertion,
 )
 from forze.base.exceptions import exc
 
@@ -49,6 +52,12 @@ class AuthnOrchestrator(AuthnPort):
     eligibility: PrincipalEligibilityPort
     """Principal eligibility gate applied after credential verification."""
 
+    actor_claim: str | None = attrs.field(default=None)
+    """When set (e.g. ``"act"``), the token's claim of this name is read as an RFC 8693
+    delegation assertion: the on-behalf-of **actor** is resolved through the same principal
+    resolver and attached as :attr:`AuthnIdentity.actor`. ``None`` (default) ignores any such
+    claim. Only the token path honors it — password/API-key assertions carry no actor."""
+
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
@@ -79,6 +88,7 @@ class AuthnOrchestrator(AuthnPort):
         password_verifier: PasswordVerifierPort | None = None,
         token_verifier: TokenVerifierPort | None = None,
         api_key_verifier: ApiKeyVerifierPort | None = None,
+        actor_claim: str | None = None,
     ) -> "AuthnOrchestrator":
         """Convenience factory mirroring :class:`AuthnSpec` semantics."""
 
@@ -89,6 +99,7 @@ class AuthnOrchestrator(AuthnPort):
             password_verifier=password_verifier,
             token_verifier=token_verifier,
             api_key_verifier=api_key_verifier,
+            actor_claim=actor_claim,
         )
 
     # ....................... #
@@ -128,10 +139,63 @@ class AuthnOrchestrator(AuthnPort):
         identity = await self.resolver.resolve(assertion)
         await self.eligibility.require_authentication_allowed(identity.principal_id)
 
+        if self.actor_claim is not None:
+            act = assertion.claims.get(self.actor_claim)
+
+            if isinstance(act, Mapping):
+                identity = attrs.evolve(
+                    identity,
+                    actor=await self._resolve_actor(
+                        assertion, cast("Mapping[str, Any]", act)
+                    ),
+                )
+
         return AuthnResult(
             identity=identity,
             issuer_tenant_hint=assertion.issuer_tenant_hint,
         )
+
+    # ....................... #
+
+    async def _resolve_actor(
+        self,
+        parent: VerifiedAssertion,
+        act: Mapping[str, Any],
+    ) -> AuthnIdentity:
+        """Resolve a delegation actor from an RFC 8693 ``act`` claim (chainable).
+
+        The actor is asserted in the *same* issuer's namespace, so a derived assertion is
+        resolved through the same :class:`PrincipalResolverPort`. A nested ``act`` (multi-hop
+        delegation) recurses, building the actor chain on :attr:`AuthnIdentity.actor`.
+        """
+
+        actor_subject = act.get("sub")
+
+        if not isinstance(actor_subject, str):
+            raise exc.authentication(
+                "Delegation actor claim is missing a string 'sub'",
+                code="invalid_actor_claim",
+            )
+
+        actor_assertion = attrs.evolve(
+            parent,
+            subject=actor_subject,
+            claims=act,
+        )
+        actor = await self.resolver.resolve(actor_assertion)
+        await self.eligibility.require_authentication_allowed(actor.principal_id)
+
+        nested = act.get(self.actor_claim) if self.actor_claim is not None else None
+
+        if isinstance(nested, Mapping):
+            actor = attrs.evolve(
+                actor,
+                actor=await self._resolve_actor(
+                    actor_assertion, cast("Mapping[str, Any]", nested)
+                ),
+            )
+
+        return actor
 
     # ....................... #
 

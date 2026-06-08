@@ -2,6 +2,8 @@ from ..deps import ConfigurableDepPort, ConvenientDeps, DepKey
 from .ports import (
     AuthzDecisionPort,
     AuthzScopePort,
+    DelegationGrantPort,
+    DelegationPort,
     GrantQueryPort,
     PrincipalRegistryPort,
     RoleAssignmentPort,
@@ -12,6 +14,8 @@ from .specs import AuthzSpec
 
 AuthzDecisionDepPort = ConfigurableDepPort[AuthzSpec, AuthzDecisionPort]
 GrantQueryDepPort = ConfigurableDepPort[AuthzSpec, GrantQueryPort]
+DelegationDepPort = ConfigurableDepPort[AuthzSpec, DelegationPort]
+DelegationGrantDepPort = ConfigurableDepPort[AuthzSpec, DelegationGrantPort]
 PrincipalRegistryDepPort = ConfigurableDepPort[AuthzSpec, PrincipalRegistryPort]
 RoleAssignmentDepPort = ConfigurableDepPort[AuthzSpec, RoleAssignmentPort]
 AuthzScopeDepPort = ConfigurableDepPort[AuthzSpec, AuthzScopePort]
@@ -20,6 +24,8 @@ AuthzScopeDepPort = ConfigurableDepPort[AuthzSpec, AuthzScopePort]
 
 AuthzDecisionDepKey = DepKey[AuthzDecisionDepPort]("authz_decision")
 GrantQueryDepKey = DepKey[GrantQueryDepPort]("authz_grant_query")
+DelegationDepKey = DepKey[DelegationDepPort]("authz_delegation")
+DelegationGrantDepKey = DepKey[DelegationGrantDepPort]("authz_delegation_grant")
 PrincipalRegistryDepKey = DepKey[PrincipalRegistryDepPort]("authz_principal_registry")
 RoleAssignmentDepKey = DepKey[RoleAssignmentDepPort]("authz_role_assignment")
 AuthzScopeDepKey = DepKey[AuthzScopeDepPort]("authz_scope")
@@ -41,6 +47,20 @@ class AuthzDeps(ConvenientDeps):
         """Resolve the grant query port for ``spec``."""
 
         return self._resolve_configurable(GrantQueryDepKey, spec, route=spec.name)
+
+    # ....................... #
+
+    def delegation(self, spec: AuthzSpec) -> DelegationPort:
+        """Resolve the delegation (``may_act``) query port for ``spec``."""
+
+        return self._resolve_configurable(DelegationDepKey, spec, route=spec.name)
+
+    # ....................... #
+
+    def delegation_grant(self, spec: AuthzSpec) -> DelegationGrantPort:
+        """Resolve the delegation grant port for ``spec`` (a write — guarded)."""
+
+        return self._resolve_command(DelegationGrantDepKey, spec, route=spec.name)
 
     # ....................... #
 

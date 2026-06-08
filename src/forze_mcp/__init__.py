@@ -8,8 +8,10 @@ holds no business logic and enforces no authorization; governance stays in the e
 upstream of this boundary.
 
 ``build_mcp_server`` is an optional batteries-included convenience that constructs a server
-for you. The read-only MVP exposes only ``QUERY`` operations and binds a configurable static
-identity; write exposure and token-derived delegated identity are follow-up phases.
+for you. By default only ``QUERY`` operations are exposed and a configurable static identity
+is bound; pass ``include_writes=True`` to expose command operations (tagged with destructive
+hints) and supply a :class:`DelegatedIdentityResolver` to run calls on behalf of a user with
+the agent attached as actor (least-privilege intersection enforced by the engine).
 """
 
 from ._compat import require_mcp

@@ -5,10 +5,13 @@ context just like the FastAPI middleware does. A :class:`MCPIdentityResolver` tu
 incoming call into the ``(authn, tenant)`` pair bound onto the invocation context before
 the operation runs.
 
-The read-only MVP ships :class:`StaticIdentityResolver` (a fixed, configured identity or
-none). Production wiring — extracting a verified token from the MCP session and mapping it
-through ``PrincipalResolverPort`` / ``TenantResolverPort`` — is the delegated-identity
-phase; this protocol is the seam it will plug into.
+:class:`StaticIdentityResolver` binds a fixed, configured identity (or none — for local,
+unauthenticated read-only servers). :class:`DelegatedIdentityResolver` runs each call on
+behalf of a user resolved from the session while attaching the server's own service
+principal as the :attr:`~forze.application.contracts.authn.AuthnIdentity.actor`, so the
+engine enforces least-privilege intersection of user and agent grants. Production wiring —
+extracting a verified token from the MCP session and mapping it through
+``PrincipalResolverPort`` / ``TenantResolverPort`` — plugs in behind ``resolve_subject``.
 """
 
 from collections.abc import Awaitable, Callable

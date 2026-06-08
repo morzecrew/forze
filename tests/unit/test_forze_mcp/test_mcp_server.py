@@ -55,6 +55,10 @@ def _registry() -> FrozenOperationRegistry:
         "calc.double",
         OperationDescriptor(input_type=_In, output_type=_Out, description="double n"),
     )
+    reg = reg.set_descriptor(
+        "calc.write",
+        OperationDescriptor(input_type=_In, output_type=_Out, description="write n"),
+    )
     reg = reg.bind("calc.double").as_query().finish()
 
     return reg.freeze()
@@ -175,3 +179,46 @@ class TestRoundTrip:
 
             result = await client.call_tool("calc.double", {"n": 21})
             assert result.structured_content == {"doubled": 42}
+
+
+# ....................... #
+
+
+class TestWriteEnablement:
+    async def test_write_op_exposed_with_destructive_hints(self) -> None:
+        server = build_mcp_server(
+            _registry(), _ctx_factory, name="calc-mcp", include_writes=True
+        )
+
+        async with Client(server) as client:
+            tools = {t.name: t for t in await client.list_tools()}
+            assert {"calc.double", "calc.write"} <= set(tools)
+
+            read_tool = tools["calc.double"]
+            write_tool = tools["calc.write"]
+
+            assert read_tool.annotations is not None
+            assert read_tool.annotations.readOnlyHint is True
+            assert read_tool.annotations.destructiveHint is False
+
+            assert write_tool.annotations is not None
+            assert write_tool.annotations.readOnlyHint is False
+            assert write_tool.annotations.destructiveHint is True
+            # Flat arg schema applies to writes too.
+            assert set(write_tool.inputSchema.get("properties", {})) == {"n", "label"}
+
+    async def test_client_calls_a_write_tool_end_to_end(self) -> None:
+        server = build_mcp_server(
+            _registry(), _ctx_factory, name="calc-mcp", include_writes=True
+        )
+
+        async with Client(server) as client:
+            result = await client.call_tool("calc.write", {"n": 21})
+            assert result.structured_content == {"doubled": 42}
+
+    async def test_writes_excluded_by_default(self) -> None:
+        server = build_mcp_server(_registry(), _ctx_factory, name="calc-mcp")
+
+        async with Client(server) as client:
+            tools = {t.name for t in await client.list_tools()}
+            assert "calc.write" not in tools
