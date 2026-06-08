@@ -109,6 +109,21 @@ class AuthzBeforeAuthorize(BeforeFactory):
                     code="permission_denied",
                 )
 
+            # Delegation (on-behalf-of): the actor (agent) must *independently* be
+            # permitted the same action, so a delegated call can never exceed
+            # intersect(subject grants, actor grants) — the confused-deputy defense.
+            if request.subject.actor is not None:
+                actor_result = await decision_port.authorize(
+                    attrs.evolve(request, subject=request.subject.actor)
+                )
+
+                if not actor_result.allowed:
+                    raise exc.authorization(
+                        actor_result.reason
+                        or f"Delegate not permitted: {self.action!r}",
+                        code="delegate_denied",
+                    )
+
         return _before
 
     # ....................... #

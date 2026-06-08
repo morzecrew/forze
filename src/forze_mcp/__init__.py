@@ -18,7 +18,11 @@ require_mcp()
 
 # ....................... #
 
-from .identity import MCPIdentityResolver, StaticIdentityResolver  # noqa: E402
+from .identity import (  # noqa: E402
+    DelegatedIdentityResolver,
+    MCPIdentityResolver,
+    StaticIdentityResolver,
+)
 from .projection import exposed_operations  # noqa: E402
 from .registration import register_operations  # noqa: E402
 from .server import build_mcp_server  # noqa: E402
@@ -26,6 +30,7 @@ from .server import build_mcp_server  # noqa: E402
 # ----------------------- #
 
 __all__ = [
+    "DelegatedIdentityResolver",
     "MCPIdentityResolver",
     "StaticIdentityResolver",
     "build_mcp_server",

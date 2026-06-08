@@ -16,8 +16,9 @@ from forze.application.execution.operations.registry import (
     FrozenOperationRegistry,
     OperationRegistry,
 )
+from forze.application.contracts.authn import AuthnIdentity
 from forze_mcp.dispatch import build_args, invoke_operation
-from forze_mcp.identity import StaticIdentityResolver
+from forze_mcp.identity import DelegatedIdentityResolver, StaticIdentityResolver
 from forze_mcp.projection import exposed_operations
 from forze_mcp.registration import register_operations
 from forze_mcp.server import build_mcp_server
@@ -80,6 +81,27 @@ class TestExposurePolicy:
 
 
 # ....................... #
+
+
+class TestDelegatedIdentity:
+    async def test_attaches_agent_as_actor(self) -> None:
+        from uuid import uuid4
+
+        agent = AuthnIdentity(principal_id=uuid4())
+        user = AuthnIdentity(principal_id=uuid4())
+
+        async def _resolve_subject():
+            return user, None
+
+        resolver = DelegatedIdentityResolver(
+            agent=agent, resolve_subject=_resolve_subject
+        )
+        authn, tenant = await resolver.resolve()
+
+        assert authn is not None
+        assert authn.principal_id == user.principal_id  # effective subject = user
+        assert authn.actor == agent  # actor = agent
+        assert tenant is None
 
 
 class TestDispatch:

@@ -15,6 +15,7 @@ EXEC_ID_KEY: Final = "execution_id"
 CORR_ID_KEY: Final = "correlation_id"
 CAUS_ID_KEY: Final = "causation_id"
 PRINCIPAL_ID_KEY: Final = "principal_id"
+ACTOR_ID_KEY: Final = "actor_id"
 TENANT_ID_KEY: Final = "tenant_id"
 IDEMPOTENCY_KEY_KEY: Final = "idempotency_key"
 
@@ -190,6 +191,9 @@ class InvocationContext:
         if authn is not None:
             bound[PRINCIPAL_ID_KEY] = authn.principal_id
 
+            if authn.actor is not None:
+                bound[ACTOR_ID_KEY] = authn.actor.principal_id
+
         if tenant is not None:
             bound[TENANT_ID_KEY] = str(tenant.tenant_id)
 
@@ -227,6 +231,9 @@ class InvocationContext:
 
         if authn is not None:
             bound[PRINCIPAL_ID_KEY] = authn.principal_id
+
+            if authn.actor is not None:
+                bound[ACTOR_ID_KEY] = authn.actor.principal_id
 
         if tenant is not None:
             bound[TENANT_ID_KEY] = str(tenant.tenant_id)

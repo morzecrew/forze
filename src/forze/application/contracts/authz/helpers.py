@@ -63,9 +63,16 @@ def subject_for_grant_query(
 
 
 def subject_from_authn(identity: AuthnIdentity) -> AuthzSubject:
-    """Build an :class:`AuthzSubject` from a bound :class:`AuthnIdentity`."""
+    """Build an :class:`AuthzSubject` from a bound :class:`AuthnIdentity`.
 
-    return AuthzSubject(principal_id=identity.principal_id)
+    Carries the delegation chain: a bound ``actor`` (the agent acting on behalf of the
+    subject) becomes the subject's :attr:`AuthzSubject.actor`.
+    """
+
+    return AuthzSubject(
+        principal_id=identity.principal_id,
+        actor=subject_from_authn(identity.actor) if identity.actor is not None else None,
+    )
 
 
 def subject_from_principal_ref(principal: PrincipalRef) -> AuthzSubject:
