@@ -15,7 +15,8 @@ A couple of notes are seeded at startup, so ``notes.list`` / ``notes.get`` retur
 immediately; ``include_writes=True`` also exposes ``notes.create`` / ``update`` / ``kill`` so
 you can mutate state and read it back. The server also registers the querying-DSL guidance
 prompts (``forze.querying`` / ``forze.aggregates``, in the Inspector's "Prompts" tab) that
-teach how to build ``notes.list`` filters/sorts/pagination. (For a stdio Inspector session
+teach how to build ``notes.list`` filters/sorts/pagination, and a ``notes://{id}`` resource
+template (in "Resources") to fetch a single note by id. (For a stdio Inspector session
 instead, change the transport at the bottom to ``"stdio"`` and launch this module as the
 Inspector command.)
 
@@ -47,8 +48,10 @@ from forze_kits.aggregates.document.value_objects import DocumentDTOs
 from forze.base.logging import attach_foreign_loggers, configure_logging
 from forze_mcp import (
     LoggingMiddleware,
+    ResourceTemplateSpec,
     build_mcp_server,
     register_dsl_query_prompts,
+    register_resource_templates,
     register_schema_resources,
 )
 from forze_mock import MockDepsModule, MockState
@@ -146,6 +149,14 @@ def build_server(
     )
     register_dsl_query_prompts(server)
     register_schema_resources(server, SPEC)
+    # Expose get-by-id as a resource template: read `notes://<uuid>` to fetch one note
+    # (runs the GET operation through the same governed pipeline as the tools).
+    register_resource_templates(
+        server,
+        registry,
+        ctx_factory,
+        [ResourceTemplateSpec(op=NS.key(DocumentKernelOp.GET), scheme="notes")],
+    )
     # Structured access log per MCP message (method, tool/resource target, duration, outcome).
     server.add_middleware(LoggingMiddleware())
 

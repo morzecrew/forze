@@ -53,6 +53,27 @@ class TestMcpExample:
 
         assert "schema://notes" in uris
 
+    async def test_get_by_id_resource_template_round_trips(self) -> None:
+        import json
+
+        registry = build_registry()
+        ctx_factory, _ = build_context_factory()
+        await seed(registry, ctx_factory)
+        server = build_server(registry, ctx_factory)
+
+        async with Client(server) as client:
+            templates = {
+                str(t.uriTemplate) for t in await client.list_resource_templates()
+            }
+            assert "notes://{id}" in templates
+
+            # Find a seeded note id via the list tool, then read it through the template.
+            listed = await client.call_tool(NS.key(DocumentKernelOp.LIST), {})
+            note_id = listed.structured_content["hits"][0]["id"]
+            content = await client.read_resource(f"notes://{note_id}")
+
+        assert json.loads(content[0].text)["id"] == note_id
+
     async def test_logging_middleware_emits_access_line(self) -> None:
         import structlog
 

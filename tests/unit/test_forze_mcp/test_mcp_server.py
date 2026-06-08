@@ -17,6 +17,7 @@ from forze.application.execution.operations.registry import (
     OperationRegistry,
 )
 from forze.application.contracts.authn import AuthnIdentity
+from forze.domain.models import BaseDTO, ReadDocument
 from forze_mcp.dispatch import build_args, invoke_operation
 from forze_mcp.identity import DelegatedIdentityResolver, StaticIdentityResolver
 from forze_mcp.projection import exposed_operations
@@ -252,6 +253,120 @@ class TestQueryPrompts:
         assert "active items" in text
         # Grounded in the real DSL grammar.
         assert "$values" in text and "$and" in text and '"asc"' in text
+
+
+class _NoteRead(ReadDocument):
+    title: str
+
+
+class _NoteInput(BaseDTO):
+    title: str = ""
+
+
+def _doc_setup():
+    from forze.application.contracts.document import DocumentSpec, DocumentWriteTypes
+    from forze.domain.models import Document
+    from forze_kits.aggregates.document import (
+        DocumentDTOs,
+        DocumentKernelOp,
+        build_document_registry,
+    )
+
+    class _Note(Document):
+        title: str = ""
+
+    spec = DocumentSpec(
+        name="notes",
+        read=_NoteRead,
+        write=DocumentWriteTypes(domain=_Note, create_cmd=_NoteInput),
+    )
+    reg = build_document_registry(spec, DocumentDTOs(read=_NoteRead, create=_NoteInput))
+    return spec, reg.freeze(), DocumentKernelOp
+
+
+class TestResourceTemplates:
+    async def test_get_by_id_template_round_trip(self) -> None:
+        import json
+
+        from forze.application.execution.operations import run_operation
+        from forze_mcp import ResourceTemplateSpec, register_resource_templates
+        from forze_mock import MockDepsModule, MockState
+        from tests.support.execution_context import context_from_modules
+
+        spec, reg, op = _doc_setup()
+        state = MockState()
+
+        def ctx_factory():
+            return context_from_modules(MockDepsModule(state=state))
+
+        created = await run_operation(
+            reg,
+            spec.default_namespace.key(op.CREATE),
+            _NoteInput(title="hello"),
+            ctx_factory(),
+        )
+        note_id = created.id
+
+        server = FastMCP("notes")
+        uris = register_resource_templates(
+            server,
+            reg,
+            ctx_factory,
+            [ResourceTemplateSpec(op=spec.default_namespace.key(op.GET), scheme="notes")],
+        )
+        assert uris == ["notes://{id}"]
+
+        async with Client(server) as client:
+            templates = {
+                str(t.uriTemplate) for t in await client.list_resource_templates()
+            }
+            assert "notes://{id}" in templates
+
+            content = await client.read_resource(f"notes://{note_id}")
+            payload = json.loads(content[0].text)
+
+        assert payload["id"] == str(note_id)
+        assert payload["title"] == "hello"
+
+    def test_rejects_non_read_only_op(self) -> None:
+        from forze.base.exceptions import CoreException
+        from forze_mcp import ResourceTemplateSpec, register_resource_templates
+
+        spec, reg, op = _doc_setup()
+        server = FastMCP("notes")
+
+        with pytest.raises(CoreException, match="read-only"):
+            register_resource_templates(
+                server,
+                reg,
+                _ctx_factory,
+                [
+                    ResourceTemplateSpec(
+                        op=spec.default_namespace.key(op.CREATE), scheme="notes"
+                    )
+                ],
+            )
+
+    def test_rejects_unknown_id_param(self) -> None:
+        from forze.base.exceptions import CoreException
+        from forze_mcp import ResourceTemplateSpec, register_resource_templates
+
+        spec, reg, op = _doc_setup()
+        server = FastMCP("notes")
+
+        with pytest.raises(CoreException, match="id_param"):
+            register_resource_templates(
+                server,
+                reg,
+                _ctx_factory,
+                [
+                    ResourceTemplateSpec(
+                        op=spec.default_namespace.key(op.GET),
+                        scheme="notes",
+                        id_param="nope",
+                    )
+                ],
+            )
 
 
 class TestLoggingMiddleware:
