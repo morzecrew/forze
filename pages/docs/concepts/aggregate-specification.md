@@ -146,6 +146,7 @@ Use `ExecutionContext` helpers — names on specs must match routed infra config
     search_index = ctx.search.command(project_search_spec)  # when SearchCommandDepKey is wired
     cache = ctx.cache(cache_spec)
     counter = ctx.counter(counter_spec)
-    storage = ctx.storage(storage_spec)
+    storage_q = ctx.storage.query(storage_spec)
+    storage_c = ctx.storage.command(storage_spec)
 
 For contracts without a helper, use `ctx.deps.resolve_configurable(ctx, SomeDepKey, spec, route=spec.name)`.

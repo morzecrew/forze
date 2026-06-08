@@ -5,6 +5,8 @@ from typing import final
 import attrs
 from pydantic import BaseModel
 
+from forze.base.exceptions import exc
+
 from .types import GraphDirection
 
 # ----------------------- #
@@ -44,13 +46,83 @@ class VertexRef:
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class EdgeRef:
-    """Opaque pointer to an edge within a graph module."""
+    """Pointer to an edge within a graph module, in one of two addressing modes.
+
+    The mode must match the edge kind's :attr:`GraphEdgeSpec.identity`:
+
+    - **key mode** (:meth:`by_key`): a stable per-edge key — an ArangoDB ``_key`` or a
+      Neo4j business-key property. Use when edges carry their own identity (and for
+      multigraphs, where several edges of one kind may join the same pair).
+    - **endpoints mode** (:meth:`by_endpoints`): identifies the at-most-one edge of
+      ``kind`` between ``from_ref`` and ``to_ref`` — maps to a Cypher ``MERGE`` by
+      endpoints / an ArangoDB unique index on ``[_from, _to]``. Use for simple
+      relationships that have no business key.
+    """
 
     kind: str
     """Logical edge kind; matches :attr:`GraphEdgeSpec.name` in the module spec."""
 
-    key: str
-    """Engine-specific stable key for the relationship or edge document."""
+    key: str | None = None
+    """Stable per-edge key (key mode); ``None`` in endpoints mode."""
+
+    from_ref: VertexRef | None = None
+    """Tail vertex (endpoints mode); ``None`` in key mode."""
+
+    to_ref: VertexRef | None = None
+    """Head vertex (endpoints mode); ``None`` in key mode."""
+
+    # ....................... #
+
+    def __attrs_post_init__(self) -> None:
+        has_key = self.key is not None
+        has_endpoints = self.from_ref is not None or self.to_ref is not None
+
+        if has_key and has_endpoints:
+            raise exc.validation(
+                "EdgeRef accepts a key or a (from_ref, to_ref) pair, not both",
+                code="graph_edge_ref_mode",
+            )
+
+        if not has_key and not has_endpoints:
+            raise exc.validation(
+                "EdgeRef requires either a key or a (from_ref, to_ref) pair",
+                code="graph_edge_ref_mode",
+            )
+
+        if has_endpoints and (self.from_ref is None or self.to_ref is None):
+            raise exc.validation(
+                "EdgeRef endpoints mode requires both from_ref and to_ref",
+                code="graph_edge_ref_endpoints",
+            )
+
+    # ....................... #
+
+    @classmethod
+    def by_key(cls, kind: str, key: str) -> "EdgeRef":
+        """Build a key-mode edge ref."""
+
+        return cls(kind=kind, key=key)
+
+    # ....................... #
+
+    @classmethod
+    def by_endpoints(
+        cls,
+        kind: str,
+        from_ref: "VertexRef",
+        to_ref: "VertexRef",
+    ) -> "EdgeRef":
+        """Build an endpoints-mode edge ref (at-most-one edge of ``kind`` per pair)."""
+
+        return cls(kind=kind, from_ref=from_ref, to_ref=to_ref)
+
+    # ....................... #
+
+    @property
+    def is_keyed(self) -> bool:
+        """Whether this ref is in key mode (``True``) or endpoints mode (``False``)."""
+
+        return self.key is not None
 
 
 # ....................... #
@@ -122,13 +194,15 @@ class GraphWalkStep:
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class ShortestPathParams:
-    """Parameters for :meth:`GraphQueryPort.shortest_path`."""
+    """Parameters for :meth:`GraphQueryPort.shortest_path` and ``k_shortest_paths``.
+
+    The number of paths is **not** a field here: :meth:`GraphQueryPort.shortest_path`
+    returns a single path, and :meth:`GraphQueryPort.k_shortest_paths` takes an explicit
+    ``k``. This keeps each method's return type unambiguous.
+    """
 
     max_hops: int
     """Upper bound on path length (number of edges)."""
-
-    max_paths: int = 1
-    """How many distinct paths to return (if the backend supports k shortest paths)."""
 
     edge_kinds: frozenset[str] = frozenset()
     """

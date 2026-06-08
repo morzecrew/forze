@@ -49,13 +49,23 @@ class PostgresTxManagerAdapter(TransactionManagerPort):
     # ....................... #
 
     @asynccontextmanager
-    async def transaction(self) -> AsyncGenerator[None]:
-        """Open Postgres transaction for the duration of the context."""
+    async def transaction(self, *, read_only: bool = False) -> AsyncGenerator[None]:
+        """Open Postgres transaction for the duration of the context.
 
-        #! TODO: log options
-        logger.debug("Starting transaction")
+        ``read_only`` (set for ``QUERY`` operations) opens the transaction with
+        ``BEGIN ... READ ONLY`` so the database rejects writes. A route configured
+        read-only at construction stays read-only regardless (restrictive OR).
+        """
 
-        async with self.client.transaction(options=self.options):
+        options = (
+            attrs.evolve(self.options, read_only=True)
+            if read_only and not self.options.read_only
+            else self.options
+        )
+
+        logger.debug("Starting transaction (read_only=%s)", options.read_only)
+
+        async with self.client.transaction(options=options):
             try:
                 yield
 

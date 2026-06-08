@@ -1,5 +1,6 @@
 """Document adapter orchestrating query/command ports over gateways."""
 
+from collections.abc import Callable
 from functools import cached_property
 from typing import Sequence
 from uuid import UUID
@@ -15,6 +16,7 @@ from forze.application.contracts.document.gateways import (
     DocumentReadGatewayPort,
     DocumentWriteGatewayPort,
 )
+from forze.application.contracts.domain import DomainEventDispatcherPort
 from forze.application.contracts.querying import (
     QuerySortExpression,
     read_fields_for_model,
@@ -67,6 +69,15 @@ class DocumentAdapter(
 
     max_chunked_command_pages: int | None = DEFAULT_MAX_CHUNKED_COMMAND_PAGES  # type: ignore[override]
     """Max pages for :meth:`update_matching_strict`; ``None`` for unlimited."""
+
+    dispatcher_provider: Callable[[], DomainEventDispatcherPort | None] = attrs.field(
+        default=lambda: None
+    )
+    """Resolve the in-process domain-event dispatcher (or ``None`` when unregistered).
+
+    Injected by the integration factory from ``ctx.domain()``; defaults to a no-op so a
+    non-aggregate document never requires a dispatcher.
+    """
 
     # ....................... #
 
@@ -235,6 +246,8 @@ class DocumentAdapter(
         return_new: bool,
         pk: UUID | None = None,
     ) -> R | None:
+        await self._dispatch_domain_events([domain])
+
         if not return_new:
             return None
 
@@ -255,6 +268,8 @@ class DocumentAdapter(
         return_new: bool,
         pks: Sequence[UUID] | None = None,
     ) -> Sequence[R] | None:
+        await self._dispatch_domain_events(domains)
+
         if not return_new:
             return None
 

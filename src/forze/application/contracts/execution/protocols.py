@@ -1,4 +1,4 @@
-from typing import TYPE_CHECKING, Any, Awaitable, Callable, Protocol
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
     from forze.application.execution.context import ExecutionContext
@@ -89,6 +89,34 @@ class MiddlewareFactory(Protocol):  # pragma: no cover
     """Protocol for a factory that builds a middleware."""
 
     def __call__(self, ctx: "ExecutionContext") -> Middleware[Any, Any]: ...
+
+
+# ....................... #
+
+
+@runtime_checkable
+class ProvidesIdempotency(Protocol):  # pragma: no cover
+    """Marker: a middleware factory that deduplicates an operation's effects.
+
+    Detected structurally at freeze time (the validator is contracts-only and cannot
+    import the hook classes) to satisfy the hedging safety gate.
+    """
+
+    def provides_idempotency(self) -> bool: ...
+
+
+# ....................... #
+
+
+@runtime_checkable
+class DeclaresHedge(Protocol):  # pragma: no cover
+    """Marker: a middleware factory that hedges an operation (concurrent duplicates).
+
+    ``hedge_safety_declared`` reports whether an explicit safety basis was given; the
+    freeze-time gate requires that or a sibling :class:`ProvidesIdempotency`.
+    """
+
+    def hedge_safety_declared(self) -> bool: ...
 
 
 # ....................... #

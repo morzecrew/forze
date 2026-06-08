@@ -30,6 +30,7 @@ from .constants import (
     LEG_EID,
     LEG_SCORE,
 )
+from collections.abc import Awaitable
 
 # ----------------------- #
 
@@ -251,7 +252,7 @@ class HubLegRuntime:
 class HubSearchLegEngine(Protocol):
     """Builds heap ``WHERE``, rank column, and parameters for one hub leg."""
 
-    async def build_leg(
+    def build_leg(
         self,
         leg: HubLegRuntime,
         *,
@@ -261,7 +262,7 @@ class HubSearchLegEngine(Protocol):
         queries: tuple[str, ...],
         options: SearchOptions | None,
         score_column: str,
-    ) -> tuple[sql.Composable, sql.Composable, list[Any]]:
+    ) -> Awaitable[tuple[sql.Composable, sql.Composable, list[Any]]]:
         """Return ``(where_sql, rank_select_sql, params)`` for the leg CTE."""
 
         ...

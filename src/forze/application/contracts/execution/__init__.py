@@ -7,6 +7,7 @@ from .protocols import (
     Before,
     BeforeFactory,
     Finally,
+    DeclaresHedge,
     FinallyFactory,
     Handler,
     HandlerFactory,
@@ -17,6 +18,7 @@ from .protocols import (
     OnFailureFactory,
     OnSuccess,
     OnSuccessFactory,
+    ProvidesIdempotency,
 )
 from .value_objects import (
     BeforeStep,
@@ -38,6 +40,8 @@ from .value_objects import (
 # ----------------------- #
 
 __all__ = [
+    "DeclaresHedge",
+    "ProvidesIdempotency",
     "Middleware",
     "MiddlewareFactory",
     "Before",

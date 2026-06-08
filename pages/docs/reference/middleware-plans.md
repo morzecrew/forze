@@ -54,6 +54,7 @@ Register handler factories on `OperationRegistry` with `set_handler` or the `han
 |--------|---------|
 | `set_handler(op, factory)` | Register or replace a handler factory |
 | `bind(*ops)` | Start a plan binder for one or more operation keys |
+| `as_query()` / `as_command()` | Tag the operation read-only (`QUERY`) or read-write (`COMMAND`, default) |
 | `bind_outer()` | Author outer-scope stages (`before`, `wrap`, `on_success`, …) |
 | `bind_tx()` | Author transaction scope (`tx_before`, `after_commit`, `set_route`, …) |
 | `finish(deep=False)` | Commit scope changes to the parent binder |
@@ -61,6 +62,50 @@ Register handler factories on `OperationRegistry` with `set_handler` or the `han
 | `freeze()` | Validate patches, resolved plans, dispatch graph; return `FrozenOperationRegistry` |
 
 Built-in composition helpers (`build_document_registry`, `build_search_registry`, …) return an `OperationRegistry` with handlers pre-registered. Bind transaction routes and outer stages, then call `.freeze()` before `attach_*_endpoints`.
+
+### Command vs query operations
+
+An operation is read-write (`COMMAND`, the default) or read-only (`QUERY`). Tag it early in the chain:
+
+    :::python
+    registry.bind("projects.get").as_query().bind_tx().set_route("default").finish(deep=True)
+
+A `QUERY` operation is enforced read-only at two layers:
+
+- **Port (application):** a command (write) port cannot be acquired by construction —
+  `ctx.document.command(...)`, `ctx.outbox.command(...)`, and the other `*.command(...)` accessors raise
+  `precondition` inside a query op (read/`query` accessors are unaffected).
+- **Transaction (database):** the operation's transaction is opened **read-only**
+  (Postgres `BEGIN ... READ ONLY`), so the database itself rejects writes — including those via the
+  raw-query escape hatch, which the port guard can't see.
+
+This makes the CQRS split structural rather than a naming convention. Untagged operations default to
+`COMMAND`, so existing code is unchanged.
+
+**Routing queries to a read replica:** bind the query op's transaction to a replica route — the
+transaction is read-only-enforced on the replica too:
+
+    :::python
+    registry.bind("projects.get").as_query().bind_tx().set_route("pg_replica").finish(deep=True)
+
+> Deferred: read-replica *auto*-routing from kind (picking a replica without a separate route bind) and
+> per-kind default plans.
+
+#### What a query op may and may not do
+
+The guard covers every **first-class state-write** accessor uniformly — not just `*.command(...)`. The
+rule is *pragmatic*: a query may not mutate domain/auth **state**, but writes that legitimately happen
+*during* a read (caching, metrics, result snapshots) are allowed.
+
+| Accessor | Class | In a `QUERY` op |
+|----------|-------|-----------------|
+| `document/outbox/search/graph/dlock/storage.command`, `analytics.ingest`, `authz.principal_registry`/`role_assignment`, `authn.*_lifecycle` | **state write** | **forbidden** (`precondition`) |
+| `*.query` / `*.get` / `search.hub`/`federated` / decision & verify ports | read | allowed |
+| `cache` (read-through), `counter` (metrics), `search.snapshot` (result cache) | write-during-read | **allowed** (by design) |
+| `inbox` (`mark_if_unseen`), `idempotency` (`begin`/`commit`) | framework-internal | unguarded (only ever run in command ops) |
+
+Single-purpose ports (`transaction`, `resilience`, `domain` dispatcher, `http`, `embeddings`) carry no
+read/write split — they're neither query nor command in the CQRS sense.
 
 ### Stage methods (on scope binders)
 

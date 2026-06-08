@@ -1,10 +1,14 @@
-"""S3 storage dep factory."""
+"""S3 storage dep factories."""
 
 from typing import final
 
 import attrs
 
-from forze.application.contracts.storage import StorageDepPort, StorageSpec
+from forze.application.contracts.storage import (
+    StorageCommandDepPort,
+    StorageQueryDepPort,
+    StorageSpec,
+)
 from forze.application.execution import ExecutionContext
 
 from ....adapters import S3StorageAdapter
@@ -14,10 +18,27 @@ from ..keys import S3ClientDepKey
 # ----------------------- #
 
 
+def _build_adapter(
+    ctx: ExecutionContext,
+    config: S3StorageConfig,
+) -> S3StorageAdapter:
+    client = ctx.deps.provide(S3ClientDepKey)
+
+    return S3StorageAdapter(
+        client=client,
+        bucket_spec=config.bucket,
+        tenant_aware=config.tenant_aware,
+        tenant_provider=ctx.inv_ctx.get_tenant,
+    )
+
+
+# ....................... #
+
+
 @final
 @attrs.define(slots=True, frozen=True, kw_only=True)
-class ConfigurableS3Storage(StorageDepPort):
-    """Configurable S3 storage adapter."""
+class ConfigurableS3StorageQuery(StorageQueryDepPort):
+    """Configurable S3 storage query adapter."""
 
     config: S3StorageConfig = attrs.field(
         validator=attrs.validators.instance_of(S3StorageConfig),
@@ -27,11 +48,23 @@ class ConfigurableS3Storage(StorageDepPort):
     # ....................... #
 
     def __call__(self, ctx: ExecutionContext, spec: StorageSpec) -> S3StorageAdapter:
-        client = ctx.deps.provide(S3ClientDepKey)
+        return _build_adapter(ctx, self.config)
 
-        return S3StorageAdapter(
-            client=client,
-            bucket_spec=self.config.bucket,
-            tenant_aware=self.config.tenant_aware,
-            tenant_provider=ctx.inv_ctx.get_tenant,
-        )
+
+# ....................... #
+
+
+@final
+@attrs.define(slots=True, frozen=True, kw_only=True)
+class ConfigurableS3StorageCommand(StorageCommandDepPort):
+    """Configurable S3 storage command adapter."""
+
+    config: S3StorageConfig = attrs.field(
+        validator=attrs.validators.instance_of(S3StorageConfig),
+    )
+    """Configuration for the storage."""
+
+    # ....................... #
+
+    def __call__(self, ctx: ExecutionContext, spec: StorageSpec) -> S3StorageAdapter:
+        return _build_adapter(ctx, self.config)

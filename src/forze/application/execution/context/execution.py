@@ -9,10 +9,15 @@ from forze.application.contracts.authn import AuthnDeps
 from forze.application.contracts.authz import AuthzDeps
 from forze.application.contracts.cache import CacheDeps
 from forze.application.contracts.counter import CounterDeps
+from forze.application.contracts.domain import DomainDeps
 from forze.application.contracts.dlock import DistributedLockDeps
 from forze.application.contracts.document import DocumentDeps
 from forze.application.contracts.embeddings import EmbeddingsDeps
+from forze.application.contracts.graph import GraphDeps
 from forze.application.contracts.http import HttpServiceDeps
+from forze.application.contracts.idempotency import IdempotencyDeps
+from forze.application.contracts.inbox import InboxDeps
+from forze.application.contracts.resilience import ResilienceDeps
 from forze.application.contracts.search import SearchDeps
 from forze.application.contracts.storage import StorageDeps
 from forze.application.contracts.tenancy import TenancyDeps
@@ -112,6 +117,9 @@ class ExecutionContext:
     storage: StorageDeps = attrs.field(factory=StorageDeps, init=False)
     """Storage dependencies."""
 
+    graph: GraphDeps = attrs.field(factory=GraphDeps, init=False)
+    """Graph database dependencies."""
+
     embeddings: EmbeddingsDeps = attrs.field(factory=EmbeddingsDeps, init=False)
     """Embeddings dependencies."""
 
@@ -130,6 +138,18 @@ class ExecutionContext:
 
     transaction: TransactionDeps = attrs.field(factory=TransactionDeps, init=False)
     """Transaction dependencies."""
+
+    resilience: ResilienceDeps = attrs.field(factory=ResilienceDeps, init=False)
+    """Resilience policy pipeline dependencies."""
+
+    idempotency: IdempotencyDeps = attrs.field(factory=IdempotencyDeps, init=False)
+    """Idempotency dependencies."""
+
+    domain: DomainDeps = attrs.field(factory=DomainDeps, init=False)
+    """Domain-event dispatch dependencies."""
+
+    inbox: InboxDeps = attrs.field(factory=InboxDeps, init=False)
+    """Inbox (consumer-side dedup) dependencies."""
 
     # ....................... #
 
@@ -211,12 +231,17 @@ class ExecutionContext:
         self.cache.lock(self)
         self.counter.lock(self)
         self.storage.lock(self)
+        self.graph.lock(self)
         self.embeddings.lock(self)
         self.dlock.lock(self)
         self.tenancy.lock(self)
         self.authz.lock(self)
         self.authn.lock(self)
         self.transaction.lock(self)
+        self.resilience.lock(self)
+        self.idempotency.lock(self)
+        self.domain.lock(self)
+        self.inbox.lock(self)
 
         self.tx_ctx.lock(
             self.transaction,

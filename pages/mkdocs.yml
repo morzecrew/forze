@@ -97,11 +97,14 @@ nav:
       - Durable workflow schedule: core-package/contracts/durable-workflow-schedule.md
       - Durable function: core-package/contracts/durable-function.md
       - Idempotency: core-package/contracts/idempotency.md
+      - Deterministic time & ids: core-package/contracts/clock.md
+      - Saga: core-package/contracts/saga.md
       - Outbox: core-package/contracts/outbox.md
       - Analytics: core-package/contracts/analytics.md
       - HTTP: core-package/contracts/http.md
     - Execution: reference/execution.md
     - Middleware & Plans: reference/middleware-plans.md
+    - Observability (OpenTelemetry): reference/observability.md
     - Capability execution: reference/capability-execution.md
     - Kits: reference/kits.md
     - Composition & Mapping: reference/composition.md
@@ -117,6 +120,7 @@ nav:
     - Google BigQuery: integrations/bigquery.md
     - ClickHouse: integrations/clickhouse.md
     - MongoDB: integrations/mongo.md
+    - Neo4j (graph): integrations/neo4j.md
     - Meilisearch: integrations/meilisearch.md
     - HTTP (outbound): integrations/http.md
     - Cloud Firestore: integrations/firestore.md

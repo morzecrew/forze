@@ -15,7 +15,7 @@ from forze.application.contracts.authn import (
     AuthnResult,
     AuthnSpec,
 )
-from tests.support.execution_context import context_from_deps, context_from_modules, frozen_deps_from_deps
+from tests.support.execution_context import context_from_deps
 from forze.application.contracts.tenancy import (
     TENANT_ID_HEADER,
     TenantIdentity,
@@ -209,6 +209,36 @@ class TestInvocationMetadataMiddleware:
         assert "x-request-id" in response.headers
         assert "x-correlation-id" in response.headers
         assert captured["metadata"] is not None
+
+    def test_binds_idempotency_key_from_header(self) -> None:
+        ctx = _execution_ctx()
+        captured: dict[str, str | None] = {}
+
+        async def _capture_app(scope, receive, send):  # type: ignore[no-untyped-def]
+            captured["key"] = ctx.inv_ctx.get_idempotency_key()
+            await send({"type": "http.response.start", "status": 200, "headers": []})
+            await send({"type": "http.response.body", "body": b"ok"})
+
+        mw = InvocationMetadataMiddleware(_capture_app, ctx_dep=lambda: ctx)
+        response = TestClient(mw).get("/", headers={"Idempotency-Key": "req-123"})
+
+        assert response.status_code == 200
+        assert captured["key"] == "req-123"
+
+    def test_no_idempotency_key_when_header_absent(self) -> None:
+        ctx = _execution_ctx()
+        captured: dict[str, str | None] = {}
+
+        async def _capture_app(scope, receive, send):  # type: ignore[no-untyped-def]
+            captured["key"] = ctx.inv_ctx.get_idempotency_key()
+            await send({"type": "http.response.start", "status": 200, "headers": []})
+            await send({"type": "http.response.body", "body": b"ok"})
+
+        mw = InvocationMetadataMiddleware(_capture_app, ctx_dep=lambda: ctx)
+        response = TestClient(mw).get("/")
+
+        assert response.status_code == 200
+        assert captured["key"] is None
 
     @pytest.mark.asyncio
     async def test_non_http_scope_passthrough(self) -> None:

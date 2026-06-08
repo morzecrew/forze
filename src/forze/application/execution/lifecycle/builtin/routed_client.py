@@ -3,6 +3,7 @@ from typing import TYPE_CHECKING, Protocol, final
 import attrs
 
 from forze.application.contracts.execution import LifecycleHook, LifecycleStep
+from collections.abc import Awaitable
 
 if TYPE_CHECKING:
     from forze.application.execution.context import ExecutionContext
@@ -13,9 +14,9 @@ if TYPE_CHECKING:
 class RoutedClientLifecycle(Protocol):
     """Protocol for tenant-routed clients with explicit startup and shutdown."""
 
-    async def startup(self) -> None: ...
+    def startup(self) -> Awaitable[None]: ...
 
-    async def close(self) -> None: ...
+    def close(self) -> Awaitable[None]: ...
 
 
 # ....................... #

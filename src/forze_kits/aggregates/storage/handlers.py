@@ -3,7 +3,8 @@ import attrs
 from forze.application.contracts.execution import Handler
 from forze.application.contracts.storage import (
     DownloadedObject,
-    StoragePort,
+    StorageCommandPort,
+    StorageQueryPort,
     StoredObject,
     UploadedObject,
 )
@@ -37,7 +38,7 @@ def _stored_object_to_dto(obj: StoredObject) -> StoredObjectDTO:
 class DeleteObject(Handler[str, None]):
     """Handler that deletes an object from storage."""
 
-    storage: StoragePort
+    storage: StorageCommandPort
     """Storage port for object operations."""
 
     # ....................... #
@@ -55,7 +56,7 @@ class DeleteObject(Handler[str, None]):
 class DownloadObject(Handler[str, DownloadedObject]):
     """Handler that downloads an object from storage."""
 
-    storage: StoragePort
+    storage: StorageQueryPort
     """Storage port for object operations."""
 
     # ....................... #
@@ -73,7 +74,7 @@ class DownloadObject(Handler[str, DownloadedObject]):
 class ListObjects(Handler[ListObjectsRequestDTO, ListedObjects]):
     """Handler that lists objects in storage."""
 
-    storage: StoragePort
+    storage: StorageQueryPort
     """Storage port for object operations."""
 
     # ....................... #
@@ -104,7 +105,7 @@ class ListObjects(Handler[ListObjectsRequestDTO, ListedObjects]):
 class UploadObject(Handler[UploadObjectRequestDTO, StoredObjectDTO]):
     """Handler that uploads an object to storage."""
 
-    storage: StoragePort
+    storage: StorageCommandPort
     """Storage port for object operations."""
 
     # ....................... #

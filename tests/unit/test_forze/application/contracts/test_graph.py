@@ -25,14 +25,18 @@ from forze.application.contracts.graph import (
     GraphNodeSpec,
     GraphQueryDepKey,
     GraphQueryPort,
+    GraphRawQueryDepKey,
+    GraphRawQueryPort,
     GraphWalkParams,
     GraphWalkStep,
     NeighborRow,
     ShortestPathParams,
     ShortestPathResult,
     VertexRef,
+    resolve_query_directions,
     validate_graph_module_spec,
 )
+from forze.base.exceptions import CoreException
 
 # ----------------------- #
 # Test fixtures (read DTOs)
@@ -74,6 +78,7 @@ def _knows_edge(
     return GraphEdgeSpec(
         name=name,
         read=_KnowsRead,
+        identity="endpoints",
         endpoints=endpoints,
         directionality=directionality,
     )
@@ -197,7 +202,7 @@ class TestValidateGraphModuleSpec:
 
     def test_empty_nodes_rejected_by_default(self) -> None:
         spec = GraphModuleSpec(name="empty", nodes=(), edges=())
-        with pytest.raises(ValueError, match="must be non-empty"):
+        with pytest.raises(CoreException, match="must be non-empty"):
             validate_graph_module_spec(spec)
 
     def test_empty_nodes_allowed_when_opted_out(self) -> None:
@@ -210,7 +215,7 @@ class TestValidateGraphModuleSpec:
             nodes=(_person_node(), _person_node()),
             edges=(),
         )
-        with pytest.raises(ValueError, match="Duplicate graph node kind"):
+        with pytest.raises(CoreException, match="Duplicate graph node kind"):
             validate_graph_module_spec(spec)
 
     def test_duplicate_edge_kind_rejected(self) -> None:
@@ -219,7 +224,7 @@ class TestValidateGraphModuleSpec:
             nodes=(_person_node(),),
             edges=(_knows_edge(), _knows_edge()),
         )
-        with pytest.raises(ValueError, match="Duplicate graph edge kind"):
+        with pytest.raises(CoreException, match="Duplicate graph edge kind"):
             validate_graph_module_spec(spec)
 
     def test_edge_without_endpoints_rejected(self) -> None:
@@ -228,7 +233,7 @@ class TestValidateGraphModuleSpec:
             nodes=(_person_node(),),
             edges=(_knows_edge(endpoints=()),),
         )
-        with pytest.raises(ValueError, match="at least one GraphEdgeEndpoint"):
+        with pytest.raises(CoreException, match="at least one GraphEdgeEndpoint"):
             validate_graph_module_spec(spec)
 
     def test_unknown_from_kind_rejected(self) -> None:
@@ -243,7 +248,7 @@ class TestValidateGraphModuleSpec:
                 ),
             ),
         )
-        with pytest.raises(ValueError, match="unknown from_kind 'ghost'"):
+        with pytest.raises(CoreException, match="unknown from_kind 'ghost'"):
             validate_graph_module_spec(spec)
 
     def test_unknown_to_kind_rejected(self) -> None:
@@ -258,7 +263,7 @@ class TestValidateGraphModuleSpec:
                 ),
             ),
         )
-        with pytest.raises(ValueError, match="unknown to_kind 'ghost'"):
+        with pytest.raises(CoreException, match="unknown to_kind 'ghost'"):
             validate_graph_module_spec(spec)
 
 
@@ -273,13 +278,81 @@ class TestRefs:
         with pytest.raises(attrs_frozen_error()):
             ref.kind = "tag"  # type: ignore[misc]
 
-    def test_edge_ref(self) -> None:
-        ref = EdgeRef(kind="knows", key="e1")
+    def test_edge_ref_by_key(self) -> None:
+        ref = EdgeRef.by_key("knows", "e1")
         assert (ref.kind, ref.key) == ("knows", "e1")
+        assert ref.is_keyed
+        assert ref.from_ref is None and ref.to_ref is None
+
+    def test_edge_ref_by_endpoints(self) -> None:
+        a = VertexRef(kind="person", key="p1")
+        b = VertexRef(kind="person", key="p2")
+        ref = EdgeRef.by_endpoints("knows", a, b)
+        assert not ref.is_keyed
+        assert ref.from_ref == a and ref.to_ref == b
+        assert ref.key is None
+
+    def test_edge_ref_requires_exactly_one_mode(self) -> None:
+        with pytest.raises(CoreException, match="key or a"):
+            EdgeRef(kind="knows")  # neither mode
+
+        a = VertexRef(kind="person", key="p1")
+        with pytest.raises(CoreException, match="not both"):
+            EdgeRef(kind="knows", key="e1", from_ref=a, to_ref=a)  # both modes
+
+        with pytest.raises(CoreException, match="both from_ref and to_ref"):
+            EdgeRef(kind="knows", from_ref=a)  # partial endpoints
 
     def test_endpoint(self) -> None:
         ep = GraphEdgeEndpoint(from_kind="person", to_kind="tag")
         assert (ep.from_kind, ep.to_kind) == ("person", "tag")
+
+
+class TestKeyField:
+    def test_node_key_field_default_and_override(self) -> None:
+        assert _person_node().key_field == "id"
+        assert GraphNodeSpec(name="x", read=_PersonRead, key_field="name").key_field == "name"
+
+    def test_keyed_edge_requires_existing_key_field(self) -> None:
+        spec = GraphModuleSpec(
+            name="m",
+            nodes=(_person_node(),),
+            edges=(
+                GraphEdgeSpec(
+                    name="knows",
+                    read=_KnowsRead,
+                    identity="key",
+                    key_field="missing",
+                    endpoints=(GraphEdgeEndpoint(from_kind="person", to_kind="person"),),
+                    directionality=GraphEdgeDirectionality.DIRECTED,
+                ),
+            ),
+        )
+        with pytest.raises(CoreException, match="key_field"):
+            validate_graph_module_spec(spec)
+
+
+class TestResolveQueryDirections:
+    def test_directed_default(self) -> None:
+        edge = _knows_edge(directionality=GraphEdgeDirectionality.DIRECTED)
+        assert resolve_query_directions(edge) == frozenset(
+            {GraphDirection.OUT, GraphDirection.IN}
+        )
+
+    def test_symmetric_default(self) -> None:
+        edge = _knows_edge(directionality=GraphEdgeDirectionality.SYMMETRIC)
+        assert resolve_query_directions(edge) == frozenset({GraphDirection.BOTH})
+
+    def test_explicit_override(self) -> None:
+        edge = GraphEdgeSpec(
+            name="knows",
+            read=_KnowsRead,
+            identity="endpoints",
+            endpoints=(GraphEdgeEndpoint(from_kind="person", to_kind="person"),),
+            directionality=GraphEdgeDirectionality.DIRECTED,
+            query_directions=frozenset({GraphDirection.OUT}),
+        )
+        assert resolve_query_directions(edge) == frozenset({GraphDirection.OUT})
 
 
 class TestWalkValueObjects:
@@ -332,8 +405,9 @@ class TestWalkValueObjects:
 class TestShortestPath:
     def test_params_defaults(self) -> None:
         params = ShortestPathParams(max_hops=5)
-        assert params.max_paths == 1
+        assert params.max_hops == 5
         assert params.edge_kinds == frozenset()
+        assert not hasattr(params, "max_paths")
 
     def test_result_parallel_sequences(self) -> None:
         v0 = _PersonRead(id="p1", name="Ada")
@@ -356,6 +430,8 @@ class TestGraphDeps:
 
     def test_dep_keys_distinct(self) -> None:
         assert GraphQueryDepKey != GraphCommandDepKey
+        assert GraphRawQueryDepKey != GraphQueryDepKey
+        assert GraphRawQueryDepKey.name == "graph_raw_query"
 
 
 class TestGraphPortProtocols:
@@ -418,6 +494,9 @@ class TestGraphPortProtocols:
 
             async def shortest_path(self, from_ref, to_ref, params):  # noqa: ANN001, ANN202
                 return None
+
+            async def k_shortest_paths(self, from_ref, to_ref, params, *, k):  # noqa: ANN001, ANN202
+                return []
 
             async def find_vertices(  # noqa: ANN202
                 self,
@@ -498,6 +577,18 @@ class TestGraphPortProtocols:
                 return None
 
         assert isinstance(_Command(), GraphCommandPort)
+
+    def test_raw_query_port_structural_match(self) -> None:
+        spec = GraphModuleSpec(name="g", nodes=(_person_node(),), edges=())
+
+        class _Raw:
+            def __init__(self) -> None:
+                self.spec = spec
+
+            async def run(self, query, params=None):  # noqa: ANN001, ANN202
+                return []
+
+        assert isinstance(_Raw(), GraphRawQueryPort)
 
 
 # ----------------------- #

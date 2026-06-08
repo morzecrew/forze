@@ -35,26 +35,34 @@ class AuthzDeps(ConvenientDeps):
 
         return self._resolve_configurable(AuthzDecisionDepKey, spec, route=spec.name)
 
+    # ....................... #
+
     def grant_query(self, spec: AuthzSpec) -> GrantQueryPort:
         """Resolve the grant query port for ``spec``."""
 
         return self._resolve_configurable(GrantQueryDepKey, spec, route=spec.name)
+
+    # ....................... #
 
     def scope(self, spec: AuthzSpec) -> AuthzScopePort:
         """Resolve the data scoping port for ``spec``."""
 
         return self._resolve_configurable(AuthzScopeDepKey, spec, route=spec.name)
 
-    def principal_registry(self, spec: AuthzSpec) -> PrincipalRegistryPort:
-        """Resolve the principal registry port for ``spec``."""
+    # ....................... #
 
-        return self._resolve_configurable(
+    def principal_registry(self, spec: AuthzSpec) -> PrincipalRegistryPort:
+        """Resolve the principal registry port for ``spec`` (a write — guarded)."""
+
+        return self._resolve_command(
             PrincipalRegistryDepKey,
             spec,
             route=spec.name,
         )
 
-    def role_assignment(self, spec: AuthzSpec) -> RoleAssignmentPort:
-        """Resolve the role assignment port for ``spec``."""
+    # ....................... #
 
-        return self._resolve_configurable(RoleAssignmentDepKey, spec, route=spec.name)
+    def role_assignment(self, spec: AuthzSpec) -> RoleAssignmentPort:
+        """Resolve the role assignment port for ``spec`` (a write — guarded)."""
+
+        return self._resolve_command(RoleAssignmentDepKey, spec, route=spec.name)

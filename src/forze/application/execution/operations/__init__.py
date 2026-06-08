@@ -4,7 +4,7 @@ from .facade import (
     facade_op,
     namespaced_facade,
 )
-from .planning import FrozenOperationPlan, OperationPlan
+from .planning import FrozenOperationPlan, OperationKind, OperationPlan
 from .registry import FrozenOperationRegistry, OperationRegistry, PlanPatch
 from .run import (
     handler_for_registry_operation,
@@ -18,6 +18,7 @@ from .run import (
 __all__ = [
     "FrozenOperationPlan",
     "FrozenOperationRegistry",
+    "OperationKind",
     "OperationPlan",
     "OperationRegistry",
     "PlanPatch",

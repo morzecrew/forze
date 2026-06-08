@@ -11,6 +11,7 @@ from forze.application.integrations.outbox import OutboxStaging, StagingOutboxCo
 from forze.application.integrations.outbox.staging import FlushRowsFn
 
 from .enrichment import InvocationOutboxEnricher
+from collections.abc import Awaitable
 
 # ----------------------- #
 
@@ -19,7 +20,7 @@ from .enrichment import InvocationOutboxEnricher
 class OutboxRowPersistPort(Protocol):
     """Narrow store surface used when wiring flush into staging."""
 
-    async def persist_rows(self, rows: Sequence[StagedOutboxEntry]) -> int:
+    def persist_rows(self, rows: Sequence[StagedOutboxEntry]) -> Awaitable[int]:
         """Insert staged rows; return count of new rows."""
         ...
 

@@ -1,14 +1,14 @@
 """Orchestrate execution of a resolved operation plan."""
 
 from contextlib import AbstractAsyncContextManager
-from typing import Any, Awaitable, Callable, cast
+from typing import Any, Awaitable, Callable, Protocol, cast
 
 from forze.application.contracts.execution import Failure, Handler, Success
 from forze.application.contracts.transaction import AfterCommitPort
 from forze.base.exceptions import exc
 from forze.base.primitives import StrKey
 
-from ..planning.plans import ResolvedOperationPlan
+from ..planning.plans import OperationKind, ResolvedOperationPlan
 from ..planning.scopes import ResolvedScope, ResolvedTransactionScope
 from .stages import (
     run_graph_before,
@@ -21,7 +21,13 @@ from .stages import (
 
 # ----------------------- #
 
-TransactionRunner = Callable[[StrKey], AbstractAsyncContextManager[None]]
+
+class TransactionRunner(Protocol):
+    """Open a transaction scope on a route, optionally read-only (a QUERY operation)."""
+
+    def __call__(
+        self, route: StrKey, *, read_only: bool = False
+    ) -> AbstractAsyncContextManager[None]: ...
 
 # ....................... #
 
@@ -99,6 +105,7 @@ async def run_resolved_tx_scope[Args, R](
     *,
     tx_runner: TransactionRunner,
     defer_after_commit: AfterCommitPort,
+    read_only: bool = False,
 ) -> R:
     """Run the transaction scope around the handler."""
 
@@ -107,7 +114,7 @@ async def run_resolved_tx_scope[Args, R](
     if route is None:
         raise exc.internal("Transaction route is required to run a transaction scope")
 
-    async with tx_runner(route):
+    async with tx_runner(route, read_only=read_only):
         if tx.body_is_empty():
             # No transaction-scope body hooks: run the handler directly inside the
             # transaction (after-commit stages are still handled below).
@@ -159,6 +166,7 @@ async def run_resolved_operation_plan[Args, R](
             args,
             tx_runner=tx_runner,
             defer_after_commit=defer_after_commit,
+            read_only=plan.kind is OperationKind.QUERY,
         )
 
     return await run_resolved_scope(plan.outer, transactional_core, args)

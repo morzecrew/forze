@@ -141,3 +141,43 @@ async def test_transaction_read_only(
                 "INSERT INTO test_txmanager_readonly (value) VALUES (%(val)s)",
                 {"val": 1},
             )
+
+
+@pytest.mark.asyncio
+async def test_transaction_per_call_read_only_rejects_writes(
+    pg_client: PostgresClient,
+) -> None:
+    """`transaction(read_only=True)` opens a read-only tx even on a read-write manager.
+
+    This is the path a QUERY operation takes: the manager is registered read-write, but the
+    engine passes ``read_only=True`` per transaction, so the database rejects the write
+    (including via the raw-query escape hatch).
+    """
+
+    await pg_client.execute(
+        """
+        CREATE TABLE test_txmanager_per_call_ro (
+            id serial PRIMARY KEY,
+            value integer
+        );
+        """
+    )
+
+    txmanager = PostgresTxManagerAdapter(client=pg_client)  # default: read-write
+
+    with pytest.raises(Exception):  # psycopg errors.ReadOnlySqlTransaction
+        async with txmanager.transaction(read_only=True):
+            await pg_client.execute(
+                "INSERT INTO test_txmanager_per_call_ro (value) VALUES (%(val)s)",
+                {"val": 1},
+            )
+
+    # A normal (read-write) transaction on the same manager still writes fine.
+    async with txmanager.transaction():
+        await pg_client.execute(
+            "INSERT INTO test_txmanager_per_call_ro (value) VALUES (%(val)s)",
+            {"val": 2},
+        )
+
+    val = await pg_client.fetch_value("SELECT value FROM test_txmanager_per_call_ro")
+    assert val == 2

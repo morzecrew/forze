@@ -5,7 +5,7 @@ from uuid import uuid4
 
 import pytest
 
-from forze.application.contracts.idempotency import IdempotencySnapshot
+from forze.application.contracts.idempotency import IdempotencyRecord
 from forze_redis.adapters.cache import RedisCacheAdapter
 from forze_redis.adapters.counter import RedisCounterAdapter
 from forze_redis.adapters.idempotency import RedisIdempotencyAdapter
@@ -61,18 +61,12 @@ async def test_redis_idempotency_adapter_replays_snapshot(
     with pytest.raises(CoreException, match="pending"):
         await adapter.begin(op, key, payload_hash)
 
-    snapshot = IdempotencySnapshot(
-        code=201,
-        content_type="application/json",
-        body=b'{"id":"1"}',
-    )
-    await adapter.commit(op, key, payload_hash, snapshot)
+    record = IdempotencyRecord(result=b'{"id":"1"}')
+    await adapter.commit(op, key, payload_hash, record)
 
     replay = await adapter.begin(op, key, payload_hash)
     assert replay is not None
-    assert replay.code == 201
-    assert replay.content_type == "application/json"
-    assert replay.body == b'{"id":"1"}'
+    assert replay.result == b'{"id":"1"}'
 
     with pytest.raises(CoreException, match="Payload hash mismatch"):
         await adapter.begin(op, key, "hash-2")

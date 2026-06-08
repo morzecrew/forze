@@ -3,7 +3,7 @@
 from forze.base.exceptions import CoreException
 import pytest
 
-from forze.application.contracts.idempotency import IdempotencySnapshot
+from forze.application.contracts.idempotency import IdempotencyRecord
 from forze_redis.adapters import RedisIdempotencyAdapter
 
 @pytest.mark.asyncio
@@ -34,12 +34,8 @@ async def test_idempotency_begin_with_none_key_returns_none(
 async def test_idempotency_commit_and_replay(
     redis_idempotency: RedisIdempotencyAdapter,
 ) -> None:
-    """commit stores snapshot; duplicate begin returns cached snapshot."""
-    snapshot = IdempotencySnapshot(
-        code=201,
-        content_type="application/json",
-        body=b'{"id":"123"}',
-    )
+    """commit stores the record; duplicate begin returns the cached record."""
+    record = IdempotencyRecord(result=b'{"id":"123"}')
     await redis_idempotency.begin(
         op="create",
         key="req-1",
@@ -49,7 +45,7 @@ async def test_idempotency_commit_and_replay(
         op="create",
         key="req-1",
         payload_hash="hash1",
-        snapshot=snapshot,
+        record=record,
     )
 
     result = await redis_idempotency.begin(
@@ -58,9 +54,7 @@ async def test_idempotency_commit_and_replay(
         payload_hash="hash1",
     )
     assert result is not None
-    assert result.code == 201
-    assert result.content_type == "application/json"
-    assert result.body == b'{"id":"123"}'
+    assert result.result == b'{"id":"123"}'
 
 @pytest.mark.asyncio
 async def test_idempotency_payload_hash_mismatch_raises(
@@ -68,16 +62,12 @@ async def test_idempotency_payload_hash_mismatch_raises(
 ) -> None:
     """begin with different payload hash raises ConflictError."""
     await redis_idempotency.begin(op="op", key="k1", payload_hash="h1")
-    snapshot = IdempotencySnapshot(
-        code=200,
-        content_type="application/json",
-        body=b"ok",
-    )
+    record = IdempotencyRecord(result=b"ok")
     await redis_idempotency.commit(
         op="op",
         key="k1",
         payload_hash="h1",
-        snapshot=snapshot,
+        record=record,
     )
 
     with pytest.raises(CoreException, match="Payload hash mismatch"):

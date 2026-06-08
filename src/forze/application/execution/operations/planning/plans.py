@@ -1,10 +1,15 @@
 from __future__ import annotations
 
+from enum import StrEnum
 from typing import TYPE_CHECKING, Any, Callable, Iterable, Never, Self
 
 import attrs
 
-from forze.application.contracts.execution import DispatchStep, OnSuccess
+from forze.application.contracts.execution import (
+    DispatchStep,
+    MiddlewareStep,
+    OnSuccess,
+)
 from forze.base.descriptors import hybridmethod
 from forze.base.exceptions import exc
 from forze.base.primitives import StrKey
@@ -32,6 +37,21 @@ def _root_commit_fn(x: Any) -> Never:
 # ....................... #
 
 
+class OperationKind(StrEnum):
+    """Whether an operation reads (``QUERY``) or writes (``COMMAND``).
+
+    The default is ``COMMAND`` (read-write). A ``QUERY`` operation is forbidden from
+    acquiring a command (write) port — enforced when the read-only flag is bound for its
+    duration (see ``InvocationContext.bind_read_only``).
+    """
+
+    COMMAND = "command"
+    QUERY = "query"
+
+
+# ....................... #
+
+
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class OperationPlan:
     """Operation plan for a distinct operation."""
@@ -41,6 +61,9 @@ class OperationPlan:
 
     _tx: TransactionScope = attrs.field(factory=TransactionScope, alias="tx")
     """Transaction scope for this operation."""
+
+    kind: OperationKind = attrs.field(default=OperationKind.COMMAND)
+    """Read (``QUERY``) vs write (``COMMAND``) classification; defaults to ``COMMAND``."""
 
     # ....................... #
 
@@ -67,6 +90,14 @@ class OperationPlan:
         """Transaction route for this plan, if set."""
 
         return self._tx.route
+
+    # ....................... #
+
+    def iter_wrap_steps(self) -> Iterable[MiddlewareStep]:
+        """Yield every middleware wrap step across the plan's scopes."""
+
+        yield from self._outer.wrap.items
+        yield from self._tx.wrap.items
 
     # ....................... #
 
@@ -98,7 +129,7 @@ class OperationPlan:
         frozen_outer = self._outer.freeze()
         frozen_tx = self._tx.freeze()
 
-        return FrozenOperationPlan(outer=frozen_outer, tx=frozen_tx)
+        return FrozenOperationPlan(outer=frozen_outer, tx=frozen_tx, kind=self.kind)
 
     # ....................... #
 
@@ -109,7 +140,14 @@ class OperationPlan:
         merged_outer = Scope.merge(*[plan._outer for plan in plans])
         merged_tx = TransactionScope.merge(*[plan._tx for plan in plans])
 
-        return cls(outer=merged_outer, tx=merged_tx)
+        # Restrictive wins: a QUERY in any merged layer keeps the operation read-only.
+        merged_kind = (
+            OperationKind.QUERY
+            if any(plan.kind is OperationKind.QUERY for plan in plans)
+            else OperationKind.COMMAND
+        )
+
+        return cls(outer=merged_outer, tx=merged_tx, kind=merged_kind)
 
     # ....................... #
 
@@ -131,6 +169,9 @@ class FrozenOperationPlan:
     tx: FrozenTransactionScope = attrs.field(factory=FrozenTransactionScope)
     """Frozen transaction scope for this operation."""
 
+    kind: OperationKind = attrs.field(default=OperationKind.COMMAND)
+    """Read (``QUERY``) vs write (``COMMAND``) classification."""
+
     # ....................... #
 
     def resolve(
@@ -144,7 +185,9 @@ class FrozenOperationPlan:
         resolved_outer = self.outer.resolve(ctx, dispatch_resolver)
         resolved_tx = self.tx.resolve(ctx, dispatch_resolver)
 
-        return ResolvedOperationPlan(outer=resolved_outer, tx=resolved_tx)
+        return ResolvedOperationPlan(
+            outer=resolved_outer, tx=resolved_tx, kind=self.kind
+        )
 
 
 # ....................... #
@@ -159,3 +202,6 @@ class ResolvedOperationPlan:
 
     tx: ResolvedTransactionScope = attrs.field(factory=ResolvedTransactionScope)
     """Resolved transaction scope for this operation."""
+
+    kind: OperationKind = attrs.field(default=OperationKind.COMMAND)
+    """Read (``QUERY``) vs write (``COMMAND``) classification."""

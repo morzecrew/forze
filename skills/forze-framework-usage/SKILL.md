@@ -48,7 +48,8 @@ from forze_postgres.adapters.document import PostgresDocumentAdapter  # Never in
 | `ctx.document.command(spec)` / `ctx.doc.command(spec)` | `DocumentCommandPort` | Creates, updates, deletes |
 | `ctx.cache(spec)` | `CachePort` | `CacheSpec` |
 | `ctx.counter(spec)` | `CounterPort` | `CounterSpec` |
-| `ctx.storage(spec)` | `StoragePort` | `StorageSpec` |
+| `ctx.storage.query(spec)` | `StorageQueryPort` | `StorageSpec` (download, list) |
+| `ctx.storage.command(spec)` | `StorageCommandPort` | `StorageSpec` (upload, delete) |
 | `ctx.search.query(spec)` | `SearchQueryPort` | Full-text search |
 | `ctx.search.hub(spec)` | `SearchQueryPort` | Hub search |
 | `ctx.search.federated(spec)` | `SearchQueryPort` | Federated search |
@@ -165,10 +166,13 @@ next_id = await counter.incr()
 ### Object storage
 
 ```python
-from forze.application.contracts.storage import StorageSpec
+from forze.application.contracts.storage import StorageSpec, UploadedObject
 
-storage = ctx.storage(StorageSpec(name=ResourceName.ATTACHMENTS))
-stored = await storage.upload("file.pdf", data, description="Contract")
+spec = StorageSpec(name=ResourceName.ATTACHMENTS)
+stored = await ctx.storage.command(spec).upload(
+    UploadedObject(filename="file.pdf", data=data, description="Contract")
+)
+downloaded = await ctx.storage.query(spec).download(stored.key)
 ```
 
 ### Queue, pub/sub, stream, and workflow ports

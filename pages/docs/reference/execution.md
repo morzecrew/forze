@@ -39,7 +39,8 @@ The central dependency resolution point. Every handler factory and lifecycle hoo
 | `ctx.doc.query` / `ctx.doc.command` | same | Alias for `document` |
 | `ctx.cache(spec)` | `CachePort` | Cache port for a namespace |
 | `ctx.counter(spec)` | `CounterPort` | Namespace-scoped counter (`CounterSpec`) |
-| `ctx.storage(spec)` | `StoragePort` | Object storage (`StorageSpec`) |
+| `ctx.storage.query(spec)` | `StorageQueryPort` | Object storage reads — `download`, `list` (`StorageSpec`) |
+| `ctx.storage.command(spec)` | `StorageCommandPort` | Object storage writes — `upload`, `delete` (`StorageSpec`) |
 | `ctx.search.query(spec)` | `SearchQueryPort` | Full-text search port |
 | `ctx.search.hub(spec)` | `SearchQueryPort` | Hub (multi-leg) search |
 | `ctx.search.federated(spec)` | `SearchQueryPort` | Federated search |

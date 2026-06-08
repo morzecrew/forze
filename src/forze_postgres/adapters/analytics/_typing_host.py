@@ -30,7 +30,7 @@ class PostgresAnalyticsHost(Protocol[R, Ing]):
 
     def _validated_params(self, query_key: StrKey, params: BaseModel) -> BaseModel: ...
 
-    async def _ingest_qname(self) -> Any: ...
+    def _ingest_qname(self) -> Awaitable[Any]: ...
 
     def _max_append_rows(self) -> int: ...
 
@@ -38,7 +38,7 @@ class PostgresAnalyticsHost(Protocol[R, Ing]):
 
     def _param_dict(self, params: BaseModel | JsonDict) -> dict[str, object]: ...
 
-    async def _fetch_rows(
+    def _fetch_rows(
         self,
         query_key: StrKey,
         params: BaseModel | JsonDict,
@@ -46,15 +46,15 @@ class PostgresAnalyticsHost(Protocol[R, Ing]):
         options: AnalyticsRunOptions | None,
         limit: int | None,
         offset: int | None,
-    ) -> list[JsonDict]: ...
+    ) -> Awaitable[list[JsonDict]]: ...
 
-    async def _run_with_timeout(
+    def _run_with_timeout(
         self,
         options: AnalyticsRunOptions | None,
         fn: Callable[[], Awaitable[Any]],
-    ) -> Any: ...
+    ) -> Awaitable[Any]: ...
 
-    async def _offset_page(
+    def _offset_page(
         self,
         query_key: StrKey,
         params: BaseModel,
@@ -64,9 +64,9 @@ class PostgresAnalyticsHost(Protocol[R, Ing]):
         return_count: bool,
         return_type: type[BaseModel] | None,
         return_fields: Sequence[str] | None,
-    ) -> CountlessPage[Any] | Page[Any]: ...
+    ) -> Awaitable[CountlessPage[Any] | Page[Any]]: ...
 
-    async def _cursor_page(
+    def _cursor_page(
         self,
         query_key: StrKey,
         params: BaseModel,
@@ -75,9 +75,9 @@ class PostgresAnalyticsHost(Protocol[R, Ing]):
         options: AnalyticsRunOptions | None,
         return_type: type[BaseModel] | None,
         return_fields: Sequence[str] | None,
-    ) -> Any: ...
+    ) -> Awaitable[Any]: ...
 
-    async def _chunked_scan(
+    def _chunked_scan(
         self,
         query_key: StrKey,
         params: BaseModel,
@@ -85,7 +85,7 @@ class PostgresAnalyticsHost(Protocol[R, Ing]):
         options: AnalyticsRunOptions | None,
         fetch_batch_size: int,
         _row_type: type[BaseModel],
-    ) -> Any: ...
+    ) -> Awaitable[Any]: ...
 
     def run_chunked(
         self,

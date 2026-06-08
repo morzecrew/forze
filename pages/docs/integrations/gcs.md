@@ -18,7 +18,7 @@ Use `RoutedGCSClient` when tenant identity selects GCP project and credentials (
 4. Add lifecycle steps when the integration opens network connections.
 5. Resolve ports from `ExecutionContext`; do not import adapters in handlers.
 
-`forze_gcs` implements `StoragePort` using native async [`gcloud-aio-storage`](https://pypi.org/project/gcloud-aio-storage/).
+`forze_gcs` implements the storage query and command ports using native async [`gcloud-aio-storage`](https://pypi.org/project/gcloud-aio-storage/).
 
 ## Installation
 
@@ -72,19 +72,24 @@ Register `RoutedGCSClient` under `GCSClientDepKey` and use `routed_gcs_lifecycle
 | Key | Capability |
 |-----|-----------|
 | `GCSClientDepKey` | Raw GCS client for direct bucket/blob operations |
-| `StorageDepKey` | Storage port adapter factory |
+| `StorageQueryDepKey` | Storage query port (download, list) adapter factory |
+| `StorageCommandDepKey` | Storage command port (upload, delete) adapter factory |
 
-## Using the storage port
+## Using the storage ports
+
+Resolve `ctx.storage.query(spec)` for reads and `ctx.storage.command(spec)` for writes:
 
     :::python
     from forze.application.contracts.storage import StorageSpec, UploadedObject
 
-    storage = ctx.storage(StorageSpec(name="app-assets"))
+    spec = StorageSpec(name="app-assets")
+    storage_q = ctx.storage.query(spec)
+    storage_c = ctx.storage.command(spec)
 
 ### Upload
 
     :::python
-    stored = await storage.upload(
+    stored = await storage_c.upload(
         UploadedObject(
             filename="invoice.pdf",
             data=pdf_bytes,
@@ -98,17 +103,17 @@ The adapter generates a unique key from the prefix and a UUID v7 segment. Conten
 ### Download
 
     :::python
-    downloaded = await storage.download(stored.key)
+    downloaded = await storage_q.download(stored.key)
 
 ### Delete
 
     :::python
-    await storage.delete(stored.key)
+    await storage_c.delete(stored.key)
 
 ### List
 
     :::python
-    objects, total = await storage.list(
+    objects, total = await storage_q.list(
         limit=20,
         offset=0,
         prefix="invoices/2026",
@@ -129,8 +134,8 @@ When `ExecutionContext` has a bound `TenantIdentity` and the storage route confi
 
 ## Scope of the integration
 
-Forze handles resolving `StoragePort`, upload/download/delete/list, content-type detection, metadata in custom blob metadata, and optional tenant key prefixes.
+Forze handles resolving the storage query/command ports, upload/download/delete/list, content-type detection, metadata in custom blob metadata, and optional tenant key prefixes.
 
 Forze does **not** manage IAM, bucket lifecycle rules, CORS, encryption defaults, or signed URLs — configure those in GCP or IaC.
 
-For framework tests or advanced wiring, prefer `from forze_gcs.execution.deps import ConfigurableGCSStorage` rather than removed `forze_gcs.execution.deps.deps` paths.
+For framework tests or advanced wiring, prefer `from forze_gcs.execution.deps import ConfigurableGCSStorageQuery, ConfigurableGCSStorageCommand` rather than removed `forze_gcs.execution.deps.deps` paths.

@@ -47,11 +47,16 @@ class MongoTxManagerAdapter(TransactionManagerPort):
     # ....................... #
 
     @asynccontextmanager
-    async def transaction(self) -> AsyncGenerator[None]:
-        """Open Mongo transaction for the duration of the context."""
+    async def transaction(self, *, read_only: bool = False) -> AsyncGenerator[None]:
+        """Open Mongo transaction for the duration of the context.
 
-        #! TODO: log options
-        logger.debug("Starting transaction")
+        ``read_only`` is accepted for interface parity but not enforced — Mongo
+        multi-document transactions have no read-only mode (a read-only intent is better
+        expressed via a read preference / secondary). The Phase-1 port guard still prevents
+        a ``QUERY`` operation from acquiring a write port.
+        """
+
+        logger.debug("Starting transaction (read_only=%s)", read_only)
 
         async with self.client.transaction(options=self.options):
             try:

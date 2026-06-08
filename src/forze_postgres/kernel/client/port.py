@@ -39,12 +39,12 @@ class PostgresClientPort(Protocol):
     want an auto-commit read outside an explicit :meth:`transaction` block.
     """
 
-    async def close(self) -> None:
+    def close(self) -> Awaitable[None]:
         """Close pools / release resources."""
 
         ...  # pragma: no cover
 
-    async def health(self) -> tuple[str, bool]:
+    def health(self) -> Awaitable[tuple[str, bool]]:
         """Connectivity probe."""
 
         ...  # pragma: no cover

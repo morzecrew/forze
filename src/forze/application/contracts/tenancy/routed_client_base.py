@@ -20,12 +20,13 @@ from .helpers import (
 )
 from .registry import TenantClientRegistry
 from .value_objects import TenantIdentity
+from collections.abc import Awaitable
 
 # ----------------------- #
 
 
 class _CloseableClient(Protocol):
-    async def close(self) -> None: ...
+    def close(self) -> Awaitable[None]: ...
 
 
 C = TypeVar("C", bound=_CloseableClient)

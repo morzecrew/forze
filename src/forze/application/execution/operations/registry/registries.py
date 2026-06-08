@@ -51,6 +51,17 @@ class OperationRegistry:
 
     # ....................... #
 
+    def operation_keys(self) -> frozenset[StrKey]:
+        """Return every registered operation key (one per handler factory).
+
+        Useful for cross-cutting instrumentation that targets all operations — e.g.
+        ``instrument_operations`` (OpenTelemetry).
+        """
+
+        return frozenset(self._handlers)
+
+    # ....................... #
+
     def get_patches(self) -> tuple[PlanPatch, ...]:
         """Read-only access to plan patches."""
 
@@ -313,6 +324,7 @@ class FrozenOperationRegistry:
             plan=resolved_plan,
             tx_runner=ctx.tx_ctx.scope,
             defer_after_commit=ctx.tx_ctx.run_or_defer,
+            inv_ctx=ctx.inv_ctx,
         )
 
         ctx.store_operation(op, resolved)

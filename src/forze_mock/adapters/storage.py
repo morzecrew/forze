@@ -9,7 +9,8 @@ from typing import (
 import attrs
 from forze.application.contracts.storage import (
     DownloadedObject,
-    StoragePort,
+    StorageCommandPort,
+    StorageQueryPort,
     StoredObject,
     UploadedObject,
 )
@@ -20,7 +21,7 @@ from forze_mock.tenancy import MockTenancyMixin, partition_namespace
 
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class MockStorageAdapter(MockTenancyMixin, StoragePort):
+class MockStorageAdapter(MockTenancyMixin, StorageQueryPort, StorageCommandPort):
     """In-memory object storage adapter."""
 
     state: MockState
