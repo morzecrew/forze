@@ -11,6 +11,7 @@ from forze.application.contracts.document import (
     DocumentSpec,
 )
 from forze.application.contracts.transaction import AfterCommitPort
+from forze.application.execution.domain import domain_dispatcher_provider
 from forze.application.integrations.document import DocumentCache
 from forze.application.execution import ExecutionContext
 from forze.base.exceptions import exc
@@ -166,4 +167,5 @@ class ConfigurableMongoDocument(DocumentCommandDepPort[R, D, C, U]):
             write_gw=write,
             document_cache=cc,
             batch_size=config.batch_size,
+            dispatcher_provider=domain_dispatcher_provider(ctx),
         )

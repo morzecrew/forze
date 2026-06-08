@@ -18,6 +18,7 @@ from forze.application.contracts.search import (
 from forze.application.integrations.search.snapshot import SearchResultSnapshot
 from forze.base.primitives import JsonDict
 from forze.base.serialization import ModelCodec, materialize_mapping_rows
+from collections.abc import Awaitable
 
 # ----------------------- #
 
@@ -78,16 +79,16 @@ class OffsetRowsResult:
 class SimpleOffsetSearchHooks(Protocol):
     """Backend callbacks for one offset search miss (after snapshot read)."""
 
-    async def fetch_count(self) -> int | None:
+    def fetch_count(self) -> Awaitable[int | None]:
         """Return total when counting; ``None`` if count is deferred to :meth:`fetch_rows`."""
         ...
 
-    async def fetch_rows(
+    def fetch_rows(
         self,
         window: OffsetFetchWindow,
         *,
         want_snap: bool,
-    ) -> OffsetRowsResult:
+    ) -> Awaitable[OffsetRowsResult]:
         """Fetch ordered rows for the given window."""
         ...
 

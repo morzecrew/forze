@@ -28,7 +28,7 @@ async def test_s3_storage_upload_benchmark(
     """Benchmark storage adapter upload."""
 
     ctx = _s3_ctx(s3_client, s3_bucket)
-    storage = ctx.storage(StorageSpec(name=s3_bucket))
+    storage = ctx.storage.command(StorageSpec(name=s3_bucket))
 
     async def run() -> None:
         uploaded = await storage.upload(
@@ -49,9 +49,10 @@ async def test_s3_storage_list_benchmark(
 ) -> None:
     """Benchmark storage adapter list."""
     ctx = _s3_ctx(s3_client, s3_bucket)
-    storage = ctx.storage(StorageSpec(name=s3_bucket))
+    storage_q = ctx.storage.query(StorageSpec(name=s3_bucket))
+    storage_c = ctx.storage.command(StorageSpec(name=s3_bucket))
 
-    uploaded = await storage.upload(
+    uploaded = await storage_c.upload(
         filename="list-bench.txt",
         data=b"list-perf",
         description="perf",
@@ -59,12 +60,12 @@ async def test_s3_storage_list_benchmark(
     )
 
     async def run() -> None:
-        listed, total = await storage.list(limit=10, offset=0, prefix="perf")
+        listed, total = await storage_q.list(limit=10, offset=0, prefix="perf")
         assert total >= 1
 
     await async_benchmark(run)
 
-    await storage.delete(uploaded["key"])
+    await storage_c.delete(uploaded["key"])
 
 
 @pytest.mark.perf
@@ -74,9 +75,10 @@ async def test_s3_storage_download_benchmark(
 ) -> None:
     """Benchmark storage adapter download (object pre-seeded)."""
     ctx = _s3_ctx(s3_client, s3_bucket)
-    storage = ctx.storage(StorageSpec(name=s3_bucket))
+    storage_q = ctx.storage.query(StorageSpec(name=s3_bucket))
+    storage_c = ctx.storage.command(StorageSpec(name=s3_bucket))
 
-    uploaded = await storage.upload(
+    uploaded = await storage_c.upload(
         filename="download-bench.txt",
         data=b"download-perf-payload",
         description="perf",
@@ -84,12 +86,12 @@ async def test_s3_storage_download_benchmark(
     )
 
     async def run() -> None:
-        downloaded = await storage.download(uploaded["key"])
+        downloaded = await storage_q.download(uploaded["key"])
         assert downloaded["data"] == b"download-perf-payload"
 
     await async_benchmark(run)
 
-    await storage.delete(uploaded["key"])
+    await storage_c.delete(uploaded["key"])
 
 
 @pytest.mark.perf
@@ -100,19 +102,20 @@ async def test_s3_storage_upload_list_download_delete_benchmark(
     """Benchmark storage adapter full round-trip."""
 
     ctx = _s3_ctx(s3_client, s3_bucket)
-    storage = ctx.storage(StorageSpec(name=s3_bucket))
+    storage_q = ctx.storage.query(StorageSpec(name=s3_bucket))
+    storage_c = ctx.storage.command(StorageSpec(name=s3_bucket))
 
     async def run() -> None:
-        uploaded = await storage.upload(
+        uploaded = await storage_c.upload(
             filename="roundtrip.txt",
             data=b"roundtrip-perf",
             description="perf",
             prefix="perf/roundtrip",
         )
-        listed, total = await storage.list(limit=10, offset=0, prefix="perf")
+        listed, total = await storage_q.list(limit=10, offset=0, prefix="perf")
         assert total >= 1
-        downloaded = await storage.download(uploaded["key"])
+        downloaded = await storage_q.download(uploaded["key"])
         assert downloaded["data"] == b"roundtrip-perf"
-        await storage.delete(uploaded["key"])
+        await storage_c.delete(uploaded["key"])
 
     await async_benchmark(run)

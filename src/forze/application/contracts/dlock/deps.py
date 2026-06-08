@@ -48,7 +48,7 @@ class DistributedLockDeps(ConvenientDeps):
     def command(self, spec: DistributedLockSpec) -> DistributedLockCommandPort:
         """Resolve a distributed lock command port for the given spec."""
 
-        return self._resolve_configurable(
+        return self._resolve_command(
             DistributedLockCommandDepKey,
             spec,
             route=spec.name,

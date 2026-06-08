@@ -121,14 +121,14 @@ Resolve with `ctx.search.command(search_spec)` when the integration registers `S
 
 ### Object storage
 
-**`StoragePort`**: S3-style blob storage:
+**`StorageQueryPort` / `StorageCommandPort`**: S3-style blob storage, split by CQRS:
 
-| Method | Purpose |
-|--------|---------|
-| `upload(filename, data, description?, *, prefix?)` | Upload an object |
-| `download(key)` | Download an object |
-| `delete(key)` | Delete an object |
-| `list(limit, offset, *, prefix?)` | List objects with pagination |
+| Port | Method | Purpose |
+|------|--------|---------|
+| `StorageCommandPort` | `upload(UploadedObject)` | Upload an object |
+| `StorageCommandPort` | `delete(key)` | Delete an object |
+| `StorageQueryPort` | `download(key)` | Download an object |
+| `StorageQueryPort` | `list(limit, offset, *, prefix?)` | List objects with pagination |
 
 ### Queue (message queue)
 
@@ -242,7 +242,8 @@ Each contract has a corresponding `DepKey` for registration and resolution. Inte
     doc = self.ctx.document.query(project_spec)     # resolves DocumentQueryDepKey
     cache = self.ctx.cache(cache_spec)         # resolves CacheDepKey
     counter = self.ctx.counter(CounterSpec(name="tickets"))  # resolves CounterDepKey
-    storage = self.ctx.storage(StorageSpec(name="attachments"))  # resolves StorageDepKey
+    storage_q = self.ctx.storage.query(StorageSpec(name="attachments"))  # StorageQueryDepKey
+    storage_c = self.ctx.storage.command(StorageSpec(name="attachments"))  # StorageCommandDepKey
     search_q = self.ctx.search.query(search_spec)  # resolves SearchQueryDepKey
     search_c = self.ctx.search.command(search_spec)  # resolves SearchCommandDepKey (when wired)
     metrics = self.ctx.analytics.query(metrics_spec)  # resolves AnalyticsQueryDepKey

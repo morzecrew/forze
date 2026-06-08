@@ -4,7 +4,7 @@ from forze.application.contracts.document import DocumentCommandPort, DocumentQu
 from forze.application.contracts.execution import Handler
 from forze.application.contracts.outbox import OutboxCommandPort
 from forze.application.contracts.search import SearchQueryPort
-from forze.application.contracts.storage import StoragePort
+from forze.application.contracts.storage import StorageQueryPort
 from forze.base.exceptions import exc
 from forze_kits.aggregates.search.dto import (
     SearchPaginated,
@@ -120,7 +120,7 @@ class DownloadStoredFile(Handler[StoredFileIdDTO, StoredFileDownloadDTO]):
     """Download blob bytes for a ready stored file."""
 
     doc: DocumentQueryPort[StoredFileRead]
-    storage: StoragePort
+    storage: StorageQueryPort
 
     # ....................... #
 

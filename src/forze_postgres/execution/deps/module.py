@@ -13,6 +13,7 @@ from forze.application.contracts.document import (
     DocumentCommandDepKey,
     DocumentQueryDepKey,
 )
+from forze.application.contracts.inbox import InboxDepKey
 from forze.application.contracts.outbox import OutboxCommandDepKey, OutboxQueryDepKey
 from forze.application.contracts.search import (
     FederatedSearchQueryDepKey,
@@ -39,6 +40,7 @@ from .configs import (
     PostgresFederatedSearchConfig,
     PostgresFederatedSearchLegHub,
     PostgresHubSearchConfig,
+    PostgresInboxConfig,
     PostgresOutboxConfig,
     PostgresReadOnlyDocumentConfig,
     PostgresSearchConfig,
@@ -48,6 +50,7 @@ from .factories import (
     ConfigurablePostgresDocument,
     ConfigurablePostgresFederatedSearch,
     ConfigurablePostgresHubSearch,
+    ConfigurablePostgresInbox,
     ConfigurablePostgresOutboxCommand,
     ConfigurablePostgresOutboxQuery,
     ConfigurablePostgresReadOnlyDocument,
@@ -113,6 +116,9 @@ class PostgresDepsModule(DepsModule):
 
     outboxes: Mapping[StrKey, PostgresOutboxConfig] | None = attrs.field(default=None)
     """Mapping from outbox route names to their Postgres-specific configurations."""
+
+    inboxes: Mapping[StrKey, PostgresInboxConfig] | None = attrs.field(default=None)
+    """Mapping from inbox route names to their Postgres-specific configurations."""
 
     # ....................... #
 
@@ -395,6 +401,18 @@ class PostgresDepsModule(DepsModule):
                 )
             )
 
+        inbox_deps = Deps()
+
+        if self.inboxes:
+            inbox_deps = Deps.routed(
+                {
+                    InboxDepKey: {
+                        name: ConfigurablePostgresInbox(config=config)
+                        for name, config in self.inboxes.items()
+                    },
+                }
+            )
+
         return plain_deps.merge(
             doc_deps,
             search_deps,
@@ -403,4 +421,5 @@ class PostgresDepsModule(DepsModule):
             federated_search_deps,
             analytics_deps,
             outbox_deps,
+            inbox_deps,
         )

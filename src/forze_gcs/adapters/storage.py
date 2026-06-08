@@ -1,4 +1,4 @@
-"""GCS-backed implementation of :class:`~forze.application.contracts.storage.StoragePort`."""
+"""GCS-backed object storage adapter (storage query and command ports)."""
 
 from forze_gcs._compat import require_gcs
 
@@ -28,7 +28,7 @@ from ..kernel.relation import resolve_gcs_bucket
 class GCSStorageAdapter(ObjectStorageAdapter):
     """Storage adapter that persists files in a GCS bucket.
 
-    Implements :class:`~forze.application.contracts.storage.StoragePort` via
+    Implements the storage query and command ports via
     :class:`~forze.application.integrations.storage.ObjectStorageAdapter`.
     """
 

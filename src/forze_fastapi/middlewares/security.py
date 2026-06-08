@@ -48,7 +48,9 @@ class SecurityContextMiddleware:
     # ....................... #
 
     async def _resolve_authn(
-        self, request: Request, ctx: ExecutionContext
+        self,
+        request: Request,
+        ctx: ExecutionContext,
     ) -> AuthnResult | None:
         results: list[AuthnResult] = []
 

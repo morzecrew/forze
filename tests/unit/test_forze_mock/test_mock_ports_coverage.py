@@ -7,7 +7,7 @@ from datetime import timedelta
 import pytest
 from pydantic import BaseModel
 
-from forze.application.contracts.idempotency import IdempotencySnapshot
+from forze.application.contracts.idempotency import IdempotencyRecord
 from forze.application.contracts.pubsub import PubSubSpec
 from forze.application.contracts.queue import QueueSpec
 from forze.application.contracts.stream.specs import StreamSpec
@@ -67,7 +67,7 @@ async def test_mock_idempotency_begin_commit_and_conflict() -> None:
     st = MockState()
     idem = MockIdempotencyAdapter(state=st, namespace="idem")
     assert await idem.begin("op", None, "h") is None
-    snap = IdempotencySnapshot(code=201, content_type="text/plain", body=b"ok")
+    snap = IdempotencyRecord(result=b"ok")
     with pytest.raises(CoreException):
         await idem.commit("op", "k", "wrong", snap)
     assert await idem.begin("op", "k", "hash") is None

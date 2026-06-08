@@ -11,4 +11,5 @@ def test_storage_contracts_import_without_magic(monkeypatch) -> None:
     module = importlib.import_module("forze.application.contracts.storage")
 
     assert "magic" not in sys.modules
-    assert module.StoragePort is not None
+    assert module.StorageQueryPort is not None
+    assert module.StorageCommandPort is not None

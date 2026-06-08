@@ -314,16 +314,16 @@ Result shape and pagination mode are encoded in the method name:
 
 ## Object storage
 
-### StoragePort
+### StorageQueryPort / StorageCommandPort
 
-S3-style blob storage:
+S3-style blob storage, split into read (query) and write (command) ports:
 
-| Method | Signature | Returns |
-|--------|-----------|---------|
-| `upload` | `(filename, data, description?, *, prefix?)` | `StoredObject` |
-| `download` | `(key)` | `DownloadedObject` |
-| `delete` | `(key)` | `None` |
-| `list` | `(limit, offset, *, prefix?)` | `(list[ObjectMetadata], int)` |
+| Port | Method | Signature | Returns |
+|------|--------|-----------|---------|
+| `StorageCommandPort` | `upload` | `(UploadedObject)` | `StoredObject` |
+| `StorageCommandPort` | `delete` | `(key)` | `None` |
+| `StorageQueryPort` | `download` | `(key)` | `DownloadedObject` |
+| `StorageQueryPort` | `list` | `(limit, offset, *, prefix?)` | `(list[ObjectMetadata], int)` |
 
 ### Storage types
 
@@ -337,7 +337,8 @@ S3-style blob storage:
 
 | Key | Resolved via |
 |-----|-------------|
-| `StorageDepKey` | `ctx.storage(StorageSpec(name=...))` |
+| `StorageQueryDepKey` | `ctx.storage.query(StorageSpec(name=...))` |
+| `StorageCommandDepKey` | `ctx.storage.command(StorageSpec(name=...))` |
 
 ## Queue
 
@@ -485,22 +486,22 @@ S3-style blob storage:
 
 ## Idempotency
 
+Engine-level result idempotency. See [Idempotency contracts](../core-package/contracts/idempotency.md) for the full model (`IdempotencyWrap`, `Idempotency-Key` header).
+
 ### IdempotencyPort
 
-Deduplicate operations by caching responses keyed by operation name, idempotency key, and payload hash:
+Store and replay a completed operation's result, keyed by operation name, idempotency key, and payload hash:
 
 | Method | Signature | Purpose |
 |--------|-----------|---------|
-| `begin` | `(op, key, payload_hash)` | Check for a cached response; returns `IdempotencySnapshot \| None` |
-| `commit` | `(op, key, payload_hash, snapshot)` | Store the response for future dedup |
+| `begin` | `(op, key, payload_hash)` | Return the stored `IdempotencyRecord` on replay, or `None` after a fresh claim; raises on payload-hash mismatch or an in-progress duplicate |
+| `commit` | `(op, key, payload_hash, record)` | Store the result record for future replays |
 
-### IdempotencySnapshot
+### IdempotencyRecord
 
 | Field | Type | Purpose |
 |-------|------|---------|
-| `status_code` | `int` | HTTP status code |
-| `body` | `bytes` | Serialized response body |
-| `headers` | `dict[str, str]` | Response headers |
+| `result` | `bytes` | The serialized operation result (encoded by the operation's result codec) |
 
 ### Dependency keys
 
@@ -620,7 +621,8 @@ All ports are resolved through `ExecutionContext`. Contracts with convenience me
     doc_c = ctx.document.command(project_spec)
     cache = ctx.cache(cache_spec)
     counter = ctx.counter(CounterSpec(name="tickets"))
-    storage = ctx.storage(StorageSpec(name="attachments"))
+    storage_q = ctx.storage.query(StorageSpec(name="attachments"))
+    storage_c = ctx.storage.command(StorageSpec(name="attachments"))
     search = ctx.search.query(search_spec)
     tx = ctx.tx_ctx.resolver("default")
 

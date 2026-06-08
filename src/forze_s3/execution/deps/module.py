@@ -4,7 +4,10 @@ from typing import Mapping, final
 
 import attrs
 
-from forze.application.contracts.storage import StorageDepKey
+from forze.application.contracts.storage import (
+    StorageCommandDepKey,
+    StorageQueryDepKey,
+)
 from forze.application.contracts.tenancy import warn_integration_routes
 from forze.application.execution import Deps, DepsModule
 from forze.application.execution.deps.builders import merge_deps, routed_from_mapping
@@ -14,7 +17,7 @@ from ...kernel._logger import logger
 from ...kernel.client import S3ClientPort
 from ._warnings import S3_STORAGE_WARNING
 from .configs import S3StorageConfig
-from .factories import ConfigurableS3Storage
+from .factories import ConfigurableS3StorageCommand, ConfigurableS3StorageQuery
 from .keys import S3ClientDepKey
 
 # ----------------------- #
@@ -57,7 +60,10 @@ class S3DepsModule(DepsModule):
         return merge_deps(
             routed_from_mapping(
                 self.storages,
-                bindings=[(StorageDepKey, ConfigurableS3Storage)],
+                bindings=[
+                    (StorageQueryDepKey, ConfigurableS3StorageQuery),
+                    (StorageCommandDepKey, ConfigurableS3StorageCommand),
+                ],
             ),
             plain={S3ClientDepKey: self.client},
         )

@@ -97,7 +97,7 @@ Use them for:
 - `tests/integration/`: integration tests with external dependencies.
 - `tests/perf/`: performance benchmarks (`-m perf`, excluded from `just test`; many use Docker, some in-process only).
 - `pages/`: documentation source and build files.
-- `examples/`: usage examples and tutorials.
+- `examples/`: runnable, **test-backed** usage examples (each is exercised by a test under `tests/unit/test_examples/`, so examples can't silently rot). E.g. `order_fulfillment.py` runs the aggregate → event → saga → outbox → relay → inbox → downstream flow in-process.
 - `skills/`: published [Agent Skills](https://agentskills.io/) for **app authors** (`SKILL.md` per skill; see `skills/AUTHORING.md`); install via README **Agent Skills** (e.g. `npx skills add morzecrew/forze`). Framework contribution uses `.claude/skills/` and canonical docs.
 
 ## Operating rules for agents

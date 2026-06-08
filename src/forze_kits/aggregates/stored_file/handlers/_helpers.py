@@ -172,7 +172,7 @@ async def complete_stored_file_upload(
     """Upload blob bytes and transition a pending row to ``ready``."""
 
     doc = ctx.doc.command(kit.document)
-    storage = ctx.storage(kit.resolved_storage)
+    storage = ctx.storage.command(kit.resolved_storage)
 
     try:
         stored = await storage.upload(
@@ -227,7 +227,7 @@ async def purge_stored_file_blob(
     """Delete blob and search index entry after soft delete."""
 
     if storage_key:
-        storage = ctx.storage(kit.resolved_storage)
+        storage = ctx.storage.command(kit.resolved_storage)
         await storage.delete(storage_key)
 
     if search is not None:

@@ -7,6 +7,7 @@ from pydantic import BaseModel
 from forze.base.primitives import StrKey
 
 from .specs import HttpServiceSpec
+from collections.abc import Awaitable
 
 # ----------------------- #
 
@@ -18,11 +19,11 @@ class HttpServicePort(Protocol):
     spec: HttpServiceSpec
     """Service specification bound to this port instance."""
 
-    async def invoke(
+    def invoke(
         self,
         op: StrKey,
         args: BaseModel | None = None,
-    ) -> BaseModel:
+    ) -> Awaitable[BaseModel]:
         """Execute operation ``op`` and return a validated response model."""
 
         ...  # pragma: no cover

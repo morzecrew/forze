@@ -107,8 +107,14 @@ class TransactionContext:
     # ....................... #
 
     @asynccontextmanager
-    async def scope(self, route: StrKey) -> AsyncGenerator[None]:
-        """Enter a transaction scope"""
+    async def scope(
+        self, route: StrKey, *, read_only: bool = False
+    ) -> AsyncGenerator[None]:
+        """Enter a transaction scope.
+
+        ``read_only`` opens a read-only transaction where the backend supports it (a
+        ``QUERY`` operation passes this), so the database rejects writes.
+        """
 
         if self.resolver is None:
             raise exc.internal("Transaction resolver is not set")
@@ -128,7 +134,7 @@ class TransactionContext:
             token_d = self.__tx_depth.set(depth + 1)
 
             try:
-                async with tx.transaction():
+                async with tx.transaction(read_only=read_only):
                     yield
 
             finally:
@@ -146,7 +152,7 @@ class TransactionContext:
         deferred: list[Callable[[], Awaitable[None]]] | None = None
 
         try:
-            async with tx.transaction():
+            async with tx.transaction(read_only=read_only):
                 yield
 
         except BaseException:

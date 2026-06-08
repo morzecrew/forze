@@ -39,7 +39,7 @@ The package supplies a single `MockDepsModule` that registers in-memory adapters
 | `MockCounterAdapter` | `CounterPort` |
 | `MockCacheAdapter` | `CachePort` |
 | `MockIdempotencyAdapter` | `IdempotencyPort` |
-| `MockStorageAdapter` | `StoragePort` |
+| `MockStorageAdapter` | `StorageQueryPort`, `StorageCommandPort` |
 | `MockTxManagerAdapter` | `TxManagerPort` |
 | `MockQueueAdapter` | `QueueReadPort`, `QueueWritePort` |
 | `MockPubSubAdapter` | `PubSubCommandPort`, `PubSubQueryPort` |
@@ -85,7 +85,8 @@ No lifecycle plan is needed — mock adapters have no connections to manage.
 | `CounterDepKey` | Counter adapter |
 | `CacheDepKey` | Cache adapter |
 | `IdempotencyDepKey` | Idempotency adapter |
-| `StorageDepKey` | Storage adapter |
+| `StorageQueryDepKey` | Storage query adapter (download, list) |
+| `StorageCommandDepKey` | Storage command adapter (upload, delete) |
 | `TxManagerDepKey` | Transaction manager (no-op) |
 | `QueueReadDepKey` | Queue read adapter |
 | `QueueWriteDepKey` | Queue write adapter |

@@ -14,7 +14,6 @@ Notes:
 
 import hashlib
 import secrets
-import time
 from datetime import UTC, datetime, timezone
 from typing import Any
 from uuid import UUID
@@ -24,6 +23,7 @@ from zoneinfo import ZoneInfo
 import orjson
 
 from ..exceptions import exc
+from .time_source import current_time_source
 
 # ----------------------- #
 
@@ -65,6 +65,13 @@ def uuid7(
             "Specify only one of timestamp_ms or timestamp_ns, not both."
         )
 
+    if timestamp_ms is None and timestamp_ns is None:
+        # No explicit timestamp: read the context-active time source (system clock by
+        # default), so a bound source controls every "current time" id read. Imported at
+        # module level (not lazily here) so calling uuid7() inside a Temporal workflow does
+        # not run an import statement — which the workflow sandbox would reject.
+        return current_time_source().uuid()
+
     if (timestamp_ms == 0 and timestamp_ns is None) or (
         timestamp_ns == 0 and timestamp_ms is None
     ):
@@ -72,10 +79,10 @@ def uuid7(
 
     if timestamp_ns is not None:
         timestamp_ns = int(timestamp_ns)
-    elif timestamp_ms is not None:
-        timestamp_ns = int(timestamp_ms * 1_000_000)
+
     else:
-        timestamp_ns = time.time_ns()
+        assert timestamp_ms is not None  # nosec: B101
+        timestamp_ns = int(timestamp_ms * 1_000_000)
 
     if timestamp_ns < 0:
         raise exc.internal("Timestamp must be positive.")

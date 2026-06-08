@@ -9,7 +9,11 @@ from forze.application.contracts.cache import CacheSpec
 from forze.application.contracts.counter import CounterDepKey, CounterPort, CounterSpec
 from forze.application.contracts.document import DocumentSpec
 from forze.application.contracts.search import SearchSpec
-from forze.application.contracts.storage import StorageDepKey, StorageSpec
+from forze.application.contracts.storage import (
+    StorageCommandDepKey,
+    StorageQueryDepKey,
+    StorageSpec,
+)
 from forze.application.execution import Deps, ExecutionContext
 from forze.domain.models import CreateDocumentCmd, Document, ReadDocument
 from tests.support.execution_context import context_from_deps, context_from_modules, frozen_deps_from_deps
@@ -40,7 +44,8 @@ def ctx(mock_state: MockState) -> ExecutionContext:
     base = MockDepsModule(state=mock_state)()
     plain = dict(base.plain_deps)
     plain[CounterDepKey] = _mock_counter_fac
-    plain[StorageDepKey] = _mock_storage_fac
+    plain[StorageQueryDepKey] = _mock_storage_fac
+    plain[StorageCommandDepKey] = _mock_storage_fac
     return context_from_deps(Deps.plain(plain))
 
 
@@ -208,8 +213,9 @@ class TestExecutionContextPorts:
         assert port is not None
 
     def test_storage(self, ctx: ExecutionContext) -> None:
-        port = ctx.storage(StorageSpec(name="my-bucket"))
-        assert port is not None
+        spec = StorageSpec(name="my-bucket")
+        assert ctx.storage.query(spec) is not None
+        assert ctx.storage.command(spec) is not None
 
     def test_search(self, ctx: ExecutionContext) -> None:
         port = ctx.search.query(_search_spec())
@@ -243,7 +249,8 @@ class TestExecutionContextStrEnumNames:
 
         assert ctx.counter(CounterSpec(name=DocName.TEST)) is not None
 
-        assert ctx.storage(StorageSpec(name=DocName.TEST)) is not None
+        assert ctx.storage.query(StorageSpec(name=DocName.TEST)) is not None
+        assert ctx.storage.command(StorageSpec(name=DocName.TEST)) is not None
 
         search_spec = SearchSpec(
             name=DocName.TEST,

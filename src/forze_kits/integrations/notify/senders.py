@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Protocol, runtime_checkable
 
 from .payloads import EmailNotification, PushNotification, WebhookNotification
+from collections.abc import Awaitable
 
 # ----------------------- #
 
@@ -13,14 +14,14 @@ from .payloads import EmailNotification, PushNotification, WebhookNotification
 class NotificationSenders(Protocol):
     """Send notifications using vendor SDKs wired by the application."""
 
-    async def send_email(self, _notification: EmailNotification) -> None:
+    def send_email(self, _notification: EmailNotification) -> Awaitable[None]:
         """Deliver an email notification."""
         ...  # pragma: no cover
 
-    async def send_push(self, _notification: PushNotification) -> None:
+    def send_push(self, _notification: PushNotification) -> Awaitable[None]:
         """Deliver a push notification."""
         ...  # pragma: no cover
 
-    async def send_webhook(self, _notification: WebhookNotification) -> None:
+    def send_webhook(self, _notification: WebhookNotification) -> Awaitable[None]:
         """Deliver a webhook notification."""
         ...  # pragma: no cover

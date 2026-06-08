@@ -53,9 +53,9 @@ class AnalyticsDeps(ConvenientDeps):
     # ....................... #
 
     def ingest(self, spec: AnalyticsSpec[Any, Ing]) -> AnalyticsIngestPort[Ing]:
-        """Resolve an analytics ingest port for the given spec."""
+        """Resolve an analytics ingest port for the given spec (a write — guarded)."""
 
-        return self._resolve_configurable(
+        return self._resolve_command(
             AnalyticsIngestDepKey,
             spec,
             route=spec.name,

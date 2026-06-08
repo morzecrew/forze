@@ -6,7 +6,7 @@ from forze.base.exceptions import exc
 from forze.base.primitives import StrKey, StrKeySelector
 
 from ..planning.binders import ScopeBinder, TransactionScopeBinder
-from ..planning.plans import OperationPlan
+from ..planning.plans import OperationKind, OperationPlan
 
 if TYPE_CHECKING:
     from ..planning.scopes import Scope, TransactionScope
@@ -57,6 +57,29 @@ class OperationRegistryBinder:
         new_parent = attrs.evolve(self._parent, plans=plans)
 
         return new_parent
+
+    # ....................... #
+
+    def as_query(self) -> Self:
+        """Mark these operations as read-only (``QUERY``).
+
+        A read-only operation may not acquire a command (write) port — enforced for the
+        operation's duration. Place early in the chain, e.g.
+        ``registry.bind(op).as_query().bind_tx().set_route("pg").finish()``.
+        """
+
+        return attrs.evolve(
+            self, acc=attrs.evolve(self._acc, kind=OperationKind.QUERY)
+        )
+
+    # ....................... #
+
+    def as_command(self) -> Self:
+        """Mark these operations as read-write (``COMMAND``) — the default."""
+
+        return attrs.evolve(
+            self, acc=attrs.evolve(self._acc, kind=OperationKind.COMMAND)
+        )
 
     # ....................... #
 

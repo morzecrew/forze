@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Iterable, Mapping, final
+from typing import Any, Iterable, Literal, Mapping, final
 
 import attrs
 
@@ -45,6 +45,7 @@ from forze.application.contracts.document import (
     DocumentQueryDepKey,
     DocumentSpec,
 )
+from forze.application.contracts.domain import DomainEventDispatcherDepKey
 from forze.application.contracts.durable.function import (
     DurableFunctionEventCommandDepKey,
     DurableFunctionEventSpec,
@@ -61,11 +62,18 @@ from forze.application.contracts.embeddings import (
     EmbeddingsProviderDepKey,
     EmbeddingsSpec,
 )
+from forze.application.contracts.graph import (
+    GraphCommandDepKey,
+    GraphModuleSpec,
+    GraphQueryDepKey,
+    GraphRawQueryDepKey,
+)
 from forze.application.contracts.idempotency import (
     IdempotencyDepKey,
     IdempotencyPort,
     IdempotencySpec,
 )
+from forze.application.contracts.inbox import InboxDepKey, InboxPort, InboxSpec
 from forze.application.contracts.outbox import (
     OutboxCommandDepKey,
     OutboxQueryDepKey,
@@ -81,6 +89,7 @@ from forze.application.contracts.queue import (
     QueueQueryDepKey,
     QueueSpec,
 )
+from forze.application.contracts.resilience import ResilienceExecutorDepKey
 from forze.application.contracts.search import (
     FederatedSearchQueryDepKey,
     FederatedSearchSpec,
@@ -93,7 +102,13 @@ from forze.application.contracts.search import (
     SearchSpec,
 )
 from forze.application.contracts.secrets import SecretsDepKey
-from forze.application.contracts.storage import StorageDepKey, StoragePort, StorageSpec
+from forze.application.contracts.storage import (
+    StorageCommandDepKey,
+    StorageCommandPort,
+    StorageQueryDepKey,
+    StorageQueryPort,
+    StorageSpec,
+)
 from forze.application.contracts.stream import (
     StreamCommandDepKey,
     StreamGroupQueryDepKey,
@@ -109,7 +124,16 @@ from forze.application.contracts.transaction import (
     TransactionManagerDepKey,
     TransactionManagerPort,
 )
-from forze.application.execution import Deps, DepsModule, ExecutionContext
+from forze.application.execution import (
+    Deps,
+    DepsModule,
+    DomainEventRegistry,
+    ExecutionContext,
+    InProcessDomainEventDispatcher,
+    InProcessResilienceExecutor,
+    builtin_default_policies,
+)
+from forze.application.execution.domain import domain_dispatcher_provider
 from forze.application.execution.outbox import build_staging_outbox_command_for_store
 from forze.application.integrations.outbox import StagingOutboxCommand
 from forze.application.integrations.search import SearchResultSnapshot
@@ -128,8 +152,10 @@ from forze_mock.adapters import (
     MockDurableWorkflowScheduleCommandAdapter,
     MockDurableWorkflowScheduleQueryAdapter,
     MockFederatedSearchAdapter,
+    MockGraphAdapter,
     MockHubSearchAdapter,
     MockIdempotencyAdapter,
+    MockInboxAdapter,
     MockPubSubAdapter,
     MockQueueAdapter,
     MockSearchAdapter,
@@ -167,6 +193,7 @@ from forze_mock.outbox_adapter import MockOutboxStore
 from forze_mock.tenancy import MockRoutedStateRegistry, resolve_mock_namespace_sync
 from forze_mock.tenancy.routed import MockRoutedStateDepKey
 
+from ..resilience import PassthroughResilienceExecutor
 from .configs import MockRouteConfig
 from .keys import MockStateDepKey
 
@@ -176,8 +203,7 @@ DocSpec = DocumentSpec[Any, Any, Any, Any]
 
 
 def mock_txmanager(context: ExecutionContext) -> TransactionManagerPort:
-    del context
-    return MockTxManagerAdapter()
+    return MockTxManagerAdapter(state=context.deps.provide(MockStateDepKey))
 
 
 def _tenant_provider(ctx: ExecutionContext) -> TenantProviderPort:
@@ -248,6 +274,7 @@ class ConfigurableMockDocument(_MockFactoryBase):
             namespace=self._namespace_for(context, spec.name, default=str(spec.name)),
             read_model=spec.read,
             domain_model=domain_model,
+            dispatcher_provider=domain_dispatcher_provider(context),
             tenant_aware=cfg.tenant_aware if cfg else False,
             tenant_provider=_tenant_provider(context),
         )
@@ -427,12 +454,62 @@ class ConfigurableMockIdempotency(_MockFactoryBase):
 
 @final
 @attrs.define(slots=True, kw_only=True)
-class ConfigurableMockStorage(_MockFactoryBase):
-    def __call__(self, context: ExecutionContext, spec: StorageSpec) -> StoragePort:
+class ConfigurableMockInbox(_MockFactoryBase):
+    def __call__(
+        self,
+        context: ExecutionContext,
+        spec: InboxSpec,
+    ) -> InboxPort:
+        cfg = self._route(spec.name)
+        return MockInboxAdapter(
+            state=self._state(context),
+            namespace=self._namespace_for(context, spec.name, default=str(spec.name)),
+            tenant_aware=cfg.tenant_aware if cfg else False,
+            tenant_provider=_tenant_provider(context),
+        )
+
+
+@final
+@attrs.define(slots=True, kw_only=True)
+class ConfigurableMockStorageQuery(_MockFactoryBase):
+    def __call__(
+        self, context: ExecutionContext, spec: StorageSpec
+    ) -> StorageQueryPort:
         cfg = self._route(spec.name)
         return MockStorageAdapter(
             state=self._state(context),
             bucket=self._namespace_for(context, spec.name, default=str(spec.name)),
+            tenant_aware=cfg.tenant_aware if cfg else False,
+            tenant_provider=_tenant_provider(context),
+        )
+
+
+@final
+@attrs.define(slots=True, kw_only=True)
+class ConfigurableMockStorageCommand(_MockFactoryBase):
+    def __call__(
+        self, context: ExecutionContext, spec: StorageSpec
+    ) -> StorageCommandPort:
+        cfg = self._route(spec.name)
+        return MockStorageAdapter(
+            state=self._state(context),
+            bucket=self._namespace_for(context, spec.name, default=str(spec.name)),
+            tenant_aware=cfg.tenant_aware if cfg else False,
+            tenant_provider=_tenant_provider(context),
+        )
+
+
+@final
+@attrs.define(slots=True, kw_only=True)
+class ConfigurableMockGraph(_MockFactoryBase):
+    def __call__(
+        self, context: ExecutionContext, spec: GraphModuleSpec
+    ) -> MockGraphAdapter:
+        cfg = self._route(spec.name)
+        return MockGraphAdapter(
+            spec=spec,
+            state=self._state(context),
+            namespace=self._namespace_for(context, spec.name, default=str(spec.name)),
             tenant_aware=cfg.tenant_aware if cfg else False,
             tenant_provider=_tenant_provider(context),
         )
@@ -664,14 +741,30 @@ class MockDepsModule(DepsModule):
     identity: MockIdentityConfig | None = attrs.field(default=None)
     routed_state: MockRoutedStateRegistry | None = attrs.field(default=None)
     embeddings_dimensions: int = 8
+    resilience: Literal["passthrough", "real"] = "passthrough"
+    domain_events: DomainEventRegistry | None = attrs.field(default=None)
 
     def __call__(self) -> Deps:
         document = ConfigurableMockDocument(module=self)
         dlock = ConfigurableMockDistributedLock(module=self)
+        graph = ConfigurableMockGraph(module=self)
         secrets = MockSecretsPort(state=self.state)
+
+        resilience_executor = (
+            PassthroughResilienceExecutor()
+            if self.resilience == "passthrough"
+            else InProcessResilienceExecutor(policies=builtin_default_policies())
+        )
+
+        domain_registry = self.domain_events or DomainEventRegistry()
+
+        def _domain_dispatcher(ctx: ExecutionContext) -> InProcessDomainEventDispatcher:
+            return InProcessDomainEventDispatcher(registry=domain_registry, ctx=ctx)
 
         deps: dict[DepKey[Any], Any] = {
             MockStateDepKey: self.state,
+            ResilienceExecutorDepKey: resilience_executor,
+            DomainEventDispatcherDepKey: _domain_dispatcher,
             DocumentQueryDepKey: document,
             DocumentCommandDepKey: document,
             SearchQueryDepKey: ConfigurableMockSearch(module=self),
@@ -684,7 +777,12 @@ class MockDepsModule(DepsModule):
             CounterDepKey: ConfigurableMockCounter(module=self),
             CacheDepKey: ConfigurableMockCache(module=self),
             IdempotencyDepKey: ConfigurableMockIdempotency(module=self),
-            StorageDepKey: ConfigurableMockStorage(module=self),
+            InboxDepKey: ConfigurableMockInbox(module=self),
+            StorageQueryDepKey: ConfigurableMockStorageQuery(module=self),
+            StorageCommandDepKey: ConfigurableMockStorageCommand(module=self),
+            GraphQueryDepKey: graph,
+            GraphCommandDepKey: graph,
+            GraphRawQueryDepKey: graph,
             TransactionManagerDepKey: mock_txmanager,
             QueueQueryDepKey: ConfigurableMockQueue(module=self),
             QueueCommandDepKey: ConfigurableMockQueue(module=self),

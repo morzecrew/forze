@@ -10,14 +10,13 @@ from typing import Any, Sequence, cast, final
 from uuid import UUID
 
 import attrs
-from tenacity import (
-    retry,
-    retry_if_exception,
-    stop_after_attempt,
-    wait_exponential,
-)
 
 from forze.application.contracts.querying import QueryFilterExpression
+from forze.application.contracts.resilience import ResilienceExecutorPort
+from forze.application.execution.resilience import (
+    default_resilience_executor,
+    occ_retry,
+)
 from forze.base.exceptions import CoreException, ExceptionKind, exc
 from forze.base.primitives import JsonDict
 from forze.base.serialization import ModelCodec
@@ -32,21 +31,6 @@ from .read import FirestoreReadGateway
 # ----------------------- #
 
 
-def optimistic_retry(*, attempts: int = 3):  # type: ignore[no-untyped-def]
-    return retry(
-        retry=retry_if_exception(
-            predicate=lambda e: isinstance(e, CoreException)
-            and e.kind is ExceptionKind.CONCURRENCY
-        ),
-        stop=stop_after_attempt(attempts),
-        wait=wait_exponential(multiplier=0.01, min=0.01, max=0.2),
-        reraise=True,
-    )
-
-
-# ....................... #
-
-
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class FirestoreWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
@@ -55,10 +39,17 @@ class FirestoreWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
     """Write gateway for Firestore documents with optimistic concurrency."""
 
     read_gw: FirestoreReadGateway[D]
+    resilience: ResilienceExecutorPort = attrs.field(
+        factory=default_resilience_executor,
+        eq=False,
+        repr=False,
+    )
     create_cmd_type: type[C]
     update_cmd_type: type[U] | None = attrs.field(default=None)
     create_codec: ModelCodec[D, Any] = attrs.field(kw_only=True, eq=False, repr=False)
-    update_codec: ModelCodec[U, Any] | None = attrs.field(kw_only=True, eq=False, repr=False)
+    update_codec: ModelCodec[U, Any] | None = attrs.field(
+        kw_only=True, eq=False, repr=False
+    )
     history_gw: FirestoreHistoryGateway[D] | None = attrs.field(default=None)
 
     # ....................... #
@@ -194,7 +185,7 @@ class FirestoreWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
 
     # ....................... #
 
-    @optimistic_retry()  # type: ignore[untyped-decorator]
+    @occ_retry
     async def create(self, dto: C) -> D:
         model = self._from_cdto(dto)
         data = self.read_codec.encode_persistence_mapping(model)
@@ -210,7 +201,7 @@ class FirestoreWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
 
     # ....................... #
 
-    @optimistic_retry()  # type: ignore[untyped-decorator]
+    @occ_retry
     async def create_many(
         self,
         dtos: Sequence[C],
@@ -245,7 +236,7 @@ class FirestoreWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
 
     # ....................... #
 
-    @optimistic_retry()  # type: ignore[untyped-decorator]
+    @occ_retry
     async def _patch(
         self,
         pk: UUID,
@@ -335,7 +326,7 @@ class FirestoreWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
 
     # ....................... #
 
-    @optimistic_retry()  # type: ignore[untyped-decorator]
+    @occ_retry
     async def ensure(self, dto: C) -> D:
         model = self._from_cdto(dto)
 
@@ -350,7 +341,7 @@ class FirestoreWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
 
     # ....................... #
 
-    @optimistic_retry()  # type: ignore[untyped-decorator]
+    @occ_retry
     async def ensure_many(
         self,
         dtos: Sequence[C],
@@ -370,7 +361,7 @@ class FirestoreWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
 
     # ....................... #
 
-    @optimistic_retry()  # type: ignore[untyped-decorator]
+    @occ_retry
     async def upsert(self, create_dto: C, update_dto: U) -> D:
         self._require_update_cmd()
         model = self._from_cdto(create_dto)
@@ -389,7 +380,7 @@ class FirestoreWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
 
     # ....................... #
 
-    @optimistic_retry()  # type: ignore[untyped-decorator]
+    @occ_retry
     async def upsert_many(
         self,
         pairs: Sequence[tuple[C, U]],

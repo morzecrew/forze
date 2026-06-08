@@ -4,7 +4,10 @@ from typing import Mapping, final
 
 import attrs
 
-from forze.application.contracts.storage import StorageDepKey
+from forze.application.contracts.storage import (
+    StorageCommandDepKey,
+    StorageQueryDepKey,
+)
 from forze.application.contracts.tenancy import warn_integration_routes
 from forze.application.execution import Deps, DepsModule
 from forze.application.execution.deps.builders import merge_deps, routed_from_mapping
@@ -14,7 +17,7 @@ from ...kernel._logger import logger
 from ...kernel.client import GCSClientPort
 from ._warnings import GCS_STORAGE_WARNING
 from .configs import GCSStorageConfig
-from .factories import ConfigurableGCSStorage
+from .factories import ConfigurableGCSStorageCommand, ConfigurableGCSStorageQuery
 from .keys import GCSClientDepKey
 
 # ----------------------- #
@@ -47,7 +50,10 @@ class GCSDepsModule(DepsModule):
         return merge_deps(
             routed_from_mapping(
                 self.storages,
-                bindings=[(StorageDepKey, ConfigurableGCSStorage)],
+                bindings=[
+                    (StorageQueryDepKey, ConfigurableGCSStorageQuery),
+                    (StorageCommandDepKey, ConfigurableGCSStorageCommand),
+                ],
             ),
             plain={GCSClientDepKey: self.client},
         )

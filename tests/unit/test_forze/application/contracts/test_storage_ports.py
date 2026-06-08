@@ -8,11 +8,14 @@ from forze.application.contracts.storage import (
     StoredObject,
     UploadedObject,
 )
-from forze.application.contracts.storage.ports import StoragePort
+from forze.application.contracts.storage.ports import (
+    StorageCommandPort,
+    StorageQueryPort,
+)
 
 
 class _StubStorage:
-    """Concrete implementation for testing StoragePort."""
+    """Concrete implementation for testing the storage query/command ports."""
 
     async def upload(self, obj: UploadedObject) -> StoredObject:
         return StoredObject(
@@ -44,10 +47,11 @@ class _StubStorage:
         return [], 0
 
 
-class TestStoragePort:
+class TestStoragePorts:
     def test_is_runtime_checkable(self) -> None:
         stub = _StubStorage()
-        assert isinstance(stub, StoragePort)
+        assert isinstance(stub, StorageQueryPort)
+        assert isinstance(stub, StorageCommandPort)
 
     async def test_upload(self) -> None:
         stub = _StubStorage()
@@ -83,4 +87,5 @@ class TestStoragePort:
         class Bad:
             pass
 
-        assert not isinstance(Bad(), StoragePort)
+        assert not isinstance(Bad(), StorageQueryPort)
+        assert not isinstance(Bad(), StorageCommandPort)

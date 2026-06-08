@@ -1,4 +1,4 @@
-"""S3-backed implementation of :class:`~forze.application.contracts.storage.StoragePort`."""
+"""S3-backed object storage adapter (storage query and command ports)."""
 
 from forze_s3._compat import require_s3
 
@@ -28,7 +28,7 @@ from ..kernel.relation import resolve_s3_bucket
 class S3StorageAdapter(ObjectStorageAdapter):
     """Storage adapter that persists files in an S3-compatible bucket.
 
-    Implements :class:`~forze.application.contracts.storage.StoragePort` via
+    Implements the storage query and command ports via
     :class:`~forze.application.integrations.storage.ObjectStorageAdapter`.
     """
 

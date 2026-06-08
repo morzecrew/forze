@@ -112,19 +112,57 @@ jobs:
       - name: Run quality checks
         run: just quality -s
 
-  tests:
-    name: Run tests
+  # Each suite runs in its own runner so only that integration's testcontainers
+  # are alive at once — the full serial suite peaks well over the 16 GB runner.
+  # Per-shard coverage data is combined + gated in the `coverage` job below.
+  test:
+    name: Test (${{ matrix.name }})
     needs: [changes, quality]
     if: |
       (needs.changes.outputs.force_full == 'true' || needs.changes.outputs.code == 'true') &&
       needs.quality.result == 'success'
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     permissions:
       contents: read
       checks: write
       pull-requests: write
       issues: write
-
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: unit, path: tests/unit }
+          - { name: core, path: tests/integration/test_forze }
+          - { name: authn, path: tests/integration/test_forze_authn }
+          - { name: authz, path: tests/integration/test_forze_authz }
+          - { name: bigquery, path: tests/integration/test_forze_bigquery }
+          - { name: clickhouse, path: tests/integration/test_forze_clickhouse }
+          - { name: fastapi, path: tests/integration/test_forze_fastapi }
+          - { name: firestore, path: tests/integration/test_forze_firestore }
+          - { name: gcs, path: tests/integration/test_forze_gcs }
+          - { name: inngest, path: tests/integration/test_forze_inngest_integration }
+          - { name: meilisearch, path: tests/integration/test_forze_meilisearch }
+          - { name: mock, path: tests/integration/test_forze_mock }
+          - { name: mongo, path: tests/integration/test_forze_mongo }
+          - { name: neo4j, path: tests/integration/test_forze_neo4j }
+          - { name: postgres, path: tests/integration/test_forze_postgres }
+          - { name: rabbitmq, path: tests/integration/test_forze_rabbitmq }
+          - { name: redis, path: tests/integration/test_forze_redis }
+          - { name: s3, path: tests/integration/test_forze_s3 }
+          - { name: sqs, path: tests/integration/test_forze_sqs }
+          - { name: temporal, path: tests/integration/test_forze_temporal_integration }
+          - { name: vault, path: tests/integration/test_forze_vault }
+    env:
+      COVERAGE_FILE: .coverage.${{ matrix.name }}
+      # Force coverage's settrace-based `ctrace` core instead of the Python 3.12+
+      # default `sysmon` (sys.monitoring) core. sysmon's branch callback fires
+      # *inside* Temporal's workflow sandbox, where it lazily imports coverage
+      # internals and calls platform.python_implementation() — blocked as
+      # non-deterministic (RestrictedWorkflowAccessError) → infinite workflow-task
+      # retry → hung `temporal` shard. ctrace parses at report time, outside the
+      # sandbox, so it's sandbox-safe. Set for every shard for one consistent tracer.
+      COVERAGE_CORE: ctrace
     steps:
       - name: Harden the runner (Audit all outbound calls)
         uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
@@ -148,14 +186,24 @@ jobs:
       - name: Install dependencies
         run: uv sync --all-groups --all-extras
 
-      - name: Run tests
+      - name: Run ${{ matrix.name }} tests
         run: |
-          just test \
+          just test "${{ matrix.path }}" \
             --cov=src \
-            --cov-report=xml \
-            --cov-report=term \
-            --junitxml=junit.xml \
+            --cov-report= \
+            --cov-fail-under=0 \
+            --junitxml="junit-${{ matrix.name }}.xml" \
             -o junit_family=legacy
+
+      - name: Upload coverage data
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: coverage-data-${{ matrix.name }}
+          path: .coverage.${{ matrix.name }}
+          include-hidden-files: true
+          if-no-files-found: ignore
+          retention-days: 1
 
       - name: Upload test results to Codecov
         if: ${{ !cancelled() }}
@@ -163,9 +211,55 @@ jobs:
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           report_type: test_results
-          files: ./junit.xml
+          files: ./junit-${{ matrix.name }}.xml
 
-      - name: Upload coverage reports to Codecov
+  # Combine per-shard coverage into one report, enforce the threshold, upload.
+  coverage:
+    name: Coverage gate
+    needs: [changes, quality, test]
+    if: |
+      !cancelled() &&
+      (needs.changes.outputs.force_full == 'true' || needs.changes.outputs.code == 'true') &&
+      needs.quality.result == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+
+      - name: Checkout code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          enable-cache: true
+          cache-dependency-glob: |
+            uv.lock
+            pyproject.toml
+
+      - name: Install dependencies
+        run: uv sync --all-groups
+
+      - name: Download coverage data
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          pattern: coverage-data-*
+          path: coverage-data
+          merge-multiple: true
+
+      - name: Combine coverage + generate report
+        run: |
+          mv coverage-data/.coverage.* . 2>/dev/null || true
+          uv run coverage combine
+          uv run coverage xml || true  # never gate here; upload first, gate below
+
+      - name: Upload coverage to Codecov
         if: ${{ !cancelled() }}
         uses: codecov/codecov-action@e79a6962e0d4c0c17b229090214935d2e33f8354 # v6.0.1
         with:
@@ -173,9 +267,12 @@ jobs:
           report_type: coverage
           files: ./coverage.xml
 
+      - name: Enforce coverage threshold
+        run: uv run coverage report --fail-under=80
+
   required-ci:
     name: Required Continuous Integration
-    needs: [changes, quality, tests]
+    needs: [changes, quality, test, coverage]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -189,7 +286,8 @@ jobs:
         run: |
           echo "changes.result=${{ needs.changes.result }}"
           echo "quality.result=${{ needs.quality.result }}"
-          echo "tests.result=${{ needs.tests.result }}"
+          echo "test.result=${{ needs.test.result }}"
+          echo "coverage.result=${{ needs.coverage.result }}"
           echo "code=${{ needs.changes.outputs.code }}"
           echo "force_full=${{ needs.changes.outputs.force_full }}"
 
@@ -204,8 +302,13 @@ jobs:
               exit 1
             fi
 
-            if [[ "${{ needs.tests.result }}" != "success" ]]; then
-              echo "tests job did not succeed"
+            if [[ "${{ needs.test.result }}" != "success" ]]; then
+              echo "test matrix did not succeed"
+              exit 1
+            fi
+
+            if [[ "${{ needs.coverage.result }}" != "success" ]]; then
+              echo "coverage gate did not succeed"
               exit 1
             fi
           else
@@ -214,8 +317,8 @@ jobs:
               exit 1
             fi
 
-            if [[ "${{ needs.tests.result }}" != "skipped" ]]; then
-              echo "tests was expected to be skipped"
+            if [[ "${{ needs.test.result }}" != "skipped" ]]; then
+              echo "test was expected to be skipped"
               exit 1
             fi
           fi

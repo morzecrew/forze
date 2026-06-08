@@ -85,7 +85,7 @@ class SearchDeps(ConvenientDeps):
     def command(self, spec: SearchSpec[T]) -> SearchCommandPort[T]:
         """Resolve a search command port for the given spec."""
 
-        return self._resolve_configurable(
+        return self._resolve_command(
             SearchCommandDepKey,
             spec,
             route=spec.name,

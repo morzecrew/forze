@@ -1,5 +1,5 @@
-from .plans import FrozenOperationPlan, OperationPlan
+from .plans import FrozenOperationPlan, OperationKind, OperationPlan
 
 # ----------------------- #
 
-__all__ = ["OperationPlan", "FrozenOperationPlan"]
+__all__ = ["OperationKind", "OperationPlan", "FrozenOperationPlan"]

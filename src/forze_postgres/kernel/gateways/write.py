@@ -14,16 +14,15 @@ from uuid import UUID
 
 import attrs
 from psycopg import sql
-from tenacity import (
-    retry,
-    retry_if_exception,
-    stop_after_attempt,
-    wait_random_exponential,
-)
 
 from forze.application.contracts.querying import QueryFilterExpression
+from forze.application.contracts.resilience import ResilienceExecutorPort
+from forze.application.execution.resilience import (
+    default_resilience_executor,
+    occ_retry,
+)
 from forze.application.integrations.persistence import HistoryOccMixin
-from forze.base.exceptions import CoreException, ExceptionKind, exc
+from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict, OnceCell
 from forze.base.serialization import ModelCodec
 from forze.domain.constants import ID_FIELD, REV_FIELD
@@ -38,28 +37,6 @@ from .read import PostgresReadGateway
 from .types import PostgresBookkeepingStrategy
 
 # ----------------------- #
-
-
-def optimistic_retry(*, attempts: int = 3):  # type: ignore[no-untyped-def]
-    """Return a tenacity retry decorator for :exc:`~forze.base.errors.ConcurrencyError`.
-
-    Uses exponential back-off and re-raises the error after *attempts* failures.
-
-    :param attempts: Maximum number of attempts before re-raising.
-    """
-
-    return retry(
-        retry=retry_if_exception(
-            lambda e: isinstance(e, CoreException)
-            and e.kind is ExceptionKind.CONCURRENCY
-        ),
-        stop=stop_after_attempt(attempts),
-        wait=wait_random_exponential(multiplier=0.05, max=2.0),
-        reraise=True,
-    )
-
-
-# ....................... #
 
 
 def _pg_cast_type_sql(pg: PostgresType) -> sql.Composable:
@@ -108,11 +85,19 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
 
     Requires a companion :class:`PostgresReadGateway` sharing the same client.
     Optionally writes revision history via :class:`PostgresHistoryGateway`.
-    All mutating operations are decorated with :func:`optimistic_retry`.
+    All mutating operations are wrapped with the ``occ`` resilience policy via
+    :func:`~forze.application.execution.resilience.occ_retry`.
     """
 
     read_gw: PostgresReadGateway[D]
     """Read gateway for the same document type."""
+
+    resilience: ResilienceExecutorPort = attrs.field(
+        factory=default_resilience_executor,
+        eq=False,
+        repr=False,
+    )
+    """Resilience executor backing optimistic-concurrency retries."""
 
     create_cmd_type: type[C]
     """Pydantic model for creation payloads."""
@@ -252,7 +237,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
 
     # ....................... #
 
-    @optimistic_retry()  # type: ignore[untyped-decorator]
+    @occ_retry
     async def create(self, dto: C) -> D:
         async with self._write_tx():
             model = self._from_create_dto(dto)
@@ -291,7 +276,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
 
     # ....................... #
 
-    @optimistic_retry()  # type: ignore[untyped-decorator]
+    @occ_retry
     async def create_many(
         self,
         dtos: Sequence[C],
@@ -385,7 +370,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
 
     # ....................... #
 
-    @optimistic_retry()  # type: ignore[untyped-decorator]
+    @occ_retry
     async def ensure(self, dto: C) -> D:
         """Insert a row when the primary key is absent; otherwise return the existing row.
 
@@ -432,7 +417,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
 
     # ....................... #
 
-    @optimistic_retry()  # type: ignore[untyped-decorator]
+    @occ_retry
     async def ensure_many(
         self,
         dtos: Sequence[C],
@@ -567,7 +552,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
 
     # ....................... #
 
-    @optimistic_retry()  # type: ignore[untyped-decorator]
+    @occ_retry
     async def upsert(self, create_dto: C, update_dto: U) -> D:
         """Insert when the primary key is free; otherwise apply ``update_dto`` like :meth:`update`.
 
@@ -619,7 +604,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
 
     # ....................... #
 
-    @optimistic_retry()  # type: ignore[untyped-decorator]
+    @occ_retry
     async def upsert_many(
         self,
         pairs: Sequence[tuple[C, U]],
@@ -778,7 +763,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
 
     # ....................... #
 
-    @optimistic_retry()  # type: ignore[untyped-decorator]
+    @occ_retry
     async def __patch(
         self,
         pk: UUID,
@@ -867,7 +852,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
 
     # ....................... #
 
-    @optimistic_retry()  # type: ignore[untyped-decorator]
+    @occ_retry
     async def __patch_group(
         self,
         key: tuple[str, ...],
@@ -1119,7 +1104,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
 
     # ....................... #
 
-    @optimistic_retry()  # type: ignore[untyped-decorator]
+    @occ_retry
     async def update_matching(
         self,
         filters: QueryFilterExpression,  # type: ignore[valid-type]

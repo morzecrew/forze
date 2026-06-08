@@ -15,7 +15,9 @@ from forze_mock.adapters.durable import (
     MockDurableWorkflowScheduleCommandAdapter,
     MockDurableWorkflowScheduleQueryAdapter,
 )
+from forze_mock.adapters.graph import MockGraphAdapter
 from forze_mock.adapters.idempotency import MockIdempotencyAdapter
+from forze_mock.adapters.inbox import MockInboxAdapter
 from forze_mock.adapters.pubsub import MockPubSubAdapter
 from forze_mock.adapters.queue import MockQueueAdapter
 from forze_mock.adapters.search import (
@@ -38,9 +40,11 @@ __all__ = [
     "MockSearchResultSnapshotAdapter",
     "MockHubSearchAdapter",
     "MockFederatedSearchAdapter",
+    "MockGraphAdapter",
     "MockCounterAdapter",
     "MockCacheAdapter",
     "MockIdempotencyAdapter",
+    "MockInboxAdapter",
     "MockStorageAdapter",
     "MockTxManagerAdapter",
     "MockQueueAdapter",

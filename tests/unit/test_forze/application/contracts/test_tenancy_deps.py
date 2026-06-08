@@ -3,12 +3,17 @@
 from __future__ import annotations
 
 from unittest.mock import MagicMock
+from uuid import uuid4
 
+import pytest
+
+from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.contracts.tenancy.deps import (
     TenancyDeps,
     TenantManagementDepKey,
     TenantResolverDepKey,
 )
+from forze.base.exceptions import CoreException
 
 
 class TestTenancyDeps:
@@ -50,3 +55,30 @@ class TestTenancyDeps:
         deps.lock(ctx)
 
         assert deps.manager() is port
+
+    def test_current_returns_bound_tenant(self) -> None:
+        tenant = TenantIdentity(tenant_id=uuid4())
+        ctx = MagicMock()
+        ctx.inv_ctx.get_tenant.return_value = tenant
+        deps = TenancyDeps()
+        deps.lock(ctx)
+
+        assert deps.current() is tenant
+
+    def test_require_current_id_returns_id(self) -> None:
+        tid = uuid4()
+        ctx = MagicMock()
+        ctx.inv_ctx.get_tenant.return_value = TenantIdentity(tenant_id=tid)
+        deps = TenancyDeps()
+        deps.lock(ctx)
+
+        assert deps.require_current_id() == tid
+
+    def test_require_current_id_raises_when_no_tenant(self) -> None:
+        ctx = MagicMock()
+        ctx.inv_ctx.get_tenant.return_value = None
+        deps = TenancyDeps()
+        deps.lock(ctx)
+
+        with pytest.raises(CoreException):
+            deps.require_current_id()

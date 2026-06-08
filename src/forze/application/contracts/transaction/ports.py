@@ -70,10 +70,12 @@ class TransactionManagerPort(Protocol):
         """Return the key used to scope the transaction."""
         ...
 
-    def transaction(self) -> AsyncContextManager[None]:
+    def transaction(self, *, read_only: bool = False) -> AsyncContextManager[None]:
         """Return an async context manager that scopes a transaction.
 
         On entry, begins a transaction; on exit, commits or rolls back
-        according to implementation policy.
+        according to implementation policy. When ``read_only`` is true the backend opens a
+        read-only transaction where supported (e.g. Postgres ``BEGIN ... READ ONLY``), so
+        the database rejects writes — used for ``QUERY`` operations.
         """
         ...

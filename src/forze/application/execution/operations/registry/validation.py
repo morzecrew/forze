@@ -5,7 +5,11 @@ from __future__ import annotations
 from collections import defaultdict
 from typing import Mapping, final
 
-from forze.application.contracts.execution import HandlerFactory
+from forze.application.contracts.execution import (
+    DeclaresHedge,
+    HandlerFactory,
+    ProvidesIdempotency,
+)
 from forze.base.exceptions import exc
 from forze.base.primitives import DirectedAcyclicGraph, StrKey, str_key_selector
 
@@ -29,6 +33,7 @@ class RegistryFreezeValidator:
         RegistryFreezeValidator.validate_patches(handlers, resolution)
         RegistryFreezeValidator.validate_resolved_plans(handlers, resolution)
         RegistryFreezeValidator.validate_dispatch_graph(handlers, resolution)
+        RegistryFreezeValidator.validate_hedge_safety(handlers, resolution)
 
     # ....................... #
 
@@ -126,6 +131,45 @@ class RegistryFreezeValidator:
                     f"Operation {op!r} has transaction stages or dispatch "
                     "but no transaction route"
                 )
+
+    # ....................... #
+
+    @staticmethod
+    def validate_hedge_safety(
+        handlers: Mapping[StrKey, HandlerFactory],
+        resolution: PlanResolution,
+    ) -> None:
+        """Reject hedged operations that are neither idempotency-guarded nor declared safe.
+
+        Hedging fires concurrent duplicate attempts, so it is only safe on
+        idempotent / read-only operations. An operation carrying a hedge wrap passes
+        only if it also carries an idempotency guard (auto-detected) or every hedge
+        wrap declares an explicit safety basis.
+        """
+
+        for op in handlers:
+            factories = [
+                step.factory
+                for step in resolution.resolve(str(op)).iter_wrap_steps()
+            ]
+
+            hedges = [f for f in factories if isinstance(f, DeclaresHedge)]
+
+            if not hedges:
+                continue
+
+            has_idempotency = any(
+                isinstance(f, ProvidesIdempotency) and f.provides_idempotency()
+                for f in factories
+            )
+
+            if has_idempotency or all(h.hedge_safety_declared() for h in hedges):
+                continue
+
+            raise exc.configuration(
+                f"Operation {op!r} is hedged but has no idempotency guard and no "
+                "explicit HedgeWrap(safety=...); concurrent duplicates are unsafe.",
+            )
 
     # ....................... #
 

@@ -1,5 +1,9 @@
+from uuid import UUID
+
 from ..deps import ConvenientDeps, DepKey, SimpleDepPort
+from .helpers import require_tenant_id
 from .ports import TenantManagementPort, TenantResolverPort
+from .value_objects import TenantIdentity
 
 # ----------------------- #
 
@@ -44,3 +48,25 @@ class TenancyDeps(ConvenientDeps):
             return None
 
         return self._resolve_simple(TenantManagementDepKey)
+
+    # ....................... #
+
+    def current(self) -> TenantIdentity | None:
+        """Return the current tenant identity, if any."""
+
+        return self._require_ctx().inv_ctx.get_tenant()
+
+    # ....................... #
+
+    def require_current_id(self) -> UUID:
+        """Return the current tenant id, raising if no tenant is bound.
+
+        For manual scopers — a raw client-port caller (``PostgresClientPort`` etc.) that
+        owns its own tenant filtering scopes its query with this instead of reaching into
+        ``inv_ctx``.
+        """
+
+        return require_tenant_id(
+            self._require_ctx().inv_ctx.get_tenant,
+            message="Tenant ID is required",
+        )
