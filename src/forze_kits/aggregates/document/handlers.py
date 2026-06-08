@@ -322,8 +322,8 @@ class AggregatedListDocuments(Handler[Alr, ProjectedPaginated]):
     """Optional mapper to transform incoming request DTO"""
 
     query_guard: QueryFieldGuard | None = attrs.field(default=None)
-    """Optional boundary guard rejecting filters/sorts outside the spec's allow-sets.
-    Aggregate group-by / computed fields are not yet covered (filters + sorts only)."""
+    """Optional boundary guard rejecting filters/sorts/aggregate fields outside the spec's
+    allow-sets (group-by + computed-metric fields and per-metric filters are checked too)."""
 
     # ....................... #
 
@@ -334,7 +334,11 @@ class AggregatedListDocuments(Handler[Alr, ProjectedPaginated]):
             body = await self.mapper(body)
 
         if self.query_guard is not None:
-            self.query_guard.check(filters=body.filters, sorts=body.sorts)
+            self.query_guard.check(
+                filters=body.filters,
+                sorts=body.sorts,
+                aggregates=body.aggregates,
+            )
 
         res = await self.doc.aggregate_page(
             body.aggregates,

@@ -7,13 +7,28 @@ import pytest
 from forze.application.contracts.querying import (
     QueryFieldGuard,
     QueryFieldPolicy,
+    collect_aggregate_field_roots,
+    collect_aggregate_filter_expressions,
     collect_filter_field_roots,
+    validate_aggregatable_fields,
     validate_filterable_fields,
     validate_sortable_fields,
 )
 from forze.base.exceptions import CoreException
 
 pytestmark = pytest.mark.unit
+
+# A grouped aggregate over `category`, summing `price`, with a per-metric filter on `price`.
+_AGG = {
+    "$groups": {"category": "category"},
+    "$computed": {
+        "orders": {"$count": None},
+        "revenue": {"$sum": "price"},
+        "premium_revenue": {
+            "$sum": {"field": "price", "filter": {"$values": {"price": {"$gte": 20}}}}
+        },
+    },
+}
 
 
 class TestCollectFilterFieldRoots:
@@ -121,3 +136,68 @@ class TestQueryFieldGuard:
         with pytest.raises(CoreException) as ei2:
             guard.check(sorts={"created_at": "asc"})
         assert ei2.value.code == "field_not_sortable"
+
+
+class TestCollectAggregateFields:
+    def test_group_and_measure_roots(self) -> None:
+        # `category` (group) + `price` (computed measure); per-metric filter excluded here.
+        assert collect_aggregate_field_roots(_AGG) == frozenset({"category", "price"})
+
+    def test_trunc_group_source_field(self) -> None:
+        agg = {
+            "$groups": {"day": {"$trunc": {"field": "created_at", "unit": "day"}}},
+            "$computed": {"n": {"$count": None}},
+        }
+        assert collect_aggregate_field_roots(agg) == frozenset({"created_at"})
+
+    def test_per_metric_filters_extracted(self) -> None:
+        filters = collect_aggregate_filter_expressions(_AGG)
+        assert filters == ({"$values": {"price": {"$gte": 20}}},)
+
+
+class TestValidateAggregatable:
+    def test_allowed_passes(self) -> None:
+        validate_aggregatable_fields(
+            _AGG, allowed=frozenset({"category", "price"}), spec_name="orders"
+        )
+
+    def test_none_is_noop(self) -> None:
+        validate_aggregatable_fields(None, allowed=frozenset(), spec_name="orders")
+
+    def test_forbidden_raises(self) -> None:
+        with pytest.raises(CoreException) as ei:
+            validate_aggregatable_fields(
+                _AGG, allowed=frozenset({"category"}), spec_name="orders"
+            )
+        assert ei.value.code == "field_not_aggregatable"
+
+
+class TestGuardAggregates:
+    def test_aggregatable_axis_enforced(self) -> None:
+        guard = QueryFieldGuard(
+            policy=QueryFieldPolicy(aggregatable={"category"}),
+            spec_name="orders",
+        )
+        with pytest.raises(CoreException) as ei:
+            guard.check(aggregates=_AGG)  # `price` measure not allowed
+        assert ei.value.code == "field_not_aggregatable"
+
+    def test_per_metric_filter_governed_by_filterable(self) -> None:
+        # aggregatable allows the group/measure fields, but the per-metric filter on `price`
+        # is checked against the filterable axis (which excludes `price`).
+        guard = QueryFieldGuard(
+            policy=QueryFieldPolicy(
+                aggregatable={"category", "price"}, filterable={"category"}
+            ),
+            spec_name="orders",
+        )
+        with pytest.raises(CoreException) as ei:
+            guard.check(aggregates=_AGG)
+        assert ei.value.code == "field_not_filterable"
+
+    def test_unrestricted_aggregatable_skips(self) -> None:
+        # No aggregatable / filterable axes → aggregate passes untouched.
+        guard = QueryFieldGuard(
+            policy=QueryFieldPolicy(sortable={"category"}), spec_name="orders"
+        )
+        guard.check(aggregates=_AGG)

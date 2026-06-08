@@ -186,7 +186,9 @@ class TestSchemaResources:
         return DocumentSpec(
             name="notes",
             read=NoteRead,
-            query_policy=QueryFieldPolicy(filterable={"title"}, sortable=["title"]),
+            query_policy=QueryFieldPolicy(
+                filterable={"title"}, sortable=["title"], aggregatable={"body"}
+            ),
         )
 
     async def test_registers_schema_resource_per_spec(self) -> None:
@@ -210,6 +212,7 @@ class TestSchemaResources:
         # Capability allow-sets are projected from the spec's query_policy.
         assert payload["filterable_fields"] == ["title"]
         assert payload["sortable_fields"] == ["title"]
+        assert payload["aggregatable_fields"] == ["body"]
 
 
 class TestQueryPrompts:

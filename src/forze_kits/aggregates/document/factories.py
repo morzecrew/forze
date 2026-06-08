@@ -64,7 +64,11 @@ def _query_guard(spec: DocumentSpec[Any, Any, Any, Any]) -> QueryFieldGuard | No
 
     policy = spec.query_policy
 
-    if policy is None or (policy.filterable is None and policy.sortable is None):
+    if policy is None or (
+        policy.filterable is None
+        and policy.sortable is None
+        and policy.aggregatable is None
+    ):
         return None
 
     return QueryFieldGuard(policy=policy, spec_name=str(spec.name))

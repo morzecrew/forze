@@ -14,7 +14,12 @@ import attrs
 
 from forze.base.exceptions import exc
 
-from .expressions import QueryFilterExpression, QuerySortExpression
+from .expressions import (
+    AggregatesExpression,
+    QueryFilterExpression,
+    QuerySortExpression,
+)
+from .internal.aggregate import AggregatesExpressionParser
 from .internal.nodes import (
     ELEM_SCALAR_FIELD,
     QueryAnd,
@@ -120,6 +125,63 @@ def validate_sortable_fields(
         )
 
 
+# ....................... #
+
+
+def collect_aggregate_field_roots(aggregates: AggregatesExpression) -> frozenset[str]:  # type: ignore[valid-type]
+    """Top-level field names a group-by / computed-metric expression reads.
+
+    Covers group dimensions (plain refs and ``$trunc`` sources) and the source field of each
+    computed metric. Per-metric ``filter`` sub-expressions are *not* included here — those are
+    filters, returned by :func:`collect_aggregate_filter_expressions` and governed by the
+    filterable axis.
+    """
+
+    parsed = AggregatesExpressionParser.parse(aggregates)
+
+    roots = {_root(group.expr.field) for group in parsed.groups}
+    roots |= {
+        _root(field.field)
+        for field in parsed.computed_fields
+        if field.field is not None
+    }
+
+    return frozenset(roots)
+
+
+def collect_aggregate_filter_expressions(
+    aggregates: AggregatesExpression,  # type: ignore[valid-type]
+) -> tuple[QueryFilterExpression, ...]:  # type: ignore[valid-type]
+    """Per-metric ``filter`` sub-expressions declared on computed aggregate fields."""
+
+    parsed = AggregatesExpressionParser.parse(aggregates)
+
+    return tuple(
+        field.filter for field in parsed.computed_fields if field.filter is not None
+    )
+
+
+def validate_aggregatable_fields(
+    aggregates: AggregatesExpression | None,  # type: ignore[valid-type]
+    *,
+    allowed: frozenset[str],
+    spec_name: str,
+) -> None:
+    """Raise when *aggregates* group/aggregate a field outside the *allowed* set."""
+
+    if aggregates is None:
+        return
+
+    forbidden = collect_aggregate_field_roots(aggregates) - allowed
+
+    if forbidden:
+        raise exc.precondition(
+            f"Aggregating on field(s) {sorted(forbidden)} is not allowed for "
+            f"{spec_name!r}.",
+            code="field_not_aggregatable",
+        )
+
+
 def _to_frozenset(value: Iterable[str] | None) -> frozenset[str] | None:
     return None if value is None else frozenset(value)
 
@@ -144,6 +206,13 @@ class QueryFieldPolicy:
     sortable: frozenset[str] | None = attrs.field(default=None, converter=_to_frozenset)
     """Field names a caller may sort by, or ``None`` for all read-model fields."""
 
+    aggregatable: frozenset[str] | None = attrs.field(
+        default=None, converter=_to_frozenset
+    )
+    """Field names a caller may group by / aggregate over (the dimensions and computed-metric
+    source fields of an aggregate query), or ``None`` for all read-model fields. Per-metric
+    ``filter`` sub-expressions are governed by :attr:`filterable`, not this axis."""
+
     # ....................... #
 
     def resolve_filterable(self, read_fields: frozenset[str]) -> frozenset[str]:
@@ -155,6 +224,11 @@ class QueryFieldPolicy:
         """Effective sortable fields: the declared set, or all read fields when ``None``."""
 
         return read_fields if self.sortable is None else self.sortable
+
+    def resolve_aggregatable(self, read_fields: frozenset[str]) -> frozenset[str]:
+        """Effective aggregatable fields: the declared set, or all read fields when ``None``."""
+
+        return read_fields if self.aggregatable is None else self.aggregatable
 
 
 # ....................... #
@@ -179,17 +253,37 @@ class QueryFieldGuard:
         *,
         filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
         sorts: QuerySortExpression | None = None,
+        aggregates: AggregatesExpression | None = None,  # type: ignore[valid-type]
     ) -> None:
-        """Validate caller *filters* / *sorts* against the policy (raises on violation)."""
+        """Validate caller *filters* / *sorts* / *aggregates* against the policy.
+
+        Filters (top-level *and* per-metric aggregate filters) are checked against the
+        filterable axis; sorts against sortable; group/computed-metric fields against
+        aggregatable. Raises on the first violation; axes whose allow-set is ``None`` are
+        skipped.
+        """
 
         if self.policy.filterable is not None:
             validate_filterable_fields(
                 filters, allowed=self.policy.filterable, spec_name=self.spec_name
             )
 
+            if aggregates is not None:
+                for metric_filter in collect_aggregate_filter_expressions(aggregates):
+                    validate_filterable_fields(
+                        metric_filter,
+                        allowed=self.policy.filterable,
+                        spec_name=self.spec_name,
+                    )
+
         if self.policy.sortable is not None:
             validate_sortable_fields(
                 sorts, allowed=self.policy.sortable, spec_name=self.spec_name
+            )
+
+        if self.policy.aggregatable is not None:
+            validate_aggregatable_fields(
+                aggregates, allowed=self.policy.aggregatable, spec_name=self.spec_name
             )
 
 
@@ -208,7 +302,11 @@ def validate_field_policy(
     silently forbid a field that was meant to be allowed.
     """
 
-    for axis, declared in (("filterable", policy.filterable), ("sortable", policy.sortable)):
+    for axis, declared in (
+        ("filterable", policy.filterable),
+        ("sortable", policy.sortable),
+        ("aggregatable", policy.aggregatable),
+    ):
         if declared is None:
             continue
 

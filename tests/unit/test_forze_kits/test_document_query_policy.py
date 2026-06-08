@@ -14,7 +14,10 @@ from forze_kits.aggregates.document import (
     DocumentKernelOp,
     build_document_registry,
 )
-from forze_kits.aggregates.document.dto import ListRequestDTO
+from forze_kits.aggregates.document.dto import (
+    AggregatedListRequestDTO,
+    ListRequestDTO,
+)
 from forze_mock import MockDepsModule, MockState
 from tests.support.execution_context import context_from_modules
 
@@ -72,6 +75,30 @@ class TestGovernedOperationEnforcement:
         spec, reg = _registry(None)
         res = await _run_list(reg, spec, filters={"$values": {"body": "x"}})
         assert res.count == 0
+
+
+class TestAggregateEnforcement:
+    async def test_forbidden_group_field_rejected(self) -> None:
+        spec = DocumentSpec(
+            name="notes",
+            read=NoteRead,
+            query_policy=QueryFieldPolicy(aggregatable={"title"}),
+        )
+        reg = build_document_registry(spec, DocumentDTOs(read=NoteRead)).freeze()
+
+        with pytest.raises(CoreException) as ei:
+            await run_operation(
+                reg,
+                spec.default_namespace.key(DocumentKernelOp.AGG_LIST),
+                AggregatedListRequestDTO(
+                    aggregates={
+                        "$groups": {"body": "body"},  # `body` not aggregatable
+                        "$computed": {"n": {"$count": None}},
+                    },
+                ),
+                _ctx(),
+            )
+        assert ei.value.code == "field_not_aggregatable"
 
 
 class TestPortBypass:

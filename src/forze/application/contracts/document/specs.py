@@ -120,6 +120,18 @@ class DocumentSpec(BaseSpec, Generic[R, D, C, U]):
 
     # ....................... #
 
+    def aggregatable_fields(self) -> frozenset[str]:
+        """Field names a governed caller may group by / aggregate (allow-set, or all read fields)."""
+
+        read_fields = read_fields_for_model(self.read)
+
+        if self.query_policy is None:
+            return read_fields
+
+        return self.query_policy.resolve_aggregatable(read_fields)
+
+    # ....................... #
+
     def supports_update(self) -> bool:
         """Return ``True`` when the update command exposes writable fields."""
 

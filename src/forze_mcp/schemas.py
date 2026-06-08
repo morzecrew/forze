@@ -28,6 +28,7 @@ def _schema_payload(spec: DocumentSpec[Any, Any, Any, Any]) -> dict[str, Any]:
         "read_schema": spec.read.model_json_schema(),
         "filterable_fields": sorted(spec.filterable_fields()),
         "sortable_fields": sorted(spec.sortable_fields()),
+        "aggregatable_fields": sorted(spec.aggregatable_fields()),
         "default_sort": dict(spec.default_sort) if spec.default_sort else None,
     }
 
