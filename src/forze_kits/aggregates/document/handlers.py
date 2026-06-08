@@ -6,6 +6,7 @@ from pydantic import BaseModel
 from forze.application.contracts.document import DocumentCommandPort, DocumentQueryPort
 from forze.application.contracts.execution import Handler
 from forze.application.contracts.mapping import Mapper
+from forze.application.contracts.querying import QueryFieldGuard
 from forze_kits.dto.paginated import (
     CursorPaginated,
     Paginated,
@@ -162,6 +163,9 @@ class ListDocuments[Out: Bm](Handler[Lr, Paginated[Out]]):
     mapper: Mapper[Lr, Lr] | None = attrs.field(default=None)
     """Optional mapper to transform incoming request DTO"""
 
+    query_guard: QueryFieldGuard | None = attrs.field(default=None)
+    """Optional boundary guard rejecting filters/sorts outside the spec's allow-sets."""
+
     # ....................... #
 
     async def __call__(self, args: Lr) -> Paginated[Out]:
@@ -175,6 +179,9 @@ class ListDocuments[Out: Bm](Handler[Lr, Paginated[Out]]):
 
         if self.mapper:
             body = await self.mapper(body)
+
+        if self.query_guard is not None:
+            self.query_guard.check(filters=body.filters, sorts=body.sorts)
 
         res = await self.doc.find_page(
             filters=body.filters,
@@ -198,6 +205,9 @@ class ProjectedListDocuments(Handler[Plr, ProjectedPaginated]):
     mapper: Mapper[Plr, Plr] | None = attrs.field(default=None)
     """Optional mapper to transform incoming request DTO"""
 
+    query_guard: QueryFieldGuard | None = attrs.field(default=None)
+    """Optional boundary guard rejecting filters/sorts outside the spec's allow-sets."""
+
     # ....................... #
 
     async def __call__(self, args: Plr) -> ProjectedPaginated:
@@ -211,6 +221,9 @@ class ProjectedListDocuments(Handler[Plr, ProjectedPaginated]):
 
         if self.mapper:
             body = await self.mapper(body)
+
+        if self.query_guard is not None:
+            self.query_guard.check(filters=body.filters, sorts=body.sorts)
 
         res = await self.doc.project_page(
             tuple(body.return_fields),
@@ -235,6 +248,9 @@ class CursorListDocuments[Out: Bm](Handler[Clr, CursorPaginated[Out]]):
     mapper: Mapper[Clr, Clr] | None = attrs.field(default=None)
     """Optional mapper to transform incoming request DTO"""
 
+    query_guard: QueryFieldGuard | None = attrs.field(default=None)
+    """Optional boundary guard rejecting filters/sorts outside the spec's allow-sets."""
+
     # ....................... #
 
     async def __call__(self, args: Clr) -> CursorPaginated[Out]:
@@ -242,6 +258,9 @@ class CursorListDocuments[Out: Bm](Handler[Clr, CursorPaginated[Out]]):
 
         if self.mapper:
             body = await self.mapper(body)
+
+        if self.query_guard is not None:
+            self.query_guard.check(filters=body.filters, sorts=body.sorts)
 
         res = await self.doc.find_cursor(
             filters=body.filters,
@@ -265,6 +284,9 @@ class ProjectedCursorListDocuments(Handler[Pclr, ProjectedCursorPaginated]):
     mapper: Mapper[Pclr, Pclr] | None = attrs.field(default=None)
     """Optional mapper to transform incoming request DTO"""
 
+    query_guard: QueryFieldGuard | None = attrs.field(default=None)
+    """Optional boundary guard rejecting filters/sorts outside the spec's allow-sets."""
+
     # ....................... #
 
     async def __call__(self, args: Pclr) -> ProjectedCursorPaginated:
@@ -272,6 +294,9 @@ class ProjectedCursorListDocuments(Handler[Pclr, ProjectedCursorPaginated]):
 
         if self.mapper:
             body = await self.mapper(body)
+
+        if self.query_guard is not None:
+            self.query_guard.check(filters=body.filters, sorts=body.sorts)
 
         res = await self.doc.project_cursor(
             tuple(body.return_fields),
@@ -296,6 +321,10 @@ class AggregatedListDocuments(Handler[Alr, ProjectedPaginated]):
     mapper: Mapper[Alr, Alr] | None = attrs.field(default=None)
     """Optional mapper to transform incoming request DTO"""
 
+    query_guard: QueryFieldGuard | None = attrs.field(default=None)
+    """Optional boundary guard rejecting filters/sorts outside the spec's allow-sets.
+    Aggregate group-by / computed fields are not yet covered (filters + sorts only)."""
+
     # ....................... #
 
     async def __call__(self, args: Alr) -> ProjectedPaginated:
@@ -303,6 +332,9 @@ class AggregatedListDocuments(Handler[Alr, ProjectedPaginated]):
 
         if self.mapper:
             body = await self.mapper(body)
+
+        if self.query_guard is not None:
+            self.query_guard.check(filters=body.filters, sorts=body.sorts)
 
         res = await self.doc.aggregate_page(
             body.aggregates,

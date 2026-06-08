@@ -5,6 +5,7 @@ from typing import Any, TypeVar
 from pydantic import BaseModel
 
 from forze.application.contracts.document import DocumentSpec
+from forze.application.contracts.querying import QueryFieldGuard
 from forze.application.execution.operations import OperationDescriptor, OperationRegistry
 from .handlers import (
     AggregatedListDocuments,
@@ -52,6 +53,21 @@ _READ_OPS: tuple[DocumentKernelOp, ...] = (
     DocumentKernelOp.AGG_LIST,
 )
 """Document operations that only acquire read (query) ports."""
+
+
+def _query_guard(spec: DocumentSpec[Any, Any, Any, Any]) -> QueryFieldGuard | None:
+    """Build a boundary field guard when the spec restricts a filter/sort axis.
+
+    ``None`` when no ``query_policy`` is set, or when both axes are unrestricted — so a
+    spec without explicit allow-sets pays no guard cost and keeps today's behavior.
+    """
+
+    policy = spec.query_policy
+
+    if policy is None or (policy.filterable is None and policy.sortable is None):
+        return None
+
+    return QueryFieldGuard(policy=policy, spec_name=str(spec.name))
 
 
 def _parametrized(generic: Any, arg: Any) -> Any:
@@ -205,6 +221,8 @@ def build_document_registry(
 
     ns = ns or spec.default_namespace
 
+    guard = _query_guard(spec)
+
     reg = OperationRegistry(
         handlers={
             ns.key(DocumentKernelOp.GET): lambda ctx: GetDocument(
@@ -213,14 +231,17 @@ def build_document_registry(
             ns.key(DocumentKernelOp.LIST): lambda ctx: ListDocuments(
                 doc=ctx.doc.query(spec),
                 mapper=mappers.list(ctx) if mappers.list else None,
+                query_guard=guard,
             ),
             ns.key(DocumentKernelOp.RAW_LIST): lambda ctx: ProjectedListDocuments(
                 doc=ctx.doc.query(spec),
                 mapper=mappers.projected_list(ctx) if mappers.projected_list else None,
+                query_guard=guard,
             ),
             ns.key(DocumentKernelOp.LIST_CURSOR): lambda ctx: CursorListDocuments(
                 doc=ctx.doc.query(spec),
                 mapper=mappers.cursor_list(ctx) if mappers.cursor_list else None,
+                query_guard=guard,
             ),
             ns.key(
                 DocumentKernelOp.RAW_LIST_CURSOR
@@ -231,12 +252,14 @@ def build_document_registry(
                     if mappers.projected_cursor_list
                     else None
                 ),
+                query_guard=guard,
             ),
             ns.key(DocumentKernelOp.AGG_LIST): lambda ctx: AggregatedListDocuments(
                 doc=ctx.doc.query(spec),
                 mapper=(
                     mappers.aggregated_list(ctx) if mappers.aggregated_list else None
                 ),
+                query_guard=guard,
             ),
         },
     )
