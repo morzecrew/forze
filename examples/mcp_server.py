@@ -39,7 +39,11 @@ from forze.domain.models import BaseDTO, Document, ReadDocument
 from forze_kits.aggregates.document.factories import build_document_registry
 from forze_kits.aggregates.document.operations import DocumentKernelOp
 from forze_kits.aggregates.document.value_objects import DocumentDTOs
-from forze_mcp import build_mcp_server, register_dsl_query_prompts
+from forze_mcp import (
+    build_mcp_server,
+    register_dsl_query_prompts,
+    register_schema_resources,
+)
 from forze_mock import MockDepsModule, MockState
 
 # ----------------------- #
@@ -121,9 +125,10 @@ def build_server(
 ) -> FastMCP:
     """Build a FastMCP server exposing every Notes operation as a tool.
 
-    Also attaches the querying-DSL guidance prompts, so the Inspector's "Prompts" tab shows
-    ``forze.querying`` / ``forze.aggregates`` — pull them to learn how to build ``notes.list``
-    filters/sorts/pagination.
+    Also attaches the querying-DSL guidance prompts (Inspector's "Prompts" tab:
+    ``forze.querying`` / ``forze.aggregates``) and a field-schema resource
+    (``schema://notes``, in "Resources") so an agent can discover which Note fields are
+    filterable/sortable and how to build a ``notes.list`` query.
     """
 
     server = build_mcp_server(
@@ -133,6 +138,7 @@ def build_server(
         include_writes=True,  # demo: expose create/update/kill too, not just reads
     )
     register_dsl_query_prompts(server)
+    register_schema_resources(server, SPEC)
 
     return server
 

@@ -43,6 +43,16 @@ class TestMcpExample:
 
         assert {"forze.querying", "forze.aggregates"} <= prompts
 
+    async def test_field_schema_resource_is_exposed(self) -> None:
+        registry = build_registry()
+        ctx_factory, _ = build_context_factory()
+        server = build_server(registry, ctx_factory)
+
+        async with Client(server) as client:
+            uris = {str(r.uri) for r in await client.list_resources()}
+
+        assert "schema://notes" in uris
+
     async def test_seeded_notes_are_listable_over_mcp(self) -> None:
         registry = build_registry()
         ctx_factory, _ = build_context_factory()

@@ -9,7 +9,8 @@ from forze.domain.models import BaseDTO, Document
 
 from ..base import BaseSpec
 from ..cache import CacheSpec
-from ..querying import QuerySortExpression
+from ..querying import QueryFieldPolicy, QuerySortExpression
+from ..querying.field_policy import validate_field_policy
 from ..querying.sort_resolution import read_fields_for_model, validate_sort_fields
 from ..codecs import stored_field_names_for
 from .codecs import DocumentCodecs, document_codecs_for_spec
@@ -47,6 +48,11 @@ class DocumentSpec(BaseSpec, Generic[R, D, C, U]):
     default_sort: QuerySortExpression | None = attrs.field(default=None)
     """Default ``sorts`` when callers omit them (required for read models without ``id``)."""
 
+    query_policy: QueryFieldPolicy | None = attrs.field(default=None)
+    """Optional allow-sets restricting which fields a governed caller may filter / sort by.
+    ``None`` (default) allows every read-model field. Drives discovery and (when enforced)
+    boundary validation."""
+
     codecs: DocumentCodecs[R, D, C, U] | None = attrs.field(
         default=None,
         eq=False,
@@ -72,12 +78,45 @@ class DocumentSpec(BaseSpec, Generic[R, D, C, U]):
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
+        read_fields = read_fields_for_model(self.read)
+
         if self.default_sort is not None:
             validate_sort_fields(
                 self.default_sort,
-                read_fields=read_fields_for_model(self.read),
-                spec_name=self.name,
+                read_fields=read_fields,
+                spec_name=str(self.name),
             )
+
+        if self.query_policy is not None:
+            validate_field_policy(
+                self.query_policy,
+                read_fields=read_fields,
+                spec_name=str(self.name),
+            )
+
+    # ....................... #
+
+    def filterable_fields(self) -> frozenset[str]:
+        """Field names a governed caller may filter on (policy allow-set, or all read fields)."""
+
+        read_fields = read_fields_for_model(self.read)
+
+        if self.query_policy is None:
+            return read_fields
+
+        return self.query_policy.resolve_filterable(read_fields)
+
+    # ....................... #
+
+    def sortable_fields(self) -> frozenset[str]:
+        """Field names a governed caller may sort by (policy allow-set, or all read fields)."""
+
+        read_fields = read_fields_for_model(self.read)
+
+        if self.query_policy is None:
+            return read_fields
+
+        return self.query_policy.resolve_sortable(read_fields)
 
     # ....................... #
 

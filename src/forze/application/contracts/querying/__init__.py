@@ -35,6 +35,10 @@ from .expressions import (
     QueryValueOpConjunction,
     QueryValuesPredicate,
 )
+from .field_policy import (
+    QueryFieldPolicy,
+    validate_field_policy,
+)
 from .internal import (
     AggregateComputedField,
     AggregatesExpressionParser,
@@ -108,9 +112,11 @@ __all__ = [
     "QueryElementValueMap",
     "QueryElementValueMapValue",
     "QueryElementValuesPredicate",
+    "QueryFieldPolicy",
     "QueryFilterExpression",
     "QueryNegation",
     "ElementOp",
+    "validate_field_policy",
     "ELEM_SCALAR_FIELD",
     "QuerySortExpression",
     "QueryValueMap",

@@ -22,6 +22,7 @@ from forze_mcp.identity import DelegatedIdentityResolver, StaticIdentityResolver
 from forze_mcp.projection import exposed_operations
 from forze_mcp.prompts import register_dsl_query_prompts
 from forze_mcp.registration import register_tools
+from forze_mcp.schemas import register_schema_resources
 from forze_mcp.server import build_mcp_server
 
 from forze_mock import MockDepsModule
@@ -168,6 +169,47 @@ class TestRegistration:
 
 
 # ....................... #
+
+
+class TestSchemaResources:
+    def _doc_spec(self):
+        import json as _json  # noqa: F401
+
+        from forze.application.contracts.document import DocumentSpec
+        from forze.application.contracts.querying import QueryFieldPolicy
+        from forze.domain.models import ReadDocument
+
+        class NoteRead(ReadDocument):
+            title: str
+            body: str
+
+        return DocumentSpec(
+            name="notes",
+            read=NoteRead,
+            query_policy=QueryFieldPolicy(filterable={"title"}, sortable=["title"]),
+        )
+
+    async def test_registers_schema_resource_per_spec(self) -> None:
+        import json
+
+        server = FastMCP("calc")
+        uris = register_schema_resources(server, self._doc_spec())
+
+        assert uris == ["schema://notes"]
+
+        async with Client(server) as client:
+            listed = {str(r.uri) for r in await client.list_resources()}
+            assert "schema://notes" in listed
+
+            content = await client.read_resource("schema://notes")
+            payload = json.loads(content[0].text)
+
+        assert payload["aggregate"] == "notes"
+        # Read-model schema is embedded for the LLM.
+        assert "title" in payload["read_schema"]["properties"]
+        # Capability allow-sets are projected from the spec's query_policy.
+        assert payload["filterable_fields"] == ["title"]
+        assert payload["sortable_fields"] == ["title"]
 
 
 class TestQueryPrompts:
