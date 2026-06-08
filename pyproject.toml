@@ -208,9 +208,10 @@ pythonpath = ["src", "tests"]
 addopts = ["--tb=short", "--strict-markers", "--strict-config"]
 asyncio_mode = "auto"
 # Safety net: no test may hang the run indefinitely. On timeout, dump all thread
-# stacks and kill the process (the `thread` method guarantees the run can't stick —
-# e.g. a wedged Temporal time-skipping server on a constrained CI runner). Generous
-# enough to cover container/session-fixture startup on a cold runner.
+# stacks and kill the process (the `thread` method guarantees the run can't stick).
+# Defense-in-depth, not a fix — it's how the Temporal-sandbox/coverage-sysmon deadlock
+# (see CI's COVERAGE_CORE=ctrace) was diagnosed: the dumped stack pinpointed the wedge.
+# Generous enough to cover container/session-fixture startup on a cold runner.
 timeout = 300
 timeout_method = "thread"
 markers = [
@@ -468,7 +469,6 @@ DEP002 = [
     "python-multipart",
     "email-validator",       # required for pydantic.EmailStr
     #! Added temporarily
-    "neo4j",
     "python-arango-async",
     "uvicorn",
     "types-hvac",

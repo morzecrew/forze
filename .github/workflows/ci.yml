@@ -155,6 +155,14 @@ jobs:
           - { name: vault, path: tests/integration/test_forze_vault }
     env:
       COVERAGE_FILE: .coverage.${{ matrix.name }}
+      # Force coverage's settrace-based `ctrace` core instead of the Python 3.12+
+      # default `sysmon` (sys.monitoring) core. sysmon's branch callback fires
+      # *inside* Temporal's workflow sandbox, where it lazily imports coverage
+      # internals and calls platform.python_implementation() — blocked as
+      # non-deterministic (RestrictedWorkflowAccessError) → infinite workflow-task
+      # retry → hung `temporal` shard. ctrace parses at report time, outside the
+      # sandbox, so it's sandbox-safe. Set for every shard for one consistent tracer.
+      COVERAGE_CORE: ctrace
     steps:
       - name: Harden the runner (Audit all outbound calls)
         uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
