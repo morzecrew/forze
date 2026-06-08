@@ -17,6 +17,7 @@ from forze_temporal.adapters.schedule import (
     TemporalWorkflowScheduleCommandAdapter,
     TemporalWorkflowScheduleQueryAdapter,
 )
+from forze_temporal.sandbox import sandboxed_workflow_runner
 
 from ._workflow_defs import ItSumWorkflow, SumIn, SumOut, it_sum_pair
 
@@ -83,6 +84,7 @@ async def test_schedule_trigger_starts_workflow(temporal_dev_env) -> None:
         task_queue=task_queue,
         workflows=[ItSumWorkflow],
         activities=[it_sum_pair],
+        workflow_runner=sandboxed_workflow_runner(),
     ):
         timing = DurableWorkflowScheduleTiming(interval=timedelta(hours=1))
         handle = await cmd.create(

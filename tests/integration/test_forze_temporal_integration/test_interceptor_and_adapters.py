@@ -24,6 +24,7 @@ from forze_temporal.adapters.workflow import (
 )
 from forze_temporal.interceptors.context import ExecutionContextInterceptor
 from forze_temporal.kernel.client.client import TemporalClient
+from forze_temporal.sandbox import sandboxed_workflow_runner
 from tests.support.execution_context import context_from_deps
 
 from ._workflow_defs import (
@@ -61,6 +62,7 @@ async def test_execution_context_interceptor_propagates_correlation_to_activity(
                 task_queue=task_queue,
                 workflows=[ItContextProbeWorkflow],
                 activities=[it_read_correlation],
+                workflow_runner=sandboxed_workflow_runner(),
             ):
                 with exec_ctx.inv_ctx.bind(
                     metadata=InvocationMetadata(
@@ -125,6 +127,7 @@ async def test_temporal_workflow_adapters_end_to_end() -> None:
                 task_queue=task_queue,
                 workflows=[ItSumWorkflow],
                 activities=[it_sum_pair],
+                workflow_runner=sandboxed_workflow_runner(),
             ):
                 with exec_ctx.inv_ctx.bind(
                     metadata=InvocationMetadata(

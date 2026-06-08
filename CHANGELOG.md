@@ -119,6 +119,7 @@ See [Kits reference](pages/docs/reference/kits.md).
 - **Identity (authn):** password provisioning rejects duplicate logins (`password_account_exists`); login detects ambiguous duplicate accounts (`password_account_ambiguous`); `MappingTableResolver` re-reads mappings after create conflicts when `provision_on_first_sight=True`.
 - **`forze_fastapi`:** tenant resolution honors JWT/OIDC `issuer_tenant_hint` and `X-Tenant-Id` via `TenantResolverPort.requested_tenant_id`, with a hint-only fallback when no tenant resolver is registered.
 - **`forze.base`:** `connection_string_fingerprint` includes sorted URI query parameters so routed-client LRU dedup distinguishes targets that differ only by query string.
+- **`forze_temporal` + `forze[mcp]`:** Temporal workflow validation no longer fails with `RuntimeError: Failed validating workflow <name>` when the MCP stack is imported in the same process. `fastmcp`'s transitive `py-key-value-aio` dependency installs a process-wide `beartype.claw` import hook at import time; the Temporal workflow sandbox re-imports each workflow module through that hook and hits a circular import. New `forze_temporal.sandboxed_workflow_runner()` / `default_sandbox_restrictions()` (and `PASSTHROUGH_MODULES`) pass `beartype` through the sandbox — use the runner as your `Worker(workflow_runner=...)` when running workers alongside the MCP integration.
 
 ### Security
 
