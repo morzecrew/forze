@@ -133,7 +133,7 @@ jobs:
       matrix:
         include:
           - { name: unit, path: tests/unit }
-          - { name: integration-core, path: tests/integration/test_forze }
+          - { name: core, path: tests/integration/test_forze }
           - { name: authn, path: tests/integration/test_forze_authn }
           - { name: authz, path: tests/integration/test_forze_authz }
           - { name: bigquery, path: tests/integration/test_forze_bigquery }
@@ -151,7 +151,7 @@ jobs:
           - { name: redis, path: tests/integration/test_forze_redis }
           - { name: s3, path: tests/integration/test_forze_s3 }
           - { name: sqs, path: tests/integration/test_forze_sqs }
-          - { name: temporal-integration, path: tests/integration/test_forze_temporal_integration }
+          - { name: temporal, path: tests/integration/test_forze_temporal_integration }
           - { name: vault, path: tests/integration/test_forze_vault }
     env:
       COVERAGE_FILE: .coverage.${{ matrix.name }}
