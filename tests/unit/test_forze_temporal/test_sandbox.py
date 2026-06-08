@@ -16,10 +16,11 @@ from forze_temporal import (
 )
 
 
-def test_passthrough_modules_includes_beartype() -> None:
-    """``beartype`` must be passed through: its ``claw`` hook breaks sandbox re-import."""
+def test_passthrough_modules_cover_known_sandbox_hazards() -> None:
+    """``beartype`` (claw hook) and ``coverage`` (sysmon tracer) must be passed through."""
 
     assert "beartype" in PASSTHROUGH_MODULES
+    assert "coverage" in PASSTHROUGH_MODULES
 
 
 def test_default_restrictions_add_passthrough_modules() -> None:

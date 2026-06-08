@@ -14,8 +14,17 @@ libraries) skips the re-import and keeps validation working whenever such a hook
 the worker process. Listed module names need not be importable, so the passthrough is harmless
 when the dependency is absent.
 
+The same passthrough is needed for :mod:`coverage`. On Python 3.14 ``coverage`` traces via
+``sys.monitoring``; a branch callback can fire while sandboxed workflow code runs and lazily
+import ``coverage.env``, which calls ``platform.python_implementation()`` at module load.
+``platform`` is restricted inside the sandbox, so the access raises
+``RestrictedWorkflowAccessError``, which fails the workflow *task* — and Temporal retries
+workflow-task failures indefinitely, so a coverage-instrumented test run **hangs** instead of
+failing. Passing ``coverage`` through lets its machinery import and run unrestricted.
+
 Use :func:`sandboxed_workflow_runner` as the ``workflow_runner`` for any
-:class:`temporalio.worker.Worker` in a process that may also import the Forze MCP stack.
+:class:`temporalio.worker.Worker` in a process that may also import the Forze MCP stack or run
+under coverage.
 """
 
 from __future__ import annotations
@@ -27,9 +36,10 @@ from temporalio.worker.workflow_sandbox import (
 
 # ----------------------- #
 
-#: Modules that must bypass the workflow sandbox because they (or a transitive dependency)
-#: install a global import hook that breaks the sandbox's per-workflow module re-import.
-PASSTHROUGH_MODULES: tuple[str, ...] = ("beartype",)
+#: Modules that must bypass the workflow sandbox. ``beartype`` installs a global import hook
+#: (via the MCP stack) that breaks the sandbox's per-workflow module re-import; ``coverage``
+#: traces sandboxed workflow code and trips restricted access during its lazy imports.
+PASSTHROUGH_MODULES: tuple[str, ...] = ("beartype", "coverage")
 
 
 def default_sandbox_restrictions() -> SandboxRestrictions:

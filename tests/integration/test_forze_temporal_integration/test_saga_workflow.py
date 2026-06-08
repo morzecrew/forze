@@ -16,6 +16,7 @@ from temporalio.testing import WorkflowEnvironment
 from temporalio.worker import Worker
 
 from forze.base.primitives import uuid7
+from forze_temporal.sandbox import sandboxed_workflow_runner
 
 from ._workflow_defs import (
     SAGA_RECORDER,
@@ -41,6 +42,7 @@ async def _run_checkout(fail_at: str) -> object:
             task_queue=task_queue,
             workflows=[ItCheckoutSagaWorkflow],
             activities=_ACTIVITIES,
+            workflow_runner=sandboxed_workflow_runner(),
         ):
             return await env.client.execute_workflow(
                 ItCheckoutSagaWorkflow.run,
