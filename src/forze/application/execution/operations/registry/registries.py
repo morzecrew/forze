@@ -9,6 +9,7 @@ from forze.base.descriptors import hybridmethod
 from forze.base.exceptions import exc
 from forze.base.primitives import StrKey, StrKeyNamespace, StrKeySelector
 
+from ..descriptors import OperationCatalogEntry, OperationDescriptor
 from ..planning import FrozenOperationPlan, OperationPlan
 from ..run import DispatchedOperation, ResolvedOperation
 from .binder import OperationRegistryBinder
@@ -39,6 +40,12 @@ class OperationRegistry:
     )
     """Execution plans for operations."""
 
+    _descriptors: Mapping[StrKey, OperationDescriptor] = attrs.field(
+        factory=dict[StrKey, OperationDescriptor],
+        alias="descriptors",
+    )
+    """Catalog metadata for operations (interface-agnostic; optional per operation)."""
+
     _patches: tuple[PlanPatch, ...] = attrs.field(factory=tuple, alias="patches")
     """Plan patches applied by selector at freeze."""
 
@@ -48,6 +55,13 @@ class OperationRegistry:
         """Read-only access to the plans."""
 
         return dict(self._plans)
+
+    # ....................... #
+
+    def get_descriptors(self) -> dict[StrKey, OperationDescriptor]:
+        """Read-only access to the catalog descriptors."""
+
+        return dict(self._descriptors)
 
     # ....................... #
 
@@ -113,6 +127,56 @@ class OperationRegistry:
             new_handlers[op] = handler
 
         return attrs.evolve(self, handlers=new_handlers)
+
+    # ....................... #
+
+    def set_descriptor(
+        self,
+        op: StrKey,
+        descriptor: OperationDescriptor,
+        *,
+        override: bool = False,
+        namespace: StrKeyNamespace | None = None,
+    ) -> Self:
+        """Set the catalog descriptor for an operation."""
+
+        if namespace is not None:
+            op = namespace.key(op)
+
+        if op in self._descriptors and not override:
+            raise exc.internal(f"Descriptor already set for operation: {op}")
+
+        new_descriptors = dict(self._descriptors)
+        new_descriptors[op] = descriptor
+
+        return attrs.evolve(self, descriptors=new_descriptors)
+
+    # ....................... #
+
+    def set_descriptors(
+        self,
+        descriptors: Mapping[StrKey, OperationDescriptor],
+        *,
+        override: bool = False,
+        namespace: StrKeyNamespace | None = None,
+    ) -> Self:
+        """Set the catalog descriptors for multiple operations."""
+
+        new_descriptors = dict(self._descriptors)
+
+        if namespace is not None:
+            descriptors = {
+                namespace.key(op): descriptor
+                for op, descriptor in descriptors.items()
+            }
+
+        for op, descriptor in descriptors.items():
+            if op in new_descriptors and not override:
+                raise exc.internal(f"Descriptor already set for operation: {op}")
+
+            new_descriptors[op] = descriptor
+
+        return attrs.evolve(self, descriptors=new_descriptors)
 
     # ....................... #
 
@@ -232,6 +296,7 @@ class OperationRegistry:
                 RegistryMerge(
                     handlers=reg._handlers,
                     plans=reg._plans,
+                    descriptors=reg._descriptors,
                     patches=reg._patches,
                 )
                 for reg in registries
@@ -241,6 +306,7 @@ class OperationRegistry:
         return cls(
             handlers=merged.handlers,
             plans=merged.plans,
+            descriptors=merged.descriptors,
             patches=merged.patches,
         )
 
@@ -267,6 +333,7 @@ class OperationRegistry:
         return FrozenOperationRegistry(
             handlers=frozen_handlers,
             plans=frozen_plans,
+            descriptors=dict(self._descriptors),
         )
 
 
@@ -286,6 +353,30 @@ class FrozenOperationRegistry:
         factory=dict[StrKey, FrozenOperationPlan],
     )
     """Execution plans for operations."""
+
+    descriptors: Mapping[StrKey, OperationDescriptor] = attrs.field(
+        factory=dict[StrKey, OperationDescriptor],
+    )
+    """Catalog metadata for operations (interface-agnostic; optional per operation)."""
+
+    # ....................... #
+
+    def catalog(self) -> dict[StrKey, OperationCatalogEntry]:
+        """Join descriptors with each operation's read/write kind into a catalog.
+
+        One entry per registered handler. Operations without a declared descriptor still
+        appear (with ``descriptor=None``) so callers can see the full operation surface;
+        a driving adapter decides which entries it actually exposes.
+        """
+
+        return {
+            op: OperationCatalogEntry(
+                op=op,
+                kind=self.plans[op].kind,
+                descriptor=self.descriptors.get(op),
+            )
+            for op in self.handlers
+        }
 
     # ....................... #
 

@@ -1,3 +1,4 @@
+from .descriptors import OperationCatalogEntry, OperationDescriptor
 from .facade import (
     OperationFacade,
     OperationFacadeFactory,
@@ -18,6 +19,8 @@ from .run import (
 __all__ = [
     "FrozenOperationPlan",
     "FrozenOperationRegistry",
+    "OperationCatalogEntry",
+    "OperationDescriptor",
     "OperationKind",
     "OperationPlan",
     "OperationRegistry",

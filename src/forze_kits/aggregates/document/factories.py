@@ -5,7 +5,7 @@ from typing import Any, TypeVar
 from pydantic import BaseModel
 
 from forze.application.contracts.document import DocumentSpec
-from forze.application.execution.operations import OperationRegistry
+from forze.application.execution.operations import OperationDescriptor, OperationRegistry
 from .handlers import (
     AggregatedListDocuments,
     CreateDocument,
@@ -17,13 +17,51 @@ from .handlers import (
     ProjectedListDocuments,
     UpdateDocument,
 )
+from forze_kits.dto.paginated import (
+    CursorPaginated,
+    Paginated,
+    ProjectedCursorPaginated,
+    ProjectedPaginated,
+)
 from forze_kits.mapping import PydanticPipelineMapperFactory
 from forze.base.exceptions import exc
-from forze.base.primitives import StrKeyNamespace
+from forze.base.primitives import StrKey, StrKeyNamespace
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document
 
+from .dto import (
+    AggregatedListRequestDTO,
+    CursorListRequestDTO,
+    DocumentIdDTO,
+    DocumentUpdateDTO,
+    DocumentUpdateRes,
+    ListRequestDTO,
+    ProjectedCursorListRequestDTO,
+    ProjectedListRequestDTO,
+)
 from .operations import DocumentKernelOp
 from .value_objects import DocumentDTOs, DocumentMappers
+
+# ----------------------- #
+
+_READ_OPS: tuple[DocumentKernelOp, ...] = (
+    DocumentKernelOp.GET,
+    DocumentKernelOp.LIST,
+    DocumentKernelOp.RAW_LIST,
+    DocumentKernelOp.LIST_CURSOR,
+    DocumentKernelOp.RAW_LIST_CURSOR,
+    DocumentKernelOp.AGG_LIST,
+)
+"""Document operations that only acquire read (query) ports."""
+
+
+def _parametrized(generic: Any, arg: Any) -> Any:
+    """Parametrize a generic envelope (e.g. ``Paginated``) with a runtime read type.
+
+    Kept off the static-type path: the read model is only known at build time, so the
+    subscription must happen on values, not as a type annotation.
+    """
+
+    return generic[arg]
 
 # ----------------------- #
 
@@ -71,6 +109,79 @@ def _default_update_mapper(
         raise exc.configuration("Update DTO or update command is not provided")
 
     return PydanticPipelineMapperFactory(in_=udto, out=u_cmd)
+
+
+# ....................... #
+
+
+def _build_document_descriptors(
+    spec: DocumentSpec[R, D, C_cmd, U_cmd],
+    dtos: DocumentDTOs[R, C, U],
+) -> dict[StrKey, OperationDescriptor]:
+    """Build catalog descriptors for the registered document operations.
+
+    One descriptor per operation, carrying the request/response DTO types so a driving
+    adapter can derive schemas. Write descriptors are emitted only when the matching DTO
+    is configured, mirroring the handlers in :func:`build_document_registry`.
+    """
+
+    read = dtos.read
+
+    descriptors: dict[StrKey, OperationDescriptor] = {
+        DocumentKernelOp.GET: OperationDescriptor(
+            input_type=DocumentIdDTO,
+            output_type=read,
+            description="Fetch a single document by primary key.",
+        ),
+        DocumentKernelOp.LIST: OperationDescriptor(
+            input_type=ListRequestDTO,
+            output_type=_parametrized(Paginated, read),
+            description="List documents by filters and sorts (offset pagination).",
+        ),
+        DocumentKernelOp.RAW_LIST: OperationDescriptor(
+            input_type=ProjectedListRequestDTO,
+            output_type=ProjectedPaginated,
+            description="List projected document fields (offset pagination).",
+        ),
+        DocumentKernelOp.LIST_CURSOR: OperationDescriptor(
+            input_type=CursorListRequestDTO,
+            output_type=_parametrized(CursorPaginated, read),
+            description="List documents by filters and sorts (cursor pagination).",
+        ),
+        DocumentKernelOp.RAW_LIST_CURSOR: OperationDescriptor(
+            input_type=ProjectedCursorListRequestDTO,
+            output_type=ProjectedCursorPaginated,
+            description="List projected document fields (cursor pagination).",
+        ),
+        DocumentKernelOp.AGG_LIST: OperationDescriptor(
+            input_type=AggregatedListRequestDTO,
+            output_type=ProjectedPaginated,
+            description="List documents with aggregates by filters and sorts.",
+        ),
+    }
+
+    if spec.write is not None:
+        descriptors[DocumentKernelOp.KILL] = OperationDescriptor(
+            input_type=DocumentIdDTO,
+            output_type=None,
+            description="Permanently delete a document by primary key (hard delete).",
+        )
+
+        if dtos.create is not None:
+            descriptors[DocumentKernelOp.CREATE] = OperationDescriptor(
+                input_type=dtos.create,
+                output_type=read,
+                description="Create a new document.",
+            )
+
+        if spec.supports_update() and dtos.update is not None:
+            descriptors[DocumentKernelOp.UPDATE] = OperationDescriptor(
+                input_type=_parametrized(DocumentUpdateDTO, dtos.update),
+                output_type=_parametrized(DocumentUpdateRes, read),
+                description="Update an existing document and return the result with diff.",
+            )
+
+    return descriptors
 
 
 # ....................... #
@@ -161,5 +272,12 @@ def build_document_registry(
                     ),
                 ),
             )
+
+    # Read operations only acquire query ports — mark them so they run read-only and
+    # surface as read-only in the operation catalog.
+    reg = reg.bind(*_READ_OPS, namespace=ns).as_query().finish()
+
+    # Attach catalog metadata (request/response schemas + descriptions).
+    reg = reg.set_descriptors(_build_document_descriptors(spec, dtos), namespace=ns)
 
     return reg

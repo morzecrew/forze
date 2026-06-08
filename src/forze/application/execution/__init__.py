@@ -25,7 +25,12 @@ from .lifecycle import (
     LifecycleModule,
     LifecyclePlan,
 )
-from .operations import OperationKind, OperationPlan
+from .operations import (
+    OperationCatalogEntry,
+    OperationDescriptor,
+    OperationKind,
+    OperationPlan,
+)
 from .operations.registry import FrozenOperationRegistry, OperationRegistry
 from .resilience import (
     CircuitBreakerStore,
@@ -94,6 +99,8 @@ __all__ = [
     "LifecycleModule",
     "outbox_event_handler",
     "LifecyclePlan",
+    "OperationCatalogEntry",
+    "OperationDescriptor",
     "OperationKind",
     "OperationPlan",
     "OperationRegistry",
