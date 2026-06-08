@@ -37,6 +37,11 @@ from .resilience import (
     occ_retry,
     resolve_resilience_executor,
 )
+from .observability import (
+    DURATION_HISTOGRAM,
+    OPERATIONS_COUNTER,
+    instrument_operations,
+)
 from .runtime import ExecutionRuntime
 from .saga import (
     InProcessSagaExecutor,
@@ -92,6 +97,9 @@ __all__ = [
     "OperationKind",
     "OperationPlan",
     "OperationRegistry",
+    "instrument_operations",
+    "OPERATIONS_COUNTER",
+    "DURATION_HISTOGRAM",
     "ResilienceDepsModule",
     "builtin_default_policies",
     "default_resilience_executor",

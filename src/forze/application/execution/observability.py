@@ -1,8 +1,10 @@
 """OpenTelemetry instrumentation for Forze operations.
 
 ``instrument_operations`` wraps every operation in a registry with a span + metrics, using
-the existing per-operation ``wrap`` middleware seam — no engine changes. Emits via the
-global OpenTelemetry providers (configure the SDK + exporter in your app).
+the existing per-operation ``wrap`` middleware seam — no engine changes. OpenTelemetry is a
+core dependency (the logging layer already uses it), so this is built in, not an optional
+extra. Emits via the global OpenTelemetry providers — configure the SDK + exporter in your
+app.
 """
 
 from __future__ import annotations
@@ -18,13 +20,14 @@ from forze.application.contracts.execution import (
     MiddlewareFactory,
     MiddlewareStep,
 )
-from forze.application.execution.operations.registry import OperationRegistry
+
+from .operations.registry import OperationRegistry
 
 if TYPE_CHECKING:
     from opentelemetry.metrics import Counter, Histogram, Meter
     from opentelemetry.trace import Tracer
 
-    from forze.application.execution import ExecutionContext
+    from .context import ExecutionContext
 
 # ----------------------- #
 

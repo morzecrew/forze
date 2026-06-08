@@ -55,7 +55,7 @@ class OperationRegistry:
         """Return every registered operation key (one per handler factory).
 
         Useful for cross-cutting instrumentation that targets all operations — e.g.
-        ``forze_otel.instrument_operations``.
+        ``instrument_operations`` (OpenTelemetry).
         """
 
         return frozenset(self._handlers)

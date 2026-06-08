@@ -1,8 +1,9 @@
-"""`forze_otel.instrument_operations` exports a span + metrics per operation."""
+"""`instrument_operations` exports an OpenTelemetry span + metrics per operation."""
 
 from __future__ import annotations
 
 from typing import Any
+from uuid import uuid4
 
 import attrs
 import pytest
@@ -13,17 +14,19 @@ from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
     InMemorySpanExporter,
 )
-from uuid import uuid4
-
 from opentelemetry.trace import StatusCode
 
 from forze.application.contracts.authn import AuthnIdentity
 from forze.application.contracts.execution import Handler
 from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.execution.context.invocation import InvocationMetadata
+from forze.application.execution.observability import (
+    DURATION_HISTOGRAM,
+    OPERATIONS_COUNTER,
+    instrument_operations,
+)
 from forze.application.execution.operations import run_operation
 from forze.application.execution.operations.registry import OperationRegistry
-from forze_otel import DURATION_HISTOGRAM, OPERATIONS_COUNTER, instrument_operations
 
 from forze_mock import MockDepsModule
 from tests.support.execution_context import context_from_modules

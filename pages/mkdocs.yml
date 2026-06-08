@@ -104,6 +104,7 @@ nav:
       - HTTP: core-package/contracts/http.md
     - Execution: reference/execution.md
     - Middleware & Plans: reference/middleware-plans.md
+    - Observability (OpenTelemetry): reference/observability.md
     - Capability execution: reference/capability-execution.md
     - Kits: reference/kits.md
     - Composition & Mapping: reference/composition.md
@@ -128,5 +129,4 @@ nav:
     - SQS: integrations/sqs.md
     - RabbitMQ: integrations/rabbitmq.md
     - OIDC: integrations/oidc.md
-    - OpenTelemetry: integrations/otel.md
     - Mock: integrations/mock.md

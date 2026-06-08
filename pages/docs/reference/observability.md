@@ -1,25 +1,20 @@
-# OpenTelemetry (observability)
+# Observability (OpenTelemetry)
 
-`forze_otel` exports a **span + metrics for every operation** to OpenTelemetry, so Forze
-operations appear in your tracing/metrics backend with latency, outcome, and identity
-attributes. Forze is observability-rich internally (runtime tracer, tx tracer, structured
-logs); this is the seam that pushes it out to an APM.
+Forze is observability-rich internally (runtime tracer, tx tracer, structured logs).
+`instrument_operations` pushes that out to **OpenTelemetry**: a **span + metrics for every
+operation**, so Forze operations appear in your tracing/metrics backend with latency,
+outcome, and identity attributes.
 
-Install the extra:
-
-```bash
-pip install "forze[otel]"
-```
-
-`forze_otel` depends only on `opentelemetry-api` — your application owns the SDK and exporter
-choice (OTLP, Prometheus, console, …).
+OpenTelemetry is a **core dependency** (the logging layer already uses it), so this is
+built in — no extra to install. Your application owns the SDK + exporter choice (OTLP,
+Prometheus, console, …).
 
 ## Instrument the registry
 
 Call `instrument_operations` once, before freezing — it wraps every registered operation:
 
 ```python
-from forze_otel import instrument_operations
+from forze.application.execution import instrument_operations
 
 registry = build_my_registry()
 registry = instrument_operations(registry)   # spans + metrics on all ops
@@ -40,7 +35,7 @@ Each operation produces:
 
 ## Configure the SDK (your app)
 
-`forze_otel` only emits; configure the providers + exporter yourself, e.g. OTLP:
+Forze emits to the providers; configure them + an exporter yourself, e.g. OTLP:
 
 ```python
 from opentelemetry import trace, metrics
@@ -59,6 +54,8 @@ metrics.set_meter_provider(
     MeterProvider(metric_readers=[PeriodicExportingMetricReader(OTLPMetricExporter())])
 )
 ```
+
+The OTel **API + SDK ship with Forze**; you add only your chosen **exporter** package.
 
 ## Log ↔ trace correlation (free)
 
