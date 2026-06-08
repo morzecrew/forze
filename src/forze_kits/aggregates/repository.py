@@ -21,7 +21,7 @@ from forze.application.contracts.document import (
     DocumentSpec,
 )
 from forze.base.exceptions import exc
-from forze.domain.models import BaseDTO, CreateDocumentCmd, Document
+from forze.domain.models import BaseDTO, Document
 
 if TYPE_CHECKING:
     from forze.application.execution import ExecutionContext
@@ -30,7 +30,7 @@ if TYPE_CHECKING:
 
 R = TypeVar("R", bound=BaseModel)
 D = TypeVar("D", bound=Document)
-C = TypeVar("C", bound=CreateDocumentCmd)
+C = TypeVar("C", bound=BaseDTO)
 U = TypeVar("U", bound=BaseDTO)
 
 

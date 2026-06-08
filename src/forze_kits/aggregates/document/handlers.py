@@ -12,7 +12,7 @@ from forze_kits.dto.paginated import (
     ProjectedCursorPaginated,
     ProjectedPaginated,
 )
-from forze.domain.models import BaseDTO, CreateDocumentCmd
+from forze.domain.models import BaseDTO
 
 from .dto import (
     AggregatedListRequestDTO,
@@ -29,7 +29,7 @@ from .dto import (
 
 Bm = BaseModel
 Bd = BaseDTO
-Cd = CreateDocumentCmd
+Cd = BaseDTO
 Du = DocumentUpdateDTO
 Dur = DocumentUpdateRes
 Did = DocumentIdDTO
@@ -64,7 +64,7 @@ class CreateDocument[In: Bd, Cmd: Cd, Out: Bm](Handler[In, Out]):
 
         cmd = await self.mapper(args)
 
-        return await self.doc.create(dto=cmd)
+        return await self.doc.create(cmd)
 
 
 # ....................... #

@@ -155,7 +155,8 @@ async def test_postgres_write_gateway_upsert_insert_then_conflict_updates(
     )
 
     first = await write.upsert(
-        PgGwCreate(id=pk, name="inserted"),
+        pk,
+        PgGwCreate(name="inserted"),
         PgGwUpdate(name="should-not-apply-on-insert"),
     )
     assert first.id == pk
@@ -163,7 +164,8 @@ async def test_postgres_write_gateway_upsert_insert_then_conflict_updates(
     assert first.rev == 1
 
     second = await write.upsert(
-        PgGwCreate(id=pk, name="ignored-on-conflict"),
+        pk,
+        PgGwCreate(name="ignored-on-conflict"),
         PgGwUpdate(name="after-conflict"),
     )
     assert second.id == pk
@@ -207,21 +209,17 @@ async def test_postgres_write_gateway_upsert_many_mixed_batch(
 
     existing = await write.create(PgGwCreate(name="seed"))
 
-    pairs = [
-        (PgGwCreate(name="brand-new-one"), PgGwUpdate(name="n/a")),
-        (
-            PgGwCreate(id=existing.id, name="ignored"),
-            PgGwUpdate(name="patched-existing"),
-        ),
-    ]
-    out = await write.upsert_many(pairs, batch_size=10)
+    fresh_id = uuid4()
+    ids = [fresh_id, existing.id]
+    creates = [PgGwCreate(name="brand-new-one"), PgGwCreate(name="ignored")]
+    updates = [PgGwUpdate(name="n/a"), PgGwUpdate(name="patched-existing")]
+    out = await write.upsert_many(ids, creates, updates, batch_size=10)
     assert len(out) == 2
 
     by_id = {d.id: d for d in out}
     assert by_id[existing.id].name == "patched-existing"
     assert by_id[existing.id].rev >= 2
 
-    fresh_id = next(i for i in by_id if i != existing.id)
     assert by_id[fresh_id].name == "brand-new-one"
     assert by_id[fresh_id].rev == 1
 
@@ -261,8 +259,8 @@ async def test_postgres_write_gateway_ensure_returns_existing_row(
         tenant_aware=False,
     )
 
-    first = await write.create(PgGwCreate(id=pk, name="original"))
-    second = await write.ensure(PgGwCreate(id=pk, name="ignored"))
+    first = await write.create(PgGwCreate(name="original"), id=pk)
+    second = await write.ensure(pk, PgGwCreate(name="ignored"))
     assert second.id == pk
     assert second.name == "original"
     assert second.rev == first.rev
@@ -304,10 +302,8 @@ async def test_postgres_write_gateway_ensure_many_inserts_and_reuses_existing(
     seed = await write.create(PgGwCreate(name="seed"))
     new_id = uuid4()
     out = await write.ensure_many(
-        [
-            PgGwCreate(id=new_id, name="inserted"),
-            PgGwCreate(id=seed.id, name="ignored"),
-        ],
+        [new_id, seed.id],
+        [PgGwCreate(name="inserted"), PgGwCreate(name="ignored")],
         batch_size=10,
     )
     assert len(out) == 2
@@ -638,16 +634,16 @@ async def test_postgres_write_gateway_ensure_composite_pk_and_secondary_unique(
     doc_id = uuid4()
     seeded = await write.create(
         PgGwCreateTenant(
-            id=doc_id,
             tenant_id=tenant_id,
             name="seeded",
             email="a@example.com",
         ),
+        id=doc_id,
     )
 
     second = await write.ensure(
+        doc_id,
         PgGwCreateTenant(
-            id=doc_id,
             tenant_id=tenant_id,
             name="ignored",
             email="other@example.com",
@@ -661,8 +657,8 @@ async def test_postgres_write_gateway_ensure_composite_pk_and_secondary_unique(
     dup_email_id = uuid4()
     with pytest.raises(CoreException) as err:
         await write.ensure(
+            dup_email_id,
             PgGwCreateTenant(
-                id=dup_email_id,
                 tenant_id=tenant_id,
                 name="dup",
                 email="a@example.com",
@@ -673,8 +669,8 @@ async def test_postgres_write_gateway_ensure_composite_pk_and_secondary_unique(
     )
 
     patched = await write.upsert(
+        doc_id,
         PgGwCreateTenant(
-            id=doc_id,
             tenant_id=tenant_id,
             name="ignored",
             email="ignored",

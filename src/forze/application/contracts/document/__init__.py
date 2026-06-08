@@ -6,7 +6,6 @@ from .deps import (
     DocumentQueryDepPort,
 )
 from .gateways import DocumentReadGatewayPort, DocumentWriteGatewayPort
-from .helpers import require_create_id, require_create_id_for_many
 from .ports import BaseDocumentPort, DocumentCommandPort, DocumentQueryPort
 from .codecs import (
     DocumentCodecs,
@@ -14,6 +13,7 @@ from .codecs import (
     document_codecs_for_write_types,
 )
 from .specs import DocumentSpec
+from .value_objects import KeyedCreate, UpsertItem
 from .write_types import DocumentWriteTypes
 from .types import RowLockMode
 
@@ -26,8 +26,8 @@ __all__ = [
     "DocumentQueryPort",
     "DocumentCommandPort",
     "RowLockMode",
-    "require_create_id_for_many",
-    "require_create_id",
+    "KeyedCreate",
+    "UpsertItem",
     "DocumentCodecs",
     "document_codecs_for_spec",
     "document_codecs_for_write_types",

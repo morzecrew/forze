@@ -5,7 +5,7 @@ from typing import Any, Generic, TypeVar, final
 import attrs
 from pydantic import BaseModel
 
-from forze.domain.models import BaseDTO, CreateDocumentCmd, Document
+from forze.domain.models import BaseDTO, Document
 
 from ..base import BaseSpec
 from ..cache import CacheSpec
@@ -21,7 +21,7 @@ R = TypeVar("R", bound=BaseModel)
 
 # Any is default to avoid separate spec for read-only documents
 D = TypeVar("D", bound=Document, default=Any)
-C = TypeVar("C", bound=CreateDocumentCmd, default=Any)
+C = TypeVar("C", bound=BaseDTO, default=Any)
 U = TypeVar("U", bound=BaseDTO, default=Any)
 
 # ....................... #

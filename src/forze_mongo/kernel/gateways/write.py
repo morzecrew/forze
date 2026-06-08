@@ -23,7 +23,7 @@ from forze.base.exceptions import CoreException, ExceptionKind, exc
 from forze.base.primitives import JsonDict
 from forze.base.serialization import ModelCodec
 from forze.domain.constants import ID_FIELD, REV_FIELD
-from forze.domain.models import BaseDTO, CreateDocumentCmd, Document
+from forze.domain.models import BaseDTO, Document
 
 from ..relation import relations_match
 from .base import MongoGateway
@@ -35,7 +35,7 @@ from .read import MongoReadGateway
 
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
+class MongoWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
     HistoryOccMixin[D],
     MongoGateway[D],
 ):
@@ -182,13 +182,30 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
 
     # ....................... #
 
-    def _from_cdto(self, dto: C) -> D:
-        return self.create_codec.transform(dto)
+    def _from_cdto(self, payload: C, id: UUID | None = None) -> D:
+        model = self.create_codec.transform(payload)
+
+        if id is not None:
+            model = model.model_copy(update={ID_FIELD: id}, deep=True)
+
+        return model
 
     # ....................... #
 
-    def _from_cdto_many(self, dtos: Sequence[C]) -> Sequence[D]:
-        return self.create_codec.transform_many(dtos)
+    def _from_cdto_many(
+        self,
+        payloads: Sequence[C],
+        ids: Sequence[UUID] | None = None,
+    ) -> Sequence[D]:
+        models = list(self.create_codec.transform_many(payloads))
+
+        if ids is not None:
+            models = [
+                m.model_copy(update={ID_FIELD: i}, deep=True)
+                for m, i in zip(models, ids, strict=True)
+            ]
+
+        return models
 
     # ....................... #
 
@@ -206,14 +223,15 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
     # ....................... #
 
     @occ_retry
-    async def create(self, dto: C) -> D:
-        """Insert a new document from a creation DTO and record its history.
+    async def create(self, payload: C, *, id: UUID | None = None) -> D:
+        """Insert a new document from a creation payload and record its history.
 
-        :param dto: Creation payload.
+        :param payload: Creation payload (domain fields only).
+        :param id: Optional caller-chosen primary key; server-generated when omitted.
         :returns: The persisted domain document.
         """
 
-        model = self._from_cdto(dto)
+        model = self._from_cdto(payload, id)
         data = self.read_codec.encode_persistence_mapping(model)
         data = self.adapt_payload_for_write(data, create=True)
 
@@ -229,26 +247,24 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
     @occ_retry
     async def create_many(
         self,
-        dtos: Sequence[C],
+        payloads: Sequence[C],
         *,
         batch_size: int = 200,
     ) -> Sequence[D]:
-        """Bulk-insert documents from creation DTOs and record their history.
+        """Bulk-insert documents from creation payloads and record their history.
 
-        :param dtos: Creation payloads. No-ops when empty.
+        :param payloads: Creation payloads (server-assigned ids). No-ops when empty.
         """
 
-        if not dtos:
+        if not payloads:
             return []
 
-        models = self._from_cdto_many(dtos)
+        models = self._from_cdto_many(payloads)
         raw_payloads = self.read_codec.encode_persistence_mapping_many(models)
-        payloads = self.adapt_many_payload_for_write(raw_payloads, create=True)
-        payloads = list(map(self._storage_doc, payloads))
+        write_payloads = self.adapt_many_payload_for_write(raw_payloads, create=True)
+        docs = list(map(self._storage_doc, write_payloads))
 
-        await self.client.insert_many(
-            await self.coll(), payloads, batch_size=batch_size
-        )
+        await self.client.insert_many(await self.coll(), docs, batch_size=batch_size)
 
         created = await self.read_gw.get_many([model.id for model in models])
         await self._write_history(*created)
@@ -258,10 +274,10 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
     # ....................... #
 
     @occ_retry
-    async def ensure(self, dto: C) -> D:
-        """Insert a document when missing using ``$setOnInsert`` upsert; no field updates on match."""
+    async def ensure(self, id: UUID, payload: C) -> D:
+        """Insert a document at *id* when missing using ``$setOnInsert``; no updates on match."""
 
-        model = self._from_cdto(dto)
+        model = self._from_cdto(payload, id)
         data = self.read_codec.encode_persistence_mapping(model)
         data = self.adapt_payload_for_write(data, create=True)
         storage = self._storage_doc(data)
@@ -282,23 +298,24 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
     @occ_retry
     async def ensure_many(
         self,
-        dtos: Sequence[C],
+        ids: Sequence[UUID],
+        payloads: Sequence[C],
         *,
         batch_size: int = 200,
     ) -> Sequence[D]:
         """Bulk insert-when-missing with ``$setOnInsert`` upserts; order preserved for reads."""
 
-        if not dtos:
+        if not payloads:
             return []
 
-        models = self._from_cdto_many(dtos)
+        models = self._from_cdto_many(payloads, ids)
         raw_payloads = self.read_codec.encode_persistence_mapping_many(models)
-        payloads = self.adapt_many_payload_for_write(raw_payloads, create=True)
+        write_payloads = self.adapt_many_payload_for_write(raw_payloads, create=True)
 
         inserted_idx: set[int] = set()
 
-        for offset in range(0, len(dtos), batch_size):
-            chunk_payloads = payloads[offset : offset + batch_size]
+        for offset in range(0, len(write_payloads), batch_size):
+            chunk_payloads = write_payloads[offset : offset + batch_size]
             chunk_models = models[offset : offset + batch_size]
             ops = self._bulk_upsert_set_on_insert_ops(chunk_models, chunk_payloads)
             inserted_idx |= await self._run_bulk_upsert_set_on_insert(
@@ -321,12 +338,12 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
     # ....................... #
 
     @occ_retry
-    async def upsert(self, create_dto: C, update_dto: U) -> D:
-        """Insert with ``$setOnInsert`` when missing; else delegate to :meth:`update`."""
+    async def upsert(self, id: UUID, create: C, update: U) -> D:
+        """Insert *create* at *id* with ``$setOnInsert`` when missing; else delegate to :meth:`update`."""
 
         self._require_update_cmd()
 
-        model = self._from_cdto(create_dto)
+        model = self._from_cdto(create, id)
         data = self.read_codec.encode_persistence_mapping(model)
         data = self.adapt_payload_for_write(data, create=True)
         storage = self._storage_doc(data)
@@ -341,7 +358,7 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
             return model
 
         current = await self.read_gw.get(model.id)
-        u_res, _ = await self.update(model.id, update_dto, rev=current.rev)
+        u_res, _ = await self.update(model.id, update, rev=current.rev)
         return u_res
 
     # ....................... #
@@ -349,7 +366,9 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
     @occ_retry
     async def upsert_many(
         self,
-        pairs: Sequence[tuple[C, U]],
+        ids: Sequence[UUID],
+        creates: Sequence[C],
+        updates: Sequence[U],
         *,
         batch_size: int = 200,
     ) -> Sequence[D]:
@@ -357,17 +376,17 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
 
         self._require_update_cmd()
 
-        if not pairs:
+        if not creates:
             return []
 
-        models = self._from_cdto_many([c for c, _ in pairs])
+        models = self._from_cdto_many(creates, ids)
         raw_payloads = self.read_codec.encode_persistence_mapping_many(models)
         payloads = self.adapt_many_payload_for_write(raw_payloads, create=True)
-        u_all = [u for _, u in pairs]
+        u_all = list(updates)
 
         inserted_idx: set[int] = set()
 
-        for offset in range(0, len(pairs), batch_size):
+        for offset in range(0, len(creates), batch_size):
             chunk_payloads = payloads[offset : offset + batch_size]
             chunk_models = models[offset : offset + batch_size]
             ops = self._bulk_upsert_set_on_insert_ops(chunk_models, chunk_payloads)

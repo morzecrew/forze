@@ -21,6 +21,7 @@ from uuid import UUID
 import pytest
 from pydantic import BaseModel
 
+from forze.application.contracts.document import KeyedCreate, UpsertItem
 from forze.application.integrations.document._command import DocumentCommandMixin
 from forze.application.integrations.document._query import DocumentQueryMixin
 from forze.base.exceptions import CoreException
@@ -116,27 +117,31 @@ class FakeWriteGateway:
         self._update_many_result = update_many_result
         self.calls: list[str] = []
 
-    async def create(self, dto: Any) -> Any:
+    async def create(self, payload: Any, *, id: Any = None) -> Any:
         self.calls.append("create")
         return self._create_result
 
-    async def create_many(self, dtos: Any, *, batch_size: int) -> Sequence[Any]:
+    async def create_many(self, payloads: Any, *, batch_size: int) -> Sequence[Any]:
         self.calls.append("create_many")
         return self._create_many_result
 
-    async def ensure(self, dto: Any) -> Any:
+    async def ensure(self, id: Any, payload: Any) -> Any:
         self.calls.append("ensure")
         return self._ensure_result
 
-    async def ensure_many(self, dtos: Any, *, batch_size: int) -> Sequence[Any]:
+    async def ensure_many(
+        self, ids: Any, payloads: Any, *, batch_size: int
+    ) -> Sequence[Any]:
         self.calls.append("ensure_many")
         return self._ensure_many_result
 
-    async def upsert(self, create_dto: Any, update_dto: Any) -> Any:
+    async def upsert(self, id: Any, create: Any, update: Any) -> Any:
         self.calls.append("upsert")
         return self._upsert_result
 
-    async def upsert_many(self, pairs: Any, *, batch_size: int) -> Sequence[Any]:
+    async def upsert_many(
+        self, ids: Any, creates: Any, updates: Any, *, batch_size: int
+    ) -> Sequence[Any]:
         self.calls.append("upsert_many")
         return self._upsert_many_result
 
@@ -570,7 +575,7 @@ async def test_ensure_invalidates_and_returns() -> None:
     cache = FakeCache()
     harness = CommandHarness(write_gw, cache)
 
-    res = await harness.ensure(_Dto(id=_UID_A))
+    res = await harness.ensure(_UID_A, _Dto())
 
     assert res is not None and res.id == str(_UID_A)
     assert cache.invalidated == [_UID_A]
@@ -585,7 +590,7 @@ async def test_upsert_invalidates_and_returns() -> None:
     cache = FakeCache()
     harness = CommandHarness(write_gw, cache)
 
-    res = await harness.upsert(_Dto(id=_UID_A), _Dto())
+    res = await harness.upsert(_UID_A, _Dto(), _Dto())
 
     assert res is not None and res.id == str(_UID_A)
     assert cache.invalidated == [_UID_A]
@@ -623,7 +628,7 @@ async def test_ensure_many_populates_cache(return_new: bool) -> None:
     harness = CommandHarness(write_gw, cache)
 
     res = await harness.ensure_many(
-        [_Dto(id=_UID_A), _Dto(id=_UID_B)],
+        [KeyedCreate(id=_UID_A, payload=_Dto()), KeyedCreate(id=_UID_B, payload=_Dto())],
         return_new=return_new,
     )
 
@@ -647,7 +652,10 @@ async def test_upsert_many_populates_cache(return_new: bool) -> None:
     harness = CommandHarness(write_gw, cache)
 
     res = await harness.upsert_many(
-        [(_Dto(id=_UID_A), _Dto()), (_Dto(id=_UID_B), _Dto())],
+        [
+            UpsertItem(id=_UID_A, create=_Dto(), update=_Dto()),
+            UpsertItem(id=_UID_B, create=_Dto(), update=_Dto()),
+        ],
         return_new=return_new,
     )
 

@@ -4,10 +4,7 @@ import asyncio
 from typing import Generic, Literal, Sequence, overload
 from uuid import UUID
 
-from forze.application.contracts.document import (
-    require_create_id,
-    require_create_id_for_many,
-)
+from forze.application.contracts.document import KeyedCreate, UpsertItem
 from forze.application.contracts.querying import QueryFilterExpression
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
@@ -20,6 +17,18 @@ from ._limits import check_page_limit
 from ._types import C, D, R, U
 
 # ----------------------- #
+
+
+def _require_distinct_ids(ids: Sequence[UUID]) -> None:
+    """Reject duplicate ids within a bulk ensure/upsert batch."""
+
+    if len(set(ids)) != len(ids):
+        raise exc.internal(
+            "ensure_many and upsert_many require distinct id values in the batch"
+        )
+
+
+# ....................... #
 
 
 class DocumentCommandMixin(
@@ -63,21 +72,28 @@ class DocumentCommandMixin(
     # ....................... #
 
     @overload
-    async def create(self, dto: C, *, return_new: Literal[True] = True) -> R: ...
+    async def create(
+        self, payload: C, *, id: UUID | None = None, return_new: Literal[True] = True
+    ) -> R: ...
 
     @overload
-    async def create(self, dto: C, *, return_new: Literal[False]) -> None: ...
+    async def create(
+        self, payload: C, *, id: UUID | None = None, return_new: Literal[False]
+    ) -> None: ...
 
-    async def create(self, dto: C, *, return_new: bool = True) -> R | None:
+    async def create(
+        self, payload: C, *, id: UUID | None = None, return_new: bool = True
+    ) -> R | None:
         """Create a new document and populate the cache.
 
-        :param dto: Creation payload.
+        :param payload: Creation payload (domain fields only).
+        :param id: Optional caller-chosen primary key; server-generated when omitted.
         :returns: The created document as the read model.
         """
 
         w = self._require_write()
 
-        domain = await w.create(dto)
+        domain = await w.create(payload, id=id)
         await self.document_cache.invalidate_keys_now(domain.id)
         return await self._finalize_single_write(domain, return_new=return_new)
 
@@ -86,7 +102,7 @@ class DocumentCommandMixin(
     @overload
     async def create_many(
         self,
-        dtos: Sequence[C],
+        payloads: Sequence[C],
         *,
         return_new: Literal[True] = True,
     ) -> Sequence[R]: ...
@@ -94,31 +110,31 @@ class DocumentCommandMixin(
     @overload
     async def create_many(
         self,
-        dtos: Sequence[C],
+        payloads: Sequence[C],
         *,
         return_new: Literal[False],
     ) -> None: ...
 
     async def create_many(
         self,
-        dtos: Sequence[C],
+        payloads: Sequence[C],
         *,
         return_new: bool = True,
     ) -> Sequence[R] | None:
         """Bulk-create documents and populate the cache.
 
-        :param dtos: Creation payloads.
+        :param payloads: Creation payloads (server-assigned ids).
         """
 
         w = self._require_write()
 
-        if not dtos:
+        if not payloads:
             if not return_new:
                 return None
 
             return []
 
-        domains = await w.create_many(dtos, batch_size=self.eff_batch_size)
+        domains = await w.create_many(payloads, batch_size=self.eff_batch_size)
         pks_new = [x.id for x in domains]
         await self.document_cache.invalidate_keys_now(*pks_new)
         return await self._finalize_bulk_write(domains, return_new=return_new)
@@ -128,7 +144,8 @@ class DocumentCommandMixin(
     @overload
     async def ensure(
         self,
-        dto: C,
+        id: UUID,
+        payload: C,
         *,
         return_new: Literal[True] = True,
     ) -> R: ...
@@ -136,16 +153,18 @@ class DocumentCommandMixin(
     @overload
     async def ensure(
         self,
-        dto: C,
+        id: UUID,
+        payload: C,
         *,
         return_new: Literal[False],
     ) -> None: ...
 
-    async def ensure(self, dto: C, *, return_new: bool = True) -> R | None:
+    async def ensure(
+        self, id: UUID, payload: C, *, return_new: bool = True
+    ) -> R | None:
         w = self._require_write()
-        require_create_id(dto)
 
-        domain = await w.ensure(dto)
+        domain = await w.ensure(id, payload)
         await self.document_cache.invalidate_keys_now(domain.id)
         return await self._finalize_single_write(domain, return_new=return_new)
 
@@ -154,7 +173,7 @@ class DocumentCommandMixin(
     @overload
     async def ensure_many(
         self,
-        dtos: Sequence[C],
+        items: Sequence[KeyedCreate[C]],
         *,
         return_new: Literal[True] = True,
     ) -> Sequence[R]: ...
@@ -162,28 +181,30 @@ class DocumentCommandMixin(
     @overload
     async def ensure_many(
         self,
-        dtos: Sequence[C],
+        items: Sequence[KeyedCreate[C]],
         *,
         return_new: Literal[False],
     ) -> None: ...
 
     async def ensure_many(
         self,
-        dtos: Sequence[C],
+        items: Sequence[KeyedCreate[C]],
         *,
         return_new: bool = True,
     ) -> Sequence[R] | None:
         w = self._require_write()
 
-        if not dtos:
+        if not items:
             if not return_new:
                 return None
 
             return []
 
-        require_create_id_for_many(dtos)
+        ids = [it.id for it in items]
+        _require_distinct_ids(ids)
+        payloads = [it.payload for it in items]
 
-        domains = await w.ensure_many(dtos, batch_size=self.eff_batch_size)
+        domains = await w.ensure_many(ids, payloads, batch_size=self.eff_batch_size)
         pks = [x.id for x in domains]
         await self.document_cache.invalidate_keys_now(*pks)
         return await self._finalize_bulk_write(domains, return_new=return_new)
@@ -193,8 +214,9 @@ class DocumentCommandMixin(
     @overload
     async def upsert(
         self,
-        create_dto: C,
-        update_dto: U,
+        id: UUID,
+        create: C,
+        update: U,
         *,
         return_new: Literal[True] = True,
     ) -> R: ...
@@ -202,23 +224,24 @@ class DocumentCommandMixin(
     @overload
     async def upsert(
         self,
-        create_dto: C,
-        update_dto: U,
+        id: UUID,
+        create: C,
+        update: U,
         *,
         return_new: Literal[False],
     ) -> None: ...
 
     async def upsert(
         self,
-        create_dto: C,
-        update_dto: U,
+        id: UUID,
+        create: C,
+        update: U,
         *,
         return_new: bool = True,
     ) -> R | None:
         w = self._require_write()
-        require_create_id(create_dto)
 
-        domain = await w.upsert(create_dto, update_dto)
+        domain = await w.upsert(id, create, update)
         await self.document_cache.invalidate_keys_now(domain.id)
         return await self._finalize_single_write(domain, return_new=return_new)
 
@@ -227,7 +250,7 @@ class DocumentCommandMixin(
     @overload
     async def upsert_many(
         self,
-        pairs: Sequence[tuple[C, U]],
+        items: Sequence[UpsertItem[C, U]],
         *,
         return_new: Literal[True] = True,
     ) -> Sequence[R]: ...
@@ -235,27 +258,32 @@ class DocumentCommandMixin(
     @overload
     async def upsert_many(
         self,
-        pairs: Sequence[tuple[C, U]],
+        items: Sequence[UpsertItem[C, U]],
         *,
         return_new: Literal[False],
     ) -> None: ...
 
     async def upsert_many(
         self,
-        pairs: Sequence[tuple[C, U]],
+        items: Sequence[UpsertItem[C, U]],
         *,
         return_new: bool = True,
     ) -> Sequence[R] | None:
         w = self._require_write()
 
-        if not pairs:
+        if not items:
             if not return_new:
                 return None
             return []
 
-        require_create_id_for_many(pairs)
+        ids = [it.id for it in items]
+        _require_distinct_ids(ids)
+        creates = [it.create for it in items]
+        updates = [it.update for it in items]
 
-        domains = await w.upsert_many(pairs, batch_size=self.eff_batch_size)
+        domains = await w.upsert_many(
+            ids, creates, updates, batch_size=self.eff_batch_size
+        )
         pks = [x.id for x in domains]
         await self.document_cache.invalidate_keys_now(*pks)
         return await self._finalize_bulk_write(domains, return_new=return_new)

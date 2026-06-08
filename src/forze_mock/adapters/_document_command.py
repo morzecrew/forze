@@ -5,10 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, Generic, Literal, Sequence, cast, overload
 from uuid import UUID
 
-from forze.application.contracts.document import (
-    require_create_id,
-    require_create_id_for_many,
-)
+from forze.application.contracts.document import KeyedCreate, UpsertItem
 from forze.application.contracts.querying import QueryFilterExpression
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict, utcnow
@@ -97,15 +94,38 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
 
     # ....................... #
 
-    @overload
-    async def create(self, dto: C, *, return_new: Literal[True] = True) -> R: ...
+    def _build_domain(self, payload: C, id: UUID | None = None) -> D:
+        """Build the domain model from a create payload, injecting an explicit id if given.
 
-    @overload
-    async def create(self, dto: C, *, return_new: Literal[False]) -> None: ...
+        ``created_at``/``last_update_at`` carried on the payload (import) flow through the
+        codec transform; otherwise the domain self-stamps them. The id is server-generated
+        (domain default) unless supplied.
+        """
 
-    async def create(self, dto: C, *, return_new: bool = True) -> R | None:
         self._require_domain_model()
-        domain = self._create_codec().transform(dto)
+        domain = self._create_codec().transform(payload)
+
+        if id is not None:
+            domain = domain.model_copy(update={ID_FIELD: id}, deep=True)
+
+        return domain
+
+    # ....................... #
+
+    @overload
+    async def create(
+        self, payload: C, *, id: UUID | None = None, return_new: Literal[True] = True
+    ) -> R: ...
+
+    @overload
+    async def create(
+        self, payload: C, *, id: UUID | None = None, return_new: Literal[False]
+    ) -> None: ...
+
+    async def create(
+        self, payload: C, *, id: UUID | None = None, return_new: bool = True
+    ) -> R | None:
+        domain = self._build_domain(payload, id)
         serialized = self._domain_codec().encode_persistence_mapping(domain)
 
         if self.tenant_aware:
@@ -128,7 +148,7 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
     @overload
     async def create_many(
         self,
-        dtos: Sequence[C],
+        payloads: Sequence[C],
         *,
         return_new: Literal[True] = True,
     ) -> Sequence[R]: ...
@@ -136,26 +156,26 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
     @overload
     async def create_many(
         self,
-        dtos: Sequence[C],
+        payloads: Sequence[C],
         *,
         return_new: Literal[False],
     ) -> None: ...
 
     async def create_many(
         self,
-        dtos: Sequence[C],
+        payloads: Sequence[C],
         *,
         return_new: bool = True,
     ) -> Sequence[R] | None:
-        if not dtos:
+        if not payloads:
             if not return_new:
                 return None
 
             return []
         if return_new:
-            return [await self.create(dto, return_new=True) for dto in dtos]
-        for dto in dtos:
-            await self.create(dto, return_new=False)
+            return [await self.create(p, return_new=True) for p in payloads]
+        for p in payloads:
+            await self.create(p, return_new=False)
         return None
 
     # ....................... #
@@ -163,7 +183,8 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
     @overload
     async def ensure(
         self,
-        dto: C,
+        id: UUID,
+        payload: C,
         *,
         return_new: Literal[True] = True,
     ) -> R: ...
@@ -171,16 +192,16 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
     @overload
     async def ensure(
         self,
-        dto: C,
+        id: UUID,
+        payload: C,
         *,
         return_new: Literal[False],
     ) -> None: ...
 
-    async def ensure(self, dto: C, *, return_new: bool = True) -> R | None:
-        require_create_id(dto)
-
-        self._require_domain_model()
-        domain = self._create_codec().transform(dto)
+    async def ensure(
+        self, id: UUID, payload: C, *, return_new: bool = True
+    ) -> R | None:
+        domain = self._build_domain(payload, id)
 
         with self.state.lock:
             store = self._store()
@@ -199,7 +220,7 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
     @overload
     async def ensure_many(
         self,
-        dtos: Sequence[C],
+        items: Sequence[KeyedCreate[C]],
         *,
         return_new: Literal[True] = True,
     ) -> Sequence[R]: ...
@@ -207,28 +228,31 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
     @overload
     async def ensure_many(
         self,
-        dtos: Sequence[C],
+        items: Sequence[KeyedCreate[C]],
         *,
         return_new: Literal[False],
     ) -> None: ...
 
     async def ensure_many(
         self,
-        dtos: Sequence[C],
+        items: Sequence[KeyedCreate[C]],
         *,
         return_new: bool = True,
     ) -> Sequence[R] | None:
-        if not dtos:
+        if not items:
             if not return_new:
                 return None
             return []
 
-        require_create_id_for_many(dtos)
+        if len({it.id for it in items}) != len(items):
+            raise exc.internal("ensure_many requires distinct id values in the batch")
 
         if return_new:
-            return [await self.ensure(dto, return_new=True) for dto in dtos]
-        for dto in dtos:
-            await self.ensure(dto, return_new=False)
+            return [
+                await self.ensure(it.id, it.payload, return_new=True) for it in items
+            ]
+        for it in items:
+            await self.ensure(it.id, it.payload, return_new=False)
         return None
 
     # ....................... #
@@ -236,8 +260,9 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
     @overload
     async def upsert(
         self,
-        create_dto: C,
-        update_dto: U,
+        id: UUID,
+        create: C,
+        update: U,
         *,
         return_new: Literal[True] = True,
     ) -> R: ...
@@ -245,43 +270,41 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
     @overload
     async def upsert(
         self,
-        create_dto: C,
-        update_dto: U,
+        id: UUID,
+        create: C,
+        update: U,
         *,
         return_new: Literal[False],
     ) -> None: ...
 
     async def upsert(
         self,
-        create_dto: C,
-        update_dto: U,
+        id: UUID,
+        create: C,
+        update: U,
         *,
         return_new: bool = True,
     ) -> R | None:
-        require_create_id(create_dto)
-
-        self._require_domain_model()
-        domain = self._create_codec().transform(create_dto)
         with self.state.lock:
-            if domain.id in self._store():
-                rev = self._to_domain(dict(self._store()[domain.id])).rev
+            if id in self._store():
+                rev = self._to_domain(dict(self._store()[id])).rev
             else:
                 rev = None
         if rev is not None:
             return await self.update(  # type: ignore[call-overload]
-                domain.id,
+                id,
                 rev,
-                update_dto,
+                update,
                 return_new=return_new,
             )
-        return await self.create(create_dto, return_new=return_new)  # type: ignore[call-overload]
+        return await self.create(create, id=id, return_new=return_new)  # type: ignore[call-overload]
 
     # ....................... #
 
     @overload
     async def upsert_many(
         self,
-        pairs: Sequence[tuple[C, U]],
+        items: Sequence[UpsertItem[C, U]],
         *,
         return_new: Literal[True] = True,
     ) -> Sequence[R]: ...
@@ -289,29 +312,33 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
     @overload
     async def upsert_many(
         self,
-        pairs: Sequence[tuple[C, U]],
+        items: Sequence[UpsertItem[C, U]],
         *,
         return_new: Literal[False],
     ) -> None: ...
 
     async def upsert_many(
         self,
-        pairs: Sequence[tuple[C, U]],
+        items: Sequence[UpsertItem[C, U]],
         *,
         return_new: bool = True,
     ) -> Sequence[R] | None:
-        if not pairs:
+        if not items:
             if not return_new:
                 return None
             return []
 
-        require_create_id_for_many(pairs)
+        if len({it.id for it in items}) != len(items):
+            raise exc.internal("upsert_many requires distinct id values in the batch")
 
         if return_new:
-            return [await self.upsert(c, u, return_new=True) for c, u in pairs]
+            return [
+                await self.upsert(it.id, it.create, it.update, return_new=True)
+                for it in items
+            ]
 
-        for c, u in pairs:
-            await self.upsert(c, u, return_new=False)
+        for it in items:
+            await self.upsert(it.id, it.create, it.update, return_new=False)
 
         return None
 

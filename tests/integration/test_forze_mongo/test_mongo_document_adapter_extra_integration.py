@@ -153,7 +153,7 @@ async def test_mongo_adapter_cursor_prev_next_and_desc(
         UUID("20000000-0000-0000-0000-000000000004"),
     ]
     for u in ids:
-        await cmd.create(_CxCreate(id=u, sku=str(u)[:8]))
+        await cmd.create(_CxCreate(sku=str(u)[:8]), id=u)
 
     p1 = await q.find_cursor(None, cursor={"limit": 2}, sorts=None)
     assert p1.prev_cursor is None

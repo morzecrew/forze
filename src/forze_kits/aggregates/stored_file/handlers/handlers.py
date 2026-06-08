@@ -57,7 +57,7 @@ class UploadStoredFile(Handler[UploadStoredFileRequestDTO, StoredFileRead]):
     # ....................... #
 
     async def __call__(self, args: UploadStoredFileRequestDTO) -> StoredFileRead:
-        created = await self.doc.create(dto=upload_request_to_create_cmd(args))
+        created = await self.doc.create(upload_request_to_create_cmd(args))
 
         if self.outbox is not None:
             await stage_upload_pending(self.outbox, created)

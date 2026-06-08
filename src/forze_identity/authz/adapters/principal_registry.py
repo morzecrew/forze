@@ -54,8 +54,8 @@ class PrincipalRegistryAdapter(PrincipalRegistryPort):
                 is_active=existing.is_active,
             )
 
-        dto = CreatePolicyPrincipalCmd(id=principal_id, kind=kind)
-        created = await self.principal_cmd.create(dto, return_new=True)
+        dto = CreatePolicyPrincipalCmd(kind=kind)
+        created = await self.principal_cmd.create(dto, id=principal_id, return_new=True)
 
         if not is_active:
             await self.principal_cmd.update(

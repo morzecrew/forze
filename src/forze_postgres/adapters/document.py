@@ -17,7 +17,7 @@ from forze.application.integrations.document.hydration import (
     can_hydrate_read_from_write_domain,
     validate_read_write_gateway_compat,
 )
-from forze.domain.models import BaseDTO, CreateDocumentCmd, Document
+from forze.domain.models import BaseDTO, Document
 
 from ..kernel.gateways import PostgresReadGateway, PostgresWriteGateway
 from ..kernel.relation import RelationSpec, is_static_relation
@@ -26,7 +26,7 @@ from ..kernel.relation import RelationSpec, is_static_relation
 
 R = TypeVar("R", bound=BaseModel)
 D = TypeVar("D", bound=Document)
-C = TypeVar("C", bound=CreateDocumentCmd)
+C = TypeVar("C", bound=BaseDTO)
 U = TypeVar("U", bound=BaseDTO)
 
 # ....................... #

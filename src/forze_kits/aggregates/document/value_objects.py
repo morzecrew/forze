@@ -4,7 +4,7 @@ import attrs
 from pydantic import BaseModel
 
 from forze.application.contracts.mapping import MapperFactory
-from forze.domain.models import BaseDTO, CreateDocumentCmd
+from forze.domain.models import BaseDTO
 
 from .dto import (
     AggregatedListRequestDTO,
@@ -20,7 +20,7 @@ R = TypeVar("R", bound=BaseModel)
 C = TypeVar("C", bound=BaseDTO, default=BaseDTO)
 U = TypeVar("U", bound=BaseDTO, default=BaseDTO)
 
-C_cmd = TypeVar("C_cmd", bound=CreateDocumentCmd, default=Any)
+C_cmd = TypeVar("C_cmd", bound=BaseDTO, default=Any)
 U_cmd = TypeVar("U_cmd", bound=BaseDTO, default=Any)
 
 # ....................... #

@@ -16,7 +16,7 @@ from uuid import UUID
 from pydantic import BaseModel
 
 from forze.base.primitives import JsonDict
-from forze.domain.models import BaseDTO, CreateDocumentCmd, Document
+from forze.domain.models import BaseDTO, Document
 
 from ..base import CountlessPage, CursorPage, Page
 from ..querying import (
@@ -28,12 +28,13 @@ from ..querying import (
 )
 from .specs import DocumentSpec
 from .types import RowLockMode
+from .value_objects import KeyedCreate, UpsertItem
 
 # ----------------------- #
 
 R = TypeVar("R", bound=BaseModel)
 D = TypeVar("D", bound=Document)
-C = TypeVar("C", bound=CreateDocumentCmd)
+C = TypeVar("C", bound=BaseDTO)
 U = TypeVar("U", bound=BaseDTO)
 
 T = TypeVar("T", bound=BaseModel)
@@ -301,17 +302,39 @@ class DocumentCommandPort(BaseDocumentPort[R, D, C, U], Protocol[R, D, C, U]):
     """Command operations for document aggregates."""
 
     @overload
-    def create(self, dto: C, *, return_new: Literal[True] = True) -> Awaitable[R]:
-        """Create a new document from the given command DTO."""
+    def create(
+        self,
+        payload: C,
+        *,
+        id: UUID | None = None,
+        return_new: Literal[True] = True,
+    ) -> Awaitable[R]:
+        """Create a new document from *payload* (server id unless ``id`` is given)."""
         ...  # pragma: no cover
 
     @overload
-    def create(self, dto: C, *, return_new: Literal[False]) -> Awaitable[None]:
-        """Create a new document from the given command DTO."""
+    def create(
+        self,
+        payload: C,
+        *,
+        id: UUID | None = None,
+        return_new: Literal[False],
+    ) -> Awaitable[None]:
+        """Create a new document from *payload* (server id unless ``id`` is given)."""
         ...  # pragma: no cover
 
-    def create(self, dto: C, *, return_new: bool = True) -> Awaitable[R | None]:
-        """Create a new document from the given command DTO."""
+    def create(
+        self,
+        payload: C,
+        *,
+        id: UUID | None = None,
+        return_new: bool = True,
+    ) -> Awaitable[R | None]:
+        """Create a document from *payload* (domain fields only).
+
+        The primary key is server-generated unless ``id`` is supplied — a caller-chosen
+        "put" that inserts and fails on a primary-key conflict.
+        """
         ...  # pragma: no cover
 
     # ....................... #
@@ -319,7 +342,7 @@ class DocumentCommandPort(BaseDocumentPort[R, D, C, U], Protocol[R, D, C, U]):
     @overload
     def create_many(
         self,
-        dtos: Sequence[C],
+        payloads: Sequence[C],
         *,
         return_new: Literal[True] = True,
     ) -> Awaitable[Sequence[R]]:
@@ -329,7 +352,7 @@ class DocumentCommandPort(BaseDocumentPort[R, D, C, U], Protocol[R, D, C, U]):
     @overload
     def create_many(
         self,
-        dtos: Sequence[C],
+        payloads: Sequence[C],
         *,
         return_new: Literal[False],
     ) -> Awaitable[None]:
@@ -338,7 +361,7 @@ class DocumentCommandPort(BaseDocumentPort[R, D, C, U], Protocol[R, D, C, U]):
 
     def create_many(
         self,
-        dtos: Sequence[C],
+        payloads: Sequence[C],
         *,
         return_new: bool = True,
     ) -> Awaitable[Sequence[R] | None]:
@@ -348,22 +371,29 @@ class DocumentCommandPort(BaseDocumentPort[R, D, C, U], Protocol[R, D, C, U]):
     # ....................... #
 
     @overload
-    def ensure(self, dto: C, *, return_new: Literal[True] = True) -> Awaitable[R]:
-        """Insert when missing; if a row with the same id exists, return it unchanged."""
+    def ensure(
+        self, id: UUID, payload: C, *, return_new: Literal[True] = True
+    ) -> Awaitable[R]:
+        """Insert *payload* at *id* when missing; if it exists, return it unchanged."""
         ...  # pragma: no cover
 
     @overload
-    def ensure(self, dto: C, *, return_new: Literal[False]) -> Awaitable[None]:
+    def ensure(
+        self, id: UUID, payload: C, *, return_new: Literal[False]
+    ) -> Awaitable[None]:
         """Insert when missing; no read when ``return_new`` is false."""
         ...  # pragma: no cover
 
-    def ensure(self, dto: C, *, return_new: bool = True) -> Awaitable[R | None]:
-        """Insert when missing; if a row with the same primary key exists, return it unchanged.
+    def ensure(
+        self, id: UUID, payload: C, *, return_new: bool = True
+    ) -> Awaitable[R | None]:
+        """Insert *payload* at primary key *id* when missing; return it unchanged on conflict.
 
-        Requires :attr:`~CreateDocumentCmd.id` to be set on ``dto`` so the
-        operation is idempotent by primary key. **Insert-only on conflict** — existing
-        rows are never mutated. Gateways may hydrate the returned domain row from the
-        write payload when read and write share the same physical source.
+        Idempotent by primary key — **insert-only on conflict**; existing rows are never
+        mutated. To preserve ``created_at``/``last_update_at`` on import, pass a payload
+        carrying those fields (the ``forze_kits`` import-timestamps mixin); otherwise the
+        server stamps them. Gateways may hydrate the returned domain row from the write
+        payload when read and write share the same physical source.
         """
         ...  # pragma: no cover
 
@@ -372,7 +402,7 @@ class DocumentCommandPort(BaseDocumentPort[R, D, C, U], Protocol[R, D, C, U]):
     @overload
     def ensure_many(
         self,
-        dtos: Sequence[C],
+        items: Sequence[KeyedCreate[C]],
         *,
         return_new: Literal[True] = True,
     ) -> Awaitable[Sequence[R]]:
@@ -382,7 +412,7 @@ class DocumentCommandPort(BaseDocumentPort[R, D, C, U], Protocol[R, D, C, U]):
     @overload
     def ensure_many(
         self,
-        dtos: Sequence[C],
+        items: Sequence[KeyedCreate[C]],
         *,
         return_new: Literal[False],
     ) -> Awaitable[None]:
@@ -391,14 +421,14 @@ class DocumentCommandPort(BaseDocumentPort[R, D, C, U], Protocol[R, D, C, U]):
 
     def ensure_many(
         self,
-        dtos: Sequence[C],
+        items: Sequence[KeyedCreate[C]],
         *,
         return_new: bool = True,
     ) -> Awaitable[Sequence[R] | None]:
-        """Bulk insert-when-missing; existing primary keys are left unchanged.
+        """Bulk insert-when-missing, keyed by each :class:`KeyedCreate.id`.
 
-        Requires each DTO to set :attr:`~CreateDocumentCmd.id` and ids must be
-        unique within ``dtos``. Order of the returned read models matches ``dtos``.
+        Ids must be unique within ``items``. Order of the returned read models matches
+        ``items``. Existing primary keys are left unchanged.
         """
         ...  # pragma: no cover
 
@@ -407,19 +437,21 @@ class DocumentCommandPort(BaseDocumentPort[R, D, C, U], Protocol[R, D, C, U]):
     @overload
     def upsert(
         self,
-        create_dto: C,
-        update_dto: U,
+        id: UUID,
+        create: C,
+        update: U,
         *,
         return_new: Literal[True] = True,
     ) -> Awaitable[R]:
-        """Insert from ``create_dto`` or, if a row with that id exists, apply ``update_dto``."""
+        """Insert *create* at *id*, or apply *update* if a row with that id exists."""
         ...  # pragma: no cover
 
     @overload
     def upsert(
         self,
-        create_dto: C,
-        update_dto: U,
+        id: UUID,
+        create: C,
+        update: U,
         *,
         return_new: Literal[False],
     ) -> Awaitable[None]:
@@ -428,18 +460,18 @@ class DocumentCommandPort(BaseDocumentPort[R, D, C, U], Protocol[R, D, C, U]):
 
     def upsert(
         self,
-        create_dto: C,
-        update_dto: U,
+        id: UUID,
+        create: C,
+        update: U,
         *,
         return_new: bool = True,
     ) -> Awaitable[R | None]:
-        """Insert when missing; on primary-key conflict, apply ``update_dto`` like :meth:`update`.
+        """Insert *create* at primary key *id* when missing; on conflict apply *update* like :meth:`update`.
 
-        Requires :attr:`~CreateDocumentCmd.id` on ``create_dto``. The update branch
-        uses the current stored revision (same optimistic rules as :meth:`update`).
-        This is **not** a Mongo replace-all upsert — conflict rows are patched via
-        domain apply. Gateways may hydrate insert results from the write payload when
-        read and write share the same physical source.
+        The update branch uses the current stored revision (same optimistic rules as
+        :meth:`update`). This is **not** a Mongo replace-all upsert — conflict rows are
+        patched via domain apply. Gateways may hydrate insert results from the write
+        payload when read and write share the same physical source.
         """
         ...  # pragma: no cover
 
@@ -448,17 +480,17 @@ class DocumentCommandPort(BaseDocumentPort[R, D, C, U], Protocol[R, D, C, U]):
     @overload
     def upsert_many(
         self,
-        pairs: Sequence[tuple[C, U]],
+        items: Sequence[UpsertItem[C, U]],
         *,
         return_new: Literal[True] = True,
     ) -> Awaitable[Sequence[R]]:
-        """Bulk upsert: each pair is ``(create_cmd, update_cmd)`` for the same id."""
+        """Bulk upsert: each :class:`UpsertItem` carries ``id`` + create + update payloads."""
         ...  # pragma: no cover
 
     @overload
     def upsert_many(
         self,
-        pairs: Sequence[tuple[C, U]],
+        items: Sequence[UpsertItem[C, U]],
         *,
         return_new: Literal[False],
     ) -> Awaitable[None]:
@@ -467,13 +499,13 @@ class DocumentCommandPort(BaseDocumentPort[R, D, C, U], Protocol[R, D, C, U]):
 
     def upsert_many(
         self,
-        pairs: Sequence[tuple[C, U]],
+        items: Sequence[UpsertItem[C, U]],
         *,
         return_new: bool = True,
     ) -> Awaitable[Sequence[R] | None]:
-        """Bulk insert-or-update. Create commands must set ``id`` and ids must be unique.
+        """Bulk insert-or-update keyed by each :class:`UpsertItem.id`; ids must be unique.
 
-        Result order matches ``pairs``.
+        Result order matches ``items``.
         """
         ...  # pragma: no cover
 

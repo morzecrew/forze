@@ -2,12 +2,12 @@
 
 from typing import Generic, NotRequired, TypedDict, TypeVar, final
 
-from forze.domain.models import BaseDTO, CreateDocumentCmd, Document
+from forze.domain.models import BaseDTO, Document
 
 # ----------------------- #
 
 D = TypeVar("D", bound=Document)
-C = TypeVar("C", bound=CreateDocumentCmd)
+C = TypeVar("C", bound=BaseDTO)
 U = TypeVar("U", bound=BaseDTO)
 
 # ....................... #

@@ -7,7 +7,9 @@ from uuid import uuid4
 
 import pytest
 
-from forze.application.contracts.document import DocumentWriteTypes
+from forze.application.contracts.document import (
+    DocumentWriteTypes,
+)
 from forze.application.execution import Deps, ExecutionContext
 from forze.base.exceptions import CoreException, ExceptionKind
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document
@@ -216,8 +218,8 @@ async def test_create_ensure_upsert_many_empty_noops(
         tenant_aware=False,
     )
     assert await write.create_many([]) == []
-    assert await write.ensure_many([]) == []
-    assert await write.upsert_many([]) == []
+    assert await write.ensure_many([], []) == []
+    assert await write.upsert_many([], [], []) == []
 
 
 @pytest.mark.integration
@@ -237,6 +239,7 @@ async def test_ensure_many_all_new_no_conflicts(
         tenant_aware=False,
     )
     out = await write.ensure_many(
+        [uuid4(), uuid4()],
         [WmCreate(name="x"), WmCreate(name="y")],
         batch_size=10,
     )
@@ -245,7 +248,8 @@ async def test_ensure_many_all_new_no_conflicts(
 
     # All ids already exist -> no inserts, conflict lookup returns existing docs.
     again = await write.ensure_many(
-        [WmCreate(id=d.id, name="ignored") for d in out],
+        [d.id for d in out],
+        [WmCreate(name="ignored") for _ in out],
         batch_size=10,
     )
     assert {d.name for d in again} == {"x", "y"}
@@ -270,10 +274,9 @@ async def test_upsert_many_all_new_then_all_existing(
 
     # All new -> only the insert branch runs (no update path).
     out = await write.upsert_many(
-        [
-            (WmCreate(name="a"), WmUpdate(name="ignored")),
-            (WmCreate(name="b"), WmUpdate(name="ignored")),
-        ],
+        [uuid4(), uuid4()],
+        [WmCreate(name="a"), WmCreate(name="b")],
+        [WmUpdate(name="ignored"), WmUpdate(name="ignored")],
         batch_size=10,
     )
     assert {d.name for d in out} == {"a", "b"}
@@ -281,7 +284,9 @@ async def test_upsert_many_all_new_then_all_existing(
 
     # All existing -> only the update branch runs (no inserts).
     again = await write.upsert_many(
-        [(WmCreate(id=d.id, name="ignored"), WmUpdate(name=f"u-{d.name}")) for d in out],
+        [d.id for d in out],
+        [WmCreate(name="ignored") for _ in out],
+        [WmUpdate(name=f"u-{d.name}") for d in out],
         batch_size=10,
     )
     assert {d.name for d in again} == {"u-a", "u-b"}

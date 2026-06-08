@@ -233,7 +233,7 @@ async def test_find_many_with_cursor_seek_directions(
         UUID("20000000-0000-0000-0000-000000000003"),
     ]
     for u, label in zip(ids, ("a", "b", "c"), strict=True):
-        await write.create(RvCreate(id=u, name=label))
+        await write.create(RvCreate(name=label), id=u)
 
     pivot = str(ids[1])
     tok = encode_keyset_v1(

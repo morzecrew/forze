@@ -7,6 +7,7 @@ require_firestore()
 # ....................... #
 
 from typing import Literal, Sequence, TypeVar, final, overload
+from uuid import UUID
 
 import attrs
 from pydantic import BaseModel
@@ -17,7 +18,7 @@ from forze.application.integrations.document.hydration import (
     validate_read_write_gateway_compat,
 )
 
-from forze.domain.models import BaseDTO, CreateDocumentCmd, Document
+from forze.domain.models import BaseDTO, Document
 
 from ..kernel.gateways import FirestoreReadGateway, FirestoreWriteGateway
 
@@ -25,7 +26,7 @@ from ..kernel.gateways import FirestoreReadGateway, FirestoreWriteGateway
 
 R = TypeVar("R", bound=BaseModel)
 D = TypeVar("D", bound=Document)
-C = TypeVar("C", bound=CreateDocumentCmd)
+C = TypeVar("C", bound=BaseDTO)
 U = TypeVar("U", bound=BaseDTO)
 
 # ....................... #
@@ -62,12 +63,18 @@ class FirestoreDocumentAdapter(DocumentAdapter[R, D, C, U]):
     # ....................... #
 
     @overload
-    async def create(self, dto: C, *, return_new: Literal[True] = True) -> R: ...
+    async def create(
+        self, payload: C, *, id: UUID | None = None, return_new: Literal[True] = True
+    ) -> R: ...
 
     @overload
-    async def create(self, dto: C, *, return_new: Literal[False]) -> None: ...
+    async def create(
+        self, payload: C, *, id: UUID | None = None, return_new: Literal[False]
+    ) -> None: ...
 
-    async def create(self, dto: C, *, return_new: bool = True) -> R | None:
+    async def create(
+        self, payload: C, *, id: UUID | None = None, return_new: bool = True
+    ) -> R | None:
         """Create without a post-write read inside Firestore transactions."""
 
         write_gw = self.write_gw
@@ -77,9 +84,9 @@ class FirestoreDocumentAdapter(DocumentAdapter[R, D, C, U]):
             or not return_new
             or not write_gw.client.is_in_transaction()
         ):
-            return await super().create(dto, return_new=return_new)  # type: ignore[call-overload]
+            return await super().create(payload, id=id, return_new=return_new)  # type: ignore[call-overload]
 
-        domain = await write_gw.create(dto)
+        domain = await write_gw.create(payload, id=id)
         await self.document_cache.invalidate_keys_now(domain.id)
 
         res = self.read_gw.read_codec.transform(domain)
@@ -95,7 +102,7 @@ class FirestoreDocumentAdapter(DocumentAdapter[R, D, C, U]):
     @overload
     async def create_many(
         self,
-        dtos: Sequence[C],
+        payloads: Sequence[C],
         *,
         return_new: Literal[True] = True,
     ) -> Sequence[R]: ...
@@ -103,14 +110,14 @@ class FirestoreDocumentAdapter(DocumentAdapter[R, D, C, U]):
     @overload
     async def create_many(
         self,
-        dtos: Sequence[C],
+        payloads: Sequence[C],
         *,
         return_new: Literal[False],
     ) -> None: ...
 
     async def create_many(
         self,
-        dtos: Sequence[C],
+        payloads: Sequence[C],
         *,
         return_new: bool = True,
     ) -> Sequence[R] | None:
@@ -121,12 +128,12 @@ class FirestoreDocumentAdapter(DocumentAdapter[R, D, C, U]):
             or not return_new
             or not write_gw.client.is_in_transaction()
         ):
-            return await super().create_many(dtos, return_new=return_new)  # type: ignore[call-overload]
+            return await super().create_many(payloads, return_new=return_new)  # type: ignore[call-overload]
 
-        if not dtos:
+        if not payloads:
             return []
 
-        domains = await write_gw.create_many(dtos, batch_size=self.batch_size)
+        domains = await write_gw.create_many(payloads, batch_size=self.batch_size)
         pks_new = [doc.id for doc in domains]
         await self.document_cache.invalidate_keys_now(*pks_new)
 

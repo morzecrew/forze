@@ -61,7 +61,7 @@ async def test_find_by_number_id_roundtrip_integration() -> None:
     doc_command = ctx.document.command(spec)
     doc_query = ctx.document.query(spec)
 
-    created = await doc_command.create(dto=NumberedCreateCmd(number_id=7))
+    created = await doc_command.create(NumberedCreateCmd(number_id=7))
     found = await doc_query.find(filters={"$values": {"number_id": 7}})
 
     assert found is not None
@@ -91,7 +91,7 @@ async def test_soft_delete_hides_document_until_restore_integration() -> None:
     restore_handler = RestoreDocument(doc=doc_command)
     get_handler = GetDocument[SoftDeletableReadDocument](doc=doc_query)
 
-    created = await doc_command.create(dto=CreateDocumentCmd())
+    created = await doc_command.create(CreateDocumentCmd())
     deleted = await delete_handler(
         DocumentIdRevDTO(id=created.id, rev=created.rev),
     )
@@ -131,7 +131,7 @@ async def test_get_document_returns_created_row_integration() -> None:
     doc_query = ctx.document.query(spec)
     get_handler = GetDocument[NumberedReadDocument](doc=doc_query)
 
-    created = await doc_command.create(dto=NumberedCreateCmd(number_id=42))
+    created = await doc_command.create(NumberedCreateCmd(number_id=42))
     fetched = await get_handler(DocumentIdDTO(id=created.id))
 
     assert fetched.id == created.id

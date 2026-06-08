@@ -32,7 +32,7 @@ from forze.application.execution.context import ExecutionContextFactory
 from forze.application.execution.deps import DepsRegistry
 from forze.application.execution.operations import run_operation
 from forze.application.execution.operations.registry import FrozenOperationRegistry
-from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
+from forze.domain.models import BaseDTO, Document, ReadDocument
 from forze_kits.aggregates.document.factories import build_document_registry
 from forze_kits.aggregates.document.operations import DocumentKernelOp
 from forze_kits.aggregates.document.value_objects import DocumentDTOs
@@ -54,14 +54,9 @@ class NoteRead(ReadDocument):
 
 
 class NoteInput(BaseDTO):
-    """Client-facing create payload — only the fields a caller supplies (no id/timestamps)."""
-
-    title: str = ""
-    body: str = ""
-
-
-class NoteCreateCmd(CreateDocumentCmd):
-    """Internal create command — server fills id/created_at; the input DTO maps onto this."""
+    """Create payload — only the domain fields a caller supplies. The server assigns the
+    id and stamps timestamps, so identity never appears in the payload (or the tool schema).
+    """
 
     title: str = ""
     body: str = ""
@@ -75,9 +70,7 @@ class NoteUpdate(BaseDTO):
 SPEC = DocumentSpec(
     name="notes",
     read=NoteRead,
-    write=DocumentWriteTypes(
-        domain=Note, create_cmd=NoteCreateCmd, update_cmd=NoteUpdate
-    ),
+    write=DocumentWriteTypes(domain=Note, create_cmd=NoteInput, update_cmd=NoteUpdate),
 )
 DTOS = DocumentDTOs(read=NoteRead, create=NoteInput, update=NoteUpdate)
 NS = SPEC.default_namespace

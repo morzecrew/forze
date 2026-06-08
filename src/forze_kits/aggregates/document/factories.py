@@ -26,7 +26,7 @@ from forze_kits.dto.paginated import (
 from forze_kits.mapping import PydanticPipelineMapperFactory
 from forze.base.exceptions import exc
 from forze.base.primitives import StrKey, StrKeyNamespace
-from forze.domain.models import BaseDTO, CreateDocumentCmd, Document
+from forze.domain.models import BaseDTO, Document
 
 from .dto import (
     AggregatedListRequestDTO,
@@ -70,7 +70,7 @@ C = TypeVar("C", bound=BaseDTO, default=BaseDTO)
 U = TypeVar("U", bound=BaseDTO, default=BaseDTO)
 
 D = TypeVar("D", bound=Document, default=Any)
-C_cmd = TypeVar("C_cmd", bound=CreateDocumentCmd, default=Any)
+C_cmd = TypeVar("C_cmd", bound=BaseDTO, default=Any)
 U_cmd = TypeVar("U_cmd", bound=BaseDTO, default=Any)
 
 # ....................... #
