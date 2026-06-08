@@ -33,6 +33,16 @@ class TestMcpExample:
         assert NS.key(DocumentKernelOp.LIST) in names
         assert NS.key(DocumentKernelOp.CREATE) in names  # include_writes=True
 
+    async def test_querying_dsl_prompts_are_exposed(self) -> None:
+        registry = build_registry()
+        ctx_factory, _ = build_context_factory()
+        server = build_server(registry, ctx_factory)
+
+        async with Client(server) as client:
+            prompts = {p.name for p in await client.list_prompts()}
+
+        assert {"forze.querying", "forze.aggregates"} <= prompts
+
     async def test_seeded_notes_are_listable_over_mcp(self) -> None:
         registry = build_registry()
         ctx_factory, _ = build_context_factory()

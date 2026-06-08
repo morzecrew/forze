@@ -1,7 +1,7 @@
 """Register Forze operations as tools on a user-owned FastMCP server.
 
 This is the toolkit entrypoint: bring your own :class:`FastMCP` (with your auth, transport,
-and any hand-written tools) and call :func:`register_operations` to add the operations from
+and any hand-written tools) and call :func:`register_tools` to add the operations from
 a frozen registry as additional tools. Each tool's arguments are the operation's input-DTO
 fields at top level (a flat signature is synthesized so MCP clients see a natural tool
 contract); the result is whatever the operation returns, serialized by FastMCP.
@@ -96,7 +96,7 @@ def _flat_tool_handler(
 # ....................... #
 
 
-def register_operations(
+def register_tools(
     server: FastMCP,
     registry: FrozenOperationRegistry,
     ctx_factory: ExecutionContextFactory,

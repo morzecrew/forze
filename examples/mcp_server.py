@@ -13,8 +13,11 @@ Run it (Streamable HTTP on http://127.0.0.1:8000/mcp), then point the Inspector 
 
 A couple of notes are seeded at startup, so ``notes.list`` / ``notes.get`` return data
 immediately; ``include_writes=True`` also exposes ``notes.create`` / ``update`` / ``kill`` so
-you can mutate state and read it back. (For a stdio Inspector session instead, change the
-transport at the bottom to ``"stdio"`` and launch this module as the Inspector command.)
+you can mutate state and read it back. The server also registers the querying-DSL guidance
+prompts (``forze.querying`` / ``forze.aggregates``, in the Inspector's "Prompts" tab) that
+teach how to build ``notes.list`` filters/sorts/pagination. (For a stdio Inspector session
+instead, change the transport at the bottom to ``"stdio"`` and launch this module as the
+Inspector command.)
 
 It is also executed by ``tests/unit/test_examples/test_mcp_server_example.py`` — the example
 is the spec, and the test proves operations are preserved as tools and round-trip over MCP.
@@ -36,7 +39,7 @@ from forze.domain.models import BaseDTO, Document, ReadDocument
 from forze_kits.aggregates.document.factories import build_document_registry
 from forze_kits.aggregates.document.operations import DocumentKernelOp
 from forze_kits.aggregates.document.value_objects import DocumentDTOs
-from forze_mcp import build_mcp_server
+from forze_mcp import build_mcp_server, register_dsl_query_prompts
 from forze_mock import MockDepsModule, MockState
 
 # ----------------------- #
@@ -116,14 +119,22 @@ def build_server(
     registry: FrozenOperationRegistry,
     ctx_factory: ExecutionContextFactory,
 ) -> FastMCP:
-    """Build a FastMCP server exposing every Notes operation as a tool."""
+    """Build a FastMCP server exposing every Notes operation as a tool.
 
-    return build_mcp_server(
+    Also attaches the querying-DSL guidance prompts, so the Inspector's "Prompts" tab shows
+    ``forze.querying`` / ``forze.aggregates`` — pull them to learn how to build ``notes.list``
+    filters/sorts/pagination.
+    """
+
+    server = build_mcp_server(
         registry,
         ctx_factory,
         name="forze-notes",
         include_writes=True,  # demo: expose create/update/kill too, not just reads
     )
+    register_dsl_query_prompts(server)
+
+    return server
 
 
 # ----------------------- #

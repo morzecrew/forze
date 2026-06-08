@@ -2,7 +2,7 @@
 
 This is the optional "build it all" entrypoint — for full control (auth, transport, custom
 tools) construct your own :class:`FastMCP` and call
-:func:`~forze_mcp.registration.register_operations` instead.
+:func:`~forze_mcp.registration.register_tools` instead.
 """
 
 from fastmcp import FastMCP
@@ -11,7 +11,7 @@ from forze.application.execution.context import ExecutionContextFactory
 from forze.application.execution.operations import FrozenOperationRegistry
 
 from .identity import MCPIdentityResolver
-from .registration import register_operations
+from .registration import register_tools
 
 # ----------------------- #
 
@@ -26,14 +26,14 @@ def build_mcp_server(
 ) -> FastMCP:
     """Build a FastMCP server with the registry's exposed operations registered as tools.
 
-    A thin convenience over :func:`~forze_mcp.registration.register_operations`. Run it with
+    A thin convenience over :func:`~forze_mcp.registration.register_tools`. Run it with
     FastMCP's own transports (e.g. ``server.run()`` / ``server.run_stdio_async()`` /
     ``server.streamable_http_app()``).
     """
 
     server: FastMCP = FastMCP(name)
 
-    register_operations(
+    register_tools(
         server,
         registry,
         ctx_factory,

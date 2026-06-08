@@ -20,7 +20,8 @@ from forze.application.contracts.authn import AuthnIdentity
 from forze_mcp.dispatch import build_args, invoke_operation
 from forze_mcp.identity import DelegatedIdentityResolver, StaticIdentityResolver
 from forze_mcp.projection import exposed_operations
-from forze_mcp.registration import register_operations
+from forze_mcp.prompts import register_dsl_query_prompts
+from forze_mcp.registration import register_tools
 from forze_mcp.server import build_mcp_server
 
 from forze_mock import MockDepsModule
@@ -138,7 +139,7 @@ class TestDispatch:
 class TestRegistration:
     async def test_registers_flat_top_level_args(self) -> None:
         server = FastMCP("calc")
-        names = register_operations(server, _registry(), _ctx_factory)
+        names = register_tools(server, _registry(), _ctx_factory)
 
         assert names == ["calc.double"]  # write op excluded
 
@@ -158,7 +159,7 @@ class TestRegistration:
         def _hand_written(x: int) -> int:
             return x
 
-        register_operations(server, _registry(), _ctx_factory)
+        register_tools(server, _registry(), _ctx_factory)
 
         async with Client(server) as client:
             names = {t.name for t in await client.list_tools()}
@@ -167,6 +168,45 @@ class TestRegistration:
 
 
 # ....................... #
+
+
+class TestQueryPrompts:
+    async def test_registers_dsl_prompts(self) -> None:
+        server = FastMCP("calc")
+        names = register_dsl_query_prompts(server)
+
+        assert names == ["forze.querying", "forze.aggregates"]
+
+        async with Client(server) as client:
+            listed = {p.name for p in await client.list_prompts()}
+
+        assert {"forze.querying", "forze.aggregates"} <= listed
+
+    async def test_prefix_is_configurable_and_additive(self) -> None:
+        server = FastMCP("calc")
+
+        @server.prompt(name="hand.written")
+        def _hand() -> str:
+            return "hi"
+
+        register_dsl_query_prompts(server, prefix="acme")
+
+        async with Client(server) as client:
+            listed = {p.name for p in await client.list_prompts()}
+
+        assert {"hand.written", "acme.querying", "acme.aggregates"} <= listed
+
+    async def test_querying_prompt_renders_grammar_and_goal(self) -> None:
+        server = FastMCP("calc")
+        register_dsl_query_prompts(server)
+
+        async with Client(server) as client:
+            result = await client.get_prompt("forze.querying", {"goal": "active items"})
+
+        text = result.messages[0].content.text
+        assert "active items" in text
+        # Grounded in the real DSL grammar.
+        assert "$values" in text and "$and" in text and '"asc"' in text
 
 
 class TestRoundTrip:
