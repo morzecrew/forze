@@ -16,6 +16,8 @@ from .authn import (
 from .authz import (
     MockAuthzDecisionPort,
     MockAuthzScopePort,
+    MockDelegationGrantPort,
+    MockDelegationPort,
     MockGrantQueryPort,
     MockPrincipalRegistryPort,
     MockRoleAssignmentPort,
@@ -39,6 +41,8 @@ __all__ = [
     "MockPrincipalRegistryPort",
     "MockRoleAssignmentPort",
     "MockGrantQueryPort",
+    "MockDelegationGrantPort",
+    "MockDelegationPort",
     "MockAuthzDecisionPort",
     "MockAuthzScopePort",
     "MockTenantResolverPort",

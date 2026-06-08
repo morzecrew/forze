@@ -769,25 +769,11 @@ class TestPostgresDocumentAdapterCommands:
             write_gw=write_gw,
             document_cache=_pg_cc(read_gw, ds),
         )
-        out = await adapter.ensure(TCreate(id=pk, title="n"))
+        out = await adapter.ensure(pk, TCreate(title="n"))
         assert out == read_doc
         write_gw.ensure.assert_awaited_once()
         ca = write_gw.ensure.await_args
-        assert ca[0][0].id == pk
-
-    @pytest.mark.asyncio
-    async def test_ensure_rejects_missing_id(self) -> None:
-        read_gw = _read_gw_full()
-        write_gw = _write_gw()
-        write_gw.client = read_gw.client
-        adapter = PostgresDocumentAdapter(
-            spec=(ds := _full_spec()),
-            read_gw=read_gw,
-            write_gw=write_gw,
-            document_cache=_pg_cc(read_gw, ds),
-        )
-        with pytest.raises(CoreException, match="id"):
-            await adapter.ensure(TCreate(title="n"))  # type: ignore[call-arg]
+        assert ca[0][0] == pk
 
     @pytest.mark.asyncio
     async def test_update_clears_cache_and_reloads(self) -> None:

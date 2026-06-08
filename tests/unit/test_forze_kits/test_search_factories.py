@@ -130,3 +130,23 @@ class TestSearchRegistryFactories:
         assert isinstance(raw, ProjectedSearch)
         assert isinstance(tcur, CursorSearch)
         assert isinstance(rcur, ProjectedCursorSearch)
+
+
+class TestSearchCatalog:
+    def test_all_search_ops_are_read_only(self) -> None:
+        spec = _search_spec()
+        cat = build_search_registry(spec).freeze().catalog()
+
+        assert cat  # not empty
+        assert all(entry.is_read_only for entry in cat.values())
+
+    def test_typed_descriptor_carries_request_and_response_schema(self) -> None:
+        spec = _search_spec()
+        ns = spec.default_namespace
+        cat = build_search_registry(spec).freeze().catalog()
+
+        typed = cat[ns.key(SearchKernelOp.TYPED)].descriptor
+        assert typed is not None
+        assert typed.input_schema() is not None
+        # SearchPaginated[_Hit] envelope resolves.
+        assert "hits" in (typed.output_schema() or {}).get("properties", {})

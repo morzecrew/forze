@@ -26,7 +26,7 @@ from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict, OnceCell
 from forze.base.serialization import ModelCodec
 from forze.domain.constants import ID_FIELD, REV_FIELD
-from forze.domain.models import BaseDTO, CreateDocumentCmd, Document
+from forze.domain.models import BaseDTO, Document
 from forze_postgres.kernel.catalog.introspect import PostgresColumnTypes, PostgresType
 from forze_postgres.kernel.client import gather_db_work
 from forze_postgres.kernel.sql.conflict_target import resolve_write_conflict_target
@@ -77,7 +77,7 @@ def _values_placeholder_for_patch_group(
 
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
+class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
     HistoryOccMixin[D],
     PostgresGateway[D],
 ):
@@ -179,13 +179,30 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
 
     # ....................... #
 
-    def _from_create_dto(self, dto: C) -> D:
-        return self.create_codec.transform(dto)
+    def _from_create_dto(self, payload: C, id: UUID | None = None) -> D:
+        model = self.create_codec.transform(payload)
+
+        if id is not None:
+            model = model.model_copy(update={ID_FIELD: id}, deep=True)
+
+        return model
 
     # ....................... #
 
-    def _from_create_dto_many(self, dtos: Sequence[C]) -> Sequence[D]:
-        return self.create_codec.transform_many(dtos)
+    def _from_create_dto_many(
+        self,
+        payloads: Sequence[C],
+        ids: Sequence[UUID] | None = None,
+    ) -> Sequence[D]:
+        models = list(self.create_codec.transform_many(payloads))
+
+        if ids is not None:
+            models = [
+                m.model_copy(update={ID_FIELD: i}, deep=True)
+                for m, i in zip(models, ids, strict=True)
+            ]
+
+        return models
 
     # ....................... #
 
@@ -238,9 +255,9 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
     # ....................... #
 
     @occ_retry
-    async def create(self, dto: C) -> D:
+    async def create(self, payload: C, *, id: UUID | None = None) -> D:
         async with self._write_tx():
-            model = self._from_create_dto(dto)
+            model = self._from_create_dto(payload, id)
             insert_data_raw = self.read_codec.encode_persistence_mapping(model)
             insert_data = await self.adapt_payload_for_write(
                 insert_data_raw, create=True
@@ -279,11 +296,11 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
     @occ_retry
     async def create_many(
         self,
-        dtos: Sequence[C],
+        payloads: Sequence[C],
         *,
         batch_size: int = 200,
     ) -> Sequence[D]:
-        if not dtos:
+        if not payloads:
             return []
 
         async with self._write_tx():
@@ -325,9 +342,9 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
 
                 return rows
 
-            for offset in range(0, len(dtos), batch_size):
-                dto_batch = dtos[offset : offset + batch_size]
-                models = self._from_create_dto_many(dto_batch)
+            for offset in range(0, len(payloads), batch_size):
+                payload_batch = payloads[offset : offset + batch_size]
+                models = self._from_create_dto_many(payload_batch)
                 insert_data_raw = self.read_codec.encode_persistence_mapping_many(
                     models
                 )
@@ -361,7 +378,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
             for rows in batch_results:
                 result.extend(self._decode_rows(rows))
 
-            if len(result) != len(dtos):
+            if len(result) != len(payloads):
                 raise exc.internal("Failed to create all records")
 
             await self._write_history(*result)
@@ -371,16 +388,15 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
     # ....................... #
 
     @occ_retry
-    async def ensure(self, dto: C) -> D:
-        """Insert a row when the primary key is absent; otherwise return the existing row.
+    async def ensure(self, id: UUID, payload: C) -> D:
+        """Insert a row at *id* when absent; otherwise return the existing row.
 
-        The caller must supply a primary key on the create command; conflict
-        is resolved on the primary key column (``id``) without updating
+        Conflict is resolved on the primary key column (``id``) without updating
         existing rows.
         """
 
         async with self._write_tx():
-            model = self._from_create_dto(dto)
+            model = self._from_create_dto(payload, id)
             insert_data_raw = self.read_codec.encode_persistence_mapping(model)
             insert_data = await self.adapt_payload_for_write(
                 insert_data_raw, create=True
@@ -420,19 +436,18 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
     @occ_retry
     async def ensure_many(
         self,
-        dtos: Sequence[C],
+        ids: Sequence[UUID],
+        payloads: Sequence[C],
         *,
         batch_size: int = 200,
     ) -> Sequence[D]:
         """Bulk insert rows when their primary keys are absent; return full rows in order.
 
-        The caller must supply a primary key on every create command; each id
-        must appear at most once in ``dtos``. Conflicts on the primary key
-        column do not update existing rows. History is written only for newly
-        inserted documents.
+        Each id must appear at most once. Conflicts on the primary key column do not
+        update existing rows. History is written only for newly inserted documents.
         """
 
-        if not dtos:
+        if not payloads:
             return []
 
         async with self._write_tx():
@@ -518,9 +533,10 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
 
             out: list[D] = []
 
-            for offset in range(0, len(dtos), batch_size):
-                dto_batch = dtos[offset : offset + batch_size]
-                models = self._from_create_dto_many(dto_batch)
+            for offset in range(0, len(payloads), batch_size):
+                id_batch = ids[offset : offset + batch_size]
+                payload_batch = payloads[offset : offset + batch_size]
+                models = self._from_create_dto_many(payload_batch, id_batch)
                 insert_data_raw = self.read_codec.encode_persistence_mapping_many(
                     models
                 )
@@ -545,7 +561,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
 
                 out.extend(await _ensure_batch(insert_data, models))
 
-            if len(out) != len(dtos):
+            if len(out) != len(payloads):
                 raise exc.internal("ensure_many result length does not match input")
 
             return out
@@ -553,8 +569,8 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
     # ....................... #
 
     @occ_retry
-    async def upsert(self, create_dto: C, update_dto: U) -> D:
-        """Insert when the primary key is free; otherwise apply ``update_dto`` like :meth:`update`.
+    async def upsert(self, id: UUID, create: C, update: U) -> D:
+        """Insert *create* at *id* when free; otherwise apply ``update`` like :meth:`update`.
 
         ``database`` and ``application`` strategies both use the same pattern:
         attempt ``INSERT ... ON CONFLICT DO NOTHING``; on conflict, load the row
@@ -564,7 +580,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
         self._require_update_cmd()
 
         async with self._write_tx():
-            model = self._from_create_dto(create_dto)
+            model = self._from_create_dto(create, id)
             insert_data_raw = self.read_codec.encode_persistence_mapping(model)
             insert_data = await self.adapt_payload_for_write(
                 insert_data_raw, create=True
@@ -598,7 +614,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
                 return res
 
             current = await self._fetch_domain_by_pk(model.id, for_update=True)
-            res, _ = await self.update(model.id, update_dto, rev=current.rev)
+            res, _ = await self.update(model.id, update, rev=current.rev)
 
             return res
 
@@ -607,7 +623,9 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
     @occ_retry
     async def upsert_many(
         self,
-        pairs: Sequence[tuple[C, U]],
+        ids: Sequence[UUID],
+        creates: Sequence[C],
+        updates: Sequence[U],
         *,
         batch_size: int = 200,
     ) -> Sequence[D]:
@@ -615,7 +633,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
 
         self._require_update_cmd()
 
-        if not pairs:
+        if not creates:
             return []
 
         async with self._write_tx():
@@ -719,10 +737,11 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
 
             out: list[D] = []
 
-            for offset in range(0, len(pairs), batch_size):
-                batch_pairs = pairs[offset : offset + batch_size]
-                creates = [c for c, _ in batch_pairs]
-                models = self._from_create_dto_many(creates)
+            for offset in range(0, len(creates), batch_size):
+                id_batch = ids[offset : offset + batch_size]
+                create_batch = creates[offset : offset + batch_size]
+                update_batch = updates[offset : offset + batch_size]
+                models = self._from_create_dto_many(create_batch, id_batch)
                 insert_data_raw = self.read_codec.encode_persistence_mapping_many(
                     models
                 )
@@ -745,10 +764,10 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
                         "upsert_many: adapted payload keys differ between batches",
                     )
 
-                u_seq = [u for _, u in batch_pairs]
+                u_seq = list(update_batch)
                 out.extend(await _upsert_batch(insert_data, models, u_seq))
 
-            if len(out) != len(pairs):
+            if len(out) != len(creates):
                 raise exc.internal("upsert_many result length does not match input")
 
             return out

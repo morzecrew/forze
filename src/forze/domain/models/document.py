@@ -280,13 +280,15 @@ class Document(CoreModel):
 
 
 class CreateDocumentCmd(BaseDTO):
-    """Create document command DTO."""
+    """Deprecated base for create payloads — kept as an empty alias of :class:`BaseDTO`.
 
-    id: UUID | None = None
-    """Unique identifier of the document. Added to ensure compatibility with external imports."""
-
-    created_at: datetime | None = None
-    """Timestamp of the document creation. Added to ensure compatibility with external imports."""
+    Identity is no longer carried inside the create payload: ``create`` takes an optional
+    ``id`` keyword, and ``ensure``/``upsert`` take ``id`` as an explicit argument. Create
+    payloads are plain :class:`BaseDTO`; this subclass carries no fields and exists only so
+    existing subclasses keep importing. New payloads should subclass :class:`BaseDTO`
+    directly. To preserve ``created_at``/``last_update_at`` on import, mix in
+    ``forze_kits``'s import-timestamps mixin onto the payload and use ``ensure``.
+    """
 
 
 # ....................... #

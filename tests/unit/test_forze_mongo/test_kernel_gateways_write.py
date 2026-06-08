@@ -188,12 +188,9 @@ class TestMongoWriteGateway:
     async def test_ensure_many_reads_conflicts_only(self) -> None:
         pk_new = uuid4()
         pk_existing = uuid4()
-        now = datetime.now(tz=UTC)
         existing = _domain_doc(pk_existing, name="existing")
-        dtos = [
-            MyCreateDoc(id=pk_existing, created_at=now, name="try"),
-            MyCreateDoc(id=pk_new, created_at=now, name="new"),
-        ]
+        ids = [pk_existing, pk_new]
+        payloads = [MyCreateDoc(name="try"), MyCreateDoc(name="new")]
         client = _build_client()
         bulk_result = MagicMock()
         bulk_result.upserted_ids = {1: str(pk_new)}
@@ -211,7 +208,7 @@ class TestMongoWriteGateway:
             **_WRITE_CODECS,
         )
 
-        out = await gw.ensure_many(dtos, batch_size=20)
+        out = await gw.ensure_many(ids, payloads, batch_size=20)
 
         assert [d.id for d in out] == [pk_existing, pk_new]
         assert out[0].name == "existing"
@@ -221,8 +218,8 @@ class TestMongoWriteGateway:
     @pytest.mark.asyncio
     async def test_ensure_many_bulk_duplicate_key_raises_conflict(self) -> None:
         pk = uuid4()
-        now = datetime.now(tz=UTC)
-        dtos = [MyCreateDoc(id=pk, created_at=now, name="dup")]
+        ids = [pk]
+        payloads = [MyCreateDoc(name="dup")]
         client = _build_client()
         client.bulk_write = AsyncMock(
             side_effect=CoreException.conflict("Duplicate key violation."),
@@ -239,15 +236,15 @@ class TestMongoWriteGateway:
         )
 
         with pytest.raises(CoreException) as err:
-            await gw.ensure_many(dtos, batch_size=20)
+            await gw.ensure_many(ids, payloads, batch_size=20)
 
         assert err.value.kind is ExceptionKind.CONFLICT
 
     @pytest.mark.asyncio
     async def test_ensure_many_missing_after_bulk_raises_conflict(self) -> None:
         pk = uuid4()
-        now = datetime.now(tz=UTC)
-        dtos = [MyCreateDoc(id=pk, created_at=now, name="ghost")]
+        ids = [pk]
+        payloads = [MyCreateDoc(name="ghost")]
         client = _build_client()
         bulk_result = MagicMock()
         bulk_result.upserted_ids = {}
@@ -267,7 +264,7 @@ class TestMongoWriteGateway:
         )
 
         with pytest.raises(CoreException) as err:
-            await gw.ensure_many(dtos, batch_size=20)
+            await gw.ensure_many(ids, payloads, batch_size=20)
 
         assert err.value.kind is ExceptionKind.CONFLICT
         assert err.value.code == "mongo_ensure_bulk_miss"

@@ -21,6 +21,7 @@ from forze.base.primitives import uuid7
 from tests.support.execution_context import context_from_deps
 
 from forze_temporal.interceptors.context import ExecutionContextInterceptor
+from forze_temporal.sandbox import sandboxed_workflow_runner
 
 from ._workflow_defs import CTX_BOX, ItClockProbeWorkflow
 
@@ -45,6 +46,7 @@ async def test_workflow_clock_routes_to_deterministic_temporal_source() -> None:
                 env.client,
                 task_queue=task_queue,
                 workflows=[ItClockProbeWorkflow],
+                workflow_runner=sandboxed_workflow_runner(),
             ):
                 with exec_ctx.inv_ctx.bind(
                     metadata=InvocationMetadata(

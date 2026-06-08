@@ -69,14 +69,16 @@ async def test_write_gateway_upsert_insert_then_update(
     doc_id = UUID("50000000-0000-0000-0000-000000000001")
 
     created = await write.upsert(
-        make_create_cmd(name="new", doc_id=doc_id),
+        doc_id,
+        make_create_cmd(name="new"),
         IntegrationUpdateCmd(name="should-not-apply-on-insert"),
     )
     assert created.name == "new"
     assert created.rev == 1
 
     updated = await write.upsert(
-        make_create_cmd(name="ignored", doc_id=doc_id),
+        doc_id,
+        make_create_cmd(name="ignored"),
         IntegrationUpdateCmd(name="updated"),
     )
     assert updated.name == "updated"
@@ -97,18 +99,14 @@ async def test_write_gateway_upsert_many_mixed_batch(
 
     id_a = UUID("51000000-0000-0000-0000-000000000001")
     id_b = UUID("51000000-0000-0000-0000-000000000002")
-    await write.create(make_create_cmd(name="existing", doc_id=id_a))
+    await write.create(make_create_cmd(name="existing"), id=id_a)
 
     results = await write.upsert_many(
+        [id_a, id_b],
+        [make_create_cmd(name="existing"), make_create_cmd(name="inserted")],
         [
-            (
-                make_create_cmd(name="existing", doc_id=id_a),
-                IntegrationUpdateCmd(name="a-up"),
-            ),
-            (
-                make_create_cmd(name="inserted", doc_id=id_b),
-                IntegrationUpdateCmd(name="ignored-on-insert"),
-            ),
+            IntegrationUpdateCmd(name="a-up"),
+            IntegrationUpdateCmd(name="ignored-on-insert"),
         ],
     )
     assert len(results) == 2
@@ -169,7 +167,7 @@ async def test_read_gateway_find_with_return_model(
     write = _write(ctx, collection)
     read = _read(ctx, collection)
 
-    await write.create(make_create_cmd(name="model-find", doc_id=uuid4()))
+    await write.create(make_create_cmd(name="model-find"), id=uuid4())
 
     row = await read.find(
         {"$values": {"name": "model-find"}},

@@ -6,11 +6,11 @@ from typing import (
     TypeVar,
 )
 from pydantic import BaseModel
-from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
+from forze.domain.models import BaseDTO, Document, ReadDocument
 
 R = TypeVar("R", bound=ReadDocument)
 D = TypeVar("D", bound=Document)
-C = TypeVar("C", bound=CreateDocumentCmd)
+C = TypeVar("C", bound=BaseDTO)
 U = TypeVar("U", bound=BaseDTO)
 M = TypeVar("M", bound=BaseModel)
 T = TypeVar("T", bound=BaseModel)

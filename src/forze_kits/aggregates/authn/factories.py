@@ -7,7 +7,14 @@ from forze.application.contracts.authn import (
     TokenLifecycleDepKey,
 )
 from forze.application.execution import ExecutionContext
+from forze.application.execution.operations import OperationDescriptor
 from forze.application.execution.operations.registry import OperationRegistry
+from .dto import (
+    AuthnChangePasswordRequestDTO,
+    AuthnLoginRequestDTO,
+    AuthnRefreshRequestDTO,
+    AuthnTokenResponseDTO,
+)
 from .handlers import (
     AuthnChangePassword,
     AuthnLogout,
@@ -75,11 +82,35 @@ def build_authn_registry(
             ),
         )
 
-    return OperationRegistry(
+    reg = OperationRegistry(
         handlers={
             ns.key(AuthnKernelOp.PASSWORD_LOGIN): _password_login,
             ns.key(AuthnKernelOp.REFRESH_TOKENS): _refresh_tokens,
             ns.key(AuthnKernelOp.LOGOUT): _logout,
             ns.key(AuthnKernelOp.CHANGE_PASSWORD): _change_password,
         },
+    )
+
+    # All authn operations mutate auth state (issue/rotate/revoke tokens) — kept COMMAND.
+    return reg.set_descriptors(
+        {
+            AuthnKernelOp.PASSWORD_LOGIN: OperationDescriptor(
+                input_type=AuthnLoginRequestDTO,
+                output_type=AuthnTokenResponseDTO,
+                description="Authenticate with password credentials and issue a token pair.",
+            ),
+            AuthnKernelOp.REFRESH_TOKENS: OperationDescriptor(
+                input_type=AuthnRefreshRequestDTO,
+                output_type=AuthnTokenResponseDTO,
+                description="Rotate a refresh token into a fresh access/refresh pair.",
+            ),
+            AuthnKernelOp.LOGOUT: OperationDescriptor(
+                description="Revoke all sessions for the authenticated identity.",
+            ),
+            AuthnKernelOp.CHANGE_PASSWORD: OperationDescriptor(
+                input_type=AuthnChangePasswordRequestDTO,
+                description="Change the password of the authenticated identity.",
+            ),
+        },
+        namespace=ns,
     )

@@ -8,7 +8,11 @@ import pytest
 
 from forze.base.exceptions import CoreException
 
-from forze.application.contracts.document import DocumentSpec
+from forze.application.contracts.document import (
+    DocumentSpec,
+    KeyedCreate,
+    UpsertItem,
+)
 from forze.application.integrations.document import DocumentCache
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
 from forze_mongo.adapters.document import MongoDocumentAdapter
@@ -680,10 +684,11 @@ class TestMongoDocumentAdapterMutationsWithCache:
             write_gw=write_gw,
             document_cache=_mongo_cc(read_gw, ms, cache=cache),
         )
-        e = await adapter.ensure(MyCreateDoc(id=pk, name="a"))
+        e = await adapter.ensure(pk, MyCreateDoc(name="a"))
         assert e == read
         u = await adapter.upsert(
-            MyCreateDoc(id=pk, name="b"),
+            pk,
+            MyCreateDoc(name="b"),
             MyUpdateDoc(name="c"),
         )
         assert u == read
@@ -709,13 +714,16 @@ class TestMongoDocumentAdapterMutationsWithCache:
             document_cache=_mongo_cc(read_gw, ms, cache=cache),
         )
         em = await adapter.ensure_many(
-            [MyCreateDoc(id=p1, name="a"), MyCreateDoc(id=p2, name="b")]
+            [
+                KeyedCreate(id=p1, payload=MyCreateDoc(name="a")),
+                KeyedCreate(id=p2, payload=MyCreateDoc(name="b")),
+            ]
         )
         assert len(em) == 2
         um = await adapter.upsert_many(
             [
-                (MyCreateDoc(id=p1, name="x"), MyUpdateDoc()),
-                (MyCreateDoc(id=p2, name="y"), MyUpdateDoc()),
+                UpsertItem(id=p1, create=MyCreateDoc(name="x"), update=MyUpdateDoc()),
+                UpsertItem(id=p2, create=MyCreateDoc(name="y"), update=MyUpdateDoc()),
             ]
         )
         assert len(um) == 2
@@ -751,7 +759,7 @@ class TestMongoDocumentAdapterMutationsWithCache:
         )
         assert (
             await adapter.ensure_many(
-                [MyCreateDoc(id=pk, name="a")],
+                [KeyedCreate(id=pk, payload=MyCreateDoc(name="a"))],
                 return_new=False,
             )
             is None
@@ -772,7 +780,7 @@ class TestMongoDocumentAdapterMutationsWithCache:
         )
         assert (
             await adapter.upsert_many(
-                [(MyCreateDoc(id=pk, name="a"), MyUpdateDoc())],
+                [UpsertItem(id=pk, create=MyCreateDoc(name="a"), update=MyUpdateDoc())],
                 return_new=False,
             )
             is None

@@ -20,8 +20,8 @@ from forze.application.execution.resilience import (
 from forze.base.exceptions import CoreException, ExceptionKind, exc
 from forze.base.primitives import JsonDict
 from forze.base.serialization import ModelCodec
-from forze.domain.constants import REV_FIELD
-from forze.domain.models import BaseDTO, CreateDocumentCmd, Document
+from forze.domain.constants import ID_FIELD, REV_FIELD
+from forze.domain.models import BaseDTO, Document
 
 from ..relation import relations_match
 from .base import FirestoreGateway
@@ -33,7 +33,7 @@ from .read import FirestoreReadGateway
 
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class FirestoreWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
+class FirestoreWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
     FirestoreGateway[D]
 ):
     """Write gateway for Firestore documents with optimistic concurrency."""
@@ -162,13 +162,30 @@ class FirestoreWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
 
     # ....................... #
 
-    def _from_cdto(self, dto: C) -> D:
-        return self.create_codec.transform(dto)
+    def _from_cdto(self, payload: C, id: UUID | None = None) -> D:
+        model = self.create_codec.transform(payload)
+
+        if id is not None:
+            model = model.model_copy(update={ID_FIELD: id}, deep=True)
+
+        return model
 
     # ....................... #
 
-    def _from_cdto_many(self, dtos: Sequence[C]) -> Sequence[D]:
-        return self.create_codec.transform_many(dtos)
+    def _from_cdto_many(
+        self,
+        payloads: Sequence[C],
+        ids: Sequence[UUID] | None = None,
+    ) -> Sequence[D]:
+        models = list(self.create_codec.transform_many(payloads))
+
+        if ids is not None:
+            models = [
+                m.model_copy(update={ID_FIELD: i}, deep=True)
+                for m, i in zip(models, ids, strict=True)
+            ]
+
+        return models
 
     # ....................... #
 
@@ -186,8 +203,8 @@ class FirestoreWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
     # ....................... #
 
     @occ_retry
-    async def create(self, dto: C) -> D:
-        model = self._from_cdto(dto)
+    async def create(self, payload: C, *, id: UUID | None = None) -> D:
+        model = self._from_cdto(payload, id)
         data = self.read_codec.encode_persistence_mapping(model)
         data = self.adapt_payload_for_write(data, create=True)
         coll = await self.coll()
@@ -204,25 +221,25 @@ class FirestoreWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
     @occ_retry
     async def create_many(
         self,
-        dtos: Sequence[C],
+        payloads: Sequence[C],
         *,
         batch_size: int = 200,
     ) -> Sequence[D]:
-        if not dtos:
+        if not payloads:
             return []
 
-        models = self._from_cdto_many(dtos)
+        models = self._from_cdto_many(payloads)
         raw_payloads = self.read_codec.encode_persistence_mapping_many(models)
-        payloads = self.adapt_many_payload_for_write(raw_payloads, create=True)
+        write_payloads = self.adapt_many_payload_for_write(raw_payloads, create=True)
         documents = [
             (self._storage_pk(m.id), dict(p))
-            for m, p in zip(models, payloads, strict=True)
+            for m, p in zip(models, write_payloads, strict=True)
         ]
         await self.client.insert_many(
             await self.coll(), documents, batch_size=batch_size
         )
         if self.client.is_in_transaction():
-            created = [self._materialize_after_write(dict(p)) for p in payloads]
+            created = [self._materialize_after_write(dict(p)) for p in write_payloads]
         else:
             created = await self.read_gw.get_many([model.id for model in models])
         await self._write_history(*created)
@@ -327,15 +344,13 @@ class FirestoreWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
     # ....................... #
 
     @occ_retry
-    async def ensure(self, dto: C) -> D:
-        model = self._from_cdto(dto)
-
+    async def ensure(self, id: UUID, payload: C) -> D:
         try:
-            return await self.read_gw.get(model.id)
+            return await self.read_gw.get(id)
 
         except CoreException as err:
             if err.kind is ExceptionKind.NOT_FOUND:
-                return await self.create(dto)
+                return await self.create(payload, id=id)
 
             raise
 
@@ -344,17 +359,18 @@ class FirestoreWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
     @occ_retry
     async def ensure_many(
         self,
-        dtos: Sequence[C],
+        ids: Sequence[UUID],
+        payloads: Sequence[C],
         *,
         batch_size: int = 200,
     ) -> Sequence[D]:
-        if not dtos:
+        if not payloads:
             return []
 
         out: list[D] = []
 
-        for dto in dtos:
-            out.append(await self.ensure(dto))
+        for id_, payload in zip(ids, payloads, strict=True):
+            out.append(await self.ensure(id_, payload))
 
         _ = batch_size
         return out
@@ -362,20 +378,19 @@ class FirestoreWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
     # ....................... #
 
     @occ_retry
-    async def upsert(self, create_dto: C, update_dto: U) -> D:
+    async def upsert(self, id: UUID, create: C, update: U) -> D:
         self._require_update_cmd()
-        model = self._from_cdto(create_dto)
 
         try:
-            current = await self.read_gw.get(model.id)
+            current = await self.read_gw.get(id)
 
         except CoreException as err:
             if err.kind is ExceptionKind.NOT_FOUND:
-                return await self.create(create_dto)
+                return await self.create(create, id=id)
 
             raise
 
-        updated, _ = await self.update(current.id, update_dto, rev=current.rev)
+        updated, _ = await self.update(current.id, update, rev=current.rev)
         return updated
 
     # ....................... #
@@ -383,16 +398,21 @@ class FirestoreWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
     @occ_retry
     async def upsert_many(
         self,
-        pairs: Sequence[tuple[C, U]],
+        ids: Sequence[UUID],
+        creates: Sequence[C],
+        updates: Sequence[U],
         *,
         batch_size: int = 200,
     ) -> Sequence[D]:
         _ = batch_size
 
-        if not pairs:
+        if not creates:
             return []
 
-        return [await self.upsert(c, u) for c, u in pairs]
+        return [
+            await self.upsert(i, c, u)
+            for i, c, u in zip(ids, creates, updates, strict=True)
+        ]
 
     # ....................... #
 

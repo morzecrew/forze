@@ -246,6 +246,9 @@ class ConfigurableAuthn:
     enabled_methods: frozenset[str]
     """Snapshot of :attr:`AuthnSpec.enabled_methods`; pre-baked at registration time."""
 
+    actor_claim: str | None = attrs.field(default=None)
+    """Token claim carrying the RFC 8693 delegation actor; ``None`` ignores delegation."""
+
     # ....................... #
 
     def __call__(self, ctx: ExecutionContext, spec: AuthnSpec) -> AuthnPort:
@@ -284,6 +287,7 @@ class ConfigurableAuthn:
             password_verifier=password_v,
             token_verifier=token_v,
             api_key_verifier=api_key_v,
+            actor_claim=self.actor_claim,
         )
 
 

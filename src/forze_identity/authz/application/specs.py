@@ -1,17 +1,20 @@
 from forze.application.contracts.document import DocumentSpec
 
 from ..domain.models.bindings import (
+    CreateDelegationGrantCmd,
     CreateGroupPermissionBindingCmd,
     CreateGroupPrincipalBindingCmd,
     CreateGroupRoleBindingCmd,
     CreatePrincipalPermissionBindingCmd,
     CreatePrincipalRoleBindingCmd,
     CreateRolePermissionBindingCmd,
+    DelegationGrant,
     GroupPermissionBinding,
     GroupPrincipalBinding,
     GroupRoleBinding,
     PrincipalPermissionBinding,
     PrincipalRoleBinding,
+    ReadDelegationGrant,
     ReadGroupPermissionBinding,
     ReadGroupPrincipalBinding,
     ReadGroupRoleBinding,
@@ -140,5 +143,14 @@ group_permission_binding_spec = DocumentSpec(
     write={
         "domain": GroupPermissionBinding,
         "create_cmd": CreateGroupPermissionBindingCmd,
+    },
+)
+
+delegation_grant_spec = DocumentSpec(
+    name=AuthzResourceName.DELEGATION_GRANTS,
+    read=ReadDelegationGrant,
+    write={
+        "domain": DelegationGrant,
+        "create_cmd": CreateDelegationGrantCmd,
     },
 )

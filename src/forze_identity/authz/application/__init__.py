@@ -1,5 +1,6 @@
 from .constants import AuthzResourceName
 from .specs import (
+    delegation_grant_spec,
     group_permission_binding_spec,
     group_principal_binding_spec,
     group_role_binding_spec,
@@ -16,6 +17,7 @@ from .specs import (
 
 __all__ = [
     "AuthzResourceName",
+    "delegation_grant_spec",
     "group_permission_binding_spec",
     "group_principal_binding_spec",
     "group_role_binding_spec",

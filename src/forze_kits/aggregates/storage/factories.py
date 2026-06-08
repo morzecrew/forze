@@ -1,5 +1,12 @@
 from forze.application.contracts.storage import StorageSpec
+from forze.application.execution.operations import OperationDescriptor
 from forze.application.execution.operations.registry import OperationRegistry
+from .dto import (
+    ListedObjects,
+    ListObjectsRequestDTO,
+    StoredObjectDTO,
+    UploadObjectRequestDTO,
+)
 from .handlers import (
     DeleteObject,
     DownloadObject,
@@ -22,7 +29,7 @@ def build_storage_registry(
 
     ns = ns or spec.default_namespace
 
-    return OperationRegistry(
+    reg = OperationRegistry(
         handlers={
             ns.key(StorageKernelOp.UPLOAD): lambda ctx: UploadObject(
                 storage=ctx.storage.command(spec),
@@ -37,4 +44,33 @@ def build_storage_registry(
                 storage=ctx.storage.command(spec),
             ),
         }
+    )
+
+    # LIST and DOWNLOAD only acquire the read (query) storage port.
+    reg = reg.bind(
+        StorageKernelOp.LIST, StorageKernelOp.DOWNLOAD, namespace=ns
+    ).as_query().finish()
+
+    # DOWNLOAD/DELETE take a raw storage key and DOWNLOAD returns bytes, so they carry
+    # no JSON-schema DTO — the description still places them in the catalog.
+    return reg.set_descriptors(
+        {
+            StorageKernelOp.UPLOAD: OperationDescriptor(
+                input_type=UploadObjectRequestDTO,
+                output_type=StoredObjectDTO,
+                description="Upload an object to the bucket and return its metadata.",
+            ),
+            StorageKernelOp.LIST: OperationDescriptor(
+                input_type=ListObjectsRequestDTO,
+                output_type=ListedObjects,
+                description="List objects in the bucket (optional prefix filter).",
+            ),
+            StorageKernelOp.DOWNLOAD: OperationDescriptor(
+                description="Download an object's bytes by storage key.",
+            ),
+            StorageKernelOp.DELETE: OperationDescriptor(
+                description="Delete an object from the bucket by storage key.",
+            ),
+        },
+        namespace=ns,
     )

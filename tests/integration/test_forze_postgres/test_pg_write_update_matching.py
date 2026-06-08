@@ -177,12 +177,14 @@ async def test_ensure_many_multibatch_insert_and_conflict(
     seed = await write.create(WmCreate(name="seed", category="c"))
 
     fresh_ids = [uuid4() for _ in range(3)]
-    dtos = [WmCreate(id=fid, name=f"new{i}", category="c") for i, fid in enumerate(fresh_ids)]
+    ids = list(fresh_ids)
+    payloads = [WmCreate(name=f"new{i}", category="c") for i in range(3)]
     # Interleave the existing PK so a conflict (DO NOTHING) lands inside a batch.
-    dtos.insert(1, WmCreate(id=seed.id, name="ignored", category="c"))
+    ids.insert(1, seed.id)
+    payloads.insert(1, WmCreate(name="ignored", category="c"))
 
-    out = await write.ensure_many(dtos, batch_size=2)
-    assert len(out) == len(dtos)
+    out = await write.ensure_many(ids, payloads, batch_size=2)
+    assert len(out) == len(ids)
     by_id = {d.id: d for d in out}
     assert by_id[seed.id].name == "seed"  # existing row reused, not overwritten
     assert by_id[seed.id].rev == seed.rev
@@ -203,13 +205,20 @@ async def test_upsert_many_multibatch_insert_and_update(
     e1 = await write.create(WmCreate(name="e1", category="old"))
     e2 = await write.create(WmCreate(name="e2", category="old"))
 
-    pairs: list[tuple[WmCreate, WmUpdate]] = [
-        (WmCreate(name="brand-new-0", category="c"), WmUpdate(name="n/a")),
-        (WmCreate(id=e1.id, name="ignored", category="c"), WmUpdate(category="patched-1")),
-        (WmCreate(name="brand-new-1", category="c"), WmUpdate(name="n/a")),
-        (WmCreate(id=e2.id, name="ignored", category="c"), WmUpdate(category="patched-2")),
+    ids = [uuid4(), e1.id, uuid4(), e2.id]
+    creates = [
+        WmCreate(name="brand-new-0", category="c"),
+        WmCreate(name="ignored", category="c"),
+        WmCreate(name="brand-new-1", category="c"),
+        WmCreate(name="ignored", category="c"),
     ]
-    out = await write.upsert_many(pairs, batch_size=2)
+    updates = [
+        WmUpdate(name="n/a"),
+        WmUpdate(category="patched-1"),
+        WmUpdate(name="n/a"),
+        WmUpdate(category="patched-2"),
+    ]
+    out = await write.upsert_many(ids, creates, updates, batch_size=2)
     assert len(out) == 4
 
     by_id = {d.id: d for d in out}

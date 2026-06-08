@@ -8,6 +8,8 @@ from forze.application.contracts.authz import (
     AuthzDecisionPort,
     AuthzScopePort,
     AuthzSpec,
+    DelegationGrantPort,
+    DelegationPort,
     GrantQueryPort,
     PrincipalRegistryPort,
     RoleAssignmentPort,
@@ -17,11 +19,14 @@ from forze.application.execution import ExecutionContext
 from ...adapters import (
     AuthzDecisionAdapter,
     AuthzScopeAdapter,
+    DelegationGrantAdapter,
+    DelegationQueryAdapter,
     GrantQueryAdapter,
     PrincipalRegistryAdapter,
     RoleAssignmentAdapter,
 )
 from ...application.specs import (
+    delegation_grant_spec,
     group_permission_binding_spec,
     group_principal_binding_spec,
     group_role_binding_spec,
@@ -109,6 +114,40 @@ class ConfigurableGrantQuery:
             spec=spec,
             principal_qry=ctx.doc.query(policy_principal_spec),
             resolver=_grant_resolver(ctx),
+        )
+
+
+@final
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class ConfigurableDelegationQuery:
+    """Build :class:`~forze_authz.adapters.delegation.DelegationQueryAdapter`."""
+
+    def __call__(
+        self,
+        ctx: ExecutionContext,
+        spec: AuthzSpec,
+    ) -> DelegationPort:
+        return DelegationQueryAdapter(
+            spec=spec,
+            grant_qry=ctx.doc.query(delegation_grant_spec),
+        )
+
+
+@final
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class ConfigurableDelegationGrant:
+    """Build :class:`~forze_authz.adapters.delegation.DelegationGrantAdapter`."""
+
+    def __call__(
+        self,
+        ctx: ExecutionContext,
+        spec: AuthzSpec,
+    ) -> DelegationGrantPort:
+        return DelegationGrantAdapter(
+            spec=spec,
+            principal_qry=ctx.doc.query(policy_principal_spec),
+            grant_qry=ctx.doc.query(delegation_grant_spec),
+            grant_cmd=ctx.doc.command(delegation_grant_spec),
         )
 
 

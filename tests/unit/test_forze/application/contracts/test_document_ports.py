@@ -17,6 +17,7 @@ from forze.application.contracts.document import (
 )
 from forze.application.contracts.querying import QueryFilterExpression
 from forze.domain.constants import ID_FIELD
+from forze.application.contracts.document import KeyedCreate
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
 from forze_mock import MockState
 from forze_mock.adapters import MockDocumentAdapter
@@ -203,17 +204,18 @@ class TestDocumentCommandPortViaMock:
         assert len(result) == 2
 
     @pytest.mark.asyncio
-    async def test_ensure_requires_id(self) -> None:
+    async def test_ensure_inserts_at_given_id(self) -> None:
         port = _document_adapter()
-        with pytest.raises(CoreException, match="id"):
-            await port.ensure(CreateDocumentCmd())
+        uid = uuid4()
+        created = await port.ensure(uid, CreateDocumentCmd())
+        assert created.id == uid
 
     @pytest.mark.asyncio
     async def test_ensure_idempotent_does_not_overwrite(self) -> None:
         port = _document_adapter_with_title()
         uid = uuid4()
-        first = await port.ensure(_CreateWithTitle(id=uid, title="first"))
-        second = await port.ensure(_CreateWithTitle(id=uid, title="second"))
+        first = await port.ensure(uid, _CreateWithTitle(title="first"))
+        second = await port.ensure(uid, _CreateWithTitle(title="second"))
         assert first.id == second.id
         assert second.title == "first"
 
@@ -223,7 +225,10 @@ class TestDocumentCommandPortViaMock:
         u = uuid4()
         with pytest.raises(CoreException, match="distinct"):
             await port.ensure_many(
-                [CreateDocumentCmd(id=u), CreateDocumentCmd(id=u)],
+                [
+                    KeyedCreate(id=u, payload=CreateDocumentCmd()),
+                    KeyedCreate(id=u, payload=CreateDocumentCmd()),
+                ],
             )
 
     @pytest.mark.asyncio

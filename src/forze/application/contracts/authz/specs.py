@@ -28,3 +28,10 @@ class AuthzSpec(BaseSpec):
 
     enforce_principal_active: bool = True
     """When true, inactive policy principals are denied at runtime."""
+
+    enforce_delegation_grant: bool = False
+    """When true, a delegated call (a request whose subject carries an ``actor``) additionally
+    requires an explicit ``may_act`` grant pairing the actor to the subject — checked via
+    :class:`~forze.application.contracts.authz.ports.DelegationPort` *on top of* the
+    least-privilege intersection. Off by default (intersection-only); enabling it without a
+    wired delegation port is a configuration error (fails loud, never open)."""

@@ -13,6 +13,7 @@ from temporalio.worker import Worker
 
 from forze.application.contracts.secrets import SecretRef
 from forze_temporal.kernel.client import RoutedTemporalClient, TemporalClient
+from forze_temporal.sandbox import sandboxed_workflow_runner
 
 from tests.integration._routed_lru_helpers import temporal_hosts_for_lru_eviction
 
@@ -107,6 +108,7 @@ async def test_routed_temporal_sum_workflow_and_result(
         task_queue=task_queue,
         workflows=[ItSumWorkflow],
         activities=[it_sum_pair],
+        workflow_runner=sandboxed_workflow_runner(),
     ):
         try:
             # Time-skipping test server does not implement CountWorkflowExecutions; health() stays False.
@@ -158,6 +160,7 @@ async def test_routed_temporal_mapping_secret_ref(
         task_queue=task_queue,
         workflows=[ItSumWorkflow],
         activities=[it_sum_pair],
+        workflow_runner=sandboxed_workflow_runner(),
     ):
         try:
             wid = f"wf-map-{uuid4().hex[:12]}"
@@ -308,6 +311,7 @@ async def test_routed_temporal_lru_evict(workflow_env_with_host_target) -> None:
             task_queue=task_queue,
             workflows=[ItSumWorkflow],
             activities=[it_sum_pair],
+            workflow_runner=sandboxed_workflow_runner(),
         ):
             with patch.object(TemporalClient, "close", counting_close):
                 await touch_sum(t1, "a")

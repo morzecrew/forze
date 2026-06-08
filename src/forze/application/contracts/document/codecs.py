@@ -7,7 +7,7 @@ from typing import Any, Generic, TypeVar, cast, final
 import attrs
 from pydantic import BaseModel
 
-from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, DocumentHistory
+from forze.domain.models import BaseDTO, Document, DocumentHistory
 
 from ..codecs import ModelCodec, default_model_codec
 from .write_types import DocumentWriteTypes
@@ -16,7 +16,7 @@ from .write_types import DocumentWriteTypes
 
 R = TypeVar("R", bound=BaseModel)
 D = TypeVar("D", bound=Document)
-C = TypeVar("C", bound=CreateDocumentCmd)
+C = TypeVar("C", bound=BaseDTO)
 U = TypeVar("U", bound=BaseDTO)
 
 # ....................... #

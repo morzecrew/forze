@@ -15,7 +15,7 @@ from forze.application.execution import ExecutionContext
 from forze.application.execution.domain import domain_dispatcher_provider
 from forze.application.integrations.document import DocumentCache
 from forze.base.exceptions import exc
-from forze.domain.models import BaseDTO, CreateDocumentCmd, Document
+from forze.domain.models import BaseDTO, Document
 
 from ....adapters import FirestoreDocumentAdapter
 from ..._logger import logger
@@ -26,7 +26,7 @@ from ..utils import doc_write_gw, read_gw
 
 R = TypeVar("R", bound=BaseModel)
 D = TypeVar("D", bound=Document)
-C = TypeVar("C", bound=CreateDocumentCmd)
+C = TypeVar("C", bound=BaseDTO)
 U = TypeVar("U", bound=BaseDTO)
 
 # ....................... #

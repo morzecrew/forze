@@ -6,6 +6,8 @@ pytest.importorskip("temporalio")
 
 from temporalio.worker import Worker
 
+from forze_temporal.sandbox import sandboxed_workflow_runner
+
 from ._workflow_defs import ItAddWorkflow, ItPingWorkflow, it_add_numbers
 
 
@@ -20,6 +22,7 @@ async def test_time_skipping_worker_runs_workflow_and_activity(workflow_env) -> 
         task_queue=task_queue,
         workflows=[ItAddWorkflow],
         activities=[it_add_numbers],
+        workflow_runner=sandboxed_workflow_runner(),
     ):
         handle = await workflow_env.client.start_workflow(
             ItAddWorkflow.run,
@@ -53,6 +56,7 @@ async def test_worker_interceptor_subclass_is_composed_by_sdk(workflow_env) -> N
         task_queue=task_queue,
         workflows=[ItPingWorkflow],
         interceptors=[RecordingInterceptor()],
+        workflow_runner=sandboxed_workflow_runner(),
     ):
         handle = await workflow_env.client.start_workflow(
             ItPingWorkflow.run,

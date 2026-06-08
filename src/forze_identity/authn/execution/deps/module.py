@@ -109,6 +109,10 @@ class AuthnDepsModule(DepsModule):
     authz_route: StrKey | None = attrs.field(default=None)
     """Authz route name for :class:`PrincipalRegistryPort` when deactivation is registered."""
 
+    actor_claim: str | None = attrs.field(default=None)
+    """When set (e.g. ``"act"``), token routes read this claim as an RFC 8693 delegation
+    actor and attach it as :attr:`AuthnIdentity.actor`; ``None`` ignores delegation claims."""
+
     # ....................... #
 
     def __call__(self) -> Deps:  # noqa: C901
@@ -216,7 +220,10 @@ class AuthnDepsModule(DepsModule):
                     ConfigurableJwtNativeUuidResolver(),
                 )
 
-                authn_routes[name] = ConfigurableAuthn(enabled_methods=methods_fs)
+                authn_routes[name] = ConfigurableAuthn(
+                    enabled_methods=methods_fs,
+                    actor_claim=self.actor_claim,
+                )
 
             routed_map: dict[object, dict[StrKey, object]] = {AuthnDepKey: authn_routes}
 

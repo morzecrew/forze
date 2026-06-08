@@ -24,12 +24,12 @@ from forze.application.contracts.querying import (
 )
 from forze.base.primitives import JsonDict
 from forze.base.serialization import ModelCodec
-from forze.domain.models import BaseDTO, CreateDocumentCmd, Document
+from forze.domain.models import BaseDTO, Document
 
 M = TypeVar("M", bound=BaseModel)
 T = TypeVar("T", bound=BaseModel)
 D_co = TypeVar("D_co", bound=Document, covariant=True)
-C_co = TypeVar("C_co", bound=CreateDocumentCmd, contravariant=True)
+C_co = TypeVar("C_co", bound=BaseDTO, contravariant=True)
 U_co = TypeVar("U_co", bound=BaseDTO, contravariant=True)
 
 __all__ = [
@@ -325,29 +325,32 @@ class DocumentReadGatewayPort(Protocol, Generic[M]):
 class DocumentWriteGatewayPort(Protocol, Generic[D_co, C_co, U_co]):
     """Write gateway operations required by :class:`~forze.application.integrations.document.adapter.DocumentAdapter`."""
 
-    def create(self, dto: C_co) -> Awaitable[D_co]: ...
+    def create(self, payload: C_co, *, id: UUID | None = None) -> Awaitable[D_co]: ...
 
     def create_many(
         self,
-        dtos: Sequence[C_co],
+        payloads: Sequence[C_co],
         *,
         batch_size: int,
     ) -> Awaitable[Sequence[D_co]]: ...
 
-    def ensure(self, dto: C_co) -> Awaitable[D_co]: ...
+    def ensure(self, id: UUID, payload: C_co) -> Awaitable[D_co]: ...
 
     def ensure_many(
         self,
-        dtos: Sequence[C_co],
+        ids: Sequence[UUID],
+        payloads: Sequence[C_co],
         *,
         batch_size: int,
     ) -> Awaitable[Sequence[D_co]]: ...
 
-    def upsert(self, create_dto: C_co, update_dto: U_co) -> Awaitable[D_co]: ...
+    def upsert(self, id: UUID, create: C_co, update: U_co) -> Awaitable[D_co]: ...
 
     def upsert_many(
         self,
-        pairs: Sequence[tuple[C_co, U_co]],
+        ids: Sequence[UUID],
+        creates: Sequence[C_co],
+        updates: Sequence[U_co],
         *,
         batch_size: int,
     ) -> Awaitable[Sequence[D_co]]: ...

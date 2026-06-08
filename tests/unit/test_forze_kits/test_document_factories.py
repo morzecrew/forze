@@ -149,3 +149,39 @@ class TestBuildDocumentRegistry:
         ns = spec.default_namespace
         assert registry_has_handler(reg, ns.key(DocumentKernelOp.GET))
         assert not registry_has_handler(reg, ns.key(DocumentKernelOp.CREATE))
+
+
+class TestDocumentCatalog:
+    def test_read_ops_are_query_and_writes_are_command(self) -> None:
+        spec = _write_spec()
+        dtos = _write_dtos()
+        ns = spec.default_namespace
+        cat = build_document_registry(spec, dtos).freeze().catalog()
+
+        assert cat[ns.key(DocumentKernelOp.GET)].is_read_only is True
+        assert cat[ns.key(DocumentKernelOp.LIST)].is_read_only is True
+        assert cat[ns.key(DocumentKernelOp.AGG_LIST)].is_read_only is True
+        assert cat[ns.key(DocumentKernelOp.CREATE)].is_read_only is False
+        assert cat[ns.key(DocumentKernelOp.UPDATE)].is_read_only is False
+        assert cat[ns.key(DocumentKernelOp.KILL)].is_read_only is False
+
+    def test_descriptors_carry_schemas(self) -> None:
+        spec = _write_spec()
+        dtos = _write_dtos()
+        ns = spec.default_namespace
+        cat = build_document_registry(spec, dtos).freeze().catalog()
+
+        get = cat[ns.key(DocumentKernelOp.GET)].descriptor
+        assert get is not None
+        assert get.input_schema() is not None
+        assert get.output_schema() is not None
+
+        # LIST output is a generic Paginated[read] envelope.
+        list_out = cat[ns.key(DocumentKernelOp.LIST)].descriptor
+        assert list_out is not None
+        assert "hits" in (list_out.output_schema() or {}).get("properties", {})
+
+        # KILL returns nothing.
+        kill = cat[ns.key(DocumentKernelOp.KILL)].descriptor
+        assert kill is not None
+        assert kill.output_schema() is None

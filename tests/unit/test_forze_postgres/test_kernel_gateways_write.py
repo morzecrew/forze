@@ -133,10 +133,10 @@ async def test_create_many_batches_and_preserves_parameter_order() -> None:
     id2 = UUID("22222222-2222-2222-2222-222222222222")
     id3 = UUID("33333333-3333-3333-3333-333333333333")
 
-    dtos = [
-        MyCreateDoc(id=id1, created_at=ts, name="first"),
-        MyCreateDoc(id=id2, created_at=ts, name="second"),
-        MyCreateDoc(id=id3, created_at=ts, name="third"),
+    payloads = [
+        MyCreateDoc(name="first"),
+        MyCreateDoc(name="second"),
+        MyCreateDoc(name="third"),
     ]
 
     client.fetch_all.side_effect = [
@@ -144,7 +144,7 @@ async def test_create_many_batches_and_preserves_parameter_order() -> None:
         [_row(pk=id3, name="third", ts=ts)],
     ]
 
-    result = await gw.create_many(dtos, batch_size=2)
+    result = await gw.create_many(payloads, batch_size=2)
 
     assert client.fetch_all.await_count == 2
     calls = client.fetch_all.await_args_list
@@ -155,10 +155,8 @@ async def test_create_many_batches_and_preserves_parameter_order() -> None:
         assert call.kwargs["row_factory"] == "dict"
         assert call.kwargs["commit"] is False
 
-    assert sorted(params_by_uuids, key=lambda u: u[0] if u else id1) == [
-        [id1, id2],
-        [id3],
-    ]
+    # ids are server-generated now; assert batch grouping by count (2 then 1).
+    assert sorted(len(u) for u in params_by_uuids) == [1, 2]
     name_chunks: list[list[str]] = []
     for call in calls:
         params = call.args[1]
@@ -197,7 +195,7 @@ async def test_ensure_uses_configured_conflict_target_in_sql() -> None:
 
     client.fetch_one = AsyncMock(return_value=_row(pk=pk, name="n", ts=ts))
 
-    await gw.ensure(MyCreateDoc(id=pk, created_at=ts, name="n"))
+    await gw.ensure(pk, MyCreateDoc(name="n"))
 
     stmt = client.fetch_one.await_args.args[0]
     assert "ON CONFLICT" in str(stmt)
@@ -215,17 +213,15 @@ async def test_ensure_many_skips_conflicts_and_loads_existing() -> None:
     id2 = UUID("22222222-2222-2222-2222-222222222222")
     conflict_row = _row(pk=id1, name="unchanged", ts=ts)
     insert_row = _row(pk=id2, name="inserted", ts=ts)
-    dtos = [
-        MyCreateDoc(id=id1, created_at=ts, name="try-overwrite"),
-        MyCreateDoc(id=id2, created_at=ts, name="inserted"),
-    ]
+    ids = [id1, id2]
+    payloads = [MyCreateDoc(name="try-overwrite"), MyCreateDoc(name="inserted")]
     client.fetch_all = AsyncMock(
         side_effect=[
             [insert_row],
             [conflict_row],
         ],
     )
-    out = await gw.ensure_many(dtos, batch_size=20)
+    out = await gw.ensure_many(ids, payloads, batch_size=20)
     assert [d.id for d in out] == [id1, id2]
     assert out[0].name == "unchanged"
     assert out[1].name == "inserted"
@@ -241,8 +237,8 @@ async def test_upsert_inserts_or_updates() -> None:
     ts = datetime(2025, 1, 1, tzinfo=UTC)
     id1 = UUID("11111111-1111-1111-1111-111111111111")
     id2 = UUID("22222222-2222-2222-2222-222222222222")
-    c1 = MyCreateDoc(id=id1, created_at=ts, name="one")
-    c2 = MyCreateDoc(id=id2, created_at=ts, name="two")
+    c1 = MyCreateDoc(name="one")
+    c2 = MyCreateDoc(name="two")
     u2 = MyUpdateDoc(name="patched")
     new_row = _row(pk=id1, name="one", ts=ts)
     existing = MyDoc(
@@ -275,11 +271,11 @@ async def test_upsert_inserts_or_updates() -> None:
         ]
     )
 
-    out1 = await gw.upsert(c1, MyUpdateDoc())
+    out1 = await gw.upsert(id1, c1, MyUpdateDoc())
     assert out1.id == id1
     assert out1.name == "one"
 
-    out2 = await gw.upsert(c2, u2)
+    out2 = await gw.upsert(id2, c2, u2)
     assert out2.id == id2
     assert out2.name == "patched"
     assert out2.rev == 2

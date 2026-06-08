@@ -221,7 +221,8 @@ async def test_mongo_write_gateway_upsert_insert_then_update_path(
 
     pk = UUID(int=0xABCDEF0123456789ABCDEF0123456789)
     first = await write.upsert(
-        GwCreate(id=pk, name="inserted"),
+        pk,
+        GwCreate(name="inserted"),
         GwUpdate(name="ignored-on-first-write"),
     )
     assert first.id == pk
@@ -229,7 +230,8 @@ async def test_mongo_write_gateway_upsert_insert_then_update_path(
     assert first.rev == 1
 
     second = await write.upsert(
-        GwCreate(id=pk, name="ignored-on-second"),
+        pk,
+        GwCreate(name="ignored-on-second"),
         GwUpdate(name="merged-on-existing"),
     )
     assert second.id == pk
@@ -255,11 +257,11 @@ async def test_mongo_write_gateway_upsert_many_mixed_batch(
     )
 
     seed = await write.create(GwCreate(name="seed"))
+    new_id = uuid4()
     out = await write.upsert_many(
-        [
-            (GwCreate(name="new-a"), GwUpdate(name="n/a")),
-            (GwCreate(id=seed.id, name="skip"), GwUpdate(name="patched-seed")),
-        ],
+        [new_id, seed.id],
+        [GwCreate(name="new-a"), GwCreate(name="skip")],
+        [GwUpdate(name="n/a"), GwUpdate(name="patched-seed")],
         batch_size=10,
     )
     assert len(out) == 2
@@ -375,7 +377,7 @@ async def test_mongo_read_gateway_find_many_with_cursor(
         UUID("10000000-0000-0000-0000-000000000003"),
     ]
     for u, label in zip(ids, ("c", "b", "a"), strict=True):
-        await write.create(GwCreate(id=u, name=label))
+        await write.create(GwCreate(name=label), id=u)
 
     first = await read.find_many_with_cursor(
         None,
@@ -447,17 +449,15 @@ async def test_mongo_write_gateway_create_ensure_and_batch_validation(
     assert {d.name for d in out} == {"c1", "c2"}
 
     eid = uuid4()
-    e1 = await write.ensure(GwCreate(id=eid, name="ensure-new"))
+    e1 = await write.ensure(eid, GwCreate(name="ensure-new"))
     assert e1.id == eid
-    e2 = await write.ensure(GwCreate(id=eid, name="ignored"))
+    e2 = await write.ensure(eid, GwCreate(name="ignored"))
     assert e2.name == "ensure-new"
 
     seed = await write.create(GwCreate(name="seed"))
     em = await write.ensure_many(
-        [
-            GwCreate(name="only-insert"),
-            GwCreate(id=seed.id, name="skip"),
-        ],
+        [uuid4(), seed.id],
+        [GwCreate(name="only-insert"), GwCreate(name="skip")],
         batch_size=10,
     )
     assert len(em) == 2
@@ -513,11 +513,13 @@ async def test_mongo_write_gateway_ensure_with_secondary_unique_index(
 
     doc_id = uuid4()
     seeded = await write.create(
-        GwCreateEmail(id=doc_id, name="seeded", email="a@example.com"),
+        GwCreateEmail(name="seeded", email="a@example.com"),
+        id=doc_id,
     )
 
     second = await write.ensure(
-        GwCreateEmail(id=doc_id, name="ignored", email="other@example.com"),
+        doc_id,
+        GwCreateEmail(name="ignored", email="other@example.com"),
     )
     assert second.name == seeded.name
     assert second.email == seeded.email
@@ -525,16 +527,18 @@ async def test_mongo_write_gateway_ensure_with_secondary_unique_index(
     dup_id = uuid4()
     with pytest.raises(CoreException) as err:
         await write.ensure(
-            GwCreateEmail(id=dup_id, name="dup", email="a@example.com"),
+            dup_id,
+            GwCreateEmail(name="dup", email="a@example.com"),
         )
     assert err.value.kind == ExceptionKind.CONFLICT or (
         err.value.details.get("exc_type") == "DuplicateKeyError"
     )
 
     em = await write.ensure_many(
+        [uuid4(), doc_id],
         [
             GwCreateEmail(name="fresh", email="fresh@example.com"),
-            GwCreateEmail(id=doc_id, name="skip", email="ignored"),
+            GwCreateEmail(name="skip", email="ignored"),
         ],
         batch_size=10,
     )
@@ -542,9 +546,8 @@ async def test_mongo_write_gateway_ensure_with_secondary_unique_index(
 
     with pytest.raises(CoreException) as err_many:
         await write.ensure_many(
-            [
-                GwCreateEmail(name="x", email="fresh@example.com"),
-            ],
+            [uuid4()],
+            [GwCreateEmail(name="x", email="fresh@example.com")],
             batch_size=10,
         )
     assert err_many.value.kind == ExceptionKind.CONFLICT or (

@@ -8,9 +8,12 @@ from uuid import UUID
 import attrs
 
 from forze.application.contracts.authn import AuthnIdentity
+from forze.application.contracts.authz.helpers import subject_for_grant_query
 from forze.application.contracts.authz.ports import (
     AuthzDecisionPort,
     AuthzScopePort,
+    DelegationGrantPort,
+    DelegationPort,
     GrantQueryPort,
     PrincipalRegistryPort,
     RoleAssignmentPort,
@@ -124,6 +127,90 @@ class MockGrantQueryPort(GrantQueryPort):
     ) -> EffectiveGrants:
         _ = subject, scope
         return EffectiveGrants(resolved_at=utcnow())
+
+
+def _delegation_store(state: MockState, route: str) -> set[tuple[str, str]]:
+    store = _route_store(state, route)
+    delegations = store.setdefault("delegations", set())  # type: ignore[assignment]
+    assert isinstance(delegations, set)  # nosec: B101
+    return delegations  # type: ignore[return-value]
+
+
+@final
+@attrs.define(slots=True, kw_only=True)
+class MockDelegationGrantPort(DelegationGrantPort):
+    """In-memory pairwise (actor → subject) delegation grants kept on mock state."""
+
+    state: MockState
+    route: str = "main"
+
+    async def grant_delegation(
+        self,
+        actor: PrincipalRef | UUID | AuthnIdentity | AuthzSubject,
+        subject: PrincipalRef | UUID | AuthnIdentity | AuthzSubject,
+        *,
+        scope: AuthzScope | None = None,
+    ) -> None:
+        _ = scope
+        _delegation_store(self.state, self.route).add(
+            (str(subject_for_grant_query(actor)), str(subject_for_grant_query(subject)))
+        )
+
+    async def revoke_delegation(
+        self,
+        actor: PrincipalRef | UUID | AuthnIdentity | AuthzSubject,
+        subject: PrincipalRef | UUID | AuthnIdentity | AuthzSubject,
+        *,
+        scope: AuthzScope | None = None,
+    ) -> None:
+        _ = scope
+        _delegation_store(self.state, self.route).discard(
+            (str(subject_for_grant_query(actor)), str(subject_for_grant_query(subject)))
+        )
+
+    async def list_delegators(
+        self,
+        actor: PrincipalRef | UUID | AuthnIdentity | AuthzSubject,
+        *,
+        scope: AuthzScope | None = None,
+    ) -> frozenset[UUID]:
+        _ = scope
+        actor_id = str(subject_for_grant_query(actor))
+        return frozenset(
+            UUID(subject)
+            for granted_actor, subject in _delegation_store(self.state, self.route)
+            if granted_actor == actor_id
+        )
+
+
+@final
+@attrs.define(slots=True, kw_only=True)
+class MockDelegationPort(DelegationPort):
+    """Check pairwise delegation grants recorded by :class:`MockDelegationGrantPort`.
+
+    Deny-unless-granted by default (proper enforcement semantics); set
+    ``allow_by_default=True`` for a permissive stub.
+    """
+
+    state: MockState
+    route: str = "main"
+    allow_by_default: bool = False
+
+    async def may_act(
+        self,
+        actor_id: UUID,
+        subject_id: UUID,
+        *,
+        scope: AuthzScope | None = None,
+    ) -> bool:
+        _ = scope
+
+        if (str(actor_id), str(subject_id)) in _delegation_store(
+            self.state, self.route
+        ):
+            return True
+
+        return self.allow_by_default
 
 
 @final

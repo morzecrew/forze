@@ -72,9 +72,9 @@ async def test_firestore_read_gateway_get_many_preserves_order(
     id_b = UUID("10000000-0000-0000-0000-000000000012")
     id_c = UUID("10000000-0000-0000-0000-000000000013")
 
-    await write.create(make_create_cmd(name="a", doc_id=id_c))
-    await write.create(make_create_cmd(name="b", doc_id=id_a))
-    await write.create(make_create_cmd(name="c", doc_id=id_b))
+    await write.create(make_create_cmd(name="a"), id=id_c)
+    await write.create(make_create_cmd(name="b"), id=id_a)
+    await write.create(make_create_cmd(name="c"), id=id_b)
 
     ordered = await read.get_many([id_b, id_a, id_c])
     assert [d.name for d in ordered] == ["c", "b", "a"]
@@ -111,7 +111,7 @@ async def test_firestore_read_gateway_find_many_with_cursor(
         UUID("20000000-0000-0000-0000-000000000003"),
     ]
     for doc_id, label in zip(ids, ("c", "b", "a"), strict=True):
-        await write.create(make_create_cmd(name=label, doc_id=doc_id))
+        await write.create(make_create_cmd(name=label), id=doc_id)
 
     first = await read.find_many_with_cursor(
         None,
@@ -147,8 +147,8 @@ async def test_firestore_read_gateway_count(
     write = _write(ctx, collection)
     read = _read(ctx, collection)
 
-    await write.create(make_create_cmd(name="x", doc_id=uuid4()))
-    await write.create(make_create_cmd(name="y", doc_id=uuid4()))
+    await write.create(make_create_cmd(name="x"), id=uuid4())
+    await write.create(make_create_cmd(name="y"), id=uuid4())
 
     total = await read.count(None)
     assert total == 2
@@ -194,17 +194,15 @@ async def test_firestore_write_gateway_ensure_and_kill(
     existing_id = UUID("40000000-0000-0000-0000-000000000001")
     new_id = UUID("40000000-0000-0000-0000-000000000002")
 
-    seeded = await write.create(make_create_cmd(name="first", doc_id=existing_id))
-    again = await write.ensure(make_create_cmd(name="ignored", doc_id=existing_id))
+    seeded = await write.create(make_create_cmd(name="first"), id=existing_id)
+    again = await write.ensure(existing_id, make_create_cmd(name="ignored"))
     assert again.id == seeded.id
     assert again.name == "first"
 
-    other = await write.create(make_create_cmd(name="second", doc_id=new_id))
+    other = await write.create(make_create_cmd(name="second"), id=new_id)
     ensured = await write.ensure_many(
-        [
-            make_create_cmd(name="ignored", doc_id=existing_id),
-            make_create_cmd(name="ignored", doc_id=new_id),
-        ],
+        [existing_id, new_id],
+        [make_create_cmd(name="ignored"), make_create_cmd(name="ignored")],
     )
     assert len(ensured) == 2
     assert {d.id for d in ensured} == {existing_id, other.id}

@@ -48,6 +48,14 @@ class TestAuthnIdentity:
         pid = uuid4()
         ident = AuthnIdentity(principal_id=pid)
         assert ident.principal_id == pid
+        assert ident.actor is None
+        assert ident.is_delegated is False
+
+    def test_delegated_carries_actor(self) -> None:
+        agent = AuthnIdentity(principal_id=uuid4())
+        user = AuthnIdentity(principal_id=uuid4(), actor=agent)
+        assert user.is_delegated is True
+        assert user.actor is agent
 
 
 class TestResolveAuthzScope:
@@ -91,6 +99,29 @@ class TestSubjectHelpers:
         pid = uuid4()
         subject = subject_from_authn(AuthnIdentity(principal_id=pid))
         assert subject.principal_id == pid
+        assert subject.actor is None
+
+    def test_subject_from_authn_carries_actor_chain(self) -> None:
+        agent_pid = uuid4()
+        user_pid = uuid4()
+        identity = AuthnIdentity(
+            principal_id=user_pid, actor=AuthnIdentity(principal_id=agent_pid)
+        )
+        subject = subject_from_authn(identity)
+        assert subject.principal_id == user_pid
+        assert subject.actor is not None
+        assert subject.actor.principal_id == agent_pid
+
+    def test_subject_from_authn_rejects_too_deep_chain(self) -> None:
+        from forze.application.contracts.authz import MAX_DELEGATION_DEPTH
+
+        ident = AuthnIdentity(principal_id=uuid4())
+        for _ in range(MAX_DELEGATION_DEPTH + 2):
+            ident = AuthnIdentity(principal_id=uuid4(), actor=ident)
+
+        with pytest.raises(CoreException) as exc_info:
+            subject_from_authn(ident)
+        assert exc_info.value.code == "delegation_chain_too_deep"
 
     def test_subject_for_grant_query_variants(self) -> None:
         pid = uuid4()

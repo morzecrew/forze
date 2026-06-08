@@ -1,3 +1,5 @@
+from typing import Any
+
 from pydantic import BaseModel
 
 from forze.application.contracts.search import (
@@ -5,19 +7,71 @@ from forze.application.contracts.search import (
     HubSearchSpec,
     SearchSpec,
 )
+from forze.application.execution.operations import OperationDescriptor
 from forze.application.execution.operations.registry import OperationRegistry
+from forze.base.primitives import StrKey, StrKeyNamespace
+from forze_kits.dto.paginated import CursorPaginated, ProjectedCursorPaginated
+
+from .dto import (
+    CursorSearchRequestDTO,
+    ProjectedCursorSearchRequestDTO,
+    ProjectedSearchPaginated,
+    ProjectedSearchRequestDTO,
+    SearchPaginated,
+    SearchRequestDTO,
+)
 from .handlers import (
     CursorSearch,
     ProjectedCursorSearch,
     ProjectedSearch,
     Search,
 )
-from forze.base.primitives import StrKeyNamespace
-
 from .operations import SearchKernelOp
 from .value_objects import SearchMappers
 
 # ----------------------- #
+
+
+def _parametrized(generic: Any, arg: Any) -> Any:
+    """Parametrize a generic envelope with a runtime read type (off the static path)."""
+
+    return generic[arg]
+
+
+def _typed_search_descriptors(model_type: type) -> dict[StrKey, OperationDescriptor]:
+    """Descriptors for the four single-index/hub search operations."""
+
+    return {
+        SearchKernelOp.TYPED: OperationDescriptor(
+            input_type=SearchRequestDTO,
+            output_type=_parametrized(SearchPaginated, model_type),
+            description="Full-text search with typed results (offset pagination).",
+        ),
+        SearchKernelOp.RAW: OperationDescriptor(
+            input_type=ProjectedSearchRequestDTO,
+            output_type=ProjectedSearchPaginated,
+            description="Full-text search with field-projected results (offset pagination).",
+        ),
+        SearchKernelOp.TYPED_CURSOR: OperationDescriptor(
+            input_type=CursorSearchRequestDTO,
+            output_type=_parametrized(CursorPaginated, model_type),
+            description="Full-text search with typed results (cursor pagination).",
+        ),
+        SearchKernelOp.RAW_CURSOR: OperationDescriptor(
+            input_type=ProjectedCursorSearchRequestDTO,
+            output_type=ProjectedCursorPaginated,
+            description="Full-text search with field-projected results (cursor pagination).",
+        ),
+    }
+
+
+_ALL_SEARCH_OPS: tuple[SearchKernelOp, ...] = (
+    SearchKernelOp.TYPED,
+    SearchKernelOp.RAW,
+    SearchKernelOp.TYPED_CURSOR,
+    SearchKernelOp.RAW_CURSOR,
+)
+"""Single-index / hub search operations — all read-only (query)."""
 
 
 def build_search_registry[M: BaseModel](
@@ -64,7 +118,11 @@ def build_search_registry[M: BaseModel](
         },
     )
 
-    return reg
+    reg = reg.bind(*_ALL_SEARCH_OPS, namespace=ns).as_query().finish()
+
+    return reg.set_descriptors(
+        _typed_search_descriptors(spec.model_type), namespace=ns
+    )
 
 
 # ....................... #
@@ -112,7 +170,12 @@ def build_hub_search_registry[M: BaseModel](
             ),
         },
     )
-    return reg
+
+    reg = reg.bind(*_ALL_SEARCH_OPS, namespace=ns).as_query().finish()
+
+    return reg.set_descriptors(
+        _typed_search_descriptors(spec.model_type), namespace=ns
+    )
 
 
 # ....................... #
@@ -146,4 +209,23 @@ def build_federated_search_registry[M: BaseModel](
             ),
         },
     )
-    return reg
+
+    reg = reg.bind(
+        SearchKernelOp.TYPED, SearchKernelOp.TYPED_CURSOR, namespace=ns
+    ).as_query().finish()
+
+    # Federated search is heterogeneous (no single model type), so results carry no
+    # single response schema — descriptors record the request shape only.
+    return reg.set_descriptors(
+        {
+            SearchKernelOp.TYPED: OperationDescriptor(
+                input_type=SearchRequestDTO,
+                description="Federated full-text search across members (offset pagination).",
+            ),
+            SearchKernelOp.TYPED_CURSOR: OperationDescriptor(
+                input_type=CursorSearchRequestDTO,
+                description="Federated full-text search across members (cursor pagination).",
+            ),
+        },
+        namespace=ns,
+    )
