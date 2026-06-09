@@ -25,6 +25,21 @@ from .kernel.client import (
     DuckDbConfig,
     DuckDbQueryResult,
 )
+from .kernel.credentials import (
+    GcsCredentials,
+    GcsSecretPayload,
+    ObjectStoreCredentials,
+    S3Credentials,
+    S3SecretPayload,
+)
+from .kernel.sources import (
+    CsvSource,
+    DeltaSource,
+    DuckDbSource,
+    IcebergSource,
+    JsonSource,
+    ParquetSource,
+)
 
 # ----------------------- #
 
@@ -38,4 +53,15 @@ __all__ = [
     "duckdb_lifecycle_step",
     "DuckDbAnalyticsConfig",
     "DuckDbQueryConfig",
+    "DuckDbSource",
+    "ParquetSource",
+    "CsvSource",
+    "JsonSource",
+    "IcebergSource",
+    "DeltaSource",
+    "ObjectStoreCredentials",
+    "S3Credentials",
+    "S3SecretPayload",
+    "GcsCredentials",
+    "GcsSecretPayload",
 ]

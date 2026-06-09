@@ -64,8 +64,6 @@ dev = [
     "dirty-equals>=0.11",
     "polyfactory>=3.3.0",
     "hypothesis>=6.153.0",
-    "zensical>=0.0.43",
-    "py-spy>=0.4.2",
 ]
 docs = [
     "mkdocs>=1.6.1,<2.0.0",
@@ -75,6 +73,7 @@ docs = [
     "mkdocstrings[python]>=1.0.3",
     "pygments>=2.19.2",
     "pymdown-extensions>=10.21",
+    "zensical>=0.0.43",
 ]
 
 # ....................... #
