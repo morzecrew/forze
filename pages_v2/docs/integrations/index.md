@@ -1,5 +1,5 @@
 ---
-title: Integrations
+title: Overview
 summary: One optional package per backend, each behind a stable contract
 ---
 
@@ -18,15 +18,16 @@ extras in `pyproject.toml`; each `forze[<name>]` maps to the `<name>` extra.
 
 | Area | Extras |
 |------|--------|
-| **Documents** | `postgres` · `mongo` · `firestore` · `arango` |
-| **Graph** | `neo4j` · `arango` |
-| **Cache, queues & streams** | `redis` · `rabbitmq` · `sqs` |
-| **Search & analytics** | `meilisearch` · `bigquery` · `clickhouse` |
-| **Object storage** | `s3` · `gcs` |
-| **Workflows & durable execution** | `temporal` · `inngest` |
-| **Transport** | `fastapi` · `socketio` · `mcp` |
-| **Identity & secrets** | `authn` · `oidc` · `vault` |
+| **Data** | `postgres` · `mongo` · `firestore` · `arango` · `neo4j` · `redis` · `s3` · `gcs` · `meilisearch` · `bigquery` · `clickhouse` |
+| **Messaging** | `rabbitmq` · `sqs` |
+| **Workflows** | `temporal` · `inngest` |
+| **Inbound** | `fastapi` · `socketio` · `mcp` |
+| **Identity** | `authn` · `oidc` |
+| **Secrets** | `vault` |
 | **Outbound** | `http` |
+
+Each row maps to a `forze[<extra>]` package; their precise contract coverage is
+on each integration's page.
 
 Install one or several at once — `uv add 'forze[fastapi,postgres,redis]'`.
 </content>

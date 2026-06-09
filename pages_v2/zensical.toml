@@ -46,14 +46,21 @@ nav = [
             "in-depth/observability.md",
         ] },
     ] },
-    { "Recipes" = [
-        "recipes/postgres.md",
-    ] },
     { "Integrations" = [
         "integrations/index.md",
+        { "Data" = [
+            "integrations/postgres.md",
+            "integrations/redis.md",
+        ] },
+        { "Inbound" = [
+            "integrations/fastapi.md",
+        ] },
+    ] },
+    { "Recipes" = [
+        "recipes/cache-reads-with-redis.md",
+        "recipes/postgres.md",
     ] },
     { "Reference" = [
-        "reference/index.md",
         "reference/query-syntax.md",
     ] },
 ]
