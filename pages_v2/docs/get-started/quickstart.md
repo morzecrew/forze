@@ -83,7 +83,7 @@ user_spec = DocumentSpec(
 ## Step 4: Declare operations registry
 
 ```python
-from forze.application.composition.document import build_document_registry, DocumentDTOs
+from forze_kits.aggregates.document import build_document_registry, DocumentDTOs
 
 reg = build_document_registry(
     user_spec,
@@ -98,7 +98,8 @@ frozen_reg = reg.freeze()
 `MockDepsModule` registers in-memory adapters for every contract. `ExecutionRuntime` builds an `ExecutionContext` during startup and stores it in a `RuntimeVar` for per-request access. Typically the best way to store the execution runtime is another `RuntimeVar` paired with a function to access the context.
 
 ```python
-from forze.application.execution import DepsPlan, ExecutionRuntime, ExecutionContext
+from forze.application.execution import DepsRegistry, ExecutionRuntime, ExecutionContext
+from forze.base.primitives import RuntimeVar
 from forze_mock import MockDepsModule
 
 
@@ -110,7 +111,7 @@ def get_context() -> ExecutionContext:
 
 
 def construct_runtime() -> ExecutionRuntime:
-    deps = DepsPlan.from_modules(MockDepsModule())
+    deps = DepsRegistry.from_modules(MockDepsModule()).freeze()
     crt = ExecutionRuntime(deps=deps)
 
     _rt.set_once(crt)

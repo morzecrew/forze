@@ -1,0 +1,18 @@
+/* Center diagrams and content images. */
+.md-typeset img {
+  display: block;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+/* Make markdown tables use the full content width */
+.md-typeset .md-typeset__table {
+  display: block !important;
+  width: 100% !important;
+}
+
+.md-typeset .md-typeset__table > table {
+  display: table !important;
+  width: 100% !important;
+  max-width: none !important;
+}

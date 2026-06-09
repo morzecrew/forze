@@ -12,6 +12,11 @@ repo_url = "https://github.com/morzecrew/forze"
 repo_name = "forze"
 
 # ....................... #
+# Styles
+
+extra_css = ["_stylesheets/extra.css"]
+
+# ....................... #
 # Navigation
 
 nav = [
@@ -23,14 +28,19 @@ nav = [
     ] },
     { "Core Concepts" = [
         "core-concepts/overview.md",
+        "core-concepts/architecture.md",
         "core-concepts/domain-layer.md",
         "core-concepts/application-layer.md",
         "core-concepts/contracts.md",
-        "core-concepts/architecture.md",
         "core-concepts/runtime.md",
     ] },
-    { "Building Apps" = [
-        "building-apps/wiring.md",
+    { "In Depth" = [
+        "in-depth/wiring.md",
+        "in-depth/transactions.md",
+        "in-depth/events-sagas.md",
+        "in-depth/multi-tenancy.md",
+        "in-depth/identity.md",
+        "in-depth/observability.md",
     ] },
     { "Recipes" = [
         "recipes/postgres.md",
@@ -88,6 +98,8 @@ auto_themed = true
 auto_caption = true
 
 [project.markdown_extensions.pymdownx.snippets]
+base_path = ["docs", "../examples"]
+check_paths = true
 [project.markdown_extensions.admonition]
 [project.markdown_extensions.pymdownx.details]
 [project.markdown_extensions.pymdownx.superfences]

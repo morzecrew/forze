@@ -1,0 +1,42 @@
+style: {
+    fill: transparent
+}
+
+vars: {
+    d2-config: {
+        pad: 40
+    }
+}
+
+direction: down
+
+Handler: {
+    shape: rectangle
+    label: |md
+        ### Handler
+        Business logic — `(args) -> result`
+    |
+}
+
+Operation: {
+    shape: rectangle
+    label: |md
+        ### Operation
+        Handler + hooks, tx scope, kind
+    |
+}
+
+Resolved: {
+    shape: rectangle
+    style: {
+        stroke: "#2e7d32"
+        stroke-width: 2
+    }
+    label: |md
+        ### ResolvedOperation
+        Dependencies resolved against the context
+    |
+}
+
+Handler -> Operation: registered
+Operation -> Resolved: resolved at run time

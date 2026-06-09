@@ -1,0 +1,43 @@
+style: {
+    fill: transparent
+}
+
+vars: {
+    d2-config: {
+        pad: 40
+    }
+}
+
+direction: down
+
+Tx: {
+    shape: rectangle
+    style: {
+        stroke: "#4a90d9"
+        stroke-width: 2
+    }
+    label: |md
+        ### One transaction
+        Order confirmed + event staged
+    |
+}
+
+Relay: {
+    shape: rectangle
+    label: Relay → broker
+}
+
+Inbox: {
+    shape: rectangle
+    label: Inbox — dedup
+}
+
+Shipment: {
+    shape: rectangle
+    style.stroke: "#2e7d32"
+    label: Shipment created
+}
+
+Tx -> Relay: commit
+Relay -> Inbox
+Inbox -> Shipment: exactly once

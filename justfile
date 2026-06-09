@@ -110,3 +110,19 @@ build-diagrams:
         d2 "$f" "{{ _d2_light_build_dir }}/$(basename "${f%.d2}.svg")" {{ _d2_light_flags }}; \
         d2 "$f" "{{ _d2_dark_build_dir }}/$(basename "${f%.d2}.svg")" {{ _d2_dark_flags }}; \
     done
+
+# ----------------------- #
+# Utils
+
+_worktree_dir := join(_pwd, "..", "worktrees")
+
+# Create a worktree for a branch
+[arg("new", long, value="true", help="Create a worktree for a new branch")]
+worktree branch new="false":
+    mkdir -p {{ _worktree_dir }}
+
+    if {{ new }}; then \
+        git worktree add {{ _worktree_dir }}/forze-{{ branch }} -b {{ branch }} main;
+    else \
+        git worktree add {{ _worktree_dir }}/forze-{{ branch }} {{ branch }};
+    fi
