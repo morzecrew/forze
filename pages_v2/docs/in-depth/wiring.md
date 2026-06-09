@@ -110,7 +110,8 @@ only the client and its lifecycle step do.
 ```python
 from forze_postgres import RoutedPostgresClient
 
-pg = RoutedPostgresClient()
+# resolves a per-tenant DSN from secrets — see Multi-tenancy for the resolver wiring
+pg = RoutedPostgresClient(...)
 # PostgresDepsModule(client=pg, ..., introspector_cache_partition_key=current_tenant)
 ```
 

@@ -75,4 +75,3 @@ lifecycle = LifecyclePlan.from_steps(
   worker that can handle an operation must share the same namespace.
 - **Routed clients** use `routed_redis_lifecycle_step` — don't mix routed and
   non-routed lifecycle steps for one client.
-</content>

@@ -1,6 +1,7 @@
 ---
 title: Quickstart
 icon: lucide/zap
+summary: A working in-memory CRUD service in about ten minutes — no Docker
 ---
 
 ## What you will build
@@ -14,9 +15,11 @@ A minimal REST service for a `User` aggregate:
 | `GET` | `/users` | List users |
 | `DELETE` | `/users/{id}` | Delete a user |
 
-Storage is **in-memory** - no Docker, no database migrations.
+Storage is **in-memory** — no Docker, no migrations. The complete, runnable file
+is [`examples/quickstart/app.py`](https://github.com/morzecrew/forze/blob/main/examples/quickstart/app.py);
+the steps below build it up.
 
-## Step 1: Create the project
+## Step 1 — Create the project
 
 ```bash
 uv init forze-quickstart
@@ -24,162 +27,120 @@ cd forze-quickstart
 uv add 'forze[fastapi]'
 ```
 
-Create `main.py` in the project root. The next steps add code to this file.
+Everything below goes into a single `main.py`.
 
-## Step 2: Define domain models
+## Step 2 — Define the domain models
 
-Every document aggregate needs a **domain model**, a **create command**, and a **read model**. `Document` gives you `id`, `rev`, and timestamps.
+An aggregate needs a **domain model**, a **create command**, and a **read
+model**. `Document` gives you `id`, `rev`, and timestamps for free.
 
 ```python
-from forze.domain.models import CreateDocumentCmd, Document, ReadDocument
-from pydantic import computed_field
-
-
-class User(Document):
-    name: str
-    email: str | None = None
-
-
-class CreateUserCmd(CreateDocumentCmd):
-    name: str
-    email: str | None = None
-
-
-class ReadUser(ReadDocument):
-    name: str
-    email: str | None = None
-
-    @computed_field
-    @property
-    def email_provided(self) -> bool:
-        return self.email is not None
+--8<-- "quickstart/app.py:domain"
 ```
 
 ??? question "Why three types?"
 
-    - **Domain model** - business entity with behavior and invariants
-    - **Create command** - frozen input for `POST`
-    - **Read model** - frozen projection for `GET` responses
+    - **Domain model** — the business entity, with behaviour and invariants.
+    - **Create command** — the frozen input for `POST`.
+    - **Read model** — the frozen projection returned from `GET` (here it adds a
+      computed `email_provided`).
 
-    Update commands come later, this quickstart skips them on purpose.
+    Update commands come later; this quickstart skips them on purpose.
 
-## Step 3: Declare a document specification
+## Step 3 — Declare a specification
 
-The spec is the logical name adapters and routes share. Here it is `#!python "users"`.
-
-```python
-from forze.application.contracts.document import DocumentSpec
-
-user_spec = DocumentSpec(
-    name="users",
-    read=ReadUser,
-    write={
-        "domain": User,
-        "create_cmd": CreateUserCmd,
-    },
-)
-```
-
-## Step 4: Declare operations registry
+The [specification](../core-concepts/application-layer.md) is the logical name —
+`"users"` — that ties the models to their operations and, later, to adapters.
 
 ```python
-from forze_kits.aggregates.document import build_document_registry, DocumentDTOs
-
-reg = build_document_registry(
-    user_spec,
-    DocumentDTOs(read=ReadUser, create=CreateUserCmd)
-)
-
-frozen_reg = reg.freeze()
+--8<-- "quickstart/app.py:spec"
 ```
 
-## Step 5: Wire the runtime
+## Step 4 — Build the operation registry
 
-`MockDepsModule` registers in-memory adapters for every contract. `ExecutionRuntime` builds an `ExecutionContext` during startup and stores it in a `RuntimeVar` for per-request access. Typically the best way to store the execution runtime is another `RuntimeVar` paired with a function to access the context.
+`build_document_registry` assembles the standard CRUD operations; `freeze()`
+makes the registry immutable and shareable.
 
 ```python
-from forze.application.execution import DepsRegistry, ExecutionRuntime, ExecutionContext
-from forze.base.primitives import RuntimeVar
-from forze_mock import MockDepsModule
-
-
-_rt = RuntimeVar[ExecutionRuntime]("rt")
-
-
-def get_context() -> ExecutionContext:
-    return _rt.get().get_context()
-
-
-def construct_runtime() -> ExecutionRuntime:
-    deps = DepsRegistry.from_modules(MockDepsModule()).freeze()
-    crt = ExecutionRuntime(deps=deps)
-
-    _rt.set_once(crt)
-
-    return crt
-
+--8<-- "quickstart/app.py:registry"
 ```
 
-At runtime, a request resolves document ports from that context.
+## Step 5 — Wire the runtime
 
-*TODO: add diagram*
-
-## Step 6: Attach FastAPI routes
+`MockDepsModule` provides in-memory adapters for every contract. The
+[`ExecutionRuntime`](../core-concepts/runtime.md) builds the context on startup;
+a `RuntimeVar` holds it for per-request access.
 
 ```python
-from contextlib import asynccontextmanager
-from fastapi import FastAPI, Depends
-
-
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    crt = construct_runtime()
-
-    async with crt.scope():
-        yield
-
-
-app = FastAPI(title="Users API", lifespan=lifespan)
+--8<-- "quickstart/app.py:runtime"
 ```
 
-!!! tip "Lifespan is required"
+## Step 6 — Attach the routes
 
-    Accessing the execution context outside the runtime scope is not possible.
+The runtime runs inside the app's lifespan. Each route resolves a
+[`DocumentFacade`](../core-concepts/application-layer.md) from the context and
+calls an operation — the handlers never touch HTTP:
 
-## Step 7: Run the service
+```python
+--8<-- "quickstart/app.py:routes"
+```
+
+`register_exception_handlers` maps a `CoreException` to a response, so a missing
+user comes back as a `404`. (Higher-level route builders are
+[planned](../integrations/fastapi.md); for now routes are hand-wired.)
+
+## Step 7 — Run it
 
 ```bash
 uv run uvicorn main:app --reload
 ```
 
-Open [http://localhost:8000/docs](http://localhost:8000/docs) for the interactive API explorer.
-
-**Try it:**
+Open [http://localhost:8000/docs](http://localhost:8000/docs) for the interactive
+explorer, or try it from the shell:
 
 ```bash
-# Create
+# Create — note the id in the response
 curl -s -X POST http://127.0.0.1:8000/users \
   -H 'Content-Type: application/json' \
   -d '{"name": "Ada", "email": "ada@example.com"}'
 
-# List (use the id from the create response for get/delete)
-curl -s http://127.0.0.1:8000/users
-
-# Get a particular user
-curl -s http://127.0.0.1:8000/users/{id}
-
-# Delete a user
-curl -s -X DELETE http://127.0.0.1:8000/users/{id}
+curl -s http://127.0.0.1:8000/users            # list
+curl -s http://127.0.0.1:8000/users/<id>       # get one
+curl -s -X DELETE http://127.0.0.1:8000/users/<id>   # delete
 ```
 
 ## What you just did
 
-...
+You built a complete service without a single line of HTTP or storage code in
+your domain:
 
-## Complete example
+- A **`User` aggregate** with its command and read models — pure Python, no
+  infrastructure.
+- A **specification** and a frozen **operation registry** — the named operations
+  the service exposes.
+- An **`ExecutionRuntime`** wired to in-memory adapters, opened for the app's
+  lifetime.
+- **Routes** that resolve operations from the context and return read models.
 
-??? example "Full code"
+The only thing tying this to "in-memory" is `MockDepsModule` in Step 5. Swap it
+for `PostgresDepsModule` + `RedisDepsModule` and the domain, spec, registry, and
+routes don't change — that's the whole point. The
+[PostgreSQL integration](../integrations/postgres.md) shows the swap.
 
-    ```python
-    from contextlib import asynccontextmanager
-    ```
+## Where to go next
+
+<div class="grid cards" markdown>
+
+-   :lucide-compass: **[Core concepts](../core-concepts/overview.md)**
+
+    ---
+
+    Understand the layers, contracts, and runtime behind what you just built.
+
+-   :lucide-database: **[Back it with Postgres](../recipes/cache-reads-with-redis.md)**
+
+    ---
+
+    Swap the in-memory adapters for real infrastructure.
+
+</div>

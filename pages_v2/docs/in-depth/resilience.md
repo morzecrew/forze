@@ -62,4 +62,3 @@ result = await ctx.resilience().run(
 By default circuit-breaker state is per-process. `forze[redis]` provides a
 **distributed** breaker store so an open circuit on one replica protects them
 all.
-</content>

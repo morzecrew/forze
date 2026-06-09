@@ -216,4 +216,3 @@ Semantics are shared; rendering is backend-specific. Text-pattern support varies
 Leading-`%` patterns may need a trigram index (Postgres `pg_trgm`) to stay fast on
 large tables. On MongoDB, `$null: true` matches both explicit null and missing
 fields.
-</content>

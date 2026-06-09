@@ -1,13 +1,13 @@
 ---
 title: FastAPI
 icon: lucide/globe
-summary: Expose operations over typed HTTP — without domain code touching HTTP
+summary: Run an ExecutionRuntime behind FastAPI — lifespan, request context, and error mapping
 ---
 
-`forze[fastapi]` serves Forze operations over typed HTTP routes: generated
-CRUD / search / storage endpoints, request-context middleware, and error
-handlers. The domain and application layers stay framework-independent — FastAPI
-only resolves the runtime and calls registered operations.
+`forze[fastapi]` connects an `ExecutionRuntime` to a FastAPI app: it runs the
+runtime from the app's lifespan, binds per-request context (and identity) via
+middleware, and maps `CoreException`s to HTTP responses. Routes themselves are
+ordinary FastAPI handlers that resolve the context and run operations.
 
 ## Install
 
@@ -15,14 +15,12 @@ only resolves the runtime and calls registered operations.
 uv add 'forze[fastapi]'
 ```
 
-No external service — FastAPI is in-process. The extra brings FastAPI, Uvicorn,
-and the docs tooling.
+No external service — FastAPI is in-process.
 
-## How it plugs in
+## Run the runtime from lifespan
 
-There's no client. The **`ExecutionRuntime`** is what routes resolve from. Two
-seams connect FastAPI to it: the runtime's lifecycle runs from the app's
-**lifespan**, and routes read the current context from a **dependency**.
+The runtime's lifecycle opens and closes every backing client (Postgres, Redis,
+…). Drive it from the app lifespan:
 
 ```python
 from contextlib import asynccontextmanager
@@ -37,50 +35,60 @@ async def lifespan(app: FastAPI):
         await runtime.shutdown()
 
 app = FastAPI(title="Orders API", lifespan=lifespan)
-
-def context_dependency():
-    return runtime.get_context()
 ```
 
-## Attach routes
+## Bind request context
 
-Generated endpoints resolve operations from a **frozen** registry. Hand a router
-the spec, its DTOs, the registry, and the context dependency:
+Two ASGI middlewares attach the per-request context, both given a factory that
+returns the current `ExecutionContext`:
 
 ```python
-from fastapi import APIRouter
-from forze_fastapi.endpoints.document import attach_document_endpoints
-
-orders = APIRouter(prefix="/orders", tags=["orders"])
-attach_document_endpoints(
-    orders,
-    document=order_spec,
-    dtos=order_dtos,
-    registry=order_registry,   # built with build_document_registry(...).freeze()
-    ctx_dep=context_dependency,
+from forze_fastapi.middlewares import (
+    InvocationMetadataMiddleware,
+    SecurityContextMiddleware,
 )
-app.include_router(orders)
+
+def context() -> "ExecutionContext":
+    return runtime.get_context()
+
+app.add_middleware(InvocationMetadataMiddleware, ctx_dep=context)
+app.add_middleware(SecurityContextMiddleware, ctx_dep=context)
 ```
 
-## What it provides
+`InvocationMetadataMiddleware` binds correlation/execution metadata and the
+`Idempotency-Key` header; `SecurityContextMiddleware` binds the authenticated
+identity and tenant.
 
-| Contract | Helper | Notes |
-|----------|--------|-------|
-| `DocumentSpec` | `attach_document_endpoints` | CRUD + list routes |
-| `SearchSpec` | `attach_search_endpoints` | typed and projected search routes |
-| `StorageSpec` | `attach_storage_endpoints` | multipart upload, download, list, delete |
-| Custom operations | `attach_http_endpoint` | you own request/response mapping |
-| Idempotency / ETag | endpoint features | opt-in per mutating / read route |
+## Map errors to HTTP
 
-## Notes
+`register_exception_handlers` turns a `CoreException` into a response — the kind
+decides the status, the `code` rides an error-code header, and details are
+exposed only when the kind's [egress policy](../in-depth/errors.md) allows:
 
-- **Lifespan owns the runtime.** Wiring `runtime.startup()` / `shutdown()` into
-  the lifespan is what opens and closes every backing client (Postgres, Redis, …).
-- **Register error handlers.** `register_exception_handlers(app)` maps
-  `CoreException` to JSON responses and keeps tracebacks out of response bodies.
-- **Bind identity at the edge.** `ContextBindingMiddleware` attaches
-  `InvocationMetadata`, `AuthnIdentity`, and `TenantIdentity` to the context — see
-  [Identity & access](../in-depth/identity.md).
-- **Idempotency** needs an idempotency adapter (commonly Redis) and a stable
-  client-sent `Idempotency-Key`.
-</content>
+```python
+from forze_fastapi.exceptions import register_exception_handlers
+
+register_exception_handlers(app)
+# raise exc.not_found("...") in a handler → 404 {"detail": "..."}
+```
+
+## Routes
+
+Routes are ordinary FastAPI handlers. A route resolves the context and runs an
+operation through the frozen registry (or a facade) — the domain code stays
+untouched:
+
+```python
+from forze_kits.aggregates.document import DocumentFacade
+
+@app.post("/orders")
+async def create_order(cmd: CreateOrderCmd) -> ReadOrder:
+    facade = DocumentFacade(ctx=runtime.get_context(), registry=registry, namespace=order_spec.default_namespace)
+    return await facade.create(cmd)
+```
+
+!!! note "Generated routes are planned"
+
+    Higher-level route builders (`attach_*` helpers that generate CRUD / search
+    / storage endpoints from a spec) are a planned addition. Until they land,
+    wire routes by hand as above.

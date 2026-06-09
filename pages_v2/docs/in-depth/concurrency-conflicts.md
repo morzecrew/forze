@@ -49,4 +49,3 @@ a [conflict](errors.md) for the caller to resolve.
 - `Document.validate_historical_consistency(old, patch)` is the check behind the
   merge — `True` when the concurrent change and yours touch disjoint fields.
 - `command.touch(pk)` bumps `last_update_at` and `rev` without other changes.
-</content>

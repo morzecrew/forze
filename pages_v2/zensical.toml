@@ -54,10 +54,38 @@ nav = [
         "integrations/index.md",
         { "Data" = [
             "integrations/postgres.md",
+            "integrations/mongo.md",
+            "integrations/firestore.md",
+            "integrations/neo4j.md",
             "integrations/redis.md",
+            "integrations/s3.md",
+            "integrations/gcs.md",
+            "integrations/meilisearch.md",
+            "integrations/bigquery.md",
+            "integrations/clickhouse.md",
+        ] },
+        { "Messaging" = [
+            "integrations/rabbitmq.md",
+            "integrations/sqs.md",
+        ] },
+        { "Workflows" = [
+            "integrations/temporal.md",
+            "integrations/inngest.md",
         ] },
         { "Inbound" = [
             "integrations/fastapi.md",
+            "integrations/socketio.md",
+            "integrations/mcp.md",
+        ] },
+        { "Identity" = [
+            "integrations/authn.md",
+            "integrations/oidc.md",
+        ] },
+        { "Secrets" = [
+            "integrations/vault.md",
+        ] },
+        { "Outbound" = [
+            "integrations/http.md",
         ] },
     ] },
     { "Recipes" = [
@@ -65,7 +93,9 @@ nav = [
         "recipes/postgres.md",
     ] },
     { "Reference" = [
+        "reference/contracts.md",
         "reference/query-syntax.md",
+        "reference/errors.md",
     ] },
 ]
 
@@ -82,8 +112,10 @@ features = [
     "search.highlight",
     "navigation.footer",
     "navigation.instant",
+    "navigation.instant.progress",
     "navigation.tabs",
     "navigation.sections",
+    # "navigation.expand",
     "navigation.path",
     "navigation.top",
     "toc.follow",

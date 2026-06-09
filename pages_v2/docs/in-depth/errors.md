@@ -66,4 +66,3 @@ Core stays transport-neutral — it never picks an HTTP status. The
 [FastAPI integration](../integrations/fastapi.md) turns a `CoreException` into a response,
 exposing details only when the kind's policy allows and logging the rest
 server-side.
-</content>

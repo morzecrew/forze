@@ -18,7 +18,7 @@ extras in `pyproject.toml`; each `forze[<name>]` maps to the `<name>` extra.
 
 | Area | Extras |
 |------|--------|
-| **Data** | `postgres` · `mongo` · `firestore` · `arango` · `neo4j` · `redis` · `s3` · `gcs` · `meilisearch` · `bigquery` · `clickhouse` |
+| **Data** | `postgres` · `mongo` · `firestore` · `neo4j` · `redis` · `s3` · `gcs` · `meilisearch` · `bigquery` · `clickhouse` |
 | **Messaging** | `rabbitmq` · `sqs` |
 | **Workflows** | `temporal` · `inngest` |
 | **Inbound** | `fastapi` · `socketio` · `mcp` |
@@ -30,4 +30,3 @@ Each row maps to a `forze[<extra>]` package; their precise contract coverage is
 on each integration's page.
 
 Install one or several at once — `uv add 'forze[fastapi,postgres,redis]'`.
-</content>

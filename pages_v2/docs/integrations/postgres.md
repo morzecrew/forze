@@ -78,4 +78,3 @@ lifecycle = LifecyclePlan.from_modules(
   module so the catalog cache partitions by tenant.
 - **Relations** can be static `(schema, table)` tuples or per-tenant resolvers —
   see [Multi-tenancy](../in-depth/multi-tenancy.md).
-</content>

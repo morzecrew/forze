@@ -70,4 +70,3 @@ querying and index maintenance never mix.
 
 Search is wired like any other capability: a `SearchSpec` resolved from the
 context, with per-engine setup living in each integration.
-</content>

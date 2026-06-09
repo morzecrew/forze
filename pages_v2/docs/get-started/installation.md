@@ -29,7 +29,7 @@ Install the framework core:
 Verify the installation:
 
 ```bash
-uv run python -c "import forze; print(forze.__version__)"
+uv run python -c "from forze._version import __version__; print(__version__)"
 ```
 
 ## Install with integrations

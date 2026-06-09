@@ -55,4 +55,3 @@ Postgres stores the documents; Redis answers the repeat reads.
 cd examples/recipes/cache_reads
 just run
 ```
-</content>

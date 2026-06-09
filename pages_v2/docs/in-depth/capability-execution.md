@@ -79,4 +79,3 @@ resolve — no missing or duplicate providers, no cycles — dispatch targets mu
 exist, and any transactional stage must declare a route. A misconfigured pipeline
 fails when you **build** the registry, at startup, rather than on a user's first
 request.
-</content>

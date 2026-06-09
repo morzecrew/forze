@@ -43,4 +43,3 @@ since the stored result is encoded and decoded.
 Both dedupe, at different layers: idempotency dedupes **inbound operations** by
 caller-supplied key; the [inbox](events-sagas.md) dedupes **consumed events** by
 event id. Same principle — exactly-once effects over an at-least-once world.
-</content>
