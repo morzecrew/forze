@@ -77,4 +77,3 @@ await ctx.tx_ctx.run_or_defer(send_confirmation)
 Inside a transaction, the callback is queued and runs after the **root** scope
 commits successfully. Outside any transaction, it runs immediately. This single
 mechanism is the foundation of the transactional outbox — covered next.
-</content>

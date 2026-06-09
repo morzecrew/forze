@@ -16,12 +16,12 @@ shared by the spec, the operation registry, and the dependency wiring. Get it
 consistent and everything resolves; mismatch it and a port won't be found.
 
 ```python
-from forze.application.contracts.document import DocumentSpec
+from forze.application.contracts.document import DocumentSpec, DocumentWriteTypes
 
 order_spec = DocumentSpec(
     name="orders",
-    read=ReadOrder,
-    write={"domain": Order, "create_cmd": CreateOrderCmd},
+    read=OrderRead,
+    write=DocumentWriteTypes(domain=Order, create_cmd=OrderCreate, update_cmd=OrderUpdate),
 )
 ```
 
@@ -58,7 +58,7 @@ from forze_kits.aggregates.document import DocumentDTOs, build_document_registry
 
 registry = build_document_registry(
     order_spec,
-    DocumentDTOs(read=ReadOrder, create=CreateOrderCmd),
+    DocumentDTOs(read=OrderRead, create=OrderCreate),
 ).freeze()
 ```
 
@@ -90,4 +90,3 @@ handler. Hooks run around the handler without replacing its result.
 This is how an `orders.update` operation can require an unshipped order, wrap
 itself in a transaction, and emit an event — all without the handler knowing any
 of it happened.
-</content>

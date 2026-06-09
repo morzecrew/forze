@@ -26,24 +26,35 @@ nav = [
         "get-started/quickstart.md",
         "get-started/project-structure.md",
     ] },
-    { "Core Concepts" = [
-        "core-concepts/overview.md",
-        "core-concepts/architecture.md",
-        "core-concepts/domain-layer.md",
-        "core-concepts/application-layer.md",
-        "core-concepts/contracts.md",
-        "core-concepts/runtime.md",
-    ] },
-    { "In Depth" = [
-        "in-depth/wiring.md",
-        "in-depth/transactions.md",
-        "in-depth/events-sagas.md",
-        "in-depth/multi-tenancy.md",
-        "in-depth/identity.md",
-        "in-depth/observability.md",
+    { "Learn" = [
+        { "Concepts" = [
+            "core-concepts/overview.md",
+            "core-concepts/architecture.md",
+            "core-concepts/domain-layer.md",
+            "core-concepts/application-layer.md",
+            "core-concepts/contracts.md",
+            "core-concepts/runtime.md",
+        ] },
+        { "In Depth" = [
+            "in-depth/wiring.md",
+            "in-depth/transactions.md",
+            "in-depth/capability-execution.md",
+            "in-depth/events-sagas.md",
+            "in-depth/reading-data.md",
+            "in-depth/multi-tenancy.md",
+            "in-depth/identity.md",
+            "in-depth/observability.md",
+        ] },
     ] },
     { "Recipes" = [
         "recipes/postgres.md",
+    ] },
+    { "Integrations" = [
+        "integrations/index.md",
+    ] },
+    { "Reference" = [
+        "reference/index.md",
+        "reference/query-syntax.md",
     ] },
 ]
 

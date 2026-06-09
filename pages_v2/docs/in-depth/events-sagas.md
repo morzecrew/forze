@@ -82,10 +82,11 @@ at-least-once.
 
 ## Sagas: many steps, one outcome
 
-Reserving inventory and confirming the order can't share a single database
-transaction — they're distinct steps that may each fail. A **saga** sequences
-them with **compensation**: every step carries an undo, and a failure rolls the
-completed steps back in reverse.
+The `confirm` step above doesn't run alone — it's the final step of a checkout
+**saga**. Reserving inventory and confirming the order can't share a single
+database transaction; they're distinct steps that may each fail. A saga
+sequences them with **compensation**: every step carries an undo, and a failure
+rolls the completed steps back in reverse.
 
 ```python
 --8<-- "order_fulfillment.py:saga"
@@ -106,4 +107,3 @@ The same flow handles the cases that make event-driven systems hard:
 | **Happy path** | Order confirmed, event relayed, exactly one shipment |
 | **Redelivery** | Duplicate message skipped by the inbox — still one shipment |
 | **Pivot fails** (payment declined) | Inventory released, order stays `pending`, nothing staged, relayed, or shipped |
-</content>

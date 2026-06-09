@@ -201,4 +201,3 @@ SELECT id, rev, name FROM users;
     together.
 
 </div>
-</content>

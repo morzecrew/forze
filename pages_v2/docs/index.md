@@ -130,5 +130,4 @@ user_spec = DocumentSpec(
 ```
 
 [See the full walkthrough :octicons-arrow-right-24:](get-started/quickstart.md){ .md-button }
-</content>
 </invoke>

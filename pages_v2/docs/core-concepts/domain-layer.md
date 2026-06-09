@@ -59,7 +59,7 @@ aggregate:
 ```python
 from forze.domain.models import Document
 from forze.domain.validation import update_validator
-from forze.base.errors import ValidationError
+from forze.base.exceptions import exc
 
 
 class Order(Document):
@@ -70,7 +70,7 @@ class Order(Document):
     @update_validator(fields={"total"})
     def _total_is_final_once_shipped(before, after, diff):
         if before.status == "shipped":
-            raise ValidationError("A shipped order's total is final.")
+            raise exc.domain("A shipped order's total is final.")
 ```
 
 Updates are structured. `order.update({"total": 99})` returns a **new immutable
@@ -88,4 +88,3 @@ default install). Each adds one focused capability — no deep inheritance chain
 | **Metadata** | `name`, `display_name`, and `description` with normalized string types |
 | **Number id** | A human-readable `number_id`, populated by a counter on create |
 | **Creator id** | A frozen `creator_id`, injected from the current actor context |
-</content>

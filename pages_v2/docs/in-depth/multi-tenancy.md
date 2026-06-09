@@ -87,4 +87,3 @@ The lightest cut: one connection, one schema, a `tenant_id` column.
 `tenant_aware=True` makes the gateway filter every read and stamp every write
 with the bound tenant. Combining it with a routed or relation cut is redundant —
 acceptable as defense-in-depth, and startup warns when it spots the overlap.
-</content>

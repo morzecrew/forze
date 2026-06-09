@@ -45,9 +45,9 @@ reverse.
       a contract: document storage, cache, transactions, search, queues.
     - **Handlers** — single-purpose operations that receive an execution
       context and resolve ports from it.
-    - **Composition** — facades, the `OperationRegistry`, and operation plans
-      that wire handlers with stage hooks.
-    - **Execution runtime** — the dependency container, lifecycle hooks, and
+    - **Composition** — facades, the `OperationRegistry`, and the stage hooks
+      that wrap handlers.
+    - **Execution runtime** — the dependency registry, lifecycle hooks, and
       transaction management.
 
     Imports from the domain, never from infrastructure or interface.
@@ -102,7 +102,7 @@ What actually changes when you make a common change, and what stays put:
 | Add Redis caching | Dependency module, lifecycle step, cache flag on spec | Domain models, handlers |
 | Replace FastAPI with gRPC | Interface / transport layer | Domain, handlers, specs, adapters |
 | Add a business rule | Domain model validation | Adapters, routing |
-| Audit-log every operation | Operation plan (`BeforeStep` / `OnSuccessStep`) | Domain models, adapters |
+| Audit-log every operation | Stage hooks (`BeforeStep` / `OnSuccessStep`) | Domain models, adapters |
 
 ## Where to go next
 
@@ -118,7 +118,7 @@ What actually changes when you make a common change, and what stays put:
 
     ---
 
-    Handlers, stage hooks, the runtime, and dependency plans.
+    Handlers, operations, stage hooks, and the registry.
 
 -   :lucide-plug: **[Contracts & adapters](contracts.md)**
 
@@ -133,4 +133,3 @@ What actually changes when you make a common change, and what stays put:
     Execution context, lifecycle, and transaction scopes.
 
 </div>
-</content>

@@ -22,7 +22,7 @@ serve.
 | Module | Registers (examples) |
 |--------|----------------------|
 | `PostgresDepsModule` | document query/command, search, transactions |
-| `RedisDepsModule` | cache, counters, idempotency, pub/sub, streams |
+| `RedisDepsModule` | cache, counters, idempotency |
 | `S3DepsModule` | object storage |
 | `MockDepsModule` | in-memory adapters for every contract |
 
@@ -116,4 +116,3 @@ pg = RoutedPostgresClient()
 
 How routing resolves a tenant to a connection — and the schema-per-tenant
 alternative — is the subject of [Multi-tenancy](multi-tenancy.md).
-</content>
