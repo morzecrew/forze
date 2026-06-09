@@ -2,15 +2,14 @@
 
 from __future__ import annotations
 
-from typing import AsyncGenerator, Sequence, TypeVar
+from typing import Any, AsyncGenerator, Sequence, TypeVar, cast
 
 from pydantic import BaseModel
 
 from forze.application.contracts.analytics import AnalyticsRunOptions
-from forze.application.contracts.analytics._adapter_common import dry_run_enabled
+from forze.application.integrations.analytics.adapter_common import dry_run_enabled
 from forze.application.contracts.querying import PaginationExpression
 from forze.base.primitives import StrKey
-from forze.base.serialization import pydantic_validate_many
 
 from ._mixin_base import PostgresAnalyticsMixinBase
 
@@ -35,7 +34,7 @@ class PostgresAnalyticsChunkedMixin[R: BaseModel, Ing: BaseModel](
         *,
         options: AnalyticsRunOptions | None,
         fetch_batch_size: int,
-        row_type: type[BaseModel],
+        _row_type: type[BaseModel],
     ) -> AsyncGenerator[Sequence[BaseModel]]:
         host = self._host
         params = host._validated_params(query_key, params)  # type: ignore[protected-access]
@@ -70,7 +69,8 @@ class PostgresAnalyticsChunkedMixin[R: BaseModel, Ing: BaseModel](
             if not rows:
                 break
 
-            typed = pydantic_validate_many(row_type, rows)
+            read_codec = cast(Any, host.spec.resolved_read_codec)
+            typed = read_codec.decode_mapping_many(rows)
             collected += len(typed)
             offset += len(typed)
             buffer.extend(typed)
@@ -103,7 +103,7 @@ class PostgresAnalyticsChunkedMixin[R: BaseModel, Ing: BaseModel](
             params,
             options=options,
             fetch_batch_size=fetch_batch_size,
-            row_type=host.spec.read,
+            _row_type=host.spec.read,
         ):
             yield chunk  # type: ignore[misc]
 
@@ -125,6 +125,6 @@ class PostgresAnalyticsChunkedMixin[R: BaseModel, Ing: BaseModel](
             params,
             options=options,
             fetch_batch_size=fetch_batch_size,
-            row_type=return_type,
+            _row_type=return_type,
         ):
             yield chunk  # type: ignore[misc]

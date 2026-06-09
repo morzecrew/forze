@@ -7,6 +7,8 @@ import attrs
 from forze.application.contracts.authz import (
     AuthzDecisionDepKey,
     AuthzScopeDepKey,
+    DelegationDepKey,
+    DelegationGrantDepKey,
     GrantQueryDepKey,
     PrincipalRegistryDepKey,
     RoleAssignmentDepKey,
@@ -14,23 +16,20 @@ from forze.application.contracts.authz import (
 from forze.application.execution import Deps, DepsModule
 from forze.base.exceptions import exc
 from forze.base.primitives import StrKey
+from forze_identity._routes import normalize_route_set as _normalize_route_set
 
 from .configs import AuthzKernelConfig, build_authz_shared_services
 from .deps import (
     ConfigurableAuthzDecision,
     ConfigurableAuthzScope,
+    ConfigurableDelegationGrant,
+    ConfigurableDelegationQuery,
     ConfigurableGrantQuery,
     ConfigurablePrincipalRegistry,
     ConfigurableRoleAssignment,
 )
 
 # ----------------------- #
-
-
-def _normalize_route_set(
-    routes: Collection[StrKey] | None,
-) -> frozenset[StrKey]:
-    return frozenset(routes) if routes else frozenset()
 
 
 @final
@@ -42,6 +41,8 @@ class AuthzDepsModule(DepsModule):
     principal_registry: Collection[StrKey] | None = attrs.field(default=None)
     role_assignment: Collection[StrKey] | None = attrs.field(default=None)
     grant_query: Collection[StrKey] | None = attrs.field(default=None)
+    delegation: Collection[StrKey] | None = attrs.field(default=None)
+    delegation_grant: Collection[StrKey] | None = attrs.field(default=None)
     decision: Collection[StrKey] | None = attrs.field(default=None)
     scope: Collection[StrKey] | None = attrs.field(default=None)
 
@@ -49,10 +50,12 @@ class AuthzDepsModule(DepsModule):
         pr = _normalize_route_set(self.principal_registry)
         ra = _normalize_route_set(self.role_assignment)
         gq = _normalize_route_set(self.grant_query)
+        dl = _normalize_route_set(self.delegation)
+        dg = _normalize_route_set(self.delegation_grant)
         dc = _normalize_route_set(self.decision)
         sc = _normalize_route_set(self.scope)
 
-        has_registrations = bool(pr or ra or gq or dc or sc)
+        has_registrations = bool(pr or ra or gq or dl or dg or dc or sc)
 
         if not has_registrations:
             return Deps()
@@ -94,6 +97,28 @@ class AuthzDepsModule(DepsModule):
                     {
                         GrantQueryDepKey: {
                             name: ConfigurableGrantQuery() for name in gq
+                        },
+                    },
+                ),
+            )
+
+        if dl:
+            merged = merged.merge(
+                Deps.routed(
+                    {
+                        DelegationDepKey: {
+                            name: ConfigurableDelegationQuery() for name in dl
+                        },
+                    },
+                ),
+            )
+
+        if dg:
+            merged = merged.merge(
+                Deps.routed(
+                    {
+                        DelegationGrantDepKey: {
+                            name: ConfigurableDelegationGrant() for name in dg
                         },
                     },
                 ),

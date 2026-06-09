@@ -43,8 +43,10 @@ class FirestoreTxManagerAdapter(TransactionManagerPort):
     # ....................... #
 
     @asynccontextmanager
-    async def transaction(self) -> AsyncGenerator[None]:
-        logger.debug("Starting Firestore transaction")
+    async def transaction(self, *, read_only: bool = False) -> AsyncGenerator[None]:
+        # ``read_only`` accepted for interface parity; Firestore transactions have no
+        # read-only mode. The Phase-1 port guard still blocks writes in a QUERY operation.
+        logger.debug("Starting Firestore transaction (read_only=%s)", read_only)
 
         async with self.client.transaction():
             try:

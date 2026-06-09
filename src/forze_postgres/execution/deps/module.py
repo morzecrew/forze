@@ -13,6 +13,8 @@ from forze.application.contracts.document import (
     DocumentCommandDepKey,
     DocumentQueryDepKey,
 )
+from forze.application.contracts.inbox import InboxDepKey
+from forze.application.contracts.outbox import OutboxCommandDepKey, OutboxQueryDepKey
 from forze.application.contracts.search import (
     FederatedSearchQueryDepKey,
     HubSearchQueryDepKey,
@@ -20,6 +22,7 @@ from forze.application.contracts.search import (
 )
 from forze.application.contracts.transaction import TransactionManagerDepKey
 from forze.application.execution import Deps, DepsModule
+from forze.base.exceptions import exc
 from forze.base.primitives import StrKey
 
 from ...kernel.catalog.introspect import PostgresIntrospector
@@ -37,6 +40,8 @@ from .configs import (
     PostgresFederatedSearchConfig,
     PostgresFederatedSearchLegHub,
     PostgresHubSearchConfig,
+    PostgresInboxConfig,
+    PostgresOutboxConfig,
     PostgresReadOnlyDocumentConfig,
     PostgresSearchConfig,
 )
@@ -45,6 +50,9 @@ from .factories import (
     ConfigurablePostgresDocument,
     ConfigurablePostgresFederatedSearch,
     ConfigurablePostgresHubSearch,
+    ConfigurablePostgresInbox,
+    ConfigurablePostgresOutboxCommand,
+    ConfigurablePostgresOutboxQuery,
     ConfigurablePostgresReadOnlyDocument,
     ConfigurablePostgresSearch,
     postgres_txmanager,
@@ -106,10 +114,22 @@ class PostgresDepsModule(DepsModule):
     )
     """Mapping from analytics route names to their Postgres-specific configurations."""
 
+    outboxes: Mapping[StrKey, PostgresOutboxConfig] | None = attrs.field(default=None)
+    """Mapping from outbox route names to their Postgres-specific configurations."""
+
+    inboxes: Mapping[StrKey, PostgresInboxConfig] | None = attrs.field(default=None)
+    """Mapping from inbox route names to their Postgres-specific configurations."""
+
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
         routes: list[PostgresTenancyRouteSpec] = []
+
+        if (
+            self.introspector_cache_ttl is not None
+            and self.introspector_cache_ttl.total_seconds() <= 0
+        ):
+            raise exc.configuration("Introspector cache TTL must be positive")
 
         if self.ro_documents:
             for name, cfg in self.ro_documents.items():
@@ -271,6 +291,7 @@ class PostgresDepsModule(DepsModule):
         federated_search_deps = Deps()
         tx_deps = Deps()
         analytics_deps = Deps()
+        outbox_deps = Deps()
 
         if self.ro_documents:
             doc_deps = doc_deps.merge(
@@ -364,6 +385,34 @@ class PostgresDepsModule(DepsModule):
                 )
             )
 
+        if self.outboxes:
+            outbox_deps = outbox_deps.merge(
+                Deps.routed(
+                    {
+                        OutboxCommandDepKey: {
+                            name: ConfigurablePostgresOutboxCommand(config=config)
+                            for name, config in self.outboxes.items()
+                        },
+                        OutboxQueryDepKey: {
+                            name: ConfigurablePostgresOutboxQuery(config=config)
+                            for name, config in self.outboxes.items()
+                        },
+                    }
+                )
+            )
+
+        inbox_deps = Deps()
+
+        if self.inboxes:
+            inbox_deps = Deps.routed(
+                {
+                    InboxDepKey: {
+                        name: ConfigurablePostgresInbox(config=config)
+                        for name, config in self.inboxes.items()
+                    },
+                }
+            )
+
         return plain_deps.merge(
             doc_deps,
             search_deps,
@@ -371,4 +420,6 @@ class PostgresDepsModule(DepsModule):
             hub_search_deps,
             federated_search_deps,
             analytics_deps,
+            outbox_deps,
+            inbox_deps,
         )

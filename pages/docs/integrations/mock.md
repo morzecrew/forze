@@ -12,7 +12,7 @@ Use this when you want fast tests, demos, or a partial runtime without external 
 
 1. Install the matching optional extra.
 2. Create the integration client or module configuration.
-3. Register the module in `DepsPlan` with routes that match your specs.
+3. Register the module in `DepsRegistry` with routes that match your specs.
 4. Add lifecycle steps when the integration opens network connections.
 5. Resolve ports from `ExecutionContext`; do not import adapters in handlers.
 
@@ -39,26 +39,35 @@ The package supplies a single `MockDepsModule` that registers in-memory adapters
 | `MockCounterAdapter` | `CounterPort` |
 | `MockCacheAdapter` | `CachePort` |
 | `MockIdempotencyAdapter` | `IdempotencyPort` |
-| `MockStorageAdapter` | `StoragePort` |
+| `MockStorageAdapter` | `StorageQueryPort`, `StorageCommandPort` |
 | `MockTxManagerAdapter` | `TxManagerPort` |
 | `MockQueueAdapter` | `QueueReadPort`, `QueueWritePort` |
 | `MockPubSubAdapter` | `PubSubCommandPort`, `PubSubQueryPort` |
 | `MockStreamAdapter` | `StreamQueryPort`, `StreamCommandPort` |
 | `MockStreamGroupAdapter` | `StreamGroupQueryPort` |
 | `MockAnalyticsAdapter` | `AnalyticsQueryPort`, `AnalyticsIngestPort` |
+| `MockOutboxStore` | `OutboxQueryPort` (+ `persist_rows` for staging flush) |
+| `StagingOutboxCommand` (via `OutboxCommandDepKey`) | `OutboxCommandPort` |
+| `MockDistributedLockAdapter` | `DistributedLockQueryPort`, `DistributedLockCommandPort` |
+| `MockSearchCommandAdapter` | `SearchCommandPort` |
+| `MockSearchResultSnapshotAdapter` | `SearchResultSnapshotPort` (chunked in-memory) |
+| `MockHubSearchAdapter` | `SearchQueryPort` (hub merge) |
+| `MockFederatedSearchAdapter` | `SearchQueryPort` (weighted RRF) |
+| `MockDurableWorkflow*` / `MockDurableFunction*` | Durable workflow + function ports |
+| `MockSecretsPort` + authn/authz/tenancy stubs | Identity plane (in-memory) |
 
 ## Runtime wiring
 
 Create a module and build a runtime exactly as you would with real infrastructure:
 
     :::python
-    from forze.application.execution import DepsPlan, ExecutionRuntime
+    from forze.application.execution import DepsRegistry, ExecutionRuntime
     from forze_mock import MockDepsModule
 
     module = MockDepsModule()
 
     runtime = ExecutionRuntime(
-        deps=DepsPlan.from_modules(module),
+        deps=DepsRegistry.from_modules(module).freeze(),
     )
 
 No lifecycle plan is needed — mock adapters have no connections to manage.
@@ -76,7 +85,8 @@ No lifecycle plan is needed — mock adapters have no connections to manage.
 | `CounterDepKey` | Counter adapter |
 | `CacheDepKey` | Cache adapter |
 | `IdempotencyDepKey` | Idempotency adapter |
-| `StorageDepKey` | Storage adapter |
+| `StorageQueryDepKey` | Storage query adapter (download, list) |
+| `StorageCommandDepKey` | Storage command adapter (upload, delete) |
 | `TxManagerDepKey` | Transaction manager (no-op) |
 | `QueueReadDepKey` | Queue read adapter |
 | `QueueWriteDepKey` | Queue write adapter |
@@ -85,6 +95,21 @@ No lifecycle plan is needed — mock adapters have no connections to manage.
 | `StreamQueryDepKey` | Stream query adapter |
 | `StreamCommandDepKey` | Stream command adapter |
 | `StreamGroupQueryDepKey` | Stream group query adapter |
+| `DistributedLockQueryDepKey` / `DistributedLockCommandDepKey` | Distributed lock |
+| `SearchCommandDepKey` | Search index maintenance |
+| `SearchResultSnapshotDepKey` | Search result snapshot store |
+| `HubSearchQueryDepKey` | Hub search |
+| `FederatedSearchQueryDepKey` | Federated search |
+| `EmbeddingsProviderDepKey` | Deterministic hash embeddings |
+| `DurableWorkflow*DepKey` (4) | Workflow command/query + schedule |
+| `DurableFunctionEventCommandDepKey` / `DurableFunctionStepDepKey` | Durable functions |
+| `SecretsDepKey` | Secrets resolution |
+| Authn (11) + Authz (5) + Tenancy (2) dep keys | Identity stubs (route `main` by default) |
+| `MockRoutedStateDepKey` | Optional per-tenant `MockState` registry |
+
+## Tenancy
+
+Per-route options live on :class:`~forze_mock.execution.MockRouteConfig` (`tenant_aware`, optional `namespace` / `relation` resolvers). Use :class:`~forze_mock.tenancy.MockRoutedStateRegistry` when each tenant needs a separate `MockState` instance. See [Multi-tenancy](../concepts/multi-tenancy.md#mock-forze_mock).
 
 ## Shared state
 
@@ -104,11 +129,11 @@ Access the state directly for test assertions:
 ## Using in tests
 
     :::python
-    from forze.application.execution import DepsPlan, ExecutionContext
+    from forze.application.execution import DepsRegistry, ExecutionContext
     from forze_mock import MockDepsModule
 
     module = MockDepsModule()
-    deps = DepsPlan.from_modules(module).build()
+    deps = DepsRegistry.from_modules(module).freeze().resolve()
     ctx = ExecutionContext(deps=deps)
 
     doc = ctx.document.command(project_spec)
@@ -122,18 +147,18 @@ Access the state directly for test assertions:
 Replace real infrastructure modules with mock for local development or testing:
 
     :::python
-    from forze.application.composition.document import (
+    from forze_kits.aggregates.document import (
         DocumentDTOs,
         build_document_registry,
     )
     from fastapi import APIRouter
 
-    from forze.application.execution import DepsPlan, ExecutionRuntime
+    from forze.application.execution import DepsRegistry, ExecutionRuntime
     from forze_fastapi.endpoints.document import attach_document_endpoints
     from forze_mock import MockDepsModule
 
     module = MockDepsModule()
-    runtime = ExecutionRuntime(deps=DepsPlan.from_modules(module))
+    runtime = ExecutionRuntime(deps=DepsRegistry.from_modules(module).freeze())
 
     project_dtos = DocumentDTOs(
         read=ProjectReadModel,
@@ -169,7 +194,7 @@ You can pre-seed state by passing an existing `MockState`:
 Mix mock and real adapters by merging dependency containers:
 
     :::python
-    from forze.application.execution import Deps, DepsPlan
+    from forze.application.execution import Deps, DepsRegistry
     from forze_mock import MockDepsModule
     from forze_postgres import PostgresDepsModule
 
@@ -185,7 +210,7 @@ Mix mock and real adapters by merging dependency containers:
         },
     )
 
-    deps_plan = DepsPlan.from_modules(
+    deps_registry = DepsRegistry.from_modules(
         lambda: Deps.merge(pg_module(), mock_module()),
     )
 

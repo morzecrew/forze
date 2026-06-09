@@ -161,3 +161,49 @@ async def test_invalid_query_surfaces_infrastructure_error(
 async def test_client_health(bigquery_client) -> None:
     message, ok = await bigquery_client.health()
     assert ok is True
+
+
+@pytest.mark.asyncio
+async def test_project_run_and_select_run(bigquery_client, analytics_dataset) -> None:
+    dataset_id, table_id = analytics_dataset
+    spec = _spec()
+    sql = f"SELECT event, value FROM `{dataset_id}.{table_id}`"
+    adapter = BigQueryAnalyticsAdapter(
+        client=bigquery_client,
+        spec=spec,
+        config=_config(dataset_id, table_id, sql=sql),
+    )
+
+    await adapter.append([_Ingest(event="proj", value=11)])
+
+    projected = await adapter.project_run(
+        ("event", "value"),
+        "all",
+        _Params(),
+        pagination={"limit": 5, "offset": 0},
+    )
+    assert projected.hits[0]["event"] == "proj"
+
+    class _RowLite(BaseModel):
+        event: str
+
+    selected = await adapter.select_run(
+        _RowLite,
+        "all",
+        _Params(),
+        pagination={"limit": 5, "offset": 0},
+    )
+    assert selected.hits[0].event == "proj"
+
+
+@pytest.mark.asyncio
+async def test_run_cursor_rejects_before_token(bigquery_client, analytics_dataset) -> None:
+    dataset_id, table_id = analytics_dataset
+    adapter = BigQueryAnalyticsAdapter(
+        client=bigquery_client,
+        spec=_spec(),
+        config=_config(dataset_id, table_id),
+    )
+
+    with pytest.raises(CoreException, match="Backward analytics cursors"):
+        await adapter.run_cursor("all", _Params(), cursor={"before": "tok"})

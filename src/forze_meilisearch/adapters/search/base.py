@@ -18,9 +18,13 @@ from forze.application.contracts.search import SearchSpec
 from forze.application.contracts.tenancy import TENANT_ID_FIELD
 from forze.application.contracts.tenancy.mixins import TenancyMixin
 from forze.base.exceptions import exc
-from forze.base.serialization import pydantic_dump
+from forze.base.primitives import OnceCell
 from forze.domain.constants import ID_FIELD
-from forze_meilisearch.adapters.search._filter_render import MeilisearchFilterRenderer
+from forze_meilisearch.adapters.search._filter_render import (
+    MeilisearchFilterRenderer,
+    format_literal,
+    safe_attribute,
+)
 from forze_meilisearch.execution.deps.configs import MeilisearchSearchConfig
 from forze_meilisearch.kernel.relation import resolve_meilisearch_index_uid
 
@@ -45,8 +49,8 @@ class MeilisearchSearchGateway[M: BaseModel](TenancyMixin):
         init=False,
     )
 
-    _index_uid_resolved: str | None = attrs.field(
-        default=None,
+    _index_uid_cell: OnceCell[str] = attrs.field(
+        factory=OnceCell,
         init=False,
         eq=False,
         repr=False,
@@ -71,16 +75,18 @@ class MeilisearchSearchGateway[M: BaseModel](TenancyMixin):
     # ....................... #
 
     async def _resolved_index_uid(self) -> str:
-        if self._index_uid_resolved is not None:
-            return self._index_uid_resolved
+        async def _factory() -> str:
+            return await resolve_meilisearch_index_uid(
+                self.config.index_uid,
+                self._tenant_id_for_resolve(),
+            )
 
-        resolved = await resolve_meilisearch_index_uid(
-            self.config.index_uid,
-            self._tenant_id_for_resolve(),
+        # Only memoize tenant-independent (static) index uids; a dynamic resolver
+        # depends on the bound tenant and the adapter may be shared across tenants.
+        return await self._index_uid_cell.resolve(
+            _factory,
+            cache=is_static_named_resource(self.config.index_uid),
         )
-        object.__setattr__(self, "_index_uid_resolved", resolved)
-
-        return resolved
 
     # ....................... #
 
@@ -93,8 +99,10 @@ class MeilisearchSearchGateway[M: BaseModel](TenancyMixin):
         if is_static_named_resource(spec):
             return spec
 
-        if self._index_uid_resolved is not None:
-            return self._index_uid_resolved
+        resolved = self._index_uid_cell.peek()
+
+        if resolved is not None:
+            return resolved
 
         raise exc.internal(
             "index_uid is only available for static index UIDs; await _resolved_index_uid()",
@@ -145,13 +153,13 @@ class MeilisearchSearchGateway[M: BaseModel](TenancyMixin):
         if tenant_id is None:
             return None
 
-        attr = self.physical_path(TENANT_ID_FIELD)
-        return f'{attr} = "{tenant_id}"'
+        attr = safe_attribute(self.physical_path(TENANT_ID_FIELD))
+        return f"{attr} = {format_literal(tenant_id)}"
 
     # ....................... #
 
     def to_index_document(self, model: M) -> dict[str, Any]:
-        data = pydantic_dump(model)
+        data = self.spec.resolved_read_codec.encode_mapping(model)
         out: dict[str, Any] = {}
 
         for key, value in data.items():

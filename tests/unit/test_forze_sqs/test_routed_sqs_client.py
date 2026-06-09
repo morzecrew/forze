@@ -1,6 +1,6 @@
 """Unit tests for :class:`~forze_sqs.kernel.client.RoutedSQSClient`."""
 
-from forze.base.exceptions import CoreException, exc
+from forze.base.exceptions import CoreException
 import json
 from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -10,6 +10,7 @@ import pytest
 
 from forze.application.contracts.secrets import SecretRef
 from forze_sqs.kernel.client import RoutedSQSClient
+from forze_sqs.kernel.client.routing_credentials import SQSRoutingCredentials
 
 # ----------------------- #
 
@@ -120,3 +121,26 @@ async def test_routed_sqs_requires_tenant() -> None:
     await routed.startup()
     with pytest.raises(CoreException, match="Tenant ID"):
         await routed.health()
+
+
+def test_routed_sqs_credential_fingerprint_detects_secret_rotation() -> None:
+    routed = RoutedSQSClient(
+        secrets=_MemSecrets({}),
+        secret_ref_for_tenant=_ref,
+        tenant_provider=lambda: None,
+    )
+    common = {
+        "endpoint": "http://localhost:4566",
+        "region_name": "us-east-1",
+        "access_key_id": "AKIA",
+    }
+
+    fp_a = routed.credential_fingerprint(
+        SQSRoutingCredentials(**common, secret_access_key="secret-a")
+    )
+    fp_b = routed.credential_fingerprint(
+        SQSRoutingCredentials(**common, secret_access_key="secret-b")
+    )
+
+    assert fp_a != fp_b  # rotating only the secret key changes the dedup key
+    assert "secret-a" not in fp_a  # raw secret never embedded

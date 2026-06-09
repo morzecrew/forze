@@ -1,7 +1,7 @@
 ---
 name: forze-storage-gcs
 description: >-
-  Wires and consumes Forze object storage with StorageSpec, StoragePort,
+  Wires and consumes Forze object storage with StorageSpec, StorageQueryPort, StorageCommandPort,
   GCSDepsModule, tenant-aware buckets, lifecycle, upload/download/list/delete,
   and tests with MockStorageAdapter. Use when adding GCS blob/file storage.
 ---
@@ -56,11 +56,11 @@ For local fake-gcs-server, set `STORAGE_EMULATOR_HOST=http://localhost:4443` bef
 
 ```python
 from forze.application.contracts.execution import Handler
-from forze.application.contracts.storage import StoragePort, StoredObject, UploadedObject
+from forze.application.contracts.storage import StorageCommandPort, StoredObject, UploadedObject
 
 
 class UploadAttachment(Handler[UploadAttachmentCmd, StoredObject]):
-    storage: StoragePort
+    storage: StorageCommandPort
 
     async def __call__(self, cmd: UploadAttachmentCmd) -> StoredObject:
         return await self.storage.upload(
@@ -72,7 +72,9 @@ class UploadAttachment(Handler[UploadAttachmentCmd, StoredObject]):
         )
 ```
 
-Resolve storage in the factory: `storage=ctx.storage(attachments_spec)`.
+Storage is CQRS-split. Resolve the command side in the factory for writes:
+`storage=ctx.storage.command(attachments_spec)`; use `ctx.storage.query(spec)` for
+`download` / `list`.
 
 ## Tenant-aware storage
 

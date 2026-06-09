@@ -15,7 +15,7 @@ from forze.application.contracts.authn import (
     AuthnResult,
     AuthnSpec,
 )
-from tests.support.execution_context import context_from_deps, context_from_modules, frozen_deps_from_deps
+from tests.support.execution_context import context_from_deps
 from forze.application.contracts.tenancy import (
     TENANT_ID_HEADER,
     TenantIdentity,
@@ -209,6 +209,36 @@ class TestInvocationMetadataMiddleware:
         assert "x-request-id" in response.headers
         assert "x-correlation-id" in response.headers
         assert captured["metadata"] is not None
+
+    def test_binds_idempotency_key_from_header(self) -> None:
+        ctx = _execution_ctx()
+        captured: dict[str, str | None] = {}
+
+        async def _capture_app(scope, receive, send):  # type: ignore[no-untyped-def]
+            captured["key"] = ctx.inv_ctx.get_idempotency_key()
+            await send({"type": "http.response.start", "status": 200, "headers": []})
+            await send({"type": "http.response.body", "body": b"ok"})
+
+        mw = InvocationMetadataMiddleware(_capture_app, ctx_dep=lambda: ctx)
+        response = TestClient(mw).get("/", headers={"Idempotency-Key": "req-123"})
+
+        assert response.status_code == 200
+        assert captured["key"] == "req-123"
+
+    def test_no_idempotency_key_when_header_absent(self) -> None:
+        ctx = _execution_ctx()
+        captured: dict[str, str | None] = {}
+
+        async def _capture_app(scope, receive, send):  # type: ignore[no-untyped-def]
+            captured["key"] = ctx.inv_ctx.get_idempotency_key()
+            await send({"type": "http.response.start", "status": 200, "headers": []})
+            await send({"type": "http.response.body", "body": b"ok"})
+
+        mw = InvocationMetadataMiddleware(_capture_app, ctx_dep=lambda: ctx)
+        response = TestClient(mw).get("/")
+
+        assert response.status_code == 200
+        assert captured["key"] is None
 
     @pytest.mark.asyncio
     async def test_non_http_scope_passthrough(self) -> None:
@@ -407,8 +437,7 @@ class TestSecurityContextMiddleware:
         assert isinstance(captured["tenant"], TenantIdentity)
         assert captured["tenant"].tenant_id == tid
 
-    def test_binds_tenant_from_header_hint_without_resolver(self) -> None:
-        tid = uuid4()
+    def _run_with_tenant_header(self, tid: UUID, *, trust_tenant_header: bool):
         ctx = context_from_deps(Deps.plain({AuthnDepKey: _TokenAuthFactory()}))
         captured: dict[str, object] = {}
 
@@ -424,6 +453,7 @@ class TestSecurityContextMiddleware:
                 ingress=(HeaderTokenAuthn(authn_spec=_TOKEN_SPEC, header_name="Authorization"),)
             ),
             when_multiple_credentials="first_in_order",
+            trust_tenant_header=trust_tenant_header,
         )
         response = TestClient(mw).get(
             "/",
@@ -434,8 +464,18 @@ class TestSecurityContextMiddleware:
         )
 
         assert response.status_code == 200
-        assert isinstance(captured["tenant"], TenantIdentity)
-        assert captured["tenant"].tenant_id == tid
+        return captured["tenant"]
+
+    def test_header_tenant_denied_by_default_without_resolver(self) -> None:
+        # Unvalidated X-Tenant-Id header is not trusted unless opted in.
+        tenant = self._run_with_tenant_header(uuid4(), trust_tenant_header=False)
+        assert tenant is None
+
+    def test_binds_header_tenant_when_trust_tenant_header_opted_in(self) -> None:
+        tid = uuid4()
+        tenant = self._run_with_tenant_header(tid, trust_tenant_header=True)
+        assert isinstance(tenant, TenantIdentity)
+        assert tenant.tenant_id == tid
 
     def test_first_in_order_short_circuits(self) -> None:
         ctx = context_from_deps(Deps.plain({AuthnDepKey: _BothFactory()}))

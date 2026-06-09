@@ -7,7 +7,7 @@ to look first for authoritative rules before editing code, tests, docs, or relea
 
 ## Project overview
 
-Forze is a Python library for Domain-Driven Design and Hexagonal Architecture in backend services. It provides core framework layers (application, domain, utils, base) and optional integrations (FastAPI, Postgres, Redis, S3, Temporal, Mongo, RabbitMQ, Socket.IO, SQS). Development validation means running tests and quality checks—there is no runnable application or server to start.
+Forze is a Python library for Domain-Driven Design and Hexagonal Architecture in backend services. It provides core framework layers (application, domain, utils, base) and optional integrations (FastAPI, Postgres, Redis, S3, Temporal, Mongo, HTTP outbound, RabbitMQ, Socket.IO, SQS). Development validation means running tests and quality checks—there is no runnable application or server to start.
 
 ## Agent workflow (quick checklist)
 
@@ -88,26 +88,16 @@ Use them for:
 ## Repository map (high signal paths)
 
 - `src/forze/`: core framework layers (application/domain/utils/base).
-- `src/forze_patterns/`: optional domain mixins and helpers (soft deletion, metadata, number id, creator id).
-- `src/forze_identity/`: identity plane (`authn/`, `authz/`, `tenancy/`, `oidc/` subpackages; import as `forze_identity.authn`, etc.).
-- `src/forze_identity/local/`: file/env API-key identity for demos (`LocalIdentityConfig`, `local_identity_deps`); not for production.
-- `src/forze_fastapi/`: FastAPI integration package.
-- `src/forze_postgres/`: Postgres integration package.
-- `src/forze_redis/`: Redis integration package.
-- `src/forze_s3/`: S3 integration package.
-- `src/forze_gcs/`: Google Cloud Storage integration package.
-- `src/forze_temporal/`: Temporal integration package.
-- `src/forze_inngest/`: Inngest integration package (durable functions).
-- `src/forze_mongo/`: Mongo integration package.
-- `src/forze_mock/`: in-memory mock adapters for local development (tenant-agnostic unless tests partition `MockState` themselves; no `RelationSpec` wiring).
-- `src/forze_rabbitmq/`: RabbitMQ integration package.
-- `src/forze_socketio/`: Socket.IO integration package.
-- `src/forze_sqs/`: SQS integration package.
+- `src/forze_kits/`: pre-built wiring above contracts (`domain/`; `aggregates/` with per-aggregate `handlers/`; `mapping/`; `dto/`; `integrations/` outbox + notify; `adapters/` secrets; `scopes/` e.g. `DistributedLockScope`). Core `forze.application` keeps contracts, execution, hooks, integrations only—must not import `forze_kits`. Not `forze_identity` (separate plane).
+- `src/forze_identity/`: identity plane (`authn/`, `authz/`, `tenancy/`, `oidc/`, `oauth/` subpackages; import as `forze_identity.authn`, etc.).
+- `src/forze_identity/builtin/`: shipped-in identity presets (`local/` file/env API keys, `idp/` Google/VK/Telegram Login OIDC); not for production unless you accept each preset's trust model.
+- `src/forze_mock/`: in-memory mock adapters (`MockState`, optional `MockRoutedStateRegistry`, `tenancy/`, `execution/` deps module with identity/durable/search/dlock stubs).
+- `src/forze_<integration>/`: one optional integration package per backend/transport (Postgres, Redis, Mongo, S3, GCS, BigQuery, Firestore, ClickHouse, Meilisearch, Temporal, Inngest, RabbitMQ, SQS, Socket.IO, FastAPI, outbound HTTP, Vault, …). **Do not maintain this list by hand.** The authoritative, always-current set is `[project.optional-dependencies]` (extras) and `[tool.hatch.build.targets.wheel]` (packages) in `pyproject.toml`; each `forze_<name>` maps to the `<name>` extra. Packages share a common shape (`kernel/` client + ports, `adapters/`, `execution/` deps + lifecycle, `__init__` exporting the public API); per-integration specifics live in that package's `__init__` and its docs page.
 - `tests/unit/`: unit tests, typically mirroring `src` layout.
 - `tests/integration/`: integration tests with external dependencies.
-- `tests/perf/`: performance benchmarks (require Docker).
+- `tests/perf/`: performance benchmarks (`-m perf`, excluded from `just test`; many use Docker, some in-process only).
 - `pages/`: documentation source and build files.
-- `examples/`: usage examples and tutorials.
+- `examples/`: runnable, **test-backed** usage examples (each is exercised by a test under `tests/unit/test_examples/`, so examples can't silently rot). E.g. `order_fulfillment.py` runs the aggregate → event → saga → outbox → relay → inbox → downstream flow in-process.
 - `skills/`: published [Agent Skills](https://agentskills.io/) for **app authors** (`SKILL.md` per skill; see `skills/AUTHORING.md`); install via README **Agent Skills** (e.g. `npx skills add morzecrew/forze`). Framework contribution uses `.claude/skills/` and canonical docs.
 
 ## Operating rules for agents
@@ -146,12 +136,12 @@ See `justfile` and `CONTRIBUTING.md` for the full list. Quick reference:
 
 - **Unit tests:** `just test tests/unit`
 - **All tests (unit + integration):** `just test` (integration tests need Docker for testcontainers)
-- **Performance tests:** `just perf` (requires Docker)
+- **Performance tests:** `just perf` (benchmarks; Docker for container-backed perf, not required for every file)
 - **Quality checks (lint/imports/dead-code/deps/security):** `just quality` (or `just quality -s` for strict)
 - **Docs:** `just pages serve`
 
 ### Caveats
 
-- Integration tests (`tests/integration/`) and performance tests (`tests/perf/`) require Docker and pull container images for Postgres, Valkey, MinIO, MongoDB, RabbitMQ, and LocalStack (SQS) via testcontainers. They will fail without a running Docker daemon.
+- Integration tests (`tests/integration/`) require Docker (testcontainers). Many performance tests under `tests/perf/` also use Docker; perf tests without container fixtures (e.g. codec benchmarks) run in-process. Default CI (`just test`) excludes `-m perf`.
 - The package version is derived from git tags via `hatch-vcs`; importing `forze.__version__` does not work—use `forze._version.__version__` instead.
 - `uv sync` is called automatically by `justfile` recipes before test/quality commands, so manual re-sync is rarely needed.

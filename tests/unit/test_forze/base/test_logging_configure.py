@@ -17,10 +17,12 @@ from forze.base.logging.configure import (
 )
 from forze.base.logging.logger import Logger
 from forze.base.logging.processors import (
+    ExceptionFieldsSanitizer,
     ExceptionInfoFormatter,
     OpenTelemetryContextInjector,
     RedundantKeysDropper,
 )
+from forze.base.scrubbing import SECRET_PLACEHOLDER
 from forze.base.logging.renderers import ForzeConsoleRenderer
 
 
@@ -205,6 +207,77 @@ class TestConfigureLogging:
         assert row["event"] == "failed"
         assert row["error.type"] == "RuntimeError"
         assert row["error.message"] == "explode"
+
+    def test_configure_logging_scrubs_exception_message_and_stack(self) -> None:
+        stream = io.StringIO()
+
+        configure_logging(
+            level="info",
+            render_mode="json",
+            logger_names=["forze.test"],
+            stream=stream,
+        )
+
+        logger = Logger("forze.test")
+        try:
+            raise RuntimeError("password=hunter2")
+        except RuntimeError:
+            logger.exception("failed")
+
+        row = _json_records(stream)[-1]
+        assert SECRET_PLACEHOLDER in row["error.message"]
+        assert "hunter2" not in row["error.message"]
+        assert SECRET_PLACEHOLDER in row["error.stack"]
+        assert "hunter2" not in row["error.stack"]
+
+    def test_configure_logging_omits_stack_when_disabled(self) -> None:
+        stream = io.StringIO()
+
+        configure_logging(
+            level="info",
+            render_mode="json",
+            logger_names=["forze.test"],
+            stream=stream,
+            include_exception_stack=False,
+        )
+
+        logger = Logger("forze.test")
+        try:
+            raise RuntimeError("explode")
+        except RuntimeError:
+            logger.exception("failed")
+
+        row = _json_records(stream)[-1]
+        assert row["error.type"] == "RuntimeError"
+        assert "error.stack" not in row
+
+    def test_configure_logging_sanitize_logs_disabled_keeps_raw_exception(
+        self,
+    ) -> None:
+        stream = io.StringIO()
+
+        configure_logging(
+            level="info",
+            render_mode="json",
+            logger_names=["forze.test"],
+            stream=stream,
+            sanitize_logs=False,
+        )
+
+        logger = Logger("forze.test")
+        try:
+            raise RuntimeError("password=hunter2")
+        except RuntimeError:
+            logger.exception("failed")
+
+        row = _json_records(stream)[-1]
+        assert row["error.message"] == "password=hunter2"
+
+    def test_event_sanitizer_includes_exception_fields_scrubber(self) -> None:
+        from forze.base.logging.configure import _event_sanitizer_processors
+
+        processors = _event_sanitizer_processors(sanitize_logs=True, text_scrub=True)
+        assert any(isinstance(p, ExceptionFieldsSanitizer) for p in processors)
 
     def test_configure_logging_scrubs_sensitive_extras(self) -> None:
         stream = io.StringIO()

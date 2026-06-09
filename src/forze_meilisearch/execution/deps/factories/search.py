@@ -14,7 +14,7 @@ from forze.application.contracts.search import (
     SearchResultSnapshotSpec,
     SearchSpec,
 )
-from forze.application.coordinators import SearchResultSnapshotCoordinator
+from forze.application.integrations.search import SearchResultSnapshot
 from forze.application.execution import ExecutionContext
 from forze_meilisearch.adapters.search._command import MeilisearchSearchCommandAdapter
 from forze_meilisearch.adapters.search._simple_base import (
@@ -48,16 +48,16 @@ def _resolve_result_snapshot(
 # ....................... #
 
 
-def snapshot_coord(
+def result_snapshot(
     context: ExecutionContext,
     spec: SearchResultSnapshotSpec | None,
-) -> SearchResultSnapshotCoordinator | None:
+) -> SearchResultSnapshot | None:
     port = _resolve_result_snapshot(context, spec)
 
     if port is None:
         return None
 
-    return SearchResultSnapshotCoordinator(store=port)
+    return SearchResultSnapshot(store=port)
 
 
 # ....................... #
@@ -77,7 +77,7 @@ def meilisearch_search_adapter[M: BaseModel](
         client=client,
         tenant_provider=context.inv_ctx.get_tenant,
         tenant_aware=tenant_aware,
-        snapshot_coord=snapshot_coord(context, member_spec.snapshot),
+        result_snapshot=result_snapshot(context, member_spec.snapshot),
     )
 
 

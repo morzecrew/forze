@@ -28,7 +28,7 @@ Use `RoutedClickHouseClient` when tenant identity selects ClickHouse host, crede
 ## Runtime wiring
 
     :::python
-    from forze.application.execution import DepsPlan, ExecutionRuntime, LifecyclePlan
+    from forze.application.execution import DepsRegistry, ExecutionRuntime, LifecyclePlan
     from forze_clickhouse import (
         ClickHouseClient,
         ClickHouseConfig,
@@ -64,10 +64,10 @@ Use `RoutedClickHouseClient` when tenant identity selects ClickHouse host, crede
     )
 
     runtime = ExecutionRuntime(
-        deps=DepsPlan.from_modules(module),
+        deps=DepsRegistry.from_modules(module).freeze(),
         lifecycle=LifecyclePlan.from_steps(
             clickhouse_lifecycle_step(connection=connection),
-        ),
+        ).freeze(),
     )
 
 ### Local Docker (integration tests)

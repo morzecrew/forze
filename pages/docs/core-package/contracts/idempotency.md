@@ -1,77 +1,70 @@
 # Idempotency contracts
 
-Idempotency contracts let HTTP-style boundaries replay a stored response when a
-caller repeats the same operation, idempotency key, and normalized payload hash.
+Engine-level, interface-agnostic idempotency. A boundary supplies an **idempotency
+key**; the execution engine replays a duplicate operation's stored **typed result**
+instead of re-running it. The stored value is the operation's result — not an HTTP
+response — and the boundary frames it for its transport.
 
 ## `IdempotencySpec`
 
-| Section | Details |
-|---------|---------|
-| Purpose | Names an idempotency backend route and configures snapshot TTL. |
-| Import path | `from forze.application.contracts.idempotency import IdempotencySpec` |
-| Type parameters | None. |
-| Required fields | `name`; `ttl` defaults to 30 seconds. |
-| Returned values | Passed to the idempotency dependency factory. |
-| Common implementations | Mock idempotency adapter, Redis / Valkey idempotency adapter. |
-| Related dependency keys | `IdempotencyDepKey`. |
-| Minimal example | `spec = IdempotencySpec(name="http", ttl=timedelta(minutes=5))` |
-| Related pages | [Add Idempotency](../../recipes/add-idempotency.md), [FastAPI](../../integrations/fastapi.md). |
+Names an idempotency store route and its TTL.
+
+| Field | Purpose |
+|-------|---------|
+| `name` | Logical store route. |
+| `ttl` | Time-to-live for stored records (defaults to 30 seconds). |
+
+Resolve a store with `ctx.idempotency(spec)`.
 
 ## `IdempotencyPort`
 
-| Section | Details |
-|---------|---------|
-| Purpose | Begins idempotent operations and commits serialized response snapshots. |
-| Import path | `from forze.application.contracts.idempotency import IdempotencyPort` |
-| Type parameters | None. |
-| Required methods | `begin`, `commit`. |
-| Returned values | `begin` returns `IdempotencySnapshot | None`; `commit` returns `None`. |
-| Common implementations | Mock, Redis / Valkey, FastAPI idempotency feature consumers. |
-| Related dependency keys | `IdempotencyDepKey`. |
-| Minimal example | See below. |
-| Related pages | [Contracts overview](../contracts.md), [Redis / Valkey](../../integrations/redis.md). |
-
-Required methods:
+Stores and replays a completed operation's result, keyed by `(op, key, payload_hash)`.
 
 | Method | Parameters | Returns |
 |--------|------------|---------|
-| `begin` | `op`, `key`, `payload_hash` | Stored `IdempotencySnapshot` or `None`. |
-| `commit` | `op`, `key`, `payload_hash`, `snapshot` | `None`. |
+| `begin` | `op`, `key`, `payload_hash` | Stored `IdempotencyRecord` on replay, or `None` after a fresh claim. Raises on a payload-hash mismatch (`PRECONDITION` / `CONFLICT`) or an in-progress duplicate (`CONFLICT`). |
+| `commit` | `op`, `key`, `payload_hash`, `record` | `None`. |
 
-## `IdempotencySnapshot`
+Implementations: Mock idempotency adapter, Redis / Valkey (`RedisIdempotencyAdapter`).
 
-| Section | Details |
-|---------|---------|
-| Purpose | Stores a serialized response for replay. |
-| Import path | `from forze.application.contracts.idempotency import IdempotencySnapshot` |
-| Type parameters | None. |
-| Required fields | `code`, `content_type`, `body`; optional `headers`. |
-| Returned values | Returned by `begin` and accepted by `commit`. |
-| Common implementations | attrs value object stored by idempotency adapters. |
-| Related dependency keys | Produced through `IdempotencyDepKey` implementations. |
-| Minimal example | `IdempotencySnapshot(code=201, content_type="application/json", body=b"{}")` |
-| Related pages | [FastAPI integration](../../integrations/fastapi.md). |
+## `IdempotencyRecord`
+
+A frozen value object holding `result: bytes` — the serialized operation result. The
+engine wrap encodes and decodes it with the operation's declared result codec.
+
+## Engine wrap — `IdempotencyWrap`
+
+`forze.application.hooks.idempotency.IdempotencyWrap` is an operation-plan middleware.
+Attach it per operation:
 
     :::python
-    from datetime import timedelta
+    from forze.application.hooks.idempotency import IdempotencyWrap
 
-    from forze.application.contracts.idempotency import (
-        IdempotencyDepKey,
-        IdempotencySnapshot,
-        IdempotencySpec,
+    registry.bind("orders.create").bind_outer().wrap(
+        IdempotencyWrap(
+            op="orders.create",
+            spec=idem_spec,
+            result_type=OrderRead,
+        ).to_step()
     )
 
-    spec = IdempotencySpec(name="http", ttl=timedelta(minutes=5))
-    idem = ctx.deps.resolve_configurable(ctx, IdempotencyDepKey, spec, route=spec.name)
-    cached = await idem.begin("create-project", key, payload_hash)
-    if cached is None:
-        await idem.commit(
-            "create-project",
-            key,
-            payload_hash,
-            IdempotencySnapshot(
-                code=201,
-                content_type="application/json",
-                body=b'{"ok": true}',
-            ),
-        )
+On a duplicate key it returns the stored, typed result early — skipping the handler and
+its transaction. It is a no-op when no idempotency key is bound. The engine computes
+`payload_hash` from the operation arguments; the boundary supplies only the key.
+
+## Boundary — the `Idempotency-Key` header
+
+FastAPI's `InvocationMetadataMiddleware` reads the canonical `Idempotency-Key` header
+(configurable via `idem_header`) into the invocation context, exposed as
+`ctx.inv_ctx.get_idempotency_key()`. Other boundaries (message consumers, CLIs) bind it
+with `ctx.inv_ctx.bind_idempotency(key)`.
+
+## Notes
+
+- This is **result-level** idempotency (re-serializes the typed result), not byte-identical
+  HTTP response replay.
+- The result is stored after the operation's transaction commits; a crash in that window
+  re-executes on retry (standard at-least-once).
+
+Related: [Add Idempotency](../../recipes/add-idempotency.md), [Outbox](outbox.md),
+[FastAPI integration](../../integrations/fastapi.md).

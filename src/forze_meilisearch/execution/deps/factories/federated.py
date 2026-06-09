@@ -21,7 +21,7 @@ from forze_meilisearch.adapters.search.federated import (
 from forze_meilisearch.execution.deps.configs import MeilisearchFederatedSearchConfig
 from forze_meilisearch.execution.deps.keys import MeilisearchClientDepKey
 
-from .search import meilisearch_search_adapter, snapshot_coord
+from .search import meilisearch_search_adapter, result_snapshot
 
 # ----------------------- #
 
@@ -73,5 +73,5 @@ class ConfigurableMeilisearchFederatedSearch(FederatedSearchQueryDepPort):
             merge=self.config.merge,
             rrf_k=self.config.rrf_k,
             rrf_per_leg_limit=self.config.rrf_per_leg_limit,
-            snapshot_coord=snapshot_coord(context, spec.snapshot),
+            result_snapshot=result_snapshot(context, spec.snapshot),
         )

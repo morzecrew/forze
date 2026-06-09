@@ -2,8 +2,10 @@ from uuid import UUID
 
 from forze.application.contracts.authn import AuthnIdentity
 from forze.application.contracts.document import DocumentQueryPort
+from forze.base.exceptions import exc
 
 from ..domain.models.account import ReadApiKeyAccount, ReadPasswordAccount
+from ..domain.models.invite import ReadPasswordInvite
 
 # ----------------------- #
 
@@ -12,14 +14,26 @@ async def find_password_account_by_login(
     qry: DocumentQueryPort[ReadPasswordAccount],
     login: str,
 ) -> ReadPasswordAccount | None:
-    return await qry.find(
+    page = await qry.find_many(
         filters={
             "$or": [
                 {"$values": {"username": login}},
                 {"$values": {"email": login}},
             ]
-        }
+        },
+        pagination={"limit": 2},
     )
+
+    if not page.hits:
+        return None
+
+    if len(page.hits) > 1:
+        raise exc.internal(
+            "Multiple password accounts match this login",
+            code="password_account_ambiguous",
+        )
+
+    return page.hits[0]
 
 
 # ....................... #
@@ -75,6 +89,22 @@ async def find_api_key_account_by_id(
         filters={
             "$values": {
                 "id": key_id,
+            },
+        }
+    )
+
+
+# ....................... #
+
+
+async def find_password_invite_by_digest(
+    qry: DocumentQueryPort[ReadPasswordInvite],
+    token_digest: str,
+) -> ReadPasswordInvite | None:
+    return await qry.find(
+        filters={
+            "$values": {
+                "token_digest": token_digest,
             },
         }
     )

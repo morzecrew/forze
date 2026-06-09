@@ -18,9 +18,11 @@ async def test_s3_storage_adapter_upload_list_download_delete(
             storages={s3_bucket: S3StorageConfig(bucket=s3_bucket)},
         )()
     )
-    storage = ctx.storage(StorageSpec(name=s3_bucket))
+    spec = StorageSpec(name=s3_bucket)
+    storage_q = ctx.storage.query(spec)
+    storage_c = ctx.storage.command(spec)
 
-    uploaded = await storage.upload(
+    uploaded = await storage_c.upload(
         UploadedObject(
             filename="contract.txt",
             data=b"forze-s3-storage-adapter",
@@ -33,19 +35,19 @@ async def test_s3_storage_adapter_upload_list_download_delete(
     assert uploaded.size == len(b"forze-s3-storage-adapter")
     assert uploaded.key.startswith("inbox/contracts/")
 
-    listed, total_count = await storage.list(limit=10, offset=0, prefix="inbox")
+    listed, total_count = await storage_q.list(limit=10, offset=0, prefix="inbox")
     assert total_count == 1
     assert len(listed) == 1
     assert listed[0].key == uploaded.key
     assert listed[0].filename == "contract.txt"
     assert listed[0].description == "integration test"
 
-    downloaded = await storage.download(uploaded.key)
+    downloaded = await storage_q.download(uploaded.key)
     assert downloaded.filename == "contract.txt"
     assert downloaded.data == b"forze-s3-storage-adapter"
 
-    await storage.delete(uploaded.key)
-    listed_after_delete, total_after_delete = await storage.list(
+    await storage_c.delete(uploaded.key)
+    listed_after_delete, total_after_delete = await storage_q.list(
         limit=10, offset=0, prefix="inbox"
     )
     assert total_after_delete == 0
@@ -61,24 +63,26 @@ async def test_s3_storage_list_pagination(
             storages={s3_bucket: S3StorageConfig(bucket=s3_bucket)},
         )()
     )
-    storage = ctx.storage(StorageSpec(name=s3_bucket))
+    spec = StorageSpec(name=s3_bucket)
+    storage_q = ctx.storage.query(spec)
+    storage_c = ctx.storage.command(spec)
     base = f"pagination/{uuid4().hex[:10]}/it"
 
     keys: list[str] = []
     for i, body in enumerate((b"aa", b"bb", b"cc")):
-        up = await storage.upload(
+        up = await storage_c.upload(
             UploadedObject(filename=f"f{i}.txt", data=body, prefix=base),
         )
         keys.append(up.key)
 
-    page_all, total_all = await storage.list(limit=50, offset=0, prefix=None)
+    page_all, total_all = await storage_q.list(limit=50, offset=0, prefix=None)
     assert total_all == 3
     assert len(page_all) == 3
     assert {o.key for o in page_all} == set(keys)
 
     slices: list[str] = []
     for offset in range(3):
-        page, _total = await storage.list(limit=1, offset=offset, prefix=base)
+        page, _total = await storage_q.list(limit=1, offset=offset, prefix=base)
         assert len(page) == 1
         slices.append(page[0].key)
 
@@ -86,4 +90,4 @@ async def test_s3_storage_list_pagination(
     assert set(slices) == set(keys)
 
     for k in keys:
-        await storage.delete(k)
+        await storage_c.delete(k)

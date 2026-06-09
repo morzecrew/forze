@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import Any, ClassVar, Literal, Self, cast
 from uuid import UUID
 
-from pydantic import Field
+from pydantic import Field, model_validator
 
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict, utcnow, uuid7
@@ -20,9 +20,12 @@ from ..constants import LAST_UPDATE_AT_FIELD
 from ..validation import (
     UpdateValidator,
     UpdateValidatorMetadata,
+    collect_invariants,
     collect_update_validators,
 )
+from .aggregate import AggregateRoot
 from .base import BaseDTO, CoreModel
+from .emitters import has_event_emitters
 
 # ----------------------- #
 
@@ -37,6 +40,9 @@ class Document(CoreModel):
         "warn"
     )
     """Update validators on conflict."""
+
+    _invariants_: ClassVar[list[str]] = []
+    """Names of ``@invariant`` methods, enforced on create and after every update."""
 
     # ....................... #
 
@@ -72,6 +78,14 @@ class Document(CoreModel):
             len(cls._update_validators_),
             cls.__qualname__,
         )
+
+        cls._invariants_ = collect_invariants(cls)
+
+        if has_event_emitters(cls) and not issubclass(cls, AggregateRoot):
+            raise exc.configuration(
+                f"{cls.__qualname__} declares @event_emitter methods but is not an "
+                "AggregateRoot; domain events have no buffer on a plain Document."
+            )
 
     # ....................... #
 
@@ -149,6 +163,24 @@ class Document(CoreModel):
 
     # ....................... #
 
+    @model_validator(mode="after")
+    def _enforce_invariants_on_create(self) -> Self:
+        # Runs on construction / model_validate (create). The merge-patch update path uses
+        # ``model_copy``, which bypasses model validators, so update enforces invariants
+        # explicitly via ``_run_invariants`` — together they make an invariant always hold.
+        self._run_invariants()
+        return self
+
+    # ....................... #
+
+    def _run_invariants(self) -> None:
+        cls = type(self)
+
+        for name in cls._invariants_:
+            getattr(cls, name)(self)
+
+    # ....................... #
+
     def update(self, data: JsonDict) -> tuple[Self, JsonDict]:
         """Apply a validated update and return the new document and diff.
 
@@ -177,6 +209,16 @@ class Document(CoreModel):
             after = self
 
         self._run_update_validators(after, diff)
+
+        # Enforce invariants on the new state. The create-time model validator is bypassed
+        # by `model_copy` above, so this is what keeps invariants holding across updates.
+        after._run_invariants()
+
+        # Run domain-event emitters when `after` is an AggregateRoot (no-op otherwise);
+        # events are recorded on the returned instance and drained by the caller.
+        emit = getattr(after, "_emit_domain_events", None)
+        if emit is not None:
+            emit(self, diff)
 
         return after, diff
 
@@ -238,13 +280,15 @@ class Document(CoreModel):
 
 
 class CreateDocumentCmd(BaseDTO):
-    """Create document command DTO."""
+    """Deprecated base for create payloads — kept as an empty alias of :class:`BaseDTO`.
 
-    id: UUID | None = None
-    """Unique identifier of the document. Added to ensure compatibility with external imports."""
-
-    created_at: datetime | None = None
-    """Timestamp of the document creation. Added to ensure compatibility with external imports."""
+    Identity is no longer carried inside the create payload: ``create`` takes an optional
+    ``id`` keyword, and ``ensure``/``upsert`` take ``id`` as an explicit argument. Create
+    payloads are plain :class:`BaseDTO`; this subclass carries no fields and exists only so
+    existing subclasses keep importing. New payloads should subclass :class:`BaseDTO`
+    directly. To preserve ``created_at``/``last_update_at`` on import, mix in
+    ``forze_kits``'s import-timestamps mixin onto the payload and use ``ensure``.
+    """
 
 
 # ....................... #

@@ -1,21 +1,19 @@
 """Integration tests for document handlers with in-memory adapters."""
 
 import pytest
-
-from forze.application.contracts.document import DocumentSpec
-from forze.application.execution import Deps, ExecutionContext
-from forze.application.handlers.document import GetDocument
-from forze.application.handlers.document.dto import DocumentIdDTO, DocumentIdRevDTO
-from tests.support.execution_context import context_from_deps, context_from_modules, frozen_deps_from_deps
 from pydantic import PositiveInt
 
-from forze_patterns.soft_deletion import DeleteDocument, RestoreDocument
-from forze_patterns.soft_deletion.models import (
+from forze.application.contracts.document import DocumentSpec
+from forze.application.execution import Deps
+from forze.domain.models import CreateDocumentCmd, Document, ReadDocument
+from forze_kits.aggregates.document import DocumentIdDTO, DocumentIdRevDTO, GetDocument
+from forze_kits.aggregates.soft_deletion import DeleteDocument, RestoreDocument
+from forze_kits.domain.soft_deletion.models import (
     DocWithSoftDeletion,
     UpdateCmdWithSoftDeletion,
 )
-from forze.domain.models import CreateDocumentCmd, Document, ReadDocument
 from forze_mock import MockDepsModule, MockState
+from tests.support.execution_context import context_from_deps
 
 # ----------------------- #
 
@@ -63,7 +61,7 @@ async def test_find_by_number_id_roundtrip_integration() -> None:
     doc_command = ctx.document.command(spec)
     doc_query = ctx.document.query(spec)
 
-    created = await doc_command.create(dto=NumberedCreateCmd(number_id=7))
+    created = await doc_command.create(NumberedCreateCmd(number_id=7))
     found = await doc_query.find(filters={"$values": {"number_id": 7}})
 
     assert found is not None
@@ -93,7 +91,7 @@ async def test_soft_delete_hides_document_until_restore_integration() -> None:
     restore_handler = RestoreDocument(doc=doc_command)
     get_handler = GetDocument[SoftDeletableReadDocument](doc=doc_query)
 
-    created = await doc_command.create(dto=CreateDocumentCmd())
+    created = await doc_command.create(CreateDocumentCmd())
     deleted = await delete_handler(
         DocumentIdRevDTO(id=created.id, rev=created.rev),
     )
@@ -111,3 +109,30 @@ async def test_soft_delete_hides_document_until_restore_integration() -> None:
     assert restored.is_deleted is False
     assert refetched.id == created.id
     assert refetched.is_deleted is False
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_get_document_returns_created_row_integration() -> None:
+    """Round-trip create then GetDocument handler."""
+
+    state = MockState()
+    ctx = context_from_deps(Deps.plain(dict(MockDepsModule(state=state)().plain_deps)))
+    spec = DocumentSpec(
+        name="items",
+        read=NumberedReadDocument,
+        write={
+            "domain": NumberedDocument,
+            "create_cmd": NumberedCreateCmd,
+            "update_cmd": CreateDocumentCmd,
+        },
+    )
+    doc_command = ctx.document.command(spec)
+    doc_query = ctx.document.query(spec)
+    get_handler = GetDocument[NumberedReadDocument](doc=doc_query)
+
+    created = await doc_command.create(NumberedCreateCmd(number_id=42))
+    fetched = await get_handler(DocumentIdDTO(id=created.id))
+
+    assert fetched.id == created.id
+    assert fetched.number_id == 42

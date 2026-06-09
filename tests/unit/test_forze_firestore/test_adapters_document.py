@@ -9,7 +9,8 @@ import pytest
 from forze.base.exceptions import CoreException
 
 from forze.application.contracts.document import DocumentSpec
-from forze.application.coordinators import DocumentCacheCoordinator
+from forze.application.integrations.document import DocumentCache
+from tests.unit._gateway_codec_helpers import codec_for
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
 from forze_firestore.adapters.document import FirestoreDocumentAdapter
 from forze_firestore.kernel.gateways import FirestoreReadGateway, FirestoreWriteGateway
@@ -54,8 +55,9 @@ def test_write_gateway_requires_same_client() -> None:
     write_gw.tenant_aware = False
 
     spec = _doc_spec()
-    cc = DocumentCacheCoordinator(
+    cc = DocumentCache(
         read_model_type=MyReadDoc,
+        read_codec=codec_for(MyReadDoc),
         document_name=spec.name,
         cache=None,
     )
@@ -65,7 +67,7 @@ def test_write_gateway_requires_same_client() -> None:
             spec=spec,
             read_gw=read_gw,
             write_gw=write_gw,
-            cache_coord=cc,
+            document_cache=cc,
         )
 
 
@@ -81,8 +83,9 @@ def test_write_gateway_requires_matching_tenant_awareness() -> None:
     write_gw.tenant_aware = True
 
     spec = _doc_spec()
-    cc = DocumentCacheCoordinator(
+    cc = DocumentCache(
         read_model_type=MyReadDoc,
+        read_codec=codec_for(MyReadDoc),
         document_name=spec.name,
         cache=None,
     )
@@ -92,7 +95,7 @@ def test_write_gateway_requires_matching_tenant_awareness() -> None:
             spec=spec,
             read_gw=read_gw,
             write_gw=write_gw,
-            cache_coord=cc,
+            document_cache=cc,
         )
 
 
@@ -114,6 +117,7 @@ async def test_create_in_transaction_uses_write_gateway_directly() -> None:
     read_gw.client = MagicMock()
     read_gw.client.is_in_transaction.return_value = True
     read_gw.tenant_aware = False
+    read_gw.read_codec = codec_for(MyReadDoc)
 
     write_gw = MagicMock(spec=FirestoreWriteGateway)
     write_gw.client = read_gw.client
@@ -122,8 +126,9 @@ async def test_create_in_transaction_uses_write_gateway_directly() -> None:
     write_gw.create = AsyncMock(return_value=domain)
 
     spec = _doc_spec()
-    cache_coord = DocumentCacheCoordinator(
+    cache_coord = DocumentCache(
         read_model_type=MyReadDoc,
+        read_codec=codec_for(MyReadDoc),
         document_name=spec.name,
         cache=None,
     )
@@ -132,7 +137,7 @@ async def test_create_in_transaction_uses_write_gateway_directly() -> None:
         spec=spec,
         read_gw=read_gw,
         write_gw=write_gw,
-        cache_coord=cache_coord,
+        document_cache=cache_coord,
     )
 
     out = await adapter.create(MyCreateDoc(name="tx"))
@@ -148,6 +153,7 @@ async def test_create_many_in_transaction_returns_validated_reads() -> None:
     read_gw.client = MagicMock()
     read_gw.client.is_in_transaction.return_value = True
     read_gw.tenant_aware = False
+    read_gw.read_codec = codec_for(MyReadDoc)
 
     write_gw = MagicMock(spec=FirestoreWriteGateway)
     write_gw.client = read_gw.client
@@ -156,8 +162,9 @@ async def test_create_many_in_transaction_returns_validated_reads() -> None:
     write_gw.create_many = AsyncMock(return_value=domains)
 
     spec = _doc_spec()
-    cache_coord = DocumentCacheCoordinator(
+    cache_coord = DocumentCache(
         read_model_type=MyReadDoc,
+        read_codec=codec_for(MyReadDoc),
         document_name=spec.name,
         cache=None,
     )
@@ -166,7 +173,7 @@ async def test_create_many_in_transaction_returns_validated_reads() -> None:
         spec=spec,
         read_gw=read_gw,
         write_gw=write_gw,
-        cache_coord=cache_coord,
+        document_cache=cache_coord,
         batch_size=50,
     )
 

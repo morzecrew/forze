@@ -4,9 +4,11 @@ from __future__ import annotations
 
 from typing import Any, Sequence
 
+# pyright: reportPrivateUsage=false
+
+import attrs
 from pydantic import BaseModel
 
-from forze.application.contracts.base import page_from_limit_offset
 from forze.application.contracts.querying import (
     PaginationExpression,
     QueryFilterExpression,
@@ -15,25 +17,72 @@ from forze.application.contracts.search import (
     SearchResultSnapshotOptions,
     SearchSpec,
 )
-from forze.application.coordinators import SearchResultSnapshotCoordinator
+from forze.application.integrations.search import SearchResultSnapshot
+from forze.application.integrations.search.offset_executor import (
+    OffsetFetchWindow,
+    OffsetRowsResult,
+    execute_simple_offset_search_with_snapshot,
+)
 from forze.base.primitives import JsonDict
-from forze.base.serialization import pydantic_validate_many
 from forze_mongo.kernel.client.port import MongoClientPort
 
-from ._materialize import materialize_search_page
 from ._pipeline import append_pagination_stages, build_count_pipeline
 from .base import MongoSearchGateway
 
 # ----------------------- #
 
 
-def _offset_from_dict(pagination_dict: dict[str, Any]) -> int:
-    raw = pagination_dict.get("offset")
+@attrs.define(slots=True)
+class _MongoOffsetHooks:
+    gw: MongoSearchGateway[Any]
+    client: MongoClientPort
+    ranked_pipeline: list[JsonDict]
+    pagination_dict: dict[str, Any]
+    return_count: bool
 
-    if raw is None:
-        return 0
+    _coll: Any = attrs.field(default=None, init=False)
 
-    return int(raw)
+    async def _collection(self) -> Any:
+        if self._coll is None:
+            self._coll = await self.gw.coll()
+
+        return self._coll
+
+    async def fetch_count(self) -> int | None:
+        if not self.return_count:
+            return None
+
+        coll = await self._collection()
+        count_rows = await self.client.aggregate(
+            coll,
+            build_count_pipeline(self.ranked_pipeline),
+            limit=1,
+        )
+
+        return int(count_rows[0]["total"]) if count_rows else 0
+
+    async def fetch_rows(
+        self,
+        window: OffsetFetchWindow,
+        *,
+        want_snap: bool,
+    ) -> OffsetRowsResult:
+        coll = await self._collection()
+        offset = window.fetch_offset
+        limit = int(window.fetch_limit) if window.fetch_limit is not None else None
+
+        data_pipeline = append_pagination_stages(
+            self.ranked_pipeline,
+            offset=offset,
+            limit=int(limit) if limit is not None else None,
+        )
+        rows = await self.client.aggregate(coll, data_pipeline, limit=None)
+        normalized = [
+            self.gw._from_storage_doc(r)  # pyright: ignore[reportPrivateUsage]
+            for r in rows
+        ]
+
+        return OffsetRowsResult(rows=normalized)
 
 
 # ....................... #
@@ -54,128 +103,33 @@ async def execute_mongo_ranked_offset_search[M: BaseModel](
     return_count: bool,
     return_type: type[BaseModel] | None,
     return_fields: Sequence[str] | None,
-    snapshot_coord: SearchResultSnapshotCoordinator | None,
+    result_snapshot: SearchResultSnapshot | None,
 ) -> Any:
     """Run count (optional), aggregation fetch, and snapshot materialization."""
 
-    rs_spec = spec.snapshot
-    fp_fingerprint = SearchResultSnapshotCoordinator.simple_search_fingerprint(
-        query,
-        filters,
-        None,
-        spec_name=spec.name,
-        variant=variant,
-        extras=fingerprint_extras,
-    )
-
     pagination_dict: dict[str, Any] = dict(pagination or {})
 
-    if snapshot_coord is not None and rs_spec is not None:
-        maybe_snap: Any = await snapshot_coord.read_simple_result_snapshot(
-            rs_spec=rs_spec,
-            snap_opt=snapshot,
-            fp_computed=fp_fingerprint,
-            spec=spec,
-            pagination=pagination_dict,
-            return_type=return_type,
-            return_fields=return_fields,
-            return_count=return_count,
-        )
-
-        if maybe_snap is not None:
-            return maybe_snap
-
-    coll = await gw.coll()
-    total = 0
-
-    if return_count:
-        count_rows = await client.aggregate(
-            coll,
-            build_count_pipeline(ranked_pipeline),
-            limit=1,
-        )
-
-        total = int(count_rows[0]["total"]) if count_rows else 0
-        any_hits: list[Any] = []
-
-        if total == 0:
-            return page_from_limit_offset(any_hits, pagination_dict, total=0)
-
-    want_snap = (
-        snapshot_coord is not None
-        and rs_spec is not None
-        and snapshot_coord.should_write_result_snapshot(snapshot, rs_spec)
-    )
-    max_nw = (
-        snapshot_coord.effective_snapshot_max_ids(snapshot, rs_spec)
-        if want_snap and snapshot_coord is not None
-        else 0
-    )
-    sql_limit, sql_offset, page_limit = (
-        SearchResultSnapshotCoordinator.snapshot_pagination(
-            want_snap,
-            max_nw,
-            pagination_dict,
-        )
-    )
-
-    offset = sql_offset if want_snap else _offset_from_dict(pagination_dict)
-    limit = sql_limit if want_snap else pagination_dict.get("limit")
-
-    data_pipeline = append_pagination_stages(
-        ranked_pipeline,
-        offset=offset,
-        limit=int(limit) if limit is not None else None,
-    )
-
-    rows = await client.aggregate(coll, data_pipeline, limit=None)
-    normalized = [
-        gw._from_storage_doc(r) for r in rows  # pyright: ignore[reportPrivateUsage]
-    ]
-
-    handle_out = None
-    pool_snap: list[M] | None = None
-    u_off = offset if want_snap else _offset_from_dict(pagination_dict)
-
-    if want_snap and snapshot_coord is not None and rs_spec is not None:
-        pool_len = len(normalized)
-        pool_snap = pydantic_validate_many(gw.model_type, normalized)
-        handle_out = await snapshot_coord.put_simple_ordered_hits(
-            pool_snap,
-            snap_opt=snapshot,
-            rs_spec=rs_spec,
-            fp_computed=fp_fingerprint,
-            pool_len_before_cap=pool_len,
-        )
-
-        if want_snap and sql_limit is not None:
-            normalized = normalized[u_off : u_off + page_limit]
-
-    page = materialize_search_page(
-        page_rows=normalized,
-        pool=pool_snap,
-        u=u_off,
-        page_limit=(
-            page_limit
-            if want_snap
-            else (int(limit) if limit is not None else len(normalized))
-        ),
+    return await execute_simple_offset_search_with_snapshot(
+        query=query,
+        filters=filters,
+        sorts=None,
+        fingerprint_sorts=None,
+        spec=spec,
+        variant=variant,
+        fingerprint_extras=fingerprint_extras,
+        pagination=pagination,
+        snapshot=snapshot,
+        return_count=return_count,
         return_type=return_type,
         return_fields=return_fields,
         model_type=gw.model_type,
-    )
-
-    if return_count:
-        return page_from_limit_offset(
-            page,
-            pagination_dict,
-            total=total,
-            snapshot=handle_out,
-        )
-
-    return page_from_limit_offset(
-        page,
-        pagination_dict,
-        total=None,
-        snapshot=handle_out,
+        codec=gw.spec.resolved_read_codec,
+        result_snapshot=result_snapshot,
+        hooks=_MongoOffsetHooks(
+            gw=gw,
+            client=client,
+            ranked_pipeline=ranked_pipeline,
+            pagination_dict=pagination_dict,
+            return_count=return_count,
+        ),
     )

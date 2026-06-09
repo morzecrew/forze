@@ -5,16 +5,16 @@ from datetime import datetime
 import attrs
 import pytest
 
-from forze.base.exceptions import CoreException
-
-from forze.application.composition.storage import StorageFacade, StorageKernelOp
 from forze.application.contracts.execution import Handler
 from forze.application.execution.operations.registry import OperationRegistry
-from forze.application.handlers.storage.dto import (
+from forze.base.exceptions import CoreException
+from forze.base.primitives import StrKeyNamespace
+from forze_kits.aggregates.storage import (
+    StorageFacade,
+    StorageKernelOp,
     StoredObjectDTO,
     UploadObjectRequestDTO,
 )
-from forze.base.primitives import StrKeyNamespace
 
 # ----------------------- #
 

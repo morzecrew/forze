@@ -13,13 +13,17 @@ import aioboto3
 import attrs
 from pydantic import SecretStr
 from types_aiobotocore_s3.client import S3Client as AsyncS3Client
-from types_aiobotocore_s3.type_defs import ObjectTypeDef
 
+from forze.application.integrations.storage.client import (
+    ObjectStorageHead,
+    ObjectStorageListedObject,
+    normalize_list_window,
+)
 from forze.base.exceptions import exc
 
 from .errors import exc_interceptor
 from .port import S3ClientPort
-from .value_objects import S3Config, S3ConnectionOpts, S3Head
+from .value_objects import S3Config, S3ConnectionOpts
 
 # ----------------------- #
 
@@ -350,7 +354,7 @@ class S3Client(S3ClientPort):
         *,
         limit: int | None = None,
         offset: int | None = None,
-    ) -> tuple[list[ObjectTypeDef], int]:
+    ) -> tuple[list[ObjectStorageListedObject], int]:
         """List objects in a bucket with optional pagination.
 
         Streams all pages from the ``list_objects_v2`` paginator and applies
@@ -370,17 +374,9 @@ class S3Client(S3ClientPort):
         paginator = c.get_paginator("list_objects_v2")
         _prefix = prefix or ""
 
-        if limit is not None and limit <= 0:
-            raise exc.internal("limit must be > 0")  # Validation ?
+        _limit, _offset = normalize_list_window(limit, offset)
 
-        if offset is not None and offset < 0:
-            raise exc.internal("offset must be >= 0")  # Validation ?
-
-        # Defaults
-        _limit = limit if limit is not None else 10_000_000  # effectively "no limit"
-        _offset = offset or 0
-
-        items: list[ObjectTypeDef] = []
+        items: list[ObjectStorageListedObject] = []
         total_count = 0
 
         # We will take objects in the requested window as we stream pages
@@ -400,7 +396,13 @@ class S3Client(S3ClientPort):
                 total_count += 1
 
                 if start <= idx < end:
-                    items.append(obj)
+                    key = obj.get("Key")
+
+                    if not key:
+                        raise exc.internal("Invalid object key")
+
+                    items.append(ObjectStorageListedObject(key=key))
+
                     if len(items) >= _limit:
                         collected_enough = True
 
@@ -412,7 +414,7 @@ class S3Client(S3ClientPort):
     # ....................... #
 
     @exc_interceptor.coroutine("s3.head_object")  # type: ignore[untyped-decorator]
-    async def head_object(self, bucket: str, key: str) -> S3Head:
+    async def head_object(self, bucket: str, key: str) -> ObjectStorageHead:
         """Retrieve object metadata without downloading the body.
 
         :param bucket: Bucket name.
@@ -424,7 +426,7 @@ class S3Client(S3ClientPort):
         c = self.__require_client()
         head = await c.head_object(Bucket=bucket, Key=key)
 
-        return S3Head(
+        return ObjectStorageHead(
             content_type=head.get("ContentType", "application/octet-stream"),
             metadata=head.get("Metadata", {}),
             size=head.get("ContentLength", 0),

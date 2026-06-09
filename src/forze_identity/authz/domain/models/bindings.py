@@ -172,3 +172,31 @@ class ReadGroupPermissionBinding(ReadDocument):
 
     group_id: UUID
     permission_id: UUID
+
+
+# ....................... #
+# Actor → Subject (delegation / may_act)
+
+
+class DelegationGrant(Document):
+    """Grants a principal (actor) the right to act on behalf of another (subject)."""
+
+    actor_id: UUID = Field(frozen=True)
+    """Policy principal document id of the delegate (the agent acting)."""
+
+    subject_id: UUID = Field(frozen=True)
+    """Policy principal document id of the principal acted-for (the user)."""
+
+
+class CreateDelegationGrantCmd(CreateDocumentCmd):
+    """Create delegation (``may_act``) grant."""
+
+    actor_id: UUID = Field(frozen=True)
+    subject_id: UUID = Field(frozen=True)
+
+
+class ReadDelegationGrant(ReadDocument):
+    """Read model for delegation grant."""
+
+    actor_id: UUID
+    subject_id: UUID

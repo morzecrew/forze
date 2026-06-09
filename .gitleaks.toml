@@ -1,0 +1,10 @@
+# Inherit all default secret detection rules
+useDefault = true
+
+[allowlist]
+description = "Targeted exclusions for intentional test fixtures"
+regexes = [
+    '''password=hunter2''',
+    '''postgresql://user:secret@db\.example\.com''',
+    '''-----BEGIN PRIVATE KEY-----''',
+]

@@ -11,7 +11,7 @@ pytest.importorskip("redis")
 from forze_redis.adapters.stream import RedisStreamAdapter, RedisStreamGroupAdapter
 from forze_redis.adapters.codecs import RedisStreamCodec
 from forze_redis.kernel.client import RedisClient
-from forze.base.serialization import PydanticRecordMappingCodec
+from forze.base.serialization import PydanticModelCodec
 
 
 class _Payload(BaseModel):
@@ -20,7 +20,7 @@ class _Payload(BaseModel):
 
 @pytest.fixture
 def codec() -> RedisStreamCodec[_Payload]:
-    return RedisStreamCodec(payload_codec=PydanticRecordMappingCodec(_Payload))
+    return RedisStreamCodec(payload_codec=PydanticModelCodec(_Payload))
 
 
 @pytest.mark.asyncio

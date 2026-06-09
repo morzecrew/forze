@@ -5,6 +5,8 @@ from typing import Any
 
 from pydantic import BaseModel
 from temporalio import activity, workflow
+from temporalio.common import RetryPolicy
+from temporalio.exceptions import ApplicationError
 
 # Set by integration tests so activities can read :class:`~forze.application.execution.ExecutionContext`.
 CTX_BOX: dict[str, Any] = {"exec": None}
@@ -54,6 +56,22 @@ class ItContextProbeWorkflow:
         )
 
 
+@workflow.defn(name="ItClockProbeWorkflow")
+class ItClockProbeWorkflow:
+    @workflow.run
+    async def run(self) -> str:
+        # Under the ExecutionContextInterceptor's bound workflow clock, utcnow() must
+        # route to workflow.now() (deterministic) and uuid7() to workflow.uuid4()
+        # (a version-4 id) — never the non-deterministic system clock / secrets.
+        with workflow.unsafe.imports_passed_through():
+            from forze.base.primitives import utcnow, uuid7
+
+        same_now = utcnow() == workflow.now()
+        version = uuid7().version
+
+        return f"{same_now}:{version}"
+
+
 class SumIn(BaseModel):
     """Pydantic input for :class:`ItSumWorkflow`."""
 
@@ -82,3 +100,92 @@ class ItSumWorkflow:
             schedule_to_close_timeout=timedelta(seconds=5),
         )
         return SumOut(total=t)
+
+
+# ----------------------- #
+# Saga driver (TemporalSaga) — compensation / forward-incomplete over activities.
+
+# Records activity execution order so a test can assert compensation behaviour.
+SAGA_RECORDER: list[str] = []
+
+
+@activity.defn(name="it_saga_reserve")
+async def it_saga_reserve(fail_at: str) -> str:
+    SAGA_RECORDER.append("reserve")
+    if fail_at == "reserve":
+        raise ApplicationError("reserve failed", non_retryable=True)
+    return "reserved"
+
+
+@activity.defn(name="it_saga_unreserve")
+async def it_saga_unreserve() -> str:
+    SAGA_RECORDER.append("unreserve")
+    return "unreserved"
+
+
+@activity.defn(name="it_saga_charge")
+async def it_saga_charge(fail_at: str) -> str:
+    SAGA_RECORDER.append("charge")
+    if fail_at == "charge":
+        raise ApplicationError("charge failed", non_retryable=True)
+    return "charged"
+
+
+@activity.defn(name="it_saga_ship")
+async def it_saga_ship(fail_at: str) -> str:
+    SAGA_RECORDER.append("ship")
+    if fail_at == "ship":
+        raise ApplicationError("ship failed", non_retryable=True)
+    return "shipped"
+
+
+class SagaOut(BaseModel):
+    """Outcome of :class:`ItCheckoutSagaWorkflow` (status + saga error code, if any)."""
+
+    status: str
+    code: str | None = None
+
+
+@workflow.defn(name="ItCheckoutSagaWorkflow")
+class ItCheckoutSagaWorkflow:
+    @workflow.run
+    async def run(self, fail_at: str) -> SagaOut:
+        with workflow.unsafe.imports_passed_through():
+            from forze.application.contracts.saga import SagaStepKind
+            from forze.base.exceptions import CoreException
+
+            from forze_temporal import TemporalSaga
+
+        saga = TemporalSaga(name="checkout")
+        opts: dict[str, Any] = {
+            "schedule_to_close_timeout": timedelta(seconds=5),
+            "retry_policy": RetryPolicy(maximum_attempts=1),
+        }
+
+        try:
+            await saga.step(
+                "reserve",
+                lambda: workflow.execute_activity(
+                    it_saga_reserve, args=[fail_at], **opts
+                ),
+                compensation=lambda: workflow.execute_activity(
+                    it_saga_unreserve, args=[], **opts
+                ),
+            )
+            await saga.step(
+                "charge",
+                lambda: workflow.execute_activity(
+                    it_saga_charge, args=[fail_at], **opts
+                ),
+                kind=SagaStepKind.PIVOT,
+            )
+            await saga.step(
+                "ship",
+                lambda: workflow.execute_activity(it_saga_ship, args=[fail_at], **opts),
+                kind=SagaStepKind.RETRYABLE,
+            )
+
+        except CoreException as error:
+            return SagaOut(status="failed", code=error.code)
+
+        return SagaOut(status="completed")

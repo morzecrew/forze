@@ -30,8 +30,6 @@ _EVENT_DICT_SANITIZE_SKIP: frozenset[str] = frozenset(
         "logger_name",
         TRACE_LEVEL_KEY,
         ERR_TYPE_KEY,
-        ERR_MESSAGE_KEY,
-        ERR_STACK_KEY,
         RICH_EXC_INFO_KEY,
         OTEL_DEFAULT_SPAN_ID_KEY,
         OTEL_DEFAULT_TRACE_ID_KEY,
@@ -49,6 +47,9 @@ class ExceptionInfoFormatter:
 
     render_mode: RenderMode
     """Render mode."""
+
+    include_exception_stack: bool = True
+    """When false, omit ``error.stack`` from structured output."""
 
     # ....................... #
 
@@ -73,13 +74,36 @@ class ExceptionInfoFormatter:
 
         event_dict[ERR_TYPE_KEY] = exc_type.__name__
         event_dict[ERR_MESSAGE_KEY] = str(exc)
-        event_dict[ERR_STACK_KEY] = "".join(
-            traceback.format_exception(exc_type, exc, tb)
-        )
+
+        if self.include_exception_stack:
+            event_dict[ERR_STACK_KEY] = "".join(
+                traceback.format_exception(exc_type, exc, tb)
+            )
 
         # only for console renderer / dev output
         if self.render_mode == "console":
             event_dict[RICH_EXC_INFO_KEY] = (exc_type, exc, tb)
+
+        return event_dict
+
+
+# ....................... #
+
+
+@attrs.define(slots=True, frozen=True, kw_only=True)
+class ExceptionFieldsSanitizer:
+    """Scrub ``error.message`` and ``error.stack`` (always uses log string rules)."""
+
+    # ....................... #
+
+    def __call__(self, _: Any, __: str, event_dict: EventDict) -> EventDict:
+        from forze.base.scrubbing.policy import scrub_log_string
+
+        for key in (ERR_MESSAGE_KEY, ERR_STACK_KEY):
+            value = event_dict.get(key)
+
+            if isinstance(value, str):
+                event_dict[key] = scrub_log_string(value)
 
         return event_dict
 

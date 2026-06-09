@@ -158,16 +158,16 @@ You can restrict a validator to specific fields using the `fields` parameter:
         if after.status not in allowed.get(before.status, set()):
             raise ValidationError("Invalid status transition.")
 
-## Mixins (`forze_patterns`)
+## Mixins (`forze_kits`)
 
-Reusable domain concerns live in the optional **`forze_patterns`** package (included in the default wheel). Each mixin adds a focused capability without deep inheritance chains.
+Reusable domain concerns live in the optional **`forze_kits`** package (included in the default wheel). Each mixin adds a focused capability without deep inheritance chains.
 
 ### SoftDeletionMixin
 
 Adds an `is_deleted` boolean field and an update validator that blocks updates to soft-deleted documents (except toggling the deletion flag itself):
 
     :::python
-    from forze_patterns.soft_deletion import SoftDeletionMixin
+    from forze_kits.domain.soft_deletion import SoftDeletionMixin
 
     class Project(SoftDeletionMixin, Document):
         title: str
@@ -179,7 +179,7 @@ Once `is_deleted` is `True`, any update that modifies fields other than `is_dele
 Adds `name`, optional `display_name`, and `description` with normalized string types:
 
     :::python
-    from forze_patterns.metadata import (
+    from forze_kits.domain.metadata import (
         MetadataCreateCmdMixin,
         MetadataMixin,
         MetadataUpdateCmdMixin,
@@ -194,7 +194,7 @@ Adds `name`, optional `display_name`, and `description` with normalized string t
 Adds a required `number_id` field (positive integer) for human-readable identifiers. Typically populated by a counter adapter during the create mapping step:
 
     :::python
-    from forze_patterns.number_id import NumberIdCreateCmdMixin, NumberIdMixin
+    from forze_kits.domain.number_id import NumberIdCreateCmdMixin, NumberIdMixin
 
     class Ticket(NumberIdMixin, Document):
         title: str
@@ -207,7 +207,7 @@ Adds a required `number_id` field (positive integer) for human-readable identifi
 Adds a frozen `creator_id` field (UUID). Typically injected by a mapping step that reads the current actor context:
 
     :::python
-    from forze_patterns.creator_id import CreatorIdCreateCmdMixin, CreatorIdMixin
+    from forze_kits.domain.creator_id import CreatorIdCreateCmdMixin, CreatorIdMixin
 
     class Comment(CreatorIdMixin, Document):
         body: str

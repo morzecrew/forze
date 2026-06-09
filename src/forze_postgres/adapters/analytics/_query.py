@@ -8,27 +8,26 @@ from psycopg.abc import QueryNoTemplate
 from pydantic import BaseModel
 
 from forze.application.contracts.analytics import AnalyticsRunOptions, AnalyticsSpec
-from forze.application.contracts.tenancy import TenantProviderPort
-from forze.application.contracts.analytics._adapter_common import (
+from forze.application.contracts.tenancy import TenantProviderPort, soft_tenant_id
+from forze.application.integrations.analytics.adapter_common import (
     dry_run_enabled,
     dry_run_offset_page,
-    pagination_window,
+    execute_analytics_offset_page,
     parse_count_row,
-    shape_rows,
     timeout_seconds,
     validated_params,
 )
-from forze.application.contracts.base import CountlessPage, Page, page_from_limit_offset
+from forze.application.contracts.base import CountlessPage, Page
 from forze.application.contracts.querying import PaginationExpression
 from forze.base.exceptions import exc
-from forze.base.primitives import JsonDict, StrKey
+from forze.base.primitives import JsonDict, OnceCell, StrKey
 from forze_postgres.execution.deps.configs import (
     PostgresAnalyticsConfig,
     PostgresQueryConfig,
 )
 from forze_postgres.kernel.client import PostgresClientPort
 from forze_postgres.kernel.gateways import PostgresQualifiedName
-from forze_postgres.kernel.relation import resolve_postgres_qname
+from forze_postgres.kernel.relation import is_static_relation, resolve_postgres_qname
 from forze_postgres.kernel.sql import (
     apply_limit_offset,
     build_count_sql,
@@ -51,7 +50,7 @@ class PostgresAnalyticsQueryMixin[R: BaseModel, Ing: BaseModel]:
     spec: AnalyticsSpec[R, Ing]
     config: PostgresAnalyticsConfig
     tenant_provider: TenantProviderPort | None
-    _ingest_qname_resolved: PostgresQualifiedName | None
+    _ingest_qname_cell: OnceCell[PostgresQualifiedName]
 
     # ....................... #
 
@@ -75,12 +74,7 @@ class PostgresAnalyticsQueryMixin[R: BaseModel, Ing: BaseModel]:
     # ....................... #
 
     def _tenant_id_for_resolve(self) -> UUID | None:
-        if self.tenant_provider is None:
-            return None
-
-        tenant = self.tenant_provider()
-
-        return tenant.tenant_id if tenant is not None else None
+        return soft_tenant_id(self.tenant_provider)
 
     # ....................... #
 
@@ -92,13 +86,15 @@ class PostgresAnalyticsQueryMixin[R: BaseModel, Ing: BaseModel]:
                 f"Postgres ingest relation is required for route {self.spec.name!r}."
             )
 
-        if self._ingest_qname_resolved is not None:
-            return self._ingest_qname_resolved
+        async def _factory() -> PostgresQualifiedName:
+            return await resolve_postgres_qname(spec, self._tenant_id_for_resolve())
 
-        resolved = await resolve_postgres_qname(spec, self._tenant_id_for_resolve())
-        object.__setattr__(self, "_ingest_qname_resolved", resolved)
-
-        return resolved
+        # Only memoize tenant-independent (static) relations; a dynamic resolver
+        # depends on the bound tenant and the adapter may be shared across tenants.
+        return await self._ingest_qname_cell.resolve(
+            _factory,
+            cache=is_static_relation(spec),
+        )
 
     # ....................... #
 
@@ -227,27 +223,23 @@ class PostgresAnalyticsQueryMixin[R: BaseModel, Ing: BaseModel]:
         if dry_run_enabled(options):
             return dry_run_offset_page(pagination, return_count=return_count)
 
-        limit, offset = pagination_window(pagination)
+        async def _fetch(limit: int | None, offset: int | None) -> list[JsonDict]:
+            return await self._fetch_rows(
+                query_key,
+                params,
+                options=options,
+                limit=limit,
+                offset=offset,
+            )
 
-        rows = await self._fetch_rows(
-            query_key,
-            params,
-            options=options,
-            limit=limit,
-            offset=offset,
-        )
-        data = shape_rows(
-            rows,
-            read_type=self.spec.read,
+        return await execute_analytics_offset_page(
+            pagination=pagination,
+            return_count=return_count,
             return_type=return_type,
             return_fields=return_fields,
+            read_codec=self.spec.resolved_read_codec,
+            read_type=self.spec.read,
+            skip_total=self._skip_total(query_key),
+            fetch_rows=_fetch,
+            total_count=lambda: self._total_count(query_key, params, options=options),
         )
-
-        if return_count:
-            if self._skip_total(query_key):
-                return page_from_limit_offset(data, pagination, total=None)
-
-            total = await self._total_count(query_key, params, options=options)
-            return page_from_limit_offset(data, pagination, total=total)
-
-        return page_from_limit_offset(data, pagination, total=None)

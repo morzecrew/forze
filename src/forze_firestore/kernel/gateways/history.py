@@ -6,18 +6,15 @@ require_firestore()
 
 # ....................... #
 
-from typing import Sequence, final
+from typing import Any, Sequence, final
 from uuid import UUID
 
 import attrs
 from google.cloud.firestore_v1.base_query import And, FieldFilter
 
 from forze.base.exceptions import CoreException, ExceptionKind, exc
-from forze.base.primitives import JsonDict
-from forze.base.serialization import (
-    pydantic_persistence_dump,
-    pydantic_validate,
-)
+from forze.base.primitives import JsonDict, OnceCell
+from forze.base.serialization import ModelCodec
 from forze.domain.constants import (
     HISTORY_DATA_FIELD,
     HISTORY_SOURCE_FIELD,
@@ -26,7 +23,7 @@ from forze.domain.constants import (
 )
 from forze.domain.models import Document, DocumentHistory
 
-from ..relation import RelationSpec, resolve_firestore_collection
+from ..relation import RelationSpec, is_static_relation, resolve_firestore_collection
 from .base import FirestoreGateway
 
 # ----------------------- #
@@ -40,8 +37,11 @@ class FirestoreHistoryGateway[D: Document](FirestoreGateway[D]):
     target_relation: RelationSpec
     """Write collection ``(database, collection)`` this history tracks."""
 
-    _target_resolved: tuple[str, str] | None = attrs.field(
-        default=None,
+    history_codec: ModelCodec[Any, Any] = attrs.field(kw_only=True, eq=False, repr=False)
+    """Codec for :class:`~forze.domain.models.DocumentHistory` persistence rows."""
+
+    _target_cell: OnceCell[tuple[str, str]] = attrs.field(
+        factory=OnceCell,
         init=False,
         eq=False,
         repr=False,
@@ -49,15 +49,24 @@ class FirestoreHistoryGateway[D: Document](FirestoreGateway[D]):
 
     # ....................... #
 
+    def __attrs_post_init__(self) -> None:
+        super().__attrs_post_init__()
+
+    # ....................... #
+
     async def _history_source_key(self) -> str:
-        if self._target_resolved is not None:
-            database, collection = self._target_resolved
-        else:
-            database, collection = await resolve_firestore_collection(
+        async def _factory() -> tuple[str, str]:
+            return await resolve_firestore_collection(
                 self.target_relation,
                 self._tenant_id_for_resolve(),
             )
-            object.__setattr__(self, "_target_resolved", (database, collection))
+
+        # Only memoize tenant-independent (static) relations; a dynamic resolver
+        # depends on the bound tenant and the adapter may be shared across tenants.
+        database, collection = await self._target_cell.resolve(
+            _factory,
+            cache=is_static_relation(self.target_relation),
+        )
 
         return f"{database}.{collection}"
 
@@ -86,7 +95,7 @@ class FirestoreHistoryGateway[D: Document](FirestoreGateway[D]):
         if payload is None:
             raise exc.not_found(f"History payload not found: {pk}, {rev}")
 
-        return pydantic_validate(self.model_type, payload)
+        return self._decode_row(payload)
 
     # ....................... #
 
@@ -126,7 +135,7 @@ class FirestoreHistoryGateway[D: Document](FirestoreGateway[D]):
 
     async def write(self, data: D) -> None:
         record = await self._from_data(data)
-        raw_payload = pydantic_persistence_dump(record)
+        raw_payload = self.history_codec.encode_persistence_mapping(record)
         raw_payload = self.adapt_payload_for_write(raw_payload)
 
         await self.client.set_document(
@@ -151,7 +160,8 @@ class FirestoreHistoryGateway[D: Document](FirestoreGateway[D]):
                 rev=item.rev,
                 data=item,
             )
-            raw_payload = pydantic_persistence_dump(record)
+            raw_payload = self.history_codec.encode_persistence_mapping(record)
+
             raw_payload = self.adapt_payload_for_write(raw_payload)
             documents.append((f"{self._storage_pk(item.id)}_{item.rev}", raw_payload))
 

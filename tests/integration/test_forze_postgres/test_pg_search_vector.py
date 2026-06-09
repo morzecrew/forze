@@ -881,3 +881,77 @@ async def test_vector_search_with_cursor_ranked_return_type_and_before(
     )
     assert len(p_back.hits) >= 1
     assert p_back.hits[0].id == p0.hits[0].id
+
+
+@pytest.mark.asyncio
+async def test_vector_exact_total_exceeds_candidate_cap(
+    pgvector_client: PostgresClient,
+) -> None:
+    """KNN candidate cap limits scored rows but exact total counts all matches."""
+    await _ensure_vector_extension(pgvector_client)
+
+    suffix = uuid4().hex[:12]
+    table = f"vec_cap_{suffix}"
+    index_name = f"idx_vec_cap_{suffix}"
+    await pgvector_client.execute(
+        f"""
+        CREATE TABLE {table} (
+            id uuid PRIMARY KEY,
+            label text NOT NULL,
+            emb vector(3) NOT NULL
+        );
+        """
+    )
+
+    prov = MockHashEmbeddingsProvider(dimensions=3)
+    query_label = "cap-query"
+
+    for i in range(11):
+        lv = await prov.embed_one(f"cap-query-near-{i}")
+        await pgvector_client.execute(
+            f"""
+            INSERT INTO {table} (id, label, emb)
+            VALUES (%(id)s, %(lbl)s, '{vector_param_literal(lv)}'::vector)
+            """,
+            {"id": uuid4(), "lbl": f"cap-query-near-{i}"},
+        )
+
+    await pgvector_client.execute(
+        f"""
+        CREATE INDEX {index_name} ON {table}
+        USING hnsw (emb vector_l2_ops);
+        """
+    )
+
+    ctx = context_from_deps(
+        Deps.plain(
+            {
+                PostgresClientDepKey: pgvector_client,
+                PostgresIntrospectorDepKey: PostgresIntrospector(
+                    client=pgvector_client
+                ),
+                SearchQueryDepKey: ConfigurablePostgresSearch(
+                    config=PostgresSearchConfig(
+                        index=("public", index_name),
+                        read=("public", table),
+                        heap=("public", table),
+                        engine="vector",
+                        vector_column="emb",
+                        vector_distance="l2",
+                        embeddings_name="vec_test",
+                        embedding_dimensions=3,
+                        pgroonga_candidate_limit=3,
+                    )
+                ),
+                EmbeddingsProviderDepKey: _embeddings_factory,
+            }
+        )
+    )
+    spec = SearchSpec(name="vec_cap", model_type=VecDoc, fields=["label"])
+    page = await ctx.search.query(spec).search_page(
+        query_label,
+        pagination={"limit": 2},
+        options={"search_count": "exact"},
+    )
+    assert page.count == 11
+    assert len(page.hits) == 2

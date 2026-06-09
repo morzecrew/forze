@@ -415,6 +415,20 @@ class TestConfigurablePostgresSearch:
         out = factory(ctx, self._search_spec())
         assert out.pgroonga_score_version == "v1"
 
+    def test_read_validation_trusted_wires_to_adapter(self) -> None:
+        factory = ConfigurablePostgresSearch(
+            config=PostgresSearchConfig(
+                engine="pgroonga",
+                index=("public", "gi"),
+                read=("public", "gs"),
+                read_validation="trusted",
+            )
+        )
+        ctx = _ctx()
+        out = factory(ctx, self._search_spec())
+
+        assert out.read_validation == "trusted"
+
 
 def test_postgres_txmanager_builds_adapter() -> None:
     ctx = _ctx()
@@ -439,9 +453,11 @@ def test_read_gw_factory() -> None:
 
 def test_doc_write_gw_without_history() -> None:
     ctx = _ctx()
+    spec = _rw_spec()
     gw = doc_write_gw(
         ctx,
-        write_types=_rw_spec().write,  # type: ignore[arg-type]
+        write_types=spec.write,  # type: ignore[arg-type]
+        codecs=spec.resolved_codecs,
         write_relation=("public", "w"),
         history_relation=None,
         history_enabled=False,
@@ -455,9 +471,11 @@ def test_doc_write_gw_without_history() -> None:
 
 def test_doc_write_gw_with_history() -> None:
     ctx = _ctx()
+    spec = _rw_spec(history_enabled=True)
     gw = doc_write_gw(
         ctx,
-        write_types=_rw_spec().write,  # type: ignore[arg-type]
+        write_types=spec.write,  # type: ignore[arg-type]
+        codecs=spec.resolved_codecs,
         write_relation=("public", "w"),
         history_relation=("public", "h"),
         history_enabled=True,

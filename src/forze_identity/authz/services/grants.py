@@ -1,14 +1,23 @@
 """Resolve effective grants from catalog documents and binding edges."""
 
-from dataclasses import dataclass
 from uuid import UUID
 
 import attrs
 from pydantic import BaseModel
 
-from forze.application.contracts.authz import AuthzScope, EffectiveGrants, PermissionRef, RoleRef
+from forze.application.contracts.authz import (
+    AuthzScope,
+    EffectiveGrants,
+    PermissionRef,
+    RoleRef,
+)
 from forze.application.contracts.document import DocumentQueryPort
 from forze.application.contracts.querying import QueryFilterExpression
+from forze.application.integrations.document._limits import (
+    DEFAULT_MAX_FETCH_ALL_PAGES,
+    check_page_limit,
+)
+from forze.base.exceptions import exc
 
 from ..domain.models.bindings import (
     ReadGroupPermissionBinding,
@@ -25,7 +34,7 @@ from ..domain.models.role_definition import ReadRoleDefinition
 # ----------------------- #
 
 
-@dataclass(frozen=True, slots=True)
+@attrs.define(frozen=True, slots=True)
 class AuthzGrantResolverDeps:
     """Document query ports required to compute grants."""
 
@@ -48,11 +57,22 @@ async def fetch_all_document_hits[R: BaseModel](
     *,
     filters: QueryFilterExpression,  # type: ignore[valid-type]
     page_size: int = 500,
+    max_pages: int | None = DEFAULT_MAX_FETCH_ALL_PAGES,
 ) -> list[R]:
+    if page_size < 1:
+        raise exc.precondition("page_size must be positive")
+
     hits: list[R] = []
     offset = 0
+    page_num = 0
 
     while True:
+        check_page_limit(
+            pages=page_num,
+            max_pages=max_pages,
+            label="fetch_all_document_hits",
+        )
+
         page = await qry.find_many(
             filters=filters,
             pagination={"limit": page_size, "offset": offset},
@@ -63,6 +83,7 @@ async def fetch_all_document_hits[R: BaseModel](
             break
 
         offset += page_size
+        page_num += 1
 
     return hits
 

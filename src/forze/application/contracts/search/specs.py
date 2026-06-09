@@ -5,6 +5,7 @@ import attrs
 from pydantic import BaseModel
 
 from forze.base.exceptions import exc
+from forze.base.serialization import ModelCodec, default_model_codec
 
 from ..base import BaseSpec
 from ..querying import QuerySortExpression
@@ -42,6 +43,12 @@ class SearchResultSnapshotSpec(BaseSpec):
     chunk_size: int = 5_000
     """Size of each KV chunk when materializing ID lists."""
 
+    # ....................... #
+
+    def __attrs_post_init__(self) -> None:
+        if self.ttl.total_seconds() <= 0:
+            raise exc.configuration("TTL must be positive")
+
 
 # ....................... #
 
@@ -67,6 +74,13 @@ class SearchSpec[M: BaseModel](BaseSpec):
 
     default_sort: QuerySortExpression | None = attrs.field(default=None)
     """Default ``sorts`` when callers omit them (required for models without ``id``)."""
+
+    read_codec: ModelCodec[M, Any] | None = attrs.field(
+        default=None,
+        eq=False,
+        repr=False,
+    )
+    """Optional row codec override; use :attr:`resolved_read_codec` at runtime."""
 
     # ....................... #
 
@@ -100,6 +114,17 @@ class SearchSpec[M: BaseModel](BaseSpec):
                 "Default weights must be provided for all search fields."
             )
 
+    # ....................... #
+
+    @property
+    def resolved_read_codec(self) -> ModelCodec[M, Any]:
+        """Row codec (explicit override or :func:`default_model_codec`)."""
+
+        if self.read_codec is not None:
+            return self.read_codec
+
+        return default_model_codec(self.model_type)
+
 
 # ....................... #
 
@@ -124,6 +149,13 @@ class HubSearchSpec[M: BaseModel](BaseSpec):
 
     default_sort: QuerySortExpression | None = attrs.field(default=None)
     """Default ``sorts`` for hub browse/cursor when callers omit them."""
+
+    read_codec: ModelCodec[M, Any] | None = attrs.field(
+        default=None,
+        eq=False,
+        repr=False,
+    )
+    """Row decode/encode codec; defaults to :class:`PydanticModelCodec`."""
 
     # ....................... #
 
@@ -155,6 +187,17 @@ class HubSearchSpec[M: BaseModel](BaseSpec):
                     raise exc.configuration(
                         f"Default weight for search field '{member.name}' should be between 0.0 and 1.0."
                     )
+
+    # ....................... #
+
+    @property
+    def resolved_read_codec(self) -> ModelCodec[M, Any]:
+        """Row codec (explicit override or :func:`default_model_codec`)."""
+
+        if self.read_codec is not None:
+            return self.read_codec
+
+        return default_model_codec(self.model_type)
 
 
 # ....................... #

@@ -54,7 +54,7 @@ Queue-level config uses `SQSQueueConfig` with `namespace` and optional `tenant_a
 ### Deps module
 
 ```python
-from forze.application.execution import DepsPlan
+from forze.application.execution import DepsRegistry
 from forze_sqs import SQSDepsModule, SQSQueueConfig
 
 queue_config = SQSQueueConfig(namespace="orders", tenant_aware=True)
@@ -65,7 +65,7 @@ sqs_module = SQSDepsModule(
     queue_writers={"orders": queue_config},
 )
 
-deps_plan = DepsPlan.from_modules(sqs_module)
+deps_registry = DepsRegistry.from_modules(sqs_module)
 ```
 
 The route key should match your `QueueSpec.name`.
@@ -115,7 +115,7 @@ See [Background Workflow](../recipes/background-workflow.md) for the long-form b
 
 ### Serialization settings
 
-The adapter encodes message bodies safely for SQS and stores message metadata in SQS message attributes. Bind a `RecordMappingCodec` on `QueueSpec` (for example `PydanticRecordMappingCodec`) to validate payloads after receive.
+The adapter encodes message bodies safely for SQS and stores message metadata in SQS message attributes. Bind a `ModelCodec` on `QueueSpec` (for example `PydanticModelCodec`) to validate payloads after receive.
 
 ### Delayed delivery
 

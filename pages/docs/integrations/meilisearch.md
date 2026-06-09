@@ -23,7 +23,7 @@ Integration tests require Docker and `uv sync --extra meilisearch`.
 ## Runtime wiring
 
 ```python
-from forze.application.execution import DepsPlan, ExecutionRuntime, LifecyclePlan
+from forze.application.execution import DepsRegistry, ExecutionRuntime, LifecyclePlan
 from forze_meilisearch import (
     MeilisearchClient,
     MeilisearchConfig,
@@ -53,14 +53,14 @@ module = MeilisearchDepsModule(
 )
 
 runtime = ExecutionRuntime(
-    deps=DepsPlan.from_modules(module),
+    deps=DepsRegistry.from_modules(module).freeze(),
     lifecycle=LifecyclePlan.from_steps(
         meilisearch_lifecycle_step(
             url="http://localhost:7700",
             api_key="masterKey",
             config=MeilisearchConfig(timeout=30.0),
         )
-    ),
+    ).freeze(),
 )
 ```
 
@@ -137,7 +137,7 @@ Filters support a subset of `QueryFilterExpression` (`$eq`, `$neq`, order compar
 ## Federated search
 
 - **`merge="federation"`**: single `multi_search` with per-leg `federationOptions.weight` (from `SearchOptions.member_weights`; legs with weight ≤ 0 are skipped).
-- **`merge="rrf"`**: parallel per-leg `search`, merged with `SearchResultSnapshotCoordinator.weighted_rrf_merge_rows`, then caller sorts applied.
+- **`merge="rrf"`**: parallel per-leg `search`, merged with `SearchResultSnapshot.weighted_rrf_merge_rows`, then caller sorts applied.
 
 Snapshot fingerprints include `extras={"merge": "federation"}` or `extras={"merge": "rrf", "rrf_k": k}` so federation and RRF runs do not collide in Redis.
 

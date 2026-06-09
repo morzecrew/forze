@@ -1,19 +1,20 @@
-"""Port for HTTP-style idempotency handling."""
+"""Port for engine-level idempotency handling."""
 
-from typing import Awaitable, Protocol, runtime_checkable
+from collections.abc import Awaitable
+from typing import Protocol, runtime_checkable
 
-from .value_objects import IdempotencySnapshot
+from .value_objects import IdempotencyRecord
 
 # ----------------------- #
 
 
 @runtime_checkable
 class IdempotencyPort(Protocol):
-    """Contract for implementing idempotent request handling.
+    """Contract for storing and replaying the result of an idempotent operation.
 
-    Implementations are responsible for storing and retrieving response
-    snapshots keyed by an operation identifier, optional key, and payload
-    hash.
+    Implementations store a result record keyed by an operation identifier, an
+    idempotency key, and a payload hash, and replay it when a duplicate request
+    is detected.
     """
 
     def begin(
@@ -21,13 +22,15 @@ class IdempotencyPort(Protocol):
         op: str,
         key: str | None,
         payload_hash: str,
-    ) -> Awaitable[IdempotencySnapshot | None]:
-        """Start an idempotent operation and return a cached snapshot if any.
+    ) -> Awaitable[IdempotencyRecord | None]:
+        """Claim an idempotent operation, returning a stored record if complete.
 
         :param op: Operation name.
-        :param key: Optional idempotency key provided by the caller.
-        :param payload_hash: Hash of the normalized request payload.
-        :returns: A previously stored :class:`IdempotencySnapshot` or ``None``.
+        :param key: Idempotency key supplied by the boundary (``None`` skips idempotency).
+        :param payload_hash: Hash of the normalized operation arguments.
+        :returns: A stored :class:`IdempotencyRecord` when the operation already
+            completed, else ``None`` after a fresh claim. Raises on a payload-hash
+            mismatch or an in-progress duplicate.
         """
         ...  # pragma: no cover
 
@@ -36,7 +39,7 @@ class IdempotencyPort(Protocol):
         op: str,
         key: str | None,
         payload_hash: str,
-        snapshot: IdempotencySnapshot,
+        record: IdempotencyRecord,
     ) -> Awaitable[None]:
-        """Persist the snapshot for the given idempotent operation."""
+        """Persist the result record for a completed idempotent operation."""
         ...  # pragma: no cover

@@ -3,6 +3,7 @@ from uuid import UUID
 
 from ..value_objects import (
     AuthnIdentity,
+    IssuedInvite,
     PasswordCredentials,
 )
 
@@ -24,6 +25,12 @@ class PasswordAccountProvisioningPort(Protocol):  # pragma: no cover
         principal_id: UUID,
         credentials: PasswordCredentials,
     ) -> Awaitable[None]: ...
+
+    def issue_password_invite(
+        self,
+        operator: AuthnIdentity,  # noqa: F841
+        principal_id: UUID,
+    ) -> Awaitable[IssuedInvite]: ...
 
     def accept_invite_with_password(
         self,

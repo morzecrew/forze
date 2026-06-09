@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 
 from forze.base.exceptions import CoreException
-from tests.support.execution_context import context_from_deps, context_from_modules, frozen_deps_from_deps
+from tests.support.execution_context import context_from_deps
 from pydantic import BaseModel
 
 from forze.application.contracts.analytics import (

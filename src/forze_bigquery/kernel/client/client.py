@@ -16,6 +16,7 @@ from pydantic import BaseModel
 
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
+from forze.base.primitives.owned_temp_path import OwnedTempPath
 
 from .errors import exc_interceptor
 from .port import BigQueryClientPort
@@ -43,7 +44,10 @@ class BigQueryClient(BigQueryClientPort):
 
     __project_id: str | None = attrs.field(default=None, init=False)
     __config: BigQueryConfig | None = attrs.field(default=None, init=False)
-    __service_file: str | None = attrs.field(default=None, init=False)
+    __credential_path: OwnedTempPath = attrs.field(
+        factory=OwnedTempPath.empty,
+        init=False,
+    )
     __api_root: str | None = attrs.field(default=None, init=False)
     __session: Any = attrs.field(default=None, init=False)
 
@@ -54,6 +58,7 @@ class BigQueryClient(BigQueryClientPort):
         project_id: str,
         *,
         service_file: str | None = None,
+        service_file_owned: bool = False,
         config: BigQueryConfig | None = None,
     ) -> None:
         """Configure project, credentials, and shared HTTP session."""
@@ -63,7 +68,10 @@ class BigQueryClient(BigQueryClientPort):
 
         self.__project_id = project_id
         self.__config = config or BigQueryConfig()
-        self.__service_file = service_file
+        self.__credential_path = OwnedTempPath(
+            path=service_file,
+            owned=service_file_owned,
+        )
 
         if host := os.environ.get("BIGQUERY_EMULATOR_HOST"):
             self.__api_root = host.rstrip("/")
@@ -73,14 +81,40 @@ class BigQueryClient(BigQueryClientPort):
     # ....................... #
 
     async def close(self) -> None:
-        session = self.__session
+        session_error: Exception | None = None
+        cred_error: Exception | None = None
 
-        if session is not None:
-            await session.close()
+        try:
+            session = self.__session
+
+            if session is not None:
+                await session.close()
+
+        except Exception as exc:
+            session_error = exc
+
+        finally:
             self.__session = None
 
-        self.__project_id = None
-        self.__config = None
+        try:
+            self.__credential_path.release()
+
+        except Exception as exc:
+            cred_error = exc
+
+        finally:
+            self.__credential_path = OwnedTempPath.empty()
+            self.__project_id = None
+            self.__config = None
+            self.__api_root = None
+
+        errors = [e for e in (session_error, cred_error) if e is not None]
+
+        if len(errors) == 1:
+            raise errors[0]
+
+        if len(errors) > 1:
+            raise ExceptionGroup("BigQuery client close failed", errors) from errors[0]
 
     # ....................... #
 
@@ -180,7 +214,7 @@ class BigQueryClient(BigQueryClientPort):
         return Job(
             job_id=job_id,
             project=self.__require_project_id(),
-            service_file=self.__service_file,
+            service_file=self.__credential_path.path,
             session=self.__require_session(),
             api_root=self.__api_root,
         )
@@ -192,7 +226,7 @@ class BigQueryClient(BigQueryClientPort):
             dataset_name=dataset,
             table_name=table,
             project=self.__require_project_id(),
-            service_file=self.__service_file,
+            service_file=self.__credential_path.path,
             session=self.__require_session(),
             api_root=self.__api_root,
         )

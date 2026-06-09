@@ -3,10 +3,13 @@
 from pydantic import SecretStr
 
 from forze.base.primitives.fingerprint import (
+    build_routing_fingerprint,
     connection_string_fingerprint,
     gcp_credential_dedup_tag,
     secret_dedup_fingerprint,
     stable_fingerprint,
+    stable_json_bytes,
+    stable_payload_fingerprint,
 )
 from forze_clickhouse.kernel.client.routing_credentials import (
     ClickHouseRoutingCredentials,
@@ -14,6 +17,33 @@ from forze_clickhouse.kernel.client.routing_credentials import (
 )
 
 # ----------------------- #
+
+
+def test_stable_json_bytes_is_key_order_independent() -> None:
+    assert stable_json_bytes({"a": 1, "b": 2}) == stable_json_bytes({"b": 2, "a": 1})
+
+
+def test_stable_json_bytes_falls_back_to_str() -> None:
+    # Non-JSON-native values are coerced via ``default=str`` rather than raising.
+    assert stable_json_bytes({"x": object}) == stable_json_bytes({"x": object})
+
+
+def test_stable_payload_fingerprint_is_deterministic_and_prefixed() -> None:
+    fp = stable_payload_fingerprint({"b": 2, "a": 1})
+
+    assert fp == stable_payload_fingerprint({"a": 1, "b": 2})
+    assert fp.startswith("sha256:")
+
+
+def test_stable_payload_fingerprint_differs_by_content() -> None:
+    assert stable_payload_fingerprint({"a": 1}) != stable_payload_fingerprint({"a": 2})
+
+
+def test_stable_payload_fingerprint_bare_digest_when_no_prefix() -> None:
+    bare = stable_payload_fingerprint({"a": 1}, prefix="")
+
+    assert ":" not in bare
+    assert len(bare) == 64  # sha256 hex
 
 
 def test_stable_fingerprint_is_deterministic() -> None:
@@ -102,3 +132,56 @@ def test_clickhouse_routing_fingerprint_excludes_plaintext_password() -> None:
     fp = routing_fingerprint(creds)
 
     assert password not in fp
+
+
+# ....................... #
+
+
+def test_build_routing_fingerprint_is_deterministic() -> None:
+    a = build_routing_fingerprint(public=["host", "5432"], secret=["pw"])
+    b = build_routing_fingerprint(public=["host", "5432"], secret=["pw"])
+
+    assert a == b
+
+
+def test_build_routing_fingerprint_differs_by_public_field() -> None:
+    a = build_routing_fingerprint(public=["host-a"], secret=["pw"])
+    b = build_routing_fingerprint(public=["host-b"], secret=["pw"])
+
+    assert a != b
+
+
+def test_build_routing_fingerprint_detects_secret_rotation() -> None:
+    a = build_routing_fingerprint(public=["host"], secret=["pw-a"])
+    b = build_routing_fingerprint(public=["host"], secret=["pw-b"])
+
+    assert a != b
+
+
+def test_build_routing_fingerprint_ignores_empty_secrets() -> None:
+    base = build_routing_fingerprint(public=["host"])
+
+    assert base == build_routing_fingerprint(public=["host"], secret=[None])
+    assert base == build_routing_fingerprint(public=["host"], secret=[""])
+    assert base == build_routing_fingerprint(public=["host"], secret=[None, ""])
+
+
+def test_build_routing_fingerprint_presence_of_secret_changes_key() -> None:
+    assert build_routing_fingerprint(public=["host"]) != build_routing_fingerprint(
+        public=["host"],
+        secret=["pw"],
+    )
+
+
+def test_build_routing_fingerprint_never_embeds_plaintext_secret() -> None:
+    secret = "super-secret-value"
+    fp = build_routing_fingerprint(public=["host"], secret=[secret])
+
+    assert secret not in fp
+
+
+def test_build_routing_fingerprint_accepts_secret_str() -> None:
+    assert build_routing_fingerprint(
+        public=["h"],
+        secret=[SecretStr("pw")],
+    ) == build_routing_fingerprint(public=["h"], secret=["pw"])

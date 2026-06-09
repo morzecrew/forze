@@ -18,9 +18,11 @@ uv add 'forze[oidc]'
 
 | Requirement | Notes |
 |-------------|-------|
-| Package extra | `oidc` installs `pyjwt[crypto]` for JWS verification and JWKS fetching. |
+| Package extra | `oidc` installs `pyjwt[crypto]` for JWS verification and JWKS fetching, plus `httpx` for `forze_identity.builtin.idp` authorization-code exchange helpers (VK ID, Telegram Login). |
 | Required service | The IdP (issuer URL + JWKS URI). No local service runs. |
 | Local development dependency | None beyond the extra; tests use `StaticKeyProvider` to avoid network. |
+
+Shipped IdP presets (`forze_identity.builtin.idp.google`, `.vk`, `.telegram`) wrap this package with issuer/JWKS defaults and bootstrap-route wiring — see [External bootstrap → Forze JWT](../recipes/external-bootstrap-forze-jwt.md).
 
 Importing any module from `forze_identity.oidc` calls `require_oidc()` and raises a clear `RuntimeError("forze_identity.oidc requires 'forze[oidc]' extra")` when the extra is missing.
 
@@ -70,6 +72,24 @@ casdoor_mapper = OidcClaimMapper(tenant_claim="organization")
 | `issued_at_claim` / `expires_at_claim` | `"iat"` / `"exp"` | Coerced to `datetime` when present as integer/float. |
 | `tenant_claim` | `None` | When set, the mapper copies this claim into `VerifiedAssertion.issuer_tenant_hint` for later tenancy resolution. |
 
+### IdP preset (issuer + JWKS + audience)
+
+`OidcIdpPreset` and `ConfigurableOidcIdpVerifier` bundle the usual JWKS-backed verifier wiring:
+
+```python
+from forze_identity.oidc import ConfigurableOidcIdpVerifier, OidcIdpPreset
+
+preset = OidcIdpPreset(
+    issuer="https://idp.example.com",
+    jwks_uri="https://idp.example.com/.well-known/jwks.json",
+    audience="my-client-id",
+)
+
+verifier_factory = ConfigurableOidcIdpVerifier(preset=preset)
+```
+
+Vendor-specific defaults (Google, VK ID, Telegram Login) live under `forze_identity.builtin.idp`; PKCE helpers live in `forze_identity.oauth`.
+
 ### Verifier
 
 `OidcTokenVerifier` validates signature, issuer, audience, and expiry with the configured leeway, then delegates the claim payload to the mapper:
@@ -93,12 +113,17 @@ oidc_verifier = OidcTokenVerifier(
 |-------|---------|-------|
 | `key_provider` | required | Any `SigningKeyProviderPort`. |
 | `algorithms` | `("RS256",)` | JWS algorithm allowlist; rejects everything else. |
-| `audience` | `None` | Required `aud` value(s); skip enforcement by leaving `None`. |
-| `issuer` | `None` | Required `iss` value; skip enforcement by leaving `None`. |
+| `audience` | `None` | Required `aud` value(s); skip enforcement by leaving `None` (dev/tests only). |
+| `issuer` | `None` | Required `iss` value; skip enforcement by leaving `None` (dev/tests only). |
+| `enforce_issuer_and_audience` | `True` | When `True` (default), construction fails unless both `issuer` and `audience` are set. Pass `False` in tests or minimal dev setups that intentionally omit issuer/audience checks. |
 | `leeway` | `timedelta(seconds=10)` | Clock-skew tolerance for `iat`/`exp`/`nbf`. |
 | `claim_mapper` | `OidcClaimMapper()` | Maps the verified payload to `VerifiedAssertion`. |
 
+JWKS resolution runs in a worker thread (`asyncio.to_thread`) so cache misses do not block the event loop.
+
 The verifier raises `AuthenticationError(code="oidc_token_expired")` for expired tokens and `AuthenticationError(code="invalid_oidc_token")` for any other validation failure.
+
+Forze `revoke_tokens` / logout does **not** invalidate third-party access JWTs. End the IdP session and rely on `PrincipalEligibilityPort` for mapped principals that are deactivated in Forze.
 
 ## Wiring into AuthnDepsModule
 
@@ -132,6 +157,7 @@ class ConfigurableOidcTokenVerifier:
             algorithms=("RS256",),
             audience=self.audience,
             issuer=self.issuer,
+            enforce_issuer_and_audience=True,
         )
 
 

@@ -65,11 +65,17 @@ nav:
     - Authn, authz, and tenancy (FastAPI): recipes/authn-authz-tenancy-fastapi.md
     - External IdPs over OIDC: recipes/external-idp-oidc.md
     - Local identity (demo / MVP): recipes/local-identity.md
+    - External bootstrap → Forze JWT: recipes/external-bootstrap-forze-jwt.md
+    - Google Sign-In (OIDC): recipes/google-oidc.md
+    - VK ID (OIDC): recipes/vk-id.md
+    - Telegram Login (OIDC): recipes/telegram-login-oidc.md
     - Read-only Document API: recipes/read-only-document-api.md
     - Add Caching: recipes/add-caching.md
     - Add Idempotency: recipes/add-idempotency.md
     - Background Workflow: recipes/background-workflow.md
     - Scheduled Queue Jobs: recipes/scheduled-queue-jobs.md
+    - Transactional outbox: recipes/transactional-outbox.md
+    - Transactional notifications: recipes/transactional-notifications.md
 
   - Reference:
     - Overview: reference/index.md
@@ -91,10 +97,16 @@ nav:
       - Durable workflow schedule: core-package/contracts/durable-workflow-schedule.md
       - Durable function: core-package/contracts/durable-function.md
       - Idempotency: core-package/contracts/idempotency.md
+      - Deterministic time & ids: core-package/contracts/clock.md
+      - Saga: core-package/contracts/saga.md
+      - Outbox: core-package/contracts/outbox.md
       - Analytics: core-package/contracts/analytics.md
+      - HTTP: core-package/contracts/http.md
     - Execution: reference/execution.md
     - Middleware & Plans: reference/middleware-plans.md
+    - Observability (OpenTelemetry): reference/observability.md
     - Capability execution: reference/capability-execution.md
+    - Kits: reference/kits.md
     - Composition & Mapping: reference/composition.md
     - Query Syntax: reference/query-syntax.md
 
@@ -108,7 +120,9 @@ nav:
     - Google BigQuery: integrations/bigquery.md
     - ClickHouse: integrations/clickhouse.md
     - MongoDB: integrations/mongo.md
+    - Neo4j (graph): integrations/neo4j.md
     - Meilisearch: integrations/meilisearch.md
+    - HTTP (outbound): integrations/http.md
     - Cloud Firestore: integrations/firestore.md
     - Temporal: integrations/temporal.md
     - Inngest: integrations/inngest.md

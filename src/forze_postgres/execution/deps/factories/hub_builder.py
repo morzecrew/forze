@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING, Any, Literal
 from forze.application.contracts.embeddings import EmbeddingsSpec
 from forze.application.contracts.search import HubSearchSpec
 from forze.base.exceptions import exc
-from forze.base.serialization import pydantic_field_names
+from forze.application.contracts.codecs import stored_field_names_for
 
 from ....adapters import HubLegRuntime
 from ..configs import PostgresHubSearchConfig
@@ -71,7 +71,7 @@ def build_hub_leg_runtimes(
             )
 
         if c.same_heap_as_hub:
-            hub_fields = pydantic_field_names(
+            hub_fields = stored_field_names_for(
                 spec.model_type,
                 include_computed=False,
             )

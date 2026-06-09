@@ -8,7 +8,7 @@ Repeated stage hooks, transaction setup, follow-up work, and operation wiring be
 
 Forze composition has three parts:
 
-1. `OperationRegistry`: maps operation keys to handler factories and owns per-operation `OperationPlan` instances (one of the [three execution plans](../reference/execution.md#three-execution-plans); dependency wiring and startup hooks use `DepsPlan` and `LifecyclePlan` on `ExecutionRuntime` instead).
+1. `OperationRegistry`: maps operation keys to handler factories and owns per-operation `OperationPlan` instances (one of the [three execution plans](../reference/execution.md#three-execution-plans); dependency wiring and startup hooks use frozen `DepsRegistry` and `LifecyclePlan` on `ExecutionRuntime` instead).
 2. `StrKeyNamespace` / `facade_op(...)`: keep facade operation names suffix-based while producing stable full keys.
 3. `OperationFacade`: resolves handlers from a frozen registry through a namespace-aware facade.
 
@@ -22,7 +22,7 @@ Forze composition has three parts:
 `OperationRegistry` holds handler factories and operation plans. Built-in helpers register standard document/search/storage/authn handlers; you add stages with `.bind(...)` then **freeze** before HTTP attach:
 
     :::python
-    from forze.application.composition.document import build_document_registry
+    from forze_kits.aggregates.document import build_document_registry
 
     registry = (
         build_document_registry(project_spec, project_dtos)
@@ -83,7 +83,7 @@ Stage hooks may raise; they do not replace the handler result. Capability metada
 | `on_failure` / `finally_` | Around the outer chain outcome | cleanup, error hooks |
 | `tx_before` | Inside the transaction, before the handler | locks, preconditions |
 | `on_success` (tx scope) | Inside the transaction, after successful handler | writes that must commit |
-| `after_commit` | After a successful root commit | notifications, event publishing |
+| `after_commit` | After a successful root commit | best-effort follow-up (prefer [transactional outbox](../recipes/transactional-outbox.md) + [notifications](../recipes/transactional-notifications.md) for reliable delivery) |
 | `on_success` (outer) | After everything else succeeded | out-of-tx follow-up work |
 
 Inspect merged plans on a frozen registry via internal explain helpers in tests, or trace resolution with `FrozenOperationRegistry.resolve`.
@@ -93,7 +93,7 @@ Inspect merged plans on a frozen registry via internal explain helpers in tests,
 Facades provide typed entry points over a **frozen** registry:
 
     :::python
-    from forze.application.composition.document import DocumentFacade, build_document_registry
+    from forze_kits.aggregates.document import DocumentFacade, build_document_registry
 
     registry = build_document_registry(project_spec, project_dtos).freeze()
     facade = DocumentFacade(
@@ -109,7 +109,7 @@ Built-in facades define operations with `facade_op(...)` descriptors on the clas
 ## Document and search composition
 
     :::python
-    from forze.application.composition.document import DocumentKernelOp, build_document_registry
+    from forze_kits.aggregates.document import DocumentKernelOp, build_document_registry
 
     registry = build_document_registry(project_spec, project_dtos)
     write_ops = [

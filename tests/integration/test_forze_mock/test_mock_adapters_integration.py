@@ -9,9 +9,9 @@ from pydantic import BaseModel
 from forze.application.contracts.document import DocumentSpec, DocumentWriteTypes
 from forze.application.contracts.search import SearchSpec
 from forze.application.contracts.storage import UploadedObject
-from forze.base.serialization import PydanticRecordMappingCodec
+from forze.base.serialization import PydanticModelCodec
 from forze.domain.models import BaseDTO, CreateDocumentCmd, ReadDocument
-from forze_patterns.soft_deletion.models import DocWithSoftDeletion
+from forze_kits.domain.soft_deletion.models import DocWithSoftDeletion
 from forze_mock import (
     MockCacheAdapter,
     MockDocumentAdapter,
@@ -92,7 +92,7 @@ async def test_mock_shared_state_document_search_storage_cache_and_queue() -> No
         state=state,
         namespace="jobs",
         codec=QueueSpec(
-            name="jobs", codec=PydanticRecordMappingCodec(model_type=_QMsg)
+            name="jobs", codec=PydanticModelCodec(model_type=_QMsg)
         ).codec,
     )
 

@@ -13,6 +13,8 @@ from ...services import (
     AccessTokenService,
     ApiKeyConfig,
     ApiKeyService,
+    InviteTokenConfig,
+    InviteTokenService,
     PasswordConfig,
     PasswordService,
     RefreshTokenConfig,
@@ -34,6 +36,7 @@ class AuthnKernelConfig:
 
     access_token_secret: bytes | None = attrs.field(
         default=None,
+        repr=False,
         validator=attrs.validators.optional(attrs.validators.min_len(32)),
     )
     """Minimum 32 bytes when set; required for token authentication and token lifecycle."""
@@ -43,6 +46,7 @@ class AuthnKernelConfig:
 
     refresh_token_pepper: bytes | None = attrs.field(
         default=None,
+        repr=False,
         validator=attrs.validators.optional(attrs.validators.min_len(32)),
     )
     """Minimum 32 bytes when set; required for token lifecycle."""
@@ -53,8 +57,19 @@ class AuthnKernelConfig:
     password: PasswordConfig | None = attrs.field(default=None)
     """When set, builds a single shared :class:`~forze_authn.services.password.PasswordService`."""
 
+    invite_token_pepper: bytes | None = attrs.field(
+        default=None,
+        repr=False,
+        validator=attrs.validators.optional(attrs.validators.min_len(32)),
+    )
+    """Minimum 32 bytes when set; required to issue/accept password provisioning invites."""
+
+    invite_token: InviteTokenConfig = attrs.field(factory=InviteTokenConfig)
+    """Password invite token service configuration."""
+
     api_key_pepper: bytes | None = attrs.field(
         default=None,
+        repr=False,
         validator=attrs.validators.optional(attrs.validators.min_len(32)),
     )
     """Minimum 32 bytes when set; required for API key authentication and API key lifecycle."""
@@ -78,6 +93,7 @@ class AuthnSharedServices:
     access_svc: AccessTokenService | None
     refresh_svc: RefreshTokenService | None
     password_svc: PasswordService | None
+    invite_svc: InviteTokenService | None
     api_key_svc: ApiKeyService | None
 
 
@@ -108,6 +124,14 @@ def build_authn_shared_services(kernel: AuthnKernelConfig) -> AuthnSharedService
         PasswordService(config=kernel.password) if kernel.password is not None else None
     )
 
+    invite_svc = (
+        InviteTokenService(
+            pepper=kernel.invite_token_pepper, config=kernel.invite_token
+        )
+        if kernel.invite_token_pepper is not None
+        else None
+    )
+
     api_key_svc = (
         ApiKeyService(pepper=kernel.api_key_pepper, config=kernel.api_key)
         if kernel.api_key_pepper is not None
@@ -118,6 +142,7 @@ def build_authn_shared_services(kernel: AuthnKernelConfig) -> AuthnSharedService
         access_svc=access_svc,
         refresh_svc=refresh_svc,
         password_svc=password_svc,
+        invite_svc=invite_svc,
         api_key_svc=api_key_svc,
     )
 
@@ -130,6 +155,7 @@ def validate_route_methods(
     methods: frozenset[AuthnMethod],
     *,
     skip_api_key_service: bool = False,
+    skip_token_service: bool = False,
 ) -> None:
     """Ensure each enabled method has the matching service in ``shared``."""
 
@@ -145,7 +171,7 @@ def validate_route_methods(
         msg = "'api_key' method requires kernel.api_key_pepper"
         raise exc.internal(msg)
 
-    if "token" in methods and shared.access_svc is None:
+    if "token" in methods and shared.access_svc is None and not skip_token_service:
         msg = "'token' method requires kernel.access_token_secret"
         raise exc.internal(msg)
 
@@ -162,16 +188,19 @@ def validate_shared_matches_route_sets(
     api_key_lifecycle: Collection[StrKey],
     password_account_provisioning: Collection[StrKey],
     api_key_verifier_overrides: Collection[StrKey] | None = None,
+    token_verifier_overrides: Collection[StrKey] | None = None,
 ) -> None:
     """Fail fast when routes require kernel sections that were not configured."""
 
-    override_routes = frozenset(api_key_verifier_overrides or ())
+    api_key_override_routes = frozenset(api_key_verifier_overrides or ())
+    token_override_routes = frozenset(token_verifier_overrides or ())
 
     for route, methods in authn.items():
         validate_route_methods(
             shared,
             methods,
-            skip_api_key_service=route in override_routes,
+            skip_api_key_service=route in api_key_override_routes,
+            skip_token_service=route in token_override_routes,
         )
 
     if token_lifecycle:

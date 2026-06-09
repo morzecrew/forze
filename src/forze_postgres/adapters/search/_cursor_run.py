@@ -16,11 +16,10 @@ from forze.application.contracts.querying import (
     CursorPaginationExpression,
     QueryFilterExpression,
     QuerySortExpression,
-    decode_keyset_v1,
-    encode_keyset_v1,
+    keyset_page_bounds,
     normalize_sorts_for_keyset,
     resolve_effective_sorts,
-    row_value_for_sort_key,
+    validate_cursor_token,
 )
 from forze.application.contracts.search import (
     SearchSpec,
@@ -29,7 +28,9 @@ from forze.application.contracts.search import (
 )
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
-from forze.base.serialization import pydantic_validate_many
+from forze.base.serialization import ModelCodec
+
+from ._materialize_hits import decode_search_hits
 from forze_postgres.kernel.sql import (
     build_order_by_sql,
     build_ranked_cursor_order_by_sql,
@@ -75,6 +76,7 @@ async def execute_projection_keyset_cursor[M: BaseModel](
     parsed_filters: Any,
     return_type: type[BaseModel] | None,
     return_fields: Sequence[str] | None,
+    trust_source: bool = False,
 ) -> CursorPage[Any]:
     """Keyset cursor on the projection relation only (empty search query)."""
 
@@ -127,19 +129,16 @@ async def execute_projection_keyset_cursor[M: BaseModel](
 
     if use_after or use_before:
         token = str(c["after" if use_after else "before"])
-        tk, td, tv = decode_keyset_v1(token)
-
-        if tk != sort_keys or len(td) != len(directions):
-            raise exc.internal("Cursor does not match current search sort")
-
-        for i, di in enumerate(directions):
-            if (td[i] or "").lower() != di:
-                raise exc.internal("Cursor does not match current search sort")
+        tv = validate_cursor_token(
+            token,
+            sort_keys=sort_keys,
+            directions=directions,
+        )
 
         sk, sp_seek = build_seek_condition(
             exprs,
             directions,
-            list(tv),
+            tv,
             "before" if use_before else "after",
         )
 
@@ -173,43 +172,25 @@ async def execute_projection_keyset_cursor[M: BaseModel](
         await gw.client.fetch_all(data_stmt, params, row_factory="dict")
     )  # type: ignore[assignment, arg-type]
 
-    if use_before:
-        raw_rows = list(reversed(raw_rows))
-
-    has_more = len(raw_rows) > lim
-    rows = raw_rows[:lim]
-
-    def _row_token_vals(row: JsonDict) -> list[Any]:
-        return [row_value_for_sort_key(row, k) for k in sort_keys]
-
-    if has_more and rows:
-        nxt = encode_keyset_v1(
-            sort_keys=sort_keys,
-            directions=directions,
-            values=_row_token_vals(rows[-1]),
-        )
-
-    else:
-        nxt = None
-
-    if rows and (use_after or (use_before and has_more)):
-        prv = encode_keyset_v1(
-            sort_keys=sort_keys,
-            directions=directions,
-            values=_row_token_vals(rows[0]),
-        )
-
-    else:
-        prv = None
+    rows, has_more, nxt, prv = keyset_page_bounds(
+        raw_rows,
+        lim,
+        sort_keys=sort_keys,
+        directions=directions,
+        use_after=use_after,
+        use_before=use_before,
+    )
 
     return _cursor_page_from_rows(
         rows,
         return_type=return_type,
         return_fields=return_fields,
         model_type=gw.model_type,
+        codec=spec.resolved_read_codec,
         next_cursor=nxt,
         prev_cursor=prv,
         has_more=has_more,
+        trust_source=trust_source,
     )
 
 
@@ -226,6 +207,7 @@ async def execute_ranked_pipeline_cursor[M: BaseModel](
     spec: SearchSpec[Any],
     return_type: type[BaseModel] | None,
     return_fields: Sequence[str] | None,
+    trust_source: bool = False,
 ) -> CursorPage[Any]:
     """Keyset cursor over a ranked projection + index-heap pipeline."""
 
@@ -269,19 +251,16 @@ async def execute_ranked_pipeline_cursor[M: BaseModel](
 
     if use_after or use_before:
         token = str(c["after" if use_after else "before"])
-        tk, td, tv = decode_keyset_v1(token)
-
-        if tk != sort_keys or len(td) != len(directions):
-            raise exc.internal("Cursor does not match current search sort")
-
-        for i, di in enumerate(directions):
-            if (td[i] or "").lower() != di:
-                raise exc.internal("Cursor does not match current search sort")
+        tv = validate_cursor_token(
+            token,
+            sort_keys=sort_keys,
+            directions=directions,
+        )
 
         sk, sp_seek = build_seek_condition(
             exprs,
             directions,
-            list(tv),
+            tv,
             "before" if use_before else "after",
         )
 
@@ -348,43 +327,25 @@ async def execute_ranked_pipeline_cursor[M: BaseModel](
         await gw.client.fetch_all(data_stmt, params, row_factory="dict")
     )  # type: ignore[assignment, arg-type]
 
-    if use_before:
-        raw_rows = list(reversed(raw_rows))
-
-    has_more = len(raw_rows) > lim
-    rows = raw_rows[:lim]
-
-    def _row_token_vals(row: JsonDict) -> list[Any]:
-        return [row_value_for_sort_key(row, k) for k in sort_keys]
-
-    if has_more and rows:
-        nxt = encode_keyset_v1(
-            sort_keys=sort_keys,
-            directions=directions,
-            values=_row_token_vals(rows[-1]),
-        )
-
-    else:
-        nxt = None
-
-    if rows and (use_after or (use_before and has_more)):
-        prv = encode_keyset_v1(
-            sort_keys=sort_keys,
-            directions=directions,
-            values=_row_token_vals(rows[0]),
-        )
-
-    else:
-        prv = None
+    rows, has_more, nxt, prv = keyset_page_bounds(
+        raw_rows,
+        lim,
+        sort_keys=sort_keys,
+        directions=directions,
+        use_after=use_after,
+        use_before=use_before,
+    )
 
     return _cursor_page_from_rows(
         rows,
         return_type=return_type,
         return_fields=return_fields,
         model_type=gw.model_type,
+        codec=spec.resolved_read_codec,
         next_cursor=nxt,
         prev_cursor=prv,
         has_more=has_more,
+        trust_source=trust_source,
     )
 
 
@@ -397,20 +358,25 @@ def _cursor_page_from_rows(
     return_type: type[BaseModel] | None,
     return_fields: Sequence[str] | None,
     model_type: type[BaseModel],
+    codec: ModelCodec[Any, Any],
     next_cursor: str | None,
     prev_cursor: str | None,
     has_more: bool,
+    trust_source: bool = False,
 ) -> CursorPage[Any]:
     hits: list[Any]
 
-    if return_type is not None:
-        hits = pydantic_validate_many(return_type, rows)
-
-    elif return_fields is not None:
+    if return_fields is not None:
         hits = [{k: r.get(k, None) for k in return_fields} for r in rows]
 
     else:
-        hits = pydantic_validate_many(model_type, rows)
+        hits = decode_search_hits(
+            rows=rows,
+            model_type=model_type,
+            codec=codec,
+            return_type=return_type,
+            trust_source=trust_source,
+        )
 
     return CursorPage(
         hits=hits,

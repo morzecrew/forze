@@ -16,25 +16,22 @@ from forze.application.contracts.querying import (
     CursorPaginationExpression,
     QueryFilterExpression,
     QuerySortExpression,
-    decode_keyset_v1,
-    encode_keyset_v1,
-    row_value_for_sort_key,
+    keyset_page_bounds,
+    validate_cursor_token,
 )
 from forze.application.contracts.search import (
     SearchOptions,
     cursor_return_fields_for_select,
-    normalize_search_queries,
-    prepare_hub_search_options,
 )
-from forze.base.exceptions import exc
-from forze.base.primitives import JsonDict
-from forze.base.serialization import pydantic_validate_many
-from forze_postgres.kernel.sql import build_seek_condition
-from forze_postgres.kernel.sql.query.nested import sort_key_expr
 
 from .._cursor_run import parse_search_cursor
+from .._materialize_hits import decode_search_hits, search_trust_source
+from forze_postgres.kernel.sql import build_ranked_cursor_order_by_sql, build_seek_condition
+from forze_postgres.kernel.sql.query.nested import sort_key_expr
+
 from .constants import COMBO_ALIAS, HUB_RANK
-from .sql import HubSearchSqlMixin
+from .parallel import HubParallelSearchMixin
+from .plan import build_hub_search_plan
 
 # ----------------------- #
 
@@ -43,7 +40,7 @@ T = TypeVar("T", bound=BaseModel)
 # ....................... #
 
 
-class HubSearchCursorMixin[M: BaseModel](HubSearchSqlMixin[M]):
+class HubSearchCursorMixin[T: BaseModel](HubParallelSearchMixin[T]):
     """Keyset cursor over the hub ``combo`` CTE."""
 
     async def _cursor_search_impl(
@@ -73,26 +70,42 @@ class HubSearchCursorMixin[M: BaseModel](HubSearchSqlMixin[M]):
         internally and stripped from the response.
         """
 
-        terms = normalize_search_queries(query)
-
-        leg_options, member_weights_list = prepare_hub_search_options(
-            self._hub_host.hub_spec,
-            options,
+        plan = await build_hub_search_plan(
+            self._hub_host,
+            query=query,
+            options=options,
+            sorts=sorts,
+            pagination_or_cursor=dict(cursor or {}),
+            snapshot=None,
+            result_snapshot=None,
+            mode="cursor",
         )
+
+        if plan.use_parallel:
+            return await self._hub_parallel_cursor_search(
+                plan=plan,
+                filters=filters,
+                cursor=cursor,
+                return_type=return_type,
+                return_fields=return_fields,
+                hub_spec=self._hub_host.hub_spec,
+            )
 
         c = dict(cursor or {})
         lim, use_after, use_before = parse_search_cursor(cursor)
 
-        with_clause, params, do_legs = await self._hub_build_with_clause(
-            query_terms=terms,
-            filters=filters,
-            leg_options=leg_options,
-            member_weights_list=member_weights_list,
+        combo_cap = plan.resolved_combo if plan.terms else None
+
+        with_clause, params, do_legs, _count_rel, data_relation = (
+            await self._hub_build_with_clause_from_plan(
+                plan,
+                filters=filters,
+                combo_limit=combo_cap,
+            )
         )
 
-        key_spec = self._hub_cursor_key_spec(do_legs=do_legs, sorts=sorts)
-        sort_keys = [k for k, _ in key_spec]
-        directions = [d for _, d in key_spec]
+        sort_keys = [k for k, _ in plan.order_key_spec]
+        directions = [d for _, d in plan.order_key_spec]
 
         types = await self._hub_host.column_types()
         exprs: list[sql.Composable] = []
@@ -115,29 +128,27 @@ class HubSearchCursorMixin[M: BaseModel](HubSearchSqlMixin[M]):
 
         if use_after or use_before:
             token = str(c["after" if use_after else "before"])
-            tk, td, tv = decode_keyset_v1(token)
-
-            if tk != sort_keys or len(td) != len(directions):
-                raise exc.internal("Cursor does not match current search sort")
-
-            for i, di in enumerate(directions):
-                if (td[i] or "").lower() != di:
-                    raise exc.internal("Cursor does not match current search sort")
+            tv = validate_cursor_token(
+                token,
+                sort_keys=sort_keys,
+                directions=directions,
+            )
 
             sk, sp = build_seek_condition(
                 exprs,
                 directions,
-                list(tv),
+                tv,
                 "before" if use_before else "after",
             )
 
             where_fin = sk
             params = params + sp
 
-        order_sql = self._hub_cursor_order_sql(
+        order_sql = build_ranked_cursor_order_by_sql(
             exprs,
             sort_keys,
             directions,
+            rank_key=HUB_RANK,
             flip=use_before,
         )
 
@@ -187,7 +198,7 @@ class HubSearchCursorMixin[M: BaseModel](HubSearchSqlMixin[M]):
         ).format(
             with_clause=with_clause,
             cols=cols,
-            combo=sql.Identifier("combo"),
+            combo=sql.Identifier(data_relation),
             ca=sql.Identifier(COMBO_ALIAS),
             w=where_fin,
             order=order_sql,
@@ -204,44 +215,17 @@ class HubSearchCursorMixin[M: BaseModel](HubSearchSqlMixin[M]):
             ),
         )  # type: ignore[assignment, arg-type]
 
-        if use_before:
-            raw_rows = list(reversed(raw_rows))
+        rows, has_more, nxt, prv = keyset_page_bounds(
+            raw_rows,
+            lim,
+            sort_keys=sort_keys,
+            directions=directions,
+            use_after=use_after,
+            use_before=use_before,
+        )
 
-        has_more = len(raw_rows) > lim
-        rows = raw_rows[:lim]
+        trust = search_trust_source(self._hub_host.read_validation)
 
-        def _row_token_vals(row: JsonDict) -> list[Any]:
-            return [row_value_for_sort_key(row, k) for k in sort_keys]
-
-        if has_more and rows:
-            nxt = encode_keyset_v1(
-                sort_keys=sort_keys,
-                directions=directions,
-                values=_row_token_vals(rows[-1]),
-            )
-
-        else:
-            nxt = None
-
-        if rows and (use_after or (use_before and has_more)):
-            prv = encode_keyset_v1(
-                sort_keys=sort_keys,
-                directions=directions,
-                values=_row_token_vals(rows[0]),
-            )
-
-        else:
-            prv = None
-
-        if return_type is not None:
-            v = pydantic_validate_many(return_type, rows)
-
-            return CursorPage(
-                hits=v,
-                next_cursor=nxt,
-                prev_cursor=prv,
-                has_more=has_more,
-            )
         if return_fields is not None:
             rj = [{k: r.get(k, None) for k in return_fields} for r in rows]
 
@@ -252,10 +236,16 @@ class HubSearchCursorMixin[M: BaseModel](HubSearchSqlMixin[M]):
                 has_more=has_more,
             )
 
-        m = pydantic_validate_many(self._hub_host.model_type, rows)
+        hits = decode_search_hits(
+            rows=rows,
+            model_type=self._hub_host.model_type,
+            codec=self._hub_host.hub_spec.resolved_read_codec,
+            return_type=return_type,
+            trust_source=trust,
+        )
 
         return CursorPage(
-            hits=m,
+            hits=hits,
             next_cursor=nxt,
             prev_cursor=prv,
             has_more=has_more,

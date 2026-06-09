@@ -1,15 +1,27 @@
-from datetime import datetime, timedelta
+from datetime import timedelta
 from typing import Any, Mapping, final
 
 import attrs
 from botocore.config import Config as AioConfig
 from pydantic import SecretStr
 
-from forze.base.serialization import pydantic_secret_converter
+from forze.application.integrations.storage.client import (
+    ObjectStorageHead,
+    ObjectStorageListedObject,
+)
+from forze.base.exceptions import exc
+from forze.base.serialization.pydantic import pydantic_secret_converter
 
 # ----------------------- #
 
+S3Head = ObjectStorageHead
+S3ListedObject = ObjectStorageListedObject
+
+# ....................... #
+
 _DEFAULT_RETRIES: Mapping[str, Any] = {"max_attempts": 3, "mode": "adaptive"}
+
+# ....................... #
 
 
 @final
@@ -39,6 +51,18 @@ class S3Config:
 
     # ....................... #
 
+    def __attrs_post_init__(self) -> None:
+        if (
+            self.connect_timeout is not None
+            and self.connect_timeout.total_seconds() <= 0
+        ):
+            raise exc.configuration("Connect timeout must be positive")
+
+        if self.read_timeout is not None and self.read_timeout.total_seconds() <= 0:
+            raise exc.configuration("Read timeout must be positive")
+
+    # ....................... #
+
     def to_aio_config(self) -> AioConfig:
         """Build botocore :class:`~botocore.config.Config` for aioboto3."""
 
@@ -52,30 +76,6 @@ class S3Config:
                 params[key] = val.total_seconds()
 
         return AioConfig(**params)
-
-
-# ....................... #
-
-
-@final
-@attrs.define(slots=True, kw_only=True, frozen=True)
-class S3Head:
-    """Metadata returned by an S3 ``HeadObject`` call."""
-
-    content_type: str = "application/octet-stream"
-    """MIME type of the object."""
-
-    metadata: Mapping[str, str] = attrs.field(factory=dict[str, str])
-    """User-defined metadata key-value pairs."""
-
-    size: int = 0
-    """Content length in bytes."""
-
-    last_modified: datetime | None = None
-    """Timestamp of the last modification."""
-
-    etag: str = ""
-    """Entity tag with surrounding quotes stripped."""
 
 
 # ....................... #

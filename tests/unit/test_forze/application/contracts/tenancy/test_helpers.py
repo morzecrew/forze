@@ -157,3 +157,90 @@ class TestEnsureStructuredFingerprint:
 
         assert fp1 == fp2 == "fp"
         assert calls == 1
+
+    @pytest.mark.asyncio
+    async def test_ttl_recompute_evicts_client_on_change(self) -> None:
+        stored: dict[UUID, str] = {}
+        evicted: list[UUID] = []
+        values = iter(["fp-old", "fp-new"])
+
+        async def fingerprint() -> str:
+            return next(values)
+
+        async def on_change(tenant_id: UUID) -> None:
+            evicted.append(tenant_id)
+
+        first = await ensure_structured_fingerprint(
+            stored.get,
+            stored.__setitem__,
+            tenant_id=_TID,
+            fingerprint=fingerprint,
+        )
+        second = await ensure_structured_fingerprint(
+            stored.get,
+            stored.__setitem__,
+            tenant_id=_TID,
+            fingerprint=fingerprint,
+            is_expired=lambda _t: True,
+            on_change=on_change,
+        )
+
+        assert first == "fp-old"
+        assert second == "fp-new"
+        assert evicted == [_TID]
+        assert stored[_TID] == "fp-new"
+
+    @pytest.mark.asyncio
+    async def test_ttl_recompute_keeps_client_when_unchanged(self) -> None:
+        stored: dict[UUID, str] = {}
+        evicted: list[UUID] = []
+
+        async def fingerprint() -> str:
+            return "stable"
+
+        async def on_change(tenant_id: UUID) -> None:
+            evicted.append(tenant_id)
+
+        await ensure_structured_fingerprint(
+            stored.get,
+            stored.__setitem__,
+            tenant_id=_TID,
+            fingerprint=fingerprint,
+        )
+        result = await ensure_structured_fingerprint(
+            stored.get,
+            stored.__setitem__,
+            tenant_id=_TID,
+            fingerprint=fingerprint,
+            is_expired=lambda _t: True,
+            on_change=on_change,
+        )
+
+        assert result == "stable"
+        assert evicted == []  # unchanged credentials must not evict the client
+
+    @pytest.mark.asyncio
+    async def test_not_expired_returns_cached_without_recompute(self) -> None:
+        stored: dict[UUID, str] = {}
+        calls = 0
+
+        async def fingerprint() -> str:
+            nonlocal calls
+            calls += 1
+            return "fp"
+
+        await ensure_structured_fingerprint(
+            stored.get,
+            stored.__setitem__,
+            tenant_id=_TID,
+            fingerprint=fingerprint,
+        )
+        await ensure_structured_fingerprint(
+            stored.get,
+            stored.__setitem__,
+            tenant_id=_TID,
+            fingerprint=fingerprint,
+            is_expired=lambda _t: False,
+        )
+
+        assert calls == 1  # not expired -> cached value returned, no recompute

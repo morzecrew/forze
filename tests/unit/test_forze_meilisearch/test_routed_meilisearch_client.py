@@ -73,7 +73,7 @@ async def test_routed_meilisearch_eviction() -> None:
     def _make_client() -> MagicMock:
         inst = MagicMock()
         inst.initialize = AsyncMock()
-        inst.aclose = AsyncMock()
+        inst.close = AsyncMock()
         inst.health = AsyncMock(return_value=True)
         instances.append(inst)
         return inst
@@ -86,10 +86,10 @@ async def test_routed_meilisearch_eviction() -> None:
         await routed.health()
         cur = _T2
         await routed.health()
-        assert instances[0].aclose.await_count == 1
+        assert instances[0].close.await_count == 1
 
     await routed.close()
-    assert instances[1].aclose.await_count == 1
+    assert instances[1].close.await_count == 1
 
 
 def test_routed_meilisearch_rejects_zero_max_cached_tenants() -> None:

@@ -220,3 +220,6 @@ junit.xml
 
 pages_v2/docs/_diagrams/
 pages_v2/site/
+# MemPalace per-project files (issue #185)
+mempalace.yaml
+entities.json

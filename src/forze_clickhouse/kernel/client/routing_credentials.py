@@ -2,7 +2,7 @@
 
 from pydantic import BaseModel, Field, SecretStr
 
-from forze.base.primitives.fingerprint import secret_dedup_fingerprint, stable_fingerprint
+from forze.base.primitives.fingerprint import build_routing_fingerprint
 
 from .value_objects import ClickHouseConfig, resolve_password
 
@@ -40,11 +40,13 @@ def routing_fingerprint(creds: ClickHouseRoutingCredentials) -> str:
 
     password = resolve_password(creds.password)
 
-    return stable_fingerprint(
-        creds.host,
-        str(creds.port),
-        creds.username,
-        creds.database,
-        str(creds.secure),
-        secret_dedup_fingerprint(password or None),
+    return build_routing_fingerprint(
+        public=[
+            creds.host,
+            str(creds.port),
+            creds.username,
+            creds.database,
+            str(creds.secure),
+        ],
+        secret=[password or None],
     )

@@ -7,7 +7,7 @@ from pydantic import BaseModel
 
 from forze_rabbitmq.adapters import RabbitMQQueueAdapter, RabbitMQQueueCodec
 from forze_rabbitmq.kernel.client import RabbitMQClient, RabbitMQQueueMessage
-from forze.base.serialization import PydanticRecordMappingCodec
+from forze.base.serialization import PydanticModelCodec
 
 
 class _Payload(BaseModel):
@@ -15,7 +15,7 @@ class _Payload(BaseModel):
 
 
 def test_queue_codec_encode_decode_roundtrip() -> None:
-    codec = RabbitMQQueueCodec(payload_codec=PydanticRecordMappingCodec(_Payload))
+    codec = RabbitMQQueueCodec(payload_codec=PydanticModelCodec(_Payload))
     ts = datetime(2025, 1, 1, 12, 0, 0)
 
     encoded = codec.encode(_Payload(value="hello"))
@@ -45,7 +45,7 @@ async def test_queue_adapter_enqueue_forwards_delayed_delivery() -> None:
     client.enqueue = AsyncMock(return_value="msg-1")
     adapter = RabbitMQQueueAdapter(
         client=client,
-        codec=RabbitMQQueueCodec(payload_codec=PydanticRecordMappingCodec(_Payload)),
+        codec=RabbitMQQueueCodec(payload_codec=PydanticModelCodec(_Payload)),
         namespace="ns",
         delayed_delivery=True,
     )
@@ -66,7 +66,7 @@ async def test_queue_adapter_enqueue_uses_namespaced_queue() -> None:
     client.enqueue = AsyncMock(return_value="msg-1")
     adapter = RabbitMQQueueAdapter(
         client=client,
-        codec=RabbitMQQueueCodec(payload_codec=PydanticRecordMappingCodec(_Payload)),
+        codec=RabbitMQQueueCodec(payload_codec=PydanticModelCodec(_Payload)),
         namespace="ns",
     )
 
@@ -81,7 +81,7 @@ async def test_queue_adapter_enqueue_uses_namespaced_queue() -> None:
 async def test_queue_adapter_enqueue_many_uses_namespaced_queue() -> None:
     client = Mock(spec=RabbitMQClient)
     client.enqueue_many = AsyncMock(return_value=["msg-1", "msg-2"])
-    codec = RabbitMQQueueCodec(payload_codec=PydanticRecordMappingCodec(_Payload))
+    codec = RabbitMQQueueCodec(payload_codec=PydanticModelCodec(_Payload))
     adapter = RabbitMQQueueAdapter(client=client, codec=codec, namespace="ns")
 
     message_ids = await adapter.enqueue_many(
@@ -128,7 +128,7 @@ async def test_queue_adapter_enqueue_many_with_empty_payloads() -> None:
     client.enqueue_many = AsyncMock()
     adapter = RabbitMQQueueAdapter(
         client=client,
-        codec=RabbitMQQueueCodec(payload_codec=PydanticRecordMappingCodec(_Payload)),
+        codec=RabbitMQQueueCodec(payload_codec=PydanticModelCodec(_Payload)),
         namespace="ns",
     )
 
@@ -141,7 +141,7 @@ async def test_queue_adapter_enqueue_many_with_empty_payloads() -> None:
 @pytest.mark.asyncio
 async def test_queue_adapter_receive_decodes_messages() -> None:
     client = Mock(spec=RabbitMQClient)
-    codec = RabbitMQQueueCodec(payload_codec=PydanticRecordMappingCodec(_Payload))
+    codec = RabbitMQQueueCodec(payload_codec=PydanticModelCodec(_Payload))
     ts = datetime(2025, 1, 1, 12, 0, 0)
     client.receive = AsyncMock(
         return_value=[
@@ -172,7 +172,7 @@ async def test_queue_adapter_receive_decodes_messages() -> None:
 @pytest.mark.asyncio
 async def test_queue_adapter_consume_decodes_messages() -> None:
     client = Mock(spec=RabbitMQClient)
-    codec = RabbitMQQueueCodec(payload_codec=PydanticRecordMappingCodec(_Payload))
+    codec = RabbitMQQueueCodec(payload_codec=PydanticModelCodec(_Payload))
     captured: dict[str, object] = {}
 
     async def _iter():
@@ -208,7 +208,7 @@ async def test_queue_adapter_ack_and_nack_use_namespaced_queue() -> None:
     client.nack = AsyncMock(return_value=1)
     adapter = RabbitMQQueueAdapter(
         client=client,
-        codec=RabbitMQQueueCodec(payload_codec=PydanticRecordMappingCodec(_Payload)),
+        codec=RabbitMQQueueCodec(payload_codec=PydanticModelCodec(_Payload)),
         namespace="ns",
     )
 

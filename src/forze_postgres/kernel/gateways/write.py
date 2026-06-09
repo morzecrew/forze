@@ -14,58 +14,29 @@ from uuid import UUID
 
 import attrs
 from psycopg import sql
-from tenacity import (
-    retry,
-    retry_if_exception,
-    stop_after_attempt,
-    wait_random_exponential,
-)
 
 from forze.application.contracts.querying import QueryFilterExpression
-from forze.base.exceptions import CoreException, ExceptionKind, exc
-from forze.base.primitives import JsonDict
-from forze.base.serialization import (
-    pydantic_persistence_dump,
-    pydantic_persistence_dump_many,
-    pydantic_transform,
-    pydantic_transform_many,
-    pydantic_validate,
-    pydantic_validate_many,
+from forze.application.contracts.resilience import ResilienceExecutorPort
+from forze.application.execution.resilience import (
+    default_resilience_executor,
+    occ_retry,
 )
+from forze.application.integrations.persistence import HistoryOccMixin
+from forze.base.exceptions import exc
+from forze.base.primitives import JsonDict, OnceCell
+from forze.base.serialization import ModelCodec
 from forze.domain.constants import ID_FIELD, REV_FIELD
-from forze.domain.models import BaseDTO, CreateDocumentCmd, Document
-
+from forze.domain.models import BaseDTO, Document
 from forze_postgres.kernel.catalog.introspect import PostgresColumnTypes, PostgresType
 from forze_postgres.kernel.client import gather_db_work
 from forze_postgres.kernel.sql.conflict_target import resolve_write_conflict_target
+
 from .base import PostgresGateway
 from .history import PostgresHistoryGateway
 from .read import PostgresReadGateway
 from .types import PostgresBookkeepingStrategy
 
 # ----------------------- #
-
-
-def optimistic_retry(*, attempts: int = 3):  # type: ignore[no-untyped-def]
-    """Return a tenacity retry decorator for :exc:`~forze.base.errors.ConcurrencyError`.
-
-    Uses exponential back-off and re-raises the error after *attempts* failures.
-
-    :param attempts: Maximum number of attempts before re-raising.
-    """
-
-    return retry(
-        retry=retry_if_exception(
-            lambda e: isinstance(e, CoreException)
-            and e.kind is ExceptionKind.CONCURRENCY
-        ),
-        stop=stop_after_attempt(attempts),
-        wait=wait_random_exponential(multiplier=0.05, max=2.0),
-        reraise=True,
-    )
-
-
-# ....................... #
 
 
 def _pg_cast_type_sql(pg: PostgresType) -> sql.Composable:
@@ -106,18 +77,27 @@ def _values_placeholder_for_patch_group(
 
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
-    PostgresGateway[D]
+class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
+    HistoryOccMixin[D],
+    PostgresGateway[D],
 ):
     """Write gateway for document mutations with optimistic concurrency control.
 
     Requires a companion :class:`PostgresReadGateway` sharing the same client.
     Optionally writes revision history via :class:`PostgresHistoryGateway`.
-    All mutating operations are decorated with :func:`optimistic_retry`.
+    All mutating operations are wrapped with the ``occ`` resilience policy via
+    :func:`~forze.application.execution.resilience.occ_retry`.
     """
 
     read_gw: PostgresReadGateway[D]
     """Read gateway for the same document type."""
+
+    resilience: ResilienceExecutorPort = attrs.field(
+        factory=default_resilience_executor,
+        eq=False,
+        repr=False,
+    )
+    """Resilience executor backing optimistic-concurrency retries."""
 
     create_cmd_type: type[C]
     """Pydantic model for creation payloads."""
@@ -125,7 +105,15 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
     update_cmd_type: type[U] | None = attrs.field(default=None)
     """Pydantic model for update payloads."""
 
-    history_gw: PostgresHistoryGateway[D] | None = attrs.field(default=None)
+    create_codec: ModelCodec[D, Any] = attrs.field(kw_only=True, eq=False, repr=False)
+    """Codec for create commands."""
+
+    update_codec: ModelCodec[U, Any] | None = attrs.field(
+        kw_only=True, eq=False, repr=False
+    )
+    """Codec for update commands when :attr:`update_cmd_type` is set; else ``None``."""
+
+    history_gw: PostgresHistoryGateway[D] | None = attrs.field(default=None)  # type: ignore[override]
     """Optional history gateway for revision snapshots."""
 
     strategy: PostgresBookkeepingStrategy
@@ -134,8 +122,8 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
     conflict_target: tuple[str, ...] | None = attrs.field(default=None)
     """``ON CONFLICT`` columns for :meth:`ensure` / :meth:`upsert`; ``None`` infers PRIMARY KEY."""
 
-    _conflict_target_resolved: tuple[str, ...] | None = attrs.field(
-        default=None,
+    _conflict_target_cell: OnceCell[tuple[str, ...]] = attrs.field(
+        factory=OnceCell,
         init=False,
         eq=False,
         repr=False,
@@ -191,49 +179,43 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
 
     # ....................... #
 
-    async def _write_history(self, *data: D) -> None:
-        if self.history_gw is not None:
-            await self.history_gw.write_many(data)
+    def _from_create_dto(self, payload: C, id: UUID | None = None) -> D:
+        model = self.create_codec.transform(payload)
+
+        if id is not None:
+            model = model.model_copy(update={ID_FIELD: id}, deep=True)
+
+        return model
 
     # ....................... #
 
-    async def _validate_history(self, *data: tuple[D, int, JsonDict]) -> None:
-        if self.history_gw is None:
-            for current, rev, _ in data:
-                if rev != current.rev:
-                    raise exc.precondition(
-                        "Revision mismatch", code="revision_mismatch"
-                    )
+    def _from_create_dto_many(
+        self,
+        payloads: Sequence[C],
+        ids: Sequence[UUID] | None = None,
+    ) -> Sequence[D]:
+        models = list(self.create_codec.transform_many(payloads))
 
-            return
+        if ids is not None:
+            models = [
+                m.model_copy(update={ID_FIELD: i}, deep=True)
+                for m, i in zip(models, ids, strict=True)
+            ]
 
-        to_check = [
-            (current, rev, update)
-            for current, rev, update in data
-            if rev != current.rev
-        ]
-        bad_records = [rev for current, rev, _ in to_check if rev > current.rev]
+        return models
 
-        if bad_records:
-            raise exc.precondition("Invalid revision number")
+    # ....................... #
 
-        if to_check:
-            pks_to_check = [c.id for c, _, _ in to_check]
-            revs_to_check = [r for _, r, _ in to_check]
-            hist_records = await self.history_gw.read_many(pks_to_check, revs_to_check)
+    def _patch_codec(self) -> ModelCodec[Any, Any]:
+        if self.update_codec is not None:
+            return self.update_codec
 
-            if len(hist_records) != len(to_check):
-                raise exc.precondition(
-                    "History records not found. Please retry with actual revision number.",
-                    code="history_not_found_retry",
-                )
+        if self.update_cmd_type is not None:
+            raise exc.internal(
+                "Update codec is required when update commands are supported"
+            )
 
-            for (c, _, u), h in zip(to_check, hist_records, strict=True):
-                if not c.validate_historical_consistency(h, u):
-                    raise exc.conflict(
-                        "Historical consistency violation during update",
-                        code="historical_consistency_violation",
-                    )
+        return self.read_codec
 
     # ....................... #
 
@@ -253,20 +235,17 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
     # ....................... #
 
     async def _resolved_conflict_target(self) -> tuple[str, ...]:
-        cached = self._conflict_target_resolved
+        async def _factory() -> tuple[str, ...]:
+            return await resolve_write_conflict_target(
+                self.introspector,
+                schema=(await self._qname()).schema,
+                relation=(await self._qname()).name,
+                configured=self.conflict_target,
+            )
 
-        if cached is not None:
-            return cached
-
-        resolved = await resolve_write_conflict_target(
-            self.introspector,
-            schema=(await self._qname()).schema,
-            relation=(await self._qname()).name,
-            configured=self.conflict_target,
-        )
-        object.__setattr__(self, "_conflict_target_resolved", resolved)
-
-        return resolved
+        # Conflict columns are the table's PK/unique columns — identical across
+        # tenant schemas (tenant-independent), so always memoized.
+        return await self._conflict_target_cell.resolve(_factory)
 
     async def _ident_conflict_target(self) -> sql.Composable:
         cols = await self._resolved_conflict_target()
@@ -275,11 +254,11 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
 
     # ....................... #
 
-    @optimistic_retry()  # type: ignore[untyped-decorator]
-    async def create(self, dto: C) -> D:
+    @occ_retry
+    async def create(self, payload: C, *, id: UUID | None = None) -> D:
         async with self._write_tx():
-            model = pydantic_transform(self.model_type, dto)
-            insert_data_raw = pydantic_persistence_dump(model)
+            model = self._from_create_dto(payload, id)
+            insert_data_raw = self.read_codec.encode_persistence_mapping(model)
             insert_data = await self.adapt_payload_for_write(
                 insert_data_raw, create=True
             )
@@ -307,21 +286,21 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
                     code="create_failed",
                 )
 
-            res = pydantic_validate(self.model_type, row)
+            res = self._decode_row(row)
             await self._write_history(res)
 
             return res
 
     # ....................... #
 
-    @optimistic_retry()  # type: ignore[untyped-decorator]
+    @occ_retry
     async def create_many(
         self,
-        dtos: Sequence[C],
+        payloads: Sequence[C],
         *,
         batch_size: int = 200,
     ) -> Sequence[D]:
-        if not dtos:
+        if not payloads:
             return []
 
         async with self._write_tx():
@@ -363,10 +342,12 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
 
                 return rows
 
-            for offset in range(0, len(dtos), batch_size):
-                dto_batch = dtos[offset : offset + batch_size]
-                models = pydantic_transform_many(self.model_type, dto_batch)
-                insert_data_raw = pydantic_persistence_dump_many(models)
+            for offset in range(0, len(payloads), batch_size):
+                payload_batch = payloads[offset : offset + batch_size]
+                models = self._from_create_dto_many(payload_batch)
+                insert_data_raw = self.read_codec.encode_persistence_mapping_many(
+                    models
+                )
                 insert_data = await self.adapt_many_payload_for_write(
                     insert_data_raw,
                     create=True,
@@ -395,9 +376,9 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
 
             result: list[D] = []
             for rows in batch_results:
-                result.extend(pydantic_validate_many(self.model_type, rows))
+                result.extend(self._decode_rows(rows))
 
-            if len(result) != len(dtos):
+            if len(result) != len(payloads):
                 raise exc.internal("Failed to create all records")
 
             await self._write_history(*result)
@@ -406,18 +387,17 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
 
     # ....................... #
 
-    @optimistic_retry()  # type: ignore[untyped-decorator]
-    async def ensure(self, dto: C) -> D:
-        """Insert a row when the primary key is absent; otherwise return the existing row.
+    @occ_retry
+    async def ensure(self, id: UUID, payload: C) -> D:
+        """Insert a row at *id* when absent; otherwise return the existing row.
 
-        The caller must supply a primary key on the create command; conflict
-        is resolved on the primary key column (``id``) without updating
+        Conflict is resolved on the primary key column (``id``) without updating
         existing rows.
         """
 
         async with self._write_tx():
-            model = pydantic_transform(self.model_type, dto)
-            insert_data_raw = pydantic_persistence_dump(model)
+            model = self._from_create_dto(payload, id)
+            insert_data_raw = self.read_codec.encode_persistence_mapping(model)
             insert_data = await self.adapt_payload_for_write(
                 insert_data_raw, create=True
             )
@@ -444,7 +424,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
             )
 
             if row is not None:
-                res = pydantic_validate(self.model_type, row)
+                res = self._decode_row(row)
                 await self._write_history(res)
                 return res
 
@@ -453,22 +433,21 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
 
     # ....................... #
 
-    @optimistic_retry()  # type: ignore[untyped-decorator]
+    @occ_retry
     async def ensure_many(
         self,
-        dtos: Sequence[C],
+        ids: Sequence[UUID],
+        payloads: Sequence[C],
         *,
         batch_size: int = 200,
     ) -> Sequence[D]:
         """Bulk insert rows when their primary keys are absent; return full rows in order.
 
-        The caller must supply a primary key on every create command; each id
-        must appear at most once in ``dtos``. Conflicts on the primary key
-        column do not update existing rows. History is written only for newly
-        inserted documents.
+        Each id must appear at most once. Conflicts on the primary key column do not
+        update existing rows. History is written only for newly inserted documents.
         """
 
-        if not dtos:
+        if not payloads:
             return []
 
         async with self._write_tx():
@@ -533,7 +512,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
                     rj = by_returned.get(m.id)
 
                     if rj is not None:
-                        dom = pydantic_validate(self.model_type, rj)
+                        dom = self._decode_row(rj)
                         inserted.append(dom)
                         ordered.append(dom)
 
@@ -554,10 +533,13 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
 
             out: list[D] = []
 
-            for offset in range(0, len(dtos), batch_size):
-                dto_batch = dtos[offset : offset + batch_size]
-                models = pydantic_transform_many(self.model_type, dto_batch)
-                insert_data_raw = pydantic_persistence_dump_many(models)
+            for offset in range(0, len(payloads), batch_size):
+                id_batch = ids[offset : offset + batch_size]
+                payload_batch = payloads[offset : offset + batch_size]
+                models = self._from_create_dto_many(payload_batch, id_batch)
+                insert_data_raw = self.read_codec.encode_persistence_mapping_many(
+                    models
+                )
                 insert_data = await self.adapt_many_payload_for_write(
                     insert_data_raw,
                     create=True,
@@ -579,16 +561,16 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
 
                 out.extend(await _ensure_batch(insert_data, models))
 
-            if len(out) != len(dtos):
+            if len(out) != len(payloads):
                 raise exc.internal("ensure_many result length does not match input")
 
             return out
 
     # ....................... #
 
-    @optimistic_retry()  # type: ignore[untyped-decorator]
-    async def upsert(self, create_dto: C, update_dto: U) -> D:
-        """Insert when the primary key is free; otherwise apply ``update_dto`` like :meth:`update`.
+    @occ_retry
+    async def upsert(self, id: UUID, create: C, update: U) -> D:
+        """Insert *create* at *id* when free; otherwise apply ``update`` like :meth:`update`.
 
         ``database`` and ``application`` strategies both use the same pattern:
         attempt ``INSERT ... ON CONFLICT DO NOTHING``; on conflict, load the row
@@ -598,8 +580,8 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
         self._require_update_cmd()
 
         async with self._write_tx():
-            model = pydantic_transform(self.model_type, create_dto)
-            insert_data_raw = pydantic_persistence_dump(model)
+            model = self._from_create_dto(create, id)
+            insert_data_raw = self.read_codec.encode_persistence_mapping(model)
             insert_data = await self.adapt_payload_for_write(
                 insert_data_raw, create=True
             )
@@ -626,22 +608,24 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
             )
 
             if row is not None:
-                res = pydantic_validate(self.model_type, row)
+                res = self._decode_row(row)
                 await self._write_history(res)
 
                 return res
 
             current = await self._fetch_domain_by_pk(model.id, for_update=True)
-            res, _ = await self.update(model.id, update_dto, rev=current.rev)
+            res, _ = await self.update(model.id, update, rev=current.rev)
 
             return res
 
     # ....................... #
 
-    @optimistic_retry()  # type: ignore[untyped-decorator]
+    @occ_retry
     async def upsert_many(
         self,
-        pairs: Sequence[tuple[C, U]],
+        ids: Sequence[UUID],
+        creates: Sequence[C],
+        updates: Sequence[U],
         *,
         batch_size: int = 200,
     ) -> Sequence[D]:
@@ -649,7 +633,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
 
         self._require_update_cmd()
 
-        if not pairs:
+        if not creates:
             return []
 
         async with self._write_tx():
@@ -703,7 +687,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
                 for m in model_batch:
                     rj = by_returned.get(m.id)
                     if rj is not None:
-                        inserted.append(pydantic_validate(self.model_type, rj))
+                        inserted.append(self._decode_row(rj))
 
                 if inserted:
                     await self._write_history(*inserted)
@@ -737,7 +721,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
                     rj = by_returned.get(m.id)
 
                     if rj is not None:
-                        ordered.append(pydantic_validate(self.model_type, rj))
+                        ordered.append(self._decode_row(rj))
 
                     else:
                         u_one = by_updated.get(m.id)
@@ -753,11 +737,14 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
 
             out: list[D] = []
 
-            for offset in range(0, len(pairs), batch_size):
-                batch_pairs = pairs[offset : offset + batch_size]
-                creates = [c for c, _ in batch_pairs]
-                models = pydantic_transform_many(self.model_type, creates)
-                insert_data_raw = pydantic_persistence_dump_many(models)
+            for offset in range(0, len(creates), batch_size):
+                id_batch = ids[offset : offset + batch_size]
+                create_batch = creates[offset : offset + batch_size]
+                update_batch = updates[offset : offset + batch_size]
+                models = self._from_create_dto_many(create_batch, id_batch)
+                insert_data_raw = self.read_codec.encode_persistence_mapping_many(
+                    models
+                )
                 insert_data = await self.adapt_many_payload_for_write(
                     insert_data_raw,
                     create=True,
@@ -777,10 +764,10 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
                         "upsert_many: adapted payload keys differ between batches",
                     )
 
-                u_seq = [u for _, u in batch_pairs]
+                u_seq = list(update_batch)
                 out.extend(await _upsert_batch(insert_data, models, u_seq))
 
-            if len(out) != len(pairs):
+            if len(out) != len(creates):
                 raise exc.internal("upsert_many result length does not match input")
 
             return out
@@ -795,7 +782,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
 
     # ....................... #
 
-    @optimistic_retry()  # type: ignore[untyped-decorator]
+    @occ_retry
     async def __patch(
         self,
         pk: UUID,
@@ -852,7 +839,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
             if row is None:
                 raise exc.concurrency("Failed to update record")
 
-            res = pydantic_validate(self.model_type, row)
+            res = self._decode_row(row)
             await self._write_history(res)
 
             return res, diff
@@ -868,7 +855,10 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
     ) -> tuple[D, JsonDict]:
         self._require_update_cmd()
 
-        update_data = pydantic_persistence_dump(dto, exclude={"unset": True})
+        update_data = self._patch_codec().encode_persistence_mapping(
+            cast(Any, dto),
+            exclude={"unset": True},
+        )
 
         return await self.__patch(pk, update_data, rev=rev)
 
@@ -881,7 +871,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
 
     # ....................... #
 
-    @optimistic_retry()  # type: ignore[untyped-decorator]
+    @occ_retry
     async def __patch_group(
         self,
         key: tuple[str, ...],
@@ -971,7 +961,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
         if missing:
             raise exc.concurrency("Failed to update records")
 
-        return pydantic_validate_many(self.model_type, rows)
+        return self._decode_rows(rows)
 
     # ....................... #
 
@@ -1116,8 +1106,8 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
         updates: list[JsonDict] = []
         for start in range(0, len(dtos), batch_size):
             updates.extend(
-                pydantic_persistence_dump_many(
-                    dtos[start : start + batch_size],
+                self._patch_codec().encode_persistence_mapping_many(
+                    cast(Any, dtos[start : start + batch_size]),
                     exclude={"unset": True},
                 ),
             )
@@ -1133,7 +1123,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
 
     # ....................... #
 
-    @optimistic_retry()  # type: ignore[untyped-decorator]
+    @occ_retry
     async def update_matching(
         self,
         filters: QueryFilterExpression,  # type: ignore[valid-type]
@@ -1149,7 +1139,10 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
 
         self._require_update_cmd()
 
-        update_data = pydantic_persistence_dump(dto, exclude={"unset": True})
+        update_data = self._patch_codec().encode_persistence_mapping(
+            cast(Any, dto),
+            exclude={"unset": True},
+        )
 
         if not update_data:
             return 0, []
@@ -1197,7 +1190,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
                 commit=False,
             )
 
-            doms = pydantic_validate_many(self.model_type, rows)
+            doms = self._decode_rows(rows)
             await self._write_history(*doms)
 
             return len(doms), doms

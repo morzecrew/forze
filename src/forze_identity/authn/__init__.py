@@ -24,7 +24,6 @@ from .execution import (
     ConfigurableForzeJwtTokenVerifier,
     ConfigurableHmacApiKeyVerifier,
     ConfigurableJwtNativeUuidResolver,
-    ConfigurableLocalApiKeyVerifier,
     ConfigurableMappingTableResolver,
     ConfigurablePasswordAccountProvisioning,
     ConfigurablePasswordLifecycle,
@@ -41,7 +40,6 @@ from .verifiers import (
     Argon2PasswordVerifier,
     ForzeJwtTokenVerifier,
     HmacApiKeyVerifier,
-    LocalApiKeyVerifier,
 )
 
 # ----------------------- #
@@ -60,7 +58,6 @@ __all__ = [
     "ConfigurableForzeJwtTokenVerifier",
     "ConfigurableHmacApiKeyVerifier",
     "ConfigurableJwtNativeUuidResolver",
-    "ConfigurableLocalApiKeyVerifier",
     "ConfigurableMappingTableResolver",
     "ConfigurablePasswordAccountProvisioning",
     "ConfigurablePasswordLifecycle",
@@ -69,6 +66,5 @@ __all__ = [
     "ForzeJwtTokenVerifier",
     "HmacApiKeyVerifier",
     "JwtNativeUuidResolver",
-    "LocalApiKeyVerifier",
     "MappingTableResolver",
 ]

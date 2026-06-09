@@ -6,13 +6,12 @@ require_redis()
 
 # ....................... #
 
-import base64
 from datetime import timedelta
 from typing import Any, Final, TypedDict, final
 
 import attrs
 
-from forze.application.contracts.idempotency import IdempotencyPort, IdempotencySnapshot
+from forze.application.contracts.idempotency import IdempotencyPort, IdempotencyRecord
 from forze.base.exceptions import exc
 
 from ._logger import logger
@@ -31,12 +30,10 @@ _BODY_SUFFIX: Final[str] = "body"
 
 
 class _MetaPayload(TypedDict, total=False):
-    """JSON metadata stored at the primary idempotency key (no raw body)."""
+    """JSON metadata stored at the primary idempotency key (no raw result)."""
 
     st: str
     ph: str
-    code: int
-    ct: str
 
 
 # ....................... #
@@ -48,12 +45,18 @@ class RedisIdempotencyAdapter(IdempotencyPort, RedisBaseAdapter):
     """Redis implementation of :class:`~forze.application.contracts.idempotency.IdempotencyPort`.
 
     Uses ``SET NX`` on a small JSON metadata key for :meth:`begin`, stores the
-    response body as raw bytes on a sibling key on :meth:`commit`, and keeps
-    metadata and body expiries aligned via a transactional pipeline.
+    serialized result as raw bytes on a sibling key on :meth:`commit`, and keeps
+    metadata and result expiries aligned via a transactional pipeline.
     """
 
     ttl: timedelta = timedelta(seconds=30)
     """TTL for the idempotency keys."""
+
+    # ....................... #
+
+    def __attrs_post_init__(self) -> None:
+        if int(self.ttl.total_seconds()) < 1:
+            raise exc.configuration("TTL must be at least 1 second")
 
     # ....................... #
 
@@ -80,7 +83,7 @@ class RedisIdempotencyAdapter(IdempotencyPort, RedisBaseAdapter):
         op: str,
         key: str | None,
         payload_hash: str,
-    ) -> IdempotencySnapshot | None:
+    ) -> IdempotencyRecord | None:
         if not key:
             logger.debug("Idempotency key is not provided for op '%s', skipping", op)
             return None
@@ -118,32 +121,18 @@ class RedisIdempotencyAdapter(IdempotencyPort, RedisBaseAdapter):
         if data_st != _DONE:
             raise exc.conflict("Idempotency is in progress (unknown state)")
 
-        body_raw = await self.client.get(self.__body_key(op, key))
+        result_raw = await self.client.get(self.__body_key(op, key))
 
-        if body_raw is None:
-            # Legacy layout: body embedded as base64 in JSON.
-            legacy_b64 = data.get("body_b64")
+        if result_raw is None:
+            raise exc.conflict("Idempotency is in progress (done without result)")
 
-            if isinstance(legacy_b64, str):
-                body = base64.b64decode(legacy_b64.encode("ascii"))
-
-            else:
-                raise exc.conflict("Idempotency is in progress (done without body)")
-
-        else:
-            body = (
-                body_raw
-                if isinstance(
-                    body_raw, (bytes, bytearray)
-                )  # pyright: ignore[reportUnnecessaryIsInstance]
-                else str(body_raw).encode("utf-8")
-            )
-
-        return IdempotencySnapshot(
-            code=int(data.get("code", 200)),
-            content_type=str(data.get("ct", "application/json")),
-            body=bytes(body),
+        result = (
+            result_raw
+            if isinstance(result_raw, (bytes, bytearray))  # pyright: ignore[reportUnnecessaryIsInstance]
+            else str(result_raw).encode("utf-8")
         )
+
+        return IdempotencyRecord(result=bytes(result))
 
     # ....................... #
 
@@ -152,7 +141,7 @@ class RedisIdempotencyAdapter(IdempotencyPort, RedisBaseAdapter):
         op: str,
         key: str | None,
         payload_hash: str,
-        snapshot: IdempotencySnapshot,
+        record: IdempotencyRecord,
     ) -> None:
         if not key:
             logger.debug("Idempotency key is not provided for op '%s', skipping", op)
@@ -171,12 +160,10 @@ class RedisIdempotencyAdapter(IdempotencyPort, RedisBaseAdapter):
         meta_done: _MetaPayload = {
             "st": _DONE,
             "ph": payload_hash,
-            "code": snapshot.code,
-            "ct": snapshot.content_type,
         }
 
         async with self.client.pipeline(transaction=True):
-            await self.client.set(body_k, snapshot.body, ex=ex)
+            await self.client.set(body_k, record.result, ex=ex)
             await self.client.set(
                 meta_k,
                 default_json_codec.dumps(meta_done),

@@ -64,7 +64,7 @@ test *args='':
 
     uv run pytest -m "not perf" {{ args }}
 
-# Run performance tests (requires Docker for testcontainers)
+# Run performance benchmarks (-m perf; Docker only where a perf conftest starts containers)
 perf *args='tests/perf':
     {{ _uv_sync }}
 
@@ -88,6 +88,8 @@ quality strict="false":
     just _uv_cmd "Dead code" {{ strict }} vulture
     just _uv_cmd "Dependencies" {{ strict }} deptry .
     just _uv_cmd "Security" {{ strict }} bandit -c pyproject.toml -r "src"
+    just _uv_cmd "Frozen bypass" {{ strict }} pre-commit run no-frozen-setattr-bypass --all-files
+    just _uv_cmd "Secrets" {{ strict }} pre-commit run gitleaks --all-files
 
 
 # ----------------------- #

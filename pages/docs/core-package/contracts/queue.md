@@ -14,7 +14,7 @@ acknowledge, and optionally requeue messages.
 | Returned values | Passed to queue dep factories to build query or command ports. |
 | Common implementations | Mock queue adapter, SQS adapter, RabbitMQ adapter. |
 | Related dependency keys | `QueueQueryDepKey`, `QueueCommandDepKey`. |
-| Minimal example | `order_queue = QueueSpec(name="orders", codec=PydanticRecordMappingCodec(OrderPayload))` |
+| Minimal example | `order_queue = QueueSpec(name="orders", codec=default_model_codec(OrderPayload))` |
 | Related pages | [SQS](../../integrations/sqs.md), [RabbitMQ](../../integrations/rabbitmq.md). |
 
 ## `QueueQueryPort[M]`
@@ -74,11 +74,11 @@ Use [`resolve_delivery_delay`](../../reference/contracts.md) in adapters; handle
 
     :::python
     from forze.application.contracts.queue import QueueCommandDepKey, QueueSpec
-    from forze.base.serialization import PydanticRecordMappingCodec
+    from forze.base.serialization import default_model_codec
 
     order_queue = QueueSpec(
         name="orders",
-        codec=PydanticRecordMappingCodec(OrderPayload),
+        codec=default_model_codec(OrderPayload),
     )
     writer = ctx.deps.resolve_configurable(ctx, QueueCommandDepKey, order_queue, route=order_queue.name)
     message_id = await writer.enqueue("orders", OrderPayload(order_id="A-1"))

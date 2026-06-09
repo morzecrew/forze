@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from uuid import UUID
 
 import attrs
@@ -18,3 +20,15 @@ class AuthnIdentity:
 
     principal_id: UUID
     """Internal principal identifier; aligns with :class:`~forze.application.contracts.authz.value_objects.PrincipalRef`."""
+
+    actor: AuthnIdentity | None = None
+    """The principal *performing* the action when this identity is acted-for on behalf of
+    another (delegation / RFC 8693 ``act``). ``principal_id`` is the effective **subject**
+    (e.g. the user); ``actor`` is the **agent** doing it. ``None`` means a direct,
+    non-delegated call. Chainable for multi-hop delegation."""
+
+    @property
+    def is_delegated(self) -> bool:
+        """Whether this identity is acting on behalf of another (an actor is attached)."""
+
+        return self.actor is not None

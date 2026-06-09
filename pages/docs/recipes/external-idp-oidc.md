@@ -51,9 +51,12 @@ class ConfigurableOidcTokenVerifier:
             algorithms=("RS256",),
             audience=self.audience,
             issuer=self.issuer,
+            enforce_issuer_and_audience=True,
             claim_mapper=OidcClaimMapper(tenant_claim=self.tenant_claim),
         )
 ```
+
+`OidcTokenVerifier` defaults `enforce_issuer_and_audience=True`; production factories should always set both `issuer` and `audience` (as above). Tests may pass `enforce_issuer_and_audience=False` when issuer/audience checks are intentionally omitted.
 
 `forze_identity.authn` already ships `ConfigurableMappingTableResolver` and `ConfigurableDeterministicUuidResolver`; reuse them directly.
 
@@ -62,7 +65,7 @@ When `tenant_claim` is set, the mapped claim becomes `issuer_tenant_hint` on the
 ## Module wiring
 
 ```python
-from forze.application.execution import DepsPlan
+from forze.application.execution import DepsRegistry
 from forze_identity.authn import (
     AuthnDepsModule,
     AuthnKernelConfig,
@@ -88,7 +91,7 @@ authn_module = AuthnDepsModule(
     resolvers={ROUTE: ConfigurableMappingTableResolver(provision_on_first_sight=True)},
 )
 
-deps = DepsPlan.from_modules(authn_module)
+deps = DepsRegistry.from_modules(authn_module)
 ```
 
 `MappingTableResolver(provision_on_first_sight=True)` mints a fresh `UUID` the first time it sees an `(issuer, subject)` pair and persists the mapping in `identity_mapping_spec`. Use `provision_on_first_sight=False` (default) when principals are pre-provisioned and unknown subjects must be rejected.

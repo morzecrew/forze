@@ -22,10 +22,15 @@ from forze.application.contracts.querying import (
     QueryFilterLimits,
     QuerySortExpression,
 )
-from forze.application.contracts.tenancy import TENANT_ID_FIELD, TenancyMixin
+from forze.application.contracts.tenancy import TENANT_ID_FIELD
+from forze.application.integrations.persistence import (
+    FilterParserMixin,
+    ModelCodecGatewayMixin,
+    TenantResolvedRelationMixin,
+)
 from forze.base.exceptions import exc
-from forze.base.primitives import JsonDict
-from forze.base.serialization import pydantic_field_names, pydantic_validate
+from forze.base.primitives import JsonDict, OnceCell
+from forze.base.serialization import ModelCodec, default_model_codec
 from forze.domain.constants import ID_FIELD
 from forze_postgres.kernel.catalog.introspect import (
     PostgresColumnTypes,
@@ -109,24 +114,39 @@ class PostgresQualifiedName:
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class PostgresGateway[M: BaseModel](TenancyMixin):
+class PostgresGateway[M: BaseModel](
+    ModelCodecGatewayMixin[M],
+    FilterParserMixin,
+    TenantResolvedRelationMixin,
+):
     """Base gateway providing shared query-building helpers for a single Postgres relation."""
 
     relation: RelationSpec
     """Static ``(schema, relation)`` or tenant-scoped resolver."""
 
-    _qname_resolved: PostgresQualifiedName | None = attrs.field(
-        default=None,
+    _qname_cell: OnceCell[PostgresQualifiedName] = attrs.field(
+        factory=OnceCell,
         init=False,
         eq=False,
         repr=False,
     )
+
+    _return_clause_cache: dict[
+        tuple[type[BaseModel] | None, str | None], sql.Composable
+    ] = attrs.field(factory=dict, init=False, eq=False, repr=False, hash=False)
+    """Per-gateway memo of column-list composables for the non-projection cases
+    (default read fields / explicit ``return_type``), keyed by ``(return_type, alias)``.
+    Schema-independent (derived from read-model field names), so it is safe for the
+    gateway's lifetime. Explicit ``return_fields`` projections are not cached."""
 
     client: PostgresClientPort
     """Shared :class:`~forze_postgres.kernel.client.PostgresClientPort` instance."""
 
     model_type: type[M]
     """Pydantic model used for deserialization."""
+
+    codec: ModelCodec[M, Any] = attrs.field(kw_only=True, eq=False, repr=False)
+    """Row decode/encode codec."""
 
     introspector: PostgresIntrospector
     """Postgres introspector instance."""
@@ -145,10 +165,10 @@ class PostgresGateway[M: BaseModel](TenancyMixin):
     """
 
     filter_limits: QueryFilterLimits | None = attrs.field(default=None)
-    """Optional filter DSL abuse limits; defaults to :class:`QueryFilterLimits` factory values."""
-
-    filter_parser: QueryFilterExpressionParser = attrs.field(init=False)
-    """Parser built from :attr:`filter_limits` during initialization."""
+    filter_parser: QueryFilterExpressionParser = attrs.field(
+        default=attrs.Factory(lambda self: self.build_filter_parser(), takes_self=True),
+        init=False,
+    )
 
     # ....................... #
 
@@ -157,27 +177,6 @@ class PostgresGateway[M: BaseModel](TenancyMixin):
 
         if cap is not None and cap < 1:
             raise exc.internal("find_many_implicit_limit must be at least 1 when set")
-
-        limits = (
-            self.filter_limits
-            if self.filter_limits is not None
-            else QueryFilterLimits()
-        )
-        object.__setattr__(
-            self,
-            "filter_parser",
-            QueryFilterExpressionParser(limits=limits),
-        )
-
-    # ....................... #
-
-    @property
-    def read_fields(self) -> frozenset[str]:
-        """Pydantic field names for :attr:`model_type` (safe for frozen attrs subclasses)."""
-
-        return frozenset(
-            pydantic_field_names(self.model_type, include_computed=False),
-        )
 
     # ....................... #
 
@@ -191,33 +190,17 @@ class PostgresGateway[M: BaseModel](TenancyMixin):
 
     # ....................... #
 
-    def _tenant_id_for_resolve(self) -> UUID | None:
-        if self.tenant_provider is None:
-            return None
-
-        tenant = self.tenant_provider()
-
-        if tenant is None:
-            if self.tenant_aware:
-                return self.require_tenant_if_aware()
-
-            return None
-
-        return tenant.tenant_id
-
-    # ....................... #
-
     async def _qname(self) -> PostgresQualifiedName:
-        if self._qname_resolved is not None:
-            return self._qname_resolved
+        async def _factory() -> PostgresQualifiedName:
+            return await resolve_postgres_qname(
+                self.relation,
+                self._tenant_id_for_resolve(),
+            )
 
-        resolved = await resolve_postgres_qname(
-            self.relation,
-            self._tenant_id_for_resolve(),
+        return await self._qname_cell.resolve(
+            _factory,
+            cache=is_static_relation(self.relation),
         )
-        object.__setattr__(self, "_qname_resolved", resolved)
-
-        return resolved
 
     # ....................... #
 
@@ -229,8 +212,10 @@ class PostgresGateway[M: BaseModel](TenancyMixin):
         resolvers require :meth:`_qname` on async paths.
         """
 
-        if self._qname_resolved is not None:
-            return self._qname_resolved
+        resolved = self._qname_cell.peek()
+
+        if resolved is not None:
+            return resolved
 
         if is_static_relation(self.relation):
             return PostgresQualifiedName(*self.relation)
@@ -290,24 +275,12 @@ class PostgresGateway[M: BaseModel](TenancyMixin):
 
     # ....................... #
 
-    def compile_filters(
-        self,
-        filters: QueryFilterExpression | None,  # type: ignore[valid-type]
-    ) -> QueryExpr | None:
-        """Parse *filters* into an AST using :attr:`filter_parser`."""
-
-        if not filters:
-            return None
-
-        return self.filter_parser.parse_filter(filters)
-
-    # ....................... #
-
     async def where_clause(
         self,
         filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
         *,
         parsed: QueryExpr | None = None,
+        table_alias: str | None = None,
     ) -> tuple[sql.Composable, list[Any]]:
         query = sql.SQL("TRUE")
         params: list[Any] = []
@@ -317,11 +290,13 @@ class PostgresGateway[M: BaseModel](TenancyMixin):
         if expr is not None:
             types = await self.column_types()
 
+            alias = self.filter_table_alias if table_alias is None else table_alias
+
             r = PsycopgQueryRenderer(
                 types=types,
                 model_type=self.model_type,
                 nested_field_hints=self.nested_field_hints,
-                table_alias=self.filter_table_alias,
+                table_alias=alias,
             )
 
             query, params = r.render(expr)  # type: ignore[assignment]
@@ -366,24 +341,51 @@ class PostgresGateway[M: BaseModel](TenancyMixin):
         *,
         table_alias: str | None = None,
     ) -> sql.Composable:
-        """Build a SQL expression for selecting fields from a table."""
+        """Build a SQL expression for selecting fields from a table.
+
+        The non-projection cases (default read fields / explicit ``return_type``) are
+        memoized per ``(return_type, table_alias)``: the field set is derived from
+        read-model names and is fixed for the gateway's lifetime. Explicit
+        ``return_fields`` projections are built each call (caller-controlled, possibly
+        dynamic, so left uncached to keep the memo bounded).
+        """
 
         if return_fields is not None and return_type is not None:
             raise exc.internal(
                 "Fields and model for mapping cannot be specified simultaneously"
             )
 
-        elif return_fields is not None:
-            use = list(return_fields)
+        if return_fields is not None:
+            return self._build_return_clause(list(return_fields), table_alias)
 
-        elif return_type is not None:
+        cache_key = (return_type, table_alias)
+        cached = self._return_clause_cache.get(cache_key)
+
+        if cached is not None:
+            return cached
+
+        if return_type is not None:
             use = list(
-                pydantic_field_names(return_type, include_computed=False),
+                default_model_codec(return_type).stored_field_names(
+                    include_computed=False,
+                ),
             )
 
         else:
             use = list(self.read_fields)
 
+        clause = self._build_return_clause(use, table_alias)
+        self._return_clause_cache[cache_key] = clause
+
+        return clause
+
+    # ....................... #
+
+    def _build_return_clause(
+        self,
+        use: list[str],
+        table_alias: str | None,
+    ) -> sql.Composable:
         bad = [f for f in use if f not in self.read_fields]
 
         #!? explicitly exclude bad fields or not ?!
@@ -507,7 +509,7 @@ class PostgresGateway[M: BaseModel](TenancyMixin):
         if row is None:
             raise exc.not_found(f"Record not found: {pk!s}")
 
-        return pydantic_validate(self.model_type, row)
+        return self._decode_row(row)
 
     # ....................... #
 
@@ -560,6 +562,6 @@ class PostgresGateway[M: BaseModel](TenancyMixin):
             if row_by_id is None:
                 raise exc.not_found(f"Record not found: {pk!s}")
 
-            out.append(pydantic_validate(self.model_type, row_by_id))
+            out.append(self._decode_row(row_by_id))
 
         return out

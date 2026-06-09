@@ -4,7 +4,7 @@ from pydantic import BaseModel
 
 from forze.application.contracts.durable.function import DurableFunctionEventSpec
 from forze.application.execution import Deps, ExecutionContext
-from forze.base.serialization import PydanticRecordMappingCodec
+from forze.base.serialization import PydanticModelCodec
 from tests.support.execution_context import context_from_deps, context_from_modules, frozen_deps_from_deps
 from forze_inngest.adapters import InngestEventCommandAdapter
 from forze_inngest.execution.deps import InngestClientDepKey
@@ -21,7 +21,7 @@ async def test_send_builds_inngest_event() -> None:
     client = RecordingInngestClient()
     spec = DurableFunctionEventSpec(
         name="app/test",
-        codec=PydanticRecordMappingCodec(model_type=_Payload),
+        codec=PydanticModelCodec(model_type=_Payload),
     )
 
     adapter = InngestEventCommandAdapter(
@@ -59,7 +59,7 @@ async def test_send_merges_execution_context_from_resolved_adapter() -> None:
     factory = ConfigurableInngestEventCommand(config=InngestEventConfig())
     spec = DurableFunctionEventSpec(
         name="app/test",
-        codec=PydanticRecordMappingCodec(model_type=_Payload),
+        codec=PydanticModelCodec(model_type=_Payload),
     )
 
     metadata = InvocationMetadata(

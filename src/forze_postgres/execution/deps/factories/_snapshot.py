@@ -3,7 +3,7 @@
 from typing import TYPE_CHECKING
 
 from forze.application.contracts.search import SearchResultSnapshotDepKey
-from forze.application.coordinators import SearchResultSnapshotCoordinator
+from forze.application.integrations.search import SearchResultSnapshot
 
 if TYPE_CHECKING:
     from forze.application.contracts.search import (
@@ -36,13 +36,13 @@ def resolve_result_snapshot(
 # ....................... #
 
 
-def snapshot_coord(
+def result_snapshot(
     context: "ExecutionContext",
     spec: "SearchResultSnapshotSpec | None",
-) -> "SearchResultSnapshotCoordinator | None":
+) -> "SearchResultSnapshot | None":
     port = resolve_result_snapshot(context, spec)
 
     if port is None:
         return None
 
-    return SearchResultSnapshotCoordinator(store=port)
+    return SearchResultSnapshot(store=port)

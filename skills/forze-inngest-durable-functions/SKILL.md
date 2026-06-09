@@ -15,11 +15,11 @@ Use when your application emits events from HTTP handlers and runs memoized step
 
 ```python
 from forze.application.contracts.durable.function import DurableFunctionEventSpec
-from forze.base.serialization import PydanticRecordMappingCodec
+from forze.base.serialization import PydanticModelCodec
 
 invoice_paid = DurableFunctionEventSpec(
     name="app/invoice.paid",
-    codec=PydanticRecordMappingCodec(model_type=InvoicePaidPayload),
+    codec=PydanticModelCodec(model_type=InvoicePaidPayload),
 )
 ```
 
@@ -27,6 +27,7 @@ invoice_paid = DurableFunctionEventSpec(
 
 ```python
 from forze.application.contracts.durable.function import (
+    DurableFunctionCronTrigger,
     DurableFunctionEventTrigger,
     DurableFunctionInvokeSpec,
     DurableFunctionSpec,
@@ -42,7 +43,7 @@ on_invoice_paid = DurableFunctionSpec(
 ## Runtime wiring (API)
 
 ```python
-from forze.application.execution import DepsPlan, LifecyclePlan
+from forze.application.execution import DepsRegistry, LifecyclePlan
 from forze_inngest import InngestClient, InngestDepsModule, inngest_lifecycle_step
 
 client = InngestClient(app_id="my-app")
@@ -51,7 +52,7 @@ module = InngestDepsModule(
     events={invoice_paid.name: {}},
 )
 
-deps = DepsPlan.from_modules(module)
+deps = DepsRegistry.from_modules(module)
 lifecycle = LifecyclePlan.from_steps(inngest_lifecycle_step())
 ```
 

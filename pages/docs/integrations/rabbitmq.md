@@ -52,7 +52,7 @@ The namespace prefixes queue names and can include tenant identity when `tenant_
 ### Deps module
 
 ```python
-from forze.application.execution import DepsPlan
+from forze.application.execution import DepsRegistry
 from forze_rabbitmq import RabbitMQDepsModule
 
 rabbit_module = RabbitMQDepsModule(
@@ -61,7 +61,7 @@ rabbit_module = RabbitMQDepsModule(
     queue_writers={"orders": orders_queue},
 )
 
-deps_plan = DepsPlan.from_modules(rabbit_module)
+deps_registry = DepsRegistry.from_modules(rabbit_module)
 ```
 
 The route key should match your `QueueSpec.name`.

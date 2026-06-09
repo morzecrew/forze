@@ -1,6 +1,6 @@
 """Shared types for Temporal schedule client operations."""
 
-from dataclasses import dataclass
+import attrs
 
 from forze.application.contracts.durable.workflow import (
     DurableWorkflowScheduleDescription,
@@ -9,7 +9,7 @@ from forze.application.contracts.durable.workflow import (
 # ----------------------- #
 
 
-@dataclass(frozen=True, slots=True)
+@attrs.define(frozen=True, slots=True)
 class TemporalScheduleListPage:
     """One page of schedule list results."""
 

@@ -151,17 +151,22 @@ def test_configurable_mongo_read_only_document_batch_size() -> None:
 
 
 def test_document_config_to_read_only_preserves_batch_size() -> None:
-    from forze_mongo.execution.deps.module import _document_config_to_read_only
+    from forze.application.contracts.document.wiring import derive_read_only_document_config
 
     rw = MongoDocumentConfig(
         read=("db", "c"),
         write=("db", "c"),
         batch_size=999,
+        tenant_aware=True,
     )
-    ro = _document_config_to_read_only(rw)
+    ro = derive_read_only_document_config(
+        rw,
+        factory=MongoReadOnlyDocumentConfig,
+    )
 
     assert ro.read == ("db", "c")
     assert ro.batch_size == 999
+    assert ro.tenant_aware is True
 
 
 def test_mongo_txmanager() -> None:
@@ -184,9 +189,11 @@ def test_read_gw_factory() -> None:
 
 
 def test_doc_write_gw_without_history() -> None:
+    spec = _rw_spec()
     gw = doc_write_gw(
         _ctx(),
-        write_types=_rw_spec().write,  # type: ignore[arg-type]
+        write_types=spec.write,  # type: ignore[arg-type]
+        codecs=spec.resolved_codecs,
         write_relation=("db", "w"),
         history_relation=None,
         history_enabled=False,
@@ -210,9 +217,11 @@ def test_rejects_mapping_search_config() -> None:
 
 
 def test_doc_write_gw_with_history() -> None:
+    spec = _rw_spec(history_enabled=True)
     gw = doc_write_gw(
         _ctx(),
-        write_types=_rw_spec().write,  # type: ignore[arg-type]
+        write_types=spec.write,  # type: ignore[arg-type]
+        codecs=spec.resolved_codecs,
         write_relation=("db", "w"),
         history_relation=("db", "h"),
         history_enabled=True,

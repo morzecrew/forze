@@ -27,6 +27,12 @@ class AccessTokenConfig:
     algorithm: str = "HS256"
     """Algorithm of the token."""
 
+    # ....................... #
+
+    def __attrs_post_init__(self) -> None:
+        if self.expires_in.total_seconds() <= 0:
+            raise exc.configuration("Expires in must be positive")
+
 
 # ....................... #
 
@@ -40,6 +46,8 @@ class AccessTokenClaims(TypedDict):
     iat: int
     exp: int
     tid: NotRequired[str]
+    sid: NotRequired[str]
+    """Session id binding the access token to a refresh session row."""
 
 
 # ....................... #
@@ -49,7 +57,7 @@ class AccessTokenClaims(TypedDict):
 class AccessTokenService:
     """Access token service."""
 
-    secret_key: bytes = attrs.field(validator=attrs.validators.min_len(32))
+    secret_key: bytes = attrs.field(repr=False, validator=attrs.validators.min_len(32))
     config: AccessTokenConfig = attrs.field(factory=AccessTokenConfig)
 
     # ....................... #
@@ -59,6 +67,7 @@ class AccessTokenService:
         *,
         principal_id: UUID,
         tenant_id: UUID | None = None,
+        session_id: UUID | None = None,
     ) -> str:
         now = utcnow()
         exp = now + self.config.expires_in
@@ -73,6 +82,9 @@ class AccessTokenService:
 
         if tenant_id is not None:
             payload["tid"] = str(tenant_id)
+
+        if session_id is not None:
+            payload["sid"] = str(session_id)
 
         return jwt.encode(  # pyright: ignore[reportUnknownMemberType]
             payload=payload,
@@ -123,6 +135,20 @@ class AccessTokenService:
         *,
         leeway: timedelta = timedelta(seconds=10),
     ) -> AccessTokenClaims | None:
+        """Verify only the signature and return claims **without** validating them.
+
+        .. warning::
+
+            This is **not** an authentication gate. The signature is checked, but
+            ``exp`` / ``iss`` / ``aud`` / ``nbf`` are **not** verified and no claims are
+            required, so this accepts expired or wrong-audience tokens. Use it only to
+            read claims out of a structurally valid token (e.g. to surface a session id
+            during logout); use :meth:`verify_token` to authenticate.
+
+        :returns: The decoded claims, or ``None`` if the signature is invalid or the
+            token is malformed.
+        """
+
         try:
             res = jwt.decode(  # pyright: ignore[reportUnknownMemberType]
                 jwt=token,

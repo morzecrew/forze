@@ -30,8 +30,10 @@ def _minimal_vector_port(
 ) -> PostgresVectorSearchAdapter[_M]:
     intro = MagicMock()
     intro.get_column_types = AsyncMock(return_value={})
+    spec = SearchSpec(name="t", model_type=_M, fields=["id", "label"])
     return PostgresVectorSearchAdapter(
-        spec=SearchSpec(name="t", model_type=_M, fields=["id", "label"]),
+        spec=spec,
+        codec=spec.resolved_read_codec,
         index_relation=("public", "idx"),
         relation=("public", "heap"),
         index_heap_relation=("public", "heap"),

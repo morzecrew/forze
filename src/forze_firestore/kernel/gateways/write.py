@@ -6,30 +6,22 @@ require_firestore()
 
 # ....................... #
 
-from typing import Sequence, final
+from typing import Any, Sequence, cast, final
 from uuid import UUID
 
 import attrs
-from tenacity import (
-    retry,
-    retry_if_exception,
-    stop_after_attempt,
-    wait_exponential,
-)
 
 from forze.application.contracts.querying import QueryFilterExpression
+from forze.application.contracts.resilience import ResilienceExecutorPort
+from forze.application.execution.resilience import (
+    default_resilience_executor,
+    occ_retry,
+)
 from forze.base.exceptions import CoreException, ExceptionKind, exc
 from forze.base.primitives import JsonDict
-from forze.base.serialization import (
-    pydantic_dump,
-    pydantic_dump_many,
-    pydantic_persistence_dump,
-    pydantic_persistence_dump_many,
-    pydantic_validate,
-    pydantic_validate_many,
-)
-from forze.domain.constants import REV_FIELD
-from forze.domain.models import BaseDTO, CreateDocumentCmd, Document
+from forze.base.serialization import ModelCodec
+from forze.domain.constants import ID_FIELD, REV_FIELD
+from forze.domain.models import BaseDTO, Document
 
 from ..relation import relations_match
 from .base import FirestoreGateway
@@ -39,36 +31,32 @@ from .read import FirestoreReadGateway
 # ----------------------- #
 
 
-def optimistic_retry(*, attempts: int = 3):  # type: ignore[no-untyped-def]
-    return retry(
-        retry=retry_if_exception(
-            predicate=lambda e: isinstance(e, CoreException)
-            and e.kind is ExceptionKind.CONCURRENCY
-        ),
-        stop=stop_after_attempt(attempts),
-        wait=wait_exponential(multiplier=0.01, min=0.01, max=0.2),
-        reraise=True,
-    )
-
-
-# ....................... #
-
-
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class FirestoreWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
+class FirestoreWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
     FirestoreGateway[D]
 ):
     """Write gateway for Firestore documents with optimistic concurrency."""
 
     read_gw: FirestoreReadGateway[D]
+    resilience: ResilienceExecutorPort = attrs.field(
+        factory=default_resilience_executor,
+        eq=False,
+        repr=False,
+    )
     create_cmd_type: type[C]
     update_cmd_type: type[U] | None = attrs.field(default=None)
+    create_codec: ModelCodec[D, Any] = attrs.field(kw_only=True, eq=False, repr=False)
+    update_codec: ModelCodec[U, Any] | None = attrs.field(
+        kw_only=True, eq=False, repr=False
+    )
     history_gw: FirestoreHistoryGateway[D] | None = attrs.field(default=None)
 
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
+        super().__attrs_post_init__()
+
         if not relations_match(self.relation, self.read_gw.relation):
             raise exc.configuration(
                 "Relation mismatch. Write gateway and nested read gateway must use the same relation."
@@ -102,6 +90,8 @@ class FirestoreWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
 
     # ....................... #
 
+    # ....................... #
+
     def _require_update_cmd(self) -> None:
         if self.update_cmd_type is None:
             raise exc.internal("Update command type is not supported for this model")
@@ -117,7 +107,7 @@ class FirestoreWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
     def _materialize_after_write(self, payload: JsonDict) -> D:
         """Build a domain model from written storage without a post-write read."""
 
-        return pydantic_validate(self.model_type, self._from_storage_doc(payload))
+        return self._decode_row(self._from_storage_doc(payload))
 
     # ....................... #
 
@@ -125,7 +115,7 @@ class FirestoreWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
         """Return a document after a write, avoiding read-after-write inside transactions."""
 
         if merged is not None and self.client.is_in_transaction():
-            return pydantic_validate(self.model_type, merged)
+            return self._decode_row(merged)
 
         return await self.read_gw.get(pk)
 
@@ -172,22 +162,50 @@ class FirestoreWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
 
     # ....................... #
 
-    def _from_cdto(self, dto: C) -> D:
-        data = pydantic_dump(dto, exclude={"unset": True})
-        return pydantic_validate(self.model_type, data)
+    def _from_cdto(self, payload: C, id: UUID | None = None) -> D:
+        model = self.create_codec.transform(payload)
+
+        if id is not None:
+            model = model.model_copy(update={ID_FIELD: id}, deep=True)
+
+        return model
 
     # ....................... #
 
-    def _from_cdto_many(self, dtos: Sequence[C]) -> Sequence[D]:
-        data = pydantic_dump_many(dtos, exclude={"unset": True})
-        return pydantic_validate_many(self.model_type, data)
+    def _from_cdto_many(
+        self,
+        payloads: Sequence[C],
+        ids: Sequence[UUID] | None = None,
+    ) -> Sequence[D]:
+        models = list(self.create_codec.transform_many(payloads))
+
+        if ids is not None:
+            models = [
+                m.model_copy(update={ID_FIELD: i}, deep=True)
+                for m, i in zip(models, ids, strict=True)
+            ]
+
+        return models
 
     # ....................... #
 
-    @optimistic_retry()  # type: ignore[untyped-decorator]
-    async def create(self, dto: C) -> D:
-        model = self._from_cdto(dto)
-        data = pydantic_persistence_dump(model)
+    def _patch_codec(self) -> ModelCodec[Any, Any]:
+        if self.update_codec is not None:
+            return self.update_codec
+
+        if self.update_cmd_type is not None:
+            raise exc.internal(
+                "Update codec is required when update commands are supported"
+            )
+
+        return self.read_codec
+
+    # ....................... #
+
+    @occ_retry
+    async def create(self, payload: C, *, id: UUID | None = None) -> D:
+        model = self._from_cdto(payload, id)
+        data = self.read_codec.encode_persistence_mapping(model)
         data = self.adapt_payload_for_write(data, create=True)
         coll = await self.coll()
         await self.client.set_document(coll, self._storage_pk(model.id), data)
@@ -200,28 +218,28 @@ class FirestoreWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
 
     # ....................... #
 
-    @optimistic_retry()  # type: ignore[untyped-decorator]
+    @occ_retry
     async def create_many(
         self,
-        dtos: Sequence[C],
+        payloads: Sequence[C],
         *,
         batch_size: int = 200,
     ) -> Sequence[D]:
-        if not dtos:
+        if not payloads:
             return []
 
-        models = self._from_cdto_many(dtos)
-        raw_payloads = pydantic_persistence_dump_many(models)
-        payloads = self.adapt_many_payload_for_write(raw_payloads, create=True)
+        models = self._from_cdto_many(payloads)
+        raw_payloads = self.read_codec.encode_persistence_mapping_many(models)
+        write_payloads = self.adapt_many_payload_for_write(raw_payloads, create=True)
         documents = [
             (self._storage_pk(m.id), dict(p))
-            for m, p in zip(models, payloads, strict=True)
+            for m, p in zip(models, write_payloads, strict=True)
         ]
         await self.client.insert_many(
             await self.coll(), documents, batch_size=batch_size
         )
         if self.client.is_in_transaction():
-            created = [self._materialize_after_write(dict(p)) for p in payloads]
+            created = [self._materialize_after_write(dict(p)) for p in write_payloads]
         else:
             created = await self.read_gw.get_many([model.id for model in models])
         await self._write_history(*created)
@@ -235,7 +253,7 @@ class FirestoreWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
 
     # ....................... #
 
-    @optimistic_retry()  # type: ignore[untyped-decorator]
+    @occ_retry
     async def _patch(
         self,
         pk: UUID,
@@ -258,7 +276,7 @@ class FirestoreWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
             return current, diff
 
         diff = self._bump_rev(current, diff)
-        merged = pydantic_persistence_dump(current)
+        merged = self.read_codec.encode_persistence_mapping(current)
         merged.update(self.adapt_payload_for_write(diff, create=False))
 
         coll = await self.coll()
@@ -279,7 +297,10 @@ class FirestoreWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
         rev: int | None = None,
     ) -> tuple[D, JsonDict]:
         self._require_update_cmd()
-        update_data = pydantic_persistence_dump(dto, exclude={"unset": True})
+        update_data = self._patch_codec().encode_persistence_mapping(
+            cast(Any, dto),
+            exclude={"unset": True},
+        )
 
         return await self._patch(pk, update_data, rev=rev)
 
@@ -322,73 +343,76 @@ class FirestoreWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
 
     # ....................... #
 
-    @optimistic_retry()  # type: ignore[untyped-decorator]
-    async def ensure(self, dto: C) -> D:
-        model = self._from_cdto(dto)
-
+    @occ_retry
+    async def ensure(self, id: UUID, payload: C) -> D:
         try:
-            return await self.read_gw.get(model.id)
+            return await self.read_gw.get(id)
 
         except CoreException as err:
             if err.kind is ExceptionKind.NOT_FOUND:
-                return await self.create(dto)
+                return await self.create(payload, id=id)
 
             raise
 
     # ....................... #
 
-    @optimistic_retry()  # type: ignore[untyped-decorator]
+    @occ_retry
     async def ensure_many(
         self,
-        dtos: Sequence[C],
+        ids: Sequence[UUID],
+        payloads: Sequence[C],
         *,
         batch_size: int = 200,
     ) -> Sequence[D]:
-        if not dtos:
+        if not payloads:
             return []
 
         out: list[D] = []
 
-        for dto in dtos:
-            out.append(await self.ensure(dto))
+        for id_, payload in zip(ids, payloads, strict=True):
+            out.append(await self.ensure(id_, payload))
 
         _ = batch_size
         return out
 
     # ....................... #
 
-    @optimistic_retry()  # type: ignore[untyped-decorator]
-    async def upsert(self, create_dto: C, update_dto: U) -> D:
+    @occ_retry
+    async def upsert(self, id: UUID, create: C, update: U) -> D:
         self._require_update_cmd()
-        model = self._from_cdto(create_dto)
 
         try:
-            current = await self.read_gw.get(model.id)
+            current = await self.read_gw.get(id)
 
         except CoreException as err:
             if err.kind is ExceptionKind.NOT_FOUND:
-                return await self.create(create_dto)
+                return await self.create(create, id=id)
 
             raise
 
-        updated, _ = await self.update(current.id, update_dto, rev=current.rev)
+        updated, _ = await self.update(current.id, update, rev=current.rev)
         return updated
 
     # ....................... #
 
-    @optimistic_retry()  # type: ignore[untyped-decorator]
+    @occ_retry
     async def upsert_many(
         self,
-        pairs: Sequence[tuple[C, U]],
+        ids: Sequence[UUID],
+        creates: Sequence[C],
+        updates: Sequence[U],
         *,
         batch_size: int = 200,
     ) -> Sequence[D]:
         _ = batch_size
 
-        if not pairs:
+        if not creates:
             return []
 
-        return [await self.upsert(c, u) for c, u in pairs]
+        return [
+            await self.upsert(i, c, u)
+            for i, c, u in zip(ids, creates, updates, strict=True)
+        ]
 
     # ....................... #
 

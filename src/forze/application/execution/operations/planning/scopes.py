@@ -400,6 +400,26 @@ class ResolvedScope:
     )
     """Resolved dispatch hooks for this scope."""
 
+    # ....................... #
+
+    def body_is_empty(self) -> bool:
+        """Whether this scope has no body stage hooks (before/wrap/.../dispatch).
+
+        Excludes transaction after-commit stages. When true, the scope body adds no
+        behavior around the inner callable, so the executor can invoke it directly
+        and skip building the wrap/finally machinery (see
+        :func:`~forze.application.execution.operations.run.plan.run_resolved_scope`).
+        """
+
+        return (
+            self.before.is_empty()
+            and self.wrap.is_empty()
+            and self.finally_.is_empty()
+            and self.on_failure.is_empty()
+            and self.on_success.is_empty()
+            and self.dispatch.is_empty()
+        )
+
 
 # ....................... #
 
@@ -425,12 +445,7 @@ class ResolvedTransactionScope(ResolvedScope):
 
     def is_empty(self) -> bool:
         return (
-            self.before.is_empty()
-            and self.wrap.is_empty()
-            and self.finally_.is_empty()
-            and self.on_failure.is_empty()
-            and self.on_success.is_empty()
-            and self.dispatch.is_empty()
+            self.body_is_empty()
             and self.after_commit.is_empty()
             and self.dispatch_after_commit.is_empty()
         )

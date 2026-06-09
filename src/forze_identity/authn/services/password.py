@@ -2,6 +2,9 @@ import attrs
 from argon2 import PasswordHasher
 from argon2.exceptions import InvalidHash, VerificationError, VerifyMismatchError
 
+# Sentinel for constant-time verification when no account exists (not user-facing).
+_TIMING_DUMMY_PASSWORD = "__forze_timing_mitigation__"  # nosec B105 — non-user sentinel for timing-safe verify
+
 # ----------------------- #
 
 
@@ -27,6 +30,7 @@ class PasswordService:
 
     # Non initable fields
     __hasher: PasswordHasher | None = attrs.field(default=None, init=False)
+    __timing_dummy_hash: str | None = attrs.field(default=None, init=False)
 
     # ....................... #
 
@@ -50,6 +54,16 @@ class PasswordService:
         ph = self._require_hasher()
 
         return ph.hash(password)
+
+    # ....................... #
+
+    def timing_dummy_hash(self) -> str:
+        """Argon2 hash used for verify work when no matching account exists."""
+
+        if self.__timing_dummy_hash is None:
+            self.__timing_dummy_hash = self.hash_password(_TIMING_DUMMY_PASSWORD)
+
+        return self.__timing_dummy_hash
 
     # ....................... #
 

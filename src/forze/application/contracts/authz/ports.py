@@ -70,6 +70,65 @@ class GrantQueryPort(Protocol):
 # ....................... #
 
 
+class DelegationPort(Protocol):
+    """Port for checking whether one principal may act on behalf of another.
+
+    Answers the *pairwise* question ``may_act(actor, subject)`` — distinct from the
+    least-privilege intersection (which asks whether both are independently permitted the
+    action). Consulted by the authz before-hook only when
+    :attr:`~forze.application.contracts.authz.specs.AuthzSpec.enforce_delegation_grant` is set.
+    """
+
+    def may_act(
+        self,
+        actor_id: UUID,
+        subject_id: UUID,
+        *,
+        scope: AuthzScope | None = None,
+    ) -> Awaitable[bool]:
+        """Whether ``actor_id`` holds a grant to act on behalf of ``subject_id``."""
+        ...  # pragma: no cover
+
+
+# ....................... #
+
+
+class DelegationGrantPort(Protocol):
+    """Port for attaching and listing delegation (``may_act``) grants between principals."""
+
+    def grant_delegation(
+        self,
+        actor: PrincipalRef | UUID | AuthnIdentity | AuthzSubject,
+        subject: PrincipalRef | UUID | AuthnIdentity | AuthzSubject,
+        *,
+        scope: AuthzScope | None = None,
+    ) -> Awaitable[None]:
+        """Grant ``actor`` the right to act on behalf of ``subject`` (idempotent)."""
+        ...  # pragma: no cover
+
+    def revoke_delegation(
+        self,
+        actor: PrincipalRef | UUID | AuthnIdentity | AuthzSubject,
+        subject: PrincipalRef | UUID | AuthnIdentity | AuthzSubject,
+        *,
+        scope: AuthzScope | None = None,
+    ) -> Awaitable[None]:
+        """Revoke ``actor``'s right to act on behalf of ``subject``."""
+        ...  # pragma: no cover
+
+    def list_delegators(
+        self,
+        actor: PrincipalRef | UUID | AuthnIdentity | AuthzSubject,
+        *,
+        scope: AuthzScope | None = None,
+    ) -> Awaitable[frozenset[UUID]]:
+        """Enumerate the subject principal ids ``actor`` may act on behalf of."""
+        ...  # pragma: no cover
+
+
+# ....................... #
+
+
 class PrincipalRegistryPort(Protocol):
     """Port for registering and resolving policy principals."""
 

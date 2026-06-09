@@ -13,6 +13,7 @@ from forze.application.contracts.analytics import (
     AnalyticsSpec,
 )
 from forze.application.contracts.tenancy import TenantProviderPort
+from forze.base.primitives import OnceCell
 from forze_postgres.execution.deps.configs import PostgresAnalyticsConfig
 from forze_postgres.kernel.client import PostgresClientPort
 from forze_postgres.kernel.gateways import PostgresQualifiedName
@@ -45,8 +46,8 @@ class PostgresAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
     tenant_provider: TenantProviderPort | None = None
     """Tenant context for dynamic ingest :class:`~forze_postgres.kernel.relation.RelationSpec` resolvers."""
 
-    _ingest_qname_resolved: PostgresQualifiedName | None = attrs.field(
-        default=None,
+    _ingest_qname_cell: OnceCell[PostgresQualifiedName] = attrs.field(
+        factory=OnceCell,
         init=False,
         eq=False,
         repr=False,

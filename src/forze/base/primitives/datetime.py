@@ -1,6 +1,8 @@
 """Datetime primitives shared across the application."""
 
-from datetime import UTC, datetime
+from datetime import datetime
+
+from .time_source import current_time_source
 
 # ----------------------- #
 
@@ -8,8 +10,9 @@ from datetime import UTC, datetime
 def utcnow() -> datetime:
     """Return the current timezone-aware UTC datetime.
 
-    Uses :class:`datetime.datetime` with ``tzinfo=UTC`` for consistent
-    timestamp handling across the application.
+    Reads the context-active :class:`~forze.base.primitives.time_source.TimeSource`
+    (the system clock by default), so a bound source — a frozen clock in tests or a
+    durable workflow's deterministic clock — controls every ``utcnow()`` read.
     """
 
-    return datetime.now(UTC)
+    return current_time_source().now()

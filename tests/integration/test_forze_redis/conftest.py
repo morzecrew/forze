@@ -27,7 +27,7 @@ from forze_redis.adapters import (
     RedisStreamGroupAdapter,
 )
 from forze_redis.kernel.client import RedisClient, RedisConfig
-from forze.base.serialization import PydanticRecordMappingCodec
+from forze.base.serialization import PydanticModelCodec
 
 
 def _ensure_docker_available() -> None:
@@ -138,7 +138,7 @@ class _PubSubPayload(BaseModel):
 @pytest_asyncio.fixture(scope="function")
 async def redis_stream(redis_client: RedisClient) -> RedisStreamAdapter[_StreamPayload]:
     """Provide a RedisStreamAdapter for integration tests."""
-    codec = RedisStreamCodec(payload_codec=PydanticRecordMappingCodec(_StreamPayload))
+    codec = RedisStreamCodec(payload_codec=PydanticModelCodec(_StreamPayload))
     return RedisStreamAdapter(client=redis_client, codec=codec)
 
 
@@ -147,7 +147,7 @@ async def redis_stream_group(
     redis_client: RedisClient,
 ) -> RedisStreamGroupAdapter[_StreamPayload]:
     """Provide a RedisStreamGroupAdapter for integration tests."""
-    codec = RedisStreamCodec(payload_codec=PydanticRecordMappingCodec(_StreamPayload))
+    codec = RedisStreamCodec(payload_codec=PydanticModelCodec(_StreamPayload))
     return RedisStreamGroupAdapter(client=redis_client, codec=codec)
 
 
@@ -160,7 +160,7 @@ def stream_payload_cls() -> type[_StreamPayload]:
 @pytest_asyncio.fixture(scope="function")
 async def redis_pubsub(redis_client: RedisClient) -> RedisPubSubAdapter[_PubSubPayload]:
     """Provide a RedisPubSubAdapter for integration tests."""
-    codec = RedisPubSubCodec(payload_codec=PydanticRecordMappingCodec(_PubSubPayload))
+    codec = RedisPubSubCodec(payload_codec=PydanticModelCodec(_PubSubPayload))
     return RedisPubSubAdapter(client=redis_client, codec=codec)
 
 

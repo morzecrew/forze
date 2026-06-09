@@ -24,7 +24,8 @@ from pydantic import BaseModel
 from .._logger import logger
 from ..exceptions import exc
 from ..primitives import JsonDict
-from .model_codec import EncodeMode, RecordMappingDumpExcludeOptions
+from ._common import sequence_as_list, validate_batch_size
+from .model_codec import EncodeMode, ModelDumpExcludeOptions
 from .pydantic import pydantic_dump
 
 # ----------------------- #
@@ -57,15 +58,6 @@ def _struct_fields_cached(
 @lru_cache(maxsize=256)
 def _struct_field_names_cached(cls: type[msgspec.Struct]) -> frozenset[str]:
     return frozenset(field.encode_name for field in _struct_fields_cached(cls))
-
-
-# ....................... #
-
-
-def _sequence_as_list[T](seq: Sequence[T]) -> list[T]:
-    """Return ``seq`` as a ``list`` without copying when already a list."""
-
-    return seq if isinstance(seq, list) else list(seq)
 
 
 # ....................... #
@@ -269,7 +261,7 @@ def _validate_no_unknown_fields(
 # ....................... #
 
 
-def _ensure_unset_not_requested(exclude: RecordMappingDumpExcludeOptions) -> None:
+def _ensure_unset_not_requested(exclude: ModelDumpExcludeOptions) -> None:
     if exclude.get("unset", False):
         raise exc.internal(
             "msgspec codec does not support exclude={'unset': True}; strip unset fields before crossing the application boundary",
@@ -306,7 +298,7 @@ def _dump_value(
     value: Any,
     *,
     mode: EncodeMode,
-    exclude: RecordMappingDumpExcludeOptions,
+    exclude: ModelDumpExcludeOptions,
 ) -> Any:
     if isinstance(value, msgspec.Struct):
         return _dump_struct(value, mode=mode, exclude=exclude)
@@ -337,7 +329,7 @@ def _dump_struct(
     obj: msgspec.Struct,
     *,
     mode: EncodeMode,
-    exclude: RecordMappingDumpExcludeOptions,
+    exclude: ModelDumpExcludeOptions,
 ) -> JsonDict:
     out: JsonDict = {}
 
@@ -386,6 +378,66 @@ def msgspec_validate[T: msgspec.Struct](
 # ....................... #
 
 
+def msgspec_convert[M: msgspec.Struct](
+    cls: type[M],
+    data: JsonDict,
+) -> M:
+    """Convert a trusted mapping into a struct without unknown-field scanning."""
+
+    logger.trace("Msgspec convert into %s", cls.__name__)
+
+    return msgspec.convert(data, cls, strict=False)
+
+
+# ....................... #
+
+
+def msgspec_convert_many[T: msgspec.Struct](
+    cls: type[T],
+    data: Sequence[JsonDict],
+) -> list[T]:
+    """Bulk convert trusted rows via one ``msgspec.convert`` (no ``forbid_extra`` walk)."""
+
+    payload = sequence_as_list(data)
+
+    if not payload:
+        return []
+
+    logger.trace(
+        "Msgspec convert %s rows into list[%s]",
+        len(payload),
+        cls.__name__,
+    )
+
+    return msgspec.convert(payload, list[cls], strict=False)  # type: ignore[valid-type]
+
+
+# ....................... #
+
+
+def msgspec_convert_many_batched[T: msgspec.Struct](
+    cls: type[T],
+    data: Sequence[JsonDict],
+    *,
+    batch_size: int = 2000,
+) -> Iterator[list[T]]:
+    """Yield struct chunks using trusted bulk convert only."""
+
+    validate_batch_size(batch_size)
+
+    seq = sequence_as_list(data)
+
+    if not seq:
+        return
+
+    for start in range(0, len(seq), batch_size):
+        chunk = seq[start : start + batch_size]
+        yield msgspec_convert_many(cls, chunk)
+
+
+# ....................... #
+
+
 def msgspec_validate_many[T: msgspec.Struct](
     cls: type[T],
     data: Sequence[JsonDict],
@@ -394,7 +446,7 @@ def msgspec_validate_many[T: msgspec.Struct](
 ) -> list[T]:
     """Validate raw mapping rows into a list of msgspec structs."""
 
-    payload = _sequence_as_list(data)
+    payload = sequence_as_list(data)
 
     logger.trace(
         "Validating %s data items into list[%s] (forbid_extra=%s)",
@@ -422,11 +474,9 @@ def msgspec_validate_many_batched[T: msgspec.Struct](
 ) -> Iterator[list[T]]:
     """Validate raw mapping rows into msgspec structs in fixed-size chunks."""
 
-    if batch_size < 1:
-        msg = "batch_size must be >= 1"
-        raise ValueError(msg)
+    validate_batch_size(batch_size)
 
-    seq = _sequence_as_list(data)
+    seq = sequence_as_list(data)
 
     if not seq:
         return
@@ -448,7 +498,7 @@ def msgspec_dump(
     obj: msgspec.Struct,
     *,
     mode: EncodeMode = "python",
-    exclude: RecordMappingDumpExcludeOptions = {},
+    exclude: ModelDumpExcludeOptions = {},
 ) -> JsonDict:
     """Dump a msgspec struct into a JSON-compatible ``dict``."""
 
@@ -471,7 +521,7 @@ def msgspec_dump_many(
     objs: Sequence[msgspec.Struct],
     *,
     mode: EncodeMode = "python",
-    exclude: RecordMappingDumpExcludeOptions = {},
+    exclude: ModelDumpExcludeOptions = {},
 ) -> list[JsonDict]:
     """Dump a list of msgspec structs into JSON-compatible dicts."""
 
@@ -497,17 +547,15 @@ def msgspec_dump_many_batched(
     *,
     batch_size: int = 2000,
     mode: EncodeMode = "python",
-    exclude: RecordMappingDumpExcludeOptions = {},
+    exclude: ModelDumpExcludeOptions = {},
 ) -> Iterator[list[JsonDict]]:
     """Dump msgspec structs in fixed-size chunks."""
 
     _ensure_unset_not_requested(exclude)
 
-    if batch_size < 1:
-        msg = "batch_size must be >= 1"
-        raise ValueError(msg)
+    validate_batch_size(batch_size)
 
-    seq = _sequence_as_list(objs)
+    seq = sequence_as_list(objs)
 
     if not seq:
         return
@@ -524,7 +572,7 @@ def msgspec_dump_many_batched(
 def msgspec_encode_json_bytes(
     obj: msgspec.Struct,
     *,
-    exclude: RecordMappingDumpExcludeOptions = {},
+    exclude: ModelDumpExcludeOptions = {},
 ) -> bytes:
     """Serialize a msgspec struct to JSON UTF-8 bytes for wire transport."""
 
@@ -597,7 +645,7 @@ def msgspec_transform[T: msgspec.Struct](
     model: msgspec.Struct | BaseModel,
     *,
     mode: EncodeMode = "python",
-    exclude: RecordMappingDumpExcludeOptions = {},
+    exclude: ModelDumpExcludeOptions = {},
 ) -> T:
     """Transform a Pydantic model or msgspec struct into a msgspec struct."""
 
@@ -620,7 +668,7 @@ def msgspec_transform_many[T: msgspec.Struct](
     models: Sequence[msgspec.Struct | BaseModel],
     *,
     mode: EncodeMode = "python",
-    exclude: RecordMappingDumpExcludeOptions = {},
+    exclude: ModelDumpExcludeOptions = {},
 ) -> list[T]:
     """Transform many Pydantic models or msgspec structs into msgspec structs."""
 

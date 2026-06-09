@@ -1,6 +1,5 @@
 """Unit tests for :class:`~forze_postgres.kernel.client.RoutedPostgresClient`."""
 
-from forze.base.exceptions import CoreException, exc
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID
@@ -8,12 +7,14 @@ from uuid import UUID
 import pytest
 
 from forze.application.contracts.secrets import SecretRef
+from forze.base.exceptions import CoreException
 from forze_postgres.kernel.client import RoutedPostgresClient
 
 # ----------------------- #
 
 _T1 = UUID("11111111-1111-1111-1111-111111111111")
 _T2 = UUID("22222222-2222-2222-2222-222222222222")
+
 
 class _MemSecrets:
     def __init__(self, paths: dict[UUID, str]) -> None:
@@ -28,8 +29,10 @@ class _MemSecrets:
     async def exists(self, ref: SecretRef) -> bool:
         return any(ref.path == f"tenants/{tid}/dsn" for tid in self.paths)
 
+
 def _ref(tid: UUID) -> SecretRef:
     return SecretRef(path=f"tenants/{tid}/dsn")
+
 
 @pytest.mark.asyncio
 async def test_routed_requires_startup() -> None:
@@ -46,6 +49,7 @@ async def test_routed_requires_startup() -> None:
     tenant = _T1
     with pytest.raises(CoreException, match="not started"):
         await routed.health()
+
 
 @pytest.mark.asyncio
 async def test_routed_eviction_closes_old_pool() -> None:
@@ -87,6 +91,7 @@ async def test_routed_eviction_closes_old_pool() -> None:
 
     await routed.close()
     assert instances[1].close.await_count == 1
+
 
 @pytest.mark.asyncio
 async def test_routed_lru_defers_close_while_tenant_pool_still_in_use() -> None:
@@ -152,6 +157,7 @@ async def test_routed_lru_defers_close_while_tenant_pool_still_in_use() -> None:
     await routed.close()
     assert instances[1].close.await_count == 1
 
+
 def test_routed_postgres_rejects_zero_max_cached_tenants() -> None:
     secrets = _MemSecrets({_T1: "postgresql://localhost/db1"})
     with pytest.raises(CoreException, match="max_entries"):
@@ -161,6 +167,7 @@ def test_routed_postgres_rejects_zero_max_cached_tenants() -> None:
             tenant_provider=lambda: _T1,
             max_cached_tenants=0,
         )
+
 
 @pytest.mark.asyncio
 async def test_routed_dedup_shares_pool_for_same_dsn() -> None:

@@ -11,21 +11,19 @@ from uuid import UUID
 
 import attrs
 from pymongo import UpdateOne
-from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
 
 from forze.application.contracts.querying import QueryFilterExpression
+from forze.application.contracts.resilience import ResilienceExecutorPort
+from forze.application.execution.resilience import (
+    default_resilience_executor,
+    occ_retry,
+)
+from forze.application.integrations.persistence import HistoryOccMixin
 from forze.base.exceptions import CoreException, ExceptionKind, exc
 from forze.base.primitives import JsonDict
-from forze.base.serialization import (
-    pydantic_dump,
-    pydantic_dump_many,
-    pydantic_persistence_dump,
-    pydantic_persistence_dump_many,
-    pydantic_validate,
-    pydantic_validate_many,
-)
+from forze.base.serialization import ModelCodec
 from forze.domain.constants import ID_FIELD, REV_FIELD
-from forze.domain.models import BaseDTO, CreateDocumentCmd, Document
+from forze.domain.models import BaseDTO, Document
 
 from ..relation import relations_match
 from .base import MongoGateway
@@ -35,32 +33,12 @@ from .read import MongoReadGateway
 # ----------------------- #
 
 
-def optimistic_retry(*, attempts: int = 3):  # type: ignore[no-untyped-def]
-    """Return a tenacity retry decorator for :exc:`~forze.base.errors.ConcurrencyError`.
-
-    Mirrors the Postgres retry strategy: exponential back-off with re-raise
-    after *attempts* failures.
-
-    :param attempts: Maximum number of attempts before re-raising.
-    """
-
-    return retry(
-        retry=retry_if_exception(
-            lambda e: isinstance(e, CoreException)
-            and e.kind is ExceptionKind.CONCURRENCY
-        ),
-        stop=stop_after_attempt(attempts),
-        wait=wait_exponential(multiplier=0.01, min=0.01, max=0.2),
-        reraise=True,
-    )
-
-
-# ....................... #
-
-
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](MongoGateway[D]):
+class MongoWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
+    HistoryOccMixin[D],
+    MongoGateway[D],
+):
     """Write gateway for Mongo documents with optimistic concurrency and optional history.
 
     Uses a :class:`MongoReadGateway` for read-before-write patterns and
@@ -73,18 +51,33 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](MongoGate
     read_gw: MongoReadGateway[D]
     """Companion read gateway; must share the same client, source, and database."""
 
+    resilience: ResilienceExecutorPort = attrs.field(
+        factory=default_resilience_executor,
+        eq=False,
+        repr=False,
+    )
+    """Resilience executor backing optimistic-concurrency retries."""
+
     create_cmd_type: type[C]
     """Pydantic model for creation payloads."""
 
     update_cmd_type: type[U] | None = attrs.field(default=None)
     """Pydantic model for update payloads."""
 
-    history_gw: MongoHistoryGateway[D] | None = attrs.field(default=None)
+    create_codec: ModelCodec[D, Any] = attrs.field(kw_only=True, eq=False, repr=False)
+
+    update_codec: ModelCodec[U, Any] | None = attrs.field(
+        kw_only=True, eq=False, repr=False
+    )
+
+    history_gw: MongoHistoryGateway[D] | None = attrs.field(default=None)  # type: ignore[override]
     """Optional history gateway for revision snapshots."""
 
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
+        super().__attrs_post_init__()
+
         if not relations_match(self.relation, self.read_gw.relation):
             raise exc.configuration(
                 "Relation mismatch. Write gateway and nested read gateway must use the same relation."
@@ -115,6 +108,8 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](MongoGate
                 raise exc.configuration(
                     "Tenant awareness mismatch. Write gateway and nested history gateway must have the same tenant awareness."
                 )
+
+    # ....................... #
 
     # ....................... #
 
@@ -187,77 +182,57 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](MongoGate
 
     # ....................... #
 
-    async def _write_history(self, *data: D) -> None:
-        if self.history_gw is not None:
-            await self.history_gw.write_many(data)
+    def _from_cdto(self, payload: C, id: UUID | None = None) -> D:
+        model = self.create_codec.transform(payload)
+
+        if id is not None:
+            model = model.model_copy(update={ID_FIELD: id}, deep=True)
+
+        return model
 
     # ....................... #
 
-    async def _validate_history(self, *data: tuple[D, int, JsonDict]) -> None:
-        if self.history_gw is None:
-            for current, rev, _ in data:
-                if rev != current.rev:
-                    raise exc.precondition(
-                        "Revision mismatch", code="revision_mismatch"
-                    )
+    def _from_cdto_many(
+        self,
+        payloads: Sequence[C],
+        ids: Sequence[UUID] | None = None,
+    ) -> Sequence[D]:
+        models = list(self.create_codec.transform_many(payloads))
 
-            return
+        if ids is not None:
+            models = [
+                m.model_copy(update={ID_FIELD: i}, deep=True)
+                for m, i in zip(models, ids, strict=True)
+            ]
 
-        to_check = [
-            (current, rev, update)
-            for current, rev, update in data
-            if rev != current.rev
-        ]
-        bad_records = [rev for current, rev, _ in to_check if rev > current.rev]
-
-        if bad_records:
-            raise exc.precondition("Invalid revision number")
-
-        if to_check:
-            pks_to_check = [current.id for current, _, _ in to_check]
-            revs_to_check = [rev for _, rev, _ in to_check]
-            hist_records = await self.history_gw.read_many(pks_to_check, revs_to_check)
-
-            if len(hist_records) != len(to_check):
-                raise exc.not_found(
-                    "History records not found. Please retry with actual revision number."
-                )
-
-            for (current, _, update), historical in zip(
-                to_check, hist_records, strict=True
-            ):
-                if not current.validate_historical_consistency(historical, update):
-                    raise exc.conflict(
-                        "Historical consistency violation during update",
-                        code="historical_consistency_violation",
-                    )
+        return models
 
     # ....................... #
 
-    #! TODO: canonical mapper from there
-    def _from_cdto(self, dto: C) -> D:
-        data = pydantic_dump(dto, exclude={"unset": True})
-        return pydantic_validate(self.model_type, data)
+    def _patch_codec(self) -> ModelCodec[Any, Any]:
+        if self.update_codec is not None:
+            return self.update_codec
+
+        if self.update_cmd_type is not None:
+            raise exc.configuration(
+                "Update codec is required when update commands are supported"
+            )
+
+        return self.read_codec
 
     # ....................... #
 
-    #! TODO: canonical batch mapper from there
-    def _from_cdto_many(self, dtos: Sequence[C]) -> Sequence[D]:
-        data = pydantic_dump_many(dtos, exclude={"unset": True})
-        return pydantic_validate_many(self.model_type, data)
+    @occ_retry
+    async def create(self, payload: C, *, id: UUID | None = None) -> D:
+        """Insert a new document from a creation payload and record its history.
 
-    # ....................... #
-
-    @optimistic_retry()  # type: ignore[untyped-decorator]
-    async def create(self, dto: C) -> D:
-        """Insert a new document from a creation DTO and record its history.
-
-        :param dto: Creation payload.
+        :param payload: Creation payload (domain fields only).
+        :param id: Optional caller-chosen primary key; server-generated when omitted.
         :returns: The persisted domain document.
         """
 
-        model = self._from_cdto(dto)
-        data = pydantic_persistence_dump(model)
+        model = self._from_cdto(payload, id)
+        data = self.read_codec.encode_persistence_mapping(model)
         data = self.adapt_payload_for_write(data, create=True)
 
         await self.client.insert_one(await self.coll(), self._storage_doc(data))
@@ -269,29 +244,27 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](MongoGate
 
     # ....................... #
 
-    @optimistic_retry()  # type: ignore[untyped-decorator]
+    @occ_retry
     async def create_many(
         self,
-        dtos: Sequence[C],
+        payloads: Sequence[C],
         *,
         batch_size: int = 200,
     ) -> Sequence[D]:
-        """Bulk-insert documents from creation DTOs and record their history.
+        """Bulk-insert documents from creation payloads and record their history.
 
-        :param dtos: Creation payloads. No-ops when empty.
+        :param payloads: Creation payloads (server-assigned ids). No-ops when empty.
         """
 
-        if not dtos:
+        if not payloads:
             return []
 
-        models = self._from_cdto_many(dtos)
-        raw_payloads = pydantic_persistence_dump_many(models)
-        payloads = self.adapt_many_payload_for_write(raw_payloads, create=True)
-        payloads = list(map(self._storage_doc, payloads))
+        models = self._from_cdto_many(payloads)
+        raw_payloads = self.read_codec.encode_persistence_mapping_many(models)
+        write_payloads = self.adapt_many_payload_for_write(raw_payloads, create=True)
+        docs = list(map(self._storage_doc, write_payloads))
 
-        await self.client.insert_many(
-            await self.coll(), payloads, batch_size=batch_size
-        )
+        await self.client.insert_many(await self.coll(), docs, batch_size=batch_size)
 
         created = await self.read_gw.get_many([model.id for model in models])
         await self._write_history(*created)
@@ -300,12 +273,12 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](MongoGate
 
     # ....................... #
 
-    @optimistic_retry()  # type: ignore[untyped-decorator]
-    async def ensure(self, dto: C) -> D:
-        """Insert a document when missing using ``$setOnInsert`` upsert; no field updates on match."""
+    @occ_retry
+    async def ensure(self, id: UUID, payload: C) -> D:
+        """Insert a document at *id* when missing using ``$setOnInsert``; no updates on match."""
 
-        model = self._from_cdto(dto)
-        data = pydantic_persistence_dump(model)
+        model = self._from_cdto(payload, id)
+        data = self.read_codec.encode_persistence_mapping(model)
         data = self.adapt_payload_for_write(data, create=True)
         storage = self._storage_doc(data)
         res: Any = await self.client.update_one_upsert(
@@ -322,26 +295,27 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](MongoGate
 
     # ....................... #
 
-    @optimistic_retry()  # type: ignore[untyped-decorator]
+    @occ_retry
     async def ensure_many(
         self,
-        dtos: Sequence[C],
+        ids: Sequence[UUID],
+        payloads: Sequence[C],
         *,
         batch_size: int = 200,
     ) -> Sequence[D]:
         """Bulk insert-when-missing with ``$setOnInsert`` upserts; order preserved for reads."""
 
-        if not dtos:
+        if not payloads:
             return []
 
-        models = self._from_cdto_many(dtos)
-        raw_payloads = pydantic_persistence_dump_many(models)
-        payloads = self.adapt_many_payload_for_write(raw_payloads, create=True)
+        models = self._from_cdto_many(payloads, ids)
+        raw_payloads = self.read_codec.encode_persistence_mapping_many(models)
+        write_payloads = self.adapt_many_payload_for_write(raw_payloads, create=True)
 
         inserted_idx: set[int] = set()
 
-        for offset in range(0, len(dtos), batch_size):
-            chunk_payloads = payloads[offset : offset + batch_size]
+        for offset in range(0, len(write_payloads), batch_size):
+            chunk_payloads = write_payloads[offset : offset + batch_size]
             chunk_models = models[offset : offset + batch_size]
             ops = self._bulk_upsert_set_on_insert_ops(chunk_models, chunk_payloads)
             inserted_idx |= await self._run_bulk_upsert_set_on_insert(
@@ -363,14 +337,14 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](MongoGate
 
     # ....................... #
 
-    @optimistic_retry()  # type: ignore[untyped-decorator]
-    async def upsert(self, create_dto: C, update_dto: U) -> D:
-        """Insert with ``$setOnInsert`` when missing; else delegate to :meth:`update`."""
+    @occ_retry
+    async def upsert(self, id: UUID, create: C, update: U) -> D:
+        """Insert *create* at *id* with ``$setOnInsert`` when missing; else delegate to :meth:`update`."""
 
         self._require_update_cmd()
 
-        model = self._from_cdto(create_dto)
-        data = pydantic_persistence_dump(model)
+        model = self._from_cdto(create, id)
+        data = self.read_codec.encode_persistence_mapping(model)
         data = self.adapt_payload_for_write(data, create=True)
         storage = self._storage_doc(data)
 
@@ -384,15 +358,17 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](MongoGate
             return model
 
         current = await self.read_gw.get(model.id)
-        u_res, _ = await self.update(model.id, update_dto, rev=current.rev)
+        u_res, _ = await self.update(model.id, update, rev=current.rev)
         return u_res
 
     # ....................... #
 
-    @optimistic_retry()  # type: ignore[untyped-decorator]
+    @occ_retry
     async def upsert_many(
         self,
-        pairs: Sequence[tuple[C, U]],
+        ids: Sequence[UUID],
+        creates: Sequence[C],
+        updates: Sequence[U],
         *,
         batch_size: int = 200,
     ) -> Sequence[D]:
@@ -400,17 +376,17 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](MongoGate
 
         self._require_update_cmd()
 
-        if not pairs:
+        if not creates:
             return []
 
-        models = self._from_cdto_many([c for c, _ in pairs])
-        raw_payloads = pydantic_persistence_dump_many(models)
+        models = self._from_cdto_many(creates, ids)
+        raw_payloads = self.read_codec.encode_persistence_mapping_many(models)
         payloads = self.adapt_many_payload_for_write(raw_payloads, create=True)
-        u_all = [u for _, u in pairs]
+        u_all = list(updates)
 
         inserted_idx: set[int] = set()
 
-        for offset in range(0, len(pairs), batch_size):
+        for offset in range(0, len(creates), batch_size):
             chunk_payloads = payloads[offset : offset + batch_size]
             chunk_models = models[offset : offset + batch_size]
             ops = self._bulk_upsert_set_on_insert_ops(chunk_models, chunk_payloads)
@@ -456,7 +432,7 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](MongoGate
 
     # ....................... #
 
-    @optimistic_retry()  # type: ignore[untyped-decorator]
+    @occ_retry
     async def _patch(
         self,
         pk: UUID,
@@ -500,7 +476,7 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](MongoGate
 
     # ....................... #
 
-    @optimistic_retry()  # type: ignore[untyped-decorator]
+    @occ_retry
     async def _patch_many(
         self,
         pks: Sequence[UUID],
@@ -584,7 +560,10 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](MongoGate
 
         self._require_update_cmd()
 
-        update_data = pydantic_persistence_dump(dto, exclude={"unset": True})
+        update_data = self._patch_codec().encode_persistence_mapping(
+            cast(Any, dto),
+            exclude={"unset": True},
+        )
         return await self._patch(pk, update_data, rev=rev)
 
     # ....................... #
@@ -618,12 +597,15 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](MongoGate
         if revs is not None and len(revs) != len(pks):
             raise exc.precondition("Length mismatch between primary keys and revisions")
 
-        updates = pydantic_persistence_dump_many(dtos, exclude={"unset": True})
+        updates = self._patch_codec().encode_persistence_mapping_many(
+            cast(Any, dtos),
+            exclude={"unset": True},
+        )
         return await self._patch_many(pks, updates, revs=revs, batch_size=batch_size)
 
     # ....................... #
 
-    @optimistic_retry()  # type: ignore[untyped-decorator]
+    @occ_retry
     async def update_matching(
         self,
         filters: QueryFilterExpression,  # type: ignore[valid-type]
@@ -640,7 +622,10 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](MongoGate
 
         self._require_update_cmd()
 
-        update_data = pydantic_persistence_dump(dto, exclude={"unset": True})
+        update_data = self._patch_codec().encode_persistence_mapping(
+            cast(Any, dto),
+            exclude={"unset": True},
+        )
 
         if not update_data:
             return 0, []

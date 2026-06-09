@@ -1,5 +1,6 @@
 from .routed_client import routed_client_lifecycle_step
+from .shutdown import ClientShutdownHook
 
 # ----------------------- #
 
-__all__ = ["routed_client_lifecycle_step"]
+__all__ = ["ClientShutdownHook", "routed_client_lifecycle_step"]

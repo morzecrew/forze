@@ -1,10 +1,12 @@
 import os
 from datetime import timedelta
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from forze.base.exceptions import CoreException
+from forze.base.primitives.owned_temp_path import OwnedTempPath
 
 from forze_gcs.kernel.client.client import GCSClient
 from forze_gcs.kernel.client.value_objects import GCSConfig
@@ -77,7 +79,7 @@ async def test_list_objects_applies_offset_and_limit() -> None:
         offset=1,
     )
 
-    assert [item.Key for item in items] == ["b", "c"]
+    assert [item.key for item in items] == ["b", "c"]
     assert total_count == 4
     bucket_ref.list_blobs.assert_awaited_once_with(prefix="")
 
@@ -164,3 +166,26 @@ async def test_head_object_maps_download_metadata() -> None:
     assert head.metadata == {"filename": "Zm9v"}
     assert head.size == 42
     assert head.etag == "abc"
+
+
+@pytest.mark.asyncio
+async def test_close_unlinks_owned_service_file() -> None:
+    sa_json = '{"type":"service_account","project_id":"p"}'
+    credential_path = OwnedTempPath.materialize_text(sa_json, prefix="forze-gcs-test-")
+    client = GCSClient()
+    fake_storage = MagicMock()
+    fake_storage.close = AsyncMock()
+
+    with patch(
+        "forze_gcs.kernel.client.client.Storage",
+        return_value=fake_storage,
+    ):
+        await client.initialize(
+            "test-project",
+            service_file=credential_path.path,
+            service_file_owned=credential_path.owned,
+        )
+        await client.close()
+
+    assert credential_path.path is not None
+    assert not Path(credential_path.path).exists()

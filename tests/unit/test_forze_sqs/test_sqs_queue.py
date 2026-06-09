@@ -7,7 +7,7 @@ from pydantic import BaseModel
 
 from forze_sqs.adapters import SQSQueueAdapter, SQSQueueCodec
 from forze_sqs.kernel.client import SQSClient, SQSQueueMessage
-from forze.base.serialization import PydanticRecordMappingCodec
+from forze.base.serialization import PydanticModelCodec
 
 
 class _Payload(BaseModel):
@@ -15,7 +15,7 @@ class _Payload(BaseModel):
 
 
 def test_queue_codec_encode_decode_roundtrip() -> None:
-    codec = SQSQueueCodec(payload_codec=PydanticRecordMappingCodec(_Payload))
+    codec = SQSQueueCodec(payload_codec=PydanticModelCodec(_Payload))
     ts = datetime(2025, 1, 1, 12, 0, 0)
 
     encoded = codec.encode(_Payload(value="hello"))
@@ -46,7 +46,7 @@ async def test_queue_adapter_enqueue_forwards_delay() -> None:
     client.enqueue = AsyncMock(return_value="msg-1")
     adapter = SQSQueueAdapter(
         client=client,
-        codec=SQSQueueCodec(payload_codec=PydanticRecordMappingCodec(_Payload)),
+        codec=SQSQueueCodec(payload_codec=PydanticModelCodec(_Payload)),
         namespace="ns",
     )
     delay = timedelta(seconds=30)
@@ -64,7 +64,7 @@ async def test_queue_adapter_enqueue_uses_namespaced_queue() -> None:
     client.enqueue = AsyncMock(return_value="msg-1")
     adapter = SQSQueueAdapter(
         client=client,
-        codec=SQSQueueCodec(payload_codec=PydanticRecordMappingCodec(_Payload)),
+        codec=SQSQueueCodec(payload_codec=PydanticModelCodec(_Payload)),
         namespace="ns:primary",
     )
 
@@ -80,7 +80,7 @@ async def test_queue_adapter_enqueue_many_uses_namespaced_queue() -> None:
     client = Mock(spec=SQSClient)
     client.client = MagicMock(return_value=AsyncMock())
     client.enqueue_many = AsyncMock(return_value=["msg-1", "msg-2"])
-    codec = SQSQueueCodec(payload_codec=PydanticRecordMappingCodec(_Payload))
+    codec = SQSQueueCodec(payload_codec=PydanticModelCodec(_Payload))
     adapter = SQSQueueAdapter(client=client, codec=codec, namespace="ns:primary")
 
     message_ids = await adapter.enqueue_many(
@@ -127,7 +127,7 @@ async def test_queue_adapter_enqueue_many_with_empty_payloads() -> None:
     client.enqueue_many = AsyncMock()
     adapter = SQSQueueAdapter(
         client=client,
-        codec=SQSQueueCodec(payload_codec=PydanticRecordMappingCodec(_Payload)),
+        codec=SQSQueueCodec(payload_codec=PydanticModelCodec(_Payload)),
         namespace="ns",
     )
 
@@ -141,7 +141,7 @@ async def test_queue_adapter_enqueue_many_with_empty_payloads() -> None:
 async def test_queue_adapter_receive_decodes_messages() -> None:
     client = Mock(spec=SQSClient)
     client.client = MagicMock(return_value=AsyncMock())
-    codec = SQSQueueCodec(payload_codec=PydanticRecordMappingCodec(_Payload))
+    codec = SQSQueueCodec(payload_codec=PydanticModelCodec(_Payload))
     ts = datetime(2025, 1, 1, 12, 0, 0)
     client.receive = AsyncMock(
         return_value=[
@@ -173,7 +173,7 @@ async def test_queue_adapter_receive_decodes_messages() -> None:
 async def test_queue_adapter_consume_decodes_messages() -> None:
     client = Mock(spec=SQSClient)
     client.client = MagicMock(return_value=AsyncMock())
-    codec = SQSQueueCodec(payload_codec=PydanticRecordMappingCodec(_Payload))
+    codec = SQSQueueCodec(payload_codec=PydanticModelCodec(_Payload))
     captured: dict[str, object] = {}
 
     async def _iter():
@@ -210,7 +210,7 @@ async def test_queue_adapter_ack_and_nack_use_namespaced_queue() -> None:
     client.nack = AsyncMock(return_value=1)
     adapter = SQSQueueAdapter(
         client=client,
-        codec=SQSQueueCodec(payload_codec=PydanticRecordMappingCodec(_Payload)),
+        codec=SQSQueueCodec(payload_codec=PydanticModelCodec(_Payload)),
         namespace="ns",
     )
 

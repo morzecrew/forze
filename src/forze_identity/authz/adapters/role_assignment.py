@@ -25,7 +25,7 @@ from ..domain.models.bindings import (
 from ..domain.models.policy_principal import ReadPolicyPrincipal
 from ..domain.models.role_definition import ReadRoleDefinition
 from ..services.grants import AuthzGrantResolver, fetch_all_document_hits
-from ._utils import find_policy_principal_by_id, validate_secure_authz_document_spec
+from ._utils import find_policy_principal_by_id, validate_authz_query_ports
 
 # ----------------------- #
 
@@ -50,21 +50,22 @@ class RoleAssignmentAdapter(RoleAssignmentPort):
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
-        validate_secure_authz_document_spec(self.principal_qry.spec)
-        validate_secure_authz_document_spec(self.role_qry.spec)
-        validate_secure_authz_document_spec(self.pr_binding_qry.spec)
-        validate_secure_authz_document_spec(self.pr_binding_cmd.spec)
-
-        for qry in (
-            self.resolver.deps.permission_qry,
-            self.resolver.deps.group_qry,
-            self.resolver.deps.rp_binding_qry,
-            self.resolver.deps.pp_binding_qry,
-            self.resolver.deps.gp_binding_qry,
-            self.resolver.deps.gr_binding_qry,
-            self.resolver.deps.gperm_binding_qry,
-        ):
-            validate_secure_authz_document_spec(qry.spec)
+        validate_authz_query_ports(
+            self.spec,
+            (
+                self.principal_qry,
+                self.role_qry,
+                self.pr_binding_qry,
+                self.pr_binding_cmd,
+                self.resolver.deps.permission_qry,
+                self.resolver.deps.group_qry,
+                self.resolver.deps.rp_binding_qry,
+                self.resolver.deps.pp_binding_qry,
+                self.resolver.deps.gp_binding_qry,
+                self.resolver.deps.gr_binding_qry,
+                self.resolver.deps.gperm_binding_qry,
+            ),
+        )
 
     # ....................... #
 

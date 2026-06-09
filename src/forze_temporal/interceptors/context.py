@@ -40,9 +40,15 @@ from forze.application.contracts.authn import AuthnIdentity
 from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.execution import ExecutionContext, InvocationMetadata
 
+from forze.base.primitives import bind_time_source
+
+from .clock import TemporalWorkflowTimeSource
 from .codecs import TemporalContextBinder, TemporalContextCodec
 
 # ----------------------- #
+
+_WORKFLOW_CLOCK = TemporalWorkflowTimeSource()
+"""Replay-deterministic time source bound for the duration of workflow execution."""
 
 
 @attrs.define(slots=True)
@@ -233,6 +239,28 @@ class WorkflowContextInboundInterceptor(
         )
 
         return self.next.init(wrapped)
+
+    # ....................... #
+
+    async def bind_and_call(
+        self,
+        headers: Mapping[str, Payload],
+        next: Callable[[], Awaitable[Any]],
+    ) -> Any:
+        # Bind Temporal's replay-safe clock for the workflow scope so all utcnow()/
+        # uuid7() reads (domain stamping, adapters) reproduce deterministically.
+        with bind_time_source(_WORKFLOW_CLOCK):
+            return await super().bind_and_call(headers, next)
+
+    # ....................... #
+
+    def bind_and_call_sync(
+        self,
+        headers: Mapping[str, Payload],
+        next: Callable[[], Any],
+    ) -> Any:
+        with bind_time_source(_WORKFLOW_CLOCK):
+            return super().bind_and_call_sync(headers, next)
 
     # ....................... #
 

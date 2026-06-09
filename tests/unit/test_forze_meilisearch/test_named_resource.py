@@ -70,7 +70,7 @@ def test_meilisearch_deps_module_warns_dynamic_index_with_tenant_aware() -> None
         return "tenant-index"
 
     with patch(
-        "forze_meilisearch.execution.deps.module.warn_dynamic_relation_with_tenant_aware",
+        "forze_meilisearch.execution.deps.module.warn_integration_routes",
     ) as mock_warn:
         MeilisearchDepsModule(
             client=MagicMock(),
@@ -85,7 +85,8 @@ def test_meilisearch_deps_module_warns_dynamic_index_with_tenant_aware() -> None
     mock_warn.assert_called_once()
     kwargs = mock_warn.call_args.kwargs
     assert kwargs["integration"] == "Meilisearch"
-    assert kwargs["named_fields"] == [("index_uid", _resolver)]
+    assert kwargs["routes"] is not None
+    assert kwargs["routes"]["items"].index_uid is _resolver
 
 
 def test_meilisearch_federated_deps_warns_member_index() -> None:

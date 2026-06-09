@@ -38,6 +38,9 @@ class InvocationMetadataMiddleware:
     caus_header: str = attrs.field(default="X-Causation-ID", kw_only=True)
     """Header name for the causation id."""
 
+    idem_header: str = attrs.field(default="Idempotency-Key", kw_only=True)
+    """Header name for the idempotency key (canonical, per the IETF httpapi draft)."""
+
     # ....................... #
 
     def _decode_metadata(self, request: Request) -> InvocationMetadata:
@@ -96,6 +99,7 @@ class InvocationMetadataMiddleware:
         request = Request(scope, receive)
         ctx = self.ctx_dep()
         metadata = self._decode_metadata(request)
+        idempotency_key = request.headers.get(self.idem_header) or None
 
         async def send_wrapper(message: Message) -> None:
             if message["type"] == "http.response.start":
@@ -105,5 +109,8 @@ class InvocationMetadataMiddleware:
 
             await send(message)
 
-        with ctx.inv_ctx.bind_metadata(metadata=metadata):
+        with (
+            ctx.inv_ctx.bind_metadata(metadata=metadata),
+            ctx.inv_ctx.bind_idempotency(idempotency_key),
+        ):
             await self.app(scope, receive, send_wrapper)

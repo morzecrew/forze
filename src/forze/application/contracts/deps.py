@@ -100,6 +100,31 @@ class ConvenientDeps:
 
     # ....................... #
 
+    def _resolve_command(
+        self,
+        key: DepKey[Any],
+        spec: BaseSpec,
+        *,
+        route: StrKey | None = None,
+    ) -> Any:
+        """Resolve a command (write) port — forbidden in a read-only (``QUERY``) operation.
+
+        The single guard point for write ports: a ``QUERY`` operation cannot acquire one,
+        by construction. Query/read accessors keep using :meth:`_resolve_configurable`.
+        """
+
+        ctx = self._require_ctx()
+
+        if ctx.inv_ctx.is_read_only():
+            raise exc.precondition(
+                f"Cannot acquire command (write) port {key} in a read-only (QUERY) "
+                "operation."
+            )
+
+        return ctx.deps.resolve_configurable(ctx, key, spec, route=route)
+
+    # ....................... #
+
     def _resolve_simple(
         self,
         key: DepKey[Any],

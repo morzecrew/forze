@@ -9,6 +9,7 @@ from forze.base.descriptors import hybridmethod
 from forze.base.exceptions import exc
 from forze.base.primitives import StrKey
 
+from ..descriptors import OperationDescriptor
 from ..planning import OperationPlan
 from .patch import PlanPatch
 
@@ -30,6 +31,11 @@ class RegistryMerge:
     )
     """Execution plans for operations."""
 
+    descriptors: Mapping[StrKey, OperationDescriptor] = attrs.field(
+        factory=dict[StrKey, OperationDescriptor],
+    )
+    """Catalog metadata for operations."""
+
     patches: tuple[PlanPatch, ...] = attrs.field(factory=tuple)
     """Plan patches applied by selector at freeze."""
 
@@ -41,6 +47,7 @@ class RegistryMerge:
 
         merged_handlers: dict[StrKey, HandlerFactory] = {}
         merged_plans: dict[StrKey, OperationPlan] = {}
+        merged_descriptors: dict[StrKey, OperationDescriptor] = {}
         merged_patches: list[PlanPatch] = []
 
         for part in parts:
@@ -50,6 +57,9 @@ class RegistryMerge:
             plan_conflicts = set(map(str, merged_plans.keys())) & set(
                 map(str, part.plans.keys())
             )
+            descriptor_conflicts = set(map(str, merged_descriptors.keys())) & set(
+                map(str, part.descriptors.keys())
+            )
 
             if handler_conflicts:
                 raise exc.internal(
@@ -58,6 +68,11 @@ class RegistryMerge:
 
             if plan_conflicts:
                 raise exc.internal(f"Conflicting operation plans: {plan_conflicts}")
+
+            if descriptor_conflicts:
+                raise exc.internal(
+                    f"Conflicting operation descriptors: {descriptor_conflicts}"
+                )
 
             for patch in part.patches:
                 if any(
@@ -71,10 +86,12 @@ class RegistryMerge:
 
             merged_handlers.update(part.handlers)
             merged_plans.update(part.plans)
+            merged_descriptors.update(part.descriptors)
 
         return cls(
             handlers=merged_handlers,
             plans=merged_plans,
+            descriptors=merged_descriptors,
             patches=tuple(merged_patches),
         )
 

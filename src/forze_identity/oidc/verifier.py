@@ -4,6 +4,7 @@ require_oidc()
 
 # ....................... #
 
+import asyncio
 from datetime import timedelta
 from typing import Sequence, final
 
@@ -38,6 +39,8 @@ class OidcTokenVerifier(TokenVerifierPort):
     subjects to internal Forze :class:`UUID`-shaped principals (good for SSO with admin
     overrides), or with :class:`forze_authn.DeterministicUuidResolver` for stateless
     deterministic mapping.
+
+    JWKS resolution runs in a worker thread so cache misses do not block the event loop.
     """
 
     key_provider: SigningKeyProviderPort
@@ -52,11 +55,37 @@ class OidcTokenVerifier(TokenVerifierPort):
     issuer: str | None = attrs.field(default=None)
     """Required ``iss`` value; when ``None``, issuer is not enforced."""
 
+    enforce_issuer_and_audience: bool = True
+    """When ``True`` (default), ``issuer`` and ``audience`` must be set at construction time."""
+
     leeway: timedelta = attrs.field(default=timedelta(seconds=10))
     """Clock-skew leeway for ``iat``/``exp``/``nbf`` validation."""
 
+    require_nonce: bool = False
+    """When ``True``, reject tokens missing a ``nonce`` claim.
+
+    Presence-only. Binding the ``nonce`` *value* to the per-request nonce remains the
+    responsibility of the redirect/callback handler, because this stateless verifier
+    holds no per-authentication-request state. Enabling this forces the IdP to issue
+    the token through an interactive flow that carried a nonce, which blocks replaying
+    a nonce-less token (e.g. minted via a non-interactive grant) into a login slot.
+    """
+
     claim_mapper: OidcClaimMapper = attrs.field(factory=OidcClaimMapper)
     """Maps the verified claim payload onto the canonical assertion shape."""
+
+    # ....................... #
+
+    def __attrs_post_init__(self) -> None:
+        if self.enforce_issuer_and_audience and (
+            self.issuer is None or self.audience is None
+        ):
+            raise exc.configuration(
+                "enforce_issuer_and_audience requires both issuer and audience",
+            )
+
+        if self.leeway.total_seconds() <= 0:
+            raise exc.configuration("Leeway must be positive")
 
     # ....................... #
 
@@ -65,7 +94,15 @@ class OidcTokenVerifier(TokenVerifierPort):
         credentials: AccessTokenCredentials,
     ) -> VerifiedAssertion:
         try:
-            key = self.key_provider.get_signing_key(credentials.token)
+            key = await asyncio.to_thread(
+                self.key_provider.get_signing_key,
+                credentials.token,
+            )
+
+            required_claims = ["iss", "sub", "exp"]
+
+            if self.require_nonce:
+                required_claims.append("nonce")
 
             claims = jwt_decode(  # pyright: ignore[reportUnknownMemberType]
                 jwt=credentials.token,
@@ -74,7 +111,7 @@ class OidcTokenVerifier(TokenVerifierPort):
                 audience=self.audience,
                 issuer=self.issuer,
                 leeway=self.leeway,
-                options={"require": ["iss", "sub", "exp"]},
+                options={"require": required_claims},
             )
 
         except ExpiredSignatureError as e:

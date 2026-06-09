@@ -1,6 +1,6 @@
 """Scrub sensitive data before logs or API error egress."""
 
-from .policy import SECRET_PLACEHOLDER
+from .policy import SECRET_PLACEHOLDER, register_sensitive_patterns
 from .pydantic_helpers import (
     dump_bound_args_for_errors,
     dump_for_error_context,
@@ -15,6 +15,7 @@ __all__ = [
     "SanitizeContext",
     "dump_bound_args_for_errors",
     "dump_for_error_context",
+    "register_sensitive_patterns",
     "sanitize",
     "sanitize_pydantic_errors",
 ]

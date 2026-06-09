@@ -1,6 +1,6 @@
 """Mongo dependency module for the application kernel."""
 
-from typing import Mapping, final
+from typing import Any, Mapping, final
 
 import attrs
 
@@ -8,21 +8,37 @@ from forze.application.contracts.document import (
     DocumentCommandDepKey,
     DocumentQueryDepKey,
 )
+from forze.application.contracts.document.wiring import derive_read_only_document_config
+from forze.application.contracts.outbox import OutboxCommandDepKey, OutboxQueryDepKey
 from forze.application.contracts.search import SearchQueryDepKey
-from forze.application.contracts.tenancy import warn_dynamic_relation_with_tenant_aware
+from forze.application.contracts.tenancy import warn_integration_routes
 from forze.application.contracts.transaction import TransactionManagerDepKey
 from forze.application.execution import Deps, DepsModule
+from forze.application.execution.deps.builders import (
+    merge_deps,
+    routed_constant,
+    routed_from_mapping,
+)
 from forze.base.primitives import StrKey
 
 from ...kernel._logger import logger
-from ...kernel.client import MongoClientPort, RoutedMongoClient
+from ...kernel.client import MongoClientPort
+from ._warnings import (
+    MONGO_DOCUMENT_RO_WARNING,
+    MONGO_DOCUMENT_RW_WARNING,
+    MONGO_OUTBOX_WARNING,
+    MONGO_SEARCH_WARNING,
+)
 from .configs import (
     MongoDocumentConfig,
+    MongoOutboxConfig,
     MongoReadOnlyDocumentConfig,
     MongoSearchConfig,
 )
 from .factories import (
     ConfigurableMongoDocument,
+    ConfigurableMongoOutboxCommand,
+    ConfigurableMongoOutboxQuery,
     ConfigurableMongoReadOnlyDocument,
     ConfigurableMongoSearch,
     mongo_txmanager,
@@ -32,15 +48,15 @@ from .keys import MongoClientDepKey
 # ----------------------- #
 
 
-def _document_config_to_read_only(
+def _rw_document_query_factory(
+    *,
     config: MongoDocumentConfig,
-) -> MongoReadOnlyDocumentConfig:
-    """Derive a read-only config from a read-write document config (same ``read`` mapping)."""
-
-    return MongoReadOnlyDocumentConfig(
-        read=config.read,
-        tenant_aware=config.tenant_aware,
-        batch_size=config.batch_size,
+) -> ConfigurableMongoReadOnlyDocument[Any]:
+    return ConfigurableMongoReadOnlyDocument(
+        config=derive_read_only_document_config(
+            config=config,  # type: ignore[arg-type]
+            factory=MongoReadOnlyDocumentConfig,
+        ),
     )
 
 
@@ -71,110 +87,68 @@ class MongoDepsModule(DepsModule):
     searches: Mapping[StrKey, MongoSearchConfig] | None = attrs.field(default=None)
     """Mapping from search spec names to Mongo-specific search configurations."""
 
+    outboxes: Mapping[StrKey, MongoOutboxConfig] | None = attrs.field(default=None)
+    """Mapping from outbox route names to Mongo-specific configurations."""
+
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
-        if self.ro_documents:
-            for name, cfg in self.ro_documents.items():
-                warn_dynamic_relation_with_tenant_aware(
-                    integration="Mongo",
-                    route_name=str(name),
-                    kind="document",
-                    tenant_aware=cfg.tenant_aware,
-                    relation_fields=[("read", cfg.read)],
-                    log_warning=logger.warning,
-                )
-
-        if self.rw_documents:
-            for name, rw_cfg in self.rw_documents.items():
-                warn_dynamic_relation_with_tenant_aware(
-                    integration="Mongo",
-                    route_name=str(name),
-                    kind="document",
-                    tenant_aware=rw_cfg.tenant_aware,
-                    relation_fields=[
-                        ("read", rw_cfg.read),
-                        ("write", rw_cfg.write),
-                        ("history", rw_cfg.history),
-                    ],
-                    log_warning=logger.warning,
-                )
-
-        if self.searches:
-            for name, s_cfg in self.searches.items():
-                warn_dynamic_relation_with_tenant_aware(
-                    integration="Mongo",
-                    route_name=str(name),
-                    kind="search",
-                    tenant_aware=s_cfg.tenant_aware,
-                    relation_fields=[("read", s_cfg.read)],
-                    named_fields=[("index_name", s_cfg.index_name)],
-                    log_warning=logger.warning,
-                )
-
-        _ = isinstance(self.client, RoutedMongoClient)
+        warn_integration_routes(
+            integration="Mongo",
+            routes=self.ro_documents,
+            warning=MONGO_DOCUMENT_RO_WARNING,
+            log_warning=logger.warning,
+        )
+        warn_integration_routes(
+            integration="Mongo",
+            routes=self.rw_documents,
+            warning=MONGO_DOCUMENT_RW_WARNING,
+            log_warning=logger.warning,
+        )
+        warn_integration_routes(
+            integration="Mongo",
+            routes=self.searches,
+            warning=MONGO_SEARCH_WARNING,
+            log_warning=logger.warning,
+        )
+        warn_integration_routes(
+            integration="Mongo",
+            routes=self.outboxes,
+            warning=MONGO_OUTBOX_WARNING,
+            log_warning=logger.warning,
+        )
 
     # ....................... #
 
     def __call__(self) -> Deps:
         """Build a dependency container with Mongo-backed ports."""
 
-        plain_deps = Deps.plain({MongoClientDepKey: self.client})
-        doc_deps = Deps()
-        search_deps = Deps()
-        tx_deps = Deps()
-
-        if self.ro_documents:
-            doc_deps = doc_deps.merge(
-                Deps.routed(
-                    {
-                        DocumentQueryDepKey: {
-                            name: ConfigurableMongoReadOnlyDocument(config=config)
-                            for name, config in self.ro_documents.items()
-                        }
-                    }
-                )
-            )
-
-        if self.rw_documents:
-            doc_deps = doc_deps.merge(
-                Deps.routed(
-                    {
-                        DocumentQueryDepKey: {
-                            name: ConfigurableMongoReadOnlyDocument(
-                                config=_document_config_to_read_only(config)
-                            )
-                            for name, config in self.rw_documents.items()
-                        },
-                        DocumentCommandDepKey: {
-                            name: ConfigurableMongoDocument(config=config)
-                            for name, config in self.rw_documents.items()
-                        },
-                    }
-                )
-            )
-
-        if self.searches:
-            search_deps = search_deps.merge(
-                Deps.routed(
-                    {
-                        SearchQueryDepKey: {
-                            name: ConfigurableMongoSearch(config=config)
-                            for name, config in self.searches.items()
-                        }
-                    }
-                )
-            )
-
-        if self.tx:
-            tx_deps = tx_deps.merge(
-                Deps.routed(
-                    {
-                        TransactionManagerDepKey: {
-                            name: mongo_txmanager for name in self.tx
-                        }
-                    }
-                )
-            )
-
-        return plain_deps.merge(doc_deps, search_deps, tx_deps)
+        return merge_deps(
+            routed_from_mapping(
+                self.ro_documents,
+                bindings=[(DocumentQueryDepKey, ConfigurableMongoReadOnlyDocument)],
+            ),
+            routed_from_mapping(
+                self.rw_documents,
+                bindings=[
+                    (DocumentQueryDepKey, _rw_document_query_factory),
+                    (DocumentCommandDepKey, ConfigurableMongoDocument),
+                ],
+            ),
+            routed_from_mapping(
+                self.searches,
+                bindings=[(SearchQueryDepKey, ConfigurableMongoSearch)],
+            ),
+            routed_constant(
+                self.tx,
+                bindings=[(TransactionManagerDepKey, mongo_txmanager)],
+            ),
+            routed_from_mapping(
+                self.outboxes,
+                bindings=[
+                    (OutboxCommandDepKey, ConfigurableMongoOutboxCommand),
+                    (OutboxQueryDepKey, ConfigurableMongoOutboxQuery),
+                ],
+            ),
+            plain={MongoClientDepKey: self.client},
+        )

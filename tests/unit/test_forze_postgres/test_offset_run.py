@@ -37,8 +37,10 @@ def _gateway() -> PostgresFTSSearchAdapter[_M]:
     )
     intro = MagicMock()
     intro.get_column_types = AsyncMock(return_value={})
+    spec = SearchSpec(name="t", model_type=_M, fields=["id", "label"])
     return PostgresFTSSearchAdapter(
-        spec=SearchSpec(name="t", model_type=_M, fields=["id", "label"]),
+        spec=spec,
+        codec=spec.resolved_read_codec,
         index_relation=("public", "idx"),
         relation=("public", "v"),
         index_heap_relation=("public", "h"),
@@ -77,7 +79,7 @@ async def test_execute_simple_ranked_offset_search_applies_limit_offset() -> Non
         return_type=None,
         return_fields=None,
         model_type=_M,
-        snapshot_coord=None,
+        result_snapshot=None,
     )
     assert page.count == 2
     assert len(page.hits) == 2

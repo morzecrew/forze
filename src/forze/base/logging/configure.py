@@ -5,8 +5,9 @@ Some code taken from: https://gist.github.com/nymous/f138c7f06062b7c43c060bf0375
 
 import logging
 import sys
-from typing import Literal, Sequence, TextIO, TypedDict
+from typing import Any, Callable, Literal, Sequence, TextIO, TypedDict
 
+import orjson
 import structlog
 from structlog.types import Processor
 
@@ -19,11 +20,13 @@ from .constants import (
 )
 from .processors import (
     EventDictSanitizer,
+    ExceptionFieldsSanitizer,
     ExceptionInfoFormatter,
     OpenTelemetryContextInjector,
     RedundantKeysDropper,
     TraceLevelResolver,
 )
+from .logger import set_configured_min_rank
 from .renderers import ForzeConsoleRenderer
 
 # ----------------------- #
@@ -45,12 +48,33 @@ class OpenTelemetryConfig(TypedDict, total=False):
 # ....................... #
 
 
+def _orjson_serializer(
+    obj: Any,
+    *,
+    default: Callable[[Any], Any] | None = None,
+    **_: Any,
+) -> str:
+    """orjson-backed serializer for :class:`structlog.processors.JSONRenderer`.
+
+    ``orjson.dumps`` returns UTF-8 ``bytes``; we decode to ``str`` because the
+    configured :class:`structlog.stdlib.ProcessorFormatter` bridges into stdlib
+    logging, which expects text. ``default`` is forwarded from structlog's JSON
+    fallback handler. Output is equivalent compact JSON to ``json.dumps`` (no key
+    sorting, no extra whitespace).
+    """
+
+    return orjson.dumps(obj, default=default).decode("utf-8")
+
+
+# ....................... #
+
+
 def build_renderer(
     render_mode: RenderMode,
     custom_console_renderer: structlog.types.Processor | None = None,
 ) -> structlog.types.Processor:
     if render_mode == "json":
-        return structlog.processors.JSONRenderer()
+        return structlog.processors.JSONRenderer(serializer=_orjson_serializer)
 
     elif custom_console_renderer:
         return custom_console_renderer
@@ -65,6 +89,8 @@ def build_renderer(
 def build_common_processors(
     render_mode: RenderMode,
     otel_config: OpenTelemetryConfig | None = None,
+    *,
+    include_exception_stack: bool = True,
 ) -> list[Processor]:
     processors: list[Processor] = [
         structlog.contextvars.merge_contextvars,
@@ -86,7 +112,10 @@ def build_common_processors(
         [
             structlog.processors.TimeStamper(fmt="iso"),
             structlog.processors.StackInfoRenderer(),
-            ExceptionInfoFormatter(render_mode=render_mode),
+            ExceptionInfoFormatter(
+                render_mode=render_mode,
+                include_exception_stack=include_exception_stack,
+            ),
         ]
     )
 
@@ -103,7 +132,10 @@ def _event_sanitizer_processors(
 ) -> list[Processor]:
     if not sanitize_logs:
         return []
-    return [EventDictSanitizer(text_scrub=text_scrub)]
+    return [
+        ExceptionFieldsSanitizer(),
+        EventDictSanitizer(text_scrub=text_scrub),
+    ]
 
 
 # ....................... #
@@ -128,10 +160,15 @@ def build_foreign_formatter(
     *,
     sanitize_logs: bool = True,
     text_scrub: bool = True,
+    include_exception_stack: bool = True,
 ) -> structlog.stdlib.ProcessorFormatter:
     return structlog.stdlib.ProcessorFormatter(
         foreign_pre_chain=[
-            *build_common_processors(render_mode, otel_config),
+            *build_common_processors(
+                render_mode,
+                otel_config,
+                include_exception_stack=include_exception_stack,
+            ),
             *_event_sanitizer_processors(
                 sanitize_logs=sanitize_logs,
                 text_scrub=text_scrub,
@@ -160,6 +197,7 @@ def configure_logging(
     otel_config: OpenTelemetryConfig | None = None,
     sanitize_logs: bool = True,
     text_scrub: bool = True,
+    include_exception_stack: bool = True,
 ) -> None:
     """Configure logging for the application.
 
@@ -170,7 +208,10 @@ def configure_logging(
     :param stream: The stream to use for logging (default: stdout).
     :param sanitize_logs: Scrub sensitive keys (and optionally text PII) from log event fields.
     :param text_scrub: Apply scrub to string values in log extras when ``sanitize_logs`` is true.
+    :param include_exception_stack: When false, omit ``error.stack`` from structured logs.
     """
+
+    set_configured_min_rank(level)
 
     wrapper_class = (
         structlog.make_filtering_bound_logger(level)
@@ -180,7 +221,11 @@ def configure_logging(
 
     structlog.configure(
         processors=[
-            *build_common_processors(render_mode, otel_config),
+            *build_common_processors(
+                render_mode,
+                otel_config,
+                include_exception_stack=include_exception_stack,
+            ),
             *build_structlog_processors(level),
             *_event_sanitizer_processors(
                 sanitize_logs=sanitize_logs,
@@ -195,7 +240,11 @@ def configure_logging(
 
     formatter = structlog.stdlib.ProcessorFormatter(
         foreign_pre_chain=[
-            *build_common_processors(render_mode, otel_config),
+            *build_common_processors(
+                render_mode,
+                otel_config,
+                include_exception_stack=include_exception_stack,
+            ),
             *_event_sanitizer_processors(
                 sanitize_logs=sanitize_logs,
                 text_scrub=text_scrub,
@@ -236,6 +285,7 @@ def attach_foreign_loggers(
     otel_config: OpenTelemetryConfig | None = None,
     sanitize_logs: bool = True,
     text_scrub: bool = True,
+    include_exception_stack: bool = True,
 ) -> None:
     formatter = build_foreign_formatter(
         render_mode,
@@ -243,6 +293,7 @@ def attach_foreign_loggers(
         otel_config=otel_config,
         sanitize_logs=sanitize_logs,
         text_scrub=text_scrub,
+        include_exception_stack=include_exception_stack,
     )
 
     for name in names:

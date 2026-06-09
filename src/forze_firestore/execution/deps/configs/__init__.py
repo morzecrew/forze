@@ -1,5 +1,7 @@
 """Firestore dependency integration configs (frozen attrs)."""
 
+from typing import Literal
+
 import attrs
 
 from forze.application.contracts.resolution import RelationSpec, coerce_relation_spec
@@ -14,6 +16,9 @@ class FirestoreReadOnlyDocumentConfig(TenantAwareIntegrationConfig):
 
     read: RelationSpec = attrs.field(converter=coerce_relation_spec)
     batch_size: int = 200
+
+    read_validation: Literal["strict", "trusted"] = "strict"
+    """Row decode mode for reads (``trusted`` skips Pydantic validation)."""
 
 
 # ....................... #

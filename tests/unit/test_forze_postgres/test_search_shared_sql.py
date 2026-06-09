@@ -297,14 +297,25 @@ def test_fts_tsquery_expr_conjunction_and_combines() -> None:
 
 
 def test_pgroonga_disjunctive_match_text() -> None:
+    # User terms are quoted as literal Groonga phrases (no operator injection).
     assert pgroonga_disjunctive_match_text(()) == ""
-    assert pgroonga_disjunctive_match_text(("x",)) == "x"
-    assert pgroonga_disjunctive_match_text(("a", "b")) == "(a) OR (b)"
+    assert pgroonga_disjunctive_match_text(("x",)) == '"x"'
+    assert pgroonga_disjunctive_match_text(("a", "b")) == '("a") OR ("b")'
 
 
 def test_pgroonga_phrase_match_text_all() -> None:
     assert pgroonga_phrase_match_text((), combine="any") == ""
-    assert pgroonga_phrase_match_text(("a", "b"), combine="all") == "(a) (b)"
+    assert pgroonga_phrase_match_text(("a", "b"), combine="all") == '("a") ("b")'
+
+
+def test_pgroonga_phrase_match_text_escapes_query_syntax() -> None:
+    # Groonga operators / column refs / quotes are neutralized by literal quoting.
+    assert pgroonga_phrase_match_text(("title:foo OR x",), combine="any") == (
+        '"title:foo OR x"'
+    )
+    assert pgroonga_phrase_match_text(('a"b\\c',), combine="any") == '"a\\"b\\\\c"'
+    # Empty / whitespace terms are dropped before quoting.
+    assert pgroonga_phrase_match_text(("", "a"), combine="all") == '"a"'
 
 
 def test_pgroonga_score_rank_expr_v2_uses_tableoid_ctid() -> None:

@@ -1,4 +1,7 @@
+import time
+from collections import OrderedDict
 from contextlib import asynccontextmanager
+from datetime import timedelta
 from typing import AsyncGenerator, Awaitable, Callable
 from uuid import UUID
 
@@ -12,7 +15,13 @@ from forze.base.primitives import GuardedLruRegistry, SimpleLruRegistry
 
 @attrs.define(slots=True)
 class TenantClientRegistry[C, R = str]:
-    """LRU pool keyed by tenant id with optional fingerprint dedup."""
+    """LRU pool keyed by tenant id with optional fingerprint dedup.
+
+    When ``guarded=True``, the underlying :class:`~forze.base.primitives.GuardedLruRegistry`
+    ``create`` callback must not call :meth:`use` for the same tenant (or deduplicated slot)
+    while that tenant is being created — reentrant access raises
+    :exc:`~forze.base.errors.exc.internal` instead of deadlocking.
+    """
 
     max_entries: int
     """Maximum number of entries in the registry."""
@@ -26,7 +35,23 @@ class TenantClientRegistry[C, R = str]:
     guarded: bool = attrs.field(default=False, on_setattr=attrs.setters.frozen)
     """Whether to use a guarded LRU registry underneath."""
 
-    __fingerprints: dict[UUID, R] = attrs.field(factory=dict, init=False, repr=False)
+    __fingerprints: "OrderedDict[UUID, R]" = attrs.field(
+        factory=OrderedDict,
+        init=False,
+        repr=False,
+    )
+    """LRU-bounded (to ``max_entries``) cache of per-tenant dedup fingerprints.
+
+    Capped so it cannot grow without bound across the lifetime of a long-lived
+    process; an evicted entry is simply recomputed on the tenant's next access.
+    """
+
+    __fingerprint_times: dict[UUID, float] = attrs.field(
+        factory=dict,
+        init=False,
+        repr=False,
+    )
+    """Monotonic timestamps for cached fingerprints, used for optional TTL refresh."""
 
     __started: bool = attrs.field(default=False, init=False)
 
@@ -62,12 +87,15 @@ class TenantClientRegistry[C, R = str]:
 
     async def close(self) -> None:
         await self.__registry.close_all()
+        self.__fingerprints.clear()
+        self.__fingerprint_times.clear()
         self.__started = False
 
     # ....................... #
 
     async def evict(self, tenant_id: UUID) -> None:
         self.__fingerprints.pop(tenant_id, None)
+        self.__fingerprint_times.pop(tenant_id, None)
         await self.__registry.evict(tenant_id)
 
     # ....................... #
@@ -76,11 +104,34 @@ class TenantClientRegistry[C, R = str]:
         """Call before first get/create so dedup_key is defined."""
 
         self.__fingerprints[tenant_id] = fingerprint
+        self.__fingerprints.move_to_end(tenant_id)
+        self.__fingerprint_times[tenant_id] = time.monotonic()
+
+        while len(self.__fingerprints) > self.max_entries:
+            evicted, _ = self.__fingerprints.popitem(last=False)
+            self.__fingerprint_times.pop(evicted, None)
 
     # ....................... #
 
     def get_fingerprint(self, tenant_id: UUID) -> R | None:
-        return self.__fingerprints.get(tenant_id)
+        fingerprint = self.__fingerprints.get(tenant_id)
+
+        if fingerprint is not None:
+            self.__fingerprints.move_to_end(tenant_id)
+
+        return fingerprint
+
+    # ....................... #
+
+    def is_fingerprint_expired(self, tenant_id: UUID, ttl: timedelta) -> bool:
+        """Whether *tenant_id*'s cached fingerprint is older than *ttl*.
+
+        Returns ``True`` when no timestamp is recorded (treat as expired).
+        """
+
+        stamped = self.__fingerprint_times.get(tenant_id)
+
+        return stamped is None or (time.monotonic() - stamped) > ttl.total_seconds()
 
     # ....................... #
 

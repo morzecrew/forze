@@ -1,0 +1,8 @@
+early_access: true
+
+reviews:
+  request_changes_workflow: true
+  auto_apply_labels: true
+  slop_detection:
+    enabled: true
+    label: slop

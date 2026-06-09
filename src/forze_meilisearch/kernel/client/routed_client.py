@@ -1,7 +1,7 @@
 """Meilisearch client that resolves URL and API key per tenant via :class:`~forze.application.contracts.secrets.SecretsPort`."""
 
 from datetime import timedelta
-from typing import TYPE_CHECKING, Any, Callable, Mapping, final
+from typing import TYPE_CHECKING, Any, Callable, Mapping, cast, final
 
 if TYPE_CHECKING:
     from meilisearch_python_sdk.models.search import SearchParams
@@ -9,17 +9,15 @@ if TYPE_CHECKING:
 from uuid import UUID
 
 import attrs
+from pydantic import BaseModel
 
 from forze.application.contracts.secrets import SecretRef, SecretsPort
-from forze.application.contracts.tenancy import (
-    TenantClientRegistry,
-    ensure_structured_fingerprint,
-    require_tenant_id,
-    resolve_structured_for_tenant,
+from forze.application.contracts.tenancy.routed_client_base import (
+    StructuredSecretRoutedTenantClientBase,
 )
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
-from forze.base.primitives.fingerprint import secret_dedup_fingerprint, stable_fingerprint
+from forze.base.primitives.fingerprint import build_routing_fingerprint
 
 from .client import MeilisearchClient
 from .port import MeilisearchClientPort
@@ -30,8 +28,11 @@ from .value_objects import MeilisearchConfig
 
 
 @final
-@attrs.define(slots=True)
-class RoutedMeilisearchClient(MeilisearchClientPort):
+@attrs.define(slots=True, kw_only=True)
+class RoutedMeilisearchClient(
+    StructuredSecretRoutedTenantClientBase[MeilisearchClient],
+    MeilisearchClientPort,
+):
     """Routes each operation to a lazily created :class:`MeilisearchClient` for the current tenant.
 
     Credentials are JSON secrets (see :class:`MeilisearchRoutingCredentials`) resolved via
@@ -46,57 +47,30 @@ class RoutedMeilisearchClient(MeilisearchClientPort):
     tenant_provider: Callable[[], UUID | None]
     client_config: MeilisearchConfig | None = None
     max_cached_tenants: int = 100
-
-    __pool: TenantClientRegistry[MeilisearchClient, str] = attrs.field(init=False)
-
-    # ....................... #
-
-    def __attrs_post_init__(self) -> None:
-        self.__pool = TenantClientRegistry(
-            max_entries=self.max_cached_tenants,
-            create=self._create_client,
-            dispose=lambda client: client.aclose(),
-            guarded=False,
-        )
+    creds_type: type[BaseModel] = attrs.field(
+        default=MeilisearchRoutingCredentials,
+        init=False,
+    )
+    backend: str = attrs.field(default="Meilisearch", init=False)
+    tenant_required_message: str = attrs.field(
+        default="Tenant ID is required for routed Meilisearch access",
+        init=False,
+    )
 
     # ....................... #
 
-    async def startup(self) -> None:
-        await self.__pool.startup()
+    def credential_fingerprint(self, creds: BaseModel) -> str:
+        c = cast(MeilisearchRoutingCredentials, creds)
+
+        return build_routing_fingerprint(public=[c.url], secret=[c.api_key])
 
     # ....................... #
 
-    async def close(self) -> None:
-        await self.__pool.close()
-
-    # ....................... #
-
-    async def evict_tenant(self, tenant_id: UUID) -> None:
-        await self.__pool.evict(tenant_id)
-
-    # ....................... #
-
-    async def _fingerprint_for(self, tenant_id: UUID) -> str:
-        creds = await resolve_structured_for_tenant(
-            MeilisearchRoutingCredentials,
-            tenant_id=tenant_id,
-            secrets=self.secrets,
-            ref_for_tenant=self.secret_ref_for_tenant,
-            backend="Meilisearch",
-        )
-
-        return stable_fingerprint(creds.url, secret_dedup_fingerprint(creds.api_key))
-
-    # ....................... #
-
-    async def _create_client(self, tid: UUID) -> MeilisearchClient:
-        creds = await resolve_structured_for_tenant(
-            MeilisearchRoutingCredentials,
-            tenant_id=tid,
-            secrets=self.secrets,
-            ref_for_tenant=self.secret_ref_for_tenant,
-            backend="Meilisearch",
-        )
+    async def initialize_client(
+        self,
+        tenant_id: UUID,
+        creds: MeilisearchRoutingCredentials,
+    ) -> MeilisearchClient:
         client = MeilisearchClient()
 
         await client.initialize(
@@ -109,23 +83,6 @@ class RoutedMeilisearchClient(MeilisearchClientPort):
 
     # ....................... #
 
-    async def _get_client(self) -> MeilisearchClient:
-        tenant_id = require_tenant_id(
-            self.tenant_provider,
-            message="Tenant ID is required for routed Meilisearch access",
-        )
-
-        await ensure_structured_fingerprint(
-            self.__pool.get_fingerprint,
-            self.__pool.set_fingerprint,
-            tenant_id=tenant_id,
-            fingerprint=lambda: self._fingerprint_for(tenant_id),
-        )
-
-        return await self.__pool.get(tenant_id)
-
-    # ....................... #
-
     async def aclose(self) -> None:
         await self.close()
 
@@ -134,11 +91,8 @@ class RoutedMeilisearchClient(MeilisearchClientPort):
         return await inner.health()
 
     def index(self, uid: str) -> Any:
-        tid = require_tenant_id(
-            self.tenant_provider,
-            message="Tenant ID is required for routed Meilisearch access",
-        )
-        inner = self.__pool.peek(tid)
+        tid = self._require_tenant_id()
+        inner = self._peek_client(tid)
 
         if inner is None:
             raise exc.internal(

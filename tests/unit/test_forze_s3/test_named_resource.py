@@ -60,7 +60,7 @@ def test_s3_deps_module_warns_dynamic_bucket_with_tenant_aware() -> None:
         return "tenant-bucket"
 
     with patch(
-        "forze_s3.execution.deps.module.warn_dynamic_relation_with_tenant_aware",
+        "forze_s3.execution.deps.module.warn_integration_routes",
     ) as mock_warn:
         S3DepsModule(
             client=MagicMock(),
@@ -72,4 +72,5 @@ def test_s3_deps_module_warns_dynamic_bucket_with_tenant_aware() -> None:
     mock_warn.assert_called_once()
     kwargs = mock_warn.call_args.kwargs
     assert kwargs["integration"] == "S3"
-    assert kwargs["named_fields"] == [("bucket", _resolver)]
+    assert kwargs["routes"] is not None
+    assert kwargs["routes"]["files"].bucket is _resolver

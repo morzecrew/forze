@@ -4,8 +4,6 @@ from uuid import uuid4
 
 import pytest
 import pytest_asyncio
-from docker import from_env
-from docker.errors import DockerException
 from testcontainers.postgres import PostgresContainer
 from testcontainers.redis import RedisContainer
 
@@ -15,24 +13,13 @@ pytest.importorskip("redis")
 from forze_postgres.kernel.client.client import PostgresClient, PostgresConfig
 from forze_redis.adapters import RedisSearchResultSnapshotAdapter
 from forze_redis.kernel.client import RedisClient, RedisConfig
-
-
-def _ensure_docker_available() -> None:
-    client = None
-    try:
-        client = from_env()
-        client.ping()
-    except DockerException as exc:
-        pytest.skip(f"Docker is required: {exc}")
-    finally:
-        if client is not None:
-            client.close()
+from tests.support.docker import ensure_docker_available
 
 
 @pytest.fixture(scope="session")
 def redis_container() -> RedisContainer:
     """Valkey/Redis for search result snapshot integration tests (combined with Postgres)."""
-    _ensure_docker_available()
+    ensure_docker_available()
     with RedisContainer(image="valkey/valkey:9.0") as redis:
         yield redis
 

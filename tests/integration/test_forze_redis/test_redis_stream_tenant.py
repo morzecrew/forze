@@ -10,7 +10,7 @@ from pydantic import BaseModel
 from forze.application.contracts.tenancy import TenantIdentity
 from forze_redis.adapters import RedisStreamAdapter, RedisStreamCodec
 from forze_redis.kernel.client import RedisClient
-from forze.base.serialization import PydanticRecordMappingCodec
+from forze.base.serialization import PydanticModelCodec
 
 pytestmark = pytest.mark.integration
 
@@ -24,7 +24,7 @@ async def test_tenant_aware_stream_isolates_by_tenant(redis_client: RedisClient)
     tenant_a = uuid4()
     tenant_b = uuid4()
     logical = f"events_{uuid4().hex[:8]}"
-    codec = RedisStreamCodec(payload_codec=PydanticRecordMappingCodec(_Payload))
+    codec = RedisStreamCodec(payload_codec=PydanticModelCodec(_Payload))
 
     adapter_a = RedisStreamAdapter(
         client=redis_client,

@@ -16,6 +16,12 @@ class AuthzSubject:
 
     principal_id: UUID
     kind: PrincipalKind | None = None
+    actor: "AuthzSubject | None" = None
+    """Delegated actor (the agent) when the call is made on-behalf-of ``principal_id``.
+
+    Mirrors :attr:`~forze.application.contracts.authn.AuthnIdentity.actor`. A policy engine
+    may inspect it for delegation rules; the standard authz hook additionally requires the
+    actor to be independently permitted the action (least-privilege intersection)."""
 
 
 # ....................... #

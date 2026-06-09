@@ -25,6 +25,7 @@ from forze.application.contracts.authn import (
 from forze.application.execution import Deps, DepsModule
 from forze.base.exceptions import exc
 from forze.base.primitives import StrKey
+from forze_identity._routes import normalize_route_set as _normalize_route_set
 
 from .configs import (
     AuthnKernelConfig,
@@ -46,15 +47,6 @@ from .deps import (
 )
 
 # ----------------------- #
-
-
-def _normalize_route_set(
-    routes: Collection[StrKey] | None,
-) -> frozenset[StrKey]:
-    return frozenset(routes) if routes else frozenset()
-
-
-# ....................... #
 
 
 @final
@@ -117,6 +109,10 @@ class AuthnDepsModule(DepsModule):
     authz_route: StrKey | None = attrs.field(default=None)
     """Authz route name for :class:`PrincipalRegistryPort` when deactivation is registered."""
 
+    actor_claim: str | None = attrs.field(default=None)
+    """When set (e.g. ``"act"``), token routes read this claim as an RFC 8693 delegation
+    actor and attach it as :attr:`AuthnIdentity.actor`; ``None`` ignores delegation claims."""
+
     # ....................... #
 
     def __call__(self) -> Deps:  # noqa: C901
@@ -140,6 +136,7 @@ class AuthnDepsModule(DepsModule):
         shared = build_authn_shared_services(self.kernel)
 
         api_key_overrides_keys = frozenset((self.api_key_verifiers or {}).keys())
+        token_overrides_keys = frozenset((self.token_verifiers or {}).keys())
 
         validate_shared_matches_route_sets(
             shared=shared,
@@ -149,6 +146,7 @@ class AuthnDepsModule(DepsModule):
             api_key_lifecycle=akl,
             password_account_provisioning=pap,
             api_key_verifier_overrides=api_key_overrides_keys,
+            token_verifier_overrides=token_overrides_keys,
         )
 
         merged: Deps = Deps()
@@ -222,7 +220,10 @@ class AuthnDepsModule(DepsModule):
                     ConfigurableJwtNativeUuidResolver(),
                 )
 
-                authn_routes[name] = ConfigurableAuthn(enabled_methods=methods_fs)
+                authn_routes[name] = ConfigurableAuthn(
+                    enabled_methods=methods_fs,
+                    actor_claim=self.actor_claim,
+                )
 
             routed_map: dict[object, dict[StrKey, object]] = {AuthnDepKey: authn_routes}
 

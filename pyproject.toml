@@ -36,11 +36,9 @@ dependencies = [
     "orjson>=3.11.7",
     "pydantic>=2.12.5",
     "pydantic-extra-types>=2.11.0",
-    "python-dateutil>=2.9.0.post0",
     "pyyaml>=6.0.3",
     "rich>=14.0.0",
     "structlog>=25.0.0",
-    "tenacity>=9.1.4",
 ]
 
 [dependency-groups]
@@ -55,11 +53,11 @@ dev = [
     "pytest-benchmark>=5.2.3",
     "pytest-cov>=7.0.0",
     "pytest-mock>=3.15.1",
+    "pytest-timeout>=2.3.0",
     "pytest-xdist>=3.8.0",
     "radon>=6.0.1",
     "ruff>=0.15.5",
-    "testcontainers[minio,rabbitmq,vault,google,clickhouse]>=4.14.1",
-    "types-python-dateutil>=2.9.0.20260305",
+    "testcontainers[minio,rabbitmq,vault,google,clickhouse,neo4j]>=4.14.1",
     "types-pyyaml>=6.0.12.20250915",
     "vulture>=2.14",
     "pre-commit>=4.5.1",
@@ -67,6 +65,7 @@ dev = [
     "polyfactory>=3.3.0",
     "hypothesis>=6.153.0",
     "zensical>=0.0.43",
+    "py-spy>=0.4.2",
 ]
 docs = [
     "mkdocs>=1.6.1,<2.0.0",
@@ -125,8 +124,7 @@ authn = [
     "email-validator>=2.3.0",
     "pyjwt[crypto]>=2.12.1",
 ]
-oidc = ["pyjwt[crypto]>=2.12.1"]
-casbin = ["pycasbin>=2.8.0"]
+oidc = ["pyjwt[crypto]>=2.12.1", "httpx>=0.28.0"]
 vault = [
     "hvac[parser]>=2.4.0",
     "requests>=2.34.2",
@@ -135,6 +133,8 @@ vault = [
 ]
 inngest = ["inngest>=0.5.18"]
 meilisearch = ["meilisearch-python-sdk>=7.2.1"]
+http = ["httpx>=0.28.0"]
+mcp = ["fastmcp>=3.0.0", "mcp>=1.27.0"]
 
 # ....................... #
 
@@ -166,7 +166,7 @@ include = [
 [tool.hatch.build.targets.wheel]
 packages = [
     "src/forze",
-    "src/forze_patterns",
+    "src/forze_kits",
     "src/forze_fastapi",
     "src/forze_mock",
     "src/forze_mongo",
@@ -183,9 +183,11 @@ packages = [
     "src/forze_sqs",
     "src/forze_temporal",
     "src/forze_inngest",
-    "src/forze_secrets",
     "src/forze_vault",
     "src/forze_meilisearch",
+    "src/forze_http",
+    "src/forze_neo4j",
+    "src/forze_mcp",
 ]
 
 [tool.hatch.build.hooks.vcs]
@@ -208,8 +210,15 @@ python_functions = "test_*"
 pythonpath = ["src", "tests"]
 addopts = ["--tb=short", "--strict-markers", "--strict-config"]
 asyncio_mode = "auto"
+# Safety net: no test may hang the run indefinitely. On timeout, dump all thread
+# stacks and kill the process (the `thread` method guarantees the run can't stick).
+# Defense-in-depth, not a fix — it's how the Temporal-sandbox/coverage-sysmon deadlock
+# (see CI's COVERAGE_CORE=ctrace) was diagnosed: the dumped stack pinpointed the wedge.
+# Generous enough to cover container/session-fixture startup on a cold runner.
+timeout = 300
+timeout_method = "thread"
 markers = [
-    "perf: Performance test",
+    "perf: Performance benchmark (excluded from default just test; not all perf tests need Docker)",
     "integration: Integration test",
     "unit: Unit test",
     "asyncio: Async test",
@@ -219,32 +228,20 @@ markers = [
 [tool.coverage.run]
 source = ["src"]
 branch = true
+# Relative paths so per-shard data files combine cleanly across CI jobs.
+relative_files = true
 omit = [
     "*/tests/*",
     "*/__init__.py",
     "*/_version.py",
     "*/_compat.py",
     "*/_logging.py",
-    # DI lifecycle modules are integration/service wiring (containers, signals), not core library logic.
-    "*/forze_postgres/execution/lifecycle/pool.py",
-    "*/forze_mongo/execution/lifecycle/pool.py",
-    "*/forze_firestore/execution/lifecycle/pool.py",
-    "*/forze_redis/execution/lifecycle/pool.py",
-    "*/forze_s3/execution/lifecycle/pool.py",
-    "*/forze_gcs/execution/lifecycle/pool.py",
-    "*/forze_bigquery/execution/lifecycle/pool.py",
-    "*/forze_clickhouse/execution/lifecycle/pool.py",
-    "*/forze_rabbitmq/execution/lifecycle/pool.py",
-    "*/forze_sqs/execution/lifecycle/pool.py",
-    "*/forze_temporal/execution/lifecycle/pool.py",
-    "*/forze_inngest/execution/lifecycle/pool.py",
-    "*/forze_vault/execution/lifecycle/pool.py",
     # Temporal worker interceptors are exercised with a full SDK runtime.
     "*/forze_temporal/interceptors/*",
     # Redis deps module is exercised with a full SDK runtime.
     "*/forze_redis/execution/deps/module.py",
-    "*/forze_meilisearch/execution/lifecycle/pool.py",
     "*/forze_meilisearch/execution/deps/module.py",
+    "*/forze_neo4j/execution/deps/module.py",
     # Mock
     "*/forze_mock/*",
 ]
@@ -253,8 +250,9 @@ omit = [
 show_missing = true
 skip_covered = true
 sort = "cover"
-# fail_under = 90
 precision = 1
+# Core packages: enforced in CI (see .github/workflows/ci.yml).
+fail_under = 80
 exclude_lines = [
     "pragma: no cover",
     "if __name__ == .__main__.",
@@ -275,7 +273,7 @@ warn_unused_ignores = false
 [tool.importlinter]
 root_packages = [
     "forze",
-    "forze_patterns",
+    "forze_kits",
     "forze_fastapi",
     "forze_mock",
     "forze_postgres",
@@ -292,9 +290,11 @@ root_packages = [
     "forze_rabbitmq",
     "forze_sqs",
     "forze_identity",
-    "forze_secrets",
     "forze_vault",
     "forze_meilisearch",
+    "forze_http",
+    "forze_neo4j",
+    "forze_mcp",
 ]
 exclude_type_checking_imports = true
 
@@ -307,13 +307,17 @@ layers = ["forze.application", "forze.domain", "forze.base"]
 name = "Layered `forze.application` module architecture"
 type = "layers"
 layers = [
-    "forze.application.composition",
-    "forze.application.handlers",
     "forze.application.hooks",
     "forze.application.execution",
-    "forze.application.dto",
+    "forze.application.integrations",
     "forze.application.contracts",
 ]
+
+[[tool.importlinter.contracts]]
+name = "Core forze must not import forze_kits"
+type = "forbidden"
+source_modules = ["forze"]
+forbidden_modules = ["forze_kits"]
 
 [[tool.importlinter.contracts]]
 name = "Authz contracts do not import execution contracts"
@@ -322,9 +326,45 @@ source_modules = ["forze.application.contracts.authz"]
 forbidden_modules = ["forze.application.contracts.execution"]
 
 [[tool.importlinter.contracts]]
+name = "Resilience contracts do not import execution"
+type = "forbidden"
+source_modules = ["forze.application.contracts.resilience"]
+forbidden_modules = ["forze.application.execution"]
+
+[[tool.importlinter.contracts]]
+name = "Domain contracts do not import execution"
+type = "forbidden"
+source_modules = ["forze.application.contracts.domain"]
+forbidden_modules = ["forze.application.execution"]
+
+[[tool.importlinter.contracts]]
+name = "Idempotency contracts do not import execution"
+type = "forbidden"
+source_modules = ["forze.application.contracts.idempotency"]
+forbidden_modules = ["forze.application.execution"]
+
+[[tool.importlinter.contracts]]
+name = "Inbox contracts do not import execution"
+type = "forbidden"
+source_modules = ["forze.application.contracts.inbox"]
+forbidden_modules = ["forze.application.execution"]
+
+[[tool.importlinter.contracts]]
+name = "Saga contracts do not import execution"
+type = "forbidden"
+source_modules = ["forze.application.contracts.saga"]
+forbidden_modules = ["forze.application.execution"]
+
+[[tool.importlinter.contracts]]
 name = "Layered `forze.domain` module architecture"
 type = "layers"
 layers = ["forze.domain.models", "forze.domain.validation"]
+
+[[tool.importlinter.contracts]]
+name = "forze_kits.domain must not import forze_kits.aggregates"
+type = "forbidden"
+source_modules = ["forze_kits.domain"]
+forbidden_modules = ["forze_kits.aggregates"]
 
 [[tool.importlinter.contracts]]
 name = "Protect integration subpackages"
@@ -345,9 +385,11 @@ protected_modules = [
     "forze_firestore",
     "forze_rabbitmq",
     "forze_sqs",
-    "forze_secrets",
     "forze_vault",
     "forze_meilisearch",
+    "forze_http",
+    "forze_neo4j",
+    "forze_mcp",
 ]
 allowed_importers = []
 as_packages = true
@@ -358,7 +400,7 @@ as_packages = true
 [tool.vulture]
 paths = [
     "src/forze",
-    "src/forze_patterns",
+    "src/forze_kits",
     "src/forze_fastapi",
     "src/forze_mock",
     "src/forze_postgres",
@@ -375,9 +417,11 @@ paths = [
     "src/forze_rabbitmq",
     "src/forze_sqs",
     "src/forze_identity",
-    "src/forze_secrets",
     "src/forze_vault",
     "src/forze_meilisearch",
+    "src/forze_http",
+    "src/forze_neo4j",
+    "src/forze_mcp",
 ]
 sort_by_size = true
 min_confidence = 80
@@ -396,7 +440,7 @@ mi_min = "B"
 [tool.deptry]
 known_first_party = [
     "forze",
-    "forze_patterns",
+    "forze_kits",
     "forze_fastapi",
     "forze_mock",
     "forze_postgres",
@@ -413,9 +457,11 @@ known_first_party = [
     "forze_rabbitmq",
     "forze_sqs",
     "forze_identity",
-    "forze_secrets",
     "forze_vault",
     "forze_meilisearch",
+    "forze_http",
+    "forze_neo4j",
+    "forze_mcp",
 ]
 ignore_notebooks = true
 
@@ -430,9 +476,7 @@ DEP002 = [
     "python-multipart",
     "email-validator",       # required for pydantic.EmailStr
     #! Added temporarily
-    "neo4j",
     "python-arango-async",
-    "pycasbin",
     "uvicorn",
     "types-hvac",
 ]

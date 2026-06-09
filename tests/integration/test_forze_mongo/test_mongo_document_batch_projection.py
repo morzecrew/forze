@@ -13,7 +13,7 @@ from forze.application.contracts.document import (
 )
 from forze.application.execution import Deps, ExecutionContext
 from forze.domain.constants import ID_FIELD
-from forze_patterns.soft_deletion.models import DocWithSoftDeletion, UpdateCmdWithSoftDeletion
+from forze_kits.domain.soft_deletion.models import DocWithSoftDeletion, UpdateCmdWithSoftDeletion
 from forze.domain.models import CreateDocumentCmd, ReadDocument
 from forze_mongo.execution.deps import MongoDocumentConfig
 from forze_mongo.execution.deps import ConfigurableMongoDocument

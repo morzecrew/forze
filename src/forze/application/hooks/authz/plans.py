@@ -26,6 +26,8 @@ from forze.base.exceptions import exc
 from forze.base.primitives import StrKey
 from forze.domain.models import BaseDTO
 
+from .._base import required_guard_step
+
 # ----------------------- #
 
 
@@ -77,6 +79,13 @@ class AuthzBeforeAuthorize(BeforeFactory):
 
     def __call__(self, ctx: ExecutionContext) -> Before[Any]:
         decision_port = ctx.authz.decision(self.spec)
+        # Resolve eagerly when enforcement is on so a missing wiring fails loud at hook
+        # build (per execution) instead of silently skipping the may_act check at runtime.
+        delegation_port = (
+            ctx.authz.delegation(self.spec)
+            if self.spec.enforce_delegation_grant
+            else None
+        )
 
         async def _before(args: Any) -> None:
             identity = ctx.inv_ctx.get_authn()
@@ -107,6 +116,42 @@ class AuthzBeforeAuthorize(BeforeFactory):
                     code="permission_denied",
                 )
 
+            # Delegation (on-behalf-of): walk the actor chain. Each actor must be
+            # *independently* permitted the same action, so a delegated call can never exceed
+            # intersect(subject grants, actor grants) — the confused-deputy defense. When the
+            # route enforces delegation grants, each actor must additionally hold an explicit
+            # may_act grant for the principal it acts for.
+            node = request.subject
+
+            while node.actor is not None:
+                actor = node.actor
+                actor_result = await decision_port.authorize(
+                    attrs.evolve(request, subject=actor)
+                )
+
+                if not actor_result.allowed:
+                    raise exc.authorization(
+                        actor_result.reason
+                        or f"Delegate not permitted: {self.action!r}",
+                        code="delegate_denied",
+                    )
+
+                if delegation_port is not None:
+                    granted = await delegation_port.may_act(
+                        actor.principal_id,
+                        node.principal_id,
+                        scope=request.scope,
+                    )
+
+                    if not granted:
+                        raise exc.authorization(
+                            f"Delegation not granted: {actor.principal_id} may not act "
+                            f"on behalf of {node.principal_id}",
+                            code="delegation_not_granted",
+                        )
+
+                node = actor
+
         return _before
 
     # ....................... #
@@ -121,9 +166,9 @@ class AuthzBeforeAuthorize(BeforeFactory):
     ) -> BeforeStep:
         """Build a :class:`BeforeStep` using this factory."""
 
-        return BeforeStep(
-            id=step_id,
-            factory=self,
+        return required_guard_step(
+            self,
+            step_id=step_id,
             requires=requires,
             depends_on=depends_on,
             priority=priority,

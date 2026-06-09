@@ -1,11 +1,34 @@
 from enum import StrEnum
-from typing import Any, Self, cast, final
+from typing import Any, Final, Self, cast, final
 
 import attrs
 from structlog import get_logger
 from structlog.typing import ExcInfo, FilteringBoundLogger
 
 from .constants import TRACE_LEVEL_KEY, LogLevel, LogLevelToRank
+
+# ----------------------- #
+
+_TRACE_RANK: Final[int] = LogLevelToRank["trace"]
+_configured_min_rank: int = 0
+"""Configured minimum level rank; ``0`` (emit everything) until configured.
+
+:class:`~forze.base.logging.processors.TraceLevelResolver` drops a trace event
+(rank 5) whenever ``5 < configured_rank``, so :meth:`Logger.trace` can short-circuit
+above that threshold without building the event or touching the backend.
+"""
+
+
+def set_configured_min_rank(level: LogLevel) -> None:
+    """Record the configured minimum level so :meth:`Logger.trace` can fast-skip.
+
+    Called by :func:`~forze.base.logging.configure.configure`; keeps the per-call
+    trace gate a single integer comparison instead of a structlog pipeline pass.
+    """
+
+    global _configured_min_rank
+    _configured_min_rank = LogLevelToRank.get(level, 0)
+
 
 # ----------------------- #
 
@@ -55,7 +78,14 @@ class Logger:
         Structlog's bound logger has no trace level, so this calls ``debug`` and
         relies on :class:`~forze.base.logging.processors.TraceLevelResolver` to
         label or drop the event according to the configured minimum level.
+
+        Fast-skips when trace is below the configured level (the common production
+        case), so per-item callers on hot paths pay only one integer comparison
+        instead of building the event dict and materializing the backend.
         """
+
+        if _TRACE_RANK < _configured_min_rank:
+            return
 
         extras = {**extras, TRACE_LEVEL_KEY: "trace"}
         self.backend.debug(event, *sub, **extras)

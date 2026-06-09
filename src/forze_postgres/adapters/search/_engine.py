@@ -28,6 +28,16 @@ class RankedPipelineSql:
     count_params: list[Any] | None
     """When set, used for ``COUNT(*)`` only (e.g. FTS empty-query uses filter params)."""
 
+    count_with_clause: "sql.Composable | None" = None
+    """When set with :attr:`count_from_outer`, exact ``COUNT(*)`` uses uncapped ranked SQL."""
+
+    count_from_outer: "sql.Composable | None" = None
+    """``FROM`` fragment for :attr:`count_with_clause` (often same as :attr:`from_outer`)."""
+
     pipeline: "PipelineAliases"
     rank_column: str
     projection_alias: str
+    resolved_plan: str | None = None
+    """Resolved PGroonga plan name when applicable."""
+    candidate_limit: int | None = None
+    """Effective ranked-row cap when applicable."""

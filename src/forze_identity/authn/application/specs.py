@@ -16,6 +16,12 @@ from ..domain.models.identity_mapping import (
     ReadIdentityMapping,
     UpdateIdentityMappingCmd,
 )
+from ..domain.models.invite import (
+    CreatePasswordInviteCmd,
+    PasswordInvite,
+    ReadPasswordInvite,
+    UpdatePasswordInviteCmd,
+)
 from ..domain.models.session import (
     CreateSessionCmd,
     ReadSession,
@@ -43,6 +49,18 @@ api_key_account_spec = DocumentSpec(
         "domain": ApiKeyAccount,
         "create_cmd": CreateApiKeyAccountCmd,
         "update_cmd": UpdateApiKeyAccountCmd,
+    },
+)
+
+# ....................... #
+
+password_invite_spec = DocumentSpec(
+    name=AuthnResourceName.PASSWORD_INVITES,
+    read=ReadPasswordInvite,
+    write={
+        "domain": PasswordInvite,
+        "create_cmd": CreatePasswordInviteCmd,
+        "update_cmd": UpdatePasswordInviteCmd,
     },
 )
 

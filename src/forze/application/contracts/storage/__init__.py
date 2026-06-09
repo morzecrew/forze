@@ -1,5 +1,11 @@
-from .deps import StorageDepKey, StorageDepPort, StorageDeps
-from .ports import StoragePort
+from .deps import (
+    StorageCommandDepKey,
+    StorageCommandDepPort,
+    StorageDeps,
+    StorageQueryDepKey,
+    StorageQueryDepPort,
+)
+from .ports import StorageCommandPort, StorageQueryPort
 from .specs import StorageSpec
 from .value_objects import (
     DownloadedObject,
@@ -11,13 +17,16 @@ from .value_objects import (
 # ----------------------- #
 
 __all__ = [
-    "StoragePort",
+    "StorageQueryPort",
+    "StorageCommandPort",
     "UploadedObject",
     "StoredObject",
     "DownloadedObject",
     "ObjectMetadata",
-    "StorageDepKey",
-    "StorageDepPort",
+    "StorageQueryDepKey",
+    "StorageCommandDepKey",
+    "StorageQueryDepPort",
+    "StorageCommandDepPort",
     "StorageSpec",
     "StorageDeps",
 ]

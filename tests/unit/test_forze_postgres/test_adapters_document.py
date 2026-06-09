@@ -9,8 +9,9 @@ import pytest
 from pydantic import BaseModel
 
 from forze.application.contracts.document import DocumentSpec
-from forze.application.coordinators import DocumentCacheCoordinator
-from forze.base.serialization import pydantic_cache_dump
+from forze.application.integrations.document import DocumentCache
+from forze.base.serialization import PydanticModelCodec
+from tests.unit._gateway_codec_helpers import codec_for
 from forze.domain.constants import ID_FIELD
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
 from forze_postgres.adapters.document import PostgresDocumentAdapter
@@ -38,8 +39,9 @@ def _pg_cc(
     cache=None,
     after_commit=None,
 ):
-    return DocumentCacheCoordinator(
+    return DocumentCache(
         read_model_type=read_gw.model_type,
+        read_codec=codec_for(read_gw.model_type),
         document_name=spec.name,
         cache=cache,
         after_commit=after_commit,
@@ -60,7 +62,7 @@ class TestPostgresDocumentAdapter:
         adapter = PostgresDocumentAdapter(
             spec=(doc_spec := _adapter_spec()),
             read_gw=read_gw,
-            cache_coord=_pg_cc(read_gw, doc_spec, cache=cache),
+            document_cache=_pg_cc(read_gw, doc_spec, cache=cache),
         )
 
         result = await adapter.get(pk, for_update=True)
@@ -83,7 +85,7 @@ class TestPostgresDocumentAdapter:
         adapter = PostgresDocumentAdapter(
             spec=(doc_spec := _adapter_spec()),
             read_gw=read_gw,
-            cache_coord=_pg_cc(read_gw, doc_spec, cache=cache),
+            document_cache=_pg_cc(read_gw, doc_spec, cache=cache),
         )
 
         result = await adapter.get(pk)
@@ -100,13 +102,15 @@ class TestPostgresDocumentAdapter:
         read_gw.get.return_value = expected
 
         cache = MagicMock()
-        cache.get = AsyncMock(return_value=pydantic_cache_dump(expected))
+        cache.get = AsyncMock(
+            return_value=PydanticModelCodec(ReadDocument).encode_mapping(expected),
+        )
         cache.set_versioned = AsyncMock()
 
         adapter = PostgresDocumentAdapter(
             spec=(doc_spec := _adapter_spec()),
             read_gw=read_gw,
-            cache_coord=_pg_cc(read_gw, doc_spec, cache=cache),
+            document_cache=_pg_cc(read_gw, doc_spec, cache=cache),
         )
 
         result = await adapter.get(pk, skip_cache=True)
@@ -126,7 +130,11 @@ class TestPostgresDocumentAdapter:
         cache = MagicMock()
         cache.get_many = AsyncMock(
             return_value=(
-                {str(pks[0]): pydantic_cache_dump(expected[0])},
+                {
+                    str(pks[0]): PydanticModelCodec(ReadDocument).encode_mapping(
+                        expected[0],
+                    ),
+                },
                 [str(pks[1])],
             )
         )
@@ -135,7 +143,7 @@ class TestPostgresDocumentAdapter:
         adapter = PostgresDocumentAdapter(
             spec=(doc_spec := _adapter_spec()),
             read_gw=read_gw,
-            cache_coord=_pg_cc(read_gw, doc_spec, cache=cache),
+            document_cache=_pg_cc(read_gw, doc_spec, cache=cache),
         )
 
         result = await adapter.get_many(pks, skip_cache=True)
@@ -161,7 +169,7 @@ class TestPostgresDocumentAdapter:
         adapter = PostgresDocumentAdapter(
             spec=(doc_spec := _adapter_spec()),
             read_gw=read_gw,
-            cache_coord=_pg_cc(read_gw, doc_spec, cache=cache),
+            document_cache=_pg_cc(read_gw, doc_spec, cache=cache),
         )
 
         result = await adapter.get_many(pks)
@@ -188,7 +196,7 @@ class TestPostgresDocumentAdapter:
         adapter = PostgresDocumentAdapter(
             spec=(doc_spec := _adapter_spec()),
             read_gw=read_gw,
-            cache_coord=_pg_cc(read_gw, doc_spec, cache=cache),
+            document_cache=_pg_cc(read_gw, doc_spec, cache=cache),
         )
 
         result = await adapter.get_many(pks)
@@ -279,7 +287,7 @@ class TestPostgresDocumentAdapterInit:
                 spec=(ds := _full_spec()),
                 read_gw=read_gw,
                 write_gw=write_gw,
-                cache_coord=_pg_cc(read_gw, ds),
+                document_cache=_pg_cc(read_gw, ds),
             )
 
     def test_mismatched_tenant_awareness_raises(self) -> None:
@@ -294,7 +302,7 @@ class TestPostgresDocumentAdapterInit:
                 spec=(ds := _full_spec()),
                 read_gw=read_gw,
                 write_gw=write_gw,
-                cache_coord=_pg_cc(read_gw, ds),
+                document_cache=_pg_cc(read_gw, ds),
             )
 
 class TestPostgresDocumentAdapterEffBatchSize:
@@ -304,7 +312,7 @@ class TestPostgresDocumentAdapterEffBatchSize:
         a = PostgresDocumentAdapter(
             spec=ds,
             read_gw=rg,
-            cache_coord=_pg_cc(rg, ds),
+            document_cache=_pg_cc(rg, ds),
             batch_size=5,
         )
         assert a.eff_batch_size == 200
@@ -315,7 +323,7 @@ class TestPostgresDocumentAdapterEffBatchSize:
         a = PostgresDocumentAdapter(
             spec=ds,
             read_gw=rg,
-            cache_coord=_pg_cc(rg, ds),
+            document_cache=_pg_cc(rg, ds),
             batch_size=500000,
         )
         assert a.eff_batch_size == 200
@@ -326,7 +334,7 @@ class TestPostgresDocumentAdapterEffBatchSize:
         a = PostgresDocumentAdapter(
             spec=ds,
             read_gw=rg,
-            cache_coord=_pg_cc(rg, ds),
+            document_cache=_pg_cc(rg, ds),
             batch_size=150,
         )
         assert a.eff_batch_size == 150
@@ -344,7 +352,7 @@ class TestPostgresDocumentAdapterGetPaths:
         adapter = PostgresDocumentAdapter(
             spec=(doc_spec := _adapter_spec()),
             read_gw=read_gw,
-            cache_coord=_pg_cc(read_gw, doc_spec, cache=cache),
+            document_cache=_pg_cc(read_gw, doc_spec, cache=cache),
         )
 
         filt: dict = {"$values": {ID_FIELD: pk}}
@@ -364,12 +372,14 @@ class TestPostgresDocumentAdapterGetPaths:
         read_gw.get = AsyncMock()
 
         cache = MagicMock()
-        cache.get = AsyncMock(return_value=pydantic_cache_dump(doc))
+        cache.get = AsyncMock(
+            return_value=PydanticModelCodec(ReadDocument).encode_mapping(doc),
+        )
 
         adapter = PostgresDocumentAdapter(
             spec=(doc_spec := _adapter_spec()),
             read_gw=read_gw,
-            cache_coord=_pg_cc(read_gw, doc_spec, cache=cache),
+            document_cache=_pg_cc(read_gw, doc_spec, cache=cache),
         )
 
         result = await adapter.get(pk)
@@ -392,8 +402,12 @@ class TestPostgresDocumentAdapterGetManyOrdering:
         cache.get_many = AsyncMock(
             return_value=(
                 {
-                    str(pks[0]): pydantic_cache_dump(d0),
-                    str(pks[2]): pydantic_cache_dump(d2),
+                    str(pks[0]): PydanticModelCodec(ReadDocument).encode_mapping(
+                        d0,
+                    ),
+                    str(pks[2]): PydanticModelCodec(ReadDocument).encode_mapping(
+                        d2,
+                    ),
                 },
                 [str(pks[1])],
             )
@@ -403,7 +417,7 @@ class TestPostgresDocumentAdapterGetManyOrdering:
         adapter = PostgresDocumentAdapter(
             spec=(doc_spec := _adapter_spec()),
             read_gw=read_gw,
-            cache_coord=_pg_cc(read_gw, doc_spec, cache=cache),
+            document_cache=_pg_cc(read_gw, doc_spec, cache=cache),
         )
 
         result = await adapter.get_many(pks)
@@ -419,7 +433,7 @@ class TestPostgresDocumentAdapterRequireWrite:
         adapter = PostgresDocumentAdapter(
             spec=ds,
             read_gw=rg,
-            cache_coord=_pg_cc(rg, ds),
+            document_cache=_pg_cc(rg, ds),
         )
 
         with pytest.raises(CoreException, match="not configured"):
@@ -436,7 +450,7 @@ class TestPostgresDocumentAdapterQueryDelegation:
         adapter = PostgresDocumentAdapter(
             spec=(ds := _full_spec()),
             read_gw=read_gw,
-            cache_coord=_pg_cc(read_gw, ds),
+            document_cache=_pg_cc(read_gw, ds),
         )
 
         out = await adapter.find(filt, for_update=True)
@@ -452,7 +466,7 @@ class TestPostgresDocumentAdapterQueryDelegation:
         adapter = PostgresDocumentAdapter(
             spec=(ds := _full_spec()),
             read_gw=read_gw,
-            cache_coord=_pg_cc(read_gw, ds),
+            document_cache=_pg_cc(read_gw, ds),
         )
 
         page = await adapter.find_page(
@@ -476,7 +490,7 @@ class TestPostgresDocumentAdapterQueryDelegation:
         adapter = PostgresDocumentAdapter(
             spec=(ds := _full_spec()),
             read_gw=read_gw,
-            cache_coord=_pg_cc(read_gw, ds),
+            document_cache=_pg_cc(read_gw, ds),
         )
 
         filt = {"$values": {"a": 1}}
@@ -498,7 +512,7 @@ class TestPostgresDocumentAdapterQueryDelegation:
         adapter = PostgresDocumentAdapter(
             spec=(ds := _full_spec()),
             read_gw=read_gw,
-            cache_coord=_pg_cc(read_gw, ds),
+            document_cache=_pg_cc(read_gw, ds),
         )
 
         page = await adapter.find_page(filters=None, pagination={"limit": 10})
@@ -515,7 +529,7 @@ class TestPostgresDocumentAdapterQueryDelegation:
         adapter = PostgresDocumentAdapter(
             spec=(ds := _full_spec()),
             read_gw=read_gw,
-            cache_coord=_pg_cc(read_gw, ds),
+            document_cache=_pg_cc(read_gw, ds),
             batch_size=10,
         )
 
@@ -546,7 +560,7 @@ class TestPostgresDocumentAdapterQueryDelegation:
         adapter = PostgresDocumentAdapter(
             spec=spec,
             read_gw=read_gw,
-            cache_coord=_pg_cc(read_gw, spec),
+            document_cache=_pg_cc(read_gw, spec),
             batch_size=10,
         )
 
@@ -568,7 +582,7 @@ class TestPostgresDocumentAdapterQueryDelegation:
         adapter = PostgresDocumentAdapter(
             spec=(ds := _full_spec()),
             read_gw=read_gw,
-            cache_coord=_pg_cc(read_gw, ds),
+            document_cache=_pg_cc(read_gw, ds),
             batch_size=10,
         )
 
@@ -587,7 +601,7 @@ class TestPostgresDocumentAdapterQueryDelegation:
         adapter = PostgresDocumentAdapter(
             spec=(ds := _full_spec()),
             read_gw=read_gw,
-            cache_coord=_pg_cc(read_gw, ds),
+            document_cache=_pg_cc(read_gw, ds),
             batch_size=10,
         )
 
@@ -610,7 +624,7 @@ class TestPostgresDocumentAdapterQueryDelegation:
         adapter = PostgresDocumentAdapter(
             spec=(ds := _full_spec()),
             read_gw=read_gw,
-            cache_coord=_pg_cc(read_gw, ds),
+            document_cache=_pg_cc(read_gw, ds),
             batch_size=20,
         )
 
@@ -642,7 +656,7 @@ class TestPostgresDocumentAdapterQueryDelegation:
         adapter = PostgresDocumentAdapter(
             spec=(ds := _full_spec()),
             read_gw=read_gw,
-            cache_coord=_pg_cc(read_gw, ds),
+            document_cache=_pg_cc(read_gw, ds),
             batch_size=10,
         )
 
@@ -667,7 +681,7 @@ class TestPostgresDocumentAdapterQueryDelegation:
         adapter = PostgresDocumentAdapter(
             spec=(ds := _full_spec()),
             read_gw=read_gw,
-            cache_coord=_pg_cc(read_gw, ds),
+            document_cache=_pg_cc(read_gw, ds),
             batch_size=10,
         )
 
@@ -685,7 +699,7 @@ class TestPostgresDocumentAdapterQueryDelegation:
         adapter = PostgresDocumentAdapter(
             spec=(ds := _full_spec()),
             read_gw=read_gw,
-            cache_coord=_pg_cc(read_gw, ds),
+            document_cache=_pg_cc(read_gw, ds),
         )
 
         assert await adapter.count({"a": 1}) == 7
@@ -709,7 +723,7 @@ class TestPostgresDocumentAdapterCommands:
             spec=(ds := _full_spec()),
             read_gw=read_gw,
             write_gw=write_gw,
-            cache_coord=_pg_cc(read_gw, ds, cache=cache),
+            document_cache=_pg_cc(read_gw, ds, cache=cache),
         )
 
         out = await adapter.create(TCreate(title="n"))
@@ -730,7 +744,7 @@ class TestPostgresDocumentAdapterCommands:
             spec=(ds := _full_spec()),
             read_gw=read_gw,
             write_gw=write_gw,
-            cache_coord=_pg_cc(read_gw, ds),
+            document_cache=_pg_cc(read_gw, ds),
             batch_size=50,
         )
 
@@ -753,27 +767,13 @@ class TestPostgresDocumentAdapterCommands:
             spec=(ds := _full_spec()),
             read_gw=read_gw,
             write_gw=write_gw,
-            cache_coord=_pg_cc(read_gw, ds),
+            document_cache=_pg_cc(read_gw, ds),
         )
-        out = await adapter.ensure(TCreate(id=pk, title="n"))
+        out = await adapter.ensure(pk, TCreate(title="n"))
         assert out == read_doc
         write_gw.ensure.assert_awaited_once()
         ca = write_gw.ensure.await_args
-        assert ca[0][0].id == pk
-
-    @pytest.mark.asyncio
-    async def test_ensure_rejects_missing_id(self) -> None:
-        read_gw = _read_gw_full()
-        write_gw = _write_gw()
-        write_gw.client = read_gw.client
-        adapter = PostgresDocumentAdapter(
-            spec=(ds := _full_spec()),
-            read_gw=read_gw,
-            write_gw=write_gw,
-            cache_coord=_pg_cc(read_gw, ds),
-        )
-        with pytest.raises(CoreException, match="id"):
-            await adapter.ensure(TCreate(title="n"))  # type: ignore[call-arg]
+        assert ca[0][0] == pk
 
     @pytest.mark.asyncio
     async def test_update_clears_cache_and_reloads(self) -> None:
@@ -792,7 +792,7 @@ class TestPostgresDocumentAdapterCommands:
             spec=(ds := _full_spec()),
             read_gw=read_gw,
             write_gw=write_gw,
-            cache_coord=_pg_cc(read_gw, ds, cache=cache),
+            document_cache=_pg_cc(read_gw, ds, cache=cache),
         )
 
         out = await adapter.update(pk, 1, TUpdate(title="z"))
@@ -816,7 +816,7 @@ class TestPostgresDocumentAdapterCommands:
             spec=(ds := _full_spec()),
             read_gw=read_gw,
             write_gw=write_gw,
-            cache_coord=_pg_cc(read_gw, ds, cache=cache),
+            document_cache=_pg_cc(read_gw, ds, cache=cache),
         )
 
         await adapter.update(uuid4(), 1, TUpdate(title="z"))
@@ -837,7 +837,7 @@ class TestPostgresDocumentAdapterCommands:
             spec=(ds := _full_spec()),
             read_gw=read_gw,
             write_gw=write_gw,
-            cache_coord=_pg_cc(read_gw, ds),
+            document_cache=_pg_cc(read_gw, ds),
             batch_size=50,
         )
 
@@ -858,7 +858,7 @@ class TestPostgresDocumentAdapterCommands:
             spec=(ds := _full_spec()),
             read_gw=read_gw,
             write_gw=write_gw,
-            cache_coord=_pg_cc(read_gw, ds),
+            document_cache=_pg_cc(read_gw, ds),
         )
 
         assert await adapter.touch_many([]) == []
@@ -879,7 +879,7 @@ class TestPostgresDocumentAdapterCommands:
             spec=(ds := _full_spec()),
             read_gw=read_gw,
             write_gw=write_gw,
-            cache_coord=_pg_cc(read_gw, ds),
+            document_cache=_pg_cc(read_gw, ds),
             batch_size=40,
         )
 
@@ -900,7 +900,7 @@ class TestPostgresDocumentAdapterCommands:
             spec=(ds := _full_spec()),
             read_gw=read_gw,
             write_gw=write_gw,
-            cache_coord=_pg_cc(read_gw, ds),
+            document_cache=_pg_cc(read_gw, ds),
         )
 
         await adapter.kill_many([])
@@ -920,7 +920,7 @@ class TestPostgresDocumentAdapterCommands:
             spec=(ds := _full_spec()),
             read_gw=read_gw,
             write_gw=write_gw,
-            cache_coord=_pg_cc(read_gw, ds),
+            document_cache=_pg_cc(read_gw, ds),
         )
 
         assert await adapter.update(pk, 1, TUpdate(is_deleted=True)) == rd
@@ -939,7 +939,7 @@ class TestPostgresDocumentAdapterCommands:
             spec=(ds := _full_spec()),
             read_gw=read_gw,
             write_gw=write_gw,
-            cache_coord=_pg_cc(read_gw, ds),
+            document_cache=_pg_cc(read_gw, ds),
         )
 
         assert await adapter.update_many([]) == []
@@ -952,7 +952,7 @@ class TestPostgresDocumentAdapterGetManyBranches:
         adapter = PostgresDocumentAdapter(
             spec=(ds := _adapter_spec()),
             read_gw=read_gw,
-            cache_coord=_pg_cc(read_gw, ds),
+            document_cache=_pg_cc(read_gw, ds),
         )
 
         assert await adapter.get_many([]) == []
@@ -969,7 +969,7 @@ class TestPostgresDocumentAdapterGetManyBranches:
         adapter = PostgresDocumentAdapter(
             spec=(doc_spec := _adapter_spec()),
             read_gw=read_gw,
-            cache_coord=_pg_cc(read_gw, doc_spec, cache=cache),
+            document_cache=_pg_cc(read_gw, doc_spec, cache=cache),
         )
 
         page = await adapter.project_many(
@@ -993,8 +993,12 @@ class TestPostgresDocumentAdapterGetManyBranches:
         cache.get_many = AsyncMock(
             return_value=(
                 {
-                    str(pks[0]): pydantic_cache_dump(d0),
-                    str(pks[1]): pydantic_cache_dump(d1),
+                    str(pks[0]): PydanticModelCodec(ReadDocument).encode_mapping(
+                        d0,
+                    ),
+                    str(pks[1]): PydanticModelCodec(ReadDocument).encode_mapping(
+                        d1,
+                    ),
                 },
                 [],
             )
@@ -1003,7 +1007,7 @@ class TestPostgresDocumentAdapterGetManyBranches:
         adapter = PostgresDocumentAdapter(
             spec=(doc_spec := _adapter_spec()),
             read_gw=read_gw,
-            cache_coord=_pg_cc(read_gw, doc_spec, cache=cache),
+            document_cache=_pg_cc(read_gw, doc_spec, cache=cache),
         )
 
         result = await adapter.get_many(pks)
@@ -1030,7 +1034,7 @@ class TestPostgresDocumentAdapterBatchMutations:
             spec=(ds := _full_spec()),
             read_gw=read_gw,
             write_gw=write_gw,
-            cache_coord=_pg_cc(read_gw, ds),
+            document_cache=_pg_cc(read_gw, ds),
             batch_size=100,
         )
 
@@ -1058,7 +1062,7 @@ class TestPostgresDocumentAdapterBatchMutations:
             spec=(ds := _full_spec()),
             read_gw=read_gw,
             write_gw=write_gw,
-            cache_coord=_pg_cc(read_gw, ds),
+            document_cache=_pg_cc(read_gw, ds),
             batch_size=80,
         )
 
@@ -1092,7 +1096,7 @@ class TestPostgresDocumentAdapterBatchMutations:
             spec=(ds := _full_spec()),
             read_gw=read_gw,
             write_gw=write_gw,
-            cache_coord=_pg_cc(read_gw, ds),
+            document_cache=_pg_cc(read_gw, ds),
             batch_size=90,
         )
 
@@ -1118,7 +1122,7 @@ class TestPostgresDocumentAdapterReturnNew:
             spec=(ds := _full_spec()),
             read_gw=read_gw,
             write_gw=write_gw,
-            cache_coord=_pg_cc(read_gw, ds, cache=cache),
+            document_cache=_pg_cc(read_gw, ds, cache=cache),
         )
 
         assert await adapter.create(TCreate(title="n"), return_new=False) is None
@@ -1140,7 +1144,7 @@ class TestPostgresDocumentAdapterReturnNew:
             spec=(ds := _full_spec()),
             read_gw=read_gw,
             write_gw=write_gw,
-            cache_coord=_pg_cc(read_gw, ds, cache=cache),
+            document_cache=_pg_cc(read_gw, ds, cache=cache),
             batch_size=50,
         )
 
@@ -1169,7 +1173,7 @@ class TestPostgresDocumentAdapterReturnNew:
             spec=(ds := _full_spec()),
             read_gw=read_gw,
             write_gw=write_gw,
-            cache_coord=_pg_cc(read_gw, ds, cache=cache),
+            document_cache=_pg_cc(read_gw, ds, cache=cache),
         )
 
         assert await adapter.update(pk, 1, TUpdate(title="z"), return_new=False) is None
@@ -1191,7 +1195,7 @@ class TestPostgresDocumentAdapterReturnNew:
             spec=(ds := _full_spec()),
             read_gw=read_gw,
             write_gw=write_gw,
-            cache_coord=_pg_cc(read_gw, ds, cache=cache),
+            document_cache=_pg_cc(read_gw, ds, cache=cache),
             batch_size=80,
         )
 
@@ -1218,7 +1222,7 @@ class TestPostgresDocumentAdapterReturnNew:
             spec=(ds := _full_spec()),
             read_gw=read_gw,
             write_gw=write_gw,
-            cache_coord=_pg_cc(read_gw, ds, cache=cache),
+            document_cache=_pg_cc(read_gw, ds, cache=cache),
         )
 
         assert await adapter.touch(pk, return_new=False) is None
@@ -1239,7 +1243,7 @@ class TestPostgresDocumentAdapterReturnNew:
             spec=(ds := _full_spec()),
             read_gw=read_gw,
             write_gw=write_gw,
-            cache_coord=_pg_cc(read_gw, ds),
+            document_cache=_pg_cc(read_gw, ds),
             batch_size=50,
         )
 
@@ -1261,7 +1265,7 @@ class TestPostgresDocumentAdapterReturnNew:
             spec=(ds := _full_spec()),
             read_gw=read_gw,
             write_gw=write_gw,
-            cache_coord=_pg_cc(read_gw, ds, cache=cache),
+            document_cache=_pg_cc(read_gw, ds, cache=cache),
         )
 
         assert (

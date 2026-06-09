@@ -49,15 +49,12 @@ See [Authentication](https://morzecrew.github.io/forze/docs/concepts/authenticat
 
 ## FastAPI identity
 
-`ContextBindingMiddleware` accepts a `Sequence` of single-source resolvers (`authn_identity_resolvers`) plus a `when_multiple_credentials` policy. Use `HeaderTokenAuthnIdentityResolver` for `Authorization`-style bearer headers, `HeaderApiKeyAuthnIdentityResolver` for API-key headers, and `CookieTokenAuthnIdentityResolver` for cookie-held tokens — wire only the sources you actually accept.
+`SecurityContextMiddleware` binds `InvocationMetadata`, `AuthnIdentity`, and `TenantIdentity` at the boundary from an `AuthnRequirement` — a tuple of ingress methods — plus a `when_multiple_credentials` policy. Use `HeaderTokenAuthn` for `Authorization`-style bearer headers, `HeaderApiKeyAuthn` for API-key headers, and `CookieTokenAuthn` for cookie-held tokens; each ingress dispatches through an `AuthnSpec`. Wire only the sources you actually accept.
 
 ```python
 from forze.application.contracts.authn import AuthnSpec
-from forze_fastapi.middlewares.context import (
-    ContextBindingMiddleware,
-    HeaderApiKeyAuthnIdentityResolver,
-    HeaderTokenAuthnIdentityResolver,
-)
+from forze_fastapi.middlewares import SecurityContextMiddleware
+from forze_fastapi.security import AuthnRequirement, HeaderApiKeyAuthn, HeaderTokenAuthn
 
 authn_spec = AuthnSpec(
     name="api",
@@ -65,17 +62,19 @@ authn_spec = AuthnSpec(
 )
 
 app.add_middleware(
-    ContextBindingMiddleware,
+    SecurityContextMiddleware,
     ctx_dep=ctx_dep,
-    authn_identity_resolvers=(
-        HeaderTokenAuthnIdentityResolver(spec=authn_spec),
-        HeaderApiKeyAuthnIdentityResolver(spec=authn_spec),
+    authn=AuthnRequirement(
+        ingress=(
+            HeaderTokenAuthn(authn_spec=authn_spec, header_name="Authorization"),
+            HeaderApiKeyAuthn(authn_spec=authn_spec, header_name="X-API-Key"),
+        ),
     ),
     when_multiple_credentials="reject",
 )
 ```
 
-The resolvers forward `scheme` and API-key `prefix` as routing hints; the verifier's signature/claims (or HMAC tag) are the security boundary, not the header shape.
+Handlers read identity only from `ExecutionContext`. The ingress `scheme` and API-key header name are routing hints; the verifier's signature/claims (or HMAC tag) are the security boundary, not the header shape.
 
 ## Authn dep keys
 
@@ -152,6 +151,7 @@ class ConfigurableOidcTokenVerifier:
             algorithms=("RS256",),
             audience=self.audience,
             issuer=self.issuer,
+            enforce_issuer_and_audience=True,
             claim_mapper=OidcClaimMapper(tenant_claim=self.tenant_claim),
         )
 ```
@@ -162,7 +162,7 @@ See [External IdP (OIDC) recipe](https://morzecrew.github.io/forze/docs/recipes/
 
 ## Authn document specs
 
-`forze_identity.authn` exposes four `DocumentSpec`s (`password_account_spec`, `api_key_account_spec`, `session_spec`, `identity_mapping_spec`). All four are members of `AUTHN_TENANT_UNAWARE_DOCUMENT_SPEC_NAMES` and must be wired to **tenant-unaware** document stores so authentication can run before `TenantIdentity` is bound. `PrincipalEligibilityPort` additionally requires tenant-unaware `authz_policy_principals` (`policy_principal_spec`). User offboarding uses `PrincipalDeactivationPort`, not `deactivate_principal` alone. `MappingTableResolver` forbids cache and history on `identity_mapping_spec`.
+`forze_identity.authn` exposes five `DocumentSpec`s (`password_account_spec`, `api_key_account_spec`, `password_invite_spec`, `session_spec`, `identity_mapping_spec`). All five are members of `AUTHN_TENANT_UNAWARE_DOCUMENT_SPEC_NAMES` and must be wired to **tenant-unaware** document stores so authentication can run before `TenantIdentity` is bound. `password_invite_spec` is only needed when you enable single-use password invites (`AuthnKernelConfig.invite_token_pepper`). `PrincipalEligibilityPort` additionally requires tenant-unaware `authz_policy_principals` (`policy_principal_spec`). User offboarding uses `PrincipalDeactivationPort`, not `deactivate_principal` alone. `MappingTableResolver` forbids cache and history on `identity_mapping_spec`.
 
 ## Authz
 
@@ -178,7 +178,7 @@ For database-per-tenant Postgres routing, set `PostgresDepsModule.introspector_c
 
 ## Tenancy deps module
 
-`TenancyDepsModule` (`from forze_identity.tenancy.execution import TenancyDepsModule`) registers `TenantResolverDepKey` and/or `TenantManagementDepKey` factories (`ConfigurableTenantResolver`, `ConfigurableTenantManagement`) for the route names you pass. Merge it into `DepsPlan.from_modules` alongside Postgres/Mongo and auth modules when tenant catalog documents drive `TenantResolverPort` / `TenantManagementPort`.
+`TenancyDepsModule` (`from forze_identity.tenancy.execution import TenancyDepsModule`) registers `TenantResolverDepKey` and/or `TenantManagementDepKey` factories (`ConfigurableTenantResolver`, `ConfigurableTenantManagement`) for the route names you pass. Merge it into `DepsRegistry.from_modules` alongside Postgres/Mongo and auth modules when tenant catalog documents drive `TenantResolverPort` / `TenantManagementPort`.
 
 ```python
 from forze_identity.tenancy.execution import TenancyDepsModule
@@ -201,6 +201,34 @@ from forze.application.contracts.secrets import SecretRef, SecretsDepKey, resolv
 
 secrets = ctx.deps.provide(SecretsDepKey)
 dsn = await resolve_structured(secrets, SecretRef("postgres/main"), PostgresDsnSecret)
+```
+
+### Backends
+
+Wire one `SecretsPort` backend for the route. Bundled in `forze_kits` (no extra):
+
+```python
+from forze_kits.adapters.secrets import (
+    DirectorySecrets,
+    EnvSecrets,
+    MappingSecrets,
+    SecretsDepsModule,
+)
+
+secrets_module = SecretsDepsModule(secrets=EnvSecrets())
+# DirectorySecrets(root=Path("/etc/secrets")) for file-backed secrets;
+# MappingSecrets(data={...}) for in-memory development/tests.
+```
+
+For HashiCorp Vault (extra `forze[vault]`), `forze_vault` ships a KV v2 backend that registers `SecretsDepKey` for you:
+
+```python
+from forze_vault import VaultClient, VaultConfig, VaultDepsModule, vault_lifecycle_step
+
+vault_module = VaultDepsModule(
+    client=VaultClient(config=VaultConfig(url="https://vault:8200", token="...")),
+)
+# add vault_lifecycle_step() to your LifecyclePlan
 ```
 
 Use secrets for credentials and routed client configuration; avoid putting secret values in specs.

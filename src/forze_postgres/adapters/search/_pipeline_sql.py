@@ -27,6 +27,15 @@ class PipelineAliases:
 # ....................... #
 
 
+def scored_order_by_rank_alias(rank_column: str) -> sql.Composable:
+    """``ORDER BY`` target for capped ``scored`` CTEs (output alias, not a heap column)."""
+
+    return sql.Identifier(rank_column)
+
+
+# ....................... #
+
+
 def validate_join_pairs(join_pairs: Sequence[tuple[str, str]]) -> None:
     """Require unique projection-side column names in ``join_pairs``."""
 
@@ -157,19 +166,116 @@ def build_scored_cte(
     scored_keys: sql.Composable,
     scored_rank: sql.Composable,
     heap_ident: sql.Composable,
-    join_sf: sql.Composable,
+    join_sf: sql.Composable | None,
     sw: sql.Composable,
+    heap_fw: sql.Composable | None = None,
+    candidate_limit: int | None = None,
+    scored_order: sql.Composable | None = None,
+    candidate_order_asc: bool = False,
+    first_in_with: bool = False,
 ) -> sql.Composable:
-    """``, scored AS (SELECT keys, rank FROM heap JOIN filtered WHERE match)``."""
+    """``, scored AS (SELECT keys, rank FROM heap [JOIN filtered] WHERE match)``."""
+
+    prefix = sql.SQL("") if first_in_with else sql.SQL(",")
+
+    if join_sf is not None:
+        from_sql = sql.SQL(
+            """
+                FROM {heap} {ia}
+                INNER JOIN {filtered} {fa} ON ({join_sf})
+                """
+        ).format(
+            heap=heap_ident,
+            ia=sql.Identifier(aliases.index),
+            filtered=sql.Identifier(aliases.filtered),
+            fa=sql.Identifier(aliases.filtered),
+            join_sf=join_sf,
+        )
+
+    else:
+        from_sql = sql.SQL(" FROM {heap} {ia} ").format(
+            heap=heap_ident,
+            ia=sql.Identifier(aliases.index),
+        )
+
+    where_parts: list[sql.Composable] = [sw]
+
+    if heap_fw is not None:
+        where_parts.append(heap_fw)
+
+    where_sql = sql.SQL(" AND ").join(where_parts)
+
+    tail = sql.SQL("")
+
+    if candidate_limit is not None and scored_order is not None:
+        order_suf = (
+            sql.SQL("ASC NULLS LAST")
+            if candidate_order_asc
+            else sql.SQL("DESC NULLS LAST")
+        )
+        tail = sql.SQL(" ORDER BY {ord} {suf} LIMIT {lim}").format(  # type: ignore[assignment]
+            ord=scored_order,
+            suf=order_suf,
+            lim=sql.Literal(int(candidate_limit)),
+        )
 
     return sql.SQL(
         """
-            ,
+            {prefix}
+            {scored} AS (
+                SELECT {scored_keys}, {scored_rank}
+                {from_sql}
+                WHERE {where_sql}{tail}
+            )"""
+    ).format(
+        prefix=prefix,
+        scored=sql.Identifier(aliases.scored),
+        scored_keys=scored_keys,
+        scored_rank=scored_rank,
+        from_sql=from_sql,
+        where_sql=where_sql,
+        tail=tail,
+    )
+
+
+# ....................... #
+
+
+def build_pgroonga_index_first_pipeline(
+    *,
+    aliases: PipelineAliases,
+    scored_keys: sql.Composable,
+    scored_rank: sql.Composable,
+    heap_ident: sql.Composable,
+    sw: sql.Composable,
+    join_vs: sql.Composable,
+    proj_ident: sql.Composable,
+    proj_fw: sql.Composable,
+    heap_row_limit: int | None,
+    scored_order: sql.Composable | None,
+) -> tuple[sql.Composable, sql.Composable]:
+    """Index-first PGroonga: top-K on heap, then join projection with filters.
+
+  When ``heap_row_limit`` is ``None``, the scored CTE has no ``LIMIT`` (for exact counts).
+
+    Returns ``(with_clause, from_outer)``.
+    """
+
+    where_parts: list[sql.Composable] = [sw]
+    tail: sql.Composable = sql.SQL("")
+
+    if heap_row_limit is not None and scored_order is not None:
+        tail = sql.SQL(" ORDER BY {ord} DESC NULLS LAST LIMIT {lim}").format(
+            ord=scored_order,
+            lim=sql.Literal(int(heap_row_limit)),
+        )
+
+    scored_cte = sql.SQL(
+        """
             {scored} AS (
                 SELECT {scored_keys}, {scored_rank}
                 FROM {heap} {ia}
-                INNER JOIN {filtered} {fa} ON ({join_sf})
-                WHERE {sw}
+                WHERE {sw}{tail}
             )"""
     ).format(
         scored=sql.Identifier(aliases.scored),
@@ -177,11 +283,28 @@ def build_scored_cte(
         scored_rank=scored_rank,
         heap=heap_ident,
         ia=sql.Identifier(aliases.index),
-        filtered=sql.Identifier(aliases.filtered),
-        fa=sql.Identifier(aliases.filtered),
-        join_sf=join_sf,
-        sw=sw,
+        sw=sql.SQL(" AND ").join(where_parts),
+        tail=tail,
     )
+
+    from_outer = sql.SQL(
+        """
+            FROM {proj} {pa}
+            INNER JOIN {scored} {sa} ON ({join_vs})
+            WHERE {fw}
+            """
+    ).format(
+        proj=proj_ident,
+        pa=sql.Identifier(aliases.projection),
+        scored=sql.Identifier(aliases.scored),
+        sa=sql.Identifier(aliases.scored),
+        join_vs=join_vs,
+        fw=proj_fw,
+    )
+
+    with_clause = sql.SQL("WITH {}{}").format(scored_cte, sql.SQL(""))
+
+    return with_clause, from_outer
 
 
 # ....................... #

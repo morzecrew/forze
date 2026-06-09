@@ -4,6 +4,10 @@ from datetime import timedelta
 from typing import final
 
 import attrs
+from pydantic import SecretStr
+
+from forze.base.exceptions import exc
+from forze.base.serialization.pydantic import pydantic_secret_converter
 
 # ----------------------- #
 
@@ -16,7 +20,7 @@ class VaultConfig:
     url: str
     """Vault API base URL."""
 
-    token: str
+    token: SecretStr = attrs.field(repr=False, converter=pydantic_secret_converter)
     """Vault token used for authentication."""
 
     mount_point: str = "secret"
@@ -36,3 +40,9 @@ class VaultConfig:
 
     retry_backoff_factor: float = 0.1
     """Backoff factor between retries."""
+
+    # ....................... #
+
+    def __attrs_post_init__(self) -> None:
+        if self.timeout.total_seconds() <= 0:
+            raise exc.configuration("Timeout must be positive")

@@ -113,40 +113,40 @@ class AuthnDeps(ConvenientDeps):
         )
 
     def token_lifecycle(self, spec: AuthnSpec) -> TokenLifecyclePort:
-        """Resolve token lifecycle for ``spec``."""
+        """Resolve token lifecycle for ``spec`` (a write — guarded)."""
 
-        return self._resolve_configurable(TokenLifecycleDepKey, spec, route=spec.name)
+        return self._resolve_command(TokenLifecycleDepKey, spec, route=spec.name)
 
     def password_lifecycle(self, spec: AuthnSpec) -> PasswordLifecyclePort:
-        """Resolve password lifecycle for ``spec``."""
+        """Resolve password lifecycle for ``spec`` (a write — guarded)."""
 
-        return self._resolve_configurable(
+        return self._resolve_command(
             PasswordLifecycleDepKey,
             spec,
             route=spec.name,
         )
 
     def api_key_lifecycle(self, spec: AuthnSpec) -> ApiKeyLifecyclePort:
-        """Resolve API key lifecycle for ``spec``."""
+        """Resolve API key lifecycle for ``spec`` (a write — guarded)."""
 
-        return self._resolve_configurable(ApiKeyLifecycleDepKey, spec, route=spec.name)
+        return self._resolve_command(ApiKeyLifecycleDepKey, spec, route=spec.name)
 
     def password_account_provisioning(
         self,
         spec: AuthnSpec,
     ) -> PasswordAccountProvisioningPort:
-        """Resolve password account provisioning for ``spec``."""
+        """Resolve password account provisioning for ``spec`` (a write — guarded)."""
 
-        return self._resolve_configurable(
+        return self._resolve_command(
             PasswordAccountProvisioningDepKey,
             spec,
             route=spec.name,
         )
 
     def principal_deactivation(self, spec: AuthnSpec) -> PrincipalDeactivationPort:
-        """Resolve cascaded principal deactivation for ``spec``."""
+        """Resolve cascaded principal deactivation for ``spec`` (a write — guarded)."""
 
-        return self._resolve_configurable(
+        return self._resolve_command(
             PrincipalDeactivationDepKey,
             spec,
             route=spec.name,

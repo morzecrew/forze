@@ -47,7 +47,7 @@ Single entry point for safe copies destined for clients or logs:
     sanitize(payload, context="log")     # structured log extras — keys + log string rules
     ```
 
-`configure_logging()` scrubs log event fields by default (`sanitize_logs=True`). Log string scrubbing uses the same `**********` placeholder as sensitive keys (Logfire-aligned substring patterns plus email and Bearer tokens). Innocent words inside log message fields may be redacted; set `text_scrub=False` to disable string rules. Use `context="egress"` for HTTP and errors; do not scrub payloads before persisting to storage.
+`configure_logging()` scrubs log event fields by default (`sanitize_logs=True`). Log string scrubbing uses the same `**********` placeholder as sensitive keys (Logfire-aligned substring patterns plus email, Bearer tokens, common database URLs, and inline `private_key` JSON fragments). When `sanitize_logs=True`, `error.message` and `error.stack` are always text-scrubbed (independent of `text_scrub`). Set `include_exception_stack=False` to omit `error.stack` from structured JSON logs while keeping scrubbed messages. Innocent words inside log message fields may be redacted; set `text_scrub=False` to disable string rules on non-exception extras. Use `context="egress"` for HTTP and errors; do not scrub payloads before persisting to storage.
 
 In console mode, Rich tracebacks collapse long stacks to the first and last *N* frames (`ForzeConsoleRenderer.max_traceback_frames`, default `20`; set `0` for no limit). Customize via `configure_logging(..., custom_console_renderer=ForzeConsoleRenderer(max_traceback_frames=0))`. Use `traceback_supress` to omit framework modules (for example `uvicorn`, `starlette`, `fastapi`).
 
@@ -148,7 +148,7 @@ Shared types, value generators, and context-scoped utilities importable from `fo
 |------|--------|---------|
 | `JsonDict` | `forze.base.primitives` | JSON-compatible dictionary |
 | `StrKey` | `forze.base.primitives` | String-compatible operation/spec key |
-| `String`, `LongString` | `forze_patterns.base.types` | Pydantic-aware normalized strings (optional `forze_patterns` package) |
+| `String`, `LongString` | `forze_kits.domain.base.types` | Pydantic-aware normalized strings (optional `forze_kits` package) |
 
     :::python
     from forze.base.primitives import JsonDict, StrKey
@@ -266,7 +266,7 @@ Use `scope()` for nested isolation:
 | `clear()` | Clear the buffer |
 | `scope()` | Context manager providing an isolated buffer; restores previous state on exit |
 
-The outbox feature uses `ContextualBuffer` to collect events during a handler and flush them after commit.
+Outbox staging uses `ContextualBuffer` internally; see [Outbox contracts](../core-package/contracts/outbox.md).
 
 ## Serialization
 
@@ -298,46 +298,33 @@ Helpers for dict diffing, merging, and Pydantic model utilities. Import from `fo
 
 These are used internally by `Document.update()` to compute minimal diffs and by `validate_historical_consistency()` to detect concurrent update conflicts.
 
-### Pydantic helpers
+### Model codecs (public API)
 
-    :::python
-    from forze.base.serialization import (
-        pydantic_validate,
-        pydantic_dump,
-        pydantic_field_names,
-        pydantic_model_hash,
-    )
+Prefer `ModelCodec` implementations over direct `pydantic_*` / `msgspec_*` helpers. Application specs use `forze.application.contracts.codecs.default_model_codec` and `DocumentSpec.resolved_codecs` for document aggregates.
 
-| Function | Purpose |
-|----------|---------|
-| `pydantic_validate(...)` | Validate raw data into a model instance |
-| `pydantic_dump(...)` | Dump a model to a dict with fine-grained exclusion |
-| `pydantic_field_names(...)` | Return the set of field names on a model class |
-| `pydantic_model_hash(...)` | Compute a stable SHA-256 hash of a serialized model |
+Low-level Pydantic/msgspec functions remain in `forze.base.serialization.pydantic` and `forze.base.serialization.msgspec` for framework internals and tests.
 
-The `exclude` parameter for `pydantic_dump` accepts a `TypedDict` with optional keys: `unset`, `none`, `defaults`, `computed_fields` (all `bool`).
-
-### Record mapping codecs
+### Model codecs
 
     :::python
     import msgspec
     from forze.base.serialization import (
-        MsgspecRecordMappingCodec,
-        PydanticRecordMappingCodec,
-        RecordMappingCodec,
+        MsgspecModelCodec,
+        PydanticModelCodec,
+        ModelCodec,
     )
 
-    pydantic_codec: RecordMappingCodec[MyPydanticModel, MyPydanticSource]
-    pydantic_codec = PydanticRecordMappingCodec(MyPydanticModel)
+    pydantic_codec: ModelCodec[MyPydanticModel, MyPydanticSource]
+    pydantic_codec = PydanticModelCodec(MyPydanticModel)
 
-    msgspec_codec: RecordMappingCodec[MyMsgspecStruct, msgspec.Struct]
-    msgspec_codec = MsgspecRecordMappingCodec(MyMsgspecStruct)
+    msgspec_codec: ModelCodec[MyMsgspecStruct, msgspec.Struct]
+    msgspec_codec = MsgspecModelCodec(MyMsgspecStruct)
 
 | Type / factory | Purpose |
 |----------------|---------|
-| `RecordMappingCodec[...]` | Protocol for mapping decode/encode, JSON bytes wire helpers, batched operations, transforms, and stored-field introspection |
-| `PydanticRecordMappingCodec[...]` | Frozen default implementation backed by the `pydantic_*` helper functions |
-| `MsgspecRecordMappingCodec[...]` | Frozen msgspec implementation backed by the `msgspec_*` helper functions |
+| `ModelCodec[...]` | Protocol for mapping decode/encode, JSON bytes wire helpers, batched operations, transforms, and stored-field introspection |
+| `PydanticModelCodec[...]` | Frozen default implementation backed by the `pydantic_*` helper functions |
+| `MsgspecModelCodec[...]` | Frozen msgspec implementation backed by the `msgspec_*` helper functions |
 
 Use the codec API when a component should depend on a record-mapping abstraction. The `pydantic_*` and `msgspec_*` helpers remain available as the low-level function APIs and are the single behavior sources used by the codec classes.
 

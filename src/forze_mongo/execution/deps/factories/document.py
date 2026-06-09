@@ -11,10 +11,11 @@ from forze.application.contracts.document import (
     DocumentSpec,
 )
 from forze.application.contracts.transaction import AfterCommitPort
-from forze.application.coordinators import DocumentCacheCoordinator
+from forze.application.execution.domain import domain_dispatcher_provider
+from forze.application.integrations.document import DocumentCache
 from forze.application.execution import ExecutionContext
 from forze.base.exceptions import exc
-from forze.domain.models import BaseDTO, CreateDocumentCmd, Document
+from forze.domain.models import BaseDTO, Document
 
 from ....adapters import MongoDocumentAdapter
 from ..._logger import logger
@@ -25,7 +26,7 @@ from ..utils import doc_write_gw, read_gw
 
 R = TypeVar("R", bound=BaseModel)
 D = TypeVar("D", bound=Document)
-C = TypeVar("C", bound=CreateDocumentCmd)
+C = TypeVar("C", bound=BaseDTO)
 U = TypeVar("U", bound=BaseDTO)
 
 # ....................... #
@@ -50,11 +51,15 @@ class ConfigurableMongoReadOnlyDocument(DocumentQueryDepPort[R]):
     ) -> MongoDocumentAdapter[R, Any, Any, Any]:
         cache = ctx.cache(spec.cache) if spec.cache is not None else None
 
+        codecs = spec.resolved_codecs
+
         read = read_gw(
             ctx,
             read_type=spec.read,
             read_relation=self.config.read,
             tenant_aware=self.config.tenant_aware,
+            codec=codecs.read,
+            read_validation=self.config.read_validation,
         )
 
         after_commit: AfterCommitPort | None = None
@@ -62,18 +67,19 @@ class ConfigurableMongoReadOnlyDocument(DocumentQueryDepPort[R]):
         if cache is not None:
             after_commit = ctx.tx_ctx.run_or_defer
 
-        cc = DocumentCacheCoordinator[R](
+        cc = DocumentCache[R](
             read_model_type=read.model_type,
             document_name=spec.name,
             cache=cache,
             after_commit=after_commit,
+            read_codec=read.read_codec,
         )
 
         return MongoDocumentAdapter(
             spec=spec,
             read_gw=read,
             write_gw=None,
-            cache_coord=cc,
+            document_cache=cc,
             batch_size=self.config.batch_size,
         )
 
@@ -107,11 +113,15 @@ class ConfigurableMongoDocument(DocumentCommandDepPort[R, D, C, U]):
                 "Write relation is required for non read-only documents."
             )
 
+        codecs = spec.resolved_codecs
+
         read = read_gw(
             ctx,
             read_type=spec.read,
             read_relation=config.read,
             tenant_aware=tenant_aware,
+            codec=codecs.read,
+            read_validation=config.read_validation,
         )
 
         write_relation = config.write
@@ -131,6 +141,7 @@ class ConfigurableMongoDocument(DocumentCommandDepPort[R, D, C, U]):
         write = doc_write_gw(
             ctx,
             write_types=spec.write,
+            codecs=codecs,
             write_relation=write_relation,
             history_relation=history_relation,
             history_enabled=spec.history_enabled,
@@ -142,17 +153,19 @@ class ConfigurableMongoDocument(DocumentCommandDepPort[R, D, C, U]):
         if cache is not None:
             after_commit = ctx.tx_ctx.run_or_defer
 
-        cc = DocumentCacheCoordinator[R](
+        cc = DocumentCache[R](
             read_model_type=read.model_type,
             document_name=spec.name,
             cache=cache,
             after_commit=after_commit,
+            read_codec=read.read_codec,
         )
 
         return MongoDocumentAdapter(
             spec=spec,
             read_gw=read,
             write_gw=write,
-            cache_coord=cc,
+            document_cache=cc,
             batch_size=config.batch_size,
+            dispatcher_provider=domain_dispatcher_provider(ctx),
         )

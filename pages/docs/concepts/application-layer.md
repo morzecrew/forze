@@ -39,7 +39,8 @@ Together these ensure that business logic remains independent of infrastructure 
 | `ctx.cache(spec)` | `CachePort` | Cache port (`CacheSpec`) |
 | `ctx.counter(spec)` | `CounterPort` | Namespace-scoped counter (`CounterSpec`) |
 | `ctx.tx_ctx.resolver(route)` | `TransactionManagerPort` | Transaction manager |
-| `ctx.storage(spec)` | `StoragePort` | Object storage (`StorageSpec`) |
+| `ctx.storage.query(spec)` | `StorageQueryPort` | Object storage reads — `download`, `list` (`StorageSpec`) |
+| `ctx.storage.command(spec)` | `StorageCommandPort` | Object storage writes — `upload`, `delete` (`StorageSpec`) |
 | `ctx.search.query(spec)` | `SearchQueryPort` | Full-text search port |
 | `ctx.search.command(spec)` | `SearchCommandPort` | External index maintenance (when wired) |
 | `ctx.tx_ctx.scope(route)` | async context manager | Enter a transaction scope |
@@ -55,7 +56,7 @@ A **handler** is a single, well-defined business action. Built-in document handl
     :::python
     from forze.application.contracts.document import DocumentQueryPort
     from forze.application.contracts.execution import Handler
-    from forze.application.handlers.document import DocumentIdDTO, GetDocument
+    from forze_kits.aggregates.document.handlers import DocumentIdDTO, GetDocument
 
     # Factory registered on OperationRegistry (see build_document_registry)
     handler_factory = lambda ctx: GetDocument(doc=ctx.document.query(project_spec))
@@ -69,9 +70,9 @@ Stage hooks are authored as `BeforeStep`, `OnSuccessStep`, and related types on 
 Example precondition as `BeforeStep` on an outer scope:
 
     :::python
-    from forze.application.composition.document import build_document_registry
+    from forze_kits.aggregates.document import build_document_registry
     from forze.application.contracts.execution import BeforeStep
-    from forze.application.handlers.document import DocumentIdDTO
+    from forze_kits.aggregates.document.handlers import DocumentIdDTO
     from forze.base.errors import ValidationError
 
     def require_active_project_factory(ctx):
@@ -100,18 +101,18 @@ See [Capability execution](../reference/capability-execution.md) for `requires` 
 
 ## Execution runtime
 
-The `ExecutionRuntime` combines the dependency plan, lifecycle plan, and execution context into a scoped runtime:
+The `ExecutionRuntime` combines frozen dependency and lifecycle registries with the execution context into a scoped runtime. Authoring plans must be frozen before construction — the runtime does not coerce them:
 
     :::python
     from forze.application.execution import (
+        DepsRegistry,
         ExecutionRuntime,
-        DepsPlan,
         LifecyclePlan,
     )
 
     runtime = ExecutionRuntime(
-        deps=deps_plan,
-        lifecycle=lifecycle_plan,
+        deps=deps_registry.freeze(),
+        lifecycle=lifecycle_plan.freeze(),
     )
 
 Use `scope()` as an async context manager:
@@ -122,7 +123,7 @@ Use `scope()` as an async context manager:
 
 The scope lifecycle:
 
-1. **Create context**: build the dependency container from the deps plan
+1. **Create context**: resolve `FrozenDeps` from the frozen deps registry
 2. **Startup**: run all lifecycle startup hooks in order
 3. **Yield**: the application runs
 4. **Shutdown**: run all lifecycle shutdown hooks in reverse order
@@ -130,24 +131,25 @@ The scope lifecycle:
 
 If a startup hook fails, already-executed steps are shut down in reverse before the exception propagates.
 
-## Dependency plan
+## Dependency registry
 
-A `DepsPlan` collects module callables and merges them into a single `Deps` container on build:
+A `DepsRegistry` collects module callables and merges them into a `FrozenDepsRegistry` on `freeze()`:
 
     :::python
-    from forze.application.execution import Deps, DepsPlan
+    from forze.application.execution import Deps, DepsRegistry
 
-    deps_plan = DepsPlan.from_modules(
+    deps_registry = DepsRegistry.from_modules(
         lambda: Deps.merge(postgres_module(), redis_module()),
     )
+    frozen_deps = deps_registry.freeze()
 
-`Deps` is an in-memory container keyed by `DepKey[T]`. Each integration package provides a `DepsModule` that registers its adapters and clients. `Deps.merge()` combines multiple containers and raises `CoreError` on key conflicts.
+`Deps` is the registration blob keyed by `DepKey[T]`. Each integration package provides a `DepsModule` that registers its adapters and clients. `Deps.merge()` combines multiple containers and raises `CoreError` on key conflicts. Pass `frozen_deps` to `ExecutionRuntime`; per-scope resolution happens via `FrozenDepsRegistry.resolve()` inside the runtime scope.
 
-You can also build plans incrementally:
+You can also build registries incrementally:
 
     :::python
-    plan = DepsPlan.from_modules(base_module)
-    plan = plan.with_modules(cache_module, search_module)
+    registry = DepsRegistry.from_modules(base_module)
+    registry = registry.with_modules(cache_module, search_module)
 
 ## Lifecycle plan
 
@@ -161,6 +163,8 @@ The `LifecyclePlan` manages startup and shutdown hooks for infrastructure client
     lifecycle = LifecyclePlan.from_modules(
         PostgresLifecycleModule(client=pg, dsn="postgresql://..."),
     ).with_steps(redis_lifecycle_step(dsn="redis://..."))
+
+Pass `lifecycle.freeze()` to `ExecutionRuntime` alongside the frozen deps registry.
 
 Each `LifecycleStep` is a `GraphStep` with `requires`, `provides`, and `depends_on` for declarative ordering at `LifecyclePlan.freeze()`. Steps run by wave at startup (forward) and shutdown (reverse). If startup fails, completed steps are shut down in reverse wave order before the exception propagates.
 
@@ -195,7 +199,7 @@ See [Composition & Mapping](../reference/composition.md) for `build_document_reg
 `DocumentFacade` ties together an execution context and a frozen registry. It provides typed access to resolved handlers:
 
     :::python
-    from forze.application.composition.document import (
+    from forze_kits.aggregates.document import (
         DocumentDTOs,
         DocumentFacade,
         build_document_registry,

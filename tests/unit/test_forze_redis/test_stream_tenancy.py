@@ -14,7 +14,7 @@ from forze.application.contracts.tenancy import TenantIdentity
 from forze_redis.adapters.stream import RedisStreamAdapter, _stream_physical, _stream_wire_and_back
 from forze_redis.adapters.codecs import RedisStreamCodec
 from forze_redis.kernel.client import RedisClient
-from forze.base.serialization import PydanticRecordMappingCodec
+from forze.base.serialization import PydanticModelCodec
 
 
 class _Payload(BaseModel):
@@ -23,14 +23,14 @@ class _Payload(BaseModel):
 
 @pytest.fixture
 def codec() -> RedisStreamCodec[_Payload]:
-    return RedisStreamCodec(payload_codec=PydanticRecordMappingCodec(_Payload))
+    return RedisStreamCodec(payload_codec=PydanticModelCodec(_Payload))
 
 
 def test_stream_wire_and_back_prefixes_tenant() -> None:
     tenant_id = uuid4()
     adapter = RedisStreamAdapter(
         client=Mock(spec=RedisClient),
-        codec=RedisStreamCodec(payload_codec=PydanticRecordMappingCodec(_Payload)),
+        codec=RedisStreamCodec(payload_codec=PydanticModelCodec(_Payload)),
         tenant_aware=True,
         tenant_provider=lambda: TenantIdentity(tenant_id=tenant_id),
     )
@@ -44,7 +44,7 @@ def test_stream_wire_and_back_prefixes_tenant() -> None:
 def test_stream_physical_without_tenant() -> None:
     adapter = RedisStreamAdapter(
         client=Mock(spec=RedisClient),
-        codec=RedisStreamCodec(payload_codec=PydanticRecordMappingCodec(_Payload)),
+        codec=RedisStreamCodec(payload_codec=PydanticModelCodec(_Payload)),
         tenant_aware=False,
     )
     assert _stream_physical(adapter, "events") == "events"

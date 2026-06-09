@@ -112,7 +112,7 @@ async def test_list_objects_stops_after_collecting_requested_window() -> None:
     finally:
         client._S3Client__ctx_client.reset(token)
 
-    assert [item["Key"] for item in items] == ["b", "c"]
+    assert [item.key for item in items] == ["b", "c"]
     assert total_count == 4
     assert paginator.calls == 2
     assert paginator.kwargs == {"Bucket": "bucket", "Prefix": "docs/"}

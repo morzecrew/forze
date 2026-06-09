@@ -3,8 +3,9 @@ name: forze-documents-search
 description: >-
   Implements Forze document and search access: DocumentQueryPort,
   DocumentCommandPort, SearchQueryPort, query DSL, pagination, cache-aware
-  DocumentSpec / SearchSpec usage, Postgres/Mongo/mock adapters, and Postgres
-  simple/hub/federated search. Use when building data access features.
+  DocumentSpec / SearchSpec usage, Postgres/Mongo/Firestore document adapters,
+  Postgres/Mongo/Meilisearch search adapters, and Postgres simple/hub/federated
+  search. Use when building data access features.
 ---
 
 # Forze documents and search
@@ -64,7 +65,7 @@ When `AfterCommitPort` is wired, document cache warm/invalidation happens after 
 
 ## Search (`SearchQueryPort`)
 
-Use **`SearchSpec`** for logical searchable models. `ctx.search_query(spec)` resolves **`SearchQueryDepKey`** for route `spec.name` and returns **`SearchQueryPort`**; physical FTS/PGroonga layout belongs in **`PostgresDepsModule.searches`** (or hub/federated maps), not on the spec.
+Use **`SearchSpec`** for logical searchable models. `ctx.search.query(spec)` resolves **`SearchQueryDepKey`** for route `spec.name` and returns **`SearchQueryPort`**; physical FTS/PGroonga layout belongs in **`PostgresDepsModule.searches`** (or hub/federated maps), not on the spec.
 
 ```python
 project_search = SearchSpec(
@@ -74,7 +75,7 @@ project_search = SearchSpec(
     default_weights={"title": 0.7, "description": 0.3},
 )
 
-hits, total = await self.ctx.search_query(project_search).search(
+hits, total = await self.ctx.search.query(project_search).search(
     query="roadmap",
     filters={"$values": {"status": "active"}},
     limit=20,
@@ -83,14 +84,14 @@ hits, total = await self.ctx.search_query(project_search).search(
 
 ## Hub and federated search
 
-Use `HubSearchSpec` when one hub entity searches through weighted member legs. Use `FederatedSearchSpec` when merging independent search specs. Resolve with `ctx.hub_search_query(spec)` or `ctx.federated_search_query(spec)`.
+Use `HubSearchSpec` when one hub entity searches through weighted member legs. Use `FederatedSearchSpec` when merging independent search specs. Resolve with `ctx.search.hub(spec)` or `ctx.search.federated(spec)`.
 
 Keep snapshot storage and cursor/keyset behavior in infrastructure config; use the application search options helpers rather than duplicating merge or cursor logic.
 
 ## Adapter boundaries
 
-- Postgres and Mongo implement document query/command gateways and history where configured.
-- Mongo implements `SearchQueryPort` when `MongoDepsModule.searches` is wired (`text`, `atlas`, `vector` engines).
+- Postgres, Mongo, and Firestore implement document query/command gateways (and history where configured). Firestore wires `DocumentQueryDepKey` / `DocumentCommandDepKey` via `FirestoreDepsModule(ro_documents=..., rw_documents=...)` with `FirestoreReadOnlyDocumentConfig` / `FirestoreDocumentConfig`.
+- Postgres implements `SearchQueryPort` (FTS/PGroonga/vector); Mongo implements it when `MongoDepsModule.searches` is wired (`text`, `atlas`, `vector` engines); Meilisearch implements it via `MeilisearchDepsModule(searches={...})` with `MeilisearchSearchConfig` (plus `MeilisearchFederatedSearchConfig` for federated). All resolve through the same `ctx.search.query(spec)` port.
 - Mock implements document/search behavior for unit tests.
 - Use adapters in integration tests or deps modules, not handlers.
 
@@ -98,7 +99,7 @@ Keep snapshot storage and cursor/keyset behavior in infrastructure config; use t
 
 1. **Putting table/collection/index names in `DocumentSpec` or `SearchSpec`** — use deps-module configs.
 2. **Importing Postgres/Mongo adapters in handlers** — use ports.
-3. **Using old `ctx.doc_read` / `ctx.doc_write` / `ctx.search` helpers** — use current helpers.
+3. **Using removed flat accessors (`ctx.search_query`, `ctx.doc_read`, `ctx.doc_write`)** — use the namespaced `ctx.document.query` / `ctx.document.command` / `ctx.search.query`.
 4. **Sorting cursor pages without stable key fields** — include deterministic sort keys, usually `id`.
 5. **Bypassing revision fields on writes** — preserve optimistic concurrency semantics.
 

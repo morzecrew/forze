@@ -10,10 +10,10 @@ vars: {
 
 direction: right
 
-DepsPlan: {
+DepsRegistry: {
     shape: rectangle
     label: |md
-        ### DepsPlan
+        ### DepsRegistry
         Ordered modules
     |
 }
@@ -34,7 +34,7 @@ Deps: {
     }
     label: |md
         ### Deps
-        Merged dependency container
+        Merged registration blobs
     |
 }
 
@@ -59,7 +59,7 @@ Ports: {
     cache_port: CachePort
 }
 
-DepsPlan -> Modules: calls each module
+DepsRegistry -> Modules: calls each module
 Modules.postgres -> Deps: contributes document deps
 Modules.redis -> Deps: contributes cache deps
 Modules.custom -> Deps: contributes app deps

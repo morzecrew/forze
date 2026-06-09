@@ -91,6 +91,19 @@ def test_access_token_issue_and_verify() -> None:
     assert claims["iss"] == "it"
     assert claims["aud"] == "api"
 
+def test_access_token_optional_sid_claim() -> None:
+    secret = secrets.token_bytes(32)
+    svc = AccessTokenService(
+        secret_key=secret,
+        config=AccessTokenConfig(issuer="it", audience="api"),
+    )
+    pid = uuid4()
+    sid = uuid4()
+    token = svc.issue_token(principal_id=pid, session_id=sid)
+    claims = svc.verify_token(token)
+    assert claims["sid"] == str(sid)
+
+
 def test_access_token_optional_tid_claim() -> None:
     secret = secrets.token_bytes(32)
     svc = AccessTokenService(

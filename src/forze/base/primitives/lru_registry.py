@@ -2,6 +2,7 @@
 
 import asyncio
 from contextlib import asynccontextmanager
+from contextvars import ContextVar
 from typing import (
     Any,
     AsyncGenerator,
@@ -24,6 +25,26 @@ K = TypeVar("K", bound=Hashable)
 V = TypeVar("V")
 R = TypeVar("R", bound=Hashable, default=Any)
 
+_MAX_DRAIN_WAIT_ATTEMPTS = 64
+
+_REENTRANT_CREATE_MSG = (
+    "Reentrant LRU registry access for the same slot during create; "
+    "do not call use() or get_or_create() from create()."
+)
+
+_creating_slot: ContextVar[Any | None] = ContextVar(
+    "lru_registry_creating_slot",
+    default=None,
+)
+
+# ....................... #
+
+
+def _validate_max_entries(max_entries: int) -> None:
+    if max_entries < 1:
+        raise exc.internal("max_entries must be at least 1")
+
+
 # ....................... #
 
 
@@ -35,6 +56,7 @@ class _DedupIndex(Generic[K, R]):
 
     logical_to_resource: dict[K, R] = attrs.field(factory=dict)
     resource_refcount: dict[R, int] = attrs.field(factory=dict)
+    resource_to_keys: dict[R, set[K]] = attrs.field(factory=dict)
 
     # ....................... #
 
@@ -50,6 +72,7 @@ class _DedupIndex(Generic[K, R]):
         slot = self.dedup_key(key)
         self.logical_to_resource[key] = slot
         self.resource_refcount[slot] = self.resource_refcount.get(slot, 0) + 1
+        self.resource_to_keys.setdefault(slot, set()).add(key)
 
         return slot
 
@@ -66,6 +89,14 @@ class _DedupIndex(Generic[K, R]):
         if slot is None:
             return None
 
+        keys = self.resource_to_keys.get(slot)
+
+        if keys is not None:
+            keys.discard(key)
+
+            if not keys:
+                del self.resource_to_keys[slot]
+
         self.resource_refcount[slot] -= 1
 
         if self.resource_refcount[slot] <= 0:
@@ -76,9 +107,28 @@ class _DedupIndex(Generic[K, R]):
 
     # ....................... #
 
+    def release_slot(self, slot: R) -> None:
+        """Drop every logical key mapped to *slot* (called when the slot is LRU-evicted).
+
+        Without this, the forward and refcount maps would retain entries for evicted
+        slots and grow unbounded with the number of distinct logical keys ever seen.
+        Callers must hold the registry lock so the captured key set is consistent.
+        """
+
+        if self.dedup_key is None:
+            return
+
+        for key in self.resource_to_keys.pop(slot, set()):
+            self.logical_to_resource.pop(key, None)
+
+        self.resource_refcount.pop(slot, None)
+
+    # ....................... #
+
     def clear(self) -> None:
         self.logical_to_resource.clear()
         self.resource_refcount.clear()
+        self.resource_to_keys.clear()
 
 
 # ....................... #
@@ -129,10 +179,27 @@ class SimpleLruRegistry(Generic[K, V, R]):
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
-        if self.max_entries < 1:
-            raise exc.internal("max_entries must be at least 1")
+        _validate_max_entries(self.max_entries)
 
         self._dedup = _DedupIndex(dedup_key=self.dedup_key)
+
+    # ....................... #
+
+    @staticmethod
+    def _assert_slot_not_creating(slot: R) -> None:
+        if _creating_slot.get() == slot:
+            raise exc.internal(_REENTRANT_CREATE_MSG)
+
+    # ....................... #
+
+    async def _invoke_create(self, key: K, slot: R) -> V:
+        token = _creating_slot.set(slot)
+
+        try:
+            return await self.create(key)
+
+        finally:
+            _creating_slot.reset(token)
 
     # ....................... #
 
@@ -175,6 +242,8 @@ class SimpleLruRegistry(Generic[K, V, R]):
                 self._entries.move_to_end(slot)
                 return value
 
+        self._assert_slot_not_creating(slot)
+
         init_lock = await self._lock_for_init(slot)
 
         async with init_lock:
@@ -184,7 +253,7 @@ class SimpleLruRegistry(Generic[K, V, R]):
                     self._entries.move_to_end(slot)
                     return value
 
-            value = await self.create(key)
+            value = await self._invoke_create(key, slot)
 
             evicted: list[V] = []
 
@@ -199,7 +268,9 @@ class SimpleLruRegistry(Generic[K, V, R]):
                 self._entries.move_to_end(slot)
 
                 while len(self._entries) > self.max_entries:
-                    _, old = self._entries.popitem(last=False)
+                    evicted_slot, old = self._entries.popitem(last=False)
+                    self._dedup.release_slot(evicted_slot)
+                    self._init_locks.pop(evicted_slot, None)
                     evicted.append(old)
 
             for old in evicted:
@@ -331,6 +402,9 @@ class GuardedLruRegistry(Generic[K, V, R]):
 
     When ``dedup_key`` is set, LRU slots are keyed by ``dedup_key(logical_key)`` while
     ``create`` still receives the logical key.
+
+    Do not call :meth:`use` or nested registry access for the same slot from
+    :meth:`create` (raises :exc:`~forze.base.errors.exc.internal` instead of deadlocking).
     """
 
     max_entries: int
@@ -372,10 +446,27 @@ class GuardedLruRegistry(Generic[K, V, R]):
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
-        if self.max_entries < 1:
-            raise exc.internal("max_entries must be at least 1")
+        _validate_max_entries(self.max_entries)
 
         self._dedup = _DedupIndex(dedup_key=self.dedup_key)
+
+    # ....................... #
+
+    @staticmethod
+    def _assert_slot_not_creating(slot: R) -> None:
+        if _creating_slot.get() == slot:
+            raise exc.internal(_REENTRANT_CREATE_MSG)
+
+    # ....................... #
+
+    async def _invoke_create(self, key: K, slot: R) -> V:
+        token = _creating_slot.set(slot)
+
+        try:
+            return await self.create(key)
+
+        finally:
+            _creating_slot.reset(token)
 
     # ....................... #
 
@@ -432,7 +523,7 @@ class GuardedLruRegistry(Generic[K, V, R]):
     # ....................... #
 
     async def _await_not_draining(self, slot: R) -> None:
-        while True:
+        for _ in range(_MAX_DRAIN_WAIT_ATTEMPTS):
             async with self._registry_lock:
                 entry = self._draining.get(slot)
 
@@ -440,6 +531,9 @@ class GuardedLruRegistry(Generic[K, V, R]):
                     return
 
             await entry.wait_until_drained()
+            await asyncio.sleep(0)
+
+        raise exc.internal("Timed out waiting for LRU registry slot to finish draining")
 
     # ....................... #
 
@@ -459,6 +553,8 @@ class GuardedLruRegistry(Generic[K, V, R]):
         async with self._registry_lock:
             while len(self._slots) > self.max_entries:
                 old_key, old_entry = self._slots.popitem(last=False)
+                self._dedup.release_slot(old_key)
+                self._init_locks.pop(old_key, None)
 
                 if old_entry.refcount == 0:
                     immediate_close.append(old_entry.value)
@@ -478,6 +574,8 @@ class GuardedLruRegistry(Generic[K, V, R]):
 
         async with self._registry_lock:
             slot = self._dedup.slot_for(key)
+
+        self._assert_slot_not_creating(slot)
 
         await self._await_not_draining(slot)
 
@@ -512,7 +610,7 @@ class GuardedLruRegistry(Generic[K, V, R]):
 
                 return
 
-            value = await self.create(key)
+            value = await self._invoke_create(key, slot)
 
             async with self._registry_lock:
                 if slot in self._slots:

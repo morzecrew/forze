@@ -9,6 +9,7 @@ from forze.application.contracts.authn import (
 )
 from forze.application.contracts.document import DocumentQueryPort
 from forze.base.exceptions import exc
+from forze_identity._secure_spec import forbid_cache_and_history
 
 from ..adapters._utils import find_password_account_by_login
 from ..domain.constants import ISSUER_FORZE_PASSWORD
@@ -40,15 +41,7 @@ class Argon2PasswordVerifier(PasswordVerifierPort):
     def __attrs_post_init__(self) -> None:
         spec = self.pa_qry.spec
 
-        if spec.cache is not None:
-            raise exc.internal(
-                "Password account caching is forbidden by security reasons"
-            )
-
-        if spec.history_enabled:
-            raise exc.internal(
-                "Password account history is forbidden by security reasons"
-            )
+        forbid_cache_and_history(spec, label="Password account")
 
     # ....................... #
 
@@ -58,16 +51,21 @@ class Argon2PasswordVerifier(PasswordVerifierPort):
     ) -> VerifiedAssertion:
         account = await find_password_account_by_login(self.pa_qry, credentials.login)
 
-        if account is None or not account.is_active:
-            raise exc.authentication("Password account not found")
+        if account is not None and account.is_active:
+            password_hash = account.password_hash
+        else:
+            password_hash = self.password_svc.timing_dummy_hash()
 
         ok = self.password_svc.verify_password(
+            password_hash=password_hash,
             password=credentials.password,
-            password_hash=account.password_hash,
         )
 
-        if not ok:
-            raise exc.authentication("Invalid password")
+        if not ok or account is None or not account.is_active:
+            raise exc.authentication(
+                "Invalid login or password",
+                code="invalid_credentials",
+            )
 
         return VerifiedAssertion(
             issuer=ISSUER_FORZE_PASSWORD,

@@ -182,19 +182,11 @@ class TestValidateHistoricalConsistency:
 # DTOs
 
 class TestCreateDocumentCmd:
-    def test_defaults(self) -> None:
+    def test_is_empty_deprecated_alias(self) -> None:
+        # Identity/timestamps no longer live on the create payload; the symbol is a
+        # deprecated empty BaseDTO subclass kept for back-compat.
         cmd = CreateDocumentCmd()
-        assert cmd.id is None
-        assert cmd.created_at is None
-
-    def test_with_values(self) -> None:
-        from forze.base.primitives.uuid import uuid7
-
-        uid = uuid7()
-        now = datetime.now()
-        cmd = CreateDocumentCmd(id=uid, created_at=now)
-        assert cmd.id == uid
-        assert cmd.created_at == now
+        assert not type(cmd).model_fields
 
 class TestReadDocument:
     def test_fields(self) -> None:

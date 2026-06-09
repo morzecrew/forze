@@ -17,6 +17,7 @@ from forze_postgres.adapters.search._pipeline_sql import (
     build_pipeline_with_clause,
     build_rank_first_order,
     build_scored_cte,
+    scored_order_by_rank_alias,
     filtered_select_list,
     outer_join_on_scored,
     scored_join_on_filtered,
@@ -70,6 +71,26 @@ def test_build_filtered_cte_renders() -> None:
     text = cte.as_string()
     assert "f" in text
     assert "docs_v" in text
+
+
+def test_build_scored_cte_capped_orders_by_select_alias() -> None:
+    keys = scored_key_columns(_JOIN, index_alias=_ALIASES.index)
+    rank = sql.SQL("(0)::double precision AS {}").format(
+        sql.Identifier(_ALIASES.rank_column),
+    )
+    cte = build_scored_cte(
+        aliases=_ALIASES,
+        scored_keys=keys,
+        scored_rank=rank,
+        heap_ident=PostgresQualifiedName("public", "docs_h").ident(),
+        join_sf=None,
+        sw=sql.SQL("TRUE"),
+        candidate_limit=10,
+        scored_order=scored_order_by_rank_alias(_ALIASES.rank_column),
+    )
+    text = cte.as_string()
+    assert 'ORDER BY "_fts_rank" DESC NULLS LAST LIMIT 10' in text
+    assert '"t"."_fts_rank"' not in text
 
 
 def test_build_scored_cte_renders() -> None:

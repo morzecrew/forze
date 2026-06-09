@@ -18,7 +18,7 @@ from forze.application.contracts.search import (
     SearchResultSnapshotOptions,
     search_options_for_simple_adapter,
 )
-from forze.application.coordinators import SearchResultSnapshotCoordinator
+from forze.application.integrations.search import SearchResultSnapshot
 from forze_meilisearch.adapters.search._offset_run import (
     execute_meilisearch_offset_search,
 )
@@ -38,7 +38,7 @@ class MeilisearchSimpleSearchAdapter[M: BaseModel](
     """Offset search against one Meilisearch index."""
 
     client: MeilisearchClientPort
-    snapshot_coord: SearchResultSnapshotCoordinator | None = attrs.field(default=None)
+    result_snapshot: SearchResultSnapshot | None = attrs.field(default=None)
     search_variant: str = "meilisearch"
 
     # ....................... #
@@ -74,5 +74,5 @@ class MeilisearchSimpleSearchAdapter[M: BaseModel](
             return_count=return_count,
             return_type=return_type,
             return_fields=return_fields,
-            snapshot_coord=self.snapshot_coord,
+            result_snapshot=self.result_snapshot,
         )

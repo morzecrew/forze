@@ -282,6 +282,24 @@ class TestLogExtras:
         assert row["error.message"] == "test unhandled"
         assert "ValueError" in row["error.stack"]
 
+    def test_critical_exception_omits_stack_when_disabled(self) -> None:
+        buf = io.StringIO()
+        configure_logging(
+            level="info",
+            logger_names=["forze.test"],
+            stream=buf,
+            render_mode="json",
+            include_exception_stack=False,
+        )
+        log = Logger("forze.test")
+        try:
+            raise ValueError("test unhandled")
+        except ValueError as e:
+            log.critical_exception("Unhandled failure", exc=e)
+        row = _json_records(buf)[-1]
+        assert row["error.type"] == "ValueError"
+        assert "error.stack" not in row
+
 
 # ----------------------- #
 # Nested values (JSON render)
@@ -503,3 +521,34 @@ class TestForzeConsoleRenderer:
         assert "fail" in out
         assert "ValueError: pipe" in out
         assert "Traceback" in out
+
+
+def test_trace_fast_skips_below_configured_level(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``Logger.trace`` short-circuits before touching the backend when gated out."""
+
+    import forze.base.logging.logger as lm
+
+    recorded: list[tuple] = []
+
+    class _Recorder:
+        def debug(self, *args: object, **kwargs: object) -> None:
+            recorded.append((args, kwargs))
+
+        def bind(self, **_kwargs: object) -> "_Recorder":
+            return self
+
+    monkeypatch.setattr(lm, "get_logger", lambda _name: _Recorder())
+
+    log = lm.Logger("trace-gate-test")
+    original = lm._configured_min_rank
+
+    try:
+        lm.set_configured_min_rank("info")
+        log.trace("dropped", detail=1)
+        assert recorded == []  # gated: backend.debug never called
+
+        lm.set_configured_min_rank("trace")
+        log.trace("emitted", detail=2)
+        assert len(recorded) == 1  # passes the gate, reaches the backend
+    finally:
+        lm._configured_min_rank = original

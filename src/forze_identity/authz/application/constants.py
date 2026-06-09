@@ -16,3 +16,4 @@ class AuthzResourceName(StrEnum):
     GROUP_PRINCIPAL_BINDINGS = "authz_group_principal_bindings"
     GROUP_ROLE_BINDINGS = "authz_group_role_bindings"
     GROUP_PERMISSION_BINDINGS = "authz_group_permission_bindings"
+    DELEGATION_GRANTS = "authz_delegation_grants"

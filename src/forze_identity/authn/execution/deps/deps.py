@@ -43,6 +43,7 @@ from ...application.specs import (
     api_key_account_spec,
     identity_mapping_spec,
     password_account_spec,
+    password_invite_spec,
     session_spec,
 )
 from ...orchestrator import AuthnOrchestrator
@@ -51,13 +52,11 @@ from ...resolvers import (
     JwtNativeUuidResolver,
     MappingTableResolver,
 )
-from forze_identity.local.config import LocalIdentityConfig
 from ...verifiers import (
     Argon2PasswordVerifier,
     ForzeJwtTokenVerifier,
     HmacApiKeyVerifier,
 )
-from ...verifiers.local_api_key import LocalApiKeyVerifier
 from forze.base.primitives import StrKey
 
 from .configs import AuthnSharedServices
@@ -109,7 +108,11 @@ class ConfigurableArgon2PasswordVerifier:
 @final
 @attrs.define(slots=True, frozen=True, kw_only=True)
 class ConfigurableForzeJwtTokenVerifier:
-    """Build :class:`ForzeJwtTokenVerifier` from the shared access-token service."""
+    """Build :class:`ForzeJwtTokenVerifier` from the shared access-token service.
+
+    Wires :attr:`ForzeJwtTokenVerifier.session_qry` so lifecycle-issued access JWTs
+    (``sid`` claim) are invalidated on logout and refresh rotation.
+    """
 
     shared: AuthnSharedServices
 
@@ -120,14 +123,17 @@ class ConfigurableForzeJwtTokenVerifier:
         ctx: ExecutionContext,
         spec: AuthnSpec,
     ) -> TokenVerifierPort:
-        _ = ctx, spec
+        _ = spec
 
         if self.shared.access_svc is None:
             raise exc.internal(
                 "Forze JWT token verifier requires kernel.access_token_secret",
             )
 
-        return ForzeJwtTokenVerifier(access_svc=self.shared.access_svc)
+        return ForzeJwtTokenVerifier(
+            access_svc=self.shared.access_svc,
+            session_qry=ctx.doc.query(session_spec),
+        )
 
 
 # ....................... #
@@ -158,28 +164,6 @@ class ConfigurableHmacApiKeyVerifier:
             api_key_svc=self.shared.api_key_svc,
             ak_qry=ctx.doc.query(api_key_account_spec),
         )
-
-
-# ....................... #
-
-
-@final
-@attrs.define(slots=True, frozen=True, kw_only=True)
-class ConfigurableLocalApiKeyVerifier:
-    """Build :class:`LocalApiKeyVerifier` from a frozen local identity config."""
-
-    config: LocalIdentityConfig
-    """Static API key mapping."""
-
-    # ....................... #
-
-    def __call__(
-        self,
-        ctx: ExecutionContext,
-        spec: AuthnSpec,
-    ) -> ApiKeyVerifierPort:
-        _ = ctx, spec
-        return LocalApiKeyVerifier(config=self.config)
 
 
 # ....................... #
@@ -262,6 +246,9 @@ class ConfigurableAuthn:
     enabled_methods: frozenset[str]
     """Snapshot of :attr:`AuthnSpec.enabled_methods`; pre-baked at registration time."""
 
+    actor_claim: str | None = attrs.field(default=None)
+    """Token claim carrying the RFC 8693 delegation actor; ``None`` ignores delegation."""
+
     # ....................... #
 
     def __call__(self, ctx: ExecutionContext, spec: AuthnSpec) -> AuthnPort:
@@ -300,6 +287,7 @@ class ConfigurableAuthn:
             password_verifier=password_v,
             token_verifier=token_v,
             api_key_verifier=api_key_v,
+            actor_claim=self.actor_claim,
         )
 
 
@@ -464,9 +452,20 @@ class ConfigurablePasswordAccountProvisioning:
         if self.shared.password_svc is None:
             raise exc.internal("Password provisioning requires kernel.password")
 
+        invite_svc = self.shared.invite_svc
+        invite_qry = (
+            ctx.doc.query(password_invite_spec) if invite_svc is not None else None
+        )
+        invite_cmd = (
+            ctx.doc.command(password_invite_spec) if invite_svc is not None else None
+        )
+
         return PasswordAccountProvisioningAdapter(
             password_svc=self.shared.password_svc,
             password_account_qry=ctx.doc.query(password_account_spec),
             password_account_cmd=ctx.doc.command(password_account_spec),
             eligibility=_resolve_eligibility(ctx, spec),
+            invite_svc=invite_svc,
+            invite_qry=invite_qry,
+            invite_cmd=invite_cmd,
         )

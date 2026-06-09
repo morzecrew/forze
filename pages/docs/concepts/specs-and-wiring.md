@@ -12,7 +12,7 @@ A logical aggregate name needs to map cleanly to physical infrastructure such as
 Use this when a spec and an integration config need to agree on routes and names.
 
 
-Kernel **specs** (`DocumentSpec`, `SearchSpec`, `CacheSpec`, …) describe *what* the application works with: model types, logical `name`, optional cache/history flags. They stay free of database URLs and table names.
+Kernel **specs** (`DocumentSpec`, `SearchSpec`, `CacheSpec`, `HttpServiceSpec`, …) describe *what* the application works with: model types, logical `name`, optional cache/history flags. They stay free of database URLs, HTTP base URLs, and table names.
 
 Integration packages register **infrastructure configs** on dependency modules. Those configs map each logical `name` to concrete relations, Redis key namespaces, S3 buckets, and so on. At runtime, `ExecutionContext` combines a spec with the matching routed adapter.
 
@@ -20,8 +20,8 @@ Integration packages register **infrastructure configs** on dependency modules. 
 
 Use the **same string** for:
 
-- `DocumentSpec(name=..., ...)` / `SearchSpec(name=..., ...)` / `CacheSpec(name=..., ...)`
-- The corresponding entry in `PostgresDepsModule.rw_documents`, `MongoDepsModule.rw_documents`, `RedisDepsModule.caches`, …
+- `DocumentSpec(name=..., ...)` / `SearchSpec(name=..., ...)` / `CacheSpec(name=..., ...)` / `HttpServiceSpec(name=..., ...)`
+- The corresponding entry in `PostgresDepsModule.rw_documents`, `MongoDepsModule.rw_documents`, `RedisDepsModule.caches`, `HttpxDepsModule.services`, …
 
 `ExecutionContext` resolves `DocumentQueryDepKey` / `DocumentCommandDepKey` (and other keys) **by route** `spec.name`, then passes the spec into the factory so adapters can read model types and flags.
 
@@ -63,6 +63,10 @@ Each `PostgresDocumentConfig` supplies `(schema, table)` tuples for `read`, `wri
 - `counters`, `idempotency` — same pattern
 
 `CacheSpec(name="projects", ...)` must match the key used in `caches` so `ctx.cache(spec)` resolves the right Redis adapter.
+
+## HTTP outbound wiring
+
+`HttpServiceSpec` carries operation definitions (method, path template, Pydantic types) only. `HttpxHttpServiceConfig` supplies static `base_url` or, when `tenant_aware=True`, `secret_ref_for_tenant` (plus auth and `timeout`) keyed by the same `name` as the spec. See [HTTP integration](../integrations/http.md).
 
 ## Resolution sketch
 
@@ -107,7 +111,7 @@ Inside the app you only pass `project_spec`; adapters receive both the spec and 
 | Symptom | Likely cause | Fix | See also |
 |---------|--------------|-----|----------|
 | A spec resolves locally but fails after adding an integration module. | The logical spec name was confused with an infrastructure name such as a SQL table, collection, bucket, or Redis namespace. | Keep `spec.name` as the logical route and map it separately to infrastructure names inside the integration config. | [Contracts and adapters](contracts-adapters.md) |
-| Building the dependency plan raises a duplicate key or route error. | Two modules registered the same dependency key and route, such as two document query adapters for the same `DocumentSpec.name`. | Remove one registration, split routes by unique spec names, or merge only complementary modules. | [Execution](../reference/execution.md#dependencies) |
+| Building the dependency registry raises a duplicate key or route error. | Two modules registered the same dependency key and route, such as two document query adapters for the same `DocumentSpec.name`. | Remove one registration, split routes by unique spec names, or merge only complementary modules. | [Execution](../reference/execution.md#dependencies) |
 | Write endpoints or command handlers are skipped or fail for a document. | A read-only spec/config was used where read-write behavior is expected, or the document was registered under `ro_documents` instead of `rw_documents`. | Put read/write documents in the read-write map with a write config; reserve read-only specs/configs for query-only projections. | [PostgreSQL integration](../integrations/postgres.md) |
 
 ## Related

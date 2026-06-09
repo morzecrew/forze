@@ -24,19 +24,41 @@ from ._pgroonga_index_fields import resolve_pgroonga_index_alignment
 # ----------------------- #
 
 
+def pgroonga_literal_phrase(term: str) -> str:
+    """Quote a user term as a literal Groonga phrase (escaping ``\\`` and ``"``).
+
+    User-supplied terms must never be interpreted as Groonga query syntax (boolean
+    operators, column references, wildcards, weights): that is a search-language
+    injection surface. Double-quoting turns the whole term into a literal phrase, so
+    operator characters lose their special meaning. Trusted advanced queries should use
+    the ``groonga_query`` :class:`~forze.application.contracts.search.SearchOptions`
+    override, which bypasses this path and is passed to PGroonga verbatim.
+    """
+
+    escaped = term.replace("\\", "\\\\").replace('"', '\\"')
+    return f'"{escaped}"'
+
+
 def pgroonga_phrase_match_text(
     terms: tuple[str, ...], *, combine: PhraseCombine
 ) -> str:
-    """Build one PGroonga query string: ``OR`` between phrases, or implicit AND (whitespace) for ``all``."""
+    """Build one PGroonga query string from literal phrases: ``OR`` (any) or implicit AND (all).
 
-    if not terms:
+    Each term is quoted as a literal phrase (:func:`pgroonga_literal_phrase`) so user
+    input cannot inject Groonga query operators; only the combiner between terms is
+    framework-controlled.
+    """
+
+    phrases = [pgroonga_literal_phrase(t) for t in terms if t]
+
+    if not phrases:
         return ""
-    if len(terms) == 1:
-        return terms[0]
+    if len(phrases) == 1:
+        return phrases[0]
     if combine == "any":
-        return " OR ".join(f"({t})" for t in terms)
+        return " OR ".join(f"({p})" for p in phrases)
     # AND: Groonga / PGroonga use implicit AND (whitespace), not the ``AND`` keyword.
-    return " ".join(f"({t})" for t in terms)
+    return " ".join(f"({p})" for p in phrases)
 
 
 def pgroonga_disjunctive_match_text(terms: tuple[str, ...]) -> str:
@@ -193,3 +215,53 @@ def pgroonga_score_rank_expr(
         )
 
     return sql.SQL("{} AS {}").format(score_call, sql.Identifier(rank_column))
+
+
+# ....................... #
+
+
+def pgroonga_score_call(
+    *,
+    index_alias: str,
+    query: str,
+    score_version: Literal["v1", "v2"] = "v2",
+) -> sql.Composable:
+    """``pgroonga_score`` expression without a result column alias (for ``ORDER BY``)."""
+
+    if not query.strip():
+        return sql.SQL("(0)::double precision")
+
+    if score_version == "v1":
+        return sql.SQL("pgroonga_score({})").format(sql.Identifier(index_alias))
+
+    return sql.Composed(
+        [
+            sql.SQL("pgroonga_score("),
+            sql.Identifier(index_alias),
+            sql.SQL(".tableoid, "),
+            sql.Identifier(index_alias),
+            sql.SQL(".ctid)"),
+        ]
+    )
+
+
+def pgroonga_match_query_text(
+    queries: tuple[str, ...],
+    options: SearchOptions | None,
+) -> str:
+    """Resolve the Groonga query string (raw override or phrase combiner)."""
+
+    from forze.application.contracts.search import effective_phrase_combine
+
+    raw = (options or {}).get("groonga_query")
+
+    if raw is not None:
+        s = str(raw).strip()
+
+        if s:
+            return s
+
+    return pgroonga_phrase_match_text(
+        queries,
+        combine=effective_phrase_combine(options),
+    )

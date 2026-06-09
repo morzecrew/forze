@@ -18,6 +18,7 @@ from .result import AuthnResult
 from .tokens import (
     IssuedAccessToken,
     IssuedApiKey,
+    IssuedInvite,
     IssuedRefreshToken,
     IssuedTokens,
 )
@@ -32,6 +33,7 @@ __all__ = [
     "CredentialLifetime",
     "IssuedAccessToken",
     "IssuedApiKey",
+    "IssuedInvite",
     "IssuedRefreshToken",
     "IssuedTokens",
     "PasswordCredentials",

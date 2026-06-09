@@ -11,6 +11,7 @@ from forze.application.contracts.search import (
     SearchSpec,
 )
 from forze.application.execution import Deps, ExecutionContext
+from forze.base.exceptions import CoreException
 from forze_meilisearch.adapters.search import MeilisearchSimpleSearchAdapter
 from forze_meilisearch.execution.deps import (
     ConfigurableMeilisearchSearch,
@@ -67,3 +68,60 @@ async def test_meilisearch_search_upsert_and_query(meilisearch_client) -> None:
     page = await adapter.search_page("meilisearch")
     assert page.count == 1
     assert page.hits[0].title == "Meilisearch integration"
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_meilisearch_search_with_filters_sorts_and_cursor(
+    meilisearch_client,
+) -> None:
+    index_uid = "articles_adv_it"
+    ctx = _ctx(meilisearch_client, index_uid=index_uid)
+    spec = SearchSpec(
+        name="articles",
+        model_type=Article,
+        fields=["title", "body"],
+    )
+    cfg = MeilisearchSearchConfig(
+        index_uid=index_uid,
+        filterable_attributes=["title"],
+        sortable_attributes=["title"],
+    )
+    ctx = context_from_deps(
+        Deps.plain(
+            {
+                MeilisearchClientDepKey: meilisearch_client,
+                SearchQueryDepKey: ConfigurableMeilisearchSearch(config=cfg),
+                SearchCommandDepKey: ConfigurableMeilisearchSearchCommand(config=cfg),
+            },
+        ),
+    )
+
+    cmd = ctx.search.command(spec)
+    await cmd.ensure_index()
+    await cmd.delete_all()
+    await cmd.upsert(
+        [
+            Article(id="1", title="alpha-z", body="first"),
+            Article(id="2", title="beta-z", body="second"),
+            Article(id="3", title="gamma", body="third"),
+        ],
+    )
+
+    adapter = ctx.search.query(spec)
+    filtered = await adapter.search_page(
+        "z",
+        filters={
+            "$and": [
+                {"$values": {"title": {"$in": ["alpha-z", "beta-z"]}}},
+                {"$not": {"$values": {"title": {"$eq": "beta-z"}}}},
+            ],
+        },
+        sorts={"title": "asc"},
+        pagination={"offset": 0, "limit": 10},
+    )
+    assert filtered.count == 1
+    assert filtered.hits[0].title == "alpha-z"
+
+    with pytest.raises(CoreException, match="search_cursor is not implemented"):
+        await adapter.search_cursor("a", cursor={"limit": 1})

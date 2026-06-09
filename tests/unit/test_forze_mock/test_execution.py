@@ -9,17 +9,16 @@ from forze.application.contracts.queue import (
     QueueQueryDepKey,
     QueueSpec,
 )
-from tests.support.execution_context import context_from_deps, context_from_modules, frozen_deps_from_deps
+from tests.support.execution_context import context_from_deps
 from forze.application.contracts.search import SearchSpec
 from forze.application.contracts.stream import (
     StreamCommandDepKey,
     StreamGroupQueryDepKey,
 )
 from forze.application.contracts.stream.specs import StreamSpec
-from forze.application.execution import ExecutionContext
-from forze.base.serialization import PydanticRecordMappingCodec
+from forze.base.serialization import PydanticModelCodec
 from forze.domain.models import BaseDTO, CreateDocumentCmd, ReadDocument
-from forze_patterns.soft_deletion.models import DocWithSoftDeletion
+from forze_kits.domain.soft_deletion.models import DocWithSoftDeletion
 from forze_mock import MockDepsModule
 from forze_mock.execution import MockStateDepKey
 
@@ -95,20 +94,20 @@ async def test_execution_context_resolves_optional_contract_ports() -> None:
     ctx = context_from_deps(MockDepsModule()())
 
     queue_read = ctx.deps.provide(QueueQueryDepKey)(
-        ctx, QueueSpec(name="q", codec=PydanticRecordMappingCodec(model_type=_Msg))
+        ctx, QueueSpec(name="q", codec=PydanticModelCodec(model_type=_Msg))
     )
     queue_write = ctx.deps.provide(QueueCommandDepKey)(
-        ctx, QueueSpec(name="q", codec=PydanticRecordMappingCodec(model_type=_Msg))
+        ctx, QueueSpec(name="q", codec=PydanticModelCodec(model_type=_Msg))
     )
     pubsub = ctx.deps.provide(PubSubCommandDepKey)(
-        ctx, PubSubSpec(name="p", codec=PydanticRecordMappingCodec(model_type=_Msg))
+        ctx, PubSubSpec(name="p", codec=PydanticModelCodec(model_type=_Msg))
     )
     stream_write = ctx.deps.provide(StreamCommandDepKey)(
-        ctx, StreamSpec(name="s", codec=PydanticRecordMappingCodec(model_type=_Msg))
+        ctx, StreamSpec(name="s", codec=PydanticModelCodec(model_type=_Msg))
     )
     stream_group = ctx.deps.provide(StreamGroupQueryDepKey)(
         ctx,
-        StreamSpec(name="s", codec=PydanticRecordMappingCodec(model_type=_Msg)),
+        StreamSpec(name="s", codec=PydanticModelCodec(model_type=_Msg)),
     )
 
     msg_id = await queue_write.enqueue("tasks", _Msg(value="x"))

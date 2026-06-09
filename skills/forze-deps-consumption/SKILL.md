@@ -9,7 +9,7 @@ description: >-
 
 # Forze dependency consumption
 
-Use when wiring or debugging how your application resolves ports from `ExecutionContext`. For bootstrap and `DepsPlan`, see [`forze-wiring`](../forze-wiring/SKILL.md). For mapping logical spec names to integration configs, see [`forze-specs-infrastructure`](../forze-specs-infrastructure/SKILL.md). For a private integration not covered by shipped `forze_*` packages, see [`forze-custom-deps`](../forze-custom-deps/SKILL.md).
+Use when wiring or debugging how your application resolves ports from `ExecutionContext`. For bootstrap and `DepsRegistry`, see [`forze-wiring`](../forze-wiring/SKILL.md). For mapping logical spec names to integration configs, see [`forze-specs-infrastructure`](../forze-specs-infrastructure/SKILL.md). For a private integration not covered by shipped `forze_*` packages, see [`forze-custom-deps`](../forze-custom-deps/SKILL.md).
 
 ## Plain vs routed
 
@@ -20,7 +20,7 @@ Use when wiring or debugging how your application resolves ports from `Execution
 | `Deps.plain({DepKey: value})` | one provider per key | shared clients, secrets, idempotency defaults |
 | `Deps.routed({DepKey: {route: value}})` | one provider per key + route | specs resolved by `spec.name` |
 
-Shipped modules such as `PostgresDepsModule`, `S3DepsModule`, and `InngestDepsModule` return merged `Deps` containers. Your app passes them to `DepsPlan.from_modules(...)`.
+Shipped modules such as `PostgresDepsModule`, `S3DepsModule`, and `InngestDepsModule` return merged `Deps` containers. Your app passes them to `DepsRegistry.from_modules(...)`.
 
 ## How handlers resolve ports
 
@@ -38,11 +38,11 @@ port = ctx.deps.resolve_configurable(
 
 ## Merge conflicts
 
-`Deps.merge(...)` raises `CoreError` on duplicate plain keys, plain-vs-routed conflicts, or duplicate routed keys. Treat that as a wiring bug: two modules registered the same key/route, or you merged overlapping maps twice.
+`Deps.merge(...)` raises `CoreException` on duplicate plain keys, plain-vs-routed conflicts, or duplicate routed keys. Treat that as a wiring bug: two modules registered the same key/route, or you merged overlapping maps twice.
 
 ## Lifecycle vs deps
 
-Built-in `DepsModule.__call__` should only register providers. Connection pools and clients start via `LifecycleModule` or `LifecycleStep` factories on your `LifecyclePlan` (`PostgresLifecycleModule`, `postgres_lifecycle_step`, `s3_lifecycle_step`, …). Keep deps and lifecycle as separate plans. See [`forze-wiring`](../forze-wiring/SKILL.md).
+Built-in `DepsModule.__call__` should only register providers. Connection pools and clients start via `LifecycleModule` or `LifecycleStep` factories on your `LifecyclePlan` (`PostgresLifecycleModule`, `postgres_lifecycle_step`, `s3_lifecycle_step`, …). Keep deps and lifecycle as separate plans, **freeze both**, then pass the frozen registries to `ExecutionRuntime`. See [`forze-wiring`](../forze-wiring/SKILL.md).
 
 ## Anti-patterns
 

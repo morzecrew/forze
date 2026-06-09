@@ -3,8 +3,10 @@
 from typing import Any, cast
 from uuid import UUID
 
+import pytest
+
 from forze.application.contracts.querying import QueryField
-from forze_mock.adapters import _MISSING, _match_field, _path_get, _path_text
+from forze_mock.query import _MISSING, _match_field, _path_get, _path_text
 
 # ----------------------- #
 
@@ -19,11 +21,21 @@ def test_path_text_joins_sequences() -> None:
     assert _path_text({"t": None}, "t") == ""
 
 
-def test_match_eq_neq_and_missing() -> None:
-    assert _match_field({}, QueryField("k", "$eq", 1)) is False
-    assert _match_field({"k": 1}, QueryField("k", "$eq", 1)) is True
-    assert _match_field({}, QueryField("k", "$neq", 1)) is True
-    assert _match_field({"k": 2}, QueryField("k", "$neq", 1)) is True
+@pytest.mark.parametrize(
+    ("doc", "field", "expected"),
+    [
+        ({}, QueryField("k", "$eq", 1), False),
+        ({"k": 1}, QueryField("k", "$eq", 1), True),
+        ({}, QueryField("k", "$neq", 1), True),
+        ({"k": 2}, QueryField("k", "$neq", 1), True),
+    ],
+)
+def test_match_eq_neq_and_missing(
+    doc: dict[str, object],
+    field: QueryField,
+    expected: bool,
+) -> None:
+    assert _match_field(doc, field) is expected
 
 
 def test_match_ordering_and_type_error_falls_false() -> None:

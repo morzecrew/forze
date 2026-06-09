@@ -53,6 +53,17 @@ project_document_config = PostgresDocumentConfig(
 )
 ```
 
+#### `read_validation` (read throughput)
+
+`PostgresReadOnlyDocumentConfig` and `PostgresDocumentConfig` accept `read_validation`:
+
+| Value | Behavior |
+|-------|----------|
+| `"strict"` (default) | Full Pydantic validation on every row returned from SELECT. |
+| `"trusted"` | Build read models with `model_construct` when row keys match the read model (no validator run). |
+
+Use `"trusted"` only when the read relation columns match `DocumentSpec.read` and psycopg already returns correct Python types. Extra columns not on the read model raise a precondition error. History blobs, cache payloads, and write `RETURNING` paths stay strict.
+
 Document `read`, `write`, and optional `history`, search `index` / `read` / `heap`, and hub `hub` (plus per-leg search relations) accept a static `(schema, relation)` tuple or a tenant resolver (`ValueResolver` from `forze.application.contracts.resolution`). Resolvers run on async I/O (not at deps wiring time). Startup document schema validation and catalog warmup require static tuples (or skip those lifecycle steps). Example schema-per-tenant document:
 
 ```python
@@ -87,7 +98,7 @@ For search, use `PostgresSearchConfig`, `PostgresHubSearchConfig`, or `PostgresF
 ### Deps module
 
 ```python
-from forze.application.execution import DepsPlan
+from forze.application.execution import DepsRegistry
 from forze_postgres import PostgresDepsModule
 
 postgres_module = PostgresDepsModule(
@@ -97,7 +108,7 @@ postgres_module = PostgresDepsModule(
     tx={"projects"},
 )
 
-deps_plan = DepsPlan.from_modules(postgres_module)
+deps_registry = DepsRegistry.from_modules(postgres_module)
 ```
 
 Routes such as `"projects"` should match the names used by your `DocumentSpec`, `SearchSpec`, and transaction wiring.
@@ -215,6 +226,33 @@ Document adapters map Pydantic read/create/update models to PostgreSQL rows. Sea
 ### PGroonga search fields
 
 For `engine="pgroonga"`, multi-column indexes use `ARRAY[col1, col2, ...]` in migrations. Forze reads that order from the index catalog at query time and aligns heap columns and PGroonga `weights` to it. **`SearchSpec.fields` order does not matter**; per-field weights (`default_weights`, `options.weights`) stay keyed by logical field name. Every column in the index must be listed in `SearchSpec.fields` (use `field_map` in `PostgresSearchConfig` when logical names differ from heap columns). Extra spec fields are allowed and are not passed to the PGroonga match clause. If the index expression cannot be parsed (`ARRAY[...]` or a single column reference), search raises `CoreError` at query time.
+
+### PGroonga search performance
+
+`PostgresSearchConfig` (PGroonga engine) and optional per-request `SearchOptions` tune ranked search SQL:
+
+| Config / option | Purpose |
+|-----------------|--------|
+| `pgroonga_plan` | `filter_first` (default), `index_first`, or `auto`. |
+| `pgroonga_candidate_limit` | Cap ranked heap rows per query (default `5000`; `None` disables). |
+| `pgroonga_auto_index_first_min_rows` | With `auto`, use `index_first` when the filtered or read relation estimate is at least this many rows (default `100_000`). |
+| `pgroonga_auto_with_filters` | When `auto` and filters are index-first eligible (`$eq` / `$in` / … on projection), use filtered estimates to pick the plan (default `True`). |
+| `pgroonga_auto_filter_first_max_rows` | With `auto` and filters, prefer `filter_first` when the filtered estimate is at most this many rows (default `50_000`). |
+| `pgroonga_auto_use_exact_count` | When `auto`, run `COUNT(*)` on the filtered projection to pick the plan instead of `EXPLAIN` estimates (off by default). |
+| `pgroonga_index_first_filter_margin` | Multiply the heap top-K cap when `index_first` applies projection post-filters (default `3.0`). |
+| `SearchOptions.pgroonga_plan` / `candidate_limit` | Per-request overrides. |
+| `SearchOptions.groonga_query` | Raw Groonga query string (skips phrase combiner). |
+| `SearchOptions.search_count` | Ranked totals: `exact` (`COUNT(*)`), `approximate` (planner/stats estimate), or `none`. |
+| `SearchOptions.combo_limit` | Hub: cap merged rows in `combo_top` before pagination. |
+| `read_validation` | On `PostgresSearchConfig` and `PostgresHubSearchConfig`: `"strict"` (default, full Pydantic validation on hits) or `"trusted"` (`model_construct` when row keys match the hit model). Applies at hit materialization (including parallel hub offset/cursor), not during leg scoring. |
+
+`read_validation="trusted"` is independent of `pgroonga_plan`, candidate caps, and `execution: parallel`. Use it only when projection/heap columns match `SearchSpec.model_type` / hub read model and psycopg returns correct Python types; extra SQL columns not on the hit model raise a precondition error.
+
+`pgroonga_candidate_limit` also caps FTS and vector `scored` CTEs. `PostgresHubSearchConfig.per_leg_limit` caps each hub leg before score merge (default `5000`). `combo_limit` (or derived default) caps the merged `combo_top` CTE for the data query. `execution: parallel` runs one ranked query per leg and merges in Python (single-column `hub_fk` legs use an INNER JOIN fast path; multi-column `hub_fk` fetches leg scores and hub rows then merges with the same OR/AND and max/sum semantics as SQL). Offset hub search with `execution: parallel` requires `sorts is None` (user sorts are applied in the merge); otherwise Forze falls back to `execution: sql`. Hub cursor search supports `execution: parallel` by materializing up to the effective `combo_limit` merged rows and applying in-memory keyset pagination; exact totals still use a SQL `COUNT(*)` over the `combo` CTE when `search_count=exact`.
+
+With `pgroonga_plan: auto`, ineligible filters (e.g. `$like`, `OR`, ranges) use `filter_first`. Eligible filters use `EXPLAIN` filtered row estimates unless `pgroonga_auto_use_exact_count` is enabled. `index_first` requires a candidate cap (`pgroonga_candidate_limit` or `SearchOptions.candidate_limit`); when the cap is disabled (`None`), Forze falls back to `filter_first` even if the configured plan is `index_first` or `auto` would otherwise pick `index_first`.
+
+When a ranked candidate cap applies, the data query uses a capped `scored` (or index-first heap top-K) CTE, but `search_count=exact` with `return_count=True` runs a separate uncapped `COUNT(*)` so page totals reflect the full match set (this can be expensive on large result sets; use `search_count=approximate` for UI hints). Parallel hub offset/cursor exact counts use the same SQL `combo` COUNT (not `len(merged)`). Federated snapshot reads honor `search_count=none` the same way as hub/simple adapters (no total on the page). FTS and vector adapters apply projection filters on the index heap when read and heap relations are coalesced (same pattern as PGroonga). Hub `search_count=approximate` clamps the planner estimate to the effective `combo_limit`. Ranked approximate totals with active query terms remain disabled by default (planner estimates ignore match predicates); a future `SearchOptions` flag may opt into a bounded heuristic. Parallel hub legs may use `PostgresHubSearchConfig.parallel_hub_cte_materialized` (default `True`) to mark the hub filter CTE `MATERIALIZED` per leg statement.
 
 ### JSON filters and GIN-friendly indexes
 

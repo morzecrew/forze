@@ -18,6 +18,10 @@ from .execution import (
     redis_lifecycle_step,
     routed_redis_lifecycle_step,
 )
+from .adapters.circuit_breaker import (
+    RedisCircuitBreakerStore,
+    redis_circuit_breaker_store,
+)
 from .kernel.client import RedisClient, RedisClientPort, RedisConfig, RoutedRedisClient
 from .kernel.relation import (
     NamedResourceSpec,
@@ -45,4 +49,6 @@ __all__ = [
     "NamedResourceSpec",
     "coerce_named_resource_spec",
     "resolve_redis_namespace",
+    "RedisCircuitBreakerStore",
+    "redis_circuit_breaker_store",
 ]

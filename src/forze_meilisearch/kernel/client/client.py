@@ -1,20 +1,21 @@
 """Async Meilisearch client wrapper."""
 
-from datetime import timedelta
-
-from forze.base.primitives import JsonDict
 from forze_meilisearch._compat import require_meilisearch
 
 require_meilisearch()
 
 # ....................... #
 
+from datetime import timedelta
 from typing import Any, final
 
 import attrs
 from meilisearch_python_sdk import AsyncClient
 from meilisearch_python_sdk.models.search import Federation, SearchParams
 from pydantic import SecretStr
+
+from forze.base.exceptions import exc
+from forze.base.primitives import JsonDict
 
 from .errors import exc_interceptor
 from .port import MeilisearchClientPort
@@ -77,6 +78,13 @@ class MeilisearchClient(MeilisearchClientPort):
 
     # ....................... #
 
+    async def close(self) -> None:
+        """Alias for :meth:`aclose` (the standard ``close()`` disposal contract)."""
+
+        await self.aclose()
+
+    # ....................... #
+
     @exc_interceptor.coroutine("meilisearch.health")  # type: ignore[untyped-decorator]
     async def health(self) -> bool:
         client = self._require_client()
@@ -130,6 +138,9 @@ class MeilisearchClient(MeilisearchClientPort):
         *,
         timeout: timedelta | None = None,
     ) -> Any:
+        if timeout is not None and timeout.total_seconds() <= 0:
+            raise exc.internal("Timeout must be positive")
+
         client = self._require_client()
         return await client.wait_for_task(
             task_uid,

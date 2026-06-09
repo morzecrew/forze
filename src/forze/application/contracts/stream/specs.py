@@ -1,26 +1,13 @@
-from typing import Any, final
+from typing import final
 
 import attrs
 
-from forze.base.serialization import RecordMappingCodec
-
-from ..base import BaseSpec
+from ..base import MessageCodecSpec
 
 # ----------------------- #
 
 
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class StreamSpec[M](BaseSpec):
+class StreamSpec[M](MessageCodecSpec[M]):
     """Specification binding a stream namespace to its payload record codec."""
-
-    codec: RecordMappingCodec[M, Any]
-    """Payload record codec for messages in this stream."""
-
-    # ....................... #
-
-    @property
-    def model_type(self) -> type[M]:
-        """Payload model type carried by :attr:`codec`."""
-
-        return self.codec.model_type

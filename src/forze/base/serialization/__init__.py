@@ -1,84 +1,42 @@
-"""Helpers for diffing, record-mapping codecs, and serialization."""
+"""Helpers for diffing, model codecs, and serialization."""
 
+from .codec_rows import (
+    codec_for_alt_model,
+    decode_row,
+    decode_rows,
+    materialize_mapping_rows,
+    resolve_model_codec,
+)
+from .defaults import default_model_codec, stored_field_names_for
 from .diff import (
     apply_dict_patch,
     calculate_dict_difference,
     has_hybrid_patch_conflict,
     split_touches_from_merge_patch,
 )
-from .model_codec import RecordMappingCodec, RecordMappingDumpExcludeOptions
-from .msgspec import (
-    msgspec_decode_json_bytes,
-    msgspec_dump,
-    msgspec_dump_many,
-    msgspec_dump_many_batched,
-    msgspec_encode_json_bytes,
-    msgspec_field_names,
-    msgspec_transform,
-    msgspec_transform_many,
-    msgspec_validate,
-    msgspec_validate_many,
-    msgspec_validate_many_batched,
-)
-from .msgspec_model_codec import MsgspecRecordMappingCodec
-from .pydantic import (
-    pydantic_cache_dump,
-    pydantic_cache_dump_many,
-    pydantic_persistence_dump,
-    pydantic_persistence_dump_many,
-    pydantic_decode_json_bytes,
-    pydantic_dump,
-    pydantic_dump_many,
-    pydantic_dump_many_batched,
-    pydantic_encode_json_bytes,
-    pydantic_field_names,
-    pydantic_model_hash,
-    pydantic_secret_converter,
-    pydantic_transform,
-    pydantic_transform_many,
-    pydantic_validate,
-    pydantic_validate_many,
-    pydantic_validate_many_batched,
-)
-from .pydantic_model_codec import PydanticRecordMappingCodec
+from .model_codec import ModelCodec, ModelDumpExcludeOptions
+from .msgspec_codec import MsgspecModelCodec
+from .pydantic import CACHE_DUMP_EXCLUDE_OPTS, PERSISTENCE_DUMP_EXCLUDE_OPTS
+from .pydantic_codec import PydanticModelCodec
 
 # ----------------------- #
 
 __all__ = [
     "apply_dict_patch",
     "calculate_dict_difference",
-    "RecordMappingCodec",
-    "RecordMappingDumpExcludeOptions",
-    "PydanticRecordMappingCodec",
-    "MsgspecRecordMappingCodec",
-    "msgspec_decode_json_bytes",
-    "msgspec_dump",
-    "msgspec_dump_many",
-    "msgspec_dump_many_batched",
-    "msgspec_encode_json_bytes",
-    "msgspec_field_names",
-    "msgspec_transform",
-    "msgspec_transform_many",
-    "msgspec_validate",
-    "msgspec_validate_many",
-    "msgspec_validate_many_batched",
-    "pydantic_decode_json_bytes",
-    "pydantic_dump",
-    "pydantic_encode_json_bytes",
-    "pydantic_cache_dump",
-    "pydantic_cache_dump_many",
-    "pydantic_persistence_dump",
-    "pydantic_persistence_dump_many",
-    "pydantic_field_names",
-    "pydantic_validate",
-    "pydantic_model_hash",
+    "ModelCodec",
+    "ModelDumpExcludeOptions",
+    "PERSISTENCE_DUMP_EXCLUDE_OPTS",
+    "CACHE_DUMP_EXCLUDE_OPTS",
+    "default_model_codec",
+    "stored_field_names_for",
+    "resolve_model_codec",
+    "codec_for_alt_model",
+    "decode_row",
+    "decode_rows",
+    "materialize_mapping_rows",
+    "PydanticModelCodec",
+    "MsgspecModelCodec",
     "split_touches_from_merge_patch",
     "has_hybrid_patch_conflict",
-    "pydantic_validate_many",
-    "pydantic_validate_many_batched",
-    "pydantic_dump_many",
-    "pydantic_dump_many_batched",
-    "pydantic_transform",
-    "pydantic_transform_many",
-    "pydantic_secret_converter",
 ]

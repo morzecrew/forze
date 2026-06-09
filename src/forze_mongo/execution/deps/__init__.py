@@ -2,12 +2,14 @@
 
 from .configs import (
     MongoDocumentConfig,
+    MongoOutboxConfig,
     MongoReadOnlyDocumentConfig,
     MongoSearchConfig,
     MongoSearchEngine,
 )
 from .factories import (
     ConfigurableMongoDocument,
+    ConfigurableMongoOutbox,
     ConfigurableMongoReadOnlyDocument,
     ConfigurableMongoSearch,
     mongo_txmanager,
@@ -21,10 +23,12 @@ __all__ = [
     "MongoDepsModule",
     "MongoClientDepKey",
     "MongoDocumentConfig",
+    "MongoOutboxConfig",
     "MongoReadOnlyDocumentConfig",
     "MongoSearchConfig",
     "MongoSearchEngine",
     "ConfigurableMongoDocument",
+    "ConfigurableMongoOutbox",
     "ConfigurableMongoReadOnlyDocument",
     "ConfigurableMongoSearch",
     "mongo_txmanager",

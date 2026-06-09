@@ -7,7 +7,7 @@ import pytest
 from forze.base.exceptions import CoreException
 from pydantic import BaseModel
 
-from forze.base.serialization import PydanticRecordMappingCodec
+from forze.base.serialization import PydanticModelCodec
 from forze_redis.adapters.codecs import RedisPubSubCodec, RedisStreamCodec
 
 
@@ -16,21 +16,21 @@ class _M(BaseModel):
 
 
 def test_pubsub_codec_decode_non_object_json_raises() -> None:
-    codec = RedisPubSubCodec(payload_codec=PydanticRecordMappingCodec(_M))
+    codec = RedisPubSubCodec(payload_codec=PydanticModelCodec(_M))
 
     with pytest.raises(CoreException, match="invalid payload"):
         codec.decode("t", b"[1,2,3]")
 
 
 def test_pubsub_codec_decode_payload_not_string_raises() -> None:
-    codec = RedisPubSubCodec(payload_codec=PydanticRecordMappingCodec(_M))
+    codec = RedisPubSubCodec(payload_codec=PydanticModelCodec(_M))
 
     with pytest.raises(CoreException, match="no payload"):
         codec.decode("t", b'{"payload": 42}')
 
 
 def test_stream_codec_encode_with_optional_fields() -> None:
-    codec = RedisStreamCodec(payload_codec=PydanticRecordMappingCodec(_M))
+    codec = RedisStreamCodec(payload_codec=PydanticModelCodec(_M))
     ts = datetime(2026, 4, 15, 12, 0, 0)
     fields = codec.encode(_M(v=7), type="evt", key="k1", timestamp=ts)
 
@@ -41,7 +41,7 @@ def test_stream_codec_encode_with_optional_fields() -> None:
 
 
 def test_stream_codec_decode_roundtrip_with_timestamp() -> None:
-    codec = RedisStreamCodec(payload_codec=PydanticRecordMappingCodec(_M))
+    codec = RedisStreamCodec(payload_codec=PydanticModelCodec(_M))
     ts = datetime(2026, 3, 1, 8, 30, 0)
     raw = {
         b"payload": b'{"v":3}',
@@ -60,7 +60,7 @@ def test_stream_codec_decode_roundtrip_with_timestamp() -> None:
 
 
 def test_stream_codec_decode_missing_payload_raises() -> None:
-    codec = RedisStreamCodec(payload_codec=PydanticRecordMappingCodec(_M))
+    codec = RedisStreamCodec(payload_codec=PydanticModelCodec(_M))
 
     with pytest.raises(CoreException, match="no payload"):
         codec.decode("s", "0-1", {b"type": b"x"})

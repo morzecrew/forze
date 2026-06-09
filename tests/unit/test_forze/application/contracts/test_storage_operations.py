@@ -1,6 +1,6 @@
-"""Tests for forze.application.composition.storage.operations."""
+"""Tests for forze_kits.aggregates.storage.operations."""
 
-from forze.application.composition.storage.operations import StorageKernelOp
+from forze_kits.aggregates.storage.operations import StorageKernelOp
 from forze.base.primitives import StrKeyNamespace
 
 _STORAGE_KEYS = StrKeyNamespace(prefix="storage")

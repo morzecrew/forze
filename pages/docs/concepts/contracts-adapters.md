@@ -20,10 +20,10 @@ Forze follows **hexagonal architecture** (ports and adapters). The core idea is 
 
 1. The application layer defines **contracts**: protocol interfaces describing required capabilities
 2. Infrastructure packages provide **adapters**: concrete implementations of those protocols
-3. A **dependency plan** wires adapters to contracts at startup
+3. A **dependency registry** wires adapters to contracts at startup
 4. Handlers resolve contracts from execution context; they never import adapter classes
 
-Switching from Postgres to Mongo means changing the dependency plan, not the handler code.
+Switching from Postgres to Mongo means changing the dependency registry, not the handler code.
 
 ## Contract catalog
 
@@ -121,14 +121,14 @@ Resolve with `ctx.search.command(search_spec)` when the integration registers `S
 
 ### Object storage
 
-**`StoragePort`**: S3-style blob storage:
+**`StorageQueryPort` / `StorageCommandPort`**: S3-style blob storage, split by CQRS:
 
-| Method | Purpose |
-|--------|---------|
-| `upload(filename, data, description?, *, prefix?)` | Upload an object |
-| `download(key)` | Download an object |
-| `delete(key)` | Delete an object |
-| `list(limit, offset, *, prefix?)` | List objects with pagination |
+| Port | Method | Purpose |
+|------|--------|---------|
+| `StorageCommandPort` | `upload(UploadedObject)` | Upload an object |
+| `StorageCommandPort` | `delete(key)` | Delete an object |
+| `StorageQueryPort` | `download(key)` | Download an object |
+| `StorageQueryPort` | `list(limit, offset, *, prefix?)` | List objects with pagination |
 
 ### Queue (message queue)
 
@@ -196,6 +196,12 @@ Resolve with `ctx.search.command(search_spec)` when the integration registers `S
 | `run_cursor` / … | Cursor pagination |
 | `append` | Batch append rows (ingest port) |
 
+### Outbox
+
+**`OutboxCommandPort`** / **`OutboxQueryPort`**: stage integration events in the same transaction as your writes, flush in one batch, then relay to a queue. Resolve with `ctx.outbox.command(spec)` / `ctx.outbox.query(spec)`. See [Outbox contracts](../core-package/contracts/outbox.md).
+
+Integration **stores** (`PostgresOutboxStore`, `MongoOutboxStore`, `MockOutboxStore`) implement query/relay operations and `persist_rows` only—like `PostgresDocumentAdapter`, they take narrow deps (client, config, tenancy), not `ExecutionContext`. Dep factories compose **`StagingOutboxCommand`** (buffer + enricher + flush callback) for the command port and the store for the query port.
+
 ### Idempotency
 
 **`IdempotencyPort`**: deduplicate HTTP requests:
@@ -236,7 +242,8 @@ Each contract has a corresponding `DepKey` for registration and resolution. Inte
     doc = self.ctx.document.query(project_spec)     # resolves DocumentQueryDepKey
     cache = self.ctx.cache(cache_spec)         # resolves CacheDepKey
     counter = self.ctx.counter(CounterSpec(name="tickets"))  # resolves CounterDepKey
-    storage = self.ctx.storage(StorageSpec(name="attachments"))  # resolves StorageDepKey
+    storage_q = self.ctx.storage.query(StorageSpec(name="attachments"))  # StorageQueryDepKey
+    storage_c = self.ctx.storage.command(StorageSpec(name="attachments"))  # StorageCommandDepKey
     search_q = self.ctx.search.query(search_spec)  # resolves SearchQueryDepKey
     search_c = self.ctx.search.command(search_spec)  # resolves SearchCommandDepKey (when wired)
     metrics = self.ctx.analytics.query(metrics_spec)  # resolves AnalyticsQueryDepKey
@@ -250,12 +257,12 @@ For contracts without convenience methods on `ExecutionContext`, use `ctx.deps.r
 
 ## Wiring adapters
 
-Integration modules register their adapters at dependency plan build time:
+Integration modules register their adapters when the dependency registry is frozen:
 
     :::python
-    from forze.application.execution import Deps, DepsPlan
+    from forze.application.execution import Deps, DepsRegistry
 
-    deps_plan = DepsPlan.from_modules(
+    deps_registry = DepsRegistry.from_modules(
         lambda: Deps.merge(
             PostgresDepsModule(client=pg_client, rw_documents={...})(),
             RedisDepsModule(client=redis_client, caches={...})(),
@@ -270,12 +277,12 @@ Integration modules register their adapters at dependency plan build time:
 Tests stub contracts with in-memory or fake implementations. The `forze_mock` package provides ready-made adapters for all contracts, backed by shared in-memory state:
 
     :::python
-    from forze.application.execution import Deps, DepsPlan, ExecutionContext
+    from forze.application.execution import Deps, DepsRegistry, ExecutionContext
     from forze_mock import MockDepsModule
 
     module = MockDepsModule()
-    deps_plan = DepsPlan.from_modules(module)
-    ctx = ExecutionContext(deps=deps_plan.build())
+    deps_registry = DepsRegistry.from_modules(module)
+    ctx = ExecutionContext(deps=deps_registry.freeze().resolve())
 
     doc = ctx.document.query(project_spec)
     result = await doc.get(some_uuid)

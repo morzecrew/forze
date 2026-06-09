@@ -1,14 +1,18 @@
 """S3 client pool lifecycle hooks and step factories."""
 
-from typing import cast, final
+from typing import Any, cast, final
 
 import attrs
 from pydantic import SecretStr
 
+from forze.application.contracts.deps import DepKey
 from forze.application.contracts.execution import LifecycleHook, LifecycleStep
 from forze.application.execution.context import ExecutionContext
-from forze.application.execution.lifecycle.builtin import routed_client_lifecycle_step
-from forze.base.serialization import pydantic_secret_converter
+from forze.application.execution.lifecycle.builtin import (
+    ClientShutdownHook,
+    routed_client_lifecycle_step,
+)
+from forze.base.serialization.pydantic import pydantic_secret_converter
 
 from ...kernel.client import RoutedS3Client, S3Client, S3Config
 from ..deps import S3ClientDepKey
@@ -59,15 +63,13 @@ class S3StartupHook(LifecycleHook):
 
 @final
 @attrs.define(slots=True, frozen=True, kw_only=True)
-class S3ShutdownHook(LifecycleHook):
+class S3ShutdownHook(ClientShutdownHook):
     """Shutdown hook that closes the S3 client session.
 
     Resolves :data:`S3ClientDepKey` and awaits :meth:`S3Client.close`.
     """
 
-    async def __call__(self, ctx: ExecutionContext) -> None:
-        s3_client = ctx.deps.provide(S3ClientDepKey)
-        await s3_client.close()
+    dep_key: DepKey[Any] = attrs.field(default=S3ClientDepKey, init=False)
 
 
 # ....................... #

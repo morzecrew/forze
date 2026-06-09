@@ -2,20 +2,18 @@
 
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
-from typing import AsyncGenerator, Callable, Mapping, Sequence, final
+from typing import AsyncGenerator, Callable, Mapping, Sequence, cast, final
 from uuid import UUID
 
 import attrs
+from pydantic import BaseModel
 from types_aiobotocore_sqs.client import SQSClient as AsyncSQSClient
 
 from forze.application.contracts.secrets import SecretRef, SecretsPort
-from forze.application.contracts.tenancy import (
-    TenantClientRegistry,
-    ensure_structured_fingerprint,
-    require_tenant_id,
-    resolve_structured_for_tenant,
+from forze.application.contracts.tenancy.routed_client_base import (
+    StructuredSecretRoutedTenantClientBase,
 )
-from forze.base.primitives.fingerprint import stable_fingerprint
+from forze.base.primitives.fingerprint import build_routing_fingerprint
 
 from .client import SQSClient
 from .port import SQSClientPort
@@ -27,8 +25,8 @@ from .value_objects import SQSConfig
 
 
 @final
-@attrs.define(slots=True)
-class RoutedSQSClient(SQSClientPort):
+@attrs.define(slots=True, kw_only=True)
+class RoutedSQSClient(StructuredSecretRoutedTenantClientBase[SQSClient], SQSClientPort):
     """Routes each operation to a lazily created :class:`SQSClient` for the current tenant.
 
     Credentials are JSON secrets (see :class:`SQSRoutingCredentials`) resolved via
@@ -46,62 +44,30 @@ class RoutedSQSClient(SQSClientPort):
     tenant_provider: Callable[[], UUID | None]
     botocore_config: SQSConfig | None = None
     max_cached_tenants: int = 100
-
-    __pool: TenantClientRegistry[SQSClient, str] = attrs.field(init=False)
+    creds_type: type[BaseModel] = attrs.field(default=SQSRoutingCredentials, init=False)
+    backend: str = attrs.field(default="SQS", init=False)
+    tenant_required_message: str = attrs.field(
+        default="Tenant ID is required for routed SQS access",
+        init=False,
+    )
 
     # ....................... #
 
-    def __attrs_post_init__(self) -> None:
-        self.__pool = TenantClientRegistry(
-            max_entries=self.max_cached_tenants,
-            create=self._create_client,
-            dispose=lambda client: client.close(),
-            guarded=False,
+    def credential_fingerprint(self, creds: BaseModel) -> str:
+        c = cast(SQSRoutingCredentials, creds)
+
+        return build_routing_fingerprint(
+            public=[c.endpoint, c.region_name, c.access_key_id],
+            secret=[c.secret_access_key],
         )
 
     # ....................... #
 
-    async def startup(self) -> None:
-        await self.__pool.startup()
-
-    # ....................... #
-
-    async def close(self) -> None:
-        await self.__pool.close()
-
-    # ....................... #
-
-    async def evict_tenant(self, tenant_id: UUID) -> None:
-        await self.__pool.evict(tenant_id)
-
-    # ....................... #
-
-    async def _fingerprint_for(self, tenant_id: UUID) -> str:
-        creds = await resolve_structured_for_tenant(
-            SQSRoutingCredentials,
-            tenant_id=tenant_id,
-            secrets=self.secrets,
-            ref_for_tenant=self.secret_ref_for_tenant,
-            backend="SQS",
-        )
-
-        return stable_fingerprint(
-            creds.endpoint,
-            creds.region_name,
-            creds.access_key_id,
-        )
-
-    # ....................... #
-
-    async def _create_client(self, tid: UUID) -> SQSClient:
-        creds = await resolve_structured_for_tenant(
-            SQSRoutingCredentials,
-            tenant_id=tid,
-            secrets=self.secrets,
-            ref_for_tenant=self.secret_ref_for_tenant,
-            backend="SQS",
-        )
-
+    async def initialize_client(
+        self,
+        tenant_id: UUID,
+        creds: SQSRoutingCredentials,
+    ) -> SQSClient:
         client = SQSClient()
 
         await client.initialize(
@@ -113,23 +79,6 @@ class RoutedSQSClient(SQSClientPort):
         )
 
         return client
-
-    # ....................... #
-
-    async def _get_client(self) -> SQSClient:
-        tenant_id = require_tenant_id(
-            self.tenant_provider,
-            message="Tenant ID is required for routed SQS access",
-        )
-
-        await ensure_structured_fingerprint(
-            self.__pool.get_fingerprint,
-            self.__pool.set_fingerprint,
-            tenant_id=tenant_id,
-            fingerprint=lambda: self._fingerprint_for(tenant_id),
-        )
-
-        return await self.__pool.get(tenant_id)
 
     # ....................... #
 

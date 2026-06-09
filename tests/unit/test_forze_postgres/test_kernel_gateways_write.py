@@ -18,6 +18,7 @@ from forze_postgres.kernel.gateways import (
 )
 from forze_postgres.kernel.catalog.introspect import PostgresIntrospector, PostgresType
 from forze_postgres.kernel.client import PostgresClient
+from tests.unit._gateway_codec_helpers import write_codecs_for
 
 class MyDoc(Document):
     name: str
@@ -48,14 +49,23 @@ def _build_gateway() -> (
     read.client = client
     read.tenant_aware = False
 
+    domain_codec, create_codec, update_codec = write_codecs_for(
+        domain_type=MyDoc,
+        create_type=MyCreateDoc,
+        update_type=MyUpdateDoc,
+    )
+
     gw = PostgresWriteGateway(
         relation=("public", "docs"),
         client=client,
         model_type=MyDoc,
+        codec=domain_codec,
         introspector=introspector,
         read_gw=read,
         create_cmd_type=MyCreateDoc,
         update_cmd_type=MyUpdateDoc,
+        create_codec=create_codec,
+        update_codec=update_codec,
         strategy="application",
     )
     return gw, client
@@ -123,10 +133,10 @@ async def test_create_many_batches_and_preserves_parameter_order() -> None:
     id2 = UUID("22222222-2222-2222-2222-222222222222")
     id3 = UUID("33333333-3333-3333-3333-333333333333")
 
-    dtos = [
-        MyCreateDoc(id=id1, created_at=ts, name="first"),
-        MyCreateDoc(id=id2, created_at=ts, name="second"),
-        MyCreateDoc(id=id3, created_at=ts, name="third"),
+    payloads = [
+        MyCreateDoc(name="first"),
+        MyCreateDoc(name="second"),
+        MyCreateDoc(name="third"),
     ]
 
     client.fetch_all.side_effect = [
@@ -134,7 +144,7 @@ async def test_create_many_batches_and_preserves_parameter_order() -> None:
         [_row(pk=id3, name="third", ts=ts)],
     ]
 
-    result = await gw.create_many(dtos, batch_size=2)
+    result = await gw.create_many(payloads, batch_size=2)
 
     assert client.fetch_all.await_count == 2
     calls = client.fetch_all.await_args_list
@@ -145,10 +155,8 @@ async def test_create_many_batches_and_preserves_parameter_order() -> None:
         assert call.kwargs["row_factory"] == "dict"
         assert call.kwargs["commit"] is False
 
-    assert sorted(params_by_uuids, key=lambda u: u[0] if u else id1) == [
-        [id1, id2],
-        [id3],
-    ]
+    # ids are server-generated now; assert batch grouping by count (2 then 1).
+    assert sorted(len(u) for u in params_by_uuids) == [1, 2]
     name_chunks: list[list[str]] = []
     for call in calls:
         params = call.args[1]
@@ -187,7 +195,7 @@ async def test_ensure_uses_configured_conflict_target_in_sql() -> None:
 
     client.fetch_one = AsyncMock(return_value=_row(pk=pk, name="n", ts=ts))
 
-    await gw.ensure(MyCreateDoc(id=pk, created_at=ts, name="n"))
+    await gw.ensure(pk, MyCreateDoc(name="n"))
 
     stmt = client.fetch_one.await_args.args[0]
     assert "ON CONFLICT" in str(stmt)
@@ -205,17 +213,15 @@ async def test_ensure_many_skips_conflicts_and_loads_existing() -> None:
     id2 = UUID("22222222-2222-2222-2222-222222222222")
     conflict_row = _row(pk=id1, name="unchanged", ts=ts)
     insert_row = _row(pk=id2, name="inserted", ts=ts)
-    dtos = [
-        MyCreateDoc(id=id1, created_at=ts, name="try-overwrite"),
-        MyCreateDoc(id=id2, created_at=ts, name="inserted"),
-    ]
+    ids = [id1, id2]
+    payloads = [MyCreateDoc(name="try-overwrite"), MyCreateDoc(name="inserted")]
     client.fetch_all = AsyncMock(
         side_effect=[
             [insert_row],
             [conflict_row],
         ],
     )
-    out = await gw.ensure_many(dtos, batch_size=20)
+    out = await gw.ensure_many(ids, payloads, batch_size=20)
     assert [d.id for d in out] == [id1, id2]
     assert out[0].name == "unchanged"
     assert out[1].name == "inserted"
@@ -231,8 +237,8 @@ async def test_upsert_inserts_or_updates() -> None:
     ts = datetime(2025, 1, 1, tzinfo=UTC)
     id1 = UUID("11111111-1111-1111-1111-111111111111")
     id2 = UUID("22222222-2222-2222-2222-222222222222")
-    c1 = MyCreateDoc(id=id1, created_at=ts, name="one")
-    c2 = MyCreateDoc(id=id2, created_at=ts, name="two")
+    c1 = MyCreateDoc(name="one")
+    c2 = MyCreateDoc(name="two")
     u2 = MyUpdateDoc(name="patched")
     new_row = _row(pk=id1, name="one", ts=ts)
     existing = MyDoc(
@@ -265,11 +271,11 @@ async def test_upsert_inserts_or_updates() -> None:
         ]
     )
 
-    out1 = await gw.upsert(c1, MyUpdateDoc())
+    out1 = await gw.upsert(id1, c1, MyUpdateDoc())
     assert out1.id == id1
     assert out1.name == "one"
 
-    out2 = await gw.upsert(c2, u2)
+    out2 = await gw.upsert(id2, c2, u2)
     assert out2.id == id2
     assert out2.name == "patched"
     assert out2.rev == 2
@@ -296,14 +302,23 @@ def _build_tenant_aware_gateway() -> (
     read.client = client
     read.tenant_aware = True
 
+    domain_codec, create_codec, update_codec = write_codecs_for(
+        domain_type=MyDoc,
+        create_type=MyCreateDoc,
+        update_type=MyUpdateDoc,
+    )
+
     gw = PostgresWriteGateway(
         relation=("public", "docs"),
         client=client,
         model_type=MyDoc,
+        codec=domain_codec,
         introspector=introspector,
         read_gw=read,
         create_cmd_type=MyCreateDoc,
         update_cmd_type=MyUpdateDoc,
+        create_codec=create_codec,
+        update_codec=update_codec,
         strategy="application",
         tenant_aware=True,
         tenant_provider=lambda: TenantIdentity(tenant_id=tid),
@@ -363,3 +378,82 @@ async def test_update_tenant_aware_includes_tenant_in_where_params() -> None:
 
     params = client.fetch_one.await_args.args[1]
     assert tid in params
+
+
+@pytest.mark.asyncio
+async def test_create_and_update_use_dedicated_codecs() -> None:
+    """Create/update paths must use create_codec and update_codec, not domain_codec alone."""
+    ts = datetime(2025, 1, 1, tzinfo=UTC)
+    pk = UUID("11111111-1111-1111-1111-111111111111")
+    dto = MyCreateDoc(id=pk, created_at=ts, name="new")
+    model = MyDoc(id=pk, rev=1, created_at=ts, last_update_at=ts, name="new")
+    current = MyDoc(id=pk, rev=1, created_at=ts, last_update_at=ts, name="before")
+
+    create_codec = MagicMock()
+    create_codec.transform.return_value = model
+    create_codec.transform_many.return_value = [model]
+
+    update_codec = MagicMock()
+    update_codec.encode_persistence_mapping.return_value = {"name": "after"}
+
+    read_codec = MagicMock()
+    read_codec.encode_persistence_mapping.return_value = {
+        "id": pk,
+        "rev": 1,
+        "created_at": ts,
+        "last_update_at": ts,
+        "name": "new",
+    }
+
+    client = MagicMock(spec=PostgresClient)
+    client.fetch_one = AsyncMock(return_value=_row(pk=pk, name="new", ts=ts))
+    client.gather_concurrency_semaphore = MagicMock(
+        return_value=asyncio.Semaphore(8),
+    )
+
+    introspector = MagicMock(spec=PostgresIntrospector)
+    introspector.get_column_types = AsyncMock(return_value={})
+    introspector.get_primary_key_columns = AsyncMock(return_value=(ID_FIELD,))
+    introspector.constraint_exists_for_columns = AsyncMock(return_value=True)
+
+    read = MagicMock(spec=PostgresReadGateway)
+    read.relation = ("public", "docs")
+    read.client = client
+    read.tenant_aware = False
+    read.get = AsyncMock(return_value=current)
+
+    gw = PostgresWriteGateway(
+        relation=("public", "docs"),
+        client=client,
+        model_type=MyDoc,
+        codec=read_codec,
+        introspector=introspector,
+        read_gw=read,
+        create_cmd_type=MyCreateDoc,
+        update_cmd_type=MyUpdateDoc,
+        create_codec=create_codec,
+        update_codec=update_codec,
+        strategy="application",
+    )
+
+    await gw.create(dto)
+
+    create_codec.transform.assert_called_once_with(dto)
+    read_codec.encode_persistence_mapping.assert_called_once_with(model)
+
+    client.fetch_one = AsyncMock(
+        return_value={
+            "id": pk,
+            "rev": 2,
+            "created_at": ts,
+            "last_update_at": ts,
+            "name": "after",
+        }
+    )
+
+    await gw.update(pk, MyUpdateDoc(name="after"))
+
+    update_codec.encode_persistence_mapping.assert_called_once_with(
+        MyUpdateDoc(name="after"),
+        exclude={"unset": True},
+    )

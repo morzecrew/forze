@@ -49,7 +49,7 @@ async def test_firestore_read_gateway_find_and_projections(
     )
 
     doc = make_document(name="kernel-read")
-    created = await write.create(make_create_cmd(name=doc.name, doc_id=doc.id))
+    created = await write.create(make_create_cmd(name=doc.name), id=doc.id)
     assert created.id == doc.id
 
     row = await read.find({"$values": {"name": "kernel-read"}}, return_fields=["id", "name"])

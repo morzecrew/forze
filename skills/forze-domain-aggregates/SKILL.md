@@ -25,7 +25,7 @@ Every document aggregate typically defines four model types:
 | **Read model** | `ReadDocument` | Frozen projection for queries |
 
 ```python
-from forze_patterns.soft_deletion import SoftDeletionMixin
+from forze_kits.domain.soft_deletion import SoftDeletionMixin
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
 
 class Project(SoftDeletionMixin, Document):
@@ -55,12 +55,12 @@ class ProjectReadModel(ReadDocument):
 | Mixin | Adds | Use when |
 |-------|------|----------|
 | `SoftDeletionMixin` | `is_deleted` | Soft-delete support |
-| `NumberIdMixin` | `number_id` | Human-readable IDs (combine with `NumberIdStep` in mapping) |
-| `CreatorIdMixin` (`forze_patterns.creator_id`) | `creator_id` | Audit (`CreatorIdMappingStep`) |
-| `MetadataMixin` (`forze_patterns.metadata`) | `name`, `display_name`, … | Named entities |
+| `NumberIdMixin` | `number_id` | Human-readable IDs (combine with `NumberIdMappingStep` in mapping) |
+| `CreatorIdMixin` (`forze_kits.domain.creator_id`) | `creator_id` | Audit (`CreatorIdMappingStep`) |
+| `MetadataMixin` (`forze_kits.domain.metadata`) | `name`, `display_name`, … | Named entities |
 
 ```python
-from forze_patterns.number_id import NumberIdCreateCmdMixin, NumberIdMixin, SoftDeletionMixin
+from forze_kits.domain.number_id import NumberIdCreateCmdMixin, NumberIdMixin, SoftDeletionMixin
 from forze.domain.models import CreateDocumentCmd, Document
 
 class Ticket(NumberIdMixin, SoftDeletionMixin, Document):
@@ -76,7 +76,7 @@ Enforce rules during `Document.update()`:
 
 ```python
 from forze.domain.validation import update_validator
-from forze.base.errors import ValidationError
+from forze.base.exceptions import exc
 
 class Project(Document):
     status: str = "draft"
@@ -85,7 +85,7 @@ class Project(Document):
     def _validate_transition(before, after, diff):
         allowed = {"draft": {"active"}, "active": {"archived"}}
         if after.status not in allowed.get(before.status, set()):
-            raise ValidationError("Invalid status transition.")
+            raise exc.validation("Invalid status transition.")
 ```
 
 ## DocumentSpec (logical)
@@ -117,7 +117,7 @@ project_spec = DocumentSpec(
 )
 ```
 
-Once a `DepsPlan` registers document adapters for that `name`, handlers obtain **`DocumentQueryPort`** / **`DocumentCommandPort`** via **`ctx.document.query(project_spec)`** / **`ctx.document.command(project_spec)`** — see [`forze-framework-usage`](../forze-framework-usage/SKILL.md) and [Document contracts](https://morzecrew.github.io/forze/docs/core-package/contracts/document/).
+Once a `DepsRegistry` registers document adapters for that `name`, handlers obtain **`DocumentQueryPort`** / **`DocumentCommandPort`** via **`ctx.document.query(project_spec)`** / **`ctx.document.command(project_spec)`** — see [`forze-framework-usage`](../forze-framework-usage/SKILL.md) and [Document contracts](https://morzecrew.github.io/forze/docs/core-package/contracts/document/).
 
 | Field | Purpose |
 |-------|---------|
@@ -169,7 +169,7 @@ CREATE TABLE public.projects (
 When using `build_document_registry` and FastAPI routers:
 
 ```python
-from forze.application.composition.document import DocumentDTOs
+from forze_kits.aggregates.document import DocumentDTOs
 
 project_dtos = DocumentDTOs(
     read=ProjectReadModel,

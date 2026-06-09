@@ -1,12 +1,16 @@
 """GCS client pool lifecycle hooks and step factories."""
 
-from typing import cast, final
+from typing import Any, cast, final
 
 import attrs
 
+from forze.application.contracts.deps import DepKey
 from forze.application.contracts.execution import LifecycleHook, LifecycleStep
 from forze.application.execution import ExecutionContext
-from forze.application.execution.lifecycle.builtin import routed_client_lifecycle_step
+from forze.application.execution.lifecycle.builtin import (
+    ClientShutdownHook,
+    routed_client_lifecycle_step,
+)
 
 from ...kernel.client import GCSClient, GCSConfig, RoutedGCSClient
 from ..deps import GCSClientDepKey
@@ -45,12 +49,10 @@ class GCSStartupHook(LifecycleHook):
 
 @final
 @attrs.define(slots=True, frozen=True, kw_only=True)
-class GCSShutdownHook(LifecycleHook):
+class GCSShutdownHook(ClientShutdownHook):
     """Shutdown hook that closes the GCS client."""
 
-    async def __call__(self, ctx: ExecutionContext) -> None:
-        gcs_client = ctx.deps.provide(GCSClientDepKey)
-        await gcs_client.close()
+    dep_key: DepKey[Any] = attrs.field(default=GCSClientDepKey, init=False)
 
 
 # ....................... #

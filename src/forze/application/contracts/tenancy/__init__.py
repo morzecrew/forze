@@ -15,6 +15,7 @@ from .helpers import (
     require_tenant_id,
     resolve_dsn_for_tenant,
     resolve_structured_for_tenant,
+    soft_tenant_id,
 )
 from .integration_config import TenantAwareIntegrationConfig
 from .mixins import TenancyMixin
@@ -22,11 +23,14 @@ from .ports import TenantManagementPort, TenantProviderPort, TenantResolverPort
 from .registry import TenantClientRegistry
 from .value_objects import TenantIdentity
 from .wiring import (
+    IntegrationRouteWarning,
     TenancyRouteSpec,
     TenantIsolationMode,
     derive_tenant_isolation_mode,
+    namespace_route_warning,
     validate_routed_client_tenancy_wiring,
     warn_dynamic_relation_with_tenant_aware,
+    warn_integration_routes,
 )
 
 # ----------------------- #
@@ -49,13 +53,17 @@ __all__ = [
     "parse_tenant_hint",
     "require_tenant_id",
     "TenancyRouteSpec",
+    "IntegrationRouteWarning",
     "TenantIsolationMode",
     "derive_tenant_isolation_mode",
+    "namespace_route_warning",
     "validate_routed_client_tenancy_wiring",
     "warn_dynamic_relation_with_tenant_aware",
+    "warn_integration_routes",
     "TenantClientRegistry",
     "ensure_dsn_fingerprint",
     "resolve_dsn_for_tenant",
     "resolve_structured_for_tenant",
     "ensure_structured_fingerprint",
+    "soft_tenant_id",
 ]

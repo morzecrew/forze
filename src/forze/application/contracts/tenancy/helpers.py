@@ -92,6 +92,26 @@ def require_tenant_id(
 # ....................... #
 
 
+def soft_tenant_id(
+    provider: Callable[[], TenantIdentity | None] | None,
+) -> UUID | None:
+    """Return the current tenant id, or ``None`` (never raises).
+
+    The soft counterpart to :func:`require_tenant_id`, for adapters that resolve
+    tenant context opportunistically (e.g. analytics ingest-target resolution).
+    """
+
+    if provider is None:
+        return None
+
+    tenant = provider()
+
+    return tenant.tenant_id if tenant is not None else None
+
+
+# ....................... #
+
+
 async def ensure_dsn_fingerprint(
     get_fingerprint: Callable[[UUID], str | None],
     set_fingerprint: Callable[[UUID, str], None],
@@ -101,12 +121,19 @@ async def ensure_dsn_fingerprint(
     ref_for_tenant: Callable[[UUID], SecretRef] | Mapping[UUID, SecretRef],
     backend: str,
     extra_parts: Sequence[str] = (),
+    is_expired: Callable[[UUID], bool] | None = None,
+    on_change: Callable[[UUID], Awaitable[None]] | None = None,
 ) -> str:
-    """Resolve DSN once, compute slot fingerprint, cache on tenant id."""
+    """Resolve DSN once, compute slot fingerprint, cache on tenant id.
+
+    When *is_expired* reports the cached fingerprint stale (optional TTL refresh), the
+    DSN is re-resolved; if the fingerprint changed, *on_change* is awaited (to evict the
+    now-stale pooled client) before the new fingerprint is cached.
+    """
 
     cached = get_fingerprint(tenant_id)
 
-    if cached is not None:
+    if cached is not None and (is_expired is None or not is_expired(tenant_id)):
         return cached
 
     ref = secret_ref_for_tenant(ref_for_tenant, tenant_id)
@@ -121,6 +148,10 @@ async def ensure_dsn_fingerprint(
         connection_string_fingerprint(dsn),
         *extra_parts,
     )
+
+    if cached is not None and fp != cached and on_change is not None:
+        await on_change(tenant_id)
+
     set_fingerprint(tenant_id, fp)
 
     return fp
@@ -188,15 +219,26 @@ async def ensure_structured_fingerprint(
     *,
     tenant_id: UUID,
     fingerprint: Callable[[], Awaitable[str]],
+    is_expired: Callable[[UUID], bool] | None = None,
+    on_change: Callable[[UUID], Awaitable[None]] | None = None,
 ) -> str:
-    """Compute and cache structured fingerprint for *tenant_id*."""
+    """Compute and cache structured fingerprint for *tenant_id*.
+
+    When *is_expired* reports the cached fingerprint stale (optional TTL refresh), it is
+    recomputed; if it changed, *on_change* is awaited (to evict the now-stale pooled
+    client) before the new fingerprint is cached.
+    """
 
     cached = get_fingerprint(tenant_id)
 
-    if cached is not None:
+    if cached is not None and (is_expired is None or not is_expired(tenant_id)):
         return cached
 
     fp = await fingerprint()
+
+    if cached is not None and fp != cached and on_change is not None:
+        await on_change(tenant_id)
+
     set_fingerprint(tenant_id, fp)
 
     return fp

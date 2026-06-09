@@ -33,9 +33,11 @@ from unittest.mock import AsyncMock, MagicMock
 from forze_identity.authn import (
     AuthnOrchestrator,
     DeterministicUuidResolver,
+    ForzeJwtTokenVerifier,
     JwtNativeUuidResolver,
 )
 from forze_identity.authn.resolvers.deterministic_uuid import derive_principal_id
+from forze_identity.authn.services import AccessTokenService
 
 # ----------------------- #
 
@@ -70,7 +72,172 @@ class TestVerifiedAssertion:
 
 # ....................... #
 
-class TestJwtNativeUuidResolver:
+
+class TestForzeJwtSessionVerifier:
+    @pytest.mark.asyncio
+    async def test_active_session_passes(self) -> None:
+        import secrets
+
+        secret = secrets.token_bytes(32)
+        svc = AccessTokenService(secret_key=secret)
+        pid = uuid4()
+        sid = uuid4()
+        token = svc.issue_token(principal_id=pid, session_id=sid)
+
+        session = MagicMock()
+        session.principal_id = pid
+        session.tenant_id = None
+        session.revoked_at = None
+        session.rotated_at = None
+        session_qry = MagicMock()
+        session_qry.find = AsyncMock(return_value=session)
+
+        verifier = ForzeJwtTokenVerifier(access_svc=svc, session_qry=session_qry)
+        assertion = await verifier.verify_token(AccessTokenCredentials(token=token))
+
+        assert assertion.subject == str(pid)
+        session_qry.find.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_missing_sid_rejected(self) -> None:
+        import secrets
+
+        secret = secrets.token_bytes(32)
+        svc = AccessTokenService(secret_key=secret)
+        token = svc.issue_token(principal_id=uuid4())
+        session_qry = MagicMock()
+
+        verifier = ForzeJwtTokenVerifier(access_svc=svc, session_qry=session_qry)
+
+        with pytest.raises(CoreException) as ei:
+            await verifier.verify_token(AccessTokenCredentials(token=token))
+        assert ei.value.code == "invalid_access_token"
+        session_qry.find.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_revoked_session_rejected(self) -> None:
+        import secrets
+
+        secret = secrets.token_bytes(32)
+        svc = AccessTokenService(secret_key=secret)
+        sid = uuid4()
+        token = svc.issue_token(principal_id=uuid4(), session_id=sid)
+
+        session = MagicMock()
+        session.revoked_at = datetime.now(tz=UTC)
+        session.rotated_at = None
+        session_qry = MagicMock()
+        session_qry.find = AsyncMock(return_value=session)
+
+        verifier = ForzeJwtTokenVerifier(access_svc=svc, session_qry=session_qry)
+
+        with pytest.raises(CoreException) as ei:
+            await verifier.verify_token(AccessTokenCredentials(token=token))
+        assert ei.value.code == "session_revoked"
+
+    @pytest.mark.asyncio
+    async def test_rotated_session_rejected(self) -> None:
+        import secrets
+
+        secret = secrets.token_bytes(32)
+        svc = AccessTokenService(secret_key=secret)
+        sid = uuid4()
+        token = svc.issue_token(principal_id=uuid4(), session_id=sid)
+
+        session = MagicMock()
+        session.revoked_at = None
+        session.rotated_at = datetime.now(tz=UTC)
+        session_qry = MagicMock()
+        session_qry.find = AsyncMock(return_value=session)
+
+        verifier = ForzeJwtTokenVerifier(access_svc=svc, session_qry=session_qry)
+
+        with pytest.raises(CoreException) as ei:
+            await verifier.verify_token(AccessTokenCredentials(token=token))
+        assert ei.value.code == "session_revoked"
+
+    @pytest.mark.asyncio
+    async def test_session_subject_mismatch_rejected(self) -> None:
+        import secrets
+
+        secret = secrets.token_bytes(32)
+        svc = AccessTokenService(secret_key=secret)
+        token_pid = uuid4()
+        session_pid = uuid4()
+        sid = uuid4()
+        token = svc.issue_token(principal_id=token_pid, session_id=sid)
+
+        session = MagicMock()
+        session.principal_id = session_pid
+        session.tenant_id = None
+        session.revoked_at = None
+        session.rotated_at = None
+        session_qry = MagicMock()
+        session_qry.find = AsyncMock(return_value=session)
+
+        verifier = ForzeJwtTokenVerifier(access_svc=svc, session_qry=session_qry)
+
+        with pytest.raises(CoreException) as ei:
+            await verifier.verify_token(AccessTokenCredentials(token=token))
+        assert ei.value.code == "session_subject_mismatch"
+
+    @pytest.mark.asyncio
+    async def test_session_tenant_mismatch_rejected(self) -> None:
+        import secrets
+
+        secret = secrets.token_bytes(32)
+        svc = AccessTokenService(secret_key=secret)
+        pid = uuid4()
+        sid = uuid4()
+        token_tid = uuid4()
+        session_tid = uuid4()
+        token = svc.issue_token(
+            principal_id=pid,
+            tenant_id=token_tid,
+            session_id=sid,
+        )
+
+        session = MagicMock()
+        session.principal_id = pid
+        session.tenant_id = session_tid
+        session.revoked_at = None
+        session.rotated_at = None
+        session_qry = MagicMock()
+        session_qry.find = AsyncMock(return_value=session)
+
+        verifier = ForzeJwtTokenVerifier(access_svc=svc, session_qry=session_qry)
+
+        with pytest.raises(CoreException) as ei:
+            await verifier.verify_token(AccessTokenCredentials(token=token))
+        assert ei.value.code == "session_tenant_mismatch"
+
+    @pytest.mark.asyncio
+    async def test_session_tenant_ok_when_token_omits_tid(self) -> None:
+        import secrets
+
+        secret = secrets.token_bytes(32)
+        svc = AccessTokenService(secret_key=secret)
+        pid = uuid4()
+        sid = uuid4()
+        session_tid = uuid4()
+        token = svc.issue_token(principal_id=pid, session_id=sid)
+
+        session = MagicMock()
+        session.principal_id = pid
+        session.tenant_id = session_tid
+        session.revoked_at = None
+        session.rotated_at = None
+        session_qry = MagicMock()
+        session_qry.find = AsyncMock(return_value=session)
+
+        verifier = ForzeJwtTokenVerifier(access_svc=svc, session_qry=session_qry)
+        assertion = await verifier.verify_token(AccessTokenCredentials(token=token))
+
+        assert assertion.subject == str(pid)
+        assert assertion.issuer_tenant_hint is None
+
+
+# ....................... #
     @pytest.mark.asyncio
     async def test_uuid_subject_round_trip(self) -> None:
         pid = uuid4()
@@ -178,6 +345,19 @@ class _CountingResolver:
 
         return AuthnIdentity(principal_id=UUID(assertion.subject))
 
+class _StubDelegatedTokenVerifier:
+    """Token verifier whose assertion carries an RFC 8693 ``act`` (actor) claim."""
+
+    def __init__(self, subject: str, claims: dict[str, object]) -> None:
+        self._subject = subject
+        self._claims = claims
+
+    async def verify_token(self, c: AccessTokenCredentials) -> VerifiedAssertion:
+        _ = c
+        return VerifiedAssertion(
+            issuer="stub:token", subject=self._subject, claims=self._claims
+        )
+
 # ....................... #
 
 def _noop_eligibility() -> MagicMock:
@@ -277,3 +457,96 @@ class TestAuthnOrchestrator:
 
         issuers = [a.issuer for a in resolver.calls]
         assert issuers == ["stub:token", "stub:password", "stub:api_key"]
+
+
+# ....................... #
+
+
+class TestDelegationActorClaim:
+    """The orchestrator reads an RFC 8693 ``act`` claim into ``AuthnIdentity.actor``."""
+
+    USER = "00000000-0000-0000-0000-000000000002"
+    AGENT = "00000000-0000-0000-0000-0000000000aa"
+    SYSTEM = "00000000-0000-0000-0000-0000000000bb"
+
+    def _orch(
+        self,
+        claims: dict[str, object],
+        *,
+        actor_claim: str | None = "act",
+        eligibility: object | None = None,
+    ) -> AuthnOrchestrator:
+        return AuthnOrchestrator(
+            resolver=_CountingResolver(),
+            eligibility=eligibility or _noop_eligibility(),  # type: ignore[arg-type]
+            enabled_methods=frozenset({"token"}),
+            token_verifier=_StubDelegatedTokenVerifier(self.USER, claims),  # type: ignore[arg-type]
+            actor_claim=actor_claim,
+        )
+
+    @pytest.mark.asyncio
+    async def test_actor_attached_from_act_claim(self) -> None:
+        orch = self._orch({"act": {"sub": self.AGENT}})
+
+        result = await orch.authenticate_with_token(AccessTokenCredentials(token="t"))
+
+        assert result.identity.principal_id == UUID(self.USER)
+        assert result.identity.is_delegated is True
+        assert result.identity.actor is not None
+        assert result.identity.actor.principal_id == UUID(self.AGENT)
+        assert result.identity.actor.actor is None
+
+    @pytest.mark.asyncio
+    async def test_nested_act_builds_delegation_chain(self) -> None:
+        orch = self._orch({"act": {"sub": self.AGENT, "act": {"sub": self.SYSTEM}}})
+
+        result = await orch.authenticate_with_token(AccessTokenCredentials(token="t"))
+
+        actor = result.identity.actor
+        assert actor is not None
+        assert actor.principal_id == UUID(self.AGENT)
+        assert actor.actor is not None
+        assert actor.actor.principal_id == UUID(self.SYSTEM)
+
+    @pytest.mark.asyncio
+    async def test_act_claim_ignored_when_actor_claim_unset(self) -> None:
+        orch = self._orch({"act": {"sub": self.AGENT}}, actor_claim=None)
+
+        result = await orch.authenticate_with_token(AccessTokenCredentials(token="t"))
+
+        assert result.identity.actor is None
+        assert result.identity.is_delegated is False
+
+    @pytest.mark.asyncio
+    async def test_missing_actor_sub_raises(self) -> None:
+        orch = self._orch({"act": {"not_sub": "x"}})
+
+        with pytest.raises(CoreException) as exc_info:
+            await orch.authenticate_with_token(AccessTokenCredentials(token="t"))
+        assert exc_info.value.code == "invalid_actor_claim"
+
+    @pytest.mark.asyncio
+    async def test_eligibility_checked_for_subject_and_actor(self) -> None:
+        eligibility = _noop_eligibility()
+        orch = self._orch({"act": {"sub": self.AGENT}}, eligibility=eligibility)
+
+        await orch.authenticate_with_token(AccessTokenCredentials(token="t"))
+
+        # Once for the user (subject), once for the agent (actor).
+        assert eligibility.require_authentication_allowed.await_count == 2
+
+    @pytest.mark.asyncio
+    async def test_deeply_nested_actor_chain_is_rejected(self) -> None:
+        # A chain deeper than the cap must be refused, not recursed unbounded.
+        root: dict[str, object] = {"sub": str(uuid4())}
+        node = root
+        for _ in range(12):
+            nxt: dict[str, object] = {"sub": str(uuid4())}
+            node["act"] = nxt
+            node = nxt
+
+        orch = self._orch({"act": root})
+
+        with pytest.raises(CoreException) as exc_info:
+            await orch.authenticate_with_token(AccessTokenCredentials(token="t"))
+        assert exc_info.value.code == "actor_chain_too_deep"

@@ -26,6 +26,7 @@ from forze_postgres.kernel.client import PostgresClientPort
 from forze_postgres.kernel.gateways import PostgresQualifiedName
 
 from .runtime import HubLegRuntime
+from collections.abc import Awaitable
 
 # ----------------------- #
 
@@ -42,11 +43,15 @@ class HubSearchHost(Protocol[M]):
     vector_embedders: Mapping[int, EmbeddingsProviderPort]
     combine: Literal["or", "and"]
     score_merge: Literal["max", "sum"]
+    per_leg_limit: int
+    execution: Literal["sql", "parallel"]
+    combo_limit: int | None
     read_fields: frozenset[str]
     model_type: type[M]
     nested_field_hints: Mapping[str, Any] | None
     introspector: PostgresIntrospector
     client: PostgresClientPort
+    read_validation: Literal["strict", "trusted"]
 
     # ....................... #
 
@@ -54,29 +59,29 @@ class HubSearchHost(Protocol[M]):
 
     # ....................... #
 
-    async def _qname(self) -> PostgresQualifiedName: ...
+    def _qname(self) -> Awaitable[PostgresQualifiedName]: ...
 
     # ....................... #
 
-    async def where_clause(
+    def where_clause(
         self,
         filters: QueryFilterExpression | None,
         *,
         parsed: Any | None = None,
-    ) -> tuple[sql.Composable, list[Any]]: ...
+    ) -> Awaitable[tuple[sql.Composable, list[Any]]]: ...
 
     # ....................... #
 
-    async def order_by_clause(
+    def order_by_clause(
         self,
         sorts: QuerySortExpression | None,
         *,
         table_alias: str,
-    ) -> sql.Composable | None: ...
+    ) -> Awaitable[sql.Composable | None]: ...
 
     # ....................... #
 
-    async def column_types(self) -> PostgresColumnTypes: ...
+    def column_types(self) -> Awaitable[PostgresColumnTypes]: ...
 
     # ....................... #
 

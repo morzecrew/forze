@@ -41,6 +41,51 @@ def _is_valid_dns(address: str) -> bool:
 
 # ....................... #
 
+
+def _forwarded_proto(request: Request) -> str | None:
+    raw = request.headers.get("x-forwarded-proto")
+
+    if raw is None:
+        return None
+
+    proto = raw.split(",", 1)[0].strip().lower()
+
+    if proto in ("http", "https"):
+        return proto
+
+    return None
+
+
+# ....................... #
+
+
+def _scalar_servers_from_request(
+    request: Request,
+    *,
+    trust_forwarded_host: bool,
+) -> list[dict[str, str]]:
+    """Build Scalar ``servers`` from forwarded headers when explicitly trusted."""
+
+    if not trust_forwarded_host:
+        return []
+
+    host = request.headers.get("x-forwarded-host")
+
+    if not host:
+        return []
+
+    host = host.split(",", 1)[0].strip()
+    root_path = request.scope.get("root_path") or ""
+    proto = _forwarded_proto(request)
+
+    if proto is None:
+        proto = "https" if _is_valid_dns(host) else "http"
+
+    return [{"url": f"{proto}://{host}{root_path}"}]
+
+
+# ....................... #
+
 DownloadType = Literal["json", "yaml", "both", "none"]
 ThemeType = Literal[
     "default",
@@ -67,22 +112,17 @@ def scalar_docs(
     hide_download_button: bool = True,
     download_type: DownloadType = "both",
     theme: ThemeType = "purple",
+    *,
+    persist_auth: bool = False,
+    trust_forwarded_host: bool = False,
 ) -> HTMLResponse:
     """Return a Scalar API reference HTML page for the current OpenAPI spec."""
 
     root_path = request.scope.get("root_path")
-    host = request.headers.get("x-forwarded-host")
-
-    if not host:
-        servers = []
-
-    else:
-        proto = "http"
-
-        if _is_valid_dns(host):
-            proto = "https"
-
-        servers = [{"url": f"{proto}://{host}{root_path}"}]
+    servers = _scalar_servers_from_request(
+        request,
+        trust_forwarded_host=trust_forwarded_host,
+    )
 
     favicon_host_split = favicon_url.split("://")
 
@@ -107,7 +147,7 @@ def scalar_docs(
         hide_dark_mode_toggle=True,
         hidden_clients=True,
         hide_client_button=True,
-        persist_auth=True,
+        persist_auth=persist_auth,
         custom_css=custom_css or CUSTOM_CSS,
         agent=AgentScalarConfig(disabled=True),
     )
@@ -130,6 +170,8 @@ def register_scalar_docs(
     hide_download_button: bool = True,
     download_type: DownloadType = "both",
     theme: ThemeType = "purple",
+    persist_auth: bool = False,
+    trust_forwarded_host: bool = False,
 ) -> None:
     """Register a Scalar docs route on *app* at *path*."""
 
@@ -148,4 +190,6 @@ def register_scalar_docs(
             hide_download_button=hide_download_button,
             download_type=download_type,
             theme=theme,
+            persist_auth=persist_auth,
+            trust_forwarded_host=trust_forwarded_host,
         )

@@ -36,11 +36,16 @@ FastAPI does not require a network client. The Forze runtime is the object that 
 
 ```python
 from fastapi import FastAPI
-from forze.application.execution import ExecutionRuntime
+from forze.application.execution import DepsRegistry, ExecutionRuntime, LifecyclePlan
 
-runtime = ExecutionRuntime(...)
+runtime = ExecutionRuntime(
+    deps=deps_registry.freeze(),
+    lifecycle=lifecycle_plan.freeze(),
+)
 app = FastAPI(title="Projects API")
 ```
+
+`ExecutionRuntime` accepts only frozen deps and lifecycle registries — call `.freeze()` on authoring plans before construction.
 
 ### Config
 
@@ -48,8 +53,8 @@ Configure routers from `DocumentSpec`, `DocumentDTOs`, `SearchDTOs`, `build_stor
 
 ```python
 from fastapi import APIRouter
-from forze.application.composition.document import DocumentDTOs, build_document_registry
-from forze.application.composition.storage import build_storage_registry
+from forze_kits.aggregates.document import DocumentDTOs, build_document_registry
+from forze_kits.aggregates.storage import build_storage_registry
 from forze.application.contracts.storage import StorageSpec
 from forze.base.primitives import str_key_selector
 from forze_fastapi.endpoints.document import attach_document_endpoints
@@ -80,7 +85,7 @@ file_registry = (
 
 ### Deps module
 
-FastAPI routes do not register storage dependencies themselves. Register the adapters needed by the handlers in your normal `DepsPlan` and expose the current context as a FastAPI dependency.
+FastAPI routes do not register storage dependencies themselves. Register the adapters needed by the handlers in your normal `DepsRegistry` and expose the current context as a FastAPI dependency.
 
 ```python
 def context_dependency():
@@ -130,7 +135,7 @@ app = FastAPI(lifespan=lifespan)
 
 | Layer | Module | Role |
 |-------|--------|------|
-| Registry | `forze.application.composition.*` | `build_*_registry`, `*KernelOp`, facades — frozen `OperationRegistry` with explicit operation keys |
+| Registry | `forze_kits.*` | `build_*_registry`, `*KernelOp`, facades — frozen `OperationRegistry` with explicit operation keys |
 | Bindings | `forze_fastapi.transport.http.bindings` | HTTP method, default path, response model, handler builder per operation |
 | Options | `forze_fastapi.transport.http.options` | Per-route `RouteOpts` and attach `config` (ETag, idempotency, token transport) |
 | Attach | `forze_fastapi.transport.http.attach` | `attach_*_routes`: `enable` loop, policies, `register_route` on `APIRouter` |
@@ -143,7 +148,7 @@ Legacy [`attach_*_endpoints`](../../src/forze_fastapi/endpoints/) (`endpoints={.
 
 ```python
 from fastapi import APIRouter
-from forze.application.composition.document import (
+from forze_kits.aggregates.document import (
     DocumentFacade,
     DocumentKernelOp,
     build_document_registry,
@@ -191,7 +196,7 @@ Legacy `attach_*_endpoints` with `endpoints={...}` dicts remains available; pref
 |----------------|------------------------|--------------------------|-------------|
 | `DocumentSpec` | `attach_document_endpoints` creates CRUD/list HTTP handlers that resolve operations from a **frozen** `OperationRegistry` via absolute `StrKey` values on each `HttpEndpointSpec`. | Pass a registry built with `build_document_registry`, bind kernel operations, set the transaction route, then `.finish(deep=True).freeze()` before attach. Uses `DocumentSpec.name` and runtime document dependency keys (`DocumentQueryDepKey`, `DocumentCommandDepKey`). | Routes are generated only for supported DTO/spec features; soft-delete routes require a soft-deletion-capable domain model (`supports_soft_delete()`). |
 | `SearchSpec` | `attach_search_endpoints` creates typed and raw search routes; pass ``search=`` with the same spec used to build the registry. | Freeze the search registry the same way as document routes. Uses `SearchSpec.name` and runtime search dependencies, commonly `SearchQueryDepKey`. | Search execution still depends on a search adapter such as Postgres; FastAPI only exposes the route. |
-| `StorageSpec` | `attach_storage_endpoints` creates list, multipart upload, binary download, and delete routes resolved from a frozen registry. | Uses `StorageSpec.name` for `StorageDepKey` routing, optional upload idempotency naming, and `namespace=` (defaults to the spec namespace) for operation keys. | Download returns raw bytes (`application/octet-stream`); register `register_exception_handlers` (or equivalent) so `NotFoundError` maps to HTTP 404. |
+| `StorageSpec` | `attach_storage_endpoints` creates list, multipart upload, binary download, and delete routes resolved from a frozen registry. | Uses `StorageSpec.name` for `StorageQueryDepKey` / `StorageCommandDepKey` routing, optional upload idempotency naming, and `namespace=` (defaults to the spec namespace) for operation keys. | Download returns raw bytes (`application/octet-stream`); register `register_exception_handlers` (or equivalent) so `NotFoundError` maps to HTTP 404. |
 | Custom operations | `attach_http_endpoint` with `build_http_endpoint_spec(operation=...)`. | The spec carries an absolute operation key; the handler calls `registry.resolve(operation, ctx)`. | You own request/response mapping and status-code choices for custom endpoints. |
 | Idempotency feature | HTTP idempotency feature for mutating endpoints. | Requires an idempotency dependency such as `IdempotencyDepKey` when enabled. | Requires clients to send stable idempotency keys; storage and TTL behavior come from the configured idempotency adapter. |
 | ETag feature | HTTP ETag handling for reads. | Uses document revision/version data exposed by the document handler. | Only useful when the read model exposes stable revision metadata. |
@@ -204,7 +209,7 @@ FastAPI endpoint idempotency is an HTTP feature for mutating routes. Enable it o
 
 Most services stack `ContextBindingMiddleware` (bind `InvocationMetadata`, `AuthnIdentity`, `TenantIdentity`), `LoggingMiddleware`, `register_exception_handlers`, and Scalar docs. See [Authn, authz, and tenancy with FastAPI](../recipes/authn-authz-tenancy-fastapi.md) for boundary wiring.
 
-`register_exception_handlers(app)` maps `CoreException` to JSON responses and logs server-side tracebacks for HTTP 500s (never in response bodies). Include `fastapi.errors` in `configure_logging(logger_names=...)`. With `render_mode="json"`, stacks appear in the structured `error.stack` field.
+`register_exception_handlers(app)` maps `CoreException` to JSON responses and logs server-side tracebacks for HTTP 500s (never in response bodies). Include `fastapi.errors` in `configure_logging(logger_names=...)`. With `render_mode="json"`, stacks appear in the structured `error.stack` field (scrubbed when `sanitize_logs=True`; omit with `include_exception_stack=False`).
 
 `CustomHeadersMiddleware` (`from forze_fastapi.middlewares import CustomHeadersMiddleware`) injects **response** headers before the response is sent. Pass `static_headers` as a string-to-string map and/or `dynamic_headers` as a map of header names to zero-argument callables that return `str` or `Awaitable[str]`. If the outgoing response already includes any of the injected header names, the middleware raises `CoreError` with a duplicate-headers message.
 
@@ -246,6 +251,6 @@ HTTP server timeouts are owned by the ASGI server or ingress. Use Forze adapter 
 | Mutating requests return a validation/error response because `Idempotency-Key` is missing. | Idempotency is enabled for the endpoint, but the client did not send the required stable header. | Send the same `Idempotency-Key` for retries of the same operation and register an idempotency adapter such as Redis. | [Idempotency](#idempotency) |
 | Domain or application exceptions return generic 500 responses instead of Forze error JSON. | `register_exception_handlers(app)` was not called on the FastAPI app. | Register Forze exception handlers during app setup before serving requests. | [Operational notes](#operational-notes) |
 | Document and search endpoints shadow each other or OpenAPI shows unexpected paths. | Generated document/search routes share the same router prefix and default or overridden paths. | Use separate router prefixes or set explicit `path_override` values so document and search paths are unique. | [Contract coverage table](#contract-coverage-table) |
-| `DepKey` resolution fails inside a route. | The FastAPI dependency returned a context whose `DepsPlan` does not contain the needed adapter route. | Register the backing integration module and ensure the route/spec name matches. | [Deps module](#deps-module) |
+| `DepKey` resolution fails inside a route. | The FastAPI dependency returned a context whose `DepsRegistry` does not contain the needed adapter route. | Register the backing integration module and ensure the route/spec name matches. | [Deps module](#deps-module) |
 | Endpoint returns 422 for a valid business command. | The request DTO does not match the endpoint body mode or Pydantic model. | Check `DocumentDTOs`, `SearchDTOs`, or the custom endpoint spec and align the client payload. | [Minimal setup](#minimal-setup) |
 | Generated soft-delete or restore routes are missing. | The document spec does not advertise soft-deletion support or the endpoint was disabled. | Enable the feature in the document spec/endpoint spec or remove the route from docs and clients. | [Contract coverage table](#contract-coverage-table) |

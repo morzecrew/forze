@@ -2,6 +2,14 @@
 
 from __future__ import annotations
 
+import os
+
+# clickhouse-connect's C response buffer corrupts under the coverage tracer
+# (StreamCompleteException on the client init query). Force the pure-Python buffer
+# for the test process so the suite runs correctly with and without ``--cov``. Must
+# be set before clickhouse_connect is first imported.
+os.environ.setdefault("CLICKHOUSE_CONNECT_USE_C", "0")
+
 import shutil
 import time
 import urllib.error

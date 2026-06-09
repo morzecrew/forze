@@ -16,11 +16,17 @@ import aiohttp
 import attrs
 from gcloud.aio.storage import Storage
 
+from forze.application.integrations.storage.client import (
+    ObjectStorageHead,
+    ObjectStorageListedObject,
+    normalize_list_window,
+)
 from forze.base.exceptions import exc
+from forze.base.primitives.owned_temp_path import OwnedTempPath
 
 from .errors import exc_interceptor
 from .port import GCSClientPort
-from .value_objects import DEFAULT_TIMEOUT, GCSConfig, GCSHead, GCSListedObject
+from .value_objects import DEFAULT_TIMEOUT, GCSConfig
 
 # ----------------------- #
 
@@ -38,6 +44,10 @@ class GCSClient(GCSClientPort):
     __storage: Storage | None = attrs.field(default=None, init=False)
     __project_id: str | None = attrs.field(default=None, init=False)
     __config: GCSConfig | None = attrs.field(default=None, init=False)
+    __credential_path: OwnedTempPath = attrs.field(
+        factory=OwnedTempPath.empty,
+        init=False,
+    )
 
     __ctx_depth: ContextVar[int] = attrs.field(
         factory=lambda: ContextVar("gcs_depth", default=0),
@@ -51,6 +61,7 @@ class GCSClient(GCSClientPort):
         project_id: str,
         *,
         service_file: str | None = None,
+        service_file_owned: bool = False,
         config: GCSConfig | None = None,
     ) -> None:
         """Configure the client with project id and shared storage client.
@@ -75,6 +86,8 @@ class GCSClient(GCSClientPort):
         if key_file is None and config is not None:
             key_file = config.service_file
 
+        self.__credential_path = OwnedTempPath(path=key_file, owned=service_file_owned)
+
         self.__storage = Storage(
             service_file=key_file,
             api_root=api_root,
@@ -86,13 +99,35 @@ class GCSClient(GCSClientPort):
         """Release the underlying storage client and HTTP session."""
 
         storage = self.__storage
+        close_error: Exception | None = None
+        cred_error: Exception | None = None
 
         if storage is not None:
-            await storage.close()
-            self.__storage = None
+            try:
+                await storage.close()
 
-        self.__project_id = None
-        self.__config = None
+            except Exception as exc:
+                close_error = exc
+
+            finally:
+                self.__storage = None
+
+        try:
+            self.__credential_path.release()
+            self.__credential_path = OwnedTempPath.empty()
+            self.__project_id = None
+            self.__config = None
+
+        except Exception as exc:
+            cred_error = exc
+
+        errors = [e for e in (close_error, cred_error) if e is not None]
+
+        if len(errors) == 1:
+            raise errors[0]
+
+        if len(errors) > 1:
+            raise ExceptionGroup("GCS client close failed", errors) from errors[0]
 
     # ....................... #
 
@@ -214,12 +249,15 @@ class GCSClient(GCSClientPort):
         *,
         content_type: str | None = None,
         metadata: dict[str, str] | None = None,
+        tags: dict[str, str] | None = None,
     ) -> None:
         storage = self.__require_storage()
         upload_metadata: dict[str, object] | None = None
 
         if metadata is not None:
             upload_metadata = {"metadata": metadata}
+
+        _ = tags
 
         await storage.upload(
             bucket,
@@ -264,16 +302,9 @@ class GCSClient(GCSClientPort):
         *,
         limit: int | None = None,
         offset: int | None = None,
-    ) -> tuple[list[GCSListedObject], int]:
-        if limit is not None and limit <= 0:
-            raise exc.internal("limit must be > 0")
-
-        if offset is not None and offset < 0:
-            raise exc.internal("offset must be >= 0")
-
+    ) -> tuple[list[ObjectStorageListedObject], int]:
         _prefix = prefix or ""
-        _limit = limit if limit is not None else 10_000_000
-        _offset = offset or 0
+        _limit, _offset = normalize_list_window(limit, offset)
 
         storage = self.__require_storage()
         bucket_ref = storage.get_bucket(bucket)
@@ -281,14 +312,16 @@ class GCSClient(GCSClientPort):
 
         total_count = len(keys)
         window = keys[_offset : _offset + _limit]
-        items: list[GCSListedObject] = [GCSListedObject(Key=key) for key in window]
+        items: list[ObjectStorageListedObject] = [
+            ObjectStorageListedObject(key=key) for key in window
+        ]
 
         return items, total_count
 
     # ....................... #
 
     @exc_interceptor.coroutine("gcs.head_object")  # type: ignore[untyped-decorator]
-    async def head_object(self, bucket: str, key: str) -> GCSHead:
+    async def head_object(self, bucket: str, key: str) -> ObjectStorageHead:
         storage = self.__require_storage()
         raw = await storage.download_metadata(
             bucket,
@@ -335,7 +368,7 @@ def _response_is_not_found(exc: aiohttp.ClientResponseError) -> bool:
 # ....................... #
 
 
-def _head_from_object_json(raw: dict[str, object]) -> GCSHead:
+def _head_from_object_json(raw: dict[str, object]) -> ObjectStorageHead:
     custom: Any = raw.get("metadata") or {}
     meta_dict: dict[str, str] = {}
 
@@ -362,7 +395,7 @@ def _head_from_object_json(raw: dict[str, object]) -> GCSHead:
     size_raw = raw.get("size", 0)
     size = int(size_raw) if isinstance(size_raw, (int, float, str)) else 0
 
-    return GCSHead(
+    return ObjectStorageHead(
         content_type=str(raw.get("contentType") or "application/octet-stream"),
         metadata=meta_dict,
         size=size,

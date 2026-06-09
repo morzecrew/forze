@@ -1,9 +1,10 @@
 ---
 name: forze-storage-s3
 description: >-
-  Wires and consumes Forze object storage with StorageSpec, StoragePort,
-  S3DepsModule, tenant-aware buckets, lifecycle, upload/download/list/delete,
-  and tests with MockStorageAdapter. Use when adding blob/file storage.
+  Wires and consumes Forze object storage with StorageSpec, StorageQueryPort,
+  StorageCommandPort, S3DepsModule, tenant-aware buckets, lifecycle,
+  upload/download/list/delete, and tests with MockStorageAdapter. Use when
+  adding blob/file storage.
 ---
 
 # Forze storage and S3
@@ -39,7 +40,7 @@ s3_module = S3DepsModule(
 )
 ```
 
-`S3DepsModule(client=...)` alone registers only `S3ClientDepKey`; `ctx.storage(spec)` needs a matching `storages` route.
+`S3DepsModule(client=...)` alone registers only `S3ClientDepKey`; `ctx.storage.query(spec)` / `ctx.storage.command(spec)` need a matching `storages` route.
 
 ## Lifecycle
 
@@ -63,22 +64,25 @@ Use a secrets-backed or environment-backed configuration layer for real credenti
 
 ```python
 from forze.application.contracts.execution import Handler
+from forze.application.contracts.storage import StorageCommandPort, StoredObject, UploadedObject
 
 class UploadAttachment(Handler[UploadAttachmentCmd, StoredObject]):
     doc: DocumentQueryPort[ProjectRead]
-    storage: StoragePort
+    storage: StorageCommandPort
 
     async def __call__(self, args: UploadAttachmentCmd) -> StoredObject:
         await self.doc.get(args.project_id)
         return await self.storage.upload(
-            args.filename,
-            args.data,
-            description=args.description,
-            prefix=f"projects/{args.project_id}",
+            UploadedObject(
+                filename=args.filename,
+                data=args.data,
+                description=args.description,
+                prefix=f"projects/{args.project_id}",
+            )
         )
 ```
 
-Operations: `upload`, `download`, `delete`, and `list`. The S3 adapter generates collision-resistant object keys and detects content type.
+Storage is CQRS-split: `upload` / `delete` live on `StorageCommandPort` (resolve via `ctx.storage.command(spec)`); `download` / `list` live on `StorageQueryPort` (resolve via `ctx.storage.query(spec)`). The S3 adapter generates collision-resistant object keys and detects content type.
 
 ## Tenant-aware storage
 
@@ -86,7 +90,7 @@ When `tenant_aware=True`, the adapter derives tenant information from `Execution
 
 ## Testing
 
-`MockDepsModule` registers `StorageDepKey` with `MockStorageAdapter`, so unit tests can use `ctx.storage(StorageSpec(...))` without S3 or MinIO.
+`MockDepsModule` registers `StorageQueryDepKey` and `StorageCommandDepKey` with `MockStorageAdapter`, so unit tests can use `ctx.storage.query(StorageSpec(...))` / `ctx.storage.command(StorageSpec(...))` without S3 or MinIO.
 
 ## Anti-patterns
 

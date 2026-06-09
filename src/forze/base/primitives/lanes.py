@@ -4,6 +4,8 @@ from typing import Any, Callable, Coroutine, Hashable, final
 
 import attrs
 
+from forze.base.exceptions import exc
+
 # ----------------------- #
 
 
@@ -131,6 +133,8 @@ class InflightLane[T]:
         self,
         key: tuple[Any, ...],
         factory: Callable[[], Coroutine[Any, Any, T]],
+        *,
+        timeout: float | None = None,
     ) -> T:
         """Await an existing task for *key* or start *factory* and share its result."""
 
@@ -144,7 +148,19 @@ class InflightLane[T]:
             my_task = existing
 
         try:
-            return await my_task
+            if timeout is None:
+                return await my_task
+
+            try:
+                return await asyncio.wait_for(my_task, timeout=timeout)
+
+            except asyncio.TimeoutError as e:
+                async with self._guard:
+                    if self._tasks.get(key) is my_task:
+                        my_task.cancel()
+                        self._tasks.pop(key, None)
+
+                raise exc.internal("InflightLane timed out") from e
 
         finally:
             async with self._guard:
@@ -181,13 +197,14 @@ class CachedInflightLane[K: Hashable, V]:
         inflight_key: tuple[Any, ...],
         lane: CacheLane[K, V],
         factory: Callable[[], Coroutine[Any, Any, V]],
+        timeout: float | None = None,
     ) -> V:
         hit = lane.lookup(cache_key)
 
         if hit is not None:
             return hit
 
-        return await self._inflight.run(inflight_key, factory)
+        return await self._inflight.run(inflight_key, factory, timeout=timeout)
 
     # ....................... #
 
@@ -198,6 +215,7 @@ class CachedInflightLane[K: Hashable, V]:
         inflight_key: tuple[Any, ...],
         lane: CacheLane[K, V],
         factory: Callable[[], Coroutine[Any, Any, V]],
+        timeout: float | None = None,
     ) -> V:
         hit = lane.lookup(cache_key)
 
@@ -210,7 +228,11 @@ class CachedInflightLane[K: Hashable, V]:
 
             return value
 
-        return await self._inflight.run(inflight_key, _load_and_store)
+        return await self._inflight.run(
+            inflight_key,
+            _load_and_store,
+            timeout=timeout,
+        )
 
     # ....................... #
 

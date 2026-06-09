@@ -41,6 +41,74 @@ def _jsonify_value(v: Any) -> Any:
 # ....................... #
 
 
+def keyset_canonical_value(v: Any) -> Any:
+    """Normalize a sort-key value to the wire form used in cursor tokens."""
+
+    return _jsonify_value(v)
+
+
+# ....................... #
+
+
+def compare_keyset_sort_values(left: Any, right: Any) -> int:
+    """Compare two sort-key values (-1, 0, 1) using cursor wire canonicalization."""
+
+    lc = keyset_canonical_value(left)
+    rc = keyset_canonical_value(right)
+
+    if lc == rc:
+        return 0
+
+    if lc is None:
+        return -1
+
+    if rc is None:
+        return 1
+
+    if lc < rc:
+        return -1
+
+    return 1
+
+
+# ....................... #
+
+
+def row_passes_keyset_seek(
+    row: dict[str, Any],
+    *,
+    sort_keys: Sequence[str],
+    directions: Sequence[str],
+    cursor_values: Sequence[Any],
+    after: bool,
+) -> bool:
+    """Return whether *row* is strictly after/before the cursor tuple (composite keyset)."""
+
+    for key, direction, cursor_value in zip(
+        sort_keys,
+        directions,
+        cursor_values,
+        strict=True,
+    ):
+        cmp = compare_keyset_sort_values(
+            row_value_for_sort_key(row, key),
+            cursor_value,
+        )
+
+        if cmp == 0:
+            continue
+
+        if direction == "asc":
+            return cmp > 0 if after else cmp < 0
+
+        return cmp < 0 if after else cmp > 0
+
+    return False
+
+
+# ....................... #
+
+
 def _parse_value(v: Any) -> Any:
     if v is None:
         return None
@@ -138,3 +206,83 @@ def decode_keyset_v1(token: str) -> tuple[list[str], list[str], list[Any]]:
     vals = [_parse_value(v) for v in x]  # type: ignore[arg-type]
 
     return keys, dirs, vals
+
+
+# ....................... #
+
+
+def validate_cursor_token(
+    token: str,
+    *,
+    sort_keys: Sequence[str],
+    directions: Sequence[str],
+) -> list[Any]:
+    """Decode a keyset *token* and verify it matches the active sort; return its values.
+
+    Raises :func:`~forze.base.exceptions.exc.internal` when the token's keys or
+    directions do not align with the current search sort (a stale or mismatched
+    cursor). Shared by every keyset-cursor search path so the validation is identical.
+    """
+
+    tk, td, tv = decode_keyset_v1(token)
+
+    if list(tk) != list(sort_keys) or len(td) != len(directions):
+        raise exc.internal("Cursor does not match current search sort")
+
+    for i, di in enumerate(directions):
+        if (td[i] or "").lower() != di:
+            raise exc.internal("Cursor does not match current search sort")
+
+    return list(tv)
+
+
+# ....................... #
+
+
+def keyset_page_bounds(
+    raw_rows: list[dict[str, Any]],
+    limit: int,
+    *,
+    sort_keys: Sequence[str],
+    directions: Sequence[str],
+    use_after: bool,
+    use_before: bool,
+) -> tuple[list[dict[str, Any]], bool, str | None, str | None]:
+    """Trim an over-fetched keyset result to one page and compute next/prev cursors.
+
+    *raw_rows* holds up to ``limit + 1`` rows — the extra row signals more pages. For a
+    ``before`` page the rows are reversed back into ascending order first. Returns
+    ``(rows, has_more, next_cursor, prev_cursor)``. Shared by the keyset-cursor search
+    paths so the page-boundary and token-emission logic is single-sourced.
+    """
+
+    if use_before:
+        raw_rows = list(reversed(raw_rows))
+
+    has_more = len(raw_rows) > limit
+    rows = raw_rows[:limit]
+
+    def _row_token_vals(row: dict[str, Any]) -> list[Any]:
+        return [row_value_for_sort_key(row, k) for k in sort_keys]
+
+    nxt = (
+        encode_keyset_v1(
+            sort_keys=sort_keys,
+            directions=directions,
+            values=_row_token_vals(rows[-1]),
+        )
+        if has_more and rows
+        else None
+    )
+
+    prv = (
+        encode_keyset_v1(
+            sort_keys=sort_keys,
+            directions=directions,
+            values=_row_token_vals(rows[0]),
+        )
+        if rows and (use_after or (use_before and has_more))
+        else None
+    )
+
+    return rows, has_more, nxt, prv

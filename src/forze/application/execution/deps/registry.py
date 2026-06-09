@@ -22,6 +22,8 @@ from .store import ProviderStore
 
 _TRUTHY_ENV = frozenset({"1", "true", "yes"})
 
+# ....................... #
+
 
 def _trace_from_env() -> bool:
     value = os.environ.get("FORZE_DEPS_TRACE", "").strip().lower()
@@ -29,10 +31,16 @@ def _trace_from_env() -> bool:
     return value in _TRUTHY_ENV
 
 
+# ....................... #
+
+
 def _runtime_trace_from_env() -> bool:
     value = os.environ.get("FORZE_RUNTIME_TRACE", "").strip().lower()
 
     return value in _TRUTHY_ENV
+
+
+# ....................... #
 
 
 def _resolve_resolution_tracer(
@@ -46,6 +54,9 @@ def _resolve_resolution_tracer(
         return resolution_tracer_from_flag(freeze_kw)
 
     return resolution_tracer_from_flag(_trace_from_env())
+
+
+# ....................... #
 
 
 def _resolve_runtime_tracer(

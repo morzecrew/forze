@@ -1,9 +1,10 @@
 """Optional recorder for runtime port and transaction events."""
 
-from contextvars import ContextVar
 from typing import Protocol, final, runtime_checkable
 
 import attrs
+
+from forze.base.primitives import ContextVarTrace
 
 from ..tracing import RuntimeTrace
 
@@ -89,8 +90,8 @@ NOOP_RUNTIME_TRACER = NoopRuntimeTracer()
 class RecordingRuntimeTracer:
     """Per-:class:`~forze.application.execution.deps.container.Deps` runtime event recorder."""
 
-    _trace: ContextVar[RuntimeTrace | None] = attrs.field(
-        factory=lambda: ContextVar("deps_runtime_trace", default=None),
+    _trace: ContextVarTrace[RuntimeTrace] = attrs.field(
+        factory=lambda: ContextVarTrace(RuntimeTrace, "deps_runtime_trace"),
         init=False,
         repr=False,
         eq=False,
@@ -106,19 +107,7 @@ class RecordingRuntimeTracer:
     # ....................... #
 
     def init_task(self) -> None:
-        if self._trace.get() is None:
-            self._trace.set(RuntimeTrace())
-
-    # ....................... #
-
-    def _trace_get_or_create(self) -> RuntimeTrace:
-        trace = self._trace.get()
-
-        if trace is None:
-            trace = RuntimeTrace()
-            self._trace.set(trace)
-
-        return trace
+        self._trace.init_task()
 
     # ....................... #
 
@@ -133,7 +122,7 @@ class RecordingRuntimeTracer:
         tx_depth: int = 0,
         tx_route: str | None = None,
     ) -> None:
-        self._trace_get_or_create().next_event(
+        self._trace.get_or_create().next_event(
             domain=domain,
             op=op,
             surface=surface,
@@ -146,7 +135,7 @@ class RecordingRuntimeTracer:
     # ....................... #
 
     def snapshot(self) -> RuntimeTrace | None:
-        return self._trace.get()
+        return self._trace.snapshot()
 
 
 # ....................... #

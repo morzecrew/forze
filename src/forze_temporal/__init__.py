@@ -20,6 +20,12 @@ from .kernel.client import (
     TemporalClientPort,
     TemporalConfig,
 )
+from .sandbox import (
+    PASSTHROUGH_MODULES,
+    default_sandbox_restrictions,
+    sandboxed_workflow_runner,
+)
+from .saga import TemporalSaga
 
 # ----------------------- #
 
@@ -34,4 +40,8 @@ __all__ = [
     "temporal_lifecycle_step",
     "routed_temporal_lifecycle_step",
     "ExecutionContextInterceptor",
+    "TemporalSaga",
+    "PASSTHROUGH_MODULES",
+    "default_sandbox_restrictions",
+    "sandboxed_workflow_runner",
 ]

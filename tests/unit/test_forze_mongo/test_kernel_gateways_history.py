@@ -9,10 +9,14 @@ import pytest
 from forze.domain.models import Document
 from forze_mongo.kernel.gateways import MongoHistoryGateway
 from forze_mongo.kernel.client import MongoClient
+from tests.unit._gateway_codec_helpers import history_codecs_for
 
 
 class MyDoc(Document):
     name: str
+
+
+_DOMAIN_CODEC, _HISTORY_CODEC = history_codecs_for(MyDoc)
 
 
 def _domain_doc(pk: UUID, *, rev: int = 1, name: str = "item") -> MyDoc:
@@ -36,10 +40,12 @@ class TestMongoHistoryGateway:
     async def test_write_many_persists_history_records(self) -> None:
         client = _build_client()
         gw = MongoHistoryGateway(
-            model_type=MyDoc,
             relation=(_DB, "docs_history"),
             target_relation=(_DB, "docs"),
             client=client,
+            model_type=MyDoc,
+            codec=_DOMAIN_CODEC,
+            history_codec=_HISTORY_CODEC,
         )
         doc = _domain_doc(uuid4(), rev=2, name="beta")
 
@@ -71,10 +77,12 @@ class TestMongoHistoryGateway:
             }
         ]
         gw = MongoHistoryGateway(
-            model_type=MyDoc,
             relation=(_DB, "docs_history"),
             target_relation=(_DB, "docs"),
             client=client,
+            model_type=MyDoc,
+            codec=_DOMAIN_CODEC,
+            history_codec=_HISTORY_CODEC,
         )
 
         result = await gw.read_many([pk], [1])

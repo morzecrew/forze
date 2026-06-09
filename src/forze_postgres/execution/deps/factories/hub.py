@@ -8,7 +8,7 @@ from forze.application.contracts.search import HubSearchQueryDepPort
 
 from ....adapters import PostgresHubSearchAdapter
 from ..keys import PostgresClientDepKey, PostgresIntrospectorDepKey
-from ._snapshot import snapshot_coord
+from ._snapshot import result_snapshot
 from .hub_builder import build_hub_leg_runtimes
 
 if TYPE_CHECKING:
@@ -44,13 +44,19 @@ class ConfigurablePostgresHubSearch(HubSearchQueryDepPort):
             vector_embedders=vector_embedders,
             combine=self.config.combine_strategy,
             score_merge=self.config.merge_strategy,
+            per_leg_limit=self.config.per_leg_limit,
+            combo_limit=self.config.combo_limit,
+            execution=self.config.execution,
+            parallel_hub_cte_materialized=self.config.parallel_hub_cte_materialized,
             relation=self.config.hub,
             client=context.deps.provide(PostgresClientDepKey),
+            codec=spec.resolved_read_codec,
             model_type=spec.model_type,
             introspector=context.deps.provide(PostgresIntrospectorDepKey),
             tenant_provider=context.inv_ctx.get_tenant,
             tenant_aware=self.config.tenant_aware,
             filter_table_alias="h",
             nested_field_hints=self.config.nested_field_hints,
-            snapshot_coord=snapshot_coord(context, spec.snapshot),
+            result_snapshot=result_snapshot(context, spec.snapshot),
+            read_validation=self.config.read_validation,
         )

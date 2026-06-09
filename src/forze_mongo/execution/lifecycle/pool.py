@@ -1,14 +1,18 @@
 """Mongo client pool lifecycle hooks and step factories."""
 
-from typing import cast, final
+from typing import Any, cast, final
 
 import attrs
 from pydantic import SecretStr
 
+from forze.application.contracts.deps import DepKey
 from forze.application.contracts.execution import LifecycleHook, LifecycleStep
 from forze.application.execution.context import ExecutionContext
-from forze.application.execution.lifecycle.builtin import routed_client_lifecycle_step
-from forze.base.serialization import pydantic_secret_converter
+from forze.application.execution.lifecycle.builtin import (
+    ClientShutdownHook,
+    routed_client_lifecycle_step,
+)
+from forze.base.serialization.pydantic import pydantic_secret_converter
 
 from ...kernel.client import MongoClient, MongoConfig, RoutedMongoClient
 from ..deps import MongoClientDepKey
@@ -46,12 +50,10 @@ class MongoStartupHook(LifecycleHook):
 
 @final
 @attrs.define(slots=True, frozen=True, kw_only=True)
-class MongoShutdownHook(LifecycleHook):
+class MongoShutdownHook(ClientShutdownHook):
     """Shutdown hook that closes the Mongo client."""
 
-    async def __call__(self, ctx: ExecutionContext) -> None:
-        mongo_client = ctx.deps.provide(MongoClientDepKey)
-        await mongo_client.close()
+    dep_key: DepKey[Any] = attrs.field(default=MongoClientDepKey, init=False)
 
 
 # ....................... #

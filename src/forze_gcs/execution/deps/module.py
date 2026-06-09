@@ -4,15 +4,20 @@ from typing import Mapping, final
 
 import attrs
 
-from forze.application.contracts.storage import StorageDepKey
-from forze.application.contracts.tenancy import warn_dynamic_relation_with_tenant_aware
+from forze.application.contracts.storage import (
+    StorageCommandDepKey,
+    StorageQueryDepKey,
+)
+from forze.application.contracts.tenancy import warn_integration_routes
 from forze.application.execution import Deps, DepsModule
+from forze.application.execution.deps.builders import merge_deps, routed_from_mapping
 from forze.base.primitives import StrKey
 
 from ...kernel._logger import logger
 from ...kernel.client import GCSClientPort
+from ._warnings import GCS_STORAGE_WARNING
 from .configs import GCSStorageConfig
-from .factories import ConfigurableGCSStorage
+from .factories import ConfigurableGCSStorageCommand, ConfigurableGCSStorageQuery
 from .keys import GCSClientDepKey
 
 # ----------------------- #
@@ -32,33 +37,23 @@ class GCSDepsModule(DepsModule):
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
-        if self.storages:
-            for name, cfg in self.storages.items():
-                warn_dynamic_relation_with_tenant_aware(
-                    integration="GCS",
-                    route_name=str(name),
-                    kind="storage",
-                    tenant_aware=cfg.tenant_aware,
-                    named_fields=[("bucket", cfg.bucket)],
-                    log_warning=logger.warning,
-                )
+        warn_integration_routes(
+            integration="GCS",
+            routes=self.storages,
+            warning=GCS_STORAGE_WARNING,
+            log_warning=logger.warning,
+        )
 
     # ....................... #
 
     def __call__(self) -> Deps:
-        plain_deps = Deps.plain({GCSClientDepKey: self.client})
-        storage_deps = Deps()
-
-        if self.storages:
-            storage_deps = storage_deps.merge(
-                Deps.routed(
-                    {
-                        StorageDepKey: {
-                            name: ConfigurableGCSStorage(config=config)
-                            for name, config in self.storages.items()
-                        }
-                    }
-                )
-            )
-
-        return plain_deps.merge(storage_deps)
+        return merge_deps(
+            routed_from_mapping(
+                self.storages,
+                bindings=[
+                    (StorageQueryDepKey, ConfigurableGCSStorageQuery),
+                    (StorageCommandDepKey, ConfigurableGCSStorageCommand),
+                ],
+            ),
+            plain={GCSClientDepKey: self.client},
+        )

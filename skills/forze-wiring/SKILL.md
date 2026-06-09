@@ -1,7 +1,7 @@
 ---
 name: forze-wiring
 description: >-
-  Wires Forze ExecutionRuntime, DepsPlan, lifecycle, built-in deps modules,
+  Wires Forze ExecutionRuntime, DepsRegistry, lifecycle, built-in deps modules,
   document/search composition, operation pipeline stages, and interface entry
   points. Use when bootstrapping an app or composing runtime, lifecycle, and
   operation registries.
@@ -9,22 +9,22 @@ description: >-
 
 # Forze Wiring
 
-Use when setting up the Forze runtime, dependency plan, lifecycle, operation composition, and interface layer. For logical spec names, routes, and `StrEnum` wiring, see [`forze-specs-infrastructure`](../forze-specs-infrastructure/SKILL.md). For dependency resolution, see [`forze-deps-consumption`](../forze-deps-consumption/SKILL.md); for private integrations, see [`forze-custom-deps`](../forze-custom-deps/SKILL.md). For HTTP details, see [`forze-fastapi-interface`](../forze-fastapi-interface/SKILL.md). For day-to-day handler code, see [`forze-framework-usage`](../forze-framework-usage/SKILL.md).
+Use when setting up the Forze runtime, dependency registry, lifecycle, operation composition, and interface layer. For logical spec names, routes, and `StrEnum` wiring, see [`forze-specs-infrastructure`](../forze-specs-infrastructure/SKILL.md). For dependency resolution, see [`forze-deps-consumption`](../forze-deps-consumption/SKILL.md); for private integrations, see [`forze-custom-deps`](../forze-custom-deps/SKILL.md). For HTTP details, see [`forze-fastapi-interface`](../forze-fastapi-interface/SKILL.md). For day-to-day handler code, see [`forze-framework-usage`](../forze-framework-usage/SKILL.md).
 
-For which plan enables deps, lifecycle hooks, or operation stages, see [Three execution plans](https://morzecrew.github.io/forze/docs/reference/execution/#three-execution-plans) (`DepsPlan`, `LifecyclePlan`, `OperationRegistry`).
+For which plan enables deps, lifecycle hooks, or operation stages, see [Three execution plans](https://morzecrew.github.io/forze/docs/reference/execution/#three-execution-plans) (`DepsRegistry`, `LifecyclePlan`, `OperationRegistry`).
 
 ## Runtime setup
 
-Logical **specs** (`DocumentSpec`, `SearchSpec`, `CacheSpec`, …) declare model types and `name` only—no DSNs, table names, collection paths, or index DDL. **Deps modules** (`PostgresDepsModule`, `MongoDepsModule`, `RedisDepsModule`, …) map that same `name` to physical configs (read/write relations, Redis namespaces, `PostgresSearchConfig`, …). **`DepsPlan.from_modules(...)`** merges those modules so `ExecutionContext` resolves factories by route `spec.name` (for example `DocumentQueryDepKey` / `DocumentCommandDepKey`). See [Specs and wiring](https://morzecrew.github.io/forze/docs/concepts/specs-and-wiring/).
+Logical **specs** (`DocumentSpec`, `SearchSpec`, `CacheSpec`, …) declare model types and `name` only—no DSNs, table names, collection paths, or index DDL. **Deps modules** (`PostgresDepsModule`, `MongoDepsModule`, `RedisDepsModule`, …) map that same `name` to physical configs (read/write relations, Redis namespaces, `PostgresSearchConfig`, …). **`DepsRegistry.from_modules(...)`** merges those modules so `ExecutionContext` resolves factories by route `spec.name` (for example `DocumentQueryDepKey` / `DocumentCommandDepKey`). See [Specs and wiring](https://morzecrew.github.io/forze/docs/concepts/specs-and-wiring/).
 
-### Dependency plan
+### Dependency registry
 
-Pass **`DepsModule` instances** to `DepsPlan.from_modules`. Each module’s `__call__` returns a `Deps` container; the plan merges them (conflicting keys raise `CoreError`).
+Pass **`DepsModule` instances** to `DepsRegistry.from_modules`. Each module’s `__call__` returns a `Deps` container; the plan merges them (conflicting keys raise `CoreException`).
 
 ```python
 from enum import StrEnum
 
-from forze.application.execution import DepsPlan, ExecutionRuntime, LifecyclePlan
+from forze.application.execution import DepsRegistry, ExecutionRuntime, LifecyclePlan
 from forze_postgres import (
     PostgresClient,
     PostgresConfig,
@@ -46,7 +46,7 @@ class TxRoute(StrEnum):
 postgres_client = PostgresClient()
 redis_client = RedisClient()
 
-deps_plan = DepsPlan.from_modules(
+deps_registry = DepsRegistry.from_modules(
     PostgresDepsModule(
         client=postgres_client,
         rw_documents={
@@ -72,7 +72,7 @@ Merge optional integration modules the same way — for example `TenancyDepsModu
 ```python
 from forze_identity.tenancy.execution import TenancyDepsModule
 
-deps_plan = DepsPlan.from_modules(
+deps_registry = DepsRegistry.from_modules(
     PostgresDepsModule(...),
     TenancyDepsModule(tenant_resolver={"main"}),
 )
@@ -80,7 +80,7 @@ deps_plan = DepsPlan.from_modules(
 
 ### Lifecycle plan
 
-Manages startup/shutdown of connection pools. Use `LifecyclePlan.from_modules(...)` for integration modules (for example `PostgresLifecycleModule`) or `from_steps(...)` for individual factories. `freeze()` builds topological waves using `requires` / `provides` / `depends_on` on each `LifecycleStep`; `ExecutionRuntime` freezes and runs the plan per scope. Use `with_concurrent()` when independent steps in the same wave may start in parallel.
+Manages startup/shutdown of connection pools. Use `LifecyclePlan.from_modules(...)` for integration modules (for example `PostgresLifecycleModule`) or `from_steps(...)` for individual factories. Call `freeze()` to build topological waves using `requires` / `provides` / `depends_on` on each `LifecycleStep`, then pass the frozen plan to `ExecutionRuntime`. Use `with_concurrent()` when independent steps in the same wave may start in parallel.
 
 ```python
 from forze_postgres import PostgresLifecycleModule
@@ -102,7 +102,10 @@ lifecycle_plan = LifecyclePlan.from_modules(
 ### Execution runtime
 
 ```python
-runtime = ExecutionRuntime(deps=deps_plan, lifecycle=lifecycle_plan)
+runtime = ExecutionRuntime(
+    deps=deps_registry.freeze(),
+    lifecycle=lifecycle_plan.freeze(),
+)
 ```
 
 Run work inside `runtime.scope()`:
@@ -119,7 +122,7 @@ async with runtime.scope():
 `build_document_registry` registers standard CRUD handlers. **Transactions are not implicit** — bind a transaction route on write operations, then **freeze** before HTTP attach:
 
 ```python
-from forze.application.composition.document import (
+from forze_kits.aggregates.document import (
     DocumentDTOs,
     DocumentKernelOp,
     build_document_registry,
@@ -156,7 +159,7 @@ registry = (
 
 ```python
 from forze.application.contracts.execution import BeforeStep
-from forze.application.composition.document import DocumentKernelOp
+from forze_kits.aggregates.document import DocumentKernelOp
 
 create_op = project_spec.default_namespace.key(DocumentKernelOp.CREATE)
 
@@ -213,21 +216,20 @@ def context_dependency():
     return runtime.get_context()
 ```
 
-### Document endpoints
+### Endpoints
+
+> **Note:** the former `forze_fastapi.endpoints.*` router helpers (`attach_document_endpoints`, `attach_search_endpoints`, `attach_http_endpoint`, …) have been removed. Define your own FastAPI routes that resolve a context with the dependency above, dispatch through your operation registry / facade (see [Search composition](#search-composition)), and return the result. Use `SecurityContextMiddleware` for identity binding and `register_exception_handlers(app)` for error mapping (see [`forze-auth-tenancy-secrets`](../forze-auth-tenancy-secrets/SKILL.md) and [`forze-observability-errors`](../forze-observability-errors/SKILL.md)). A canonical endpoint pattern is being reworked alongside the docs refresh.
 
 ```python
 from fastapi import APIRouter
 
-from forze_fastapi.endpoints.document import attach_document_endpoints
-
 router = APIRouter(prefix="/projects", tags=["projects"])
-attach_document_endpoints(
-    router,
-    document=project_spec,
-    dtos=project_dtos,
-    registry=registry,
-    ctx_dep=context_dependency,
-)
+
+
+@router.get("/{project_id}")
+async def get_project(project_id: UUID, ctx=Depends(context_dependency)):
+    return await ctx.document.query(project_spec).get(project_id)
+
 
 app.include_router(router)
 ```
@@ -254,25 +256,39 @@ app = FastAPI(lifespan=lifespan)
 Inject computed fields (e.g. `number_id`, `creator_id`) before the handler runs:
 
 ```python
-from forze.application.composition.document import build_document_create_mapper
-from forze.application.mapping import CreatorIdStep, NumberIdStep
+from forze_kits.aggregates.document import DocumentMappers, build_document_registry
+from forze_kits.domain.creator_id import CreatorIdMappingStepFactory
+from forze_kits.domain.number_id import NumberIdMappingStepFactory
+from forze_kits.mapping import PydanticPipelineMapperFactory
 
-mapper = (
-    build_document_create_mapper(project_spec, project_dtos)
-    .with_steps(NumberIdStep(), CreatorIdStep())
+create_mapper = PydanticPipelineMapperFactory(
+    in_=CreateProjectRequest,
+    out=CreateProjectCmd,
+    step_factories=(
+        NumberIdMappingStepFactory(spec=project_counter_spec),
+        CreatorIdMappingStepFactory(),  # configured per your identity resolver
+    ),
 )
+
+registry = build_document_registry(
+    project_spec,
+    project_dtos,
+    DocumentMappers(create=create_mapper),
+).freeze()
 ```
+
+See [`forze-domain-aggregates`](../forze-domain-aggregates/SKILL.md) and the mapping reference for step configuration.
 
 ## Testing with Mock
 
 In-memory adapters — no external services:
 
 ```python
-from forze.application.execution import DepsPlan, ExecutionRuntime
+from forze.application.execution import DepsRegistry, ExecutionRuntime
 from forze_mock import MockDepsModule
 
 mock_module = MockDepsModule()
-runtime = ExecutionRuntime(deps=DepsPlan.from_modules(mock_module))
+runtime = ExecutionRuntime(deps=DepsRegistry.from_modules(mock_module).freeze())
 
 async with runtime.scope():
     ctx = runtime.get_context()
@@ -283,8 +299,7 @@ async with runtime.scope():
 ## Search composition
 
 ```python
-from forze.application.composition.search import SearchFacade, build_search_registry
-from forze.application.dto.search import SearchRequestDTO
+from forze_kits.aggregates.search import SearchFacade, SearchRequestDTO, build_search_registry
 
 search_registry = build_search_registry(project_search_spec).freeze()
 
@@ -296,13 +311,32 @@ facade = SearchFacade(
 result = await facade.search(SearchRequestDTO(query="roadmap", limit=20))
 ```
 
+## Transactional notifications
+
+```python
+from forze.application.contracts.outbox import OutboxDestination, OutboxSpec
+from forze_kits.integrations.outbox import outbox_flush_tx_on_success_factory, relay_outbox_to_queue
+from forze_kits.integrations.notify import EmailNotification, NotificationRouter, process_notification_message
+
+events_spec = OutboxSpec(
+    name="events",
+    codec=...,
+    destination=OutboxDestination.queue(route="notifications", channel="notifications"),
+)
+router = NotificationRouter()
+router.register("project.created", lambda e: [EmailNotification(...)])
+# stage in handler; flush via outbox_flush_tx_on_success_factory; relay; worker calls process_notification_message
+```
+
+See [Transactional notifications](https://morzecrew.github.io/forze/docs/recipes/transactional-notifications/).
+
 ## Anti-patterns
 
-1. **Hand-building `Deps` for production** — prefer `DepsPlan.from_modules` and integration modules.
+1. **Hand-building `Deps` for production** — prefer `DepsRegistry.from_modules` and integration modules.
 2. **Skipping lifecycle** — real adapters need pools started/stopped.
 3. **`get_context()` outside `runtime.scope()`** — raises `RuntimeError`.
 4. **Missing `ctx_dep` on FastAPI routers** — each request needs a context from the active scope.
-5. **Attaching HTTP routes without `.freeze()`** — call `.freeze()` after `bind_tx().set_route(...).finish(...)`.
+5. **Attaching HTTP routes without `.freeze()`** — call `.freeze()` after `bind_tx().set_route(...).finish(...)` on operation registries, and on deps/lifecycle plans before `ExecutionRuntime`.
 6. **Duplicating literal route strings** — use shared `StrEnum` values for spec names and transaction routes.
 
 ## Reference

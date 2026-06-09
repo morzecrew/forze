@@ -54,7 +54,7 @@ Specifications are the bridge between your domain models and infrastructure adap
 
 ### Helper methods
 
-- `supports_soft_delete()` — `True` when `write["domain"]` subclasses `forze_patterns.soft_deletion.SoftDeletionMixin`
+- `supports_soft_delete()` — `True` when `write["domain"]` subclasses `forze_kits.domain.soft_deletion.SoftDeletionMixin`
 - `supports_update()` — `True` when `update_cmd` has writable fields
 
 Physical storage (Postgres tables, Mongo collections) is **not** on the spec — configure `PostgresDocumentConfig` / `MongoDocumentConfig` under the same `name`.
@@ -107,25 +107,25 @@ Resolved with `ctx.counter(tickets)`.
 
 ### QueueSpec, PubSubSpec, StreamSpec
 
-Each subclasses `BaseSpec` with a `name` and a `codec` (`RecordMappingCodec`) for payloads.
+Each subclasses `BaseSpec` with a `name` and a `codec` (`ModelCodec`) for payloads.
 
     :::python
     from forze.application.contracts.queue import QueueSpec
     from forze.application.contracts.pubsub import PubSubSpec
     from forze.application.contracts.stream import StreamSpec
-    from forze.base.serialization import PydanticRecordMappingCodec
+    from forze.base.serialization import default_model_codec
 
     order_queue = QueueSpec(
         name="orders",
-        codec=PydanticRecordMappingCodec(OrderPayload),
+        codec=default_model_codec(OrderPayload),
     )
     events_pubsub = PubSubSpec(
         name="events",
-        codec=PydanticRecordMappingCodec(EventPayload),
+        codec=default_model_codec(EventPayload),
     )
     audit_stream = StreamSpec(
         name="audit",
-        codec=PydanticRecordMappingCodec(AuditEntry),
+        codec=default_model_codec(AuditEntry),
     )
 
 ### StorageSpec
@@ -146,6 +146,7 @@ Use `ExecutionContext` helpers — names on specs must match routed infra config
     search_index = ctx.search.command(project_search_spec)  # when SearchCommandDepKey is wired
     cache = ctx.cache(cache_spec)
     counter = ctx.counter(counter_spec)
-    storage = ctx.storage(storage_spec)
+    storage_q = ctx.storage.query(storage_spec)
+    storage_c = ctx.storage.command(storage_spec)
 
 For contracts without a helper, use `ctx.deps.resolve_configurable(ctx, SomeDepKey, spec, route=spec.name)`.

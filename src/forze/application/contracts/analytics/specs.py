@@ -9,6 +9,7 @@ from pydantic import BaseModel
 
 from forze.base.exceptions import exc
 from forze.base.primitives import StrKey
+from forze.base.serialization import ModelCodec, default_model_codec
 
 from ..base import BaseSpec
 
@@ -49,10 +50,47 @@ class AnalyticsSpec(BaseSpec, Generic[R, Ing]):
     ingest: type[Ing] | None = attrs.field(default=None)
     """Optional row model for :class:`~.AnalyticsIngestPort`; ``None`` disables ingest."""
 
+    read_codec: ModelCodec[R, Any] | None = attrs.field(
+        default=None,
+        eq=False,
+        repr=False,
+    )
+    """Read-row codec; defaults to :class:`PydanticModelCodec` for :attr:`read`."""
+
+    ingest_codec: ModelCodec[Ing, Any] | None = attrs.field(
+        default=None,
+        eq=False,
+        repr=False,
+    )
+    """Ingest-row codec when :attr:`ingest` is set."""
+
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
         validate_analytics_spec(self)
+
+    # ....................... #
+
+    @property
+    def resolved_read_codec(self) -> ModelCodec[R, Any]:
+        """Read codec (explicit override or :func:`default_model_codec`)."""
+
+        if self.read_codec is not None:
+            return self.read_codec
+
+        return default_model_codec(self.read)
+
+    @property
+    def resolved_ingest_codec(self) -> ModelCodec[Ing, Any] | None:
+        """Ingest codec when :attr:`ingest` is configured."""
+
+        if self.ingest is None:
+            return None
+
+        if self.ingest_codec is not None:
+            return self.ingest_codec
+
+        return default_model_codec(self.ingest)
 
 
 # ....................... #

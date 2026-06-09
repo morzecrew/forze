@@ -5,45 +5,25 @@ from __future__ import annotations
 from uuid import uuid4
 
 import pytest
-from pydantic import BaseModel
-
 from forze.application.contracts.document import (
     DocumentCommandDepKey,
     DocumentQueryDepKey,
     DocumentSpec,
 )
 from forze.application.execution import Deps, ExecutionContext
-from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
 from forze_mongo.execution.deps import MongoDocumentConfig
 from forze_mongo.execution.deps import ConfigurableMongoDocument
 from forze_mongo.execution.deps.keys import MongoClientDepKey
 from forze_mongo.kernel.client import MongoClient
 from tests.support.execution_context import context_from_deps
-
-
-class Meta(BaseModel):
-    score: int
-    tag: str = ""
-
-
-class RowDoc(Document):
-    title: str
-    meta: Meta
-
-
-class RowCreate(CreateDocumentCmd):
-    title: str
-    meta: Meta
-
-
-class RowUpdate(BaseDTO):
-    title: str | None = None
-    meta: Meta | None = None
-
-
-class RowRead(ReadDocument):
-    title: str
-    meta: Meta
+from tests.support.scenarios.document_nested_filters import (
+    NestedFilterMeta as Meta,
+    NestedFilterRowCreate as RowCreate,
+    NestedFilterRowDoc as RowDoc,
+    NestedFilterRowRead as RowRead,
+    NestedFilterRowUpdate as RowUpdate,
+    expected_scores_ascending,
+)
 
 
 async def _setup(
@@ -86,7 +66,7 @@ async def test_sort_by_dotted_nested_field(mongo_client: MongoClient) -> None:
     rows = __p.hits
     total = __p.count
     assert total == 3
-    assert [r.meta.score for r in rows] == [10, 20, 30]
+    assert [r.meta.score for r in rows] == expected_scores_ascending()
 
 
 @pytest.mark.asyncio

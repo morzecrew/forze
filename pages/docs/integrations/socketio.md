@@ -115,5 +115,5 @@ Mount with `build_socketio_asgi_app(sio, other_asgi_app=...)` when Socket.IO sha
 
 1. **Unfrozen registry** — call `.freeze()` after binding transaction routes and stage hooks.
 2. **Importing adapter code in handlers** — resolve ports from `ExecutionContext`.
-3. **Skipping `context_factory` wiring** — every event needs a request-scoped context with the same `DepsPlan` as HTTP.
+3. **Skipping `context_factory` wiring** — every event needs a request-scoped context with the same `DepsRegistry` as HTTP.
 4. **Duplicate event names per namespace** — `SocketIONamespaceRouter.command` raises on collision.

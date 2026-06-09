@@ -14,7 +14,7 @@ subscriber interested in a topic should see the published event.
 | Returned values | Passed to pub/sub dep factories. |
 | Common implementations | Mock pub/sub adapter, Redis / Valkey pub/sub adapter. |
 | Related dependency keys | `PubSubCommandDepKey`, `PubSubQueryDepKey`. |
-| Minimal example | `events = PubSubSpec(name="events", codec=PydanticRecordMappingCodec(EventPayload))` |
+| Minimal example | `events = PubSubSpec(name="events", codec=default_model_codec(EventPayload))` |
 | Related pages | [Redis / Valkey](../../integrations/redis.md). |
 
 ## `PubSubCommandPort[M]`
@@ -61,11 +61,11 @@ subscriber interested in a topic should see the published event.
 
     :::python
     from forze.application.contracts.pubsub import PubSubCommandDepKey, PubSubSpec
-    from forze.base.serialization import PydanticRecordMappingCodec
+    from forze.base.serialization import default_model_codec
 
     events = PubSubSpec(
         name="events",
-        codec=PydanticRecordMappingCodec(EventPayload),
+        codec=default_model_codec(EventPayload),
     )
     publisher = ctx.deps.resolve_configurable(ctx, PubSubCommandDepKey, events, route=events.name)
     await publisher.publish("projects.created", EventPayload(project_id="p1"))

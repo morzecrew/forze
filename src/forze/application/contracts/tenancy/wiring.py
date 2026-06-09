@@ -1,6 +1,7 @@
 """Shared tenancy wiring validation for integration deps modules."""
 
-from typing import Callable, Literal, Sequence
+from collections.abc import Mapping
+from typing import Any, Callable, Literal, Protocol, Sequence, TypeVar
 
 import attrs
 
@@ -57,6 +58,102 @@ def derive_tenant_isolation_mode(
         return "relation"
 
     return "none"
+
+
+# ....................... #
+
+ConfigT = TypeVar("ConfigT")
+
+# ....................... #
+
+
+@attrs.define(slots=True, frozen=True, kw_only=True)
+class IntegrationRouteWarning[ConfigT]:
+    """Descriptor for batch tenant-aware route warnings in integration deps modules."""
+
+    kind: str
+    """Resource kind for log messages (e.g. ``document``, ``storage``)."""
+
+    tenant_aware: Callable[[ConfigT], bool]
+    """Return whether the route applies row-level tenant filtering."""
+
+    relation_fields: Callable[
+        [ConfigT],
+        Sequence[tuple[str, RelationSpec | None]],
+    ] = lambda _config: ()
+    """Return relation fields to inspect for dynamic resolvers."""
+
+    named_fields: Callable[
+        [ConfigT],
+        Sequence[tuple[str, NamedResourceSpec | None]],
+    ] = lambda _config: ()
+    """Return named resource fields to inspect for dynamic resolvers."""
+
+
+# ....................... #
+
+
+class _NamespacedRouteConfig(Protocol):
+    """Structural config exposing a base namespace and a row-level tenant flag."""
+
+    @property
+    def tenant_aware(self) -> bool: ...
+
+    @property
+    def namespace(self) -> Any:
+        # ``Any`` (not ``NamedResourceSpec``) so attrs ``converter=`` fields, which
+        # type checkers model as an opaque descriptor, still satisfy the protocol.
+        ...
+
+
+# ....................... #
+
+
+def namespace_route_warning[C: _NamespacedRouteConfig](
+    config_type: type[C],
+    *,
+    kind: str,
+) -> IntegrationRouteWarning[C]:
+    """Build a route warning for a namespaced, tenant-aware integration config.
+
+    Shared by namespace-based integrations (Redis, SQS, RabbitMQ); *config_type*
+    only pins the generic config type for the returned descriptor.
+    """
+
+    _ = config_type
+
+    return IntegrationRouteWarning[C](
+        kind=kind,
+        tenant_aware=lambda config: config.tenant_aware,
+        named_fields=lambda config: [("namespace", config.namespace)],
+    )
+
+
+# ....................... #
+
+
+def warn_integration_routes[ConfigT](
+    *,
+    integration: str,
+    routes: Mapping[StrKey, ConfigT] | None,
+    warning: IntegrationRouteWarning[ConfigT],
+    log_warning: Callable[..., None] | None = None,
+) -> None:
+    """Log tenant-aware dynamic resolver warnings for every route in a mapping."""
+
+    if not routes:
+        return
+
+    for name, config in routes.items():
+        warn_dynamic_relation_with_tenant_aware(
+            integration=integration,
+            route_name=str(name),
+            kind=warning.kind,
+            tenant_aware=warning.tenant_aware(config),
+            relation_fields=warning.relation_fields(config),
+            named_fields=warning.named_fields(config),
+            log_warning=log_warning,
+        )
 
 
 # ....................... #

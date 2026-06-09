@@ -1,34 +1,32 @@
 """Tests for forze.application.contracts.idempotency.ports and types."""
 
-from typing import Optional
-
-from forze.application.contracts.idempotency import IdempotencyPort, IdempotencySnapshot
+from forze.application.contracts.idempotency import IdempotencyPort, IdempotencyRecord
 
 
 class _StubIdempotency:
     """Concrete implementation for testing IdempotencyPort."""
 
     def __init__(self) -> None:
-        self._store: dict[str, IdempotencySnapshot] = {}
+        self._store: dict[str, IdempotencyRecord] = {}
 
     async def begin(
         self,
         op: str,
-        key: Optional[str],
+        key: str | None,
         payload_hash: str,
-    ) -> Optional[IdempotencySnapshot]:
+    ) -> IdempotencyRecord | None:
         k = f"{op}:{key}:{payload_hash}"
         return self._store.get(k)
 
     async def commit(
         self,
         op: str,
-        key: Optional[str],
+        key: str | None,
         payload_hash: str,
-        snapshot: IdempotencySnapshot,
+        record: IdempotencyRecord,
     ) -> None:
         k = f"{op}:{key}:{payload_hash}"
-        self._store[k] = snapshot
+        self._store[k] = record
 
 
 class TestIdempotencyPort:
@@ -41,21 +39,18 @@ class TestIdempotencyPort:
         result = await stub.begin("create", "k1", "hash1")
         assert result is None
 
-    async def test_commit_and_begin_returns_snapshot(self) -> None:
+    async def test_commit_and_begin_returns_record(self) -> None:
         stub = _StubIdempotency()
-        snap = IdempotencySnapshot(
-            code=200, content_type="application/json", body=b'{"ok":1}'
-        )
-        await stub.commit("create", "k1", "hash1", snap)
+        record = IdempotencyRecord(result=b'{"ok":1}')
+        await stub.commit("create", "k1", "hash1", record)
         result = await stub.begin("create", "k1", "hash1")
         assert result is not None
-        assert result.code == 200
-        assert result.body == b'{"ok":1}'
+        assert result.result == b'{"ok":1}'
 
     async def test_different_keys_independent(self) -> None:
         stub = _StubIdempotency()
-        snap = IdempotencySnapshot(code=201, content_type="text/plain", body=b"ok")
-        await stub.commit("create", "k1", "h1", snap)
+        record = IdempotencyRecord(result=b"ok")
+        await stub.commit("create", "k1", "h1", record)
         assert await stub.begin("create", "k2", "h1") is None
         assert await stub.begin("create", "k1", "h2") is None
 
@@ -66,11 +61,7 @@ class TestIdempotencyPort:
         assert not isinstance(Bad(), IdempotencyPort)
 
 
-class TestIdempotencySnapshot:
-    def test_create_snapshot(self) -> None:
-        snap = IdempotencySnapshot(
-            code=200, content_type="application/json", body=b"{}"
-        )
-        assert snap.code == 200
-        assert snap.content_type == "application/json"
-        assert snap.body == b"{}"
+class TestIdempotencyRecord:
+    def test_create_record(self) -> None:
+        record = IdempotencyRecord(result=b"{}")
+        assert record.result == b"{}"

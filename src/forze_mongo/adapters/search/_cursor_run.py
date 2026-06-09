@@ -156,6 +156,7 @@ async def execute_mongo_ranked_cursor_search[M: BaseModel](
         return_type=return_type,
         return_fields=return_fields,
         model_type=gw.model_type,
+        codec=gw.spec.resolved_read_codec,
     )
 
     return CursorPage(

@@ -6,7 +6,7 @@ from uuid import UUID
 
 import pytest
 
-from forze.application.contracts.idempotency import IdempotencySnapshot
+from forze.application.contracts.idempotency import IdempotencyRecord
 from forze.application.contracts.tenancy import TenantIdentity
 from forze.base.exceptions import CoreException
 from forze_redis.adapters.codecs import RedisKeyCodec
@@ -120,9 +120,7 @@ async def test_commit_success_with_tenant(
 ) -> None:
     done_meta = '{"st":"D","ph":"hash123","code":200,"ct":"application/json"}'
     mock_redis_client.get.return_value = done_meta
-    snapshot = IdempotencySnapshot(
-        code=200, content_type="application/json", body=b"test-body"
-    )
+    snapshot = IdempotencyRecord(result=b"test-body")
 
     await adapter_with_tenant.commit("op", "test-key", "hash123", snapshot)
 
@@ -137,9 +135,7 @@ async def test_commit_success_with_tenant(
 async def test_commit_no_key(
     adapter_with_tenant: RedisIdempotencyAdapter, mock_redis_client: MagicMock
 ) -> None:
-    snapshot = IdempotencySnapshot(
-        code=200, content_type="application/json", body=b"test-body"
-    )
+    snapshot = IdempotencyRecord(result=b"test-body")
     await adapter_with_tenant.commit("op", None, "hash123", snapshot)
     mock_redis_client.set.assert_not_called()
 
@@ -150,9 +146,7 @@ async def test_commit_failed_missing_or_expired(
     mock_redis_client: MagicMock,
 ) -> None:
     mock_redis_client.get.return_value = None
-    snapshot = IdempotencySnapshot(
-        code=200, content_type="application/json", body=b"test-body"
-    )
+    snapshot = IdempotencyRecord(result=b"test-body")
 
     with pytest.raises(CoreException, match="Idempotency commit failed"):
         await adapter_with_tenant.commit("op", "test-key", "hash123", snapshot)

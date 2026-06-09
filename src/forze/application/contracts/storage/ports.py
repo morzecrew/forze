@@ -1,4 +1,4 @@
-"""Storage port and object metadata TypedDicts."""
+"""Storage query and command ports for object storage providers."""
 
 from typing import Awaitable, Protocol, runtime_checkable
 
@@ -8,22 +8,11 @@ from .value_objects import DownloadedObject, StoredObject, UploadedObject
 
 
 @runtime_checkable
-class StoragePort(Protocol):
-    """Abstraction over object storage providers (e.g. S3-compatible services)."""
-
-    def upload(self, obj: UploadedObject) -> Awaitable[StoredObject]:
-        """Upload an object and return its stored metadata.
-
-        :param obj: Uploaded object.
-        """
-        ...  # pragma: no cover
+class StorageQueryPort(Protocol):
+    """Read-only operations over object storage providers (e.g. S3-compatible services)."""
 
     def download(self, key: str) -> Awaitable[DownloadedObject]:
         """Download previously stored object data by key."""
-        ...  # pragma: no cover
-
-    def delete(self, key: str) -> Awaitable[None]:
-        """Delete an object identified by ``key``."""
         ...  # pragma: no cover
 
     def list(
@@ -40,4 +29,23 @@ class StoragePort(Protocol):
         :param prefix: Optional prefix filter.
         :returns: A pair of results and the total count.
         """
+        ...  # pragma: no cover
+
+
+# ....................... #
+
+
+@runtime_checkable
+class StorageCommandPort(Protocol):
+    """Write operations over object storage providers (e.g. S3-compatible services)."""
+
+    def upload(self, obj: UploadedObject) -> Awaitable[StoredObject]:
+        """Upload an object and return its stored metadata.
+
+        :param obj: Uploaded object.
+        """
+        ...  # pragma: no cover
+
+    def delete(self, key: str) -> Awaitable[None]:
+        """Delete an object identified by ``key``."""
         ...  # pragma: no cover

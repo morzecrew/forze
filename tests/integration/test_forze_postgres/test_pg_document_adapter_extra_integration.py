@@ -21,7 +21,7 @@ from forze.application.contracts.transaction.deps import TransactionManagerDepKe
 from forze.application.execution import Deps, ExecutionContext
 from forze.domain.constants import ID_FIELD
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
-from forze_patterns.soft_deletion.models import (
+from forze_kits.domain.soft_deletion.models import (
     DocWithSoftDeletion,
     UpdateCmdWithSoftDeletion,
 )
@@ -206,7 +206,7 @@ async def test_pg_adapter_cursor_prev_next_desc_before_and_projection(
         UUID("20000000-0000-0000-0000-000000000004"),
     ]
     for u in ids:
-        await cmd.create(_CxCreate(id=u, sku=str(u)[:8]))
+        await cmd.create(_CxCreate(sku=str(u)[:8]), id=u)
 
     p1 = await q.find_cursor(None, cursor={"limit": 2}, sorts=None)
     assert p1.prev_cursor is None
@@ -391,9 +391,10 @@ async def test_pg_adapter_mutation_branches_and_empty_batches(
     assert await cmd.kill_many([]) is None
 
     base = await cmd.create(_CxCreate(sku="base"))
-    await cmd.ensure(_CxCreate(id=base.id, sku="base"), return_new=False)
+    await cmd.ensure(base.id, _CxCreate(sku="base"), return_new=False)
     await cmd.upsert(
-        _CxCreate(id=base.id, sku="ignored"),
+        base.id,
+        _CxCreate(sku="ignored"),
         _CxUpdate(sku="upserted"),
         return_new=False,
     )
@@ -630,7 +631,7 @@ async def test_pg_adapter_create_return_new_false(
     cmd = ctx.document.command(spec)
     q = ctx.document.query(spec)
     uid = uuid4()
-    out = await cmd.create(_CxCreate(id=uid, sku="no-ret"), return_new=False)
+    out = await cmd.create(_CxCreate(sku="no-ret"), id=uid, return_new=False)
     assert out is None
     loaded = await q.get(uid)
     assert loaded.sku == "no-ret"

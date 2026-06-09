@@ -6,7 +6,6 @@ require_firestore()
 
 # ....................... #
 
-from functools import cached_property
 from typing import Any, Sequence
 from uuid import UUID
 
@@ -22,10 +21,14 @@ from forze.application.contracts.querying import (
     QuerySortExpression,
 )
 from forze.application.contracts.tenancy import TENANT_ID_FIELD
-from forze.application.contracts.tenancy.mixins import TenancyMixin
+from forze.application.integrations.persistence import (
+    FilterParserMixin,
+    ModelCodecGatewayMixin,
+    TenantResolvedRelationMixin,
+)
 from forze.base.exceptions import exc
-from forze.base.primitives import JsonDict
-from forze.base.serialization import pydantic_field_names
+from forze.base.primitives import JsonDict, OnceCell
+from forze.base.serialization import ModelCodec
 from forze.domain.constants import ID_FIELD
 
 from ..client import FirestoreClientPort
@@ -36,17 +39,24 @@ from ..relation import RelationSpec, is_static_relation, resolve_firestore_colle
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class FirestoreGateway[M: BaseModel](TenancyMixin):
+class FirestoreGateway[M: BaseModel](
+    ModelCodecGatewayMixin[M],
+    FilterParserMixin,
+    TenantResolvedRelationMixin,
+):
     """Base gateway for Firestore document access."""
 
     model_type: type[M]
     """Pydantic model used for deserialization."""
 
+    codec: ModelCodec[M, Any] = attrs.field(kw_only=True, eq=False, repr=False)
+    """Row decode/encode codec."""
+
     relation: RelationSpec
     """Static ``(database, collection)`` or tenant-scoped resolver."""
 
-    _relation_resolved: tuple[str, str] | None = attrs.field(
-        default=None,
+    _relation_cell: OnceCell[tuple[str, str]] = attrs.field(
+        factory=OnceCell,
         init=False,
         eq=False,
         repr=False,
@@ -55,57 +65,29 @@ class FirestoreGateway[M: BaseModel](TenancyMixin):
     client: FirestoreClientPort
     renderer: FirestoreQueryRenderer = attrs.field(factory=FirestoreQueryRenderer)
     filter_limits: QueryFilterLimits | None = attrs.field(default=None)
-    filter_parser: QueryFilterExpressionParser = attrs.field(init=False)
+    filter_parser: QueryFilterExpressionParser = attrs.field(
+        default=attrs.Factory(lambda self: self.build_filter_parser(), takes_self=True),
+        init=False,
+    )
 
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
-        limits = (
-            self.filter_limits
-            if self.filter_limits is not None
-            else QueryFilterLimits()
-        )
-        object.__setattr__(
-            self,
-            "filter_parser",
-            QueryFilterExpressionParser(limits=limits),
-        )
-
-    # ....................... #
-
-    @cached_property
-    def read_fields(self) -> frozenset[str]:
-        return pydantic_field_names(self.model_type, include_computed=False)
-
-    # ....................... #
-
-    def _tenant_id_for_resolve(self) -> UUID | None:
-        if self.tenant_provider is None:
-            return None
-
-        tenant = self.tenant_provider()
-
-        if tenant is None:
-            if self.tenant_aware:
-                raise exc.internal("Tenant ID is required for the gateway")
-
-            return None
-
-        return tenant.tenant_id
+        """Post-init hook for subclasses; ``filter_parser`` is built via its factory."""
 
     # ....................... #
 
     async def _resolved_collection(self) -> tuple[str, str]:
-        if self._relation_resolved is not None:
-            return self._relation_resolved
+        async def _factory() -> tuple[str, str]:
+            return await resolve_firestore_collection(
+                self.relation,
+                self._tenant_id_for_resolve(),
+            )
 
-        resolved = await resolve_firestore_collection(
-            self.relation,
-            self._tenant_id_for_resolve(),
+        return await self._relation_cell.resolve(
+            _factory,
+            cache=is_static_relation(self.relation),
         )
-        object.__setattr__(self, "_relation_resolved", resolved)
-
-        return resolved
 
     # ....................... #
 
@@ -116,8 +98,10 @@ class FirestoreGateway[M: BaseModel](TenancyMixin):
         if is_static_relation(self.relation):
             return self.relation[0]
 
-        if self._relation_resolved is not None:
-            return self._relation_resolved[0]
+        resolved = self._relation_cell.peek()
+
+        if resolved is not None:
+            return resolved[0]
 
         raise exc.internal(
             "database is only available for static relations; await _resolved_collection()",
@@ -132,8 +116,10 @@ class FirestoreGateway[M: BaseModel](TenancyMixin):
         if is_static_relation(self.relation):
             return self.relation[1]
 
-        if self._relation_resolved is not None:
-            return self._relation_resolved[1]
+        resolved = self._relation_cell.peek()
+
+        if resolved is not None:
+            return resolved[1]
 
         raise exc.internal(
             "collection is only available for static relations; await _resolved_collection()",
@@ -194,7 +180,7 @@ class FirestoreGateway[M: BaseModel](TenancyMixin):
         if self.tenant_provider is None:
             raise exc.internal("Tenant provider is required for the gateway")
 
-        tenant_id = self.tenant_provider()
+        tenant_id = self.require_tenant_if_aware()
 
         if tenant_id is None:
             raise exc.internal("Tenant ID is required for the gateway")
@@ -217,7 +203,7 @@ class FirestoreGateway[M: BaseModel](TenancyMixin):
             if self.tenant_provider is None:
                 raise exc.internal("Tenant provider is required for the gateway")
 
-            tenant_id = self.tenant_provider()
+            tenant_id = self.require_tenant_if_aware()
 
             if tenant_id is None:
                 raise exc.internal("Tenant ID is required for the gateway")
@@ -225,17 +211,6 @@ class FirestoreGateway[M: BaseModel](TenancyMixin):
             out[TENANT_ID_FIELD] = tenant_id
 
         return out
-
-    # ....................... #
-
-    def compile_filters(
-        self,
-        filters: QueryFilterExpression | None,  # type: ignore[valid-type]
-    ) -> QueryExpr | None:
-        if not filters:
-            return None
-
-        return self.filter_parser.parse_filter(filters)
 
     # ....................... #
 

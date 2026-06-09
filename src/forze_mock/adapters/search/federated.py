@@ -1,0 +1,141 @@
+"""In-memory federated search with weighted RRF merge."""
+
+from __future__ import annotations
+
+from typing import Final, Sequence, final
+
+import attrs
+from pydantic import BaseModel
+
+from forze.application.contracts.base import CountlessPage, Page, page_from_limit_offset
+from forze.application.contracts.querying import (
+    PaginationExpression,
+    QueryFilterExpression,
+    QuerySortExpression,
+)
+from forze.application.contracts.search import (
+    FederatedSearchReadModel,
+    FederatedSearchSpec,
+    SearchOptions,
+    SearchQueryPort,
+    SearchResultSnapshotOptions,
+    prepare_federated_search_options,
+)
+from forze.application.integrations.search import SearchResultSnapshot
+from forze_mock.adapters.search._unsupported import MockOffsetOnlySearchMixin
+from forze_mock.adapters.search.query import MockSearchAdapter
+
+# ----------------------- #
+
+_DEFAULT_RRF_K: Final[int] = 60
+_DEFAULT_PER_LEG_LIMIT: Final[int] = 5000
+
+
+@final
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class MockFederatedSearchAdapter[M: BaseModel](
+    MockOffsetOnlySearchMixin[FederatedSearchReadModel[M]],
+    SearchQueryPort[FederatedSearchReadModel[M]],
+):
+    """Federate mock search legs via :meth:`SearchResultSnapshot.weighted_rrf_merge_rows`."""
+
+    federated_spec: FederatedSearchSpec[M]
+    legs: Sequence[tuple[str, MockSearchAdapter[M]]]
+    rrf_k: int = _DEFAULT_RRF_K
+    rrf_per_leg_limit: int = _DEFAULT_PER_LEG_LIMIT
+    result_snapshot: SearchResultSnapshot | None = None
+
+    spec: FederatedSearchSpec[M] = attrs.field(
+        default=attrs.Factory(lambda self: self.federated_spec, takes_self=True),
+        init=False,
+    )
+
+    # ....................... #
+
+    async def search(
+        self,
+        query: str | Sequence[str],
+        filters: QueryFilterExpression | None = None,
+        pagination: PaginationExpression | None = None,
+        sorts: QuerySortExpression | None = None,
+        *,
+        options: SearchOptions | None = None,
+        snapshot: SearchResultSnapshotOptions | None = None,
+    ) -> CountlessPage[FederatedSearchReadModel[M]]:
+        _ = snapshot
+        leg_opts, member_weights = prepare_federated_search_options(
+            self.federated_spec,
+            options,
+        )
+        leg_cap = max(1, int(self.rrf_per_leg_limit))
+        leg_rows: list[tuple[str, list[M], float]] = []
+
+        for i, (name, port) in enumerate(self.legs):
+            weight = float(member_weights[i])
+            if weight <= 0.0:
+                continue
+            page = await port.search(
+                query,
+                filters,
+                {"limit": leg_cap},
+                None,
+                options=leg_opts,
+            )
+            leg_rows.append((name, list(page.hits), weight))
+
+        merged = SearchResultSnapshot.weighted_rrf_merge_rows(
+            leg_rows=leg_rows,
+            k=int(self.rrf_k),
+        )
+        hits = [item[0] for item in merged]
+        pagination = pagination or {}
+        offset = int(pagination.get("offset") or 0)
+        limit = pagination.get("limit")
+        window = hits[offset:]
+        if limit is not None:
+            window = window[: int(limit)]
+        return page_from_limit_offset(window, pagination, total=None)
+
+    async def search_page(
+        self,
+        query: str | Sequence[str],
+        filters: QueryFilterExpression | None = None,
+        pagination: PaginationExpression | None = None,
+        sorts: QuerySortExpression | None = None,
+        *,
+        options: SearchOptions | None = None,
+        snapshot: SearchResultSnapshotOptions | None = None,
+    ) -> Page[FederatedSearchReadModel[M]]:
+        _ = snapshot, sorts
+        leg_opts, member_weights = prepare_federated_search_options(
+            self.federated_spec,
+            options,
+        )
+        leg_cap = max(1, int(self.rrf_per_leg_limit))
+        leg_rows: list[tuple[str, list[M], float]] = []
+
+        for i, (name, port) in enumerate(self.legs):
+            weight = float(member_weights[i])
+            if weight <= 0.0:
+                continue
+            page = await port.search(
+                query,
+                filters,
+                {"limit": leg_cap},
+                None,
+                options=leg_opts,
+            )
+            leg_rows.append((name, list(page.hits), weight))
+
+        merged = SearchResultSnapshot.weighted_rrf_merge_rows(
+            leg_rows=leg_rows,
+            k=int(self.rrf_k),
+        )
+        hits = [item[0] for item in merged]
+        pagination = pagination or {}
+        offset = int(pagination.get("offset") or 0)
+        limit = pagination.get("limit")
+        window = hits[offset:]
+        if limit is not None:
+            window = window[: int(limit)]
+        return page_from_limit_offset(window, pagination, total=len(hits))

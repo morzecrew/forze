@@ -71,6 +71,8 @@ Read-only operations for document aggregates. Result shape is selected by the me
 
 Stream methods export rows in keyset chunks via repeated internal cursor pages (default `chunk_size` 500, clamped 10–20 000). They do not support `for_update` or aggregates.
 
+`DocumentAdapter` (integrations layer) adds safety limits on internal scan/stream loops: `max_scan_pages`, `max_stream_pages`, and `max_chunked_command_pages` default to **100 000**; set any of them to `None` for unlimited export. Non-advancing cursor tokens raise an internal error instead of looping forever. Routed tenant pools (`TenantClientRegistry` with `guarded=True`) must not call `use()` for the same tenant from that tenant's `create` callback.
+
 ### DocumentCommandPort[R, D, C, U]
 
 Mutation operations for document aggregates:
@@ -134,7 +136,7 @@ Kernel specification: model types, logical `name`, optional `history_enabled`, o
 
 Helper methods:
 
-- `supports_soft_delete()` — `True` when the domain model inherits from `forze_patterns.soft_deletion.SoftDeletionMixin`
+- `supports_soft_delete()` — `True` when the domain model inherits from `forze_kits.domain.soft_deletion.SoftDeletionMixin`
 - `supports_update()` — `True` when the update command has writable fields
 
 ### Dependency keys
@@ -312,16 +314,16 @@ Result shape and pagination mode are encoded in the method name:
 
 ## Object storage
 
-### StoragePort
+### StorageQueryPort / StorageCommandPort
 
-S3-style blob storage:
+S3-style blob storage, split into read (query) and write (command) ports:
 
-| Method | Signature | Returns |
-|--------|-----------|---------|
-| `upload` | `(filename, data, description?, *, prefix?)` | `StoredObject` |
-| `download` | `(key)` | `DownloadedObject` |
-| `delete` | `(key)` | `None` |
-| `list` | `(limit, offset, *, prefix?)` | `(list[ObjectMetadata], int)` |
+| Port | Method | Signature | Returns |
+|------|--------|-----------|---------|
+| `StorageCommandPort` | `upload` | `(UploadedObject)` | `StoredObject` |
+| `StorageCommandPort` | `delete` | `(key)` | `None` |
+| `StorageQueryPort` | `download` | `(key)` | `DownloadedObject` |
+| `StorageQueryPort` | `list` | `(limit, offset, *, prefix?)` | `(list[ObjectMetadata], int)` |
 
 ### Storage types
 
@@ -335,7 +337,8 @@ S3-style blob storage:
 
 | Key | Resolved via |
 |-----|-------------|
-| `StorageDepKey` | `ctx.storage(StorageSpec(name=...))` |
+| `StorageQueryDepKey` | `ctx.storage.query(StorageSpec(name=...))` |
+| `StorageCommandDepKey` | `ctx.storage.command(StorageSpec(name=...))` |
 
 ## Queue
 
@@ -343,11 +346,11 @@ S3-style blob storage:
 
     :::python
     from forze.application.contracts.queue import QueueSpec
-    from forze.base.serialization import PydanticRecordMappingCodec
+    from forze.base.serialization import PydanticModelCodec
 
     order_queue = QueueSpec(
         name="orders",
-        codec=PydanticRecordMappingCodec(OrderPayload),
+        codec=PydanticModelCodec(OrderPayload),
     )
 
 ### QueueReadPort[M]
@@ -391,11 +394,11 @@ S3-style blob storage:
 
     :::python
     from forze.application.contracts.pubsub import PubSubSpec
-    from forze.base.serialization import PydanticRecordMappingCodec
+    from forze.base.serialization import PydanticModelCodec
 
     events_spec = PubSubSpec(
         name="events",
-        codec=PydanticRecordMappingCodec(EventPayload),
+        codec=PydanticModelCodec(EventPayload),
     )
 
 ### PubSubCommandPort[M]
@@ -434,11 +437,11 @@ S3-style blob storage:
 
     :::python
     from forze.application.contracts.stream import StreamSpec
-    from forze.base.serialization import PydanticRecordMappingCodec
+    from forze.base.serialization import PydanticModelCodec
 
     audit_stream = StreamSpec(
         name="audit",
-        codec=PydanticRecordMappingCodec(AuditEntry),
+        codec=PydanticModelCodec(AuditEntry),
     )
 
 ### StreamQueryPort[M]
@@ -483,22 +486,22 @@ S3-style blob storage:
 
 ## Idempotency
 
+Engine-level result idempotency. See [Idempotency contracts](../core-package/contracts/idempotency.md) for the full model (`IdempotencyWrap`, `Idempotency-Key` header).
+
 ### IdempotencyPort
 
-Deduplicate operations by caching responses keyed by operation name, idempotency key, and payload hash:
+Store and replay a completed operation's result, keyed by operation name, idempotency key, and payload hash:
 
 | Method | Signature | Purpose |
 |--------|-----------|---------|
-| `begin` | `(op, key, payload_hash)` | Check for a cached response; returns `IdempotencySnapshot \| None` |
-| `commit` | `(op, key, payload_hash, snapshot)` | Store the response for future dedup |
+| `begin` | `(op, key, payload_hash)` | Return the stored `IdempotencyRecord` on replay, or `None` after a fresh claim; raises on payload-hash mismatch or an in-progress duplicate |
+| `commit` | `(op, key, payload_hash, record)` | Store the result record for future replays |
 
-### IdempotencySnapshot
+### IdempotencyRecord
 
 | Field | Type | Purpose |
 |-------|------|---------|
-| `status_code` | `int` | HTTP status code |
-| `body` | `bytes` | Serialized response body |
-| `headers` | `dict[str, str]` | Response headers |
+| `result` | `bytes` | The serialized operation result (encoded by the operation's result codec) |
 
 ### Dependency keys
 
@@ -618,7 +621,8 @@ All ports are resolved through `ExecutionContext`. Contracts with convenience me
     doc_c = ctx.document.command(project_spec)
     cache = ctx.cache(cache_spec)
     counter = ctx.counter(CounterSpec(name="tickets"))
-    storage = ctx.storage(StorageSpec(name="attachments"))
+    storage_q = ctx.storage.query(StorageSpec(name="attachments"))
+    storage_c = ctx.storage.command(StorageSpec(name="attachments"))
     search = ctx.search.query(search_spec)
     tx = ctx.tx_ctx.resolver("default")
 

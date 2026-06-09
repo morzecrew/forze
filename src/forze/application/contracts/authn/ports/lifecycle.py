@@ -18,8 +18,11 @@ class PasswordLifecyclePort(Protocol):  # pragma: no cover
     def change_password(
         self,
         identity: AuthnIdentity,  # noqa: F841
+        current_password: str,  # noqa: F841
         new_password: str,  # noqa: F841
-    ) -> Awaitable[None]: ...
+    ) -> Awaitable[None]:
+        """Change the password after re-authenticating with the current password."""
+        ...
 
 
 # ....................... #

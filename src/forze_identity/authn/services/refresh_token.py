@@ -6,6 +6,8 @@ from datetime import timedelta
 
 import attrs
 
+from forze.base.exceptions import exc
+
 # ----------------------- #
 
 
@@ -19,6 +21,12 @@ class RefreshTokenConfig:
     expires_in: timedelta = timedelta(days=7)
     """Expiration time of the token."""
 
+    # ....................... #
+
+    def __attrs_post_init__(self) -> None:
+        if self.expires_in.total_seconds() <= 0:
+            raise exc.configuration("Expires in must be positive")
+
 
 # ....................... #
 
@@ -27,7 +35,7 @@ class RefreshTokenConfig:
 class RefreshTokenService:
     """Refresh token service."""
 
-    pepper: bytes = attrs.field(validator=attrs.validators.min_len(32))
+    pepper: bytes = attrs.field(repr=False, validator=attrs.validators.min_len(32))
     config: RefreshTokenConfig = attrs.field(factory=RefreshTokenConfig)
 
     # ....................... #

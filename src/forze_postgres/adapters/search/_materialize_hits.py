@@ -1,15 +1,54 @@
 """Shared hit materialization for Postgres search adapters."""
 
-from typing import Any, Sequence, TypeVar
+from typing import Any, Literal, Sequence, TypeVar
 
 from pydantic import BaseModel
 
 from forze.base.primitives import JsonDict
-from forze.base.serialization import pydantic_validate_many
+from forze.base.serialization import (
+    ModelCodec,
+    default_model_codec,
+    materialize_mapping_rows,
+)
 
 # ----------------------- #
 
 M = TypeVar("M", bound=BaseModel)
+
+ReadValidation = Literal["strict", "trusted"]
+
+# ....................... #
+
+
+def search_trust_source(read_validation: ReadValidation) -> bool:
+    """Return whether search hit decode should skip Pydantic validation."""
+
+    return read_validation == "trusted"
+
+
+# ....................... #
+
+
+def decode_search_hits(
+    *,
+    rows: list[JsonDict],
+    model_type: type[BaseModel],
+    codec: ModelCodec[Any, Any],
+    return_type: type[BaseModel] | None,
+    trust_source: bool = False,
+) -> list[Any]:
+    """Decode search hit row dicts into models (default or projection type)."""
+
+    if return_type is not None:
+        return default_model_codec(return_type).decode_mapping_many(
+            rows,
+            trust_source=trust_source,
+        )
+
+    return codec.decode_mapping_many(rows, trust_source=trust_source)
+
+
+# ....................... #
 
 
 def materialize_search_page(
@@ -21,6 +60,8 @@ def materialize_search_page(
     return_type: type[BaseModel] | None,
     return_fields: Sequence[str] | None,
     model_type: type[M],
+    codec: ModelCodec[Any, Any] | None,
+    trust_source: bool = False,
 ) -> list[Any] | list[JsonDict]:
     """Build the API page payload after optional snapshot storage.
 
@@ -35,19 +76,21 @@ def materialize_search_page(
     :param return_type: Optional projection model; when ``None``, use ``model_type``.
     :param return_fields: When set, build plain dict projections from ``page_rows``.
     :param model_type: Default read model for this adapter.
+    :param codec: Search spec row codec for decode/materialization.
+    :param trust_source: When true, skip Pydantic validation on decode paths.
     :returns: Either a list of Pydantic models or plain dict projections.
     """
 
-    if return_fields is not None:
-        return [{k: r.get(k, None) for k in return_fields} for r in page_rows]
+    resolved = codec or default_model_codec(model_type)
 
-    if return_type is not None:
-        if pool is not None and return_type == model_type:
-            return pool[u : u + page_limit]
-
-        return pydantic_validate_many(return_type, page_rows)
-
-    if pool is not None:
-        return pool[u : u + page_limit]
-
-    return pydantic_validate_many(model_type, page_rows)
+    return materialize_mapping_rows(
+        codec=resolved,
+        model_type=model_type,
+        page_rows=page_rows,
+        pool=pool,
+        u=u,
+        page_limit=page_limit,
+        return_type=return_type,
+        return_fields=return_fields,
+        trust_source=trust_source,
+    )

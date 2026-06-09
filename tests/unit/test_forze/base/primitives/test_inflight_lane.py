@@ -4,6 +4,7 @@ import asyncio
 
 import pytest
 
+from forze.base.exceptions import CoreException
 from forze.base.primitives.lanes import InflightLane
 
 # ----------------------- #
@@ -51,6 +52,30 @@ class TestInflightLane:
         assert await lane.run(("k",), lambda: _return(1)) == 1
         lane.clear()
         assert await lane.run(("k",), lambda: _return(2)) == 2
+
+    @pytest.mark.asyncio
+    async def test_timeout_cancels_and_allows_retry(self) -> None:
+        lane = InflightLane[int]()
+        gate = asyncio.Event()
+
+        async def factory() -> int:
+            await gate.wait()
+            return 99
+
+        blocked = asyncio.create_task(lane.run(("k",), factory))
+
+        await asyncio.sleep(0.05)
+
+        with pytest.raises(CoreException, match="timed out"):
+            await lane.run(("k",), factory, timeout=0.05)
+
+        gate.set()
+        blocked.cancel()
+
+        with pytest.raises(asyncio.CancelledError):
+            await blocked
+
+        assert await lane.run(("k",), lambda: _return(7)) == 7
 
 
 async def _return(value: int) -> int:

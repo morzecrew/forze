@@ -337,6 +337,7 @@ async def test_fts_adapter_v2_direct_projection_heap_and_index_field_map(
         index_field_map={"title": "c1", "content": "c2"},
         client=pg_client,
         model_type=FtsArticle,
+        codec=spec.resolved_read_codec,
         introspector=introspector,
         tenant_provider=None,
         tenant_aware=False,
@@ -656,3 +657,69 @@ async def test_fts_v2_search_with_cursor_ranked_return_type_and_fields(
     )
     assert len(p2.hits) == 2
     assert set(p2.hits[0].keys()) == {"title", "id"}
+
+
+@pytest.mark.asyncio
+async def test_fts_exact_total_exceeds_candidate_cap(
+    pg_client: PostgresClient,
+) -> None:
+    """Ranked FTS cap on ``scored`` does not cap exact ``search_count`` totals."""
+    suffix = uuid4().hex[:12]
+    table = f"fts_cap_{suffix}"
+    index_name = f"idx_fts_cap_{suffix}"
+
+    await pg_client.execute(
+        f"""
+        CREATE TABLE {table} (
+            id uuid PRIMARY KEY,
+            title text NOT NULL,
+            content text NOT NULL
+        );
+        """
+    )
+    await pg_client.execute(
+        f"""
+        CREATE INDEX {index_name}
+        ON {table}
+        USING gin (to_tsvector('english', coalesce(title, '') || ' ' || coalesce(content, '')));
+        """
+    )
+    token = "ftscap"
+    for i in range(12):
+        await pg_client.execute(
+            f"""
+            INSERT INTO {table} (id, title, content)
+            VALUES (%(id)s, %(t)s, %(c)s)
+            """,
+            {"id": uuid4(), "t": f"{token} doc {i}", "c": "x"},
+        )
+
+    ctx = context_from_deps(
+        Deps.plain(
+            {
+                PostgresClientDepKey: pg_client,
+                PostgresIntrospectorDepKey: PostgresIntrospector(client=pg_client),
+                SearchQueryDepKey: ConfigurablePostgresSearch(
+                    config=PostgresSearchConfig(
+                        index=("public", index_name),
+                        read=("public", table),
+                        engine="fts",
+                        fts_groups={"A": ("title",), "B": ("content",)},
+                        pgroonga_candidate_limit=4,
+                    )
+                ),
+            }
+        )
+    )
+    spec = SearchSpec(
+        name="fts_cap",
+        model_type=FtsArticle,
+        fields=["title", "content"],
+    )
+    page = await ctx.search.query(spec).search_page(
+        token,
+        pagination={"limit": 2},
+        options={"search_count": "exact"},
+    )
+    assert page.count == 12
+    assert len(page.hits) == 2

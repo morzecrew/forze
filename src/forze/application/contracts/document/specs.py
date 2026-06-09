@@ -1,16 +1,20 @@
 """Specifications for document models and storage layout."""
 
-from typing import Any, Generic, NotRequired, TypedDict, TypeVar, final
+from typing import Any, Generic, TypeVar, final
 
 import attrs
 from pydantic import BaseModel
 
-from forze.domain.models import BaseDTO, CreateDocumentCmd, Document
+from forze.domain.models import BaseDTO, Document
 
 from ..base import BaseSpec
 from ..cache import CacheSpec
-from ..querying import QuerySortExpression
+from ..querying import QueryFieldPolicy, QuerySortExpression
+from ..querying.field_policy import validate_field_policy
 from ..querying.sort_resolution import read_fields_for_model, validate_sort_fields
+from ..codecs import stored_field_names_for
+from .codecs import DocumentCodecs, document_codecs_for_spec
+from .write_types import DocumentWriteTypes
 
 # ----------------------- #
 
@@ -18,25 +22,8 @@ R = TypeVar("R", bound=BaseModel)
 
 # Any is default to avoid separate spec for read-only documents
 D = TypeVar("D", bound=Document, default=Any)
-C = TypeVar("C", bound=CreateDocumentCmd, default=Any)
+C = TypeVar("C", bound=BaseDTO, default=Any)
 U = TypeVar("U", bound=BaseDTO, default=Any)
-
-# ....................... #
-
-
-@final
-class DocumentWriteTypes(TypedDict, Generic[D, C, U]):
-    """Write models for a document aggregate."""
-
-    domain: type[D]
-    """Model type for the domain model."""
-
-    create_cmd: type[C]
-    """Model type for the create command."""
-
-    update_cmd: NotRequired[type[U]]
-    """Model type for the update command."""
-
 
 # ....................... #
 
@@ -61,15 +48,87 @@ class DocumentSpec(BaseSpec, Generic[R, D, C, U]):
     default_sort: QuerySortExpression | None = attrs.field(default=None)
     """Default ``sorts`` when callers omit them (required for read models without ``id``)."""
 
+    query_policy: QueryFieldPolicy | None = attrs.field(default=None)
+    """Optional allow-sets restricting which fields a governed caller may filter / sort by.
+    ``None`` (default) allows every read-model field. Drives discovery and (when enforced)
+    boundary validation."""
+
+    codecs: DocumentCodecs[R, D, C, U] | None = attrs.field(
+        default=None,
+        eq=False,
+        repr=False,
+    )
+    """Optional codec overrides; defaults are derived from model types."""
+
+    # ....................... #
+
+    @property
+    def resolved_codecs(self) -> DocumentCodecs[R, D, C, U]:
+        """Codecs for this aggregate (explicit or auto-derived)."""
+
+        if self.codecs is not None:
+            return self.codecs
+
+        return document_codecs_for_spec(
+            read=self.read,
+            write=self.write,
+            history_enabled=self.history_enabled,
+        )
+
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
+        read_fields = read_fields_for_model(self.read)
+
         if self.default_sort is not None:
             validate_sort_fields(
                 self.default_sort,
-                read_fields=read_fields_for_model(self.read),
-                spec_name=self.name,
+                read_fields=read_fields,
+                spec_name=str(self.name),
             )
+
+        if self.query_policy is not None:
+            validate_field_policy(
+                self.query_policy,
+                read_fields=read_fields,
+                spec_name=str(self.name),
+            )
+
+    # ....................... #
+
+    def filterable_fields(self) -> frozenset[str]:
+        """Field names a governed caller may filter on (policy allow-set, or all read fields)."""
+
+        read_fields = read_fields_for_model(self.read)
+
+        if self.query_policy is None:
+            return read_fields
+
+        return self.query_policy.resolve_filterable(read_fields)
+
+    # ....................... #
+
+    def sortable_fields(self) -> frozenset[str]:
+        """Field names a governed caller may sort by (policy allow-set, or all read fields)."""
+
+        read_fields = read_fields_for_model(self.read)
+
+        if self.query_policy is None:
+            return read_fields
+
+        return self.query_policy.resolve_sortable(read_fields)
+
+    # ....................... #
+
+    def aggregatable_fields(self) -> frozenset[str]:
+        """Field names a governed caller may group by / aggregate (allow-set, or all read fields)."""
+
+        read_fields = read_fields_for_model(self.read)
+
+        if self.query_policy is None:
+            return read_fields
+
+        return self.query_policy.resolve_aggregatable(read_fields)
 
     # ....................... #
 
@@ -82,21 +141,9 @@ class DocumentSpec(BaseSpec, Generic[R, D, C, U]):
         if "update_cmd" not in self.write:
             return False
 
-        return self.write["update_cmd"].model_fields != {}
-
-    # ....................... #
-
-    def supports_soft_delete(self) -> bool:
-        """Return ``True`` when the domain model supports soft deletion."""
-
-        if self.write is None:
-            return False
-
-        return "is_deleted" in self.write["domain"].model_fields
-
-    # ....................... #
-
-    def supports_number_id(self) -> bool:
-        """Return ``True`` when the read model exposes a number identifier."""
-
-        return "number_id" in self.read.model_fields
+        return bool(
+            stored_field_names_for(
+                self.write["update_cmd"],
+                include_computed=False,
+            )
+        )

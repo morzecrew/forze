@@ -14,8 +14,8 @@ from forze_mongo.kernel.gateways import (
     MongoReadGateway,
     MongoWriteGateway,
 )
-from forze_mongo.kernel.gateways.write import optimistic_retry
 from forze_mongo.kernel.client import MongoClient
+from tests.unit._gateway_codec_helpers import history_codecs_for, write_codecs_for
 
 class MyDoc(Document):
     name: str
@@ -36,6 +36,19 @@ def _build_client() -> MagicMock:
     client.collection.return_value = object()
     client.update_one = AsyncMock()
     return client
+
+_DOMAIN_CODEC, _CREATE_CODEC, _UPDATE_CODEC = write_codecs_for(
+    domain_type=MyDoc,
+    create_type=MyCreateDoc,
+    update_type=MyUpdateDoc,
+)
+
+_WRITE_CODECS = {
+    "codec": _DOMAIN_CODEC,
+    "create_codec": _CREATE_CODEC,
+    "update_codec": _UPDATE_CODEC,
+}
+
 
 def _build_read(
     client: MagicMock,
@@ -67,12 +80,13 @@ class TestMongoWriteGateway:
         ]  # read-before-write, then read-after-write
 
         gw = MongoWriteGateway(
-            model_type=MyDoc,
             relation=("test_db", "docs"),
             client=client,
             read_gw=read,
             create_cmd_type=MyCreateDoc,
             update_cmd_type=MyUpdateDoc,
+            model_type=MyDoc,
+            **_WRITE_CODECS,
         )
         updated, diff = await gw.update(pk, MyUpdateDoc(name="after"))
 
@@ -98,14 +112,15 @@ class TestMongoWriteGateway:
         read.get.side_effect = [current, after_write]
 
         gw = MongoWriteGateway(
-            model_type=MyDoc,
             relation=("test_db", "docs"),
             client=client,
             read_gw=read,
             create_cmd_type=MyCreateDoc,
             update_cmd_type=MyUpdateDoc,
+            model_type=MyDoc,
             tenant_aware=True,
             tenant_provider=lambda: TenantIdentity(tenant_id=tid),
+            **_WRITE_CODECS,
         )
         await gw.update(pk, MyUpdateDoc(name="after"))
 
@@ -132,12 +147,13 @@ class TestMongoWriteGateway:
         ]  # attempt 1 before write, attempt 2 before+after write
 
         gw = MongoWriteGateway(
-            model_type=MyDoc,
             relation=("test_db", "docs"),
             client=client,
             read_gw=read,
             create_cmd_type=MyCreateDoc,
             update_cmd_type=MyUpdateDoc,
+            model_type=MyDoc,
+            **_WRITE_CODECS,
         )
         updated, _ = await gw.update(pk, MyUpdateDoc(name="after"))
 
@@ -154,12 +170,13 @@ class TestMongoWriteGateway:
         read.get.return_value = current
 
         gw = MongoWriteGateway(
-            model_type=MyDoc,
             relation=("test_db", "docs"),
             client=client,
             read_gw=read,
             create_cmd_type=MyCreateDoc,
             update_cmd_type=MyUpdateDoc,
+            model_type=MyDoc,
+            **_WRITE_CODECS,
         )
 
         with pytest.raises(CoreException, match="Failed to update record"):
@@ -171,12 +188,9 @@ class TestMongoWriteGateway:
     async def test_ensure_many_reads_conflicts_only(self) -> None:
         pk_new = uuid4()
         pk_existing = uuid4()
-        now = datetime.now(tz=UTC)
         existing = _domain_doc(pk_existing, name="existing")
-        dtos = [
-            MyCreateDoc(id=pk_existing, created_at=now, name="try"),
-            MyCreateDoc(id=pk_new, created_at=now, name="new"),
-        ]
+        ids = [pk_existing, pk_new]
+        payloads = [MyCreateDoc(name="try"), MyCreateDoc(name="new")]
         client = _build_client()
         bulk_result = MagicMock()
         bulk_result.upserted_ids = {1: str(pk_new)}
@@ -185,15 +199,16 @@ class TestMongoWriteGateway:
         read.get_many = AsyncMock(return_value=[existing])
 
         gw = MongoWriteGateway(
-            model_type=MyDoc,
             relation=("test_db", "docs"),
             client=client,
             read_gw=read,
             create_cmd_type=MyCreateDoc,
             update_cmd_type=MyUpdateDoc,
+            model_type=MyDoc,
+            **_WRITE_CODECS,
         )
 
-        out = await gw.ensure_many(dtos, batch_size=20)
+        out = await gw.ensure_many(ids, payloads, batch_size=20)
 
         assert [d.id for d in out] == [pk_existing, pk_new]
         assert out[0].name == "existing"
@@ -203,32 +218,33 @@ class TestMongoWriteGateway:
     @pytest.mark.asyncio
     async def test_ensure_many_bulk_duplicate_key_raises_conflict(self) -> None:
         pk = uuid4()
-        now = datetime.now(tz=UTC)
-        dtos = [MyCreateDoc(id=pk, created_at=now, name="dup")]
+        ids = [pk]
+        payloads = [MyCreateDoc(name="dup")]
         client = _build_client()
         client.bulk_write = AsyncMock(
             side_effect=CoreException.conflict("Duplicate key violation."),
         )
         read = _build_read(client)
         gw = MongoWriteGateway(
-            model_type=MyDoc,
             relation=("test_db", "docs"),
             client=client,
             read_gw=read,
             create_cmd_type=MyCreateDoc,
             update_cmd_type=MyUpdateDoc,
+            model_type=MyDoc,
+            **_WRITE_CODECS,
         )
 
         with pytest.raises(CoreException) as err:
-            await gw.ensure_many(dtos, batch_size=20)
+            await gw.ensure_many(ids, payloads, batch_size=20)
 
         assert err.value.kind is ExceptionKind.CONFLICT
 
     @pytest.mark.asyncio
     async def test_ensure_many_missing_after_bulk_raises_conflict(self) -> None:
         pk = uuid4()
-        now = datetime.now(tz=UTC)
-        dtos = [MyCreateDoc(id=pk, created_at=now, name="ghost")]
+        ids = [pk]
+        payloads = [MyCreateDoc(name="ghost")]
         client = _build_client()
         bulk_result = MagicMock()
         bulk_result.upserted_ids = {}
@@ -238,24 +254,20 @@ class TestMongoWriteGateway:
             side_effect=CoreException.not_found("Some records not found"),
         )
         gw = MongoWriteGateway(
-            model_type=MyDoc,
             relation=("test_db", "docs"),
             client=client,
             read_gw=read,
             create_cmd_type=MyCreateDoc,
             update_cmd_type=MyUpdateDoc,
+            model_type=MyDoc,
+            **_WRITE_CODECS,
         )
 
         with pytest.raises(CoreException) as err:
-            await gw.ensure_many(dtos, batch_size=20)
+            await gw.ensure_many(ids, payloads, batch_size=20)
 
         assert err.value.kind is ExceptionKind.CONFLICT
         assert err.value.code == "mongo_ensure_bulk_miss"
-
-class TestOptimisticRetry:
-    def test_optimistic_retry_returns_tenacity_decorator(self) -> None:
-        decorator = optimistic_retry(attempts=5)
-        assert callable(decorator)
 
 class TestMongoWriteGatewayPostInit:
     def test_rejects_mismatched_read_collection(self) -> None:
@@ -263,12 +275,13 @@ class TestMongoWriteGatewayPostInit:
         read = _build_read(client, relation=("test_db", "read_col"))
         with pytest.raises(CoreException, match="Relation mismatch"):
             MongoWriteGateway(
-                model_type=MyDoc,
                 relation=("test_db", "write_col"),
                 client=client,
                 read_gw=read,
                 create_cmd_type=MyCreateDoc,
                 update_cmd_type=MyUpdateDoc,
+                model_type=MyDoc,
+                **_WRITE_CODECS,
             )
 
     def test_rejects_mismatched_read_client(self) -> None:
@@ -277,12 +290,13 @@ class TestMongoWriteGatewayPostInit:
         read = _build_read(c_read)
         with pytest.raises(CoreException, match="Client mismatch"):
             MongoWriteGateway(
-                model_type=MyDoc,
                 relation=("test_db", "docs"),
                 client=c_write,
                 read_gw=read,
                 create_cmd_type=MyCreateDoc,
                 update_cmd_type=MyUpdateDoc,
+                model_type=MyDoc,
+                **_WRITE_CODECS,
             )
 
     def test_rejects_mismatched_read_database(self) -> None:
@@ -290,12 +304,13 @@ class TestMongoWriteGatewayPostInit:
         read = _build_read(client, relation=("db_a", "docs"))
         with pytest.raises(CoreException, match="Relation mismatch"):
             MongoWriteGateway(
-                model_type=MyDoc,
                 relation=("db_b", "docs"),
                 client=client,
                 read_gw=read,
                 create_cmd_type=MyCreateDoc,
                 update_cmd_type=MyUpdateDoc,
+                model_type=MyDoc,
+                **_WRITE_CODECS,
             )
 
     def test_rejects_mismatched_tenant_awareness(self) -> None:
@@ -304,34 +319,39 @@ class TestMongoWriteGatewayPostInit:
         read.tenant_aware = True
         with pytest.raises(CoreException, match="Tenant awareness mismatch"):
             MongoWriteGateway(
-                model_type=MyDoc,
                 relation=("test_db", "docs"),
                 client=client,
                 read_gw=read,
                 create_cmd_type=MyCreateDoc,
                 update_cmd_type=MyUpdateDoc,
+                model_type=MyDoc,
                 tenant_aware=False,
+                **_WRITE_CODECS,
             )
 
     def test_rejects_history_gateway_client_mismatch(self) -> None:
         c_main = _build_client()
         c_hist = _build_client()
         read = _build_read(c_main, relation=("db", "docs"))
+        domain_codec, history_codec = history_codecs_for(MyDoc)
         hist = MongoHistoryGateway(
-            model_type=MyDoc,
             relation=("db", "hist"),
             target_relation=("db", "docs"),
             client=c_hist,
+            model_type=MyDoc,
+            codec=domain_codec,
+            history_codec=history_codec,
         )
         with pytest.raises(
             CoreException, match="nested history gateway must use the same client"
         ):
             MongoWriteGateway(
-                model_type=MyDoc,
                 relation=("db", "docs"),
                 client=c_main,
                 read_gw=read,
                 create_cmd_type=MyCreateDoc,
                 update_cmd_type=MyUpdateDoc,
+                model_type=MyDoc,
                 history_gw=hist,
+                **_WRITE_CODECS,
             )

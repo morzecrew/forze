@@ -215,6 +215,12 @@ class DurableWorkflowScheduleTiming:
                 "DurableWorkflowScheduleTiming requires cron_expressions or interval",
             )
 
+        if self.interval is not None and self.interval.total_seconds() <= 0:
+            raise exc.configuration("Interval must be positive")
+
+        if self.jitter is not None and self.jitter.total_seconds() <= 0:
+            raise exc.configuration("Jitter must be positive")
+
 
 # ....................... #
 
