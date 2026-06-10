@@ -111,8 +111,15 @@ nav = [
         ] },
     ] },
     { "Reference" = [
-        "reference/contracts.md",
+        { "Contracts" = [
+            "reference/contracts.md",
+            "reference/contracts/document.md",
+            "reference/contracts/stores.md",
+            "reference/contracts/search.md",
+            "reference/contracts/messaging.md",
+        ] },
         "reference/query-syntax.md",
+        "reference/mapping.md",
         "reference/errors.md",
     ] },
 ]

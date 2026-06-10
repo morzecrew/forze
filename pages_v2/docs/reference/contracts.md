@@ -6,8 +6,9 @@ summary: Every capability the application can resolve from the execution context
 
 The narrative is in [Contracts & adapters](../core-concepts/contracts.md); this is
 the index — each capability, the spec it's keyed by, and how a handler reaches it
-from the `ExecutionContext`. Method-level detail lives with each
-[integration](../integrations/index.md).
+from the `ExecutionContext`. For the **method signatures** on each port, see
+[Document](contracts/document.md), [Cache/counter/storage](contracts/stores.md),
+[Search](contracts/search.md), and [Queue/outbox/inbox](contracts/messaging.md).
 
 ## Data & storage
 
