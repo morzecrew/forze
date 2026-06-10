@@ -73,6 +73,7 @@ class RabbitMQClient(RabbitMQClientPort):
         init=False,
     )
     __delay_queues_ready: set[str] = attrs.field(factory=set, init=False)
+    __init_lock: asyncio.Lock = attrs.field(factory=asyncio.Lock, init=False)
 
     # ....................... #
     # Lifecycle
@@ -83,18 +84,19 @@ class RabbitMQClient(RabbitMQClientPort):
         *,
         config: RabbitMQConfig = RabbitMQConfig(),
     ) -> None:
-        if self.__connection is not None and not self.__connection.is_closed:
-            return
+        async with self.__init_lock:
+            if self.__connection is not None and not self.__connection.is_closed:
+                return
 
-        if isinstance(dsn, SecretStr):
-            dsn = dsn.get_secret_value()
+            if isinstance(dsn, SecretStr):
+                dsn = dsn.get_secret_value()
 
-        self.__config = config
-        self.__connection = await connect_robust(
-            dsn,
-            timeout=config.connect_timeout.total_seconds(),
-            heartbeat=config.heartbeat.total_seconds(),
-        )
+            self.__config = config
+            self.__connection = await connect_robust(
+                dsn,
+                timeout=config.connect_timeout.total_seconds(),
+                heartbeat=config.heartbeat.total_seconds(),
+            )
 
     # ....................... #
 

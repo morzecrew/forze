@@ -1,5 +1,6 @@
 """Firestore async client with context-bound transactions."""
 
+import asyncio
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
 from typing import Any, AsyncGenerator, Mapping, Sequence, final
@@ -53,6 +54,8 @@ class FirestoreClient(FirestoreClientPort):
         repr=False,
     )
 
+    __init_lock: asyncio.Lock = attrs.field(factory=asyncio.Lock, init=False)
+
     # ....................... #
 
     async def initialize(
@@ -63,12 +66,13 @@ class FirestoreClient(FirestoreClientPort):
     ) -> None:
         """Initialize the client"""
 
-        if self.__client is not None:
-            return
+        async with self.__init_lock:
+            if self.__client is not None:
+                return
 
-        self.__project_id = project_id
-        self.__database_id = database
-        self.__client = AsyncClient(project=project_id, database=database)
+            self.__project_id = project_id
+            self.__database_id = database
+            self.__client = AsyncClient(project=project_id, database=database)
 
     # ....................... #
 

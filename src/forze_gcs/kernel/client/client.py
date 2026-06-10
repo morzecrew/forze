@@ -5,6 +5,7 @@ require_gcs()
 
 # ....................... #
 
+import asyncio
 import json
 import os
 from contextlib import asynccontextmanager
@@ -54,6 +55,8 @@ class GCSClient(GCSClientPort):
         init=False,
     )
 
+    __init_lock: asyncio.Lock = attrs.field(factory=asyncio.Lock, init=False)
+
     # ....................... #
 
     async def initialize(
@@ -71,27 +74,30 @@ class GCSClient(GCSClientPort):
         :param config: Optional client configuration overrides.
         """
 
-        if self.__storage is not None:
-            return
+        async with self.__init_lock:
+            if self.__storage is not None:
+                return
 
-        self.__project_id = project_id
-        self.__config = config
+            self.__project_id = project_id
+            self.__config = config
 
-        api_root: str | None = None
-        if host := os.environ.get("STORAGE_EMULATOR_HOST"):
-            api_root = host.rstrip("/")
+            api_root: str | None = None
+            if host := os.environ.get("STORAGE_EMULATOR_HOST"):
+                api_root = host.rstrip("/")
 
-        key_file = service_file
+            key_file = service_file
 
-        if key_file is None and config is not None:
-            key_file = config.service_file
+            if key_file is None and config is not None:
+                key_file = config.service_file
 
-        self.__credential_path = OwnedTempPath(path=key_file, owned=service_file_owned)
+            self.__credential_path = OwnedTempPath(
+                path=key_file, owned=service_file_owned
+            )
 
-        self.__storage = Storage(
-            service_file=key_file,
-            api_root=api_root,
-        )
+            self.__storage = Storage(
+                service_file=key_file,
+                api_root=api_root,
+            )
 
     # ....................... #
 

@@ -8,6 +8,8 @@ require_http()
 
 # ....................... #
 
+import asyncio
+
 import httpx
 
 import attrs
@@ -42,6 +44,7 @@ class HttpxClient(HttpxClientPort):
 
     __client: httpx.AsyncClient | None = attrs.field(default=None, init=False)
     __base_url: str | None = attrs.field(default=None, init=False)
+    __init_lock: asyncio.Lock = attrs.field(factory=asyncio.Lock, init=False)
 
     # ....................... #
 
@@ -53,25 +56,26 @@ class HttpxClient(HttpxClientPort):
         default_headers: Mapping[str, str] | None = None,
         transport: httpx.AsyncBaseTransport | None = None,
     ) -> None:
-        if self.__client is not None:
-            return
+        async with self.__init_lock:
+            if self.__client is not None:
+                return
 
-        cfg = config or HttpxConfig()
-        self.__base_url = base_url
-        timeout = httpx.Timeout(cfg.timeout.total_seconds())
-        client_kwargs: dict[str, Any] = {
-            "timeout": timeout,
-            "follow_redirects": cfg.follow_redirects,
-            "headers": dict(default_headers or {}),
-        }
+            cfg = config or HttpxConfig()
+            self.__base_url = base_url
+            timeout = httpx.Timeout(cfg.timeout.total_seconds())
+            client_kwargs: dict[str, Any] = {
+                "timeout": timeout,
+                "follow_redirects": cfg.follow_redirects,
+                "headers": dict(default_headers or {}),
+            }
 
-        if base_url is not None:
-            client_kwargs["base_url"] = base_url
+            if base_url is not None:
+                client_kwargs["base_url"] = base_url
 
-        if transport is not None:
-            client_kwargs["transport"] = transport
+            if transport is not None:
+                client_kwargs["transport"] = transport
 
-        self.__client = httpx.AsyncClient(**client_kwargs)
+            self.__client = httpx.AsyncClient(**client_kwargs)
 
     # ....................... #
 

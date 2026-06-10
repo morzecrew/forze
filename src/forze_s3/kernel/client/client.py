@@ -4,6 +4,7 @@ require_s3()
 
 # ....................... #
 
+import asyncio
 import io
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
@@ -49,6 +50,7 @@ class S3Client(S3ClientPort):
         factory=lambda: ContextVar("s3_depth", default=0),
         init=False,
     )
+    __init_lock: asyncio.Lock = attrs.field(factory=asyncio.Lock, init=False)
 
     # ....................... #
     # Lifecycle
@@ -64,7 +66,8 @@ class S3Client(S3ClientPort):
 
         No-ops if the session is already initialized. When no ``retries``
         key is present in *config*, a default adaptive retry strategy with
-        up to 3 attempts is applied automatically.
+        up to 3 attempts is applied automatically. Concurrent calls serialize
+        on an internal lock so only one coroutine performs the setup.
 
         :param endpoint: S3-compatible endpoint URL.
         :param access_key_id: AWS access key identifier.
@@ -72,19 +75,20 @@ class S3Client(S3ClientPort):
         :param config: Optional botocore configuration overrides.
         """
 
-        if self.__session is not None:
-            return
+        async with self.__init_lock:
+            if self.__session is not None:
+                return
 
-        cfg = config if config is not None else S3Config()
-        aio_config = cfg.to_aio_config()
+            cfg = config if config is not None else S3Config()
+            aio_config = cfg.to_aio_config()
 
-        self.__opts = S3ConnectionOpts(
-            endpoint=endpoint,
-            access_key_id=access_key_id,
-            secret_access_key=secret_access_key,
-            config=aio_config,
-        )
-        self.__session = aioboto3.Session()
+            self.__opts = S3ConnectionOpts(
+                endpoint=endpoint,
+                access_key_id=access_key_id,
+                secret_access_key=secret_access_key,
+                config=aio_config,
+            )
+            self.__session = aioboto3.Session()
 
     # ....................... #
 

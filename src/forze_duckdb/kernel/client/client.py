@@ -77,6 +77,7 @@ class DuckDbClient(DuckDbClientPort):
     __conn: Any = attrs.field(default=None, init=False)
     __config: DuckDbConfig | None = attrs.field(default=None, init=False)
     __executor: ThreadPoolExecutor | None = attrs.field(default=None, init=False)
+    __init_lock: asyncio.Lock = attrs.field(factory=asyncio.Lock, init=False)
 
     # ....................... #
     # Lifecycle
@@ -93,7 +94,8 @@ class DuckDbClient(DuckDbClientPort):
     ) -> None:
         """Open the connection, load extensions, register secrets and views.
 
-        Idempotent; later calls are no-ops.
+        Idempotent; later calls are no-ops. Concurrent calls serialize on an
+        internal lock so only one coroutine performs the setup.
 
         :param database: DuckDB database path, or ``:memory:`` for an ephemeral db.
         :param config: Engine/executor configuration.
@@ -104,45 +106,46 @@ class DuckDbClient(DuckDbClientPort):
         :param bootstrap_sql: Additional raw statements run after the above.
         """
 
-        if self.__conn is not None:
-            return
+        async with self.__init_lock:
+            if self.__conn is not None:
+                return
 
-        cfg = config or DuckDbConfig()
-        self.__config = cfg
+            cfg = config or DuckDbConfig()
+            self.__config = cfg
 
-        def _open() -> Any:
-            conn = duckdb.connect(database, read_only=cfg.read_only)
+            def _open() -> Any:
+                conn = duckdb.connect(database, read_only=cfg.read_only)
 
-            if cfg.threads is not None:
-                conn.execute(f"PRAGMA threads={int(cfg.threads)}")
+                if cfg.threads is not None:
+                    conn.execute(f"PRAGMA threads={int(cfg.threads)}")
 
-            if cfg.memory_limit is not None:
-                conn.execute(f"SET memory_limit='{cfg.memory_limit}'")
+                if cfg.memory_limit is not None:
+                    conn.execute(f"SET memory_limit='{cfg.memory_limit}'")
 
-            for ext in extensions:
-                conn.execute(f"INSTALL {ext}")
-                conn.execute(f"LOAD {ext}")
+                for ext in extensions:
+                    conn.execute(f"INSTALL {ext}")
+                    conn.execute(f"LOAD {ext}")
 
-            for secret_sql in secrets:
-                conn.execute(secret_sql)
+                for secret_sql in secrets:
+                    conn.execute(secret_sql)
 
-            if sources:
-                for name, scan_expr in sources.items():
-                    conn.execute(
-                        f"CREATE OR REPLACE VIEW {name} "  # nosec B608
-                        f"AS SELECT * FROM {scan_expr}"
-                    )
+                if sources:
+                    for name, scan_expr in sources.items():
+                        conn.execute(
+                            f"CREATE OR REPLACE VIEW {name} "  # nosec B608
+                            f"AS SELECT * FROM {scan_expr}"
+                        )
 
-            for stmt in bootstrap_sql:
-                conn.execute(stmt)
+                for stmt in bootstrap_sql:
+                    conn.execute(stmt)
 
-            return conn
+                return conn
 
-        self.__conn = await asyncio.to_thread(_open)
-        self.__executor = ThreadPoolExecutor(
-            max_workers=cfg.max_concurrent_queries,
-            thread_name_prefix="forze-duckdb",
-        )
+            self.__conn = await asyncio.to_thread(_open)
+            self.__executor = ThreadPoolExecutor(
+                max_workers=cfg.max_concurrent_queries,
+                thread_name_prefix="forze-duckdb",
+            )
 
     # ....................... #
 
@@ -261,9 +264,11 @@ class DuckDbClient(DuckDbClientPort):
         timeout: timedelta | None = None,
         fetch_batch_size: int = 2000,
     ) -> list[JsonDict]:
+        if fetch_batch_size < 1:
+            raise exc.internal("fetch_batch_size must be >= 1")
+
         # DuckDB materializes the full result in-process; batching happens in the
         # adapter. ``fetch_batch_size`` is accepted for port symmetry.
-        _ = fetch_batch_size
         result = await self.run_query(
             sql,
             params,

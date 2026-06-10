@@ -21,7 +21,7 @@ def test_s3_inline_renders_create_secret() -> None:
         name="lake",
         inline=S3SecretPayload(
             access_key_id="AK",
-            secret_access_key="SK",  # type: ignore[arg-type]
+            secret_access_key="SK",  # type: ignore[arg-type] # noqa: S106
             region="eu-west-1",
             endpoint="minio:9000",
             url_style="path",

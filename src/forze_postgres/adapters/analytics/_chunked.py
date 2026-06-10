@@ -7,7 +7,10 @@ from typing import Any, AsyncGenerator, Sequence, TypeVar, cast
 from pydantic import BaseModel
 
 from forze.application.contracts.analytics import AnalyticsRunOptions
-from forze.application.integrations.analytics.adapter_common import dry_run_enabled
+from forze.application.integrations.analytics.adapter_common import (
+    dry_run_enabled,
+    validate_fetch_batch_size,
+)
 from forze.application.contracts.querying import PaginationExpression
 from forze.base.primitives import StrKey
 
@@ -36,6 +39,7 @@ class PostgresAnalyticsChunkedMixin[R: BaseModel, Ing: BaseModel](
         fetch_batch_size: int,
         _row_type: type[BaseModel],
     ) -> AsyncGenerator[Sequence[BaseModel]]:
+        validate_fetch_batch_size(fetch_batch_size)
         host = self._host
         params = host._validated_params(query_key, params)  # type: ignore[protected-access]
 
@@ -44,7 +48,7 @@ class PostgresAnalyticsChunkedMixin[R: BaseModel, Ing: BaseModel](
 
         max_rows = (options or {}).get("max_rows")
         cap = int(max_rows) if max_rows is not None else None
-        batch = max(1, fetch_batch_size)
+        batch = fetch_batch_size
         offset = 0
         collected = 0
         buffer: list[BaseModel] = []

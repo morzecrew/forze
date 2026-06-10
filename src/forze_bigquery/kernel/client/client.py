@@ -50,6 +50,7 @@ class BigQueryClient(BigQueryClientPort):
     )
     __api_root: str | None = attrs.field(default=None, init=False)
     __session: Any = attrs.field(default=None, init=False)
+    __init_lock: asyncio.Lock = attrs.field(factory=asyncio.Lock, init=False)
 
     # ....................... #
 
@@ -63,20 +64,21 @@ class BigQueryClient(BigQueryClientPort):
     ) -> None:
         """Configure project, credentials, and shared HTTP session."""
 
-        if self.__project_id is not None:
-            return
+        async with self.__init_lock:
+            if self.__project_id is not None:
+                return
 
-        self.__project_id = project_id
-        self.__config = config or BigQueryConfig()
-        self.__credential_path = OwnedTempPath(
-            path=service_file,
-            owned=service_file_owned,
-        )
+            self.__project_id = project_id
+            self.__config = config or BigQueryConfig()
+            self.__credential_path = OwnedTempPath(
+                path=service_file,
+                owned=service_file_owned,
+            )
 
-        if host := os.environ.get("BIGQUERY_EMULATOR_HOST"):
-            self.__api_root = host.rstrip("/")
+            if host := os.environ.get("BIGQUERY_EMULATOR_HOST"):
+                self.__api_root = host.rstrip("/")
 
-        self.__session = ClientSession()
+            self.__session = ClientSession()
 
     # ....................... #
 

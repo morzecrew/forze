@@ -4,6 +4,7 @@ require_temporal()
 
 # ....................... #
 
+import asyncio
 import base64
 from typing import Any, final
 
@@ -47,6 +48,7 @@ class TemporalClient(TemporalClientPort):
     """Low level client for temporal.io."""
 
     __client: Client | None = attrs.field(default=None, init=False)
+    __init_lock: asyncio.Lock = attrs.field(factory=asyncio.Lock, init=False)
 
     # ....................... #
     # Lifecycle
@@ -57,18 +59,19 @@ class TemporalClient(TemporalClientPort):
         *,
         config: TemporalConfig = TemporalConfig(),
     ) -> None:
-        if self.__client is not None:
-            # log
-            return
+        async with self.__init_lock:
+            if self.__client is not None:
+                # log
+                return
 
-        self.__client = await Client.connect(
-            host,
-            namespace=config.namespace,
-            lazy=config.lazy,
-            # Default values (not configurable)
-            data_converter=pydantic_data_converter,
-            interceptors=config.interceptors or [],
-        )
+            self.__client = await Client.connect(
+                host,
+                namespace=config.namespace,
+                lazy=config.lazy,
+                # Default values (not configurable)
+                data_converter=pydantic_data_converter,
+                interceptors=config.interceptors or [],
+            )
 
     # ....................... #
 
