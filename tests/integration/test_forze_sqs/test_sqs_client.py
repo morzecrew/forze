@@ -167,3 +167,54 @@ async def test_client_delayed_enqueue_not_visible_until_delay_elapses(
         messages = await _receive_until(sqs_client, sqs_queue_url, attempts=12)
         assert messages[0].body == b'{"value":"delayed"}'
         await sqs_client.ack(sqs_queue_url, [messages[0].id])
+
+
+@pytest.mark.asyncio
+async def test_sequential_operations_reuse_single_aiobotocore_client(
+    localstack_container,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``initialize`` opens one aiobotocore client; sequential ops reuse it.
+
+    LocalStack requires explicit static credentials, so the credential-chain
+    (``access_key_id=None``) path is exercised by unit tests only.
+    """
+    import aioboto3
+
+    create_calls = 0
+    original_client = aioboto3.Session.client
+
+    def _counting_client(self, *args, **kwargs):  # noqa: ANN001, ANN002, ANN003
+        nonlocal create_calls
+        create_calls += 1
+        return original_client(self, *args, **kwargs)
+
+    monkeypatch.setattr(aioboto3.Session, "client", _counting_client)
+
+    client = SQSClient()
+    await client.initialize(
+        endpoint=localstack_container.get_url(),
+        region_name="us-east-1",
+        access_key_id="test",
+        secret_access_key="test",
+    )
+
+    try:
+        queue = f"forze-sqs-reuse-{uuid4().hex[:12]}"
+
+        async with client.client():
+            queue_url = await client.create_queue(queue)
+
+        async with client.client():
+            message_id = await client.enqueue(queue_url, b"reuse-payload")
+            assert message_id
+
+        async with client.client():
+            messages = await _receive_until(client, queue_url)
+            assert messages[0].body == b"reuse-payload"
+            assert await client.ack(queue_url, [messages[0].id]) == 1
+
+        assert create_calls == 1
+
+    finally:
+        await client.close()

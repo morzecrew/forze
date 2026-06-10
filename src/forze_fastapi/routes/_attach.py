@@ -28,7 +28,7 @@ from uuid import UUID
 
 import attrs
 from fastapi import APIRouter
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from forze.application.execution.context import ExecutionContextFactory
 from forze.application.execution.operations import (
@@ -99,6 +99,68 @@ def require_input_type(
 # ....................... #
 
 
+def _require_satisfiable(
+    dto_type: type[BaseModel],
+    op: str,
+    supplied: AbstractSet[str],
+) -> None:
+    """Fail at attach time when the route cannot satisfy the DTO's required fields.
+
+    Endpoints that assemble the input DTO from path/query parameters can only
+    supply the fields in *supplied*; a DTO with other required fields would fail
+    ``model_validate`` on every request. Catching the mismatch here turns a
+    request-time 500 into a configuration error at attach time.
+    """
+
+    required = {
+        name
+        for name, field in dto_type.model_fields.items()
+        if field.is_required()
+    }
+
+    if missing := required - set(supplied):
+        raise exc.configuration(
+            f"Input type '{dto_type.__name__}' of operation '{op}' has required "
+            f"fields {sorted(missing)} the route cannot supply "
+            f"(only {sorted(supplied)} are available)"
+        )
+
+
+# ....................... #
+
+
+def validate_payload(
+    dto_type: type[BaseModel],
+    data: Mapping[str, Any],
+    op: str,
+) -> BaseModel:
+    """Validate *data* against *dto_type*, surfacing failures as 422.
+
+    Endpoints that assemble the input DTO manually (path/query/multipart shapes)
+    bypass FastAPI's request validation, so a raw pydantic ``ValidationError``
+    would escape as an unhandled 500. Re-raising it as a validation
+    :class:`CoreException` keeps the response a standard 422 error payload,
+    matching the body endpoints.
+    """
+
+    try:
+        return dto_type.model_validate(dict(data))
+    except ValidationError as error:
+        raise exc.validation(
+            f"Invalid input for operation '{op}'",
+            details={
+                "errors": error.errors(
+                    include_url=False,
+                    include_input=False,
+                    include_context=False,
+                )
+            },
+        ) from error
+
+
+# ....................... #
+
+
 def _operation_runner(
     registry: FrozenOperationRegistry,
     op: str,
@@ -152,9 +214,10 @@ def id_endpoint(
     """Endpoint assembling the input DTO from an ``{id}`` path parameter."""
 
     dto_type = require_input_type(input_type, op)
+    _require_satisfiable(dto_type, op, {"id"})
 
     async def endpoint(id: UUID) -> Any:
-        return await runner(dto_type.model_validate({"id": id}))
+        return await runner(validate_payload(dto_type, {"id": id}, op))
 
     return endpoint
 
@@ -170,9 +233,10 @@ def id_rev_endpoint(
     """Endpoint assembling the input DTO from ``{id}`` path and ``rev`` query."""
 
     dto_type = require_input_type(input_type, op)
+    _require_satisfiable(dto_type, op, {"id", "rev"})
 
     async def endpoint(id: UUID, rev: int) -> Any:
-        return await runner(dto_type.model_validate({"id": id, "rev": rev}))
+        return await runner(validate_payload(dto_type, {"id": id, "rev": rev}, op))
 
     return endpoint
 
@@ -204,7 +268,7 @@ def id_rev_body_endpoint(
 
     async def endpoint(id: UUID, rev: int, payload: Any) -> Any:
         return await runner(
-            dto_type.model_validate({"id": id, "rev": rev, "dto": payload})
+            validate_payload(dto_type, {"id": id, "rev": rev, "dto": payload}, op)
         )
 
     endpoint.__signature__ = inspect.Signature(  # type: ignore[attr-defined]

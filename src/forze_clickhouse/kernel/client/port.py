@@ -40,7 +40,9 @@ class ClickHouseClientPort(Protocol):
         max_rows: int | None = None,
         timeout: timedelta | None = None,
         fetch_batch_size: int = 2000,
-    ) -> Awaitable[list[JsonDict]]: ...  # pragma: no cover
+    ) -> Awaitable[list[JsonDict]]:
+        """Fetch all rows (single streaming execution, capped by *max_rows*)."""
+        ...  # pragma: no cover
 
     def insert_rows(
         self,

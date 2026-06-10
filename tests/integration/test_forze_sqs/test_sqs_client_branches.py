@@ -372,7 +372,12 @@ async def test_health_ok(
 
 @pytest.mark.asyncio
 async def test_client_options_missing_raises() -> None:
-    """Entering client() with a session but no opts raises internal."""
+    """Entering client() with a session but no opts raises internal.
+
+    After ``initialize`` the persistent client would be yielded without
+    consulting opts, so it is dropped too: the lazy fallback path is the
+    only one that still builds a client from opts.
+    """
 
     client = SQSClient()
     await client.initialize(
@@ -381,8 +386,10 @@ async def test_client_options_missing_raises() -> None:
         access_key_id="test",
         secret_access_key="test",
     )
-    # Drop opts while keeping the session to hit the guard branch.
+    # Drop opts and the persistent client while keeping the session to hit
+    # the lazy-construction guard branch.
     client._SQSClient__opts = None  # type: ignore[attr-defined]
+    client._SQSClient__persistent_client = None  # type: ignore[attr-defined]
     with pytest.raises(CoreException):
         async with client.client():
             pass

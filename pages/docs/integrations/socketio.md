@@ -39,7 +39,7 @@ chat.command(event="message.send", operation="messages.create", payload_type=Sen
 
 adapter = ForzeSocketIOAdapter(
     sio=sio,
-    context_factory=lambda request: runtime.get_context(),  # bind identity/tenant here
+    context_factory=lambda request: runtime.get_context(),  # tenant/deps wiring here
     operation_resolver=registry.resolve,                     # the frozen registry
 )
 adapter.include_router(chat)
@@ -47,6 +47,19 @@ adapter.include_router(chat)
 
 On each event the adapter builds the context, validates the payload, runs the
 operation, and returns the (validated) result as the Socket.IO ack.
+
+## Errors and identity
+
+Every handler runs inside an error boundary: a `CoreException` is acked as
+`{"error": {"detail", "code", "kind", ...}}` honoring the same egress policy as
+the HTTP boundary — server-side kinds (internal, infrastructure, configuration,
+concurrency) and unexpected exceptions are logged and acked with a generic
+detail, so internals never leak to clients. An optional `identity_resolver`
+on the adapter authenticates connections at connect time (refusing them via
+`ConnectionRefusedError` when it raises, e.g. `exc.authentication`) and binds
+the resolved `AuthnIdentity` onto the invocation context around each event;
+without one, handlers run unauthenticated and governance hooks that require
+identity will deny. Tenant resolution stays in the `context_factory`.
 
 ## What it provides
 
@@ -61,7 +74,7 @@ operation, and returns the (validated) result as the Socket.IO ack.
   any transport.
 - `operation_resolver` is the registry's own `resolve` — its signature is
   `(operation_key, context)`.
-- Payloads validate through a per-route Pydantic `TypeAdapter`; bind identity and
-  tenant in the `context_factory`, never at the socket layer.
+- Payloads validate through a per-route Pydantic `TypeAdapter`; authenticate
+  connections with `identity_resolver`, bind tenant in the `context_factory`.
 - Multi-process delivery needs the Redis backplane (`redis_url=`); without it the
   server is single-worker.

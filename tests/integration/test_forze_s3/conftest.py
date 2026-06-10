@@ -64,7 +64,9 @@ async def s3_client(minio_container):
         config=config,
     )
 
-    return client
+    yield client
+
+    await client.close()
 
 
 @pytest_asyncio.fixture(scope="function")

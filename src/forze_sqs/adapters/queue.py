@@ -19,6 +19,7 @@ from forze.application.integrations.queue import ScopedQueueNamingMixin
 from forze.base.exceptions import exc
 
 from ..kernel.client import SQSClientPort
+from ._logger import logger
 from .codecs import SQSQueueCodec
 
 # ----------------------- #
@@ -31,7 +32,16 @@ class SQSQueueAdapter[M: BaseModel](
     QueueCommandPort[M],
     ScopedQueueNamingMixin,
 ):
-    """SQS queue adapter."""
+    """SQS queue adapter.
+
+    Poison messages: a payload that fails codec decoding in :meth:`receive`
+    or :meth:`consume` is rejected with ``nack(requeue=False)`` (the message
+    stays invisible until its visibility timeout lapses, so the queue's
+    redrive policy eventually dead-letters it — terminal disposition is
+    broker-specific per the queue port contract), logged by message id only
+    (never payload contents), and *skipped*: the remaining batch is still
+    returned and a continuous consumer keeps consuming.
+    """
 
     client: SQSClientPort
     """SQS client instance."""
@@ -123,6 +133,30 @@ class SQSQueueAdapter[M: BaseModel](
 
     # ....................... #
 
+    async def __nack_poison(self, physical_queue: str, message_id: str) -> None:
+        """Reject an undecodable message without requeue (redrive/dead-letter).
+
+        ``requeue=False`` leaves the message invisible until its visibility
+        timeout lapses, so the queue's redrive policy counts the receive and
+        eventually dead-letters it — requeueing a poison message would only
+        redeliver it forever. Best-effort: a failed nack leaves the message
+        invisible until its visibility timeout lapses anyway.
+        """
+
+        try:
+            async with self.client.client():
+                await self.client.nack(physical_queue, [message_id], requeue=False)
+        except Exception:
+            logger.error(
+                "SQS queue %s: failed to nack undecodable message %s; "
+                "it stays invisible until its visibility timeout lapses",
+                physical_queue,
+                message_id,
+                exc_info=True,
+            )
+
+    # ....................... #
+
     async def receive(
         self,
         queue: str,
@@ -130,6 +164,12 @@ class SQSQueueAdapter[M: BaseModel](
         limit: int | None = None,
         timeout: timedelta | None = None,
     ) -> list[QueueMessage[M]]:
+        """Receive up to ``limit`` decoded messages.
+
+        Undecodable (poison) entries are nacked away with ``requeue=False``
+        and excluded from the result; the decodable remainder of the batch
+        is still returned. See the class docstring for the full contract.
+        """
         physical_queue = await self.__queue_name(queue)
 
         async with self.client.client():
@@ -139,7 +179,25 @@ class SQSQueueAdapter[M: BaseModel](
                 timeout=timeout,
             )
 
-        return [self.codec.decode(queue, msg) for msg in raw]
+        decoded: list[QueueMessage[M]] = []
+
+        for msg in raw:
+            try:
+                decoded.append(self.codec.decode(queue, msg))
+            except Exception:
+                # Poison entries are nacked away (requeue=False) and the
+                # successfully decoded remainder is still returned: one bad
+                # payload must not fail or wedge the whole batch.
+                logger.error(
+                    "SQS queue %s: failed to decode message %s; "
+                    "rejecting without requeue",
+                    physical_queue,
+                    msg.id,
+                    exc_info=True,
+                )
+                await self.__nack_poison(physical_queue, msg.id)
+
+        return decoded
 
     # ....................... #
 
@@ -149,11 +207,34 @@ class SQSQueueAdapter[M: BaseModel](
         *,
         timeout: timedelta | None = None,
     ) -> AsyncGenerator[QueueMessage[M]]:
+        """Yield decoded messages continuously from ``queue``.
+
+        A decode failure must not kill the consumer: undecodable (poison)
+        messages are nacked away with ``requeue=False`` and the stream keeps
+        yielding subsequent messages. See the class docstring for the full
+        contract.
+        """
         physical_queue = await self.__queue_name(queue)
 
         async with self.client.client():
             async for msg in self.client.consume(physical_queue, timeout=timeout):
-                yield self.codec.decode(queue, msg)
+                try:
+                    decoded = self.codec.decode(queue, msg)
+                except Exception:
+                    # A poison message is nacked away (requeue=False) and the
+                    # loop keeps consuming: a single undecodable payload must
+                    # not crash (and thereby wedge) the consumer stream.
+                    logger.error(
+                        "SQS queue %s: failed to decode message %s; "
+                        "rejecting without requeue",
+                        physical_queue,
+                        msg.id,
+                        exc_info=True,
+                    )
+                    await self.__nack_poison(physical_queue, msg.id)
+                    continue
+
+                yield decoded
 
     # ....................... #
 

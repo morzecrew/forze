@@ -58,3 +58,19 @@ class TestRabbitmqErrorHandler:
         assert "boom" not in r.summary
         assert r.details is not None
         assert r.details["error"] == "boom"
+
+
+class TestAssembledChain:
+    """Regression: the package mapper must be reachable through the chain
+    wired into ``exc_interceptor`` (nested default chain used to shadow it)."""
+
+    def test_connection_error_through_assembled_chain(self) -> None:
+        from forze_rabbitmq.kernel.client.errors import exc_interceptor
+
+        out = exc_interceptor.mapper(
+            aio_pika_errors.AMQPConnectionError("conn"), site="connect"
+        )
+        assert out is not None
+        assert out.kind == ExceptionKind.INFRASTRUCTURE
+        assert out.code != "core.unhandled"
+        assert "connection" in out.summary.lower()

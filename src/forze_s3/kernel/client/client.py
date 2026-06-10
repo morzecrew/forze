@@ -6,9 +6,9 @@ require_s3()
 
 import asyncio
 import io
-from contextlib import asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager
 from contextvars import ContextVar
-from typing import Any, AsyncGenerator, cast, final
+from typing import Any, AsyncContextManager, AsyncGenerator, cast, final
 from urllib.parse import urlencode
 
 import aioboto3
@@ -33,15 +33,29 @@ from .value_objects import S3Config, S3ConnectionOpts
 @final
 @attrs.define(slots=True)
 class S3Client(S3ClientPort):
-    """Async S3 client with context-scoped connection reuse.
+    """Async S3 client with a long-lived connection and context-scoped reuse.
 
-    Must be :meth:`initialize`d with endpoint credentials before use. The
-    :meth:`client` context manager creates an ``aioboto3`` S3 client for the
-    current context; nested entries reuse the same client via context variables.
+    Must be :meth:`initialize`d with an endpoint before use; ``initialize``
+    opens a single long-lived ``aioboto3`` client that all :meth:`client`
+    scopes share until :meth:`close`. Nested entries reuse the same client
+    via context variables.
     """
 
     __opts: S3ConnectionOpts | None = attrs.field(default=None, init=False)
     __session: aioboto3.Session | None = attrs.field(default=None, init=False)
+
+    __persistent_client: AsyncS3Client | None = attrs.field(default=None, init=False)
+    """Long-lived S3 client opened by :meth:`initialize`, shared by all scopes.
+
+    aiobotocore clients are coroutine-safe for concurrent calls: each client
+    owns one ``aiohttp.ClientSession`` with a pooled ``TCPConnector``
+    (bounded by ``max_pool_connections``) and serializes credential refresh
+    behind an ``asyncio.Lock``, so a single instance can serve concurrent
+    operations from multiple tasks.
+    """
+
+    __exit_stack: AsyncExitStack | None = attrs.field(default=None, init=False)
+    """Owns the persistent client's async context; closed by :meth:`close`."""
 
     __ctx_client: ContextVar[AsyncS3Client | None] = attrs.field(
         factory=lambda: ContextVar("s3_client", default=None),
@@ -59,20 +73,33 @@ class S3Client(S3ClientPort):
     async def initialize(
         self,
         endpoint: str,
-        access_key_id: str,
-        secret_access_key: str | SecretStr,
+        access_key_id: str | None = None,
+        secret_access_key: str | SecretStr | None = None,
         config: S3Config | None = None,
     ) -> None:
-        """Configure the client with S3 credentials and create a session.
+        """Configure the client and open a long-lived ``aioboto3`` client.
 
-        No-ops if the session is already initialized. When no ``retries``
-        key is present in *config*, a default adaptive retry strategy with
-        up to 3 attempts is applied automatically. Concurrent calls serialize
-        on an internal lock so only one coroutine performs the setup.
+        No-ops if the session is already initialized. The underlying
+        ``aiobotocore`` client is created **once** here; subsequent
+        :meth:`client` scopes reuse it (depth tracking only) until
+        :meth:`close` releases it. When no ``retries`` key is present in
+        *config*, a default adaptive retry strategy with up to 3 attempts is
+        applied automatically. Concurrent calls serialize on an internal lock
+        so only one coroutine performs the setup.
+
+        Credentials are optional: when *access_key_id* and
+        *secret_access_key* are both ``None`` (the default), they are **not**
+        passed to the client and botocore's default credential chain resolves
+        them instead (environment variables, shared config/credentials files,
+        container/instance roles — ECS task roles, EC2 instance profiles,
+        EKS IRSA). Passing explicit static credentials keeps the previous
+        behavior. Providing only one of the two raises a configuration error.
 
         :param endpoint: S3-compatible endpoint URL.
-        :param access_key_id: AWS access key identifier.
-        :param secret_access_key: AWS secret access key (plain or :class:`SecretStr`).
+        :param access_key_id: AWS access key identifier, or ``None`` to defer
+            to the default credential chain.
+        :param secret_access_key: AWS secret access key (plain or
+            :class:`SecretStr`), or ``None`` to defer to the chain.
         :param config: Optional botocore configuration overrides.
         """
 
@@ -91,14 +118,45 @@ class S3Client(S3ClientPort):
             )
             self.__session = aioboto3.Session()
 
+            stack = AsyncExitStack()
+
+            try:
+                self.__persistent_client = await stack.enter_async_context(
+                    self.__create_client_cm()
+                )
+
+            except BaseException:
+                await stack.aclose()
+                self.__persistent_client = None
+                self.__session = None
+                self.__opts = None
+                raise
+
+            self.__exit_stack = stack
+
     # ....................... #
 
     async def close(self) -> None:
-        """Release the session and connection options."""
+        """Close the long-lived client and release session and options.
+
+        ``close()`` invalidates ambient scopes: scopes still nested when it
+        runs keep their (now closed) client reference and fail on next use,
+        but exit cleanly — they only reset context variables and never
+        re-exit the shared client, so there is no deadlock or double-close.
+        """
 
         async with self.__init_lock:
-            self.__session = None
-            self.__opts = None
+            stack = self.__exit_stack
+            self.__exit_stack = None
+            self.__persistent_client = None
+
+            try:
+                if stack is not None:
+                    await stack.aclose()
+
+            finally:
+                self.__session = None
+                self.__opts = None
 
     # ....................... #
 
@@ -125,13 +183,44 @@ class S3Client(S3ClientPort):
 
     # ....................... #
 
+    def __create_client_cm(self) -> AsyncContextManager[AsyncS3Client]:
+        """Build the ``aiobotocore`` client async context manager from opts.
+
+        When credentials are absent in the options, the ``aws_*`` kwargs are
+        omitted so botocore's default credential chain resolves them.
+        """
+
+        session = self.__require_session()
+        opts = self.__opts
+
+        if opts is None:
+            raise exc.internal("S3 client options are not initialized")
+
+        kwargs: dict[str, Any] = {
+            "endpoint_url": opts.endpoint,
+            "config": opts.config,
+        }
+
+        if opts.access_key_id is not None and opts.secret_access_key is not None:
+            kwargs["aws_access_key_id"] = opts.access_key_id
+            kwargs["aws_secret_access_key"] = opts.secret_access_key.get_secret_value()
+
+        cm = session.client("s3", **kwargs)  # type: ignore
+
+        return cast(AsyncContextManager[AsyncS3Client], cm)
+
+    # ....................... #
+
     @asynccontextmanager
     async def client(self) -> AsyncGenerator[AsyncS3Client]:
         """Yield a context-scoped S3 client.
 
-        On first entry a new ``aioboto3`` client is created; nested calls reuse
-        the existing client and increment a depth counter so the underlying
-        connection is only closed when the outermost context exits.
+        When :meth:`initialize` has opened the long-lived client, scopes are
+        cheap: they bind the shared client to the current context (depth
+        tracking only), and nested calls reuse it until the outermost context
+        exits. Lazy per-scope client construction remains as a fallback for
+        instances whose options were configured without the persistent client
+        (un-lifecycled usage).
         """
 
         depth = self.__ctx_depth.get()
@@ -148,22 +237,22 @@ class S3Client(S3ClientPort):
 
             return
 
-        session = self.__require_session()
-        opts = self.__opts
+        persistent = self.__persistent_client
 
-        if opts is None:
-            raise exc.internal("S3 client options are not initialized")
+        if persistent is not None:
+            token_client = self.__ctx_client.set(persistent)
+            token_depth = self.__ctx_depth.set(1)
 
-        cm = session.client(  # type: ignore
-            "s3",
-            endpoint_url=opts.endpoint,
-            aws_access_key_id=opts.access_key_id,
-            aws_secret_access_key=opts.secret_access_key.get_secret_value(),
-            config=opts.config,  # type: ignore
-        )
-        cm = cast(AsyncS3Client, cm)
+            try:
+                yield persistent
 
-        async with cm as c:
+            finally:
+                self.__ctx_client.reset(token_client)
+                self.__ctx_depth.reset(token_depth)
+
+            return
+
+        async with self.__create_client_cm() as c:
             token_client = self.__ctx_client.set(c)
             token_depth = self.__ctx_depth.set(1)
 

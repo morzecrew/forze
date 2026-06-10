@@ -10,7 +10,6 @@ from pydantic import ValidationError as PydanticValidationError
 
 from forze.base.exceptions import (
     ChainExceptionMapper,
-    CoreException,
     ExceptionInterceptor,
     ExceptionKind,
     default_chain_exc_mapper,
@@ -88,6 +87,151 @@ class TestDefaultChainMapper:
 
         assert out is not None
         assert out.kind == ExceptionKind.VALIDATION
+
+
+class TestReraiseMappedSite:
+    """Every mapped exception carries the interception site in details."""
+
+    def test_site_added_when_mapper_omits_it(self) -> None:
+        from forze.base.exceptions._utils import reraise_mapped
+
+        def mapper(e: BaseException, *, site: str, details=None):  # type: ignore[no-untyped-def]
+            return exc.infrastructure("backend failed", details={"foo": 1})
+
+        with pytest.raises(CoreException) as exc_info:
+            reraise_mapped(mapper, RuntimeError("boom"), site="pg.fetch_one")
+
+        assert exc_info.value.details == {"foo": 1, "site": "pg.fetch_one"}
+
+    def test_site_added_when_details_none(self) -> None:
+        from forze.base.exceptions._utils import reraise_mapped
+
+        def mapper(e: BaseException, *, site: str, details=None):  # type: ignore[no-untyped-def]
+            return exc.infrastructure("backend failed")
+
+        with pytest.raises(CoreException) as exc_info:
+            reraise_mapped(mapper, RuntimeError("boom"), site="pg.fetch_one")
+
+        assert exc_info.value.details == {"site": "pg.fetch_one"}
+
+    def test_mapper_supplied_site_wins(self) -> None:
+        from forze.base.exceptions._utils import reraise_mapped
+
+        def mapper(e: BaseException, *, site: str, details=None):  # type: ignore[no-untyped-def]
+            return exc.infrastructure("backend failed", details={"site": "inner"})
+
+        with pytest.raises(CoreException) as exc_info:
+            reraise_mapped(mapper, RuntimeError("boom"), site="outer")
+
+        assert exc_info.value.details == {"site": "inner"}
+
+    def test_core_exception_passthrough_untouched(self) -> None:
+        from forze.base.exceptions._utils import reraise_mapped
+
+        original = exc.not_found("missing")
+
+        with pytest.raises(CoreException) as exc_info:
+            reraise_mapped(
+                lambda e, *, site, details=None: None,  # type: ignore[arg-type,misc]
+                original,
+                site="outer",
+            )
+
+        assert exc_info.value is original
+        assert exc_info.value.details is None
+
+
+class TestChainFlattening:
+    """Regression tests: chaining onto an existing chain must keep later mappers reachable.
+
+    A nested :class:`ChainExceptionMapper` never returns ``None`` — its
+    ``__call__`` falls through to ``default_exception`` — so before
+    flattening, ``inner.chain(specific)`` made ``specific`` dead code and
+    every unmatched exception surfaced as INTERNAL "Unhandled exception"
+    (this silently broke every integration package's error mapper, including
+    postgres OCC retry on serialization failures).
+    """
+
+    @staticmethod
+    def _map_value_error(e, *, site, details=None):
+        if isinstance(e, ValueError):
+            return exc.concurrency("retryable")
+        return None
+
+    @staticmethod
+    def _fallback(e, *, site, details=None):
+        return exc.infrastructure("from-fallback")
+
+    def test_chained_onto_chain_consults_later_mapper(self) -> None:
+        # The exact bug shape used by every integration package:
+        # default_chain_exc_mapper.chain(<package mapper>).
+        outer = default_chain_exc_mapper.chain(self._map_value_error)
+
+        out = outer(ValueError("x"), site="op")
+
+        assert out is not None
+        assert out.kind == ExceptionKind.CONCURRENCY
+
+    def test_chained_onto_chain_with_fallback_consults_later_mapper(self) -> None:
+        inner = ChainExceptionMapper.chain(map_pydantic, fallback=self._fallback)
+        outer = inner.chain(self._map_value_error)
+
+        out = outer(ValueError("x"), site="op")
+
+        assert out is not None
+        assert out.kind == ExceptionKind.CONCURRENCY
+        assert out.summary != "from-fallback"
+
+    def test_inherited_fallback_applies_when_unmatched(self) -> None:
+        inner = ChainExceptionMapper.chain(map_pydantic, fallback=self._fallback)
+        outer = inner.chain(self._map_value_error)
+
+        out = outer(RuntimeError("x"), site="op")
+
+        assert out is not None
+        assert out.summary == "from-fallback"
+
+    def test_explicit_fallback_overrides_inherited(self) -> None:
+        inner = ChainExceptionMapper.chain(map_pydantic, fallback=self._fallback)
+        outer = inner.chain(
+            self._map_value_error,
+            fallback=lambda e, *, site, details=None: exc.infrastructure("explicit"),
+        )
+
+        out = outer(RuntimeError("x"), site="op")
+
+        assert out is not None
+        assert out.summary == "explicit"
+
+    def test_unmatched_without_fallback_returns_default_exception(self) -> None:
+        outer = default_chain_exc_mapper.chain(self._map_value_error)
+
+        out = outer(RuntimeError("x"), site="op")
+
+        assert out is not None
+        assert out.kind == ExceptionKind.INTERNAL
+        assert out.code == "core.unhandled"
+
+    def test_core_exception_passthrough_unchanged(self) -> None:
+        original = exc.not_found("missing")
+        outer = default_chain_exc_mapper.chain(self._map_value_error)
+
+        assert outer(original, site="op") is original
+
+    def test_mappers_are_flat_and_order_preserved(self) -> None:
+        outer = default_chain_exc_mapper.chain(self._map_value_error)
+
+        assert not any(isinstance(m, ChainExceptionMapper) for m in outer.mappers)
+        assert outer.mappers == (map_pydantic, self._map_value_error)
+
+    def test_classmethod_chain_flattens_nested_arguments(self) -> None:
+        nested = ChainExceptionMapper.chain(
+            ChainExceptionMapper.chain(map_pydantic, fallback=self._fallback),
+            self._map_value_error,
+        )
+
+        assert nested.mappers == (map_pydantic, self._map_value_error)
+        assert nested.fallback is self._fallback
 
 
 class TestExceptionInterceptor:

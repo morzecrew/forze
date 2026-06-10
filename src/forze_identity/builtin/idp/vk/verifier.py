@@ -1,6 +1,6 @@
 """VK ID ``id_token`` verification via server-side introspection (``public_info``)."""
 
-from typing import Any, final
+from typing import cast, final
 
 import attrs
 import httpx
@@ -11,6 +11,7 @@ from forze.application.contracts.authn import (
     VerifiedAssertion,
 )
 from forze.base.exceptions import exc
+from forze.base.primitives import JsonDict
 
 from .config import VK_ID_OIDC_ISSUER, VK_ID_PUBLIC_INFO_ENDPOINT
 
@@ -108,6 +109,8 @@ class VkPublicInfoTokenVerifier(TokenVerifierPort):
                 code="vk_public_info_invalid_response",
             )
 
+        payload = cast(JsonDict, payload)
+
         error = payload.get("error")
 
         if error is not None or response.status_code >= 400:
@@ -141,7 +144,7 @@ class VkPublicInfoTokenVerifier(TokenVerifierPort):
     # ....................... #
 
     @staticmethod
-    def _extract_user_id(payload: dict[str, Any]) -> str | None:
+    def _extract_user_id(payload: JsonDict) -> str | None:
         """Extract the VK user id as a non-empty string, or ``None``.
 
         The documented success shape is ``{"user": {"user_id": ...}}``; a top-level
@@ -150,7 +153,13 @@ class VkPublicInfoTokenVerifier(TokenVerifierPort):
         """
 
         user = payload.get("user")
-        container = user if isinstance(user, dict) else payload
+
+        if isinstance(user, dict):
+            container = cast(JsonDict, user)
+
+        else:
+            container = payload
+
         raw = container.get("user_id")
 
         if isinstance(raw, bool):

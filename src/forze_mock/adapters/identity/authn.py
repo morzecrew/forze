@@ -85,7 +85,8 @@ class MockPasswordVerifierPort(PasswordVerifierPort):
         if entry is None:
             raise exc.authentication("Invalid login or password")
         assert isinstance(entry, dict)  # nosec: B101
-        if entry.get("password") != credentials.password:
+
+        if entry.get("password") != credentials.password:  # type: ignore[union-attr]
             raise exc.authentication("Invalid login or password")
         return _assertion_from_store(entry)  # type: ignore[arg-type]
 

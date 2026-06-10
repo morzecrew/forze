@@ -69,3 +69,55 @@ async def test_s3_ensure_bucket_creates_missing_bucket_and_is_idempotent(
         # Second call is a no-op on an existing bucket.
         await s3_client.ensure_bucket(bucket)
         assert await s3_client.bucket_exists(bucket)
+
+
+@pytest.mark.asyncio
+async def test_sequential_operations_reuse_single_aiobotocore_client(
+    minio_container,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``initialize`` opens one aiobotocore client; sequential ops reuse it.
+
+    MinIO requires explicit static credentials, so the credential-chain
+    (``access_key_id=None``) path is exercised by unit tests only.
+    """
+    import aioboto3
+
+    from forze_s3.kernel.client import S3Config
+
+    _container, endpoint = minio_container
+
+    create_calls = 0
+    original_client = aioboto3.Session.client
+
+    def _counting_client(self, *args, **kwargs):  # noqa: ANN001, ANN002, ANN003
+        nonlocal create_calls
+        create_calls += 1
+        return original_client(self, *args, **kwargs)
+
+    monkeypatch.setattr(aioboto3.Session, "client", _counting_client)
+
+    client = S3Client()
+    await client.initialize(
+        endpoint=endpoint,
+        access_key_id="minioadmin",  # MinIO root creds from conftest fixture
+        secret_access_key="minioadmin",
+        config=S3Config(s3={"addressing_style": "path"}),
+    )
+
+    try:
+        bucket = f"forze-s3-reuse-{uuid4().hex[:16]}"
+
+        async with client.client():
+            await client.create_bucket(bucket)
+
+        async with client.client():
+            await client.upload_bytes(bucket, "reuse/key.txt", b"payload")
+
+        async with client.client():
+            assert await client.download_bytes(bucket, "reuse/key.txt") == b"payload"
+
+        assert create_calls == 1
+
+    finally:
+        await client.close()

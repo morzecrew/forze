@@ -115,9 +115,7 @@ class RedisClient(RedisClientPort):
                 return
 
             socket_timeout = (
-                config.socket_timeout.total_seconds()
-                if config.socket_timeout
-                else None
+                config.socket_timeout.total_seconds() if config.socket_timeout else None
             )
             connect_timeout = (
                 config.connect_timeout.total_seconds()
@@ -167,13 +165,32 @@ class RedisClient(RedisClientPort):
     def __in_pipeline(self) -> bool:
         return self.__current_pipe() is not None
 
-    async def __maybe_read_retry(self, op: str, fn: Callable[[], Awaitable[T]]) -> T:
-        if self.__in_pipeline():
-            return await fn()
+    def __require_no_pipeline(self, method: str) -> None:
+        """Reject value-returning calls inside a bound pipeline scope.
 
+        Pipeline commands only produce results at ``execute()``; until then the
+        underlying call returns the pipeline object itself, so any coerced
+        return value would be garbage. Fail loud instead of corrupting silently.
+        """
+
+        if self.__in_pipeline():
+            raise exc.precondition(
+                f"{method} is not available inside a pipeline scope; "
+                "results only materialize at execute()",
+                code="redis_read_in_pipeline",
+            )
+
+    async def __maybe_read_retry(self, op: str, fn: Callable[[], Awaitable[T]]) -> T:
         cfg = self.__redis_config
         hook = cfg.on_read_retry
-        on_retry = (lambda attempt: hook(op, attempt)) if hook is not None else None
+
+        if hook is not None:
+
+            def on_retry(attempt: int) -> None:
+                hook(op, attempt)
+
+        else:
+            on_retry = None  # type: ignore[assignment]
 
         return await retry_read(
             fn,
@@ -236,6 +253,25 @@ class RedisClient(RedisClientPort):
     @exc_interceptor.asynccontextmanager("redis.pipeline")  # type: ignore[untyped-decorator]
     @asynccontextmanager
     async def pipeline(self, *, transaction: bool = True) -> AsyncGenerator[Pipeline]:
+        """Bind a context-local pipeline that batches **writes** until the block exits.
+
+        Pipelines are for write batching only: fire-and-forget methods called
+        inside the scope (``set``, ``mset``, ``delete``, ``unlink``, ``expire``,
+        ``publish``, ``xdel``, ``xtrim_maxlen``, ``xtrim_minid``) queue onto the
+        pipeline and return neutral placeholder values (``True`` / ``0``); the
+        real results only materialize when the pipeline executes on scope exit.
+
+        Value-returning methods (``get``, ``mget``, ``exists``, ``pttl``,
+        ``pttl_raw_ms``, ``run_script``, ``incr``, ``decr``, ``reset``,
+        ``xadd``, ``xread``, ``xgroup_read``, ``xgroup_create``, ``xack``)
+        raise a ``precondition`` error with code ``redis_read_in_pipeline``
+        when called inside the scope — their results cannot be observed before
+        ``execute()``, so returning anything would be silent corruption.
+
+        Nested ``pipeline`` blocks reuse the parent pipeline and only the
+        outermost block executes it.
+        """
+
         depth = self.__ctx_depth.get()
         parent = self.__current_pipe()
 
@@ -268,8 +304,10 @@ class RedisClient(RedisClientPort):
 
     @exc_interceptor.coroutine("redis.exists")  # type: ignore[untyped-decorator]
     async def exists(self, key: str) -> bool:
+        self.__require_no_pipeline("exists")
+
         async def _call() -> bool:
-            res = await self.__executor().exists(key)
+            res = await self.__require_client().exists(key)
 
             return res == 1
 
@@ -281,6 +319,8 @@ class RedisClient(RedisClientPort):
     async def pttl(self, key: str) -> int | None:
         """Milliseconds until expiry, or ``None`` if the key is missing or has no TTL."""
 
+        self.__require_no_pipeline("pttl")
+
         raw = await self.pttl_raw_ms(key)
 
         return raw if raw >= 0 else None
@@ -291,8 +331,10 @@ class RedisClient(RedisClientPort):
     async def pttl_raw_ms(self, key: str) -> int:
         """Return the raw Redis ``PTTL`` value in milliseconds (``>= 0`` time left, ``-1`` persistent, ``-2`` missing)."""
 
+        self.__require_no_pipeline("pttl_raw_ms")
+
         async def _call() -> int:
-            raw_res = await self.__executor().pttl(key)
+            raw_res = await self.__require_client().pttl(key)
 
             return raw_res
 
@@ -307,24 +349,19 @@ class RedisClient(RedisClientPort):
         keys: Sequence[str],
         args: Sequence[Any],
     ) -> str:
-        pipe = self.__current_pipe()
+        self.__require_no_pipeline("run_script")
+
         raw_res: Any
 
-        if pipe is None:
-            reg = self.__script_registry.get(script)
+        reg = self.__script_registry.get(script)
 
-            if reg is None:
-                reg = self.__require_client().register_script(script)
-                self.__script_registry[script] = reg
+        if reg is None:
+            reg = self.__require_client().register_script(script)
+            self.__script_registry[script] = reg
 
-            raw_res = reg(  # pyright: ignore[reportUnknownVariableType]
-                keys=list(keys), args=list(args)
-            )
-
-        else:
-            numkeys = len(keys)
-            keys_and_args = [*keys, *args]
-            raw_res = pipe.eval(script, numkeys, *keys_and_args)
+        raw_res = reg(  # pyright: ignore[reportUnknownVariableType]
+            keys=list(keys), args=list(args)
+        )
 
         if isinstance(raw_res, Awaitable):
             raw_res = await raw_res  # pyright: ignore[reportUnknownVariableType]
@@ -350,8 +387,10 @@ class RedisClient(RedisClientPort):
 
     @exc_interceptor.coroutine("redis.get")  # type: ignore[untyped-decorator]
     async def get(self, key: str) -> bytes | None:
+        self.__require_no_pipeline("get")
+
         async def _call() -> bytes | None:
-            return _bytes_or_none(await self.__executor().get(key))
+            return _bytes_or_none(await self.__require_client().get(key))
 
         return await self.__maybe_read_retry("get", _call)
 
@@ -362,9 +401,11 @@ class RedisClient(RedisClientPort):
         if not keys:
             return []
 
+        self.__require_no_pipeline("mget")
+
         async def _one_batch(batch: Sequence[str]) -> list[bytes | None]:
             async def _call() -> list[bytes | None]:
-                raw = await self.__executor().mget(*batch)
+                raw = await self.__require_client().mget(*batch)
 
                 return [_bytes_or_none(x) for x in raw]
 
@@ -394,6 +435,11 @@ class RedisClient(RedisClientPort):
         xx: bool = False,
     ) -> bool:
         res = await self.__executor().set(key, value, ex=ex, px=px, nx=nx, xx=xx)
+
+        # Inside a pipeline the command is only queued; the outcome (incl.
+        # NX/XX applicability) materializes at execute(). Report "queued".
+        if self.__in_pipeline():
+            return True
 
         return bool(res)
 
@@ -430,6 +476,16 @@ class RedisClient(RedisClientPort):
             *[mapping[k] for k in keys_list],
         ]
 
+        pipe = self.__current_pipe()
+
+        if pipe is not None:
+            # Queue the atomic bulk-set script directly on the pipeline
+            # (run_script raises inside pipeline scopes because its result
+            # cannot be observed). The NX/XX outcome materializes at execute().
+            await pipe.eval(MSET_BULK_SET, len(keys_list), *keys_list, *argv)
+
+            return True
+
         raw = await self.run_script(MSET_BULK_SET, keys_list, argv)
 
         try:
@@ -448,6 +504,10 @@ class RedisClient(RedisClientPort):
 
         res = await self.__executor().delete(*keys)
 
+        # Queued onto the pipeline; the deleted count materializes at execute().
+        if self.__in_pipeline():
+            return 0
+
         return int(res)
 
     # ....................... #
@@ -459,6 +519,10 @@ class RedisClient(RedisClientPort):
 
         res = await self.__executor().unlink(*keys)
 
+        # Queued onto the pipeline; the unlinked count materializes at execute().
+        if self.__in_pipeline():
+            return 0
+
         return int(res)
 
     # ....................... #
@@ -467,6 +531,10 @@ class RedisClient(RedisClientPort):
     async def expire(self, key: str, seconds: int) -> bool:
         res = await self.__executor().expire(key, seconds)
 
+        # Queued onto the pipeline; whether the key existed materializes at execute().
+        if self.__in_pipeline():
+            return True
+
         return bool(res)
 
     # ....................... #
@@ -474,6 +542,8 @@ class RedisClient(RedisClientPort):
 
     @exc_interceptor.coroutine("redis.incr")  # type: ignore[untyped-decorator]
     async def incr(self, key: str, by: int = 1) -> int:
+        self.__require_no_pipeline("incr")
+
         res = await self.__executor().incrby(key, by)
 
         return int(res)
@@ -482,6 +552,8 @@ class RedisClient(RedisClientPort):
 
     @exc_interceptor.coroutine("redis.decr")  # type: ignore[untyped-decorator]
     async def decr(self, key: str, by: int = 1) -> int:
+        self.__require_no_pipeline("decr")
+
         res = await self.__executor().decrby(key, by)
 
         return int(res)
@@ -490,6 +562,8 @@ class RedisClient(RedisClientPort):
 
     @exc_interceptor.coroutine("redis.reset")  # type: ignore[untyped-decorator]
     async def reset(self, key: str, value: int) -> int:
+        self.__require_no_pipeline("reset")
+
         res = await self.__executor().getset(key, value)
 
         return int(res or 0)
@@ -504,6 +578,10 @@ class RedisClient(RedisClientPort):
                 channel, message
             )
         )
+
+        # Queued onto the pipeline; the receiver count materializes at execute().
+        if self.__in_pipeline():
+            return 0
 
         return int(res)
 
@@ -633,6 +711,8 @@ class RedisClient(RedisClientPort):
         minid: str | None = None,
         limit: int | None = None,
     ) -> str:
+        self.__require_no_pipeline("xadd")
+
         res = await self.__executor().xadd(
             stream,
             data,  # type: ignore[arg-type]
@@ -659,6 +739,8 @@ class RedisClient(RedisClientPort):
         count: int | None = None,
         block_ms: int | None = None,
     ) -> RedisStreamResponse:
+        self.__require_no_pipeline("xread")
+
         res = await self.__executor().xread(
             streams=streams,  # type: ignore[arg-type]
             count=count,
@@ -675,6 +757,10 @@ class RedisClient(RedisClientPort):
             return 0
 
         res = await self.__executor().xdel(stream, *ids)
+
+        # Queued onto the pipeline; the deleted count materializes at execute().
+        if self.__in_pipeline():
+            return 0
 
         return int(res)
 
@@ -696,6 +782,10 @@ class RedisClient(RedisClientPort):
             limit=limit,
         )
 
+        # Queued onto the pipeline; the trimmed count materializes at execute().
+        if self.__in_pipeline():
+            return 0
+
         return int(res)
 
     # ....................... #
@@ -716,6 +806,10 @@ class RedisClient(RedisClientPort):
             limit=limit,
         )
 
+        # Queued onto the pipeline; the trimmed count materializes at execute().
+        if self.__in_pipeline():
+            return 0
+
         return int(res)
 
     # ....................... #
@@ -729,6 +823,8 @@ class RedisClient(RedisClientPort):
         id: str = "0-0",
         mkstream: bool = True,
     ) -> bool:
+        self.__require_no_pipeline("xgroup_create")
+
         res = await self.__executor().xgroup_create(
             stream,
             group,
@@ -751,6 +847,8 @@ class RedisClient(RedisClientPort):
         block_ms: int | None = None,
         noack: bool = False,
     ) -> RedisStreamResponse:
+        self.__require_no_pipeline("xgroup_read")
+
         res = await self.__executor().xreadgroup(
             group,
             consumer,
@@ -768,6 +866,8 @@ class RedisClient(RedisClientPort):
     async def xack(self, stream: str, group: str, ids: Sequence[str]) -> int:
         if not ids:
             return 0
+
+        self.__require_no_pipeline("xack")
 
         res = await self.__executor().xack(stream, group, *ids)
 

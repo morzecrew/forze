@@ -3,6 +3,7 @@ from uuid import uuid4
 import pytest
 from pydantic import SecretStr
 
+from forze.base.exceptions import CoreException
 from forze_redis.kernel.client import RedisClient, RedisConfig
 
 
@@ -124,12 +125,7 @@ async def test_empty_arg_methods_short_circuit(redis_client: RedisClient) -> Non
     assert await redis_client.unlink() == 0
     assert await redis_client.mget([]) == []
     assert await redis_client.xdel(f"it:redis-client:nostream:{uuid4()}", []) == 0
-    assert (
-        await redis_client.xack(
-            f"it:redis-client:nostream:{uuid4()}", "g", []
-        )
-        == 0
-    )
+    assert await redis_client.xack(f"it:redis-client:nostream:{uuid4()}", "g", []) == 0
 
 
 @pytest.mark.asyncio
@@ -151,16 +147,74 @@ async def test_mget_chunks_large_key_sets(redis_client: RedisClient) -> None:
 
 
 @pytest.mark.asyncio
-async def test_read_methods_inside_pipeline(redis_client: RedisClient) -> None:
-    """Reads issued inside a pipeline route through the pipeline (no retry wrapper)."""
+async def test_read_methods_inside_pipeline_raise(redis_client: RedisClient) -> None:
+    """Reads inside a pipeline scope fail loud: results only materialize at execute()."""
     prefix = f"it:redis-client:pipe-read:{uuid4()}"
     key = f"{prefix}:k"
 
     await redis_client.set(key, "v")
 
+    with pytest.raises(CoreException) as exc_info:
+        async with redis_client.pipeline(transaction=True):
+            await redis_client.get(key)
+
+    assert exc_info.value.code == "redis_read_in_pipeline"
+
+    with pytest.raises(CoreException) as exc_info:
+        async with redis_client.pipeline(transaction=True):
+            await redis_client.exists(key)
+
+    assert exc_info.value.code == "redis_read_in_pipeline"
+
+    # The client remains fully usable outside the scope afterwards.
+    assert await redis_client.get(key) == b"v"
+
+
+@pytest.mark.asyncio
+async def test_read_inside_pipeline_aborts_queued_writes(
+    redis_client: RedisClient,
+) -> None:
+    """A read raising inside the scope prevents execute(): queued writes are discarded."""
+    prefix = f"it:redis-client:pipe-abort:{uuid4()}"
+    key = f"{prefix}:k"
+
+    with pytest.raises(CoreException):
+        async with redis_client.pipeline(transaction=True):
+            await redis_client.set(key, "v")
+            await redis_client.get(key)
+
+    assert await redis_client.get(key) is None
+
+
+@pytest.mark.asyncio
+async def test_pipeline_batches_writes_end_to_end(redis_client: RedisClient) -> None:
+    """Fire-and-forget writes queue inside the scope and apply at execute()."""
+    prefix = f"it:redis-client:pipe-write:{uuid4()}"
+    key_set = f"{prefix}:set"
+    key_mset_a = f"{prefix}:mset-a"
+    key_mset_b = f"{prefix}:mset-b"
+    key_expire = f"{prefix}:expire"
+    key_delete = f"{prefix}:delete"
+
+    await redis_client.set(key_expire, "v")
+    await redis_client.set(key_delete, "v")
+
     async with redis_client.pipeline(transaction=True):
-        await redis_client.get(key)
-        await redis_client.exists(key)
+        # Placeholder return values while queued.
+        assert await redis_client.set(key_set, "v1") is True
+        assert await redis_client.mset({key_mset_a: "a", key_mset_b: "b"}, ex=3600)
+        assert await redis_client.expire(key_expire, 3600) is True
+        assert await redis_client.delete(key_delete) == 0
+
+        # Nothing is applied until the scope exits.
+        # (Reads must run outside the scope, so verify after exit.)
+
+    assert await redis_client.get(key_set) == b"v1"
+    assert await redis_client.get(key_mset_a) == b"a"
+    assert await redis_client.get(key_mset_b) == b"b"
+    assert await redis_client.pttl(key_mset_a) is not None
+    assert await redis_client.pttl(key_expire) is not None
+    assert await redis_client.get(key_delete) is None
 
 
 @pytest.mark.asyncio
@@ -215,19 +269,21 @@ async def test_run_script_return_types(
 
 
 @pytest.mark.asyncio
-async def test_run_script_inside_pipeline_uses_eval(redis_client: RedisClient) -> None:
-    """Inside a pipeline run_script goes through pipe.eval, writing the key."""
+async def test_run_script_inside_pipeline_raises(redis_client: RedisClient) -> None:
+    """run_script is value-returning: inside a pipeline scope it fails loud."""
     prefix = f"it:redis-client:script-pipe:{uuid4()}"
     key = f"{prefix}:k"
 
-    async with redis_client.pipeline(transaction=True):
-        await redis_client.run_script(
-            "redis.call('SET', KEYS[1], ARGV[1]); return 1",
-            [key],
-            ["scripted"],
-        )
+    with pytest.raises(CoreException) as exc_info:
+        async with redis_client.pipeline(transaction=True):
+            await redis_client.run_script(
+                "redis.call('SET', KEYS[1], ARGV[1]); return 1",
+                [key],
+                ["scripted"],
+            )
 
-    assert await redis_client.get(key) == b"scripted"
+    assert exc_info.value.code == "redis_read_in_pipeline"
+    assert await redis_client.get(key) is None
 
 
 @pytest.mark.asyncio

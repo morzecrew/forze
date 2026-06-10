@@ -46,6 +46,14 @@ def reraise_mapped(
     if err is None:
         err = default_exception(exc, site)
 
+    # Every mapped exception carries the interception site for observability,
+    # even when the package-specific mapper didn't include it itself.
+    elif err.details is None:
+        err.details = {"site": site}
+
+    elif "site" not in err.details:
+        err.details = {**err.details, "site": site}
+
     raise err from exc
 
 

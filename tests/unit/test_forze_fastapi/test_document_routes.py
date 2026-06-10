@@ -6,14 +6,18 @@ import pytest
 
 pytest.importorskip("fastapi")
 
+from uuid import UUID
+
 from fastapi import APIRouter, FastAPI
 from fastapi.testclient import TestClient
+from pydantic import BaseModel, field_validator
 
 from forze.application.contracts.document import DocumentSpec, DocumentWriteTypes
+from forze.application.execution.operations import OperationDescriptor
 from forze.application.execution.operations.registry import FrozenOperationRegistry
 from forze.base.exceptions import CoreException
 from forze.domain.models import BaseDTO, ReadDocument
-from forze_fastapi.exceptions import register_exception_handlers
+from forze_fastapi.exceptions import ERROR_CODE_HEADER, register_exception_handlers
 from forze_fastapi.routes import attach_document_routes
 from forze_kits.aggregates.document import (
     DocumentDTOs,
@@ -283,3 +287,96 @@ class TestCatalogProjection:
                 ctx_dep=lambda: context_from_modules(MockDepsModule()),
                 style="rest",
             )
+
+
+# ....................... #
+
+_RESERVED_ID = UUID("00000000-0000-0000-0000-0000000000ff")
+
+
+class _BadGetDTO(BaseDTO):
+    """Get DTO with a required field the ``{id}`` route cannot supply."""
+
+    id: UUID
+    tenant: str
+
+
+class _OptionalExtraGetDTO(BaseDTO):
+    """Get DTO whose extra field has a default — satisfiable from ``{id}`` alone."""
+
+    id: UUID
+    verbose: bool = False
+
+
+class _PickyGetDTO(BaseDTO):
+    """Get DTO whose model-level validation can still fail at request time."""
+
+    id: UUID
+
+    @field_validator("id")
+    @classmethod
+    def _reject_reserved(cls, value: UUID) -> UUID:
+        if value == _RESERVED_ID:
+            raise ValueError("id is reserved")
+        return value
+
+
+def _build_app_with_get_input(input_type: type[BaseModel]) -> FastAPI:
+    """Build the app with the ``get`` descriptor's input DTO swapped out."""
+
+    spec = _spec()
+    dtos = DocumentDTOs(read=_NoteRead, create=_NoteCreate, update=_NoteUpdate)
+    reg = build_document_registry(spec, dtos)
+    reg = reg.merge(build_soft_deletion_registry(spec))
+    reg = reg.set_descriptors(
+        {
+            DocumentKernelOp.GET: OperationDescriptor(
+                input_type=input_type, output_type=_NoteRead
+            )
+        },
+        override=True,
+        namespace=spec.default_namespace,
+    )
+
+    state = MockState()
+    router = APIRouter(prefix="/notes")
+    attach_document_routes(
+        router,
+        registry=reg.freeze(),
+        ns=spec.default_namespace,
+        ctx_dep=lambda: context_from_modules(MockDepsModule(state=state)),
+        style="rest",
+    )
+
+    app = FastAPI()
+    app.include_router(router)
+    register_exception_handlers(app)
+
+    return app
+
+
+class TestDtoShapeValidation:
+    def test_unsatisfiable_required_field_fails_at_attach_time(self) -> None:
+        # Regression: this used to attach fine and answer 500 on every request.
+        with pytest.raises(CoreException, match=r"required fields \['tenant'\]") as e:
+            _build_app_with_get_input(_BadGetDTO)
+
+        assert e.value.kind.value == "configuration"
+
+    def test_optional_extra_field_attaches_and_serves(self) -> None:
+        client = TestClient(_build_app_with_get_input(_OptionalExtraGetDTO))
+
+        note = client.post("/notes", json={"title": "hello"}).json()
+        fetched = client.get(f"/notes/{note['id']}")
+
+        assert fetched.status_code == 200
+        assert fetched.json()["title"] == "hello"
+
+    def test_runtime_validation_error_answers_standard_422(self) -> None:
+        client = TestClient(_build_app_with_get_input(_PickyGetDTO))
+
+        response = client.get(f"/notes/{_RESERVED_ID}")
+
+        assert response.status_code == 422
+        assert "detail" in response.json()
+        assert response.headers[ERROR_CODE_HEADER] == "core.validation"

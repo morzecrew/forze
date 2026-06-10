@@ -151,3 +151,41 @@ class TestPsycopgErrorHandlerBranches:
         assert "weird" not in out.summary
         assert out.details is not None
         assert out.details["error"] == "weird"
+
+
+class TestAssembledChain:
+    """Drive the actual chain wired into ``exc_interceptor``.
+
+    Regression: ``default_chain_exc_mapper.chain(_psycopg_eh)`` used to nest
+    the default chain, whose ``__call__`` never returns ``None`` — so
+    ``_psycopg_eh`` was unreachable and every psycopg error surfaced as a
+    generic INTERNAL "Unhandled exception". That broke OCC retry at the
+    interceptor level: ``occ_retry`` only retries CONCURRENCY, so
+    serialization failures and deadlocks were never retried.
+    """
+
+    def test_serialization_failure_maps_to_concurrency(self) -> None:
+        out = client_errors.exc_interceptor.mapper(
+            errors.SerializationFailure("could not serialize access"),
+            site="tx",
+        )
+        assert out is not None
+        assert out.kind == ExceptionKind.CONCURRENCY
+
+    def test_deadlock_detected_maps_to_concurrency(self) -> None:
+        out = client_errors.exc_interceptor.mapper(
+            errors.DeadlockDetected("deadlock detected"),
+            site="tx",
+        )
+        assert out is not None
+        assert out.kind == ExceptionKind.CONCURRENCY
+
+    def test_unknown_exception_reaches_package_fallback(self) -> None:
+        out = client_errors.exc_interceptor.mapper(RuntimeError("weird"), site="op")
+        assert out is not None
+        assert out.kind == ExceptionKind.INFRASTRUCTURE
+        assert out.code != "core.unhandled"
+
+    def test_core_exception_passthrough(self) -> None:
+        original = exc.not_found("missing")
+        assert client_errors.exc_interceptor.mapper(original, site="op") is original

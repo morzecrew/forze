@@ -4,16 +4,16 @@ import attrs
 
 from forze.base.exceptions import exc
 
-from ._hmac_token import _HmacTokenService
+from ._hmac_token import HmacTokenService, TokenConfigLike
 
 # ----------------------- #
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class RefreshTokenConfig:
+class RefreshTokenConfig(TokenConfigLike):
     """Refresh token configuration."""
 
-    length: int = 32
+    length: int = 32  # type: ignore[override]
     """Length of the token."""
 
     expires_in: timedelta = timedelta(days=7)
@@ -30,7 +30,7 @@ class RefreshTokenConfig:
 
 
 @attrs.define(slots=True, kw_only=True)
-class RefreshTokenService(_HmacTokenService):
+class RefreshTokenService(HmacTokenService):
     """Refresh token service."""
 
-    config: RefreshTokenConfig = attrs.field(factory=RefreshTokenConfig)
+    config: RefreshTokenConfig = attrs.field(factory=RefreshTokenConfig)  # type: ignore[assignment]

@@ -42,3 +42,16 @@ class TestMeilisearchErrorHandler:
         assert "boom" not in mapped.summary
         assert mapped.details is not None
         assert mapped.details["error"] == "boom"
+
+
+class TestAssembledChain:
+    """Regression: the package mapper must be reachable through the chain
+    wired into ``exc_interceptor`` (nested default chain used to shadow it)."""
+
+    def test_timeout_through_assembled_chain(self) -> None:
+        from forze_meilisearch.kernel.client.errors import exc_interceptor
+
+        out = exc_interceptor.mapper(MeilisearchTimeoutError("timeout"), site="index")
+        assert out is not None
+        assert out.code != "core.unhandled"
+        assert "Meilisearch" in out.summary

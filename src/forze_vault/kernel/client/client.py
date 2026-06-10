@@ -7,7 +7,8 @@ require_vault()
 # ....................... #
 
 import asyncio
-from typing import Any, final
+import contextlib
+from typing import Any, cast, final
 
 import attrs
 import hvac
@@ -18,9 +19,18 @@ from urllib3.util.retry import Retry
 
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
+from forze_vault.kernel._logger import logger
 
 from .port import VaultClientPort
 from .value_objects import VaultConfig
+
+# ----------------------- #
+
+RENEW_FAILURE_RETRY_SECONDS = 30.0
+"""Backoff before retrying a failed token renewal."""
+
+MIN_RENEW_DELAY_SECONDS = 1.0
+"""Lower bound for the derived renewal cadence."""
 
 # ----------------------- #
 
@@ -33,6 +43,9 @@ class VaultClient(VaultClientPort):
     config: VaultConfig
     _client: Any = attrs.field(default=None, init=False, repr=False)
     _init_lock: asyncio.Lock = attrs.field(factory=asyncio.Lock, init=False)
+    _renew_task: asyncio.Task[None] | None = attrs.field(
+        default=None, init=False, repr=False
+    )
 
     # ....................... #
 
@@ -43,11 +56,91 @@ class VaultClient(VaultClientPort):
 
             self._client = await asyncio.to_thread(self._create_client)
 
+            if self.config.renew_token:
+                await self._start_token_renewal()
+
     # ....................... #
 
     async def close(self) -> None:
         async with self._init_lock:
+            task, self._renew_task = self._renew_task, None
+
+            if task is not None:
+                task.cancel()
+
+                with contextlib.suppress(asyncio.CancelledError):
+                    await asyncio.shield(task)
+
             self._client = None
+
+    # ....................... #
+    # Token renewal
+
+    async def _start_token_renewal(self) -> None:
+        lookup = await asyncio.to_thread(self._client.auth.token.lookup_self)
+        data = cast(JsonDict, lookup.get("data") or {})
+
+        if not data.get("renewable", False):
+            logger.warning(
+                "Vault token is not renewable, skipping background renewal",
+            )
+            return
+
+        ttl = float(data.get("ttl") or 0)
+        self._renew_task = asyncio.create_task(
+            self._renew_loop(ttl),
+            name="vault-token-renewal",
+        )
+
+    # ....................... #
+
+    def _renew_delay(self, ttl_seconds: float) -> float:
+        if self.config.renew_interval is not None:
+            return self.config.renew_interval.total_seconds()
+
+        return max(ttl_seconds / 2.0, MIN_RENEW_DELAY_SECONDS)
+
+    # ....................... #
+
+    async def _renew_loop(self, ttl_seconds: float) -> None:
+        """Renew the token lease on a cadence; never crashes the app.
+
+        Renewal extends a renewable token's lease — it cannot resurrect an
+        expired or ``max_ttl``-capped token; those require a restart or an
+        externally re-issued token.
+        """
+
+        delay = self._renew_delay(ttl_seconds)
+
+        while True:
+            await asyncio.sleep(delay)
+
+            client = self._client
+
+            if client is None:  # pragma: no cover - close() cancels first
+                return
+
+            try:
+                response = await asyncio.to_thread(client.auth.token.renew_self)
+
+            except asyncio.CancelledError:
+                raise
+
+            except Exception as e:  # noqa: BLE001 - renewal must not crash
+                logger.warning(
+                    "Vault token renewal failed, retrying in "
+                    f"{RENEW_FAILURE_RETRY_SECONDS:.0f}s: {e}",
+                )
+                delay = RENEW_FAILURE_RETRY_SECONDS
+                continue
+
+            auth = cast(JsonDict, response.get("auth") or {})
+            new_ttl = float(auth.get("lease_duration") or 0)
+
+            if new_ttl > 0:
+                delay = self._renew_delay(new_ttl)
+
+            logger.trace(f"Vault token renewed, next renewal in {delay:.0f}s")
 
     # ....................... #
 
@@ -127,7 +220,7 @@ class VaultClient(VaultClientPort):
         client = self._require_client()
 
         try:
-            client.secrets.kv.v2.read_secret_version(
+            client.secrets.kv.v2.read_secret_metadata(
                 path=path,
                 mount_point=self.config.mount_point,
             )
@@ -150,4 +243,40 @@ class VaultClient(VaultClientPort):
     # ....................... #
 
     async def kv_exists(self, path: str) -> bool:
+        """Check secret existence via the KV v2 metadata endpoint.
+
+        Uses metadata so the secret material is never read into memory.
+        """
+
         return await asyncio.to_thread(self._kv_exists_sync, path)
+
+    # ....................... #
+
+    def _health_sync(self) -> tuple[str, bool]:
+        client = self._require_client()
+        status = client.sys.read_health_status(method="GET")
+
+        if not isinstance(status, dict):  # requests.Response fallback
+            ok = bool(getattr(status, "ok", False))
+            return ("ok" if ok else f"status {status.status_code}", ok)
+
+        status = cast(JsonDict, status)
+
+        if status.get("sealed", False):
+            return "sealed", False
+
+        if not status.get("initialized", True):
+            return "not initialized", False
+
+        return "ok", True
+
+    # ....................... #
+
+    async def health(self) -> tuple[str, bool]:
+        """Report Vault health as ``(message, ok)``; never raises."""
+
+        try:
+            return await asyncio.to_thread(self._health_sync)
+
+        except Exception as e:  # noqa: BLE001 - health must not raise
+            return str(e), False

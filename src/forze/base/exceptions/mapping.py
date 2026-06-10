@@ -58,9 +58,42 @@ class ChainExceptionMapper(ExceptionMapper):
         *mappers: ExceptionMapper,
         fallback: ExceptionMapper | None = None,
     ) -> ChainExceptionMapper:
-        """Construct a chain of exception mappers."""
+        """Construct a chain of exception mappers.
 
-        return cls(mappers=mappers, fallback=fallback)
+        Nested :class:`ChainExceptionMapper` instances are flattened: their
+        mappers are spliced in place (order preserved) and their fallback is
+        applied only at the outermost level (an explicit ``fallback`` wins;
+        otherwise the first nested fallback is inherited).
+
+        Flattening is required for correctness: a nested chain used as a
+        sub-mapper never returns ``None`` — its ``__call__`` falls through to
+        ``default_exception`` — so every mapper chained after it would be
+        dead code (e.g. ``default_chain_exc_mapper.chain(pkg_mapper)`` would
+        never consult ``pkg_mapper``).
+        """
+
+        flat: list[ExceptionMapper] = []
+        inherited: ExceptionMapper | None = None
+
+        def _flatten(items: tuple[ExceptionMapper, ...]) -> None:
+            nonlocal inherited
+
+            for mapper in items:
+                if isinstance(mapper, ChainExceptionMapper):
+                    if inherited is None:
+                        inherited = mapper.fallback
+
+                    _flatten(mapper.mappers)
+
+                else:
+                    flat.append(mapper)
+
+        _flatten(mappers)
+
+        return cls(
+            mappers=tuple(flat),
+            fallback=fallback if fallback is not None else inherited,
+        )
 
     # ....................... #
 

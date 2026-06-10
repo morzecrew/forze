@@ -4,16 +4,16 @@ import attrs
 
 from forze.base.exceptions import exc
 
-from ._hmac_token import _HmacTokenService
+from ._hmac_token import HmacTokenService, TokenConfigLike
 
 # ----------------------- #
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class InviteTokenConfig:
+class InviteTokenConfig(TokenConfigLike):
     """Password invite token configuration."""
 
-    length: int = 32
+    length: int = 32  # type: ignore[override]
     """Length of the random token material."""
 
     expires_in: timedelta = timedelta(days=7)
@@ -30,7 +30,7 @@ class InviteTokenConfig:
 
 
 @attrs.define(slots=True, kw_only=True)
-class InviteTokenService(_HmacTokenService):
+class InviteTokenService(HmacTokenService):
     """Password invite token generation and verification service."""
 
-    config: InviteTokenConfig = attrs.field(factory=InviteTokenConfig)
+    config: InviteTokenConfig = attrs.field(factory=InviteTokenConfig)  # type: ignore[assignment]

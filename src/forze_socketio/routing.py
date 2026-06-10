@@ -1,22 +1,60 @@
+"""Socket.IO command routing with a built-in error and identity boundary.
+
+Every registered event handler is wrapped in an error boundary: a
+:class:`~forze.base.exceptions.CoreException` raised during dispatch is
+translated into the structured error acknowledgement built by
+:func:`forze_socketio.exceptions.build_core_exception_ack`, and any other
+exception is logged and acked with a generic internal-error payload (see
+:mod:`forze_socketio.exceptions` for the exact ack shape). The error payload is
+returned as the handler's return value, which python-socketio delivers as the
+event acknowledgement when the client requested one.
+
+Identity is bound per event through an optional ``identity_resolver``: it runs
+once at connect time (receiving the connection ``environ`` and ``auth``
+payload), the resolved :class:`~forze.application.contracts.authn.AuthnIdentity`
+is stored in the Socket.IO session, and each dispatched event binds it onto the
+invocation context (``ctx.inv_ctx.bind_identity(authn=...)``) around handler
+execution. Tenant resolution stays the ``context_factory``'s job. Without a
+resolver nothing changes: no connect handler is registered and no identity is
+bound.
+"""
+
 from ._compat import require_socketio
 
 require_socketio()
 
 # ....................... #
 
+from contextlib import AbstractContextManager, nullcontext
 from inspect import isawaitable
-from typing import Any, Awaitable, Callable, final
+from typing import Any, Awaitable, Callable, Final, Mapping, final
 
 import attrs
-from pydantic import TypeAdapter
+from pydantic import TypeAdapter, ValidationError
 from socketio.async_server import AsyncServer
+from socketio.exceptions import ConnectionRefusedError as SocketIOConnectionRefusedError
 
+from forze.application.contracts.authn import AuthnIdentity
 from forze.application.contracts.execution import Handler
 from forze.application.execution import ExecutionContext
-from forze.base.exceptions import exc
+from forze.base.exceptions import CoreException, exc
 from forze.base.primitives import StrKey
+from forze.base.scrubbing import sanitize_pydantic_errors
+
+from .exceptions import (
+    GENERIC_INTERNAL_DETAIL,
+    build_core_exception_ack,
+    build_unhandled_exception_ack,
+    is_server_error_kind,
+    log_server_error,
+)
 
 # ----------------------- #
+
+IDENTITY_SESSION_KEY: Final[str] = "forze.authn_identity"
+"""Socket.IO session key holding the identity resolved at connect time."""
+
+# ....................... #
 
 ExecutionContextFactoryPort = Callable[
     ["SocketIORequest"],
@@ -27,7 +65,37 @@ ExecutionContextFactoryPort = Callable[
 HandlerResolverPort = Callable[[StrKey, ExecutionContext], Handler[Any, Any]]
 """Resolver that maps operation keys to composed handlers."""
 
+IdentityResolverPort = Callable[
+    ["SocketIOConnect"],
+    AuthnIdentity | None | Awaitable[AuthnIdentity | None],
+]
+"""Resolver that authenticates a Socket.IO connection.
+
+Called once per connection with the connect-time metadata (``environ`` and the
+client ``auth`` payload). Return the authenticated identity, ``None`` for an
+anonymous connection, or raise a client-safe :class:`CoreException` (for
+example ``exc.authentication``) to refuse the connection.
+"""
+
 # ....................... #
+
+
+@final
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class SocketIOConnect:
+    """Inbound Socket.IO connection metadata passed to the identity resolver."""
+
+    sid: str
+    """Socket.IO session id for the connecting client."""
+
+    namespace: str
+    """Socket.IO namespace being connected to."""
+
+    environ: Mapping[str, Any]
+    """WSGI/ASGI environ dictionary python-socketio passes to connect handlers."""
+
+    auth: Any = None
+    """Authentication payload sent by the client, or :obj:`None`."""
 
 
 @final
@@ -197,15 +265,42 @@ class SocketIONamespaceRouter:
         *,
         context_factory: ExecutionContextFactoryPort,
         operation_resolver: HandlerResolverPort,
+        identity_resolver: IdentityResolverPort | None = None,
     ) -> "SocketIONamespaceRouter":
         """Bind registered command routes to a Socket.IO server.
+
+        Every event handler is wrapped in an error boundary: a
+        :class:`CoreException` is acked as the structured error payload built by
+        :func:`forze_socketio.exceptions.build_core_exception_ack`; any other
+        exception is logged and acked with a generic internal-error payload.
+
+        When *identity_resolver* is provided, a ``connect`` handler is
+        registered for this namespace: the resolver runs once per connection,
+        the resolved identity is stored in the Socket.IO session, and each
+        dispatched event binds it onto the invocation context around handler
+        execution. A client-safe :class:`CoreException` raised by the resolver
+        (for example ``exc.authentication``) refuses the connection with its
+        summary; server-side errors are logged and refused with a generic
+        message.
 
         :param sio: Socket.IO async server.
         :param context_factory: Factory for request-scoped execution context.
         :param operation_resolver: Resolver that builds a handler by operation key.
+        :param identity_resolver: Optional connection-time identity resolver.
         :returns: Current router for chaining.
         """
         namespace = self.namespace
+
+        if identity_resolver is not None:
+            sio.on(
+                "connect",
+                handler=_build_connect_handler(
+                    sio,
+                    namespace=namespace,
+                    identity_resolver=identity_resolver,
+                ),
+                namespace=namespace,
+            )
 
         for route in self.commands:
 
@@ -215,18 +310,38 @@ class SocketIONamespaceRouter:
                 *,
                 _namespace: str = namespace,
                 _route: SocketIOCommandRoute[Any, Any] = route,
+                _with_identity: bool = identity_resolver is not None,
             ) -> Any:
                 request = SocketIORequest(
                     sid=sid,
                     namespace=_namespace,
                     event=_route.event,
                 )
-                ctx = await _resolve_context(context_factory, request)
-                args = _route.parse_payload(payload)
-                op = operation_resolver(_route.operation, ctx)
-                result = await op(args)
 
-                return _route.parse_ack(result)
+                try:
+                    ctx = await _resolve_context(context_factory, request)
+                    args = _parse_payload(_route, payload)
+
+                    binding: AbstractContextManager[None] = nullcontext()
+
+                    if _with_identity:
+                        session = await sio.get_session(sid, namespace=_namespace)
+                        identity: AuthnIdentity | None = session.get(
+                            IDENTITY_SESSION_KEY
+                        )
+                        binding = ctx.inv_ctx.bind_identity(authn=identity)
+
+                    with binding:
+                        op = operation_resolver(_route.operation, ctx)
+                        result = await op(args)
+
+                    return _route.parse_ack(result)
+
+                except CoreException as error:
+                    return build_core_exception_ack(error)
+
+                except Exception as error:  # noqa: BLE001
+                    return build_unhandled_exception_ack(error)
 
             sio.on(route.event, handler=handler, namespace=namespace)
 
@@ -249,6 +364,15 @@ class ForzeSocketIOAdapter:
 
     operation_resolver: HandlerResolverPort
     """Resolver that builds composed handlers from operation keys."""
+
+    identity_resolver: IdentityResolverPort | None = None
+    """Optional connection-time identity resolver.
+
+    When provided, each attached namespace authenticates connections with it
+    and binds the resolved identity onto the invocation context per event.
+    When :obj:`None` (the default) behavior is unchanged: no connect handler is
+    registered and identity stays ``context_factory``-driven.
+    """
 
     __routers: dict[str, SocketIONamespaceRouter] = attrs.field(
         factory=dict,
@@ -284,6 +408,7 @@ class ForzeSocketIOAdapter:
             self.sio,
             context_factory=self.context_factory,
             operation_resolver=self.operation_resolver,
+            identity_resolver=self.identity_resolver,
         )
 
         return self
@@ -318,3 +443,84 @@ async def _resolve_context(
         return await value
 
     return value
+
+
+# ....................... #
+
+
+async def _resolve_identity(
+    resolver: IdentityResolverPort,
+    connect: SocketIOConnect,
+) -> AuthnIdentity | None:
+    value = resolver(connect)
+
+    if isawaitable(value):
+        return await value
+
+    return value
+
+
+# ....................... #
+
+
+def _parse_payload(route: SocketIOCommandRoute[Any, Any], payload: Any) -> Any:
+    """Parse the inbound payload, translating validation failures to client-safe errors."""
+
+    try:
+        return route.parse_payload(payload)
+
+    except ValidationError as error:
+        raise exc.validation(
+            "Invalid event payload",
+            code="socketio.invalid_payload",
+            details={"errors": sanitize_pydantic_errors(error.errors())},
+        ) from error
+
+
+# ....................... #
+
+
+def _build_connect_handler(
+    sio: AsyncServer,
+    *,
+    namespace: str,
+    identity_resolver: IdentityResolverPort,
+) -> Callable[..., Awaitable[None]]:
+    """Build the namespace ``connect`` handler that resolves and stores identity."""
+
+    async def connect_handler(
+        sid: str,
+        environ: Mapping[str, Any],
+        auth: Any = None,
+    ) -> None:
+        connect = SocketIOConnect(
+            sid=sid,
+            namespace=namespace,
+            environ=environ,
+            auth=auth,
+        )
+
+        try:
+            identity = await _resolve_identity(identity_resolver, connect)
+
+        except SocketIOConnectionRefusedError:
+            raise
+
+        except CoreException as error:
+            if is_server_error_kind(error.kind):
+                log_server_error(error, core=error)
+
+                raise SocketIOConnectionRefusedError(GENERIC_INTERNAL_DETAIL) from error
+
+            raise SocketIOConnectionRefusedError(error.summary) from error
+
+        except Exception as error:  # noqa: BLE001
+            log_server_error(error)
+
+            raise SocketIOConnectionRefusedError(GENERIC_INTERNAL_DETAIL) from error
+
+        session = await sio.get_session(sid, namespace=namespace)
+        session[IDENTITY_SESSION_KEY] = identity
+        await sio.save_session(sid, session, namespace=namespace)
+
+    return connect_handler

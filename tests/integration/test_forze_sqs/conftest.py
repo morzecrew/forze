@@ -1,5 +1,6 @@
 """Pytest configuration for forze_sqs integration tests."""
 
+from typing import AsyncGenerator
 from uuid import uuid4
 
 import pytest
@@ -44,7 +45,9 @@ def localstack_container() -> LocalStackContainer:
 
 
 @pytest_asyncio.fixture(scope="function")
-async def sqs_client(localstack_container: LocalStackContainer) -> SQSClient:
+async def sqs_client(
+    localstack_container: LocalStackContainer,
+) -> AsyncGenerator[SQSClient]:
     """Provide an initialized SQS client connected to LocalStack."""
     endpoint = localstack_container.get_url()
 
@@ -56,7 +59,9 @@ async def sqs_client(localstack_container: LocalStackContainer) -> SQSClient:
         secret_access_key="test",
     )
 
-    return client
+    yield client
+
+    await client.close()
 
 
 @pytest_asyncio.fixture(scope="function")

@@ -160,10 +160,10 @@ async def test_nested_channel_reuses_parent(
 
 
 @pytest.mark.asyncio
-async def test_delayed_enqueue_uses_delay_queue_and_caches(
+async def test_delayed_enqueue_uses_delay_queue_and_redeclares(
     rabbitmq_client: RabbitMQClient,
 ) -> None:
-    """Delayed enqueue declares the DLX delay queue once, then reuses it."""
+    """Delayed enqueue declares the per-delay DLX queue on every publish."""
 
     queue = f"it:delay:{uuid4().hex[:10]}"
     # First delayed publish declares the delay queue.
@@ -173,7 +173,7 @@ async def test_delayed_enqueue_uses_delay_queue_and_caches(
         delay=timedelta(seconds=1),
         delayed_delivery=True,
     )
-    # Second publish hits the delay-queue-ready cache branch.
+    # Second publish re-declares it idempotently (refreshes x-expires).
     await rabbitmq_client.enqueue(
         queue,
         b'{"value":"d2"}',
@@ -208,7 +208,7 @@ async def test_delay_over_max_expiration_raises(
     """A delay beyond the wire-max message expiration raises a precondition."""
 
     queue = f"it:overmax:{uuid4().hex[:10]}"
-    with pytest.raises(CoreException, match="maximum message expiration"):
+    with pytest.raises(CoreException, match="maximum supported delay"):
         await rabbitmq_client.enqueue(
             queue,
             b'{"value":"x"}',

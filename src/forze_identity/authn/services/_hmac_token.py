@@ -11,8 +11,8 @@ import attrs
 # ----------------------- #
 
 
-class _TokenConfigLike(Protocol):
-    """Config shape required by :class:`_HmacTokenService` (random-material length)."""
+class TokenConfigLike(Protocol):
+    """Config shape required by :class:`HmacTokenService` (random-material length)."""
 
     @property
     def length(self) -> int: ...
@@ -22,7 +22,7 @@ class _TokenConfigLike(Protocol):
 
 
 @attrs.define(slots=True, kw_only=True)
-class _HmacTokenService:
+class HmacTokenService:
     """Mint opaque URL-safe tokens and verify them via peppered HMAC-SHA256 digests.
 
     Digests of live tokens are persisted (e.g. in session or invite stores), so
@@ -31,7 +31,7 @@ class _HmacTokenService:
     """
 
     pepper: bytes = attrs.field(repr=False, validator=attrs.validators.min_len(32))
-    config: _TokenConfigLike
+    config: TokenConfigLike
 
     # ....................... #
 

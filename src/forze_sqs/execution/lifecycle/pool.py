@@ -23,13 +23,19 @@ from ..deps import SQSClientDepKey
 @final
 @attrs.define(slots=True, frozen=True, kw_only=True)
 class SQSStartupHook(LifecycleHook):
-    """Startup hook that initializes the SQS client from the deps container."""
+    """Startup hook that initializes the SQS client from the deps container.
+
+    Leave *access_key_id* / *secret_access_key* as ``None`` to defer to
+    botocore's default credential chain (env vars, shared config files,
+    container/instance roles) instead of static credentials.
+    """
 
     endpoint: str
     region_name: str
-    access_key_id: str = attrs.field(repr=False)
-    secret_access_key: SecretStr = attrs.field(
-        converter=pydantic_secret_converter,
+    access_key_id: str | None = attrs.field(default=None, repr=False)
+    secret_access_key: SecretStr | None = attrs.field(
+        default=None,
+        converter=attrs.converters.optional(pydantic_secret_converter),
         repr=False,
     )
     config: SQSConfig | None = attrs.field(default=None, repr=False)
@@ -67,11 +73,15 @@ def sqs_lifecycle_step(
     *,
     endpoint: str,
     region_name: str,
-    access_key_id: str,
-    secret_access_key: str | SecretStr,
+    access_key_id: str | None = None,
+    secret_access_key: str | SecretStr | None = None,
     config: SQSConfig | None = None,
 ) -> LifecycleStep:
-    """Build a lifecycle step for SQS client init and shutdown."""
+    """Build a lifecycle step for SQS client init and shutdown.
+
+    Omit *access_key_id* / *secret_access_key* to use botocore's default
+    credential chain instead of static credentials.
+    """
     startup_hook = SQSStartupHook(
         endpoint=endpoint,
         region_name=region_name,

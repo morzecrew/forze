@@ -81,3 +81,20 @@ class TestS3ErrorHandler:
         assert "nope" not in r.summary
         assert r.details is not None
         assert r.details["error"] == "nope"
+
+
+class TestAssembledChain:
+    """Regression: the package mapper must be reachable through the chain
+    wired into ``exc_interceptor`` (nested default chain used to shadow it)."""
+
+    def test_endpoint_error_through_assembled_chain(self) -> None:
+        from forze_s3.kernel.client.errors import exc_interceptor
+
+        out = exc_interceptor.mapper(
+            s3_errors.EndpointConnectionError(endpoint_url="http://x"),
+            site="put",
+        )
+        assert out is not None
+        assert out.kind == ExceptionKind.INFRASTRUCTURE
+        assert out.code != "core.unhandled"
+        assert "connection" in out.summary.lower()

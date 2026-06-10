@@ -16,6 +16,25 @@ class _FakeAioConfig:
     def __init__(self, **kwargs: Any) -> None:
         self.kwargs = kwargs
 
+class _FakeSession:
+    """Minimal ``aioboto3.Session`` stand-in: ``.client()`` yields a fake API.
+
+    ``initialize`` now eagerly opens a persistent client, so fake sessions
+    must support ``.client(...)`` as an async context manager.
+    """
+
+    def __init__(self) -> None:
+        self.client_calls: list[dict[str, Any]] = []
+
+    def client(self, service_name: str, **kwargs: Any) -> Any:
+        self.client_calls.append({"service": service_name, **kwargs})
+
+        @asynccontextmanager
+        async def _cm() -> Any:
+            yield _FakeS3Api()
+
+        return _cm()
+
 class _FakePaginator:
     def __init__(self, pages: list[dict[str, Any]]) -> None:
         self.pages = pages
@@ -46,7 +65,7 @@ async def test_initialize_injects_default_retries_when_missing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     client = S3Client()
-    fake_session = object()
+    fake_session = _FakeSession()
 
     monkeypatch.setattr(s3_value_objects, "AioConfig", _FakeAioConfig)
     monkeypatch.setattr(s3_client_module.aioboto3, "Session", lambda: fake_session)
@@ -70,7 +89,7 @@ async def test_initialize_preserves_explicit_retries(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     client = S3Client()
-    fake_session = object()
+    fake_session = _FakeSession()
 
     monkeypatch.setattr(s3_value_objects, "AioConfig", _FakeAioConfig)
     monkeypatch.setattr(s3_client_module.aioboto3, "Session", lambda: fake_session)
@@ -125,7 +144,7 @@ async def test_initialize_converts_timedelta_to_float(
     from datetime import timedelta
 
     client = S3Client()
-    fake_session = object()
+    fake_session = _FakeSession()
 
     monkeypatch.setattr(s3_value_objects, "AioConfig", _FakeAioConfig)
     monkeypatch.setattr(s3_client_module.aioboto3, "Session", lambda: fake_session)
@@ -154,7 +173,7 @@ async def test_initialize_converts_timedelta_to_float(
 @pytest.mark.asyncio
 async def test_initialize_is_idempotent(monkeypatch: pytest.MonkeyPatch) -> None:
     client = S3Client()
-    fake_session = object()
+    fake_session = _FakeSession()
     monkeypatch.setattr(s3_value_objects, "AioConfig", _FakeAioConfig)
     monkeypatch.setattr(s3_client_module.aioboto3, "Session", lambda: fake_session)
 
@@ -226,7 +245,7 @@ async def test_client_nested_reuses_context_client(
 ) -> None:
     client = S3Client()
     monkeypatch.setattr(s3_value_objects, "AioConfig", _FakeAioConfig)
-    monkeypatch.setattr(s3_client_module.aioboto3, "Session", lambda: object())
+    monkeypatch.setattr(s3_client_module.aioboto3, "Session", _FakeSession)
 
     await client.initialize(
         endpoint="http://s3.local",
@@ -373,7 +392,7 @@ async def test_create_bucket_includes_location_constraint_outside_us_east_1(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     client = S3Client()
-    monkeypatch.setattr(s3_client_module.aioboto3, "Session", lambda: object())
+    monkeypatch.setattr(s3_client_module.aioboto3, "Session", _FakeSession)
 
     await client.initialize(
         endpoint="http://s3.local",
@@ -401,7 +420,7 @@ async def test_create_bucket_omits_location_constraint_for_us_east_1(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     client = S3Client()
-    monkeypatch.setattr(s3_client_module.aioboto3, "Session", lambda: object())
+    monkeypatch.setattr(s3_client_module.aioboto3, "Session", _FakeSession)
 
     await client.initialize(
         endpoint="http://s3.local",
@@ -489,7 +508,7 @@ async def test_initialize_injects_retries_when_config_has_no_retries(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     client = S3Client()
-    fake_session = object()
+    fake_session = _FakeSession()
     monkeypatch.setattr(s3_value_objects, "AioConfig", _FakeAioConfig)
     monkeypatch.setattr(s3_client_module.aioboto3, "Session", lambda: fake_session)
 

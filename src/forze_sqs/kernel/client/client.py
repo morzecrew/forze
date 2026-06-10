@@ -8,11 +8,19 @@ import asyncio
 import base64
 import math
 import re
-from contextlib import asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager
 from contextvars import ContextVar
 from datetime import datetime, timedelta, timezone
 from re import Pattern
-from typing import Any, AsyncGenerator, Final, Sequence, cast, final
+from typing import (
+    Any,
+    AsyncContextManager,
+    AsyncGenerator,
+    Final,
+    Sequence,
+    cast,
+    final,
+)
 from uuid import uuid4
 
 import aioboto3
@@ -77,6 +85,19 @@ class SQSClient(SQSClientPort):
         init=False,
     )
 
+    __persistent_client: AsyncSQSClient | None = attrs.field(default=None, init=False)
+    """Long-lived SQS client opened by :meth:`initialize`, shared by all scopes.
+
+    aiobotocore clients are coroutine-safe for concurrent calls: each client
+    owns one ``aiohttp.ClientSession`` with a pooled ``TCPConnector``
+    (bounded by ``max_pool_connections``) and serializes credential refresh
+    behind an ``asyncio.Lock``, so a single instance can serve concurrent
+    operations from multiple tasks.
+    """
+
+    __exit_stack: AsyncExitStack | None = attrs.field(default=None, init=False)
+    """Owns the persistent client's async context; closed by :meth:`close`."""
+
     __queue_url_cache: dict[str, str] = attrs.field(factory=dict, init=False)
 
     __pending: dict[str, tuple[str, str]] = attrs.field(factory=dict, init=False)
@@ -104,13 +125,34 @@ class SQSClient(SQSClientPort):
     async def initialize(
         self,
         endpoint: str,
-        access_key_id: str,
-        secret_access_key: str | SecretStr,
+        access_key_id: str | None = None,
+        secret_access_key: str | SecretStr | None = None,
         *,
         region_name: str,
         config: SQSConfig | None = None,
     ) -> None:
-        """Initialize the SQS session with endpoint and credentials."""
+        """Initialize the SQS session and open a long-lived client.
+
+        Creates the underlying ``aiobotocore`` client **once**; subsequent
+        :meth:`client` scopes reuse it (depth tracking only), so per-operation
+        scopes are cheap. The client is released by :meth:`close`.
+
+        Credentials are optional: when *access_key_id* and
+        *secret_access_key* are both ``None`` (the default), they are **not**
+        passed to the client and botocore's default credential chain resolves
+        them instead (environment variables, shared config/credentials files,
+        container/instance roles — ECS task roles, EC2 instance profiles,
+        EKS IRSA). Passing explicit static credentials keeps the previous
+        behavior. Providing only one of the two raises a configuration error.
+
+        :param endpoint: SQS-compatible endpoint URL.
+        :param access_key_id: AWS access key id, or ``None`` to defer to the
+            default credential chain.
+        :param secret_access_key: AWS secret access key (plain or
+            :class:`SecretStr`), or ``None`` to defer to the chain.
+        :param region_name: AWS region name (required).
+        :param config: Optional botocore configuration overrides.
+        """
         async with self.__init_lock:
             if self.__session is not None:
                 return
@@ -138,18 +180,49 @@ class SQSClient(SQSClientPort):
             )
             self.__session = aioboto3.Session()
 
+            stack = AsyncExitStack()
+
+            try:
+                self.__persistent_client = await stack.enter_async_context(
+                    self.__create_client_cm()
+                )
+
+            except BaseException:
+                await stack.aclose()
+                self.__persistent_client = None
+                self.__session = None
+                self.__opts = None
+                raise
+
+            self.__exit_stack = stack
+
     # ....................... #
 
     async def close(self) -> None:
-        """Drop the current session, queue URL cache, and pending deliveries."""
+        """Close the long-lived client and drop session, caches, and pending.
+
+        ``close()`` invalidates ambient scopes: scopes still nested when it
+        runs keep their (now closed) client reference and fail on next use,
+        but exit cleanly — they only reset context variables and never
+        re-exit the shared client, so there is no deadlock or double-close.
+        """
 
         async with self.__init_lock:
-            self.__session = None
-            self.__opts = None
-            self.__queue_url_cache.clear()
+            stack = self.__exit_stack
+            self.__exit_stack = None
+            self.__persistent_client = None
 
-            async with self.__pending_lock:
-                self.__pending.clear()
+            try:
+                if stack is not None:
+                    await stack.aclose()
+
+            finally:
+                self.__session = None
+                self.__opts = None
+                self.__queue_url_cache.clear()
+
+                async with self.__pending_lock:
+                    self.__pending.clear()
 
     # ....................... #
 
@@ -214,9 +287,45 @@ class SQSClient(SQSClientPort):
 
     # ....................... #
 
+    def __create_client_cm(self) -> AsyncContextManager[AsyncSQSClient]:
+        """Build the ``aiobotocore`` client async context manager from opts.
+
+        When credentials are absent in the options, the ``aws_*`` kwargs are
+        omitted so botocore's default credential chain resolves them.
+        """
+
+        session = self.__require_session()
+        opts = self.__opts
+
+        if opts is None:
+            raise exc.internal("SQS client options are not initialized")
+
+        kwargs: dict[str, Any] = {
+            "endpoint_url": opts.endpoint,
+            "region_name": opts.region_name,
+            "config": opts.config,
+        }
+
+        if opts.access_key_id is not None and opts.secret_access_key is not None:
+            kwargs["aws_access_key_id"] = opts.access_key_id
+            kwargs["aws_secret_access_key"] = opts.secret_access_key.get_secret_value()
+
+        cm = session.client("sqs", **kwargs)  # type: ignore
+
+        return cast(AsyncContextManager[AsyncSQSClient], cm)
+
+    # ....................... #
+
     @asynccontextmanager
     async def client(self) -> AsyncGenerator[AsyncSQSClient]:
-        """Yield a context-bound SQS client with nested-scope reuse."""
+        """Yield a context-bound SQS client with nested-scope reuse.
+
+        When :meth:`initialize` has opened the long-lived client, scopes are
+        cheap: they bind the shared client to the current context (depth
+        tracking only). Lazy per-scope client construction remains as a
+        fallback for instances whose options were configured without the
+        persistent client (un-lifecycled usage).
+        """
         depth = self.__ctx_depth.get()
         parent = self.__current_client()
 
@@ -231,23 +340,22 @@ class SQSClient(SQSClientPort):
 
             return
 
-        session = self.__require_session()
-        opts = self.__opts
+        persistent = self.__persistent_client
 
-        if opts is None:
-            raise exc.internal("SQS client options are not initialized")
+        if persistent is not None:
+            token_client = self.__ctx_client.set(persistent)
+            token_depth = self.__ctx_depth.set(1)
 
-        cm = session.client(  # type: ignore
-            "sqs",
-            endpoint_url=opts.endpoint,
-            region_name=opts.region_name,
-            aws_access_key_id=opts.access_key_id,
-            aws_secret_access_key=opts.secret_access_key.get_secret_value(),
-            config=opts.config,  # type: ignore[arg-type]
-        )
-        cm = cast(AsyncSQSClient, cm)
+            try:
+                yield persistent
 
-        async with cm as c:
+            finally:
+                self.__ctx_client.reset(token_client)
+                self.__ctx_depth.reset(token_depth)
+
+            return
+
+        async with self.__create_client_cm() as c:
             token_client = self.__ctx_client.set(c)
             token_depth = self.__ctx_depth.set(1)
 
@@ -596,7 +704,11 @@ class SQSClient(SQSClientPort):
                 entry_id = success.get("Id")
                 broker_id = success.get("MessageId")
 
-                if isinstance(entry_id, str) and isinstance(broker_id, str):
+                if isinstance(
+                    entry_id, str
+                ) and isinstance(  # pyright: ignore[reportUnnecessaryIsInstance]
+                    broker_id, str
+                ):
                     by_entry[entry_id] = broker_id
 
             return [
