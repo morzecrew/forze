@@ -90,6 +90,37 @@ the auth code for an `id_token` first, then run the
 Once you have the `id_token`, the [login handler](external-bootstrap-forze-jwt.md#the-login-handler)
 verifies it and mints first-party tokens — identical across all three providers.
 
+## Callback hardening checklist
+
+PKCE bound to the session already blocks most login-CSRF and code injection;
+`state` and nonce-value binding close the rest. Before the authorize redirect:
+
+```python
+from forze_identity.oauth import generate_nonce, generate_pkce, generate_state
+
+pkce = generate_pkce()
+state = generate_state()
+nonce = generate_nonce()
+# authorize URL gets: pkce.code_challenge (S256), state, nonce
+# server session gets: pkce.code_verifier, state, nonce
+```
+
+On the callback:
+
+1. Verify `state` equality against the session value with `hmac.compare_digest`
+   — reject before doing anything else.
+2. Exchange the code with the session's `code_verifier` (PKCE).
+3. Bind the `id_token` to this login attempt: pass `expected_nonce=nonce` to
+   `exchange_authorization_code` (VK, Telegram), or call
+   `forze_identity.oidc.verify_id_token_nonce(id_token, nonce)` yourself
+   (Google, custom IdPs).
+4. Clear all three session values — they are single-use.
+
+`verify_id_token_nonce` compares claims only (constant-time); signature
+verification still happens in the bootstrap route's verifier. The verifier's
+`require_nonce` flag stays presence-only — value binding lives here, in the
+callback, where the session is.
+
 ## Notes
 
 - `generate_pkce()` returns a `code_verifier` (keep it in the session between the

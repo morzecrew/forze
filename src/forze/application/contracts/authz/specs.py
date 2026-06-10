@@ -24,7 +24,18 @@ class AuthzSpec(BaseSpec):
     """
 
     tenancy_mode: AuthzTenancyMode = "global"
-    """How strictly tenant context from the invocation must match policy scope."""
+    """How strictly tenant context from the invocation must match policy scope.
+
+    ``global`` (the default) resolves grants without tenant partitioning:
+    roles, permissions, and bindings are shared across **all** tenants, even
+    when the backing document ports are tenant-aware. That is a legitimate
+    choice for deliberately platform-wide roles, but in a multi-tenant
+    deployment it usually means the flag was forgotten — set
+    ``require_invocation_tenant`` so grant resolution is partitioned by the
+    invocation tenant (adapters then refuse non-tenant-aware ports at
+    startup). Authz adapters log a warning when constructed in ``global``
+    mode over tenant-aware ports.
+    """
 
     enforce_principal_active: bool = True
     """When true, inactive policy principals are denied at runtime."""

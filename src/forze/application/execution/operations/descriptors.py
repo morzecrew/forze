@@ -49,6 +49,12 @@ class OperationDescriptor:
     tags: tuple[str, ...] = ()
     """Optional free-form tags for grouping/filtering in a catalog."""
 
+    sensitive: bool = False
+    """The operation projects a read model that carries credential/secret material
+    (``spec.sensitive``). An intrinsic fact, not an exposure decision: generated
+    external surfaces (HTTP route generators, MCP tools/resources) must refuse to
+    project operations marked sensitive."""
+
     # ....................... #
 
     def input_schema(self) -> dict[str, Any] | None:

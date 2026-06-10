@@ -82,6 +82,10 @@ class ConfigurableArgon2PasswordVerifier:
 
     shared: AuthnSharedServices
 
+    rehash_on_login: bool = attrs.field(default=False)
+    """When ``True``, wire the password account command port so stored hashes are
+    upgraded to current Argon2 parameters after a successful login."""
+
     # ....................... #
 
     def __call__(
@@ -96,9 +100,14 @@ class ConfigurableArgon2PasswordVerifier:
                 "Password verifier requires kernel.password",
             )
 
+        pa_cmd = (
+            ctx.doc.command(password_account_spec) if self.rehash_on_login else None
+        )
+
         return Argon2PasswordVerifier(
             password_svc=self.shared.password_svc,
             pa_qry=ctx.doc.query(password_account_spec),
+            pa_cmd=pa_cmd,
         )
 
 
@@ -384,6 +393,10 @@ class ConfigurablePasswordLifecycle:
 
     shared: AuthnSharedServices
 
+    revoke_sessions_on_password_change: bool = attrs.field(default=True)
+    """Whether a successful password change revokes all of the principal's sessions
+    ("log out everywhere"); wires the session document ports when enabled."""
+
     # ....................... #
 
     def __call__(
@@ -396,11 +409,16 @@ class ConfigurablePasswordLifecycle:
         if self.shared.password_svc is None:
             raise exc.internal("Password lifecycle requires kernel.password")
 
+        revoke = self.revoke_sessions_on_password_change
+
         return PasswordLifecycleAdapter(
             password_svc=self.shared.password_svc,
             pa_qry=ctx.doc.query(password_account_spec),
             pa_cmd=ctx.doc.command(password_account_spec),
             eligibility=_resolve_eligibility(ctx, spec),
+            session_qry=ctx.doc.query(session_spec) if revoke else None,
+            session_cmd=ctx.doc.command(session_spec) if revoke else None,
+            revoke_sessions_on_password_change=revoke,
         )
 
 

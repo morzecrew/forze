@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
 import pytest
+import structlog.testing
 
 from forze.application.contracts.authz import AuthzSpec, EffectiveGrants, PrincipalRef
 from forze.application.contracts.document import DocumentSpec
@@ -122,3 +123,52 @@ def test_global_route_allows_non_tenant_aware_ports() -> None:
     )
 
     assert adapter.spec.tenancy_mode == "global"
+
+
+# ----------------------- #
+# Global mode over tenant-aware ports warns (likely multi-tenant deployment)
+
+
+def _warnings(logs: list[dict[str, object]]) -> list[dict[str, object]]:
+    return [log for log in logs if log["log_level"] == "warning"]
+
+
+def test_global_mode_over_tenant_aware_ports_warns() -> None:
+    # Tenant-aware ports signal a multi-tenant deployment; global mode then
+    # shares grants across all tenants — warn (not error: platform-wide roles
+    # over tenant-partitioned stores can be intentional).
+    with structlog.testing.capture_logs() as logs:
+        GrantQueryAdapter(
+            spec=AuthzSpec(name="main"),
+            principal_qry=_document_qry(tenant_aware=True),
+            resolver=_resolver(tenant_aware=True),
+        )
+
+    warnings = _warnings(logs)
+
+    assert len(warnings) == 1
+    assert "shared across all tenants" in str(warnings[0]["event"])
+    assert "require_invocation_tenant" in str(warnings[0]["event"])
+    assert warnings[0]["route"] == "main"
+
+
+def test_global_mode_over_non_tenant_aware_ports_does_not_warn() -> None:
+    with structlog.testing.capture_logs() as logs:
+        GrantQueryAdapter(
+            spec=AuthzSpec(name="main"),
+            principal_qry=_document_qry(tenant_aware=False),
+            resolver=_resolver(tenant_aware=False),
+        )
+
+    assert _warnings(logs) == []
+
+
+def test_tenant_scoped_route_does_not_warn() -> None:
+    with structlog.testing.capture_logs() as logs:
+        GrantQueryAdapter(
+            spec=AuthzSpec(name="main", tenancy_mode="require_invocation_tenant"),
+            principal_qry=_document_qry(tenant_aware=True),
+            resolver=_resolver(tenant_aware=True),
+        )
+
+    assert _warnings(logs) == []

@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 import httpx
+import jwt
 import pytest
 
 from forze.base.exceptions import CoreException
@@ -99,6 +100,51 @@ async def test_exchange_missing_id_token(monkeypatch: pytest.MonkeyPatch) -> Non
     with pytest.raises(CoreException) as ei:
         await exchange_authorization_code(config, code="c", code_verifier="v")
     assert ei.value.code == "vk_token_exchange_failed"
+
+
+@pytest.mark.asyncio
+async def test_exchange_binds_expected_nonce(monkeypatch: pytest.MonkeyPatch) -> None:
+    config = VkIdOidcConfig(client_id="vk-app", redirect_uri="https://app.example/cb")
+    id_token = jwt.encode({"sub": "u", "nonce": "n-1"}, "k" * 32, algorithm="HS256")
+    _mock_httpx_client(monkeypatch, status=200, json_body={"id_token": id_token})
+
+    result = await exchange_authorization_code(
+        config,
+        code="c",
+        code_verifier="v",
+        expected_nonce="n-1",
+    )
+
+    assert result.id_token == id_token
+
+
+@pytest.mark.asyncio
+async def test_exchange_rejects_nonce_mismatch(monkeypatch: pytest.MonkeyPatch) -> None:
+    config = VkIdOidcConfig(client_id="vk-app", redirect_uri="https://app.example/cb")
+    id_token = jwt.encode({"sub": "u", "nonce": "other"}, "k" * 32, algorithm="HS256")
+    _mock_httpx_client(monkeypatch, status=200, json_body={"id_token": id_token})
+
+    with pytest.raises(CoreException) as ei:
+        await exchange_authorization_code(
+            config,
+            code="c",
+            code_verifier="v",
+            expected_nonce="n-1",
+        )
+    assert ei.value.code == "oidc_nonce_mismatch"
+
+
+@pytest.mark.asyncio
+async def test_exchange_without_expected_nonce_skips_binding(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``None`` preserves today's behavior — the id_token is not even decoded."""
+    config = VkIdOidcConfig(client_id="vk-app", redirect_uri="https://app.example/cb")
+    _mock_httpx_client(monkeypatch, status=200, json_body={"id_token": "not-a-jwt"})
+
+    result = await exchange_authorization_code(config, code="c", code_verifier="v")
+
+    assert result.id_token == "not-a-jwt"
 
 
 def test_vk_config_defaults() -> None:

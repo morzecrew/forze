@@ -2,6 +2,7 @@
 
 from typing import Any, TypeVar
 
+import attrs
 from pydantic import BaseModel
 
 from forze.application.contracts.document import DocumentSpec
@@ -142,7 +143,9 @@ def _build_document_descriptors(
 
     One descriptor per operation, carrying the request/response DTO types so a driving
     adapter can derive schemas. Write descriptors are emitted only when the matching DTO
-    is configured, mirroring the handlers in :func:`build_document_registry`.
+    is configured, mirroring the handlers in :func:`build_document_registry`. A spec
+    marked ``sensitive`` propagates the flag onto every descriptor so projection
+    surfaces (generated routes, MCP) can refuse it at build time.
     """
 
     read = dtos.read
@@ -200,6 +203,12 @@ def _build_document_descriptors(
                 output_type=_parametrized(DocumentUpdateRes, read),
                 description="Update an existing document and return the result with diff.",
             )
+
+    if spec.sensitive:
+        descriptors = {
+            op: attrs.evolve(descriptor, sensitive=True)
+            for op, descriptor in descriptors.items()
+        }
 
     return descriptors
 

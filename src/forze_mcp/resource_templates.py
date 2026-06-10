@@ -114,8 +114,9 @@ def register_resource_templates(
     :param identity: Resolver for the principal/tenant bound per read (defaults to a
         no-identity :class:`StaticIdentityResolver`).
     :returns: The list of registered URI templates.
-    :raises CoreException: When an operation is missing, not read-only, has no descriptor
-        with an input type, or ``id_param`` is not a field of that input DTO.
+    :raises CoreException: When an operation is missing, not read-only, projects a
+        sensitive read model, has no descriptor with an input type, or ``id_param``
+        is not a field of that input DTO.
     """
 
     catalog = registry.catalog()
@@ -137,6 +138,14 @@ def register_resource_templates(
             )
 
         descriptor = entry.descriptor
+
+        if descriptor is not None and descriptor.sensitive:
+            raise exc.configuration(
+                f"Refusing to register resource template for operation "
+                f"{template.op!r}: it projects a sensitive read model (its spec "
+                "is marked sensitive=True; credential/secret material must not "
+                "be exposed on generated external surfaces).",
+            )
 
         if descriptor is None or descriptor.input_type is None:
             raise exc.configuration(

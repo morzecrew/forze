@@ -133,3 +133,15 @@ def test_query_policy_unknown_field_rejected_at_construction() -> None:
             read=_Read,
             query_policy=QueryFieldPolicy(filterable={"nonexistent"}),
         )
+
+
+def test_sensitive_defaults_to_false() -> None:
+    spec = DocumentSpec(name="doc", read=_Read)
+
+    assert spec.sensitive is False
+
+
+def test_sensitive_flag_round_trips() -> None:
+    spec = DocumentSpec(name="doc", read=_Read, sensitive=True)
+
+    assert spec.sensitive is True

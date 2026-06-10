@@ -29,6 +29,15 @@ order_spec = DocumentSpec(
 each naming a capability for one aggregate. In code the suffix is `Spec`; in
 these docs we call it a *specification*.
 
+When a read model carries credential or secret material (password hashes, token
+digests), mark the spec with `sensitive=True` (available on `DocumentSpec` and
+`SearchSpec`). Generated external surfaces — the FastAPI route generators and
+the MCP tool/resource registrations — refuse to project a sensitive spec and
+fail with a configuration error at attach/registration time, so a
+credential-bearing read model can never leak through a generated endpoint. The
+shipped authn specs (password accounts, API-key accounts, sessions, invites)
+are marked this way.
+
 ## From handler to operation
 
 Three roles turn business logic into something the runtime can run. Keeping them

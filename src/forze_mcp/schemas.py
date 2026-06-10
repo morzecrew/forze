@@ -16,6 +16,7 @@ from fastmcp import FastMCP
 from fastmcp.resources import Resource
 
 from forze.application.contracts.document import DocumentSpec
+from forze.base.exceptions import exc
 
 # ----------------------- #
 
@@ -62,7 +63,19 @@ def register_schema_resources(
         metadata lives on the spec).
     :param prefix: URI scheme for the resources (default ``"schema"``).
     :returns: The list of registered resource URIs.
+    :raises CoreException: When a spec is marked ``sensitive`` — its read model
+        carries credential/secret material and must not be published.
     """
+
+    # Refuse sensitive specs up front (before any resource is added).
+    for spec in specs:
+        if spec.sensitive:
+            raise exc.configuration(
+                f"Refusing to register schema resource for spec '{spec.name}': "
+                "it is marked sensitive=True (its read model carries "
+                "credential/secret material that must not be exposed on "
+                "generated external surfaces)"
+            )
 
     uris: list[str] = []
 

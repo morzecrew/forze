@@ -75,3 +75,16 @@ class PasswordService:
 
         except (InvalidHash, VerificationError, VerifyMismatchError):
             return False
+
+    # ....................... #
+
+    def password_needs_rehash(self, password_hash: str) -> bool:
+        """Whether ``password_hash`` was produced with outdated Argon2 parameters."""
+
+        try:
+            ph = self._require_hasher()
+
+            return ph.check_needs_rehash(password_hash)
+
+        except InvalidHash:
+            return True

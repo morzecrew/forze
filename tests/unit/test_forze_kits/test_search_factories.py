@@ -150,3 +150,58 @@ class TestSearchCatalog:
         assert typed.input_schema() is not None
         # SearchPaginated[_Hit] envelope resolves.
         assert "hits" in (typed.output_schema() or {}).get("properties", {})
+
+
+class TestSearchSensitivePropagation:
+    def test_descriptors_not_sensitive_by_default(self) -> None:
+        spec = _search_spec()
+        cat = build_search_registry(spec).freeze().catalog()
+
+        assert cat
+        assert all(
+            entry.descriptor is not None and entry.descriptor.sensitive is False
+            for entry in cat.values()
+        )
+
+    def test_sensitive_spec_marks_every_descriptor(self) -> None:
+        spec = SearchSpec(
+            name="leg1", model_type=_Hit, fields=["id"], sensitive=True
+        )
+        cat = build_search_registry(spec).freeze().catalog()
+
+        assert cat
+        assert all(
+            entry.descriptor is not None and entry.descriptor.sensitive is True
+            for entry in cat.values()
+        )
+
+    def test_hub_is_sensitive_when_any_member_is(self) -> None:
+        a = SearchSpec(name="a", model_type=_Hit, fields=["id"], sensitive=True)
+        b = SearchSpec(name="b", model_type=_Hit, fields=["id"])
+        hub = HubSearchSpec(name="hub1", model_type=_Hit, members=(a, b))
+
+        cat = build_hub_search_registry(hub).freeze().catalog()
+
+        assert cat
+        assert all(
+            entry.descriptor is not None and entry.descriptor.sensitive is True
+            for entry in cat.values()
+        )
+
+    def test_federated_is_sensitive_when_any_member_is(self) -> None:
+        from forze_kits.aggregates.search.factories import (
+            build_federated_search_registry,
+        )
+        from forze.application.contracts.search import FederatedSearchSpec
+
+        a = SearchSpec(name="a", model_type=_Hit, fields=["id"], sensitive=True)
+        b = SearchSpec(name="b", model_type=_Hit, fields=["id"])
+        fed = FederatedSearchSpec(name="fed1", members=(a, b))
+
+        cat = build_federated_search_registry(fed).freeze().catalog()
+
+        assert cat
+        assert all(
+            entry.descriptor is not None and entry.descriptor.sensitive is True
+            for entry in cat.values()
+        )

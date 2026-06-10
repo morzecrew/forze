@@ -28,6 +28,7 @@ from ..domain.models.session import (
     UpdateSessionCmd,
 )
 from ..services import AccessTokenService, RefreshTokenService
+from ._utils import revoke_sessions_matching
 
 # ----------------------- #
 
@@ -133,37 +134,23 @@ class TokenLifecycleAdapter(TokenLifecyclePort):
     # ....................... #
 
     async def revoke_tokens(self, identity: AuthnIdentity) -> None:
-        sessions = await self.session_qry.find_many(
-            filters={
-                "$values": {
-                    "principal_id": identity.principal_id,
-                }
-            }
+        await revoke_sessions_matching(
+            self.session_qry,
+            self.session_cmd,
+            {"principal_id": identity.principal_id},
         )
-
-        upds = [
-            (x.id, x.rev, UpdateSessionCmd(revoked_at=utcnow())) for x in sessions.hits
-        ]
-
-        await self.session_cmd.update_many(upds, return_new=False)
 
     # ....................... #
 
     async def revoke_chain_of_tokens(self, principal_id: UUID, family_id: UUID) -> None:
-        sessions = await self.session_qry.find_many(
-            filters={
-                "$values": {
-                    "principal_id": principal_id,
-                    "family_id": family_id,
-                }
-            }
+        await revoke_sessions_matching(
+            self.session_qry,
+            self.session_cmd,
+            {
+                "principal_id": principal_id,
+                "family_id": family_id,
+            },
         )
-
-        upds = [
-            (x.id, x.rev, UpdateSessionCmd(revoked_at=utcnow())) for x in sessions.hits
-        ]
-
-        await self.session_cmd.update_many(upds, return_new=False)
 
     # ....................... #
 

@@ -38,6 +38,19 @@ class TestSearchSpec:
         spec = _minimal_search_spec()
         assert list(spec.fields) == ["title"]
 
+    def test_sensitive_defaults_to_false(self) -> None:
+        assert _minimal_search_spec().sensitive is False
+
+    def test_sensitive_flag_round_trips(self) -> None:
+        spec = SearchSpec(
+            name="test",
+            model_type=_MinimalSearchModel,
+            fields=["title"],
+            sensitive=True,
+        )
+
+        assert spec.sensitive is True
+
     def test_duplicate_fields_raise(self) -> None:
         with pytest.raises(CoreException, match="unique"):
             SearchSpec(

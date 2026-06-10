@@ -380,3 +380,41 @@ class TestDtoShapeValidation:
         assert response.status_code == 422
         assert "detail" in response.json()
         assert response.headers[ERROR_CODE_HEADER] == "core.validation"
+
+
+class TestSensitiveSpecRefusal:
+    def _sensitive_registry(self) -> tuple[DocumentSpec, FrozenOperationRegistry]:
+        spec = DocumentSpec(
+            name="notes",
+            read=_NoteRead,
+            write=DocumentWriteTypes(
+                domain=_Note, create_cmd=_NoteCreate, update_cmd=_NoteUpdate
+            ),
+            sensitive=True,
+        )
+        dtos = DocumentDTOs(read=_NoteRead, create=_NoteCreate, update=_NoteUpdate)
+        return spec, build_document_registry(spec, dtos).freeze()
+
+    def test_sensitive_registry_fails_at_attach_time(self) -> None:
+        # The refusal must happen at attach time (startup), never as a 500 at
+        # request time.
+        spec, registry = self._sensitive_registry()
+        router = APIRouter(prefix="/notes")
+
+        with pytest.raises(CoreException, match="sensitive") as e:
+            attach_document_routes(
+                router,
+                registry=registry,
+                ns=spec.default_namespace,
+                ctx_dep=lambda: context_from_modules(MockDepsModule()),
+                style="rest",
+            )
+
+        assert e.value.kind.value == "configuration"
+        # Nothing was served: no app exists, so there is no request-time surface.
+        assert all(route.path != "/notes/{id}" for route in router.routes)
+
+    def test_non_sensitive_registry_attaches_unchanged(self) -> None:
+        app = _build_app("rest")
+
+        assert _operation_ids(app)

@@ -197,6 +197,43 @@ class TestOidcTokenVerifier:
         assert ei.value.code == "oidc_token_expired"
 
     @pytest.mark.asyncio
+    async def test_require_nonce_is_presence_only(self) -> None:
+        """Any nonce value passes — value binding lives in ``verify_id_token_nonce``."""
+        secret = secrets.token_bytes(32)
+        verifier = OidcTokenVerifier(
+            key_provider=StaticKeyProvider(key=secret),
+            algorithms=("HS256",),
+            issuer="iss",
+            audience="my-app",
+            require_nonce=True,
+        )
+        token = _hs256_token(
+            secret,
+            issuer="iss",
+            subject="u",
+            extra={"nonce": "whatever"},
+        )
+
+        assertion = await verifier.verify_token(AccessTokenCredentials(token=token))
+        assert assertion.subject == "u"
+
+    @pytest.mark.asyncio
+    async def test_require_nonce_rejects_missing_nonce(self) -> None:
+        secret = secrets.token_bytes(32)
+        verifier = OidcTokenVerifier(
+            key_provider=StaticKeyProvider(key=secret),
+            algorithms=("HS256",),
+            issuer="iss",
+            audience="my-app",
+            require_nonce=True,
+        )
+        token = _hs256_token(secret, issuer="iss", subject="u")
+
+        with pytest.raises(CoreException) as ei:
+            await verifier.verify_token(AccessTokenCredentials(token=token))
+        assert ei.value.code == "invalid_oidc_token"
+
+    @pytest.mark.asyncio
     async def test_pairs_with_deterministic_resolver(self) -> None:
         """End-to-end: external IdP token → assertion → internal UUID via DeterministicUuidResolver."""
         secret = secrets.token_bytes(32)

@@ -55,6 +55,7 @@ def _verifier(
     *,
     account: ReadPasswordAccount | None,
     password_svc: PasswordService | None = None,
+    pa_cmd: MagicMock | None = None,
 ) -> Argon2PasswordVerifier:
     pa_qry = MagicMock()
     pa_qry.spec = _password_spec()
@@ -63,7 +64,23 @@ def _verifier(
         return_value=CountlessPage(hits=hits, page=1, size=len(hits)),
     )
     svc = password_svc or PasswordService(config=_slow_password_config())
-    return Argon2PasswordVerifier(password_svc=svc, pa_qry=pa_qry)
+    return Argon2PasswordVerifier(password_svc=svc, pa_qry=pa_qry, pa_cmd=pa_cmd)
+
+
+def _pa_cmd() -> MagicMock:
+    pa_cmd = MagicMock()
+    pa_cmd.spec = _password_spec()
+    pa_cmd.update = AsyncMock(return_value=None)
+    return pa_cmd
+
+
+def _old_params_hash(password: str) -> str:
+    """Hash produced under parameters that differ from ``_slow_password_config``."""
+
+    old_svc = PasswordService(
+        config=PasswordConfig(time_cost=2, memory_cost=16384, parallelism=1),
+    )
+    return old_svc.hash_password(password)
 
 
 def _assert_invalid_login(exc: BaseException) -> None:
@@ -128,6 +145,108 @@ async def test_valid_password_returns_assertion() -> None:
 
     assert assertion.issuer == ISSUER_FORZE_PASSWORD
     assert assertion.subject == str(account.principal_id)
+
+
+# ....................... #
+# Rehash-on-login (Argon2 parameter upgrades)
+
+
+@pytest.mark.asyncio
+async def test_outdated_hash_is_rehashed_when_command_port_wired() -> None:
+    pwd = PasswordService(config=_slow_password_config())
+    old_hash = _old_params_hash("correct")
+    account = _account(password_hash=old_hash)
+    pa_cmd = _pa_cmd()
+    verifier = _verifier(account=account, password_svc=pwd, pa_cmd=pa_cmd)
+
+    assertion = await verifier.verify_password(
+        PasswordCredentials(login="alice", password="correct"),
+    )
+
+    assert assertion.subject == str(account.principal_id)
+
+    pa_cmd.update.assert_awaited_once()
+    doc_id, rev, upd_cmd = pa_cmd.update.await_args.args
+    assert doc_id == account.id
+    assert rev == account.rev
+
+    new_hash = upd_cmd.password_hash
+    assert new_hash is not None
+    assert new_hash != old_hash
+    assert pwd.verify_password(password_hash=new_hash, password="correct")
+    assert not pwd.password_needs_rehash(new_hash)
+
+
+@pytest.mark.asyncio
+async def test_rehash_persistence_failure_never_fails_login() -> None:
+    pwd = PasswordService(config=_slow_password_config())
+    account = _account(password_hash=_old_params_hash("correct"))
+    pa_cmd = _pa_cmd()
+    pa_cmd.update = AsyncMock(side_effect=RuntimeError("rev conflict"))
+    verifier = _verifier(account=account, password_svc=pwd, pa_cmd=pa_cmd)
+
+    with patch(
+        "forze_identity.authn.verifiers.argon2_password.logger"
+    ) as mock_logger:
+        assertion = await verifier.verify_password(
+            PasswordCredentials(login="alice", password="correct"),
+        )
+
+    assert assertion.subject == str(account.principal_id)
+    pa_cmd.update.assert_awaited_once()
+    mock_logger.warning.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_no_command_port_skips_rehash_write() -> None:
+    pwd = PasswordService(config=_slow_password_config())
+    account = _account(password_hash=_old_params_hash("correct"))
+    verifier = _verifier(account=account, password_svc=pwd, pa_cmd=None)
+
+    with patch.object(
+        PasswordService,
+        "password_needs_rehash",
+        autospec=True,
+    ) as needs_rehash:
+        assertion = await verifier.verify_password(
+            PasswordCredentials(login="alice", password="correct"),
+        )
+
+    assert assertion.subject == str(account.principal_id)
+    needs_rehash.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_up_to_date_hash_is_not_rewritten() -> None:
+    pwd = PasswordService(config=_slow_password_config())
+    account = _account(password_hash=pwd.hash_password("correct"))
+    pa_cmd = _pa_cmd()
+    verifier = _verifier(account=account, password_svc=pwd, pa_cmd=pa_cmd)
+
+    assertion = await verifier.verify_password(
+        PasswordCredentials(login="alice", password="correct"),
+    )
+
+    assert assertion.subject == str(account.principal_id)
+    pa_cmd.update.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_wrong_password_never_triggers_rehash() -> None:
+    pwd = PasswordService(config=_slow_password_config())
+    account = _account(password_hash=_old_params_hash("correct"))
+    pa_cmd = _pa_cmd()
+    verifier = _verifier(account=account, password_svc=pwd, pa_cmd=pa_cmd)
+
+    with pytest.raises(CoreException):
+        await verifier.verify_password(
+            PasswordCredentials(login="alice", password="wrong"),
+        )
+
+    pa_cmd.update.assert_not_awaited()
+
+
+# ....................... #
 
 
 @pytest.mark.asyncio

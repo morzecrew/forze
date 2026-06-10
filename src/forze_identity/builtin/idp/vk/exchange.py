@@ -6,6 +6,7 @@ import attrs
 
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
+from forze_identity.oidc import verify_id_token_nonce
 
 from .._exchange import oidc_code_exchange
 from .config import VkIdOidcConfig
@@ -75,12 +76,18 @@ async def exchange_authorization_code(
     code_verifier: str,
     redirect_uri: str | None = None,
     device_id: str | None = None,
+    expected_nonce: str | None = None,
     timeout: float = 10.0,
 ) -> VkTokenResponse:
     """Exchange an authorization code for tokens (PKCE).
 
     Validates only the returned ``id_token`` with :class:`ConfigurableVkIdOidcVerifier`.
     Store ``access_token`` / ``refresh_token`` server-side if needed for VK API calls.
+
+    When ``expected_nonce`` is set (the session nonce you sent on the authorize URL),
+    the returned ``id_token`` is bound to it via
+    :func:`forze_identity.oidc.verify_id_token_nonce` — a missing or mismatched
+    ``nonce`` claim raises an authentication error. ``None`` skips the binding.
     """
 
     data: dict[str, str] = {
@@ -107,4 +114,9 @@ async def exchange_authorization_code(
         timeout=timeout,
     )
 
-    return _parse_token_response(payload)
+    response = _parse_token_response(payload)
+
+    if expected_nonce is not None:
+        verify_id_token_nonce(response.id_token, expected_nonce)
+
+    return response

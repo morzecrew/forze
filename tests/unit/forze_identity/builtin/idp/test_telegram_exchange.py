@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 import httpx
+import jwt
 import pytest
 
 from forze.base.exceptions import CoreException
@@ -81,6 +82,46 @@ async def test_exchange_rejects_missing_id_token(monkeypatch: pytest.MonkeyPatch
     with pytest.raises(CoreException) as ei:
         await exchange_authorization_code(config, code="c", code_verifier="v")
     assert ei.value.code == "telegram_token_exchange_failed"
+
+
+@pytest.mark.asyncio
+async def test_exchange_binds_expected_nonce(monkeypatch: pytest.MonkeyPatch) -> None:
+    config = TelegramLoginOidcConfig(
+        client_id="bot",
+        client_secret="s",
+        redirect_uri="https://x/cb",
+    )
+    id_token = jwt.encode({"sub": "u", "nonce": "n-1"}, "k" * 32, algorithm="HS256")
+    _mock_httpx_client(monkeypatch, status=200, json_body={"id_token": id_token})
+
+    result = await exchange_authorization_code(
+        config,
+        code="c",
+        code_verifier="v",
+        expected_nonce="n-1",
+    )
+
+    assert result.id_token == id_token
+
+
+@pytest.mark.asyncio
+async def test_exchange_rejects_nonce_mismatch(monkeypatch: pytest.MonkeyPatch) -> None:
+    config = TelegramLoginOidcConfig(
+        client_id="bot",
+        client_secret="s",
+        redirect_uri="https://x/cb",
+    )
+    id_token = jwt.encode({"sub": "u"}, "k" * 32, algorithm="HS256")  # nonce absent
+    _mock_httpx_client(monkeypatch, status=200, json_body={"id_token": id_token})
+
+    with pytest.raises(CoreException) as ei:
+        await exchange_authorization_code(
+            config,
+            code="c",
+            code_verifier="v",
+            expected_nonce="n-1",
+        )
+    assert ei.value.code == "oidc_nonce_mismatch"
 
 
 def test_telegram_preset_defaults() -> None:
