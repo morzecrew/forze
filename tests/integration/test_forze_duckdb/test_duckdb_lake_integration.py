@@ -23,6 +23,7 @@ from forze.application.execution import ExecutionContext
 from forze_duckdb import (
     DeltaSource,
     DuckDbClient,
+    IcebergSource,
     ParquetSource,
     S3Credentials,
 )
@@ -135,6 +136,53 @@ async def test_local_delta_table_read(tmp_path: Path) -> None:
         database=":memory:",
         extensions=(),  # delta is auto-derived from DeltaSource
         sources={"events": DeltaSource(str(table_dir))},
+    )
+
+    try:
+        await hook(_ctx({DuckDbClientDepKey: client}))
+        result = await client.run_query("SELECT day, total FROM events ORDER BY day")
+        assert [(r["day"], r["total"]) for r in result.rows] == [
+            ("a", 10),
+            ("b", 20),
+            ("c", 30),
+        ]
+
+    finally:
+        await client.close()
+
+
+# ....................... #
+
+
+async def test_local_iceberg_table_read(tmp_path: Path) -> None:
+    pytest.importorskip("pyiceberg")
+    pa = pytest.importorskip("pyarrow")
+    from pyiceberg.catalog.sql import SqlCatalog
+
+    warehouse = tmp_path / "warehouse"
+    warehouse.mkdir()
+    catalog = SqlCatalog(
+        "default",
+        uri=f"sqlite:///{tmp_path}/catalog.db",
+        warehouse=f"file://{warehouse}",
+    )
+    catalog.create_namespace("ns")
+    data = pa.table(
+        {"day": ["a", "b", "c"], "total": pa.array([10, 20, 30], type=pa.int64())}
+    )
+    table = catalog.create_table("ns.events", schema=data.schema)
+    table.append(data)
+
+    # DuckDB's iceberg extension reads a pyiceberg-written table when pointed at the
+    # current metadata.json with allow_moved_paths disabled (the stored manifest paths
+    # are already absolute; allow_moved_paths re-roots them and breaks resolution).
+    metadata_path = table.metadata_location.removeprefix("file://")
+
+    client = DuckDbClient()
+    hook = DuckDbStartupHook(
+        database=":memory:",
+        extensions=(),  # iceberg is auto-derived from IcebergSource
+        sources={"events": IcebergSource(metadata_path, allow_moved_paths=False)},
     )
 
     try:

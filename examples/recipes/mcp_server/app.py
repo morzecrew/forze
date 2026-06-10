@@ -8,7 +8,7 @@ result. No Docker, no real database — the document store is an in-memory ``Moc
 
 Run it (Streamable HTTP on http://127.0.0.1:8000/mcp), then point the Inspector at it::
 
-    uv run python -m examples.mcp_server
+    uv run python -m examples.recipes.mcp_server.app
     npx -y @modelcontextprotocol/inspector            # choose "Streamable HTTP", URL above
 
 A couple of notes are seeded at startup, so ``notes.list`` / ``notes.get`` return data
@@ -60,6 +60,7 @@ from forze_mock import MockDepsModule, MockState
 # Domain — a minimal Notes aggregate.
 
 
+# --8<-- [start:aggregate]
 class Note(Document):
     title: str = ""
     body: str = ""
@@ -91,6 +92,7 @@ SPEC = DocumentSpec(
 )
 DTOS = DocumentDTOs(read=NoteRead, create=NoteInput, update=NoteUpdate)
 NS = SPEC.default_namespace
+# --8<-- [end:aggregate]
 
 # ----------------------- #
 
@@ -141,12 +143,14 @@ def build_server(
     filterable/sortable and how to build a ``notes.list`` query.
     """
 
+    # --8<-- [start:server]
     server = build_mcp_server(
         registry,
         ctx_factory,
         name="forze-notes",
         include_writes=True,  # demo: expose create/update/kill too, not just reads
     )
+    # --8<-- [end:server]
     register_dsl_query_prompts(server)
     register_schema_resources(server, SPEC)
     # Expose get-by-id as a resource template: read `notes://<uuid>` to fetch one note

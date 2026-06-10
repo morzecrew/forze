@@ -64,6 +64,7 @@ nav = [
             "integrations/meilisearch.md",
             "integrations/bigquery.md",
             "integrations/clickhouse.md",
+            "integrations/duckdb.md",
         ] },
         { "Messaging" = [
             "integrations/rabbitmq.md",
@@ -104,10 +105,17 @@ nav = [
             "recipes/social-sign-in.md",
         ] },
         { "Messaging & workflows" = [
+            "recipes/end-to-end-saga-outbox-inbox.md",
             "recipes/transactional-outbox.md",
             "recipes/transactional-notifications.md",
             "recipes/background-workflow.md",
             "recipes/scheduled-queue-jobs.md",
+        ] },
+        { "Analytics" = [
+            "recipes/analytics-over-a-data-lake.md",
+        ] },
+        { "Interfaces" = [
+            "recipes/expose-an-aggregate-over-mcp.md",
         ] },
     ] },
     { "Reference" = [

@@ -55,4 +55,6 @@ instead of `build_mcp_server`.
 - Reads are read-only by default; `include_writes=True` opts in and tags command
   tools as destructive.
 - For production, bring your own `FastMCP` (auth, transport); `build_mcp_server`
-  is a convenience. A worked example lives at `examples/mcp_server.py`.
+  is a convenience. See the
+  [expose-an-aggregate-over-MCP recipe](../recipes/expose-an-aggregate-over-mcp.md)
+  for a runnable walkthrough.

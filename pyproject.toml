@@ -65,6 +65,10 @@ dev = [
     "polyfactory>=3.3.0",
     "hypothesis>=6.153.0",
     "py-spy>=0.4.2",
+    # Lakehouse fixture writers for forze_duckdb integration tests (delta/iceberg are
+    # read via DuckDB extensions at runtime; these only create the tables to read).
+    "deltalake>=0.22.0",
+    "pyiceberg[sql-sqlite]>=0.8.0",
 ]
 docs = ["zensical>=0.0.43", "pygments>=2.19.2", "pymdown-extensions>=10.21"]
 
