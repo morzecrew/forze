@@ -1,117 +1,62 @@
-# Transactional notifications
+---
+title: Transactional notifications
+icon: lucide/mail
+summary: Reliable email / push / webhook — staged with the write, routed to a sender by the notify kit
+---
 
-Send email, push, or webhooks reliably using the **transactional outbox**, **queue relay**, and **`forze_kits.integrations.notify`**—without a core `NotificationPort`.
+A "welcome email" that fires on signup shouldn't send if the signup rolled back,
+and shouldn't be lost if it committed. That's the [outbox](transactional-outbox.md)
+guarantee again — plus a small kit that **routes** each relayed event to the
+right notification and hands it to a **sender**.
 
-## Checklist
+The runnable version lives at `examples/recipes/notifications/` (mock — no broker
+or SMTP needed).
 
-1. Define integration event payloads and `OutboxSpec` with `OutboxDestination.queue(...)`.
-2. Register outbox store + `QueueSpec` on deps modules.
-3. Patch mutating operations with `outbox_flush_tx_on_success_factory`.
-4. Run `relay_outbox_to_queue` (or `relay_outbox`) from a worker.
-5. Consume the queue with `process_notification_message` and app `NotificationSenders`.
+## Stage the notification
 
-## Event and outbox
-
-```python
-from pydantic import BaseModel
-
-from forze.application.contracts.outbox import OutboxDestination, OutboxSpec
-from forze.application.contracts.queue import QueueSpec
-from forze.base.serialization import PydanticModelCodec
-
-class ProjectCreated(BaseModel):
-    project_id: str
-
-events_spec = OutboxSpec(
-    name="events",
-    codec=PydanticModelCodec(ProjectCreated),
-    destination=OutboxDestination.queue(route="notifications", channel="notifications"),
-)
-notifications_spec = QueueSpec(name="notifications", codec=events_spec.codec)
-```
-
-Stage in a handler (same transaction as writes):
+The producer stages an event exactly like the outbox recipe — the notification is
+just the integration event's purpose:
 
 ```python
-await ctx.outbox.command(events_spec).stage(
-    "project.created",
-    ProjectCreated(project_id=str(project.id)),
-)
+--8<-- "recipes/notifications/app.py:event"
 ```
 
-Wire flush on the transaction route (see [Transactional outbox](transactional-outbox.md)).
+## Route events to notifications
 
-## Relay
+A `NotificationRouter` maps each event type to the notifications it should
+produce. The mapper receives the integration event, so it reads the payload:
 
 ```python
-from forze_kits.integrations.outbox import relay_outbox_to_queue
-
-await relay_outbox_to_queue(
-    ctx,
-    outbox_spec=events_spec,
-    queue_spec=notifications_spec,
-)
+--8<-- "recipes/notifications/app.py:router"
 ```
 
-## Routing and senders
+`EmailNotification`, `PushNotification`, and `WebhookNotification` are the shipped
+shapes.
+
+## Provide senders
+
+`NotificationSenders` is a protocol — any object with `send_email` / `send_push`
+/ `send_webhook` satisfies it. Real senders wrap SMTP, FCM, or an HTTP client;
+here it just records:
 
 ```python
-from forze_kits.integrations.notify import (
-    EmailNotification,
-    NotificationRouter,
-    NotificationSenders,
-    process_notification_message,
-)
-
-router = NotificationRouter()
-router.register(
-    "project.created",
-    lambda event: [
-        EmailNotification(
-            to="owner@example.com",
-            subject="Project created",
-            body=f"Project {event.payload.project_id} is ready.",
-        )
-    ],
-)
-
-class AppNotificationSenders(NotificationSenders):
-    async def send_email(self, notification: EmailNotification) -> None:
-        ...  # SendGrid, SMTP, etc.
-
-    async def send_push(self, notification) -> None:
-        ...
-
-    async def send_webhook(self, notification) -> None:
-        ...
-
-senders = AppNotificationSenders()
+--8<-- "recipes/notifications/app.py:senders"
 ```
 
-## Worker
+## Consume and dispatch
+
+The consumer relays the staged events to the queue, then feeds each message to
+`process_notification_message`, which resolves it through the router and calls the
+matching sender:
 
 ```python
-async for message in ctx.deps.resolve_configurable(
-    ctx, QueueQueryDepKey, notifications_spec, route=notifications_spec.name
-).consume("notifications"):
-    await process_notification_message(message, router=router, senders=senders)
-    await query.ack("notifications", [message.id])
+--8<-- "recipes/notifications/app.py:consume"
 ```
 
-Implement **idempotent** senders or deduplicate on `message.key` (`event_id` from outbox relay) because delivery is at-least-once.
+## Notes
 
-## Live fan-out (optional)
-
-For WebSocket or SSE subscribers, either:
-
-- **Second outbox** with `OutboxDestination.pubsub(...)` and `relay_outbox_to_pubsub`, or
-- Publish from the notification worker after successful send (`PubSubCommandPort.publish`).
-
-Prefer **queue workers** for email/push/webhook retries; use **pub/sub** or **streams** for broadcast or ordered logs (see [Stream contracts](../core-package/contracts/stream.md)).
-
-## Related
-
-- [Transactional outbox](transactional-outbox.md)
-- [Outbox contracts](../core-package/contracts/outbox.md)
-- [Queue contracts](../core-package/contracts/queue.md)
-- [Kits reference](../reference/kits.md)
+- `process_notification_message` takes a **`QueueMessage`** (not a raw payload) —
+  the event type and id come from the relayed message's `type` and `key`.
+- Unmapped event types are skipped by default (`skip_unmapped=True`).
+- The producer and consumer are decoupled: they can be different processes, and
+  the consumer is just a queue worker.

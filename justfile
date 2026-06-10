@@ -9,7 +9,7 @@ _uv_sync := "uv sync --all-groups --all-extras > /dev/null 2>&1"
 # ....................... #
 
 _pwd := justfile_directory()
-_cwd := join(_pwd, "pages_v2")
+_cwd := join(_pwd, "pages")
 
 _d2_dir := join(_cwd, "diagrams")
 _d2_light_build_dir := join(_cwd, "docs", "_diagrams", "light")
@@ -24,11 +24,7 @@ _d2_dark_flags := "--theme 200 --center --scale 1"
 _default:
     echo "Available commands:"
     echo
-    just --color=always --list | sed '1d; /^\s*pages\b/d'
-    echo
-    echo "Pages module commands:"
-    echo
-    just --color=always --list pages | sed '1d'
+    just --color=always --list | sed '1d'
 
 help:
     just
@@ -96,10 +92,14 @@ quality strict="false":
 # Docs
 
 # Serve the documentation with live reload
-[working-directory("pages_v2")]
+[working-directory("pages")]
 serve-docs:
     uv run zensical serve
 
+# Build the documentation site (diagrams + zensical) into pages/site
+[working-directory("pages")]
+build-docs: build-diagrams
+    uv run zensical build
 
 # Build D2 diagrams
 build-diagrams:

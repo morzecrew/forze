@@ -25,7 +25,7 @@ Framework contributors should use [`AGENTS.md`](../AGENTS.md), [canonical docs](
 
 ## Links
 
-- **Published docs:** `https://morzecrew.github.io/forze/docs/...` (see [`pages/mkdocs.yml`](../pages/mkdocs.yml) `site_url`). Use trailing-slash paths, e.g. `.../docs/integrations/inngest/`.
+- **Published docs:** `https://morzecrew.github.io/forze/...` (see [`pages/zensical.toml`](../pages/zensical.toml) `site_url`). Use trailing-slash paths, e.g. `.../forze/integrations/inngest/`.
 - **Cross-skill:** relative paths only, e.g. [`forze-wiring`](forze-wiring/SKILL.md).
 - **Never** link to `../../src/`, `../../tests/`, or `../../pages/` — installed skills are copied outside the Forze repo and those paths break.
 

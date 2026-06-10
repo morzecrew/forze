@@ -1,170 +1,66 @@
-# Inngest Integration
+---
+title: Inngest
+icon: lucide/workflow
+summary: Durable functions and events on Inngest
+---
 
-## Page opening
+`forze[inngest]` implements the durable-function contracts on
+[Inngest](https://inngest.com) — emit events that trigger functions, and run
+memoized steps inside them, behind the durable ports.
 
-`forze_inngest` connects Forze [durable function](../core-package/contracts/durable-function.md)
-contracts to [Inngest](https://www.inngest.com/). HTTP handlers emit events through
-`DurableFunctionEventCommandPort`; a worker process serves registered functions with
-memoized steps via `DurableFunctionStepPort`.
-
-| Topic | Details |
-|------|---------|
-| What it provides | `InngestClient`, `InngestDepsModule`, event command adapters, function registration, FastAPI `serve`. |
-| Supported Forze contracts | `DurableFunctionEventCommandDepKey`, `DurableFunctionStepDepKey`, plus `InngestClientDepKey`. |
-| When to use it | Event-driven durable handlers, cron-triggered jobs, and step memoization without Temporal workflows. |
-| Multi-tenant emit | `RoutedInngestClient` resolves `app_id` / keys per tenant for `send`; framework `serve()` remains single-app. |
-
-## Installation
+## Install
 
 ```bash
 uv add 'forze[inngest]'
 ```
 
-For FastAPI serve helpers:
+Needs Inngest, and a served function endpoint. The FastAPI serve helper needs
+`forze[inngest,fastapi]`.
 
-```bash
-uv add 'forze[inngest,fastapi]'
-```
-
-| Requirement | Notes |
-|-------------|-------|
-| Package extra | `inngest` installs the Inngest Python SDK. |
-| Local development | [Inngest Dev Server](https://www.inngest.com/docs/local-development) (`inngest dev`) or Inngest Cloud. |
-| Environment | `INNGEST_DEV`, `INNGEST_EVENT_KEY`, `INNGEST_SIGNING_KEY`, `INNGEST_BASE_URL`, `INNGEST_SERVE_ORIGIN` per Inngest docs. |
-| Integration tests | Docker + `inngest/inngest` testcontainer (`tests/integration/test_forze_inngest_integration/`). The app binds to `0.0.0.0`; the dev server container uses `host.docker.internal:host-gateway` to invoke it. |
-
-## Minimal setup
-
-### Client
+## The client
 
 ```python
 from forze_inngest import InngestClient, InngestConfig
 
-client = InngestClient(
-    app_id="my-app",
-    config=InngestConfig(is_production=False),
-)
+inngest = InngestClient(app_id="orders", config=InngestConfig())
 ```
 
-For per-tenant Inngest apps or keys, register `RoutedInngestClient` and `routed_inngest_lifecycle_step`. Secrets use `InngestRoutingCredentials` (`app_id`, optional `event_key`, `signing_key`). Access `native` only after the inner client is warmed for the current tenant (typically after `send`).
+`RoutedInngestClient` resolves per-tenant credentials.
 
-`InngestEventConfig` does not support `RelationSpec` or `NamedResourceSpec`—there is no table, queue, or bucket field to resolve. Multi-tenant **event routing** (event names, function IDs, cron triggers) is an **application convention** (for example prefixing IDs with `tenant:{tenant_id}:`), not framework config. See [Multi-tenancy — Inngest](../concepts/multi-tenancy.md#inngest-forze_inngest).
+## Wire it
 
-### Deps module (emit events from API)
+Register the events you emit and bind your functions to operations:
 
 ```python
 from forze.application.execution import DepsRegistry
-from forze_inngest import InngestDepsModule
+from forze_inngest import InngestDepsModule, InngestEventConfig, InngestFunctionBinding
 
-inngest_module = InngestDepsModule(
-    client=client,
-    events={
-        "app/invoice.paid": {},
-    },
+bindings = [InngestFunctionBinding.for_registry_operation(fulfil_spec, registry)]
+
+deps = DepsRegistry.from_modules(
+    InngestDepsModule(client=inngest, events={"orders": InngestEventConfig()}, function_bindings=bindings),
 )
-
-deps_registry = DepsRegistry.from_modules(inngest_module)
 ```
 
-Route keys must match `DurableFunctionEventSpec.name`.
-
-For framework tests or advanced wiring, prefer `from forze_inngest.execution.deps import ConfigurableInngestEventCommand` rather than removed `forze_inngest.execution.deps.deps` paths.
-
-### Emit from a handler
+Serve the functions from FastAPI (registers them with Inngest):
 
 ```python
-events = ctx.deps.resolve_configurable(
-    ctx,
-    DurableFunctionEventCommandDepKey,
-    invoice_paid_spec,
-    route=invoice_paid_spec.name,
-)
-await events.send(InvoicePaidPayload(invoice_id="inv-1"))
-```
-
-When `include_execution_context` is enabled (default), invocation metadata and identity
-are embedded under `_forze` in the event payload and restored in the worker.
-
-### Register functions and serve (worker)
-
-**Preferred (registry-backed):** set `operation` on `DurableFunctionSpec` and pass the
-same frozen `OperationRegistry` used for HTTP. Cron/event runs resolve the full operation
-plan (middleware, transactions, dispatch).
-
-```python
-from forze.application.contracts.durable.function import (
-    DurableFunctionCronTrigger,
-    DurableFunctionInvokeSpec,
-    DurableFunctionSpec,
-)
-from forze_inngest import InngestFunctionBinding, register_functions
 from forze_inngest.fastapi import serve
 
-scan_spec = DurableFunctionSpec(
-    name="scan-inbox",
-    operation="jobs.scan_inbox",
-    run=DurableFunctionInvokeSpec(args_type=CronTickArgs, return_type=None),
-    triggers=(DurableFunctionCronTrigger(expression="0 */3 * * *"),),
-)
-
-binding = InngestFunctionBinding.for_registry_operation(scan_spec, frozen_registry)
-
-functions = register_functions(
-    client,
-    [binding],
-    ctx_factory=make_execution_context,
-)
-# Or pass registry once for many bindings:
-# register_functions(client, bindings, ctx_factory=..., registry=frozen_registry)
-
-serve(app, client, [binding], ctx_factory=make_execution_context)
+serve(app, inngest, bindings, ctx_factory=lambda req: runtime.get_context(), registry=registry)
 ```
 
-**Escape hatch:** custom handler when the function is not a registry operation:
+## What it provides
 
-```python
-binding = InngestFunctionBinding(
-    spec=my_function_spec,
-    handler_factory=lambda ctx: MyHandler(deps=ctx.deps),
-)
-```
+| Contract | Keyed by |
+|----------|----------|
+| Durable function event command (emit) | `DurableFunctionEventSpec.name` (`events`) |
+| Durable function step (memoized steps) | resolved inside a function run |
 
-Store bindings on the deps module when you want a single wiring site:
+## Notes
 
-```python
-InngestDepsModule(
-    client=client,
-    events={...},
-    function_bindings=[binding],
-)
-```
-
-Use `get_function_bindings(module)` in your worker bootstrap.
-
-### Lifecycle
-
-```python
-from forze.application.execution import LifecyclePlan
-from forze_inngest import inngest_lifecycle_step
-
-lifecycle = LifecyclePlan.from_steps(inngest_lifecycle_step())
-```
-
-Startup verifies `InngestClientDepKey` is registered; shutdown is a no-op.
-
-## Steps inside handlers
-
-Resolve `DurableFunctionStepDepKey` only inside a registered function run:
-
-```python
-step = ctx.deps.provide(DurableFunctionStepDepKey)
-await step.run("charge", lambda: payment_port.charge(...))
-```
-
-Outside a function run, the port raises a precondition error.
-
-## Related pages
-
-- [Durable function contracts](../core-package/contracts/durable-function.md)
-- [Temporal integration](temporal.md) — long-running workflow orchestration
-- Agent skill: `forze-inngest-durable-functions`
+- A function binding maps a `DurableFunctionSpec` to either an operation
+  (`for_registry_operation`) or a handler factory — set exactly one.
+- The execution-context metadata travels in a `_forze` envelope and is restored
+  in the worker, so functions run with the right identity/tenant.
+- Steps resolve only inside a running function.

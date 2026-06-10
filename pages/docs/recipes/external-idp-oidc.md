@@ -1,167 +1,93 @@
-# External IdPs over OIDC
+---
+title: Accept external OIDC tokens
+icon: lucide/badge-check
+summary: Verify a third-party IdP's access tokens on every request — verify-then-resolve, no first-party minting
+---
 
-Use this recipe when an external identity provider (Casdoor, Firebase Auth, Auth0, internal SSO with a JWKS endpoint, etc.) issues access tokens and Forze should accept them without leaking vendor specifics into the application or domain layer.
+Sometimes you want to accept an IdP's tokens *directly* — every request carries a
+third-party OIDC access token, and your API verifies it against the IdP's JWKS
+and resolves it to a principal. No first-party tokens are minted (that's the
+[bootstrap](external-bootstrap-forze-jwt.md) pattern); the verification is the
+seam.
 
-## Ingredients
+The conceptual model is in [OIDC](../integrations/oidc.md); this is the wiring.
 
-- The [authentication pipeline](../concepts/authentication.md) (verify-then-resolve seam).
-- `forze_identity.authn` for `AuthnDepsModule`, `AuthnKernelConfig`, the document specs, and the resolver factories.
-- `forze_identity.oidc` for the generic OIDC `TokenVerifierPort` (`pip install forze[oidc]`).
-- A document storage integration that exposes `identity_mapping_spec` (any `forze` document adapter; the spec must be wired to a tenant-unaware store).
-- A FastAPI app with `ContextBindingMiddleware` (or any other boundary that resolves credentials).
+## Build a verifier
 
-## Steps
-
-1. Choose a route name (e.g. `"api"`) and decide which credential families it accepts via `AuthnSpec.enabled_methods`.
-2. Configure `AuthnKernelConfig`. For an OIDC-only route you do not need an access-token secret on the kernel — the kernel section is required only when the *first-party* `ForzeJwtTokenVerifier` would be used.
-3. Build a configurable factory wrapping `OidcTokenVerifier` and a `JwksKeyProvider` per IdP issuer.
-4. Pick a `PrincipalResolverPort`: `MappingTableResolver` for production SSO, `DeterministicUuidResolver` for stateless prototyping.
-5. Pass the verifier and resolver overrides into `AuthnDepsModule.token_verifiers` / `AuthnDepsModule.resolvers`.
-6. Wire `HeaderTokenAuthnIdentityResolver` (and any siblings you need) on the FastAPI middleware with the matching `AuthnSpec`.
-
-## Configurable factories
-
-Wrap `OidcTokenVerifier` and the resolver in `Configurable*` factories the same way `forze_identity.authn` does:
+An `OidcTokenVerifier` validates the JWT signature against a JWKS, plus issuer,
+audience, and expiry. All arguments are keyword-only, and `cache_ttl` / `timeout`
+are `timedelta`s:
 
 ```python
-from typing import final
-
-import attrs
-
-from forze.application.contracts.authn import AuthnSpec, TokenVerifierPort
-from forze.application.execution import ExecutionContext
+from datetime import timedelta
 from forze_identity.oidc import JwksKeyProvider, OidcClaimMapper, OidcTokenVerifier
 
-
-@final
-@attrs.define(slots=True, frozen=True, kw_only=True)
-class ConfigurableOidcTokenVerifier:
-    """Build an OidcTokenVerifier from a shared JWKS provider."""
-
-    key_provider: JwksKeyProvider
-    audience: str
-    issuer: str
-    tenant_claim: str | None = None
-
-    def __call__(self, ctx: ExecutionContext, spec: AuthnSpec) -> TokenVerifierPort:
-        _ = ctx, spec
-
-        return OidcTokenVerifier(
-            key_provider=self.key_provider,
-            algorithms=("RS256",),
-            audience=self.audience,
-            issuer=self.issuer,
-            enforce_issuer_and_audience=True,
-            claim_mapper=OidcClaimMapper(tenant_claim=self.tenant_claim),
-        )
+verifier = OidcTokenVerifier(
+    key_provider=JwksKeyProvider(
+        jwks_uri="https://idp.example.com/.well-known/jwks.json",
+        cache_ttl=timedelta(minutes=10),
+    ),
+    issuer="https://idp.example.com/",
+    audience="my-api",
+    claim_mapper=OidcClaimMapper(tenant_claim="org_id"),  # optional tenant claim
+)
 ```
 
-`OidcTokenVerifier` defaults `enforce_issuer_and_audience=True`; production factories should always set both `issuer` and `audience` (as above). Tests may pass `enforce_issuer_and_audience=False` when issuer/audience checks are intentionally omitted.
+Issuer and audience are required by default (the verifier refuses to start
+without them).
 
-`forze_identity.authn` already ships `ConfigurableMappingTableResolver` and `ConfigurableDeterministicUuidResolver`; reuse them directly.
+## Register it on a route
 
-When `tenant_claim` is set, the mapped claim becomes `issuer_tenant_hint` on the boundary authn result. Combine it with `TenantIdentityResolver` plus a registered `TenantResolverPort` if you want authoritative tenant scoping; the hint alone does not define the effective tenant.
-
-## Module wiring
+A verifier only *proves* the token — a **resolver** decides the principal.
+Register both on the auth route via `AuthnDepsModule`. For real SSO, the
+mapping-table resolver provisions a principal on first sight:
 
 ```python
-from forze.application.execution import DepsRegistry
 from forze_identity.authn import (
     AuthnDepsModule,
     AuthnKernelConfig,
     ConfigurableMappingTableResolver,
 )
-from forze_identity.oidc import JwksKeyProvider
 
-ROUTE = "api"
-
-jwks = JwksKeyProvider(jwks_uri="https://idp.example.com/.well-known/jwks.json")
-
-oidc_verifier = ConfigurableOidcTokenVerifier(
-    key_provider=jwks,
-    audience="my-api",
-    issuer="https://idp.example.com/",
-    tenant_claim=None,
+deps = DepsRegistry.from_modules(
+    AuthnDepsModule(
+        kernel=AuthnKernelConfig(),  # no signing secret — this route only verifies
+        authn={"api": frozenset({"token"})},
+        token_verifiers={"api": verifier},
+        resolvers={"api": ConfigurableMappingTableResolver(provision_on_first_sight=True)},
+    ),
 )
-
-authn_module = AuthnDepsModule(
-    kernel=AuthnKernelConfig(),
-    authn={ROUTE: frozenset({"token"})},
-    token_verifiers={ROUTE: oidc_verifier},
-    resolvers={ROUTE: ConfigurableMappingTableResolver(provision_on_first_sight=True)},
-)
-
-deps = DepsRegistry.from_modules(authn_module)
 ```
 
-`MappingTableResolver(provision_on_first_sight=True)` mints a fresh `UUID` the first time it sees an `(issuer, subject)` pair and persists the mapping in `identity_mapping_spec`. Use `provision_on_first_sight=False` (default) when principals are pre-provisioned and unknown subjects must be rejected.
+Pick the resolver by your model:
 
-## Document storage for identity mappings
+| Resolver | Use when |
+|----------|----------|
+| `ConfigurableMappingTableResolver(provision_on_first_sight=True)` | external SSO — map `(issuer, subject)` → a stable principal, creating it on first login |
+| `ConfigurableDeterministicUuidResolver()` | stateless — derive a deterministic principal id from the token, no table |
 
-`identity_mapping_spec` (resource name `authn_identity_mappings`) must be registered with a **tenant-unaware** document store, just like the other authn aggregates listed in `AUTHN_TENANT_UNAWARE_DOCUMENT_SPEC_NAMES`. Caching and history on this spec are forbidden for security reasons (`MappingTableResolver` checks both at construction time). See [Multi-tenancy](../concepts/multi-tenancy.md) for tenant-unaware document wiring patterns.
+## At the boundary
 
-## FastAPI boundary
+The route is protected exactly like any other — a `HeaderTokenAuthn` ingress with
+the route's `AuthnSpec` (see [Authn, authz & tenancy](authn-authz-tenancy-fastapi.md)):
 
 ```python
 from forze.application.contracts.authn import AuthnSpec
-from forze_fastapi.middlewares.context import (
-    ContextBindingMiddleware,
-    HeaderTokenAuthnIdentityResolver,
-)
+from forze_fastapi.security import AuthnRequirement, HeaderTokenAuthn
 
-api_authn = AuthnSpec(
-    name="api",
-    enabled_methods=frozenset({"token"}),
-)
-
-app.add_middleware(
-    ContextBindingMiddleware,
-    ctx_dep=get_ctx,
-    authn_identity_resolvers=(HeaderTokenAuthnIdentityResolver(spec=api_authn),),
-    when_multiple_credentials="reject",
+API = AuthnSpec(name="api", enabled_methods=frozenset({"token"}))
+requirement = AuthnRequirement(
+    ingress=(HeaderTokenAuthn(authn_spec=API, header_name="Authorization"),),
 )
 ```
 
-The header resolver forwards `Authorization: Bearer <jwt>` into `AccessTokenCredentials`. `OidcTokenVerifier` ignores `scheme` (a routing hint) and goes straight to signature/claims validation.
+## Notes
 
-## Multi-IdP topology
-
-A single `AuthnDepsModule` can host more than one route, each with its own verifier+resolver pair:
-
-<div class="d2-diagram">
-  <img class="d2-light" src="/forze/assets/diagrams/light/authn-multi-idp-routes.svg" alt="One AuthnDepsModule serving an internal route with first-party JWT plus JwtNativeUuidResolver and an external route with OidcTokenVerifier plus MappingTableResolver">
-  <img class="d2-dark" src="/forze/assets/diagrams/dark/authn-multi-idp-routes.svg" alt="One AuthnDepsModule serving an internal route with first-party JWT plus JwtNativeUuidResolver and an external route with OidcTokenVerifier plus MappingTableResolver">
-</div>
-
-```python
-authn_module = AuthnDepsModule(
-    kernel=AuthnKernelConfig(
-        access_token_secret=internal_secret,
-    ),
-    authn={
-        "internal": frozenset({"token", "password"}),
-        "api": frozenset({"token"}),
-    },
-    token_verifiers={"api": oidc_verifier},
-    resolvers={"api": ConfigurableMappingTableResolver(provision_on_first_sight=True)},
-)
-```
-
-Routes without an entry in `token_verifiers` / `resolvers` fall back to the first-party defaults (`ForzeJwtTokenVerifier` + `JwtNativeUuidResolver`).
-
-## Trade-offs
-
-| Choice | Best when | Trade-off |
-|--------|-----------|-----------|
-| `MappingTableResolver(provision_on_first_sight=True)` | SSO with admin overrides or future account merging. | One DB write on first sight per principal. |
-| `MappingTableResolver(provision_on_first_sight=False)` | Invitation-only, tightly controlled access. | Requires out-of-band provisioning before first login. |
-| `DeterministicUuidResolver` | Read-only deployments, prototyping, or environments without writable storage. | No row to attach admin metadata, audit, or future account merges to. |
-| Multiple `TokenVerifierPort` per route via profiles | Same route accepts both first-party and external tokens. | Requires explicit `AccessTokenCredentials.profile` (or `AuthnSpec.token_profile`) routing. |
-
-## Learn more
-
-- [Concept — Authentication pipeline](../concepts/authentication.md)
-- [Reference — Authentication contracts](../reference/authentication.md)
-- [Integration — OIDC](../integrations/oidc.md)
-- [Recipe — Authn, authz, and tenancy with FastAPI](authn-authz-tenancy-fastapi.md)
-- [Concept — Multi-tenancy](../concepts/multi-tenancy.md)
+- The shipped `ConfigurableOidcIdpVerifier` + `OidcIdpPreset` cover the common
+  provider cases — use them instead of hand-building a verifier when one fits.
+- Verifying on every request means every request depends on the IdP's JWKS being
+  reachable (the provider caches it for `cache_ttl`). If that coupling is a
+  problem, mint first-party tokens with the [bootstrap](external-bootstrap-forze-jwt.md)
+  pattern instead.
+- Forze logout can't revoke a third-party token — enforce eligibility on your
+  side.

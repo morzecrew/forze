@@ -56,12 +56,12 @@ Use it for:
 ### Documentation structure and docs build
 
 Read:
-- `pages/mkdocs.yml`
-- `pages/justfile`
+- `pages/zensical.toml`
+- root `justfile` (docs recipes: `serve-docs`, `build-docs`, `build-diagrams`)
 
 Use them for:
 - docs navigation and page structure
-- mkdocs/mkdocstrings behavior
+- Zensical / Material build behavior
 - docs build and serving commands
 
 ### Security handling
@@ -138,7 +138,7 @@ See `justfile` and `CONTRIBUTING.md` for the full list. Quick reference:
 - **All tests (unit + integration):** `just test` (integration tests need Docker for testcontainers)
 - **Performance tests:** `just perf` (benchmarks; Docker for container-backed perf, not required for every file)
 - **Quality checks (lint/imports/dead-code/deps/security):** `just quality` (or `just quality -s` for strict)
-- **Docs:** `just pages serve`
+- **Docs:** `just serve-docs` (live reload) · `just build-docs` (build the site)
 
 ### Caveats
 

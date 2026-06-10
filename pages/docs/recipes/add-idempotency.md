@@ -1,45 +1,69 @@
-# Add idempotency
+---
+title: Add idempotency
+icon: lucide/copy-check
+summary: Make a retried mutation a no-op that returns the first result, keyed by a header
+---
 
-Use this recipe when clients may retry mutating requests and you need duplicate
-submissions to resolve safely — by replaying the original result rather than re-running
-the operation.
+A client retries a `POST` it isn't sure landed; an at-least-once queue delivers
+the same command twice. **Idempotency** makes the duplicate a no-op that returns
+the *first* result — the handler and its writes run exactly once. The concept is
+covered in [Idempotency](../in-depth/idempotency.md); this is the wiring.
 
-## Ingredients
+The runnable version lives at `examples/recipes/idempotency/` and runs on the
+in-memory mock store — no infrastructure needed.
 
-- An idempotency store: [Redis / Valkey Integration](../integrations/redis.md) or the mock adapter (`IdempotencySpec`, `IdempotencyDepKey`)
-- The engine wrap `IdempotencyWrap` ([Idempotency contracts](../core-package/contracts/idempotency.md))
-- A boundary that supplies a stable client-provided idempotency key
+## Wrap the operation
 
-## Steps
+Idempotency is a wrap on the operation registry. Bind the operation you want
+deduped and add an `IdempotencyWrap` — it sits **outermost**, so a replay skips
+the handler and its transaction, while `before` hooks (authn/authz) still run:
 
-1. Register an idempotency store (`IdempotencySpec` + a `Configurable*Idempotency` factory).
-2. Attach `IdempotencyWrap` to each unsafe operation, declaring its result type:
+```python
+--8<-- "recipes/idempotency/app.py:wrap"
+```
 
-        :::python
-        registry.bind("orders.create").bind_outer().wrap(
-            IdempotencyWrap(op="orders.create", spec=idem_spec, result_type=OrderRead).to_step()
-        )
+`IdempotencySpec.name` is the adapter route and `result_type` must be a Pydantic
+model (the stored result is encoded and decoded on replay).
 
-3. Have the boundary supply the key. FastAPI reads the canonical `Idempotency-Key` header
-   into the invocation context automatically; other boundaries call
-   `ctx.inv_ctx.bind_idempotency(key)`.
-4. Duplicate requests with the same key replay the stored typed result; a different
-   payload under the same key is rejected as a conflict.
+## Bind the key and call it
 
-## Where it runs
+Build the `DocumentFacade` over the wrapped registry. The wrap fires whenever an
+idempotency key is bound — passing a key, replaying the call returns the stored
+result:
 
-Idempotency is an **engine-level** concern: the boundary supplies only the key, and the
-operation-plan wrap does the dedup and early-return — handlers model business intent and
-need not know the request was retried. The engine computes the payload hash from the
-operation arguments.
+```python
+--8<-- "recipes/idempotency/app.py:scenario"
+```
+
+Over HTTP you don't bind by hand: the
+[`InvocationMetadataMiddleware`](../integrations/fastapi.md) reads the
+`Idempotency-Key` header and binds it around the request, so the route just calls
+`facade.create(cmd)`.
+
+## Register a store
+
+The mock module auto-registers an idempotency adapter, so the example needs no
+config. For production, register one — commonly Redis:
+
+```python
+RedisDepsModule(
+    client=redis,
+    idempotency={"orders": RedisIdempotencyConfig(namespace="orders")},
+)
+```
+
+The route key (`"orders"`) matches `IdempotencySpec.name`; the TTL comes from the
+spec, not the config.
 
 ## Notes
 
-- This is result-level idempotency (re-serializes the typed result), not byte-identical
-  HTTP response replay.
-- The result is stored after the operation's transaction commits.
-
-## Learn more
-
-See [Idempotency contracts](../core-package/contracts/idempotency.md) and
-[FastAPI Integration](../integrations/fastapi.md).
+- **Same key, different payload → `conflict`.** A key can't be reused for a
+  different request; the store rejects a payload-hash mismatch.
+- **Stable keys, generous TTL.** The key must be the same across a client's
+  retries, and the TTL must outlast them. Every worker that can handle the
+  operation must share the same store namespace.
+- **Not transactional with the write.** The wrap records the result *after* the
+  business transaction commits — a crash in the gap leaves the operation
+  un-recorded, so it re-runs rather than replays. Idempotency dedupes the common
+  case; it isn't a substitute for the [outbox](../in-depth/events-sagas.md) when
+  you need exactly-once *effects*.

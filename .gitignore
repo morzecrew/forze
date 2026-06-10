@@ -151,7 +151,7 @@ venv.bak/
 # Rope project settings
 .ropeproject
 
-# mkdocs documentation
+# docs build output
 /site
 
 # mypy
@@ -207,8 +207,9 @@ marimo/_lsp/
 __marimo__/
 
 src/forze/_version.py
-pages/docs/assets/diagrams
+pages/docs/_diagrams/
 pages/site/
+pages/.cache/
 
 .benchmarks
 
@@ -218,8 +219,6 @@ pages/site/
 junit.xml
 .envrc
 
-pages_v2/docs/_diagrams/
-pages_v2/site/
 # MemPalace per-project files (issue #185)
 mempalace.yaml
 entities.json

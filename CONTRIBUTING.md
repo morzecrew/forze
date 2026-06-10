@@ -78,30 +78,30 @@ All checks must pass before submitting a pull request.
 
 ### Documentation
 
-Documentation lives in `pages/docs/` and is built with MkDocs. See `pages/mkdocs.yml` for navigation and structure.
+Documentation lives in `pages/docs/` and is built with [Zensical](https://zensical.org/). See `pages/zensical.toml` for navigation and structure.
 
 **Serving docs while editing**
 
-Use `just pages serve` to serve the documentation with live reload:
+Use `just serve-docs` to serve the documentation with live reload:
 
 ```bash
-just pages serve
+just serve-docs
 ```
 
 **Diagrams**
 
-Source diagrams live in `pages/diagrams/` as `.d2` files. They are built to SVG in `pages/docs/assets/diagrams/` (light and dark variants). If the [Run on Save](https://marketplace.visualstudio.com/items?itemName=emeraldwalk.runonsave) extension is installed (recommended in `.vscode/extensions.json`), diagrams are regenerated automatically when you save a `.d2` file. Otherwise, run:
+Source diagrams live in `pages/diagrams/` as `.d2` files. They are built to SVG in `pages/docs/_diagrams/` (light and dark variants). If the [Run on Save](https://marketplace.visualstudio.com/items?itemName=emeraldwalk.runonsave) extension is installed (recommended in `.vscode/extensions.json`), diagrams are regenerated automatically when you save a `.d2` file. Otherwise, run:
 
 ```bash
-just pages diagrams
+just build-diagrams
 ```
 
 **Consistency**
 
 - Update documentation when behavior changes; keep docs aligned with code.
-- Add or update pages under `pages/docs/` and adjust `pages/mkdocs.yml` navigation as needed.
+- Add or update pages under `pages/docs/` and adjust `pages/zensical.toml` navigation as needed.
 - Follow markdownlint rules (see `.markdownlint.yaml`) for style consistency.
-- API docs are generated from docstrings via mkdocstrings; use Sphinx/reST roles in Python docstrings.
+- Python docstrings use Sphinx/reST roles (see the `python-rest-docstrings` skill).
 
 ### Integration dependency configs
 

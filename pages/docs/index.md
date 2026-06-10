@@ -1,60 +1,26 @@
 ---
-title: Welcome to forze
+title: Home
 summary: Domain-Driven Design and Hexagonal Architecture for backend services
+hide:
+  - navigation
+  - toc
+  - footer
 ---
 
-**Forze** is a Python toolkit for building backend services with clear boundaries:
-domain-first models, application-level orchestration, and replaceable infrastructure adapters.
+<div class="forze-hero" markdown>
 
-If you are new to the package, start with:
+<canvas class="forze-hero__canvas" id="forze-hero-canvas" aria-hidden="true"></canvas>
 
-1. [Installation](installation.md)
-2. [Getting Started](getting-started.md)
-3. [First Project Walkthrough](first-project-walkthrough.md)
-4. [Concepts](concepts/index.md)
+<div class="forze-hero__text" markdown>
 
-## Why use Forze?
+# Forze <!-- markdownlint-disable-line -->
 
-Forze helps you keep business logic stable while storage and framework choices evolve.
+Backend services with **clear boundaries** — swap any infrastructure without
+touching business logic.
 
-- **Layered** — four clean layers (domain, application, infrastructure, interface) with strict dependency rules
-- **Explicit** — contracts (ports) describe what the app needs; adapters deliver it
-- **Composable** — adapters are wired declaratively via dependency registries
-- **Testable** — handlers run with fake or in-memory dependencies
-- **Framework-agnostic** — core modules are not tied to any web framework, database, or cloud service
+[Get started](get-started/installation.md){ .md-button .md-button--primary }
+[Quickstart in 10 minutes](get-started/quickstart.md){ .md-button }
 
-/// note
-Forze is not a full-stack framework. It provides architecture primitives and integration packages you compose.
-///
+</div>
 
-## Architecture at a glance
-
-Forze organizes code into four layers. Dependencies flow **inward**: the interface and infrastructure layers depend on the application layer, which depends on the domain layer.
-
-| Layer | Responsibility | Examples |
-|-------|----------------|----------|
-| **Domain** | Business logic, invariants, validation | Models, commands, value objects |
-| **Application** | Orchestration, contracts, composition | Handlers, ports, execution runtime |
-| **Infrastructure** | Concrete adapter implementations | Postgres, Redis, S3, MongoDB |
-| **Interface** | User-facing entry points | FastAPI routes, Socket.IO handlers |
-
-Read more in [Layered Architecture](concepts/layered-architecture.md).
-
-## Package layout
-
-Integration code lives in separate **distribution packages** (separate import roots) published from this repository. Install the core with `uv add forze` and add integrations via optional extras (for example `forze[fastapi,postgres]`) — see [Installation](installation.md). How kernel specs map to infra configs is described in [Specs and infrastructure wiring](concepts/specs-and-wiring.md).
-
-| Package | Purpose |
-|---------|---------|
-| `forze` | Core contracts, execution runtime, composition helpers, domain primitives |
-| `forze_fastapi` | FastAPI HTTP endpoints (`endpoints.document`, `endpoints.search`, `endpoints.http`), middleware, OpenAPI helpers |
-| `forze_postgres` | Postgres-backed document, search, and transaction adapters |
-| `forze_redis` | Cache, counters, idempotency, pub/sub, and stream adapters |
-| `forze_s3` | S3-compatible storage adapter |
-| `forze_gcs` | Google Cloud Storage adapter |
-| `forze_mongo` | Mongo-backed document and transaction adapters |
-| `forze_socketio` | Socket.IO transport adapter for typed realtime events |
-| `forze_temporal` | Temporal workflow adapters and client wiring |
-| `forze_sqs` | SQS message queue adapter |
-| `forze_rabbitmq` | RabbitMQ message queue adapter |
-| `forze_mock` | In-memory mock adapters for development and testing |
+</div>

@@ -1,19 +1,17 @@
-# Local identity (demo / MVP)
+---
+title: Local identity
+icon: lucide/key-round
+summary: File- or env-defined API keys with tenant mapping — for demos and MVPs, not production
+---
 
-File- or env-backed API key authentication and principal→tenant mapping for **local development and demos only**. Not for production: no key rotation, audit trail, or revocation.
+Before you have an IdP, you still want auth. **Local identity** authenticates
+requests against a static set of API keys defined in a file (or env var), each
+mapped to a principal and tenant. It's a shipped preset — zero infrastructure —
+and explicitly **not for production** (no rotation, revocation, or audit).
 
-For production, use document-backed [`forze_identity.authn`](../reference/authentication.md) (`HmacApiKeyVerifier`) and [`forze_identity.tenancy`](../concepts/multi-tenancy.md) (`TenantResolverAdapter`).
+## The key file
 
-## Configuration
-
-Define a JSON file or inline env var:
-
-| Variable | Purpose |
-|----------|---------|
-| `FORZE_IDENTITY_LOCAL_FILE` | Path to a JSON identity file |
-| `FORZE_IDENTITY_LOCAL_CONFIG` | Inline JSON (same shape as the file) |
-
-Example file:
+A JSON document mapping API keys to principals, with optional per-key tenants:
 
 ```json
 {
@@ -28,67 +26,73 @@ Example file:
 }
 ```
 
-Load in Python:
+Load it from a path or the environment:
 
 ```python
-from forze_identity.builtin.local import LocalIdentityConfig, from_json_path, from_env
+from forze_identity.builtin.local import LocalIdentityConfig, from_env, from_json_path
 
 config = from_json_path("identity.local.json")
-# or: config = from_env()
+# or: config = from_env()   # FORZE_IDENTITY_LOCAL_FILE, else FORZE_IDENTITY_LOCAL_CONFIG (inline JSON)
 ```
 
-## Wiring
+## Wire it
 
-One-shot merge into kernel `Deps`:
+`local_identity_deps` registers the API-key verifier and the tenant resolver in
+one call:
 
 ```python
 from forze_identity.builtin.local import local_identity_deps
 
-deps = local_identity_deps(config)
-kernel_deps = kernel_deps.merge(deps)
+local = local_identity_deps(config, authn_route="main", tenancy_route="main")
+
+deps = DepsRegistry.from_modules(local)
 ```
 
-Manual wiring (same behavior):
+??? note "Wiring it by hand"
+
+    `local_identity_deps` is a thin wrapper over the two planes — drop to this if
+    you want to mix local keys with other routes:
+
+    ```python
+    from forze_identity.authn import AuthnDepsModule, AuthnKernelConfig
+    from forze_identity.builtin.local import (
+        ConfigurableLocalApiKeyVerifier, ConfigurableLocalTenantResolver,
+    )
+    from forze_identity.tenancy import TenancyDepsModule
+
+    authn = AuthnDepsModule(
+        kernel=AuthnKernelConfig(),
+        authn={"main": frozenset({"api_key"})},
+        api_key_verifiers={"main": ConfigurableLocalApiKeyVerifier(config=config)},
+    )
+    tenancy = TenancyDepsModule(
+        tenant_resolver={"main"},
+        tenant_resolvers={"main": ConfigurableLocalTenantResolver(config=config)},
+    )
+    ```
+
+## At the boundary
+
+Local identity uses **API keys**, so the middleware ingress is `HeaderApiKeyAuthn`
+(see [Authn, authz & tenancy](authn-authz-tenancy-fastapi.md) for the full
+boundary setup):
 
 ```python
-from forze_identity.authn import AuthnDepsModule, AuthnKernelConfig
-from forze_identity.builtin.local import (
-    ConfigurableLocalApiKeyVerifier,
-    ConfigurableLocalTenantResolver,
+from forze.application.contracts.authn import AuthnSpec
+from forze_fastapi.security import AuthnRequirement, HeaderApiKeyAuthn
+
+MAIN = AuthnSpec(name="main", enabled_methods=frozenset({"api_key"}))
+requirement = AuthnRequirement(
+    ingress=(HeaderApiKeyAuthn(authn_spec=MAIN, header_name="X-API-Key"),),
 )
-from forze_identity.tenancy import TenancyDepsModule
-
-authn = AuthnDepsModule(
-    kernel=AuthnKernelConfig(),
-    authn={"main": frozenset({"api_key"})},
-    api_key_verifiers={
-        "main": ConfigurableLocalApiKeyVerifier(config=config),
-    },
-)()
-
-tenancy = TenancyDepsModule(
-    tenant_resolver={"main"},
-    tenant_resolvers={
-        "main": ConfigurableLocalTenantResolver(config=config),
-    },
-)()
 ```
 
-Register an `AuthnSpec` with `enabled_methods=("api_key",)` and enable API key ingress on FastAPI routes (see [Authn, authz, and tenancy (FastAPI)](authn-authz-tenancy-fastapi.md)).
+A request carrying `X-API-Key: dev-service-key` is resolved to that principal and
+tenant — the same `ctx.inv_ctx` binding every authz/tenancy hook reads.
 
-## Components
+!!! warning "Demo trust model"
 
-| Piece | Module |
-|-------|--------|
-| Config model | `forze_identity.builtin.local.LocalIdentityConfig` |
-| API key verifier | `forze_identity.builtin.local.LocalApiKeyVerifier` |
-| Tenant resolver | `forze_identity.builtin.local.LocalTenantResolver` |
-| Issuer label | `forze:local_api_key` (distinct from document-backed `forze:api_key`) |
-
-Principal resolution reuses `JwtNativeUuidResolver` because the local verifier sets `subject` to the canonical principal UUID string.
-
-## Limits
-
-- Keep the number of API keys small (linear scan with constant-time compare per entry).
-- Do not commit real secrets; use env-specific files ignored by git.
-- This is separate from [`forze_kits.adapters.secrets`](../reference/contracts.md) (`SecretsPort` resolves DSNs and peppers, not caller identity).
+    Keys are compared in a constant-time linear scan against a static table —
+    fine for a demo or MVP, but there's no rotation, revocation, or audit trail.
+    Move to [first-party tokens](external-bootstrap-forze-jwt.md) or an
+    [external IdP](social-sign-in.md) before production.

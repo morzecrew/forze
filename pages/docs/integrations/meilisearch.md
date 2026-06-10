@@ -1,153 +1,63 @@
-# Meilisearch Integration
+---
+title: Meilisearch
+icon: lucide/search
+summary: Full-text and federated search on Meilisearch
+---
 
-## What this integration provides
+`forze[meilisearch]` implements the search contracts on Meilisearch — querying an
+external index plus the command side that maintains it. The index holds a **read
+model**, maintained explicitly (not auto-synced from your document store).
 
-`forze_meilisearch` implements `SearchQueryPort`, `SearchCommandPort`, and federated search over Meilisearch indexes using the async `meilisearch-python-sdk`.
-
-Indexed documents are treated as a **read model**: hits are validated as your `SearchSpec.model_type`. Applications call `ctx.search.command(spec).upsert(...)` explicitly; there is no automatic sync from `DocumentCommandPort`.
-
-## When to use it
-
-Use this when Meilisearch is your full-text search backend and you want Forze search contracts (offset pagination, filters, federated multi-index search, optional Redis result snapshots).
-
-Use `RoutedMeilisearchClient` when tenant identity selects Meilisearch URL and API key (row-level isolation can still use `tenant_aware` on search configs).
-
-## Installation
+## Install
 
 ```bash
 uv add 'forze[meilisearch]'
 ```
 
-Integration tests require Docker and `uv sync --extra meilisearch`.
+Needs a Meilisearch server.
 
-## Runtime wiring
-
-```python
-from forze.application.execution import DepsRegistry, ExecutionRuntime, LifecyclePlan
-from forze_meilisearch import (
-    MeilisearchClient,
-    MeilisearchConfig,
-    MeilisearchDepsModule,
-    meilisearch_lifecycle_step,
-)
-
-client = MeilisearchClient()
-module = MeilisearchDepsModule(
-    client=client,
-    searches={
-        "articles": {
-            "index_uid": "articles",
-            "filterable_fields": ["tenant_id", "status"],
-            "sortable_fields": ["created_at"],
-        },
-    },
-    federated_searches={
-        "catalog": {
-            "merge": "federation",
-            "members": {
-                "products": {"index_uid": "products"},
-                "brands": {"index_uid": "brands"},
-            },
-        },
-    },
-)
-
-runtime = ExecutionRuntime(
-    deps=DepsRegistry.from_modules(module).freeze(),
-    lifecycle=LifecyclePlan.from_steps(
-        meilisearch_lifecycle_step(
-            url="http://localhost:7700",
-            api_key="masterKey",
-            config=MeilisearchConfig(timeout=30.0),
-        )
-    ).freeze(),
-)
-```
-
-### Routed lifecycle
+## The client
 
 ```python
-from forze_meilisearch import RoutedMeilisearchClient, routed_meilisearch_lifecycle_step
+from forze_meilisearch import MeilisearchClient
 
-routed = RoutedMeilisearchClient(
-    secrets=secrets_port,
-    secret_ref_for_tenant=lambda tid: SecretRef(f"tenants/{tid}/meilisearch"),
-    tenant_provider=ctx.inv_ctx.get_tenant,
-)
-# LifecyclePlan.from_steps(routed_meilisearch_lifecycle_step(client=routed))
+meili = MeilisearchClient()
 ```
 
-Per-tenant JSON: `{"url": "https://search.example.com", "api_key": "..."}` (`MeilisearchRoutingCredentials`).
+`RoutedMeilisearchClient` resolves a per-tenant instance/key.
 
-### What gets registered
+## Wire it
 
-| Key | Capability |
-|-----|------------|
-| `MeilisearchClientDepKey` | Async Meilisearch client |
-| `SearchQueryDepKey` | Per-route simple search adapters |
-| `SearchCommandDepKey` | Index settings and document upsert/delete |
-| `FederatedSearchQueryDepKey` | Multi-index federated search (optional) |
-
-## SearchSpec and Meilisearch config
-
-`MeilisearchSearchConfig` (per `SearchSpec` route):
-
-| Field | Purpose |
-|-------|---------|
-| `index_uid` | Meilisearch index UID (required) |
-| `primary_key` | Document primary key field (default: `id`) |
-| `field_map` | Logical → Meilisearch attribute names |
-| `filterable_fields` / `sortable_fields` | Applied in `ensure_index` |
-| `tenant_aware` | Inject tenant filter when enabled |
-| `wait_for_tasks` | Wait for Meilisearch tasks after writes (default `True`) |
-| `ranking_rules` | Optional index ranking rules |
-
-`MeilisearchFederatedSearchConfig`:
-
-| Field | Purpose |
-|-------|---------|
-| `members` | Map of member name → `MeilisearchSearchConfig` (≥2) |
-| `merge` | `"federation"` (native Meilisearch federation, default) or `"rrf"` (weighted RRF in-process) |
-| `rrf_k`, `rrf_per_leg_limit` | RRF tuning when `merge="rrf"` |
-
-Federated members must be `SearchSpec` only (`HubSearchSpec` is rejected).
-
-## Command port
+Each search route names an index, keyed by `SearchSpec.name`:
 
 ```python
-cmd = ctx.search.command(article_spec)
-await cmd.ensure_index()
-await cmd.upsert(documents)
-await cmd.delete(["id-1"])
-await cmd.delete_all()
+from forze.application.execution import DepsRegistry, LifecyclePlan
+from forze_meilisearch import MeilisearchClient, MeilisearchDepsModule, MeilisearchSearchConfig, meilisearch_lifecycle_step
+
+orders_search = MeilisearchSearchConfig(
+    index_uid="orders",
+    filterable_attributes=("status",),
+    sortable_attributes=("created_at",),
+)
+
+deps = DepsRegistry.from_modules(MeilisearchDepsModule(client=meili, searches={"orders": orders_search}))
+lifecycle = LifecyclePlan.from_steps(meilisearch_lifecycle_step(url="http://localhost:7700", api_key="…"))
 ```
 
-`ensure_index` creates or updates index settings (`searchableAttributes`, `filterableAttributes`, `sortableAttributes`).
+## What it provides
 
-## Query port
+| Contract | Keyed by |
+|----------|----------|
+| Search query | `SearchSpec.name` (`searches`) |
+| Search command (index maintenance: `ensure_index`, `upsert`, `delete`) | `SearchSpec.name` |
+| Federated search | federated route (`federated_searches`) |
 
-Resolve with `ctx.search.query(spec)`:
+## Notes
 
-- `search`, `search_page`, `select_search`, `project_search` — offset pagination
-- `*_cursor` — not implemented (`CoreException.internal`)
-- `project_search*` on federated routes — not implemented
-
-Filters support a subset of `QueryFilterExpression` (`$eq`, `$neq`, order comparisons, `$in`, `$nin`, `$null`, `$and`, `$or`, `$not`). `$like`, set relations, and field-to-field compares raise clear errors.
-
-## Federated search
-
-- **`merge="federation"`**: single `multi_search` with per-leg `federationOptions.weight` (from `SearchOptions.member_weights`; legs with weight ≤ 0 are skipped).
-- **`merge="rrf"`**: parallel per-leg `search`, merged with `SearchResultSnapshot.weighted_rrf_merge_rows`, then caller sorts applied.
-
-Snapshot fingerprints include `extras={"merge": "federation"}` or `extras={"merge": "rrf", "rrf_k": k}` so federation and RRF runs do not collide in Redis.
-
-## Limitations
-
-| Feature | Status |
-|---------|--------|
-| Hub search | Not supported |
-| Cursor pagination | Not implemented |
-| Full filter language | Subset only |
-| `forze_mock` command adapter | Not bundled (optional follow-up) |
-
-For framework tests or advanced wiring, prefer `from forze_meilisearch.execution.deps import ConfigurableMeilisearchSearch`, `ConfigurableMeilisearchSearchCommand`, and `ConfigurableMeilisearchFederatedSearch` rather than removed `forze_meilisearch.execution.deps.deps` paths.
+- **The index is yours to maintain.** There's no auto-sync from
+  `DocumentCommandPort` — call `ctx.search.command(spec).upsert(...)` (e.g. via
+  the outbox) when documents change. `ensure_index` applies the
+  searchable/filterable/sortable attributes.
+- Cursor pagination and hub search aren't supported here; the filter language is
+  a subset of the [Query DSL](../reference/query-syntax.md).
+- Federated routes merge ≥2 member indexes (`federation` or in-process RRF).

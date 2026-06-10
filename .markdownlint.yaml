@@ -1,10 +1,10 @@
-# Relax rules that conflict with docs structure (mkdocs, images, tables)
+# Relax rules that conflict with docs structure (Zensical/Material, images, tables)
 # See https://github.com/DavidAnson/markdownlint/blob/main/doc/Rules.md
 
 # MD013: Line length - docs often have long lines (URLs, code, paths)
 MD013: false
 
-# MD033: Inline HTML - mkdocs uses div/img for images and layout
+# MD033: Inline HTML - the docs use div/img for grids, hero, and layout
 MD033: false
 
 # MD056: Table column count - strict consistency can break tables

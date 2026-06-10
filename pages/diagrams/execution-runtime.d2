@@ -10,18 +10,18 @@ vars: {
 
 direction: right
 
-DepsRegistry: {
+DepsPlan: {
     shape: rectangle
     label: |md
-        ### Deps Registry
-        Authoring + freeze()
+        ### DepsRegistry
+        What to build
     |
 }
 
 LifecyclePlan: {
     shape: rectangle
     label: |md
-        ### Lifecycle Plan
+        ### LifecyclePlan
         Startup / shutdown
     |
 }
@@ -33,7 +33,6 @@ Runtime: {
     }
     label: |md
         ### ExecutionRuntime
-        Frozen registries only
     |
 }
 
@@ -48,6 +47,6 @@ Context: {
     |
 }
 
-DepsRegistry -> Runtime: .freeze()
-LifecyclePlan -> Runtime: .freeze()
+DepsPlan -> Runtime
+LifecyclePlan -> Runtime
 Runtime -> Context: scope() creates
