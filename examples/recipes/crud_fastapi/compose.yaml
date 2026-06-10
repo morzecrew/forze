@@ -1,0 +1,16 @@
+# Ephemeral Postgres for the CRUD recipe.
+# No volumes on purpose — nothing persists; `down` leaves a clean machine.
+services:
+  postgres:
+    image: postgres:18
+    environment:
+      POSTGRES_USER: forze
+      POSTGRES_PASSWORD: forze
+      POSTGRES_DB: forze
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U forze"]
+      interval: 1s
+      timeout: 3s
+      retries: 30

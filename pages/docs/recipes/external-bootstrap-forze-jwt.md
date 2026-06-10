@@ -1,93 +1,94 @@
-# External bootstrap → Forze JWT
+---
+title: External bootstrap → Forze JWT
+icon: lucide/key-square
+summary: Verify an external OIDC token once at login, then issue first-party Forze JWTs for the session
+---
 
-Use this recipe when users sign in through an external OIDC IdP (Google, VK ID, Telegram Login, corporate SSO) and your **steady-state API** should accept **first-party Forze JWTs** (with optional session enforcement), not vendor tokens on every request.
+You want users to sign in with an external IdP, but you don't want every API
+request to depend on that IdP's latency and availability. The **bootstrap**
+pattern: at login, verify the external OIDC token *once* and mint a first-party
+**Forze JWT**; every steady-state request then verifies the fast, local token.
 
-## Pattern
+This is the hub for all [social sign-in](social-sign-in.md) — Google, VK, and
+Telegram all plug into the same two-route shape.
 
-1. **Bootstrap route** — validates the external `id_token` (or a token you obtained server-side after code exchange) via a preset `TokenVerifierPort` from `forze_identity.builtin.idp.*`.
-2. **API route** — validates Forze-issued access tokens via `AuthnKernelConfig(access_token_secret=..., refresh_token_pepper=...)` and the default `ForzeJwtTokenVerifier`.
-3. **Login handler** — after bootstrap auth resolves a `PrincipalIdentity`, call `TokenLifecyclePort.issue_tokens(identity)` to mint Forze access/refresh tokens for the client.
-4. **Middleware** — bind `HeaderTokenAuthnIdentityResolver` only to the **API** `AuthnSpec` so vendor JWTs never hit protected resources by mistake.
+## Two routes, two auth routes
 
-```mermaid
-flowchart LR
-  subgraph login [Login handler]
-    Code[authorization_code]
-    Ex[IdP exchange optional]
-    Boot[bootstrap authenticate_with_token]
-    Life[issue_tokens]
-  end
-  subgraph api [Protected API]
-    JWT[Forze JWT + session]
-  end
-  Code --> Ex --> Boot --> Life --> JWT
-```
+- **`/login`** uses the **`bootstrap`** auth route — its verifier checks the
+  external IdP's `id_token`.
+- **Everything else** uses the **`api`** auth route — its verifier checks
+  first-party Forze JWTs, and it owns the token *lifecycle* that mints them.
 
-## Wiring sketch
+## Wire both routes
+
+The bootstrap route comes from a [provider preset](social-sign-in.md); the API
+route is a first-party `AuthnDepsModule` with signing secrets and
+`token_lifecycle` enabled (that's what lets it *issue* tokens):
 
 ```python
 from forze.application.execution import Deps, DepsRegistry
 from forze_identity.authn import AuthnDepsModule, AuthnKernelConfig
 from forze_identity.builtin.idp.google import GoogleOidcConfig, google_identity_deps
 
-google_bootstrap = google_identity_deps(
-    GoogleOidcConfig(client_id="..."),
+bootstrap = google_identity_deps(
+    GoogleOidcConfig(client_id="<google-oauth-client-id>"),
     authn_route="bootstrap",
 )
 
-api_authn = AuthnDepsModule(
+api = AuthnDepsModule(
     kernel=AuthnKernelConfig(
-        access_token_secret=access_secret,
-        refresh_token_pepper=refresh_pepper,
+        access_token_secret=access_secret,    # bytes, ≥ 32
+        refresh_token_pepper=refresh_pepper,   # bytes, ≥ 32
     ),
     authn={"api": frozenset({"token"})},
+    token_lifecycle={"api"},  # this route may issue + refresh tokens
 )
 
-deps_registry = DepsRegistry.from_modules(
-    lambda: Deps.merge(google_bootstrap, api_authn()),
-)
+deps = DepsRegistry.from_modules(lambda: Deps.merge(bootstrap, api()))
 ```
 
-Routes without `token_verifiers` overrides use the first-party JWT verifier. The bootstrap route uses an empty kernel (no access-token secret) because it only registers an external OIDC verifier.
+The bootstrap route needs no signing secret — it only *verifies* an external
+token (it has a `token_verifiers` override), it never mints one.
 
-## Resolver choice
+## The login handler
 
-| Resolver | When |
-|----------|------|
-| `MappingTableResolver(provision_on_first_sight=True)` | Production SSO — stable internal UUID per `(issuer, subject)`. |
-| `DeterministicUuidResolver` | Demos and tests — no mapping table required. |
-
-Builtin presets default to `DeterministicUuidResolver`; pass `resolver=` to `oidc_bootstrap_identity_deps` or wrap presets when you need mapping-table behavior.
-
-## Login handler flow
+Resolve the bootstrap orchestrator to verify the external token, then the API
+route's token lifecycle to issue the Forze JWTs:
 
 ```python
-# After VK/Telegram code exchange (optional):
-# id_token = (await exchange_authorization_code(config, code=..., code_verifier=...)).id_token
+from forze.application.contracts.authn import AccessTokenCredentials, AuthnSpec
 
-identity = await authn_orchestrator.authenticate_with_token(
-    AccessTokenCredentials(token=id_token),
-    spec=AuthnSpec(name="bootstrap", enabled_methods=frozenset({"token"})),
-)
+BOOTSTRAP = AuthnSpec(name="bootstrap", enabled_methods=frozenset({"token"}))
+API = AuthnSpec(name="api", enabled_methods=frozenset({"token"}))
 
-issued = await token_lifecycle.issue_tokens(identity)
-# Return issued.access_token to the client; use api route + Forze JWT on later calls.
+
+@app.post("/login")
+async def login(id_token: str = Body(..., embed=True)) -> dict:
+    c = ctx()
+    # verify the external id_token → an authenticated identity
+    result = await c.authn.authn(BOOTSTRAP).authenticate_with_token(
+        AccessTokenCredentials(token=id_token)
+    )
+    # mint first-party tokens for that identity
+    issued = await c.authn.token_lifecycle(API).issue_tokens(result.identity)
+    return {
+        "access_token": issued.access.token.token,
+        "refresh_token": issued.refresh.token.token if issued.refresh else None,
+    }
 ```
 
-## Per-IdP shortcuts
+`authenticate_with_token` takes only the credentials (the route is fixed when the
+orchestrator is resolved) and returns an `AuthnResult` — pass `result.identity`
+to `issue_tokens`. The raw JWT string is `issued.access.token.token`.
 
-| IdP | Preset module | Code exchange |
-|-----|---------------|---------------|
-| Google Sign-In | `forze_identity.builtin.idp.google` | Client obtains `id_token` (GIS / mobile SDK); POST to your login handler |
-| VK ID | `forze_identity.builtin.idp.vk` | `forze_identity.oauth.generate_pkce()` + `exchange_authorization_code()` |
-| Telegram Login | `forze_identity.builtin.idp.telegram` | Same (`oauth` + exchange) |
+## Steady state
 
-Install: `pip install 'forze[oidc]'` (includes `pyjwt[crypto]` and `httpx` for exchange helpers).
+Every other route is protected by the **`api`** `AuthnSpec` through the
+[`SecurityContextMiddleware`](authn-authz-tenancy-fastapi.md) — fast, local
+verification with no IdP round-trip. The first-party token also carries the
+tenant, so [tenancy and authz](authn-authz-tenancy-fastapi.md) work unchanged.
 
-## Learn more
+!!! note "Logout is local only"
 
-- [External IdPs over OIDC](external-idp-oidc.md) — generic `OidcTokenVerifier` wiring
-- [Google Sign-In (OIDC)](google-oidc.md)
-- [VK ID (OIDC)](vk-id.md)
-- [Telegram Login (OIDC)](telegram-login-oidc.md)
-- [Integration — OIDC](../integrations/oidc.md)
+    Revoking a Forze refresh token ends the Forze session; it does **not** revoke
+    the user's access at the external IdP. Enforce eligibility on your side.

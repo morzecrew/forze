@@ -82,7 +82,7 @@ When `tenant_aware=True`, bind `TenantIdentity` at the HTTP/worker boundary befo
 
 ## Testing
 
-Use `MockStorageAdapter` from `forze_mock` for unit tests without GCS. For integration-style checks, use fake-gcs-server as described in the [GCS integration](https://morzecrew.github.io/forze/docs/integrations/gcs/) doc.
+Use `MockStorageAdapter` from `forze_mock` for unit tests without GCS. For integration-style checks, use fake-gcs-server as described in the [GCS integration](https://morzecrew.github.io/forze/integrations/gcs/) doc.
 
 ## Anti-patterns
 
@@ -94,7 +94,7 @@ Use `MockStorageAdapter` from `forze_mock` for unit tests without GCS. For integ
 
 ## Reference
 
-- [GCS integration](https://morzecrew.github.io/forze/docs/integrations/gcs/)
-- [Storage contracts](https://morzecrew.github.io/forze/docs/core-package/contracts/storage/)
+- [GCS integration](https://morzecrew.github.io/forze/integrations/gcs/)
+- [Storage contracts](https://morzecrew.github.io/forze/reference/contracts/stores/)
 - [`forze-storage-s3`](../forze-storage-s3/SKILL.md)
 - [`forze-framework-usage`](../forze-framework-usage/SKILL.md)

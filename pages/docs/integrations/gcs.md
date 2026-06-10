@@ -1,141 +1,56 @@
-# Google Cloud Storage Integration
+---
+title: Google Cloud Storage
+icon: lucide/cloud
+summary: Object upload, download, list, and delete on Google Cloud Storage
+---
 
-## What this integration provides
+`forze[gcs]` implements object storage on Google Cloud Storage — the same
+storage contracts as [S3](s3.md), on GCS buckets.
 
-Store and retrieve binary objects behind Forze storage contracts without coupling handlers to the GCS SDK.
+## Install
 
-## When to use it
+```bash
+uv add 'forze[gcs]'
+```
 
-Use this when you run on GCP (or local fake-gcs-server) and want native GCS buckets with Application Default Credentials instead of S3 interoperability.
+Needs GCS (or `fake-gcs-server` via `STORAGE_EMULATOR_HOST`).
 
-Use `RoutedGCSClient` when tenant identity selects GCP project and credentials (`tenant_aware` on storage routes still prefixes object keys).
+## The client
 
-## Standard setup checklist
+```python
+from forze_gcs import GCSClient
 
-1. Install the matching optional extra.
-2. Create the integration client or module configuration.
-3. Register the module in `DepsRegistry` with routes that match your specs.
-4. Add lifecycle steps when the integration opens network connections.
-5. Resolve ports from `ExecutionContext`; do not import adapters in handlers.
+gcs = GCSClient()
+```
 
-`forze_gcs` implements the storage query and command ports using native async [`gcloud-aio-storage`](https://pypi.org/project/gcloud-aio-storage/).
+`RoutedGCSClient` (with `GCSRoutingCredentials`) resolves per-tenant
+projects/credentials.
 
-## Installation
+## Wire it
 
-    :::bash
-    uv add 'forze[gcs]'
+Each storage route names a **bucket**, keyed by `StorageSpec.name`:
 
-## Runtime wiring
+```python
+from forze.application.execution import DepsRegistry, LifecyclePlan
+from forze_gcs import GCSClient, GCSDepsModule, GCSStorageConfig, gcs_lifecycle_step
 
-    :::python
-    from forze.application.execution import DepsRegistry, ExecutionRuntime, LifecyclePlan
-    from forze_gcs import GCSClient, GCSDepsModule, GCSStorageConfig, gcs_lifecycle_step
+deps = DepsRegistry.from_modules(
+    GCSDepsModule(client=gcs, storages={"assets": GCSStorageConfig(bucket="my-assets")}),
+)
+lifecycle = LifecyclePlan.from_steps(gcs_lifecycle_step(project_id="my-project"))
+```
 
-    client = GCSClient()
-    module = GCSDepsModule(
-        client=client,
-        storages={"app-assets": GCSStorageConfig(bucket="my-project-assets")},
-    )
+## What it provides
 
-    runtime = ExecutionRuntime(
-        deps=DepsRegistry.from_modules(module).freeze(),
-        lifecycle=LifecyclePlan.from_steps(
-            gcs_lifecycle_step(project_id="my-gcp-project"),
-        ).freeze(),
-    )
+| Contract | Operations | Keyed by |
+|----------|-----------|----------|
+| Storage query | `download`, `list` | `StorageSpec.name` (`storages`) |
+| Storage command | `upload`, `delete` | `StorageSpec.name` (`storages`) |
 
-### Emulator (fake-gcs-server)
+## Notes
 
-For local development and integration tests, set `STORAGE_EMULATOR_HOST` to the emulator base URL **before** starting the runtime (for example `http://localhost:4443`). The client reads this environment variable at initialization; lifecycle and application code do not take an emulator URL parameter.
-
-Start [fake-gcs-server](https://github.com/fsouza/fake-gcs-server) (mapped port), then wire lifecycle as usual:
-
-    :::python
-    gcs_lifecycle_step(project_id="local-dev")
-
-### Service account credentials
-
-By default the client uses Application Default Credentials. To use an explicit key file:
-
-    :::python
-    gcs_lifecycle_step(
-        project_id="my-gcp-project",
-        service_file="/path/to/service-account.json",
-    )
-
-### Routed client
-
-Register `RoutedGCSClient` under `GCSClientDepKey` and use `routed_gcs_lifecycle_step(client=routed_gcs)`. Per-tenant secrets use `GCSRoutingCredentials` (same shape as BigQuery: `project_id`, optional `service_file` or `service_account_json`).
-
-### What gets registered
-
-| Key | Capability |
-|-----|-----------|
-| `GCSClientDepKey` | Raw GCS client for direct bucket/blob operations |
-| `StorageQueryDepKey` | Storage query port (download, list) adapter factory |
-| `StorageCommandDepKey` | Storage command port (upload, delete) adapter factory |
-
-## Using the storage ports
-
-Resolve `ctx.storage.query(spec)` for reads and `ctx.storage.command(spec)` for writes:
-
-    :::python
-    from forze.application.contracts.storage import StorageSpec, UploadedObject
-
-    spec = StorageSpec(name="app-assets")
-    storage_q = ctx.storage.query(spec)
-    storage_c = ctx.storage.command(spec)
-
-### Upload
-
-    :::python
-    stored = await storage_c.upload(
-        UploadedObject(
-            filename="invoice.pdf",
-            data=pdf_bytes,
-            description="Invoice #42",
-            prefix="invoices/2026/03",
-        ),
-    )
-
-The adapter generates a unique key from the prefix and a UUID v7 segment. Content type is detected with `python-magic`.
-
-### Download
-
-    :::python
-    downloaded = await storage_q.download(stored.key)
-
-### Delete
-
-    :::python
-    await storage_c.delete(stored.key)
-
-### List
-
-    :::python
-    objects, total = await storage_q.list(
-        limit=20,
-        offset=0,
-        prefix="invoices/2026",
-    )
-
-## Operation reference
-
-| Method | Returns | Purpose |
-|--------|---------|---------|
-| `upload(UploadedObject)` | `StoredObject` | Upload bytes and return metadata |
-| `download(key)` | `DownloadedObject` | Download previously stored object |
-| `delete(key)` | `None` | Delete an object by key |
-| `list(limit, offset, *, prefix?)` | `(list[StoredObject], int)` | Paginated listing with optional prefix filter |
-
-## Multi-tenant behavior
-
-When `ExecutionContext` has a bound `TenantIdentity` and the storage route config sets `tenant_aware=True`, object keys are prefixed with `tenant_{tenant_id}/`.
-
-## Scope of the integration
-
-Forze handles resolving the storage query/command ports, upload/download/delete/list, content-type detection, metadata in custom blob metadata, and optional tenant key prefixes.
-
-Forze does **not** manage IAM, bucket lifecycle rules, CORS, encryption defaults, or signed URLs — configure those in GCP or IaC.
-
-For framework tests or advanced wiring, prefer `from forze_gcs.execution.deps import ConfigurableGCSStorageQuery, ConfigurableGCSStorageCommand` rather than removed `forze_gcs.execution.deps.deps` paths.
+- **You provision buckets, IAM, and lifecycle rules.** Forze only does
+  query/command (with content-type detection).
+- Credentials default to Application Default Credentials; pass `service_file` for
+  an explicit key, or `RoutedGCSClient` for per-tenant projects.
+- With `tenant_aware`, object keys are prefixed per tenant.

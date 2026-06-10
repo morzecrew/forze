@@ -151,7 +151,7 @@ venv.bak/
 # Rope project settings
 .ropeproject
 
-# mkdocs documentation
+# docs build output
 /site
 
 # mypy
@@ -207,8 +207,9 @@ marimo/_lsp/
 __marimo__/
 
 src/forze/_version.py
-pages/docs/assets/diagrams
+pages/docs/_diagrams/
 pages/site/
+pages/.cache/
 
 .benchmarks
 

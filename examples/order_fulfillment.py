@@ -80,6 +80,7 @@ class OrderConfirmed(DomainEvent):
     aggregate_id: UUID
 
 
+# --8<-- [start:order-aggregate]
 class Order(Document, AggregateRoot):
     status: str = "pending"
 
@@ -89,6 +90,9 @@ class Order(Document, AggregateRoot):
             return OrderConfirmed(aggregate_id=after.id)
 
         return None
+
+
+# --8<-- [end:order-aggregate]
 
 
 class OrderCreate(CreateDocumentCmd):
@@ -107,7 +111,9 @@ ORDER_SPEC = DocumentSpec(
     name="orders",
     read=OrderRead,
     write=DocumentWriteTypes(
-        domain=Order, create_cmd=OrderCreate, update_cmd=OrderUpdate
+        domain=Order,
+        create_cmd=OrderCreate,
+        update_cmd=OrderUpdate,
     ),
 )
 
@@ -207,7 +213,11 @@ async def _reserve(ctx: ExecutionContext, s: CheckoutCtx) -> CheckoutCtx:
     )
 
     log.info("inventory reserved", sku=inv.sku, qty=s.qty)
-    log.debug("reserve detail", inventory_id=str(s.inventory_id), new_reserved=inv.reserved + s.qty)
+    log.debug(
+        "reserve detail",
+        inventory_id=str(s.inventory_id),
+        new_reserved=inv.reserved + s.qty,
+    )
     return s
 
 
@@ -224,6 +234,7 @@ async def _release(ctx: ExecutionContext, s: CheckoutCtx) -> None:
     log.warning("compensation: inventory released", sku=inv.sku, qty=s.qty)
 
 
+# --8<-- [start:confirm-step]
 async def _confirm(ctx: ExecutionContext, s: CheckoutCtx) -> CheckoutCtx:
     # Pivot. A pre-commit failure (e.g. payment declined) compensates `reserve`.
     if s.simulate_failure:
@@ -239,16 +250,25 @@ async def _confirm(ctx: ExecutionContext, s: CheckoutCtx) -> CheckoutCtx:
     # Transactional outbox: flush the staged event within the same transaction.
     await ctx.outbox.command(OUTBOX_SPEC).flush()
 
-    log.info("order confirmed — OrderConfirmed staged to outbox", order_id=str(s.order_id))
+    log.info(
+        "order confirmed — OrderConfirmed staged to outbox", order_id=str(s.order_id)
+    )
     return s
 
 
+# --8<-- [end:confirm-step]
+
+
+# --8<-- [start:saga]
 def build_checkout_saga() -> SagaDefinition[CheckoutCtx]:
     return SagaDefinition(
         name="checkout",
         steps=(
             SagaStep(
-                name="reserve", action=_reserve, compensation=_release, tx_route="mock"
+                name="reserve",
+                action=_reserve,
+                compensation=_release,
+                tx_route="mock",
             ),
             SagaStep(
                 name="confirm",
@@ -258,6 +278,9 @@ def build_checkout_saga() -> SagaDefinition[CheckoutCtx]:
             ),
         ),
     )
+
+
+# --8<-- [end:saga]
 
 
 async def place_order(ctx: ExecutionContext) -> tuple[UUID, UUID]:
@@ -303,6 +326,7 @@ class RelayMessage:
     order_id: UUID
 
 
+# --8<-- [start:relay]
 async def relay_once(ctx: ExecutionContext) -> list[RelayMessage]:
     query = ctx.outbox.query(OUTBOX_SPEC)
     claims = await query.claim_pending()
@@ -319,6 +343,9 @@ async def relay_once(ctx: ExecutionContext) -> list[RelayMessage]:
     return messages
 
 
+# --8<-- [end:relay]
+
+
 # ----------------------- #
 # Consumer — exactly-once via the inbox; the effect is creating a Shipment.
 
@@ -330,6 +357,7 @@ async def _fulfill(ctx: ExecutionContext, message: RelayMessage) -> None:
     log.info("shipment created", order_id=str(message.order_id))
 
 
+# --8<-- [start:inbox]
 async def deliver(ctx: ExecutionContext, message: RelayMessage) -> bool:
     """Process one relayed message exactly-once. Returns False if it was a duplicate."""
 
@@ -347,10 +375,14 @@ async def deliver(ctx: ExecutionContext, message: RelayMessage) -> bool:
     return processed
 
 
+# --8<-- [end:inbox]
+
+
 # ----------------------- #
 # Context wiring — register the domain-event → outbox bridge, build an in-process context.
 
 
+# --8<-- [start:outbox-bridge]
 def build_context() -> ExecutionContext:
     registry = DomainEventRegistry()
     registry.register(
@@ -363,6 +395,9 @@ def build_context() -> ExecutionContext:
     )
     module = MockDepsModule(domain_events=registry)
     return ExecutionContext(deps=DepsRegistry.from_modules(module).freeze().resolve())
+
+
+# --8<-- [end:outbox-bridge]
 
 
 async def _demo_happy() -> None:

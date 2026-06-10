@@ -102,6 +102,6 @@ When `tenant_aware=True`, the adapter derives tenant information from `Execution
 
 ## Reference
 
-- [S3 integration](https://morzecrew.github.io/forze/docs/integrations/s3/)
-- [Storage contracts](https://morzecrew.github.io/forze/docs/core-package/contracts/storage/)
+- [S3 integration](https://morzecrew.github.io/forze/integrations/s3/)
+- [Storage contracts](https://morzecrew.github.io/forze/reference/contracts/stores/)
 - [`forze-framework-usage`](../forze-framework-usage/SKILL.md)

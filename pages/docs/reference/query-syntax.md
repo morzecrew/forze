@@ -1,401 +1,270 @@
-# Query Syntax
+---
+title: Query DSL
+icon: lucide/filter
+summary: The filter, sort, and aggregate expression language shared by document and search ports
+---
 
-Forze uses a shared query DSL for filtering and sorting. The same expression shape is used by document ports (`find`, `find_many`, `count`) and search requests (`filters`, `sorts`).
+Forze uses one expression language for **filtering**, **sorting**, and
+**aggregating**, shared by document query ports (`find`, `find_many`, `count`, …)
+and search requests. Learn it once; it applies everywhere — including
+authorization scope filters.
 
-## Filter expression shape
+## Filter expressions
 
-A filter expression is one of:
+A filter expression is exactly one of these shapes. **Combinators
+(`$and`/`$or`/`$not`) cannot share a dict with constraints (`$values`/`$fields`)** —
+that raises at parse time.
 
-- literal constraints: `{"$values": {...}}`
-- field-to-field constraints: `{"$fields": {...}}`
-- combined constraints: `{"$values": {...}, "$fields": {...}}` (implicit AND)
-- conjunction: `{"$and": [expr, ...]}`
-- disjunction: `{"$or": [expr, ...]}`
-- negation: `{"$not": expr}` (single child object, not an array)
+| Form | Shape |
+|------|-------|
+| Literal constraints | `{"$values": {…}}` |
+| Field-to-field constraints | `{"$fields": {…}}` |
+| Combined (implicit **AND**) | `{"$values": {…}, "$fields": {…}}` |
+| Conjunction | `{"$and": [expr, …]}` |
+| Disjunction | `{"$or": [expr, …]}` |
+| Negation | `{"$not": expr}` (a single child object, not a list) |
 
-Where `expr` is recursively one of the shapes above.
+## Field constraints — `$values`
 
-You may combine `$values` and `$fields` in one object; all constraints are ANDed.
-Do not mix `$and` / `$or` / `$not` with `$values` / `$fields` in the same object.
+Inside `$values`, each field maps to a literal shortcut or an explicit operator
+map:
 
-## Literal shortcuts (`$values`)
-
-Inside `"$values"`, each field value can use a shortcut or an explicit operator map.
-
-| Field value | Expanded form | Meaning |
-|-------------|---------------|---------|
+| Shortcut | Expands to | Meaning |
+|----------|-----------|---------|
 | `"active"` | `{"$eq": "active"}` | equality |
 | `["a", "b"]` | `{"$in": ["a", "b"]}` | membership |
-| `null` | `{"$null": true}` | is null |
+| `None` | `{"$null": true}` | is null |
 
-Example:
-
-    :::python
-    filters = {
-        "$values": {
-            "status": "active",
-            "tags": ["backend", "api"],
-            "deleted_at": None,
-        }
+```python
+filters = {
+    "$values": {
+        "status": "active",          # → $eq
+        "tags": ["backend", "api"],  # → $in
+        "deleted_at": None,          # → $null
     }
+}
+```
 
-## Operators (for `$values`)
+### Operators
 
-### Equality
+| Group | Operators | Operand |
+|-------|-----------|---------|
+| Comparison | `$eq` `$neq` `$gt` `$gte` `$lt` `$lte` | a scalar |
+| Membership | `$in` `$nin` | a list — value is / isn't in it |
+| Text | `$like` `$ilike` `$regex` | a pattern (or a list of patterns → OR) |
+| Null | `$null` | `true`: is null · `false`: is not null |
+| Empty | `$empty` | `true`: empty **array** · `false`: non-empty |
+| Set relations | `$superset` `$subset` `$overlaps` `$disjoint` | a list (see [Array fields](#array-fields)) |
+| Quantifiers | `$any` `$all` `$none` | an element predicate (see [Array fields](#array-fields)) |
 
-| Operator | Value type | Meaning |
-|----------|------------|---------|
-| `$eq` | scalar | equal |
-| `$neq` | scalar | not equal |
+`$empty` tests **array** length (not string emptiness). `$like`/`$ilike` use
+`%`/`_` wildcards (`\` escapes); a list of patterns becomes an OR on that field.
 
-### Ordering
+### Combining operators on one field
 
-| Operator | Value type | Meaning |
-|----------|------------|---------|
-| `$gt` | numeric/date/datetime | greater than |
-| `$gte` | numeric/date/datetime | greater than or equal |
-| `$lt` | numeric/date/datetime | less than |
-| `$lte` | numeric/date/datetime | less than or equal |
+Multiple operators on the same field are **ANDed**:
 
-### Membership
+```python
+{"$values": {"score": {"$gte": 1, "$lt": 10}}}   # score >= 1 AND score < 10
+```
 
-| Operator | Value type | Meaning |
-|----------|------------|---------|
-| `$in` | array | field is in list |
-| `$nin` | array | field is not in list |
+Two operators stand **alone** — `{"$null": true}` and `{"$empty": true}` can't be
+combined with anything else on that field (their `false` forms can). A
+[quantifier](#element-quantifiers) is also exclusive with other operators on its
+field.
 
-### Unary checks
+## Nested fields
 
-| Operator | Value type | Meaning |
-|----------|------------|---------|
-| `$null` | bool | `true`: is null, `false`: is not null |
-| `$empty` | bool | `true`: empty array, `false`: non-empty array |
+A field key is a **dot-separated path** into a nested/embedded object — usable in
+`$values`, `$fields`, sorts, `$groups`, and aggregate fields. Depth is unbounded;
+each segment walks one level deeper:
 
-### Set relations (array fields)
+```python
+{"$values": {
+    "address.city": "Berlin",
+    "address.geo.lat": {"$gte": 52.0},
+}}
+```
 
-| Operator | Value type | Meaning |
-|----------|------------|---------|
-| `$superset` | array | field contains all values from list |
-| `$subset` | array | field contains no values outside list |
-| `$overlaps` | array | field intersects list |
-| `$disjoint` | array | field does not intersect list |
+The **root** segment must be a real column / read-model field; deeper segments
+traverse a JSON/JSONB column. A few rules to know (Postgres):
 
-### Text matching
+- When the leaf type can't be inferred statically (a dynamic mapping, an `Any`),
+  declare it via the adapter's `nested_field_hints={"address.geo.lat": float}`.
+- Set operators (`$superset` / `$subset` / `$overlaps` / `$disjoint` / `$empty`)
+  are **not** supported on nested JSON paths — use a top-level array column for
+  those.
 
-| Operator | Value type | Meaning |
-|----------|------------|---------|
-| `$like` | string or string array | SQL `LIKE` match (`%`, `_` wildcards; `\` escapes `%`, `_`, `\`) |
-| `$ilike` | string or string array | case-insensitive `LIKE` (Postgres `ILIKE`; Mongo `$regex` with `i`) |
-| `$regex` | string or string array | POSIX regex match (Postgres `~`; Mongo `$regex`) |
+## Array fields
 
-When the operand is a **sequence of strings**, the parser expands it to an implicit
-**OR** of single-pattern constraints on the same field (no separate `$ilike_any`
-operator).
+Two distinct ways to query an array column.
 
-Pseudo-search example:
+### Set relations
 
-    :::python
-    filters = {"$values": {"title": {"$ilike": "%road%"}}}
+The whole array, compared against a list:
 
-Multi-pattern OR:
+| Operator | Matches when the field… |
+|----------|-------------------------|
+| `$superset` | contains **all** the listed values |
+| `$subset` | has **no** values outside the list |
+| `$overlaps` | **intersects** the list |
+| `$disjoint` | does **not** intersect the list |
 
-    :::python
-    filters = {"$values": {"title": {"$ilike": ["%road%", "%map%"]}}}
+```python
+{"$values": {"roles": {"$superset": ["admin", "ops"]}}}   # has both roles
+```
 
-`$regex` patterns are validated at parse time for length and known ReDoS shapes;
-this is best-effort safety, not a performance guarantee.
+### Element quantifiers
 
-### Array element quantifiers (`$any`, `$all`, `$none`)
+`$any` / `$all` / `$none` apply a predicate to *individual* elements. `$all` and
+`$none` are vacuously true on a missing, null, or empty array. A quantifier holds
+**exactly one** of three operand forms:
 
-Apply a predicate to **individual elements** inside an array field (native Postgres
-arrays or JSON/JSONB arrays). Use one quantifier per field; do not combine with other
-operators on the same key.
+```python
+# 1. scalar shortcut → element equality
+{"$values": {"tags": {"$any": "urgent"}}}
 
-| Operator | Meaning |
-|----------|---------|
-| `$any` | at least one element matches the inner predicate |
-| `$all` | every element matches (vacuous **true** when the field is missing, null, or `[]`) |
-| `$none` | no element matches (vacuous **true** when missing, null, or `[]`) |
+# 2. a single element operator (only $eq $neq $gt $gte $lt $lte $like $ilike $regex)
+{"$values": {"scores": {"$all": {"$gte": 1}}}}
 
-**Scalar arrays** — inner predicate is `$eq` / `$neq` / ordering ops, text pattern
-ops (`$like`, `$ilike`, `$regex`), or a scalar shortcut:
+# 3. $values map for an array of objects — fields are element-relative
+{"$values": {"line_items": {"$any": {"$values": {
+    "product_id": "p-42",
+    "quantity": {"$gt": 0},
+}}}}}
+```
 
-    :::python
-    {"$values": {"tags": {"$any": "urgent"}}}
-    {"$values": {"scores": {"$any": {"$gte": 10}}}}
+Quantifiers **do not nest** (`$any` inside `$any` is rejected), and inside an
+object-array `$values` the `null` / list / quantifier shortcuts aren't allowed —
+only literal operators (which still AND together per field).
 
-**Object arrays** — inner predicate is element-relative `$values` (implicit AND):
+## Comparing fields — `$fields`
 
-    :::python
-    filters = {
-        "$values": {
-            "items": {
-                "$any": {
-                    "$values": {
-                        "status": "open",
-                        "qty": {"$gte": 1},
-                    },
-                },
-            },
+Compare one field to another, not to a literal. A bare string value is a **field
+path**, and only the equality/ordering operators apply (no membership, text, or
+set operators here):
+
+```python
+filters = {
+    "$values": {"is_deleted": False},
+    "$fields": {"starts_at": {"$lte": "ends_at"}},
+}
+```
+
+## Combining expressions — `$and` / `$or` / `$not`
+
+```python
+{"$and": [
+    {"$values": {"status": ["active", "trial"]}},     # $in shortcut
+    {"$or": [
+        {"$values": {"region": "eu"}},
+        {"$not": {"$values": {"deleted_at": {"$null": False}}}},
+    ]},
+    {"$fields": {"updated_at": {"$gt": "created_at"}}},
+]}
+```
+
+`$and`/`$or` take a list of expressions; `$not` takes a single expression.
+Nesting depth is capped (see [Limits](#limits)).
+
+## Sorting
+
+A map of field → direction (`"asc"` / `"desc"`); keys may be nested paths, and
+map order is sort priority:
+
+```python
+sorts = {"created_at": "desc", "id": "asc"}
+```
+
+The DSL has **no null-ordering control** (no `NULLS FIRST/LAST`). For
+[cursor pagination](../in-depth/reading-data.md) all keys must share one
+direction, and an `id` tie-breaker is appended automatically.
+
+## Aggregates
+
+An aggregate expression groups and computes over matched rows. Group keys go in
+`$groups` (alias → source path, or a list of paths); outputs go in `$computed`
+(alias → function). Functions: `$count` (use `None` for row counts), `$sum`,
+`$avg`, `$min`, `$max`, `$median`.
+
+```python
+aggregates = {
+    "$groups": {"category": "category"},
+    "$computed": {
+        "products": {"$count": None},
+        "revenue": {"$sum": "price"},
+        "premium_revenue": {
+            "$sum": {"field": "price", "filter": {"$values": {"price": {"$gte": 20}}}},
         },
-    }
+    },
+}
+```
 
-Inner operators include equality, ordering (`$eq`, `$neq`, `$gt`, `$gte`, `$lt`,
-`$lte`), and text patterns (`$like`, `$ilike`, `$regex`). Nested quantifiers are
-not supported.
+A computed metric's `filter` is a **per-metric row pre-filter** (it narrows the
+rows that feed *that* aggregate) — there is **no post-aggregate `HAVING`** stage.
+`$count` takes no field; every other function requires one.
 
-## Negation (`$not`)
+Calendar bucketing uses `$trunc` as a group value — `unit` is one of `hour` /
+`day` / `week` (Monday-start) / `month`; `timezone` is an IANA name or fixed
+offset (default UTC):
 
-Negate any filter expression:
+```python
+"$groups": {"day_start": {"$trunc": {"field": "ts", "unit": "day", "timezone": "+3"}}}
+```
 
-    :::python
-    filters = {
-        "$not": {
-            "$values": {"status": "archived"},
-        },
-    }
+## Where you pass them
 
-    filters = {
-        "$not": {
-            "$or": [
-                {"$values": {"priority": {"$lt": 3}}},
-                {"$values": {"is_deleted": True}},
-            ],
-        },
-    }
+Document query ports take `filters`, `sorts`, `pagination`, and (where supported)
+`aggregates`:
 
-On MongoDB, top-level `$not` is rendered as `$nor` with one operand (semantically
-equivalent for boolean filters).
+```python
+doc = ctx.document.query(project_spec)
+page = await doc.find_many(
+    filters=filters,
+    sorts=sorts,
+    pagination={"limit": 20, "offset": 0},
+)
+rows = page.hits
+```
 
-## Field-to-field compare (`$fields`)
+Search requests take the same filter and sort expressions alongside the query
+text:
 
-Compare one document field to another field (not a literal). Use the same
-operator names as equality and ordering (`$eq`, `$neq`, `$gt`, `$gte`, `$lt`,
-`$lte`). Membership, unary, and set-relation operators are not supported under
-`$fields`.
-
-Inside `"$fields"`, each **left** field key maps to either:
-
-| Value | Meaning |
-|-------|---------|
-| `"other_field"` | `$eq` shortcut: left field equals right field path |
-| `{"$gte": "other_field"}` | explicit compare operator; value is always a **field path** string |
-
-Unlike `"$values"`, string values under `"$fields"` always refer to another
-field path, never a literal scalar.
-
-Example:
-
-    :::python
-    filters = {
-        "$values": {"is_deleted": False},
-        "$fields": {"starts_at": {"$lte": "ends_at"}},
-    }
-
-Dot notation works for nested JSON fields (Postgres requires the same column
-type metadata and read model as other nested filters).
-
-## Complex examples
-
-### Nested AND/OR
-
-    :::python
-    filters = {
-        "$and": [
-            {"$values": {"is_deleted": False}},
-            {
-                "$or": [
-                    {"$values": {"priority": {"$gte": 5}}},
-                    {"$values": {"status": {"$in": ["new", "in_progress"]}}},
-                ]
-            },
-        ]
-    }
-
-### Range + set relation
-
-    :::python
-    filters = {
-        "$values": {
-            "created_at": {"$gte": "2026-01-01T00:00:00Z"},
-            "labels": {"$overlaps": ["urgent", "customer"]},
-        }
-    }
-
-## Sorting syntax
-
-Sort expression is a map of field name to direction:
-
-    :::python
-    sorts = {
-        "created_at": "desc",
-        "id": "asc",
-    }
-
-Supported directions:
-
-- `"asc"`
-- `"desc"`
-
-If `sorts` is omitted for regular offset pagination, this layer does not add an
-explicit ordering. Pass a sort expression when callers need deterministic order.
-
-## Aggregate syntax
-
-Document `find_many` calls can request aggregate rows with a separate
-`aggregates` expression. Aggregate rows are not document-shaped: without
-`return_type` they are returned as JSON mappings; with `return_type` each row is
-validated against that Pydantic model.
-
-An aggregate expression has two sections:
-
-- `$groups`: group keys — either a map of output alias → source field path, or a
-  list/tuple of field paths (each path is used as both alias and source).
-- `$computed`: output aliases mapped to one aggregate function.
-
-Supported functions are `$count`, `$sum`, `$avg`, `$min`, `$max`, and `$median`.
-Use `$count: None` for row counts. Other functions take a source field path.
-Computed fields may also use an object form with `field` and an optional
-`filter`. The filter uses the same query filter syntax as top-level document
-filters, including `$and` and `$or`, but it applies only to that aggregate.
-
-    :::python
-    aggregates = {
-        "$groups": {"category": "category"},
-        "$computed": {
-            "products": {"$count": None},
-            "revenue": {"$sum": "price"},
-            "median_price": {"$median": "price"},
-            "premium_products": {
-                "$count": {
-                    "filter": {"$values": {"price": {"$gte": 20}}},
-                },
-            },
-            "premium_revenue": {
-                "$sum": {
-                    "field": "price",
-                    "filter": {"$values": {"price": {"$gte": 20}}},
-                },
-            },
-        },
-    }
-
-    # Same group keys when alias equals source path:
-    aggregates = {
-        "$groups": ["detail_id", "revision_id", "warehouse_id"],
-        "$computed": {"rows": {"$count": None}},
-    }
-
-    page = await doc.find_many(
-        filters={"$values": {"is_deleted": False}},
-        sorts={"revenue": "desc"},
-        aggregates=aggregates,
-        return_count=True,
-    )
-
-When `return_count=True` **with** `aggregates`, the total counts **aggregate
-groups**. Sorts for aggregate queries use aggregate output aliases such as
-`revenue`, not source document fields.
-
-**`$groups` map values** are either a source path string (group by that field) or a
-single-operator object. Calendar bucketing uses **`$trunc`** (output alias is the
-map key):
-
-    :::python
-    "day_start": {"$trunc": {"field": "ts", "unit": "day", "timezone": "+3"}}
-
-Units: `hour`, `day`, `week` (Monday start, aligned with Postgres `date_trunc` /
-Mongo `$dateTrunc`), `month`. Default timezone is `UTC`. You may pass an **IANA**
-name (`Europe/Berlin`) or a **fixed offset** (`+3`, `+03:00`). List/tuple `$groups`
-accept path strings only (no `$trunc`).
-
-MongoDB **5.0+** is required for `$dateTrunc` bucketing.
-
-Non-aggregate **`find_many`**: you may pass `return_type` **without** `aggregates`
-to validate each **document** row against a Pydantic model (same as the list read
-model shape). `return_count` then counts documents, not groups.
-
-    :::python
-    aggregates = {
-        "$groups": {
-            "item_id": "item_id",
-            "day_start": {"$trunc": {"field": "ts", "unit": "day", "timezone": "+3"}},
-        },
-        "$computed": {"avg_price": {"$avg": "price"}},
-    }
-
-    :::python
-    page = await doc.find_many(
-        filters=filters,
-        pagination={"limit": 20, "offset": 0},
-        return_type=MyRowDto,
-    )
-
-## Where you pass these expressions
-
-### Document port usage
-
-    :::python
-    doc = ctx.document.query(project_spec)
-
-    page = await doc.find_many(
-        filters=filters,
-        sorts=sorts,
-        pagination={"limit": 20, "offset": 0},
-        return_count=True,
-    )
-    rows = page.hits
-    total = page.count
-
-### Search request usage
-
-    :::python
-    search = ctx.search.query(project_search_spec)
-
-    hits, total = await search.search(
-        query="roadmap",
-        filters=filters,
-        sorts=sorts,
-        limit=20,
-        offset=0,
-    )
+```python
+page = await ctx.search.query(project_search_spec).search(
+    "roadmap",
+    filters=filters,
+    pagination={"limit": 20, "offset": 0},
+)
+```
 
 ## Limits
 
-Filter expressions are validated at parse time. Default bounds (override per gateway via
-``filter_limits`` on Postgres/Mongo gateways, or a custom
-:class:`~forze.application.contracts.querying.QueryFilterExpressionParser` instance):
+Filters are validated at parse time, before any query reaches the database.
+Defaults (override per gateway via `filter_limits`):
 
 | Limit | Default | Applies to |
 |-------|---------|------------|
-| ``max_depth`` | 32 | Nesting of ``$and`` / ``$or`` / ``$not`` |
-| ``max_clauses`` | 256 | Combinator children, ``$values`` / ``$fields`` keys, and per-field operator entries |
-| ``max_in_size`` | 1000 | ``$in`` / ``$nin``, array shortcuts, and set-relation operands |
-| ``max_pattern_length`` | 256 | each ``$like`` / ``$ilike`` / ``$regex`` pattern string |
-| ``max_pattern_or_branches`` | 32 | patterns when a text operator operand is a sequence (OR) |
+| `max_depth` | 32 | nesting of `$and` / `$or` / `$not` |
+| `max_clauses` | 256 | combinator children, `$values` / `$fields` keys, per-field operators |
+| `max_in_size` | 1000 | `$in` / `$nin`, array shortcuts, set-relation operands |
+| `max_pattern_length` | 256 | each `$like` / `$ilike` / `$regex` pattern |
+| `max_pattern_or_branches` | 32 | patterns when a text operand is a sequence |
 
-Violations raise :class:`~forze.base.errors.ValidationError` before any query is sent to the database.
-
-## Validation rules
-
-- A field operator map cannot be empty.
-- Unknown operators fail validation.
-- Operator values must match expected types.
-- `{"$null": true}` cannot be combined with other operators on the same field.
-- `{"$empty": true}` cannot be combined with other operators on the same field.
+A violation — or an empty operator map, an unknown operator, a type mismatch, or a
+regex with unsafe nesting/repetition — raises a validation `CoreException` before
+the query runs.
 
 ## Backend notes
 
-- Semantics are shared, but rendering is backend-specific (Postgres vs Mongo).
-- In Mongo renderer defaults, `$null: true` matches both explicit `null` and missing fields.
+Semantics are shared; rendering is backend-specific. Text-pattern support varies:
 
-### Text pattern operator support
+| Operator | Postgres | MongoDB | Firestore |
+|----------|----------|---------|-----------|
+| `$like` | `LIKE` | `$regex` | not supported |
+| `$ilike` | `ILIKE` | `$regex` + `i` | not supported |
+| `$regex` | `~` | `$regex` | not supported |
 
-| Operator | Postgres | MongoDB | Firestore (MVP) |
-|----------|----------|---------|-----------------|
-| `$like` | `LIKE` | `$regex` (LIKE→regex) | not supported (`CoreError`) |
-| `$ilike` | `ILIKE` | `$regex` + `i` | not supported (`CoreError`) |
-| `$regex` | `~` | `$regex` | not supported (`CoreError`) |
-
-Leading `%` patterns may require indexes (for example Postgres `pg_trgm`) for
-acceptable performance on large tables.
+Leading-`%` patterns may need a trigram index (Postgres `pg_trgm`) to stay fast on
+large tables. On MongoDB, `$null: true` matches both explicit null and missing
+fields; object-array quantifiers render as `$elemMatch`.

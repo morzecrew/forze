@@ -1,0 +1,51 @@
+style: {
+    fill: transparent
+}
+
+vars: {
+    d2-config: {
+        pad: 40
+    }
+}
+
+direction: right
+
+Tenant: {
+    shape: rectangle
+    style: {
+        stroke: "#4a90d9"
+        stroke-width: 2
+    }
+    label: |md
+        ### Tenant identity
+        bound per request
+    |
+}
+
+Database: {
+    shape: rectangle
+    label: |md
+        ### Database per tenant
+        routed client
+    |
+}
+
+Schema: {
+    shape: rectangle
+    label: |md
+        ### Schema per tenant
+        relation resolver
+    |
+}
+
+Row: {
+    shape: rectangle
+    label: |md
+        ### Shared, row-filtered
+        tenant_aware
+    |
+}
+
+Tenant -> Database
+Tenant -> Schema
+Tenant -> Row

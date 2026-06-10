@@ -182,7 +182,7 @@ Schedules require a Temporal server with the Schedules API (not the time-skippin
 
 ## Testing
 
-For handlers that only need to verify a workflow command was issued, register fake `DurableWorkflowCommandDepKey` / `DurableWorkflowQueryDepKey` factories in `Deps` (for example via `MockDepsModule` or a test `DepsRegistry`). Schedule handlers can use fake `DurableWorkflowScheduleCommandDepKey` / `DurableWorkflowScheduleQueryDepKey` factories similarly. For workflow definition tests, follow the [Temporal integration](https://morzecrew.github.io/forze/docs/integrations/temporal/) testing section.
+For handlers that only need to verify a workflow command was issued, register fake `DurableWorkflowCommandDepKey` / `DurableWorkflowQueryDepKey` factories in `Deps` (for example via `MockDepsModule` or a test `DepsRegistry`). Schedule handlers can use fake `DurableWorkflowScheduleCommandDepKey` / `DurableWorkflowScheduleQueryDepKey` factories similarly. For workflow definition tests, follow the [Temporal integration](https://morzecrew.github.io/forze/integrations/temporal/) testing section.
 
 ## Anti-patterns
 
@@ -194,6 +194,6 @@ For handlers that only need to verify a workflow command was issued, register fa
 
 ## Reference
 
-- [Temporal integration](https://morzecrew.github.io/forze/docs/integrations/temporal/)
-- [Durable workflow contracts](https://morzecrew.github.io/forze/docs/core-package/contracts/durable-workflow/)
+- [Temporal integration](https://morzecrew.github.io/forze/integrations/temporal/)
+- [Durable workflow contracts](https://morzecrew.github.io/forze/reference/contracts/)
 - [`forze-wiring`](../forze-wiring/SKILL.md)

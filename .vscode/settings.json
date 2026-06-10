@@ -78,7 +78,7 @@
         "commands": [
             {
                 "match": "\\.d2$",
-                "cmd": "just pages diagrams"
+                "cmd": "just build-diagrams"
             }
         ]
     },

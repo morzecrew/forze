@@ -120,7 +120,7 @@ await step.run("notify", lambda: notifier.send(...))
 
 ## Reference
 
-- [Inngest integration](https://morzecrew.github.io/forze/docs/integrations/inngest/)
-- [Durable function contracts](https://morzecrew.github.io/forze/docs/core-package/contracts/durable-function/)
+- [Inngest integration](https://morzecrew.github.io/forze/integrations/inngest/)
+- [Durable function contracts](https://morzecrew.github.io/forze/reference/contracts/)
 - [`forze-wiring`](../forze-wiring/SKILL.md)
 - [`forze-framework-usage`](../forze-framework-usage/SKILL.md)

@@ -1,0 +1,201 @@
+[project]
+site_name = "Forze"
+site_url = "https://morzecrew.github.io/forze"
+site_description = "Domain-Driven Design and Hexagonal Architecture for backend services"
+site_author = "Lev Litvinov"
+copyright = "&copy; 2026 Lev Litvinov and contributors"
+
+# ....................... #
+# Repo
+
+repo_url = "https://github.com/morzecrew/forze"
+repo_name = "forze"
+
+# ....................... #
+# Styles
+
+extra_css = ["_stylesheets/extra.css"]
+extra_javascript = ["_javascripts/theme.js", "_javascripts/hero.js"]
+
+# ....................... #
+# Navigation
+
+nav = [
+    { "Home" = "index.md" },
+    { "Get Started" = [
+        "get-started/installation.md",
+        "get-started/quickstart.md",
+        "get-started/project-structure.md",
+    ] },
+    { "Learn" = [
+        { "Concepts" = [
+            "core-concepts/overview.md",
+            "core-concepts/architecture.md",
+            "core-concepts/domain-layer.md",
+            "core-concepts/application-layer.md",
+            "core-concepts/contracts.md",
+            "core-concepts/runtime.md",
+        ] },
+        { "In Depth" = [
+            "in-depth/wiring.md",
+            "in-depth/transactions.md",
+            "in-depth/capability-execution.md",
+            "in-depth/errors.md",
+            "in-depth/concurrency-conflicts.md",
+            "in-depth/resilience.md",
+            "in-depth/idempotency.md",
+            "in-depth/events-sagas.md",
+            "in-depth/reading-data.md",
+            "in-depth/multi-tenancy.md",
+            "in-depth/identity.md",
+            "in-depth/observability.md",
+        ] },
+    ] },
+    { "Integrations" = [
+        "integrations/index.md",
+        { "Data" = [
+            "integrations/postgres.md",
+            "integrations/mongo.md",
+            "integrations/firestore.md",
+            "integrations/neo4j.md",
+            "integrations/redis.md",
+            "integrations/s3.md",
+            "integrations/gcs.md",
+            "integrations/meilisearch.md",
+            "integrations/bigquery.md",
+            "integrations/clickhouse.md",
+        ] },
+        { "Messaging" = [
+            "integrations/rabbitmq.md",
+            "integrations/sqs.md",
+        ] },
+        { "Workflows" = [
+            "integrations/temporal.md",
+            "integrations/inngest.md",
+        ] },
+        { "Inbound" = [
+            "integrations/fastapi.md",
+            "integrations/socketio.md",
+            "integrations/mcp.md",
+        ] },
+        { "Identity" = [
+            "integrations/authn.md",
+            "integrations/oidc.md",
+        ] },
+        { "Secrets" = [
+            "integrations/vault.md",
+        ] },
+        { "Outbound" = [
+            "integrations/http.md",
+        ] },
+    ] },
+    { "Recipes" = [
+        { "Data" = [
+            "recipes/crud-fastapi-postgres.md",
+            "recipes/read-only-document-api.md",
+            "recipes/cache-reads-with-redis.md",
+            "recipes/add-idempotency.md",
+        ] },
+        { "Identity" = [
+            "recipes/authn-authz-tenancy-fastapi.md",
+            "recipes/local-identity.md",
+            "recipes/external-bootstrap-forze-jwt.md",
+            "recipes/external-idp-oidc.md",
+            "recipes/social-sign-in.md",
+        ] },
+        { "Messaging & workflows" = [
+            "recipes/transactional-outbox.md",
+            "recipes/transactional-notifications.md",
+            "recipes/background-workflow.md",
+            "recipes/scheduled-queue-jobs.md",
+        ] },
+    ] },
+    { "Reference" = [
+        { "Contracts" = [
+            "reference/contracts.md",
+            "reference/contracts/document.md",
+            "reference/contracts/stores.md",
+            "reference/contracts/search.md",
+            "reference/contracts/messaging.md",
+        ] },
+        "reference/query-syntax.md",
+        "reference/mapping.md",
+        "reference/errors.md",
+    ] },
+]
+
+# ....................... #
+# Development
+
+dev_addr = "localhost:8045"
+
+# ....................... #
+# Theme
+
+[project.theme]
+features = [
+    "search.highlight",
+    "navigation.footer",
+    "navigation.instant",
+    "navigation.instant.progress",
+    "navigation.tabs",
+    "navigation.sections",
+    # "navigation.expand",
+    "navigation.path",
+    "navigation.top",
+    "toc.follow",
+    "content.code.copy",
+    "content.code.select",
+    "content.code.annotate",
+]
+custom_dir = "overrides"
+logo = "_images/forze-multicolor.png"
+favicon = "images/forze-multicolor.png"
+
+[project.theme.icon]
+repo = "fontawesome/brands/github"
+
+[[project.theme.palette]]
+scheme = "default"
+toggle.icon = "lucide/sun"
+toggle.name = "Switch to dark mode"
+primary = "blue grey"
+accent = "deep orange"
+
+[[project.theme.palette]]
+scheme = "slate"
+toggle.icon = "lucide/moon"
+toggle.name = "Switch to light mode"
+primary = "blue grey"
+accent = "deep orange"
+
+# ....................... #
+# Extensions
+
+[project.markdown_extensions.zensical.extensions.glightbox]
+auto_themed = true
+auto_caption = true
+
+[project.markdown_extensions.pymdownx.snippets]
+base_path = ["docs", "../examples"]
+check_paths = true
+[project.markdown_extensions.admonition]
+[project.markdown_extensions.pymdownx.details]
+[project.markdown_extensions.pymdownx.superfences]
+[project.markdown_extensions.attr_list]
+[project.markdown_extensions.md_in_html]
+
+[project.markdown_extensions.pymdownx.emoji]
+emoji_index = "zensical.extensions.emoji.twemoji"
+emoji_generator = "zensical.extensions.emoji.to_svg"
+
+[project.markdown_extensions.tables]
+
+[project.markdown_extensions.pymdownx.tabbed]
+alternate_style = true
+
+[project.markdown_extensions.toc]
+permalink = true
+
+[project.markdown_extensions.pymdownx.highlight]
+[project.markdown_extensions.pymdownx.inlinehilite]

@@ -133,11 +133,11 @@ Register routes on the backend module (e.g. `PostgresDepsModule(tx={TxRoute.DEFA
 
 ## Reference
 
-- [Specs and wiring](https://morzecrew.github.io/forze/docs/concepts/specs-and-wiring/)
-- [Postgres integration](https://morzecrew.github.io/forze/docs/integrations/postgres/)
-- [Mongo integration](https://morzecrew.github.io/forze/docs/integrations/mongo/)
-- [Redis integration](https://morzecrew.github.io/forze/docs/integrations/redis/)
-- [S3 integration](https://morzecrew.github.io/forze/docs/integrations/s3/)
-- [SQS integration](https://morzecrew.github.io/forze/docs/integrations/sqs/)
-- [RabbitMQ integration](https://morzecrew.github.io/forze/docs/integrations/rabbitmq/)
-- [Temporal integration](https://morzecrew.github.io/forze/docs/integrations/temporal/)
+- [Specs and wiring](https://morzecrew.github.io/forze/in-depth/wiring/)
+- [Postgres integration](https://morzecrew.github.io/forze/integrations/postgres/)
+- [Mongo integration](https://morzecrew.github.io/forze/integrations/mongo/)
+- [Redis integration](https://morzecrew.github.io/forze/integrations/redis/)
+- [S3 integration](https://morzecrew.github.io/forze/integrations/s3/)
+- [SQS integration](https://morzecrew.github.io/forze/integrations/sqs/)
+- [RabbitMQ integration](https://morzecrew.github.io/forze/integrations/rabbitmq/)
+- [Temporal integration](https://morzecrew.github.io/forze/integrations/temporal/)

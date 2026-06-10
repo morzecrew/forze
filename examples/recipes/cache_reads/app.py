@@ -1,0 +1,175 @@
+"""Recipe: read-through caching of a document — Postgres-backed, Redis cache.
+
+A ``Product`` aggregate carries a ``CacheSpec``: reads serve from Redis on a hit
+and populate it on a miss; writes invalidate it. The handlers never change —
+caching is wired entirely through the deps.
+
+Run it against the recipe's ``compose.yaml``:
+
+    just run            # from examples/recipes/cache_reads/
+
+The read-through behaviour is exercised by
+``tests/integration/test_examples/test_cache_reads.py``.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import os
+
+from forze.application.contracts.cache import CacheSpec
+from forze.application.contracts.document import DocumentSpec, DocumentWriteTypes
+from forze.application.execution import (
+    DepsRegistry,
+    ExecutionContext,
+    ExecutionRuntime,
+    LifecyclePlan,
+)
+from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
+from forze_postgres import (
+    PostgresClient,
+    PostgresConfig,
+    PostgresDepsModule,
+    PostgresDocumentConfig,
+    PostgresLifecycleModule,
+)
+from forze_redis import (
+    RedisCacheConfig,
+    RedisClient,
+    RedisDepsModule,
+    redis_lifecycle_step,
+)
+
+# ----------------------- #
+# Domain
+
+
+# --8<-- [start:domain]
+class Product(Document):
+    name: str
+    price: int
+
+
+class ProductCreate(CreateDocumentCmd):
+    name: str
+    price: int
+
+
+class ProductUpdate(BaseDTO):
+    name: str | None = None
+    price: int | None = None
+
+
+class ProductRead(ReadDocument):
+    name: str
+    price: int
+
+
+# --8<-- [end:domain]
+
+
+# --8<-- [start:spec]
+PRODUCT_SPEC = DocumentSpec(
+    name="products",
+    read=ProductRead,
+    write=DocumentWriteTypes(
+        domain=Product, create_cmd=ProductCreate, update_cmd=ProductUpdate
+    ),
+    cache=CacheSpec(name="products"),  # reads cached, writes invalidate
+)
+# --8<-- [end:spec]
+
+
+PRODUCT_PG = PostgresDocumentConfig(
+    read=("public", "products"),
+    write=("public", "products"),
+    bookkeeping_strategy="application",
+)
+
+# A demo creates its own table; real apps own their schema via migrations.
+SCHEMA = """
+CREATE TABLE IF NOT EXISTS public.products (
+    id             uuid PRIMARY KEY,
+    rev            bigint      NOT NULL DEFAULT 1,
+    created_at     timestamptz NOT NULL DEFAULT now(),
+    last_update_at timestamptz NOT NULL DEFAULT now(),
+    name           text        NOT NULL,
+    price          integer     NOT NULL
+)
+"""
+
+# ----------------------- #
+# Wiring — Postgres stores documents, Redis caches reads.
+
+
+# --8<-- [start:wiring]
+def build_runtime(
+    pg: PostgresClient,
+    redis: RedisClient,
+    *,
+    pg_dsn: str,
+    redis_dsn: str,
+) -> ExecutionRuntime:
+    deps = DepsRegistry.from_modules(
+        PostgresDepsModule(
+            client=pg, rw_documents={"products": PRODUCT_PG}, tx={"products"}
+        ),
+        # caches keyed by CacheSpec.name — this is the whole "cache reads" step
+        RedisDepsModule(
+            client=redis,
+            caches={"products": RedisCacheConfig(namespace="app:products")},
+        ),
+    )
+    lifecycle = LifecyclePlan.from_modules(
+        PostgresLifecycleModule(client=pg, dsn=pg_dsn, config=PostgresConfig()),
+    ).with_steps(redis_lifecycle_step(dsn=redis_dsn))
+
+    return ExecutionRuntime(deps=deps.freeze(), lifecycle=lifecycle.freeze())
+
+
+# --8<-- [end:wiring]
+
+
+# ----------------------- #
+# The cache scenario — handlers untouched; reads go through the cache.
+
+
+# --8<-- [start:read-through]
+async def cache_scenario(ctx: ExecutionContext) -> ProductRead:
+    docs = ctx.document.command(PRODUCT_SPEC)
+    query = ctx.document.query(PRODUCT_SPEC)
+    cache = ctx.cache(PRODUCT_SPEC.cache)  # pyright: ignore[reportArgumentType]
+
+    product = await docs.create(ProductCreate(name="Widget", price=10))
+
+    await query.get(product.id)  # miss → fills the cache
+    assert await cache.get(str(product.id)) is not None  # cached now
+
+    await docs.update(product.id, product.rev, ProductUpdate(price=12))  # invalidates
+    fresh = await query.get(product.id)  # repopulates, new value
+    assert fresh.price == 12
+
+    return fresh
+
+
+# --8<-- [end:read-through]
+
+
+async def main() -> None:
+    pg_dsn = os.environ.get(
+        "POSTGRES_DSN", "postgresql://forze:forze@localhost:5432/forze"
+    )
+    redis_dsn = os.environ.get("REDIS_DSN", "redis://localhost:6379/0")
+
+    pg = PostgresClient()
+    redis = RedisClient()
+    runtime = build_runtime(pg, redis, pg_dsn=pg_dsn, redis_dsn=redis_dsn)
+
+    async with runtime.scope():
+        await pg.execute(SCHEMA)  # demo bootstrap (real apps migrate instead)
+        result = await cache_scenario(runtime.get_context())
+        print(f"product cached and refreshed: price={result.price}")
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
