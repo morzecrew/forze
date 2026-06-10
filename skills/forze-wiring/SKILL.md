@@ -11,11 +11,11 @@ description: >-
 
 Use when setting up the Forze runtime, dependency registry, lifecycle, operation composition, and interface layer. For logical spec names, routes, and `StrEnum` wiring, see [`forze-specs-infrastructure`](../forze-specs-infrastructure/SKILL.md). For dependency resolution, see [`forze-deps-consumption`](../forze-deps-consumption/SKILL.md); for private integrations, see [`forze-custom-deps`](../forze-custom-deps/SKILL.md). For HTTP details, see [`forze-fastapi-interface`](../forze-fastapi-interface/SKILL.md). For day-to-day handler code, see [`forze-framework-usage`](../forze-framework-usage/SKILL.md).
 
-For which plan enables deps, lifecycle hooks, or operation stages, see [Three execution plans](https://morzecrew.github.io/forze/docs/reference/execution/#three-execution-plans) (`DepsRegistry`, `LifecyclePlan`, `OperationRegistry`).
+For which plan enables deps, lifecycle hooks, or operation stages, see [Three execution plans](https://morzecrew.github.io/forze/in-depth/wiring/) (`DepsRegistry`, `LifecyclePlan`, `OperationRegistry`).
 
 ## Runtime setup
 
-Logical **specs** (`DocumentSpec`, `SearchSpec`, `CacheSpec`, …) declare model types and `name` only—no DSNs, table names, collection paths, or index DDL. **Deps modules** (`PostgresDepsModule`, `MongoDepsModule`, `RedisDepsModule`, …) map that same `name` to physical configs (read/write relations, Redis namespaces, `PostgresSearchConfig`, …). **`DepsRegistry.from_modules(...)`** merges those modules so `ExecutionContext` resolves factories by route `spec.name` (for example `DocumentQueryDepKey` / `DocumentCommandDepKey`). See [Specs and wiring](https://morzecrew.github.io/forze/docs/concepts/specs-and-wiring/).
+Logical **specs** (`DocumentSpec`, `SearchSpec`, `CacheSpec`, …) declare model types and `name` only—no DSNs, table names, collection paths, or index DDL. **Deps modules** (`PostgresDepsModule`, `MongoDepsModule`, `RedisDepsModule`, …) map that same `name` to physical configs (read/write relations, Redis namespaces, `PostgresSearchConfig`, …). **`DepsRegistry.from_modules(...)`** merges those modules so `ExecutionContext` resolves factories by route `spec.name` (for example `DocumentQueryDepKey` / `DocumentCommandDepKey`). See [Specs and wiring](https://morzecrew.github.io/forze/in-depth/wiring/).
 
 ### Dependency registry
 
@@ -65,9 +65,9 @@ deps_registry = DepsRegistry.from_modules(
 )
 ```
 
-Alternatively, a single callable module may return `Deps.merge(...)` — see [Getting started](https://morzecrew.github.io/forze/docs/getting-started/).
+Alternatively, a single callable module may return `Deps.merge(...)` — see [Getting started](https://morzecrew.github.io/forze/get-started/quickstart/).
 
-Merge optional integration modules the same way — for example `TenancyDepsModule` from `forze_identity.tenancy.execution` registers `TenantResolverDepKey` / `TenantManagementDepKey` routes for document-backed tenant resolution (see [Multi-tenancy](https://morzecrew.github.io/forze/docs/concepts/multi-tenancy/)):
+Merge optional integration modules the same way — for example `TenancyDepsModule` from `forze_identity.tenancy.execution` registers `TenantResolverDepKey` / `TenantManagementDepKey` routes for document-backed tenant resolution (see [Multi-tenancy](https://morzecrew.github.io/forze/in-depth/multi-tenancy/)):
 
 ```python
 from forze_identity.tenancy.execution import TenancyDepsModule
@@ -205,7 +205,7 @@ registry = (
 
 ### Stage order
 
-Outer `before` / `wrap` / `on_success` / `on_failure` / `finally_`, then optional transaction scope (`tx_before`, handler, transactional `on_success`, `after_commit`, `dispatch_after_commit`). Higher `priority` runs first within the same stage. See [Middleware and plans](https://morzecrew.github.io/forze/docs/reference/middleware-plans/).
+Outer `before` / `wrap` / `on_success` / `on_failure` / `finally_`, then optional transaction scope (`tx_before`, handler, transactional `on_success`, `after_commit`, `dispatch_after_commit`). Higher `priority` runs first within the same stage. See [Middleware and plans](https://morzecrew.github.io/forze/in-depth/capability-execution/).
 
 ## FastAPI integration
 
@@ -328,7 +328,7 @@ router.register("project.created", lambda e: [EmailNotification(...)])
 # stage in handler; flush via outbox_flush_tx_on_success_factory; relay; worker calls process_notification_message
 ```
 
-See [Transactional notifications](https://morzecrew.github.io/forze/docs/recipes/transactional-notifications/).
+See [Transactional notifications](https://morzecrew.github.io/forze/recipes/transactional-notifications/).
 
 ## Anti-patterns
 
@@ -341,8 +341,8 @@ See [Transactional notifications](https://morzecrew.github.io/forze/docs/recipes
 
 ## Reference
 
-- [Getting started](https://morzecrew.github.io/forze/docs/getting-started/)
-- [Operation composition](https://morzecrew.github.io/forze/docs/concepts/operation-composition/)
-- [Composition reference](https://morzecrew.github.io/forze/docs/reference/composition/)
-- [FastAPI integration](https://morzecrew.github.io/forze/docs/integrations/fastapi/)
-- [Mock integration](https://morzecrew.github.io/forze/docs/integrations/mock/)
+- [Getting started](https://morzecrew.github.io/forze/get-started/quickstart/)
+- [Operation composition](https://morzecrew.github.io/forze/in-depth/capability-execution/)
+- [Composition reference](https://morzecrew.github.io/forze/in-depth/capability-execution/)
+- [FastAPI integration](https://morzecrew.github.io/forze/integrations/fastapi/)
+- [Mock integration](https://morzecrew.github.io/forze/integrations/)

@@ -1,68 +1,69 @@
-# Scheduled queue jobs
+---
+title: Scheduled & delayed jobs
+icon: lucide/calendar-clock
+summary: Delay a one-off job, or run work on a schedule — without Celery Beat
+---
 
-Use this recipe when work should run on a schedule or after a delay, without adding Celery Beat or a second orchestration product.
+Two different needs: **delay** a single job ("retry this in 5 minutes") and
+**recurring** schedules ("every night at 02:00"). Forze handles the first on the
+queue itself, and the second through a durable backend's scheduler.
 
-## Ingredients
+## Delay a one-off job
 
-- A `QueueSpec` and queue command port ([queue contracts](../core-package/contracts/queue.md))
-- [SQS](../integrations/sqs.md) or [RabbitMQ](../integrations/rabbitmq.md) (or [Mock](../integrations/mock.md) in tests)
-- An external scheduler (Kubernetes CronJob, systemd timer, cloud scheduler) **or** `delay` / `not_before` on enqueue
-
-## Pattern A: recurring jobs (cron)
-
-The scheduler lives **outside** Forze. It calls your API or a CLI that runs a handler with `ExecutionContext`.
-
-```text
-CronJob → POST /internal/jobs/daily-report → handler → queue.enqueue(...)
-Worker deployment → queue.receive / consume → domain logic → ack
-```
-
-Use a **deterministic message key** or idempotent handler when the scheduler may fire twice:
+`enqueue` takes a `delay` (relative `timedelta`) or a `not_before` (absolute
+tz-aware `datetime`) — the message stays invisible until then:
 
 ```python
-run_day = date.today().isoformat()
-await writer.enqueue(
-    "daily-report",
-    DailyReportPayload(day=run_day),
-    key=f"daily-{run_day}",
+from datetime import timedelta
+
+queue = ctx.deps.resolve_configurable(ctx, QueueCommandDepKey, JOBS_QUEUE, route=JOBS_QUEUE.name)
+
+await queue.enqueue("jobs", RetryCharge(invoice_id=id), delay=timedelta(minutes=5))
+# or a fixed time:
+await queue.enqueue("jobs", SendReminder(id=id), not_before=due_at)  # tz-aware datetime
+```
+
+!!! warning "`delay` and `not_before` are mutually exclusive"
+
+    Pass one or the other, never both. `delay` must be non-negative; `not_before`
+    must be timezone-aware. (`enqueued_at` is metadata only — it does **not**
+    delay delivery.)
+
+Backend limits:
+
+| Backend | Delayed delivery |
+|---------|------------------|
+| **SQS** | up to `SQS_MAX_DELAY` (15 minutes) — longer delays need a scheduler |
+| **RabbitMQ** | requires `RabbitMQQueueConfig(delayed_delivery=True)` on the route |
+| **Mock** | honoured in-memory |
+
+## Recurring schedules (cron)
+
+A queue delay is one-shot. For *recurring* work, register a **durable function**
+with a cron trigger — the durable backend ([Temporal](../integrations/temporal.md)
+/ [Inngest](../integrations/inngest.md)) owns the schedule:
+
+```python
+from forze.application.contracts.durable.function import (
+    DurableFunctionCronTrigger,
+    DurableFunctionSpec,
+)
+
+nightly = DurableFunctionSpec(
+    run=DurableFunctionInvokeSpec(...),
+    triggers=(DurableFunctionCronTrigger(expression="0 2 * * *"),),  # 02:00 daily
+    operation="reports.nightly",  # run the same frozen-registry operation as HTTP
 )
 ```
 
-For durable multi-step work, start a [Temporal workflow](../integrations/temporal.md) instead of a queue message, with a stable `workflow_id` per run day.
+Setting `operation` means the scheduled run executes the *same* handler your HTTP
+routes do — one implementation, two triggers.
 
-Alternatively, use [Inngest](../integrations/inngest.md) cron triggers with
-`DurableFunctionSpec.operation` so the worker runs the same frozen registry operation as HTTP
-(no external cron hitting an internal route).
+## Notes
 
-## Pattern B: defer after an event (delay)
-
-When a user action should trigger work later (for example a reminder in ten minutes), enqueue from the request handler:
-
-```python
-await writer.enqueue(
-    "reminders",
-    ReminderPayload(user_id=user_id),
-    delay=timedelta(minutes=10),
-)
-```
-
-| Backend | Notes |
-|---------|--------|
-| SQS | Max delay 15 minutes (`SQS_MAX_DELAY`) |
-| RabbitMQ | Requires `delayed_delivery=True` on `RabbitMQQueueConfig` for the writer route |
-| Mock | In-memory visibility time for tests |
-
-`enqueued_at` records metadata on the message; it does not delay delivery.
-
-## When to use something else
-
-| Need | Prefer |
-|------|--------|
-| Recurring **workflow** with pause/backfill | [Durable workflow schedule](../core-package/contracts/durable-workflow-schedule.md) or cron → `DurableWorkflowCommandPort.start` |
-| Delay longer than 15 minutes on SQS | External scheduler, DB outbox, or RabbitMQ with `delayed_delivery` |
-| Complex DAG / step UI | Temporal or a dedicated orchestrator |
-
-## Learn more
-
-- [Background workflow](background-workflow.md) — choosing queue vs Temporal
-- [Queue contracts](../core-package/contracts/queue.md) — `delay`, `not_before`, and backend limits
+- The **scheduler lives outside Forze** — the queue/durable backend fires the
+  trigger; Forze runs the work. There's no Celery Beat to operate.
+- To schedule a job *reliably* as part of a transaction, stage it through the
+  [outbox](transactional-outbox.md) rather than enqueuing inline.
+- For a single deferred run with no recurrence, the queue `delay` is simpler than
+  a durable function.

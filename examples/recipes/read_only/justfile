@@ -1,0 +1,15 @@
+set shell := ["bash", "-cu"]
+
+# Bring up Postgres and serve the read-only API on http://localhost:8000.
+run:
+    docker compose up -d --wait
+    POSTGRES_DSN=postgresql://forze:forze@localhost:5432/forze \
+        uv run --directory ../../.. uvicorn examples.recipes.read_only.app:app --reload
+
+# Start the infra only (leave it up for iterating).
+up:
+    docker compose up -d --wait
+
+# Stop and remove the infra.
+down:
+    docker compose down

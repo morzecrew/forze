@@ -1,29 +1,69 @@
-# Background workflow
+---
+title: Background work
+icon: lucide/workflow
+summary: Start work and return early — choosing between a queue task and a durable workflow
+---
 
-Use this recipe when a request should start long-running work and return before the work finishes.
+A request kicks off work that shouldn't block the response — sending a report,
+transcoding a video, running a multi-step fulfilment. Forze gives you two tools;
+the choice is about how much you need to *observe and orchestrate* the work.
 
-## Ingredients
+## Which one
 
-- A durable workflow spec from [durable workflow contracts](../core-package/contracts/durable-workflow.md)
-- [Temporal Integration](../integrations/temporal.md) for durable workflows, or a queue integration such as [RabbitMQ](../integrations/rabbitmq.md) or [SQS](../integrations/sqs.md)
-- A handler that resolves workflow or queue ports from `ExecutionContext`
+| | **Queue task** | **Durable workflow** |
+|---|----------------|----------------------|
+| Shape | one fire-and-forget unit | multi-step, long-running |
+| Status / result | none (it just runs) | `describe` / `query` / `result` |
+| Retries / timers / signals | basic redelivery | built in (Temporal / Inngest) |
+| Use when | "do this once, soon" | "run this process and let me track it" |
 
-## Steps
+Reach for a **queue** when the work is a single task you don't need to follow.
+Reach for a **durable workflow** when it has steps, can take minutes to days, or
+the caller needs to ask "is it done?".
 
-1. Define the command or message DTO that describes the work.
-2. Declare the workflow or queue spec with a logical name.
-3. Register the same name in the integration dependency module.
-4. Resolve the command port from a handler and enqueue/start work.
-5. Expose a status endpoint when needed: poll **`describe(handle)`** for coarse lifecycle (`running` / `completed` / …), optional app **`query()`** for step-level progress, then **`result(handle)`** once terminal.
+## Fire-and-forget with a queue
 
-## Choosing an integration
+Enqueue the work and return — a worker consumes it elsewhere:
 
-| Need | Prefer |
-|------|--------|
-| Durable orchestration, signals, queries, retries | [Temporal](../integrations/temporal.md) |
-| Simple message queue with external workers | [RabbitMQ](../integrations/rabbitmq.md) or [SQS](../integrations/sqs.md) |
-| Local tests without external services | [Mock](../integrations/mock.md) |
+```python
+from forze.application.contracts.queue import QueueCommandDepKey
 
-## Learn more
+queue = ctx.deps.resolve_configurable(ctx, QueueCommandDepKey, REPORTS_QUEUE, route=REPORTS_QUEUE.name)
+await queue.enqueue("reports", GenerateReport(account_id=account_id))
+# return 202 Accepted immediately
+```
 
-See [Durable contracts](../core-package/contracts/durable.md), [Contracts and Adapters](../concepts/contracts-adapters.md), and the integration page for the backend you choose. For cron-style or delayed enqueue patterns, see [Scheduled queue jobs](scheduled-queue-jobs.md).
+## Start a durable workflow
+
+`start` returns a handle the moment the workflow is accepted; the work continues
+in the durable backend:
+
+```python
+from forze.application.contracts.durable.workflow import DurableWorkflowCommandDepKey
+
+workflows = ctx.deps.resolve_configurable(ctx, DurableWorkflowCommandDepKey, FULFIL_SPEC, route=FULFIL_SPEC.name)
+handle = await workflows.start(FulfilOrder(order_id=order_id), workflow_id=f"fulfil-{order_id}")
+```
+
+Then observe it through the query port:
+
+```python
+from forze.application.contracts.durable.workflow import DurableWorkflowQueryDepKey, DurableWorkflowRunStatus
+
+q = ctx.deps.resolve_configurable(ctx, DurableWorkflowQueryDepKey, FULFIL_SPEC, route=FULFIL_SPEC.name)
+run = await q.describe(handle)                    # coarse lifecycle: RUNNING / COMPLETED / …
+if run.status is DurableWorkflowRunStatus.COMPLETED:
+    result = await q.result(handle)               # the typed return value
+# q.query(handle, query=…, args=…) reads in-flight workflow state
+```
+
+## Notes
+
+- A durable workflow needs a real backend — [Temporal](../integrations/temporal.md)
+  or [Inngest](../integrations/inngest.md) — for its durability, retries, and
+  timers. The queue path runs on any [queue backend](../integrations/rabbitmq.md).
+- A stable `workflow_id` makes `start` idempotent (`raise_on_already_started`
+  controls the collision behaviour).
+- To kick the work off *reliably* from a request — only if the write commits —
+  stage it through the [outbox](transactional-outbox.md) instead of enqueuing
+  directly.

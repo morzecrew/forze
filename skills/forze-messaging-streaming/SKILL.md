@@ -134,8 +134,8 @@ Use `StreamQueryDepKey` for `read` / `tail`, and `StreamGroupQueryDepKey` for co
 
 ## Reference
 
-- [SQS integration](https://morzecrew.github.io/forze/docs/integrations/sqs/)
-- [RabbitMQ integration](https://morzecrew.github.io/forze/docs/integrations/rabbitmq/)
-- [Queue contracts](https://morzecrew.github.io/forze/docs/core-package/contracts/queue/)
-- [Pub/Sub contracts](https://morzecrew.github.io/forze/docs/core-package/contracts/pubsub/)
-- [Stream contracts](https://morzecrew.github.io/forze/docs/core-package/contracts/stream/)
+- [SQS integration](https://morzecrew.github.io/forze/integrations/sqs/)
+- [RabbitMQ integration](https://morzecrew.github.io/forze/integrations/rabbitmq/)
+- [Queue contracts](https://morzecrew.github.io/forze/reference/contracts/messaging/)
+- [Pub/Sub contracts](https://morzecrew.github.io/forze/reference/contracts/)
+- [Stream contracts](https://morzecrew.github.io/forze/reference/contracts/)

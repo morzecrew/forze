@@ -1,33 +1,60 @@
-# Read-only document API
+---
+title: Read-only document API
+icon: lucide/book-open
+summary: Expose a typed query API for documents written by another service — no write side
+---
 
-Use this recipe when another system owns writes and your service only exposes typed reads.
+When a service only *reads* an aggregate — a projection, a lookup, a reporting
+view owned by someone else — give its spec `write=None`. No command port is
+registered, so the API can only query, and the wiring stays minimal.
 
-## Ingredients
+The runnable version lives at `examples/recipes/read_only/` — `just run` brings
+up ephemeral Postgres, seeds a couple of rows, and serves the read API.
 
-- A read model from [Domain Layer](../concepts/domain-layer.md)
-- A `DocumentSpec` with `write=None`
-- A read-capable storage integration such as [PostgreSQL](../integrations/postgres.md) or [MongoDB](../integrations/mongo.md)
-- Optional [FastAPI](../integrations/fastapi.md) read endpoints
+## A read-only spec
 
-## Steps
+`write=None` is the whole opt-in. The read model still inherits `id`, `rev`, and
+timestamps from `ReadDocument`:
 
-1. Define a `ReadDocument` subclass for the response shape.
-2. Create a `DocumentSpec` with the logical name and read model only.
-3. Register a read-only document route in the storage dependency module.
-4. Expose `get`, `get_many`, or `find_many` operations from a handler or FastAPI endpoint.
+```python
+--8<-- "recipes/read_only/app.py:spec"
+```
 
-## Minimal shape
+## Wire it read-only
 
-    :::python
-    from forze.application.contracts.document import DocumentSpec
+Register the document under **`ro_documents`** (not `rw_documents`) with a
+`PostgresReadOnlyDocumentConfig` — it carries only the read relation, no write
+tables or bookkeeping, and no transaction route is needed:
 
+```python
+--8<-- "recipes/read_only/app.py:wiring"
+```
 
-    project_read_spec = DocumentSpec(
-        name="projects",
-        read=ProjectReadModel,
-        write=None,
-    )
+!!! note "Data gets in elsewhere"
 
-## Notes
+    A read-only doc has **no command port** — `ctx.document.command(spec)` won't
+    resolve. The writer is another service (or a migration); the example seeds
+    rows directly through the client just to be self-contained.
 
-Read-only specs are useful for projections, reporting APIs, and integration boundaries where writes flow through another service.
+## Query routes
+
+Resolve `ctx.document.query(spec)` and call its read methods:
+
+```python
+--8<-- "recipes/read_only/app.py:routes"
+```
+
+The query port gives you the full read surface — pick by how you want misses
+handled:
+
+| Method | Returns | On miss |
+|--------|---------|---------|
+| `get(id)` | the document | raises `not_found` → 404 |
+| `get_many(ids)` | a list | raises `not_found` if any is missing |
+| `find(filters)` | the document or `None` | returns `None` |
+| `find_many(filters, pagination, sorts)` | a `CountlessPage` (`.hits`) | empty page |
+| `find_page(...)` | a `Page` (adds `.count`) | empty page |
+| `count(filters)` | an `int` | `0` |
+
+Filters and sorts use the [query DSL](../reference/query-syntax.md); pagination
+is `{"limit": …, "offset": …}`.

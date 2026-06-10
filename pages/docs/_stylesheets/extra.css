@@ -1,0 +1,156 @@
+/* Hero lattice colour — orange in dark, steel blue in light.
+   (Swap the light value for the exact logo hex when available.) */
+/* The hero is always dark, so the lattice is always the orange accent. */
+[data-md-color-scheme="default"],
+[data-md-color-scheme="slate"] {
+  --forze-hero-color: var(--md-accent-fg-color);
+  --forze-hero-boost: 1;
+}
+
+/* Home is forced to the dark scheme — hide the palette toggle there. */
+.forze-home [data-md-component="palette"] {
+  display: none;
+}
+
+/* No footer on the home page. */
+.forze-home .md-footer {
+  display: none;
+}
+
+/* Home fits exactly one screen — no vertical scroll. */
+.forze-home {
+  overflow: hidden;
+}
+
+.forze-home .md-main__inner {
+  margin-top: 0;
+}
+
+.forze-home .md-content__inner {
+  margin: 0;
+  padding: 0;
+}
+
+.forze-home .md-content__inner::before {
+  display: none;
+}
+
+.forze-home .forze-hero {
+  min-height: 0;
+  height: calc(100vh - var(--forze-top, 4.8rem));
+}
+
+/* Center diagrams and content images. */
+.md-typeset img {
+  display: block;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+/* Make markdown tables use the full content width */
+.md-typeset .md-typeset__table {
+  display: block !important;
+  width: 100% !important;
+}
+
+.md-typeset .md-typeset__table > table {
+  display: table !important;
+  width: 100% !important;
+  max-width: none !important;
+}
+
+/* ---- Landing hero ---- */
+.md-typeset .forze-hero {
+  position: relative;
+  display: flex;
+  align-items: center;
+  /* full-bleed: break out of the content column to span the viewport */
+  width: 100vw;
+  left: 50%;
+  right: 50%;
+  margin-left: -50vw;
+  margin-right: -50vw;
+  min-height: calc(100vh - 6rem);
+  padding: 1rem 1.5rem 1rem max(1.2rem, calc((100vw - 61rem) / 2));
+  overflow: hidden;
+}
+
+.forze-hero__canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 0;
+  pointer-events: none;
+}
+
+.md-typeset .forze-hero__text {
+  position: relative;
+  z-index: 1;
+  max-width: 34rem;
+  text-shadow: 0 0 22px var(--md-default-bg-color), 0 1px 4px var(--md-default-bg-color);
+}
+
+.md-typeset .forze-hero__text h1 {
+  font-weight: 800;
+  font-size: 3.2rem;
+  line-height: 1.1;
+  margin: 0 0 0.8rem;
+}
+
+/* No permalink pilcrow on the hero title. */
+.md-typeset .forze-hero .headerlink {
+  display: none;
+}
+
+.md-typeset .forze-hero__text > p:first-of-type {
+  font-size: 1.1rem;
+  color: var(--md-default-fg-color--light);
+  margin: 0 0 1.6rem;
+}
+
+.md-typeset .forze-hero .md-button {
+  margin: 0.3rem 0.5rem 0.3rem 0;
+}
+
+@media screen and (max-width: 59.9375em) {
+  .md-typeset .forze-hero {
+    min-height: 72vh;
+  }
+
+  /* On small screens let the home flow/scroll naturally (browser-chrome vh). */
+  .forze-home {
+    overflow: visible;
+  }
+
+  .forze-home .forze-hero {
+    height: auto;
+  }
+
+  .forze-hero__canvas {
+    opacity: 0.6;
+  }
+}
+
+.md-typeset .forze-hero .md-button--primary {
+  background-color: var(--md-accent-fg-color);
+  border-color: var(--md-accent-fg-color);
+  color: #fff;
+}
+
+.md-typeset .forze-hero .md-button--primary:hover {
+  background-color: var(--md-default-fg-color);
+  border-color: var(--md-default-fg-color);
+  color: var(--md-default-bg-color);
+}
+
+/* ---- Card hover lift ---- */
+.md-typeset .grid.cards > ul > li {
+  transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
+}
+
+.md-typeset .grid.cards > ul > li:hover {
+  border-color: var(--md-accent-fg-color);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.08);
+  transform: translateY(-2px);
+}

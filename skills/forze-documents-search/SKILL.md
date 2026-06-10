@@ -105,9 +105,9 @@ Keep snapshot storage and cursor/keyset behavior in infrastructure config; use t
 
 ## Reference
 
-- [Specs and wiring](https://morzecrew.github.io/forze/docs/concepts/specs-and-wiring/)
-- [Document contracts](https://morzecrew.github.io/forze/docs/core-package/contracts/document/)
-- [Query syntax](https://morzecrew.github.io/forze/docs/core-package/query-syntax/)
-- [Contracts overview](https://morzecrew.github.io/forze/docs/core-package/contracts/)
-- [Postgres integration](https://morzecrew.github.io/forze/docs/integrations/postgres/)
-- [Mongo integration](https://morzecrew.github.io/forze/docs/integrations/mongo/)
+- [Specs and wiring](https://morzecrew.github.io/forze/in-depth/wiring/)
+- [Document contracts](https://morzecrew.github.io/forze/reference/contracts/document/)
+- [Query syntax](https://morzecrew.github.io/forze/reference/query-syntax/)
+- [Contracts overview](https://morzecrew.github.io/forze/reference/contracts/)
+- [Postgres integration](https://morzecrew.github.io/forze/integrations/postgres/)
+- [Mongo integration](https://morzecrew.github.io/forze/integrations/mongo/)

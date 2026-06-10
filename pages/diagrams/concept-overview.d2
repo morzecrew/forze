@@ -1,0 +1,46 @@
+style: {
+    fill: transparent
+}
+
+vars: {
+    d2-config: {
+        pad: 40
+    }
+}
+
+direction: right
+
+App: {
+    shape: rectangle
+    label: |md
+        ### Your app
+        Domain models
+        & operations
+    |
+}
+
+Context: {
+    shape: rectangle
+    style: {
+        stroke: "#4a90d9"
+        stroke-width: 2
+    }
+    label: |md
+        ### Execution context
+        _The Seam_
+    |
+}
+
+Infra: {
+    shape: rectangle
+    label: |md
+        ### Infrastructure
+        Postgres · Redis · S3 · queues
+    |
+}
+
+App -> Context: asks
+Context -> Infra: resolves
+Context -> App: adapter {
+    style.stroke-dash: 3
+}

@@ -1,181 +1,60 @@
-# Google BigQuery Integration
+---
+title: BigQuery
+icon: lucide/bar-chart-3
+summary: Named, parameterized warehouse queries on Google BigQuery
+---
 
-## What this integration provides
+`forze[bigquery]` implements the analytics contracts on Google BigQuery — named,
+parameterized SQL against pre-provisioned tables, plus optional append. This is
+warehouse reads, not OLTP document storage.
 
-Run named Standard SQL queries and optional streaming row appends behind Forze analytics contracts without coupling handlers to the BigQuery SDK.
+## Install
 
-## When to use it
+```bash
+uv add 'forze[bigquery]'
+```
 
-Use this when you run on GCP (or the [goccy/bigquery-emulator](https://github.com/goccy/bigquery-emulator) for local tests) and want async HTTP access via [`gcloud-aio-bigquery`](https://pypi.org/project/gcloud-aio-bigquery/), aligned with [`forze_gcs`](gcs.md).
+Needs Google BigQuery (or the `goccy/bigquery-emulator` via
+`BIGQUERY_EMULATOR_HOST`).
 
-## Standard setup checklist
+## The client
 
-1. Install the `bigquery` optional extra.
-2. Declare `AnalyticsSpec` routes and named queries in application code.
-3. Map each route to dataset, SQL templates, and optional ingest table in `BigQueryDepsModule`.
-4. Add `bigquery_lifecycle_step` or `routed_bigquery_lifecycle_step` when the client opens network connections.
-5. Resolve ports from `ExecutionContext`; do not import adapters in handlers.
+```python
+from forze_bigquery import BigQueryClient
 
-Use `RoutedBigQueryClient` when tenant identity selects GCP project and credentials (JSON secret per tenant).
+bq = BigQueryClient()
+```
 
-`forze_bigquery` implements `AnalyticsQueryPort` and, when configured, `AnalyticsIngestPort` on the same adapter.
+`RoutedBigQueryClient` resolves a per-tenant project/credentials.
 
-## Installation
+## Wire it
 
-    :::bash
-    uv add 'forze[bigquery]'
+Each analytics route maps `query_key`s to SQL, keyed by `AnalyticsSpec.name`:
 
-## Runtime wiring
+```python
+from forze.application.execution import DepsRegistry, LifecyclePlan
+from forze_bigquery import BigQueryAnalyticsConfig, BigQueryClient, BigQueryDepsModule, BigQueryQueryConfig, bigquery_lifecycle_step
 
-    :::python
-    from forze.application.execution import DepsRegistry, ExecutionRuntime, LifecyclePlan
-    from forze_bigquery import BigQueryClient, BigQueryDepsModule, bigquery_lifecycle_step
+events = BigQueryAnalyticsConfig(
+    dataset="analytics",
+    queries={"daily": BigQueryQueryConfig(sql="SELECT day, value FROM analytics.metrics WHERE day = @day")},
+)
 
-    client = BigQueryClient()
-    module = BigQueryDepsModule(
-        client=client,
-        analytics={
-            "events": {
-                "dataset": "analytics",
-                "queries": {
-                    "daily": {
-                        "sql": (
-                            "SELECT event, value FROM analytics.metrics "
-                            "WHERE day = @day"
-                        ),
-                    },
-                },
-                "ingest_table": "events_raw",
-                "insert_id_field": "event_id",
-            },
-        },
-    )
+deps = DepsRegistry.from_modules(BigQueryDepsModule(client=bq, analytics={"events": events}))
+lifecycle = LifecyclePlan.from_steps(bigquery_lifecycle_step(project_id="my-project"))
+```
 
-    runtime = ExecutionRuntime(
-        deps=DepsRegistry.from_modules(module).freeze(),
-        lifecycle=LifecyclePlan.from_steps(
-            bigquery_lifecycle_step(project_id="my-gcp-project"),
-        ).freeze(),
-    )
+## What it provides
 
-### Emulator (goccy/bigquery-emulator)
+| Contract | Keyed by |
+|----------|----------|
+| Analytics query (`run` / `run_page` / `run_cursor` / `run_chunked`) | `AnalyticsSpec.name` |
+| Analytics ingest (`append`) | `AnalyticsSpec.name` (`ingest_relation`) |
 
-For local development and integration tests, set `BIGQUERY_EMULATOR_HOST` to the emulator base URL **before** starting the runtime (for example `http://localhost:9050`). The client reads this environment variable at initialization; lifecycle and application code do not take an emulator URL parameter.
+## Notes
 
-Start the emulator (for example `ghcr.io/goccy/bigquery-emulator:latest` on port 9050), then wire lifecycle as usual:
-
-    :::python
-    bigquery_lifecycle_step(project_id="test-project")
-
-### Service account credentials
-
-By default the client uses Application Default Credentials. To use an explicit key file:
-
-    :::python
-    bigquery_lifecycle_step(
-        project_id="my-gcp-project",
-        service_file="/path/to/service-account.json",
-    )
-
-### Routed client (multi-tenant credentials)
-
-Register `RoutedBigQueryClient` under `BigQueryClientDepKey` and use `routed_bigquery_lifecycle_step(client=routed_bq)`. Do not combine routed and non-routed lifecycle steps for the same instance.
-
-Per-tenant secrets resolve to `BigQueryRoutingCredentials` (`project_id`, and optionally `service_file` or `service_account_json`):
-
-    :::json
-    {
-      "project_id": "tenant-a-gcp",
-      "service_file": "/secrets/tenant-a.json"
-    }
-
-### What gets registered
-
-| Key | Capability |
-|-----|-----------|
-| `BigQueryClientDepKey` | Raw BigQuery client (`Job` / `Table` via shared `aiohttp` session) |
-| `AnalyticsQueryDepKey` | Query port adapter factory |
-| `AnalyticsIngestDepKey` | Ingest port adapter factory (when ingest is configured) |
-
-For framework tests or advanced wiring, prefer `from forze_bigquery.execution.deps import ConfigurableBigQueryAnalytics` rather than removed `forze_bigquery.execution.deps.deps` paths.
-
-## Configuration
-
-Physical mapping lives on `BigQueryDepsModule.analytics`, keyed by `AnalyticsSpec.name`:
-
-| Field | Purpose |
-|-------|---------|
-| `queries` | Map of `query_key` → `sql` (+ optional `maximum_bytes_billed`, `skip_total`) |
-| `ingest_relation` | Ingest target as static `(dataset, table)` or tenant `ValueResolver`. Preferred when `AnalyticsSpec.ingest` is set. |
-| `dataset` | Legacy dataset id for `ingest_table` when `ingest_relation` is omitted. |
-| `ingest_table` | Legacy table id for `append`; use `ingest_relation` for relation-level isolation. |
-| `insert_id_field` | Optional row field for streaming insert deduplication |
-| `max_append_rows` | Optional cap per `append` batch (default 10_000) |
-
-Query keys in config **must** match `AnalyticsSpec.queries`. The module validates this at build time.
-
-## SQL templates
-
-- Use **Standard SQL** (`use_legacy_sql=False` is enforced in the adapter).
-- Name parameters with `@field` placeholders; values come from the spec’s Pydantic `params` model via BigQuery `queryParameters`.
-- Offset pagination is applied in SQL (`LIMIT` / `OFFSET`) or by slicing small result sets.
-- `run_page` runs a `COUNT(*)` wrapper around your query SQL, then the data query, so totals are available on `Page.total`. Set `skip_total: true` on a query to skip the COUNT (``Page.total`` is ``None``).
-- Streaming inserts may partially fail; `AnalyticsAppendResult.rejected` and `.errors` surface row-level `insertErrors` when present.
-
-### Analytics queries and tenancy
-
-**Ingest** uses `ingest_relation` (resolved per request with `tenant_provider`). **Query** SQL in `queries.*.sql` is executed **as written**—Forze does not inject dataset or table names into query text.
-
-| Concern | Framework | Application |
-|---------|-----------|-------------|
-| Append target | `ingest_relation` / `resolved_ingest_relation()` | Static `(dataset, table)` or `ValueResolver` |
-| Read SQL | Not rewritten | Use fully qualified `` `project.dataset.table` `` (or project from routed credentials) |
-
-Recommended patterns:
-
-1. **Project-per-tenant** — `RoutedBigQueryClient` with per-tenant GCP project in secrets; static dataset/table names in SQL within that project.
-2. **Dataset-per-tenant** — `ingest_relation` resolver for append; qualify read SQL with the tenant dataset (or use views).
-3. **Shared project** — hard-code dataset/table in SQL, separate routes per layout, or bind `tenant_id` in `WHERE` via `@param` placeholders from the params model.
-
-See [Multi-tenancy — relation-level isolation](../concepts/multi-tenancy.md#relation-level-isolation-all-integrations).
-
-## Using analytics ports
-
-    :::python
-    from forze.application.contracts.analytics import AnalyticsSpec
-
-    async with runtime.session() as ctx:
-        q = ctx.analytics.query(spec)
-        page = await q.run_page("daily", DailyParams(day="2026-01-01"))
-        await ctx.analytics.ingest(spec).append([EventRow(event="signup", value=1)])
-
-Pass `AnalyticsRunOptions` (`dry_run`, `max_rows`, `timeout`) per request; the adapter maps `dry_run` to BigQuery dry-run queries and respects byte limits via `BigQueryConfig.maximum_bytes_billed`.
-
-## Operation reference
-
-| Port method | Behavior |
-|-------------|----------|
-| `run` / `project_run` / `select_run` | Execute named query; return `CountlessPage` |
-| `run_page` | COUNT wrapper + data query → `Page` with total |
-| `run_cursor` | Encode/decode BigQuery `pageToken` in cursor `after` |
-| `run_chunked` | Page through `get_query_results` until exhausted |
-| `append` | Streaming `Table.insert` with optional `insert_id_field` |
-
-## Multi-tenant datasets
-
-- **Connection routing:** `RoutedBigQueryClient` resolves per-tenant `project_id` and credentials from `SecretsPort` (see routed client above).
-- **Dataset names:** still configured per `AnalyticsSpec` route in `BigQueryDepsModule.analytics` (static `dataset` or deploy-time separate routes). Routed clients do not auto-resolve dataset from tenant identity.
-
-## Client health
-
-Call `await client.health()` after lifecycle startup for readiness checks (lightweight dry-run query).
-
-## Out of scope (v1)
-
-Load jobs, `MERGE`, DDL, per-route dataset resolvers, and bulk ETL. Prefer queue/stream handoff plus external loaders for large pipelines; see [Analytics contracts](../core-package/contracts/analytics.md).
-
-## Related pages
-
-- [Analytics contracts](../core-package/contracts/analytics.md)
-- [Mock integration](mock.md) — in-memory adapter for unit tests
-- [Google Cloud Storage](gcs.md) — shared `gcloud-aio` stack
+- **Tables are pre-provisioned**; queries are named Standard SQL with `@param`
+  placeholders bound from each query's params model. Forze does **not** rewrite
+  read SQL — qualify tables yourself.
+- Ingest targets a relation `(dataset, table)`, static or a per-tenant resolver.
+- Out of scope: load jobs, `MERGE`, and DDL — manage those externally.
