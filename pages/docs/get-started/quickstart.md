@@ -86,8 +86,9 @@ calls an operation — the handlers never touch HTTP:
 ```
 
 `register_exception_handlers` maps a `CoreException` to a response, so a missing
-user comes back as a `404`. (Higher-level route builders are
-[planned](../integrations/fastapi.md); for now routes are hand-wired.)
+user comes back as a `404`. (Routes are hand-wired here to show the moving
+parts — [generated routes](../integrations/fastapi.md#generated-routes) can
+attach the CRUD endpoints from the registry instead.)
 
 ## Step 7 — Run it
 

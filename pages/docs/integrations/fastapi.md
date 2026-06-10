@@ -1,13 +1,14 @@
 ---
 title: FastAPI
 icon: lucide/globe
-summary: Run an ExecutionRuntime behind FastAPI — lifespan, request context, and error mapping
+summary: Run an ExecutionRuntime behind FastAPI — lifespan, request context, error mapping, and generated routes
 ---
 
 `forze[fastapi]` connects an `ExecutionRuntime` to a FastAPI app: it runs the
 runtime from the app's lifespan, binds per-request context (and identity) via
-middleware, and maps `CoreException`s to HTTP responses. Routes themselves are
-ordinary FastAPI handlers that resolve the context and run operations.
+middleware, and maps `CoreException`s to HTTP responses. Routes are ordinary
+FastAPI handlers that resolve the context and run operations — written by hand,
+or [generated from an operation registry](#generated-routes).
 
 ## Install
 

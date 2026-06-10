@@ -29,7 +29,7 @@ Skills load automatically when the agent detects a relevant task (handlers, wiri
 | **forze-deps-consumption** | Plain vs routed deps, `route=spec.name`, built-in `*DepsModule`, merge debugging. |
 | **forze-custom-deps** | Advanced: custom `DepKey` and `DepsModule` for private integrations. |
 | **forze-documents-search** | Document/search ports, query DSL, cache-aware specs, Postgres/Mongo/Firestore + Meilisearch behavior. |
-| **forze-fastapi-interface** | FastAPI context deps, endpoints, middleware, idempotency, ETags, errors. |
+| **forze-fastapi-interface** | FastAPI context deps, generated routes (`attach_*_routes`), middleware, errors. |
 | **forze-storage-s3** | `StorageSpec`, `S3DepsModule`, tenant-aware buckets, lifecycle, mock tests. |
 | **forze-storage-gcs** | GCS storage with `GCSDepsModule`, emulator, tenant-aware buckets, mock tests. |
 | **forze-http-outbound** | Outbound HTTP: declarative `BaseHttpIntegration` / `async_http_op`, `HttpServiceSpec`, `HttpxDepsModule`, auth, tenant routing. |
