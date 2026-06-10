@@ -188,10 +188,12 @@ async def test_typed_local_source_view_is_queryable_real_engine(
     becomes a queryable view on a real engine — no network/extension install."""
 
     parquet = tmp_path / "events.parquet"
-    duckdb.connect().execute(
-        "COPY (SELECT * FROM (VALUES ('a', 10), ('b', 20)) t(day, total)) "
-        f"TO '{parquet}' (FORMAT parquet)"
-    )
+    with duckdb.connect() as conn:
+        conn.execute(
+            "COPY (SELECT * FROM (VALUES ('a', 10), ('b', 20)) t(day, total)) "
+            "TO ? (FORMAT parquet)",
+            [str(parquet)],
+        )
 
     client = DuckDbClient()
     ctx = context_from_deps(Deps.plain({DuckDbClientDepKey: client}))

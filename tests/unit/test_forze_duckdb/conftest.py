@@ -53,11 +53,13 @@ def events_parquet(tmp_path: Path) -> str:
     """Write a tiny deterministic events Parquet file and return its path."""
 
     path = tmp_path / "events.parquet"
-    duckdb.connect().execute(
-        "COPY (SELECT * FROM (VALUES ('a', 10), ('b', 20), ('c', 30), ('d', 40)) "
-        "t(day, total)) "
-        f"TO '{path}' (FORMAT parquet)"
-    )
+    with duckdb.connect() as conn:
+        conn.execute(
+            "COPY (SELECT * FROM (VALUES ('a', 10), ('b', 20), ('c', 30), ('d', 40)) "
+            "t(day, total)) "
+            "TO ? (FORMAT parquet)",
+            [str(path)],
+        )
 
     return str(path)
 

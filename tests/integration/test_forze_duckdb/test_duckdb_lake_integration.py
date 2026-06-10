@@ -196,3 +196,6 @@ async def test_local_iceberg_table_read(tmp_path: Path) -> None:
 
     finally:
         await client.close()
+        # Dispose the catalog's SQLAlchemy engine; its pooled sqlite connections
+        # otherwise leak and surface as ResourceWarnings in unrelated tests.
+        catalog.close()

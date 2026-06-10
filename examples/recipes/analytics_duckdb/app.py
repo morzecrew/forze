@@ -78,11 +78,13 @@ def _write_sample_lake(directory: Path) -> Path:
     """Write a tiny Parquet 'lake' the demo can query (stands in for S3/GCS)."""
 
     path = directory / "sales.parquet"
-    duckdb.connect().execute(
-        "COPY (SELECT * FROM (VALUES "
-        "('eu', 10), ('eu', 5), ('us', 30), ('us', 20), ('apac', 8)"
-        f") t(region, total)) TO '{path}' (FORMAT parquet)"
-    )
+    with duckdb.connect() as conn:
+        conn.execute(
+            "COPY (SELECT * FROM (VALUES "
+            "('eu', 10), ('eu', 5), ('us', 30), ('us', 20), ('apac', 8)"
+            ") t(region, total)) TO ? (FORMAT parquet)",
+            [str(path)],
+        )
     return path
 
 

@@ -4,6 +4,7 @@ concurrency constraints (event-loop responsiveness, timeout via cursor interrupt
 from __future__ import annotations
 
 import asyncio
+import contextlib
 from datetime import timedelta
 
 import pytest
@@ -99,6 +100,8 @@ async def test_event_loop_stays_responsive_under_heavy_query(
         await client.run_query(_HEAVY_SQL)
     finally:
         ticker_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await ticker_task
 
     # If the loop had been blocked, ticks would be ~0. We only require a few.
     assert ticks >= 3

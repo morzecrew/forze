@@ -31,7 +31,7 @@ class DuckDbQueryConfig:
 
     def __attrs_post_init__(self) -> None:
         if not self.sql.strip():
-            raise exc.internal("Analytics query sql must be non-empty.")
+            raise exc.configuration("Analytics query sql must be non-empty.")
 
 
 # ....................... #

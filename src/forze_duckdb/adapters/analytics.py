@@ -187,6 +187,9 @@ class DuckDbAnalyticsAdapter[R: BaseModel](
         options: AnalyticsRunOptions | None = None,
         fetch_batch_size: int = 2000,
     ) -> AsyncGenerator[Sequence[R]]:
+        if fetch_batch_size <= 0:
+            raise exc.precondition("fetch_batch_size must be a positive integer.")
+
         params = self._validated_params(query_key, params)
 
         if dry_run_enabled(options):
@@ -218,6 +221,9 @@ class DuckDbAnalyticsAdapter[R: BaseModel](
         options: AnalyticsRunOptions | None = None,
         fetch_batch_size: int = 2000,
     ) -> AsyncGenerator[Sequence[T]]:
+        if fetch_batch_size <= 0:
+            raise exc.precondition("fetch_batch_size must be a positive integer.")
+
         params = self._validated_params(query_key, params)
 
         if dry_run_enabled(options):
