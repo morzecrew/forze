@@ -98,6 +98,11 @@
   margin: 0 0 0.8rem;
 }
 
+/* No permalink pilcrow on the hero title. */
+.md-typeset .forze-hero .headerlink {
+  display: none;
+}
+
 .md-typeset .forze-hero__text > p:first-of-type {
   font-size: 1.1rem;
   color: var(--md-default-fg-color--light);
