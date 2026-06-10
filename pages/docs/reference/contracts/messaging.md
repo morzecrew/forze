@@ -52,13 +52,16 @@ relay. See [Transactional outbox](../../recipes/transactional-outbox.md).
 
 | Method | Signature | Notes |
 |--------|-----------|-------|
-| `claim_pending` | `claim_pending(*, limit=None)` | claim a batch for relay |
+| `claim_pending` | `claim_pending(*, limit=None)` | claim a batch for relay; skips rows whose `available_at` is in the future |
 | `mark_published` | `mark_published(ids)` | mark relayed |
-| `mark_failed` | `mark_failed(ids, *, error=None)` | mark failed |
+| `mark_failed` | `mark_failed(ids, *, error=None)` | mark terminally failed (operator re-drives) |
+| `mark_retry` | `mark_retry(ids, *, attempts, available_at, error=None)` | reschedule for a future retry with the durable attempt counter |
 | `reclaim_stale_processing` | `reclaim_stale_processing(*, older_than)` | reset stuck rows to pending |
-| `requeue_failed` | `requeue_failed(ids)` | re-drive failed rows |
+| `requeue_failed` | `requeue_failed(ids)` | re-drive failed rows; resets `attempts` to 0 |
 
 (Most apps use the `relay_outbox_to_queue` kit rather than these directly.)
+Delivery is at-least-once and ordering is not preserved across
+failures/retries — consumers key on `event_id` and tolerate reordering.
 
 ## Inbox
 

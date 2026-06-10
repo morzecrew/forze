@@ -114,6 +114,9 @@ class OutboxClaim:
     occurred_at: datetime | None = None
     """When the event occurred."""
 
+    attempts: int = 0
+    """Completed publish attempts so far (durable retry counter)."""
+
 
 # ....................... #
 
@@ -121,7 +124,12 @@ class OutboxClaim:
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class OutboxRelayResult:
-    """Summary of a single relay pass."""
+    """Summary of a single relay pass.
+
+    Delivery is at-least-once and ordering is **not** preserved across
+    failures/retries — consumers must key on ``event_id`` and tolerate
+    reordering as well as redelivery.
+    """
 
     claimed: int = 0
     """Rows claimed from the outbox."""
@@ -130,7 +138,10 @@ class OutboxRelayResult:
     """Rows successfully enqueued and marked published."""
 
     failed: int = 0
-    """Rows marked failed during relay."""
+    """Rows marked terminally failed during relay."""
+
+    retried: int = 0
+    """Rows rescheduled for a future retry after a transient publish error."""
 
     reclaimed: int = 0
     """Rows reset from processing to pending before claim."""

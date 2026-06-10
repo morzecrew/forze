@@ -96,6 +96,9 @@ async def _relay_outbox_to(
     allow_unset_destination: bool = False,
     limit: int | None,
     reclaim_stale_after: timedelta | None,
+    max_attempts: int,
+    retry_base_delay: timedelta,
+    retry_max_backoff: timedelta,
 ) -> OutboxRelayResult:
     """Claim pending outbox rows and relay each via ``command.<method>(channel, ...)``.
 
@@ -130,6 +133,9 @@ async def _relay_outbox_to(
         publish_one=_publish,
         limit=limit,
         reclaim_stale_after=reclaim_stale_after,
+        max_attempts=max_attempts,
+        retry_base_delay=retry_base_delay,
+        retry_max_backoff=retry_max_backoff,
     )
 
 
@@ -143,14 +149,28 @@ async def relay_outbox_to_queue(
     queue_spec: QueueSpec[Any],
     limit: int | None = None,
     reclaim_stale_after: timedelta | None = timedelta(minutes=5),
+    max_attempts: int = 5,
+    retry_base_delay: timedelta = timedelta(seconds=1),
+    retry_max_backoff: timedelta = timedelta(minutes=5),
 ) -> OutboxRelayResult:
-    """Claim pending outbox rows, enqueue payloads, and mark published or failed.
+    """Claim pending outbox rows, enqueue payloads, and mark each row's outcome.
 
-    Delivery is **at-least-once**: rows are claimed (``pending`` → ``processing``),
-    enqueued one message per claim, then marked ``published``. Enqueue and
-    ``mark_published`` are not atomic—consumers should deduplicate on
+    Delivery is **at-least-once**, and ordering is **not preserved across
+    failures/retries**: a row rescheduled (or parked as ``failed``) does not
+    stall later rows. Rows are claimed (``pending`` → ``processing``), enqueued
+    one message per claim, then marked ``published``. Enqueue and
+    ``mark_published`` are not atomic—consumers must deduplicate on
     :attr:`~forze.application.contracts.outbox.IntegrationEvent.event_id` (or the
-    claim ``event_id``) when the queue supports idempotent handling.
+    claim ``event_id``) and tolerate reordering.
+
+    Failure handling per row (one row's failure never aborts the batch):
+
+    - Payload decode errors (poison) → ``mark_failed`` immediately; an operator
+      re-drives with ``requeue_failed`` after fixing the cause.
+    - Broker publish errors (transient) → rescheduled with exponential backoff
+      plus jitter (``retry_base_delay * 2**attempts``, capped at
+      *retry_max_backoff*) until *max_attempts* publish attempts are exhausted,
+      then ``mark_failed`` (terminal). ``requeue_failed`` resets the counter.
 
     Each successful enqueue passes ``key=str(claim.event_id)`` to
     :meth:`~forze.application.contracts.queue.QueueCommandPort.enqueue` when the
@@ -175,6 +195,9 @@ async def relay_outbox_to_queue(
         allow_unset_destination=True,
         limit=limit,
         reclaim_stale_after=reclaim_stale_after,
+        max_attempts=max_attempts,
+        retry_base_delay=retry_base_delay,
+        retry_max_backoff=retry_max_backoff,
     )
 
 
@@ -188,8 +211,17 @@ async def relay_outbox_to_stream(
     stream_spec: StreamSpec[Any],
     limit: int | None = None,
     reclaim_stale_after: timedelta | None = timedelta(minutes=5),
+    max_attempts: int = 5,
+    retry_base_delay: timedelta = timedelta(seconds=1),
+    retry_max_backoff: timedelta = timedelta(minutes=5),
 ) -> OutboxRelayResult:
-    """Claim pending outbox rows, append to a stream, and mark published or failed."""
+    """Claim pending outbox rows, append to a stream, and mark each row's outcome.
+
+    Same failure model and ordering caveats as :func:`relay_outbox_to_queue`:
+    at-least-once delivery, no ordering across failures/retries, poison rows
+    fail immediately, transient publish errors retry with backoff up to
+    *max_attempts*.
+    """
 
     return await _relay_outbox_to(
         ctx,
@@ -200,6 +232,9 @@ async def relay_outbox_to_stream(
         method="append",
         limit=limit,
         reclaim_stale_after=reclaim_stale_after,
+        max_attempts=max_attempts,
+        retry_base_delay=retry_base_delay,
+        retry_max_backoff=retry_max_backoff,
     )
 
 
@@ -213,8 +248,17 @@ async def relay_outbox_to_pubsub(
     pubsub_spec: PubSubSpec[Any],
     limit: int | None = None,
     reclaim_stale_after: timedelta | None = timedelta(minutes=5),
+    max_attempts: int = 5,
+    retry_base_delay: timedelta = timedelta(seconds=1),
+    retry_max_backoff: timedelta = timedelta(minutes=5),
 ) -> OutboxRelayResult:
-    """Claim pending outbox rows, publish to a topic, and mark published or failed."""
+    """Claim pending outbox rows, publish to a topic, and mark each row's outcome.
+
+    Same failure model and ordering caveats as :func:`relay_outbox_to_queue`:
+    at-least-once delivery, no ordering across failures/retries, poison rows
+    fail immediately, transient publish errors retry with backoff up to
+    *max_attempts*.
+    """
 
     return await _relay_outbox_to(
         ctx,
@@ -225,6 +269,9 @@ async def relay_outbox_to_pubsub(
         method="publish",
         limit=limit,
         reclaim_stale_after=reclaim_stale_after,
+        max_attempts=max_attempts,
+        retry_base_delay=retry_base_delay,
+        retry_max_backoff=retry_max_backoff,
     )
 
 
@@ -240,6 +287,9 @@ async def relay_outbox(
     pubsub_spec: PubSubSpec[Any] | None = None,
     limit: int | None = None,
     reclaim_stale_after: timedelta | None = timedelta(minutes=5),
+    max_attempts: int = 5,
+    retry_base_delay: timedelta = timedelta(seconds=1),
+    retry_max_backoff: timedelta = timedelta(minutes=5),
 ) -> OutboxRelayResult:
     """Relay using :attr:`~forze.application.contracts.outbox.OutboxSpec.destination`."""
 
@@ -260,6 +310,9 @@ async def relay_outbox(
                 queue_spec=queue_spec,
                 limit=limit,
                 reclaim_stale_after=reclaim_stale_after,
+                max_attempts=max_attempts,
+                retry_base_delay=retry_base_delay,
+                retry_max_backoff=retry_max_backoff,
             )
 
         case "stream":
@@ -273,6 +326,9 @@ async def relay_outbox(
                 stream_spec=stream_spec,
                 limit=limit,
                 reclaim_stale_after=reclaim_stale_after,
+                max_attempts=max_attempts,
+                retry_base_delay=retry_base_delay,
+                retry_max_backoff=retry_max_backoff,
             )
 
         case "pubsub":
@@ -286,6 +342,9 @@ async def relay_outbox(
                 pubsub_spec=pubsub_spec,
                 limit=limit,
                 reclaim_stale_after=reclaim_stale_after,
+                max_attempts=max_attempts,
+                retry_base_delay=retry_base_delay,
+                retry_max_backoff=retry_max_backoff,
             )
 
         case _:  # pyright: ignore[reportUnnecessaryComparison]

@@ -71,6 +71,7 @@ def _claim_from_doc(doc: JsonDict) -> OutboxClaim:
             else None
         ),
         occurred_at=doc.get("occurred_at"),
+        attempts=int(doc.get("attempts") or 0),
     )
 
 
@@ -166,6 +167,8 @@ class MongoOutboxStore[M: BaseModel](TenancyMixin, OutboxQueryPort):
                     "processing_at": None,
                     "published_at": None,
                     "last_error": None,
+                    "attempts": 0,
+                    "available_at": None,
                 }
             )
 
@@ -203,6 +206,11 @@ class MongoOutboxStore[M: BaseModel](TenancyMixin, OutboxQueryPort):
         claims: list[OutboxClaim] = []
         base_filter = self._route_filter()
         base_filter["status"] = OutboxStatus.PENDING.value
+        # NULL/absent available_at means immediately claimable.
+        base_filter["$or"] = [
+            {"available_at": None},
+            {"available_at": {"$lte": now}},
+        ]
 
         for _ in range(max_n):
             doc = await self.client.find_one_and_update(
@@ -264,6 +272,35 @@ class MongoOutboxStore[M: BaseModel](TenancyMixin, OutboxQueryPort):
             {"$set": update},
         )
 
+    async def mark_retry(
+        self,
+        ids: Sequence[UUID],
+        *,
+        attempts: int,
+        available_at: datetime,
+        error: str | None = None,
+    ) -> int:
+        if not ids:
+            return 0
+
+        coll = await self._collection()
+        return await self.client.update_many(
+            coll,
+            {
+                "id": {"$in": [str(i) for i in ids]},
+                "status": OutboxStatus.PROCESSING.value,
+            },
+            {
+                "$set": {
+                    "status": OutboxStatus.PENDING.value,
+                    "processing_at": None,
+                    "attempts": attempts,
+                    "available_at": available_at,
+                    "last_error": error,
+                }
+            },
+        )
+
     async def reclaim_stale_processing(
         self,
         *,
@@ -302,6 +339,8 @@ class MongoOutboxStore[M: BaseModel](TenancyMixin, OutboxQueryPort):
                     "processing_at": None,
                     "published_at": None,
                     "last_error": None,
+                    "attempts": 0,
+                    "available_at": None,
                 }
             },
         )

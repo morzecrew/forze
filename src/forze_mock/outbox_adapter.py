@@ -44,6 +44,8 @@ class MockOutboxRow:
     published_at: datetime | None = None
     processing_at: datetime | None = None
     last_error: str | None = None
+    attempts: int = 0
+    available_at: datetime | None = None
 
 
 # ....................... #
@@ -118,6 +120,7 @@ class MockOutboxStore[M: BaseModel](MockTenancyMixin, OutboxQueryPort):
                 r
                 for r in self.state.outbox_rows.get(route, [])
                 if r.status == OutboxStatus.PENDING
+                and (r.available_at is None or r.available_at <= now)
             ]
             pending.sort(key=lambda r: r.created_at)
             batch = pending[:max_n]
@@ -138,6 +141,7 @@ class MockOutboxStore[M: BaseModel](MockTenancyMixin, OutboxQueryPort):
                 correlation_id=r.correlation_id,
                 causation_id=r.causation_id,
                 occurred_at=r.occurred_at,
+                attempts=r.attempts,
             )
             for r in batch
         ]
@@ -152,6 +156,38 @@ class MockOutboxStore[M: BaseModel](MockTenancyMixin, OutboxQueryPort):
         error: str | None = None,
     ) -> int:
         return self._mark(ids, OutboxStatus.FAILED, error=error)
+
+    async def mark_retry(
+        self,
+        ids: Sequence[UUID],
+        *,
+        attempts: int,
+        available_at: datetime,
+        error: str | None = None,
+    ) -> int:
+        if not ids:
+            return 0
+
+        id_set = set(ids)
+        route = self._route()
+        updated = 0
+
+        with self.state.lock:
+            for row in self.state.outbox_rows.get(route, []):
+                if row.id not in id_set:
+                    continue
+
+                if row.status != OutboxStatus.PROCESSING:
+                    continue
+
+                row.status = OutboxStatus.PENDING
+                row.processing_at = None
+                row.attempts = attempts
+                row.available_at = available_at
+                row.last_error = error
+                updated += 1
+
+        return updated
 
     async def reclaim_stale_processing(
         self,
@@ -195,6 +231,8 @@ class MockOutboxStore[M: BaseModel](MockTenancyMixin, OutboxQueryPort):
                 row.processing_at = None
                 row.published_at = None
                 row.last_error = None
+                row.attempts = 0
+                row.available_at = None
                 updated += 1
 
         return updated
