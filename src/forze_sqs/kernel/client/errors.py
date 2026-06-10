@@ -101,14 +101,17 @@ def _sqs_eh(
 
         case sqs_errors.BotoCoreError() as be:
             return CoreException.infrastructure(
-                f"SQS core error: {be}",
-                details=details,
+                "SQS core error.",
+                details={**(details or {}), "error": str(be)},
             )
 
         case _:
+            # Keep the summary static: raw driver exception text may carry
+            # internal data. The stringified error goes into details, which
+            # egress suppresses and the scrubber sanitizes.
             return CoreException.infrastructure(
-                f"An error occurred while executing SQS operation {site}: {exc}",
-                details=details,
+                f"An error occurred while executing SQS operation {site}.",
+                details={**(details or {}), "error": str(exc)},
             )
 
 

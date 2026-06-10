@@ -876,7 +876,6 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
         self,
         key: tuple[str, ...],
         batch: list[tuple[UUID, int, JsonDict]],
-        column_types: PostgresColumnTypes,
     ) -> list[D]:
         # First two VALUES columns are the PK and the *expected* revision for the WHERE
         # clause. When the patch bumps ``rev``, the diff also contains a new ``rev`` value
@@ -984,7 +983,6 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
 
         async with self._write_tx():
             currents = await self.read_gw.get_many(pks)
-            column_types = await self.column_types()
 
             groups: dict[tuple[str, ...], list[tuple[UUID, int, JsonDict]]] = (
                 defaultdict(list)
@@ -1072,7 +1070,6 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
                         self.__patch_group,
                         fk,
                         bb,
-                        column_types,
                     )
                     for fk, bb in work
                 ],

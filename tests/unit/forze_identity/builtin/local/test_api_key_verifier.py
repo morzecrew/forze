@@ -38,3 +38,16 @@ async def test_verify_api_key_miss() -> None:
 
     with pytest.raises(CoreException, match="Invalid API key"):
         await verifier.verify_api_key(ApiKeyCredentials(key="wrong"))
+
+
+@pytest.mark.asyncio
+async def test_verify_api_key_non_ascii_is_clean_authentication_error() -> None:
+    """Non-ASCII input must yield a clean 401, not a TypeError from compare_digest."""
+
+    config = LocalIdentityConfig.from_mapping(
+        {"api_keys": {"secret": {"principal_id": str(_PID)}}},
+    )
+    verifier = LocalApiKeyVerifier(config=config)
+
+    with pytest.raises(CoreException, match="Invalid API key"):
+        await verifier.verify_api_key(ApiKeyCredentials(key="pässwörd-ключ"))

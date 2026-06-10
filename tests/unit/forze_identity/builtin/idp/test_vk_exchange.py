@@ -101,9 +101,9 @@ async def test_exchange_missing_id_token(monkeypatch: pytest.MonkeyPatch) -> Non
     assert ei.value.code == "vk_token_exchange_failed"
 
 
-def test_vk_preset_defaults() -> None:
+def test_vk_config_defaults() -> None:
     config = VkIdOidcConfig(client_id="1", redirect_uri="https://x/cb")
-    preset = config.to_preset()
 
-    assert preset.issuer == VK_ID_OIDC_ISSUER
-    assert preset.audience == "1"
+    assert config.issuer == VK_ID_OIDC_ISSUER
+    assert config.token_endpoint == "https://id.vk.ru/oauth2/auth"
+    assert config.public_info_endpoint == "https://id.vk.ru/oauth2/public_info"

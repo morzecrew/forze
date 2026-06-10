@@ -114,7 +114,6 @@ async def test_patch_group_sql_includes_column_casts() -> None:
     await gw._PostgresWriteGateway__patch_group(  # type: ignore[attr-defined]
         ("amount", "rev"),
         [(pk, 1, {"amount": None, "rev": 2})],
-        column_types,
     )
 
     stmt = client.fetch_all.await_args.args[0]

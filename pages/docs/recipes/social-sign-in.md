@@ -99,3 +99,6 @@ verifies it and mints first-party tokens — identical across all three provider
   `access_token` / `refresh_token` are not bearer credentials for your API.
 - Issuer, JWKS, and audience defaults are baked into each preset; override them on
   the config only for non-standard deployments.
+- VK is the exception on verification: VK ID publishes no JWKS, so the VK preset
+  validates the `id_token` by server-side introspection at VK's `public_info`
+  endpoint (trust comes from TLS to `id.vk.ru`) instead of a local signature check.

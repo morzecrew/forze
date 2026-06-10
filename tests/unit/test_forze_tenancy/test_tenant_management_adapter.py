@@ -9,6 +9,7 @@ from uuid import uuid4
 import pytest
 
 from forze.application.contracts.base import Page
+from forze.application.contracts.cache import CacheSpec
 from forze.application.contracts.document import DocumentSpec
 from forze.base.exceptions import CoreException
 from forze_identity.tenancy.adapters.management import TenantManagementAdapter
@@ -55,6 +56,27 @@ def test_post_init_rejects_mismatched_specs() -> None:
     adapter = _adapter()
     adapter.tenant_qry.spec = DocumentSpec(name="wrong", read=ReadTenant)
     with pytest.raises(CoreException, match="tenant_qry spec"):
+        adapter.__attrs_post_init__()
+
+
+def test_post_init_rejects_cache_and_history() -> None:
+    adapter = _adapter()
+
+    adapter.tenant_qry.spec = DocumentSpec(
+        name=tenant_spec.name,
+        read=ReadTenant,
+        cache=CacheSpec(name="cache"),
+    )
+    with pytest.raises(CoreException, match="caching is forbidden"):
+        adapter.__attrs_post_init__()
+
+    adapter.tenant_qry.spec = tenant_spec
+    adapter.binding_cmd.spec = DocumentSpec(
+        name=principal_tenant_binding_spec.name,
+        read=ReadPrincipalTenantBinding,
+        history_enabled=True,
+    )
+    with pytest.raises(CoreException, match="history is forbidden"):
         adapter.__attrs_post_init__()
 
 

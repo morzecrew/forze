@@ -75,14 +75,3 @@ class PasswordService:
 
         except (InvalidHash, VerificationError, VerifyMismatchError):
             return False
-
-    # ....................... #
-
-    def password_needs_rehash(self, password_hash: str) -> bool:
-        try:
-            ph = self._require_hasher()
-
-            return ph.check_needs_rehash(password_hash)
-
-        except InvalidHash:
-            return True

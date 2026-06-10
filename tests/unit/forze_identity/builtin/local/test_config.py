@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from typing import Any, Iterator, Mapping
 from uuid import UUID
 
 import pytest
@@ -37,6 +38,61 @@ def test_from_mapping_rejects_invalid_principal_uuid() -> None:
         from_mapping(
             {"api_keys": {"k": {"principal_id": "not-a-uuid"}}},
         )
+
+
+def test_from_mapping_rejects_invalid_default_tenant_uuid() -> None:
+    with pytest.raises(CoreException, match="default_tenant_id"):
+        from_mapping(
+            {
+                "api_keys": {"k": {"principal_id": str(_PID)}},
+                "default_tenant_id": "not-a-uuid",
+            },
+        )
+
+
+def test_repr_does_not_leak_api_keys() -> None:
+    config = from_mapping(
+        {"api_keys": {"super-secret-key": {"principal_id": str(_PID)}}},
+    )
+
+    rendered = repr(config)
+
+    assert "super-secret-key" not in rendered
+
+
+class _DuplicateKeyMapping(Mapping[str, Any]):
+    """Mapping whose iteration yields the same key twice (e.g. a multidict)."""
+
+    def __init__(self, pairs: list[tuple[str, Any]]) -> None:
+        self._pairs = pairs
+
+    def __getitem__(self, key: str) -> Any:
+        for k, v in self._pairs:
+            if k == key:
+                return v
+
+        raise KeyError(key)
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(k for k, _ in self._pairs)
+
+    def __len__(self) -> int:
+        return len(self._pairs)
+
+    def items(self):  # type: ignore[override]
+        return list(self._pairs)
+
+
+def test_duplicate_api_key_error_does_not_leak_key() -> None:
+    entry = {"principal_id": str(_PID)}
+    raw_keys = _DuplicateKeyMapping(
+        [("super-secret-key", entry), ("super-secret-key", entry)],
+    )
+
+    with pytest.raises(CoreException, match="duplicate api_keys entry") as ei:
+        from_mapping({"api_keys": raw_keys})  # type: ignore[dict-item]
+
+    assert "super-secret-key" not in str(ei.value)
 
 
 def test_from_json_path(tmp_path) -> None:

@@ -28,7 +28,6 @@ from .value_objects import (
     ClickHouseConfig,
     ClickHouseInsertResult,
     ClickHouseQueryResult,
-    resolve_password,
 )
 
 # ----------------------- #
@@ -63,7 +62,7 @@ class ClickHouseClient(ClickHouseClientPort):
                 host=config.host,
                 port=config.port,
                 username=config.username,
-                password=resolve_password(config.password),
+                password=config.password.get_secret_value(),
                 database=config.database,
                 secure=config.secure,
                 connect_timeout=timeout_sec,
@@ -140,7 +139,6 @@ class ClickHouseClient(ClickHouseClientPort):
 
     async def __maybe_read_retry(
         self,
-        op: str,
         fn: Callable[[], Awaitable[T]],
     ) -> T:
         cfg = self.__require_config()
@@ -232,7 +230,7 @@ class ClickHouseClient(ClickHouseClientPort):
 
             return ClickHouseQueryResult(rows=rows, row_count=len(rows))
 
-        return await self.__maybe_read_retry("run_query", _run)
+        return await self.__maybe_read_retry(_run)
 
     # ....................... #
 
@@ -282,7 +280,7 @@ class ClickHouseClient(ClickHouseClientPort):
 
             return all_rows
 
-        return await self.__maybe_read_retry("run_query_all_pages", _run)
+        return await self.__maybe_read_retry(_run)
 
     # ....................... #
 

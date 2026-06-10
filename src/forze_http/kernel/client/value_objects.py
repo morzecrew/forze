@@ -18,8 +18,11 @@ class HttpxConfig:
     timeout: timedelta = attrs.field(default=timedelta(seconds=30))
     """HTTP client timeout."""
 
-    follow_redirects: bool = True
-    """Whether to follow redirects."""
+    follow_redirects: bool = False
+    """Whether to follow redirects. Disabled by default because httpx only strips
+    the ``Authorization`` header on cross-origin redirects — custom credential
+    headers (e.g. ``X-API-Key`` from routing credentials or default headers) would
+    otherwise be re-sent to whatever host a malicious 30x points at."""
 
     # ....................... #
 

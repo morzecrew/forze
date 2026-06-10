@@ -32,9 +32,12 @@ def _gcs_http_message(status: int | None) -> str:
 def _gcs_fallback(
     exc: BaseException, site: str, details: Mapping[str, Any] | None
 ) -> CoreException:
+    # Keep the summary static: raw driver exception text may carry internal
+    # data. The stringified error goes into details, which egress suppresses
+    # and the scrubber sanitizes.
     return CoreException.infrastructure(
-        f"An error occurred while executing GCS operation {site}: {exc}",
-        details=details,
+        f"An error occurred while executing GCS operation {site}.",
+        details={**(details or {}), "error": str(exc)},
     )
 
 

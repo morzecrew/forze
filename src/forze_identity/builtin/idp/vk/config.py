@@ -1,19 +1,15 @@
-"""VK ID OIDC preset configuration."""
+"""VK ID preset configuration (code exchange + ``public_info`` introspection)."""
 
-from datetime import timedelta
 from typing import Final, final
 
 import attrs
 from pydantic import SecretStr
 
-from forze.base.exceptions import exc
-from forze_identity.oidc import OidcIdpPreset
-
 # ----------------------- #
 
 VK_ID_OIDC_ISSUER: Final[str] = "https://id.vk.ru"
-VK_ID_JWKS_URI: Final[str] = "https://id.vk.ru/.well-known/jwks.json"
 VK_ID_TOKEN_ENDPOINT: Final[str] = "https://id.vk.ru/oauth2/auth"
+VK_ID_PUBLIC_INFO_ENDPOINT: Final[str] = "https://id.vk.ru/oauth2/public_info"
 
 
 # ....................... #
@@ -22,10 +18,15 @@ VK_ID_TOKEN_ENDPOINT: Final[str] = "https://id.vk.ru/oauth2/auth"
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class VkIdOidcConfig:
-    """VK ID OAuth client settings for code exchange and ``id_token`` verification."""
+    """VK ID OAuth client settings for code exchange and ``id_token`` verification.
+
+    VK publishes no JWKS, so ``id_token`` verification uses server-side
+    introspection at ``public_info_endpoint`` instead of local signature checks
+    (see :class:`~forze_identity.builtin.idp.vk.verifier.VkPublicInfoTokenVerifier`).
+    """
 
     client_id: str
-    """VK application id (JWT ``aud``)."""
+    """VK application id (sent as ``client_id`` on exchange and introspection)."""
 
     redirect_uri: str
     """Registered redirect URI (must match authorization request)."""
@@ -37,22 +38,13 @@ class VkIdOidcConfig:
     """OAuth token endpoint for authorization-code exchange."""
 
     issuer: str = attrs.field(default=VK_ID_OIDC_ISSUER)
-    """Expected ``iss`` on VK ``id_token``."""
+    """Issuer recorded on verified assertions (principal-resolver discriminator)."""
 
-    jwks_uri: str = attrs.field(default=VK_ID_JWKS_URI)
-    """JWKS URI for ``id_token`` signature verification."""
+    public_info_endpoint: str = attrs.field(default=VK_ID_PUBLIC_INFO_ENDPOINT)
+    """VK ID ``public_info`` endpoint used for server-side ``id_token`` introspection."""
 
-    tenant_claim: str | None = attrs.field(default=None)
-    """Optional claim mapped to ``issuer_tenant_hint``."""
-
-    leeway: timedelta = attrs.field(default=timedelta(seconds=10))
-    """Clock-skew leeway for JWT validation."""
-
-    # ....................... #
-
-    def __attrs_post_init__(self) -> None:
-        if self.leeway.total_seconds() <= 0:
-            raise exc.configuration("Leeway must be positive")
+    verify_timeout: float = attrs.field(default=10.0)
+    """Request timeout in seconds for the introspection call."""
 
     # ....................... #
 
@@ -64,14 +56,3 @@ class VkIdOidcConfig:
             return self.client_secret.get_secret_value()
 
         return self.client_secret
-
-    # ....................... #
-
-    def to_preset(self) -> OidcIdpPreset:
-        return OidcIdpPreset(
-            issuer=self.issuer,
-            jwks_uri=self.jwks_uri,
-            audience=self.client_id,
-            leeway=self.leeway,
-            tenant_claim=self.tenant_claim,
-        )

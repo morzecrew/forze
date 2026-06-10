@@ -23,7 +23,14 @@ class QueueQueryPort[M](Protocol):
         limit: int | None = None,
         timeout: timedelta | None = None,  # noqa: F841
     ) -> Awaitable[list[QueueMessage[M]]]:
-        """Fetch a batch of messages from *queue*."""
+        """Fetch a batch of messages from *queue*.
+
+        :param timeout: Upper bound on how long the call may wait for
+            messages. The call always returns within a bounded window —
+            with whatever messages arrived (possibly fewer than *limit*,
+            possibly none). ``None`` means a backend-default bounded wait,
+            never an unbounded block.
+        """
         ...  # pragma: no cover
 
     # ....................... #
@@ -34,7 +41,14 @@ class QueueQueryPort[M](Protocol):
         *,
         timeout: timedelta | None = None,  # noqa: F841
     ) -> AsyncGenerator[QueueMessage[M]]:
-        """Yield messages continuously from *queue* until *timeout* elapses."""
+        """Yield messages continuously from *queue*.
+
+        :param timeout: **Idle** timeout. ``None`` means consume forever,
+            yielding messages as they arrive. A finite value means the
+            generator stops cleanly (no error is raised) once no message
+            has arrived for that duration; each received message resets
+            the idle window.
+        """
         ...  # pragma: no cover
 
     # ....................... #

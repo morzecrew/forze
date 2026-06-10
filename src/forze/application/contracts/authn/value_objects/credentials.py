@@ -11,7 +11,7 @@ class PasswordCredentials:
     login: str
     """Login name (e.g. username or email address)."""
 
-    password: str
+    password: str = attrs.field(repr=False)
     """Plaintext password."""
 
 
@@ -23,7 +23,7 @@ class PasswordCredentials:
 class ApiKeyCredentials:
     """Credentials for API key authentication."""
 
-    key: str
+    key: str = attrs.field(repr=False)
     """API key."""
 
     prefix: str | None = attrs.field(default=None)
@@ -44,7 +44,7 @@ class AccessTokenCredentials:
     spec hint when set).
     """
 
-    token: str
+    token: str = attrs.field(repr=False)
     """Opaque access token string."""
 
     scheme: str = attrs.field(default="Bearer")
@@ -66,5 +66,5 @@ class RefreshTokenCredentials:
     never by a token verifier port; therefore there is no ``profile`` knob.
     """
 
-    token: str
+    token: str = attrs.field(repr=False)
     """Opaque refresh token string."""

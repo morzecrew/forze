@@ -1,7 +1,7 @@
 """Constants for the forze package."""
 
 from enum import StrEnum
-from typing import Final, final
+from typing import final
 
 # ----------------------- #
 
@@ -14,8 +14,3 @@ class ForzeLogger(StrEnum):
     APPLICATION = "forze.application"
     DOMAIN = "forze.domain"
     UNCAUGHT = "forze.uncaught"
-
-
-# ....................... #
-
-FORZE_LOGGER_NAMES: Final = list(map(str, ForzeLogger))

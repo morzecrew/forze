@@ -1,7 +1,7 @@
 """Constants for the forze_fastapi package."""
 
 from enum import StrEnum
-from typing import Final, final
+from typing import final
 
 # ----------------------- #
 
@@ -12,9 +12,3 @@ class ForzeFastAPILogger(StrEnum):
 
     ACCESS = "fastapi.access"
     ERRORS = "fastapi.errors"
-    MIDDLEWARES = "fastapi.middlewares"
-
-
-# ....................... #
-
-FORZE_FASTAPI_LOGGER_NAMES: Final = list(map(str, ForzeFastAPILogger))

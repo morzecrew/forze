@@ -177,3 +177,78 @@ async def test_wrap_document_scope_merges_filters_on_ctx() -> None:
             {"$values": {"tenant_id": tid}},
         ],
     }
+
+
+def _scope_port(scope: object) -> MagicMock:
+    port = MagicMock()
+    port.scope_document = AsyncMock(return_value=scope)
+    return port
+
+
+@pytest.mark.asyncio
+async def test_wrap_document_scope_missing_filter_attr_raises_configuration() -> None:
+    from forze.application.contracts.authz import AuthzDocumentScope
+    from forze.application.hooks.authz import AuthzDocumentScopeWrap
+    from forze.base.exceptions import CoreException, ExceptionKind
+
+    ctx = context_from_deps(Deps())
+    metadata = InvocationMetadata(execution_id=uuid4(), correlation_id=uuid4())
+    ident = AuthnIdentity(principal_id=uuid4())
+
+    @attrs.define
+    class _NoFilterArgs:
+        query: str = "x"
+
+    port = _scope_port(
+        AuthzDocumentScope(filters={"$values": {"tenant_id": str(uuid4())}}),
+    )
+
+    with patch.object(ctx.authz, "scope", return_value=port):
+        with ctx.inv_ctx.bind(metadata=metadata, authn=ident):
+            wrap = AuthzDocumentScopeWrap(
+                spec=AuthzSpec(name="main"),
+                document_name="widgets",
+                operation="list",
+                action="widgets.list",
+            )(ctx)
+
+            async def _next(a: object) -> object:
+                return a
+
+            with pytest.raises(CoreException, match="no 'filters' attribute") as err:
+                await wrap(_next, _NoFilterArgs())
+
+    assert err.value.kind is ExceptionKind.CONFIGURATION
+
+
+@pytest.mark.asyncio
+async def test_wrap_document_scope_no_filters_and_missing_attr_passes_through() -> None:
+    from forze.application.contracts.authz import AuthzDocumentScope
+    from forze.application.hooks.authz import AuthzDocumentScopeWrap
+
+    ctx = context_from_deps(Deps())
+    metadata = InvocationMetadata(execution_id=uuid4(), correlation_id=uuid4())
+    ident = AuthnIdentity(principal_id=uuid4())
+
+    @attrs.define
+    class _NoFilterArgs:
+        query: str = "x"
+
+    port = _scope_port(AuthzDocumentScope(filters=None))
+
+    with patch.object(ctx.authz, "scope", return_value=port):
+        with ctx.inv_ctx.bind(metadata=metadata, authn=ident):
+            wrap = AuthzDocumentScopeWrap(
+                spec=AuthzSpec(name="main"),
+                document_name="widgets",
+                operation="list",
+                action="widgets.list",
+            )(ctx)
+
+            async def _next(a: object) -> object:
+                return a
+
+            args = _NoFilterArgs()
+            out = await wrap(_next, args)
+
+    assert out is args

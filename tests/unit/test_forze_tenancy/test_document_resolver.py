@@ -7,6 +7,8 @@ from uuid import UUID, uuid4
 import pytest
 
 from forze.application.contracts.base import CountlessPage
+from forze.application.contracts.cache import CacheSpec
+from forze.application.contracts.document import DocumentSpec
 from forze.base.primitives import utcnow
 from forze_identity.tenancy.adapters.resolver import TenantResolverAdapter
 from forze_identity.tenancy.application.specs import principal_tenant_binding_spec, tenant_spec
@@ -25,6 +27,29 @@ def _binding_row(*, pid: UUID, tid: UUID) -> ReadPrincipalTenantBinding:
         principal_id=pid,
         tenant_id=tid,
     )
+
+def test_resolver_post_init_rejects_cache_and_history() -> None:
+    binding_qry = AsyncMock()
+    binding_qry.spec = DocumentSpec(
+        name=principal_tenant_binding_spec.name,
+        read=ReadPrincipalTenantBinding,
+        cache=CacheSpec(name="cache"),
+    )
+
+    with pytest.raises(CoreException, match="caching is forbidden"):
+        TenantResolverAdapter(binding_qry=binding_qry, tenant_qry=None)
+
+    binding_qry.spec = principal_tenant_binding_spec
+
+    tenant_qry = AsyncMock()
+    tenant_qry.spec = DocumentSpec(
+        name=tenant_spec.name,
+        read=ReadTenant,
+        history_enabled=True,
+    )
+
+    with pytest.raises(CoreException, match="history is forbidden"):
+        TenantResolverAdapter(binding_qry=binding_qry, tenant_qry=tenant_qry)
 
 @pytest.mark.asyncio
 async def test_resolver_returns_tenant_from_binding() -> None:

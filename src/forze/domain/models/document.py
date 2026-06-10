@@ -111,8 +111,26 @@ class Document(CoreModel):
 
     # ....................... #
 
-    def _calculate_update_diff(self, data: JsonDict) -> JsonDict:
-        """Return a minimal merge patch that represents ``data`` applied to self."""
+    def _calculate_update_diff(self, data: JsonDict) -> tuple[Self, JsonDict]:
+        """Merge ``data`` into self with full re-validation and return the result.
+
+        The patch is merged into a python-mode dump of the current state and the
+        merged mapping is run through ``model_validate``, so:
+
+        * patch values are canonicalized by field validators (an ISO string for a
+          datetime field becomes a real ``datetime``, partial dicts for nested model
+          fields become validated nested models with sibling fields preserved);
+        * the diff compares two python-mode dumps of *validated* state, so a patch
+          that validates to the current value yields an **empty** diff (semantic
+          no-op — no rev bump, no history, no emitters downstream).
+
+        Computed fields are excluded from the dumps: they are derived (not
+        persisted), and the candidate recomputes them, so leaving them in would
+        leak phantom keys into the diff the gateways try to write as columns.
+
+        :returns: The validated candidate instance and the minimal merge patch
+            (python-mode values) that represents ``data`` applied to self.
+        """
 
         logger.trace(
             "Calculating update diff for %s",
@@ -120,11 +138,43 @@ class Document(CoreModel):
         )
 
         patch = self._validate_update_data(data)
-        before = self.model_dump(mode="json")
-        after = apply_dict_patch(before, patch)
-        diff = calculate_dict_difference(before, after)
+        before = self._dump_stored_fields()
+        merged = apply_dict_patch(before, patch)
+        candidate = type(self).model_validate(merged)
+        diff = calculate_dict_difference(before, candidate._dump_stored_fields())
 
-        return diff
+        return candidate, diff
+
+    # ....................... #
+
+    def _dump_stored_fields(self) -> JsonDict:
+        """Python-mode dump restricted to declared (non-computed) fields."""
+
+        dump = self.model_dump(mode="python")
+        fields = type(self).model_fields
+
+        return {k: v for k, v in dump.items() if k in fields}
+
+    # ....................... #
+
+    def _materialize_update(self, candidate: Self, diff: JsonDict) -> Self:
+        """Copy self, taking validated values of the changed fields from ``candidate``.
+
+        Copying from ``self`` (rather than returning ``candidate``) preserves runtime
+        state that does not round-trip through a dump — e.g. pending domain events on
+        an :class:`AggregateRoot` (via its ``model_copy`` override) and fields excluded
+        from serialization.
+        """
+
+        fields = type(self).model_fields
+        update = {k: getattr(candidate, k) for k in diff if k in fields}
+        needs_deep = any(isinstance(v, (dict, list)) for v in diff.values())
+
+        logger.trace(
+            "Applying diff to %s (needs_deep=%s)", type(self).__qualname__, needs_deep
+        )
+
+        return self.model_copy(update=update, deep=needs_deep)
 
     # ....................... #
 
@@ -135,13 +185,10 @@ class Document(CoreModel):
             )
             return self
 
-        needs_deep = any(isinstance(v, (dict, list)) for v in diff.values())
+        merged = apply_dict_patch(self._dump_stored_fields(), diff)
+        candidate = type(self).model_validate(merged)
 
-        logger.trace(
-            "Applying diff to %s (needs_deep=%s)", type(self).__qualname__, needs_deep
-        )
-
-        return self.model_copy(update=diff, deep=needs_deep)
+        return self._materialize_update(candidate, diff)
 
     # ....................... #
 
@@ -187,8 +234,12 @@ class Document(CoreModel):
         The method:
 
         * validates the requested field changes,
-        * computes a JSON merge-style diff,
-        * bumps ``last_update_at``,
+        * merges them into the current state and **re-validates** the result, so the
+          returned instance always carries properly typed field values,
+        * computes a JSON merge-style diff over canonical (python-mode, validated)
+          values — a patch that validates to the current state yields an empty diff
+          and returns ``self`` unchanged (no ``last_update_at`` bump),
+        * bumps ``last_update_at`` when the diff is non-empty,
         * runs registered :func:`update_validator` hooks.
         """
 
@@ -198,11 +249,13 @@ class Document(CoreModel):
             tuple(data.keys()),
         )
 
-        diff = self._calculate_update_diff(data)
+        candidate, diff = self._calculate_update_diff(data)
 
         if diff:
-            diff[LAST_UPDATE_AT_FIELD] = utcnow()
-            after = self._apply_update(diff)
+            now = utcnow()
+            diff[LAST_UPDATE_AT_FIELD] = now
+            candidate = candidate.model_copy(update={LAST_UPDATE_AT_FIELD: now})
+            after = self._materialize_update(candidate, diff)
 
         else:
             logger.trace("Update diff is empty; document remains unchanged")

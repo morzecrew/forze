@@ -72,6 +72,3 @@ class GrantQueryAdapter(GrantQueryPort):
             raise exc.internal("Policy principal not found when resolving grants")
 
         return await self.resolver.resolve_effective_grants(pid, scope=resolved_scope)
-
-
-EffectiveGrantsAdapter = GrantQueryAdapter

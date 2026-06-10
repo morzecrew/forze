@@ -32,7 +32,8 @@ class LocalIdentityConfig:
     """Static API-key and principal→tenant mappings loaded from env or a JSON file."""
 
     api_keys: Mapping[str, LocalApiKeyEntry] = attrs.field(
-        factory=dict[str, LocalApiKeyEntry]
+        factory=dict[str, LocalApiKeyEntry],
+        repr=False,
     )
     """Lookup by raw API key string (constant-time compare at verify time)."""
 
@@ -68,15 +69,20 @@ class LocalIdentityConfig:
             except ValueError:
                 raise exc.configuration("principal_tenants must be a mapping of UUIDs")
 
-        for key, entry_raw in raw_keys.items():  # type: ignore
+        for index, (key, entry_raw) in enumerate(raw_keys.items()):  # type: ignore
             if not isinstance(key, str) or not key:
                 raise exc.configuration("api_keys keys must be non-empty strings")
 
+            # Never echo the raw key: it is secret material. Report by position.
             if key in api_keys:
-                raise exc.configuration(f"duplicate api_keys entry: {key!r}")
+                raise exc.configuration(
+                    f"duplicate api_keys entry at position {index}"
+                )
 
             if not isinstance(entry_raw, Mapping):
-                raise exc.configuration(f"api_keys[{key!r}] must be a mapping")
+                raise exc.configuration(
+                    f"api_keys entry at position {index} must be a mapping"
+                )
 
             try:
                 principal_id = UUID(str(entry_raw["principal_id"]))  # type: ignore
@@ -102,7 +108,14 @@ class LocalIdentityConfig:
                 principal_tenants[principal_id] = tenant_id
 
         default_raw = data.get("default_tenant_id")
-        default_tenant_id = UUID(str(default_raw)) if default_raw is not None else None
+
+        try:
+            default_tenant_id = (
+                UUID(str(default_raw)) if default_raw is not None else None
+            )
+
+        except ValueError:
+            raise exc.configuration("default_tenant_id must be a valid UUID")
 
         return cls(
             api_keys=api_keys,

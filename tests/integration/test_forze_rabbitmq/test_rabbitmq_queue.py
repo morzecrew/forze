@@ -168,7 +168,13 @@ async def test_queue_adapter_delayed_enqueue(
         delay=timedelta(seconds=2),
     )
 
-    immediate = await rabbitmq_delayed_queue.receive(queue, limit=1)
+    # Probe with a short explicit window: receive(timeout=None) now waits a
+    # bounded default window (2s) which would race the 2s delivery delay.
+    immediate = await rabbitmq_delayed_queue.receive(
+        queue,
+        limit=1,
+        timeout=timedelta(milliseconds=300),
+    )
     assert immediate == []
 
     message = await _receive_until(rabbitmq_delayed_queue, queue, attempts=15)

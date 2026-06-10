@@ -43,13 +43,30 @@ class InvocationMetadataMiddleware:
 
     # ....................... #
 
+    @staticmethod
+    def _parse_uuid_header(raw: str | None) -> UUID | None:
+        """Parse an advisory UUID header, ignoring malformed values."""
+
+        if not raw:
+            return None
+
+        try:
+            return UUID(raw)
+
+        except ValueError:
+            return None
+
+    # ....................... #
+
     def _decode_metadata(self, request: Request) -> InvocationMetadata:
         execution_id = uuid7()
         corr_raw = request.headers.get(self.corr_header)
         caus_raw = request.headers.get(self.caus_header)
 
-        correlation_id = UUID(corr_raw) if corr_raw else uuid7()
-        causation_id = UUID(caus_raw) if caus_raw else None
+        # The headers are advisory client input: fall back to a fresh id
+        # (or no causation) instead of failing the request on garbage values.
+        correlation_id = self._parse_uuid_header(corr_raw) or uuid7()
+        causation_id = self._parse_uuid_header(caus_raw)
 
         return InvocationMetadata(
             execution_id=execution_id,

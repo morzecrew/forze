@@ -1153,9 +1153,6 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
-arango = [
-    { name = "python-arango-async" },
-]
 authn = [
     { name = "argon2-cffi" },
     { name = "email-validator" },
@@ -1324,7 +1321,6 @@ requires-dist = [
     { name = "pyjwt", extras = ["crypto"], marker = "extra == 'authn'", specifier = ">=2.12.1" },
     { name = "pyjwt", extras = ["crypto"], marker = "extra == 'oidc'", specifier = ">=2.12.1" },
     { name = "pymongo", marker = "extra == 'mongo'", specifier = ">=4.16.0" },
-    { name = "python-arango-async", marker = "extra == 'arango'", specifier = ">=1.2.2" },
     { name = "python-magic", marker = "extra == 'gcs'", specifier = ">=0.4.27" },
     { name = "python-magic", marker = "extra == 's3'", specifier = ">=0.4.27" },
     { name = "python-multipart", marker = "extra == 'fastapi'", specifier = ">=0.0.22" },
@@ -1346,7 +1342,7 @@ requires-dist = [
     { name = "urllib3", marker = "extra == 'vault'", specifier = ">=2.7.0" },
     { name = "uvicorn", extras = ["standard"], marker = "extra == 'fastapi'", specifier = ">=0.42.0" },
 ]
-provides-extras = ["arango", "authn", "bigquery", "clickhouse", "duckdb", "fastapi", "firestore", "gcs", "http", "inngest", "mcp", "meilisearch", "mongo", "neo4j", "oidc", "postgres", "rabbitmq", "redis", "s3", "socketio", "sqs", "temporal", "vault"]
+provides-extras = ["authn", "bigquery", "clickhouse", "duckdb", "fastapi", "firestore", "gcs", "http", "inngest", "mcp", "meilisearch", "mongo", "neo4j", "oidc", "postgres", "rabbitmq", "redis", "s3", "socketio", "sqs", "temporal", "vault"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -3520,21 +3516,6 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/78/b4/439b179d1ff526791eb921115fca8e44e596a13efeda518b9d845a619450/pytest_xdist-3.8.0.tar.gz", hash = "sha256:7e578125ec9bc6050861aa93f2d59f1d8d085595d6551c2c90b6f4fad8d3a9f1", size = 88069, upload-time = "2025-07-01T13:30:59.346Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/ca/31/d4e37e9e550c2b92a9cbc2e4d0b7420a27224968580b5a447f420847c975/pytest_xdist-3.8.0-py3-none-any.whl", hash = "sha256:202ca578cfeb7370784a8c33d6d05bc6e13b4f25b5053c30a152269fd10f0b88", size = 46396, upload-time = "2025-07-01T13:30:56.632Z" },
-]
-
-[[package]]
-name = "python-arango-async"
-version = "1.2.3"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "aiohttp" },
-    { name = "multidict" },
-    { name = "packaging" },
-    { name = "pyjwt" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/8f/d8/6b54ac70799f458d9abec99260868fab492a081d91fd53bfd7066c7d8e91/python_arango_async-1.2.3.tar.gz", hash = "sha256:f9adc259c0fe59a4580e20f5e7d2b453ef5a6b0dc689f1180539bc250178bb0f", size = 259609, upload-time = "2026-06-01T11:01:32.493Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/16/75/fa1b4af307efac29116c5f38adf1732279b122b2aea1b731b69ac97a8248/python_arango_async-1.2.3-py3-none-any.whl", hash = "sha256:deff1fd1f7a4d209372abe09ead470f54f2ec94af78f1a7383f904fe65c42c31", size = 102375, upload-time = "2026-06-01T11:01:31.365Z" },
 ]
 
 [[package]]

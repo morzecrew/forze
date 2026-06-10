@@ -79,9 +79,12 @@ def _rabbitmq_eh(
             )
 
         case _:
+            # Keep the summary static: raw driver exception text may carry
+            # internal data. The stringified error goes into details, which
+            # egress suppresses and the scrubber sanitizes.
             return CoreException.infrastructure(
-                f"An error occurred while executing RabbitMQ operation {site}: {exc}",
-                details=details,
+                f"An error occurred while executing RabbitMQ operation {site}.",
+                details={**(details or {}), "error": str(exc)},
             )
 
 

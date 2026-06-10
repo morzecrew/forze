@@ -104,6 +104,16 @@ class TestOidcClaimMapper:
         with pytest.raises(ValueError, match="iss"):
             mapper.map({"sub": "u"})
 
+    def test_rejects_empty_subject(self) -> None:
+        mapper = OidcClaimMapper()
+        with pytest.raises(ValueError, match="non-empty"):
+            mapper.map({"iss": "issuer", "sub": ""})
+
+    def test_rejects_whitespace_issuer(self) -> None:
+        mapper = OidcClaimMapper()
+        with pytest.raises(ValueError, match="non-empty"):
+            mapper.map({"iss": "   ", "sub": "u"})
+
 
 # ....................... #
 

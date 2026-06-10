@@ -5,7 +5,7 @@ from uuid import UUID
 
 import attrs
 import inngest
-from pydantic import BaseModel, SecretStr
+from pydantic import BaseModel
 
 from forze.application.contracts.secrets import SecretRef, SecretsPort
 from forze.application.contracts.tenancy.routed_client_base import (
@@ -23,27 +23,9 @@ from .routing_credentials import InngestRoutingCredentials
 
 
 def _to_inngest_config(creds: InngestRoutingCredentials) -> InngestConfig:
-    event_key: str | None = None
-
-    if creds.event_key is not None:
-        event_key = (
-            creds.event_key.get_secret_value()
-            if isinstance(creds.event_key, SecretStr)
-            else creds.event_key
-        )
-
-    signing_key: str | None = None
-
-    if creds.signing_key is not None:
-        signing_key = (
-            creds.signing_key.get_secret_value()
-            if isinstance(creds.signing_key, SecretStr)
-            else creds.signing_key
-        )
-
     return InngestConfig(
-        event_key=event_key,
-        signing_key=signing_key,
+        event_key=creds.event_key,  # type: ignore[arg-type]
+        signing_key=creds.signing_key,  # type: ignore[arg-type]
         is_production=creds.is_production,
         request_timeout=creds.request_timeout,
     )

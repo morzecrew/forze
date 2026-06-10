@@ -10,7 +10,11 @@ import pytest
 from forze.application.contracts.authn import AuthnIdentity
 from forze.application.contracts.authz import AuthzSpec, AuthzDecision
 from forze.application.execution import Deps, ExecutionContext, InvocationMetadata
-from forze.application.hooks.authz import AuthzBeforeAuthorize, merge_query_filters
+from forze.application.hooks.authz import (
+    AuthzBeforeAuthorize,
+    AuthzDocumentScopeWrap,
+    merge_query_filters,
+)
 from forze.base.exceptions import CoreException, ExceptionKind
 from tests.support.execution_context import context_from_deps, context_from_modules, frozen_deps_from_deps
 
@@ -75,6 +79,48 @@ async def test_before_authorize_denies() -> None:
             with pytest.raises(CoreException) as exc_info:
                 await hook(None)
             assert exc_info.value.kind == ExceptionKind.AUTHORIZATION
+
+
+@pytest.mark.asyncio
+async def test_before_authorize_missing_identity_is_authentication() -> None:
+    # No bound identity is a missing-credentials problem (401), not a denial (403).
+    ctx = context_from_deps(Deps())
+    metadata = InvocationMetadata(execution_id=uuid4(), correlation_id=uuid4())
+
+    with patch.object(ctx.authz, "decision", return_value=_AllowDecision()):
+        with ctx.inv_ctx.bind(metadata=metadata):
+            hook = AuthzBeforeAuthorize(spec=AuthzSpec(name="z"), action="x.read")(ctx)
+
+            with pytest.raises(CoreException) as exc_info:
+                await hook(None)
+            assert exc_info.value.kind == ExceptionKind.AUTHENTICATION
+            assert exc_info.value.code == "auth_required"
+
+
+@pytest.mark.asyncio
+async def test_document_scope_wrap_missing_identity_is_authentication() -> None:
+    ctx = context_from_deps(Deps())
+    metadata = InvocationMetadata(execution_id=uuid4(), correlation_id=uuid4())
+
+    class _Scope:
+        async def scope_document(self, request):  # noqa: ANN001
+            raise AssertionError("scope port must not be consulted without identity")
+
+    with patch.object(ctx.authz, "scope", return_value=_Scope()):
+        with ctx.inv_ctx.bind(metadata=metadata):
+            wrap = AuthzDocumentScopeWrap(
+                spec=AuthzSpec(name="z"),
+                document_name="doc",
+                operation="list",
+            )(ctx)
+
+            async def _next(args):  # noqa: ANN001
+                return args
+
+            with pytest.raises(CoreException) as exc_info:
+                await wrap(_next, None)
+            assert exc_info.value.kind == ExceptionKind.AUTHENTICATION
+            assert exc_info.value.code == "auth_required"
 
 
 @pytest.mark.asyncio

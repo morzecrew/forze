@@ -31,7 +31,7 @@ from forze.base.primitives import JsonDict
 
 from .._logger import logger
 from .errors import exc_interceptor
-from .helpers import isolation_level_psycopg
+from .helpers import set_transaction_sql
 from .port import PostgresClientPort
 from .types import RowFactory
 from .value_objects import PostgresConfig, PostgresTransactionOptions
@@ -343,7 +343,22 @@ class PostgresClient(PostgresClientPort):
         conn: AsyncConnection,
         options: PostgresTransactionOptions,
     ) -> None:
-        await conn.set_isolation_level(isolation_level_psycopg(options.isolation))
+        """Apply *options* to the transaction currently open on *conn*.
+
+        Runs ``SET TRANSACTION ISOLATION LEVEL … [READ ONLY]`` inside the
+        already-started root transaction. Deliberately avoids
+        :meth:`~psycopg.AsyncConnection.set_isolation_level` /
+        :meth:`~psycopg.AsyncConnection.set_read_only`: those mutate connection
+        attributes that persist across pool check-ins (psycopg_pool only rolls
+        back on return), leaking read-only/isolation into unrelated later work
+        on the same pooled connection. ``SET TRANSACTION`` scopes the options
+        to this transaction only. Must be the first statement of the
+        transaction (Postgres rejects isolation changes after the first query);
+        nested transactions (savepoints) must never call this.
+        """
+
+        async with conn.cursor() as cur:
+            await cur.execute(set_transaction_sql(options))
 
     # ....................... #
 
@@ -396,12 +411,8 @@ class PostgresClient(PostgresClientPort):
             token_depth = self.__ctx_depth.set(1)
 
             try:
-                await self._apply_transaction_options(parent_conn, options)
-
-                if options.read_only:
-                    await parent_conn.set_read_only(True)
-
                 async with parent_conn.transaction():
+                    await self._apply_transaction_options(parent_conn, options)
                     yield parent_conn
 
             except Exception:
@@ -420,12 +431,8 @@ class PostgresClient(PostgresClientPort):
             token_depth = self.__ctx_depth.set(1)
 
             try:
-                await self._apply_transaction_options(conn, options)
-
-                if options.read_only:
-                    await conn.set_read_only(True)
-
                 async with conn.transaction():
+                    await self._apply_transaction_options(conn, options)
                     yield conn
 
             except Exception:

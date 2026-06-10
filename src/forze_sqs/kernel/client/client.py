@@ -6,6 +6,7 @@ require_sqs()
 
 import asyncio
 import base64
+import math
 import re
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
@@ -44,6 +45,15 @@ _MAX_ENQUEUE_BATCH_CONCURRENCY: Final[int] = 32
 
 _DEFAULT_HTTP_POOL_SIZE: Final[int] = 10
 """Botocore default when ``max_pool_connections`` is omitted."""
+
+_CONSUME_LONG_POLL_WAIT: Final[timedelta] = timedelta(seconds=20)
+"""Per-receive long-poll wait used by :meth:`SQSClient.consume` (SQS maximum)."""
+
+_CONSUME_ERROR_BACKOFF_INITIAL: Final[float] = 0.5
+"""Initial backoff (seconds) after a failed receive inside :meth:`SQSClient.consume`."""
+
+_CONSUME_ERROR_BACKOFF_MAX: Final[float] = 5.0
+"""Backoff ceiling (seconds) for repeated receive failures in :meth:`SQSClient.consume`."""
 
 _RE_UNSUPPORTED_CHARS: Pattern[str] = re.compile(r"[^A-Za-z0-9_-]")
 _RE_MULTI_UNDERSCORE: Pattern[str] = re.compile(r"_+")
@@ -637,15 +647,68 @@ class SQSClient(SQSClientPort):
         *,
         timeout: timedelta | None = None,
     ) -> AsyncGenerator[SQSQueueMessage]:
-        """Yield queue messages continuously using long polling."""
+        """Yield queue messages continuously using SQS long polling.
+
+        ``timeout`` is an **idle** timeout: ``None`` (or a non-positive
+        value) consumes forever, long-polling with
+        :data:`_CONSUME_LONG_POLL_WAIT` per receive so empty queues do not
+        busy-loop; a finite value stops the generator cleanly (no error)
+        once no message has arrived for that duration. Each message resets
+        the idle window. Failed receives retry with exponential backoff.
+        """
+
+        idle_seconds = (
+            timeout.total_seconds()
+            if timeout is not None and timeout.total_seconds() > 0
+            else None
+        )
+        long_poll_seconds = _CONSUME_LONG_POLL_WAIT.total_seconds()
+        backoff = _CONSUME_ERROR_BACKOFF_INITIAL
+        loop = asyncio.get_running_loop()
+        idle_deadline = loop.time() + idle_seconds if idle_seconds is not None else None
 
         while True:
-            messages = await self.receive(queue, limit=1, timeout=timeout)
+            if idle_deadline is not None:
+                remaining = idle_deadline - loop.time()
+
+                if remaining <= 0:
+                    return
+
+                # Ceil to a whole second (SQS wait granularity) so a small
+                # remainder still long-polls instead of short-poll spinning;
+                # the idle stop may overshoot by less than a second.
+                wait_seconds = min(long_poll_seconds, float(math.ceil(remaining)))
+            else:
+                wait_seconds = long_poll_seconds
+
+            try:
+                # The long-poll await is the natural cancellation point.
+                messages = await self.receive(
+                    queue,
+                    limit=1,
+                    timeout=timedelta(seconds=wait_seconds),
+                )
+
+            except Exception:
+                # Back off so a persistently failing receive does not
+                # hot-loop; the idle deadline (when set) still terminates.
+                await asyncio.sleep(backoff)
+                backoff = min(backoff * 2, _CONSUME_ERROR_BACKOFF_MAX)
+
+                continue
+
+            backoff = _CONSUME_ERROR_BACKOFF_INITIAL
 
             if not messages:
                 continue
 
             yield messages[0]
+
+            # Reset the idle window when the caller resumes, so message
+            # processing time does not count against the idle timeout
+            # (mirrors the per-wait idle semantics of the RabbitMQ backend).
+            if idle_seconds is not None:
+                idle_deadline = loop.time() + idle_seconds
 
     # ....................... #
 

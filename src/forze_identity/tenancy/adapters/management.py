@@ -6,6 +6,7 @@ import attrs
 from forze.application.contracts.document import DocumentCommandPort, DocumentQueryPort
 from forze.application.contracts.tenancy import TenantIdentity, TenantManagementPort
 from forze.base.exceptions import exc
+from forze_identity._secure_spec import forbid_cache_and_history
 
 from ..application.specs import principal_tenant_binding_spec, tenant_spec
 from ..domain.models.principal_tenant_binding import (
@@ -58,6 +59,17 @@ class TenantManagementAdapter(TenantManagementPort):
             raise exc.internal(
                 "binding_cmd spec must match principal_tenant_binding_spec"
             )
+
+        forbid_cache_and_history(
+            self.tenant_qry.spec,
+            self.tenant_cmd.spec,
+            label="Tenant",
+        )
+        forbid_cache_and_history(
+            self.binding_qry.spec,
+            self.binding_cmd.spec,
+            label="Principal-tenant binding",
+        )
 
     # ....................... #
 

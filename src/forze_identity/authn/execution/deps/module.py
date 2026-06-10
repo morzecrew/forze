@@ -137,6 +137,23 @@ class AuthnDepsModule(DepsModule):
 
         api_key_overrides_keys = frozenset((self.api_key_verifiers or {}).keys())
         token_overrides_keys = frozenset((self.token_verifiers or {}).keys())
+        resolver_overrides_keys = frozenset((self.resolvers or {}).keys())
+
+        # An external token verifier paired with the default JwtNativeUuidResolver
+        # would trust the external IdP's ``sub`` as an internal principal UUID —
+        # a UUID-shaped external subject could collide with an internal principal.
+        # Scoped to token_verifiers only: api_key/password overrides (e.g. the
+        # builtin local wiring) legitimately emit internal principal UUIDs.
+        for name in token_overrides_keys - resolver_overrides_keys:
+            methods = authn_map.get(name)
+
+            if methods is not None and "token" in methods:
+                raise exc.configuration(
+                    f"token_verifiers override for route {name!r} requires an "
+                    "explicit resolvers override; the default JwtNativeUuidResolver "
+                    "trusts the assertion subject as an internal principal UUID, "
+                    "which is unsafe for external token verifiers",
+                )
 
         validate_shared_matches_route_sets(
             shared=shared,

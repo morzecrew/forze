@@ -31,8 +31,16 @@ class InngestClient(InngestClientPort):
             lambda self: inngest.Inngest(
                 app_id=self.app_id,
                 is_production=self.config.is_production,
-                event_key=self.config.event_key,
-                signing_key=self.config.signing_key,
+                event_key=(
+                    self.config.event_key.get_secret_value()
+                    if self.config.event_key is not None
+                    else None
+                ),
+                signing_key=(
+                    self.config.signing_key.get_secret_value()
+                    if self.config.signing_key is not None
+                    else None
+                ),
                 request_timeout=self.config.request_timeout,
             ),
             takes_self=True,

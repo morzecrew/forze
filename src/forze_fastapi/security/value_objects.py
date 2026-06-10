@@ -28,7 +28,7 @@ class CookieTokenAuthn:
     """Whether a missing cookie should raise :class:`AuthenticationError`."""
 
     description: str | None = None
-    """Human-readable description rendered into the OpenAPI security scheme."""
+    """Human-readable description of the ingress method (informational only)."""
 
 
 # ....................... #
@@ -45,17 +45,11 @@ class HeaderTokenAuthn:
     header_name: str
     """Header name carrying the bearer token."""
 
-    scheme: str = "Bearer"
-    """Scheme label stored on :class:`AccessTokenCredentials`."""
-
     required: bool = False
     """Whether a missing header should raise :class:`AuthenticationError`."""
 
-    bearer_format: str = "JWT"
-    """Bearer format stored on :class:`AccessTokenCredentials`."""
-
     description: str | None = None
-    """Human-readable description rendered into the OpenAPI security scheme."""
+    """Human-readable description of the ingress method (informational only)."""
 
 
 # ....................... #
@@ -76,7 +70,7 @@ class HeaderApiKeyAuthn:
     """Whether a missing header should raise :class:`AuthenticationError`."""
 
     description: str | None = None
-    """Human-readable description rendered into the OpenAPI security scheme."""
+    """Human-readable description of the ingress method (informational only)."""
 
 
 # ....................... #

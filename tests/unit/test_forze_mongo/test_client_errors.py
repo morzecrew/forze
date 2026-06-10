@@ -112,6 +112,26 @@ class TestMongoErrorHandler:
         assert isinstance(result, CoreException) and result.kind == ExceptionKind.CONCURRENCY
         assert "transaction" in result.summary.lower()
 
+    def test_operation_failure_write_conflict(self) -> None:
+        from pymongo.errors import OperationFailure
+
+        e = OperationFailure("WriteConflict", code=112)
+        result = _mongo_eh(e, site="x")
+        assert isinstance(result, CoreException) and result.kind == ExceptionKind.CONCURRENCY
+        assert "conflict" in result.summary.lower()
+
+    def test_operation_failure_transient_transaction_label(self) -> None:
+        from pymongo.errors import OperationFailure
+
+        e = OperationFailure(
+            "some transient error",
+            code=999,
+            details={"errorLabels": ["TransientTransactionError"]},
+        )
+        result = _mongo_eh(e, site="x")
+        assert isinstance(result, CoreException) and result.kind == ExceptionKind.CONCURRENCY
+        assert "transient" in result.summary.lower()
+
     def test_operation_failure_unauthorized(self) -> None:
         from pymongo.errors import OperationFailure
 

@@ -60,6 +60,10 @@ class TestSqsErrorHandler:
         r = _sqs_eh(RuntimeError("boom"), site="sqs.test")
         assert r is not None
         assert "sqs.test" in r.summary.lower()
+        # raw driver text must not leak into the summary, only into details
+        assert "boom" not in r.summary
+        assert r.details is not None
+        assert r.details["error"] == "boom"
 
     def test_read_timeout_maps(self) -> None:
         r = _sqs_eh(sqs_errors.ReadTimeoutError(endpoint_url="http://x"), site="x")
@@ -108,6 +112,10 @@ class TestSqsErrorHandler:
         assert needle in r.summary.lower()
 
     def test_botocore_fallback(self) -> None:
-        r = _sqs_eh(sqs_errors.BotoCoreError(), site="op")
+        raised = sqs_errors.BotoCoreError()
+        r = _sqs_eh(raised, site="op")
         assert r is not None
         assert "core error" in r.summary.lower()
+        assert str(raised) not in r.summary
+        assert r.details is not None
+        assert r.details["error"] == str(raised)

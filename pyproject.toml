@@ -114,7 +114,6 @@ socketio = [
     "python-socketio-stubs>=5.16.1.0.20260211",
 ]
 neo4j = ["neo4j>=6.1.0"]
-arango = ["python-arango-async>=1.2.2"]
 authn = [
     "argon2-cffi>=25.1.0",
     "email-validator>=2.3.0",
@@ -477,7 +476,6 @@ DEP002 = [
     "python-multipart",
     "email-validator",       # required for pydantic.EmailStr
     #! Added temporarily
-    "python-arango-async",
     "uvicorn",
     "types-hvac",
 ]

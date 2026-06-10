@@ -1,6 +1,6 @@
 """Unit tests for :mod:`forze_postgres.kernel.client.client` helpers (no DB I/O)."""
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -11,8 +11,12 @@ pytest.importorskip("psycopg")
 from forze_postgres.kernel.client.client import (
     PostgresClient,
     PostgresConfig,
+    PostgresTransactionOptions,
 )
-from forze_postgres.kernel.client.helpers import isolation_level_sql_fragment
+from forze_postgres.kernel.client.helpers import (
+    isolation_level_sql_fragment,
+    set_transaction_sql,
+)
 
 # ----------------------- #
 
@@ -57,6 +61,60 @@ class TestIsolationLevelSql:
     def test_rejects_unknown_level(self) -> None:
         with pytest.raises(CoreException, match="Unsupported transaction isolation"):
             isolation_level_sql_fragment("phantom")
+
+
+class TestSetTransactionSql:
+    """``SET TRANSACTION`` statement generation for root transaction options."""
+
+    def test_default_options(self) -> None:
+        stmt = set_transaction_sql(PostgresTransactionOptions())
+        assert stmt.as_string() == "SET TRANSACTION ISOLATION LEVEL READ COMMITTED"
+
+    def test_read_only(self) -> None:
+        stmt = set_transaction_sql(PostgresTransactionOptions(read_only=True))
+        assert (
+            stmt.as_string()
+            == "SET TRANSACTION ISOLATION LEVEL READ COMMITTED READ ONLY"
+        )
+
+    def test_serializable_read_only(self) -> None:
+        stmt = set_transaction_sql(
+            PostgresTransactionOptions(isolation="serializable", read_only=True),
+        )
+        assert (
+            stmt.as_string() == "SET TRANSACTION ISOLATION LEVEL SERIALIZABLE READ ONLY"
+        )
+
+    def test_repeatable_read(self) -> None:
+        stmt = set_transaction_sql(
+            PostgresTransactionOptions(isolation="repeatable_read"),
+        )
+        assert stmt.as_string() == "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ"
+
+
+class TestApplyTransactionOptions:
+    """Options must be scoped via ``SET TRANSACTION``, never connection attributes."""
+
+    @pytest.mark.asyncio
+    async def test_emits_set_transaction_without_mutating_connection(self) -> None:
+        cursor = AsyncMock()
+        conn = MagicMock()
+        conn.cursor.return_value.__aenter__ = AsyncMock(return_value=cursor)
+        conn.cursor.return_value.__aexit__ = AsyncMock(return_value=False)
+
+        options = PostgresTransactionOptions(isolation="serializable", read_only=True)
+        await PostgresClient._apply_transaction_options(conn, options)
+
+        cursor.execute.assert_awaited_once()
+        (stmt,) = cursor.execute.await_args.args
+        assert (
+            stmt.as_string() == "SET TRANSACTION ISOLATION LEVEL SERIALIZABLE READ ONLY"
+        )
+
+        # Connection attributes must stay untouched — they persist across pool
+        # check-ins and previously leaked READ ONLY / isolation to later work.
+        conn.set_read_only.assert_not_called()
+        conn.set_isolation_level.assert_not_called()
 
 
 class TestPostgresClientRowHelpers:

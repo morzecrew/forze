@@ -166,7 +166,6 @@ class BigQueryClient(BigQueryClientPort):
 
     async def __maybe_read_retry(
         self,
-        op: str,
         fn: Callable[[], Awaitable[T]],
     ) -> T:
         cfg = self.__require_config()
@@ -248,7 +247,7 @@ class BigQueryClient(BigQueryClientPort):
             async def _probe() -> None:
                 await self.run_query("SELECT 1", dry_run=True, timeout=None)
 
-            await self.__maybe_read_retry("health", _probe)
+            await self.__maybe_read_retry(_probe)
             return "ok", True
 
         except Exception as e:
@@ -378,7 +377,7 @@ class BigQueryClient(BigQueryClientPort):
 
             return self.__parse_rows(results)
 
-        return await self.__maybe_read_retry("run_query", _run)
+        return await self.__maybe_read_retry(_run)
 
     # ....................... #
 
@@ -420,7 +419,7 @@ class BigQueryClient(BigQueryClientPort):
 
             return all_rows
 
-        return await self.__maybe_read_retry("run_query_all_pages", _run)
+        return await self.__maybe_read_retry(_run)
 
     # ....................... #
 

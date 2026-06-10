@@ -1,3 +1,4 @@
+import asyncio
 import inspect
 from functools import lru_cache
 from typing import Any, Callable, Mapping, Never
@@ -34,7 +35,10 @@ def reraise_mapped(
     if isinstance(exc, CoreException):
         raise exc
 
-    if isinstance(exc, (GeneratorExit, KeyboardInterrupt, SystemExit)):
+    if isinstance(
+        exc,
+        (GeneratorExit, KeyboardInterrupt, SystemExit, asyncio.CancelledError),
+    ):
         raise exc
 
     err = mapper(exc, site=site, details=details)

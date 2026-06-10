@@ -354,6 +354,25 @@ async def test_upload_bytes_with_metadata_and_tags() -> None:
         client._S3Client__ctx_client.reset(tok)
 
 @pytest.mark.asyncio
+async def test_upload_bytes_url_encodes_tags() -> None:
+    client = S3Client()
+    api = _FakeS3Api()
+    tok = client._S3Client__ctx_client.set(api)  # type: ignore[arg-type]
+    try:
+        await client.upload_bytes(
+            "b",
+            "k",
+            b"data",
+            tags={"team a": "dev&ops", "k=ey": "v al"},
+        )
+        extra = api.upload_calls[0]["ExtraArgs"]
+        # Reserved characters ('&', '=') and spaces must not break the
+        # Tagging query-string structure.
+        assert extra["Tagging"] == "team+a=dev%26ops&k%3Dey=v+al"
+    finally:
+        client._S3Client__ctx_client.reset(tok)
+
+@pytest.mark.asyncio
 async def test_list_objects_rejects_invalid_limit_or_offset() -> None:
     client = S3Client()
     paginator = _FakePaginator(pages=[])

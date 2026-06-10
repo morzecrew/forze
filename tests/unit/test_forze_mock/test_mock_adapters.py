@@ -1,6 +1,6 @@
 """Unit tests for in-memory mock adapters."""
 
-from forze.base.exceptions import CoreException
+from forze.base.exceptions import CoreException, ExceptionKind
 import asyncio
 from unittest.mock import MagicMock
 from uuid import UUID
@@ -288,6 +288,42 @@ async def test_document_update_detects_revision_conflict() -> None:
 
     with pytest.raises(CoreException):
         await doc.update(created.id, created.rev + 1, _ProductUpdate(title="B"))
+
+@pytest.mark.asyncio
+async def test_document_create_duplicate_id_raises_conflict() -> None:
+    """Mirror Postgres: creating an existing id maps to ``exc.conflict``."""
+    state = MockState()
+    doc = _document_adapter(state)
+    created = await doc.create(_ProductCreate(title="A", category="x"))
+
+    with pytest.raises(CoreException, match="Unique violation") as excinfo:
+        await doc.create(_ProductCreate(title="B", category="y"), id=created.id)
+
+    assert excinfo.value.kind is ExceptionKind.CONFLICT
+    # The original document is untouched.
+    assert (await doc.get(created.id)).title == "A"
+
+
+@pytest.mark.asyncio
+async def test_document_ensure_and_upsert_tolerate_existing_id() -> None:
+    state = MockState()
+    doc = _document_adapter(state)
+    created = await doc.create(_ProductCreate(title="A", category="x"))
+
+    # ensure() returns the existing document without conflict.
+    ensured = await doc.ensure(created.id, _ProductCreate(title="B", category="y"))
+    assert ensured.id == created.id
+    assert ensured.title == "A"
+
+    # upsert() updates over the existing document without conflict.
+    upserted = await doc.upsert(
+        created.id,
+        _ProductCreate(title="C", category="z"),
+        _ProductUpdate(title="Updated"),
+    )
+    assert upserted.id == created.id
+    assert upserted.title == "Updated"
+
 
 @pytest.mark.asyncio
 async def test_counter_is_async_safe_under_concurrent_increments() -> None:

@@ -90,4 +90,5 @@ modules as any other integration.
 For getting started, `forze_identity.builtin` ships presets — file/env API keys
 (`local`) and Google / VK / Telegram Login over OIDC (`idp`). They're shipped-in
 conveniences, not production defaults: adopt one only once you accept its trust
-model.
+model (e.g. VK publishes no JWKS, so its preset verifies `id_token`s by
+server-side introspection against VK rather than a local signature check).

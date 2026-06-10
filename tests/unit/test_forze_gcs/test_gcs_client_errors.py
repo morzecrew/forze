@@ -72,3 +72,7 @@ class TestGCSErrorHandler:
         r = _gcs_eh(ValueError("nope"), site="gcs_op")
         assert r is not None
         assert "gcs_op" in r.summary
+        # raw driver text must not leak into the summary, only into details
+        assert "nope" not in r.summary
+        assert r.details is not None
+        assert r.details["error"] == "nope"

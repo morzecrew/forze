@@ -3,20 +3,36 @@ import contextlib
 import secrets
 from contextlib import asynccontextmanager
 from datetime import timedelta
-from typing import Any, AsyncGenerator, Callable
+from typing import Any, AsyncGenerator, Callable, Final
 
 import attrs
 
 from forze.application._logger import logger
 from forze.application.contracts.dlock import DistributedLockCommandPort
-from forze.base.exceptions import exc
+from forze.base.exceptions import CoreException, exc
 
 # ----------------------- #
+
+EXTEND_TASK_SHUTDOWN_GRACE: Final[timedelta] = timedelta(milliseconds=5)
+"""Grace period to let the extend heartbeat observe its stop event before cancelling.
+
+The heartbeat wakes as soon as the stop event is set, so this only needs to cover one
+event-loop scheduling hop — not a full ``extend_interval``.
+"""
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class DistributedLockScope:
-    """Async context manager for distributed lock acquire/extend/release."""
+    """Async context manager for distributed lock acquire/extend/release.
+
+    The protected body is the caller's ``async with`` block, so the scope cannot
+    cancel it mid-flight. When the extend heartbeat loses the lock (``reset``
+    returns ``False`` — expired or stolen) or fails with an exception, the
+    heartbeat stops, the failure is recorded, and the scope raises on exit so the
+    loss never goes unnoticed. If the body itself raised, the body's exception
+    propagates unchanged and the lock failure is attached as context (a warning
+    log plus an exception note) instead of masking it.
+    """
 
     cmd: DistributedLockCommandPort
     """Distributed lock command port."""
@@ -71,8 +87,6 @@ class DistributedLockScope:
         async def try_acquire_until_deadline() -> bool:
             nonlocal deadline
 
-            attempt = 0
-
             while True:
                 ok = await self.cmd.acquire(key, owner)
 
@@ -107,7 +121,6 @@ class DistributedLockScope:
 
                 sleep_for = min(retry_s + extra_s, remaining)
 
-                attempt += 1
                 await asyncio.sleep(sleep_for)
 
         acquired = await try_acquire_until_deadline()
@@ -136,12 +149,29 @@ class DistributedLockScope:
                         ok = await self.cmd.reset(key, owner)
 
                         if not ok:
+                            # Lock expired or was stolen: the body keeps running
+                            # (it cannot be cancelled mid-flight), so record the
+                            # loss, stop extending, and raise at scope exit.
+                            lost = exc.concurrency(
+                                "Distributed lock lost before scope exit "
+                                "(expired or stolen)",
+                                details={"key": key, "owner": owner},
+                            )
+                            logger.error(
+                                "Distributed lock lost before scope exit",
+                                key=key,
+                                owner=owner,
+                            )
+                            extend_errors.append(lost)
+                            stop_event.set()
                             break
 
             except Exception as e:
                 logger.error("Failed to extend distributed lock: %s", e)
                 extend_errors.append(e)
                 stop_event.set()
+
+        body_exc: BaseException | None = None
 
         try:
             if self.extend_interval is not None:
@@ -151,12 +181,19 @@ class DistributedLockScope:
 
             yield True
 
+        except BaseException as e:
+            body_exc = e
+            raise
+
         finally:
             if self.extend_interval is not None and extend_task is not None:
                 stop_event.set()
 
                 try:
-                    await asyncio.wait_for(extend_task, timeout=0.005)
+                    await asyncio.wait_for(
+                        extend_task,
+                        timeout=EXTEND_TASK_SHUTDOWN_GRACE.total_seconds(),
+                    )
 
                 except asyncio.TimeoutError:
                     extend_task.cancel()
@@ -167,11 +204,35 @@ class DistributedLockScope:
             try:
                 await asyncio.shield(self.cmd.release(key, owner))
 
-            except Exception:  # nosec B110
-                pass
+            except Exception as e:
+                logger.warning(
+                    "Failed to release distributed lock",
+                    key=key,
+                    owner=owner,
+                    error=str(e),
+                )
 
             if extend_errors:
-                raise exc.internal(
-                    "Failed to extend distributed lock",
-                    details={"error": str(extend_errors[0])},
+                first = extend_errors[0]
+                lock_exc = (
+                    first
+                    if isinstance(first, CoreException)
+                    else exc.internal(
+                        "Failed to extend distributed lock",
+                        details={"key": key, "error": str(first)},
+                    )
                 )
+
+                if body_exc is None:
+                    raise lock_exc
+
+                # The body raised: never mask its exception with the lock
+                # problem — attach the lock failure as context instead.
+                logger.warning(
+                    "Distributed lock extend failed while scope body raised; "
+                    "propagating the body's exception",
+                    key=key,
+                    owner=owner,
+                    error=str(first),
+                )
+                body_exc.add_note(f"distributed lock problem during scope: {lock_exc}")

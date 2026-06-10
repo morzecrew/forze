@@ -38,8 +38,12 @@ class LocalApiKeyVerifier(ApiKeyVerifierPort):
     ) -> VerifiedAssertion:
         presented = credentials.key
 
+        # Compare UTF-8 bytes: compare_digest raises TypeError on non-ASCII str,
+        # which would turn a bad credential (401) into an internal error (500).
+        presented_bytes = presented.encode()
+
         for stored_key, entry in self.config.api_keys.items():
-            if secrets.compare_digest(presented, stored_key):
+            if secrets.compare_digest(presented_bytes, stored_key.encode()):
                 return VerifiedAssertion(
                     issuer=ISSUER_FORZE_LOCAL_API_KEY,
                     subject=str(entry.principal_id),

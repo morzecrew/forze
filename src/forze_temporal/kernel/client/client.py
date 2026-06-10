@@ -64,13 +64,26 @@ class TemporalClient(TemporalClientPort):
                 # log
                 return
 
+            # Only forward optional security kwargs when set so the default
+            # connect call stays byte-identical to previous releases.
+            connect_kwargs: dict[str, Any] = {}
+
+            if config.tls:
+                connect_kwargs["tls"] = config.tls
+
+            if config.api_key is not None:
+                connect_kwargs["api_key"] = config.api_key.get_secret_value()
+
+            if config.rpc_metadata:
+                connect_kwargs["rpc_metadata"] = dict(config.rpc_metadata)
+
             self.__client = await Client.connect(
                 host,
                 namespace=config.namespace,
                 lazy=config.lazy,
-                # Default values (not configurable)
-                data_converter=pydantic_data_converter,
+                data_converter=config.data_converter or pydantic_data_converter,
                 interceptors=config.interceptors or [],
+                **connect_kwargs,
             )
 
     # ....................... #

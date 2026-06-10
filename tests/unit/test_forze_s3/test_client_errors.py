@@ -65,11 +65,19 @@ class TestS3ErrorHandler:
         assert needle in r.summary.lower()
 
     def test_botocore_fallback(self) -> None:
-        r = _s3_eh(s3_errors.BotoCoreError(), site="op")
+        raised = s3_errors.BotoCoreError()
+        r = _s3_eh(raised, site="op")
         assert isinstance(r, CoreException) and r.kind == ExceptionKind.INFRASTRUCTURE
         assert "core error" in r.summary.lower()
+        assert str(raised) not in r.summary
+        assert r.details is not None
+        assert r.details["error"] == str(raised)
 
     def test_generic_fallback(self) -> None:
         r = _s3_eh(ValueError("nope"), site="s3_op")
         assert isinstance(r, CoreException) and r.kind == ExceptionKind.INFRASTRUCTURE
         assert "s3_op" in r.summary.lower()
+        # raw driver text must not leak into the summary, only into details
+        assert "nope" not in r.summary
+        assert r.details is not None
+        assert r.details["error"] == "nope"

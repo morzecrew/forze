@@ -9,6 +9,7 @@ import io
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
 from typing import Any, AsyncGenerator, cast, final
+from urllib.parse import urlencode
 
 import aioboto3
 import attrs
@@ -307,7 +308,7 @@ class S3Client(S3ClientPort):
             extra["Metadata"] = metadata
 
         if tags:
-            extra["Tagging"] = "&".join(f"{k}={v}" for k, v in tags.items())
+            extra["Tagging"] = urlencode(tags)
 
         fileobj = io.BytesIO(data)
 

@@ -39,6 +39,13 @@ _DELAY_QUEUE_SUFFIX = ".__forze_delay"
 _RABBITMQ_MAX_EXPIRATION_MS = 2**32 - 1
 """Upper bound for per-message ``expiration`` (milliseconds) on the wire."""
 
+_DEFAULT_RECEIVE_WINDOW = timedelta(seconds=2)
+"""Bounded wait window for :meth:`RabbitMQClient.receive` when *timeout* is unset.
+
+Keeps ``receive(timeout=None)`` a bounded call: it returns whatever messages
+arrived within the window instead of blocking until a full batch shows up.
+"""
+
 # ....................... #
 
 
@@ -525,24 +532,39 @@ class RabbitMQClient(RabbitMQClientPort):
         limit: int | None = None,
         timeout: timedelta | None = None,
     ) -> list[RabbitMQQueueMessage]:
+        """Fetch up to ``limit`` messages within a bounded wait window.
+
+        ``timeout`` caps the **total** wait; ``None`` (or a non-positive
+        value) falls back to :data:`_DEFAULT_RECEIVE_WINDOW`. The call
+        returns early once ``limit`` messages arrived and otherwise
+        returns whatever arrived when the window elapses (possibly none).
+        """
         max_messages = 1 if limit is None else limit
 
         if max_messages <= 0:
             return []
 
-        timeout_seconds = timeout.total_seconds() if timeout is not None else 0
+        window = (
+            timeout
+            if timeout is not None and timeout.total_seconds() > 0
+            else _DEFAULT_RECEIVE_WINDOW
+        )
         raw_messages: list[AbstractIncomingMessage] = []
 
         channel = await self.__require_pending_channel()
         declared = await self.__declare_queue(channel, queue)
 
         try:
-            async with declared.iterator(timeout=timeout_seconds, no_ack=False) as it:
-                async for raw in it:
-                    raw_messages.append(raw)
+            async with asyncio.timeout(window.total_seconds()):
+                # No iterator timeout: the surrounding ``asyncio.timeout``
+                # bounds the whole drain loop (aio_pika treats its iterator
+                # ``timeout`` as a per-``__anext__`` wait, not a total one).
+                async with declared.iterator(no_ack=False) as it:
+                    async for raw in it:
+                        raw_messages.append(raw)
 
-                    if len(raw_messages) >= max_messages:
-                        break
+                        if len(raw_messages) >= max_messages:
+                            break
         except TimeoutError:
             pass
 
@@ -557,12 +579,37 @@ class RabbitMQClient(RabbitMQClientPort):
         *,
         timeout: timedelta | None = None,
     ) -> AsyncGenerator[RabbitMQQueueMessage]:
-        timeout_seconds = timeout.total_seconds() if timeout is not None else 1.0
+        """Yield messages continuously from ``queue``.
+
+        ``timeout`` is an **idle** timeout: ``None`` (or a non-positive
+        value) consumes forever, yielding messages as they arrive; a finite
+        value stops the generator cleanly (no error) once no message has
+        arrived for that duration. Each message resets the idle window.
+        """
+        idle_seconds = (
+            timeout.total_seconds()
+            if timeout is not None and timeout.total_seconds() > 0
+            else None
+        )
         channel = await self.__require_pending_channel()
         declared = await self.__declare_queue(channel, queue)
 
-        async with declared.iterator(timeout=timeout_seconds, no_ack=False) as it:
-            async for raw in it:
+        # aio_pika applies ``timeout`` per ``__anext__`` wait, which matches
+        # idle-timeout semantics; ``None`` waits unbounded (consume forever).
+        async with declared.iterator(timeout=idle_seconds, no_ack=False) as it:
+            while True:
+                try:
+                    raw = await it.__anext__()
+
+                except StopAsyncIteration:
+                    return
+
+                except TimeoutError:
+                    # Idle window elapsed: terminate cleanly per the queue
+                    # port contract instead of surfacing an infrastructure
+                    # error (aio_pika closes the iterator before raising).
+                    return
+
                 yield await self.__to_message(queue, raw)
 
     # ....................... #

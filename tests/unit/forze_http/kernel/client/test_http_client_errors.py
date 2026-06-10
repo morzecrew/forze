@@ -16,3 +16,29 @@ def test_maps_404_to_not_found() -> None:
 
     assert mapped is not None
     assert mapped.code is not None
+
+
+def test_catch_all_keeps_driver_error_out_of_summary() -> None:
+    mapped = _httpx_eh(
+        RuntimeError("driver internals: token=hunter2"),
+        site="http.test",
+    )
+
+    assert mapped is not None
+    assert mapped.summary == "An error occurred during HTTP operation http.test."
+    assert "driver internals" not in mapped.summary
+    assert mapped.details is not None
+    assert mapped.details["error"] == "driver internals: token=hunter2"
+
+
+def test_catch_all_preserves_existing_details() -> None:
+    mapped = _httpx_eh(
+        RuntimeError("boom"),
+        site="http.test",
+        details={"endpoint": "billing"},
+    )
+
+    assert mapped is not None
+    assert mapped.details is not None
+    assert mapped.details["endpoint"] == "billing"
+    assert mapped.details["error"] == "boom"

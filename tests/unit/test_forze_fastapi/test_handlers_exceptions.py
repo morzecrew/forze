@@ -163,7 +163,7 @@ class TestForzeExceptionHandler:
         assert body["context"]["field"] == "email"
 
     @pytest.mark.asyncio
-    async def test_omits_context_on_500(self) -> None:
+    async def test_omits_context_and_summary_on_500(self) -> None:
         err = exc.infrastructure(
             "Database down",
             details={"dsn": "postgres://user:pass@localhost/db"},
@@ -172,7 +172,47 @@ class TestForzeExceptionHandler:
         response = await _forze_exception_handler(request, err)
 
         assert response.status_code == 500
-        assert json.loads(response.body) == {"detail": "Database down"}
+        assert json.loads(response.body) == {"detail": "Internal server error"}
+        assert b"Database down" not in response.body
+        assert b"dsn" not in response.body
+
+    @pytest.mark.asyncio
+    async def test_internal_summary_replaced_with_generic_detail(self) -> None:
+        err = exc.internal("Dep wiring failed for key X")
+        request = Request(scope={"type": "http", "path": "/", "method": "GET"})
+        response = await _forze_exception_handler(request, err)
+
+        assert response.status_code == 500
+        assert json.loads(response.body) == {"detail": "Internal server error"}
+        assert b"wiring" not in response.body
+
+    @pytest.mark.asyncio
+    async def test_configuration_kind_leaks_nothing(self) -> None:
+        err = exc.configuration(
+            "Policy 'secrets-prod' is misconfigured",
+            details={"dep_key": "SecretsDepKey", "policy": "secrets-prod"},
+        )
+        request = Request(scope={"type": "http", "path": "/", "method": "GET"})
+        response = await _forze_exception_handler(request, err)
+
+        assert response.status_code == 500
+        assert json.loads(response.body) == {"detail": "Internal server error"}
+        assert b"secrets-prod" not in response.body
+        assert b"SecretsDepKey" not in response.body
+
+    @pytest.mark.asyncio
+    async def test_4xx_kinds_still_expose_summary(self) -> None:
+        request = Request(scope={"type": "http", "path": "/", "method": "GET"})
+
+        validation = await _forze_exception_handler(request, exc.validation("Invalid input"))
+        assert validation.status_code == 422
+        assert json.loads(validation.body) == {"detail": "Invalid input"}
+
+        authentication = await _forze_exception_handler(
+            request, exc.authentication("Token expired")
+        )
+        assert authentication.status_code == 401
+        assert json.loads(authentication.body) == {"detail": "Token expired"}
 
 
 class TestRegisterExceptionHandlers:
@@ -190,6 +230,26 @@ class TestRegisterExceptionHandlers:
         assert response.status_code == 404
         assert response.json() == {"detail": "Not found"}
         assert response.headers.get(ERROR_CODE_HEADER) == "core.not_found"
+
+    def test_route_raised_server_error_returns_generic_detail(self) -> None:
+        app = FastAPI()
+
+        @app.get("/infra")
+        def raise_infra() -> None:
+            raise exc.infrastructure("Driver said: connection to 10.0.0.5 refused")
+
+        @app.get("/internal")
+        def raise_internal() -> None:
+            raise exc.internal("Dep wiring failed for key X")
+
+        register_exception_handlers(app)
+        client = TestClient(app)
+
+        for path, needle in (("/infra", "10.0.0.5"), ("/internal", "wiring")):
+            response = client.get(path)
+            assert response.status_code == 500
+            assert response.json() == {"detail": "Internal server error"}
+            assert needle not in response.text
 
     def test_unhandled_exception_returns_500_json(
         self,

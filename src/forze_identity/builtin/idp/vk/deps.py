@@ -1,4 +1,4 @@
-"""VK ID OIDC verifier factory."""
+"""VK ID verifier factory (``public_info`` introspection)."""
 
 from typing import final
 
@@ -7,8 +7,8 @@ import attrs
 from forze.application.contracts.authn import AuthnSpec, TokenVerifierPort
 from forze.application.execution import ExecutionContext
 
-from forze_identity.oidc import ConfigurableOidcIdpVerifier
 from .config import VkIdOidcConfig
+from .verifier import VkPublicInfoTokenVerifier
 
 # ----------------------- #
 
@@ -16,10 +16,15 @@ from .config import VkIdOidcConfig
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class ConfigurableVkIdOidcVerifier:
-    """Build a VK ID-configured :class:`OidcTokenVerifier` (``id_token`` JWT only)."""
+    """Build a VK ID-configured :class:`VkPublicInfoTokenVerifier` (``id_token`` only).
+
+    VK publishes no JWKS, so unlike the Google/Telegram presets this factory does
+    not produce a JWT-signature verifier — it produces the server-side
+    introspection verifier documented by VK ID.
+    """
 
     config: VkIdOidcConfig
-    """VK client id, JWKS, and token endpoint settings."""
+    """VK client id, introspection, and token endpoint settings."""
 
     # ....................... #
 
@@ -28,4 +33,10 @@ class ConfigurableVkIdOidcVerifier:
         ctx: ExecutionContext,
         spec: AuthnSpec,
     ) -> TokenVerifierPort:
-        return ConfigurableOidcIdpVerifier(preset=self.config.to_preset())(ctx, spec)
+        _ = ctx, spec
+        return VkPublicInfoTokenVerifier(
+            client_id=self.config.client_id,
+            public_info_url=self.config.public_info_endpoint,
+            issuer=self.config.issuer,
+            timeout=self.config.verify_timeout,
+        )

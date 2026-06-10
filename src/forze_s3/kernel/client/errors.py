@@ -100,15 +100,18 @@ def _s3_eh(
         # --- broad fallback for other botocore errors ---
         case s3_errors.BotoCoreError() as be:
             return CoreException.infrastructure(
-                f"S3 core error: {be}",
-                details=details,
+                "S3 core error.",
+                details={**(details or {}), "error": str(be)},
             )
 
         # --- ultimate fallback ---
         case _:
+            # Keep the summary static: raw driver exception text may carry
+            # internal data. The stringified error goes into details, which
+            # egress suppresses and the scrubber sanitizes.
             return CoreException.infrastructure(
-                f"An error occurred while executing S3 operation {site}: {exc}",
-                details=details,
+                f"An error occurred while executing S3 operation {site}.",
+                details={**(details or {}), "error": str(exc)},
             )
 
 

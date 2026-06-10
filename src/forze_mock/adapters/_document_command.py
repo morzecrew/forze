@@ -135,6 +135,13 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
                 serialized["tenant_id"] = str(tid)
         with self.state.lock:
             store = self._store()
+            if domain.id in store:
+                # Mirror the integration adapters: Postgres maps a duplicate
+                # primary key (UniqueViolation) to ``exc.conflict``.
+                raise exc.conflict(
+                    "Unique violation.",
+                    details={"id": str(domain.id)},
+                )
             store[domain.id] = serialized
 
         await self._dispatch_domain_events([domain])

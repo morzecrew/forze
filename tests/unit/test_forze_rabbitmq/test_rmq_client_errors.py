@@ -54,3 +54,7 @@ class TestRabbitmqErrorHandler:
         r = _rabbitmq_eh(RuntimeError("boom"), site="rabbitmq.test")
         assert r is not None
         assert "rabbitmq.test" in r.summary.lower()
+        # raw driver text must not leak into the summary, only into details
+        assert "boom" not in r.summary
+        assert r.details is not None
+        assert r.details["error"] == "boom"

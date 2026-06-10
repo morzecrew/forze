@@ -16,6 +16,8 @@ from forze.application.contracts.authn import (
     AuthnSpec,
     IssuedAccessToken,
     IssuedApiKey,
+    IssuedInvite,
+    IssuedRefreshToken,
     IssuedTokens,
     PasswordCredentials,
     RefreshTokenCredentials,
@@ -41,6 +43,50 @@ class TestAuthnSpec:
     def test_minimal_spec(self) -> None:
         spec = AuthnSpec(name="auth")
         assert spec.name == "auth"
+
+
+class TestCredentialReprMasking:
+    """Secret-bearing fields must never leak through ``repr`` (logs, tracebacks)."""
+
+    def test_password_credentials_repr_hides_password(self) -> None:
+        creds = PasswordCredentials(login="alice", password="s3cr3t-password")
+        assert "s3cr3t-password" not in repr(creds)
+        assert "alice" in repr(creds)
+
+    def test_api_key_credentials_repr_hides_key(self) -> None:
+        creds = ApiKeyCredentials(key="s3cr3t-api-key", prefix="fz")
+        assert "s3cr3t-api-key" not in repr(creds)
+        assert "fz" in repr(creds)
+
+    def test_access_token_credentials_repr_hides_token(self) -> None:
+        creds = AccessTokenCredentials(token="s3cr3t-access-token")
+        assert "s3cr3t-access-token" not in repr(creds)
+        assert "Bearer" in repr(creds)
+
+    def test_refresh_token_credentials_repr_hides_token(self) -> None:
+        creds = RefreshTokenCredentials(token="s3cr3t-refresh-token")
+        assert "s3cr3t-refresh-token" not in repr(creds)
+
+    def test_issued_invite_repr_hides_token(self) -> None:
+        invite = IssuedInvite(token="s3cr3t-invite-token", principal_id=uuid4())
+        assert "s3cr3t-invite-token" not in repr(invite)
+
+    def test_issued_tokens_repr_hides_nested_secrets(self) -> None:
+        issued = IssuedTokens(
+            access=IssuedAccessToken(
+                token=AccessTokenCredentials(token="s3cr3t-access-token")
+            ),
+            refresh=IssuedRefreshToken(
+                token=RefreshTokenCredentials(token="s3cr3t-refresh-token")
+            ),
+        )
+        rendered = repr(issued)
+        assert "s3cr3t-access-token" not in rendered
+        assert "s3cr3t-refresh-token" not in rendered
+
+    def test_issued_api_key_repr_hides_nested_key(self) -> None:
+        issued = IssuedApiKey(key=ApiKeyCredentials(key="s3cr3t-api-key"))
+        assert "s3cr3t-api-key" not in repr(issued)
 
 
 class TestAuthnIdentity:

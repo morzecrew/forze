@@ -145,6 +145,19 @@ def _mongo_eh(
                     details=details,
                 )
 
+            if code == 112:
+                # WriteConflict: standard retryable in-transaction conflict.
+                return CoreException.concurrency(
+                    "Write conflict during transaction. Please retry.",
+                    details=details,
+                )
+
+            if exc.has_error_label("TransientTransactionError"):
+                return CoreException.concurrency(
+                    "Transient transaction error. Please retry.",
+                    details=details,
+                )
+
             msg = str(exc)
 
             if "not authorized" in msg.lower() or "unauthorized" in msg.lower():

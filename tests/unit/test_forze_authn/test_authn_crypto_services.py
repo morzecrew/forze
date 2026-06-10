@@ -56,16 +56,6 @@ def test_password_hash_and_verify_fast_config() -> None:
     assert not pwd.verify_password(h, "hunter3")
     assert not pwd.verify_password("$invalid", "x")
 
-def test_password_needs_rehash_after_tune() -> None:
-    weak_cfg = PasswordConfig(time_cost=1, memory_cost=8192, parallelism=1)
-    pwd_weak = PasswordService(config=weak_cfg)
-    hashed = pwd_weak.hash_password("quiet")
-
-    assert not pwd_weak.password_needs_rehash(hashed)
-
-    pwd_strong = PasswordService(config=PasswordService().config)
-    assert pwd_strong.password_needs_rehash(hashed)
-
 def test_refresh_digest_round_trip() -> None:
     pepper = secrets.token_bytes(32)
     svc = RefreshTokenService(pepper=pepper)
@@ -145,8 +135,3 @@ def test_access_token_detects_expiry() -> None:
     with pytest.raises(CoreException) as ei:
         svc.verify_token(expired_token)
     assert ei.value.code == "access_token_expired"
-
-def test_try_decode_returns_none_for_garbage() -> None:
-    svc = AccessTokenService(secret_key=secrets.token_bytes(32))
-    assert svc.try_decode_token("") is None
-    assert svc.try_decode_token("not.a.token") is None

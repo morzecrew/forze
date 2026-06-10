@@ -194,6 +194,26 @@ class TestAuthnDepsModule:
         assert deps.exists(ApiKeyLifecycleDepKey, route="a")
         assert deps.exists(PasswordAccountProvisioningDepKey, route="a")
 
+    def test_token_verifier_override_without_resolver_rejected(self) -> None:
+        with pytest.raises(CoreException, match="'main'"):
+            AuthnDepsModule(
+                kernel=_kernel_min_access(),
+                authn={"main": frozenset({"token"})},
+                token_verifiers={"main": MagicMock()},
+            )()
+
+    def test_token_verifier_override_with_resolver_passes(self) -> None:
+        deps = AuthnDepsModule(
+            kernel=AuthnKernelConfig(),
+            authn={"main": frozenset({"token"})},
+            token_verifiers={"main": MagicMock()},
+            resolvers={"main": ConfigurableJwtNativeUuidResolver()},
+        )()
+
+        assert deps.exists(AuthnDepKey, route="main")
+        assert deps.exists(TokenVerifierDepKey, route="main")
+        assert deps.exists(PrincipalResolverDepKey, route="main")
+
     def test_resolver_override(self) -> None:
         sentinel = ConfigurableJwtNativeUuidResolver()
         deps = AuthnDepsModule(

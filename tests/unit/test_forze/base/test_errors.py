@@ -152,3 +152,7 @@ class TestExceptionEgressPolicy:
 
     def test_infrastructure_hides_details(self) -> None:
         assert exception_egress_policy(ExceptionKind.INFRASTRUCTURE).expose_details is False
+
+    def test_configuration_hides_details(self) -> None:
+        # Configuration errors carry internal wiring info and must stay opaque.
+        assert exception_egress_policy(ExceptionKind.CONFIGURATION).expose_details is False
