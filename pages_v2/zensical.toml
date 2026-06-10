@@ -90,8 +90,25 @@ nav = [
         ] },
     ] },
     { "Recipes" = [
-        "recipes/cache-reads-with-redis.md",
-        "recipes/postgres.md",
+        { "Data" = [
+            "recipes/crud-fastapi-postgres.md",
+            "recipes/read-only-document-api.md",
+            "recipes/cache-reads-with-redis.md",
+            "recipes/add-idempotency.md",
+        ] },
+        { "Identity" = [
+            "recipes/authn-authz-tenancy-fastapi.md",
+            "recipes/local-identity.md",
+            "recipes/external-bootstrap-forze-jwt.md",
+            "recipes/external-idp-oidc.md",
+            "recipes/social-sign-in.md",
+        ] },
+        { "Messaging & workflows" = [
+            "recipes/transactional-outbox.md",
+            "recipes/transactional-notifications.md",
+            "recipes/background-workflow.md",
+            "recipes/scheduled-queue-jobs.md",
+        ] },
     ] },
     { "Reference" = [
         "reference/contracts.md",

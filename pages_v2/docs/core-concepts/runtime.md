@@ -94,7 +94,7 @@ to build something with it.
 
     A running service in about ten minutes, in-memory — no Docker.
 
--   :lucide-database: **[Recipes](../recipes/postgres.md)**
+-   :lucide-database: **[CRUD over Postgres](../recipes/crud-fastapi-postgres.md)**
 
     ---
 
