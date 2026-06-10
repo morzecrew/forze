@@ -46,7 +46,8 @@ class VaultClient(VaultClientPort):
     # ....................... #
 
     async def close(self) -> None:
-        self._client = None
+        async with self._init_lock:
+            self._client = None
 
     # ....................... #
 

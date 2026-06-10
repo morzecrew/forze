@@ -101,18 +101,22 @@ class RabbitMQClient(RabbitMQClientPort):
     # ....................... #
 
     async def close(self) -> None:
-        if self.__pending_channel is not None and not self.__pending_channel.is_closed:
-            await self.__pending_channel.close()
+        async with self.__init_lock:
+            if (
+                self.__pending_channel is not None
+                and not self.__pending_channel.is_closed
+            ):
+                await self.__pending_channel.close()
 
-        self.__pending_channel = None
+            self.__pending_channel = None
 
-        if self.__connection is not None and not self.__connection.is_closed:
-            await self.__connection.close()
+            if self.__connection is not None and not self.__connection.is_closed:
+                await self.__connection.close()
 
-        self.__connection = None
+            self.__connection = None
 
-        async with self.__pending_lock:
-            self.__pending.clear()
+            async with self.__pending_lock:
+                self.__pending.clear()
 
     # ....................... #
 

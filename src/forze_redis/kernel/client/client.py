@@ -132,23 +132,31 @@ class RedisClient(RedisClientPort):
             if isinstance(dsn, SecretStr):
                 dsn = dsn.get_secret_value()
 
-            self.__pool = (
-                ConnectionPool.from_url(  # pyright: ignore[reportUnknownMemberType]
-                    dsn,
-                    max_connections=config.max_size,
-                    socket_timeout=socket_timeout,
-                    socket_connect_timeout=connect_timeout,
-                    decode_responses=False,
-                    encoding="utf-8",
-                    health_check_interval=health_check_interval,
-                    socket_keepalive=config.socket_keepalive,
-                    retry_on_timeout=config.retry_on_timeout,
-                    client_name=config.client_name,
-                )
+            pool = ConnectionPool.from_url(  # pyright: ignore[reportUnknownMemberType]
+                dsn,
+                max_connections=config.max_size,
+                socket_timeout=socket_timeout,
+                socket_connect_timeout=connect_timeout,
+                decode_responses=False,
+                encoding="utf-8",
+                health_check_interval=health_check_interval,
+                socket_keepalive=config.socket_keepalive,
+                retry_on_timeout=config.retry_on_timeout,
+                client_name=config.client_name,
             )
-            self.__client = Redis(connection_pool=self.__pool)
-            await self.__client.ping()  # type: ignore[misc]
+            client = Redis(connection_pool=pool)
 
+            # Ping before assigning so a failed ping doesn't leave the guard
+            # satisfied with an unverified client.
+            try:
+                await client.ping()  # type: ignore[misc]
+
+            except BaseException:
+                await pool.disconnect()
+                raise
+
+            self.__pool = pool
+            self.__client = client
             self.__redis_config = config
 
             logger.trace("Client initialized successfully")
@@ -192,19 +200,20 @@ class RedisClient(RedisClientPort):
     # ....................... #
 
     async def close(self) -> None:
-        self.__script_registry.clear()
+        async with self.__init_lock:
+            self.__script_registry.clear()
 
-        if self.__client is not None:
-            logger.trace("Client found, closing")
-            await self.__client.aclose()
-            self.__client = None
+            if self.__client is not None:
+                logger.trace("Client found, closing")
+                await self.__client.aclose()
+                self.__client = None
 
-        if self.__pool is not None:
-            logger.trace("Pool found, disconnecting")
-            await self.__pool.disconnect(inuse_connections=True)
-            self.__pool = None
+            if self.__pool is not None:
+                logger.trace("Pool found, disconnecting")
+                await self.__pool.disconnect(inuse_connections=True)
+                self.__pool = None
 
-        logger.trace("Client closed successfully")
+            logger.trace("Client closed successfully")
 
     # ....................... #
 

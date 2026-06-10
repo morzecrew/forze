@@ -84,7 +84,8 @@ class MeilisearchClient(MeilisearchClientPort):
     async def close(self) -> None:
         """Alias for :meth:`aclose` (the standard ``close()`` disposal contract)."""
 
-        await self.aclose()
+        async with self.__init_lock:
+            await self.aclose()
 
     # ....................... #
 

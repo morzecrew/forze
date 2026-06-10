@@ -95,8 +95,9 @@ class S3Client(S3ClientPort):
     async def close(self) -> None:
         """Release the session and connection options."""
 
-        self.__session = None
-        self.__opts = None
+        async with self.__init_lock:
+            self.__session = None
+            self.__opts = None
 
     # ....................... #
 

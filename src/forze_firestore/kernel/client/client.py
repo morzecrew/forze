@@ -77,11 +77,12 @@ class FirestoreClient(FirestoreClientPort):
     # ....................... #
 
     async def close(self) -> None:
-        if self.__client is None:
-            return
+        async with self.__init_lock:
+            if self.__client is None:
+                return
 
-        self.__client.close()  # type: ignore[no-untyped-call]
-        self.__client = None
+            self.__client.close()  # type: ignore[no-untyped-call]
+            self.__client = None
 
     # ....................... #
 

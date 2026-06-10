@@ -112,12 +112,13 @@ class MongoClient(MongoClientPort):
     async def close(self) -> None:
         """Close the underlying client. No-op if not initialized."""
 
-        if self.__client is None:
-            return
+        async with self.__init_lock:
+            if self.__client is None:
+                return
 
-        await self.__client.close()
+            await self.__client.close()
 
-        self.__client = None
+            self.__client = None
 
     # ....................... #
 

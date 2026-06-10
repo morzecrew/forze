@@ -85,9 +85,10 @@ class Neo4jClient(Neo4jClientPort):
     # ....................... #
 
     async def close(self) -> None:
-        if self._driver is not None:
-            await self._driver.close()
-            self._driver = None
+        async with self._init_lock:
+            if self._driver is not None:
+                await self._driver.close()
+                self._driver = None
 
     # ....................... #
 

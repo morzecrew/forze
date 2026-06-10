@@ -76,13 +76,14 @@ class ClickHouseClient(ClickHouseClientPort):
     # ....................... #
 
     async def close(self) -> None:
-        client = self.__client
+        async with self.__init_lock:
+            client = self.__client
 
-        if client is not None:
-            await client.close()
-            self.__client = None
+            if client is not None:
+                await client.close()
+                self.__client = None
 
-        self.__config = None
+            self.__config = None
 
     # ....................... #
 

@@ -76,8 +76,9 @@ class TemporalClient(TemporalClientPort):
     # ....................... #
 
     async def close(self) -> None:
-        if self.__client is not None:
-            self.__client = None
+        async with self.__init_lock:
+            if self.__client is not None:
+                self.__client = None
 
     # ....................... #
 

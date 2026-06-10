@@ -150,20 +150,25 @@ class DuckDbClient(DuckDbClientPort):
     # ....................... #
 
     async def close(self) -> None:
-        """Shut down the executor and close the connection. No-op if not initialized."""
+        """Shut down the executor and close the connection. No-op if not initialized.
 
-        executor = self.__executor
-        conn = self.__conn
+        Serializes on the same lock as :meth:`initialize` so a concurrent
+        initialize cannot interleave with teardown.
+        """
 
-        self.__executor = None
-        self.__conn = None
-        self.__config = None
+        async with self.__init_lock:
+            executor = self.__executor
+            conn = self.__conn
 
-        if executor is not None:
-            await asyncio.to_thread(executor.shutdown, wait=True)
+            self.__executor = None
+            self.__conn = None
+            self.__config = None
 
-        if conn is not None:
-            await asyncio.to_thread(conn.close)
+            if executor is not None:
+                await asyncio.to_thread(executor.shutdown, wait=True)
+
+            if conn is not None:
+                await asyncio.to_thread(conn.close)
 
     # ....................... #
     # Helpers

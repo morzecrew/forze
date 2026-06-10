@@ -176,7 +176,7 @@ class PostgresClient(PostgresClientPort):
             if isinstance(dsn, SecretStr):
                 dsn = dsn.get_secret_value()
 
-            self.__pool = AsyncConnectionPool(
+            pool = AsyncConnectionPool(
                 conninfo=dsn,
                 open=False,
                 min_size=config.min_size,
@@ -192,19 +192,23 @@ class PostgresClient(PostgresClientPort):
 
             self.__gather_sem = asyncio.Semaphore(self.__max_concurrent_queries)
 
-            await self.__pool.open()
+            # Open before assigning so a failed open doesn't leave the guard
+            # satisfied with an unopened pool.
+            await pool.open()
+            self.__pool = pool  # type: ignore[assignment]
 
     # ....................... #
 
     async def close(self) -> None:
         """Closes the connection pool. No-op if not initialized."""
 
-        if self.__pool is None:
-            return
+        async with self.__init_lock:
+            if self.__pool is None:
+                return
 
-        await self.__pool.close()
-        self.__pool = None
-        self.__gather_sem = None
+            await self.__pool.close()
+            self.__pool = None
+            self.__gather_sem = None
 
     # ....................... #
 
@@ -635,9 +639,7 @@ class PostgresClient(PostgresClientPort):
         # transaction unwind run promptly, leaving the connection clean.
         async with self.__acquire_conn() as conn:
             tx_cm: AbstractAsyncContextManager[Any] = (
-                nullcontext()
-                if self.is_in_transaction()
-                else conn.transaction()
+                nullcontext() if self.is_in_transaction() else conn.transaction()
             )
 
             async with tx_cm:

@@ -100,7 +100,8 @@ class HttpxClient(HttpxClientPort):
         return None
 
     async def close(self) -> None:
-        await self.aclose()
+        async with self.__init_lock:
+            await self.aclose()
 
     async def evict_tenant(self, tenant_id: Any) -> None:
         return None

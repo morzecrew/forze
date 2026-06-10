@@ -120,9 +120,10 @@ class SQSClient(SQSClientPort):
     async def close(self) -> None:
         """Drop the current session and queue URL cache."""
 
-        self.__session = None
-        self.__opts = None
-        self.__queue_url_cache.clear()
+        async with self.__init_lock:
+            self.__session = None
+            self.__opts = None
+            self.__queue_url_cache.clear()
 
     # ....................... #
 
