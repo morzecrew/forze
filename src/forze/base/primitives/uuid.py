@@ -140,7 +140,7 @@ def uuid7_to_datetime(
     if high_precision:
         # Extract the sub-millisecond nanoseconds (bits 52-71)
         # First get the integer representation
-        uuid_int = uuid.int
+        uuid_int = int(uuid)
         # Extract bits 52-71 (20 bits for sub-ms nanoseconds)
         sub_ms_ns = (uuid_int >> 56) & 0xFFFFF  # Mask with 20 bits
         # Convert to microseconds (1 microsecond = 1000 nanoseconds)
