@@ -62,6 +62,11 @@ The runtime opens inside the app's lifespan; each route resolves the document
   code.
 - A missing id raises `not_found` → `404`.
 
+Hand-writing the routes keeps this recipe transparent; the same endpoints can
+also be [generated from an operation
+registry](../integrations/fastapi.md#generated-routes) with
+`attach_document_routes`.
+
 ## Run it
 
 ```bash

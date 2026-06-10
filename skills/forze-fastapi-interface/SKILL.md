@@ -2,9 +2,10 @@
 name: forze-fastapi-interface
 description: >-
   Connects Forze handlers to FastAPI: runtime context dependency and lifespan,
-  SecurityContextMiddleware identity binding, custom headers/logging middleware,
-  Scalar docs, and CoreException error handling. Use when exposing handlers over
-  HTTP.
+  generated routes from an operation registry (attach_document_routes /
+  attach_search_routes / attach_storage_routes), SecurityContextMiddleware
+  identity binding, custom headers/logging middleware, Scalar docs, and
+  CoreException error handling. Use when exposing handlers over HTTP.
 ---
 
 # Forze FastAPI interface
@@ -13,11 +14,11 @@ Use when connecting Forze handlers to HTTP. Pair with [`forze-wiring`](../forze-
 
 > **Migration note:** the previous `forze_fastapi.endpoints.*` helpers
 > (`attach_document_endpoints`, `attach_search_endpoints`, `attach_authn_endpoints`,
-> `attach_http_endpoint`, `build_http_endpoint_spec`) were **removed**. The package
-> now ships middleware, security primitives, Scalar docs, and exception handling;
-> you define your own FastAPI routes that dispatch through the operation registry /
-> facade. A canonical endpoint-generation pattern is being reworked as part of the
-> docs refresh.
+> `attach_http_endpoint`, `build_http_endpoint_spec`) were **removed**. Their
+> replacement is `forze_fastapi.routes` (`attach_document_routes`,
+> `attach_search_routes`, `attach_storage_routes`), which generates routes from a
+> frozen operation registry — see **Generated routes** below. Hand-written routes
+> that dispatch through the registry / facade remain fully supported.
 
 ## Context dependency and lifespan
 
@@ -42,7 +43,44 @@ def ctx_dep():
     return runtime.get_context()
 ```
 
-## Exposing handlers
+## Generated routes
+
+`forze_fastapi.routes` projects a frozen operation registry (built with
+`forze_kits.aggregates.*` factories) onto a plain `APIRouter` you own. Schemas
+come from the operation descriptors and each route's `operationId` is the
+registry operation key verbatim (e.g. `notes.get`):
+
+```python
+from fastapi import APIRouter
+
+from forze_fastapi.routes import attach_document_routes
+
+router = APIRouter(prefix="/notes", tags=["notes"])
+
+attach_document_routes(
+    router,
+    registry=registry,  # build_document_registry(spec, dtos).freeze()
+    ns=spec.default_namespace,
+    ctx_dep=ctx_dep,
+    style="rest",  # or "rpc" — explicit, required
+)
+
+app.include_router(router)
+```
+
+- `style="rest"` gives resource paths (`POST ""` 201, `GET /{id}`,
+  `PATCH /{id}?rev=`, `DELETE /{id}` 204); `style="rpc"` gives uniform
+  `POST /<op>` with the input DTO as body. List operations are `POST /<op>` in
+  both styles.
+- Only operations the registry holds are attached (a read-only spec yields a
+  read-only router); narrow with `include={"get", "list"}`.
+- Merging `build_soft_deletion_registry(spec)` into the document registry adds
+  `POST /{id}/delete|restore?rev=` automatically.
+- `attach_search_routes` (no `style` — every search request is a filter body,
+  always `POST /<op>`) and `attach_storage_routes` (`style` required; multipart
+  upload, raw-bytes download) follow the same pattern.
+
+## Hand-written routes
 
 Define plain FastAPI routes that resolve a context with `ctx_dep`, dispatch through your operation registry / facade (see [`forze-wiring`](../forze-wiring/SKILL.md) and [`forze-documents-search`](../forze-documents-search/SKILL.md)), and return the result. For simple reads you can call the ports directly:
 
@@ -95,7 +133,7 @@ register_scalar_docs(app, path="/docs")
 
 1. **Creating `ExecutionContext` per request by hand** — use `runtime.get_context()` via `ctx_dep`.
 2. **Calling `runtime.get_context()` outside lifespan scope** — it raises at runtime.
-3. **Importing the removed `forze_fastapi.endpoints.*` helpers** — define your own routes and dispatch through the registry/facade.
+3. **Importing the removed `forze_fastapi.endpoints.*` helpers** — use `forze_fastapi.routes.attach_*_routes`, or define your own routes that dispatch through the registry/facade.
 4. **Binding identity inside route handlers** — let `SecurityContextMiddleware` bind at the boundary.
 5. **Catching `CoreException` manually in routes** — register the built-in exception handlers.
 
