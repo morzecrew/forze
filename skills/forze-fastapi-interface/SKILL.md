@@ -101,6 +101,6 @@ register_scalar_docs(app, path="/docs")
 
 ## Reference
 
-- [FastAPI integration](https://morzecrew.github.io/forze/docs/integrations/fastapi/)
+- [FastAPI integration](https://morzecrew.github.io/forze/integrations/fastapi/)
 - [`forze-wiring`](../forze-wiring/SKILL.md)
 - [`forze-auth-tenancy-secrets`](../forze-auth-tenancy-secrets/SKILL.md)

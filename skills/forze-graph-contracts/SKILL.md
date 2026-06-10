@@ -98,6 +98,6 @@ Keep Cypher, AQL, and engine-specific query strings inside your adapter. Registe
 
 ## Reference
 
-- [Graph contracts](https://morzecrew.github.io/forze/docs/core-package/contracts/graph/)
-- [Specs and wiring](https://morzecrew.github.io/forze/docs/concepts/specs-and-wiring/)
+- [Graph contracts](https://morzecrew.github.io/forze/reference/contracts/)
+- [Specs and wiring](https://morzecrew.github.io/forze/in-depth/wiring/)
 - [`forze-custom-deps`](../forze-custom-deps/SKILL.md)

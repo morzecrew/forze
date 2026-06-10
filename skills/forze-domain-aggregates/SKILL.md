@@ -9,7 +9,7 @@ description: >-
 
 # Forze Domain Aggregates
 
-Use when defining domain models, document aggregates, and **logical** specifications. Physical tables, collections, Redis namespaces, buckets, and queues belong in integration configs — see [`forze-specs-infrastructure`](../forze-specs-infrastructure/SKILL.md) and [Specs and wiring](https://morzecrew.github.io/forze/docs/concepts/specs-and-wiring/).
+Use when defining domain models, document aggregates, and **logical** specifications. Physical tables, collections, Redis namespaces, buckets, and queues belong in integration configs — see [`forze-specs-infrastructure`](../forze-specs-infrastructure/SKILL.md) and [Specs and wiring](https://morzecrew.github.io/forze/in-depth/wiring/).
 
 Pair with [`forze-framework-usage`](../forze-framework-usage/SKILL.md) for ports and [`forze-wiring`](../forze-wiring/SKILL.md) for composition and HTTP.
 
@@ -117,7 +117,7 @@ project_spec = DocumentSpec(
 )
 ```
 
-Once a `DepsRegistry` registers document adapters for that `name`, handlers obtain **`DocumentQueryPort`** / **`DocumentCommandPort`** via **`ctx.document.query(project_spec)`** / **`ctx.document.command(project_spec)`** — see [`forze-framework-usage`](../forze-framework-usage/SKILL.md) and [Document contracts](https://morzecrew.github.io/forze/docs/core-package/contracts/document/).
+Once a `DepsRegistry` registers document adapters for that `name`, handlers obtain **`DocumentQueryPort`** / **`DocumentCommandPort`** via **`ctx.document.query(project_spec)`** / **`ctx.document.command(project_spec)`** — see [`forze-framework-usage`](../forze-framework-usage/SKILL.md) and [Document contracts](https://morzecrew.github.io/forze/reference/contracts/document/).
 
 | Field | Purpose |
 |-------|---------|
@@ -188,5 +188,5 @@ project_dtos = DocumentDTOs(
 
 ## Reference
 
-- [Aggregate specification](https://morzecrew.github.io/forze/docs/concepts/aggregate-specification/)
-- [Specs and wiring](https://morzecrew.github.io/forze/docs/concepts/specs-and-wiring/)
+- [Aggregate specification](https://morzecrew.github.io/forze/core-concepts/application-layer/)
+- [Specs and wiring](https://morzecrew.github.io/forze/in-depth/wiring/)

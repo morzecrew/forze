@@ -45,7 +45,7 @@ Authentication is split into two seams:
 
 External IdPs (`forze_identity.oidc`, `forze_firebase_auth`, …) plug in via `TokenVerifierPort` and reuse a Forze resolver — install the matching identity extra; handlers stay on existing authn ports.
 
-See [Authentication](https://morzecrew.github.io/forze/docs/concepts/authentication/) for the full architectural rationale.
+See [Authentication](https://morzecrew.github.io/forze/in-depth/identity/) for the full architectural rationale.
 
 ## FastAPI identity
 
@@ -158,7 +158,7 @@ class ConfigurableOidcTokenVerifier:
 
 Forze stays UUID-native: external `subject` strings become canonical UUID `principal_id`s via the chosen resolver, so domain / authz / tenancy code never sees a vendor identifier.
 
-See [External IdP (OIDC) recipe](https://morzecrew.github.io/forze/docs/recipes/external-idp-oidc/) and [OIDC integration](https://morzecrew.github.io/forze/docs/integrations/oidc/).
+See [External IdP (OIDC) recipe](https://morzecrew.github.io/forze/recipes/external-idp-oidc/) and [OIDC integration](https://morzecrew.github.io/forze/integrations/oidc/).
 
 ## Authn document specs
 
@@ -190,7 +190,7 @@ TenancyDepsModule(
 )
 ```
 
-See [Multi-tenancy](https://morzecrew.github.io/forze/docs/concepts/multi-tenancy/) for aggregates, adapters, and FastAPI `TenantIdentityResolver` pairing.
+See [Multi-tenancy](https://morzecrew.github.io/forze/in-depth/multi-tenancy/) for aggregates, adapters, and FastAPI `TenantIdentityResolver` pairing.
 
 ## Secrets
 
@@ -246,10 +246,10 @@ Use secrets for credentials and routed client configuration; avoid putting secre
 
 ## Reference
 
-- [Authentication](https://morzecrew.github.io/forze/docs/concepts/authentication/)
-- [Authentication reference](https://morzecrew.github.io/forze/docs/reference/authentication/)
-- [Authn, authz, tenancy (FastAPI) recipe](https://morzecrew.github.io/forze/docs/recipes/authn-authz-tenancy-fastapi/)
-- [External IdP (OIDC) recipe](https://morzecrew.github.io/forze/docs/recipes/external-idp-oidc/)
-- [OIDC integration](https://morzecrew.github.io/forze/docs/integrations/oidc/)
-- [FastAPI integration](https://morzecrew.github.io/forze/docs/integrations/fastapi/)
-- [Multi-tenancy](https://morzecrew.github.io/forze/docs/concepts/multi-tenancy/)
+- [Authentication](https://morzecrew.github.io/forze/in-depth/identity/)
+- [Authentication reference](https://morzecrew.github.io/forze/in-depth/identity/)
+- [Authn, authz, tenancy (FastAPI) recipe](https://morzecrew.github.io/forze/recipes/authn-authz-tenancy-fastapi/)
+- [External IdP (OIDC) recipe](https://morzecrew.github.io/forze/recipes/external-idp-oidc/)
+- [OIDC integration](https://morzecrew.github.io/forze/integrations/oidc/)
+- [FastAPI integration](https://morzecrew.github.io/forze/integrations/fastapi/)
+- [Multi-tenancy](https://morzecrew.github.io/forze/in-depth/multi-tenancy/)

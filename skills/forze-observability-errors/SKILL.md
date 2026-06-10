@@ -110,5 +110,5 @@ register_exception_handlers(app)
 
 ## Reference
 
-- [Base layer (errors and logging)](https://morzecrew.github.io/forze/docs/core-package/base-layer/)
-- [FastAPI integration](https://morzecrew.github.io/forze/docs/integrations/fastapi/)
+- [Base layer (errors and logging)](https://morzecrew.github.io/forze/reference/errors/)
+- [FastAPI integration](https://morzecrew.github.io/forze/integrations/fastapi/)

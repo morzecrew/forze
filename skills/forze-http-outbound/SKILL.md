@@ -134,6 +134,6 @@ HTTP client/adapter/execution loggers are named under `FORZE_HTTP_LOGGER_NAMES`;
 
 ## Reference
 
-- [HTTP integration](https://morzecrew.github.io/forze/docs/integrations/http/)
+- [HTTP integration](https://morzecrew.github.io/forze/integrations/http/)
 - [`forze-framework-usage`](../forze-framework-usage/SKILL.md)
 - [`forze-auth-tenancy-secrets`](../forze-auth-tenancy-secrets/SKILL.md)

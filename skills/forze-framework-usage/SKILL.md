@@ -58,7 +58,7 @@ from forze_postgres.adapters.document import PostgresDocumentAdapter  # Never in
 
 For configurable keys without a convenience wrapper, use `ctx.deps.resolve_configurable(ctx, DepKey, spec, route=spec.name)`.
 
-See [Execution reference](https://morzecrew.github.io/forze/docs/reference/execution/).
+See [Execution reference](https://morzecrew.github.io/forze/in-depth/wiring/).
 
 ### Handler pattern
 
@@ -89,7 +89,7 @@ async with ctx.tx_ctx.scope(TxRoute.DEFAULT):
 
 Use `ctx.tx_ctx.defer_after_commit()` for side effects that must run only after the root transaction commits.
 
-Stage hooks use `BeforeStep` / `OnSuccessStep` on `OperationRegistry.bind(...)` — see [Middleware and plans](https://morzecrew.github.io/forze/docs/reference/middleware-plans/).
+Stage hooks use `BeforeStep` / `OnSuccessStep` on `OperationRegistry.bind(...)` — see [Middleware and plans](https://morzecrew.github.io/forze/in-depth/capability-execution/).
 
 ### Identity and tenancy
 
@@ -204,7 +204,7 @@ See [`forze-messaging-streaming`](../forze-messaging-streaming/SKILL.md) and [`f
 
 ## Reference
 
-- [Execution reference](https://morzecrew.github.io/forze/docs/reference/execution/)
-- [Contracts and adapters](https://morzecrew.github.io/forze/docs/concepts/contracts-adapters/)
-- [Query syntax](https://morzecrew.github.io/forze/docs/reference/query-syntax/)
-- [Contracts overview](https://morzecrew.github.io/forze/docs/core-package/contracts/)
+- [Execution reference](https://morzecrew.github.io/forze/in-depth/wiring/)
+- [Contracts and adapters](https://morzecrew.github.io/forze/core-concepts/contracts/)
+- [Query syntax](https://morzecrew.github.io/forze/reference/query-syntax/)
+- [Contracts overview](https://morzecrew.github.io/forze/reference/contracts/)

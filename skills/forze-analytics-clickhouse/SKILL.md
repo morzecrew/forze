@@ -57,10 +57,10 @@ async with runtime.session() as ctx:
 
 ## Local Docker
 
-Pass `ClickHouseConfig(host=..., port=8123, username=..., password=...)` to `clickhouse_lifecycle_step(connection=...)`. See [ClickHouse integration](https://morzecrew.github.io/forze/docs/integrations/clickhouse/) for Docker and local setup.
+Pass `ClickHouseConfig(host=..., port=8123, username=..., password=...)` to `clickhouse_lifecycle_step(connection=...)`. See [ClickHouse integration](https://morzecrew.github.io/forze/integrations/clickhouse/) for Docker and local setup.
 
 ## Reference
 
-- [ClickHouse integration](https://morzecrew.github.io/forze/docs/integrations/clickhouse/)
-- [Analytics contracts](https://morzecrew.github.io/forze/docs/core-package/contracts/analytics/)
+- [ClickHouse integration](https://morzecrew.github.io/forze/integrations/clickhouse/)
+- [Analytics contracts](https://morzecrew.github.io/forze/reference/contracts/)
 - [`forze-framework-usage`](../forze-framework-usage/SKILL.md)
