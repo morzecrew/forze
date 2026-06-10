@@ -102,6 +102,22 @@ class TestStorageRoutes:
 
         assert client.post("/files/list", json={}).json()["hits"] == []
 
+    def test_download_filename_is_header_safe(self) -> None:
+        client = TestClient(_build_app("rest"))
+
+        stored = client.post(
+            "/files",
+            files={"file": ('evil"\r\nX-Injected: 1.txt', b"x", "text/plain")},
+        ).json()
+
+        downloaded = client.get(f"/files/{stored['key']}")
+
+        assert downloaded.status_code == 200
+        assert "X-Injected" not in downloaded.headers
+        disposition = downloaded.headers["content-disposition"]
+        assert "\r" not in disposition and "\n" not in disposition
+        assert disposition.startswith("attachment; filename*=utf-8''")
+
     def test_keys_may_contain_slashes(self) -> None:
         client = TestClient(_build_app("rest"))
 

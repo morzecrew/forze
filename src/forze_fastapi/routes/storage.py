@@ -16,6 +16,7 @@ require_fastapi()
 # ....................... #
 
 from typing import AbstractSet, Annotated, Any, Awaitable, Callable, Mapping
+from urllib.parse import quote
 
 from fastapi import APIRouter, Form, Response, UploadFile
 from pydantic import BaseModel
@@ -85,15 +86,30 @@ def _download_endpoint(
 
     async def endpoint(key: str) -> Response:
         obj = await runner(key)
-        filename = obj.filename.replace('"', "")
 
         return Response(
             content=obj.data,
             media_type=obj.content_type,
-            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+            headers={"Content-Disposition": _content_disposition(obj.filename)},
         )
 
     return endpoint
+
+
+def _content_disposition(filename: str) -> str:
+    """RFC 6266 attachment header for a client-supplied filename.
+
+    Percent-encoding neutralizes header-injection characters (CR/LF, quotes,
+    delimiters); names that needed encoding are carried in ``filename*``.
+    """
+
+    filename = filename or "download"
+    quoted = quote(filename)
+
+    if quoted == filename:
+        return f'attachment; filename="{filename}"'
+
+    return f"attachment; filename*=utf-8''{quoted}"
 
 
 # ....................... #
