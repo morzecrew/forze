@@ -15,6 +15,7 @@ repo_name = "forze"
 # Styles
 
 extra_css = ["_stylesheets/extra.css"]
+extra_javascript = ["_javascripts/theme.js", "_javascripts/hero.js"]
 
 # ....................... #
 # Navigation
