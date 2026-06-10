@@ -10,6 +10,7 @@ from .handlers import (
     AuthnLogout,
     AuthnPasswordLogin,
     AuthnRefreshTokens,
+    DeactivatePrincipalHandler,
 )
 
 from .operations import AuthnKernelOp
@@ -45,3 +46,9 @@ class AuthnFacade(OperationFacade):
         uc=AuthnChangePassword,
     )
     """Change-password usecase."""
+
+    deactivate_principal = facade_op(
+        AuthnKernelOp.DEACTIVATE_PRINCIPAL,
+        uc=DeactivatePrincipalHandler,
+    )
+    """Deactivate-principal (cascaded offboarding) usecase."""

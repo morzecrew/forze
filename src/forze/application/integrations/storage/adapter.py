@@ -197,6 +197,7 @@ class ObjectStorageAdapter(StorageQueryPort, StorageCommandPort, TenancyMixin):
         data = obj.data
         prefix = obj.prefix
         description = obj.description
+        tags = dict(obj.tags) if obj.tags else None
 
         if description:
             description = default_b64_codec.dumps(description)
@@ -227,6 +228,7 @@ class ObjectStorageAdapter(StorageQueryPort, StorageCommandPort, TenancyMixin):
                 data=data,
                 content_type=content_type,
                 metadata=safe_meta,
+                tags=tags,
             )
 
         return StoredObject(
@@ -236,6 +238,7 @@ class ObjectStorageAdapter(StorageQueryPort, StorageCommandPort, TenancyMixin):
             content_type=content_type,
             size=len(data),
             created_at=now,
+            tags=tags,
         )
 
     # ....................... #
@@ -343,6 +346,7 @@ class ObjectStorageAdapter(StorageQueryPort, StorageCommandPort, TenancyMixin):
                         content_type=h.content_type,
                         size=meta.size,
                         created_at=meta.created_at,
+                        tags=dict(h.tags) if h.tags else None,
                     )
                 )
 

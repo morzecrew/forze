@@ -15,9 +15,14 @@ from forze.base.exceptions import (
     ExceptionMapper,
     default_chain_exc_mapper,
     exc as forze_exc,
+    fallback_exception_mapper,
 )
 
 # ----------------------- #
+
+_fallback = fallback_exception_mapper("HTTP")
+
+# ....................... #
 
 
 def _response_status(exc: BaseException) -> int | None:
@@ -88,13 +93,7 @@ def _httpx_eh(
             )
 
         case _:
-            # Keep the summary static: raw driver exception text may carry
-            # internal data. The stringified error goes into details, which
-            # egress suppresses and the scrubber sanitizes.
-            return CoreException.internal(
-                f"An error occurred during HTTP operation {site}.",
-                details={**(details or {}), "error": str(exc)},
-            )
+            return _fallback(exc, site=site, details=details)
 
 
 # ....................... #

@@ -28,6 +28,7 @@ from redis.commands.core import AsyncScript
 from redis.exceptions import ConnectionError as RedisConnectionError
 from redis.exceptions import TimeoutError as RedisTimeoutError
 
+from forze.application.execution.resilience.read_retry import retry_read
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
 from forze_redis.kernel._logger import logger
@@ -171,31 +172,16 @@ class RedisClient(RedisClientPort):
             return await fn()
 
         cfg = self.__redis_config
-        attempts = max(0, cfg.read_retry_attempts)
-        base = max(0.0, cfg.read_retry_base_delay.total_seconds())
-        last: BaseException | None = None
+        hook = cfg.on_read_retry
+        on_retry = (lambda attempt: hook(op, attempt)) if hook is not None else None
 
-        for i in range(attempts + 1):
-            try:
-                return await fn()
-
-            except _READ_RETRY_EXC as e:
-                last = e
-
-                if i >= attempts:
-                    raise
-
-                hook = cfg.on_read_retry
-
-                if hook is not None:
-                    hook(op, i + 1)
-
-                await asyncio.sleep(base * (2**i))
-
-        if last is None:
-            raise exc.internal("Last exception is None")
-
-        raise last
+        return await retry_read(
+            fn,
+            attempts=cfg.read_retry_attempts,
+            base_delay=cfg.read_retry_base_delay.total_seconds(),
+            retry_on=_READ_RETRY_EXC,
+            on_retry=on_retry,
+        )
 
     # ....................... #
 

@@ -16,7 +16,7 @@ class MeilisearchClientPort(Protocol):
 
     def aclose(self) -> Awaitable[None]: ...  # pragma: no cover
 
-    def health(self) -> Awaitable[bool]: ...  # pragma: no cover
+    def health(self) -> Awaitable[tuple[str, bool]]: ...  # pragma: no cover
 
     def index(self, uid: str) -> Any: ...  # pragma: no cover
 

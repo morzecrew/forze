@@ -17,6 +17,7 @@ from clickhouse_connect.driver.asyncclient import (  # type: ignore[import-untyp
 )
 from pydantic import BaseModel
 
+from forze.application.execution.resilience.read_retry import retry_read
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
 
@@ -33,7 +34,6 @@ from .value_objects import (
 # ----------------------- #
 
 T = TypeVar("T")
-_READ_RETRY_EXC = (TimeoutError, OSError, ConnectionError)
 
 # ....................... #
 
@@ -142,26 +142,12 @@ class ClickHouseClient(ClickHouseClientPort):
         fn: Callable[[], Awaitable[T]],
     ) -> T:
         cfg = self.__require_config()
-        attempts = max(0, cfg.read_retry_attempts)
-        base = max(0.0, cfg.read_retry_base_delay.total_seconds())
-        last: BaseException | None = None
 
-        for i in range(attempts + 1):
-            try:
-                return await fn()
-
-            except _READ_RETRY_EXC as e:
-                last = e
-
-                if i >= attempts:
-                    raise
-
-                await asyncio.sleep(base * (2**i))
-
-        if last is None:
-            raise exc.internal("Last exception is None")
-
-        raise last
+        return await retry_read(
+            fn,
+            attempts=cfg.read_retry_attempts,
+            base_delay=cfg.read_retry_base_delay.total_seconds(),
+        )
 
     # ....................... #
 

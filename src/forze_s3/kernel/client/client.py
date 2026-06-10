@@ -217,17 +217,44 @@ class S3Client(S3ClientPort):
 
     # ....................... #
 
+    def __region_name(self) -> str | None:
+        opts = self.__opts
+
+        if opts is None or opts.config is None:
+            return None
+
+        region = getattr(opts.config, "region_name", None)
+
+        return cast(str | None, region)
+
+    # ....................... #
+
     @exc_interceptor.coroutine("s3.create_bucket")  # type: ignore[untyped-decorator]
     async def create_bucket(self, bucket: str) -> None:
         """Create a bucket, silently succeeding if it already exists.
+
+        S3 requires a ``LocationConstraint`` for every region except
+        ``us-east-1``, where it must be omitted; the configured region is
+        forwarded accordingly.
 
         :param bucket: Bucket name to create.
         """
 
         c = self.__require_client()
+        region = self.__region_name()
 
         try:
-            await c.create_bucket(Bucket=bucket)
+            if region and region != "us-east-1":
+                await c.create_bucket(
+                    Bucket=bucket,
+                    CreateBucketConfiguration=cast(
+                        Any,
+                        {"LocationConstraint": region},
+                    ),
+                )
+
+            else:
+                await c.create_bucket(Bucket=bucket)
 
         except c.exceptions.ClientError as e:  # type: ignore[attr-defined]
             code = (e.response or {}).get("Error", {}).get("Code")
@@ -241,14 +268,17 @@ class S3Client(S3ClientPort):
 
     @exc_interceptor.coroutine("s3.ensure_bucket")  # type: ignore[untyped-decorator]
     async def ensure_bucket(self, bucket: str) -> None:
-        """Assert that the bucket exists.
+        """Create the bucket when it does not exist (idempotent).
 
-        :param bucket: Bucket name to verify.
-        :raises NotFoundError: If the bucket does not exist.
+        Concurrent creation races are tolerated: ``BucketAlreadyOwnedByYou``
+        (and equivalent conflicts) from :meth:`create_bucket` are treated as
+        success.
+
+        :param bucket: Bucket name to ensure.
         """
 
         if not await self.bucket_exists(bucket):
-            raise exc.not_found("Bucket does not exist")
+            await self.create_bucket(bucket)
 
     # ....................... #
 

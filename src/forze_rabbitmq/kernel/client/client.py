@@ -412,8 +412,9 @@ class RabbitMQClient(RabbitMQClientPort):
     # ....................... #
     # Canonical queue methods
 
-    #! TODO: Rewrite without enqueue_many
-
+    # ``enqueue`` deliberately delegates to ``enqueue_many`` so queue
+    # declaration, delay-queue routing, and expiration handling live in a
+    # single publish path; a standalone rewrite would only duplicate it.
     @exc_interceptor.coroutine("rabbitmq.enqueue")  # type: ignore[untyped-decorator]
     async def enqueue(
         self,

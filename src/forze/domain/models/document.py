@@ -241,6 +241,11 @@ class Document(CoreModel):
           and returns ``self`` unchanged (no ``last_update_at`` bump),
         * bumps ``last_update_at`` when the diff is non-empty,
         * runs registered :func:`update_validator` hooks.
+
+        Note that the returned instance still carries the **old** ``rev``:
+        revision bumping is a persistence-strategy concern applied by the write
+        gateway (e.g. the Postgres gateway bumps it under
+        ``strategy="application"``), not by the domain update itself.
         """
 
         logger.trace(

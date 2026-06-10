@@ -47,6 +47,8 @@ class RedisIdempotencyAdapter(IdempotencyPort, RedisBaseAdapter):
     Uses ``SET NX`` on a small JSON metadata key for :meth:`begin`, stores the
     serialized result as raw bytes on a sibling key on :meth:`commit`, and keeps
     metadata and result expiries aligned via a transactional pipeline.
+    :meth:`fail` deletes a matching *pending* claim so a retry of a failed
+    request can re-execute before the TTL expires.
     """
 
     ttl: timedelta = timedelta(seconds=30)
@@ -180,3 +182,40 @@ class RedisIdempotencyAdapter(IdempotencyPort, RedisBaseAdapter):
 
         if str(done_meta.get("st", "")) != _DONE:
             raise exc.conflict("Idempotency commit failed (key missing or expired)")
+
+    # ....................... #
+
+    async def fail(
+        self,
+        op: str,
+        key: str | None,
+        payload_hash: str,
+    ) -> None:
+        if not key:
+            logger.debug("Idempotency key is not provided for op '%s', skipping", op)
+            return
+
+        await self._prepare_keys()
+        logger.debug(
+            "Releasing idempotency claim for op '%s', key '%s'",
+            op,
+            key[:9] + "...",
+        )
+
+        meta_k = self.__meta_key(op, key)
+        raw = await self.client.get(meta_k)
+
+        if raw is None:
+            return  # claim already expired or never taken
+
+        data: dict[str, Any] = default_json_codec.loads(raw)
+
+        # Only release our own pending claim: a completed record (DONE) or a
+        # claim for a different payload hash is left untouched.
+        if (
+            str(data.get("st", "")) != _PENDING
+            or str(data.get("ph", "")) != payload_hash
+        ):
+            return
+
+        await self.client.delete(meta_k, self.__body_key(op, key))

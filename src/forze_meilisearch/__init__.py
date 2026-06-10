@@ -1,7 +1,6 @@
 """Meilisearch integration for Forze search query and command ports."""
 
 from forze_meilisearch._compat import require_meilisearch
-from forze_meilisearch._version import __version__
 
 require_meilisearch()
 
@@ -37,7 +36,6 @@ from .kernel.relation import (
 # ----------------------- #
 
 __all__ = [
-    "__version__",
     "MeilisearchDepsModule",
     "MeilisearchClient",
     "MeilisearchClientPort",

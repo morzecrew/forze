@@ -65,6 +65,73 @@ class TestExecutionRuntime:
             assert order == ["start"]
 
     @pytest.mark.asyncio
+    async def test_scope_failed_startup_shuts_started_steps_down_exactly_once(
+        self,
+    ) -> None:
+        startups: dict[str, int] = {}
+        shutdowns: dict[str, int] = {}
+
+        def _step(i: int, *, fail: bool = False) -> LifecycleStep:
+            name = f"s{i}"
+
+            async def up(_ctx) -> None:
+                startups[name] = startups.get(name, 0) + 1
+                if fail:
+                    raise RuntimeError("startup failed at s3")
+
+            async def down(_ctx) -> None:
+                shutdowns[name] = shutdowns.get(name, 0) + 1
+
+            return LifecycleStep(
+                id=name,
+                startup=up,
+                shutdown=down,
+                depends_on=(f"s{i - 1}",) if i > 1 else (),
+            )
+
+        plan = LifecyclePlan.from_steps(
+            _step(1),
+            _step(2),
+            _step(3, fail=True),
+            _step(4),
+            _step(5),
+        ).freeze()
+        rt = ExecutionRuntime(lifecycle=plan)
+
+        with pytest.raises(RuntimeError, match="startup failed at s3"):
+            async with rt.scope():
+                pass  # pragma: no cover - never reached
+
+        # Steps 1-2 started and were shut down exactly once (by the rollback);
+        # the scope-exit shutdown did not run them a second time.
+        assert startups == {"s1": 1, "s2": 1, "s3": 1}
+        assert shutdowns == {"s1": 1, "s2": 1}
+
+    @pytest.mark.asyncio
+    async def test_scope_shuts_every_started_step_down_exactly_once(self) -> None:
+        shutdowns: dict[str, int] = {}
+
+        def _step(i: int) -> LifecycleStep:
+            name = f"s{i}"
+
+            async def down(_ctx) -> None:
+                shutdowns[name] = shutdowns.get(name, 0) + 1
+
+            return LifecycleStep(
+                id=name,
+                shutdown=down,
+                depends_on=(f"s{i - 1}",) if i > 1 else (),
+            )
+
+        plan = LifecyclePlan.from_steps(_step(1), _step(2), _step(3)).freeze()
+        rt = ExecutionRuntime(lifecycle=plan)
+
+        async with rt.scope():
+            pass
+
+        assert shutdowns == {"s1": 1, "s2": 1, "s3": 1}
+
+    @pytest.mark.asyncio
     async def test_scope_resets_context_on_exit(self) -> None:
 
         rt = ExecutionRuntime(deps=DepsRegistry().freeze())

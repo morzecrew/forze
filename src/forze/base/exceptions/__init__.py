@@ -1,4 +1,5 @@
 from .egress import exception_egress_policy
+from .fallback import fallback_exception_mapper
 from .http_mapper import make_http_exception_mapper, response_status
 from .interceptor import ExceptionInterceptor
 from .mapping import ChainExceptionMapper, default_chain_exc_mapper, map_pydantic
@@ -20,6 +21,7 @@ __all__ = [
     "ExceptionMapper",
     "exception_egress_policy",
     "ExceptionInterceptor",
+    "fallback_exception_mapper",
     "make_http_exception_mapper",
     "map_pydantic",
     "default_chain_exc_mapper",

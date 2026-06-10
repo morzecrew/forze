@@ -23,6 +23,7 @@ from types_aiobotocore_sqs.client import SQSClient as AsyncSQSClient
 from forze.application.contracts.queue import SQS_MAX_DELAY, resolve_delivery_delay
 from forze.base.exceptions import exc
 
+from .._logger import logger
 from .errors import exc_interceptor
 from .port import SQSClientPort
 from .types import SQSQueueMessage
@@ -77,6 +78,18 @@ class SQSClient(SQSClientPort):
     )
 
     __queue_url_cache: dict[str, str] = attrs.field(factory=dict, init=False)
+
+    __pending: dict[str, tuple[str, str]] = attrs.field(factory=dict, init=False)
+    """In-flight deliveries: message id -> (queue, receipt handle).
+
+    Mirrors the RabbitMQ client's pending map so callers ack/nack with the
+    message ``id`` exposed on :class:`SQSQueueMessage` while the client
+    resolves the per-delivery ``ReceiptHandle`` internally. A redelivered
+    message (same ``MessageId``) overwrites its entry — only the latest
+    receipt handle is valid.
+    """
+
+    __pending_lock: asyncio.Lock = attrs.field(factory=asyncio.Lock, init=False)
     __enqueue_batch_concurrency: int = attrs.field(
         default=_DEFAULT_HTTP_POOL_SIZE,
         init=False,
@@ -128,12 +141,15 @@ class SQSClient(SQSClientPort):
     # ....................... #
 
     async def close(self) -> None:
-        """Drop the current session and queue URL cache."""
+        """Drop the current session, queue URL cache, and pending deliveries."""
 
         async with self.__init_lock:
             self.__session = None
             self.__opts = None
             self.__queue_url_cache.clear()
+
+            async with self.__pending_lock:
+                self.__pending.clear()
 
     # ....................... #
 
@@ -246,12 +262,21 @@ class SQSClient(SQSClientPort):
 
     @exc_interceptor.coroutine("sqs.health")  # type: ignore[untyped-decorator]
     async def health(self) -> tuple[str, bool]:
-        """Check SQS client health by listing queues."""
+        """Check SQS client health by listing queues.
 
-        c = self.__require_client()
+        Self-contained: opens its own client scope when no ambient
+        :meth:`client` context is active, and never raises — failures are
+        reported as ``("<error message>", False)``.
+        """
 
         try:
-            await c.list_queues(MaxResults=1)
+            if self.__current_client() is None:
+                async with self.client() as c:
+                    await c.list_queues(MaxResults=1)
+
+            else:
+                await self.__require_client().list_queues(MaxResults=1)
+
             return "ok", True
 
         except Exception as e:
@@ -412,8 +437,11 @@ class SQSClient(SQSClientPort):
     # ....................... #
 
     @staticmethod
-    def __chunked_ids(ids: Sequence[str], size: int = 10) -> list[list[str]]:
-        return [list(ids[i : i + size]) for i in range(0, len(ids), size)]
+    def __chunked_pending(
+        pending: Sequence[tuple[str, str]],
+        size: int = 10,
+    ) -> list[list[tuple[str, str]]]:
+        return [list(pending[i : i + size]) for i in range(0, len(pending), size)]
 
     # ....................... #
 
@@ -456,7 +484,7 @@ class SQSClient(SQSClientPort):
         delay: timedelta | None = None,
         not_before: datetime | None = None,
     ) -> str:
-        """Send a single message and return its message identifier."""
+        """Send a single message and return the broker-assigned ``MessageId``."""
         return (
             await self.enqueue_many(
                 queue,
@@ -485,7 +513,11 @@ class SQSClient(SQSClientPort):
         delay: timedelta | None = None,
         not_before: datetime | None = None,
     ) -> list[str]:
-        """Send a batch of messages and return resolved message identifiers.
+        """Send a batch of messages and return broker-assigned ``MessageId``s.
+
+        The returned identifiers correlate with the ``id`` of received
+        messages (stable across redeliveries). Caller-provided *message_ids*
+        are used as FIFO deduplication ids, not as the returned identifiers.
 
         Splits into chunks of up to :data:`_SQS_SEND_MESSAGE_BATCH_MAX` (AWS limit).
         Multiple chunks are sent with bounded concurrency derived from
@@ -542,7 +574,7 @@ class SQSClient(SQSClientPort):
 
             return entries
 
-        async def _send_chunk(chunk: list[bytes], chunk_ids: list[str]) -> None:
+        async def _send_chunk(chunk: list[bytes], chunk_ids: list[str]) -> list[str]:
             resp = await c.send_message_batch(
                 QueueUrl=queue_url,
                 Entries=_entries_for_chunk(chunk, chunk_ids),  # type: ignore[arg-type]
@@ -556,6 +588,22 @@ class SQSClient(SQSClientPort):
                     f"SQS send_message_batch has failed entries: {failed_ids}"
                 )
 
+            # Map entry ids ("m{i}") back to broker-assigned MessageIds so the
+            # returned identifiers correlate with received ``message.id``.
+            by_entry: dict[str, str] = {}
+
+            for success in resp.get("Successful") or []:
+                entry_id = success.get("Id")
+                broker_id = success.get("MessageId")
+
+                if isinstance(entry_id, str) and isinstance(broker_id, str):
+                    by_entry[entry_id] = broker_id
+
+            return [
+                by_entry.get(f"m{i}", fallback_id)
+                for i, fallback_id in enumerate(chunk_ids)
+            ]
+
         chunks: list[tuple[list[bytes], list[str]]] = []
 
         for offset in range(0, len(bodies), _SQS_SEND_MESSAGE_BATCH_MAX):
@@ -564,20 +612,24 @@ class SQSClient(SQSClientPort):
             chunks.append((chunk, chunk_ids))
 
         if len(chunks) == 1:
-            await _send_chunk(chunks[0][0], chunks[0][1])
-            return resolved_ids
+            return await _send_chunk(chunks[0][0], chunks[0][1])
 
         sem = asyncio.Semaphore(self.__enqueue_batch_concurrency)
+        chunk_results: list[list[str]] = [[] for _ in chunks]
 
-        async def _bounded(chunk: list[bytes], chunk_ids: list[str]) -> None:
+        async def _bounded(
+            index: int,
+            chunk: list[bytes],
+            chunk_ids: list[str],
+        ) -> None:
             async with sem:
-                await _send_chunk(chunk, chunk_ids)
+                chunk_results[index] = await _send_chunk(chunk, chunk_ids)
 
         async with asyncio.TaskGroup() as tg:
-            for ch, ids in chunks:
-                tg.create_task(_bounded(ch, ids))
+            for index, (ch, ids) in enumerate(chunks):
+                tg.create_task(_bounded(index, ch, ids))
 
-        return resolved_ids
+        return [broker_id for chunk_ids in chunk_results for broker_id in chunk_ids]
 
     # ....................... #
 
@@ -617,6 +669,14 @@ class SQSClient(SQSClientPort):
             if not isinstance(receipt, str):
                 continue
 
+            broker_id = raw.get("MessageId")
+            # ``id`` is the broker MessageId: stable across redeliveries and
+            # correlatable with enqueue. Fall back to the receipt handle for
+            # SQS-compatible backends that omit MessageId.
+            message_id = (
+                broker_id if isinstance(broker_id, str) and broker_id else receipt
+            )
+
             body = raw.get("Body", "")
 
             attrs = raw.get("MessageAttributes")
@@ -628,13 +688,21 @@ class SQSClient(SQSClientPort):
             out.append(
                 SQSQueueMessage(
                     queue=queue,
-                    id=receipt,
+                    id=message_id,
+                    receipt_handle=receipt,
                     body=self.__decode_body(body, attrs),  # type: ignore[arg-type]
                     type=self.__extract_attr(attrs, _TYPE_ATTR),  # type: ignore[arg-type]
                     enqueued_at=self.__extract_enqueued_at(attrs, system_attrs),  # type: ignore[arg-type]
                     key=self.__extract_attr(attrs, _KEY_ATTR),  # type: ignore[arg-type]
                 )
             )
+
+        if out:
+            async with self.__pending_lock:
+                for message in out:
+                    # A redelivery (same MessageId) supersedes the previous
+                    # receipt handle; the latest one is the only valid one.
+                    self.__pending[message.id] = (queue, message.receipt_handle)
 
         return out
 
@@ -712,21 +780,64 @@ class SQSClient(SQSClientPort):
 
     # ....................... #
 
+    async def __pending_by_ids(
+        self,
+        queue: str,
+        ids: Sequence[str],
+    ) -> list[tuple[str, str]]:
+        """Resolve message ids to ``(id, receipt handle)`` pairs for *queue*."""
+
+        async with self.__pending_lock:
+            out: list[tuple[str, str]] = []
+
+            for message_id in ids:
+                entry = self.__pending.get(message_id)
+
+                if entry is None:
+                    continue
+
+                pending_queue, receipt = entry
+
+                if pending_queue != queue:
+                    continue
+
+                out.append((message_id, receipt))
+
+            return out
+
+    # ....................... #
+
+    async def __drop_pending_many(self, message_ids: Sequence[str]) -> None:
+        async with self.__pending_lock:
+            for mid in message_ids:
+                self.__pending.pop(mid, None)
+
+    # ....................... #
+
     @exc_interceptor.coroutine("sqs.ack")  # type: ignore[untyped-decorator]
     async def ack(self, queue: str, ids: Sequence[str]) -> int:
-        """Acknowledge messages by deleting them from the queue."""
+        """Acknowledge messages by deleting them from the queue.
+
+        *ids* are message ids as exposed on :class:`SQSQueueMessage`; ids
+        without a pending delivery on this client are skipped.
+        """
         if not ids:
             return 0
 
+        pending = await self.__pending_by_ids(queue, ids)
+
+        if not pending:
+            return 0
+
         queue_url = await self.__resolve_queue_url(queue)
-        acked = 0
+        acked_ids: list[str] = []
 
         c = self.__require_client()
 
-        for chunk in self.__chunked_ids(ids):
+        for chunk in self.__chunked_pending(pending):
             entries = [
                 {"Id": f"m{i}", "ReceiptHandle": receipt}
-                for i, receipt in enumerate(chunk)
+                for i, (_, receipt) in enumerate(chunk)
             ]
             resp = await c.delete_message_batch(
                 QueueUrl=queue_url,
@@ -741,9 +852,11 @@ class SQSClient(SQSClientPort):
                     f"SQS delete_message_batch has failed entries: {failed_ids}"
                 )
 
-            acked += len(resp.get("Successful") or [])
+            acked_ids.extend(message_id for message_id, _ in chunk)
 
-        return acked
+        await self.__drop_pending_many(acked_ids)
+
+        return len(acked_ids)
 
     # ....................... #
 
@@ -757,43 +870,68 @@ class SQSClient(SQSClientPort):
     ) -> int:
         """Negative-acknowledge messages.
 
-        When ``requeue`` is ``True``, visibility timeout is reset to ``0`` so
-        messages can be consumed again. When ``False``, messages are deleted.
+        When ``requeue`` is ``True``, the visibility timeout is reset to ``0``
+        (best effort — a failed reset is logged and the message still
+        redelivers once its original visibility timeout lapses). When
+        ``False``, the message is **not** deleted: it stays invisible until
+        its visibility timeout lapses, so the queue's redrive policy counts
+        the receive and eventually dead-letters it (SQS's native DLQ
+        mechanism).
+
+        *ids* are message ids as exposed on :class:`SQSQueueMessage`; ids
+        without a pending delivery on this client are skipped.
         """
         if not ids:
             return 0
 
-        if not requeue:
-            return await self.ack(queue, ids)
+        pending = await self.__pending_by_ids(queue, ids)
 
-        queue_url = await self.__resolve_queue_url(queue)
-        nacked = 0
+        if not pending:
+            return 0
 
-        c = self.__require_client()
+        nacked_ids = [message_id for message_id, _ in pending]
 
-        for chunk in self.__chunked_ids(ids):
-            entries = [
-                {
-                    "Id": f"m{i}",
-                    "ReceiptHandle": receipt,
-                    "VisibilityTimeout": 0,
-                }
-                for i, receipt in enumerate(chunk)
-            ]
-            resp = await c.change_message_visibility_batch(
-                QueueUrl=queue_url,
-                Entries=entries,  # type: ignore[arg-type]
-            )
-            failed = resp.get("Failed") or []
+        if requeue:
+            queue_url = await self.__resolve_queue_url(queue)
+            c = self.__require_client()
 
-            if failed:
-                failed_ids = ", ".join(f.get("Id", "unknown") for f in failed)
+            for chunk in self.__chunked_pending(pending):
+                entries = [
+                    {
+                        "Id": f"m{i}",
+                        "ReceiptHandle": receipt,
+                        "VisibilityTimeout": 0,
+                    }
+                    for i, (_, receipt) in enumerate(chunk)
+                ]
 
-                raise exc.internal(
-                    "SQS change_message_visibility_batch has failed entries: "
-                    f"{failed_ids}"
-                )
+                try:
+                    resp = await c.change_message_visibility_batch(
+                        QueueUrl=queue_url,
+                        Entries=entries,  # type: ignore[arg-type]
+                    )
+                    failed = resp.get("Failed") or []
 
-            nacked += len(resp.get("Successful") or [])
+                except Exception as e:
+                    logger.warning(
+                        "SQS nack visibility reset failed for queue %s: %s; "
+                        "messages redeliver after their visibility timeout",
+                        queue,
+                        e,
+                    )
+                    continue
 
-        return nacked
+                if failed:
+                    failed_ids = ", ".join(f.get("Id", "unknown") for f in failed)
+
+                    logger.warning(
+                        "SQS nack visibility reset has failed entries for "
+                        "queue %s: %s; messages redeliver after their "
+                        "visibility timeout",
+                        queue,
+                        failed_ids,
+                    )
+
+        await self.__drop_pending_many(nacked_ids)
+
+        return len(nacked_ids)

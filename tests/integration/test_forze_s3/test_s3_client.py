@@ -1,3 +1,5 @@
+from uuid import uuid4
+
 import pytest
 
 from forze_s3.kernel.client import S3Client
@@ -50,3 +52,20 @@ async def test_s3_client_bucket_and_object_crud(
 
         await s3_client.delete_object(s3_bucket, key)
         assert not await s3_client.object_exists(s3_bucket, key)
+
+
+@pytest.mark.asyncio
+async def test_s3_ensure_bucket_creates_missing_bucket_and_is_idempotent(
+    s3_client: S3Client,
+) -> None:
+    bucket = f"forze-s3-ensure-{uuid4().hex[:16]}"
+
+    async with s3_client.client():
+        assert not await s3_client.bucket_exists(bucket)
+
+        await s3_client.ensure_bucket(bucket)
+        assert await s3_client.bucket_exists(bucket)
+
+        # Second call is a no-op on an existing bucket.
+        await s3_client.ensure_bucket(bucket)
+        assert await s3_client.bucket_exists(bucket)

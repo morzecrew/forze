@@ -289,6 +289,47 @@ def test_well_formed_token_round_trips_unchanged() -> None:
     )
 
 
+def test_pre_codec_fixed_token_decodes_and_reencodes_identically() -> None:
+    # Token hard-coded from the hand-rolled json/base64 implementation that
+    # predates the :class:`~forze.base.codecs.B64UrlJsonCodec` swap. In-flight
+    # cursors must keep decoding, and re-encoding the same payload must produce
+    # the identical token bytes (wire compatibility in both directions).
+    token = (
+        "eyJkIjpbImRlc2MiLCJkZXNjIiwiZGVzYyJdLCJrIjpbImNyZWF0ZWRfYXQiLCJuYW1l"
+        "IiwiaWQiXSwidiI6MSwieCI6WyIyMDI2LTAxLTAyVDAzOjA0OjA1IiwiYWxpY2UiLCIw"
+        "MTkzZTRjMi1hYWFhLWJiYmItY2NjYy0xMjM0NTY3ODkwYWIiXX0"
+    )
+
+    keys, dirs, vals = decode_keyset_v1(token)
+
+    assert keys == ["created_at", "name", "id"]
+    assert dirs == ["desc", "desc", "desc"]
+    assert vals == [
+        "2026-01-02T03:04:05",
+        "alice",
+        "0193e4c2-aaaa-bbbb-cccc-1234567890ab",
+    ]
+    assert encode_keyset_v1(sort_keys=keys, directions=dirs, values=vals) == token
+
+
+def test_pre_codec_token_with_escaped_unicode_still_decodes() -> None:
+    # The old encoder escaped non-ASCII as \uXXXX (ensure_ascii=True); such
+    # tokens must keep decoding to the same values.
+    token = "eyJkIjpbImFzYyJdLCJrIjpbIm5hbWUiXSwidiI6MSwieCI6WyJoXHUwMGU5bGxvIl19"
+
+    keys, dirs, vals = decode_keyset_v1(token)
+
+    assert keys == ["name"]
+    assert dirs == ["asc"]
+    assert vals == ["héllo"]
+
+
+def test_non_ascii_value_round_trips() -> None:
+    token = encode_keyset_v1(sort_keys=["name"], directions=["asc"], values=["héllo"])
+
+    assert decode_keyset_v1(token) == (["name"], ["asc"], ["héllo"])
+
+
 def test_decode_keyset_rejects_non_list_payload() -> None:
     import base64
     import json

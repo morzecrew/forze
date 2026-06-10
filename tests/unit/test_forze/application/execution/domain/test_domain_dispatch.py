@@ -120,7 +120,7 @@ class TestOutboxBridge:
 
         await ctx.domain().dispatch(order.collect_events())
 
-        staged = ctx.outbox_staging.buffer.peek()
+        staged = ctx.outbox_staging.peek()
         assert len(staged) == 1
         assert staged[0].event.event_type == "order.created"
         assert staged[0].event.payload.order_id == str(order.id)
@@ -134,4 +134,4 @@ class TestCtxDomain:
 
         await ctx.domain().dispatch([OrderCreated(aggregate_id=order.id)])
 
-        assert ctx.outbox_staging.buffer.peek() == []
+        assert ctx.outbox_staging.peek() == []

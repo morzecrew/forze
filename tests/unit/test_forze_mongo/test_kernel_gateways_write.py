@@ -355,3 +355,81 @@ class TestMongoWriteGatewayPostInit:
                 history_gw=hist,
                 **_WRITE_CODECS,
             )
+
+
+class TestMongoKillNotFound:
+    """``kill`` / ``kill_many`` verify delete counts (parity with Postgres)."""
+
+    def _gw(
+        self,
+        client: MagicMock,
+        *,
+        tenant_aware: bool = False,
+    ) -> MongoWriteGateway[MyDoc, MyCreateDoc, MyUpdateDoc]:
+        read = _build_read(client)
+        read.tenant_aware = tenant_aware
+        kwargs: dict = {}
+        if tenant_aware:
+            kwargs["tenant_aware"] = True
+            kwargs["tenant_provider"] = lambda: TenantIdentity(tenant_id=uuid4())
+        return MongoWriteGateway(
+            relation=("test_db", "docs"),
+            client=client,
+            read_gw=read,
+            create_cmd_type=MyCreateDoc,
+            update_cmd_type=MyUpdateDoc,
+            model_type=MyDoc,
+            **kwargs,
+            **_WRITE_CODECS,
+        )
+
+    @pytest.mark.asyncio
+    async def test_kill_succeeds_when_deleted(self) -> None:
+        client = _build_client()
+        client.delete_one = AsyncMock(return_value=1)
+        gw = self._gw(client)
+
+        await gw.kill(uuid4())
+
+        client.delete_one.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_kill_raises_not_found_when_nothing_deleted(self) -> None:
+        client = _build_client()
+        client.delete_one = AsyncMock(return_value=0)
+        gw = self._gw(client)
+
+        with pytest.raises(CoreException, match="Record not found") as ei:
+            await gw.kill(uuid4())
+
+        assert ei.value.kind is ExceptionKind.NOT_FOUND
+
+    @pytest.mark.asyncio
+    async def test_kill_many_raises_not_found_on_partial_delete(self) -> None:
+        client = _build_client()
+        client.delete_many = AsyncMock(return_value=1)
+        gw = self._gw(client)
+
+        with pytest.raises(CoreException, match="Some records not found") as ei:
+            await gw.kill_many([uuid4(), uuid4()])
+
+        assert ei.value.kind is ExceptionKind.NOT_FOUND
+
+    @pytest.mark.asyncio
+    async def test_kill_many_tenant_aware_mentions_tenant_scope(self) -> None:
+        client = _build_client()
+        client.delete_many = AsyncMock(return_value=0)
+        gw = self._gw(client, tenant_aware=True)
+
+        with pytest.raises(CoreException, match="tenant scope"):
+            await gw.kill_many([uuid4()])
+
+    @pytest.mark.asyncio
+    async def test_kill_many_succeeds_when_all_deleted(self) -> None:
+        client = _build_client()
+        client.delete_many = AsyncMock(return_value=2)
+        gw = self._gw(client)
+
+        await gw.kill_many([uuid4(), uuid4()])
+
+        client.delete_many.assert_awaited_once()

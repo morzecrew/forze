@@ -5,8 +5,10 @@ from typing import Any, Mapping, overload
 import attrs
 
 # ----------------------- #
-#! TODO: relocate to query contract
-# Search snapshot (optional metadata on paged search responses)
+# Search snapshot (optional metadata on paged search responses). Lives in the
+# base contract because both the search and document-query surfaces (and their
+# adapters across integration packages) share it; relocating it under a single
+# query contract would break that shared import path.
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)

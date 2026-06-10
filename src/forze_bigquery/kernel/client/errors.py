@@ -13,10 +13,15 @@ from forze.base.exceptions import (
     CoreException,
     ExceptionInterceptor,
     default_chain_exc_mapper,
+    fallback_exception_mapper,
     make_http_exception_mapper,
 )
 
 # ----------------------- #
+
+_shared_fallback = fallback_exception_mapper("BigQuery")
+
+# ....................... #
 
 
 def _bigquery_http_message(status: int | None) -> str:
@@ -27,12 +32,9 @@ def _bigquery_http_message(status: int | None) -> str:
 
 
 def _bigquery_fallback(
-    _exc: BaseException, site: str, details: Mapping[str, Any] | None
+    exc: BaseException, site: str, details: Mapping[str, Any] | None
 ) -> CoreException:
-    return CoreException.infrastructure(
-        f"BigQuery error during {site}.",
-        details=details,
-    )
+    return _shared_fallback(exc, site=site, details=details)
 
 
 # ....................... #

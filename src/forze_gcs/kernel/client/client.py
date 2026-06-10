@@ -31,6 +31,16 @@ from .value_objects import DEFAULT_TIMEOUT, GCSConfig
 
 # ----------------------- #
 
+TAG_METADATA_PREFIX = "forze-tag-"
+"""Custom-metadata key prefix used to emulate object tags on GCS.
+
+GCS has no S3-style tag API; tags are persisted as namespaced custom metadata
+keys and split back out by :meth:`GCSClient.head_object`. User metadata keys
+that happen to start with this prefix would be surfaced as tags on read-back.
+"""
+
+# ....................... #
+
 
 @final
 @attrs.define(slots=True)
@@ -233,6 +243,8 @@ class GCSClient(GCSClientPort):
 
     @exc_interceptor.coroutine("gcs.ensure_bucket")  # type: ignore[untyped-decorator]
     async def ensure_bucket(self, bucket: str) -> None:
+        """Create the bucket when it does not exist (idempotent)."""
+
         if not await self.bucket_exists(bucket):
             await self.create_bucket(bucket)
 
@@ -258,13 +270,25 @@ class GCSClient(GCSClientPort):
         metadata: dict[str, str] | None = None,
         tags: dict[str, str] | None = None,
     ) -> None:
+        """Upload raw bytes to a GCS object.
+
+        Tags are persisted as custom metadata keys namespaced with
+        :data:`TAG_METADATA_PREFIX` (GCS has no S3-style tag API) and are
+        round-tripped back into :attr:`ObjectStorageHead.tags` by
+        :meth:`head_object`.
+        """
+
         storage = self.__require_storage()
+        custom: dict[str, str] = dict(metadata) if metadata is not None else {}
+
+        if tags:
+            for tag_key, tag_value in tags.items():
+                custom[f"{TAG_METADATA_PREFIX}{tag_key}"] = tag_value
+
         upload_metadata: dict[str, object] | None = None
 
-        if metadata is not None:
-            upload_metadata = {"metadata": metadata}
-
-        _ = tags
+        if metadata is not None or tags:
+            upload_metadata = {"metadata": custom}
 
         await storage.upload(
             bucket,
@@ -378,9 +402,17 @@ def _response_is_not_found(exc: aiohttp.ClientResponseError) -> bool:
 def _head_from_object_json(raw: dict[str, object]) -> ObjectStorageHead:
     custom: Any = raw.get("metadata") or {}
     meta_dict: dict[str, str] = {}
+    tags: dict[str, str] = {}
 
     if isinstance(custom, dict):
-        meta_dict = {str(k): str(v) for k, v in cast(JsonDict, custom).items()}
+        for k, v in cast(JsonDict, custom).items():
+            key, value = str(k), str(v)
+
+            if key.startswith(TAG_METADATA_PREFIX):
+                tags[key[len(TAG_METADATA_PREFIX) :]] = value
+
+            else:
+                meta_dict[key] = value
 
     updated = raw.get("updated")
     last_modified: datetime | None = None
@@ -408,4 +440,5 @@ def _head_from_object_json(raw: dict[str, object]) -> ObjectStorageHead:
         size=size,
         etag=etag_str,
         last_modified=last_modified,
+        tags=tags,
     )

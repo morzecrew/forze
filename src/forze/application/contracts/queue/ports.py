@@ -66,7 +66,17 @@ class QueueQueryPort[M](Protocol):
         *,
         requeue: bool = True,
     ) -> Awaitable[int]:
-        """Negatively acknowledge messages, optionally requeuing them."""
+        """Negatively acknowledge messages, returning the count processed.
+
+        :param requeue: ``True`` returns the messages to the queue for
+            **immediate** redelivery (RabbitMQ broker-requeue; SQS visibility
+            reset to ``0``). ``False`` does **not** return them immediately —
+            the terminal disposition is broker-specific: RabbitMQ dead-letters
+            via the queue's DLX (or drops without one); SQS leaves the message
+            invisible until its visibility timeout lapses, so the queue's
+            redrive policy counts the receive and eventually dead-letters it.
+            Neither value is an immediate permanent delete.
+        """
         ...  # pragma: no cover
 
 

@@ -16,8 +16,12 @@ _QUEUE = "jobs"
 _QUEUE_URL = "https://sqs.local/1/jobs"
 
 
-def _message(receipt: str = "r1") -> dict[str, Any]:
-    return {"ReceiptHandle": receipt, "Body": "hello"}
+def _message(message_id: str = "r1") -> dict[str, Any]:
+    return {
+        "MessageId": message_id,
+        "ReceiptHandle": f"receipt-{message_id}",
+        "Body": "hello",
+    }
 
 
 class _FakeSqs:
@@ -73,6 +77,7 @@ class TestConsumeLongPolling:
             await gen.aclose()
 
         assert msg.id == "r1"
+        assert msg.receipt_handle == "receipt-r1"
         assert msg.body == b"hello"
         assert fake.calls[0]["WaitTimeSeconds"] == 20
 

@@ -288,7 +288,11 @@ class TenantResolvedRelationMixin(TenancyMixin):
 
 
 class _HistoryGatewayPort(Protocol[D]):
-    """Minimal history-gateway surface used for OCC validation."""
+    """Minimal history-gateway surface used for OCC validation.
+
+    ``read_many`` is NOT required to preserve request order; the OCC mixin
+    re-keys returned records by ``(id, rev)`` before pairing them.
+    """
 
     def write_many(self, data: Sequence[D]) -> Awaitable[None]: ...
 
@@ -373,11 +377,20 @@ class HistoryOccMixin(Generic[D]):
                 code="history_not_found_retry",
             )
 
-        for (current, _, update), historical in zip(
-            to_check,
-            hist_records,
-            strict=True,
-        ):
+        # Re-key by (id, rev): backends are not required to return records in
+        # request order, so pairing positionally would compare the wrong
+        # (current, historical) snapshots.
+        hist_by_key = {(record.id, record.rev): record for record in hist_records}
+
+        for current, rev, update in to_check:
+            historical = hist_by_key.get((current.id, rev))
+
+            if historical is None:
+                raise exc.precondition(
+                    "History records not found. Please retry with actual revision number.",
+                    code="history_not_found_retry",
+                )
+
             if not current.validate_historical_consistency(historical, update):
                 raise exc.conflict(
                     "Historical consistency violation during update",

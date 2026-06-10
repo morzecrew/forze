@@ -63,6 +63,19 @@ async def test_mock_storage_upload_download_list_delete() -> None:
         await s.download(meta.key)
 
 @pytest.mark.asyncio
+async def test_mock_storage_round_trips_tags() -> None:
+    st = MockState()
+    s = MockStorageAdapter(state=st, bucket="b1")
+    from forze.application.contracts.storage import UploadedObject
+
+    stored = await s.upload(
+        UploadedObject(filename="f.txt", data=b"x", tags={"env": "dev"}),
+    )
+    assert stored.tags == {"env": "dev"}
+    rows, _total = await s.list(10, 0)
+    assert [row.tags for row in rows if row.key == stored.key] == [{"env": "dev"}]
+
+@pytest.mark.asyncio
 async def test_mock_idempotency_begin_commit_and_conflict() -> None:
     st = MockState()
     idem = MockIdempotencyAdapter(state=st, namespace="idem")

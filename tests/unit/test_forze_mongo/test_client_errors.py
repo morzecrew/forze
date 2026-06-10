@@ -66,6 +66,10 @@ class TestMongoErrorHandler:
         result = _mongo_eh(e, site="some_op")
         assert isinstance(result, CoreException) and result.kind == ExceptionKind.INFRASTRUCTURE
         assert "some_op" in result.summary
+        # raw driver text must not leak into the summary, only into details
+        assert "unexpected" not in result.summary
+        assert result.details is not None
+        assert result.details["error"] == "unexpected"
 
     def test_bulk_write_duplicate_key(self) -> None:
         from pymongo.errors import BulkWriteError

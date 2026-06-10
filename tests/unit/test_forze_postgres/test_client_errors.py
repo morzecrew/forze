@@ -147,4 +147,7 @@ class TestPsycopgErrorHandlerBranches:
         assert out is not None
         assert out.kind == ExceptionKind.INFRASTRUCTURE
         assert "my_op" in out.summary
-        assert "weird" in out.summary
+        # raw driver text must not leak into the summary, only into details
+        assert "weird" not in out.summary
+        assert out.details is not None
+        assert out.details["error"] == "weird"

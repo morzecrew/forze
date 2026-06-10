@@ -102,6 +102,48 @@ class TestIdempotencyWrapDirect:
         with pytest.raises(CoreException):  # still pending -> in progress
             await port.begin("op", "k", "h")
 
+    async def test_handler_failure_releases_claim_so_retry_reexecutes(self) -> None:
+        ctx = _ctx()
+        mw = IdempotencyWrap(op="op", spec=_SPEC, result_type=_Result)(ctx)
+        calls = 0
+
+        async def handler(args: _Args) -> _Result:
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                raise RuntimeError("handler boom")
+            return _Result(value=args.n)
+
+        with ctx.inv_ctx.bind_idempotency("key-fail"):
+            with pytest.raises(RuntimeError, match="handler boom"):
+                await mw(handler, _Args(n=4))
+
+            # Retry of the failed request re-executes (no stuck pending claim).
+            result = await mw(handler, _Args(n=4))
+
+        assert calls == 2
+        assert result.value == 4
+
+    async def test_fail_error_does_not_mask_handler_error(self) -> None:
+        from unittest.mock import AsyncMock, patch
+
+        from forze_mock.adapters.idempotency import MockIdempotencyAdapter
+
+        ctx = _ctx()
+        mw = IdempotencyWrap(op="op", spec=_SPEC, result_type=_Result)(ctx)
+
+        async def handler(args: _Args) -> _Result:
+            raise RuntimeError("handler boom")
+
+        with patch.object(
+            MockIdempotencyAdapter,
+            "fail",
+            AsyncMock(side_effect=RuntimeError("fail() broke")),
+        ):
+            with ctx.inv_ctx.bind_idempotency("key-mask"):
+                with pytest.raises(RuntimeError, match="handler boom"):
+                    await mw(handler, _Args(n=1))
+
 
 # ....................... #
 

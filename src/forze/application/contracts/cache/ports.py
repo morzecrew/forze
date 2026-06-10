@@ -19,7 +19,6 @@ class CacheQueryPort(Protocol):  # pragma: no cover
 
 
 # ....................... #
-#! Should we split into plain and versioned write ports ?
 
 
 @runtime_checkable

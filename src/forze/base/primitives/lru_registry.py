@@ -355,12 +355,30 @@ class _GuardedEntry(Generic[V, R]):
 
     # ....................... #
 
-    @asynccontextmanager
-    async def use(self) -> AsyncGenerator[V]:
-        """Increment refcount around work on :attr:`value`; dispose when draining and idle."""
+    def reserve(self) -> None:
+        """Synchronously increment :attr:`refcount`; callers hold the registry lock.
 
-        async with self.condition:
-            self.refcount += 1
+        Reserving while the registry lock is held makes lookup and refcount
+        increment atomic with respect to eviction, which inspects ``refcount``
+        under the same lock — so eviction can never observe ``refcount == 0``
+        for an entry a ``use`` scope is about to receive.
+        """
+
+        self.refcount += 1
+
+    # ....................... #
+
+    @asynccontextmanager
+    async def use_reserved(self) -> AsyncGenerator[V]:
+        """Yield :attr:`value` for a reservation taken via :meth:`reserve`.
+
+        Decrements the refcount on exit; when the entry is draining and idle,
+        disposes the value. The slot is always deregistered (even when
+        ``dispose`` raises) so the draining barrier cannot wedge future users.
+
+        There is no suspension point before the ``try`` block, so a reservation
+        taken under the registry lock is released exactly once.
+        """
 
         try:
             yield self.value
@@ -374,12 +392,18 @@ class _GuardedEntry(Generic[V, R]):
                 self.condition.notify_all()
 
             if do_finish_drain:
-                await self.dispose(self.value)
                 self.drain_after_idle = False
-                await self.on_finish_drain(self.key)
 
-                async with self.condition:
-                    self.condition.notify_all()
+                try:
+                    await self.dispose(self.value)
+
+                finally:
+                    # Dispose failure must still deregister the slot and lift
+                    # the draining barrier, or future use() of it would hang.
+                    await self.on_finish_drain(self.key)
+
+                    async with self.condition:
+                        self.condition.notify_all()
 
     # ....................... #
 
@@ -585,10 +609,11 @@ class GuardedLruRegistry(Generic[K, V, R]):
             if slot in self._slots:
                 entry = self._slots[slot]
                 self._slots.move_to_end(slot)
+                entry.reserve()
 
         if entry is not None:
-            async with entry.use():
-                yield entry.value
+            async with entry.use_reserved() as value:
+                yield value
 
             return
 
@@ -603,10 +628,11 @@ class GuardedLruRegistry(Generic[K, V, R]):
                 if slot in self._slots:
                     entry = self._slots[slot]
                     self._slots.move_to_end(slot)
+                    entry.reserve()
 
             if entry is not None:
-                async with entry.use():
-                    yield entry.value
+                async with entry.use_reserved() as value:
+                    yield value
 
                 return
 
@@ -614,16 +640,21 @@ class GuardedLruRegistry(Generic[K, V, R]):
 
             async with self._registry_lock:
                 if slot in self._slots:
-                    await self.dispose(value)
                     existing = self._slots[slot]
                     self._slots.move_to_end(slot)
+                    existing.reserve()
 
                 else:
                     existing = None
 
             if existing is not None:
-                async with existing.use():
-                    yield existing.value
+                # Dispose the losing duplicate inside the reserved-use scope and
+                # outside the registry lock: disposal may be slow I/O, and if it
+                # raises, ``use_reserved`` still releases the reservation taken
+                # above (otherwise the entry would be unevictable forever).
+                async with existing.use_reserved() as v:
+                    await self.dispose(value)
+                    yield v
 
                 return
 
@@ -632,14 +663,18 @@ class GuardedLruRegistry(Generic[K, V, R]):
             async with self._registry_lock:
                 self._slots[slot] = new_entry
                 self._slots.move_to_end(slot)
+                new_entry.reserve()
 
-            immediate_close = await self._evict_overflow()
+            # The reservation taken above is owned by this scope from here on:
+            # overflow eviction (here or in a concurrent task) sees a non-zero
+            # refcount and drains instead of disposing the value in use.
+            async with new_entry.use_reserved() as v:
+                immediate_close = await self._evict_overflow()
 
-            for v in immediate_close:
-                await self.dispose(v)
+                for old in immediate_close:
+                    await self.dispose(old)
 
-            async with new_entry.use():
-                yield new_entry.value
+                yield v
 
     # ....................... #
 

@@ -345,8 +345,9 @@ async def test_mongo_read_gateway_return_model_and_find_many_validation(
     )
     assert [r["name"] for r in rows] == ["ma", "mb"]
 
-    with pytest.raises(CoreException, match="Filters or limit"):
-        await read.find_many(filters=None, limit=None)
+    # No filters and no limit: the implicit cap applies instead of raising.
+    all_rows = await read.find_many(filters=None, limit=None)
+    assert len(all_rows) >= 2
 
     missing = uuid4()
     with pytest.raises(CoreException, match="Some records not found"):

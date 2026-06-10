@@ -5,8 +5,7 @@ require_rabbitmq()
 # ....................... #
 
 from datetime import datetime, timedelta
-from typing import AsyncGenerator, Sequence, final
-from uuid import UUID
+from typing import AsyncGenerator, ClassVar, Sequence, final
 
 import attrs
 from pydantic import BaseModel
@@ -16,13 +15,9 @@ from forze.application.contracts.queue import (
     QueueMessage,
     QueueQueryPort,
 )
-from forze.application.contracts.resolution import NamedResourceSpec, is_static_named_resource
-from forze.application.contracts.tenancy import TenancyMixin
-from forze.base.exceptions import exc
-from forze.base.primitives import OnceCell
+from forze.application.integrations.queue import ScopedQueueNamingMixin
 
 from ..kernel.client import RabbitMQClientPort
-from ..kernel.relation import resolve_rabbitmq_namespace
 from .codecs import RabbitMQQueueCodec
 
 # ----------------------- #
@@ -33,7 +28,7 @@ from .codecs import RabbitMQQueueCodec
 class RabbitMQQueueAdapter[M: BaseModel](
     QueueQueryPort[M],
     QueueCommandPort[M],
-    TenancyMixin,
+    ScopedQueueNamingMixin,
 ):
     """RabbitMQ queue adapter."""
 
@@ -43,71 +38,16 @@ class RabbitMQQueueAdapter[M: BaseModel](
     codec: RabbitMQQueueCodec[M]
     """RabbitMQ queue codec instance."""
 
-    namespace: NamedResourceSpec = ""
-    """RabbitMQ queue namespace."""
-
     delayed_delivery: bool = False
     """Whether delayed enqueue uses the DLX delay-queue topology."""
 
-    _namespace_cell: OnceCell[str] = attrs.field(
-        factory=OnceCell,
-        init=False,
-        eq=False,
-        repr=False,
-    )
-
-    # ....................... #
-
-    def _tenant_id_for_resolve(self) -> UUID | None:
-        if self.tenant_provider is None:
-            return None
-
-        tenant = self.tenant_provider()
-
-        if tenant is None:
-            if self.tenant_aware:
-                raise exc.internal("Tenant ID is required for the RabbitMQ queue adapter")
-
-            return None
-
-        return tenant.tenant_id
-
-    # ....................... #
-
-    async def _resolved_namespace(self) -> str:
-        async def _factory() -> str:
-            return await resolve_rabbitmq_namespace(
-                self.namespace,
-                self._tenant_id_for_resolve(),
-            )
-
-        # Only memoize tenant-independent (static) namespaces; a dynamic resolver
-        # depends on the bound tenant and the adapter may be shared across tenants.
-        return await self._namespace_cell.resolve(
-            _factory,
-            cache=is_static_named_resource(self.namespace),
-        )
+    queue_name_separator: ClassVar[str] = ":"
+    queue_backend_label: ClassVar[str] = "RabbitMQ queue"
 
     # ....................... #
 
     async def __queue_name(self, queue: str) -> str:
-        tenant_id = self.require_tenant_if_aware()
-
-        if tenant_id is not None:
-            tenant_prefix = f"tenant:{tenant_id}"
-
-        else:
-            tenant_prefix = ""
-
-        namespace = await self._resolved_namespace()
-
-        if namespace:
-            namespaced_queue = f"{namespace}:{queue}"
-
-        else:
-            namespaced_queue = queue
-
-        return f"{tenant_prefix}:{namespaced_queue}".lstrip(":")
+        return await self._scoped_queue_name(queue)
 
     # ....................... #
 

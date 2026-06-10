@@ -205,7 +205,14 @@ class TransactionScopeBinder[P: _Parent, R](ScopeBinder[P, R]):
     # ....................... #
 
     def after_commit(self, *steps: "OnSuccessStep") -> Self:
-        """Add after commit steps to the plan."""
+        """Add after commit steps to the plan.
+
+        After-commit steps run *after* the root transaction has committed. Every
+        registered callback runs even when earlier ones fail; failures are logged
+        and aggregated into a single ``after_commit_failed`` internal error raised
+        once all callbacks ran. A callback failure does **not** roll back the
+        (already committed) transaction.
+        """
 
         new_acc = attrs.evolve(
             self._acc,

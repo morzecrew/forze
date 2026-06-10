@@ -18,6 +18,7 @@ from forze.application.contracts.authn import (
     IssuedRefreshToken,
     IssuedTokens,
     PasswordLifecycleDepKey,
+    PrincipalDeactivationDepKey,
     TokenLifecycleDepKey,
 )
 from forze.application.contracts.authn.value_objects import (
@@ -32,6 +33,7 @@ from forze_kits.aggregates.authn.handlers import (
     AuthnLogout,
     AuthnPasswordLogin,
     AuthnRefreshTokens,
+    DeactivatePrincipalHandler,
 )
 from forze.base.primitives import StrKeyNamespace
 
@@ -71,6 +73,8 @@ def _mock_ctx(
     token_lifecycle.revoke_tokens = AsyncMock(return_value=None)
     password_lifecycle = AsyncMock()
     password_lifecycle.change_password = AsyncMock(return_value=None)
+    principal_deactivation = AsyncMock()
+    principal_deactivation.deactivate = AsyncMock(return_value=None)
 
     deps = MagicMock()
 
@@ -88,6 +92,8 @@ def _mock_ctx(
             return token_lifecycle
         if key is PasswordLifecycleDepKey:
             return password_lifecycle
+        if key is PrincipalDeactivationDepKey:
+            return principal_deactivation
         raise AssertionError(f"unexpected key {key!r}")
 
     deps.resolve_configurable = resolve_configurable
@@ -106,6 +112,16 @@ class TestBuildAuthnRegistry:
         assert registry_has_handler(reg, ns.key(AuthnKernelOp.REFRESH_TOKENS))
         assert registry_has_handler(reg, ns.key(AuthnKernelOp.LOGOUT))
         assert registry_has_handler(reg, ns.key(AuthnKernelOp.CHANGE_PASSWORD))
+        assert registry_has_handler(reg, ns.key(AuthnKernelOp.DEACTIVATE_PRINCIPAL))
+
+    def test_catalog_has_descriptor_for_every_op(self) -> None:
+        spec = _authn_spec()
+        frozen = build_authn_registry(spec).freeze()
+        catalog = frozen.catalog()
+        ns = spec.default_namespace
+        assert set(catalog) == {ns.key(op) for op in AuthnKernelOp}
+        for entry in catalog.values():
+            assert entry.descriptor is not None
 
     def test_custom_namespace(self) -> None:
         spec = _authn_spec()
@@ -145,3 +161,11 @@ class TestBuildAuthnRegistry:
         factory = handler_at(reg, spec.default_namespace.key(AuthnKernelOp.CHANGE_PASSWORD))
         handler = factory(_mock_ctx(identity=AuthnIdentity(principal_id=uuid4())))
         assert isinstance(handler, AuthnChangePassword)
+
+    @pytest.mark.asyncio
+    async def test_deactivate_principal_factory_returns_handler(self) -> None:
+        spec = _authn_spec()
+        reg = build_authn_registry(spec)
+        factory = handler_at(reg, spec.default_namespace.key(AuthnKernelOp.DEACTIVATE_PRINCIPAL))
+        handler = factory(_mock_ctx())
+        assert isinstance(handler, DeactivatePrincipalHandler)

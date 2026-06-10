@@ -36,6 +36,7 @@ async def _run_startup_step(
 ) -> None:
     logger.trace("Executing '%s' startup hook", step.id)
     await step.startup(ctx)
+    ctx.lifecycle_started.add(step.id)
 
 
 # ....................... #
@@ -91,6 +92,13 @@ async def _rollback_startup(
 ) -> None:
     for wave_ids in reversed(executed_waves):
         for step_id in reversed(wave_ids):
+            if step_id not in ctx.lifecycle_started:
+                continue
+
+            # Mark before attempting: shutdown runs at most once per startup,
+            # even when it fails.
+            ctx.lifecycle_started.discard(step_id)
+
             try:
                 logger.trace("Rolling back '%s' via shutdown", step_id)
                 await graph.steps[step_id].shutdown(ctx)
@@ -172,6 +180,17 @@ async def _run_shutdown_step_logged(
     step: LifecycleStep,
     ctx: ExecutionContext,
 ) -> None:
+    if step.id not in ctx.lifecycle_started:
+        logger.trace(
+            "Skipping '%s' shutdown hook (never started or already shut down)",
+            step.id,
+        )
+        return
+
+    # Mark before attempting: shutdown runs at most once per startup, even when
+    # it fails.
+    ctx.lifecycle_started.discard(step.id)
+
     try:
         await _run_shutdown_step(step, ctx)
 
@@ -205,21 +224,15 @@ async def run_lifecycle_shutdown(
             if not wave:
                 return
 
-            results = await asyncio.gather(
+            # _run_shutdown_step_logged swallows (and logs) every Exception, so
+            # gather results carry no step errors to inspect here.
+            await asyncio.gather(
                 *(
                     _run_shutdown_step_logged(graph.steps[step_id], ctx)
                     for step_id in wave
                 ),
                 return_exceptions=True,
             )
-
-            for step_id, result in zip(wave, results, strict=True):
-                if isinstance(result, Exception):
-                    logger.exception(
-                        "Lifecycle shutdown failed for '%s'",
-                        step_id,
-                        exc_info=result,
-                    )
 
         for wave in reversed(graph.waves):
             await _run_shutdown_concurrent_wave(wave)

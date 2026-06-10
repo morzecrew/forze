@@ -211,7 +211,7 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
             return self.update_codec
 
         if self.update_cmd_type is not None:
-            raise exc.internal(
+            raise exc.configuration(
                 "Update codec is required when update commands are supported"
             )
 
@@ -1219,14 +1219,10 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
             where=where_sql,
         )
 
-        if self.tenant_aware:
-            n = await self.client.execute(stmt, params, return_rowcount=True)
+        n = await self.client.execute(stmt, params, return_rowcount=True)
 
-            if n == 0:
-                raise exc.not_found(f"Record not found: {pk}")
-
-        else:
-            await self.client.execute(stmt, params)
+        if n == 0:
+            raise exc.not_found(f"Record not found: {pk}")
 
     # ....................... #
 
@@ -1261,15 +1257,15 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
             async def _delete_batch(batch: list[UUID]) -> None:
                 params: list[Any] = [list(batch), *trailing_params]
 
-                if self.tenant_aware:
-                    n = await self.client.execute(stmt, params, return_rowcount=True)
+                n = await self.client.execute(stmt, params, return_rowcount=True)
 
-                    if n != len(batch):
+                if n != len(batch):
+                    if self.tenant_aware:
                         raise exc.not_found(
                             "Some records not found or not accessible in this tenant scope"
                         )
-                else:
-                    await self.client.execute(stmt, params)
+
+                    raise exc.not_found("Some records not found")
 
             batches = [
                 list(pks[start : start + batch_size])

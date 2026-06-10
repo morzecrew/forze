@@ -4,6 +4,7 @@ from forze.application.contracts.authn import (
     AuthnDepKey,
     AuthnSpec,
     PasswordLifecycleDepKey,
+    PrincipalDeactivationDepKey,
     TokenLifecycleDepKey,
 )
 from forze.application.execution import ExecutionContext
@@ -20,6 +21,8 @@ from .handlers import (
     AuthnLogout,
     AuthnPasswordLogin,
     AuthnRefreshTokens,
+    DeactivatePrincipalHandler,
+    DeactivatePrincipalRequestDTO,
 )
 from forze.base.primitives import StrKeyNamespace
 
@@ -82,12 +85,23 @@ def build_authn_registry(
             ),
         )
 
+    def _deactivate_principal(ctx: ExecutionContext) -> DeactivatePrincipalHandler:
+        return DeactivatePrincipalHandler(
+            deactivation=ctx.deps.resolve_configurable(
+                ctx,
+                PrincipalDeactivationDepKey,
+                spec,
+                route=spec.name,
+            ),
+        )
+
     reg = OperationRegistry(
         handlers={
             ns.key(AuthnKernelOp.PASSWORD_LOGIN): _password_login,
             ns.key(AuthnKernelOp.REFRESH_TOKENS): _refresh_tokens,
             ns.key(AuthnKernelOp.LOGOUT): _logout,
             ns.key(AuthnKernelOp.CHANGE_PASSWORD): _change_password,
+            ns.key(AuthnKernelOp.DEACTIVATE_PRINCIPAL): _deactivate_principal,
         },
     )
 
@@ -110,6 +124,13 @@ def build_authn_registry(
             AuthnKernelOp.CHANGE_PASSWORD: OperationDescriptor(
                 input_type=AuthnChangePasswordRequestDTO,
                 description="Change the password of the authenticated identity.",
+            ),
+            AuthnKernelOp.DEACTIVATE_PRINCIPAL: OperationDescriptor(
+                input_type=DeactivatePrincipalRequestDTO,
+                description=(
+                    "Deactivate a principal for the application "
+                    "(policy, sessions, credentials)."
+                ),
             ),
         },
         namespace=ns,

@@ -215,34 +215,13 @@ class InvocationContext:
         authn: AuthnIdentity | None = None,
         tenant: TenantIdentity | None = None,
     ) -> Iterator[None]:
-        """Bind the invocation context."""
+        """Bind the invocation context.
 
-        metadata_token = self.__metadata.set(metadata)
-        authn_token = self.__authn.set(authn)
-        tenant_token = self.__tenant.set(tenant)
+        Composition of :meth:`bind_metadata` and :meth:`bind_identity`.
+        """
 
-        bound: dict[str, Any] = {
-            EXEC_ID_KEY: str(metadata.execution_id),
-            CORR_ID_KEY: str(metadata.correlation_id),
-        }
-
-        if metadata.causation_id is not None:
-            bound[CAUS_ID_KEY] = str(metadata.causation_id)
-
-        if authn is not None:
-            bound[PRINCIPAL_ID_KEY] = authn.principal_id
-
-            if authn.actor is not None:
-                bound[ACTOR_ID_KEY] = authn.actor.principal_id
-
-        if tenant is not None:
-            bound[TENANT_ID_KEY] = str(tenant.tenant_id)
-
-        try:
-            with bound_contextvars(**bound):
-                yield
-
-        finally:
-            self.__metadata.reset(metadata_token)
-            self.__authn.reset(authn_token)
-            self.__tenant.reset(tenant_token)
+        with (
+            self.bind_metadata(metadata=metadata),
+            self.bind_identity(authn=authn, tenant=tenant),
+        ):
+            yield

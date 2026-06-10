@@ -14,9 +14,14 @@ from forze.base.exceptions import (
     ExceptionInterceptor,
     ExceptionMapper,
     default_chain_exc_mapper,
+    fallback_exception_mapper,
 )
 
 # ----------------------- #
+
+_fallback = fallback_exception_mapper("SQS")
+
+# ....................... #
 
 
 @static_fn_conformity(ExceptionMapper)  # type: ignore[type-abstract]
@@ -106,13 +111,7 @@ def _sqs_eh(
             )
 
         case _:
-            # Keep the summary static: raw driver exception text may carry
-            # internal data. The stringified error goes into details, which
-            # egress suppresses and the scrubber sanitizes.
-            return CoreException.infrastructure(
-                f"An error occurred while executing SQS operation {site}.",
-                details={**(details or {}), "error": str(exc)},
-            )
+            return _fallback(exc, site=site, details=details)
 
 
 # ....................... #

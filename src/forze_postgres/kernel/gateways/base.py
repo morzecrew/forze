@@ -208,9 +208,10 @@ class PostgresGateway[M: BaseModel](
         )
 
     # ....................... #
-    #! We need introspection to make sure of tenancy compatibility
+    # Tenancy/schema compatibility (tenant column present, uuid, NOT NULL) is
+    # verified by introspection in ``kernel.catalog.validation.validate_schema``.
 
-    def _add_tenant_where(  #! ..._if_aware ?
+    def _add_tenant_where(
         self,
         query: sql.Composable,
         params: list[Any],
@@ -242,9 +243,10 @@ class PostgresGateway[M: BaseModel](
         return query, params
 
     # ....................... #
-    #! We need introspection to make sure of tenancy compatibility
+    # Tenancy/schema compatibility (tenant column present, uuid, NOT NULL) is
+    # verified by introspection in ``kernel.catalog.validation.validate_schema``.
 
-    def _add_tenant_id(self, data: JsonDict) -> JsonDict:  #! ..._if_aware ?
+    def _add_tenant_id(self, data: JsonDict) -> JsonDict:
         """Add tenant ID to the data if gateway is tenant aware."""
 
         out = dict(data)
@@ -378,7 +380,8 @@ class PostgresGateway[M: BaseModel](
     ) -> sql.Composable:
         bad = [f for f in use if f not in self.read_fields]
 
-        #!? explicitly exclude bad fields or not ?!
+        # Raising (rather than silently excluding) on unknown fields is
+        # deliberate: a bad field here is a caller bug, not user input.
         if bad:
             raise exc.internal(f"Invalid fields: {bad}")
 

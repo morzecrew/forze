@@ -2,7 +2,7 @@ from uuid import UUID
 
 import attrs
 
-from forze.application.contracts.authn import AuthnSpec, PrincipalDeactivationPort
+from forze.application.contracts.authn import PrincipalDeactivationPort
 from forze.application.contracts.execution import Handler
 from forze.domain.models import BaseDTO
 
@@ -22,9 +22,6 @@ class DeactivatePrincipalRequestDTO(BaseDTO):
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class DeactivatePrincipalHandler(Handler[DeactivatePrincipalRequestDTO, None]):
     """Deactivate policy principal, sessions, and credential accounts."""
-
-    spec: AuthnSpec
-    """Authn route for deactivation port resolution."""
 
     deactivation: PrincipalDeactivationPort
     """Cascaded deactivation port."""

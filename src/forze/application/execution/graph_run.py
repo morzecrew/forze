@@ -16,6 +16,50 @@ G = TypeVar("G")
 # ....................... #
 
 
+async def _run_wave[G](
+    step_ids: tuple[StrKey, ...],
+    steps: Mapping[StrKey, G],
+    run_step: Callable[[G], Awaitable[None]],
+    *,
+    concurrent: bool,
+) -> None:
+    """Run all steps in a single wave in ``step_ids`` order.
+
+    When ``concurrent`` is true, all steps run together and every failure is
+    collected: a single failing step re-raises its exception directly (so
+    ``except SpecificError`` clauses keep working), while two or more failures
+    raise an :class:`ExceptionGroup` (or :class:`BaseExceptionGroup` when a
+    non-``Exception`` is among them) so no error is silently discarded.
+    """
+
+    if not step_ids:
+        return
+
+    if concurrent:
+        results = await asyncio.gather(
+            *(run_step(steps[step_id]) for step_id in step_ids),
+            return_exceptions=True,
+        )
+
+        failures = [r for r in results if isinstance(r, BaseException)]
+
+        if len(failures) == 1:
+            raise failures[0]
+
+        if failures:
+            # BaseExceptionGroup narrows to ExceptionGroup when all
+            # failures are Exception instances.
+            raise BaseExceptionGroup("graph wave step failures", failures)
+
+        return
+
+    for step_id in step_ids:
+        await run_step(steps[step_id])
+
+
+# ....................... #
+
+
 async def run_wave_forward[G](
     wave: tuple[StrKey, ...],
     steps: Mapping[StrKey, G],
@@ -23,25 +67,13 @@ async def run_wave_forward[G](
     *,
     concurrent: bool,
 ) -> None:
-    """Run all steps in a single forward wave."""
+    """Run all steps in a single forward wave.
 
-    if not wave:
-        return
+    Multiple concurrent failures surface as an :class:`ExceptionGroup`; a
+    single failure is re-raised directly (see :func:`_run_wave`).
+    """
 
-    if concurrent:
-        results = await asyncio.gather(
-            *(run_step(steps[step_id]) for step_id in wave),
-            return_exceptions=True,
-        )
-
-        for result in results:
-            if isinstance(result, BaseException):
-                raise result
-
-        return
-
-    for step_id in wave:
-        await run_step(steps[step_id])
+    await _run_wave(wave, steps, run_step, concurrent=concurrent)
 
 
 # ....................... #
@@ -69,27 +101,13 @@ async def run_wave_reverse[G](
     *,
     concurrent: bool,
 ) -> None:
-    """Run all steps in a single reverse wave (last step id in wave first)."""
+    """Run all steps in a single reverse wave (last step id in wave first).
 
-    step_ids = tuple(reversed(wave))
+    Multiple concurrent failures surface as an :class:`ExceptionGroup`; a
+    single failure is re-raised directly (see :func:`_run_wave`).
+    """
 
-    if not step_ids:
-        return
-
-    if concurrent:
-        results = await asyncio.gather(
-            *(run_step(steps[step_id]) for step_id in step_ids),
-            return_exceptions=True,
-        )
-
-        for result in results:
-            if isinstance(result, BaseException):
-                raise result
-
-        return
-
-    for step_id in step_ids:
-        await run_step(steps[step_id])
+    await _run_wave(tuple(reversed(wave)), steps, run_step, concurrent=concurrent)
 
 
 # ....................... #

@@ -533,14 +533,14 @@ class MongoClient(MongoClientPort):
         self,
         coll: AsyncCollection[Any],
         filter: Mapping[str, Any],
-        *,
-        batch_size: int = 200,
     ) -> int:
-        """Delete many documents and return deleted count."""
+        """Delete many documents and return deleted count.
+
+        Executes as a single server-side bulk delete; no client-side chunking
+        is needed (the port and all callers pass only ``filter``).
+        """
 
         session = self.__current_session()
-
-        #! TODO: implement batching support
 
         res = await coll.delete_many(filter, session=session)
         return int(res.deleted_count)

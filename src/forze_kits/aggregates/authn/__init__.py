@@ -13,6 +13,8 @@ from .handlers import (
     AuthnLogout,
     AuthnPasswordLogin,
     AuthnRefreshTokens,
+    DeactivatePrincipalHandler,
+    DeactivatePrincipalRequestDTO,
 )
 from .operations import AuthnKernelOp
 
@@ -30,4 +32,6 @@ __all__ = [
     "AuthnLogout",
     "AuthnPasswordLogin",
     "AuthnRefreshTokens",
+    "DeactivatePrincipalHandler",
+    "DeactivatePrincipalRequestDTO",
 ]

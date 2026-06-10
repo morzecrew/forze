@@ -84,3 +84,30 @@ class MockIdempotencyAdapter(MockTenancyMixin, IdempotencyPort):
                 payload_hash,
                 record,
             )
+
+    # ....................... #
+
+    async def fail(
+        self,
+        op: str,
+        key: str | None,
+        payload_hash: str,
+    ) -> None:
+        if not key:
+            return
+
+        with self.state.lock:
+            k = self._key(op, key)
+            current = self.state.idempotency.get(k)
+
+            if current is None:
+                return  # claim already released or never taken
+
+            status, existing_hash, _ = current
+
+            # Only release our own pending claim: a completed record or a claim
+            # for a different payload hash is left untouched.
+            if status != "pending" or existing_hash != payload_hash:
+                return
+
+            del self.state.idempotency[k]

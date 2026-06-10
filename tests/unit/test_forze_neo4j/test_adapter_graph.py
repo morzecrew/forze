@@ -19,7 +19,7 @@ from forze.application.contracts.graph import (
     VertexRef,
 )
 from forze.application.contracts.tenancy import TenantIdentity
-from forze.base.exceptions import CoreException
+from forze.base.exceptions import CoreException, ExceptionKind
 from forze_neo4j.adapters import Neo4jGraphAdapter
 
 # ----------------------- #
@@ -246,5 +246,8 @@ async def test_raw_query_passthrough_when_not_tenant_aware() -> None:
 @pytest.mark.asyncio
 async def test_deferred_method_raises() -> None:
     adapter, _ = _adapter()
-    with pytest.raises(NotImplementedError):
+    with pytest.raises(CoreException, match="not implemented by forze_neo4j yet") as ei:
         await adapter.count_vertices("User")
+
+    assert ei.value.kind is ExceptionKind.INTERNAL
+    assert ei.value.code == "graph_not_implemented"

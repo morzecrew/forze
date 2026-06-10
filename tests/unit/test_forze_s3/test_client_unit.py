@@ -1,6 +1,6 @@
 """Unit tests for :mod:`forze_s3.kernel.client.client` helpers (no I/O)."""
 
-from forze.base.exceptions import CoreException, exc
+from forze.base.exceptions import CoreException
 from contextlib import asynccontextmanager
 from typing import Any
 
@@ -310,16 +310,114 @@ async def test_create_bucket_ignores_conflict() -> None:
     finally:
         client._S3Client__ctx_client.reset(tok)
 
+class _BucketApi:
+    """Fake S3 API with configurable bucket existence and create behavior."""
+
+    def __init__(
+        self,
+        *,
+        exists: bool = False,
+        create_error_code: str | None = None,
+    ) -> None:
+        self.exceptions = _S3Exceptions()
+        self.head_bucket_calls: list[str] = []
+        self.create_bucket_calls: list[dict[str, Any]] = []
+        self._exists = exists
+        self._create_error_code = create_error_code
+
+    async def head_bucket(self, *, Bucket: str) -> None:
+        self.head_bucket_calls.append(Bucket)
+        if not self._exists:
+            raise _ClientError({"Error": {"Code": "404"}})
+
+    async def create_bucket(self, **kwargs: Any) -> None:
+        self.create_bucket_calls.append(kwargs)
+        if self._create_error_code is not None:
+            raise _ClientError({"Error": {"Code": self._create_error_code}})
+
 @pytest.mark.asyncio
-async def test_ensure_bucket_raises_when_missing() -> None:
+async def test_ensure_bucket_creates_when_missing() -> None:
     client = S3Client()
-    api = _FakeS3Api()
+    api = _BucketApi(exists=False)
     tok = client._S3Client__ctx_client.set(api)  # type: ignore[arg-type]
     try:
-        with pytest.raises(CoreException, match="Bucket does not exist"):
-            await client.ensure_bucket("missing")
+        await client.ensure_bucket("missing")
+        assert api.create_bucket_calls == [{"Bucket": "missing"}]
     finally:
         client._S3Client__ctx_client.reset(tok)
+
+@pytest.mark.asyncio
+async def test_ensure_bucket_skips_create_when_present() -> None:
+    client = S3Client()
+    api = _BucketApi(exists=True)
+    tok = client._S3Client__ctx_client.set(api)  # type: ignore[arg-type]
+    try:
+        await client.ensure_bucket("present")
+        assert api.create_bucket_calls == []
+    finally:
+        client._S3Client__ctx_client.reset(tok)
+
+@pytest.mark.asyncio
+async def test_ensure_bucket_treats_already_owned_race_as_success() -> None:
+    client = S3Client()
+    api = _BucketApi(exists=False, create_error_code="BucketAlreadyOwnedByYou")
+    tok = client._S3Client__ctx_client.set(api)  # type: ignore[arg-type]
+    try:
+        await client.ensure_bucket("raced")
+        assert api.create_bucket_calls == [{"Bucket": "raced"}]
+    finally:
+        client._S3Client__ctx_client.reset(tok)
+
+@pytest.mark.asyncio
+async def test_create_bucket_includes_location_constraint_outside_us_east_1(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = S3Client()
+    monkeypatch.setattr(s3_client_module.aioboto3, "Session", lambda: object())
+
+    await client.initialize(
+        endpoint="http://s3.local",
+        access_key_id="k",
+        secret_access_key="s",
+        config=S3Config(region_name="eu-west-1"),
+    )
+
+    api = _BucketApi()
+    tok = client._S3Client__ctx_client.set(api)  # type: ignore[arg-type]
+    try:
+        await client.create_bucket("b")
+        assert api.create_bucket_calls == [
+            {
+                "Bucket": "b",
+                "CreateBucketConfiguration": {"LocationConstraint": "eu-west-1"},
+            }
+        ]
+    finally:
+        client._S3Client__ctx_client.reset(tok)
+        await client.close()
+
+@pytest.mark.asyncio
+async def test_create_bucket_omits_location_constraint_for_us_east_1(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = S3Client()
+    monkeypatch.setattr(s3_client_module.aioboto3, "Session", lambda: object())
+
+    await client.initialize(
+        endpoint="http://s3.local",
+        access_key_id="k",
+        secret_access_key="s",
+        config=S3Config(region_name="us-east-1"),
+    )
+
+    api = _BucketApi()
+    tok = client._S3Client__ctx_client.set(api)  # type: ignore[arg-type]
+    try:
+        await client.create_bucket("b")
+        assert api.create_bucket_calls == [{"Bucket": "b"}]
+    finally:
+        client._S3Client__ctx_client.reset(tok)
+        await client.close()
 
 @pytest.mark.asyncio
 async def test_object_exists_false_on_missing_key() -> None:

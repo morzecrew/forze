@@ -13,10 +13,15 @@ from forze.base.exceptions import (
     CoreException,
     ExceptionInterceptor,
     default_chain_exc_mapper,
+    fallback_exception_mapper,
     make_http_exception_mapper,
 )
 
 # ----------------------- #
+
+_shared_fallback = fallback_exception_mapper("GCS")
+
+# ....................... #
 
 
 def _gcs_http_message(status: int | None) -> str:
@@ -32,13 +37,7 @@ def _gcs_http_message(status: int | None) -> str:
 def _gcs_fallback(
     exc: BaseException, site: str, details: Mapping[str, Any] | None
 ) -> CoreException:
-    # Keep the summary static: raw driver exception text may carry internal
-    # data. The stringified error goes into details, which egress suppresses
-    # and the scrubber sanitizes.
-    return CoreException.infrastructure(
-        f"An error occurred while executing GCS operation {site}.",
-        details={**(details or {}), "error": str(exc)},
-    )
+    return _shared_fallback(exc, site=site, details=details)
 
 
 # ....................... #

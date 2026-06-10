@@ -5,8 +5,7 @@ require_sqs()
 # ....................... #
 
 from datetime import datetime, timedelta
-from typing import AsyncGenerator, Sequence, final
-from uuid import UUID
+from typing import AsyncGenerator, ClassVar, Sequence, final
 
 import attrs
 from pydantic import BaseModel
@@ -16,13 +15,10 @@ from forze.application.contracts.queue import (
     QueueMessage,
     QueueQueryPort,
 )
-from forze.application.contracts.resolution import NamedResourceSpec, is_static_named_resource
-from forze.application.contracts.tenancy import TenancyMixin
+from forze.application.integrations.queue import ScopedQueueNamingMixin
 from forze.base.exceptions import exc
-from forze.base.primitives import OnceCell
 
 from ..kernel.client import SQSClientPort
-from ..kernel.relation import resolve_sqs_namespace
 from .codecs import SQSQueueCodec
 
 # ----------------------- #
@@ -33,7 +29,7 @@ from .codecs import SQSQueueCodec
 class SQSQueueAdapter[M: BaseModel](
     QueueQueryPort[M],
     QueueCommandPort[M],
-    TenancyMixin,
+    ScopedQueueNamingMixin,
 ):
     """SQS queue adapter."""
 
@@ -43,53 +39,14 @@ class SQSQueueAdapter[M: BaseModel](
     codec: SQSQueueCodec[M]
     """SQS queue codec instance."""
 
-    namespace: NamedResourceSpec = ""
-    """SQS queue namespace."""
-
-    _namespace_cell: OnceCell[str] = attrs.field(
-        factory=OnceCell,
-        init=False,
-        eq=False,
-        repr=False,
-    )
+    queue_name_separator: ClassVar[str] = "-"
+    queue_backend_label: ClassVar[str] = "SQS queue"
 
     # ....................... #
 
     @staticmethod
     def __is_queue_url(queue: str) -> bool:
         return queue.startswith("https://") or queue.startswith("http://")
-
-    # ....................... #
-
-    def _tenant_id_for_resolve(self) -> UUID | None:
-        if self.tenant_provider is None:
-            return None
-
-        tenant = self.tenant_provider()
-
-        if tenant is None:
-            if self.tenant_aware:
-                raise exc.internal("Tenant ID is required for the SQS queue adapter")
-
-            return None
-
-        return tenant.tenant_id
-
-    # ....................... #
-
-    async def _resolved_namespace(self) -> str:
-        async def _factory() -> str:
-            return await resolve_sqs_namespace(
-                self.namespace,
-                self._tenant_id_for_resolve(),
-            )
-
-        # Only memoize tenant-independent (static) namespaces; a dynamic resolver
-        # depends on the bound tenant and the adapter may be shared across tenants.
-        return await self._namespace_cell.resolve(
-            _factory,
-            cache=is_static_named_resource(self.namespace),
-        )
 
     # ....................... #
 
@@ -105,23 +62,7 @@ class SQSQueueAdapter[M: BaseModel](
 
             return queue
 
-        tenant_id = self.require_tenant_if_aware()
-
-        if tenant_id is not None:
-            tenant_prefix = f"tenant-{tenant_id}"
-
-        else:
-            tenant_prefix = ""
-
-        namespace = await self._resolved_namespace()
-
-        if namespace:
-            namespaced_queue = f"{namespace}-{queue}"
-
-        else:
-            namespaced_queue = queue
-
-        return f"{tenant_prefix}-{namespaced_queue}".lstrip("-")
+        return await self._scoped_queue_name(queue)
 
     # ....................... #
 

@@ -56,6 +56,7 @@ class MockStorageAdapter(MockTenancyMixin, StorageQueryPort, StorageCommandPort)
             content_type=content_type,
             size=len(data),
             created_at=utcnow(),
+            tags=dict(obj.tags) if obj.tags else None,
         )
         with self.state.lock:
             self._objects()[key] = stored

@@ -1,15 +1,15 @@
 """Base64-JSON cursors and sort normalization (agnostic of SQL vs Mongo)."""
 
-import base64
-import json
 from typing import Any, Sequence
 
+from forze.base.codecs import B64UrlJsonCodec
 from forze.base.exceptions import exc
 
 # ----------------------- #
 
 _KEYSET_V1 = 1
 _DIRECTIONS = ("asc", "desc")
+_CODEC = B64UrlJsonCodec()
 
 # ....................... #
 
@@ -152,13 +152,7 @@ def encode_keyset_v1(
         "d": list(directions),
         "x": [_jsonify_value(x) for x in values],
     }
-    raw = json.dumps(
-        payload,
-        ensure_ascii=True,
-        separators=(",", ":"),
-        sort_keys=True,
-    ).encode("utf-8")
-    return base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii")
+    return _CODEC.dumps(payload)
 
 
 # ....................... #
@@ -180,13 +174,10 @@ def row_value_for_sort_key(row: dict[str, Any], key: str) -> Any:
 
 
 def decode_keyset_v1(token: str) -> tuple[list[str], list[str], list[Any]]:
-    pad = "=" * (-len(token) % 4)
-
     try:
-        raw = base64.urlsafe_b64decode(token + pad)
-        data: Any = json.loads(raw.decode("utf-8"))
+        data: Any = _CODEC.loads(token)
 
-    except (ValueError, json.JSONDecodeError) as e:
+    except ValueError as e:
         raise exc.validation("Invalid cursor token") from e
 
     if not isinstance(data, dict) or int(data.get("v", 0)) != _KEYSET_V1:  # type: ignore[arg-type]

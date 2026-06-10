@@ -269,8 +269,14 @@ class DurableWorkflowScheduleBootstrap(Generic[In]):
     timing: DurableWorkflowScheduleTiming
     """When the schedule fires."""
 
-    workflow_id_template: str | None = None  #! very questionable thing
-    """Optional workflow id template for each fired run."""
+    workflow_id_template: str | None = None
+    """Optional base workflow id for each fired run.
+
+    Passed through to the backend verbatim — Forze performs no placeholder
+    interpolation. Backends derive per-run uniqueness themselves (e.g. Temporal
+    appends the fire timestamp to the id of every scheduled run). When unset,
+    backends fall back to a ``<schedule_id>``-derived id.
+    """
 
     trigger_immediately: bool = False
     """Whether to fire once immediately after create/upsert."""

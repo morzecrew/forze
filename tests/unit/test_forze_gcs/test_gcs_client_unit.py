@@ -8,7 +8,7 @@ import pytest
 from forze.base.exceptions import CoreException
 from forze.base.primitives.owned_temp_path import OwnedTempPath
 
-from forze_gcs.kernel.client.client import GCSClient
+from forze_gcs.kernel.client.client import TAG_METADATA_PREFIX, GCSClient
 from forze_gcs.kernel.client.value_objects import GCSConfig
 
 
@@ -143,6 +143,79 @@ async def test_upload_bytes_passes_nested_metadata() -> None:
         metadata={"metadata": {"filename": "x"}},
         timeout=30,
     )
+
+
+@pytest.mark.asyncio
+async def test_upload_bytes_namespaces_tags_into_custom_metadata() -> None:
+    client = GCSClient()
+    fake_storage = MagicMock()
+    fake_storage.upload = AsyncMock()
+    client._GCSClient__storage = fake_storage
+
+    await client.upload_bytes(
+        "bucket",
+        "key",
+        b"data",
+        content_type="text/plain",
+        metadata={"filename": "x"},
+        tags={"env": "dev", "team": "core"},
+    )
+
+    fake_storage.upload.assert_awaited_once_with(
+        "bucket",
+        "key",
+        b"data",
+        content_type="text/plain",
+        metadata={
+            "metadata": {
+                "filename": "x",
+                f"{TAG_METADATA_PREFIX}env": "dev",
+                f"{TAG_METADATA_PREFIX}team": "core",
+            }
+        },
+        timeout=30,
+    )
+
+
+@pytest.mark.asyncio
+async def test_upload_bytes_tags_without_metadata() -> None:
+    client = GCSClient()
+    fake_storage = MagicMock()
+    fake_storage.upload = AsyncMock()
+    client._GCSClient__storage = fake_storage
+
+    await client.upload_bytes("bucket", "key", b"data", tags={"env": "dev"})
+
+    fake_storage.upload.assert_awaited_once_with(
+        "bucket",
+        "key",
+        b"data",
+        content_type=None,
+        metadata={"metadata": {f"{TAG_METADATA_PREFIX}env": "dev"}},
+        timeout=30,
+    )
+
+
+@pytest.mark.asyncio
+async def test_head_object_splits_tags_from_custom_metadata() -> None:
+    client = GCSClient()
+    fake_storage = MagicMock()
+    fake_storage.download_metadata = AsyncMock(
+        return_value={
+            "contentType": "text/plain",
+            "metadata": {
+                "filename": "Zm9v",
+                f"{TAG_METADATA_PREFIX}env": "dev",
+            },
+            "size": 3,
+        },
+    )
+    client._GCSClient__storage = fake_storage
+
+    head = await client.head_object("bucket", "key")
+
+    assert head.metadata == {"filename": "Zm9v"}
+    assert head.tags == {"env": "dev"}
 
 
 @pytest.mark.asyncio

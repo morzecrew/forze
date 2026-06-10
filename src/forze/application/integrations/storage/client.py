@@ -51,6 +51,14 @@ class ObjectStorageHead:
     etag: str = ""
     """Entity tag with surrounding quotes stripped when applicable."""
 
+    tags: Mapping[str, str] = attrs.field(factory=dict[str, str])
+    """Object tags when the backend surfaces them on a head request.
+
+    GCS round-trips tags via namespaced custom metadata; S3 head responses do
+    not include tags (a separate ``GetObjectTagging`` call would be required),
+    so this mapping may be empty even when the object carries tags.
+    """
+
 
 # ....................... #
 
@@ -80,7 +88,9 @@ class ObjectStorageClientPort(Protocol):
 
     def create_bucket(self, bucket: str) -> Awaitable[None]: ...  # pragma: no cover
 
-    def ensure_bucket(self, bucket: str) -> Awaitable[None]: ...  # pragma: no cover
+    def ensure_bucket(self, bucket: str) -> Awaitable[None]:
+        """Create *bucket* when it does not exist (idempotent create-if-missing)."""
+        ...  # pragma: no cover
 
     def object_exists(
         self, bucket: str, key: str

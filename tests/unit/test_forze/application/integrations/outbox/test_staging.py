@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-from uuid import uuid4
 
 import pytest
 from pydantic import BaseModel
@@ -17,6 +16,24 @@ from forze.base.serialization import PydanticModelCodec
 
 class _Payload(BaseModel):
     value: str
+
+
+def _coord(
+    ctx: ExecutionContext,
+    name: str,
+    sink: list[StagedOutboxEntry],
+) -> OutboxStaging[_Payload]:
+    async def _flush(rows: list[StagedOutboxEntry]) -> int:
+        sink.extend(rows)
+        return len(rows)
+
+    spec = OutboxSpec(name=name, codec=PydanticModelCodec(_Payload))
+    return OutboxStaging(
+        staging=ctx.outbox_staging,
+        spec=spec,
+        enricher=InvocationOutboxEnricher(inv=ctx.inv_ctx),
+        flush_rows=_flush,
+    )
 
 
 @pytest.mark.asyncio
@@ -45,7 +62,7 @@ async def test_flush_delegates_buffered_rows() -> None:
     assert count == 1
     assert len(flushed) == 1
     assert flushed[0].event.event_type == "demo.created"
-    assert ctx.outbox_staging.flushed is True
+    assert ctx.outbox_staging.flushed_for("events") is True
 
 
 @pytest.mark.asyncio
@@ -144,3 +161,86 @@ async def test_concurrent_tasks_do_not_share_flushed_state() -> None:
     assert count_a == 1
     assert count_b == 1
     assert len(flushed) == 2
+
+
+@pytest.mark.asyncio
+async def test_two_specs_flush_only_their_own_rows() -> None:
+    """Regression: two outbox specs in one operation must not share a buffer."""
+
+    ctx = ExecutionContext(deps=DepsRegistry().freeze().resolve())
+    flushed_a: list[StagedOutboxEntry] = []
+    flushed_b: list[StagedOutboxEntry] = []
+    coord_a = _coord(ctx, "route_a", flushed_a)
+    coord_b = _coord(ctx, "route_b", flushed_b)
+
+    await coord_a.stage("a.created", _Payload(value="a1"))
+    await coord_b.stage("b.created", _Payload(value="b1"))
+    await coord_a.stage("a.updated", _Payload(value="a2"))
+
+    # First flush (route A) must NOT hand route B's rows to A's port.
+    count_a = await coord_a.flush()
+    count_b = await coord_b.flush()
+
+    assert count_a == 2
+    assert count_b == 1
+    assert {e.event.event_type for e in flushed_a} == {"a.created", "a.updated"}
+    assert all(e.outbox_route == "route_a" for e in flushed_a)
+    assert [e.event.event_type for e in flushed_b] == ["b.created"]
+    assert all(e.outbox_route == "route_b" for e in flushed_b)
+
+
+@pytest.mark.asyncio
+async def test_flush_then_stage_on_other_route_unaffected() -> None:
+    """Flushing route A neither blocks staging on route B nor drops B's rows."""
+
+    ctx = ExecutionContext(deps=DepsRegistry().freeze().resolve())
+    flushed_a: list[StagedOutboxEntry] = []
+    flushed_b: list[StagedOutboxEntry] = []
+    coord_a = _coord(ctx, "route_a", flushed_a)
+    coord_b = _coord(ctx, "route_b", flushed_b)
+
+    await coord_a.stage("a.created", _Payload(value="a1"))
+    assert await coord_a.flush() == 1
+
+    # Route A is flushed for this task; route B must still accept staging.
+    await coord_b.stage("b.created", _Payload(value="b1"))
+    assert await coord_b.flush() == 1
+    assert [e.event.event_type for e in flushed_b] == ["b.created"]
+
+    # Route A itself stays closed for this task.
+    with pytest.raises(Exception, match="after flush"):
+        await coord_a.stage("a.late", _Payload(value="a2"))
+
+
+@pytest.mark.asyncio
+async def test_concurrent_tasks_same_route_have_isolated_buffers() -> None:
+    """Two concurrent tasks staging on the same route never see each other's rows."""
+
+    ctx = ExecutionContext(deps=DepsRegistry().freeze().resolve())
+    flushed: list[StagedOutboxEntry] = []
+    coord = _coord(ctx, "events", flushed)
+
+    a_staged = asyncio.Event()
+    b_flushed = asyncio.Event()
+
+    async def _task_a() -> int:
+        await coord.stage("demo.created", _Payload(value="a"))
+        a_staged.set()
+        # Hold the staged row while task B stages and flushes its own.
+        await b_flushed.wait()
+        return await coord.flush()
+
+    async def _task_b() -> int:
+        await a_staged.wait()
+        await coord.stage("demo.created", _Payload(value="b"))
+        count = await coord.flush()
+        b_flushed.set()
+        return count
+
+    count_a, count_b = await asyncio.gather(_task_a(), _task_b())
+
+    # Each task flushed exactly its own row, despite sharing the route.
+    assert count_a == 1
+    assert count_b == 1
+    values = sorted(e.event.payload.value for e in flushed)
+    assert values == ["a", "b"]

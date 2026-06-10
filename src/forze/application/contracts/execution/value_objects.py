@@ -190,7 +190,11 @@ class DispatchStep(Step):
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class LifecycleStep(GraphStep):
-    """Lifecycle step."""
+    """Lifecycle step.
+
+    ``shutdown`` may be invoked at most once per successful ``startup`` and never
+    without it (guaranteed by the runtime).
+    """
 
     startup: LifecycleHook = noop_lifecycle_hook
     """Startup hook."""

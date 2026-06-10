@@ -278,7 +278,15 @@ _STRATEGY_ORDER: tuple[type, ...] = (
 @final
 @attrs.define(slots=True, frozen=True, kw_only=True)
 class ResiliencePolicy:
-    """Ordered composition of strategies applied outer-to-inner around a call."""
+    """Ordered composition of strategies applied outer-to-inner around a call.
+
+    The canonical order is Bulkhead -> CircuitBreaker -> Retry -> Timeout, which
+    means the circuit breaker composes **outside** retry: the breaker admits and
+    records exactly **one** outcome per logical call, after the whole retry loop
+    has run. A retry storm (``max_attempts`` failing attempts) therefore counts
+    as a *single* breaker failure — breaker thresholds are tuned against logical
+    calls, not individual attempts.
+    """
 
     name: StrKey
     """Policy name used to reference it and to key process-local state."""

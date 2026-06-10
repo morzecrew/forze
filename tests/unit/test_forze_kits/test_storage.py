@@ -1,12 +1,18 @@
 """Unit tests for forze_kits.aggregates.storage."""
 
+import pytest
+
 from forze_kits.aggregates.storage import (
     StorageFacade,
     StorageKernelOp,
+    UploadObject,
+    UploadObjectRequestDTO,
     build_storage_registry,
 )
 from forze.application.contracts.storage import StorageSpec
 from forze.application.execution.operations.registry import OperationRegistry
+from forze_mock import MockState
+from forze_mock.adapters import MockStorageAdapter
 
 from .registry_helpers import registry_has_handler
 
@@ -54,3 +60,24 @@ class TestStorageFacadeWithRegistry:
             namespace=_FILES.default_namespace,
         )
         assert facade.upload is not None
+
+
+class TestUploadObjectHandler:
+    """Tests for the UploadObject handler against the mock storage adapter."""
+
+    @pytest.mark.asyncio
+    async def test_upload_carries_tags_end_to_end(self) -> None:
+        storage = MockStorageAdapter(state=MockState(), bucket="files")
+        handler = UploadObject(storage=storage)
+
+        dto = await handler(
+            UploadObjectRequestDTO(
+                filename="a.txt",
+                data=b"payload",
+                tags={"env": "dev"},
+            ),
+        )
+
+        assert dto.tags == {"env": "dev"}
+        assert dto.filename == "a.txt"
+        assert dto.size == len(b"payload")

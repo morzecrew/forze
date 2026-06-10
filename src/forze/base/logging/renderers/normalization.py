@@ -6,9 +6,11 @@ from structlog.typing import EventDict, ExcInfo
 from ..constants import ERR_MESSAGE_KEY, ERR_STACK_KEY, ERR_TYPE_KEY, RICH_EXC_INFO_KEY
 
 # ----------------------- #
-#! Yes we leak some information here, but it's for the sake of readability.
-#! It's super tricky to maintain strict isolation :/
-#! Or we need to put renderer somewhere else.
+# Deliberate layering tradeoff: this base-layer renderer knows the shape of
+# HTTP access-log events (``http.method/url/status_code``, ``network.client``)
+# so console output stays readable without a transport-specific renderer.
+# It only *reads* well-known ECS-style keys — no integration imports — which
+# we accept over relocating the renderer into an integration package.
 
 
 @attrs.define(slots=True, frozen=True, kw_only=True)

@@ -1,6 +1,8 @@
 """Integration tests for SQSClient."""
 
+import asyncio
 from datetime import datetime, timedelta, timezone
+from uuid import uuid4
 
 import pytest
 
@@ -41,10 +43,12 @@ async def test_client_enqueue_receive_ack(
         message = messages[0]
 
         assert message.queue == sqs_queue_url
-        # enqueue() returns a send-side id; receive() id is the receipt handle for ack.
+        # enqueue() returns the broker MessageId; the received id correlates
+        # with it, while the per-delivery receipt handle is separate.
         assert message_id
-        assert message.id
-        assert message.id != message_id
+        assert message.id == message_id
+        assert message.receipt_handle
+        assert message.receipt_handle != message.id
         assert message.body == b'{"value":"hello"}'
         assert message.type == "created"
         assert message.key == "partition-1"
@@ -69,6 +73,80 @@ async def test_client_nack_requeue_then_ack(
         second = (await _receive_until(sqs_client, sqs_queue_url))[0]
         assert second.body == b'{"value":"requeue"}'
         assert await sqs_client.ack(sqs_queue_url, [second.id]) == 1
+
+
+@pytest.mark.asyncio
+async def test_client_message_id_stable_across_redeliveries(
+    sqs_client: SQSClient,
+) -> None:
+    """The exposed id (broker MessageId) survives a visibility-timeout
+    redelivery while the receipt handle changes per delivery."""
+
+    queue = f"forze-redeliver-{uuid4().hex[:10]}"
+
+    async with sqs_client.client():
+        url = await sqs_client.create_queue(
+            queue,
+            attributes={"VisibilityTimeout": "1"},
+        )
+        message_id = await sqs_client.enqueue(url, b'{"value":"again"}')
+
+        first = (await _receive_until(sqs_client, url))[0]
+        assert first.id == message_id
+
+        # Let the visibility timeout lapse without acking.
+        await asyncio.sleep(1.5)
+
+        second = (await _receive_until(sqs_client, url))[0]
+        assert second.id == first.id
+        assert second.receipt_handle != first.receipt_handle
+
+        # Ack by the stable id settles the latest delivery.
+        assert await sqs_client.ack(url, [second.id]) == 1
+        assert await sqs_client.receive(url, limit=1) == []
+
+
+@pytest.mark.asyncio
+async def test_client_nack_without_requeue_leaves_message_for_redrive(
+    sqs_client: SQSClient,
+) -> None:
+    """nack(requeue=False) must not delete: the message stays invisible until
+    its visibility timeout lapses and then reappears (counting toward the
+    queue's redrive policy) instead of being permanently lost."""
+
+    queue = f"forze-redrive-{uuid4().hex[:10]}"
+
+    async with sqs_client.client():
+        url = await sqs_client.create_queue(
+            queue,
+            attributes={"VisibilityTimeout": "2"},
+        )
+        message_id = await sqs_client.enqueue(url, b'{"value":"keep-me"}')
+
+        first = (await _receive_until(sqs_client, url))[0]
+        assert await sqs_client.nack(url, [first.id], requeue=False) == 1
+
+        # Not redelivered immediately: requeue=False does not reset visibility.
+        assert await sqs_client.receive(url, limit=1) == []
+
+        # ... but it reappears after the visibility timeout (no deletion).
+        await asyncio.sleep(2.5)
+        again = (await _receive_until(sqs_client, url))[0]
+        assert again.id == message_id
+        assert again.body == b'{"value":"keep-me"}'
+        assert await sqs_client.ack(url, [again.id]) == 1
+
+
+@pytest.mark.asyncio
+async def test_client_health_without_ambient_scope(
+    sqs_client: SQSClient,
+) -> None:
+    """health() opens its own client scope when none is active."""
+
+    message, ok = await sqs_client.health()
+
+    assert ok is True
+    assert message == "ok"
 
 
 @pytest.mark.asyncio

@@ -15,6 +15,7 @@ import attrs
 from neo4j import AsyncDriver, AsyncGraphDatabase, AsyncTransaction
 from pydantic import SecretStr
 
+from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
 
 from .errors import exc_interceptor
@@ -48,7 +49,7 @@ class Neo4jClient(Neo4jClientPort):
     @property
     def _require_driver(self) -> AsyncDriver:
         if self._driver is None:
-            raise RuntimeError("Neo4jClient is not initialized")
+            raise exc.internal("Neo4j client is not initialized")
 
         return self._driver
 
@@ -92,15 +93,19 @@ class Neo4jClient(Neo4jClientPort):
 
     # ....................... #
 
-    @exc_interceptor.coroutine("neo4j.health")  # type: ignore[untyped-decorator]
     async def health(self) -> tuple[str, bool]:
+        """Verify driver connectivity.
+
+        :returns: A pair ``(message, ok)``. ``ok`` is ``True`` on success. Never raises.
+        """
+
         try:
             await self._require_driver.verify_connectivity()  # pyright: ignore[reportUnknownMemberType]
 
-        except Exception:
-            return "neo4j", False
+        except Exception as e:  # noqa: BLE001 - health must not raise
+            return str(e) or "Neo4j health check failed", False
 
-        return "neo4j", True
+        return "ok", True
 
     # ....................... #
 

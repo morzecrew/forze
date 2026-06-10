@@ -42,9 +42,15 @@ class OutboxStaging[M: BaseModel]:
 
     # ....................... #
 
+    @property
+    def _route(self) -> str:
+        return str(self.spec.name)
+
+    # ....................... #
+
     def _to_entry(self, event: IntegrationEvent[M]) -> StagedOutboxEntry:
         return StagedOutboxEntry(
-            outbox_route=str(self.spec.name),
+            outbox_route=self._route,
             event=event,
             payload_json=self.spec.codec.encode_mapping(event.payload),
         )
@@ -89,27 +95,31 @@ class OutboxStaging[M: BaseModel]:
     # ....................... #
 
     async def stage_event(self, event: IntegrationEvent[M]) -> None:
-        """Buffer a fully built integration event."""
+        """Buffer a fully built integration event into this spec's route."""
 
-        if self.staging.flushed:
+        route = self._route
+
+        if self.staging.flushed_for(route):
             raise exc.internal("Cannot stage outbox events after flush")
 
-        self.staging.buffer.push([self._to_entry(event)])
+        self.staging.buffer_for(route).push([self._to_entry(event)])
 
     # ....................... #
 
     async def flush(self) -> int:
-        """Persist buffered events."""
+        """Persist events buffered for this spec's route only."""
 
-        if self.staging.flushed:
+        route = self._route
+
+        if self.staging.flushed_for(route):
             return 0
 
-        rows = self.staging.buffer.pop()
+        rows = self.staging.buffer_for(route).pop()
 
         if not rows:
-            self.staging.flushed = True
+            self.staging.set_flushed(route, True)
             return 0
 
         written = await self.flush_rows(rows)
-        self.staging.flushed = True
+        self.staging.set_flushed(route, True)
         return written

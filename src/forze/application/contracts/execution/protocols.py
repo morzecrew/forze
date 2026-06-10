@@ -45,7 +45,11 @@ class OnSuccess[Args, R](Protocol):  # pragma: no cover
 
 
 class OnFailure[Args](Protocol):  # pragma: no cover
-    """Protocol for a hook that runs after the operation handler fails."""
+    """Protocol for a hook that runs after the operation handler fails.
+
+    Handler-only: runs when the wrap chain / handler raises, **not** when a
+    ``before`` guard (authn/authz/tenancy) denies the operation.
+    """
 
     def __call__(self, args: Args, exc: Exception) -> Awaitable[None]: ...
 
@@ -54,7 +58,11 @@ class OnFailure[Args](Protocol):  # pragma: no cover
 
 
 class Finally[Args, R](Protocol):  # pragma: no cover
-    """Protocol for a hook that runs after the operation handler finishes (success or failure)."""
+    """Protocol for a hook that runs after the operation handler finishes (success or failure).
+
+    Always runs once the scope is entered — including when a ``before`` hook raises,
+    in which case the outcome is a ``Failure`` carrying the guard error.
+    """
 
     def __call__(
         self,

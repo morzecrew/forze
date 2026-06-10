@@ -9,6 +9,9 @@ from uuid import UUID
 
 from pydantic import BaseModel
 
+from forze.application.integrations.analytics.sql import (
+    build_count_sql as build_count_sql,  # thin re-export of the shared builder
+)
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
 
@@ -127,14 +130,3 @@ def build_sync_query_request(
         body["timeoutMs"] = timeout_ms
 
     return body
-
-
-# ....................... #
-
-
-def build_count_sql(inner_sql: str) -> str:
-    """Wrap *inner_sql* in ``SELECT COUNT(*)`` for total row counts."""
-
-    stripped = inner_sql.strip().rstrip(";")
-
-    return f"SELECT COUNT(*) AS forze_cnt FROM ({stripped}) AS forze_analytics_subq"  # nosec B608
