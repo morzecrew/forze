@@ -10,7 +10,7 @@ import pytest
 
 from forze.base.exceptions import CoreException, ExceptionKind
 
-from examples.order_fulfillment import (
+from examples.recipes.order_fulfillment.app import (
     INVENTORY_SPEC,
     ORDER_SPEC,
     SHIPMENT_SPEC,

@@ -26,6 +26,7 @@ from forze.application.integrations.analytics.adapter_common import (
     parse_keyset_cursor_after,
     parse_offset_cursor_after,
     shape_rows,
+    validate_fetch_batch_size,
     validated_params,
 )
 from forze.application.contracts.base import (
@@ -261,6 +262,7 @@ class ClickHouseAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
         options: AnalyticsRunOptions | None = None,
         fetch_batch_size: int = 2000,
     ) -> AsyncGenerator[Sequence[R]]:
+        validate_fetch_batch_size(fetch_batch_size)
         params = self._validated_params(query_key, params)
 
         if dry_run_enabled(options):
@@ -293,6 +295,7 @@ class ClickHouseAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
         options: AnalyticsRunOptions | None = None,
         fetch_batch_size: int = 2000,
     ) -> AsyncGenerator[Sequence[T]]:
+        validate_fetch_batch_size(fetch_batch_size)
         params = self._validated_params(query_key, params)
 
         if dry_run_enabled(options):

@@ -32,19 +32,22 @@ class VaultClient(VaultClientPort):
 
     config: VaultConfig
     _client: Any = attrs.field(default=None, init=False, repr=False)
+    _init_lock: asyncio.Lock = attrs.field(factory=asyncio.Lock, init=False)
 
     # ....................... #
 
     async def initialize(self) -> None:
-        if self._client is not None:
-            return
+        async with self._init_lock:
+            if self._client is not None:
+                return
 
-        self._client = await asyncio.to_thread(self._create_client)
+            self._client = await asyncio.to_thread(self._create_client)
 
     # ....................... #
 
     async def close(self) -> None:
-        self._client = None
+        async with self._init_lock:
+            self._client = None
 
     # ....................... #
 

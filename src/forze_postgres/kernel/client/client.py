@@ -136,6 +136,8 @@ class PostgresClient(PostgresClientPort):
     __gather_sem: asyncio.Semaphore | None = attrs.field(default=None, init=False)
     """Pool-wide limiter for :func:`~forze_postgres.kernel.client.gather_db_work`."""
 
+    __init_lock: asyncio.Lock = attrs.field(factory=asyncio.Lock, init=False)
+
     # ....................... #
     # Lifecycle
 
@@ -149,57 +151,64 @@ class PostgresClient(PostgresClientPort):
         """Creates and opens the connection pool.
 
         Idempotent; safe to call multiple times. Later calls are no-ops.
+        Concurrent calls serialize on an internal lock so only one coroutine
+        performs the setup.
 
         :param dsn: Database connection string.
         :param config: Pool configuration. Defaults to :class:`PostgresConfig`.
         :param acquire_timeout: Timeout when acquiring a connection from the pool.
         """
 
-        if self.__pool is not None:
-            return
+        async with self.__init_lock:
+            if self.__pool is not None:
+                return
 
-        if config.max_concurrent_queries is not None:
-            self.__max_concurrent_queries = config.max_concurrent_queries
+            if config.max_concurrent_queries is not None:
+                self.__max_concurrent_queries = config.max_concurrent_queries
 
-        else:
-            self.__max_concurrent_queries = max(
-                1, config.max_size - config.pool_headroom
+            else:
+                self.__max_concurrent_queries = max(
+                    1, config.max_size - config.pool_headroom
+                )
+
+            configure = _pool_configure_for_config(config)
+
+            if isinstance(dsn, SecretStr):
+                dsn = dsn.get_secret_value()
+
+            pool = AsyncConnectionPool(
+                conninfo=dsn,
+                open=False,
+                min_size=config.min_size,
+                max_size=config.max_size,
+                max_lifetime=config.max_lifetime.total_seconds(),
+                max_idle=config.max_idle.total_seconds(),
+                reconnect_timeout=config.reconnect_timeout.total_seconds(),
+                num_workers=config.num_workers,
+                configure=configure,
             )
 
-        configure = _pool_configure_for_config(config)
+            self.__acquire_timeout = acquire_timeout
 
-        if isinstance(dsn, SecretStr):
-            dsn = dsn.get_secret_value()
+            self.__gather_sem = asyncio.Semaphore(self.__max_concurrent_queries)
 
-        self.__pool = AsyncConnectionPool(
-            conninfo=dsn,
-            open=False,
-            min_size=config.min_size,
-            max_size=config.max_size,
-            max_lifetime=config.max_lifetime.total_seconds(),
-            max_idle=config.max_idle.total_seconds(),
-            reconnect_timeout=config.reconnect_timeout.total_seconds(),
-            num_workers=config.num_workers,
-            configure=configure,
-        )
-
-        self.__acquire_timeout = acquire_timeout
-
-        self.__gather_sem = asyncio.Semaphore(self.__max_concurrent_queries)
-
-        await self.__pool.open()
+            # Open before assigning so a failed open doesn't leave the guard
+            # satisfied with an unopened pool.
+            await pool.open()
+            self.__pool = pool  # type: ignore[assignment]
 
     # ....................... #
 
     async def close(self) -> None:
         """Closes the connection pool. No-op if not initialized."""
 
-        if self.__pool is None:
-            return
+        async with self.__init_lock:
+            if self.__pool is None:
+                return
 
-        await self.__pool.close()
-        self.__pool = None
-        self.__gather_sem = None
+            await self.__pool.close()
+            self.__pool = None
+            self.__gather_sem = None
 
     # ....................... #
 
@@ -630,9 +639,7 @@ class PostgresClient(PostgresClientPort):
         # transaction unwind run promptly, leaving the connection clean.
         async with self.__acquire_conn() as conn:
             tx_cm: AbstractAsyncContextManager[Any] = (
-                nullcontext()
-                if self.is_in_transaction()
-                else conn.transaction()
+                nullcontext() if self.is_in_transaction() else conn.transaction()
             )
 
             async with tx_cm:

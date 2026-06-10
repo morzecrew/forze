@@ -62,6 +62,16 @@ def dry_run_enabled(options: AnalyticsRunOptions | None) -> bool:
 # ....................... #
 
 
+def validate_fetch_batch_size(fetch_batch_size: int) -> None:
+    """Reject non-positive batch sizes before any query work happens."""
+
+    if fetch_batch_size <= 0:
+        raise exc.precondition("fetch_batch_size must be a positive integer.")
+
+
+# ....................... #
+
+
 def timeout_seconds(options: AnalyticsRunOptions | None) -> int | None:
     if options is None:
         return None

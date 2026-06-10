@@ -10,8 +10,9 @@ and even if a step fails partway. Forze builds that reliability from three
 pieces, all riding the after-commit deferral from [Transactions](transactions.md):
 **domain events**, the **transactional outbox**, and **sagas**.
 
-We'll trace one worked example throughout — `examples/order_fulfillment.py`, a
-complete program you can run.
+We'll trace one worked example throughout — the
+[end-to-end recipe](../recipes/end-to-end-saga-outbox-inbox.md), a complete
+program you can run.
 
 ![A state change and its event commit in one transaction, then relay and inbox carry it exactly-once to a shipment](../_diagrams/light/events-flow.svg#only-light){ loading=lazy }
 ![A state change and its event commit in one transaction, then relay and inbox carry it exactly-once to a shipment](../_diagrams/dark/events-flow.svg#only-dark){ loading=lazy }
@@ -23,7 +24,7 @@ transitions. The `Order` records `OrderConfirmed` the moment its status becomes
 `confirmed` — declared right next to the data it watches:
 
 ```python
---8<-- "order_fulfillment.py:order-aggregate"
+--8<-- "recipes/order_fulfillment/app.py:order-aggregate"
 ```
 
 The event is recorded on the instance during `update()`; the application layer
@@ -37,7 +38,7 @@ nor sent when it rolls back. The bridge is a handler that turns the event into a
 **staged outbox row**:
 
 ```python
---8<-- "order_fulfillment.py:outbox-bridge"
+--8<-- "recipes/order_fulfillment/app.py:outbox-bridge"
 ```
 
 `outbox_event_handler` maps `OrderConfirmed` onto an `order.confirmed` integration
@@ -51,7 +52,7 @@ together**. The confirm step updates the order and flushes the staged event
 inside the same transaction:
 
 ```python
---8<-- "order_fulfillment.py:confirm-step"
+--8<-- "recipes/order_fulfillment/app.py:confirm-step"
 ```
 
 Because both land in one transaction, you never get a confirmed order without its
@@ -63,7 +64,7 @@ A relay then moves staged rows onward. In production that's a worker handing off
 to a broker; here it claims the pending rows and passes them along in-process:
 
 ```python
---8<-- "order_fulfillment.py:relay"
+--8<-- "recipes/order_fulfillment/app.py:relay"
 ```
 
 ## Exactly-once on the way in: the inbox
@@ -72,7 +73,7 @@ Brokers redeliver. The consumer dedupes by event id through the **inbox**, so
 handling the same message twice creates one shipment, not two:
 
 ```python
---8<-- "order_fulfillment.py:inbox"
+--8<-- "recipes/order_fulfillment/app.py:inbox"
 ```
 
 `process_with_inbox` runs the handler only if that event id hasn't been seen
@@ -89,7 +90,7 @@ sequences them with **compensation**: every step carries an undo, and a failure
 rolls the completed steps back in reverse.
 
 ```python
---8<-- "order_fulfillment.py:saga"
+--8<-- "recipes/order_fulfillment/app.py:saga"
 ```
 
 - **`reserve`** is *compensatable* — if a later step fails, `_release` runs to

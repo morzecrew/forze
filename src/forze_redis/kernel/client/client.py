@@ -97,6 +97,8 @@ class RedisClient(RedisClientPort):
 
     __redis_config: RedisConfig = attrs.field(factory=RedisConfig, init=False)
 
+    __init_lock: asyncio.Lock = attrs.field(factory=asyncio.Lock, init=False)
+
     # ....................... #
     # Lifecycle
 
@@ -106,27 +108,31 @@ class RedisClient(RedisClientPort):
         *,
         config: RedisConfig = RedisConfig(),
     ) -> None:
-        if self.__client is not None:
-            logger.trace("Client already initialized, skipping")
-            return
+        async with self.__init_lock:
+            if self.__client is not None:
+                logger.trace("Client already initialized, skipping")
+                return
 
-        socket_timeout = (
-            config.socket_timeout.total_seconds() if config.socket_timeout else None
-        )
-        connect_timeout = (
-            config.connect_timeout.total_seconds() if config.connect_timeout else None
-        )
-        health_check_interval = (
-            int(config.health_check_interval.total_seconds())
-            if config.health_check_interval
-            else None
-        )
+            socket_timeout = (
+                config.socket_timeout.total_seconds()
+                if config.socket_timeout
+                else None
+            )
+            connect_timeout = (
+                config.connect_timeout.total_seconds()
+                if config.connect_timeout
+                else None
+            )
+            health_check_interval = (
+                int(config.health_check_interval.total_seconds())
+                if config.health_check_interval
+                else None
+            )
 
-        if isinstance(dsn, SecretStr):
-            dsn = dsn.get_secret_value()
+            if isinstance(dsn, SecretStr):
+                dsn = dsn.get_secret_value()
 
-        self.__pool = (
-            ConnectionPool.from_url(  # pyright: ignore[reportUnknownMemberType]
+            pool = ConnectionPool.from_url(  # pyright: ignore[reportUnknownMemberType]
                 dsn,
                 max_connections=config.max_size,
                 socket_timeout=socket_timeout,
@@ -138,13 +144,22 @@ class RedisClient(RedisClientPort):
                 retry_on_timeout=config.retry_on_timeout,
                 client_name=config.client_name,
             )
-        )
-        self.__client = Redis(connection_pool=self.__pool)
-        await self.__client.ping()  # type: ignore[misc]
+            client = Redis(connection_pool=pool)
 
-        self.__redis_config = config
+            # Ping before assigning so a failed ping doesn't leave the guard
+            # satisfied with an unverified client.
+            try:
+                await client.ping()  # type: ignore[misc]
 
-        logger.trace("Client initialized successfully")
+            except BaseException:
+                await pool.disconnect()
+                raise
+
+            self.__pool = pool
+            self.__client = client
+            self.__redis_config = config
+
+            logger.trace("Client initialized successfully")
 
     # ....................... #
 
@@ -185,19 +200,20 @@ class RedisClient(RedisClientPort):
     # ....................... #
 
     async def close(self) -> None:
-        self.__script_registry.clear()
+        async with self.__init_lock:
+            self.__script_registry.clear()
 
-        if self.__client is not None:
-            logger.trace("Client found, closing")
-            await self.__client.aclose()
-            self.__client = None
+            if self.__client is not None:
+                logger.trace("Client found, closing")
+                await self.__client.aclose()
+                self.__client = None
 
-        if self.__pool is not None:
-            logger.trace("Pool found, disconnecting")
-            await self.__pool.disconnect(inuse_connections=True)
-            self.__pool = None
+            if self.__pool is not None:
+                logger.trace("Pool found, disconnecting")
+                await self.__pool.disconnect(inuse_connections=True)
+                self.__pool = None
 
-        logger.trace("Client closed successfully")
+            logger.trace("Client closed successfully")
 
     # ....................... #
 

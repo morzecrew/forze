@@ -14,7 +14,7 @@ One story, in-process (``forze_mock``), exercising how the pieces **compose**:
                                             ▼
                                       Shipment aggregate created
 
-Run it:  ``python -m examples.order_fulfillment``
+Run it:  ``python -m examples.recipes.order_fulfillment.app``
 It is also executed by ``tests/unit/test_examples/test_order_fulfillment.py`` — the example
 is the spec, and the test proves the composition (happy path, idempotent redelivery,
 compensation).
@@ -445,7 +445,7 @@ async def _demo_compensation() -> None:
 
 async def main(level: LogLevel = "info") -> None:
     # Quiet the framework's verbose trace logs; show this example's narrative instead.
-    # Run with ``python -m examples.order_fulfillment debug`` to also see debug lines.
+    # Run with ``python -m examples.recipes.order_fulfillment.app debug`` to also see debug lines.
     _setup_logging(level)
     await _demo_happy()
     await _demo_compensation()

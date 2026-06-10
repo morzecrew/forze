@@ -6,6 +6,7 @@ require_meilisearch()
 
 # ....................... #
 
+import asyncio
 from datetime import timedelta
 from typing import Any, final
 
@@ -30,6 +31,7 @@ class MeilisearchClient(MeilisearchClientPort):
     """Thin wrapper around :class:`meilisearch_python_sdk.AsyncClient`."""
 
     __client: AsyncClient | None = attrs.field(default=None, init=False)
+    __init_lock: asyncio.Lock = attrs.field(factory=asyncio.Lock, init=False)
 
     # ....................... #
 
@@ -40,23 +42,24 @@ class MeilisearchClient(MeilisearchClientPort):
         *,
         config: MeilisearchConfig | None = None,
     ) -> None:
-        if self.__client is not None:
-            return
+        async with self.__init_lock:
+            if self.__client is not None:
+                return
 
-        key: str | None
+            key: str | None
 
-        if isinstance(api_key, SecretStr):
-            key = api_key.get_secret_value()
+            if isinstance(api_key, SecretStr):
+                key = api_key.get_secret_value()
 
-        else:
-            key = api_key
+            else:
+                key = api_key
 
-        cfg = config or MeilisearchConfig()
-        self.__client = AsyncClient(
-            url,
-            key,
-            timeout=int(cfg.timeout.total_seconds()),
-        )
+            cfg = config or MeilisearchConfig()
+            self.__client = AsyncClient(
+                url,
+                key,
+                timeout=int(cfg.timeout.total_seconds()),
+            )
 
     # ....................... #
 
@@ -81,7 +84,8 @@ class MeilisearchClient(MeilisearchClientPort):
     async def close(self) -> None:
         """Alias for :meth:`aclose` (the standard ``close()`` disposal contract)."""
 
-        await self.aclose()
+        async with self.__init_lock:
+            await self.aclose()
 
     # ....................... #
 

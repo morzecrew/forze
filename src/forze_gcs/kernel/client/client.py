@@ -5,6 +5,7 @@ require_gcs()
 
 # ....................... #
 
+import asyncio
 import json
 import os
 from contextlib import asynccontextmanager
@@ -54,6 +55,8 @@ class GCSClient(GCSClientPort):
         init=False,
     )
 
+    __init_lock: asyncio.Lock = attrs.field(factory=asyncio.Lock, init=False)
+
     # ....................... #
 
     async def initialize(
@@ -71,63 +74,67 @@ class GCSClient(GCSClientPort):
         :param config: Optional client configuration overrides.
         """
 
-        if self.__storage is not None:
-            return
+        async with self.__init_lock:
+            if self.__storage is not None:
+                return
 
-        self.__project_id = project_id
-        self.__config = config
+            self.__project_id = project_id
+            self.__config = config
 
-        api_root: str | None = None
-        if host := os.environ.get("STORAGE_EMULATOR_HOST"):
-            api_root = host.rstrip("/")
+            api_root: str | None = None
+            if host := os.environ.get("STORAGE_EMULATOR_HOST"):
+                api_root = host.rstrip("/")
 
-        key_file = service_file
+            key_file = service_file
 
-        if key_file is None and config is not None:
-            key_file = config.service_file
+            if key_file is None and config is not None:
+                key_file = config.service_file
 
-        self.__credential_path = OwnedTempPath(path=key_file, owned=service_file_owned)
+            self.__credential_path = OwnedTempPath(
+                path=key_file, owned=service_file_owned
+            )
 
-        self.__storage = Storage(
-            service_file=key_file,
-            api_root=api_root,
-        )
+            self.__storage = Storage(
+                service_file=key_file,
+                api_root=api_root,
+            )
 
     # ....................... #
 
     async def close(self) -> None:
         """Release the underlying storage client and HTTP session."""
 
-        storage = self.__storage
-        close_error: Exception | None = None
-        cred_error: Exception | None = None
+        async with self.__init_lock:
+            storage = self.__storage
+            close_error: Exception | None = None
+            cred_error: Exception | None = None
 
-        if storage is not None:
+            if storage is not None:
+                try:
+                    await storage.close()
+
+                except Exception as exc:
+                    close_error = exc
+
+                finally:
+                    self.__storage = None
+
             try:
-                await storage.close()
+                self.__credential_path.release()
+                self.__credential_path = OwnedTempPath.empty()
+                self.__project_id = None
+                self.__config = None
 
             except Exception as exc:
-                close_error = exc
+                cred_error = exc
 
-            finally:
-                self.__storage = None
+            errors = [e for e in (close_error, cred_error) if e is not None]
 
-        try:
-            self.__credential_path.release()
-            self.__credential_path = OwnedTempPath.empty()
-            self.__project_id = None
-            self.__config = None
+            if len(errors) == 1:
+                raise errors[0]
 
-        except Exception as exc:
-            cred_error = exc
-
-        errors = [e for e in (close_error, cred_error) if e is not None]
-
-        if len(errors) == 1:
-            raise errors[0]
-
-        if len(errors) > 1:
-            raise ExceptionGroup("GCS client close failed", errors) from errors[0]
+            if len(errors) > 1:
+                raise ExceptionGroup("GCS client close failed", errors) from errors[0]
 
     # ....................... #
 

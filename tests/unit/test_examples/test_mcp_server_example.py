@@ -8,7 +8,7 @@ pytest.importorskip("fastmcp")
 
 from fastmcp import Client
 
-from examples.mcp_server import (
+from examples.recipes.mcp_server.app import (
     NS,
     build_context_factory,
     build_registry,

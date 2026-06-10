@@ -21,6 +21,9 @@ from forze.application.contracts.analytics import (
     AnalyticsSpec,
 )
 from forze.application.contracts.analytics.specs import AnalyticsQueryDefinition
+from forze.application.integrations.analytics.adapter_common import (
+    validate_fetch_batch_size,
+)
 from forze.application.contracts.base import (
     CountlessPage,
     CursorPage,
@@ -208,6 +211,7 @@ class MockAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
         return_fields: Sequence[str] | None,
         fetch_batch_size: int,
     ) -> AsyncGenerator[Sequence[Any]]:
+        validate_fetch_batch_size(fetch_batch_size)
         _ = self._validated_params(query_key, params)
         if self._dry_run(options):
             return
@@ -222,8 +226,6 @@ class MockAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
             return_fields=return_fields,
         )
         hits = page.hits
-        if fetch_batch_size < 1:
-            raise exc.internal("fetch_batch_size must be >= 1")
         for offset in range(0, len(hits), fetch_batch_size):
             yield hits[offset : offset + fetch_batch_size]
 

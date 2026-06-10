@@ -13,6 +13,7 @@ require_mongo()
 
 # ....................... #
 
+import asyncio
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
 from typing import Any, AsyncGenerator, Mapping, Sequence, final
@@ -62,6 +63,8 @@ class MongoClient(MongoClientPort):
 
     __db_name: str | None = attrs.field(default=None, init=False, repr=False)
 
+    __init_lock: asyncio.Lock = attrs.field(factory=asyncio.Lock, init=False)
+
     # ....................... #
     # Lifecycle
 
@@ -72,46 +75,50 @@ class MongoClient(MongoClientPort):
         db_name: str,
         config: MongoConfig = MongoConfig(),
     ) -> None:
-        """Create the client. Idempotent; later calls are no-ops.
+        """Create the client. Idempotent; later calls are no-ops. Concurrent
+        calls serialize on an internal lock so only one coroutine performs the
+        setup.
 
         :param uri: Mongo connection string.
         :param db_name: Default database name used by :meth:`db`.
         :param config: Client configuration.
         """
 
-        if self.__client is not None:
-            return
+        async with self.__init_lock:
+            if self.__client is not None:
+                return
 
-        if isinstance(uri, SecretStr):
-            uri = uri.get_secret_value()
+            if isinstance(uri, SecretStr):
+                uri = uri.get_secret_value()
 
-        self.__db_name = db_name
-        self.__client = AsyncMongoClient(
-            uri,
-            appname=config.appname,
-            connectTimeoutMS=int(config.connect_timeout.total_seconds() * 1e3),
-            serverSelectionTimeoutMS=int(
-                config.server_selection_timeout.total_seconds() * 1e3
-            ),
-            maxPoolSize=config.max_pool_size,
-            minPoolSize=config.min_pool_size,
-            document_class=JsonDict,
-        )
+            self.__db_name = db_name
+            self.__client = AsyncMongoClient(
+                uri,
+                appname=config.appname,
+                connectTimeoutMS=int(config.connect_timeout.total_seconds() * 1e3),
+                serverSelectionTimeoutMS=int(
+                    config.server_selection_timeout.total_seconds() * 1e3
+                ),
+                maxPoolSize=config.max_pool_size,
+                minPoolSize=config.min_pool_size,
+                document_class=JsonDict,
+            )
 
-        # Optionally force initial server selection early:
-        # await self.health()
+            # Optionally force initial server selection early:
+            # await self.health()
 
     # ....................... #
 
     async def close(self) -> None:
         """Close the underlying client. No-op if not initialized."""
 
-        if self.__client is None:
-            return
+        async with self.__init_lock:
+            if self.__client is None:
+                return
 
-        await self.__client.close()
+            await self.__client.close()
 
-        self.__client = None
+            self.__client = None
 
     # ....................... #
 

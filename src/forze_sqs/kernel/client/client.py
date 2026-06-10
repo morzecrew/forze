@@ -73,6 +73,8 @@ class SQSClient(SQSClientPort):
     )
     """Max concurrent ``send_message_batch`` calls for :meth:`enqueue_many`."""
 
+    __init_lock: asyncio.Lock = attrs.field(factory=asyncio.Lock, init=False)
+
     # ....................... #
     # Lifecycle
 
@@ -86,40 +88,42 @@ class SQSClient(SQSClientPort):
         config: SQSConfig | None = None,
     ) -> None:
         """Initialize the SQS session with endpoint and credentials."""
-        if self.__session is not None:
-            return
+        async with self.__init_lock:
+            if self.__session is not None:
+                return
 
-        pool_cap = _DEFAULT_HTTP_POOL_SIZE
+            pool_cap = _DEFAULT_HTTP_POOL_SIZE
 
-        if config is not None:
-            aio_config = config.to_aio_config()
-            if config.max_pool_connections is not None:
-                pool_cap = max(1, int(config.max_pool_connections))
-        else:
-            aio_config = None
+            if config is not None:
+                aio_config = config.to_aio_config()
+                if config.max_pool_connections is not None:
+                    pool_cap = max(1, int(config.max_pool_connections))
+            else:
+                aio_config = None
 
-        self.__enqueue_batch_concurrency = max(
-            1,
-            min(pool_cap, _MAX_ENQUEUE_BATCH_CONCURRENCY),
-        )
+            self.__enqueue_batch_concurrency = max(
+                1,
+                min(pool_cap, _MAX_ENQUEUE_BATCH_CONCURRENCY),
+            )
 
-        self.__opts = SQSConnectionOpts(
-            endpoint=endpoint,
-            region_name=region_name,
-            access_key_id=access_key_id,
-            secret_access_key=secret_access_key,
-            config=aio_config,
-        )
-        self.__session = aioboto3.Session()
+            self.__opts = SQSConnectionOpts(
+                endpoint=endpoint,
+                region_name=region_name,
+                access_key_id=access_key_id,
+                secret_access_key=secret_access_key,
+                config=aio_config,
+            )
+            self.__session = aioboto3.Session()
 
     # ....................... #
 
     async def close(self) -> None:
         """Drop the current session and queue URL cache."""
 
-        self.__session = None
-        self.__opts = None
-        self.__queue_url_cache.clear()
+        async with self.__init_lock:
+            self.__session = None
+            self.__opts = None
+            self.__queue_url_cache.clear()
 
     # ....................... #
 

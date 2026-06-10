@@ -65,12 +65,12 @@ dev = [
     "polyfactory>=3.3.0",
     "hypothesis>=6.153.0",
     "py-spy>=0.4.2",
+    # Lakehouse fixture writers for forze_duckdb integration tests (delta/iceberg are
+    # read via DuckDB extensions at runtime; these only create the tables to read).
+    "deltalake>=0.22.0",
+    "pyiceberg[sql-sqlite]>=0.8.0",
 ]
-docs = [
-    "zensical>=0.0.43",
-    "pygments>=2.19.2",
-    "pymdown-extensions>=10.21",
-]
+docs = ["zensical>=0.0.43", "pygments>=2.19.2", "pymdown-extensions>=10.21"]
 
 # ....................... #
 # Optional dependencies
@@ -107,6 +107,7 @@ firestore = ["google-cloud-firestore>=2.21.0"]
 gcs = ["aiohttp>=3.11.0", "gcloud-aio-storage>=9.6.0", "python-magic>=0.4.27"]
 bigquery = ["aiohttp>=3.11.0", "gcloud-aio-bigquery>=7.1.0"]
 clickhouse = ["clickhouse-connect[async]>=1.0.0"]
+duckdb = ["duckdb>=1.1.0", "pyarrow>=17.0.0"]
 rabbitmq = ["aio-pika>=9.6.1"]
 socketio = [
     "python-socketio>=5.16.1",
@@ -173,6 +174,7 @@ packages = [
     "src/forze_gcs",
     "src/forze_bigquery",
     "src/forze_clickhouse",
+    "src/forze_duckdb",
     "src/forze_identity",
     "src/forze_socketio",
     "src/forze_sqs",
@@ -277,6 +279,7 @@ root_packages = [
     "forze_gcs",
     "forze_bigquery",
     "forze_clickhouse",
+    "forze_duckdb",
     "forze_socketio",
     "forze_temporal",
     "forze_inngest",
@@ -373,6 +376,7 @@ protected_modules = [
     "forze_gcs",
     "forze_bigquery",
     "forze_clickhouse",
+    "forze_duckdb",
     "forze_socketio",
     "forze_temporal",
     "forze_inngest",
@@ -404,6 +408,7 @@ paths = [
     "src/forze_gcs",
     "src/forze_bigquery",
     "src/forze_clickhouse",
+    "src/forze_duckdb",
     "src/forze_socketio",
     "src/forze_temporal",
     "src/forze_inngest",
@@ -444,6 +449,7 @@ known_first_party = [
     "forze_gcs",
     "forze_bigquery",
     "forze_clickhouse",
+    "forze_duckdb",
     "forze_socketio",
     "forze_temporal",
     "forze_inngest",

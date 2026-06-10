@@ -6,6 +6,7 @@ require_neo4j()
 
 # ....................... #
 
+import asyncio
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
 from typing import AsyncGenerator, final
@@ -40,6 +41,7 @@ class Neo4jClient(Neo4jClientPort):
         init=False,
         repr=False,
     )
+    _init_lock: asyncio.Lock = attrs.field(factory=asyncio.Lock, init=False)
 
     # ....................... #
 
@@ -59,29 +61,34 @@ class Neo4jClient(Neo4jClientPort):
         auth: tuple[str, str] | None = None,
         config: Neo4jConfig = Neo4jConfig(),
     ) -> None:
-        """Create the driver. Idempotent — a second call is a no-op."""
+        """Create the driver. Idempotent — a second call is a no-op. Concurrent
+        calls serialize on an internal lock so only one coroutine performs the
+        setup.
+        """
 
-        if self._driver is not None:
-            return
+        async with self._init_lock:
+            if self._driver is not None:
+                return
 
-        resolved = uri.get_secret_value() if isinstance(uri, SecretStr) else uri
+            resolved = uri.get_secret_value() if isinstance(uri, SecretStr) else uri
 
-        self._config = config
-        self._driver = AsyncGraphDatabase.driver(  # pyright: ignore[reportUnknownMemberType]
-            resolved,
-            auth=auth,
-            max_connection_pool_size=config.max_connection_pool_size,
-            connection_acquisition_timeout=config.connection_acquisition_timeout.total_seconds(),
-            connection_timeout=config.connection_timeout.total_seconds(),
-            max_transaction_retry_time=config.max_transaction_retry_time.total_seconds(),
-        )
+            self._config = config
+            self._driver = AsyncGraphDatabase.driver(  # pyright: ignore[reportUnknownMemberType]
+                resolved,
+                auth=auth,
+                max_connection_pool_size=config.max_connection_pool_size,
+                connection_acquisition_timeout=config.connection_acquisition_timeout.total_seconds(),
+                connection_timeout=config.connection_timeout.total_seconds(),
+                max_transaction_retry_time=config.max_transaction_retry_time.total_seconds(),
+            )
 
     # ....................... #
 
     async def close(self) -> None:
-        if self._driver is not None:
-            await self._driver.close()
-            self._driver = None
+        async with self._init_lock:
+            if self._driver is not None:
+                await self._driver.close()
+                self._driver = None
 
     # ....................... #
 

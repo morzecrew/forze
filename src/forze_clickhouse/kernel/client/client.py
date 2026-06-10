@@ -46,41 +46,44 @@ class ClickHouseClient(ClickHouseClientPort):
 
     __client: AsyncClient | None = attrs.field(default=None, init=False)
     __config: ClickHouseConfig | None = attrs.field(default=None, init=False)
+    __init_lock: asyncio.Lock = attrs.field(factory=asyncio.Lock, init=False)
 
     # ....................... #
 
     async def initialize(self, config: ClickHouseConfig) -> None:
         """Open an async client from *config*."""
 
-        if self.__client is not None:
-            return
+        async with self.__init_lock:
+            if self.__client is not None:
+                return
 
-        self.__config = config
-        timeout_sec = int(config.timeout.total_seconds())
-        self.__client = await create_async_client(  # type: ignore[reportUnknownReturnType]
-            host=config.host,
-            port=config.port,
-            username=config.username,
-            password=resolve_password(config.password),
-            database=config.database,
-            secure=config.secure,
-            connect_timeout=timeout_sec,
-            send_receive_timeout=timeout_sec,
-            connector_limit=config.connector_limit,
-            connector_limit_per_host=config.connector_limit_per_host,
-            keepalive_timeout=config.keepalive_timeout.total_seconds(),
-        )
+            self.__config = config
+            timeout_sec = int(config.timeout.total_seconds())
+            self.__client = await create_async_client(  # type: ignore[reportUnknownReturnType]
+                host=config.host,
+                port=config.port,
+                username=config.username,
+                password=resolve_password(config.password),
+                database=config.database,
+                secure=config.secure,
+                connect_timeout=timeout_sec,
+                send_receive_timeout=timeout_sec,
+                connector_limit=config.connector_limit,
+                connector_limit_per_host=config.connector_limit_per_host,
+                keepalive_timeout=config.keepalive_timeout.total_seconds(),
+            )
 
     # ....................... #
 
     async def close(self) -> None:
-        client = self.__client
+        async with self.__init_lock:
+            client = self.__client
 
-        if client is not None:
-            await client.close()
-            self.__client = None
+            if client is not None:
+                await client.close()
+                self.__client = None
 
-        self.__config = None
+            self.__config = None
 
     # ....................... #
 

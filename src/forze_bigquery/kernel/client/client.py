@@ -50,6 +50,7 @@ class BigQueryClient(BigQueryClientPort):
     )
     __api_root: str | None = attrs.field(default=None, init=False)
     __session: Any = attrs.field(default=None, init=False)
+    __init_lock: asyncio.Lock = attrs.field(factory=asyncio.Lock, init=False)
 
     # ....................... #
 
@@ -63,58 +64,64 @@ class BigQueryClient(BigQueryClientPort):
     ) -> None:
         """Configure project, credentials, and shared HTTP session."""
 
-        if self.__project_id is not None:
-            return
+        async with self.__init_lock:
+            # Guard on the last-assigned field so a partial failure (e.g. session
+            # creation) doesn't make later calls early-return on a broken client.
+            if self.__session is not None:
+                return
 
-        self.__project_id = project_id
-        self.__config = config or BigQueryConfig()
-        self.__credential_path = OwnedTempPath(
-            path=service_file,
-            owned=service_file_owned,
-        )
+            self.__project_id = project_id
+            self.__config = config or BigQueryConfig()
+            self.__credential_path = OwnedTempPath(
+                path=service_file,
+                owned=service_file_owned,
+            )
 
-        if host := os.environ.get("BIGQUERY_EMULATOR_HOST"):
-            self.__api_root = host.rstrip("/")
+            if host := os.environ.get("BIGQUERY_EMULATOR_HOST"):
+                self.__api_root = host.rstrip("/")
 
-        self.__session = ClientSession()
+            self.__session = ClientSession()
 
     # ....................... #
 
     async def close(self) -> None:
-        session_error: Exception | None = None
-        cred_error: Exception | None = None
+        async with self.__init_lock:
+            session_error: Exception | None = None
+            cred_error: Exception | None = None
 
-        try:
-            session = self.__session
+            try:
+                session = self.__session
 
-            if session is not None:
-                await session.close()
+                if session is not None:
+                    await session.close()
 
-        except Exception as exc:
-            session_error = exc
+            except Exception as exc:
+                session_error = exc
 
-        finally:
-            self.__session = None
+            finally:
+                self.__session = None
 
-        try:
-            self.__credential_path.release()
+            try:
+                self.__credential_path.release()
 
-        except Exception as exc:
-            cred_error = exc
+            except Exception as exc:
+                cred_error = exc
 
-        finally:
-            self.__credential_path = OwnedTempPath.empty()
-            self.__project_id = None
-            self.__config = None
-            self.__api_root = None
+            finally:
+                self.__credential_path = OwnedTempPath.empty()
+                self.__project_id = None
+                self.__config = None
+                self.__api_root = None
 
-        errors = [e for e in (session_error, cred_error) if e is not None]
+            errors = [e for e in (session_error, cred_error) if e is not None]
 
-        if len(errors) == 1:
-            raise errors[0]
+            if len(errors) == 1:
+                raise errors[0]
 
-        if len(errors) > 1:
-            raise ExceptionGroup("BigQuery client close failed", errors) from errors[0]
+            if len(errors) > 1:
+                raise ExceptionGroup(
+                    "BigQuery client close failed", errors
+                ) from errors[0]
 
     # ....................... #
 

@@ -138,6 +138,8 @@ jobs:
           - { name: authz, path: tests/integration/test_forze_authz }
           - { name: bigquery, path: tests/integration/test_forze_bigquery }
           - { name: clickhouse, path: tests/integration/test_forze_clickhouse }
+          - { name: duckdb, path: tests/integration/test_forze_duckdb }
+          - { name: examples, path: tests/integration/test_examples }
           - { name: fastapi, path: tests/integration/test_forze_fastapi }
           - { name: firestore, path: tests/integration/test_forze_firestore }
           - { name: gcs, path: tests/integration/test_forze_gcs }
