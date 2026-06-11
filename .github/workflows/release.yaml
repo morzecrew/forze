@@ -105,7 +105,6 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
-      id-token: write
 
     steps:
       - name: Harden the runner (Audit all outbound calls)
@@ -145,9 +144,3 @@ jobs:
             ## Changelog
 
             ${{ steps.changelog.outputs.changes }}
-
-      - name: Sign GitHub Release artifacts
-        uses: sigstore/gh-action-sigstore-python@04cffa1d795717b140764e8b640de88853c92acc # v3.3.0
-        with:
-          inputs: dist/*
-          release-signing-artifacts: true
