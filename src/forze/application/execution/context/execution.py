@@ -27,6 +27,7 @@ from forze.application.contracts.transaction import TransactionDeps
 from ..deps import FrozenDeps
 from ..deps.tx_tracer import tx_tracer_from_runtime
 from ..tracing import bind_active_deps, init_runtime_tracing
+from .active_operation import warn_if_constructed_in_operation
 from .invocation import InvocationContext
 from .outbox_staging import OutboxStagingContext
 from .transaction import TransactionContext
@@ -234,6 +235,8 @@ class ExecutionContext:
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
+        warn_if_constructed_in_operation()
+
         bind_active_deps(self.deps)
         init_runtime_tracing(self.deps)
 
@@ -273,5 +276,7 @@ Invoke it once per runtime scope. Context objects own per-instance
 per-scope caches, so creating execution contexts repeatedly — per request, per
 operation — is **not** a supported mode: stale per-instance ``ContextVar``s cannot be
 cleaned from still-referenced ``Context`` objects. One context per runtime scope; see
-:class:`~forze.base.primitives.ContextualBuffer` for the rationale.
+:class:`~forze.base.primitives.ContextualBuffer` for the rationale. Enforced as a
+tripwire: constructing a context while an operation is executing logs a warning (see
+:mod:`forze.application.execution.context.active_operation`).
 """
