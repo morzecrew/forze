@@ -31,7 +31,7 @@ from .time_source import (
     bind_time_source,
     current_time_source,
 )
-from .types import JsonDict, StrKey
+from .types import JsonDict, StrKey, StrKeyMapping, str_key_mapping
 from .uuid import uuid4, uuid7
 
 # ----------------------- #
@@ -64,6 +64,8 @@ __all__ = [
     "normalize_string",
     "JsonDict",
     "StrKey",
+    "StrKeyMapping",
+    "str_key_mapping",
     "uuid4",
     "uuid7",
     "RuntimeVar",

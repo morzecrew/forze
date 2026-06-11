@@ -40,7 +40,7 @@ from forze_kits.integrations.outbox._relay_core import (
 )
 from forze_mock import MockDepsModule, MockStateDepKey
 from forze_mock.adapters import MockState
-from forze_mock.outbox_adapter import MockOutboxRow
+from forze_mock.outbox_adapter import MockOutboxRow, MockOutboxStore
 
 # ----------------------- #
 
@@ -272,6 +272,202 @@ async def test_transient_failure_does_not_abort_rest_of_batch() -> None:
         assert flaky.status == OutboxStatus.PENDING
         assert flaky.attempts == 1
         assert published == [_EventPayload(n=1), _EventPayload(n=3)]
+
+
+# ----------------------- #
+# Batched marking
+
+
+def _spy_mark(
+    monkeypatch: pytest.MonkeyPatch,
+    method: str,
+) -> list[tuple[list[Any], dict[str, Any]]]:
+    """Record ``(ids, kwargs)`` per call to *method* on the mock outbox store."""
+
+    calls: list[tuple[list[Any], dict[str, Any]]] = []
+    original = getattr(MockOutboxStore, method)
+
+    async def wrapper(self: Any, ids: Any, **kwargs: Any) -> int:
+        calls.append((list(ids), dict(kwargs)))
+        return await original(self, ids, **kwargs)
+
+    monkeypatch.setattr(MockOutboxStore, method, wrapper)
+    return calls
+
+
+@pytest.mark.asyncio
+async def test_mark_published_flushes_in_chunks_of_32(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = _spy_mark(monkeypatch, "mark_published")
+    published: list[Any] = []
+
+    async with _runtime_ctx() as (ctx, state):
+        rows = [_row({"n": i}, index=i) for i in range(100)]
+        state.outbox_rows["events"] = rows
+
+        result = await _relay(ctx, _recorder(published))
+
+        assert result.claimed == 100
+        assert result.published == 100
+        assert len(published) == 100
+
+        # ceil(100 / 32) = 4 flushes, partitioned in claim order.
+        assert [len(ids) for ids, _ in calls] == [32, 32, 32, 4]
+        flat = [row_id for ids, _ in calls for row_id in ids]
+        assert flat == [r.id for r in rows]
+        assert all(r.status == OutboxStatus.PUBLISHED for r in rows)
+
+
+@pytest.mark.asyncio
+async def test_mixed_batch_chunks_published_groups_retries_fails_per_row(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    published_calls = _spy_mark(monkeypatch, "mark_published")
+    retry_calls = _spy_mark(monkeypatch, "mark_retry")
+    failed_calls = _spy_mark(monkeypatch, "mark_failed")
+
+    async def publish(claim: OutboxClaim, payload: Any) -> None:
+        if payload.n < 0:
+            raise RuntimeError(f"broker down {payload.n}")
+
+    async with _runtime_ctx() as (ctx, state):
+        ok_rows = [_row({"n": i}, index=i) for i in range(40)]
+        # Two transient rows with attempts=0 (-> group attempts=1, errors
+        # differ) and one with attempts=1 (-> group attempts=2).
+        transient_first = [
+            _row({"n": -1}, index=100),
+            _row({"n": -2}, index=101),
+        ]
+        transient_second = [_row({"n": -3}, index=102, attempts=1)]
+        poison = [
+            _row({"not_n": "x"}, index=103),
+            _row({"not_n": "y"}, index=104),
+        ]
+        state.outbox_rows["events"] = (
+            ok_rows + transient_first + transient_second + poison
+        )
+
+        result = await _relay(ctx, publish)
+
+        assert result.claimed == 45
+        assert result.published == 40
+        assert result.retried == 3
+        assert result.failed == 2
+
+        # Published ids flushed in chunks (claim order preserved).
+        assert [len(ids) for ids, _ in published_calls] == [32, 8]
+        flat = [row_id for ids, _ in published_calls for row_id in ids]
+        assert flat == [r.id for r in ok_rows]
+
+        # One mark_retry per attempts group.
+        assert len(retry_calls) == 2
+        by_attempts = {kw["attempts"]: (ids, kw) for ids, kw in retry_calls}
+
+        ids_1, kw_1 = by_attempts[1]
+        assert set(ids_1) == {r.id for r in transient_first}
+        # Rows in one group share the single jittered available_at.
+        assert (
+            transient_first[0].available_at
+            == transient_first[1].available_at
+            == kw_1["available_at"]
+        )
+        # First error kept; differing errors noted as "+N more".
+        assert "broker down -1" in kw_1["error"]
+        assert "(+1 more)" in kw_1["error"]
+
+        ids_2, kw_2 = by_attempts[2]
+        assert ids_2 == [transient_second[0].id]
+        assert kw_2["error"] == "broker down -3"
+        assert transient_second[0].attempts == 2
+
+        # Poison rows stay per-row with their own error.
+        assert [len(ids) for ids, _ in failed_calls] == [1, 1]
+        assert all(r.status == OutboxStatus.FAILED for r in poison)
+        errors = {kw["error"] for _, kw in failed_calls}
+        assert len(errors) == 2  # per-row error fidelity preserved
+
+
+@pytest.mark.asyncio
+async def test_grouped_retry_identical_errors_not_annotated(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    retry_calls = _spy_mark(monkeypatch, "mark_retry")
+
+    async with _runtime_ctx() as (ctx, state):
+        rows = [_row({"n": i}, index=i) for i in range(3)]
+        state.outbox_rows["events"] = rows
+
+        await _relay(ctx, _always_fail("broker down"))
+
+        assert len(retry_calls) == 1
+        _, kw = retry_calls[0]
+        assert kw["error"] == "broker down"
+        assert "more" not in kw["error"]
+
+
+@pytest.mark.asyncio
+async def test_publish_failure_mid_batch_does_not_lose_other_marks(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    published_calls = _spy_mark(monkeypatch, "mark_published")
+
+    async def publish(claim: OutboxClaim, payload: Any) -> None:
+        if payload.n == 10:
+            raise RuntimeError("broker hiccup")
+
+    async with _runtime_ctx() as (ctx, state):
+        rows = [_row({"n": i}, index=i) for i in range(35)]
+        state.outbox_rows["events"] = rows
+
+        result = await _relay(ctx, publish)
+
+        assert result.published == 34
+        assert result.retried == 1
+        # 34 successes flush as a full chunk plus the remainder.
+        assert [len(ids) for ids, _ in published_calls] == [32, 2]
+        assert sum(r.status == OutboxStatus.PUBLISHED for r in rows) == 34
+        assert rows[10].status == OutboxStatus.PENDING
+        assert rows[10].attempts == 1
+
+
+@pytest.mark.asyncio
+async def test_mark_published_flush_failure_propagates(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def boom(self: Any, ids: Any) -> int:
+        raise RuntimeError("mark flush down")
+
+    monkeypatch.setattr(MockOutboxStore, "mark_published", boom)
+
+    async with _runtime_ctx() as (ctx, state):
+        rows = [_row({"n": i}, index=i) for i in range(3)]
+        state.outbox_rows["events"] = rows
+
+        with pytest.raises(RuntimeError, match="mark flush down"):
+            await _relay(ctx, _recorder([]))
+
+        # Published-but-unmarked rows stay processing -> reclaim/redeliver.
+        assert all(r.status == OutboxStatus.PROCESSING for r in rows)
+
+
+@pytest.mark.asyncio
+async def test_mark_retry_flush_failure_propagates(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def boom(self: Any, ids: Any, **kwargs: Any) -> int:
+        raise RuntimeError("retry flush down")
+
+    monkeypatch.setattr(MockOutboxStore, "mark_retry", boom)
+
+    async with _runtime_ctx() as (ctx, state):
+        row = _row({"n": 1})
+        state.outbox_rows["events"] = [row]
+
+        with pytest.raises(RuntimeError, match="retry flush down"):
+            await _relay(ctx, _always_fail())
+
+        assert row.status == OutboxStatus.PROCESSING
 
 
 # ----------------------- #

@@ -10,8 +10,17 @@ from .constants import TRACE_LEVEL_KEY, LogLevel, LogLevelToRank
 # ----------------------- #
 
 _TRACE_RANK: Final[int] = LogLevelToRank["trace"]
-_configured_min_rank: int = 0
-"""Configured minimum level rank; ``0`` (emit everything) until configured.
+_configured_min_rank: int = LogLevelToRank["info"]
+"""Configured minimum level rank; defaults to the INFO rank until configured.
+
+Trace is opt-in: a process that never calls
+:func:`~forze.base.logging.configure.configure_logging` drops every
+:meth:`Logger.trace` call at the gate (one integer comparison) instead of
+building the event dict and running the full structlog pipeline for output
+nobody asked for. ``configure_logging(level="trace")`` opens the gate.
+
+Only :meth:`Logger.trace` consults this rank — debug and above always go to
+the structlog backend, whose own (configured or default) filtering applies.
 
 :class:`~forze.base.logging.processors.TraceLevelResolver` drops a trace event
 (rank 5) whenever ``5 < configured_rank``, so :meth:`Logger.trace` can short-circuit
@@ -22,8 +31,11 @@ above that threshold without building the event or touching the backend.
 def set_configured_min_rank(level: LogLevel) -> None:
     """Record the configured minimum level so :meth:`Logger.trace` can fast-skip.
 
-    Called by :func:`~forze.base.logging.configure.configure`; keeps the per-call
-    trace gate a single integer comparison instead of a structlog pipeline pass.
+    Called by :func:`~forze.base.logging.configure.configure_logging`; keeps the
+    per-call trace gate a single integer comparison instead of a structlog
+    pipeline pass. Until this runs, the gate sits at the INFO rank, so trace is
+    dropped in unconfigured processes; any explicitly configured level —
+    including ``"trace"`` — is honored as-is.
     """
 
     global _configured_min_rank
@@ -82,6 +94,10 @@ class Logger:
         Fast-skips when trace is below the configured level (the common production
         case), so per-item callers on hot paths pay only one integer comparison
         instead of building the event dict and materializing the backend.
+
+        Trace is opt-in: unconfigured processes (no
+        :func:`~forze.base.logging.configure.configure_logging` call) gate at the
+        INFO rank and drop trace; configure with ``level="trace"`` to emit it.
         """
 
         if _TRACE_RANK < _configured_min_rank:

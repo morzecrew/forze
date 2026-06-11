@@ -1,12 +1,22 @@
 import asyncio
 import inspect
 from functools import lru_cache
-from typing import Any, Callable, Mapping, Never
+from typing import Any, Callable, Final, Mapping, Never
 
 from .model import CoreException, ExceptionKind
 from .protocols import ExceptionMapper
 
 # ----------------------- #
+
+BYPASS_INTERCEPTION: Final[tuple[type[BaseException], ...]] = (
+    GeneratorExit,
+    KeyboardInterrupt,
+    SystemExit,
+    asyncio.CancelledError,
+)
+"""Control-flow exceptions that always pass through interception unmapped."""
+
+# ....................... #
 
 
 def default_exception(exc: BaseException, site: str) -> CoreException:
@@ -35,10 +45,7 @@ def reraise_mapped(
     if isinstance(exc, CoreException):
         raise exc
 
-    if isinstance(
-        exc,
-        (GeneratorExit, KeyboardInterrupt, SystemExit, asyncio.CancelledError),
-    ):
+    if isinstance(exc, BYPASS_INTERCEPTION):
         raise exc
 
     err = mapper(exc, site=site, details=details)
