@@ -8,7 +8,10 @@ from typing import Any, AsyncGenerator, Callable, Final
 import attrs
 
 from forze.application._logger import logger
-from forze.application.contracts.dlock import DistributedLockCommandPort
+from forze.application.contracts.dlock import (
+    AcquiredLock,
+    DistributedLockCommandPort,
+)
 from forze.base.exceptions import CoreException, exc
 
 # ----------------------- #
@@ -32,6 +35,22 @@ class DistributedLockScope:
     loss never goes unnoticed. If the body itself raised, the body's exception
     propagates unchanged and the lock failure is attached as context (a warning
     log plus an exception note) instead of masking it.
+
+    **Fencing.** The scope yields the :class:`~forze.application.contracts.dlock.AcquiredLock`
+    handle (``key`` / ``owner`` / ``token``). Tokens are monotonically increasing
+    per key across lock generations; the extend heartbeat (``reset``) keeps the
+    same generation, so the token never changes mid-scope. Thread the token into
+    downstream writes and reject stale ones storage-side::
+
+        async with dlock_scope.scope("invoice:42") as lock:
+            # e.g. UPDATE invoice SET ..., fence = :token
+            #      WHERE id = 42 AND fence < :token
+            await repo.update_invoice(invoice, fence_token=lock.token)
+
+    Without that consumer-side check the scope remains best-effort exclusion
+    (a GC- or network-paused holder can resume after expiry while a new holder
+    runs); the token check is what upgrades it to fenced exclusion. A ``token``
+    of ``None`` means the backend cannot issue fencing tokens at all.
     """
 
     cmd: DistributedLockCommandPort
@@ -73,7 +92,7 @@ class DistributedLockScope:
     # ....................... #
 
     @asynccontextmanager
-    async def scope(self, key: str) -> AsyncGenerator[bool]:
+    async def scope(self, key: str) -> AsyncGenerator[AcquiredLock]:
         loop = asyncio.get_running_loop()
 
         deadline = (
@@ -84,22 +103,22 @@ class DistributedLockScope:
 
         owner = self.owner_provider()
 
-        async def try_acquire_until_deadline() -> bool:
+        async def try_acquire_until_deadline() -> AcquiredLock | None:
             nonlocal deadline
 
             while True:
-                ok = await self.cmd.acquire(key, owner)
+                acquired = await self.cmd.acquire(key, owner)
 
-                if ok:
-                    return True
+                if acquired is not None:
+                    return acquired
 
                 if deadline is None:
-                    return False
+                    return None
 
                 remaining = deadline - loop.time()
 
                 if remaining <= 0:
-                    return False
+                    return None
 
                 # Base delay plus optional jitter, all in seconds. ``randbelow`` counts
                 # integer steps; previously ms-sized steps were added to ``retry_interval``
@@ -125,7 +144,7 @@ class DistributedLockScope:
 
         acquired = await try_acquire_until_deadline()
 
-        if not acquired:
+        if acquired is None:
             raise exc.internal("Failed to acquire distributed lock")
 
         extend_task: asyncio.Task[Any] | None = None
@@ -179,7 +198,7 @@ class DistributedLockScope:
                     extend_lock(key, owner, self.extend_interval)
                 )
 
-            yield True
+            yield acquired
 
         except BaseException as e:
             body_exc = e

@@ -7,10 +7,9 @@ import pytest
 
 pytest.importorskip("redis")
 
-from forze.application.contracts.dlock import DistributedLockSpec
+from forze.application.contracts.dlock import AcquiredLock, DistributedLockSpec
 
 from forze_redis.adapters import RedisDistributedLockAdapter
-from forze_redis.adapters.codecs import RedisKeyCodec
 
 
 def _adapter(client: object) -> RedisDistributedLockAdapter:
@@ -22,19 +21,30 @@ def _adapter(client: object) -> RedisDistributedLockAdapter:
 
 
 @pytest.mark.asyncio
-async def test_acquire_uses_set_nx_px() -> None:
+async def test_acquire_runs_script_and_returns_fencing_token() -> None:
     client = AsyncMock()
-    client.set = AsyncMock(return_value=True)
+    client.run_script = AsyncMock(return_value="7")
     adapter = _adapter(client)
 
-    assert await adapter.acquire("my-key", "owner-a") is True
+    acquired = await adapter.acquire("my-key", "owner-a")
 
-    client.set.assert_awaited_once()
-    args, kwargs = client.set.call_args
-    assert args[0] == "dlock:ns:my-key"
-    assert args[1] == "owner-a"
-    assert kwargs.get("nx") is True
-    assert kwargs.get("px") == 10_000
+    assert acquired == AcquiredLock(key="my-key", owner="owner-a", token=7)
+
+    client.run_script.assert_awaited_once()
+    script, keys, args = client.run_script.call_args[0]
+    assert "SET" in script and "NX" in script and "INCR" in script
+    assert keys[0] == "dlock:ns:my-key"
+    assert keys[1] == "dlock:ns:my-key:fence"
+    assert list(args) == ["owner-a", 10_000]
+
+
+@pytest.mark.asyncio
+async def test_acquire_contention_returns_none() -> None:
+    client = AsyncMock()
+    client.run_script = AsyncMock(return_value="0")
+    adapter = _adapter(client)
+
+    assert await adapter.acquire("my-key", "owner-b") is None
 
 
 @pytest.mark.asyncio

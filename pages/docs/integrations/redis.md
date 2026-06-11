@@ -64,6 +64,31 @@ lifecycle = LifecyclePlan.from_steps(
 | Search-result snapshots | `SearchResultSnapshotSpec.name` (`search_snapshots`) |
 | Distributed locks | `DistributedLockSpec.name` (`dlocks`) |
 
+## Distributed locks and fencing
+
+A lock alone is best-effort exclusion: a holder paused by GC or a network
+partition can resume after its lease expired while a new holder runs. To close
+that gap, `acquire` returns an `AcquiredLock` whose `token` is a **fencing
+token** — monotonically increasing per key across lock generations. The Redis
+adapter issues it atomically with the `SET NX PX` acquire (a Lua script `INCR`s
+a per-key `<lock key>:fence` counter; the counter has no TTL and is never
+deleted on release, so tokens stay monotonic even after expiry — at the cost of
+one small permanent key per lock key).
+
+Protect downstream writes by sending the token with the write and rejecting,
+storage-side, any token lower than the highest one observed for that resource:
+
+```python
+async with dlock_scope.scope("invoice:42") as lock:
+    # e.g. UPDATE ... SET fence = :token WHERE id = 42 AND fence < :token
+    await repo.update_invoice(invoice, fence_token=lock.token)
+```
+
+Extending a live lease (`reset`, the scope's heartbeat) keeps the same token —
+only a fresh acquisition starts a new generation. Without the consumer-side
+token check the lock remains best-effort exclusion; the check is what upgrades
+it to fenced exclusion.
+
 ## Notes
 
 - **Namespaces are deliberate.** Give each contract its own namespace; don't

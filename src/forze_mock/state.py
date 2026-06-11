@@ -45,6 +45,13 @@ class MockState:
     dlocks: dict[str, dict[str, tuple[str, float]]] = attrs.field(factory=dict)
     """Route → lock key → (owner, expires_at monotonic)."""
 
+    dlock_fences: dict[str, dict[str, int]] = attrs.field(factory=dict)
+    """Route → lock key → last issued fencing token.
+
+    Monotonic across lock generations: survives release and expiry for the
+    lifetime of the :class:`MockState` (mirrors the Redis adapter's no-TTL
+    fencing counter)."""
+
     search_snapshots: dict[str, dict[str, Any]] = attrs.field(factory=dict)
     """Route → run_id → meta dict."""
 

@@ -2,6 +2,25 @@ from typing import Final
 
 # ----------------------- #
 
+ACQUIRE_DLOCK: Final = """
+if redis.call("SET", KEYS[1], ARGV[1], "NX", "PX", ARGV[2]) then
+    return redis.call("INCR", KEYS[2])
+else
+    return 0
+end
+"""
+"""Redis script to acquire a distributed lock and issue a fencing token atomically.
+
+KEYS[1] is the lock key, KEYS[2] the per-key fencing counter. ARGV[1] is the
+owner, ARGV[2] the TTL in milliseconds.
+
+On successful ``SET NX PX`` the per-key counter is ``INCR``-ed and its new value
+returned (always >= 1); on contention returns 0. The counter deliberately has
+**no TTL** so tokens stay monotonically increasing across lock generations even
+after the lock key expires — this is the fencing guarantee; the cost is one
+small permanent key per lock key. ``RELEASE_DLOCK`` must never delete it.
+"""
+
 RELEASE_DLOCK: Final = """
 if redis.call("GET", KEYS[1]) == ARGV[1] then
     return redis.call("DEL", KEYS[1])
