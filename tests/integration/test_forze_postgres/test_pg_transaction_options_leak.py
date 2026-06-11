@@ -1,19 +1,26 @@
 """Regression tests: transaction options must not leak onto pooled connections.
 
-Read-only / isolation options were previously applied via psycopg connection
-attributes (``set_read_only`` / ``set_isolation_level``), which persist across
-pool check-ins — after any read-only transaction the same pooled connection
-issued ``BEGIN READ ONLY`` for unrelated later work and rejected writes. A
-``max_size=1`` pool guarantees every operation reuses the *same* connection,
-so any leak surfaces deterministically.
+Read-only / isolation options are applied via psycopg connection attributes
+(``set_read_only`` / ``set_isolation_level``) so psycopg composes them into the
+``BEGIN`` statement itself — zero extra round-trips per root transaction. Those
+attributes persist across pool check-ins, which originally leaked: after any
+read-only transaction the same pooled connection issued ``BEGIN READ ONLY`` for
+unrelated later work and rejected writes. Two belts now close that leak — a
+``finally`` restore on every top-level transaction path and a pool ``reset=``
+callback clearing the attributes on check-in. A ``max_size=1`` pool guarantees
+every operation reuses the *same* connection, so any leak surfaces
+deterministically.
 """
 
+import asyncio
 from uuid import uuid4
 
 import pytest
 import pytest_asyncio
 
 pytest.importorskip("psycopg")
+
+from psycopg import IsolationLevel
 
 from forze_postgres.kernel.client.client import (
     PostgresClient,
@@ -152,3 +159,127 @@ async def test_nested_tx_after_queries_in_read_only_root(
     # Root options leaked nothing.
     level = await client.fetch_value("SHOW transaction_isolation")
     assert level == "read committed"
+
+
+# ....................... #
+# Attribute-level belts: options are applied as psycopg connection attributes
+# (composed into BEGIN, zero extra round-trips), so these tests inspect the
+# RAW attributes on the same pooled connection to prove they never survive a
+# root transaction — neither on the happy path, nor on errors/cancellation,
+# nor past a pool check-in (reset callback).
+
+
+@pytest.mark.asyncio
+async def test_attributes_restored_on_pooled_connection(
+    pg_client_single_conn: PostgresClient,
+) -> None:
+    """After a read-only/serializable root tx, the raw connection attributes are default."""
+
+    client = pg_client_single_conn
+
+    async with client.transaction(
+        options=PostgresTransactionOptions(read_only=True, isolation="serializable"),
+    ):
+        assert await client.fetch_value("SELECT 1") == 1
+
+    # max_size=1 pool: this checks out the very same physical connection.
+    async with client.bound_connection() as conn:
+        assert conn.read_only is not True
+        assert conn.read_only is None
+        assert conn.isolation_level is None
+
+
+@pytest.mark.asyncio
+async def test_attributes_restored_when_tx_body_raises(
+    pg_client_single_conn: PostgresClient,
+    leak_table: str,
+) -> None:
+    """A read-only tx that raises mid-body still restores attributes (the finally)."""
+
+    client = pg_client_single_conn
+
+    class Boom(Exception):
+        pass
+
+    with pytest.raises(Boom):
+        async with client.transaction(
+            options=PostgresTransactionOptions(
+                read_only=True,
+                isolation="serializable",
+            ),
+        ):
+            assert await client.fetch_value("SELECT 1") == 1
+            raise Boom
+
+    async with client.bound_connection() as conn:
+        assert conn.read_only is None
+        assert conn.isolation_level is None
+
+    # And the same pooled connection accepts writes again.
+    await client.execute(f"INSERT INTO {leak_table} (value) VALUES (1)")
+    assert await client.fetch_value(f"SELECT count(*) FROM {leak_table}") == 1
+
+
+@pytest.mark.asyncio
+async def test_attributes_restored_when_tx_is_cancelled(
+    pg_client_single_conn: PostgresClient,
+    leak_table: str,
+) -> None:
+    """Cancellation inside a read-only tx body still restores attributes."""
+
+    client = pg_client_single_conn
+    inside_tx = asyncio.Event()
+
+    async def body() -> None:
+        async with client.transaction(
+            options=PostgresTransactionOptions(
+                read_only=True,
+                isolation="serializable",
+            ),
+        ):
+            assert await client.fetch_value("SELECT 1") == 1
+            inside_tx.set()
+            await asyncio.sleep(30)
+
+    task = asyncio.create_task(body())
+    await inside_tx.wait()
+    task.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    async with client.bound_connection() as conn:
+        assert conn.read_only is None
+        assert conn.isolation_level is None
+
+    await client.execute(f"INSERT INTO {leak_table} (value) VALUES (1)")
+    assert await client.fetch_value(f"SELECT count(*) FROM {leak_table}") == 1
+
+
+@pytest.mark.asyncio
+async def test_pool_reset_callback_clears_poisoned_attributes(
+    pg_client_single_conn: PostgresClient,
+    leak_table: str,
+) -> None:
+    """Second belt: even attributes set OUTSIDE transaction() are cleared on check-in.
+
+    Poisons the raw connection directly (bypassing the client's finally-restore)
+    and proves the pool ``reset=`` callback wipes the attributes when the
+    connection returns to the pool.
+    """
+
+    client = pg_client_single_conn
+
+    async with client.bound_connection() as conn:
+        await conn.set_read_only(True)
+        await conn.set_isolation_level(IsolationLevel.SERIALIZABLE)
+
+    # Check-in ran the reset callback; the same connection comes back clean.
+    async with client.bound_connection() as conn:
+        assert conn.read_only is None
+        assert conn.isolation_level is None
+
+    await client.execute(f"INSERT INTO {leak_table} (value) VALUES (1)")
+    async with client.transaction():
+        level = await client.fetch_value("SHOW transaction_isolation")
+        assert level == "read committed"

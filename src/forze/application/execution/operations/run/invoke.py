@@ -11,7 +11,7 @@ from forze.application.contracts.transaction import AfterCommitPort
 from forze.base.exceptions import exc
 from forze.base.primitives import StrKey
 
-from ...context.active_operation import operation_running
+from ...context.active_operation import active_operation_var
 from ..planning.plans import OperationKind, ResolvedOperationPlan
 from .plan import TransactionRunner, run_resolved_operation_plan
 
@@ -67,14 +67,29 @@ class ResolvedOperation[Args, R](Handler[Args, R]):
         Execution is marked via the module-level active-operation flag so that
         constructing an :class:`ExecutionContext` mid-operation (per-request
         creation, an unsupported mode) can be detected and warned about.
+
+        Hot path: both flags are token set/reset directly (the equivalent of the
+        :func:`~forze.application.execution.context.active_operation.operation_running`
+        and ``InvocationContext.bind_read_only`` context managers) — a
+        ``@contextmanager`` enter/exit costs ~5x a raw ContextVar set/reset pair.
         """
 
-        with operation_running():
+        marker_token = active_operation_var.set(True)
+
+        try:
             if self.plan.kind is OperationKind.QUERY:
-                with self.inv_ctx.bind_read_only():
+                ro_token = self.inv_ctx.set_read_only()
+
+                try:
                     return await self._run(args)
 
+                finally:
+                    self.inv_ctx.reset_read_only(ro_token)
+
             return await self._run(args)
+
+        finally:
+            active_operation_var.reset(marker_token)
 
 
 # ....................... #

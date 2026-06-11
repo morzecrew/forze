@@ -31,7 +31,7 @@ from forze.base.primitives import JsonDict
 
 from .._logger import logger
 from .errors import exc_interceptor
-from .helpers import set_transaction_sql
+from .helpers import isolation_level_enum
 from .port import PostgresClientPort
 from .types import RowFactory
 from .value_objects import PostgresConfig, PostgresTransactionOptions
@@ -98,6 +98,30 @@ def _pool_configure_for_config(  # type: ignore[no-untyped-def]
                 )
 
     return configure
+
+
+# ....................... #
+
+
+async def _pool_reset_transaction_attributes(conn: AsyncConnection) -> None:
+    """Pool ``reset`` callback: clear transaction-shaping attributes on check-in.
+
+    Second belt against transaction-option leaks (the first is the ``finally``
+    restore in :meth:`PostgresClient.transaction`): even if a code path forgets
+    to restore ``read_only`` / ``isolation_level``, no connection ever re-enters
+    the pool with them set. psycopg_pool invokes ``reset`` only after bringing
+    the connection to IDLE (or discards it), and psycopg's attribute setters are
+    pure client-side when the connection is idle — ``_set_read_only_gen`` /
+    ``_set_isolation_level_gen`` only update the cached ``BEGIN`` statement, no
+    SQL is sent — so this costs no round-trip. The ``is not None`` guards keep
+    the common check-in (nothing leaked) entirely allocation- and lock-free.
+    """
+
+    if conn.isolation_level is not None:
+        await conn.set_isolation_level(None)
+
+    if conn.read_only is not None:
+        await conn.set_read_only(None)
 
 
 # ....................... #
@@ -186,6 +210,7 @@ class PostgresClient(PostgresClientPort):
                 reconnect_timeout=config.reconnect_timeout.total_seconds(),
                 num_workers=config.num_workers,
                 configure=configure,
+                reset=_pool_reset_transaction_attributes,
             )
 
             self.__acquire_timeout = acquire_timeout
@@ -339,26 +364,69 @@ class PostgresClient(PostgresClientPort):
     # ....................... #
 
     @staticmethod
+    def _options_are_default(options: PostgresTransactionOptions) -> bool:
+        """``True`` when *options* request the defaults (read-write, read committed).
+
+        Default root transactions then touch no connection attributes at all:
+        psycopg emits a plain ``BEGIN`` and there is nothing to restore.
+        """
+
+        return not options.read_only and options.isolation == "read_committed"
+
+    # ....................... #
+
+    @staticmethod
     async def _apply_transaction_options(
         conn: AsyncConnection,
         options: PostgresTransactionOptions,
     ) -> None:
-        """Apply *options* to the transaction currently open on *conn*.
+        """Apply *options* as psycopg connection attributes, **before** ``BEGIN``.
 
-        Runs ``SET TRANSACTION ISOLATION LEVEL … [READ ONLY]`` inside the
-        already-started root transaction. Deliberately avoids
-        :meth:`~psycopg.AsyncConnection.set_isolation_level` /
-        :meth:`~psycopg.AsyncConnection.set_read_only`: those mutate connection
-        attributes that persist across pool check-ins (psycopg_pool only rolls
-        back on return), leaking read-only/isolation into unrelated later work
-        on the same pooled connection. ``SET TRANSACTION`` scopes the options
-        to this transaction only. Must be the first statement of the
-        transaction (Postgres rejects isolation changes after the first query);
-        nested transactions (savepoints) must never call this.
+        psycopg composes ``read_only`` / ``isolation_level`` into the ``BEGIN``
+        statement itself (``BEGIN [ISOLATION LEVEL …] [READ ONLY]``), so the
+        options cost zero extra round-trips — unlike a separate
+        ``SET TRANSACTION`` statement inside the transaction. The setters are
+        pure client-side while the connection is idle (verified in psycopg's
+        ``_set_*_gen`` / ``_check_intrans_gen``: no SQL, they only invalidate
+        the cached begin statement) and raise if a transaction is in progress.
+
+        The attributes persist across pool check-ins, so every caller **must**
+        restore them via :meth:`_restore_transaction_attributes` in a
+        ``finally`` — and the pool's ``reset`` callback
+        (:func:`_pool_reset_transaction_attributes`) clears them on check-in as
+        a second belt. Nested transactions (savepoints) must never call this:
+        options are a root-transaction-only contract.
         """
 
-        async with conn.cursor() as cur:
-            await cur.execute(set_transaction_sql(options))
+        await conn.set_isolation_level(isolation_level_enum(options.isolation))
+
+        if options.read_only:
+            await conn.set_read_only(True)
+
+    # ....................... #
+
+    @staticmethod
+    async def _restore_transaction_attributes(conn: AsyncConnection) -> None:
+        """Reset transaction-shaping attributes to defaults after a root transaction.
+
+        Client-side only (no SQL) when the connection is idle; with ``None``
+        psycopg falls back to a plain ``BEGIN`` for subsequent transactions.
+        Best-effort: if the connection is broken or unexpectedly still in a
+        transaction the setters raise — swallow it (the original error from the
+        transaction body must win) and rely on the pool ``reset`` callback /
+        connection discard to prevent any leak.
+        """
+
+        try:
+            await conn.set_isolation_level(None)
+            await conn.set_read_only(None)
+
+        except Exception:
+            logger.warning(
+                "Failed to restore transaction attributes; "
+                "the pool reset callback will clear them on check-in",
+                exc_info=True,
+            )
 
     # ....................... #
 
@@ -405,14 +473,21 @@ class PostgresClient(PostgresClientPort):
 
             return
 
+        # Non-default options are applied as connection attributes before BEGIN
+        # (zero extra round-trips) and must be restored in the finally of the
+        # SAME top-level path that set them; default options touch nothing.
+        apply_options = not self._options_are_default(options)
+
         # If a connection is already bound in the context (e.g., tests / UoW),
         # run the top-level transaction on it instead of acquiring a new one.
         if depth == 0 and parent_conn is not None:
             token_depth = self.__ctx_depth.set(1)
 
             try:
-                async with parent_conn.transaction():
+                if apply_options:
                     await self._apply_transaction_options(parent_conn, options)
+
+                async with parent_conn.transaction():
                     yield parent_conn
 
             except Exception:
@@ -420,6 +495,9 @@ class PostgresClient(PostgresClientPort):
                 raise
 
             finally:
+                if apply_options:
+                    await self._restore_transaction_attributes(parent_conn)
+
                 self.__ctx_depth.reset(token_depth)
 
             return
@@ -431,8 +509,10 @@ class PostgresClient(PostgresClientPort):
             token_depth = self.__ctx_depth.set(1)
 
             try:
-                async with conn.transaction():
+                if apply_options:
                     await self._apply_transaction_options(conn, options)
+
+                async with conn.transaction():
                     yield conn
 
             except Exception:
@@ -440,6 +520,9 @@ class PostgresClient(PostgresClientPort):
                 raise
 
             finally:
+                if apply_options:
+                    await self._restore_transaction_attributes(conn)
+
                 self.__ctx_depth.reset(token_depth)
                 self.__ctx_conn.reset(token_conn)
 

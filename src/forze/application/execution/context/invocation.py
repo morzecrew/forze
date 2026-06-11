@@ -1,10 +1,10 @@
 from contextlib import contextmanager
-from contextvars import ContextVar
+from contextvars import ContextVar, Token
 from typing import Any, Final, Iterator, final
 from uuid import UUID
 
 import attrs
-from structlog.contextvars import bound_contextvars
+from structlog.contextvars import bind_contextvars, reset_contextvars
 
 from forze.application.contracts.authn import AuthnIdentity
 from forze.application.contracts.tenancy import TenantIdentity
@@ -117,17 +117,36 @@ class InvocationContext:
 
     # ....................... #
 
+    def set_read_only(self) -> Token[bool]:
+        """Mark the current operation read-only; reset with :meth:`reset_read_only`.
+
+        Engine fast path: a raw ContextVar set/reset pair avoids the
+        ``@contextmanager`` generator overhead on the per-operation hot path.
+        Prefer :meth:`bind_read_only` outside the engine.
+        """
+
+        return self.__read_only.set(True)
+
+    # ....................... #
+
+    def reset_read_only(self, token: Token[bool]) -> None:
+        """Reset the read-only flag to its state before :meth:`set_read_only`."""
+
+        self.__read_only.reset(token)
+
+    # ....................... #
+
     @contextmanager
     def bind_read_only(self) -> Iterator[None]:
         """Bind the current operation as read-only for its duration (a ``QUERY`` op)."""
 
-        token = self.__read_only.set(True)
+        token = self.set_read_only()
 
         try:
             yield
 
         finally:
-            self.__read_only.reset(token)
+            self.reset_read_only(token)
 
     # ....................... #
 
@@ -137,13 +156,18 @@ class InvocationContext:
 
         token = self.__idempotency_key.set(key)
 
-        bound: dict[str, Any] = {}
-
-        if key is not None:
-            bound[IDEMPOTENCY_KEY_KEY] = key
-
         try:
-            with bound_contextvars(**bound):
+            if key is not None:
+                log_tokens = bind_contextvars(**{IDEMPOTENCY_KEY_KEY: key})
+
+                try:
+                    yield
+
+                finally:
+                    reset_contextvars(**log_tokens)
+
+            else:
+                # Nothing to bind: skip the structlog save/restore entirely.
                 yield
 
         finally:
@@ -151,11 +175,9 @@ class InvocationContext:
 
     # ....................... #
 
-    @contextmanager
-    def bind_metadata(self, *, metadata: InvocationMetadata) -> Iterator[None]:
-        """Bind the invocation metadata."""
-
-        metadata_token = self.__metadata.set(metadata)
+    @staticmethod
+    def _metadata_log_fields(metadata: InvocationMetadata) -> dict[str, Any]:
+        """Log fields contributed by *metadata* (shared by ``bind*`` variants)."""
 
         bound: dict[str, Any] = {
             EXEC_ID_KEY: str(metadata.execution_id),
@@ -165,11 +187,46 @@ class InvocationContext:
         if metadata.causation_id is not None:
             bound[CAUS_ID_KEY] = str(metadata.causation_id)
 
+        return bound
+
+    # ....................... #
+
+    @staticmethod
+    def _identity_log_fields(
+        *,
+        authn: AuthnIdentity | None,
+        tenant: TenantIdentity | None,
+    ) -> dict[str, Any]:
+        """Log fields contributed by the identity pair (shared by ``bind*`` variants)."""
+
+        bound: dict[str, Any] = {}
+
+        if authn is not None:
+            bound[PRINCIPAL_ID_KEY] = authn.principal_id
+
+            if authn.actor is not None:
+                bound[ACTOR_ID_KEY] = authn.actor.principal_id
+
+        if tenant is not None:
+            bound[TENANT_ID_KEY] = str(tenant.tenant_id)
+
+        return bound
+
+    # ....................... #
+
+    @contextmanager
+    def bind_metadata(self, *, metadata: InvocationMetadata) -> Iterator[None]:
+        """Bind the invocation metadata."""
+
+        metadata_token = self.__metadata.set(metadata)
+
+        log_tokens = bind_contextvars(**self._metadata_log_fields(metadata))
+
         try:
-            with bound_contextvars(**bound):
-                yield
+            yield
 
         finally:
+            reset_contextvars(**log_tokens)
             self.__metadata.reset(metadata_token)
 
     # ....................... #
@@ -186,19 +243,20 @@ class InvocationContext:
         authn_token = self.__authn.set(authn)
         tenant_token = self.__tenant.set(tenant)
 
-        bound: dict[str, Any] = {}
-
-        if authn is not None:
-            bound[PRINCIPAL_ID_KEY] = authn.principal_id
-
-            if authn.actor is not None:
-                bound[ACTOR_ID_KEY] = authn.actor.principal_id
-
-        if tenant is not None:
-            bound[TENANT_ID_KEY] = str(tenant.tenant_id)
+        bound = self._identity_log_fields(authn=authn, tenant=tenant)
 
         try:
-            with bound_contextvars(**bound):
+            if bound:
+                log_tokens = bind_contextvars(**bound)
+
+                try:
+                    yield
+
+                finally:
+                    reset_contextvars(**log_tokens)
+
+            else:
+                # Nothing to bind: skip the structlog save/restore entirely.
                 yield
 
         finally:
@@ -217,11 +275,28 @@ class InvocationContext:
     ) -> Iterator[None]:
         """Bind the invocation context.
 
-        Composition of :meth:`bind_metadata` and :meth:`bind_identity`.
+        Observably equivalent to :meth:`bind_metadata` composed with
+        :meth:`bind_identity` — same ContextVars and log fields bound for the
+        scope, token-reset on exit (exception-safe) — but implemented as a single
+        token-based structlog bind over the merged log fields, so a boundary pays
+        one structlog save/restore instead of two.
         """
 
-        with (
-            self.bind_metadata(metadata=metadata),
-            self.bind_identity(authn=authn, tenant=tenant),
-        ):
+        metadata_token = self.__metadata.set(metadata)
+        authn_token = self.__authn.set(authn)
+        tenant_token = self.__tenant.set(tenant)
+
+        bound = self._metadata_log_fields(metadata)
+        bound.update(self._identity_log_fields(authn=authn, tenant=tenant))
+
+        log_tokens = bind_contextvars(**bound)
+
+        try:
             yield
+
+        finally:
+            # Reverse order of the sets above (mirrors the CM composition).
+            reset_contextvars(**log_tokens)
+            self.__tenant.reset(tenant_token)
+            self.__authn.reset(authn_token)
+            self.__metadata.reset(metadata_token)

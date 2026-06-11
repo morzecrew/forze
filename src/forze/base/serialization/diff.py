@@ -94,25 +94,37 @@ def _diff_recursive(
 ) -> None:
     """Walk *before* and *after* recursively, collecting changes into *patch*."""
 
+    # Fast path: an equal subtree contributes nothing to the patch. A single
+    # C-level comparison replaces the full recursive walk (dict/list `==`
+    # compares element-wise in C), so typical small diffs skip almost all of
+    # the python-level recursion. Semantics are unchanged: every branch below
+    # decides changes via the same `==`/`!=` comparisons.
+    if before == after:
+        return
+
     if isinstance(before, dict) and isinstance(after, dict):
         after = cast(dict[str, Any], after)
         before = cast(dict[str, Any], before)
 
-        for k in after:
-            child_path = path + (k,)
-
+        for k, av in after.items():
             if k not in before:
+                child_path = path + (k,)
                 logger.trace("Diff added key at %s", child_path)
-                _set_nested(patch, child_path, deepcopy(after[k]))
+                _set_nested(patch, child_path, deepcopy(av))
 
             else:
-                _diff_recursive(
-                    before[k],
-                    after[k],
-                    patch,
-                    child_path,
-                    deletions_as_none,
-                )
+                bv = before[k]
+
+                # Same fast path as the function entry, inlined to avoid a
+                # python-level call (and path tuple) per unchanged key.
+                if bv != av:
+                    _diff_recursive(
+                        bv,
+                        av,
+                        patch,
+                        path + (k,),
+                        deletions_as_none,
+                    )
 
         if deletions_as_none:
             for k in before:

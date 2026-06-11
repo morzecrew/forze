@@ -9,6 +9,7 @@ the module-level tripwire.
 from __future__ import annotations
 
 import attrs
+import pytest
 import structlog.testing
 
 from forze.application.contracts.execution import Handler
@@ -44,6 +45,15 @@ class _ProbeMarker(Handler[None, bool]):
 
 
 @attrs.define(slots=True)
+class _FailWithMarker(Handler[None, None]):
+    ctx: ExecutionContext
+
+    async def __call__(self, _args: None) -> None:
+        assert is_operation_running() is True
+        raise RuntimeError("boom")
+
+
+@attrs.define(slots=True)
 class _ConstructContext(Handler[None, str]):
     ctx: ExecutionContext
 
@@ -62,6 +72,17 @@ class TestActiveOperationMarker:
 
         assert is_operation_running() is False
         assert await run_operation(reg, "probe", None, ctx) is True
+        assert is_operation_running() is False
+
+    async def test_marker_reset_when_handler_raises(self) -> None:
+        # The engine sets/resets the marker with a raw token pair (not the
+        # operation_running CM): the reset must still happen on a handler error.
+        ctx = _ctx()
+        reg = _frozen("fail", _FailWithMarker)
+
+        with pytest.raises(RuntimeError, match="boom"):
+            await run_operation(reg, "fail", None, ctx)
+
         assert is_operation_running() is False
 
     async def test_operation_running_cm_is_token_reset(self) -> None:

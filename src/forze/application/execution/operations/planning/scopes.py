@@ -401,6 +401,38 @@ class ResolvedScope:
     """Resolved dispatch hooks for this scope."""
 
     # ....................... #
+    # Resolved scopes are frozen, so emptiness is precomputed once at construction
+    # (plan-resolution) time instead of walking the sub-collections on every call —
+    # the executor reads these booleans on the per-operation hot path.
+
+    finally_empty: bool = attrs.field(
+        init=False,
+        repr=False,
+        default=attrs.Factory(
+            lambda self: self.finally_.is_empty(),
+            takes_self=True,
+        ),
+    )
+    """Precomputed: whether this scope has no ``finally`` hooks."""
+
+    body_empty: bool = attrs.field(
+        init=False,
+        repr=False,
+        default=attrs.Factory(
+            lambda self: (
+                self.finally_empty
+                and self.before.is_empty()
+                and self.wrap.is_empty()
+                and self.on_failure.is_empty()
+                and self.on_success.is_empty()
+                and self.dispatch.is_empty()
+            ),
+            takes_self=True,
+        ),
+    )
+    """Precomputed: whether this scope has no body stage hooks (before/wrap/.../dispatch)."""
+
+    # ....................... #
 
     def body_is_empty(self) -> bool:
         """Whether this scope has no body stage hooks (before/wrap/.../dispatch).
@@ -409,16 +441,12 @@ class ResolvedScope:
         behavior around the inner callable, so the executor can invoke it directly
         and skip building the wrap/finally machinery (see
         :func:`~forze.application.execution.operations.run.plan.run_resolved_scope`).
+
+        Precomputed at construction time (the scope is frozen); hot paths read
+        :attr:`body_empty` directly.
         """
 
-        return (
-            self.before.is_empty()
-            and self.wrap.is_empty()
-            and self.finally_.is_empty()
-            and self.on_failure.is_empty()
-            and self.on_success.is_empty()
-            and self.dispatch.is_empty()
-        )
+        return self.body_empty
 
 
 # ....................... #
@@ -443,9 +471,46 @@ class ResolvedTransactionScope(ResolvedScope):
 
     # ....................... #
 
+    after_commit_empty: bool = attrs.field(
+        init=False,
+        repr=False,
+        default=attrs.Factory(
+            lambda self: (
+                self.after_commit.is_empty() and self.dispatch_after_commit.is_empty()
+            ),
+            takes_self=True,
+        ),
+    )
+    """Precomputed: whether this scope has no after-commit stages."""
+
+    empty: bool = attrs.field(
+        init=False,
+        repr=False,
+        default=attrs.Factory(
+            lambda self: self.body_empty and self.after_commit_empty,
+            takes_self=True,
+        ),
+    )
+    """Precomputed: whether this transaction scope has no stages at all."""
+
+    # ....................... #
+
+    def __attrs_post_init__(self) -> None:
+        # A resolved plan is frozen, so this invariant cannot change after
+        # construction: validate it once here (plan-resolution time) instead of
+        # re-asserting on every operation call. Registry freezing performs the
+        # same check earlier with an operation-scoped message (see
+        # ``PlanValidation.validate_resolved_plans``).
+        if self.route is None and not self.empty:
+            raise exc.internal("Transaction scope has stages but no route set")
+
+    # ....................... #
+
     def is_empty(self) -> bool:
-        return (
-            self.body_is_empty()
-            and self.after_commit.is_empty()
-            and self.dispatch_after_commit.is_empty()
-        )
+        """Whether this transaction scope has no stages at all.
+
+        Precomputed at construction time (the scope is frozen); hot paths read
+        :attr:`empty` directly.
+        """
+
+        return self.empty

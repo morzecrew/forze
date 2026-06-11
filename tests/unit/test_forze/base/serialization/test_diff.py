@@ -1,10 +1,13 @@
+import random
 from copy import deepcopy
+from typing import Any
 
 import pytest
 
 from forze.base.primitives import JsonDict
 from forze.base.serialization.diff import (
     _is_prefix,
+    _set_nested,
     apply_dict_patch,
     calculate_dict_difference,
     has_hybrid_patch_conflict,
@@ -144,6 +147,176 @@ class TestCalculateDictDifference:
         assert diff == {"b": None}
         restored = apply_dict_patch(before, diff)
         assert restored == after
+
+
+# ----------------------- #
+# Diff short-circuit parity
+
+
+def _reference_diff(
+    before: Any,
+    after: Any,
+    *,
+    deletions_as_none: bool = True,
+) -> JsonDict:
+    """Pre-optimization diff walk (no subtree-equality short-circuit).
+
+    Golden reference: the optimized ``calculate_dict_difference`` must agree
+    with this on every input.
+    """
+
+    patch: JsonDict = {}
+
+    def walk(b: Any, a: Any, path: tuple[str, ...]) -> None:
+        if isinstance(b, dict) and isinstance(a, dict):
+            for k in a:
+                if k not in b:
+                    _set_nested(patch, path + (k,), deepcopy(a[k]))
+                else:
+                    walk(b[k], a[k], path + (k,))
+
+            if deletions_as_none:
+                for k in b:
+                    if k not in a:
+                        _set_nested(patch, path + (k,), None)
+
+            return
+
+        if isinstance(b, list) and isinstance(a, list):
+            if b != a:
+                _set_nested(patch, path, deepcopy(a))
+
+            return
+
+        if b != a:
+            _set_nested(
+                patch,
+                path,
+                deepcopy(a) if isinstance(a, (dict, list, set, tuple)) else a,
+            )
+
+    walk(before, after, ())
+
+    return patch
+
+
+class TestDiffShortCircuitParity:
+    """The subtree-equality fast path must be a behavioral no-op: optimized and
+    reference walks agree on identical, partially-changed, and randomized
+    nested structures."""
+
+    def _random_value(self, rng: random.Random, depth: int) -> Any:
+        kind = rng.randrange(6 if depth > 0 else 4)
+
+        if kind == 0:
+            return rng.randrange(100)
+        if kind == 1:
+            return rng.choice(["alpha", "beta", "gamma", ""])
+        if kind == 2:
+            return rng.choice([True, False, None])
+        if kind == 3:
+            return rng.random()
+        if kind == 4:
+            return [self._random_value(rng, depth - 1) for _ in range(rng.randrange(4))]
+
+        return self._random_dict(rng, depth - 1)
+
+    def _random_dict(self, rng: random.Random, depth: int) -> JsonDict:
+        return {
+            f"k{i}": self._random_value(rng, depth) for i in range(rng.randrange(1, 6))
+        }
+
+    def _mutate(self, rng: random.Random, node: JsonDict) -> None:
+        """Apply a few random in-place mutations: change, delete, add, recurse."""
+
+        for _ in range(rng.randrange(1, 4)):
+            if not node:
+                node["added"] = self._random_value(rng, 1)
+                continue
+
+            key = rng.choice(sorted(node))
+            op = rng.randrange(4)
+
+            if op == 0:
+                node[key] = self._random_value(rng, 1)
+            elif op == 1:
+                del node[key]
+            elif op == 2:
+                node[f"new_{key}"] = self._random_value(rng, 1)
+            elif isinstance(node[key], dict):
+                self._mutate(rng, node[key])
+            else:
+                node[key] = self._random_value(rng, 1)
+
+    @pytest.mark.parametrize("deletions_as_none", [True, False])
+    def test_randomized_structures_match_reference(
+        self, deletions_as_none: bool
+    ) -> None:
+        rng = random.Random(1337)
+
+        for _ in range(100):
+            before = self._random_dict(rng, depth=3)
+            after = deepcopy(before)
+
+            if rng.random() < 0.8:  # keep some exact no-op pairs in the mix
+                self._mutate(rng, after)
+
+            expected = _reference_diff(
+                before, after, deletions_as_none=deletions_as_none
+            )
+            actual = calculate_dict_difference(
+                before, after, deletions_as_none=deletions_as_none
+            )
+
+            assert actual == expected
+
+    @pytest.mark.parametrize("deletions_as_none", [True, False])
+    def test_handcrafted_cases_match_reference(self, deletions_as_none: bool) -> None:
+        cases: list[tuple[JsonDict, JsonDict]] = [
+            # equal subtree next to a changed one
+            (
+                {"same": {"a": 1, "b": [1, 2]}, "diff": {"x": 1}},
+                {"same": {"a": 1, "b": [1, 2]}, "diff": {"x": 2}},
+            ),
+            # deletion below an otherwise-equal sibling
+            (
+                {"keep": {"deep": {"v": 1}}, "drop": {"a": 1, "b": 2}},
+                {"keep": {"deep": {"v": 1}}, "drop": {"a": 1}},
+            ),
+            # type flips (dict→scalar, scalar→list)
+            ({"a": {"b": 1}, "c": 1}, {"a": 2, "c": [1]}),
+            # empty containers
+            ({"a": {}, "b": []}, {"a": {}, "b": []}),
+            ({"a": {}}, {"a": {"x": 1}}),
+        ]
+
+        for before, after in cases:
+            assert calculate_dict_difference(
+                before, after, deletions_as_none=deletions_as_none
+            ) == _reference_diff(before, after, deletions_as_none=deletions_as_none)
+
+    def test_shared_subtree_objects_short_circuit_to_empty_diff(self) -> None:
+        # The same container object on both sides is by definition equal;
+        # the fast path must yield an empty diff, like the full walk does.
+        shared: JsonDict = {"x": {"y": [1, 2]}}
+        before: JsonDict = {"a": shared, "b": 1}
+        after: JsonDict = {"a": shared, "b": 1}
+
+        assert calculate_dict_difference(before, after) == {}
+
+    def test_diff_values_remain_isolated_copies(self) -> None:
+        # Changed containers still land in the patch as deep copies, never as
+        # references into `after`.
+        before: JsonDict = {"a": {"b": [1]}}
+        after: JsonDict = {"a": {"b": [1, 2]}, "c": {"d": 1}}
+
+        diff = calculate_dict_difference(before, after)
+        assert diff == {"a": {"b": [1, 2]}, "c": {"d": 1}}
+
+        after["a"]["b"].append(3)
+        after["c"]["d"] = 99
+        assert diff["a"]["b"] == [1, 2]
+        assert diff["c"]["d"] == 1
 
 
 # ----------------------- #

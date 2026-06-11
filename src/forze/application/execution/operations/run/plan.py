@@ -39,16 +39,6 @@ class TransactionRunner(Protocol):
 # ....................... #
 
 
-def _assert_tx_configured(tx: ResolvedTransactionScope) -> None:
-    if tx.route is not None or tx.is_empty():
-        return
-
-    raise exc.internal("Transaction scope has stages but no route set")
-
-
-# ....................... #
-
-
 async def _run_scope_body[Args, R](
     scope: ResolvedScope,
     args: Args,
@@ -88,7 +78,7 @@ async def _run_scope_body[Args, R](
 
     finally:
         # Only materialize the outcome when a finally hook will observe it.
-        if not scope.finally_.is_empty():
+        if not scope.finally_empty:
             outcome = Success(value=result) if failure is None else Failure(exc=failure)
             await run_pipeline_finally(scope.finally_, args, outcome)
 
@@ -107,7 +97,8 @@ async def run_resolved_scope[R](
 
     # Fast path: a scope with no body stages adds no behavior, so invoke the inner
     # callable directly and skip the wrap/finally machinery and its allocations.
-    if scope.body_is_empty():
+    # ``body_empty`` is precomputed at plan-resolution time (the scope is frozen).
+    if scope.body_empty:
         return await inner()
 
     async def _wrapped(a: Any) -> R:
@@ -136,7 +127,7 @@ async def run_resolved_tx_scope[Args, R](
         raise exc.internal("Transaction route is required to run a transaction scope")
 
     async with tx_runner(route, read_only=read_only):
-        if tx.body_is_empty():
+        if tx.body_empty:
             # No transaction-scope body hooks: run the handler directly inside the
             # transaction (after-commit stages are still handled below).
             result = await handler(args)
@@ -152,7 +143,7 @@ async def run_resolved_tx_scope[Args, R](
         # emptiness here (after the handler ran) is final: skip registering the
         # deferred callback when there is nothing to run. Callbacks deferred by the
         # handler itself go through the transaction context directly.
-        if not (tx.after_commit.is_empty() and tx.dispatch_after_commit.is_empty()):
+        if not tx.after_commit_empty:
             captured_result = result
 
             async def _after_commit() -> None:
@@ -183,7 +174,9 @@ async def run_resolved_operation_plan[Args, R](
 
     async def transactional_core() -> R:
         if plan.tx.route is None:
-            _assert_tx_configured(plan.tx)
+            # A route-less tx scope with stages is rejected at plan-resolution time
+            # (``ResolvedTransactionScope.__attrs_post_init__``), so no re-validation
+            # is needed per call.
             return await handler(args)
 
         return await run_resolved_tx_scope(

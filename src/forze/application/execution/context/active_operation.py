@@ -14,7 +14,7 @@ from typing import Generator
 
 # ----------------------- #
 
-_active_operation: ContextVar[bool] = ContextVar(
+active_operation_var: ContextVar[bool] = ContextVar(
     "forze_active_operation",
     default=False,
 )
@@ -28,13 +28,13 @@ _warned_ctx_in_operation: bool = False
 def operation_running() -> Generator[None]:
     """Mark the current task as executing an operation (token-reset on exit)."""
 
-    token = _active_operation.set(True)
+    token = active_operation_var.set(True)
 
     try:
         yield
 
     finally:
-        _active_operation.reset(token)
+        active_operation_var.reset(token)
 
 
 # ....................... #
@@ -43,7 +43,7 @@ def operation_running() -> Generator[None]:
 def is_operation_running() -> bool:
     """Whether an operation is executing on the current task."""
 
-    return _active_operation.get()
+    return active_operation_var.get()
 
 
 # ....................... #
@@ -59,7 +59,7 @@ def warn_if_constructed_in_operation() -> None:
     once per process; later occurrences log at debug level.
     """
 
-    if not _active_operation.get():
+    if not active_operation_var.get():
         return
 
     global _warned_ctx_in_operation

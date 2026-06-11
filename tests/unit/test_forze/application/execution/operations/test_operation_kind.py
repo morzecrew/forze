@@ -119,6 +119,15 @@ class _Noop(Handler[None, None]):
 
 
 @attrs.define(slots=True)
+class _FailUnderFlag(Handler[None, None]):
+    ctx: ExecutionContext
+
+    async def __call__(self, _args: None) -> None:
+        assert self.ctx.inv_ctx.is_read_only() is True
+        raise RuntimeError("boom")
+
+
+@attrs.define(slots=True)
 class _AcquireAnalyticsIngest(Handler[None, str]):
     ctx: ExecutionContext
 
@@ -204,6 +213,17 @@ class TestOperationKind:
         assert await run_operation(q, "q", None, ctx) is True  # inside the query op
         assert await run_operation(c, "c", None, ctx) is False  # inside the command op
         assert ctx.inv_ctx.is_read_only() is False  # after — ContextVar reset
+
+    async def test_read_only_flag_resets_when_query_handler_raises(self) -> None:
+        # The engine sets/resets the flag with a raw token pair (not a CM):
+        # the reset must still happen when the handler raises.
+        ctx = context_from_modules(MockDepsModule())
+        reg = _frozen("q", lambda c: _FailUnderFlag(ctx=c), query=True)
+
+        with pytest.raises(RuntimeError, match="boom"):
+            await run_operation(reg, "q", None, ctx)
+
+        assert ctx.inv_ctx.is_read_only() is False
 
     def test_as_query_sets_kind_on_the_resolved_plan(self) -> None:
         ctx = context_from_modules(MockDepsModule())
