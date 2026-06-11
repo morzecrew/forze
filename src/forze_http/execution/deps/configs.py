@@ -60,7 +60,7 @@ class HttpAuthConfig:
 
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class HttpxHttpServiceConfig(TenantAwareIntegrationConfig):
+class HttpServiceConfig(TenantAwareIntegrationConfig):
     """Infrastructure wiring for an :class:`~forze.application.contracts.http.HttpServiceSpec` route."""
 
     base_url: str | None = None
@@ -89,7 +89,7 @@ class HttpxHttpServiceConfig(TenantAwareIntegrationConfig):
         if self.tenant_aware:
             if self.base_url is not None:
                 raise exc.configuration(
-                    "HttpxHttpServiceConfig: set base_url on tenant secrets when "
+                    "HttpServiceConfig: set base_url on tenant secrets when "
                     "tenant_aware=True, not on the config",
                 )
 
@@ -97,11 +97,11 @@ class HttpxHttpServiceConfig(TenantAwareIntegrationConfig):
 
         if self.base_url is None:
             raise exc.configuration(
-                "HttpxHttpServiceConfig: base_url is required when tenant_aware=False",
+                "HttpServiceConfig: base_url is required when tenant_aware=False",
             )
 
         if self.secret_ref_for_tenant is not None:
             raise exc.configuration(
-                "HttpxHttpServiceConfig: secret_ref_for_tenant applies only when "
+                "HttpServiceConfig: secret_ref_for_tenant applies only when "
                 "tenant_aware=True",
             )

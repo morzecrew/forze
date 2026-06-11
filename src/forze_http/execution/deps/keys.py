@@ -2,9 +2,9 @@
 
 from forze.application.contracts.deps import DepKey
 
-from forze_http.kernel.client import HttpxClientPort
+from forze_http.kernel.client import HttpClientPort
 
 # ----------------------- #
 
-HttpxClientDepKey = DepKey[HttpxClientPort]("httpx_client")
-"""Key used to register the shared :class:`HttpxClientPort` implementation."""
+HttpClientDepKey = DepKey[HttpClientPort]("http_client")
+"""Key used to register the shared :class:`HttpClientPort` implementation."""

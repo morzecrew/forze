@@ -364,6 +364,20 @@ source_modules = ["forze_kits.domain"]
 forbidden_modules = ["forze_kits.aggregates"]
 
 [[tool.importlinter.contracts]]
+name = "Only sanctioned consumers may import forze_kits"
+type = "protected"
+protected_modules = ["forze_kits"]
+allowed_importers = ["forze_fastapi"]
+as_packages = true
+
+[[tool.importlinter.contracts]]
+name = "Nothing imports forze_identity"
+type = "protected"
+protected_modules = ["forze_identity"]
+allowed_importers = []
+as_packages = true
+
+[[tool.importlinter.contracts]]
 name = "Protect integration subpackages"
 type = "protected"
 protected_modules = [

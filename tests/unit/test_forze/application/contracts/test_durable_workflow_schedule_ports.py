@@ -42,7 +42,7 @@ class _StubScheduleCommand:
         args: _In,
         timing: DurableWorkflowScheduleTiming,
         *,
-        workflow_id_template: str | None = None,
+        workflow_id_base: str | None = None,
         trigger_immediately: bool = False,
         note: str | None = None,
     ) -> DurableWorkflowScheduleHandle:
@@ -54,7 +54,7 @@ class _StubScheduleCommand:
         args: _In,
         timing: DurableWorkflowScheduleTiming,
         *,
-        workflow_id_template: str | None = None,
+        workflow_id_base: str | None = None,
         trigger_immediately: bool = False,
         note: str | None = None,
     ) -> DurableWorkflowScheduleHandle:
@@ -66,7 +66,7 @@ class _StubScheduleCommand:
         *,
         timing: DurableWorkflowScheduleTiming | None = None,
         args: _In | None = None,
-        workflow_id_template: str | None = None,
+        workflow_id_base: str | None = None,
         note: str | None = None,
     ) -> None:
         return None

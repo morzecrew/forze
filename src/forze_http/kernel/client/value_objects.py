@@ -12,8 +12,8 @@ from forze.base.exceptions import exc
 
 @final
 @attrs.define(slots=True, frozen=True, kw_only=True)
-class HttpxConfig:
-    """Connection settings for :class:`~forze_http.kernel.client.client.HttpxClient`."""
+class HttpConfig:
+    """Connection settings for :class:`~forze_http.kernel.client.client.HttpClient`."""
 
     timeout: timedelta = attrs.field(default=timedelta(seconds=30))
     """HTTP client timeout."""

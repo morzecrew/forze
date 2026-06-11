@@ -22,6 +22,11 @@ class OutboxStagingContext:
     route's flush never pops or blocks another route's staged rows. Both the
     buffer contents and the flushed flag are additionally scoped per async
     task via :class:`~contextvars.ContextVar`.
+
+    The per-route buffers create per-instance ``ContextVar``s. This is intentional and
+    safe because an ``OutboxStagingContext`` is a per-runtime-scope singleton (one per
+    execution context), never created per request; see
+    :class:`~forze.base.primitives.ContextualBuffer` for the rationale.
     """
 
     _buffers: dict[str, ContextualBuffer[StagedOutboxEntry]] = attrs.field(

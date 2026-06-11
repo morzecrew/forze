@@ -8,7 +8,6 @@ require_rabbitmq()
 
 import asyncio
 from contextlib import asynccontextmanager
-from contextvars import ContextVar
 from datetime import datetime, timedelta, timezone
 from typing import AsyncGenerator, Mapping, Sequence, final
 from uuid import uuid4
@@ -24,6 +23,7 @@ from aio_pika.abc import (
 
 from forze.application.contracts.queue import resolve_delivery_delay
 from forze.base.exceptions import exc
+from forze.base.primitives import ContextScopedResource, GuardedLifecycle
 
 from .._logger import logger
 from .errors import exc_interceptor
@@ -69,12 +69,8 @@ class RabbitMQClient(RabbitMQClientPort):
     )
     __config: RabbitMQConfig = attrs.field(factory=RabbitMQConfig, init=False)
 
-    __ctx_channel: ContextVar[AbstractChannel | None] = attrs.field(
-        factory=lambda: ContextVar("rabbitmq_channel", default=None),
-        init=False,
-    )
-    __ctx_depth: ContextVar[int] = attrs.field(
-        factory=lambda: ContextVar("rabbitmq_channel_depth", default=0),
+    __channel_scope: ContextScopedResource[AbstractChannel] = attrs.field(
+        factory=lambda: ContextScopedResource[AbstractChannel]("rabbitmq_channel"),
         init=False,
     )
 
@@ -92,7 +88,7 @@ class RabbitMQClient(RabbitMQClientPort):
         init=False,
     )
     __pending_watermark_warned: bool = attrs.field(default=False, init=False)
-    __init_lock: asyncio.Lock = attrs.field(factory=asyncio.Lock, init=False)
+    __lifecycle: GuardedLifecycle = attrs.field(factory=GuardedLifecycle, init=False)
 
     # ....................... #
     # Lifecycle
@@ -103,52 +99,59 @@ class RabbitMQClient(RabbitMQClientPort):
         *,
         config: RabbitMQConfig = RabbitMQConfig(),
     ) -> None:
-        async with self.__init_lock:
-            if self.__connection is not None and not self.__connection.is_closed:
-                return
-
-            if isinstance(dsn, SecretStr):
-                dsn = dsn.get_secret_value()
+        async def setup() -> None:
+            resolved_dsn = dsn.get_secret_value() if isinstance(dsn, SecretStr) else dsn
 
             self.__config = config
             self.__connection = await connect_robust(
-                dsn,
+                resolved_dsn,
                 timeout=config.connect_timeout.total_seconds(),
                 heartbeat=config.heartbeat.total_seconds(),
             )
 
+        await self.__lifecycle.initialize(
+            setup,
+            ready=lambda: (
+                self.__connection is not None and not self.__connection.is_closed
+            ),
+        )
+
     # ....................... #
 
     async def close(self) -> None:
-        async with self.__init_lock:
-            # Return unacked deliveries to the broker *before* tearing the
-            # channel down: nack(requeue=True) makes them redeliverable
-            # immediately instead of only after the broker notices the
-            # connection drop. Best-effort — close() must never raise.
-            await self.__nack_pending_on_close()
+        await self.__lifecycle.close(self.__teardown)
 
-            try:
-                if (
-                    self.__pending_channel is not None
-                    and not self.__pending_channel.is_closed
-                ):
-                    await self.__pending_channel.close()
-            except Exception as e:
-                logger.warning("RabbitMQ close: pending channel close failed: %s", e)
+    # ....................... #
 
-            self.__pending_channel = None
+    async def __teardown(self) -> None:
+        # Return unacked deliveries to the broker *before* tearing the
+        # channel down: nack(requeue=True) makes them redeliverable
+        # immediately instead of only after the broker notices the
+        # connection drop. Best-effort — close() must never raise.
+        await self.__nack_pending_on_close()
 
-            try:
-                if self.__connection is not None and not self.__connection.is_closed:
-                    await self.__connection.close()
-            except Exception as e:
-                logger.warning("RabbitMQ close: connection close failed: %s", e)
+        try:
+            if (
+                self.__pending_channel is not None
+                and not self.__pending_channel.is_closed
+            ):
+                await self.__pending_channel.close()
+        except Exception as e:
+            logger.warning("RabbitMQ close: pending channel close failed: %s", e)
 
-            self.__connection = None
+        self.__pending_channel = None
 
-            async with self.__pending_lock:
-                self.__pending.clear()
-                self.__pending_watermark_warned = False
+        try:
+            if self.__connection is not None and not self.__connection.is_closed:
+                await self.__connection.close()
+        except Exception as e:
+            logger.warning("RabbitMQ close: connection close failed: %s", e)
+
+        self.__connection = None
+
+        async with self.__pending_lock:
+            self.__pending.clear()
+            self.__pending_watermark_warned = False
 
     # ....................... #
 
@@ -204,26 +207,7 @@ class RabbitMQClient(RabbitMQClientPort):
     # ....................... #
     # Context helpers
 
-    def __current_channel(self) -> AbstractChannel | None:
-        return self.__ctx_channel.get()
-
-    # ....................... #
-
-    @exc_interceptor.asynccontextmanager("rabbitmq.channel")  # type: ignore[untyped-decorator]
-    @asynccontextmanager
-    async def channel(self) -> AsyncGenerator[AbstractChannel]:
-        depth = self.__ctx_depth.get()
-        parent = self.__current_channel()
-
-        if depth > 0 and parent is not None and not parent.is_closed:
-            token_depth = self.__ctx_depth.set(depth + 1)
-            try:
-                yield parent
-            finally:
-                self.__ctx_depth.reset(token_depth)
-
-            return
-
+    async def __open_channel(self) -> AbstractChannel:
         channel = await self.__require_connection().channel(
             publisher_confirms=self.__config.publisher_confirms
         )
@@ -231,18 +215,26 @@ class RabbitMQClient(RabbitMQClientPort):
         if self.__config.prefetch_count > 0:
             await channel.set_qos(prefetch_count=self.__config.prefetch_count)
 
-        token_channel = self.__ctx_channel.set(channel)
-        token_depth = self.__ctx_depth.set(1)
+        return channel
 
-        try:
+    # ....................... #
+
+    @staticmethod
+    async def __close_channel(channel: AbstractChannel) -> None:
+        if not channel.is_closed:
+            await channel.close()
+
+    # ....................... #
+
+    @exc_interceptor.asynccontextmanager("rabbitmq.channel")  # type: ignore[untyped-decorator]
+    @asynccontextmanager
+    async def channel(self) -> AsyncGenerator[AbstractChannel]:
+        async with self.__channel_scope.scope(
+            self.__open_channel,
+            closer=self.__close_channel,
+            reusable=lambda channel: not channel.is_closed,
+        ) as channel:
             yield channel
-
-        finally:
-            self.__ctx_depth.reset(token_depth)
-            self.__ctx_channel.reset(token_channel)
-
-            if not channel.is_closed:
-                await channel.close()
 
     # ....................... #
     # Message helpers

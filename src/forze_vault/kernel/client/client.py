@@ -18,7 +18,7 @@ from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
 from forze.base.exceptions import exc
-from forze.base.primitives import JsonDict
+from forze.base.primitives import GuardedLifecycle, JsonDict
 from forze_vault.kernel._logger import logger
 
 from .port import VaultClientPort
@@ -42,7 +42,7 @@ class VaultClient(VaultClientPort):
 
     config: VaultConfig
     _client: Any = attrs.field(default=None, init=False, repr=False)
-    _init_lock: asyncio.Lock = attrs.field(factory=asyncio.Lock, init=False)
+    _lifecycle: GuardedLifecycle = attrs.field(factory=GuardedLifecycle, init=False)
     _renew_task: asyncio.Task[None] | None = attrs.field(
         default=None, init=False, repr=False
     )
@@ -50,19 +50,23 @@ class VaultClient(VaultClientPort):
     # ....................... #
 
     async def initialize(self) -> None:
-        async with self._init_lock:
-            if self._client is not None:
-                return
-
+        async def setup() -> None:
             self._client = await asyncio.to_thread(self._create_client)
 
             if self.config.renew_token:
                 await self._start_token_renewal()
 
+        await self._lifecycle.initialize(
+            setup,
+            ready=lambda: self._client is not None,
+        )
+
     # ....................... #
 
     async def close(self) -> None:
-        async with self._init_lock:
+        async def teardown() -> None:
+            # Stop the token-renewal background task before dropping the
+            # client so renewal never races a torn-down client.
             task, self._renew_task = self._renew_task, None
 
             if task is not None:
@@ -72,6 +76,8 @@ class VaultClient(VaultClientPort):
                     await asyncio.shield(task)
 
             self._client = None
+
+        await self._lifecycle.close(teardown)
 
     # ....................... #
     # Token renewal

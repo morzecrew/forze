@@ -17,12 +17,12 @@ uv add 'forze[http]'
 ## The client
 
 ```python
-from forze_http import HttpxClient
+from forze_http import HttpClient
 
-http = HttpxClient()
+http = HttpClient()
 ```
 
-`RoutedHttpxClient` resolves per-tenant base URLs and credentials from secrets.
+`RoutedHttpClient` resolves per-tenant base URLs and credentials from secrets.
 
 ## Wire it
 
@@ -30,14 +30,14 @@ Register a service config per `HttpServiceSpec.name`:
 
 ```python
 from forze.application.execution import DepsRegistry, LifecyclePlan
-from forze_http import HttpAuthConfig, HttpxClient, HttpxDepsModule, HttpxHttpServiceConfig, http_lifecycle_step
+from forze_http import HttpAuthConfig, HttpClient, HttpDepsModule, HttpServiceConfig, http_lifecycle_step
 
-payments = HttpxHttpServiceConfig(
+payments = HttpServiceConfig(
     base_url="https://api.payments.example.com",
     auth=HttpAuthConfig(kind="bearer", token="…"),
 )
 
-deps = DepsRegistry.from_modules(HttpxDepsModule(client=HttpxClient(), services={"payments": payments}))
+deps = DepsRegistry.from_modules(HttpDepsModule(client=HttpClient(), services={"payments": payments}))
 lifecycle = LifecyclePlan.from_steps(http_lifecycle_step())
 ```
 

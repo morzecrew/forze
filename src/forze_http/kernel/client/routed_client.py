@@ -12,26 +12,26 @@ from forze.application.contracts.tenancy.routed_client_base import (
 )
 from forze.base.primitives import JsonDict
 
-from .client import HttpxClient
+from .client import HttpClient
 from .credentials import credential_auth_headers
-from .port import HttpxClientPort
+from .port import HttpClientPort
 from .routing_credentials import HttpRoutingCredentials, routing_fingerprint
-from .value_objects import HttpxConfig
+from .value_objects import HttpConfig
 
 # ----------------------- #
 
 
 @final
 @attrs.define(slots=True, kw_only=True)
-class RoutedHttpxClient(
-    StructuredSecretRoutedTenantClientBase[HttpxClient],
-    HttpxClientPort,
+class RoutedHttpClient(
+    StructuredSecretRoutedTenantClientBase[HttpClient],
+    HttpClientPort,
 ):
-    """Routes HTTP requests to a per-tenant :class:`HttpxClient`."""
+    """Routes HTTP requests to a per-tenant :class:`HttpClient`."""
 
     secrets: SecretsPort
     secret_ref_for_tenant: Callable[[UUID], SecretRef] | Mapping[UUID, SecretRef]
-    client_config: HttpxConfig | None = None
+    client_config: HttpConfig | None = None
     max_cached_tenants: int = 100
     creds_type: type[BaseModel] = attrs.field(default=HttpRoutingCredentials, init=False)
     backend: str = "http"
@@ -51,8 +51,8 @@ class RoutedHttpxClient(
         self,
         tenant_id: UUID,
         creds: HttpRoutingCredentials,
-    ) -> HttpxClient:
-        client = HttpxClient()
+    ) -> HttpClient:
+        client = HttpClient()
 
         await client.initialize(
             creds.base_url,

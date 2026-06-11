@@ -32,7 +32,7 @@ Skills load automatically when the agent detects a relevant task (handlers, wiri
 | **forze-fastapi-interface** | FastAPI context deps, generated routes (`attach_*_routes`), middleware, errors. |
 | **forze-storage-s3** | `StorageSpec`, `S3DepsModule`, tenant-aware buckets, lifecycle, mock tests. |
 | **forze-storage-gcs** | GCS storage with `GCSDepsModule`, emulator, tenant-aware buckets, mock tests. |
-| **forze-http-outbound** | Outbound HTTP: declarative `BaseHttpIntegration` / `async_http_op`, `HttpServiceSpec`, `HttpxDepsModule`, auth, tenant routing. |
+| **forze-http-outbound** | Outbound HTTP: declarative `BaseHttpIntegration` / `async_http_op`, `HttpServiceSpec`, `HttpDepsModule`, auth, tenant routing. |
 | **forze-messaging-streaming** | Queue, pub/sub, stream contracts; SQS/RabbitMQ; Redis custom wiring notes. |
 | **forze-temporal-workflows** | `DurableWorkflowSpec`, Temporal deps, workflow ports, schedules, worker context. |
 | **forze-inngest-durable-functions** | Durable functions with Inngest: events, registration, steps, FastAPI serve. |

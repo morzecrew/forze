@@ -4,7 +4,6 @@ require_temporal()
 
 # ....................... #
 
-import asyncio
 import base64
 from typing import Any, final
 
@@ -27,6 +26,7 @@ from forze.application.contracts.durable.workflow import (
     DurableWorkflowScheduleTiming,
 )
 from forze.base.exceptions import exc
+from forze.base.primitives import GuardedLifecycle
 
 from .port import TemporalClientPort
 from .schedule_mapping import (
@@ -48,7 +48,7 @@ class TemporalClient(TemporalClientPort):
     """Low level client for temporal.io."""
 
     __client: Client | None = attrs.field(default=None, init=False)
-    __init_lock: asyncio.Lock = attrs.field(factory=asyncio.Lock, init=False)
+    __lifecycle: GuardedLifecycle = attrs.field(factory=GuardedLifecycle, init=False)
 
     # ....................... #
     # Lifecycle
@@ -59,11 +59,7 @@ class TemporalClient(TemporalClientPort):
         *,
         config: TemporalConfig = TemporalConfig(),
     ) -> None:
-        async with self.__init_lock:
-            if self.__client is not None:
-                # log
-                return
-
+        async def setup() -> None:
             # Only forward optional security kwargs when set so the default
             # connect call stays byte-identical to previous releases.
             connect_kwargs: dict[str, Any] = {}
@@ -86,12 +82,18 @@ class TemporalClient(TemporalClientPort):
                 **connect_kwargs,
             )
 
+        await self.__lifecycle.initialize(
+            setup,
+            ready=lambda: self.__client is not None,
+        )
+
     # ....................... #
 
     async def close(self) -> None:
-        async with self.__init_lock:
-            if self.__client is not None:
-                self.__client = None
+        async def teardown() -> None:
+            self.__client = None
+
+        await self.__lifecycle.close(teardown)
 
     # ....................... #
 

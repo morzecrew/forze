@@ -2,6 +2,7 @@
 
 from .buffer import ContextualBuffer, ContextVarTrace
 from .cell import OnceCell
+from .context_scope import ContextScopedResource
 from .datetime import utcnow
 from .fingerprint import (
     build_routing_fingerprint,
@@ -15,6 +16,7 @@ from .fingerprint import (
 )
 from .graph import DirectedAcyclicGraph
 from .lanes import CachedInflightLane, CacheLane, InflightLane
+from .lifecycle_guard import GuardedLifecycle
 from .lru_registry import GuardedLruRegistry, SimpleLruRegistry
 from .mapping import frozen_mapping
 from .namespace import StrKeyNamespace
@@ -52,8 +54,10 @@ __all__ = [
     "combine_fingerprint",
     "gcp_credential_dedup_tag",
     "connection_string_fingerprint",
+    "GuardedLifecycle",
     "GuardedLruRegistry",
     "SimpleLruRegistry",
+    "ContextScopedResource",
     "ContextualBuffer",
     "ContextVarTrace",
     "OnceCell",

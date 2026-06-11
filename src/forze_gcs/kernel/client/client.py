@@ -5,11 +5,9 @@ require_gcs()
 
 # ....................... #
 
-import asyncio
 import json
 import os
 from contextlib import asynccontextmanager
-from contextvars import ContextVar
 from datetime import datetime
 from typing import Any, AsyncGenerator, cast, final
 
@@ -23,6 +21,7 @@ from forze.application.integrations.storage.client import (
     normalize_list_window,
 )
 from forze.base.exceptions import exc
+from forze.base.primitives import ContextScopedResource, GuardedLifecycle
 from forze.base.primitives.owned_temp_path import OwnedTempPath
 
 from .errors import exc_interceptor
@@ -60,12 +59,12 @@ class GCSClient(GCSClientPort):
         init=False,
     )
 
-    __ctx_depth: ContextVar[int] = attrs.field(
-        factory=lambda: ContextVar("gcs_depth", default=0),
+    __scope: ContextScopedResource[Storage] = attrs.field(
+        factory=lambda: ContextScopedResource[Storage]("gcs"),
         init=False,
     )
 
-    __init_lock: asyncio.Lock = attrs.field(factory=asyncio.Lock, init=False)
+    __lifecycle: GuardedLifecycle = attrs.field(factory=GuardedLifecycle, init=False)
 
     # ....................... #
 
@@ -84,10 +83,7 @@ class GCSClient(GCSClientPort):
         :param config: Optional client configuration overrides.
         """
 
-        async with self.__init_lock:
-            if self.__storage is not None:
-                return
-
+        async def setup() -> None:
             self.__project_id = project_id
             self.__config = config
 
@@ -109,42 +105,51 @@ class GCSClient(GCSClientPort):
                 api_root=api_root,
             )
 
+        await self.__lifecycle.initialize(
+            setup,
+            ready=lambda: self.__storage is not None,
+        )
+
     # ....................... #
 
     async def close(self) -> None:
         """Release the underlying storage client and HTTP session."""
 
-        async with self.__init_lock:
-            storage = self.__storage
-            close_error: Exception | None = None
-            cred_error: Exception | None = None
+        await self.__lifecycle.close(self.__teardown)
 
-            if storage is not None:
-                try:
-                    await storage.close()
+    # ....................... #
 
-                except Exception as exc:
-                    close_error = exc
+    async def __teardown(self) -> None:
+        storage = self.__storage
+        close_error: Exception | None = None
+        cred_error: Exception | None = None
 
-                finally:
-                    self.__storage = None
-
+        if storage is not None:
             try:
-                self.__credential_path.release()
-                self.__credential_path = OwnedTempPath.empty()
-                self.__project_id = None
-                self.__config = None
+                await storage.close()
 
             except Exception as exc:
-                cred_error = exc
+                close_error = exc
 
-            errors = [e for e in (close_error, cred_error) if e is not None]
+            finally:
+                self.__storage = None
 
-            if len(errors) == 1:
-                raise errors[0]
+        try:
+            self.__credential_path.release()
+            self.__credential_path = OwnedTempPath.empty()
+            self.__project_id = None
+            self.__config = None
 
-            if len(errors) > 1:
-                raise ExceptionGroup("GCS client close failed", errors) from errors[0]
+        except Exception as exc:
+            cred_error = exc
+
+        errors = [e for e in (close_error, cred_error) if e is not None]
+
+        if len(errors) == 1:
+            raise errors[0]
+
+        if len(errors) > 1:
+            raise ExceptionGroup("GCS client close failed", errors) from errors[0]
 
     # ....................... #
 
@@ -172,26 +177,14 @@ class GCSClient(GCSClientPort):
     async def client(self) -> AsyncGenerator[Storage]:
         """Yield the shared storage client (depth-tracked nested scopes)."""
 
-        depth = self.__ctx_depth.get()
+        async def acquire() -> Storage:
+            return self.__require_storage()
 
-        if depth > 0:
-            self.__ctx_depth.set(depth + 1)
-
-            try:
-                yield self.__require_storage()
-
-            finally:
-                self.__ctx_depth.set(depth)
-
-            return
-
-        token = self.__ctx_depth.set(1)
-
-        try:
-            yield self.__require_storage()
-
-        finally:
-            self.__ctx_depth.reset(token)
+        async with self.__scope.scope(
+            acquire,
+            reusable=lambda storage: self.__storage is storage,
+        ) as storage:
+            yield storage
 
     # ....................... #
 

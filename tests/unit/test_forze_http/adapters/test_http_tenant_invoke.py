@@ -9,9 +9,9 @@ from pydantic import BaseModel
 from forze.application.contracts.secrets import SecretRef
 from forze.application.integrations.http import build_http_service_spec
 from forze.application.integrations.http.descriptors import BaseHttpIntegration, async_http_op
-from forze_http.adapters.http_service import HttpxHttpServiceAdapter
-from forze_http.execution.deps.configs import HttpxHttpServiceConfig
-from forze_http.kernel.client import HttpxClient, RoutedHttpxClient
+from forze_http.adapters.http_service import HttpServiceAdapter
+from forze_http.execution.deps.configs import HttpServiceConfig
+from forze_http.kernel.client import HttpClient, RoutedHttpClient
 from forze_http.kernel.client.credentials import credential_auth_headers
 from forze_http.kernel.client.routing_credentials import HttpRoutingCredentials
 
@@ -57,7 +57,7 @@ async def test_tenant_invoke_uses_routed_client() -> None:
 
     transport = httpx.MockTransport(handler)
 
-    routed = RoutedHttpxClient(
+    routed = RoutedHttpClient(
         secrets=_SecretsStub(),
         secret_ref_for_tenant={TENANT_ID: SecretRef(path="tenants/ping")},
         tenant_provider=lambda: TENANT_ID,
@@ -66,8 +66,8 @@ async def test_tenant_invoke_uses_routed_client() -> None:
     async def initialize_client(
         tenant_id: UUID,
         creds: HttpRoutingCredentials,
-    ) -> HttpxClient:
-        client = HttpxClient()
+    ) -> HttpClient:
+        client = HttpClient()
         await client.initialize(
             creds.base_url,
             default_headers=credential_auth_headers(creds),
@@ -79,9 +79,9 @@ async def test_tenant_invoke_uses_routed_client() -> None:
     routed.initialize_client = initialize_client  # type: ignore[method-assign]
     await routed.startup()
 
-    adapter = HttpxHttpServiceAdapter(
+    adapter = HttpServiceAdapter(
         client=routed,
-        config=HttpxHttpServiceConfig(tenant_aware=True),
+        config=HttpServiceConfig(tenant_aware=True),
         spec=spec,
     )
 

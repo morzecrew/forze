@@ -269,7 +269,7 @@ class DurableWorkflowScheduleBootstrap(Generic[In]):
     timing: DurableWorkflowScheduleTiming
     """When the schedule fires."""
 
-    workflow_id_template: str | None = None
+    workflow_id_base: str | None = None
     """Optional base workflow id for each fired run.
 
     Passed through to the backend verbatim — Forze performs no placeholder

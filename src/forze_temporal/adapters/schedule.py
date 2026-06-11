@@ -43,11 +43,11 @@ class TemporalWorkflowScheduleCommandAdapter[In: BaseModel](
         self,
         schedule_id: str,
         *,
-        workflow_id_template: str | None,
+        workflow_id_base: str | None,
     ) -> str:
         return resolve_scheduled_workflow_id(
             schedule_id,
-            workflow_id_template=workflow_id_template,
+            workflow_id_base=workflow_id_base,
         )
 
     # ....................... #
@@ -58,7 +58,7 @@ class TemporalWorkflowScheduleCommandAdapter[In: BaseModel](
         args: In,
         timing: DurableWorkflowScheduleTiming,
         *,
-        workflow_id_template: str | None = None,
+        workflow_id_base: str | None = None,
         trigger_immediately: bool = False,
         note: str | None = None,
     ) -> DurableWorkflowScheduleHandle:
@@ -66,7 +66,7 @@ class TemporalWorkflowScheduleCommandAdapter[In: BaseModel](
         sid = self.construct_schedule_id(schedule_id)
         workflow_id = self._workflow_id(
             sid,
-            workflow_id_template=workflow_id_template,
+            workflow_id_base=workflow_id_base,
         )
 
         await self.client.create_schedule(
@@ -90,7 +90,7 @@ class TemporalWorkflowScheduleCommandAdapter[In: BaseModel](
         args: In,
         timing: DurableWorkflowScheduleTiming,
         *,
-        workflow_id_template: str | None = None,
+        workflow_id_base: str | None = None,
         trigger_immediately: bool = False,
         note: str | None = None,
     ) -> DurableWorkflowScheduleHandle:
@@ -101,7 +101,7 @@ class TemporalWorkflowScheduleCommandAdapter[In: BaseModel](
                 schedule_id,
                 args,
                 timing,
-                workflow_id_template=workflow_id_template,
+                workflow_id_base=workflow_id_base,
                 trigger_immediately=trigger_immediately,
                 note=note,
             )
@@ -112,7 +112,7 @@ class TemporalWorkflowScheduleCommandAdapter[In: BaseModel](
 
         workflow_id = self._workflow_id(
             sid,
-            workflow_id_template=workflow_id_template,
+            workflow_id_base=workflow_id_base,
         )
 
         await self.client.update_schedule(
@@ -138,15 +138,15 @@ class TemporalWorkflowScheduleCommandAdapter[In: BaseModel](
         *,
         timing: DurableWorkflowScheduleTiming | None = None,
         args: In | None = None,
-        workflow_id_template: str | None = None,
+        workflow_id_base: str | None = None,
         note: str | None = None,
     ) -> None:
         await self._prepare_queue()
         workflow_id = (
             self._workflow_id(
-                handle.schedule_id, workflow_id_template=workflow_id_template
+                handle.schedule_id, workflow_id_base=workflow_id_base
             )
-            if workflow_id_template is not None
+            if workflow_id_base is not None
             else None
         )
 

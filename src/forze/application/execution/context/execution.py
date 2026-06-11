@@ -266,4 +266,12 @@ class ExecutionContext:
 # ....................... #
 
 ExecutionContextFactory = Callable[[], ExecutionContext]
-"""Factory callable for creating :class:`ExecutionContext` instances."""
+"""Factory callable for creating :class:`ExecutionContext` instances.
+
+Invoke it once per runtime scope. Context objects own per-instance
+:class:`~contextvars.ContextVar` state (e.g. the per-route outbox staging buffers) and
+per-scope caches, so creating execution contexts repeatedly — per request, per
+operation — is **not** a supported mode: stale per-instance ``ContextVar``s cannot be
+cleaned from still-referenced ``Context`` objects. One context per runtime scope; see
+:class:`~forze.base.primitives.ContextualBuffer` for the rationale.
+"""

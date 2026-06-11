@@ -46,11 +46,11 @@ class MockDurableWorkflowScheduleCommandAdapter[In: BaseModel](
         args: In,
         timing: DurableWorkflowScheduleTiming,
         *,
-        workflow_id_template: str | None = None,
+        workflow_id_base: str | None = None,
         trigger_immediately: bool = False,
         note: str | None = None,
     ) -> DurableWorkflowScheduleHandle:
-        _ = workflow_id_template, trigger_immediately, note
+        _ = workflow_id_base, trigger_immediately, note
         with self.state.lock:
             self._schedules()[schedule_id] = {
                 "args": args.model_dump(mode="json"),
@@ -64,7 +64,7 @@ class MockDurableWorkflowScheduleCommandAdapter[In: BaseModel](
         args: In,
         timing: DurableWorkflowScheduleTiming,
         *,
-        workflow_id_template: str | None = None,
+        workflow_id_base: str | None = None,
         trigger_immediately: bool = False,
         note: str | None = None,
     ) -> DurableWorkflowScheduleHandle:
@@ -72,7 +72,7 @@ class MockDurableWorkflowScheduleCommandAdapter[In: BaseModel](
             schedule_id,
             args,
             timing,
-            workflow_id_template=workflow_id_template,
+            workflow_id_base=workflow_id_base,
             trigger_immediately=trigger_immediately,
             note=note,
         )
@@ -83,10 +83,10 @@ class MockDurableWorkflowScheduleCommandAdapter[In: BaseModel](
         *,
         timing: DurableWorkflowScheduleTiming | None = None,
         args: In | None = None,
-        workflow_id_template: str | None = None,
+        workflow_id_base: str | None = None,
         note: str | None = None,
     ) -> None:
-        _ = workflow_id_template, note
+        _ = workflow_id_base, note
         with self.state.lock:
             entry = self._schedules().get(handle.schedule_id)
             if entry is None:

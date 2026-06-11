@@ -1,4 +1,4 @@
-"""Tests for HttpxHttpServiceAdapter."""
+"""Tests for HttpServiceAdapter."""
 
 import httpx
 import pytest
@@ -11,9 +11,9 @@ from forze.application.integrations.http.descriptors import (
     async_http_op,
 )
 from forze.base.exceptions import CoreException, ExceptionKind
-from forze_http.adapters.http_service import HttpxHttpServiceAdapter
-from forze_http.execution.deps.configs import HttpxHttpServiceConfig
-from forze_http.kernel.client import HttpxClient
+from forze_http.adapters.http_service import HttpServiceAdapter
+from forze_http.execution.deps.configs import HttpServiceConfig
+from forze_http.kernel.client import HttpClient
 
 # ----------------------- #
 
@@ -44,15 +44,15 @@ async def test_invoke_static_base_url() -> None:
         return httpx.Response(200, json={"items": [{"id": "1"}]})
 
     transport = httpx.MockTransport(handler)
-    client = HttpxClient()
+    client = HttpClient()
     await client.initialize(
         base_url="https://api.example.com",
         transport=transport,
     )
 
-    adapter = HttpxHttpServiceAdapter(
+    adapter = HttpServiceAdapter(
         client=client,
-        config=HttpxHttpServiceConfig(base_url="https://api.example.com"),
+        config=HttpServiceConfig(base_url="https://api.example.com"),
         spec=spec,
     )
 
@@ -70,15 +70,15 @@ async def test_invoke_invalid_response_is_validation_error() -> None:
         return httpx.Response(200, json={"not_items": []})
 
     transport = httpx.MockTransport(handler)
-    client = HttpxClient()
+    client = HttpClient()
     await client.initialize(
         base_url="https://api.example.com",
         transport=transport,
     )
 
-    adapter = HttpxHttpServiceAdapter(
+    adapter = HttpServiceAdapter(
         client=client,
-        config=HttpxHttpServiceConfig(base_url="https://api.example.com"),
+        config=HttpServiceConfig(base_url="https://api.example.com"),
         spec=spec,
     )
 
@@ -107,12 +107,12 @@ async def test_invoke_unknown_operation() -> None:
             ),
         },
     )
-    client = HttpxClient()
+    client = HttpClient()
     await client.initialize(base_url="https://api.example.com")
 
-    adapter = HttpxHttpServiceAdapter(
+    adapter = HttpServiceAdapter(
         client=client,
-        config=HttpxHttpServiceConfig(base_url="https://api.example.com"),
+        config=HttpServiceConfig(base_url="https://api.example.com"),
         spec=spec,
     )
 
