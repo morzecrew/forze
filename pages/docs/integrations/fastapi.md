@@ -175,6 +175,20 @@ attach_storage_routes(
 )
 ```
 
+`attach_authn_routes` projects an authn registry (`build_authn_registry`) the
+same way. Authn flows are RPC-shaped with one natural surface each, so there is
+no style choice — fixed action paths: `POST /login` and `POST /refresh` (200,
+token response), `POST /logout` (204, no body), `POST /change-password` (204),
+`POST /password-reset/request` (202, uniform ack — never the token) and
+`POST /password-reset/confirm` (204), and `POST /deactivate` (204). Login,
+refresh, and the password-reset pair are meant to be reachable without a bearer
+token (the operations authenticate via their bodies, or deliberately not at all
+for the reset request); logout and change-password 401 on their own without a
+bound identity, while `deactivate_principal` ships unguarded — bind
+`AuthnRequired` + authz hooks on it or exclude it via `include=`. The full
+wiring (including how the reset token reaches the user via the outbox) is in the
+[Authn, authz & tenancy recipe](../recipes/authn-authz-tenancy-fastapi.md#http-login-endpoints).
+
 Identity, invocation metadata, and error mapping stay with the middlewares and
 exception handlers above — generated routes only validate the input DTO and run
 the operation through the normal pipeline.

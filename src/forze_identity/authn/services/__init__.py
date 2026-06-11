@@ -3,6 +3,7 @@ from .api_key import ApiKeyConfig, ApiKeyService
 from .invite_token import InviteTokenConfig, InviteTokenService
 from .password import PasswordConfig, PasswordService
 from .refresh_token import RefreshTokenConfig, RefreshTokenService
+from .reset_token import ResetTokenConfig, ResetTokenService
 
 # ----------------------- #
 
@@ -16,6 +17,8 @@ __all__ = [
     "InviteTokenConfig",
     "RefreshTokenService",
     "RefreshTokenConfig",
+    "ResetTokenService",
+    "ResetTokenConfig",
     "PasswordService",
     "PasswordConfig",
 ]

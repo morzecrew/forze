@@ -10,6 +10,8 @@ from .handlers import (
     AuthnLogout,
     AuthnPasswordLogin,
     AuthnRefreshTokens,
+    AuthnRequestPasswordReset,
+    AuthnResetPassword,
     DeactivatePrincipalHandler,
 )
 
@@ -46,6 +48,18 @@ class AuthnFacade(OperationFacade):
         uc=AuthnChangePassword,
     )
     """Change-password usecase."""
+
+    request_password_reset = facade_op(
+        AuthnKernelOp.REQUEST_PASSWORD_RESET,
+        uc=AuthnRequestPasswordReset,
+    )
+    """Request-password-reset (self-service, uniform ack) usecase."""
+
+    reset_password = facade_op(
+        AuthnKernelOp.RESET_PASSWORD,
+        uc=AuthnResetPassword,
+    )
+    """Reset-password (consume single-use token) usecase."""
 
     deactivate_principal = facade_op(
         AuthnKernelOp.DEACTIVATE_PRINCIPAL,

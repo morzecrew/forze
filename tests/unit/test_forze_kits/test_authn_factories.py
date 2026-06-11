@@ -18,6 +18,7 @@ from forze.application.contracts.authn import (
     IssuedRefreshToken,
     IssuedTokens,
     PasswordLifecycleDepKey,
+    PasswordResetDepKey,
     PrincipalDeactivationDepKey,
     TokenLifecycleDepKey,
 )
@@ -33,6 +34,8 @@ from forze_kits.aggregates.authn.handlers import (
     AuthnLogout,
     AuthnPasswordLogin,
     AuthnRefreshTokens,
+    AuthnRequestPasswordReset,
+    AuthnResetPassword,
     DeactivatePrincipalHandler,
 )
 from forze.base.primitives import StrKeyNamespace
@@ -73,6 +76,9 @@ def _mock_ctx(
     token_lifecycle.revoke_tokens = AsyncMock(return_value=None)
     password_lifecycle = AsyncMock()
     password_lifecycle.change_password = AsyncMock(return_value=None)
+    password_reset = AsyncMock()
+    password_reset.request_reset = AsyncMock(return_value=None)
+    password_reset.reset_password = AsyncMock(return_value=None)
     principal_deactivation = AsyncMock()
     principal_deactivation.deactivate = AsyncMock(return_value=None)
 
@@ -92,6 +98,8 @@ def _mock_ctx(
             return token_lifecycle
         if key is PasswordLifecycleDepKey:
             return password_lifecycle
+        if key is PasswordResetDepKey:
+            return password_reset
         if key is PrincipalDeactivationDepKey:
             return principal_deactivation
         raise AssertionError(f"unexpected key {key!r}")
@@ -112,6 +120,8 @@ class TestBuildAuthnRegistry:
         assert registry_has_handler(reg, ns.key(AuthnKernelOp.REFRESH_TOKENS))
         assert registry_has_handler(reg, ns.key(AuthnKernelOp.LOGOUT))
         assert registry_has_handler(reg, ns.key(AuthnKernelOp.CHANGE_PASSWORD))
+        assert registry_has_handler(reg, ns.key(AuthnKernelOp.REQUEST_PASSWORD_RESET))
+        assert registry_has_handler(reg, ns.key(AuthnKernelOp.RESET_PASSWORD))
         assert registry_has_handler(reg, ns.key(AuthnKernelOp.DEACTIVATE_PRINCIPAL))
 
     def test_catalog_has_descriptor_for_every_op(self) -> None:
@@ -169,3 +179,48 @@ class TestBuildAuthnRegistry:
         factory = handler_at(reg, spec.default_namespace.key(AuthnKernelOp.DEACTIVATE_PRINCIPAL))
         handler = factory(_mock_ctx())
         assert isinstance(handler, DeactivatePrincipalHandler)
+
+    @pytest.mark.asyncio
+    async def test_request_password_reset_factory_without_outbox(self) -> None:
+        spec = _authn_spec()
+        reg = build_authn_registry(spec)
+        factory = handler_at(
+            reg,
+            spec.default_namespace.key(AuthnKernelOp.REQUEST_PASSWORD_RESET),
+        )
+        handler = factory(_mock_ctx())
+        assert isinstance(handler, AuthnRequestPasswordReset)
+        # No reset_events spec → no outbox staging wired.
+        assert handler.outbox is None
+
+    @pytest.mark.asyncio
+    async def test_request_password_reset_factory_wires_reset_events_outbox(
+        self,
+    ) -> None:
+        spec = _authn_spec()
+        outbox_spec = MagicMock()
+        reg = build_registry(spec, reset_events=outbox_spec)
+        factory = handler_at(
+            reg,
+            spec.default_namespace.key(AuthnKernelOp.REQUEST_PASSWORD_RESET),
+        )
+
+        ctx = _mock_ctx()
+        outbox_port = MagicMock()
+        ctx.outbox.command = MagicMock(return_value=outbox_port)
+
+        handler = factory(ctx)
+        assert isinstance(handler, AuthnRequestPasswordReset)
+        ctx.outbox.command.assert_called_once_with(outbox_spec)
+        assert handler.outbox is outbox_port
+
+    @pytest.mark.asyncio
+    async def test_reset_password_factory_returns_handler(self) -> None:
+        spec = _authn_spec()
+        reg = build_authn_registry(spec)
+        factory = handler_at(
+            reg,
+            spec.default_namespace.key(AuthnKernelOp.RESET_PASSWORD),
+        )
+        handler = factory(_mock_ctx())
+        assert isinstance(handler, AuthnResetPassword)

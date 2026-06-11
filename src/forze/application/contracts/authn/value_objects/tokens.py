@@ -1,3 +1,4 @@
+from datetime import datetime
 from uuid import UUID
 
 import attrs
@@ -47,6 +48,33 @@ class IssuedInvite:
 
     lifetime: CredentialLifetime | None = attrs.field(default=None)
     """Lifetime of the invite."""
+
+
+# ....................... #
+# Password reset
+
+
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class IssuedPasswordReset:
+    """A single-use password reset token freshly issued for a known login.
+
+    The raw ``token`` is delivered to the account holder out of band (e-mail,
+    SMS, …) and presented back via ``reset_password``; only its digest is
+    persisted. It must never appear in the response of the operation that
+    requested it (no-enumeration posture).
+    """
+
+    token: str = attrs.field(repr=False)
+    """Opaque reset token string (only shown at issuance time)."""
+
+    principal_id: UUID
+    """Principal whose password the reset re-keys once confirmed."""
+
+    login: str
+    """Login the reset was requested for (delivery-channel lookup key)."""
+
+    expires_at: datetime
+    """Absolute expiration time of the reset token."""
 
 
 # ....................... #

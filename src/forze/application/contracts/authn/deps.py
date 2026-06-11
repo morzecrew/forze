@@ -5,6 +5,7 @@ from .ports import (
     AuthnPort,
     PasswordAccountProvisioningPort,
     PasswordLifecyclePort,
+    PasswordResetPort,
     PasswordVerifierPort,
     PrincipalDeactivationPort,
     PrincipalEligibilityPort,
@@ -33,6 +34,9 @@ PrincipalResolverDepPort = ConfigurableDepPort[AuthnSpec, PrincipalResolverPort]
 
 PasswordLifecycleDepPort = ConfigurableDepPort[AuthnSpec, PasswordLifecyclePort]
 """Password lifecycle dependency port."""
+
+PasswordResetDepPort = ConfigurableDepPort[AuthnSpec, PasswordResetPort]
+"""Self-service password reset dependency port."""
 
 TokenLifecycleDepPort = ConfigurableDepPort[AuthnSpec, TokenLifecyclePort]
 """Token lifecycle dependency port."""
@@ -64,6 +68,9 @@ PrincipalResolverDepKey = DepKey[PrincipalResolverDepPort]("authn_principal_reso
 
 PasswordLifecycleDepKey = DepKey[PasswordLifecycleDepPort]("authn_password_lifecycle")
 """Key used to register the `PasswordLifecyclePort` builder implementation."""
+
+PasswordResetDepKey = DepKey[PasswordResetDepPort]("authn_password_reset")
+"""Key used to register the `PasswordResetPort` builder implementation."""
 
 TokenLifecycleDepKey = DepKey[TokenLifecycleDepPort]("authn_token_lifecycle")
 """Key used to register the `TokenLifecyclePort` builder implementation."""
@@ -122,6 +129,15 @@ class AuthnDeps(ConvenientDeps):
 
         return self._resolve_command(
             PasswordLifecycleDepKey,
+            spec,
+            route=spec.name,
+        )
+
+    def password_reset(self, spec: AuthnSpec) -> PasswordResetPort:
+        """Resolve self-service password reset for ``spec`` (a write — guarded)."""
+
+        return self._resolve_command(
+            PasswordResetDepKey,
             spec,
             route=spec.name,
         )

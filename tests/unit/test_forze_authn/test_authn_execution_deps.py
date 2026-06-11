@@ -21,6 +21,7 @@ from forze.application.contracts.authn import (
     AuthnSpec,
     PasswordAccountProvisioningDepKey,
     PasswordLifecycleDepKey,
+    PasswordResetDepKey,
     PasswordVerifierDepKey,
     PrincipalEligibilityDepKey,
     PrincipalResolverDepKey,
@@ -43,6 +44,7 @@ from forze_identity.authn.adapters import (
     ApiKeyLifecycleAdapter,
     PasswordAccountProvisioningAdapter,
     PasswordLifecycleAdapter,
+    PasswordResetAdapter,
     TokenLifecycleAdapter,
 )
 from forze_identity.authn.application.constants import AuthnResourceName
@@ -59,6 +61,7 @@ from forze_identity.authn.execution import (
     ConfigurableJwtNativeUuidResolver,
     ConfigurablePasswordAccountProvisioning,
     ConfigurablePasswordLifecycle,
+    ConfigurablePasswordReset,
     ConfigurablePolicyPrincipalEligibility,
     ConfigurableTokenLifecycle,
     build_authn_shared_services,
@@ -82,6 +85,7 @@ def _kernel_full() -> AuthnKernelConfig:
         refresh_token_pepper=b"p" * 32,
         password=_slow_password_config(),
         api_key_pepper=b"a" * 32,
+        reset_token_pepper=b"r" * 32,
     )
 
 
@@ -96,6 +100,7 @@ def _mock_doc_query_routes() -> dict[AuthnResourceName, object]:
         AuthzResourceName.POLICY_PRINCIPALS: factory,
         AuthnResourceName.PASSWORD_ACCOUNTS: factory,
         AuthnResourceName.API_KEY_ACCOUNTS: factory,
+        AuthnResourceName.PASSWORD_RESETS: factory,
         AuthnResourceName.TOKEN_SESSIONS: factory,
     }
 
@@ -110,6 +115,7 @@ def _mock_doc_command_routes() -> dict[AuthnResourceName, object]:
     return {
         AuthnResourceName.PASSWORD_ACCOUNTS: factory,
         AuthnResourceName.API_KEY_ACCOUNTS: factory,
+        AuthnResourceName.PASSWORD_RESETS: factory,
         AuthnResourceName.TOKEN_SESSIONS: factory,
     }
 
@@ -182,6 +188,7 @@ class TestAuthnDepsModule:
             password_lifecycle={"a"},
             api_key_lifecycle={"a"},
             password_account_provisioning={"a"},
+            password_reset={"a"},
         )()
 
         assert deps.exists(AuthnDepKey, route="a")
@@ -193,6 +200,21 @@ class TestAuthnDepsModule:
         assert deps.exists(PasswordLifecycleDepKey, route="a")
         assert deps.exists(ApiKeyLifecycleDepKey, route="a")
         assert deps.exists(PasswordAccountProvisioningDepKey, route="a")
+        assert deps.exists(PasswordResetDepKey, route="a")
+
+    def test_password_reset_requires_reset_pepper(self) -> None:
+        with pytest.raises(CoreException, match=r"kernel\.reset_token_pepper"):
+            AuthnDepsModule(
+                kernel=AuthnKernelConfig(password=_slow_password_config()),
+                password_reset={"a"},
+            )()
+
+    def test_password_reset_requires_password_section(self) -> None:
+        with pytest.raises(CoreException, match=r"kernel\.password"):
+            AuthnDepsModule(
+                kernel=AuthnKernelConfig(reset_token_pepper=b"r" * 32),
+                password_reset={"a"},
+            )()
 
     def test_token_verifier_override_without_resolver_rejected(self) -> None:
         with pytest.raises(CoreException, match="'main'"):
@@ -447,6 +469,50 @@ class TestConfigurableFactories:
 
         assert isinstance(port, PasswordAccountProvisioningAdapter)
 
+    def test_password_reset_factory(self) -> None:
+        ctx = self._ctx()
+
+        kernel = AuthnKernelConfig(
+            password=_slow_password_config(),
+            reset_token_pepper=b"r" * 32,
+        )
+        factory = ConfigurablePasswordReset(shared=build_authn_shared_services(kernel))
+
+        port = factory(ctx, AuthnSpec(name="s"))
+
+        assert isinstance(port, PasswordResetAdapter)
+        assert port.revoke_sessions_on_reset is True
+        assert port.session_qry is not None
+        assert port.session_cmd is not None
+
+    def test_password_reset_factory_revocation_opt_out(self) -> None:
+        ctx = self._ctx()
+
+        kernel = AuthnKernelConfig(
+            password=_slow_password_config(),
+            reset_token_pepper=b"r" * 32,
+        )
+        factory = ConfigurablePasswordReset(
+            shared=build_authn_shared_services(kernel),
+            revoke_sessions_on_reset=False,
+        )
+
+        port = factory(ctx, AuthnSpec(name="s"))
+
+        assert isinstance(port, PasswordResetAdapter)
+        assert port.revoke_sessions_on_reset is False
+        assert port.session_qry is None
+        assert port.session_cmd is None
+
+    def test_password_reset_factory_requires_reset_service(self) -> None:
+        ctx = self._ctx()
+
+        kernel = AuthnKernelConfig(password=_slow_password_config())
+        factory = ConfigurablePasswordReset(shared=build_authn_shared_services(kernel))
+
+        with pytest.raises(CoreException, match=r"kernel\.reset_token_pepper"):
+            factory(ctx, AuthnSpec(name="s"))
+
     def test_shared_password_service_across_authn_and_password_lifecycle(self) -> None:
         kernel = AuthnKernelConfig(
             access_token_secret=b"k" * 32,
@@ -495,10 +561,12 @@ class TestCredentialSpecsAreSensitive:
             api_key_account_spec,
             password_account_spec,
             password_invite_spec,
+            password_reset_spec,
             session_spec,
         )
 
         assert password_account_spec.sensitive is True
         assert api_key_account_spec.sensitive is True
         assert password_invite_spec.sensitive is True
+        assert password_reset_spec.sensitive is True
         assert session_spec.sensitive is True

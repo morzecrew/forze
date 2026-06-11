@@ -20,6 +20,7 @@ async def create_authn_tables(
     pwd = f"authn_pwd_{suffix}"
     ak = f"authn_ak_{suffix}"
     sess = f"authn_sess_{suffix}"
+    reset = f"authn_reset_{suffix}"
 
     await pg_client.execute(
         f"""
@@ -67,6 +68,16 @@ async def create_authn_tables(
             rotated_at timestamptz,
             replaced_by uuid
         );
+        CREATE TABLE {reset} (
+            id uuid PRIMARY KEY,
+            rev integer NOT NULL,
+            created_at timestamptz NOT NULL,
+            last_update_at timestamptz NOT NULL,
+            principal_id uuid NOT NULL,
+            token_digest text NOT NULL,
+            expires_at timestamptz NOT NULL,
+            used_at timestamptz
+        );
         """
     )
 
@@ -75,6 +86,7 @@ async def create_authn_tables(
         "pwd": pwd,
         "ak": ak,
         "sess": sess,
+        "reset": reset,
     }
 
 

@@ -126,6 +126,116 @@ registry = (
   rows they're entitled to. Authorization scoping *is* [query-DSL](../reference/query-syntax.md)
   filter injection.
 
+## HTTP login endpoints
+
+The login flows themselves come for free: `build_authn_registry` registers the
+password-login, refresh, logout, change-password, password-reset, and
+deactivate operations, and `attach_authn_routes` projects them onto a router —
+`POST /auth/login`, `/auth/refresh`, `/auth/logout`, `/auth/change-password`,
+`/auth/password-reset/request`, `/auth/password-reset/confirm`,
+`/auth/deactivate`:
+
+```python
+from fastapi import APIRouter
+from forze_fastapi.routes import attach_authn_routes
+from forze_kits.aggregates.authn import build_authn_registry
+
+AUTH = AuthnSpec(name="api", enabled_methods=frozenset({"password", "token"}))
+
+auth_router = APIRouter(prefix="/auth", tags=["auth"])
+attach_authn_routes(
+    auth_router,
+    registry=build_authn_registry(AUTH).freeze(),
+    ns=AUTH.default_namespace,
+    ctx_dep=lambda: runtime.get_context(),
+)
+app.include_router(auth_router)
+```
+
+```bash
+curl -X POST /auth/login -d '{"login": "alice", "password": "…"}'
+# → {"access_token": "…", "refresh_token": "…", "access_token_type": "Bearer", …}
+curl -X POST /auth/logout -H "Authorization: Bearer <access_token>"   # → 204
+```
+
+`/login` and `/refresh` are deliberately reachable **without** a bearer token —
+the operations authenticate via their request bodies. `/logout` and
+`/change-password` answer `401` on their own when the middleware bound no
+identity. `/deactivate` (`deactivate_principal`) is the exception: it ships
+**unguarded** — bind `AuthnRequired` plus an `AuthzBeforeAuthorize` on that
+operation (the same chain as [above](#enforce-on-operations)) before exposing
+it, or keep it off the router with `include=`.
+
+## Self-service password reset
+
+The reset pair is also part of the registry. `/password-reset/request` answers
+a **uniform 202** for known and unknown logins alike (no account enumeration)
+and never returns the token; `/password-reset/confirm` consumes the single-use
+token (1 hour TTL by default), sets the new password, and revokes **all** of
+the principal's sessions — the same "log out everywhere" cascade as
+change-password. Any bad token — wrong, expired, used, superseded — is a
+uniform `401`.
+
+Wiring needs two things on top of the login stack: the reset pepper on the
+kernel, and the `password_reset` route set:
+
+```python
+AuthnDepsModule(
+    kernel=AuthnKernelConfig(
+        access_token_secret=secret,
+        refresh_token_pepper=refresh_pepper,
+        password=PasswordConfig(),
+        reset_token_pepper=reset_pepper,  # bytes, ≥ 32 — separate from invite_token_pepper
+    ),
+    authn={"api": frozenset({"password", "token"})},
+    token_lifecycle={"api"},
+    password_reset={"api"},
+)
+```
+
+Only the token's HMAC digest is persisted (`authn_password_resets`, a
+`sensitive` document spec like the other credential stores); issuing a new
+reset supersedes the previous outstanding one (single active reset per
+principal).
+
+**Delivery — getting the token to the user.** The raw token must reach the
+account holder out of band, never via the HTTP response. The registry has an
+outbox seam for exactly this:
+
+```python
+from forze.application.contracts.outbox import OutboxSpec
+from forze_kits.aggregates.authn import AuthnPasswordResetRequestedPayload
+
+RESET_EVENTS = OutboxSpec(
+    name="authn_events",
+    codec=PydanticModelCodec(AuthnPasswordResetRequestedPayload),
+    destination=OutboxDestination.queue(route="jobs", channel="notify"),
+)
+
+registry = build_authn_registry(AUTH, reset_events=RESET_EVENTS).freeze()
+```
+
+With `reset_events` set, a successful request stages an
+`authn.password_reset_requested` integration event (payload: `login`,
+`principal_id`, raw `token`, `expires_at`). From there it is the standard
+outbox → relay → notify pipeline: relay the route to your queue and map the
+event to an e-mail/SMS command in your notify consumer (a `NotificationRouter`
+event-mapper turns the payload into a message embedding the reset link).
+Unknown logins stage nothing — the uniform ack is all an outside observer ever
+sees.
+
+Two caveats, by design:
+
+- The raw token transits the outbox row. The 1-hour TTL and single-use
+  semantics bound the exposure, but treat the outbox store like the credential
+  stores (and keep its retention tight). Apps wanting zero persistence of the
+  raw token skip `reset_events` and call `ctx.authn.password_reset(spec)` from
+  a custom handler that hands the token straight to a mailer.
+- Without `reset_events` **or** a custom delivery handler, requesting a reset
+  mints a token nobody ever receives — wire one of the two before exposing the
+  route. And rate-limit `/password-reset/request` at the edge: it is an
+  unauthenticated write.
+
 ## Notes
 
 - **Tenant binding.** The tenant comes from the verified credential's issuer hint

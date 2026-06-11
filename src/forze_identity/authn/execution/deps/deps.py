@@ -12,6 +12,7 @@ from forze.application.contracts.authn import (
     AuthnSpec,
     PasswordAccountProvisioningPort,
     PasswordLifecyclePort,
+    PasswordResetPort,
     PasswordVerifierDepKey,
     PasswordVerifierPort,
     PrincipalDeactivationPort,
@@ -34,6 +35,7 @@ from ...adapters import (
     ApiKeyLifecycleAdapter,
     PasswordAccountProvisioningAdapter,
     PasswordLifecycleAdapter,
+    PasswordResetAdapter,
     TokenLifecycleAdapter,
 )
 from ...adapters.credential_deactivation import AuthnCredentialDeactivationHelper
@@ -44,6 +46,7 @@ from ...application.specs import (
     identity_mapping_spec,
     password_account_spec,
     password_invite_spec,
+    password_reset_spec,
     session_spec,
 )
 from ...orchestrator import AuthnOrchestrator
@@ -419,6 +422,51 @@ class ConfigurablePasswordLifecycle:
             session_qry=ctx.doc.query(session_spec) if revoke else None,
             session_cmd=ctx.doc.command(session_spec) if revoke else None,
             revoke_sessions_on_password_change=revoke,
+        )
+
+
+# ....................... #
+
+
+@final
+@attrs.define(slots=True, frozen=True, kw_only=True)
+class ConfigurablePasswordReset:
+    """Build :class:`PasswordResetAdapter`."""
+
+    shared: AuthnSharedServices
+
+    revoke_sessions_on_reset: bool = attrs.field(default=True)
+    """Whether a successful reset revokes all of the principal's sessions
+    ("log out everywhere"); wires the session document ports when enabled."""
+
+    # ....................... #
+
+    def __call__(
+        self,
+        ctx: ExecutionContext,
+        spec: AuthnSpec,
+    ) -> PasswordResetPort:
+        _ = spec
+
+        if self.shared.password_svc is None:
+            raise exc.internal("Password reset requires kernel.password")
+
+        if self.shared.reset_svc is None:
+            raise exc.internal("Password reset requires kernel.reset_token_pepper")
+
+        revoke = self.revoke_sessions_on_reset
+
+        return PasswordResetAdapter(
+            password_svc=self.shared.password_svc,
+            reset_svc=self.shared.reset_svc,
+            pa_qry=ctx.doc.query(password_account_spec),
+            pa_cmd=ctx.doc.command(password_account_spec),
+            reset_qry=ctx.doc.query(password_reset_spec),
+            reset_cmd=ctx.doc.command(password_reset_spec),
+            eligibility=_resolve_eligibility(ctx, spec),
+            session_qry=ctx.doc.query(session_spec) if revoke else None,
+            session_cmd=ctx.doc.command(session_spec) if revoke else None,
+            revoke_sessions_on_reset=revoke,
         )
 
 

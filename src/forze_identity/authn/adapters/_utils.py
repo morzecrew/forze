@@ -8,6 +8,7 @@ from forze.base.primitives import utcnow
 
 from ..domain.models.account import ReadApiKeyAccount, ReadPasswordAccount
 from ..domain.models.invite import ReadPasswordInvite
+from ..domain.models.reset import ReadPasswordReset
 from ..domain.models.session import (
     CreateSessionCmd,
     ReadSession,
@@ -146,3 +147,40 @@ async def find_password_invite_by_digest(
             },
         }
     )
+
+
+# ....................... #
+
+
+async def find_password_reset_by_digest(
+    qry: DocumentQueryPort[ReadPasswordReset],
+    token_digest: str,
+) -> ReadPasswordReset | None:
+    return await qry.find(
+        filters={
+            "$values": {
+                "token_digest": token_digest,
+            },
+        }
+    )
+
+
+# ....................... #
+
+
+async def find_outstanding_password_resets(
+    qry: DocumentQueryPort[ReadPasswordReset],
+    principal_id: UUID,
+) -> list[ReadPasswordReset]:
+    """Find every still-unused reset for ``principal_id`` (for supersession)."""
+
+    page = await qry.find_many(
+        filters={
+            "$values": {
+                "principal_id": principal_id,
+                "used_at": None,
+            },
+        }
+    )
+
+    return list(page.hits)

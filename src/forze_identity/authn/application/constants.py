@@ -9,6 +9,7 @@ class AuthnResourceName(StrEnum):
     PASSWORD_ACCOUNTS = "authn_password_accounts"  # nosec B105
     API_KEY_ACCOUNTS = "authn_api_key_accounts"
     PASSWORD_INVITES = "authn_password_invites"  # nosec B105
+    PASSWORD_RESETS = "authn_password_resets"  # nosec B105
     TOKEN_SESSIONS = "authn_token_sessions"  # nosec B105
     IDENTITY_MAPPINGS = "authn_identity_mappings"
 
@@ -20,6 +21,7 @@ AUTHN_TENANT_UNAWARE_DOCUMENT_SPEC_NAMES = frozenset({
     AuthnResourceName.PASSWORD_ACCOUNTS,
     AuthnResourceName.API_KEY_ACCOUNTS,
     AuthnResourceName.PASSWORD_INVITES,
+    AuthnResourceName.PASSWORD_RESETS,
     AuthnResourceName.TOKEN_SESSIONS,
     AuthnResourceName.IDENTITY_MAPPINGS,
 })

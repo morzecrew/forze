@@ -18,6 +18,7 @@ from forze.application.contracts.authn import (
     AuthnSpec,
     PasswordAccountProvisioningDepKey,
     PasswordLifecycleDepKey,
+    PasswordResetDepKey,
     PasswordVerifierDepKey,
     PrincipalDeactivationDepKey,
     PrincipalEligibilityDepKey,
@@ -137,6 +138,7 @@ from forze.application.execution import (
 )
 from forze.application.execution.domain import domain_dispatcher_provider
 from forze.application.execution.outbox import build_staging_outbox_command_for_store
+from forze.application.integrations.authn import AuthnOrchestrator
 from forze.application.integrations.outbox import StagingOutboxCommand
 from forze.application.integrations.search import SearchResultSnapshot
 from forze.base.exceptions import exc
@@ -173,7 +175,6 @@ from forze_mock.adapters import (
 from forze_mock.adapters.identity import (
     MockApiKeyLifecyclePort,
     MockApiKeyVerifierPort,
-    MockAuthnPort,
     MockAuthzDecisionPort,
     MockAuthzScopePort,
     MockDelegationGrantPort,
@@ -181,6 +182,7 @@ from forze_mock.adapters.identity import (
     MockGrantQueryPort,
     MockPasswordAccountProvisioningPort,
     MockPasswordLifecyclePort,
+    MockPasswordResetPort,
     MockPasswordVerifierPort,
     MockPrincipalDeactivationPort,
     MockPrincipalEligibilityPort,
@@ -723,22 +725,152 @@ class ConfigurableMockDurableFunctionEvent(_MockFactoryBase):
         return MockDurableFunctionEventAdapter(spec=spec, state=self._state(context))
 
 
+@final
+@attrs.define(slots=True, frozen=True, kw_only=True)
+class ConstantMockPortFactory:
+    """Adapt a pre-built mock identity port to the configurable-factory protocol.
+
+    Identity deps are registered route-keyed as ``(ctx, spec) -> port`` factories —
+    the same shape the real identity modules use — so they resolve through
+    ``Deps.resolve_configurable`` (``ctx.authn`` / ``ctx.authz`` convenience
+    accessors and the kit handler factories). The mock stubs are pre-built per
+    route, so this factory simply hands the instance back.
+    """
+
+    port: Any
+    """Pre-built mock port returned for every resolution on this route."""
+
+    def __call__(self, context: ExecutionContext, spec: Any) -> Any:
+        _ = context, spec
+        return self.port
+
+
+# ....................... #
+
+
+def _route_eligibility(
+    context: ExecutionContext,
+    spec: AuthnSpec,
+) -> Any:
+    """Resolve the route's eligibility port (mirrors the identity-plane helper)."""
+
+    return context.deps.provide(PrincipalEligibilityDepKey, route=spec.name)(
+        context,
+        spec,
+    )
+
+
+@final
+@attrs.define(slots=True, kw_only=True)
+class ConfigurableMockAuthn(_MockFactoryBase):
+    """Compose the core :class:`AuthnOrchestrator` over the route's mock ports.
+
+    Replaces the old raising ``MockAuthnPort`` stub under ``AuthnDepKey``:
+    password/token/API-key authentication runs for real against the seeded mock
+    verifiers, principal resolver, and eligibility gate of the same route, with
+    the spec's ``enabled_methods`` gating each credential family — exactly like
+    the identity plane's ``ConfigurableAuthn``, minus the crypto.
+    """
+
+    def __call__(
+        self,
+        context: ExecutionContext,
+        spec: AuthnSpec,
+    ) -> AuthnOrchestrator:
+        def port(key: DepKey[Any]) -> Any:
+            return context.deps.provide(key, route=spec.name)(context, spec)
+
+        methods = frozenset(spec.enabled_methods)
+
+        return AuthnOrchestrator(
+            resolver=port(PrincipalResolverDepKey),
+            eligibility=port(PrincipalEligibilityDepKey),
+            enabled_methods=methods,
+            password_verifier=(
+                port(PasswordVerifierDepKey) if "password" in methods else None
+            ),
+            token_verifier=port(TokenVerifierDepKey) if "token" in methods else None,
+            api_key_verifier=(
+                port(ApiKeyVerifierDepKey) if "api_key" in methods else None
+            ),
+        )
+
+
+@final
+@attrs.define(slots=True, kw_only=True)
+class ConfigurableMockTokenLifecycle(_MockFactoryBase):
+    """Build the state-backed mock token lifecycle gated by the route's eligibility."""
+
+    def __call__(
+        self,
+        context: ExecutionContext,
+        spec: AuthnSpec,
+    ) -> MockTokenLifecyclePort:
+        return MockTokenLifecyclePort(
+            state=self._state(context),
+            route=str(spec.name),
+            eligibility=_route_eligibility(context, spec),
+        )
+
+
+@final
+@attrs.define(slots=True, kw_only=True)
+class ConfigurableMockPasswordLifecycle(_MockFactoryBase):
+    """Build the state-backed mock password lifecycle gated by the route's eligibility."""
+
+    def __call__(
+        self,
+        context: ExecutionContext,
+        spec: AuthnSpec,
+    ) -> MockPasswordLifecyclePort:
+        return MockPasswordLifecyclePort(
+            state=self._state(context),
+            route=str(spec.name),
+            eligibility=_route_eligibility(context, spec),
+        )
+
+
+@final
+@attrs.define(slots=True, kw_only=True)
+class ConfigurableMockPasswordReset(_MockFactoryBase):
+    """Build the state-backed mock password reset gated by the route's eligibility."""
+
+    def __call__(
+        self,
+        context: ExecutionContext,
+        spec: AuthnSpec,
+    ) -> MockPasswordResetPort:
+        return MockPasswordResetPort(
+            state=self._state(context),
+            route=str(spec.name),
+            eligibility=_route_eligibility(context, spec),
+        )
+
+
+# ....................... #
+
+
 def _route_stubs(
     cls: type[Any],
     routes: Iterable[StrKey],
     *,
     state: MockState | None = None,
 ) -> dict[StrKey, Any]:
-    """Build a ``{route: adapter}`` map.
+    """Build a ``{route: factory}`` map of constant configurable factories.
 
     Stateful adapters receive ``state``/``route``; stateless ones (``state`` omitted)
-    are constructed with no arguments.
+    are constructed with no arguments. Each pre-built adapter is wrapped in
+    :class:`ConstantMockPortFactory` so the registration resolves through
+    ``Deps.resolve_configurable`` like the real identity modules.
     """
 
     if state is None:
-        return {route: cls() for route in routes}
+        return {route: ConstantMockPortFactory(port=cls()) for route in routes}
 
-    return {route: cls(state=state, route=str(route)) for route in routes}
+    return {
+        route: ConstantMockPortFactory(port=cls(state=state, route=str(route)))
+        for route in routes
+    }
 
 
 @final
@@ -851,64 +983,64 @@ class MockDepsModule(DepsModule):
         authz_keys = id_cfg.authz_routes
         tenancy_keys = id_cfg.tenancy_routes
 
-        deps.update(
-            {
-                AuthnDepKey: {
-                    route: MockAuthnPort(
-                        spec=AuthnSpec(
-                            name=route, enabled_methods=frozenset({"token"})
-                        ),
-                    )
-                    for route in authn_keys
-                },
-                PasswordVerifierDepKey: _route_stubs(
-                    MockPasswordVerifierPort, authn_keys, state=self.state
-                ),
-                TokenVerifierDepKey: _route_stubs(
-                    MockTokenVerifierPort, authn_keys, state=self.state
-                ),
-                ApiKeyVerifierDepKey: _route_stubs(
-                    MockApiKeyVerifierPort, authn_keys, state=self.state
-                ),
-                PrincipalResolverDepKey: _route_stubs(
-                    MockPrincipalResolverPort, authn_keys, state=self.state
-                ),
-                PrincipalEligibilityDepKey: _route_stubs(
-                    MockPrincipalEligibilityPort, authn_keys
-                ),
-                PrincipalDeactivationDepKey: _route_stubs(
-                    MockPrincipalDeactivationPort, authn_keys
-                ),
-                TokenLifecycleDepKey: _route_stubs(MockTokenLifecyclePort, authn_keys),
-                PasswordLifecycleDepKey: _route_stubs(
-                    MockPasswordLifecyclePort, authn_keys
-                ),
-                ApiKeyLifecycleDepKey: _route_stubs(
-                    MockApiKeyLifecyclePort, authn_keys
-                ),
-                PasswordAccountProvisioningDepKey: _route_stubs(
-                    MockPasswordAccountProvisioningPort, authn_keys
-                ),
-                PrincipalRegistryDepKey: _route_stubs(
-                    MockPrincipalRegistryPort, authz_keys, state=self.state
-                ),
-                RoleAssignmentDepKey: _route_stubs(MockRoleAssignmentPort, authz_keys),
-                GrantQueryDepKey: _route_stubs(MockGrantQueryPort, authz_keys),
-                DelegationGrantDepKey: _route_stubs(
-                    MockDelegationGrantPort, authz_keys, state=self.state
-                ),
-                DelegationDepKey: _route_stubs(
-                    MockDelegationPort, authz_keys, state=self.state
-                ),
-                AuthzDecisionDepKey: _route_stubs(MockAuthzDecisionPort, authz_keys),
-                AuthzScopeDepKey: _route_stubs(MockAuthzScopePort, authz_keys),
-                TenantResolverDepKey: _route_stubs(
-                    MockTenantResolverPort, tenancy_keys, state=self.state
-                ),
-                TenantManagementDepKey: _route_stubs(
-                    MockTenantManagementPort, tenancy_keys, state=self.state
-                ),
-            }
-        )
+        authn_factory = ConfigurableMockAuthn(module=self)
+        token_lifecycle = ConfigurableMockTokenLifecycle(module=self)
+        password_lifecycle = ConfigurableMockPasswordLifecycle(module=self)
+        password_reset = ConfigurableMockPasswordReset(module=self)
 
-        return Deps.plain(deps)
+        # Identity deps are registered ROUTED with configurable factories — the
+        # same shape the real identity modules use — so kit handlers, hooks, and
+        # the ctx.authn / ctx.authz accessors resolve real working ports.
+        identity_routed: dict[DepKey[Any], dict[StrKey, Any]] = {
+            AuthnDepKey: {route: authn_factory for route in authn_keys},
+            PasswordVerifierDepKey: _route_stubs(
+                MockPasswordVerifierPort, authn_keys, state=self.state
+            ),
+            TokenVerifierDepKey: _route_stubs(
+                MockTokenVerifierPort, authn_keys, state=self.state
+            ),
+            ApiKeyVerifierDepKey: _route_stubs(
+                MockApiKeyVerifierPort, authn_keys, state=self.state
+            ),
+            PrincipalResolverDepKey: _route_stubs(
+                MockPrincipalResolverPort, authn_keys, state=self.state
+            ),
+            PrincipalEligibilityDepKey: _route_stubs(
+                MockPrincipalEligibilityPort, authn_keys
+            ),
+            PrincipalDeactivationDepKey: _route_stubs(
+                MockPrincipalDeactivationPort, authn_keys
+            ),
+            TokenLifecycleDepKey: {route: token_lifecycle for route in authn_keys},
+            PasswordLifecycleDepKey: {
+                route: password_lifecycle for route in authn_keys
+            },
+            PasswordResetDepKey: {route: password_reset for route in authn_keys},
+            ApiKeyLifecycleDepKey: _route_stubs(MockApiKeyLifecyclePort, authn_keys),
+            PasswordAccountProvisioningDepKey: _route_stubs(
+                MockPasswordAccountProvisioningPort, authn_keys
+            ),
+            PrincipalRegistryDepKey: _route_stubs(
+                MockPrincipalRegistryPort, authz_keys, state=self.state
+            ),
+            RoleAssignmentDepKey: _route_stubs(MockRoleAssignmentPort, authz_keys),
+            GrantQueryDepKey: _route_stubs(MockGrantQueryPort, authz_keys),
+            DelegationGrantDepKey: _route_stubs(
+                MockDelegationGrantPort, authz_keys, state=self.state
+            ),
+            DelegationDepKey: _route_stubs(
+                MockDelegationPort, authz_keys, state=self.state
+            ),
+            AuthzDecisionDepKey: _route_stubs(
+                MockAuthzDecisionPort, authz_keys, state=self.state
+            ),
+            AuthzScopeDepKey: _route_stubs(MockAuthzScopePort, authz_keys),
+            TenantResolverDepKey: _route_stubs(
+                MockTenantResolverPort, tenancy_keys, state=self.state
+            ),
+            TenantManagementDepKey: _route_stubs(
+                MockTenantManagementPort, tenancy_keys, state=self.state
+            ),
+        }
+
+        return Deps.merge(Deps.plain(deps), Deps.routed(identity_routed))

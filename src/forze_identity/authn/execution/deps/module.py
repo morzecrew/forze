@@ -12,6 +12,7 @@ from forze.application.contracts.authn import (
     AuthnMethod,
     PasswordAccountProvisioningDepKey,
     PasswordLifecycleDepKey,
+    PasswordResetDepKey,
     PasswordVerifierDepKey,
     PasswordVerifierDepPort,
     PrincipalDeactivationDepKey,
@@ -41,6 +42,7 @@ from .deps import (
     ConfigurableJwtNativeUuidResolver,
     ConfigurablePasswordAccountProvisioning,
     ConfigurablePasswordLifecycle,
+    ConfigurablePasswordReset,
     ConfigurablePolicyPrincipalEligibility,
     ConfigurablePrincipalDeactivation,
     ConfigurableTokenLifecycle,
@@ -110,6 +112,10 @@ class AuthnDepsModule(DepsModule):
     password_account_provisioning: Collection[StrKey] | None = attrs.field(default=None)
     """Authn routes that should use first-party password account provisioning."""
 
+    password_reset: Collection[StrKey] | None = attrs.field(default=None)
+    """Authn routes that expose self-service password reset (requires
+    ``kernel.password`` and ``kernel.reset_token_pepper``)."""
+
     principal_deactivation: Collection[StrKey] | None = attrs.field(default=None)
     """Authn routes that expose cascaded principal deactivation."""
 
@@ -125,6 +131,12 @@ class AuthnDepsModule(DepsModule):
     sessions after a successful password change ("log out everywhere"). The caller must
     re-authenticate with the new password; set ``False`` to keep existing sessions alive."""
 
+    revoke_sessions_on_reset: bool = attrs.field(default=True)
+    """Whether first-party password reset routes revoke ALL of the principal's
+    sessions after a successful reset ("log out everywhere", matching the
+    change-password posture). Set ``False`` only when sessions are managed by an
+    external lifecycle."""
+
     password_rehash_on_login: bool = attrs.field(default=False)
     """When ``True``, the default :class:`Argon2PasswordVerifier` upgrades stored hashes
     to the current Argon2 parameters after a successful login (wires the password
@@ -138,9 +150,10 @@ class AuthnDepsModule(DepsModule):
         pl = _normalize_route_set(self.password_lifecycle)
         akl = _normalize_route_set(self.api_key_lifecycle)
         pap = _normalize_route_set(self.password_account_provisioning)
+        pr = _normalize_route_set(self.password_reset)
         pd = _normalize_route_set(self.principal_deactivation)
 
-        has_registrations = bool(authn_map or tl or pl or akl or pap or pd)
+        has_registrations = bool(authn_map or tl or pl or akl or pap or pr or pd)
 
         if not has_registrations:
             return Deps()
@@ -179,13 +192,14 @@ class AuthnDepsModule(DepsModule):
             password_lifecycle=pl,
             api_key_lifecycle=akl,
             password_account_provisioning=pap,
+            password_reset=pr,
             api_key_verifier_overrides=api_key_overrides_keys,
             token_verifier_overrides=token_overrides_keys,
         )
 
         merged: Deps = Deps()
 
-        eligibility_routes = authn_map.keys() | tl | pl | akl | pap | pd
+        eligibility_routes = authn_map.keys() | tl | pl | akl | pap | pr | pd
         if eligibility_routes:
             merged = merged.merge(
                 Deps.routed(
@@ -326,6 +340,23 @@ class AuthnDepsModule(DepsModule):
                         PasswordAccountProvisioningDepKey: {
                             name: ConfigurablePasswordAccountProvisioning(shared=shared)
                             for name in pap
+                        },
+                    },
+                ),
+            )
+
+        if pr:
+            merged = merged.merge(
+                Deps.routed(
+                    {
+                        PasswordResetDepKey: {
+                            name: ConfigurablePasswordReset(
+                                shared=shared,
+                                revoke_sessions_on_reset=(
+                                    self.revoke_sessions_on_reset
+                                ),
+                            )
+                            for name in pr
                         },
                     },
                 ),

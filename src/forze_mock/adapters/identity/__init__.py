@@ -6,12 +6,14 @@ from .authn import (
     MockAuthnPort,
     MockPasswordAccountProvisioningPort,
     MockPasswordLifecyclePort,
+    MockPasswordResetPort,
     MockPasswordVerifierPort,
     MockPrincipalDeactivationPort,
     MockPrincipalEligibilityPort,
     MockPrincipalResolverPort,
     MockTokenLifecyclePort,
     MockTokenVerifierPort,
+    seed_password_account,
 )
 from .authz import (
     MockAuthzDecisionPort,
@@ -35,6 +37,7 @@ __all__ = [
     "MockPrincipalDeactivationPort",
     "MockTokenLifecyclePort",
     "MockPasswordLifecyclePort",
+    "MockPasswordResetPort",
     "MockApiKeyLifecyclePort",
     "MockPasswordAccountProvisioningPort",
     "MockAuthnPort",
@@ -47,4 +50,5 @@ __all__ = [
     "MockAuthzScopePort",
     "MockTenantResolverPort",
     "MockTenantManagementPort",
+    "seed_password_account",
 ]

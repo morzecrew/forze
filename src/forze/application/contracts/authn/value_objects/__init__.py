@@ -19,6 +19,7 @@ from .tokens import (
     IssuedAccessToken,
     IssuedApiKey,
     IssuedInvite,
+    IssuedPasswordReset,
     IssuedRefreshToken,
     IssuedTokens,
 )
@@ -34,6 +35,7 @@ __all__ = [
     "IssuedAccessToken",
     "IssuedApiKey",
     "IssuedInvite",
+    "IssuedPasswordReset",
     "IssuedRefreshToken",
     "IssuedTokens",
     "PasswordCredentials",
