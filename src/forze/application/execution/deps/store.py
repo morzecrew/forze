@@ -10,14 +10,14 @@ from forze.application._logger import logger
 from forze.application.contracts.deps import DepKey
 from forze.base.descriptors import hybridmethod
 from forze.base.exceptions import exc
-from forze.base.primitives import StrKey
+from forze.base.primitives import StrKey, StrKeyMapping
 
 from .resolution import ResolutionFrame, frame_for
 
 # ----------------------- #
 
 type PlainDepsMap = Mapping[DepKey[Any], Any]
-type RoutedDeps = Mapping[DepKey[Any], Mapping[StrKey, Any]]
+type RoutedDeps = Mapping[DepKey[Any], StrKeyMapping[Any]]
 
 # ....................... #
 

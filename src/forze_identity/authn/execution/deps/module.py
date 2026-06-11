@@ -1,6 +1,6 @@
 """Authn dependency module for the application kernel."""
 
-from typing import Collection, Mapping, final
+from typing import Collection, final
 
 import attrs
 
@@ -24,7 +24,7 @@ from forze.application.contracts.authn import (
 )
 from forze.application.execution import Deps, DepsModule
 from forze.base.exceptions import exc
-from forze.base.primitives import StrKey
+from forze.base.primitives import MappingConverter, StrKey, StrKeyMapping
 from forze_identity._routes import normalize_route_set as _normalize_route_set
 
 from .configs import (
@@ -68,26 +68,33 @@ class AuthnDepsModule(DepsModule):
     kernel: AuthnKernelConfig | None = attrs.field(default=None)
     """Secrets and service configs; required when any route registration is non-empty."""
 
-    authn: Mapping[StrKey, frozenset[AuthnMethod]] | None = attrs.field(default=None)
+    authn: StrKeyMapping[frozenset[AuthnMethod]] | None = attrs.field(
+        default=None,
+        converter=MappingConverter.to_str_key_frozen,  # type: ignore[misc]
+    )
     """Per-route enabled credential families. Empty/omitted disables authentication wiring."""
 
-    resolvers: Mapping[StrKey, PrincipalResolverDepPort] | None = attrs.field(
-        default=None
+    resolvers: StrKeyMapping[PrincipalResolverDepPort] | None = attrs.field(
+        default=None,
+        converter=MappingConverter.to_str_key_frozen,  # type: ignore[misc]
     )
     """Optional per-route principal resolver overrides; routes without an entry get :class:`JwtNativeUuidResolver`."""
 
-    token_verifiers: Mapping[StrKey, TokenVerifierDepPort] | None = attrs.field(
-        default=None
+    token_verifiers: StrKeyMapping[TokenVerifierDepPort] | None = attrs.field(
+        default=None,
+        converter=MappingConverter.to_str_key_frozen,  # type: ignore[misc]
     )
     """Optional per-route token verifier overrides; routes without an entry get :class:`ForzeJwtTokenVerifier`."""
 
-    password_verifiers: Mapping[StrKey, PasswordVerifierDepPort] | None = attrs.field(
-        default=None
+    password_verifiers: StrKeyMapping[PasswordVerifierDepPort] | None = attrs.field(
+        default=None,
+        converter=MappingConverter.to_str_key_frozen,  # type: ignore[misc]
     )
     """Optional per-route password verifier overrides; routes without an entry get :class:`Argon2PasswordVerifier`."""
 
-    api_key_verifiers: Mapping[StrKey, ApiKeyVerifierDepPort] | None = attrs.field(
-        default=None
+    api_key_verifiers: StrKeyMapping[ApiKeyVerifierDepPort] | None = attrs.field(
+        default=None,
+        converter=MappingConverter.to_str_key_frozen,  # type: ignore[misc]
     )
     """Optional per-route API key verifier overrides; routes without an entry get :class:`HmacApiKeyVerifier`."""
 

@@ -1,6 +1,6 @@
 """Mongo dependency module for the application kernel."""
 
-from typing import Any, Mapping, final
+from typing import Any, final
 
 import attrs
 
@@ -19,7 +19,7 @@ from forze.application.execution.deps.builders import (
     routed_constant,
     routed_from_mapping,
 )
-from forze.base.primitives import StrKey
+from forze.base.primitives import MappingConverter, StrKey, StrKeyMapping
 
 from ...kernel._logger import logger
 from ...kernel.client import MongoClientPort
@@ -71,23 +71,31 @@ class MongoDepsModule(DepsModule):
     client: MongoClientPort
     """Pre-constructed Mongo client (single-URI or routed)."""
 
-    ro_documents: Mapping[StrKey, MongoReadOnlyDocumentConfig] | None = attrs.field(
-        default=None
+    ro_documents: StrKeyMapping[MongoReadOnlyDocumentConfig] | None = attrs.field(
+        default=None,
+        converter=MappingConverter.to_str_key_frozen, # type: ignore[misc]
     )
     """Mapping from read-only document names to their Mongo-specific configurations."""
 
-    rw_documents: Mapping[StrKey, MongoDocumentConfig] | None = attrs.field(
-        default=None
+    rw_documents: StrKeyMapping[MongoDocumentConfig] | None = attrs.field(
+        default=None,
+        converter=MappingConverter.to_str_key_frozen, # type: ignore[misc]
     )
     """Mapping from read-write document names to their Mongo-specific configurations."""
 
     tx: set[StrKey] | None = attrs.field(default=None)
     """Set of transaction routes to register."""
 
-    searches: Mapping[StrKey, MongoSearchConfig] | None = attrs.field(default=None)
+    searches: StrKeyMapping[MongoSearchConfig] | None = attrs.field(
+        default=None,
+        converter=MappingConverter.to_str_key_frozen, # type: ignore[misc]
+    )
     """Mapping from search spec names to Mongo-specific search configurations."""
 
-    outboxes: Mapping[StrKey, MongoOutboxConfig] | None = attrs.field(default=None)
+    outboxes: StrKeyMapping[MongoOutboxConfig] | None = attrs.field(
+        default=None,
+        converter=MappingConverter.to_str_key_frozen, # type: ignore[misc]
+    )
     """Mapping from outbox route names to Mongo-specific configurations."""
 
     # ....................... #

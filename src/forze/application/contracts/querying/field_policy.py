@@ -8,7 +8,7 @@ per-aggregate contract, distinct from authorization row-scoping (a dynamic, per-
 policy): the two compose, neither replaces the other.
 """
 
-from collections.abc import Iterable
+from typing import Iterable
 
 import attrs
 

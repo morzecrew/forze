@@ -2,11 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator, Mapping
-
 import pytest
-
-from forze.base.exceptions import CoreException
 from pydantic import BaseModel
 
 from forze.application.contracts.analytics import (
@@ -14,6 +10,7 @@ from forze.application.contracts.analytics import (
     AnalyticsSpec,
     validate_analytics_spec,
 )
+from forze.base.exceptions import CoreException
 
 # ----------------------- #
 
@@ -54,22 +51,6 @@ class TestAnalyticsSpec:
                 read=_Row,
                 queries={},
             )
-
-    def test_duplicate_query_keys_raise(self) -> None:
-        q = AnalyticsQueryDefinition(params=_Params)
-
-        class _DupKeys(Mapping[str, AnalyticsQueryDefinition]):
-            def __getitem__(self, key: str) -> AnalyticsQueryDefinition:
-                return q
-
-            def __iter__(self) -> Iterator[str]:
-                yield from ("a", "a")
-
-            def __len__(self) -> int:
-                return 2
-
-        with pytest.raises(CoreException, match="Duplicate"):
-            AnalyticsSpec(name="m", read=_Row, queries=_DupKeys())
 
     def test_invalid_params_type_raises(self) -> None:
         with pytest.raises(CoreException, match="BaseModel"):

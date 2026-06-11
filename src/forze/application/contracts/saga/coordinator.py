@@ -11,8 +11,7 @@ Kept lean (only ``base.exceptions`` + same-package ``SagaStepKind``) to hold the
 
 from __future__ import annotations
 
-from collections.abc import Sequence
-from typing import final
+from typing import Sequence, final
 
 import attrs
 

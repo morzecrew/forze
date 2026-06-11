@@ -69,7 +69,7 @@ def test_codec_pydantic_trusted_decode_benchmark(
     benchmark: Any,
     codec_tier: CodecBenchmarkTier,
 ) -> None:
-    """Pydantic trusted ``decode_mapping_many`` (construct loop)."""
+    """Pydantic trusted ``decode_mapping_many`` (unknown-column precheck + batched TypeAdapter)."""
 
     codec = PydanticModelCodec(codec_tier.pydantic_model)
     rows = codec_tier.sample_rows(_ROWS)

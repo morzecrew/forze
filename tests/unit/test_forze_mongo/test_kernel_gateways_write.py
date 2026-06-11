@@ -8,18 +8,25 @@ from uuid import UUID, uuid4
 import pytest
 
 from forze.application.contracts.tenancy import TENANT_ID_FIELD, TenantIdentity
-from forze.domain.models import BaseDTO, CreateDocumentCmd, Document
+from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
 from forze_mongo.kernel.gateways import (
     MongoHistoryGateway,
     MongoReadGateway,
     MongoWriteGateway,
 )
 from forze_mongo.kernel.client import MongoClient
-from tests.unit._gateway_codec_helpers import history_codecs_for, write_codecs_for
+from tests.unit._gateway_codec_helpers import (
+    codec_for,
+    history_codecs_for,
+    write_codecs_for,
+)
 
 class MyDoc(Document):
     name: str
     is_deleted: bool = False
+
+class MyDocRead(ReadDocument):
+    name: str
 
 class MyCreateDoc(CreateDocumentCmd):
     name: str
@@ -31,10 +38,23 @@ def _domain_doc(pk: UUID, *, rev: int = 1, name: str = "item") -> MyDoc:
     now = datetime.now(tz=UTC)
     return MyDoc(id=pk, rev=rev, created_at=now, last_update_at=now, name=name)
 
+def _storage_doc_for(doc: MyDoc) -> dict:
+    """Stored document shape as Mongo would return it (string ids, ``_id`` set)."""
+    return {
+        "_id": str(doc.id),
+        "id": str(doc.id),
+        "rev": doc.rev,
+        "created_at": doc.created_at,
+        "last_update_at": doc.last_update_at,
+        "name": doc.name,
+        "is_deleted": doc.is_deleted,
+    }
+
 def _build_client() -> MagicMock:
     client = MagicMock(spec=MongoClient)
     client.collection.return_value = object()
     client.update_one = AsyncMock()
+    client.find_one_and_update = AsyncMock()
     return client
 
 _DOMAIN_CODEC, _CREATE_CODEC, _UPDATE_CODEC = write_codecs_for(
@@ -67,17 +87,15 @@ def _build_read(
 
 class TestMongoWriteGateway:
     @pytest.mark.asyncio
-    async def test_update_bumps_revision_in_application_strategy(self) -> None:
+    async def test_update_bumps_revision_via_find_one_and_update(self) -> None:
+        """Single update issues one atomic ``find_one_and_update`` with a rev filter."""
         pk = uuid4()
         current = _domain_doc(pk, rev=1, name="before")
         after_write = _domain_doc(pk, rev=2, name="after")
         client = _build_client()
-        client.update_one.return_value = 1
+        client.find_one_and_update.return_value = _storage_doc_for(after_write)
         read = _build_read(client)
-        read.get.side_effect = [
-            current,
-            after_write,
-        ]  # read-before-write, then read-after-write
+        read.get.return_value = current  # read-before-write only
 
         gw = MongoWriteGateway(
             relation=("test_db", "docs"),
@@ -92,12 +110,43 @@ class TestMongoWriteGateway:
 
         assert updated.rev == 2
         assert updated.name == "after"
-        update_filter = client.update_one.await_args.args[1]
-        update_payload = client.update_one.await_args.args[2]
+        update_filter = client.find_one_and_update.await_args.args[1]
+        update_payload = client.find_one_and_update.await_args.args[2]
         assert update_filter == {"_id": str(pk), "rev": 1}
         assert update_payload["$set"]["rev"] == 2
         assert diff["rev"] == 2
         assert diff["name"] == "after"
+        # the legacy update_one + re-get pair is gone
+        client.update_one.assert_not_awaited()
+        assert read.get.await_count == 1
+
+    @pytest.mark.asyncio
+    async def test_update_returns_doc_decoded_from_find_one_and_update_result(
+        self,
+    ) -> None:
+        """The returned model comes from the atomic write result, not a re-read."""
+        pk = uuid4()
+        current = _domain_doc(pk, rev=1, name="before")
+        after_write = _domain_doc(pk, rev=2, name="atomic-result")
+        client = _build_client()
+        client.find_one_and_update.return_value = _storage_doc_for(after_write)
+        read = _build_read(client)
+        read.get.return_value = current
+
+        gw = MongoWriteGateway(
+            relation=("test_db", "docs"),
+            client=client,
+            read_gw=read,
+            create_cmd_type=MyCreateDoc,
+            update_cmd_type=MyUpdateDoc,
+            model_type=MyDoc,
+            **_WRITE_CODECS,
+        )
+        updated, _ = await gw.update(pk, MyUpdateDoc(name="ignored"))
+
+        assert updated.name == "atomic-result"
+        assert updated.id == pk
+        read.get.assert_awaited_once_with(pk)
 
     @pytest.mark.asyncio
     async def test_update_tenant_aware_includes_tenant_in_filter(self) -> None:
@@ -106,10 +155,10 @@ class TestMongoWriteGateway:
         current = _domain_doc(pk, rev=1, name="before")
         after_write = _domain_doc(pk, rev=2, name="after")
         client = _build_client()
-        client.update_one.return_value = 1
+        client.find_one_and_update.return_value = _storage_doc_for(after_write)
         read = _build_read(client)
         read.tenant_aware = True
-        read.get.side_effect = [current, after_write]
+        read.get.return_value = current
 
         gw = MongoWriteGateway(
             relation=("test_db", "docs"),
@@ -124,27 +173,27 @@ class TestMongoWriteGateway:
         )
         await gw.update(pk, MyUpdateDoc(name="after"))
 
-        update_filter = client.update_one.await_args.args[1]
+        update_filter = client.find_one_and_update.await_args.args[1]
         assert update_filter[TENANT_ID_FIELD].tenant_id == tid
         assert update_filter["_id"] == str(pk)
         assert update_filter["rev"] == 1
 
     @pytest.mark.asyncio
-    async def test_update_retries_on_concurrency_error(self) -> None:
+    async def test_update_none_result_maps_to_concurrency_and_retries(self) -> None:
+        """``find_one_and_update`` returning ``None`` (stale rev) raises concurrency; occ retries."""
         pk = uuid4()
         current = _domain_doc(pk, rev=1, name="before")
         after_write = _domain_doc(pk, rev=2, name="after")
         client = _build_client()
-        client.update_one.side_effect = [
-            exc.concurrency("Failed to update record"),
-            1,
+        client.find_one_and_update.side_effect = [
+            None,  # stale rev or missing -> concurrency
+            _storage_doc_for(after_write),
         ]
         read = _build_read(client)
         read.get.side_effect = [
             current,
             current,
-            after_write,
-        ]  # attempt 1 before write, attempt 2 before+after write
+        ]  # one read-before-write per attempt
 
         gw = MongoWriteGateway(
             relation=("test_db", "docs"),
@@ -158,14 +207,14 @@ class TestMongoWriteGateway:
         updated, _ = await gw.update(pk, MyUpdateDoc(name="after"))
 
         assert updated.name == "after"
-        assert client.update_one.await_count == 2
+        assert client.find_one_and_update.await_count == 2
 
     @pytest.mark.asyncio
     async def test_update_exhausts_retries_and_raises(self) -> None:
         pk = uuid4()
         current = _domain_doc(pk, rev=1, name="before")
         client = _build_client()
-        client.update_one.side_effect = exc.concurrency("Failed to update record")
+        client.find_one_and_update.return_value = None
         read = _build_read(client)
         read.get.return_value = current
 
@@ -182,7 +231,32 @@ class TestMongoWriteGateway:
         with pytest.raises(CoreException, match="Failed to update record"):
             await gw.update(pk, MyUpdateDoc(name="after"))
 
-        assert client.update_one.await_count == 3
+        assert client.find_one_and_update.await_count == 3
+
+    @pytest.mark.asyncio
+    async def test_touch_uses_find_one_and_update_with_rev_filter(self) -> None:
+        pk = uuid4()
+        current = _domain_doc(pk, rev=3, name="same")
+        after_write = _domain_doc(pk, rev=4, name="same")
+        client = _build_client()
+        client.find_one_and_update.return_value = _storage_doc_for(after_write)
+        read = _build_read(client)
+        read.get.return_value = current
+
+        gw = MongoWriteGateway(
+            relation=("test_db", "docs"),
+            client=client,
+            read_gw=read,
+            create_cmd_type=MyCreateDoc,
+            update_cmd_type=MyUpdateDoc,
+            model_type=MyDoc,
+            **_WRITE_CODECS,
+        )
+        touched = await gw.touch(pk)
+
+        assert touched.rev == 4
+        update_filter = client.find_one_and_update.await_args.args[1]
+        assert update_filter == {"_id": str(pk), "rev": 3}
 
     @pytest.mark.asyncio
     async def test_ensure_many_reads_conflicts_only(self) -> None:
@@ -268,6 +342,141 @@ class TestMongoWriteGateway:
 
         assert err.value.kind is ExceptionKind.CONFLICT
         assert err.value.code == "mongo_ensure_bulk_miss"
+
+class TestMongoWriteGatewayInsertReturnShape:
+    """Insert paths decode the exact inserted payload instead of reading back.
+
+    The returned model must (a) be identical to what a subsequent read returns
+    (BSON: naive UTC datetimes, millisecond precision) and (b) have every field
+    explicitly set so the adapter's ``hydrate_from_write`` transform
+    (``exclude={"unset": True}``) does not drop default-factory fields.
+    """
+
+    def _gw(
+        self,
+        client: MagicMock,
+    ) -> MongoWriteGateway[MyDoc, MyCreateDoc, MyUpdateDoc]:
+        read = _build_read(client)
+        return MongoWriteGateway(
+            relation=("test_db", "docs"),
+            client=client,
+            read_gw=read,
+            create_cmd_type=MyCreateDoc,
+            update_cmd_type=MyUpdateDoc,
+            model_type=MyDoc,
+            **_WRITE_CODECS,
+        )
+
+    def _assert_read_identical_shape(self, doc: MyDoc) -> None:
+        assert doc.__pydantic_fields_set__ == set(MyDoc.model_fields)
+        for dt in (doc.created_at, doc.last_update_at):
+            assert dt.tzinfo is None  # naive UTC, like a BSON read
+            assert dt.microsecond % 1000 == 0  # ms precision, like a BSON read
+        # the adapter's hydrate_from_write transform must not crash
+        read_codec = codec_for(MyDocRead)
+        hydrated = read_codec.transform(doc)
+        assert hydrated.id == doc.id
+        assert hydrated.rev == doc.rev
+        assert hydrated.name == doc.name
+
+    @pytest.mark.asyncio
+    async def test_create_decodes_inserted_doc_without_read_back(self) -> None:
+        pk = uuid4()
+        client = _build_client()
+        client.insert_one = AsyncMock()
+        gw = self._gw(client)
+
+        created = await gw.create(MyCreateDoc(name="fresh"), id=pk)
+
+        client.insert_one.assert_awaited_once()
+        gw.read_gw.get.assert_not_awaited()
+        assert created.id == pk
+        assert created.name == "fresh"
+        assert created.rev == 1
+        self._assert_read_identical_shape(created)
+        # the decoded model mirrors the exact inserted payload (ms-truncated)
+        inserted = client.insert_one.await_args.args[1]
+        assert inserted["_id"] == str(pk)
+        expected_created_at = inserted["created_at"]
+        assert created.created_at == expected_created_at.astimezone(UTC).replace(
+            tzinfo=None,
+            microsecond=(expected_created_at.microsecond // 1000) * 1000,
+        )
+
+    @pytest.mark.asyncio
+    async def test_create_many_decodes_inserted_docs_without_read_back(self) -> None:
+        client = _build_client()
+        client.insert_many = AsyncMock()
+        gw = self._gw(client)
+        gw.read_gw.get_many = AsyncMock()
+
+        created = await gw.create_many([MyCreateDoc(name="a"), MyCreateDoc(name="b")])
+
+        client.insert_many.assert_awaited_once()
+        gw.read_gw.get_many.assert_not_awaited()
+        assert [d.name for d in created] == ["a", "b"]
+        for doc in created:
+            self._assert_read_identical_shape(doc)
+
+    @pytest.mark.asyncio
+    async def test_ensure_insert_path_returns_fully_set_model(self) -> None:
+        pk = uuid4()
+        client = _build_client()
+        res = MagicMock()
+        res.upserted_id = str(pk)
+        client.update_one_upsert = AsyncMock(return_value=res)
+        gw = self._gw(client)
+
+        ensured = await gw.ensure(pk, MyCreateDoc(name="ensured"))
+
+        gw.read_gw.get.assert_not_awaited()
+        assert ensured.id == pk
+        assert ensured.name == "ensured"
+        self._assert_read_identical_shape(ensured)
+
+    @pytest.mark.asyncio
+    async def test_upsert_insert_path_returns_fully_set_model(self) -> None:
+        pk = uuid4()
+        client = _build_client()
+        res = MagicMock()
+        res.upserted_id = str(pk)
+        client.update_one_upsert = AsyncMock(return_value=res)
+        gw = self._gw(client)
+
+        upserted = await gw.upsert(
+            pk,
+            MyCreateDoc(name="inserted"),
+            MyUpdateDoc(name="not-applied"),
+        )
+
+        gw.read_gw.get.assert_not_awaited()
+        client.find_one_and_update.assert_not_awaited()  # no update leg ran
+        assert upserted.id == pk
+        assert upserted.name == "inserted"
+        self._assert_read_identical_shape(upserted)
+
+    @pytest.mark.asyncio
+    async def test_ensure_many_insert_path_returns_fully_set_models(self) -> None:
+        pk_new = uuid4()
+        pk_existing = uuid4()
+        existing = _domain_doc(pk_existing, name="existing")
+        client = _build_client()
+        bulk_result = MagicMock()
+        bulk_result.upserted_ids = {1: str(pk_new)}
+        client.bulk_write = AsyncMock(return_value=bulk_result)
+        gw = self._gw(client)
+        gw.read_gw.get_many = AsyncMock(return_value=[existing])
+
+        out = await gw.ensure_many(
+            [pk_existing, pk_new],
+            [MyCreateDoc(name="try"), MyCreateDoc(name="new")],
+        )
+
+        assert out[0] is existing
+        assert out[1].id == pk_new
+        assert out[1].name == "new"
+        self._assert_read_identical_shape(out[1])
+
 
 class TestMongoWriteGatewayPostInit:
     def test_rejects_mismatched_read_collection(self) -> None:

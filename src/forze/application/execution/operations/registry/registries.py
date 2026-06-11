@@ -1,13 +1,19 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Mapping, Self
+from typing import TYPE_CHECKING, Any, Self
 
 import attrs
 
 from forze.application.contracts.execution import DispatchStep, HandlerFactory
 from forze.base.descriptors import hybridmethod
 from forze.base.exceptions import exc
-from forze.base.primitives import StrKey, StrKeyNamespace, StrKeySelector
+from forze.base.primitives import (
+    MappingConverter,
+    StrKey,
+    StrKeyMapping,
+    StrKeyNamespace,
+    StrKeySelector,
+)
 
 from ..descriptors import OperationCatalogEntry, OperationDescriptor
 from ..planning import FrozenOperationPlan, OperationPlan
@@ -28,21 +34,24 @@ if TYPE_CHECKING:
 class OperationRegistry:
     """Registry for operations."""
 
-    _handlers: Mapping[StrKey, HandlerFactory] = attrs.field(
+    _handlers: StrKeyMapping[HandlerFactory] = attrs.field(
         factory=dict[StrKey, HandlerFactory],
         alias="handlers",
+        converter=MappingConverter.to_str_key_frozen,  # type: ignore[misc]
     )
     """Handler factories for operations."""
 
-    _plans: Mapping[StrKey, OperationPlan] = attrs.field(
+    _plans: StrKeyMapping[OperationPlan] = attrs.field(
         factory=dict[StrKey, OperationPlan],
         alias="plans",
+        converter=MappingConverter.to_str_key_frozen,  # type: ignore[misc]
     )
     """Execution plans for operations."""
 
-    _descriptors: Mapping[StrKey, OperationDescriptor] = attrs.field(
+    _descriptors: StrKeyMapping[OperationDescriptor] = attrs.field(
         factory=dict[StrKey, OperationDescriptor],
         alias="descriptors",
+        converter=MappingConverter.to_str_key_frozen,  # type: ignore[misc]
     )
     """Catalog metadata for operations (interface-agnostic; optional per operation)."""
 
@@ -108,7 +117,7 @@ class OperationRegistry:
 
     def set_handlers(
         self,
-        handlers: Mapping[StrKey, HandlerFactory],
+        handlers: StrKeyMapping[HandlerFactory],
         *,
         override: bool = False,
         namespace: StrKeyNamespace | None = None,
@@ -155,7 +164,7 @@ class OperationRegistry:
 
     def set_descriptors(
         self,
-        descriptors: Mapping[StrKey, OperationDescriptor],
+        descriptors: StrKeyMapping[OperationDescriptor],
         *,
         override: bool = False,
         namespace: StrKeyNamespace | None = None,
@@ -166,8 +175,7 @@ class OperationRegistry:
 
         if namespace is not None:
             descriptors = {
-                namespace.key(op): descriptor
-                for op, descriptor in descriptors.items()
+                namespace.key(op): descriptor for op, descriptor in descriptors.items()
             }
 
         for op, descriptor in descriptors.items():
@@ -268,7 +276,7 @@ class OperationRegistry:
 
     def extend_plans(
         self,
-        plans: Mapping[StrKey, OperationPlan],
+        plans: StrKeyMapping[OperationPlan],
         *,
         namespace: StrKeyNamespace | None = None,
     ) -> Self:
@@ -344,18 +352,21 @@ class OperationRegistry:
 class FrozenOperationRegistry:
     """Frozen operation registry."""
 
-    handlers: Mapping[StrKey, HandlerFactory] = attrs.field(
+    handlers: StrKeyMapping[HandlerFactory] = attrs.field(
         factory=dict[StrKey, HandlerFactory],
+        converter=MappingConverter.to_str_key_frozen,  # type: ignore[misc]
     )
     """Handler factories for operations."""
 
-    plans: Mapping[StrKey, FrozenOperationPlan] = attrs.field(
+    plans: StrKeyMapping[FrozenOperationPlan] = attrs.field(
         factory=dict[StrKey, FrozenOperationPlan],
+        converter=MappingConverter.to_str_key_frozen,  # type: ignore[misc]
     )
     """Execution plans for operations."""
 
-    descriptors: Mapping[StrKey, OperationDescriptor] = attrs.field(
+    descriptors: StrKeyMapping[OperationDescriptor] = attrs.field(
         factory=dict[StrKey, OperationDescriptor],
+        converter=MappingConverter.to_str_key_frozen,  # type: ignore[misc]
     )
     """Catalog metadata for operations (interface-agnostic; optional per operation)."""
 

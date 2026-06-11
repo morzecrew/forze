@@ -495,6 +495,7 @@ import sys
 
 class RegularClass:
     """Regular class with __dict__."""
+
     def __init__(self, x, y, z):
         self.x = x
         self.y = y

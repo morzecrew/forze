@@ -1,9 +1,7 @@
 """Freeze-time validation for operation registries."""
 
-from __future__ import annotations
-
 from collections import defaultdict
-from typing import Mapping, final
+from typing import final
 
 from forze.application.contracts.execution import (
     DeclaresHedge,
@@ -11,7 +9,12 @@ from forze.application.contracts.execution import (
     ProvidesIdempotency,
 )
 from forze.base.exceptions import exc
-from forze.base.primitives import DirectedAcyclicGraph, StrKey, str_key_selector
+from forze.base.primitives import (
+    DirectedAcyclicGraph,
+    StrKey,
+    StrKeyMapping,
+    str_key_selector,
+)
 
 from ..planning import OperationPlan
 from .resolution import PlanResolution
@@ -25,7 +28,7 @@ class RegistryFreezeValidator:
 
     @staticmethod
     def validate_all(
-        handlers: Mapping[StrKey, HandlerFactory],
+        handlers: StrKeyMapping[HandlerFactory],
         resolution: PlanResolution,
     ) -> None:
         """Run all freeze validations."""
@@ -39,7 +42,7 @@ class RegistryFreezeValidator:
 
     @staticmethod
     def validate_patches(
-        handlers: Mapping[StrKey, HandlerFactory],
+        handlers: StrKeyMapping[HandlerFactory],
         resolution: PlanResolution,
     ) -> None:
         """Validate plan patches before freeze."""
@@ -54,7 +57,7 @@ class RegistryFreezeValidator:
 
     @staticmethod
     def _validate_orphan_patches(
-        handlers: Mapping[StrKey, HandlerFactory],
+        handlers: StrKeyMapping[HandlerFactory],
         resolution: PlanResolution,
     ) -> None:
         """Reject patches whose selector matches no registered operation."""
@@ -73,7 +76,7 @@ class RegistryFreezeValidator:
 
     @staticmethod
     def _validate_patch_specificity_conflicts(
-        handlers: Mapping[StrKey, HandlerFactory],
+        handlers: StrKeyMapping[HandlerFactory],
         resolution: PlanResolution,
     ) -> None:
         """Reject equal-specificity patches that cannot merge for the same operation."""
@@ -118,7 +121,7 @@ class RegistryFreezeValidator:
 
     @staticmethod
     def validate_resolved_plans(
-        handlers: Mapping[StrKey, HandlerFactory],
+        handlers: StrKeyMapping[HandlerFactory],
         resolution: PlanResolution,
     ) -> None:
         """Reject resolved plans with transaction stages but no route."""
@@ -136,7 +139,7 @@ class RegistryFreezeValidator:
 
     @staticmethod
     def validate_hedge_safety(
-        handlers: Mapping[StrKey, HandlerFactory],
+        handlers: StrKeyMapping[HandlerFactory],
         resolution: PlanResolution,
     ) -> None:
         """Reject hedged operations that are neither idempotency-guarded nor declared safe.
@@ -149,8 +152,7 @@ class RegistryFreezeValidator:
 
         for op in handlers:
             factories = [
-                step.factory
-                for step in resolution.resolve(str(op)).iter_wrap_steps()
+                step.factory for step in resolution.resolve(str(op)).iter_wrap_steps()
             ]
 
             hedges = [f for f in factories if isinstance(f, DeclaresHedge)]
@@ -175,7 +177,7 @@ class RegistryFreezeValidator:
 
     @staticmethod
     def validate_dispatch_graph(
-        handlers: Mapping[StrKey, HandlerFactory],
+        handlers: StrKeyMapping[HandlerFactory],
         resolution: PlanResolution,
     ) -> None:
         """Validate the dispatch graph (no loops, all targets registered)."""

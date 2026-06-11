@@ -1,12 +1,10 @@
 """Postgres federated search execution configs and validation."""
 
-from typing import Mapping
-
 import attrs
 
 from forze.application.contracts.tenancy import TenantAwareIntegrationConfig
 from forze.base.exceptions import exc
-from forze.base.primitives import StrKey, frozen_mapping
+from forze.base.primitives import MappingConverter, StrKeyMapping
 
 from .hub import PostgresHubSearchConfig
 from .search import PostgresSearchConfig
@@ -44,8 +42,8 @@ PostgresFederatedSearchLeg = (
 class PostgresFederatedSearchConfig(TenantAwareIntegrationConfig):
     """Postgres configuration for :class:`PostgresFederatedSearchAdapter`."""
 
-    members: Mapping[StrKey, PostgresFederatedSearchLeg] = attrs.field(
-        converter=frozen_mapping,
+    members: StrKeyMapping[PostgresFederatedSearchLeg] = attrs.field(
+        converter=MappingConverter.to_str_key_frozen,  # type: ignore[misc]
     )
     """Federated member name to search or embedded hub config."""
 

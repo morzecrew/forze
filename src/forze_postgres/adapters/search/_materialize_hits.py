@@ -21,7 +21,11 @@ ReadValidation = Literal["strict", "trusted"]
 
 
 def search_trust_source(read_validation: ReadValidation) -> bool:
-    """Return whether search hit decode should skip Pydantic validation."""
+    """Return whether search hit decode uses trusted-column semantics.
+
+    Trusted decode rejects unknown columns up front, then validates values
+    like strict (see :func:`forze.base.serialization.pydantic.pydantic_validate_trusted`).
+    """
 
     return read_validation == "trusted"
 
@@ -77,7 +81,7 @@ def materialize_search_page(
     :param return_fields: When set, build plain dict projections from ``page_rows``.
     :param model_type: Default read model for this adapter.
     :param codec: Search spec row codec for decode/materialization.
-    :param trust_source: When true, skip Pydantic validation on decode paths.
+    :param trust_source: When true, decode with trusted-column semantics (unknown columns rejected up front; values still validated).
     :returns: Either a list of Pydantic models or plain dict projections.
     """
 

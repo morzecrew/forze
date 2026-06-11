@@ -1,6 +1,5 @@
 """Shared tenancy wiring validation for integration deps modules."""
 
-from collections.abc import Mapping
 from typing import Any, Callable, Literal, Protocol, Sequence, TypeVar
 
 import attrs
@@ -13,7 +12,7 @@ from forze.application.contracts.resolution import (
     is_static_relation,
 )
 from forze.base.exceptions import exc
-from forze.base.primitives import StrKey
+from forze.base.primitives import StrKey, StrKeyMapping
 
 # ----------------------- #
 
@@ -135,7 +134,7 @@ def namespace_route_warning[C: _NamespacedRouteConfig](
 def warn_integration_routes[ConfigT](
     *,
     integration: str,
-    routes: Mapping[StrKey, ConfigT] | None,
+    routes: StrKeyMapping[ConfigT] | None,
     warning: IntegrationRouteWarning[ConfigT],
     log_warning: Callable[..., None] | None = None,
 ) -> None:

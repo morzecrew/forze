@@ -1,12 +1,15 @@
 """Plan resolution for operation keys (patches + explicit plans)."""
 
-from __future__ import annotations
-
-from typing import Mapping, final
+from typing import final
 
 import attrs
 
-from forze.base.primitives import StrKey, str_key_selector
+from forze.base.primitives import (
+    MappingConverter,
+    StrKey,
+    StrKeyMapping,
+    str_key_selector,
+)
 
 from ..planning import OperationPlan
 from .patch import PlanPatch
@@ -19,8 +22,9 @@ from .patch import PlanPatch
 class PlanResolution:
     """Resolve effective operation plans from patches and per-op plans."""
 
-    plans: Mapping[StrKey, OperationPlan] = attrs.field(
+    plans: StrKeyMapping[OperationPlan] = attrs.field(
         factory=dict[StrKey, OperationPlan],
+        converter=MappingConverter.to_str_key_frozen,  # type: ignore[misc]
     )
     """Explicit per-operation plans."""
 

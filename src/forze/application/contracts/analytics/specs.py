@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-from typing import Any, Generic, Mapping, TypeVar, final
+from typing import Any, Generic, TypeVar, final
 
 import attrs
 from pydantic import BaseModel
 
 from forze.base.exceptions import exc
-from forze.base.primitives import StrKey
+from forze.base.primitives import MappingConverter, StrKeyMapping
 from forze.base.serialization import ModelCodec, default_model_codec
 
 from ..base import BaseSpec
@@ -44,7 +44,9 @@ class AnalyticsSpec(BaseSpec, Generic[R, Ing]):
     read: type[R]
     """Default read model for query result rows."""
 
-    queries: Mapping[StrKey, AnalyticsQueryDefinition]
+    queries: StrKeyMapping[AnalyticsQueryDefinition] = attrs.field(
+        converter=MappingConverter.to_str_key_frozen,  # type: ignore[misc]
+    )
     """Named queries; keys are ``query_key`` arguments on :class:`~.AnalyticsQueryPort`."""
 
     ingest: type[Ing] | None = attrs.field(default=None)
@@ -79,6 +81,8 @@ class AnalyticsSpec(BaseSpec, Generic[R, Ing]):
             return self.read_codec
 
         return default_model_codec(self.read)
+
+    # ....................... #
 
     @property
     def resolved_ingest_codec(self) -> ModelCodec[Ing, Any] | None:
@@ -120,6 +124,8 @@ def validate_analytics_spec(spec: AnalyticsSpec[Any, Any]) -> None:
     seen: set[str] = set()
 
     for key, definition in spec.queries.items():
+        key = str(key)
+
         if not key:
             raise exc.configuration("Analytics query keys must be non-empty strings.")
 

@@ -289,19 +289,44 @@ def has_hybrid_patch_conflict(
     all_a = set(a_containers) | set(a_scalars.keys())
     all_b = set(b_containers) | set(b_scalars.keys())
 
+    # A prefix pair must share its first segment, so bucket B's paths by root
+    # segment and compare each path in A only within its root bucket — O(A+B)
+    # for disjoint roots instead of the full A×B scan. The empty path ``()``
+    # is prefix-related to *everything* and is tracked separately.
+    b_has_empty = () in all_b
+    b_buckets: dict[str, list[DictPath]] = {}
+
+    for pb in all_b:
+        if pb:
+            b_buckets.setdefault(pb[0], []).append(pb)
+
+    def pair_conflicts(pa: DictPath, pb: DictPath) -> bool:
+        """Conflict verdict for a prefix-related pair (scalar-overlap exemption)."""
+
+        is_both_scalar = pa in a_scalars and pb in b_scalars
+
+        if is_both_scalar and pa == pb and a_scalars[pa] == b_scalars[pb]:
+            logger.trace("Ignoring compatible scalar overlap at '%s'", pa)
+            return False
+
+        logger.trace("Conflict detected between '%s' and '%s'", pa, pb)
+        return True
+
     for pa in all_a:
-        for pb in all_b:
-            if not is_prefix(pa, pb):
-                continue
+        if not pa:
+            # () is a prefix of every path in B: compare against all of B.
+            for pb in all_b:
+                if pair_conflicts(pa, pb):
+                    return True
 
-            is_both_scalar = pa in a_scalars and pb in b_scalars
+            continue
 
-            if is_both_scalar and pa == pb and a_scalars[pa] == b_scalars[pb]:
-                logger.trace("Ignoring compatible scalar overlap at '%s'", pa)
-                continue
-
-            logger.trace("Conflict detected between '%s' and '%s'", pa, pb)
+        if b_has_empty and pair_conflicts(pa, ()):
             return True
+
+        for pb in b_buckets.get(pa[0], ()):
+            if is_prefix(pa, pb) and pair_conflicts(pa, pb):
+                return True
 
     logger.trace("No conflict detected")
     return False

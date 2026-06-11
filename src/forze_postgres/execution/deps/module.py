@@ -1,7 +1,7 @@
 """Postgres dependency module for the application kernel."""
 
 from datetime import timedelta
-from typing import Callable, Mapping, final
+from typing import Callable, final
 
 import attrs
 
@@ -23,7 +23,7 @@ from forze.application.contracts.search import (
 from forze.application.contracts.transaction import TransactionManagerDepKey
 from forze.application.execution import Deps, DepsModule
 from forze.base.exceptions import exc
-from forze.base.primitives import StrKey
+from forze.base.primitives import MappingConverter, StrKey, StrKeyMapping
 
 from ...kernel.catalog.introspect import PostgresIntrospector
 from ...kernel.catalog.validation.validate_relation_specs import (
@@ -81,27 +81,34 @@ class PostgresDepsModule(DepsModule):
     introspector_cache_ttl: timedelta | None = attrs.field(default=None)
     """Optional TTL for :class:`PostgresIntrospector` catalog caches (``None`` = no expiry)."""
 
-    ro_documents: Mapping[StrKey, PostgresReadOnlyDocumentConfig] | None = attrs.field(
-        default=None
+    ro_documents: StrKeyMapping[PostgresReadOnlyDocumentConfig] | None = attrs.field(
+        default=None,
+        converter=MappingConverter.to_str_key_frozen,  # type: ignore[misc]
     )
     """Mapping from read-only document names to their Postgres-specific configurations."""
 
-    rw_documents: Mapping[StrKey, PostgresDocumentConfig] | None = attrs.field(
-        default=None
+    rw_documents: StrKeyMapping[PostgresDocumentConfig] | None = attrs.field(
+        default=None,
+        converter=MappingConverter.to_str_key_frozen,  # type: ignore[misc]
     )
     """Mapping from read-write document names to their Postgres-specific configurations."""
 
-    searches: Mapping[StrKey, PostgresSearchConfig] | None = attrs.field(default=None)
+    searches: StrKeyMapping[PostgresSearchConfig] | None = attrs.field(
+        default=None,
+        converter=MappingConverter.to_str_key_frozen,  # type: ignore[misc]
+    )
     """Mapping from search names to their Postgres-specific configurations."""
 
-    hub_searches: Mapping[StrKey, PostgresHubSearchConfig] | None = attrs.field(
-        default=None
+    hub_searches: StrKeyMapping[PostgresHubSearchConfig] | None = attrs.field(
+        default=None,
+        converter=MappingConverter.to_str_key_frozen,  # type: ignore[misc]
     )
     """Mapping from hub search names to their Postgres-specific configurations."""
 
-    federated_searches: Mapping[StrKey, PostgresFederatedSearchConfig] | None = (
+    federated_searches: StrKeyMapping[PostgresFederatedSearchConfig] | None = (
         attrs.field(
             default=None,
+            converter=MappingConverter.to_str_key_frozen,  # type: ignore[misc]
         )
     )
     """Mapping from federated search names to their Postgres-specific configurations."""
@@ -109,15 +116,22 @@ class PostgresDepsModule(DepsModule):
     tx: set[StrKey] | None = attrs.field(default=None)
     """Set of transaction routes to register."""
 
-    analytics: Mapping[StrKey, PostgresAnalyticsConfig] | None = attrs.field(
-        default=None
+    analytics: StrKeyMapping[PostgresAnalyticsConfig] | None = attrs.field(
+        default=None,
+        converter=MappingConverter.to_str_key_frozen,  # type: ignore[misc]
     )
     """Mapping from analytics route names to their Postgres-specific configurations."""
 
-    outboxes: Mapping[StrKey, PostgresOutboxConfig] | None = attrs.field(default=None)
+    outboxes: StrKeyMapping[PostgresOutboxConfig] | None = attrs.field(
+        default=None,
+        converter=MappingConverter.to_str_key_frozen,  # type: ignore[misc]
+    )
     """Mapping from outbox route names to their Postgres-specific configurations."""
 
-    inboxes: Mapping[StrKey, PostgresInboxConfig] | None = attrs.field(default=None)
+    inboxes: StrKeyMapping[PostgresInboxConfig] | None = attrs.field(
+        default=None,
+        converter=MappingConverter.to_str_key_frozen,  # type: ignore[misc]
+    )
     """Mapping from inbox route names to their Postgres-specific configurations."""
 
     # ....................... #

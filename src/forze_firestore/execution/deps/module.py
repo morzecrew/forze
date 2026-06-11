@@ -1,6 +1,6 @@
 """Firestore dependency module for the application kernel."""
 
-from typing import Any, Mapping, final
+from typing import Any, final
 
 import attrs
 
@@ -17,7 +17,7 @@ from forze.application.execution.deps.builders import (
     routed_constant,
     routed_from_mapping,
 )
-from forze.base.primitives import StrKey
+from forze.base.primitives import MappingConverter, StrKey, StrKeyMapping
 
 from ...kernel._logger import logger
 from ...kernel.client import FirestoreClientPort
@@ -54,13 +54,22 @@ class FirestoreDepsModule(DepsModule):
     """Dependency module registering Firestore client, documents, and transactions."""
 
     client: FirestoreClientPort
-    ro_documents: Mapping[StrKey, FirestoreReadOnlyDocumentConfig] | None = attrs.field(
-        default=None
+    """Pre-constructed Firestore client."""
+
+    ro_documents: StrKeyMapping[FirestoreReadOnlyDocumentConfig] | None = attrs.field(
+        default=None,
+        converter=MappingConverter.to_str_key_frozen,  # type: ignore[misc]
     )
-    rw_documents: Mapping[StrKey, FirestoreDocumentConfig] | None = attrs.field(
-        default=None
+    """Mapping from read-only document names to their Firestore-specific configurations."""
+
+    rw_documents: StrKeyMapping[FirestoreDocumentConfig] | None = attrs.field(
+        default=None,
+        converter=MappingConverter.to_str_key_frozen,  # type: ignore[misc]
     )
+    """Mapping from read-write document names to their Firestore-specific configurations."""
+
     tx: set[StrKey] | None = attrs.field(default=None)
+    """Set of transaction routes to register."""
 
     # ....................... #
 

@@ -1,24 +1,17 @@
 """Run execution graph waves in forward or reverse order."""
 
-from __future__ import annotations
-
 import asyncio
-from typing import Awaitable, Callable, Mapping, TypeVar
+from typing import Awaitable, Callable
 
 from forze.application.contracts.execution import ExecutionGraph
-from forze.base.primitives import StrKey
+from forze.base.primitives import StrKey, StrKeyMapping
 
 # ----------------------- #
-
-G = TypeVar("G")
-
-
-# ....................... #
 
 
 async def _run_wave[G](
     step_ids: tuple[StrKey, ...],
-    steps: Mapping[StrKey, G],
+    steps: StrKeyMapping[G],
     run_step: Callable[[G], Awaitable[None]],
     *,
     concurrent: bool,
@@ -62,7 +55,7 @@ async def _run_wave[G](
 
 async def run_wave_forward[G](
     wave: tuple[StrKey, ...],
-    steps: Mapping[StrKey, G],
+    steps: StrKeyMapping[G],
     run_step: Callable[[G], Awaitable[None]],
     *,
     concurrent: bool,
@@ -96,7 +89,7 @@ async def run_graph_waves_forward[G](
 
 async def run_wave_reverse[G](
     wave: tuple[StrKey, ...],
-    steps: Mapping[StrKey, G],
+    steps: StrKeyMapping[G],
     run_step: Callable[[G], Awaitable[None]],
     *,
     concurrent: bool,

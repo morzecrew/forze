@@ -1,6 +1,6 @@
 """RabbitMQ dependency module for the application kernel."""
 
-from typing import Mapping, final
+from typing import final
 
 import attrs
 
@@ -8,7 +8,7 @@ from forze.application.contracts.queue import QueueCommandDepKey, QueueQueryDepK
 from forze.application.contracts.tenancy import warn_integration_routes
 from forze.application.execution import Deps, DepsModule
 from forze.application.execution.deps.builders import merge_deps, routed_from_mapping
-from forze.base.primitives import StrKey
+from forze.base.primitives import MappingConverter, StrKeyMapping
 
 from ...kernel.client import RabbitMQClientPort
 from ._warnings import RABBITMQ_QUEUE_READER_WARNING, RABBITMQ_QUEUE_WRITER_WARNING
@@ -27,15 +27,19 @@ class RabbitMQDepsModule(DepsModule):
     client: RabbitMQClientPort
     """Pre-constructed RabbitMQ client (single-DSN or routed, not connected until lifecycle)."""
 
-    queue_readers: Mapping[StrKey, RabbitMQQueueConfig] | None = attrs.field(
-        default=None
+    queue_readers: StrKeyMapping[RabbitMQQueueConfig] | None = attrs.field(
+        default=None,
+        converter=MappingConverter.to_str_key_frozen,  # type: ignore[misc]
     )
     """Mapping from queue names to their RabbitMQ-specific configurations."""
 
-    queue_writers: Mapping[StrKey, RabbitMQQueueConfig] | None = attrs.field(
-        default=None
+    queue_writers: StrKeyMapping[RabbitMQQueueConfig] | None = attrs.field(
+        default=None,
+        converter=MappingConverter.to_str_key_frozen,  # type: ignore[misc]
     )
     """Mapping from queue names to their RabbitMQ-specific configurations."""
+
+    # ....................... #
 
     def __attrs_post_init__(self) -> None:
         warn_integration_routes(

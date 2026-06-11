@@ -1,13 +1,13 @@
 """Plain merge of operation registry handlers, plans, and patches."""
 
-from typing import Mapping, Self, final
+from typing import Self, final
 
 import attrs
 
 from forze.application.contracts.execution import HandlerFactory
 from forze.base.descriptors import hybridmethod
 from forze.base.exceptions import exc
-from forze.base.primitives import StrKey
+from forze.base.primitives import MappingConverter, StrKey, StrKeyMapping
 
 from ..descriptors import OperationDescriptor
 from ..planning import OperationPlan
@@ -21,18 +21,21 @@ from .patch import PlanPatch
 class RegistryMerge:
     """Merged handlers, plans, and patches without resolution or validation."""
 
-    handlers: Mapping[StrKey, HandlerFactory] = attrs.field(
+    handlers: StrKeyMapping[HandlerFactory] = attrs.field(
         factory=dict[StrKey, HandlerFactory],
+        converter=MappingConverter.to_str_key_frozen,  # type: ignore[misc]
     )
     """Handler factories for operations."""
 
-    plans: Mapping[StrKey, OperationPlan] = attrs.field(
+    plans: StrKeyMapping[OperationPlan] = attrs.field(
         factory=dict[StrKey, OperationPlan],
+        converter=MappingConverter.to_str_key_frozen,  # type: ignore[misc]
     )
     """Execution plans for operations."""
 
-    descriptors: Mapping[StrKey, OperationDescriptor] = attrs.field(
+    descriptors: StrKeyMapping[OperationDescriptor] = attrs.field(
         factory=dict[StrKey, OperationDescriptor],
+        converter=MappingConverter.to_str_key_frozen,  # type: ignore[misc]
     )
     """Catalog metadata for operations."""
 

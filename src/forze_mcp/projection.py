@@ -5,19 +5,17 @@ The read-only MVP exposes only ``QUERY`` operations; ``include_writes`` opts int
 decision and lives here, not in the engine.
 """
 
-from typing import Mapping
-
 from forze.application.execution.operations import OperationCatalogEntry
-from forze.base.primitives import StrKey
+from forze.base.primitives import StrKey, StrKeyMapping
 
 # ----------------------- #
 
 
 def exposed_operations(
-    catalog: Mapping[StrKey, OperationCatalogEntry],
+    catalog: StrKeyMapping[OperationCatalogEntry],
     *,
     include_writes: bool = False,
-) -> dict[str, StrKey]:
+) -> StrKeyMapping[StrKey]:
     """Map exposed tool name → operation key for the exposed slice of the catalog."""
 
     return {

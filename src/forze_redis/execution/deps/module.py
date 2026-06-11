@@ -20,7 +20,7 @@ from forze.application.execution.deps.builders import (
     routed_from_mapping,
     routed_shared_factories,
 )
-from forze.base.primitives import StrKey
+from forze.base.primitives import MappingConverter, StrKey, StrKeyMapping
 
 from ...kernel._logger import logger
 from ...kernel.client import RedisClientPort
@@ -69,11 +69,40 @@ def _is_idem_routed(
     return all(_is_idem_route_value(v) for v in routes.values())
 
 
-def _is_idem_plain(config: Any) -> TypeGuard[RedisIdempotencyConfig | RedisUniversalConfig]:
+def _is_idem_plain(
+    config: Any,
+) -> TypeGuard[RedisIdempotencyConfig | RedisUniversalConfig]:
     if isinstance(config, RedisIdempotencyConfig):
         return True
 
     return type(config) is RedisUniversalConfig
+
+
+# ....................... #
+
+
+def _redis_idem_converter(
+    value: (
+        Mapping[StrKey, RedisIdempotencyConfig]
+        | Mapping[StrKey, RedisUniversalConfig]
+        | RedisIdempotencyConfig
+        | RedisUniversalConfig
+        | None
+    ),
+) -> (
+    StrKeyMapping[RedisIdempotencyConfig]
+    | StrKeyMapping[RedisUniversalConfig]
+    | RedisIdempotencyConfig
+    | RedisUniversalConfig
+    | None
+):
+    if value is None:
+        return None
+
+    if isinstance(value, RedisIdempotencyConfig | RedisUniversalConfig):
+        return value
+
+    return MappingConverter.to_str_key_frozen(value)
 
 
 # ....................... #
@@ -90,32 +119,53 @@ class RedisDepsModule(DepsModule):
     blocking_client: RedisClientPort | None = None
     """Optional second client registered under :data:`RedisBlockingClientDepKey`."""
 
-    caches: Mapping[StrKey, RedisCacheConfig | RedisUniversalConfig] | None = (
-        attrs.field(default=None)
+    caches: (
+        StrKeyMapping[RedisCacheConfig] | StrKeyMapping[RedisUniversalConfig] | None
+    ) = attrs.field(
+        default=None,
+        converter=MappingConverter.to_str_key_frozen,  # type: ignore[misc]
     )
     """Mapping from cache names to their Redis-specific configurations."""
 
-    counters: Mapping[StrKey, RedisCounterConfig | RedisUniversalConfig] | None = (
-        attrs.field(default=None)
+    counters: (
+        StrKeyMapping[RedisCounterConfig] | StrKeyMapping[RedisUniversalConfig] | None
+    ) = attrs.field(
+        default=None,
+        converter=MappingConverter.to_str_key_frozen,  # type: ignore[misc]
     )
+
     """Mapping from counter names to their Redis-specific configurations."""
 
     idempotency: (
-        Mapping[StrKey, RedisIdempotencyConfig | RedisUniversalConfig]
+        StrKeyMapping[RedisIdempotencyConfig]
+        | StrKeyMapping[RedisUniversalConfig]
         | RedisIdempotencyConfig
         | RedisUniversalConfig
         | None
-    ) = attrs.field(default=None)
+    ) = attrs.field(
+        default=None,
+        converter=_redis_idem_converter,
+    )
     """Redis-specific configurations for idempotency."""
 
     search_snapshots: (
-        Mapping[StrKey, RedisSearchResultSnapshotConfig | RedisUniversalConfig] | None
-    ) = attrs.field(default=None)
+        StrKeyMapping[RedisSearchResultSnapshotConfig]
+        | StrKeyMapping[RedisUniversalConfig]
+        | None
+    ) = attrs.field(
+        default=None,
+        converter=MappingConverter.to_str_key_frozen,  # type: ignore[misc]
+    )
     """Mapping from search snapshot names to their Redis-specific configurations."""
 
     dlocks: (
-        Mapping[StrKey, RedisDistributedLockConfig | RedisUniversalConfig] | None
-    ) = attrs.field(default=None)
+        StrKeyMapping[RedisDistributedLockConfig]
+        | StrKeyMapping[RedisUniversalConfig]
+        | None
+    ) = attrs.field(
+        default=None,
+        converter=MappingConverter.to_str_key_frozen,  # type: ignore[misc]
+    )
     """Mapping from distributed lock spec names to their Redis-specific configurations."""
 
     #! read and write separately?
@@ -215,7 +265,9 @@ class RedisDepsModule(DepsModule):
             idempotency_deps,
             routed_from_mapping(
                 self.search_snapshots,
-                bindings=[(SearchResultSnapshotDepKey, ConfigurableRedisSearchResultSnapshot)],
+                bindings=[
+                    (SearchResultSnapshotDepKey, ConfigurableRedisSearchResultSnapshot)
+                ],
             ),
             routed_shared_factories(
                 self.dlocks,

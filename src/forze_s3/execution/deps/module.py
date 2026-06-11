@@ -1,6 +1,6 @@
 """S3 dependency module for the application kernel."""
 
-from typing import Mapping, final
+from typing import final
 
 import attrs
 
@@ -11,7 +11,7 @@ from forze.application.contracts.storage import (
 from forze.application.contracts.tenancy import warn_integration_routes
 from forze.application.execution import Deps, DepsModule
 from forze.application.execution.deps.builders import merge_deps, routed_from_mapping
-from forze.base.primitives import StrKey
+from forze.base.primitives import MappingConverter, StrKeyMapping
 
 from ...kernel._logger import logger
 from ...kernel.client import S3ClientPort
@@ -36,7 +36,10 @@ class S3DepsModule(DepsModule):
     client: S3ClientPort
     """Pre-constructed S3 client (single endpoint or routed, session not initialized until lifecycle)."""
 
-    storages: Mapping[StrKey, S3StorageConfig] | None = attrs.field(default=None)
+    storages: StrKeyMapping[S3StorageConfig] | None = attrs.field(
+        default=None,
+        converter=MappingConverter.to_str_key_frozen,  # type: ignore[misc]
+    )
     """Mapping from storage names to their S3-specific configurations."""
 
     # ....................... #

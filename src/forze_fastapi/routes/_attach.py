@@ -59,6 +59,8 @@ EndpointBuilder = Callable[
 ]
 """Builds a route endpoint from ``(runner, descriptor input type, op key)``."""
 
+# ....................... #
+
 
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
@@ -113,9 +115,7 @@ def _require_satisfiable(
     """
 
     required = {
-        name
-        for name, field in dto_type.model_fields.items()
-        if field.is_required()
+        name for name, field in dto_type.model_fields.items() if field.is_required()
     }
 
     if missing := required - set(supplied):
@@ -273,12 +273,8 @@ def id_rev_body_endpoint(
 
     endpoint.__signature__ = inspect.Signature(  # type: ignore[attr-defined]
         [
-            inspect.Parameter(
-                "id", inspect.Parameter.KEYWORD_ONLY, annotation=UUID
-            ),
-            inspect.Parameter(
-                "rev", inspect.Parameter.KEYWORD_ONLY, annotation=int
-            ),
+            inspect.Parameter("id", inspect.Parameter.KEYWORD_ONLY, annotation=UUID),
+            inspect.Parameter("rev", inspect.Parameter.KEYWORD_ONLY, annotation=int),
             inspect.Parameter(
                 "payload", inspect.Parameter.KEYWORD_ONLY, annotation=inner
             ),

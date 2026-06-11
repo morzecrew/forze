@@ -6,7 +6,7 @@ import attrs
 
 from forze.application.contracts.tenancy import TenantAwareIntegrationConfig
 from forze.base.exceptions import exc
-from forze.base.primitives import StrKey, frozen_mapping
+from forze.base.primitives import MappingConverter, StrKeyMapping
 from forze.domain.constants import ID_FIELD
 from forze_postgres.kernel.relation import (
     RelationSpec,
@@ -51,8 +51,8 @@ class PostgresHubSearchConfig(TenantAwareIntegrationConfig):
     hub: RelationSpec = attrs.field(converter=coerce_relation_spec)
     """Hub relation (schema, table / view) for filters and row shape or resolver."""
 
-    members: Mapping[StrKey, PostgresHubSearchMemberConfig] = attrs.field(
-        converter=frozen_mapping,
+    members: StrKeyMapping[PostgresHubSearchMemberConfig] = attrs.field(
+        converter=MappingConverter.to_str_key_frozen,  # type: ignore[misc]
     )
     """Per-member leg configurations keyed by ``SearchSpec.name``."""
 

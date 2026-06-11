@@ -37,7 +37,9 @@ class MsgspecModelCodec[T: msgspec.Struct](ModelCodec[T, SourceType]):
 
     Structs have no Pydantic-style validators. ``trust_source=True`` uses bulk
     :func:`~forze.base.serialization.msgspec.msgspec_convert_many` (no unknown-field
-    scan). ``trust_source=False`` with ``forbid_extra=True`` scans keys before convert.
+    scan). ``trust_source=False`` with ``forbid_extra=True`` scans keys before convert
+    via precompiled per-struct plans; set ``forbid_unknown_fields=True`` on the whole
+    Struct tree for free native enforcement (the scan is skipped entirely).
     """
 
     model_type: type[T]  # pyright: ignore[reportIncompatibleMethodOverride]

@@ -1,6 +1,6 @@
 """Meilisearch dependency module for the application kernel."""
 
-from typing import Mapping, final
+from typing import final
 
 import attrs
 
@@ -15,7 +15,7 @@ from forze.application.contracts.tenancy import (
 )
 from forze.application.execution import Deps, DepsModule
 from forze.application.execution.deps.builders import merge_deps, routed_from_mapping
-from forze.base.primitives import StrKey
+from forze.base.primitives import MappingConverter, StrKeyMapping
 from forze_meilisearch.execution.deps.configs import (
     MeilisearchFederatedSearchConfig,
     MeilisearchSearchConfig,
@@ -40,14 +40,21 @@ class MeilisearchDepsModule(DepsModule):
     """Registers Meilisearch client and search ports."""
 
     client: MeilisearchClientPort
-    searches: Mapping[StrKey, MeilisearchSearchConfig] | None = attrs.field(
-        default=None
+    """Pre-constructed Meilisearch client."""
+
+    searches: StrKeyMapping[MeilisearchSearchConfig] | None = attrs.field(
+        default=None,
+        converter=MappingConverter.to_str_key_frozen,  # type: ignore[misc]
     )
-    federated_searches: Mapping[StrKey, MeilisearchFederatedSearchConfig] | None = (
+    """Mapping from search names to their Meilisearch-specific configurations."""
+
+    federated_searches: StrKeyMapping[MeilisearchFederatedSearchConfig] | None = (
         attrs.field(
             default=None,
+            converter=MappingConverter.to_str_key_frozen,  # type: ignore[misc]
         )
     )
+    """Mapping from federated search names to their Meilisearch-specific configurations."""
 
     # ....................... #
 
@@ -84,7 +91,9 @@ class MeilisearchDepsModule(DepsModule):
             ),
             routed_from_mapping(
                 self.federated_searches,
-                bindings=[(FederatedSearchQueryDepKey, ConfigurableMeilisearchFederatedSearch)],
+                bindings=[
+                    (FederatedSearchQueryDepKey, ConfigurableMeilisearchFederatedSearch)
+                ],
             ),
             plain={MeilisearchClientDepKey: self.client},
         )

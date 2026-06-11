@@ -132,6 +132,8 @@ indexes:
 db.outbox.createIndex({ outbox_route: 1, event_id: 1 }, { unique: true })
 db.outbox.createIndex({ outbox_route: 1, status: 1, available_at: 1, created_at: 1 })
 db.outbox.createIndex({ outbox_route: 1, status: 1, processing_at: 1 })
+// the relay reads each claimed batch back by its claim token
+db.outbox.createIndex({ claim_token: 1 }, { sparse: true })
 ```
 
 ## Notes

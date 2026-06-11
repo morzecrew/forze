@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable, Sequence
 from enum import StrEnum
-from typing import TYPE_CHECKING, Generic, TypeVar, final
+from typing import TYPE_CHECKING, Awaitable, Callable, Generic, Sequence, TypeVar, final
 
 import attrs
 

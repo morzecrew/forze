@@ -416,3 +416,175 @@ class TestHasHybridPatchConflict:
 
     def test_no_conflict_independent_containers(self) -> None:
         assert not has_hybrid_patch_conflict({}, {("a",)}, {}, {("b",)})
+
+
+# ----------------------- #
+# has_hybrid_patch_conflict: bucketed rewrite parity
+#
+# The root-bucketed implementation must be a drop-in behavioral no-op vs the
+# original quadratic scan. The reference below is a verbatim copy of the OLD
+# implementation (pre-bucketing); the fuzz harness compares both on randomized
+# path sets including shared-root nested prefixes both directions, empty-path
+# edges, and equal-scalar overlaps.
+
+
+DictPath = tuple[str, ...]
+
+
+def _reference_has_hybrid_patch_conflict(
+    a_scalars: dict[DictPath, Any],
+    a_containers: set[DictPath],
+    b_scalars: dict[DictPath, Any],
+    b_containers: set[DictPath],
+) -> bool:
+    """Verbatim copy of the pre-bucketing implementation (golden reference)."""
+
+    all_a = set(a_containers) | set(a_scalars.keys())
+    all_b = set(b_containers) | set(b_scalars.keys())
+
+    for pa in all_a:
+        for pb in all_b:
+            if not is_prefix(pa, pb):
+                continue
+
+            is_both_scalar = pa in a_scalars and pb in b_scalars
+
+            if is_both_scalar and pa == pb and a_scalars[pa] == b_scalars[pb]:
+                continue
+
+            return True
+
+    return False
+
+
+class TestHasHybridPatchConflictBucketedParity:
+    """Seeded property-style fuzz: optimized and reference verdicts must agree."""
+
+    @staticmethod
+    def _rand_path(rng: random.Random, roots: list[str], max_depth: int = 4) -> DictPath:
+        depth = rng.randint(1, max_depth)
+        segs = [rng.choice(roots)] + [
+            rng.choice(["aa", "bb", "cc", "dd"]) for _ in range(depth - 1)
+        ]
+        return tuple(segs)
+
+    @classmethod
+    def _rand_side(
+        cls,
+        rng: random.Random,
+        roots: list[str],
+        n_paths: int,
+    ) -> tuple[dict[DictPath, Any], set[DictPath]]:
+        scalars: dict[DictPath, Any] = {}
+        containers: set[DictPath] = set()
+
+        for _ in range(n_paths):
+            p = cls._rand_path(rng, roots)
+
+            if rng.random() < 0.3:
+                containers.add(p)
+
+            else:
+                # Few distinct values => frequent equal-scalar overlaps.
+                scalars[p] = rng.choice([0, 1, "x"])
+
+        return scalars, containers
+
+    def test_fuzz_parity_with_reference(self) -> None:
+        rng = random.Random(20260611)
+        conflicts = 0
+
+        for _ in range(500):
+            # A small shared root universe forces shared-root nested prefixes
+            # in both directions (A-in-B and B-in-A).
+            roots = [f"r{k}" for k in range(rng.randint(1, 6))]
+            a_s, a_c = self._rand_side(rng, roots, rng.randint(0, 8))
+            b_s, b_c = self._rand_side(rng, roots, rng.randint(0, 8))
+
+            # Occasionally inject the exact same path on both sides, half the
+            # time with an equal value (compatible overlap exemption).
+            if rng.random() < 0.5 and a_s:
+                p = rng.choice(sorted(a_s))
+                b_s[p] = a_s[p] if rng.random() < 0.5 else "different"
+
+            # Occasionally inject empty-path edges on either side.
+            if rng.random() < 0.05:
+                a_s[()] = 1
+
+            if rng.random() < 0.05:
+                b_c.add(())
+
+            expected = _reference_has_hybrid_patch_conflict(a_s, a_c, b_s, b_c)
+            actual = has_hybrid_patch_conflict(a_s, a_c, b_s, b_c)
+
+            assert actual == expected, (a_s, a_c, b_s, b_c)
+            conflicts += expected
+
+        # Sanity: the seed exercises both verdicts.
+        assert 0 < conflicts < 500
+
+    # explicit edge cases #
+
+    def test_empty_path_in_a_conflicts_with_everything(self) -> None:
+        assert has_hybrid_patch_conflict({(): 1}, set(), {("a", "b"): 2}, set())
+        assert has_hybrid_patch_conflict({(): 1}, set(), {}, {("z",)})
+
+    def test_empty_path_in_b_conflicts_with_everything(self) -> None:
+        assert has_hybrid_patch_conflict({("a", "b"): 2}, set(), {(): 1}, set())
+        assert has_hybrid_patch_conflict({}, {("z",)}, {}, {()})
+
+    def test_empty_paths_both_sides_equal_scalar_is_compatible(self) -> None:
+        assert not has_hybrid_patch_conflict({(): 1}, set(), {(): 1}, set())
+        assert has_hybrid_patch_conflict({(): 1}, set(), {(): 2}, set())
+
+    def test_shared_root_prefix_a_in_b(self) -> None:
+        assert has_hybrid_patch_conflict(
+            {("root", "x"): 1},
+            set(),
+            {("root", "x", "deep"): 2},
+            set(),
+        )
+
+    def test_shared_root_prefix_b_in_a(self) -> None:
+        assert has_hybrid_patch_conflict(
+            {("root", "x", "deep"): 1},
+            set(),
+            {("root", "x"): 2},
+            set(),
+        )
+
+    def test_shared_root_disjoint_subpaths_do_not_conflict(self) -> None:
+        assert not has_hybrid_patch_conflict(
+            {("root", "x", "p"): 1},
+            set(),
+            {("root", "y", "q"): 2},
+            set(),
+        )
+
+    def test_equal_scalar_same_path_exemption(self) -> None:
+        assert not has_hybrid_patch_conflict(
+            {("root", "x"): "same"},
+            set(),
+            {("root", "x"): "same"},
+            set(),
+        )
+
+    def test_equal_scalar_exemption_does_not_mask_other_conflicts(self) -> None:
+        assert has_hybrid_patch_conflict(
+            {("root", "x"): "same", ("root", "y"): 1},
+            set(),
+            {("root", "x"): "same", ("root", "y", "z"): 2},
+            set(),
+        )
+
+    def test_disjoint_roots_never_conflict(self) -> None:
+        assert not has_hybrid_patch_conflict(
+            {("a", "x"): 1, ("b", "y"): 2},
+            {("c",)},
+            {("d", "x"): 1, ("e", "y"): 2},
+            {("f",)},
+        )
+
+    def test_container_same_path_is_always_a_conflict(self) -> None:
+        # The exemption is scalar-only: identical container paths conflict.
+        assert has_hybrid_patch_conflict({}, {("a", "b")}, {}, {("a", "b")})

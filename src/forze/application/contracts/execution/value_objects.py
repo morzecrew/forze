@@ -1,8 +1,8 @@
-from typing import Any, Callable, Mapping, final
+from typing import Any, Callable, final
 
 import attrs
 
-from forze.base.primitives import StrKey
+from forze.base.primitives import MappingConverter, StrKey, StrKeyMapping
 
 from .defaults import noop_lifecycle_hook
 from .protocols import (
@@ -50,7 +50,10 @@ type Outcome[R] = Success[R] | Failure
 class ExecutionGraph[G]:
     """Execution graph."""
 
-    steps: Mapping[StrKey, G] = attrs.field(factory=dict[StrKey, G])
+    steps: StrKeyMapping[G] = attrs.field(
+        factory=dict[StrKey, G],
+        converter=MappingConverter.to_str_key_frozen,  # type: ignore[misc]
+    )
     """Steps for this graph."""
 
     waves: tuple[tuple[StrKey, ...], ...] = attrs.field(factory=tuple)

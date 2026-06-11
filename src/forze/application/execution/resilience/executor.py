@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import random
 import time
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable
 
 import attrs
 
@@ -18,7 +18,7 @@ from forze.application.contracts.resilience import (
     TimeoutStrategy,
 )
 from forze.base.exceptions import CoreException, exc, exception_egress_policy
-from forze.base.primitives import StrKey
+from forze.base.primitives import MappingConverter, StrKey, StrKeyMapping
 
 from ..tracing import record
 from .backoff import compute_delay
@@ -44,10 +44,19 @@ class InProcessResilienceExecutor:
     every request.
     """
 
-    policies: Mapping[StrKey, ResiliencePolicy]
+    policies: StrKeyMapping[ResiliencePolicy] = attrs.field(
+        converter=MappingConverter.to_str_key,  # type: ignore[misc]
+    )
+    """Named policies, keyed by policy name."""
+
     clock: Callable[[], float] = attrs.field(default=time.monotonic)
+    """Time source for the executor."""
+
     rng: random.Random = attrs.field(factory=random.Random)
+    """Random number generator for the executor."""
+
     sleep: Callable[[float], Awaitable[None]] = attrs.field(default=asyncio.sleep)
+    """Sleep function for the executor."""
 
     breaker_store: CircuitBreakerStore = attrs.field(
         default=attrs.Factory(
@@ -55,10 +64,16 @@ class InProcessResilienceExecutor:
             takes_self=True,
         ),
     )
+    """Circuit breaker store for the executor."""
 
     _bulkheads: dict[_StateKey, BulkheadState] = attrs.field(factory=dict, init=False)
+    """Bulkhead state for the executor."""
+
     _budgets: dict[_StateKey, BudgetState] = attrs.field(factory=dict, init=False)
+    """Budget state for the executor."""
+
     _hedge_budgets: dict[_StateKey, BudgetState] = attrs.field(factory=dict, init=False)
+    """Hedge budget state for the executor."""
 
     # ....................... #
 

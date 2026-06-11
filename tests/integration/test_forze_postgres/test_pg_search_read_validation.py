@@ -209,9 +209,15 @@ async def test_pgroonga_search_trusted_matches_strict_hits(
 
 @pytest.mark.integration
 @pytest.mark.asyncio
-async def test_pgroonga_search_trusted_skips_field_validator(
+async def test_pgroonga_search_trusted_runs_field_validator(
     pg_client: PostgresClient,
 ) -> None:
+    """Trusted decode trusts columns only — values are still validated.
+
+    Rows violating the read model raise on both paths; ``trusted`` no longer
+    constructs invalid model instances (it used to skip field validators).
+    """
+
     suffix = uuid4().hex[:10]
     table, index, _docs = await _setup_pgroonga_items(pg_client, suffix)
     spec = SearchSpec(
@@ -230,9 +236,8 @@ async def test_pgroonga_search_trusted_skips_field_validator(
     with pytest.raises(ValidationError):
         await strict_ctx.search.query(spec).search_page("python")
 
-    trusted_page = await trusted_ctx.search.query(spec).search_page("python")
-    assert trusted_page.count == 3
-    assert all(len(h.title) < 20 for h in trusted_page.hits)
+    with pytest.raises(ValidationError):
+        await trusted_ctx.search.query(spec).search_page("python")
 
 
 @pytest.mark.integration

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Iterable, Literal, Mapping, final
+from typing import Any, Iterable, Literal, final
 
 import attrs
 
@@ -140,7 +140,7 @@ from forze.application.execution.outbox import build_staging_outbox_command_for_
 from forze.application.integrations.outbox import StagingOutboxCommand
 from forze.application.integrations.search import SearchResultSnapshot
 from forze.base.exceptions import exc
-from forze.base.primitives import StrKey
+from forze.base.primitives import MappingConverter, StrKey, StrKeyMapping
 from forze_mock.adapters import (
     MockAnalyticsAdapter,
     MockCacheAdapter,
@@ -747,7 +747,10 @@ class MockDepsModule(DepsModule):
     """Register all in-memory mock contract adapters and identity stubs."""
 
     state: MockState = attrs.field(factory=MockState)
-    routes: Mapping[StrKey, MockRouteConfig] | None = attrs.field(default=None)
+    routes: StrKeyMapping[MockRouteConfig] | None = attrs.field(
+        default=None,
+        converter=MappingConverter.to_str_key_frozen,  # type: ignore[misc]
+    )
     identity: MockIdentityConfig | None = attrs.field(default=None)
     routed_state: MockRoutedStateRegistry | None = attrs.field(default=None)
     embeddings_dimensions: int = 8

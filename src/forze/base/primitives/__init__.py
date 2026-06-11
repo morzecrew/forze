@@ -18,7 +18,10 @@ from .graph import DirectedAcyclicGraph
 from .lanes import CachedInflightLane, CacheLane, InflightLane
 from .lifecycle_guard import GuardedLifecycle
 from .lru_registry import GuardedLruRegistry, SimpleLruRegistry
-from .mapping import frozen_mapping
+from .mapping import (
+    MappingConverter,
+    StrKeyMapping,
+)
 from .namespace import StrKeyNamespace
 from .runtime import RuntimeVar
 from .selector import StrKeySelector, str_key_selector
@@ -31,7 +34,7 @@ from .time_source import (
     bind_time_source,
     current_time_source,
 )
-from .types import JsonDict, StrKey, StrKeyMapping, str_key_mapping
+from .types import JsonDict, StrKey
 from .uuid import uuid4, uuid7
 
 # ----------------------- #
@@ -65,7 +68,6 @@ __all__ = [
     "JsonDict",
     "StrKey",
     "StrKeyMapping",
-    "str_key_mapping",
     "uuid4",
     "uuid7",
     "RuntimeVar",
@@ -74,5 +76,5 @@ __all__ = [
     "str_key_selector",
     "AbstractSequence",
     "DirectedAcyclicGraph",
-    "frozen_mapping",
+    "MappingConverter",
 ]

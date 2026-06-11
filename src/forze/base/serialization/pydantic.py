@@ -45,7 +45,9 @@ def pydantic_validate[M: BaseModel](
     :param cls: Pydantic model class to validate against.
     :param data: Raw input mapping.
     :param forbid_extra: When true, extra keys are forbidden instead of ignored. Defaults to False.
-    :param trust_source: When true, skip validation and use :meth:`~pydantic.BaseModel.model_construct`.
+    :param trust_source: When true, use :func:`pydantic_validate_trusted` — a cheap
+        unknown-column precondition check followed by the same validation as the
+        strict path. See that function for the exact semantics.
     :returns: Validated model instance.
     """
 
@@ -90,10 +92,20 @@ def pydantic_validate_trusted[M: BaseModel](
     *,
     forbid_extra: bool = False,
 ) -> M:
-    """Build a model from a trusted row mapping without running validators.
+    """Decode a trusted row mapping with full validation and coercion.
 
-    Row keys must be a subset of stored field names. Unknown keys raise
-    :class:`~forze.base.exceptions.exc.PreconditionError` (or when ``forbid_extra``).
+    "Trusted" means *trusted to have the right columns*: row keys must be a
+    subset of stored field names, and unknown keys raise
+    :class:`~forze.base.exceptions.exc.PreconditionError` before any
+    validation work. Values are then validated and coerced exactly like the
+    strict path — validators/normalizers run, nested models materialize as
+    real model instances, and wire types (datetime/UUID strings) coerce to
+    their Python types.
+
+    There is no skip-validation fast path here: a ``model_construct`` loop is
+    measurably slower than validation while leaving nested models as raw
+    dicts. The skip-validation semantics live in the msgspec codec instead
+    (:func:`forze.base.serialization.msgspec.msgspec_convert`).
     """
 
     _ = forbid_extra
@@ -103,9 +115,9 @@ def pydantic_validate_trusted[M: BaseModel](
     if unknown:
         _raise_trusted_unknown_fields(cls, unknown)
 
-    logger.trace("Trusted construct into %s", cls.__name__)
+    logger.trace("Trusted validate into %s", cls.__name__)
 
-    return cls.model_construct(**data)
+    return cls.model_validate(data, extra="ignore")
 
 
 def pydantic_validate_many_trusted[M: BaseModel](
@@ -114,7 +126,14 @@ def pydantic_validate_many_trusted[M: BaseModel](
     *,
     forbid_extra: bool = False,
 ) -> list[M]:
-    """Trusted bulk decode: one allowed-field set, tight construct loop (no per-row helper calls)."""
+    """Trusted bulk decode: cheap per-row unknown-column check, then batched validation.
+
+    Row keys must be a subset of stored field names (unknown keys raise
+    :class:`~forze.base.exceptions.exc.PreconditionError`); values are then
+    validated through the same cached batched :class:`~pydantic.TypeAdapter`
+    as the strict path. See :func:`pydantic_validate_trusted` for the exact
+    "trusted" semantics.
+    """
 
     _ = forbid_extra
     payload = sequence_as_list(data)
@@ -123,14 +142,6 @@ def pydantic_validate_many_trusted[M: BaseModel](
         return []
 
     allowed = pydantic_field_names(cls, include_computed=False)
-    construct = cls.model_construct
-    logger.trace(
-        "Trusted construct %s rows into list[%s]",
-        len(payload),
-        cls.__name__,
-    )
-
-    out: list[M] = []
 
     for row in payload:
         unknown = _trusted_unknown_field_names(row, allowed)
@@ -138,9 +149,15 @@ def pydantic_validate_many_trusted[M: BaseModel](
         if unknown:
             _raise_trusted_unknown_fields(cls, unknown)
 
-        out.append(construct(**row))
+    logger.trace(
+        "Trusted validate %s rows into list[%s]",
+        len(payload),
+        cls.__name__,
+    )
 
-    return out
+    adapter = _list_adapter(cls)
+
+    return adapter.validate_python(payload, extra="ignore")
 
 
 # ....................... #

@@ -115,6 +115,13 @@ async def _pool_reset_transaction_attributes(conn: AsyncConnection) -> None:
     ``_set_isolation_level_gen`` only update the cached ``BEGIN`` statement, no
     SQL is sent — so this costs no round-trip. The ``is not None`` guards keep
     the common check-in (nothing leaked) entirely allocation- and lock-free.
+
+    Also the second belt for ``autocommit`` (the first is the ``finally``
+    restore in :meth:`PostgresClient._statement_conn`): a connection must never
+    re-enter the pool in autocommit mode, or later transactional work on it
+    would silently skip ``BEGIN``. ``_set_autocommit_gen`` is likewise pure
+    client-side on an idle connection, and the truthiness guard keeps the clean
+    check-in a no-op.
     """
 
     if conn.isolation_level is not None:
@@ -122,6 +129,9 @@ async def _pool_reset_transaction_attributes(conn: AsyncConnection) -> None:
 
     if conn.read_only is not None:
         await conn.set_read_only(None)
+
+    if conn.autocommit:
+        await conn.set_autocommit(False)
 
 
 # ....................... #
@@ -286,6 +296,56 @@ class PostgresClient(PostgresClientPort):
             timeout=self.__acquire_timeout.total_seconds()
         ) as pooled_conn:
             yield pooled_conn
+
+    # ....................... #
+
+    @asynccontextmanager
+    async def _statement_conn(self) -> AsyncGenerator[AsyncConnection]:
+        """Yields a connection for a single statement, autocommit when out-of-tx.
+
+        With a context-bound connection (transaction or :meth:`bound_connection`)
+        it is yielded as-is — its owner controls commit/rollback. Otherwise a
+        pooled connection is checked out and switched to **autocommit** for the
+        duration of the statement: psycopg then skips the implicit ``BEGIN``
+        and the explicit ``COMMIT``, so an out-of-transaction statement costs
+        exactly one server statement instead of ``BEGIN``/statement/``COMMIT``.
+
+        ``set_autocommit`` is pure client-side on an idle connection (verified
+        in psycopg's ``_set_autocommit_gen``: it only flips a flag after
+        ``_check_intrans_gen``, no SQL) and is independent of the transaction
+        attribute machinery — ``read_only`` / ``isolation_level`` only ride the
+        composed ``BEGIN``, which ``_start_query`` never emits under
+        autocommit. The ``finally`` restore is best-effort (a broken connection
+        must not mask the statement's own error); the pool ``reset`` callback
+        (:func:`_pool_reset_transaction_attributes`) clears a leaked autocommit
+        flag on check-in as the second belt.
+        """
+
+        conn = self.__current_conn()
+
+        if conn is not None:
+            yield conn
+            return
+
+        async with self.__require_pool().connection(
+            timeout=self.__acquire_timeout.total_seconds()
+        ) as pooled_conn:
+            await pooled_conn.set_autocommit(True)
+
+            try:
+                yield pooled_conn
+
+            finally:
+                try:
+                    await pooled_conn.set_autocommit(False)
+
+                except Exception:
+                    logger.warning(
+                        "Failed to restore autocommit after out-of-transaction "
+                        "statement; the pool reset callback will clear it on "
+                        "check-in",
+                        exc_info=True,
+                    )
 
     # ....................... #
     # Transaction API
@@ -583,8 +643,9 @@ class PostgresClient(PostgresClientPort):
     ) -> int | None:
         """Executes a statement.
 
-        When not inside a transaction, commits automatically. Optionally
-        returns the affected row count.
+        When not inside a transaction, runs in autocommit mode (one server
+        statement, no ``BEGIN``/``COMMIT``). Optionally returns the affected
+        row count.
 
         :param query: SQL query or statement.
         :param params: Query parameters.
@@ -592,14 +653,11 @@ class PostgresClient(PostgresClientPort):
         :returns: Row count when ``return_rowcount`` is ``True``, else ``None``.
         """
 
-        async with self.__acquire_conn() as conn:
+        async with self._statement_conn() as conn:
             async with conn.cursor() as cur:
                 await cur.execute(query, params)
 
                 rowcount = cur.rowcount
-
-            if self.__current_conn() is None:
-                await conn.commit()
 
             if return_rowcount:
                 return rowcount
@@ -616,16 +674,14 @@ class PostgresClient(PostgresClientPort):
     ) -> None:
         """Executes the same statement for each parameter set.
 
-        When not inside a transaction, commits automatically after all
-        executions.
+        When not inside a transaction, runs in autocommit mode: each execution
+        commits on its own. Wrap the call in :meth:`transaction` when the batch
+        must be atomic.
         """
 
-        async with self.__acquire_conn() as conn:
+        async with self._statement_conn() as conn:
             async with conn.cursor() as cur:
                 await cur.executemany(query, params)
-
-            if self.__current_conn() is None:
-                await conn.commit()
 
     # ....................... #
 
@@ -660,17 +716,20 @@ class PostgresClient(PostgresClientPort):
     ) -> list[JsonDict] | list[tuple[Any, ...]]:
         """Executes a query and returns all rows.
 
-        Row format follows ``row_factory``. When ``commit`` is ``True`` and
-        not inside a transaction, commits after the query.
+        Row format follows ``row_factory``. When not inside a transaction, the
+        query runs in autocommit mode; ``commit`` is accepted for API symmetry
+        only and has no effect (out-of-transaction statements always commit).
 
         :param query: SQL query.
         :param params: Query parameters.
         :param row_factory: ``\"dict\"`` or ``\"tuple\"`` row format.
-        :param commit: If ``True``, commit when not in a transaction.
+        :param commit: Accepted for API symmetry; no effect.
         :returns: List of rows as dicts or tuples.
         """
 
-        async with self.__acquire_conn() as conn:
+        _ = commit
+
+        async with self._statement_conn() as conn:
             async with conn.cursor() as cur:
                 await cur.execute(query, params)
 
@@ -682,9 +741,6 @@ class PostgresClient(PostgresClientPort):
 
                 else:
                     res = self._rows_to_dicts(cur.description, rows)
-
-            if commit and self.__current_conn() is None:
-                await conn.commit()
 
             return res
 
@@ -783,17 +839,21 @@ class PostgresClient(PostgresClientPort):
     ) -> JsonDict | tuple[Any, ...] | None:
         """Executes a query and returns the first row.
 
-        Returns ``None`` when no rows match. When ``commit`` is ``True`` and
-        not inside a transaction, commits after the query.
+        Returns ``None`` when no rows match. When not inside a transaction,
+        the query runs in autocommit mode; ``commit`` is accepted for API
+        symmetry only and has no effect (out-of-transaction statements always
+        commit).
 
         :param query: SQL query.
         :param params: Query parameters.
         :param row_factory: ``\"dict\"`` or ``\"tuple\"`` row format.
-        :param commit: If ``True``, commit when not in a transaction.
+        :param commit: Accepted for API symmetry; no effect.
         :returns: First row as dict or tuple, or ``None``.
         """
 
-        async with self.__acquire_conn() as conn:
+        _ = commit
+
+        async with self._statement_conn() as conn:
             async with conn.cursor() as cur:
                 await cur.execute(query, params)
 
@@ -809,9 +869,6 @@ class PostgresClient(PostgresClientPort):
                 else:
                     res = self._row_to_dict(cur.description, row)
 
-            if commit and self.__current_conn() is None:
-                await conn.commit()
-
             return res
 
     # ....................... #
@@ -826,7 +883,8 @@ class PostgresClient(PostgresClientPort):
     ) -> Any:
         """Executes a query and returns the first column of the first row.
 
-        Returns ``default`` when no rows match.
+        Returns ``default`` when no rows match. When not inside a transaction,
+        the query runs in autocommit mode.
 
         :param query: SQL query.
         :param params: Query parameters.
@@ -834,7 +892,7 @@ class PostgresClient(PostgresClientPort):
         :returns: First column value or ``default``.
         """
 
-        async with self.__acquire_conn() as conn:
+        async with self._statement_conn() as conn:
             async with conn.cursor() as cur:
                 await cur.execute(query, params)
 

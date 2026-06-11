@@ -11,7 +11,7 @@ require_mongo()
 from collections.abc import Sequence
 from datetime import datetime
 from typing import Any, final
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import attrs
 from pydantic import BaseModel
@@ -200,10 +200,12 @@ class MongoOutboxStore[M: BaseModel](TenancyMixin, OutboxQueryPort):
         *,
         limit: int | None = None,
     ) -> Sequence[OutboxClaim]:
+        # Three round trips for the whole batch (vs. one findAndModify per
+        # claim): find candidate ids, claim them with a fresh batch token,
+        # read the claimed rows back by token.
         coll = await self._collection()
         max_n = limit if limit is not None else self.config.max_claim_rows
         now = utcnow()
-        claims: list[OutboxClaim] = []
         base_filter = self._route_filter()
         base_filter["status"] = OutboxStatus.PENDING.value
         # NULL/absent available_at means immediately claimable.
@@ -212,25 +214,52 @@ class MongoOutboxStore[M: BaseModel](TenancyMixin, OutboxQueryPort):
             {"available_at": {"$lte": now}},
         ]
 
-        for _ in range(max_n):
-            doc = await self.client.find_one_and_update(
-                coll,
-                base_filter,
-                {
-                    "$set": {
-                        "status": OutboxStatus.PROCESSING.value,
-                        "processing_at": now,
-                    }
-                },
-                sort=[("created_at", 1)],
-            )
+        candidates = await self.client.find_many(
+            coll,
+            base_filter,
+            projection={"_id": 1},
+            sort=[("created_at", 1)],
+            limit=max_n,
+        )
 
-            if doc is None:
-                break
+        if not candidates:
+            return []
 
-            claims.append(_claim_from_doc(doc))
+        # update_many rechecks status:pending per document atomically, so each
+        # row is claimed by exactly one relay. A contended batch may claim
+        # fewer than ``max_n`` rows while pending rows remain; the next poll
+        # catches up. Stale tokens left on rows by previous batches are
+        # harmless: every batch reads back its own fresh token.
+        claim_token = uuid4().hex
+        claim_filter = self._route_filter()
+        claim_filter["status"] = OutboxStatus.PENDING.value
+        claim_filter["_id"] = {"$in": [doc["_id"] for doc in candidates]}
 
-        return claims
+        claimed = await self.client.update_many(
+            coll,
+            claim_filter,
+            {
+                "$set": {
+                    "status": OutboxStatus.PROCESSING.value,
+                    "processing_at": now,
+                    "claim_token": claim_token,
+                }
+            },
+        )
+
+        if claimed == 0:
+            return []
+
+        # A crash here leaves rows processing without a read-back — the same
+        # window as crashing after a findAndModify claim; covered by
+        # reclaim_stale_processing. Recommended: sparse index on claim_token.
+        docs = await self.client.find_many(
+            coll,
+            {"claim_token": claim_token},
+            sort=[("created_at", 1)],
+        )
+
+        return [_claim_from_doc(doc) for doc in docs]
 
     async def mark_published(self, ids: Sequence[UUID]) -> int:
         return await self._mark(ids, OutboxStatus.PUBLISHED)
