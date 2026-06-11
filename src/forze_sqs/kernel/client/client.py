@@ -128,7 +128,7 @@ class SQSClient(SQSClientPort):
         access_key_id: str | None = None,
         secret_access_key: str | SecretStr | None = None,
         *,
-        region_name: str,
+        region_name: str | None = None,
         config: SQSConfig | None = None,
     ) -> None:
         """Initialize the SQS session and open a long-lived client.
@@ -145,12 +145,19 @@ class SQSClient(SQSClientPort):
         EKS IRSA). Passing explicit static credentials keeps the previous
         behavior. Providing only one of the two raises a configuration error.
 
+        The region is optional too: when *region_name* is ``None`` (the
+        default), it is **not** passed to the client and botocore's chain
+        resolves it (``AWS_REGION``/``AWS_DEFAULT_REGION``, shared profile,
+        IMDS). With no region resolvable anywhere, botocore's
+        ``NoRegionError`` surfaces through the normal error mapping.
+
         :param endpoint: SQS-compatible endpoint URL.
         :param access_key_id: AWS access key id, or ``None`` to defer to the
             default credential chain.
         :param secret_access_key: AWS secret access key (plain or
             :class:`SecretStr`), or ``None`` to defer to the chain.
-        :param region_name: AWS region name (required).
+        :param region_name: AWS region name, or ``None`` to defer to the
+            chain-resolved region.
         :param config: Optional botocore configuration overrides.
         """
         async with self.__init_lock:
@@ -291,7 +298,9 @@ class SQSClient(SQSClientPort):
         """Build the ``aiobotocore`` client async context manager from opts.
 
         When credentials are absent in the options, the ``aws_*`` kwargs are
-        omitted so botocore's default credential chain resolves them.
+        omitted so botocore's default credential chain resolves them. When the
+        region is absent, the ``region_name`` kwarg is omitted so botocore's
+        chain resolves it (env, profile, IMDS).
         """
 
         session = self.__require_session()
@@ -302,9 +311,11 @@ class SQSClient(SQSClientPort):
 
         kwargs: dict[str, Any] = {
             "endpoint_url": opts.endpoint,
-            "region_name": opts.region_name,
             "config": opts.config,
         }
+
+        if opts.region_name is not None:
+            kwargs["region_name"] = opts.region_name
 
         if opts.access_key_id is not None and opts.secret_access_key is not None:
             kwargs["aws_access_key_id"] = opts.access_key_id

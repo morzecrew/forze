@@ -217,3 +217,53 @@ async def test_scope_after_close_raises(
     with pytest.raises(CoreException, match="session is not initialized"):
         async with client.client():
             pass
+
+# ----------------------- #
+# chain-resolved region
+
+
+@pytest.mark.asyncio
+async def test_none_region_omits_region_kwarg(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No region: ``region_name`` kwarg is omitted so botocore's chain resolves."""
+    sess = _FakeSession()
+    monkeypatch.setattr(sqs_client_module.aioboto3, "Session", lambda: sess)
+
+    client = SQSClient()
+    await client.initialize(
+        endpoint="http://localhost:4566",
+        access_key_id="k",
+        secret_access_key="s",
+    )
+
+    call = sess.client_calls[0]
+    assert call["service"] == "sqs"
+    assert "region_name" not in call
+    assert call["endpoint_url"] == "http://localhost:4566"
+
+    opts = client._SQSClient__opts  # type: ignore[attr-defined]
+    assert opts is not None
+    assert opts.region_name is None
+
+    await client.close()
+
+
+@pytest.mark.asyncio
+async def test_explicit_region_still_passed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Explicit region keeps the previous behavior (kwarg forwarded)."""
+    sess = _FakeSession()
+    monkeypatch.setattr(sqs_client_module.aioboto3, "Session", lambda: sess)
+
+    client = SQSClient()
+    await client.initialize(
+        endpoint="http://localhost:4566",
+        access_key_id="k",
+        secret_access_key="s",
+        region_name="eu-central-1",
+    )
+
+    assert sess.client_calls[0]["region_name"] == "eu-central-1"
+    await client.close()

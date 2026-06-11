@@ -148,9 +148,17 @@ class Document(CoreModel):
     # ....................... #
 
     def _dump_stored_fields(self) -> JsonDict:
-        """Python-mode dump restricted to declared (non-computed) fields."""
+        """Python-mode dump restricted to declared (non-computed) fields.
 
-        dump = self.model_dump(mode="python")
+        ``exclude_computed_fields=True`` strips ``@computed_field`` keys at
+        **every** nesting level (nested models, lists/dicts of models), not just
+        the top level — computed values are derived, never persisted, so they
+        must not leak into diffs the gateways write as columns. The explicit
+        top-level filter is kept on purpose: it also drops pydantic *extras*,
+        which are equally not part of the stored-field contract.
+        """
+
+        dump = self.model_dump(mode="python", exclude_computed_fields=True)
         fields = type(self).model_fields
 
         return {k: v for k, v in dump.items() if k in fields}
@@ -299,6 +307,18 @@ class Document(CoreModel):
 
         This is used to prevent merging conflicting concurrent updates when
         reconstructing state from history.
+
+        All three inputs are compared in the **canonical python-mode space**:
+        ``old`` and ``self`` are dumped via :meth:`_dump_stored_fields`
+        (python-mode, computed fields excluded) because ``data`` is a
+        python-mode update mapping (gateways pass the codec's python-mode
+        encoding of a validated update DTO). Mixing modes — json-mode dumps
+        against python-mode updates — made a re-sent identical ``datetime`` or
+        ``UUID`` look changed (``datetime != ISO string``), so a no-op resend
+        of a field another writer concurrently changed raised a false
+        ``historical_consistency_violation``. In canonical space such a resend
+        yields no touch on that path, so only *genuinely* divergent values
+        conflict.
         """
 
         logger.trace(
@@ -307,8 +327,8 @@ class Document(CoreModel):
             tuple(data.keys()),
         )
 
-        old_state = old.model_dump(mode="json")
-        self_state = self.model_dump(mode="json")
+        old_state = old._dump_stored_fields()
+        self_state = self._dump_stored_fields()
 
         old_upd_state = apply_dict_patch(old_state, data)
 

@@ -94,7 +94,17 @@ class MockStorageAdapter(MockTenancyMixin, StorageQueryPort, StorageCommandPort)
         offset: int,
         *,
         prefix: str | None = None,
+        include_tags: bool = False,
     ) -> tuple[list[StoredObject], int]:
+        """List stored objects with pagination.
+
+        ``include_tags`` is accepted for port compatibility but adds nothing
+        here: the mock stores tags in-memory and always includes them, so
+        the guarantee is already satisfied (no extra work either way).
+        """
+
+        _ = include_tags  # tags are always included for free in the mock
+
         with self.state.lock:
             rows = list(self._objects().values())
         if prefix:

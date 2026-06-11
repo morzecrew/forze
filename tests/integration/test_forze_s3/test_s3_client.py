@@ -121,3 +121,53 @@ async def test_sequential_operations_reuse_single_aiobotocore_client(
 
     finally:
         await client.close()
+
+
+@pytest.mark.asyncio
+async def test_s3_include_tags_guarantee_on_head_and_list(
+    s3_client: S3Client, s3_bucket: str
+) -> None:
+    """MinIO supports the tagging API: ``include_tags=True`` round-trips tags."""
+
+    tags_by_key = {
+        "tagged/a.txt": {"env": "dev", "team": "core"},
+        "tagged/b.txt": {"env": "prod"},
+    }
+
+    async with s3_client.client():
+        for key, tags in tags_by_key.items():
+            await s3_client.upload_bytes(
+                bucket=s3_bucket,
+                key=key,
+                data=b"payload",
+                content_type="text/plain",
+                tags=tags,
+            )
+
+        # head: False -> tags may be absent (S3 heads never carry them)
+        head_plain = await s3_client.head_object(s3_bucket, "tagged/a.txt")
+        assert dict(head_plain.tags) == {}
+
+        # head: True -> guaranteed populated via GetObjectTagging
+        head_tagged = await s3_client.head_object(
+            s3_bucket,
+            "tagged/a.txt",
+            include_tags=True,
+        )
+        assert dict(head_tagged.tags) == tags_by_key["tagged/a.txt"]
+
+        # list: False -> no tags on listed objects
+        items_plain, _ = await s3_client.list_objects(
+            bucket=s3_bucket,
+            prefix="tagged/",
+        )
+        assert all(dict(item.tags) == {} for item in items_plain)
+
+        # list: True -> per-object tags fanned out via GetObjectTagging
+        items_tagged, total = await s3_client.list_objects(
+            bucket=s3_bucket,
+            prefix="tagged/",
+            include_tags=True,
+        )
+        assert total == len(tags_by_key)
+        assert {item.key: dict(item.tags) for item in items_tagged} == tags_by_key

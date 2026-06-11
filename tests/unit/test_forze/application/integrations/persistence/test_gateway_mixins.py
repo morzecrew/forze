@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -91,6 +92,11 @@ def test_tenant_id_for_resolve_returns_id() -> None:
 
 class _HistDoc(Document):
     name: str
+
+
+class _HistDueDoc(Document):
+    name: str
+    due: datetime
 
 
 class _FakeHistoryGw:
@@ -224,3 +230,62 @@ class TestHistoryOccMixin:
             await gw._validate_history((current_a, 2, {"name": "x"}))
 
         assert exc_info.value.code == "revision_mismatch"
+
+    @pytest.mark.asyncio
+    async def test_validate_history_noop_datetime_resend_passes(self) -> None:
+        # Regression: a stale client echoing the identical python datetime it
+        # read used to register as a touch against the json-mode historical
+        # dump (datetime != ISO string) and raised a false
+        # ``historical_consistency_violation`` when another writer had
+        # concurrently changed that same field.
+        pk = uuid4()
+        due = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        hist = _HistDueDoc(id=pk, rev=2, name="alpha", due=due)
+        current = _HistDueDoc(
+            id=pk,
+            rev=3,
+            name="alpha",
+            due=datetime(2027, 2, 2, tzinfo=timezone.utc),
+        )
+        gw = _OccGateway(_FakeHistoryGw([hist]))  # type: ignore[list-item]
+
+        await gw._validate_history((current, 2, {"due": due}))
+
+    @pytest.mark.asyncio
+    async def test_validate_history_datetime_resend_untouched_field_passes(
+        self,
+    ) -> None:
+        # Echoing identical datetimes for fields no other writer touched is a
+        # no-op and must not conflict with concurrent changes elsewhere.
+        pk = uuid4()
+        due = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        hist = _HistDueDoc(id=pk, rev=2, name="alpha", due=due)
+        current = _HistDueDoc(id=pk, rev=3, name="beta", due=due)
+        gw = _OccGateway(_FakeHistoryGw([hist]))  # type: ignore[list-item]
+
+        await gw._validate_history((current, 2, {"due": due}))
+
+    @pytest.mark.asyncio
+    async def test_validate_history_genuine_datetime_conflict_raises(self) -> None:
+        # A *different* datetime for a concurrently-changed field still conflicts.
+        pk = uuid4()
+        hist = _HistDueDoc(
+            id=pk,
+            rev=2,
+            name="alpha",
+            due=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        )
+        current = _HistDueDoc(
+            id=pk,
+            rev=3,
+            name="alpha",
+            due=datetime(2027, 2, 2, tzinfo=timezone.utc),
+        )
+        gw = _OccGateway(_FakeHistoryGw([hist]))  # type: ignore[list-item]
+
+        with pytest.raises(CoreException) as exc_info:
+            await gw._validate_history(
+                (current, 2, {"due": datetime(2028, 3, 3, tzinfo=timezone.utc)})
+            )
+
+        assert exc_info.value.code == "historical_consistency_violation"

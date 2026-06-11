@@ -72,10 +72,16 @@ class SQSConnectionOpts:
     *secret_access_key* are ``None``, the client defers to botocore's default
     credential chain (environment variables, shared config/credentials files,
     container/instance roles). Providing only one of the two is rejected.
+
+    *region_name* is optional as well: when ``None``, the region kwarg is
+    omitted from the client construction so botocore's chain resolves it
+    (``AWS_REGION``/``AWS_DEFAULT_REGION``, profile, IMDS). With no region
+    anywhere, botocore's ``NoRegionError`` surfaces through the normal error
+    mapping.
     """
 
     endpoint: str
-    region_name: str  # required for now; chain-resolved region is a deferred decision
+    region_name: str | None = None
     access_key_id: str | None = attrs.field(default=None, repr=False)
     secret_access_key: SecretStr | None = attrs.field(
         default=None,

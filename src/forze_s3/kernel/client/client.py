@@ -6,9 +6,10 @@ require_s3()
 
 import asyncio
 import io
+from collections.abc import Mapping as MappingABC
 from contextlib import AsyncExitStack, asynccontextmanager
 from contextvars import ContextVar
-from typing import Any, AsyncContextManager, AsyncGenerator, cast, final
+from typing import Any, AsyncContextManager, AsyncGenerator, Final, Mapping, cast, final
 from urllib.parse import urlencode
 
 import aioboto3
@@ -28,6 +29,12 @@ from .port import S3ClientPort
 from .value_objects import S3Config, S3ConnectionOpts
 
 # ----------------------- #
+
+GET_OBJECT_TAGGING_CONCURRENCY: Final[int] = 8
+"""Max concurrent ``GetObjectTagging`` calls when :meth:`S3Client.list_objects`
+fans out per-object tag fetches for ``include_tags=True``."""
+
+# ....................... #
 
 
 @final
@@ -323,14 +330,21 @@ class S3Client(S3ClientPort):
         """Create a bucket, silently succeeding if it already exists.
 
         S3 requires a ``LocationConstraint`` for every region except
-        ``us-east-1``, where it must be omitted; the configured region is
-        forwarded accordingly.
+        ``us-east-1``, where it must be omitted. The configured region is
+        forwarded when set; with no configured region the **resolved** region
+        of the live client (``client.meta.region_name``, i.e. what botocore's
+        chain resolved from env/profile/IMDS) is used, so the bucket lands in
+        the region the client actually targets.
 
         :param bucket: Bucket name to create.
         """
 
         c = self.__require_client()
         region = self.__region_name()
+
+        if region is None:
+            meta = getattr(c, "meta", None)
+            region = getattr(meta, "region_name", None) if meta is not None else None
 
         try:
             if region and region != "us-east-1":
@@ -479,16 +493,30 @@ class S3Client(S3ClientPort):
         *,
         limit: int | None = None,
         offset: int | None = None,
+        include_tags: bool = False,
     ) -> tuple[list[ObjectStorageListedObject], int]:
         """List objects in a bucket with optional pagination.
 
         Streams all pages from the ``list_objects_v2`` paginator and applies
         the requested offset/limit window in memory.
 
+        ``include_tags`` is a guarantee, not a filter: ``ListObjectsV2`` never
+        returns tags, so ``include_tags=True`` fans out one extra
+        ``GetObjectTagging`` call **per listed object** (N extra calls for N
+        items in the window), bounded by
+        :data:`GET_OBJECT_TAGGING_CONCURRENCY` concurrent requests, and
+        requires the ``s3:GetObjectTagging`` permission. A failing tagging
+        call propagates through the normal error mapping (the caller asked
+        for a guarantee).
+
         :param bucket: Bucket name.
         :param prefix: Key prefix filter.
         :param limit: Maximum number of objects to return.
         :param offset: Number of objects to skip before collecting results.
+        :param include_tags: When ``True``, guarantee
+            :attr:`~forze.application.integrations.storage.client.ObjectStorageListedObject.tags`
+            is populated for every returned item (at the cost of N extra
+            ``GetObjectTagging`` calls).
         :returns: A tuple of ``(items, total_count)`` where *total_count*
             reflects the full (unpaginated) result set.
         :raises exc.internal: If *limit* is non-positive or *offset* is negative.
@@ -534,16 +562,72 @@ class S3Client(S3ClientPort):
             if collected_enough and limit is not None:
                 break
 
+        if include_tags and items:
+            items = await self.__attach_tags(c, bucket, items)
+
         return items, total_count
 
     # ....................... #
 
+    async def __attach_tags(
+        self,
+        c: AsyncS3Client,
+        bucket: str,
+        items: list[ObjectStorageListedObject],
+    ) -> list[ObjectStorageListedObject]:
+        """Fan out ``GetObjectTagging`` per item with bounded concurrency.
+
+        Concurrency is capped by :data:`GET_OBJECT_TAGGING_CONCURRENCY`. Any
+        failure propagates (cancelling the remaining fetches) — the caller
+        asked for the tag guarantee.
+        """
+
+        semaphore = asyncio.Semaphore(GET_OBJECT_TAGGING_CONCURRENCY)
+
+        async def _tags_for(item: ObjectStorageListedObject) -> Mapping[str, str]:
+            async with semaphore:
+                resp = await c.get_object_tagging(Bucket=bucket, Key=item.key)
+
+                return _decode_tag_set(resp)
+
+        try:
+            async with asyncio.TaskGroup() as tg:
+                tasks = [tg.create_task(_tags_for(item)) for item in items]
+
+        except BaseExceptionGroup as eg:
+            # Unwrap so the original botocore error reaches the normal error
+            # mapping (code-specific mapping instead of a generic fallback).
+            raise eg.exceptions[0] from eg
+
+        return [
+            ObjectStorageListedObject(key=item.key, tags=task.result())
+            for item, task in zip(items, tasks, strict=True)
+        ]
+
+    # ....................... #
+
     @exc_interceptor.coroutine("s3.head_object")  # type: ignore[untyped-decorator]
-    async def head_object(self, bucket: str, key: str) -> ObjectStorageHead:
+    async def head_object(
+        self,
+        bucket: str,
+        key: str,
+        *,
+        include_tags: bool = False,
+    ) -> ObjectStorageHead:
         """Retrieve object metadata without downloading the body.
+
+        ``include_tags`` is a guarantee, not a filter: ``HeadObject`` never
+        returns tags, so ``include_tags=True`` issues one extra
+        ``GetObjectTagging`` call and requires the ``s3:GetObjectTagging``
+        permission. A failing tagging call propagates through the normal
+        error mapping (the caller asked for a guarantee). With the default
+        ``False``, :attr:`ObjectStorageHead.tags` stays empty on S3.
 
         :param bucket: Bucket name.
         :param key: Object key.
+        :param include_tags: When ``True``, guarantee
+            :attr:`ObjectStorageHead.tags` is populated (one extra
+            ``GetObjectTagging`` call).
         :returns: An :class:`S3Head` with content type, metadata, size, last
             modified timestamp, and ETag.
         """
@@ -551,10 +635,42 @@ class S3Client(S3ClientPort):
         c = self.__require_client()
         head = await c.head_object(Bucket=bucket, Key=key)
 
+        tags: Mapping[str, str] = {}
+
+        if include_tags:
+            resp = await c.get_object_tagging(Bucket=bucket, Key=key)
+            tags = _decode_tag_set(resp)
+
         return ObjectStorageHead(
             content_type=head.get("ContentType", "application/octet-stream"),
             metadata=head.get("Metadata", {}),
             size=head.get("ContentLength", 0),
             last_modified=head.get("LastModified"),
             etag=head.get("ETag", "").strip('"'),
+            tags=tags,
         )
+
+
+# ....................... #
+
+
+def _decode_tag_set(resp: Mapping[str, Any]) -> dict[str, str]:
+    """Decode a ``GetObjectTagging`` response ``TagSet`` into a mapping."""
+
+    tags: dict[str, str] = {}
+
+    tag_set = cast(list[dict[str, str]], resp.get("TagSet") or [])
+
+    for entry in tag_set:
+        if not isinstance(
+            entry, MappingABC
+        ):  # pyright: ignore[reportUnnecessaryIsInstance]
+            continue
+
+        tag_key = entry.get("Key")
+        tag_value = entry.get("Value")
+
+        if isinstance(tag_key, str) and isinstance(tag_value, str):
+            tags[tag_key] = tag_value
+
+    return tags

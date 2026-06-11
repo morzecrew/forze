@@ -218,3 +218,37 @@ async def test_sequential_operations_reuse_single_aiobotocore_client(
 
     finally:
         await client.close()
+
+
+@pytest.mark.asyncio
+async def test_client_resolves_region_from_environment(
+    localstack_container,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``region_name=None`` defers to the chain: env var alone is enough."""
+
+    monkeypatch.delenv("AWS_REGION", raising=False)
+    monkeypatch.setenv("AWS_DEFAULT_REGION", "us-east-1")
+
+    client = SQSClient()
+    await client.initialize(
+        endpoint=localstack_container.get_url(),
+        access_key_id="test",
+        secret_access_key="test",
+        # no region_name: botocore resolves it from AWS_DEFAULT_REGION
+    )
+
+    try:
+        async with client.client():
+            queue = f"forze-sqs-envregion-{uuid4().hex[:12]}"
+            await client.create_queue(queue)
+
+            message_id = await client.enqueue(queue, b"region-from-env")
+            assert message_id
+
+            messages = await _receive_until(client, queue)
+            assert messages[0].body == b"region-from-env"
+            assert await client.ack(queue, [messages[0].id]) == 1
+
+    finally:
+        await client.close()

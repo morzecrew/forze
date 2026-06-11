@@ -262,3 +262,48 @@ async def test_close_unlinks_owned_service_file() -> None:
 
     assert credential_path.path is not None
     assert not Path(credential_path.path).exists()
+
+
+@pytest.mark.asyncio
+async def test_list_objects_include_tags_is_a_free_no_op() -> None:
+    """GCS tags ride on head metadata; ``include_tags`` adds no extra calls."""
+
+    client = GCSClient()
+    fake_storage = MagicMock()
+    bucket_ref = MagicMock()
+    bucket_ref.list_blobs = AsyncMock(return_value=["a", "b"])
+    fake_storage.get_bucket.return_value = bucket_ref
+    client._GCSClient__storage = fake_storage
+
+    without_flag = await client.list_objects(bucket="bucket", prefix="")
+    with_flag = await client.list_objects(bucket="bucket", prefix="", include_tags=True)
+
+    assert with_flag == without_flag
+    # One list call per invocation -- the flag triggered no extra requests.
+    assert bucket_ref.list_blobs.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_head_object_include_tags_is_a_free_no_op() -> None:
+    """Tags are already round-tripped from custom metadata regardless of the flag."""
+
+    client = GCSClient()
+    fake_storage = MagicMock()
+    fake_storage.download_metadata = AsyncMock(
+        return_value={
+            "contentType": "text/plain",
+            "metadata": {
+                "plain": "value",
+                f"{TAG_METADATA_PREFIX}env": "dev",
+            },
+            "size": "3",
+        }
+    )
+    client._GCSClient__storage = fake_storage
+
+    without_flag = await client.head_object("bucket", "key")
+    with_flag = await client.head_object("bucket", "key", include_tags=True)
+
+    assert with_flag == without_flag
+    assert dict(with_flag.tags) == {"env": "dev"}
+    assert fake_storage.download_metadata.await_count == 2

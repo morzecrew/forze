@@ -186,3 +186,18 @@ async def test_mock_pubsub_subscribe_receives_new_messages() -> None:
     msg = await asyncio.wait_for(anext(sub), timeout=2.0)
     await pub
     assert msg.payload.body == "hi"
+
+@pytest.mark.asyncio
+async def test_mock_storage_list_include_tags_is_a_free_no_op() -> None:
+    """Mock always includes tags; ``include_tags=True`` changes nothing."""
+    st = MockState()
+    s = MockStorageAdapter(state=st, bucket="b1")
+    from forze.application.contracts.storage import UploadedObject
+
+    await s.upload(UploadedObject(filename="f.txt", data=b"x", tags={"env": "dev"}))
+
+    without_flag = await s.list(10, 0)
+    with_flag = await s.list(10, 0, include_tags=True)
+
+    assert with_flag == without_flag
+    assert with_flag[0][0].tags == {"env": "dev"}

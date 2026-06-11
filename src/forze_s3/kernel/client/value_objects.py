@@ -27,7 +27,16 @@ _DEFAULT_RETRIES: Mapping[str, Any] = {"max_attempts": 3, "mode": "adaptive"}
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class S3Config:
-    """S3 optional configuration (botocore config)."""
+    """S3 optional configuration (botocore config).
+
+    *region_name* is optional: when ``None``, no region reaches the botocore
+    config and botocore's chain resolves it (``AWS_REGION`` /
+    ``AWS_DEFAULT_REGION``, shared profile, IMDS). With no region resolvable
+    anywhere, botocore's ``NoRegionError`` surfaces through the normal error
+    mapping. :meth:`S3Client.create_bucket` uses the chain-**resolved** region
+    of the live client for its ``LocationConstraint`` when no region is
+    configured here.
+    """
 
     region_name: str | None = None
     signature_version: str | None = None

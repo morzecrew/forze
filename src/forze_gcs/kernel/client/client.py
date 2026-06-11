@@ -326,7 +326,18 @@ class GCSClient(GCSClientPort):
         *,
         limit: int | None = None,
         offset: int | None = None,
+        include_tags: bool = False,
     ) -> tuple[list[ObjectStorageListedObject], int]:
+        """List blob keys under *prefix* with an offset/limit window.
+
+        ``include_tags`` is accepted for port compatibility but adds nothing
+        on GCS: tags live in namespaced custom metadata and surface for free
+        on :meth:`head_object` (no extra calls either way), while the listing
+        API only returns keys.
+        """
+
+        _ = include_tags  # guarantee already satisfied via head metadata
+
         _prefix = prefix or ""
         _limit, _offset = normalize_list_window(limit, offset)
 
@@ -345,7 +356,23 @@ class GCSClient(GCSClientPort):
     # ....................... #
 
     @exc_interceptor.coroutine("gcs.head_object")  # type: ignore[untyped-decorator]
-    async def head_object(self, bucket: str, key: str) -> ObjectStorageHead:
+    async def head_object(
+        self,
+        bucket: str,
+        key: str,
+        *,
+        include_tags: bool = False,
+    ) -> ObjectStorageHead:
+        """Fetch object metadata, splitting namespaced tags out of it.
+
+        ``include_tags`` is accepted for port compatibility but adds nothing
+        on GCS: tags are round-tripped from custom metadata for free, so
+        :attr:`ObjectStorageHead.tags` is populated regardless of the flag
+        (no extra calls).
+        """
+
+        _ = include_tags  # tags are always included for free on GCS
+
         storage = self.__require_storage()
         raw = await storage.download_metadata(
             bucket,

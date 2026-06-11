@@ -27,11 +27,13 @@ class SQSStartupHook(LifecycleHook):
 
     Leave *access_key_id* / *secret_access_key* as ``None`` to defer to
     botocore's default credential chain (env vars, shared config files,
-    container/instance roles) instead of static credentials.
+    container/instance roles) instead of static credentials. Leave
+    *region_name* as ``None`` to defer to the chain-resolved region
+    (``AWS_REGION``/``AWS_DEFAULT_REGION``, profile, IMDS).
     """
 
     endpoint: str
-    region_name: str
+    region_name: str | None = None
     access_key_id: str | None = attrs.field(default=None, repr=False)
     secret_access_key: SecretStr | None = attrs.field(
         default=None,
@@ -72,7 +74,7 @@ def sqs_lifecycle_step(
     name: str = "sqs_lifecycle",
     *,
     endpoint: str,
-    region_name: str,
+    region_name: str | None = None,
     access_key_id: str | None = None,
     secret_access_key: str | SecretStr | None = None,
     config: SQSConfig | None = None,
@@ -80,7 +82,9 @@ def sqs_lifecycle_step(
     """Build a lifecycle step for SQS client init and shutdown.
 
     Omit *access_key_id* / *secret_access_key* to use botocore's default
-    credential chain instead of static credentials.
+    credential chain instead of static credentials. Omit *region_name* to
+    use the chain-resolved region (``AWS_REGION``/``AWS_DEFAULT_REGION``,
+    profile, IMDS).
     """
     startup_hook = SQSStartupHook(
         endpoint=endpoint,

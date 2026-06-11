@@ -43,6 +43,7 @@ class _StubStorage:
         offset: int,
         *,
         prefix: Optional[str] = None,
+        include_tags: bool = False,
     ) -> tuple[list[StoredObject], int]:
         return [], 0
 
