@@ -126,14 +126,59 @@ class MockStreamAdapter(MockTenancyMixin, StreamQueryPort[M], StreamCommandPort[
                 await asyncio.sleep(_sleep_interval(timeout))
 
 
+_GROUPS_KEY = "\x00__consumer_groups__"
+"""Reserved stream-store key holding consumer-group bookkeeping.
+
+The ``\\x00`` prefix cannot collide with a real stream name and the plain
+adapter never iterates store keys, so the entry stays invisible to
+:class:`MockStreamAdapter`.
+"""
+
+
+@attrs.define(slots=True, kw_only=True)
+class _MockGroupState:
+    """Per ``(group, stream)`` consumer-group bookkeeping.
+
+    Mirrors the observable Redis consumer-group state: the group's
+    last-delivered id and the pending-entries map (entry id -> consumer).
+    """
+
+    last_delivered: int = 0
+    pending: dict[str, str] = attrs.field(factory=dict)
+
+
+# ....................... #
+
+
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class MockStreamGroupAdapter[M: BaseModel](StreamGroupQueryPort[M]):
-    """In-memory stream group adapter."""
+    """In-memory stream group adapter mirroring Redis ``XREADGROUP`` semantics.
+
+    Each entry is delivered to exactly one consumer per group: a ``">"``
+    cursor reads entries after the group's last-delivered id, advances it,
+    and records the entries as pending for the reading consumer.  A concrete
+    id cursor re-reads the consumer's *own* pending entries after that id
+    (the ``XREADGROUP`` history view).  :meth:`ack` removes entries from the
+    pending map.
+    """
 
     stream: MockStreamAdapter[M]
     state: MockState
     namespace: str
+
+    # ....................... #
+
+    def _group_state(self, group: str, stream: str) -> _MockGroupState:
+        store = cast(dict[str, Any], self.stream._stream_store())  # type: ignore[reportPrivateUsage]
+        holder = cast(list[Any], store.setdefault(_GROUPS_KEY, [{}]))
+        groups = cast(dict[tuple[str, str], _MockGroupState], holder[0])
+        key = (group, stream)
+
+        if key not in groups:
+            groups[key] = _MockGroupState()
+
+        return groups[key]
 
     # ....................... #
 
@@ -146,12 +191,50 @@ class MockStreamGroupAdapter[M: BaseModel](StreamGroupQueryPort[M]):
         limit: int | None = None,
         timeout: timedelta | None = None,
     ) -> list[StreamMessage[M]]:
-        del consumer
-        return await self.stream.read(
-            stream_mapping,
-            limit=limit,
-            timeout=timeout,
-        )
+        del timeout
+        out: list[StreamMessage[M]] = []
+
+        with self.state.lock:
+            for stream, cursor in stream_mapping.items():
+                gs = self._group_state(group, stream)
+                entries: list[StreamMessage[M]] = self.stream._stream_store().setdefault(  # type: ignore[reportPrivateUsage]
+                    stream,
+                    [],
+                )
+
+                if cursor == ">":
+                    # New entries: deliver once per group, record as pending.
+                    for msg in entries:
+                        num = self.stream._id_to_int(msg.id)  # type: ignore[reportPrivateUsage]
+
+                        if num <= gs.last_delivered:
+                            continue
+
+                        gs.last_delivered = num
+                        gs.pending[msg.id] = consumer
+                        out.append(msg)
+
+                        if limit is not None and len(out) >= limit:
+                            return out
+
+                else:
+                    # History view: the consumer's own pending entries
+                    # strictly after the given id (acked entries excluded).
+                    last_num = self.stream._id_to_int(cursor)  # type: ignore[reportPrivateUsage]
+
+                    for msg in entries:
+                        if self.stream._id_to_int(msg.id) <= last_num:  # type: ignore[reportPrivateUsage]
+                            continue
+
+                        if gs.pending.get(msg.id) != consumer:
+                            continue
+
+                        out.append(msg)
+
+                        if limit is not None and len(out) >= limit:
+                            return out
+
+        return out
 
     # ....................... #
 
@@ -163,16 +246,21 @@ class MockStreamGroupAdapter[M: BaseModel](StreamGroupQueryPort[M]):
         *,
         timeout: timedelta | None = None,
     ) -> AsyncGenerator[StreamMessage[M]]:
-        del group, consumer
-        async for item in self.stream.tail(stream_mapping, timeout=timeout):
-            yield item
+        cursor = dict(stream_mapping)
+        while True:
+            messages = await self.read(group, consumer, cursor, timeout=timeout)
+            for message in messages:
+                cursor[message.stream] = message.id
+                yield message
+            if not messages:
+                await asyncio.sleep(_sleep_interval(timeout))
 
     # ....................... #
 
     async def ack(self, group: str, stream: str, ids: Sequence[str]) -> int:
         key = (self.stream._ns(), group, stream)  # type: ignore[reportPrivateUsage]
         with self.state.lock:
-            ack_set = self.state.stream_ack.setdefault(key, set())
-            before = len(ack_set)
-            ack_set.update(ids)
-            return len(ack_set) - before
+            gs = self._group_state(group, stream)
+            removed: list[str] = [i for i in ids if gs.pending.pop(i, None) is not None]
+            self.state.stream_ack.setdefault(key, set()).update(removed)
+            return len(removed)

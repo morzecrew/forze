@@ -29,7 +29,7 @@ from forze_mock.adapters.search import (
 )
 from forze_mock.adapters.storage import MockStorageAdapter
 from forze_mock.adapters.stream import MockStreamAdapter, MockStreamGroupAdapter
-from forze_mock.adapters.tx import MockTxManagerAdapter
+from forze_mock.adapters.tx import MockStrictTxManagerAdapter, MockTxManagerAdapter
 from forze_mock.state import MockState
 
 __all__ = [
@@ -47,6 +47,7 @@ __all__ = [
     "MockInboxAdapter",
     "MockStorageAdapter",
     "MockTxManagerAdapter",
+    "MockStrictTxManagerAdapter",
     "MockQueueAdapter",
     "MockPubSubAdapter",
     "MockStreamAdapter",

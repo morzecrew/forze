@@ -7,6 +7,7 @@ from typing import final
 import attrs
 
 from forze.application.contracts.inbox import InboxPort
+from forze_mock.adapters.tx import ensure_mock_tx_writable
 from forze_mock.state import MockState
 from forze_mock.tenancy import MockTenancyMixin, partition_namespace
 
@@ -30,6 +31,10 @@ class MockInboxAdapter(MockTenancyMixin, InboxPort):
     # ....................... #
 
     async def mark_if_unseen(self, inbox: str, message_id: str) -> bool:
+        # Inbox marks are DB rows in production: writing one inside a strict
+        # read-only root raises, like Postgres ``BEGIN ... READ ONLY`` would.
+        ensure_mock_tx_writable(store=f"inbox:{self.namespace}")
+
         with self.state.lock:
             key = self._key(inbox, message_id)
 

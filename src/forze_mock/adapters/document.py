@@ -38,6 +38,10 @@ from forze.application.contracts.querying import (
     PaginationExpression,
     QueryFilterExpression,
     QuerySortExpression,
+    assert_cursor_projection_includes_sort_keys,
+    normalize_sorts_for_keyset,
+    read_fields_for_model,
+    resolve_effective_sorts,
 )
 from forze.application.integrations.document._limits import (
     DEFAULT_MAX_STREAM_PAGES,
@@ -55,8 +59,7 @@ from forze_mock.query._types import (
     U,
 )
 from forze_mock.query.cursors import (
-    _mock_cursor_start_and_limit,  # type: ignore[reportPrivateUsage]
-    _mock_cursor_tokens,  # type: ignore[reportPrivateUsage]
+    _mock_keyset_window,  # type: ignore[reportPrivateUsage]
 )
 from forze_mock.query.matching import (
     _aggregate_docs,  # type: ignore[reportPrivateUsage]
@@ -692,8 +695,10 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
         sorts: QuerySortExpression | None = None,
     ) -> CursorPage[T]:
         page = await self.find_cursor(filters=filters, cursor=cursor, sorts=sorts)
+        # Python-mode dump keeps UUID/datetime objects intact, matching the
+        # offset select path (audit: cursor vs offset value-type parity).
         return CursorPage(
-            hits=[default_model_codec(return_type).decode_mapping(hit.model_dump(mode="json")) for hit in page.hits],  # type: ignore[union-attr]
+            hits=[default_model_codec(return_type).decode_mapping(hit.model_dump(mode="python")) for hit in page.hits],  # type: ignore[union-attr]
             next_cursor=page.next_cursor,
             prev_cursor=page.prev_cursor,
             has_more=page.has_more,
@@ -853,18 +858,38 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
         sorts: QuerySortExpression | None,
         return_fields: Sequence[str] | None,
     ) -> CursorPage[R] | CursorPage[JsonDict]:
+        # Keyset pagination on the shared cursor-token machinery, mirroring
+        # the real document gateways: resolve the effective sort (+ id
+        # tie-breaker), seek past the token's sort values, and mint the next
+        # cursor from the last returned row.
+        read_fields = read_fields_for_model(self.read_model)
+        effective = resolve_effective_sorts(
+            sorts=sorts,
+            default_sort=self.spec.default_sort,
+            read_fields=read_fields,
+            spec_name=self.spec.name,
+        )
+        normalized = normalize_sorts_for_keyset(effective, read_fields=read_fields)
+        sort_keys = [k for k, _ in normalized]
+        directions = [d for _, d in normalized]
+
+        assert_cursor_projection_includes_sort_keys(
+            return_fields=return_fields,
+            sort_keys=sort_keys,
+        )
+
         with self.state.lock:
             docs = [
                 dict(doc) for doc in self._store().values() if self._doc_visible(doc)
             ]
 
         filtered = [doc for doc in docs if _match_filters(doc, filters)]
-        ordered = _sort_docs(filtered, sorts)
-        start, lim = _mock_cursor_start_and_limit(cursor)
-        window = ordered[start : start + lim + 1]
-        has_more = len(window) > lim
-        page_docs = window[:lim]
-        next_c, prev_c = _mock_cursor_tokens(start, len(page_docs), has_more=has_more)
+        page_docs, has_more, next_c, prev_c = _mock_keyset_window(
+            filtered,
+            cursor=cursor,
+            sort_keys=sort_keys,
+            directions=directions,
+        )
         if return_fields is not None:
             out_raw = [
                 self._to_read_or_projection(doc, return_fields) for doc in page_docs

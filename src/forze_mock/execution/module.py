@@ -167,6 +167,7 @@ from forze_mock.adapters import (
     MockStorageAdapter,
     MockStreamAdapter,
     MockStreamGroupAdapter,
+    MockStrictTxManagerAdapter,
     MockTxManagerAdapter,
 )
 from forze_mock.adapters.identity import (
@@ -208,6 +209,10 @@ DocSpec = DocumentSpec[Any, Any, Any, Any]
 
 def mock_txmanager(context: ExecutionContext) -> TransactionManagerPort:
     return MockTxManagerAdapter(state=context.deps.provide(MockStateDepKey))
+
+
+def mock_strict_txmanager(context: ExecutionContext) -> TransactionManagerPort:
+    return MockStrictTxManagerAdapter(state=context.deps.provide(MockStateDepKey))
 
 
 def _tenant_provider(ctx: ExecutionContext) -> TenantProviderPort:
@@ -451,6 +456,7 @@ class ConfigurableMockIdempotency(_MockFactoryBase):
         return MockIdempotencyAdapter(
             state=self._state(context),
             namespace=self._namespace_for(context, spec.name, default=str(spec.name)),
+            ttl=spec.ttl,
             tenant_aware=cfg.tenant_aware if cfg else False,
             tenant_provider=_tenant_provider(context),
         )
@@ -748,6 +754,16 @@ class MockDepsModule(DepsModule):
     resilience: Literal["passthrough", "real"] = "passthrough"
     domain_events: DomainEventRegistry | None = attrs.field(default=None)
 
+    strict_tx: bool = attrs.field(default=False)
+    """Opt into :class:`~forze_mock.adapters.tx.MockStrictTxManagerAdapter`.
+
+    When true, transaction rollbacks restore the DB-backed mock stores
+    (documents, outbox, inbox, document-backed identity), root transactions on
+    the same state serialize, and writes inside a read-only root raise
+    (``code="read_only_tx"``). Default ``False`` keeps the documented no-op
+    transaction manager — zero behavior change.
+    """
+
     def __call__(self) -> Deps:
         document = ConfigurableMockDocument(module=self)
         dlock = ConfigurableMockDistributedLock(module=self)
@@ -787,7 +803,9 @@ class MockDepsModule(DepsModule):
             GraphQueryDepKey: graph,
             GraphCommandDepKey: graph,
             GraphRawQueryDepKey: graph,
-            TransactionManagerDepKey: mock_txmanager,
+            TransactionManagerDepKey: (
+                mock_strict_txmanager if self.strict_tx else mock_txmanager
+            ),
             QueueQueryDepKey: ConfigurableMockQueue(module=self),
             QueueCommandDepKey: ConfigurableMockQueue(module=self),
             PubSubCommandDepKey: ConfigurableMockPubSub(module=self),

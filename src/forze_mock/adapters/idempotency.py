@@ -2,29 +2,84 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta
 from typing import (
     final,
 )
 import attrs
 from forze.application.contracts.idempotency import IdempotencyPort, IdempotencyRecord
 from forze.base.exceptions import exc
+from forze.base.primitives import utcnow
 from forze_mock.state import MockState
 from forze_mock.tenancy import MockTenancyMixin, partition_namespace
+
+# ----------------------- #
+
+
+@final
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class _MockIdemEntry:
+    """Record slot stored in the idempotency store: result + expiry."""
+
+    expires_at: datetime
+    record: IdempotencyRecord | None = None
+
+
+# ....................... #
 
 
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class MockIdempotencyAdapter(MockTenancyMixin, IdempotencyPort):
-    """In-memory idempotency adapter."""
+    """In-memory idempotency adapter.
+
+    Mirrors the Redis adapter's TTL semantics: both *pending* claims and
+    *done* records expire after :attr:`ttl` (refreshed on :meth:`commit`),
+    and expired entries are treated as absent — checked lazily on access,
+    no background sweeper. :meth:`fail` releases a matching pending claim
+    so a retry can re-execute before the TTL elapses.
+    """
 
     state: MockState
     namespace: str
+
+    ttl: timedelta = timedelta(seconds=30)
+    """TTL for idempotency entries (pending claims and done records alike)."""
+
+    # ....................... #
+
+    def __attrs_post_init__(self) -> None:
+        if self.ttl.total_seconds() <= 0:
+            raise exc.configuration("TTL must be positive")
 
     # ....................... #
 
     def _key(self, op: str, key: str) -> tuple[str, str, str]:
         ns = partition_namespace(self.require_tenant_if_aware(), self.namespace)
         return ns, op, key
+
+    # ....................... #
+
+    def _live(
+        self,
+        k: tuple[str, str, str],
+        now: datetime,
+    ) -> tuple[str, str, _MockIdemEntry | None] | None:
+        """Return the unexpired entry at *k*, lazily pruning an expired one."""
+
+        current = self.state.idempotency.get(k)
+
+        if current is None:
+            return None
+
+        status, payload_hash, slot = current
+        entry = slot if isinstance(slot, _MockIdemEntry) else None
+
+        if entry is not None and entry.expires_at <= now:
+            del self.state.idempotency[k]
+            return None
+
+        return status, payload_hash, entry
 
     # ....................... #
 
@@ -37,18 +92,23 @@ class MockIdempotencyAdapter(MockTenancyMixin, IdempotencyPort):
         if not key:
             return None
 
+        now = utcnow()
+
         with self.state.lock:
             k = self._key(op, key)
-            current = self.state.idempotency.get(k)
+            current = self._live(k, now)
 
             if current is None:
-                self.state.idempotency[k] = ("pending", payload_hash, None)
+                claim = _MockIdemEntry(expires_at=now + self.ttl)
+                self.state.idempotency[k] = ("pending", payload_hash, claim)
                 return None
 
-            status, existing_hash, record = current
+            status, existing_hash, entry = current
 
             if existing_hash != payload_hash:
                 raise exc.conflict("Payload hash mismatch")
+
+            record = entry.record if entry is not None else None
 
             if status != "done" or record is None:
                 raise exc.conflict("Idempotency is in progress")
@@ -67,9 +127,11 @@ class MockIdempotencyAdapter(MockTenancyMixin, IdempotencyPort):
         if not key:
             return
 
+        now = utcnow()
+
         with self.state.lock:
             k = self._key(op, key)
-            current = self.state.idempotency.get(k)
+            current = self._live(k, now)
 
             if current is None:
                 raise exc.conflict("Idempotency commit failed (missing key)")
@@ -79,11 +141,8 @@ class MockIdempotencyAdapter(MockTenancyMixin, IdempotencyPort):
             if existing_hash != payload_hash:
                 raise exc.conflict("Payload hash mismatch")
 
-            self.state.idempotency[k] = (
-                "done",
-                payload_hash,
-                record,
-            )
+            done = _MockIdemEntry(expires_at=now + self.ttl, record=record)
+            self.state.idempotency[k] = ("done", payload_hash, done)
 
     # ....................... #
 
@@ -96,12 +155,14 @@ class MockIdempotencyAdapter(MockTenancyMixin, IdempotencyPort):
         if not key:
             return
 
+        now = utcnow()
+
         with self.state.lock:
             k = self._key(op, key)
-            current = self.state.idempotency.get(k)
+            current = self._live(k, now)
 
             if current is None:
-                return  # claim already released or never taken
+                return  # claim expired, already released, or never taken
 
             status, existing_hash, _ = current
 

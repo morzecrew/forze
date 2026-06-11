@@ -28,6 +28,7 @@ from .adapters import (
     MockStorageAdapter,
     MockStreamAdapter,
     MockStreamGroupAdapter,
+    MockStrictTxManagerAdapter,
     MockTxManagerAdapter,
 )
 from .adapters.identity import (
@@ -75,6 +76,7 @@ __all__ = [
     "MockIdempotencyAdapter",
     "MockStorageAdapter",
     "MockTxManagerAdapter",
+    "MockStrictTxManagerAdapter",
     "MockQueueAdapter",
     "MockPubSubAdapter",
     "MockStreamAdapter",

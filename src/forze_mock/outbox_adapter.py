@@ -18,6 +18,7 @@ from forze.application.contracts.outbox import (
     StagedOutboxEntry,
 )
 from forze.base.primitives import utcnow, uuid7
+from forze_mock.adapters.tx import ensure_mock_tx_writable
 from forze_mock.state import MockState
 from forze_mock.tenancy import MockTenancyMixin, partition_namespace
 
@@ -68,6 +69,10 @@ class MockOutboxStore[M: BaseModel](MockTenancyMixin, OutboxQueryPort):
     # ....................... #
 
     async def persist_rows(self, rows: Sequence[StagedOutboxEntry]) -> int:
+        # Outbox rows are DB rows in production: a strict read-only root rejects
+        # the write (relay-side claim/mark never runs inside a request tx).
+        ensure_mock_tx_writable(store=f"outbox:{self.spec.name}")
+
         route = self._route()
         written = 0
 

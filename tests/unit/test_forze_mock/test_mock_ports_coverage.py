@@ -163,6 +163,12 @@ async def test_mock_stream_read_and_group_ack() -> None:
     rows = await sa.read({"events": "0"}, limit=5)
     assert len(rows) == 1
     assert rows[0].id == sid
+
+    # Acking an entry never delivered to the group removes nothing (XACK -> 0).
+    assert await sg.ack("g", "events", [sid]) == 0
+
+    delivered = await sg.read("g", "c", {"events": ">"}, limit=5)
+    assert [m.id for m in delivered] == [sid]
     n = await sg.ack("g", "events", [sid])
     assert n == 1
 
