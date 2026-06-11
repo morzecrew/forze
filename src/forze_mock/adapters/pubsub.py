@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 from typing import (
     Any,
     AsyncGenerator,
+    Mapping,
     Sequence,
     cast,
     final,
@@ -60,6 +61,7 @@ class MockPubSubAdapter(MockTenancyMixin, PubSubCommandPort[M], PubSubQueryPort[
         type: str | None = None,
         key: str | None = None,
         published_at: datetime | None = None,
+        headers: Mapping[str, str] | None = None,
     ) -> None:
         message = PubSubMessage(
             topic=topic,
@@ -67,6 +69,7 @@ class MockPubSubAdapter(MockTenancyMixin, PubSubCommandPort[M], PubSubQueryPort[
             type=type,
             key=key,
             published_at=published_at or utcnow(),
+            headers=dict(headers) if headers else {},
         )
         with self.state.lock:
             self._topic_store().setdefault(topic, []).append(message)

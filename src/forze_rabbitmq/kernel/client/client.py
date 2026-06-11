@@ -34,6 +34,16 @@ from .value_objects import RabbitMQConfig
 # ----------------------- #
 
 _KEY_HEADER = "forze_key"
+"""Reserved AMQP header carrying the partitioning key; wins over caller headers."""
+
+_RESERVED_HEADERS = frozenset({_KEY_HEADER})
+"""Header names owned by the transport: caller values are overwritten and
+the keys are excluded from the caller-visible ``headers`` mapping on read."""
+
+_INTERNAL_HEADER_PREFIX = "x-"
+"""Broker-internal AMQP headers (``x-death`` and friends) excluded from the
+caller-visible ``headers`` mapping on read."""
+
 _DELAY_QUEUE_SUFFIX = ".__forze_delay"
 """Suffix for the per-delay-value DLX queues paired with a work queue."""
 
@@ -391,6 +401,83 @@ class RabbitMQClient(RabbitMQClientPort):
     # ....................... #
 
     @staticmethod
+    def __extract_headers(
+        headers: Mapping[str, object] | None,
+    ) -> dict[str, str] | None:
+        """Return caller-visible string headers from raw AMQP headers.
+
+        Reserved transport keys and broker-internal ``x-*`` headers are
+        excluded; only string (or UTF-8 bytes) values survive — AMQP allows
+        richer types, but the port contract is string-to-string.
+        """
+
+        if not headers:
+            return None
+
+        out: dict[str, str] = {}
+
+        for raw_key, raw_value in headers.items():
+            if raw_key in _RESERVED_HEADERS or raw_key.startswith(
+                _INTERNAL_HEADER_PREFIX
+            ):
+                continue
+
+            if isinstance(raw_value, bytes):
+                try:
+                    out[raw_key] = raw_value.decode("utf-8")
+                except UnicodeDecodeError:
+                    continue
+
+            elif isinstance(raw_value, str):
+                out[raw_key] = raw_value
+
+        return out or None
+
+    # ....................... #
+
+    @staticmethod
+    def __extract_delivery_count(raw: AbstractIncomingMessage) -> int:
+        """Approximate deliveries of *raw* including this one.
+
+        Best-effort: ``x-death`` entries with reason ``rejected`` count
+        dead-letter redelivery cycles (DLX retry topologies), so their summed
+        ``count`` + 1 is the delivery number. Without ``x-death`` history the
+        broker only exposes the boolean ``redelivered`` flag, so a redelivered
+        message reports ``2`` even when it was delivered more often. ``expired``
+        x-death entries (the delayed-delivery DLX hop) are not deliveries and
+        are ignored.
+        """
+
+        headers = raw.headers or {}
+        x_death = headers.get("x-death")
+        rejected = 0
+
+        if isinstance(x_death, (list, tuple)):
+            for entry in x_death:  # pyright: ignore[reportUnknownVariableType]
+                if not isinstance(entry, Mapping):
+                    continue
+
+                reason = entry.get("reason")  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+
+                if isinstance(reason, bytes):
+                    reason = reason.decode("utf-8", errors="replace")
+
+                if reason != "rejected":
+                    continue
+
+                count = entry.get("count")  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+
+                if isinstance(count, int):
+                    rejected += count
+
+        if rejected > 0:
+            return rejected + 1
+
+        return 2 if raw.redelivered else 1
+
+    # ....................... #
+
+    @staticmethod
     def __extract_timestamp(raw_timestamp: object) -> datetime | None:
         if isinstance(raw_timestamp, datetime):
             return raw_timestamp
@@ -502,6 +589,8 @@ class RabbitMQClient(RabbitMQClientPort):
             type=raw.type,
             enqueued_at=self.__extract_timestamp(raw.timestamp),
             key=self.__extract_key(raw.headers),
+            headers=self.__extract_headers(raw.headers),
+            delivery_count=self.__extract_delivery_count(raw),
         )
 
     # ....................... #
@@ -523,6 +612,8 @@ class RabbitMQClient(RabbitMQClientPort):
                 type=raw.type,
                 enqueued_at=self.__extract_timestamp(raw.timestamp),
                 key=self.__extract_key(raw.headers),
+                headers=self.__extract_headers(raw.headers),
+                delivery_count=self.__extract_delivery_count(raw),
             )
             rmq_messages.append(m)
 
@@ -547,6 +638,7 @@ class RabbitMQClient(RabbitMQClientPort):
         delay: timedelta | None = None,
         not_before: datetime | None = None,
         delayed_delivery: bool = False,
+        headers: Mapping[str, str] | None = None,
     ) -> str:
         """Publish one message; see :meth:`enqueue_many` for delay semantics."""
         return (
@@ -560,6 +652,7 @@ class RabbitMQClient(RabbitMQClientPort):
                 delay=delay,
                 not_before=not_before,
                 delayed_delivery=delayed_delivery,
+                headers=headers,
             )
         )[0]
 
@@ -578,8 +671,12 @@ class RabbitMQClient(RabbitMQClientPort):
         delay: timedelta | None = None,
         not_before: datetime | None = None,
         delayed_delivery: bool = False,
+        headers: Mapping[str, str] | None = None,
     ) -> list[str]:
         """Publish a batch of messages, optionally with delayed delivery.
+
+        Caller *headers* ride the AMQP message headers verbatim; the reserved
+        transport keys (``forze_key``) always win on collision.
 
         Delayed delivery uses the standard RabbitMQ per-TTL-queue pattern:
         each distinct delay value gets its own DLX queue
@@ -605,10 +702,13 @@ class RabbitMQClient(RabbitMQClientPort):
             if message_ids is not None
             else [uuid4().hex for _ in range(len(bodies))]
         )
-        headers = None
+        # Caller headers pass through verbatim; reserved transport keys are
+        # written last so they always win on collision.
+        amqp_headers: dict[str, str] | None = dict(headers) if headers else None
 
         if key is not None:
-            headers = {_KEY_HEADER: key}
+            amqp_headers = amqp_headers or {}
+            amqp_headers[_KEY_HEADER] = key
 
         delivery_mode = (
             DeliveryMode.PERSISTENT
@@ -635,7 +735,7 @@ class RabbitMQClient(RabbitMQClientPort):
                 message_id=resolved_message_id,
                 timestamp=enqueued_at,
                 type=type,
-                headers=headers,  # type: ignore[arg-type]
+                headers=amqp_headers,  # type: ignore[arg-type]
             )
             messages.append(message)
 

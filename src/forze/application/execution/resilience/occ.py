@@ -1,8 +1,16 @@
 """Decorator applying the ``occ`` resilience policy to read-modify-write methods."""
 
 import functools
-from collections.abc import Awaitable, Callable
-from typing import Concatenate, Final, ParamSpec, Protocol, TypeVar, cast
+from typing import (
+    Awaitable,
+    Callable,
+    Concatenate,
+    Final,
+    ParamSpec,
+    Protocol,
+    TypeVar,
+    cast,
+)
 
 from forze.application.contracts.resilience import ResilienceExecutorPort
 
@@ -48,4 +56,4 @@ def occ_retry(
             policy=OCC_POLICY,
         )
 
-    return cast("Callable[Concatenate[_S, _P], Awaitable[_R]]", wrapper)
+    return cast(Callable[Concatenate[_S, _P], Awaitable[_R]], wrapper)

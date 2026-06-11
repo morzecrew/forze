@@ -7,6 +7,14 @@ from typing import TYPE_CHECKING, Any
 
 from forze.application.contracts.base import BaseSpec
 from forze.application.contracts.deps import DepKey
+from forze.application.contracts.envelope import (
+    HEADER_CAUSATION_ID,
+    HEADER_CORRELATION_ID,
+    HEADER_EVENT_ID,
+    HEADER_EXECUTION_ID,
+    HEADER_OCCURRED_AT,
+    HEADER_TENANT_ID,
+)
 from forze.application.contracts.outbox import (
     OutboxDestinationKind,
     OutboxRelayResult,
@@ -85,6 +93,38 @@ def _resolve_channel(
 # ....................... #
 
 
+def _claim_envelope_headers(claim: OutboxClaim) -> dict[str, str]:
+    """Build the well-known envelope headers carried by a relayed claim.
+
+    Every destination kind forwards the staged invocation envelope as
+    transport headers (see :mod:`forze.application.contracts.envelope`):
+    ``event_id`` always, ``occurred_at`` as ISO-8601, and the
+    correlation/causation/execution/tenant ids only when set on the row.
+    """
+
+    headers: dict[str, str] = {HEADER_EVENT_ID: str(claim.event_id)}
+
+    if claim.occurred_at is not None:
+        headers[HEADER_OCCURRED_AT] = claim.occurred_at.isoformat()
+
+    if claim.correlation_id is not None:
+        headers[HEADER_CORRELATION_ID] = str(claim.correlation_id)
+
+    if claim.causation_id is not None:
+        headers[HEADER_CAUSATION_ID] = str(claim.causation_id)
+
+    if claim.execution_id is not None:
+        headers[HEADER_EXECUTION_ID] = str(claim.execution_id)
+
+    if claim.tenant_id is not None:
+        headers[HEADER_TENANT_ID] = str(claim.tenant_id)
+
+    return headers
+
+
+# ....................... #
+
+
 async def _relay_outbox_to(
     ctx: ExecutionContext,
     *,
@@ -103,8 +143,11 @@ async def _relay_outbox_to(
     """Claim pending outbox rows and relay each via ``command.<method>(channel, ...)``.
 
     The command-port method (``enqueue``/``append``/``publish``) shares the same
-    ``(channel, payload, *, type, key)`` signature across queue, stream, and pubsub,
-    so only the resolved command, dep key, and method name differ per transport.
+    ``(channel, payload, *, type, key, headers)`` signature across queue, stream,
+    and pubsub, so only the resolved command, dep key, and method name differ per
+    transport. Each publish forwards the claim's invocation envelope as
+    transport headers (see :func:`_claim_envelope_headers`); ``type``/``key``
+    stay exactly as before for backward compatibility.
     """
 
     if reclaim_stale_after is not None and reclaim_stale_after.total_seconds() <= 0:
@@ -125,6 +168,7 @@ async def _relay_outbox_to(
             payload,
             type=claim.event_type,
             key=str(claim.event_id),
+            headers=_claim_envelope_headers(claim),
         )
 
     return await relay_outbox_claims(

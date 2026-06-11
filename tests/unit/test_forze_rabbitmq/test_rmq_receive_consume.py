@@ -29,6 +29,7 @@ class _FakeIncoming:
         self.type = None
         self.timestamp = None
         self.headers = None
+        self.redelivered = False
 
 
 # ....................... #

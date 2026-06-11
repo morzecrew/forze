@@ -1,7 +1,14 @@
 """Structural protocol for SQS clients (single endpoint or tenant-routed)."""
 
 from datetime import datetime, timedelta
-from typing import AsyncContextManager, AsyncGenerator, Awaitable, Protocol, Sequence
+from typing import (
+    AsyncContextManager,
+    AsyncGenerator,
+    Awaitable,
+    Mapping,
+    Protocol,
+    Sequence,
+)
 
 from types_aiobotocore_sqs.client import SQSClient as AsyncSQSClient
 
@@ -39,6 +46,7 @@ class SQSClientPort(Protocol):
         message_id: str | None = None,
         delay: timedelta | None = None,
         not_before: datetime | None = None,
+        headers: Mapping[str, str] | None = None,
     ) -> Awaitable[str]: ...  # pragma: no cover
 
     def enqueue_many(
@@ -52,6 +60,7 @@ class SQSClientPort(Protocol):
         message_ids: Sequence[str] | None = None,
         delay: timedelta | None = None,
         not_before: datetime | None = None,
+        headers: Mapping[str, str] | None = None,
     ) -> Awaitable[list[str]]: ...  # pragma: no cover
 
     def receive(

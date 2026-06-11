@@ -17,6 +17,7 @@ from typing import (
     AsyncContextManager,
     AsyncGenerator,
     Final,
+    Mapping,
     Sequence,
     cast,
     final,
@@ -38,13 +39,21 @@ from .types import SQSQueueMessage
 from .value_objects import SQSConfig, SQSConnectionOpts
 
 # ----------------------- #
-#! TODO: Move to constants
+#! TODO: Move to constants (?)
 
 _TYPE_ATTR = "forze_type"
 _KEY_ATTR = "forze_key"
 _ENQUEUED_AT_ATTR = "forze_enqueued_at"
 _ENCODING_ATTR = "forze_encoding"
 _ENCODING_B64 = "b64"
+
+_RESERVED_ATTRS = frozenset({_TYPE_ATTR, _KEY_ATTR, _ENQUEUED_AT_ATTR, _ENCODING_ATTR})
+"""Message-attribute names owned by the transport: caller header values are
+overwritten and the keys are excluded from the caller-visible ``headers``
+mapping on read."""
+
+_RECEIVE_COUNT_ATTR = "ApproximateReceiveCount"
+"""SQS system attribute reporting deliveries including the current one."""
 
 _SQS_SEND_MESSAGE_BATCH_MAX: Final[int] = 10
 """AWS limit for ``send_message_batch`` entries per request."""
@@ -471,10 +480,22 @@ class SQSClient(SQSClientPort):
         type: str | None,
         key: str | None,
         enqueued_at: datetime | None,
+        headers: Mapping[str, str] | None = None,
     ) -> dict[str, dict[str, str]]:
-        attrs: dict[str, dict[str, str]] = {
-            _ENCODING_ATTR: {"StringValue": _ENCODING_B64, "DataType": "String"}
-        }
+        # Caller headers pass through verbatim as String attributes; the
+        # reserved transport attributes are written after them so they always
+        # win on collision. Note AWS caps message attributes at 10 per
+        # message — headers count against that limit.
+        attrs: dict[str, dict[str, str]] = {}
+
+        if headers:
+            for header_key, header_value in headers.items():
+                attrs[header_key] = {
+                    "StringValue": header_value,
+                    "DataType": "String",
+                }
+
+        attrs[_ENCODING_ATTR] = {"StringValue": _ENCODING_B64, "DataType": "String"}
 
         if type is not None:
             attrs[_TYPE_ATTR] = {"StringValue": type, "DataType": "String"}
@@ -506,6 +527,52 @@ class SQSClient(SQSClientPort):
 
         value = raw.get("StringValue")
         return value if isinstance(value, str) else None
+
+    # ....................... #
+
+    @staticmethod
+    def __extract_headers(
+        attrs: dict[str, dict[str, str]] | None,
+    ) -> dict[str, str] | None:
+        """Return caller-visible string headers from message attributes.
+
+        Reserved transport attributes are excluded; only ``String`` values
+        survive — the port contract is string-to-string.
+        """
+
+        if not attrs:
+            return None
+
+        out: dict[str, str] = {}
+
+        for attr_key, raw in attrs.items():
+            if attr_key in _RESERVED_ATTRS or not isinstance(
+                raw, dict
+            ):  # pyright: ignore[reportUnnecessaryIsInstance]
+                continue
+
+            value = raw.get("StringValue")
+
+            if isinstance(value, str):
+                out[attr_key] = value
+
+        return out or None
+
+    # ....................... #
+
+    @staticmethod
+    def __extract_delivery_count(system_attrs: dict[str, str] | None) -> int | None:
+        """Parse ``ApproximateReceiveCount`` (deliveries including this one)."""
+
+        if not system_attrs:
+            return None
+
+        raw = system_attrs.get(_RECEIVE_COUNT_ATTR)
+
+        if isinstance(raw, str) and raw.isdigit():
+            return int(raw)
+
+        return None
 
     # ....................... #
 
@@ -602,6 +669,7 @@ class SQSClient(SQSClientPort):
         message_id: str | None = None,
         delay: timedelta | None = None,
         not_before: datetime | None = None,
+        headers: Mapping[str, str] | None = None,
     ) -> str:
         """Send a single message and return the broker-assigned ``MessageId``."""
         return (
@@ -614,6 +682,7 @@ class SQSClient(SQSClientPort):
                 message_ids=[message_id] if message_id is not None else None,
                 delay=delay,
                 not_before=not_before,
+                headers=headers,
             )
         )[0]
 
@@ -631,12 +700,18 @@ class SQSClient(SQSClientPort):
         message_ids: Sequence[str] | None = None,
         delay: timedelta | None = None,
         not_before: datetime | None = None,
+        headers: Mapping[str, str] | None = None,
     ) -> list[str]:
         """Send a batch of messages and return broker-assigned ``MessageId``s.
 
         The returned identifiers correlate with the ``id`` of received
         messages (stable across redeliveries). Caller-provided *message_ids*
         are used as FIFO deduplication ids, not as the returned identifiers.
+
+        Caller *headers* ride SQS message attributes (``String`` type)
+        verbatim; the reserved transport attributes (``forze_type``,
+        ``forze_key``, ``forze_enqueued_at``, ``forze_encoding``) always win
+        on collision.
 
         Splits into chunks of up to :data:`_SQS_SEND_MESSAGE_BATCH_MAX` (AWS limit).
         Multiple chunks are sent with bounded concurrency derived from
@@ -660,6 +735,7 @@ class SQSClient(SQSClientPort):
             type=type,
             key=key,
             enqueued_at=enqueued_at,
+            headers=headers,
         )
         is_fifo = self.__is_fifo_target(queue, queue_url)
         c = self.__require_client()
@@ -782,7 +858,7 @@ class SQSClient(SQSClientPort):
             MaxNumberOfMessages=max_messages,
             WaitTimeSeconds=wait_time,
             MessageAttributeNames=["All"],
-            AttributeNames=["SentTimestamp"],
+            AttributeNames=["SentTimestamp", "ApproximateReceiveCount"],
         )
         raw_messages = resp.get("Messages") or []
         out: list[SQSQueueMessage] = []
@@ -817,6 +893,8 @@ class SQSClient(SQSClientPort):
                     type=self.__extract_attr(attrs, _TYPE_ATTR),  # type: ignore[arg-type]
                     enqueued_at=self.__extract_enqueued_at(attrs, system_attrs),  # type: ignore[arg-type]
                     key=self.__extract_attr(attrs, _KEY_ATTR),  # type: ignore[arg-type]
+                    headers=self.__extract_headers(attrs),  # type: ignore[arg-type]
+                    delivery_count=self.__extract_delivery_count(system_attrs),  # type: ignore[arg-type]
                 )
             )
 

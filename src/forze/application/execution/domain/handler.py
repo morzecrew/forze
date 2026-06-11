@@ -1,7 +1,6 @@
 """Domain-event handler types and registry."""
 
-from collections.abc import Awaitable, Callable
-from typing import cast, final
+from typing import Awaitable, Callable, cast, final
 
 import attrs
 

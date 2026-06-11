@@ -6,11 +6,8 @@ abstracts that storage so the breaker can be process-local (default) or shared a
 replicas (e.g. a Redis adapter), making the fleet trip and recover together.
 """
 
-from __future__ import annotations
-
 import time
-from collections.abc import Awaitable, Callable
-from typing import Protocol, final, runtime_checkable
+from typing import Awaitable, Callable, Protocol, final, runtime_checkable
 
 import attrs
 

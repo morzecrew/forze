@@ -8,7 +8,7 @@ require_redis()
 
 import asyncio
 from datetime import datetime, timedelta
-from typing import AsyncGenerator, Sequence, final
+from typing import AsyncGenerator, Mapping, Sequence, final
 
 import attrs
 from pydantic import BaseModel
@@ -150,8 +150,15 @@ class RedisStreamAdapter[M: BaseModel](
         type: str | None = None,
         key: str | None = None,
         timestamp: datetime | None = None,
+        headers: Mapping[str, str] | None = None,
     ) -> str:
-        data = self.codec.encode(payload, type=type, key=key, timestamp=timestamp)
+        data = self.codec.encode(
+            payload,
+            type=type,
+            key=key,
+            timestamp=timestamp,
+            headers=headers,
+        )
 
         return await self.client.xadd(_stream_physical(self, stream), data)
 

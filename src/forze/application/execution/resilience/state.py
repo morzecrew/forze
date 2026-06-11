@@ -1,7 +1,5 @@
 """Process-local mutable state for circuit breaker, bulkhead, and retry budget."""
 
-from __future__ import annotations
-
 import asyncio
 from typing import Literal
 
@@ -14,7 +12,6 @@ BreakerPhase = Literal["closed", "open", "half_open"]
 
 Transition = Literal["open", "closed", "half_open"] | None
 """Phase transition emitted by a state update, or ``None`` when unchanged."""
-
 
 # ....................... #
 

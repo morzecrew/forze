@@ -60,6 +60,77 @@ lifecycle = LifecyclePlan.from_steps(
 )
 ```
 
+## Consuming on the other side
+
+`run_consumer` is the consumer-side counterpart — it replaces the hand-rolled
+`consume → dedupe → ack/nack` loop with the decisions already made correctly.
+Per message it: **parks** handler-poison (opt-in `max_deliveries`), runs the
+handler exactly-once through the [inbox](../in-depth/events-sagas.md)
+(`process_with_inbox`, same dedup transaction, correlation rebound from the
+envelope headers), **acks** both fresh *and* duplicate deliveries — a
+redelivered already-processed message must leave the queue — and **nacks**
+handler failures back (`requeue=True`) for redelivery. One message's failure
+never kills the consumer.
+
+```python
+from forze_kits.integrations.consumer import run_consumer
+
+result = await run_consumer(
+    ctx,
+    queue="orders",                # the channel the relay published to
+    queue_spec=ORDERS_QUEUE,
+    handler=handle_order_event,    # async def (message: QueueMessage[OrderEvent]) -> None
+    inbox_spec=ORDERS_INBOX,
+    tx_route="postgres",           # dedup mark + handler commit together here
+    timeout=timedelta(seconds=5),  # idle timeout; None = consume forever
+)
+# result.processed / result.duplicates / result.parked / result.failed
+```
+
+In production it runs continuously as a lifecycle step — one step per queue
+(no in-process concurrency knob; scale out with more steps or processes):
+
+```python
+from forze_kits.integrations.consumer import queue_consumer_background_lifecycle_step
+
+lifecycle = LifecyclePlan.from_steps(
+    queue_consumer_background_lifecycle_step(
+        queue="orders",
+        queue_spec=ORDERS_QUEUE,
+        handler=handle_order_event,
+        inbox_spec=ORDERS_INBOX,
+        tx_route="postgres",
+    ),
+)
+```
+
+A crash of the consume stream itself (broker connection loss) is logged and
+the consume restarts after `restart_backoff` (default 5s); unacked in-flight
+messages redeliver and the inbox dedupes them.
+
+Two kinds of poison, two owners:
+
+- **Decode-poison** (payload doesn't fit the codec model) never reaches your
+  handler — the queue adapters reject it inside `consume` with
+  `nack(requeue=False)` (RabbitMQ DLX, SQS redrive) and keep consuming.
+- **Handler-poison** (decodes fine, handler always fails) is parked by the
+  runner when `max_deliveries` is set: a message whose `delivery_count`
+  *exceeds* it is `nack(requeue=False)`-ed **without running the handler**, so
+  the handler gets at most `max_deliveries` attempts.
+
+!!! warning "Parking is opt-in — and needs a delivery count"
+    `max_deliveries` defaults to `None`: the broker's own redrive/DLX policy is
+    the default safety net, and you should configure one. Parking also relies
+    on the backend reporting `QueueMessage.delivery_count` (SQS
+    `ApproximateReceiveCount`, RabbitMQ `x-death` approximation, mock exact) —
+    when it's `None`, parking never triggers and a poison message keeps
+    redelivering until the broker's policy catches it.
+
+Transient blips can also be retried in-process before the message goes back to
+the broker: pass `retry_policy="my-policy"` and the runner wraps each process
+step (dedup mark + handler, one fresh transaction per attempt) in
+`ctx.resilience().run(...)` under that named policy.
+
 ## Failures and retries
 
 The relay classifies errors by **where** they arise:

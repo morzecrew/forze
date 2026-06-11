@@ -1,7 +1,6 @@
 """In-process domain-event dispatcher."""
 
-from collections.abc import Sequence
-from typing import final
+from typing import Sequence, final
 
 import attrs
 

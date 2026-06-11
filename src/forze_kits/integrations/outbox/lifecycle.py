@@ -150,6 +150,12 @@ class _OutboxRelayBackgroundStartup(LifecycleHook):
 
                 await asyncio.sleep(self.interval.total_seconds())
 
+        if self.task is not None and not self.task.done():
+            # The runtime invokes startup once per scope; a direct double call
+            # must not leak (and orphan) the previous relay task.
+            logger.warning("Outbox relay already running; ignoring duplicate startup")
+            return
+
         self.task = asyncio.create_task(_loop(), name="outbox_relay_background")
 
 

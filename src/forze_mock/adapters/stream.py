@@ -7,6 +7,7 @@ from datetime import datetime, timedelta
 from typing import (
     Any,
     AsyncGenerator,
+    Mapping,
     Sequence,
     cast,
     final,
@@ -72,6 +73,7 @@ class MockStreamAdapter(MockTenancyMixin, StreamQueryPort[M], StreamCommandPort[
         type: str | None = None,
         key: str | None = None,
         timestamp: datetime | None = None,
+        headers: Mapping[str, str] | None = None,
     ) -> str:
         message_id = self.state.next_id("stream")
         message = StreamMessage(
@@ -81,6 +83,7 @@ class MockStreamAdapter(MockTenancyMixin, StreamQueryPort[M], StreamCommandPort[
             type=type,
             key=key,
             timestamp=timestamp or utcnow(),
+            headers=dict(headers) if headers else {},
         )
         with self.state.lock:
             self._stream_store().setdefault(stream, []).append(message)

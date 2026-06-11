@@ -1,7 +1,5 @@
 """In-process resilience executor composing strategies into a call pipeline."""
 
-from __future__ import annotations
-
 import asyncio
 import random
 import time
@@ -28,7 +26,6 @@ from .store import CircuitBreakerStore, InMemoryCircuitBreakerStore
 # ----------------------- #
 
 _StateKey = tuple[StrKey, StrKey | None]
-
 
 # ....................... #
 
@@ -65,6 +62,8 @@ class InProcessResilienceExecutor:
         ),
     )
     """Circuit breaker store for the executor."""
+
+    # ....................... #
 
     _bulkheads: dict[_StateKey, BulkheadState] = attrs.field(factory=dict, init=False)
     """Bulkhead state for the executor."""

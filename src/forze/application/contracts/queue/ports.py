@@ -2,6 +2,7 @@ from datetime import datetime, timedelta
 from typing import (
     AsyncGenerator,
     Awaitable,
+    Mapping,
     Protocol,
     Sequence,
     runtime_checkable,
@@ -97,12 +98,19 @@ class QueueCommandPort[M](Protocol):
         enqueued_at: datetime | None = None,
         delay: timedelta | None = None,
         not_before: datetime | None = None,
+        headers: Mapping[str, str] | None = None,
     ) -> Awaitable[str]:
         """Enqueue a single message and return its identifier.
 
         :param enqueued_at: Logical enqueue timestamp stored on the message (metadata).
         :param delay: Relative delay before the message is visible to consumers.
         :param not_before: Absolute UTC instant before which the message is not visible.
+        :param headers: String-to-string transport metadata, propagated
+            best-effort via the backend's native metadata channel and surfaced
+            on received messages as ``QueueMessage.headers``. Not part of the
+            payload contract. Reserved transport keys (``forze_type``,
+            ``forze_key``, ``forze_encoding``, ``forze_enqueued_at``) cannot
+            be overridden by caller headers.
         """
 
         ...  # pragma: no cover
@@ -119,10 +127,12 @@ class QueueCommandPort[M](Protocol):
         enqueued_at: datetime | None = None,
         delay: timedelta | None = None,
         not_before: datetime | None = None,
+        headers: Mapping[str, str] | None = None,
     ) -> Awaitable[list[str]]:
         """Enqueue multiple messages and return their identifiers.
 
-        The same *delay* or *not_before* applies to every message in the batch.
+        The same *delay*, *not_before*, and *headers* apply to every message
+        in the batch.
         """
 
         ...  # pragma: no cover

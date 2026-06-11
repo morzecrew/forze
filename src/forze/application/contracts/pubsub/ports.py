@@ -2,6 +2,7 @@ from datetime import datetime, timedelta
 from typing import (
     AsyncGenerator,
     Awaitable,
+    Mapping,
     Protocol,
     Sequence,
     runtime_checkable,
@@ -24,8 +25,15 @@ class PubSubCommandPort[M](Protocol):
         type: str | None = None,
         key: str | None = None,
         published_at: datetime | None = None,
+        headers: Mapping[str, str] | None = None,
     ) -> Awaitable[None]:
-        """Publish a single message to *topic*."""
+        """Publish a single message to *topic*.
+
+        :param headers: String-to-string transport metadata, propagated
+            best-effort via the backend's native metadata channel and surfaced
+            on received messages as ``PubSubMessage.headers``. Not part of the
+            payload contract.
+        """
         ...
 
 

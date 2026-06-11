@@ -8,6 +8,7 @@ from datetime import datetime, timedelta
 from typing import (
     Any,
     AsyncGenerator,
+    Mapping,
     Sequence,
     cast,
     final,
@@ -176,6 +177,7 @@ class MockQueueAdapter(MockTenancyMixin, QueueQueryPort[M], QueueCommandPort[M])
         enqueued_at: datetime | None = None,
         delay: timedelta | None = None,
         not_before: datetime | None = None,
+        headers: Mapping[str, str] | None = None,
     ) -> str:
         now = utcnow()
         resolved_delay = resolve_delivery_delay(delay=delay, not_before=not_before)
@@ -188,6 +190,7 @@ class MockQueueAdapter(MockTenancyMixin, QueueQueryPort[M], QueueCommandPort[M])
             type=type,
             key=key,
             enqueued_at=enqueued_at or now,
+            headers=dict(headers) if headers else {},
         )
         entry = _MockQueueEntry(visible_at=visible_at, message=message)
         with self.state.lock:
@@ -206,6 +209,7 @@ class MockQueueAdapter(MockTenancyMixin, QueueQueryPort[M], QueueCommandPort[M])
         enqueued_at: datetime | None = None,
         delay: timedelta | None = None,
         not_before: datetime | None = None,
+        headers: Mapping[str, str] | None = None,
     ) -> list[str]:
         out: list[str] = []
         for payload in payloads:
@@ -218,6 +222,7 @@ class MockQueueAdapter(MockTenancyMixin, QueueQueryPort[M], QueueCommandPort[M])
                     enqueued_at=enqueued_at,
                     delay=delay,
                     not_before=not_before,
+                    headers=headers,
                 )
             )
         return out
@@ -249,13 +254,23 @@ class MockQueueAdapter(MockTenancyMixin, QueueQueryPort[M], QueueCommandPort[M])
             remaining_ready = ready[count:]
             self._queue_store()[queue] = remaining_ready + deferred
             redeliver_at = now + self.visibility_timeout
+            delivered: list[QueueMessage[M]] = []
             for entry in batch_entries:
                 pending[entry.message.id] = _MockPendingEntry(
                     message=entry.message,
                     redeliver_at=redeliver_at,
                     delivery_count=entry.delivery_count + 1,
                 )
-            return [entry.message for entry in batch_entries]
+                # Surface the exact per-delivery count (including this one)
+                # on the returned message, mirroring SQS's
+                # ApproximateReceiveCount.
+                delivered.append(
+                    attrs.evolve(
+                        entry.message,
+                        delivery_count=entry.delivery_count + 1,
+                    )
+                )
+            return delivered
 
     # ....................... #
 

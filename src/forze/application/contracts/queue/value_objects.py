@@ -1,9 +1,14 @@
 from datetime import datetime
-from typing import final
+from types import MappingProxyType
+from typing import Final, Mapping, final
 
 import attrs
 
 # ----------------------- #
+
+_EMPTY_HEADERS: Final[Mapping[str, str]] = MappingProxyType({})
+
+# ....................... #
 
 
 @final
@@ -34,3 +39,20 @@ class QueueMessage[M]:
 
     key: str | None = None
     """Optional partitioning key for the message."""
+
+    headers: Mapping[str, str] = _EMPTY_HEADERS
+    """String-to-string transport metadata carried alongside the payload.
+
+    Propagated best-effort via the backend's native metadata channel; not
+    part of the payload contract. See
+    :mod:`forze.application.contracts.envelope` for the well-known keys.
+    """
+
+    delivery_count: int | None = None
+    """Approximate number of deliveries of this message, **including** this one.
+
+    ``None`` when the backend cannot report it. Backend-specific accuracy:
+    SQS reports ``ApproximateReceiveCount`` exactly; RabbitMQ approximates
+    from ``x-death`` history and the ``redelivered`` flag (see the RabbitMQ
+    client docs); the mock adapter counts exactly.
+    """

@@ -1,7 +1,5 @@
 """Run resolved lifecycle graphs in wave order."""
 
-from __future__ import annotations
-
 import asyncio
 from typing import TYPE_CHECKING
 

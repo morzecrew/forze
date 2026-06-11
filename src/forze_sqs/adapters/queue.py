@@ -5,7 +5,7 @@ require_sqs()
 # ....................... #
 
 from datetime import datetime, timedelta
-from typing import AsyncGenerator, ClassVar, Sequence, final
+from typing import AsyncGenerator, ClassVar, Mapping, Sequence, final
 
 import attrs
 from pydantic import BaseModel
@@ -86,6 +86,7 @@ class SQSQueueAdapter[M: BaseModel](
         enqueued_at: datetime | None = None,
         delay: timedelta | None = None,
         not_before: datetime | None = None,
+        headers: Mapping[str, str] | None = None,
     ) -> str:
         physical_queue = await self.__queue_name(queue)
         body = self.codec.encode(payload)
@@ -99,6 +100,7 @@ class SQSQueueAdapter[M: BaseModel](
                 enqueued_at=enqueued_at,
                 delay=delay,
                 not_before=not_before,
+                headers=headers,
             )
 
     # ....................... #
@@ -113,6 +115,7 @@ class SQSQueueAdapter[M: BaseModel](
         enqueued_at: datetime | None = None,
         delay: timedelta | None = None,
         not_before: datetime | None = None,
+        headers: Mapping[str, str] | None = None,
     ) -> list[str]:
         if not payloads:
             return []
@@ -129,6 +132,7 @@ class SQSQueueAdapter[M: BaseModel](
                 enqueued_at=enqueued_at,
                 delay=delay,
                 not_before=not_before,
+                headers=headers,
             )
 
     # ....................... #

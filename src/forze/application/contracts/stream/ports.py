@@ -2,6 +2,7 @@ from datetime import datetime, timedelta
 from typing import (
     AsyncGenerator,
     Awaitable,
+    Mapping,
     Protocol,
     Sequence,
     runtime_checkable,
@@ -92,6 +93,13 @@ class StreamCommandPort[M](Protocol):
         type: str | None = None,
         key: str | None = None,
         timestamp: datetime | None = None,
+        headers: Mapping[str, str] | None = None,
     ) -> Awaitable[str]:
-        """Append a message to *stream* and return its identifier."""
+        """Append a message to *stream* and return its identifier.
+
+        :param headers: String-to-string transport metadata, propagated
+            best-effort via the backend's native metadata channel and surfaced
+            on read messages as ``StreamMessage.headers``. Not part of the
+            payload contract.
+        """
         ...  # pragma: no cover
