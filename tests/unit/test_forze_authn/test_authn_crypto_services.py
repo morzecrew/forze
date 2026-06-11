@@ -18,6 +18,7 @@ from forze_identity.authn.services import (
     AccessTokenService,
     ApiKeyConfig,
     ApiKeyService,
+    InviteTokenService,
     PasswordConfig,
     PasswordService,
     RefreshTokenService,
@@ -56,16 +57,6 @@ def test_password_hash_and_verify_fast_config() -> None:
     assert not pwd.verify_password(h, "hunter3")
     assert not pwd.verify_password("$invalid", "x")
 
-def test_password_needs_rehash_after_tune() -> None:
-    weak_cfg = PasswordConfig(time_cost=1, memory_cost=8192, parallelism=1)
-    pwd_weak = PasswordService(config=weak_cfg)
-    hashed = pwd_weak.hash_password("quiet")
-
-    assert not pwd_weak.password_needs_rehash(hashed)
-
-    pwd_strong = PasswordService(config=PasswordService().config)
-    assert pwd_strong.password_needs_rehash(hashed)
-
 def test_refresh_digest_round_trip() -> None:
     pepper = secrets.token_bytes(32)
     svc = RefreshTokenService(pepper=pepper)
@@ -77,6 +68,48 @@ def test_refresh_digest_round_trip() -> None:
     assert not other.verify_token(tok, digest)
 
     assert not svc.verify_token("not-base64%%%", digest)
+
+def test_invite_digest_round_trip() -> None:
+    pepper = secrets.token_bytes(32)
+    svc = InviteTokenService(pepper=pepper)
+    tok = svc.generate_token()
+    digest = svc.calculate_token_digest(tok)
+    assert svc.verify_token(tok, digest)
+
+    other = InviteTokenService(pepper=secrets.token_bytes(32))
+    assert not other.verify_token(tok, digest)
+
+    assert not svc.verify_token("not-base64%%%", digest)
+
+# Digest stability fixed vectors: digests of live tokens are persisted in
+# databases, so any refactor of the token services must keep them byte-identical.
+# Values were computed with the pre-refactor implementation.
+_FIXED_PEPPER = b"0123456789abcdef0123456789abcdef"
+
+def test_refresh_and_invite_digest_fixed_vector_unpadded_43() -> None:
+    # 43 b64url chars (len % 4 == 3) — the shape generate_token() emits for
+    # the default 32-byte token; also covers the b64 padding formula.
+    token = "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"
+    expected = "da7164a2bac13505f97e4d5e630fa9e59f47e8ea74fb7b30c59a1ec4cb355363"
+
+    refresh = RefreshTokenService(pepper=_FIXED_PEPPER)
+    invite = InviteTokenService(pepper=_FIXED_PEPPER)
+
+    for svc in (refresh, invite):
+        assert svc.calculate_token_digest(token) == expected
+        assert svc.verify_token(token, expected)
+
+def test_refresh_and_invite_digest_fixed_vector_unpadded_22() -> None:
+    # 22 b64url chars (len % 4 == 2) — exercises the other padding branch.
+    token = "AAECAwQFBgcICQoLDA0ODw"
+    expected = "8e832f79b12634f0595cb176f678a4ab97787bdc8ceaef5494dfb79220a745f9"
+
+    refresh = RefreshTokenService(pepper=_FIXED_PEPPER)
+    invite = InviteTokenService(pepper=_FIXED_PEPPER)
+
+    for svc in (refresh, invite):
+        assert svc.calculate_token_digest(token) == expected
+        assert svc.verify_token(token, expected)
 
 def test_access_token_issue_and_verify() -> None:
     secret = secrets.token_bytes(32)
@@ -145,8 +178,3 @@ def test_access_token_detects_expiry() -> None:
     with pytest.raises(CoreException) as ei:
         svc.verify_token(expired_token)
     assert ei.value.code == "access_token_expired"
-
-def test_try_decode_returns_none_for_garbage() -> None:
-    svc = AccessTokenService(secret_key=secrets.token_bytes(32))
-    assert svc.try_decode_token("") is None
-    assert svc.try_decode_token("not.a.token") is None

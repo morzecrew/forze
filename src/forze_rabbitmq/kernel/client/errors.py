@@ -14,9 +14,14 @@ from forze.base.exceptions import (
     ExceptionInterceptor,
     ExceptionMapper,
     default_chain_exc_mapper,
+    fallback_exception_mapper,
 )
 
 # ----------------------- #
+
+_fallback = fallback_exception_mapper("RabbitMQ")
+
+# ....................... #
 
 
 @static_fn_conformity(ExceptionMapper)  # type: ignore[type-abstract]
@@ -79,10 +84,7 @@ def _rabbitmq_eh(
             )
 
         case _:
-            return CoreException.infrastructure(
-                f"An error occurred while executing RabbitMQ operation {site}: {exc}",
-                details=details,
-            )
+            return _fallback(exc, site=site, details=details)
 
 
 # ....................... #

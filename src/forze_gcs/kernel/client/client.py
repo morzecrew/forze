@@ -5,11 +5,9 @@ require_gcs()
 
 # ....................... #
 
-import asyncio
 import json
 import os
 from contextlib import asynccontextmanager
-from contextvars import ContextVar
 from datetime import datetime
 from typing import Any, AsyncGenerator, cast, final
 
@@ -23,6 +21,7 @@ from forze.application.integrations.storage.client import (
     normalize_list_window,
 )
 from forze.base.exceptions import exc
+from forze.base.primitives import ContextScopedResource, GuardedLifecycle
 from forze.base.primitives.owned_temp_path import OwnedTempPath
 
 from .errors import exc_interceptor
@@ -30,6 +29,16 @@ from .port import GCSClientPort
 from .value_objects import DEFAULT_TIMEOUT, GCSConfig
 
 # ----------------------- #
+
+TAG_METADATA_PREFIX = "forze-tag-"
+"""Custom-metadata key prefix used to emulate object tags on GCS.
+
+GCS has no S3-style tag API; tags are persisted as namespaced custom metadata
+keys and split back out by :meth:`GCSClient.head_object`. User metadata keys
+that happen to start with this prefix would be surfaced as tags on read-back.
+"""
+
+# ....................... #
 
 
 @final
@@ -50,12 +59,12 @@ class GCSClient(GCSClientPort):
         init=False,
     )
 
-    __ctx_depth: ContextVar[int] = attrs.field(
-        factory=lambda: ContextVar("gcs_depth", default=0),
+    __scope: ContextScopedResource[Storage] = attrs.field(
+        factory=lambda: ContextScopedResource[Storage]("gcs"),
         init=False,
     )
 
-    __init_lock: asyncio.Lock = attrs.field(factory=asyncio.Lock, init=False)
+    __lifecycle: GuardedLifecycle = attrs.field(factory=GuardedLifecycle, init=False)
 
     # ....................... #
 
@@ -74,10 +83,7 @@ class GCSClient(GCSClientPort):
         :param config: Optional client configuration overrides.
         """
 
-        async with self.__init_lock:
-            if self.__storage is not None:
-                return
-
+        async def setup() -> None:
             self.__project_id = project_id
             self.__config = config
 
@@ -99,42 +105,51 @@ class GCSClient(GCSClientPort):
                 api_root=api_root,
             )
 
+        await self.__lifecycle.initialize(
+            setup,
+            ready=lambda: self.__storage is not None,
+        )
+
     # ....................... #
 
     async def close(self) -> None:
         """Release the underlying storage client and HTTP session."""
 
-        async with self.__init_lock:
-            storage = self.__storage
-            close_error: Exception | None = None
-            cred_error: Exception | None = None
+        await self.__lifecycle.close(self.__teardown)
 
-            if storage is not None:
-                try:
-                    await storage.close()
+    # ....................... #
 
-                except Exception as exc:
-                    close_error = exc
+    async def __teardown(self) -> None:
+        storage = self.__storage
+        close_error: Exception | None = None
+        cred_error: Exception | None = None
 
-                finally:
-                    self.__storage = None
-
+        if storage is not None:
             try:
-                self.__credential_path.release()
-                self.__credential_path = OwnedTempPath.empty()
-                self.__project_id = None
-                self.__config = None
+                await storage.close()
 
             except Exception as exc:
-                cred_error = exc
+                close_error = exc
 
-            errors = [e for e in (close_error, cred_error) if e is not None]
+            finally:
+                self.__storage = None
 
-            if len(errors) == 1:
-                raise errors[0]
+        try:
+            self.__credential_path.release()
+            self.__credential_path = OwnedTempPath.empty()
+            self.__project_id = None
+            self.__config = None
 
-            if len(errors) > 1:
-                raise ExceptionGroup("GCS client close failed", errors) from errors[0]
+        except Exception as exc:
+            cred_error = exc
+
+        errors = [e for e in (close_error, cred_error) if e is not None]
+
+        if len(errors) == 1:
+            raise errors[0]
+
+        if len(errors) > 1:
+            raise ExceptionGroup("GCS client close failed", errors) from errors[0]
 
     # ....................... #
 
@@ -162,26 +177,14 @@ class GCSClient(GCSClientPort):
     async def client(self) -> AsyncGenerator[Storage]:
         """Yield the shared storage client (depth-tracked nested scopes)."""
 
-        depth = self.__ctx_depth.get()
+        async def acquire() -> Storage:
+            return self.__require_storage()
 
-        if depth > 0:
-            self.__ctx_depth.set(depth + 1)
-
-            try:
-                yield self.__require_storage()
-
-            finally:
-                self.__ctx_depth.set(depth)
-
-            return
-
-        token = self.__ctx_depth.set(1)
-
-        try:
-            yield self.__require_storage()
-
-        finally:
-            self.__ctx_depth.reset(token)
+        async with self.__scope.scope(
+            acquire,
+            reusable=lambda storage: self.__storage is storage,
+        ) as storage:
+            yield storage
 
     # ....................... #
 
@@ -233,6 +236,8 @@ class GCSClient(GCSClientPort):
 
     @exc_interceptor.coroutine("gcs.ensure_bucket")  # type: ignore[untyped-decorator]
     async def ensure_bucket(self, bucket: str) -> None:
+        """Create the bucket when it does not exist (idempotent)."""
+
         if not await self.bucket_exists(bucket):
             await self.create_bucket(bucket)
 
@@ -258,13 +263,25 @@ class GCSClient(GCSClientPort):
         metadata: dict[str, str] | None = None,
         tags: dict[str, str] | None = None,
     ) -> None:
+        """Upload raw bytes to a GCS object.
+
+        Tags are persisted as custom metadata keys namespaced with
+        :data:`TAG_METADATA_PREFIX` (GCS has no S3-style tag API) and are
+        round-tripped back into :attr:`ObjectStorageHead.tags` by
+        :meth:`head_object`.
+        """
+
         storage = self.__require_storage()
+        custom: dict[str, str] = dict(metadata) if metadata is not None else {}
+
+        if tags:
+            for tag_key, tag_value in tags.items():
+                custom[f"{TAG_METADATA_PREFIX}{tag_key}"] = tag_value
+
         upload_metadata: dict[str, object] | None = None
 
-        if metadata is not None:
-            upload_metadata = {"metadata": metadata}
-
-        _ = tags
+        if metadata is not None or tags:
+            upload_metadata = {"metadata": custom}
 
         await storage.upload(
             bucket,
@@ -309,7 +326,18 @@ class GCSClient(GCSClientPort):
         *,
         limit: int | None = None,
         offset: int | None = None,
+        include_tags: bool = False,
     ) -> tuple[list[ObjectStorageListedObject], int]:
+        """List blob keys under *prefix* with an offset/limit window.
+
+        ``include_tags`` is accepted for port compatibility but adds nothing
+        on GCS: tags live in namespaced custom metadata and surface for free
+        on :meth:`head_object` (no extra calls either way), while the listing
+        API only returns keys.
+        """
+
+        _ = include_tags  # guarantee already satisfied via head metadata
+
         _prefix = prefix or ""
         _limit, _offset = normalize_list_window(limit, offset)
 
@@ -328,7 +356,23 @@ class GCSClient(GCSClientPort):
     # ....................... #
 
     @exc_interceptor.coroutine("gcs.head_object")  # type: ignore[untyped-decorator]
-    async def head_object(self, bucket: str, key: str) -> ObjectStorageHead:
+    async def head_object(
+        self,
+        bucket: str,
+        key: str,
+        *,
+        include_tags: bool = False,
+    ) -> ObjectStorageHead:
+        """Fetch object metadata, splitting namespaced tags out of it.
+
+        ``include_tags`` is accepted for port compatibility but adds nothing
+        on GCS: tags are round-tripped from custom metadata for free, so
+        :attr:`ObjectStorageHead.tags` is populated regardless of the flag
+        (no extra calls).
+        """
+
+        _ = include_tags  # tags are always included for free on GCS
+
         storage = self.__require_storage()
         raw = await storage.download_metadata(
             bucket,
@@ -378,9 +422,17 @@ def _response_is_not_found(exc: aiohttp.ClientResponseError) -> bool:
 def _head_from_object_json(raw: dict[str, object]) -> ObjectStorageHead:
     custom: Any = raw.get("metadata") or {}
     meta_dict: dict[str, str] = {}
+    tags: dict[str, str] = {}
 
     if isinstance(custom, dict):
-        meta_dict = {str(k): str(v) for k, v in cast(JsonDict, custom).items()}
+        for k, v in cast(JsonDict, custom).items():
+            key, value = str(k), str(v)
+
+            if key.startswith(TAG_METADATA_PREFIX):
+                tags[key[len(TAG_METADATA_PREFIX) :]] = value
+
+            else:
+                meta_dict[key] = value
 
     updated = raw.get("updated")
     last_modified: datetime | None = None
@@ -408,4 +460,5 @@ def _head_from_object_json(raw: dict[str, object]) -> ObjectStorageHead:
         size=size,
         etag=etag_str,
         last_modified=last_modified,
+        tags=tags,
     )

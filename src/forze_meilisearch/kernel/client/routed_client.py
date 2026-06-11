@@ -86,8 +86,15 @@ class RoutedMeilisearchClient(
     async def aclose(self) -> None:
         await self.close()
 
-    async def health(self) -> bool:
-        inner = await self._get_client()
+    async def health(self) -> tuple[str, bool]:
+        """Check the current tenant's Meilisearch availability. Never raises."""
+
+        try:
+            inner = await self._get_client()
+
+        except Exception as e:  # noqa: BLE001 - health must not raise
+            return str(e) or "Meilisearch health check failed", False
+
         return await inner.health()
 
     def index(self, uid: str) -> Any:

@@ -4,6 +4,7 @@ from typing import AsyncGenerator, Awaitable, Callable
 
 import attrs
 
+from forze.application._logger import logger
 from forze.application.contracts.transaction import (
     TransactionHandle,
     TransactionManagerPort,
@@ -82,7 +83,13 @@ class TransactionContext:
     # ....................... #
 
     def _defer(self, cb: Callable[[], Awaitable[None]]) -> None:
-        """Defer a callback to run after the current root transaction commits successfully."""
+        """Defer a callback to run after the current root transaction commits successfully.
+
+        Deferred callbacks run *post-commit*: every registered callback runs even when
+        earlier ones fail, and a callback failure does **not** roll back the (already
+        committed) transaction. Failures are logged individually and re-raised as a
+        single aggregated ``after_commit_failed`` internal error after all callbacks ran.
+        """
 
         q = self.__cb_stack.get()
 
@@ -96,7 +103,12 @@ class TransactionContext:
     # ....................... #
 
     async def run_or_defer(self, cb: Callable[[], Awaitable[None]]) -> None:
-        """Defer a callback to run after the current root transaction commits successfully, or run it immediately if outside a transaction."""
+        """Defer a callback to run after the current root transaction commits successfully, or run it immediately if outside a transaction.
+
+        See :meth:`_defer` for the post-commit failure semantics: all deferred
+        callbacks run regardless of individual failures, and a failure does not
+        roll back the committed transaction.
+        """
 
         if self.depth() == 0:
             await cb()
@@ -108,12 +120,18 @@ class TransactionContext:
 
     @asynccontextmanager
     async def scope(
-        self, route: StrKey, *, read_only: bool = False
+        self, route: StrKey, *, read_only: bool | None = None
     ) -> AsyncGenerator[None]:
         """Enter a transaction scope.
 
         ``read_only`` opens a read-only transaction where the backend supports it (a
         ``QUERY`` operation passes this), so the database rejects writes.
+
+        Transaction options are honored only at the **root** scope: nested scopes are
+        savepoints that inherit the root's options, so ``read_only`` is never forwarded
+        to a nested ``transaction()`` call. A nested scope explicitly requesting a
+        ``read_only`` value that conflicts with the root's raises a precondition error;
+        the same value or ``None`` (unspecified) is fine.
         """
 
         if self.resolver is None:
@@ -131,10 +149,18 @@ class TransactionContext:
                     f"requested={tx.scope_key.name}"
                 )
 
+            if read_only is not None and read_only != cur_scope.read_only:
+                raise exc.precondition(
+                    f"Nested tx scope requested read_only={read_only} but the root "
+                    f"scope is read_only={cur_scope.read_only}; transaction options "
+                    "are honored only at root",
+                    code="tx_nested_read_only_conflict",
+                )
+
             token_d = self.__tx_depth.set(depth + 1)
 
             try:
-                async with tx.transaction(read_only=read_only):
+                async with tx.transaction():
                     yield
 
             finally:
@@ -142,7 +168,11 @@ class TransactionContext:
 
             return
 
-        token_h = self.__tx_handle.set(TransactionHandle(scope=tx.scope_key))
+        root_read_only = bool(read_only)
+
+        token_h = self.__tx_handle.set(
+            TransactionHandle(scope=tx.scope_key, read_only=root_read_only)
+        )
         token_d = self.__tx_depth.set(1)
         token_cb = self.__cb_stack.set([])
         route_name = str(getattr(route, "value", route))
@@ -152,7 +182,7 @@ class TransactionContext:
         deferred: list[Callable[[], Awaitable[None]]] | None = None
 
         try:
-            async with tx.transaction(read_only=read_only):
+            async with tx.transaction(read_only=root_read_only):
                 yield
 
         except BaseException:
@@ -170,6 +200,46 @@ class TransactionContext:
             self.__tx_handle.reset(token_h)
             self.__tx_depth.reset(token_d)
 
-        if deferred is not None:
-            for cb in deferred:
+        if deferred:
+            await self._run_deferred(deferred)
+
+    # ....................... #
+
+    async def _run_deferred(
+        self, deferred: list[Callable[[], Awaitable[None]]]
+    ) -> None:
+        """Run post-commit callbacks, isolating individual failures.
+
+        Every callback runs even when earlier ones fail; each failure is logged.
+        If any failed, a single aggregated internal error is raised afterwards —
+        the transaction is already committed and is **not** rolled back.
+        """
+
+        first_error: Exception | None = None
+        failed: list[dict[str, str]] = []
+
+        for index, cb in enumerate(deferred):
+            try:
                 await cb()
+
+            except Exception as e:
+                name = getattr(cb, "__qualname__", None) or repr(cb)
+                logger.exception(
+                    "After-commit callback %s/%s (%s) failed "
+                    "(transaction already committed)",
+                    index + 1,
+                    len(deferred),
+                    name,
+                )
+
+                if first_error is None:
+                    first_error = e
+
+                failed.append({"index": str(index), "callback": name, "error": str(e)})
+
+        if first_error is not None:
+            raise exc.internal(
+                "After-commit callbacks failed (transaction already committed)",
+                code="after_commit_failed",
+                details={"failed": failed},
+            ) from first_error

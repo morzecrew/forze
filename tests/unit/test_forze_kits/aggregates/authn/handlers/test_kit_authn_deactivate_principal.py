@@ -7,7 +7,6 @@ from uuid import uuid4
 
 import pytest
 
-from forze.application.contracts.authn import AuthnSpec
 from forze_kits.aggregates.authn.handlers.deactivate_principal import (
     DeactivatePrincipalHandler,
     DeactivatePrincipalRequestDTO,
@@ -20,10 +19,7 @@ class TestDeactivatePrincipalHandler:
         principal_id = uuid4()
         port = AsyncMock()
         port.deactivate = AsyncMock(return_value=None)
-        handler = DeactivatePrincipalHandler(
-            spec=AuthnSpec(name="app"),
-            deactivation=port,
-        )
+        handler = DeactivatePrincipalHandler(deactivation=port)
 
         await handler(DeactivatePrincipalRequestDTO(principal_id=principal_id))
 

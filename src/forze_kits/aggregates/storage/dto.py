@@ -20,6 +20,9 @@ class UploadObjectRequestDTO(BaseDTO):
     description: str | None = None
     """Optional human-readable description."""
 
+    tags: dict[str, str] | None = None
+    """Optional tags to associate with the object."""
+
     prefix: str | None = None
     """Optional key prefix (folder-like namespace)."""
 

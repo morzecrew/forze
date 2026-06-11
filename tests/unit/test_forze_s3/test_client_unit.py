@@ -1,6 +1,6 @@
 """Unit tests for :mod:`forze_s3.kernel.client.client` helpers (no I/O)."""
 
-from forze.base.exceptions import CoreException, exc
+from forze.base.exceptions import CoreException
 from contextlib import asynccontextmanager
 from typing import Any
 
@@ -15,6 +15,25 @@ from forze_s3.kernel.client import S3Client, S3Config
 class _FakeAioConfig:
     def __init__(self, **kwargs: Any) -> None:
         self.kwargs = kwargs
+
+class _FakeSession:
+    """Minimal ``aioboto3.Session`` stand-in: ``.client()`` yields a fake API.
+
+    ``initialize`` now eagerly opens a persistent client, so fake sessions
+    must support ``.client(...)`` as an async context manager.
+    """
+
+    def __init__(self) -> None:
+        self.client_calls: list[dict[str, Any]] = []
+
+    def client(self, service_name: str, **kwargs: Any) -> Any:
+        self.client_calls.append({"service": service_name, **kwargs})
+
+        @asynccontextmanager
+        async def _cm() -> Any:
+            yield _FakeS3Api()
+
+        return _cm()
 
 class _FakePaginator:
     def __init__(self, pages: list[dict[str, Any]]) -> None:
@@ -46,7 +65,7 @@ async def test_initialize_injects_default_retries_when_missing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     client = S3Client()
-    fake_session = object()
+    fake_session = _FakeSession()
 
     monkeypatch.setattr(s3_value_objects, "AioConfig", _FakeAioConfig)
     monkeypatch.setattr(s3_client_module.aioboto3, "Session", lambda: fake_session)
@@ -70,7 +89,7 @@ async def test_initialize_preserves_explicit_retries(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     client = S3Client()
-    fake_session = object()
+    fake_session = _FakeSession()
 
     monkeypatch.setattr(s3_value_objects, "AioConfig", _FakeAioConfig)
     monkeypatch.setattr(s3_client_module.aioboto3, "Session", lambda: fake_session)
@@ -125,7 +144,7 @@ async def test_initialize_converts_timedelta_to_float(
     from datetime import timedelta
 
     client = S3Client()
-    fake_session = object()
+    fake_session = _FakeSession()
 
     monkeypatch.setattr(s3_value_objects, "AioConfig", _FakeAioConfig)
     monkeypatch.setattr(s3_client_module.aioboto3, "Session", lambda: fake_session)
@@ -154,7 +173,7 @@ async def test_initialize_converts_timedelta_to_float(
 @pytest.mark.asyncio
 async def test_initialize_is_idempotent(monkeypatch: pytest.MonkeyPatch) -> None:
     client = S3Client()
-    fake_session = object()
+    fake_session = _FakeSession()
     monkeypatch.setattr(s3_value_objects, "AioConfig", _FakeAioConfig)
     monkeypatch.setattr(s3_client_module.aioboto3, "Session", lambda: fake_session)
 
@@ -226,7 +245,7 @@ async def test_client_nested_reuses_context_client(
 ) -> None:
     client = S3Client()
     monkeypatch.setattr(s3_value_objects, "AioConfig", _FakeAioConfig)
-    monkeypatch.setattr(s3_client_module.aioboto3, "Session", lambda: object())
+    monkeypatch.setattr(s3_client_module.aioboto3, "Session", _FakeSession)
 
     await client.initialize(
         endpoint="http://s3.local",
@@ -310,16 +329,114 @@ async def test_create_bucket_ignores_conflict() -> None:
     finally:
         client._S3Client__ctx_client.reset(tok)
 
+class _BucketApi:
+    """Fake S3 API with configurable bucket existence and create behavior."""
+
+    def __init__(
+        self,
+        *,
+        exists: bool = False,
+        create_error_code: str | None = None,
+    ) -> None:
+        self.exceptions = _S3Exceptions()
+        self.head_bucket_calls: list[str] = []
+        self.create_bucket_calls: list[dict[str, Any]] = []
+        self._exists = exists
+        self._create_error_code = create_error_code
+
+    async def head_bucket(self, *, Bucket: str) -> None:
+        self.head_bucket_calls.append(Bucket)
+        if not self._exists:
+            raise _ClientError({"Error": {"Code": "404"}})
+
+    async def create_bucket(self, **kwargs: Any) -> None:
+        self.create_bucket_calls.append(kwargs)
+        if self._create_error_code is not None:
+            raise _ClientError({"Error": {"Code": self._create_error_code}})
+
 @pytest.mark.asyncio
-async def test_ensure_bucket_raises_when_missing() -> None:
+async def test_ensure_bucket_creates_when_missing() -> None:
     client = S3Client()
-    api = _FakeS3Api()
+    api = _BucketApi(exists=False)
     tok = client._S3Client__ctx_client.set(api)  # type: ignore[arg-type]
     try:
-        with pytest.raises(CoreException, match="Bucket does not exist"):
-            await client.ensure_bucket("missing")
+        await client.ensure_bucket("missing")
+        assert api.create_bucket_calls == [{"Bucket": "missing"}]
     finally:
         client._S3Client__ctx_client.reset(tok)
+
+@pytest.mark.asyncio
+async def test_ensure_bucket_skips_create_when_present() -> None:
+    client = S3Client()
+    api = _BucketApi(exists=True)
+    tok = client._S3Client__ctx_client.set(api)  # type: ignore[arg-type]
+    try:
+        await client.ensure_bucket("present")
+        assert api.create_bucket_calls == []
+    finally:
+        client._S3Client__ctx_client.reset(tok)
+
+@pytest.mark.asyncio
+async def test_ensure_bucket_treats_already_owned_race_as_success() -> None:
+    client = S3Client()
+    api = _BucketApi(exists=False, create_error_code="BucketAlreadyOwnedByYou")
+    tok = client._S3Client__ctx_client.set(api)  # type: ignore[arg-type]
+    try:
+        await client.ensure_bucket("raced")
+        assert api.create_bucket_calls == [{"Bucket": "raced"}]
+    finally:
+        client._S3Client__ctx_client.reset(tok)
+
+@pytest.mark.asyncio
+async def test_create_bucket_includes_location_constraint_outside_us_east_1(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = S3Client()
+    monkeypatch.setattr(s3_client_module.aioboto3, "Session", _FakeSession)
+
+    await client.initialize(
+        endpoint="http://s3.local",
+        access_key_id="k",
+        secret_access_key="s",
+        config=S3Config(region_name="eu-west-1"),
+    )
+
+    api = _BucketApi()
+    tok = client._S3Client__ctx_client.set(api)  # type: ignore[arg-type]
+    try:
+        await client.create_bucket("b")
+        assert api.create_bucket_calls == [
+            {
+                "Bucket": "b",
+                "CreateBucketConfiguration": {"LocationConstraint": "eu-west-1"},
+            }
+        ]
+    finally:
+        client._S3Client__ctx_client.reset(tok)
+        await client.close()
+
+@pytest.mark.asyncio
+async def test_create_bucket_omits_location_constraint_for_us_east_1(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = S3Client()
+    monkeypatch.setattr(s3_client_module.aioboto3, "Session", _FakeSession)
+
+    await client.initialize(
+        endpoint="http://s3.local",
+        access_key_id="k",
+        secret_access_key="s",
+        config=S3Config(region_name="us-east-1"),
+    )
+
+    api = _BucketApi()
+    tok = client._S3Client__ctx_client.set(api)  # type: ignore[arg-type]
+    try:
+        await client.create_bucket("b")
+        assert api.create_bucket_calls == [{"Bucket": "b"}]
+    finally:
+        client._S3Client__ctx_client.reset(tok)
+        await client.close()
 
 @pytest.mark.asyncio
 async def test_object_exists_false_on_missing_key() -> None:
@@ -354,6 +471,25 @@ async def test_upload_bytes_with_metadata_and_tags() -> None:
         client._S3Client__ctx_client.reset(tok)
 
 @pytest.mark.asyncio
+async def test_upload_bytes_url_encodes_tags() -> None:
+    client = S3Client()
+    api = _FakeS3Api()
+    tok = client._S3Client__ctx_client.set(api)  # type: ignore[arg-type]
+    try:
+        await client.upload_bytes(
+            "b",
+            "k",
+            b"data",
+            tags={"team a": "dev&ops", "k=ey": "v al"},
+        )
+        extra = api.upload_calls[0]["ExtraArgs"]
+        # Reserved characters ('&', '=') and spaces must not break the
+        # Tagging query-string structure.
+        assert extra["Tagging"] == "team+a=dev%26ops&k%3Dey=v+al"
+    finally:
+        client._S3Client__ctx_client.reset(tok)
+
+@pytest.mark.asyncio
 async def test_list_objects_rejects_invalid_limit_or_offset() -> None:
     client = S3Client()
     paginator = _FakePaginator(pages=[])
@@ -372,7 +508,7 @@ async def test_initialize_injects_retries_when_config_has_no_retries(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     client = S3Client()
-    fake_session = object()
+    fake_session = _FakeSession()
     monkeypatch.setattr(s3_value_objects, "AioConfig", _FakeAioConfig)
     monkeypatch.setattr(s3_client_module.aioboto3, "Session", lambda: fake_session)
 
@@ -387,4 +523,253 @@ async def test_initialize_injects_retries_when_config_has_no_retries(
     assert opts is not None
     assert isinstance(opts.config, _FakeAioConfig)
     assert opts.config.kwargs["retries"] == {"max_attempts": 3, "mode": "adaptive"}
+    await client.close()
+
+# ----------------------- #
+# include_tags guarantee flag
+
+
+class _TaggingApi:
+    """Fake S3 API serving head/list/tagging with in-flight tracking."""
+
+    def __init__(
+        self,
+        *,
+        keys: list[str] | None = None,
+        tags_by_key: dict[str, dict[str, str]] | None = None,
+        tagging_error: Exception | None = None,
+        tagging_yield: bool = False,
+    ) -> None:
+        self.exceptions = _S3Exceptions()
+        self.tags_by_key = tags_by_key or {}
+        self.tagging_error = tagging_error
+        self.tagging_yield = tagging_yield
+        self.head_calls: list[str] = []
+        self.tagging_calls: list[str] = []
+        self.in_flight = 0
+        self.max_in_flight = 0
+        self._paginator = _FakePaginator(
+            pages=[{"Contents": [{"Key": k} for k in (keys or [])]}],
+        )
+
+    def get_paginator(self, name: str) -> _FakePaginator:
+        assert name == "list_objects_v2"
+        return self._paginator
+
+    async def head_object(self, *, Bucket: str, Key: str) -> dict[str, Any]:
+        self.head_calls.append(Key)
+        return {
+            "ContentType": "text/plain",
+            "Metadata": {"filename": "Zm9v"},
+            "ContentLength": 3,
+            "ETag": '"abc"',
+        }
+
+    async def get_object_tagging(self, *, Bucket: str, Key: str) -> dict[str, Any]:
+        import asyncio as _asyncio
+
+        self.tagging_calls.append(Key)
+        self.in_flight += 1
+        self.max_in_flight = max(self.max_in_flight, self.in_flight)
+
+        try:
+            if self.tagging_yield:
+                # Yield a few times so concurrent fetches overlap and the
+                # semaphore cap is observable.
+                for _ in range(3):
+                    await _asyncio.sleep(0)
+
+            if self.tagging_error is not None:
+                raise self.tagging_error
+
+            tags = self.tags_by_key.get(Key, {})
+            return {"TagSet": [{"Key": k, "Value": v} for k, v in tags.items()]}
+
+        finally:
+            self.in_flight -= 1
+
+
+@pytest.mark.asyncio
+async def test_head_object_include_tags_issues_get_object_tagging() -> None:
+    client = S3Client()
+    api = _TaggingApi(tags_by_key={"k": {"env": "dev", "team": "core"}})
+    tok = client._S3Client__ctx_client.set(api)  # type: ignore[arg-type]
+    try:
+        head = await client.head_object("b", "k", include_tags=True)
+    finally:
+        client._S3Client__ctx_client.reset(tok)
+
+    assert api.tagging_calls == ["k"]
+    assert dict(head.tags) == {"env": "dev", "team": "core"}
+
+
+@pytest.mark.asyncio
+async def test_head_object_without_include_tags_skips_tagging_call() -> None:
+    client = S3Client()
+    api = _TaggingApi(tags_by_key={"k": {"env": "dev"}})
+    tok = client._S3Client__ctx_client.set(api)  # type: ignore[arg-type]
+    try:
+        head = await client.head_object("b", "k")
+    finally:
+        client._S3Client__ctx_client.reset(tok)
+
+    assert api.tagging_calls == []
+    assert dict(head.tags) == {}
+
+
+@pytest.mark.asyncio
+async def test_head_object_include_tags_failure_propagates() -> None:
+    client = S3Client()
+    api = _TaggingApi(tagging_error=_ClientError({"Error": {"Code": "AccessDenied"}}))
+    tok = client._S3Client__ctx_client.set(api)  # type: ignore[arg-type]
+    try:
+        with pytest.raises(Exception):
+            await client.head_object("b", "k", include_tags=True)
+    finally:
+        client._S3Client__ctx_client.reset(tok)
+
+    assert api.tagging_calls == ["k"]
+
+
+@pytest.mark.asyncio
+async def test_list_objects_include_tags_fans_out_one_call_per_object() -> None:
+    keys = [f"k{i}" for i in range(20)]
+    client = S3Client()
+    api = _TaggingApi(
+        keys=keys,
+        tags_by_key={k: {"idx": k} for k in keys},
+        tagging_yield=True,
+    )
+    tok = client._S3Client__ctx_client.set(api)  # type: ignore[arg-type]
+    try:
+        items, total = await client.list_objects("b", include_tags=True)
+    finally:
+        client._S3Client__ctx_client.reset(tok)
+
+    assert total == 20
+    assert sorted(api.tagging_calls) == sorted(keys)  # N objects -> N calls
+    assert [item.key for item in items] == keys
+    assert all(dict(item.tags) == {"idx": item.key} for item in items)
+    # Bounded concurrency: more than one in flight, but never above the cap.
+    from forze_s3.kernel.client.client import GET_OBJECT_TAGGING_CONCURRENCY
+
+    assert 1 < api.max_in_flight <= GET_OBJECT_TAGGING_CONCURRENCY
+
+
+@pytest.mark.asyncio
+async def test_list_objects_without_include_tags_skips_tagging_calls() -> None:
+    keys = ["a", "b"]
+    client = S3Client()
+    api = _TaggingApi(keys=keys, tags_by_key={"a": {"env": "dev"}})
+    tok = client._S3Client__ctx_client.set(api)  # type: ignore[arg-type]
+    try:
+        items, total = await client.list_objects("b")
+    finally:
+        client._S3Client__ctx_client.reset(tok)
+
+    assert total == 2
+    assert api.tagging_calls == []
+    assert all(dict(item.tags) == {} for item in items)
+
+
+@pytest.mark.asyncio
+async def test_list_objects_include_tags_failure_propagates() -> None:
+    client = S3Client()
+    api = _TaggingApi(
+        keys=["a", "b"],
+        tagging_error=_ClientError({"Error": {"Code": "AccessDenied"}}),
+    )
+    tok = client._S3Client__ctx_client.set(api)  # type: ignore[arg-type]
+    try:
+        with pytest.raises(Exception):
+            await client.list_objects("b", include_tags=True)
+    finally:
+        client._S3Client__ctx_client.reset(tok)
+
+    assert api.tagging_calls  # the guarantee was attempted, then propagated
+
+
+def test_decode_tag_set_skips_malformed_entries() -> None:
+    from forze_s3.kernel.client.client import _decode_tag_set
+
+    decoded = _decode_tag_set(
+        {
+            "TagSet": [
+                {"Key": "env", "Value": "dev"},
+                {"Key": 1, "Value": "x"},
+                {"Value": "orphan"},
+                "not-a-mapping",
+            ]
+        }
+    )
+    assert decoded == {"env": "dev"}
+    assert _decode_tag_set({}) == {}
+
+
+# ----------------------- #
+# chain-resolved region (create_bucket trap)
+
+
+class _Meta:
+    def __init__(self, region_name: str | None) -> None:
+        self.region_name = region_name
+
+
+@pytest.mark.asyncio
+async def test_create_bucket_uses_resolved_region_when_unconfigured() -> None:
+    """region=None: LocationConstraint comes from the live client's meta."""
+
+    client = S3Client()
+    api = _BucketApi()
+    api.meta = _Meta("eu-west-1")  # type: ignore[attr-defined]
+    tok = client._S3Client__ctx_client.set(api)  # type: ignore[arg-type]
+    try:
+        await client.create_bucket("b")
+        assert api.create_bucket_calls == [
+            {
+                "Bucket": "b",
+                "CreateBucketConfiguration": {"LocationConstraint": "eu-west-1"},
+            }
+        ]
+    finally:
+        client._S3Client__ctx_client.reset(tok)
+
+
+@pytest.mark.asyncio
+async def test_create_bucket_omits_constraint_for_resolved_us_east_1() -> None:
+    client = S3Client()
+    api = _BucketApi()
+    api.meta = _Meta("us-east-1")  # type: ignore[attr-defined]
+    tok = client._S3Client__ctx_client.set(api)  # type: ignore[arg-type]
+    try:
+        await client.create_bucket("b")
+        assert api.create_bucket_calls == [{"Bucket": "b"}]
+    finally:
+        client._S3Client__ctx_client.reset(tok)
+
+
+@pytest.mark.asyncio
+async def test_initialize_without_region_omits_region_from_config(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """S3 region travels via botocore config; None must not reach it."""
+
+    client = S3Client()
+    fake_session = _FakeSession()
+    monkeypatch.setattr(s3_value_objects, "AioConfig", _FakeAioConfig)
+    monkeypatch.setattr(s3_client_module.aioboto3, "Session", lambda: fake_session)
+
+    await client.initialize(
+        endpoint="http://s3.local",
+        access_key_id="k",
+        secret_access_key="s",
+        config=S3Config(),
+    )
+
+    opts = client._S3Client__opts
+    assert opts is not None
+    assert isinstance(opts.config, _FakeAioConfig)
+    assert "region_name" not in opts.config.kwargs
+    call = fake_session.client_calls[0]
+    assert "region_name" not in call
     await client.close()

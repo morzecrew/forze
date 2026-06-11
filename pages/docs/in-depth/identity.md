@@ -74,6 +74,14 @@ Two questions, two ports:
 (A third slice — grant management — provisions the roles, permissions, and
 bindings those decisions read.)
 
+Two permission keys are **reserved by default**: a principal holding `admin`
+or `<resource_type>.admin` (e.g. `invoice.admin`) bypasses the `owner_id`
+ownership check on resources. Don't reuse those names for unrelated app
+permissions — or change the convention via
+`AuthzKernelConfig(owner_override_permissions=...)`: pass an empty set to
+always enforce ownership, or your own keys (the literal `{resource_type}`
+placeholder is substituted at evaluation time).
+
 Enforcement belongs on the **operation plan**, not scattered across routes — so
 it's authoritative for every caller, HTTP or not. Using the [stage
 hooks](../core-concepts/application-layer.md) from the application layer: a `BeforeStep`
@@ -90,4 +98,5 @@ modules as any other integration.
 For getting started, `forze_identity.builtin` ships presets — file/env API keys
 (`local`) and Google / VK / Telegram Login over OIDC (`idp`). They're shipped-in
 conveniences, not production defaults: adopt one only once you accept its trust
-model.
+model (e.g. VK publishes no JWKS, so its preset verifies `id_token`s by
+server-side introspection against VK rather than a local signature check).

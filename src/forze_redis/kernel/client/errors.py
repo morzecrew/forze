@@ -16,9 +16,14 @@ from forze.base.exceptions import (
     ExceptionInterceptor,
     ExceptionMapper,
     default_chain_exc_mapper,
+    fallback_exception_mapper,
 )
 
 # ----------------------- #
+
+_fallback = fallback_exception_mapper("Redis")
+
+# ....................... #
 
 
 @static_fn_conformity(ExceptionMapper)  # type: ignore[type-abstract]
@@ -103,10 +108,7 @@ def _redis_eh(
 
         # --- fallback ---
         case _:
-            return CoreException.infrastructure(
-                f"An error occurred while executing Redis operation {site}: {exc}",
-                details=details,
-            )
+            return _fallback(exc, site=site, details=details)
 
 
 # ....................... #

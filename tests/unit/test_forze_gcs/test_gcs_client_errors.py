@@ -72,3 +72,21 @@ class TestGCSErrorHandler:
         r = _gcs_eh(ValueError("nope"), site="gcs_op")
         assert r is not None
         assert "gcs_op" in r.summary
+        # raw driver text must not leak into the summary, only into details
+        assert "nope" not in r.summary
+        assert r.details is not None
+        assert r.details["error"] == "nope"
+
+
+class TestAssembledChain:
+    """Regression: the package mapper must be reachable through the chain
+    wired into ``exc_interceptor`` (nested default chain used to shadow it)."""
+
+    def test_http_404_through_assembled_chain(self) -> None:
+        from forze_gcs.kernel.client.errors import exc_interceptor
+
+        out = exc_interceptor.mapper(_client_error(404), site="get")
+        assert out is not None
+        assert out.kind == ExceptionKind.INFRASTRUCTURE
+        assert out.code != "core.unhandled"
+        assert "not found" in out.summary.lower()

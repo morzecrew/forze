@@ -33,5 +33,25 @@ class TestMeilisearchErrorHandler:
         assert mapped.kind == ExceptionKind.INFRASTRUCTURE
         assert needle in mapped.summary
 
-    def test_unknown_exception_returns_none(self) -> None:
-        assert _meilisearch_eh(RuntimeError("boom"), site="op") is None
+    def test_unknown_exception_fallback(self) -> None:
+        mapped = _meilisearch_eh(RuntimeError("boom"), site="op")
+        assert isinstance(mapped, CoreException)
+        assert mapped.kind == ExceptionKind.INFRASTRUCTURE
+        assert "op" in mapped.summary
+        # raw driver text must not leak into the summary, only into details
+        assert "boom" not in mapped.summary
+        assert mapped.details is not None
+        assert mapped.details["error"] == "boom"
+
+
+class TestAssembledChain:
+    """Regression: the package mapper must be reachable through the chain
+    wired into ``exc_interceptor`` (nested default chain used to shadow it)."""
+
+    def test_timeout_through_assembled_chain(self) -> None:
+        from forze_meilisearch.kernel.client.errors import exc_interceptor
+
+        out = exc_interceptor.mapper(MeilisearchTimeoutError("timeout"), site="index")
+        assert out is not None
+        assert out.code != "core.unhandled"
+        assert "Meilisearch" in out.summary

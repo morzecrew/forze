@@ -1,6 +1,11 @@
 from .grants import AuthzGrantResolver, AuthzGrantResolverDeps
-from .policy import AuthzPolicyService
+from .policy import DEFAULT_OWNER_OVERRIDE_PERMISSIONS, AuthzPolicyService
 
 # ----------------------- #
 
-__all__ = ["AuthzGrantResolver", "AuthzGrantResolverDeps", "AuthzPolicyService"]
+__all__ = [
+    "DEFAULT_OWNER_OVERRIDE_PERMISSIONS",
+    "AuthzGrantResolver",
+    "AuthzGrantResolverDeps",
+    "AuthzPolicyService",
+]

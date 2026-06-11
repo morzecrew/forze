@@ -16,8 +16,9 @@ from forze.application.execution.context import (
     ExecutionContext,
     ExecutionContextFactory,
 )
-from forze.base.exceptions import exc
+from forze.base.exceptions import CoreException, exc
 
+from ..exceptions import build_core_exception_response
 from ..security import AuthnRequirement, resolve_authn_ingress, resolve_tenant_identity
 
 # ----------------------- #
@@ -86,14 +87,23 @@ class SecurityContextMiddleware:
         request = Request(scope, receive)
         ctx = self.ctx_dep()
 
-        authn_res = await self._resolve_authn(request, ctx)
-        authn = authn_res.identity if authn_res is not None else None
-        tenant = await resolve_tenant_identity(
-            authn_res,
-            request=request,
-            ctx=ctx,
-            trust_tenant_header=self.trust_tenant_header,
-        )
+        try:
+            authn_res = await self._resolve_authn(request, ctx)
+            authn = authn_res.identity if authn_res is not None else None
+            tenant = await resolve_tenant_identity(
+                authn_res,
+                request=request,
+                ctx=ctx,
+                trust_tenant_header=self.trust_tenant_header,
+            )
+
+        except CoreException as error:
+            # This middleware runs above Starlette's ExceptionMiddleware, so the
+            # registered CoreException handler never sees errors raised here.
+            # Convert them to the standard JSON error response in place.
+            response = build_core_exception_response(error)
+            await response(scope, receive, send)
+            return
 
         with ctx.inv_ctx.bind_identity(authn=authn, tenant=tenant):
             await self.app(scope, receive, send)

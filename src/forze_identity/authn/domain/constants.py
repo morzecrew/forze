@@ -8,9 +8,6 @@ ACCESS_TOKEN_SCHEME: Final[str] = "Bearer"
 # ....................... #
 # Issuer identifiers used in :class:`~forze.application.contracts.authn.value_objects.assertion.VerifiedAssertion`.
 
-ISSUER_FORZE_JWT: Final[str] = "forze:jwt"
-"""Stable issuer label for first-party Forze access tokens."""
-
 ISSUER_FORZE_PASSWORD: Final[str] = "forze:password_account"
 """Stable issuer label for assertions produced by the Argon2 password verifier."""
 

@@ -3,20 +3,55 @@ import contextlib
 import secrets
 from contextlib import asynccontextmanager
 from datetime import timedelta
-from typing import Any, AsyncGenerator, Callable
+from typing import Any, AsyncGenerator, Callable, Final
 
 import attrs
 
 from forze.application._logger import logger
-from forze.application.contracts.dlock import DistributedLockCommandPort
-from forze.base.exceptions import exc
+from forze.application.contracts.dlock import (
+    AcquiredLock,
+    DistributedLockCommandPort,
+)
+from forze.base.exceptions import CoreException, exc
 
 # ----------------------- #
+
+EXTEND_TASK_SHUTDOWN_GRACE: Final[timedelta] = timedelta(milliseconds=5)
+"""Grace period to let the extend heartbeat observe its stop event before cancelling.
+
+The heartbeat wakes as soon as the stop event is set, so this only needs to cover one
+event-loop scheduling hop — not a full ``extend_interval``.
+"""
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class DistributedLockScope:
-    """Async context manager for distributed lock acquire/extend/release."""
+    """Async context manager for distributed lock acquire/extend/release.
+
+    The protected body is the caller's ``async with`` block, so the scope cannot
+    cancel it mid-flight. When the extend heartbeat loses the lock (``reset``
+    returns ``False`` — expired or stolen) or fails with an exception, the
+    heartbeat stops, the failure is recorded, and the scope raises on exit so the
+    loss never goes unnoticed. If the body itself raised, the body's exception
+    propagates unchanged and the lock failure is attached as context (a warning
+    log plus an exception note) instead of masking it.
+
+    **Fencing.** The scope yields the :class:`~forze.application.contracts.dlock.AcquiredLock`
+    handle (``key`` / ``owner`` / ``token``). Tokens are monotonically increasing
+    per key across lock generations; the extend heartbeat (``reset``) keeps the
+    same generation, so the token never changes mid-scope. Thread the token into
+    downstream writes and reject stale ones storage-side::
+
+        async with dlock_scope.scope("invoice:42") as lock:
+            # e.g. UPDATE invoice SET ..., fence = :token
+            #      WHERE id = 42 AND fence < :token
+            await repo.update_invoice(invoice, fence_token=lock.token)
+
+    Without that consumer-side check the scope remains best-effort exclusion
+    (a GC- or network-paused holder can resume after expiry while a new holder
+    runs); the token check is what upgrades it to fenced exclusion. A ``token``
+    of ``None`` means the backend cannot issue fencing tokens at all.
+    """
 
     cmd: DistributedLockCommandPort
     """Distributed lock command port."""
@@ -57,7 +92,7 @@ class DistributedLockScope:
     # ....................... #
 
     @asynccontextmanager
-    async def scope(self, key: str) -> AsyncGenerator[bool]:
+    async def scope(self, key: str) -> AsyncGenerator[AcquiredLock]:
         loop = asyncio.get_running_loop()
 
         deadline = (
@@ -68,24 +103,22 @@ class DistributedLockScope:
 
         owner = self.owner_provider()
 
-        async def try_acquire_until_deadline() -> bool:
+        async def try_acquire_until_deadline() -> AcquiredLock | None:
             nonlocal deadline
 
-            attempt = 0
-
             while True:
-                ok = await self.cmd.acquire(key, owner)
+                acquired = await self.cmd.acquire(key, owner)
 
-                if ok:
-                    return True
+                if acquired is not None:
+                    return acquired
 
                 if deadline is None:
-                    return False
+                    return None
 
                 remaining = deadline - loop.time()
 
                 if remaining <= 0:
-                    return False
+                    return None
 
                 # Base delay plus optional jitter, all in seconds. ``randbelow`` counts
                 # integer steps; previously ms-sized steps were added to ``retry_interval``
@@ -107,12 +140,11 @@ class DistributedLockScope:
 
                 sleep_for = min(retry_s + extra_s, remaining)
 
-                attempt += 1
                 await asyncio.sleep(sleep_for)
 
         acquired = await try_acquire_until_deadline()
 
-        if not acquired:
+        if acquired is None:
             raise exc.internal("Failed to acquire distributed lock")
 
         extend_task: asyncio.Task[Any] | None = None
@@ -136,6 +168,21 @@ class DistributedLockScope:
                         ok = await self.cmd.reset(key, owner)
 
                         if not ok:
+                            # Lock expired or was stolen: the body keeps running
+                            # (it cannot be cancelled mid-flight), so record the
+                            # loss, stop extending, and raise at scope exit.
+                            lost = exc.concurrency(
+                                "Distributed lock lost before scope exit "
+                                "(expired or stolen)",
+                                details={"key": key, "owner": owner},
+                            )
+                            logger.error(
+                                "Distributed lock lost before scope exit",
+                                key=key,
+                                owner=owner,
+                            )
+                            extend_errors.append(lost)
+                            stop_event.set()
                             break
 
             except Exception as e:
@@ -143,20 +190,29 @@ class DistributedLockScope:
                 extend_errors.append(e)
                 stop_event.set()
 
+        body_exc: BaseException | None = None
+
         try:
             if self.extend_interval is not None:
                 extend_task = asyncio.create_task(
                     extend_lock(key, owner, self.extend_interval)
                 )
 
-            yield True
+            yield acquired
+
+        except BaseException as e:
+            body_exc = e
+            raise
 
         finally:
             if self.extend_interval is not None and extend_task is not None:
                 stop_event.set()
 
                 try:
-                    await asyncio.wait_for(extend_task, timeout=0.005)
+                    await asyncio.wait_for(
+                        extend_task,
+                        timeout=EXTEND_TASK_SHUTDOWN_GRACE.total_seconds(),
+                    )
 
                 except asyncio.TimeoutError:
                     extend_task.cancel()
@@ -167,11 +223,35 @@ class DistributedLockScope:
             try:
                 await asyncio.shield(self.cmd.release(key, owner))
 
-            except Exception:  # nosec B110
-                pass
+            except Exception as e:
+                logger.warning(
+                    "Failed to release distributed lock",
+                    key=key,
+                    owner=owner,
+                    error=str(e),
+                )
 
             if extend_errors:
-                raise exc.internal(
-                    "Failed to extend distributed lock",
-                    details={"error": str(extend_errors[0])},
+                first = extend_errors[0]
+                lock_exc = (
+                    first
+                    if isinstance(first, CoreException)
+                    else exc.internal(
+                        "Failed to extend distributed lock",
+                        details={"key": key, "error": str(first)},
+                    )
                 )
+
+                if body_exc is None:
+                    raise lock_exc
+
+                # The body raised: never mask its exception with the lock
+                # problem — attach the lock failure as context instead.
+                logger.warning(
+                    "Distributed lock extend failed while scope body raised; "
+                    "propagating the body's exception",
+                    key=key,
+                    owner=owner,
+                    error=str(first),
+                )
+                body_exc.add_note(f"distributed lock problem during scope: {lock_exc}")

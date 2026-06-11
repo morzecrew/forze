@@ -19,6 +19,7 @@ from forze.application.execution.operations import (
     FrozenOperationRegistry,
     OperationDescriptor,
 )
+from forze.base.exceptions import exc
 from forze.base.primitives import StrKey
 
 from .dispatch import invoke_operation
@@ -114,11 +115,26 @@ def register_tools(
     :param include_writes: When ``False`` (default, read-only) only ``QUERY`` operations are
         exposed; when ``True`` command operations are exposed too.
     :returns: The list of registered tool names.
+    :raises CoreException: When an exposed operation projects a sensitive read model
+        (its spec is marked ``sensitive=True``).
     """
 
     catalog = registry.catalog()
     exposed = exposed_operations(catalog, include_writes=include_writes)
     resolver = identity or StaticIdentityResolver()
+
+    # Refuse sensitive operations up front (before any tool is added) so a
+    # credential-bearing read model can never leak through a generated tool.
+    for op in exposed.values():
+        descriptor = catalog[op].descriptor
+
+        if descriptor is not None and descriptor.sensitive:
+            raise exc.configuration(
+                f"Refusing to register MCP tools: operation '{op}' projects a "
+                "sensitive read model (its spec is marked sensitive=True; "
+                "credential/secret material must not be exposed on generated "
+                "external surfaces)"
+            )
 
     for tool_name, op in exposed.items():
         entry = catalog[op]

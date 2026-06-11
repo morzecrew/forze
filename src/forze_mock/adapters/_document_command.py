@@ -11,6 +11,7 @@ from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict, utcnow
 from forze.domain.constants import ID_FIELD, REV_FIELD
 from forze.domain.models import AggregateRoot
+from forze_mock.adapters.tx import ensure_mock_tx_writable
 from forze_mock.query._types import C, D, R, U
 from forze_mock.query.matching import _match_filters  # type: ignore[reportPrivateUsage]
 
@@ -63,6 +64,18 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
             pagination: PaginationExpression | None = None,
             sorts: QuerySortExpression | None = None,  # type: ignore[valid-type]
         ) -> Awaitable[CountlessPage[JsonDict]]: ...
+
+    # ....................... #
+
+    def _ensure_writable(self) -> None:
+        """Reject writes inside a strict read-only mock transaction.
+
+        A no-op under the default (no-op) transaction manager; under
+        :class:`~forze_mock.adapters.tx.MockStrictTxManagerAdapter` this mirrors
+        Postgres rejecting writes in ``BEGIN ... READ ONLY``.
+        """
+
+        ensure_mock_tx_writable(store=f"documents:{self.spec.name}")
 
     # ....................... #
 
@@ -125,6 +138,7 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
     async def create(
         self, payload: C, *, id: UUID | None = None, return_new: bool = True
     ) -> R | None:
+        self._ensure_writable()
         domain = self._build_domain(payload, id)
         serialized = self._domain_codec().encode_persistence_mapping(domain)
 
@@ -135,6 +149,13 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
                 serialized["tenant_id"] = str(tid)
         with self.state.lock:
             store = self._store()
+            if domain.id in store:
+                # Mirror the integration adapters: Postgres maps a duplicate
+                # primary key (UniqueViolation) to ``exc.conflict``.
+                raise exc.conflict(
+                    "Unique violation.",
+                    details={"id": str(domain.id)},
+                )
             store[domain.id] = serialized
 
         await self._dispatch_domain_events([domain])
@@ -201,6 +222,7 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
     async def ensure(
         self, id: UUID, payload: C, *, return_new: bool = True
     ) -> R | None:
+        self._ensure_writable()
         domain = self._build_domain(payload, id)
 
         with self.state.lock:
@@ -285,19 +307,22 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
         *,
         return_new: bool = True,
     ) -> R | None:
+        # Read-decide-write atomically: holding the (reentrant) state lock across
+        # the delegated call keeps the existence check and the resulting
+        # create/update in one critical section, so two concurrent upserts on the
+        # same id cannot both observe "absent" and race into duplicate creates.
+        # The delegated store mutation happens synchronously before any await
+        # suspension point, so async tasks cannot interleave either.
         with self.state.lock:
             if id in self._store():
                 rev = self._to_domain(dict(self._store()[id])).rev
-            else:
-                rev = None
-        if rev is not None:
-            return await self.update(  # type: ignore[call-overload]
-                id,
-                rev,
-                update,
-                return_new=return_new,
-            )
-        return await self.create(create, id=id, return_new=return_new)  # type: ignore[call-overload]
+                return await self.update(  # type: ignore[call-overload]
+                    id,
+                    rev,
+                    update,
+                    return_new=return_new,
+                )
+            return await self.create(create, id=id, return_new=return_new)  # type: ignore[call-overload]
 
     # ....................... #
 
@@ -397,6 +422,7 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
         return_new: bool = True,
         return_diff: bool = False,
     ) -> R | JsonDict | None | tuple[R, JsonDict]:
+        self._ensure_writable()
         patch = self._patch_codec().encode_persistence_mapping(
             cast(Any, dto),
             exclude={"unset": True},
@@ -539,6 +565,8 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
         *,
         return_new: bool = True,
     ) -> Sequence[R] | int:
+        self._ensure_writable()
+
         if not self.spec.supports_update():
             raise exc.internal("Update command type is not supported for this model")
 
@@ -673,6 +701,8 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
     async def touch(self, pk: UUID, *, return_new: Literal[False]) -> None: ...
 
     async def touch(self, pk: UUID, *, return_new: bool = True) -> R | None:
+        self._ensure_writable()
+
         with self.state.lock:
             current_raw = dict(self._ensure_exists(pk))
             current = self._to_domain(current_raw)
@@ -725,6 +755,8 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
     # ....................... #
 
     async def kill(self, pk: UUID) -> None:
+        self._ensure_writable()
+
         with self.state.lock:
             _ = self._ensure_exists(pk)
             del self._store()[pk]
@@ -765,6 +797,8 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
     ) -> None: ...
 
     async def delete(self, pk: UUID, rev: int, *, return_new: bool = True) -> R | None:
+        self._ensure_writable()
+
         if not self._supports_soft_delete():
             raise exc.internal("Soft deletion is not supported for this model")
 
@@ -849,6 +883,8 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
     ) -> None: ...
 
     async def restore(self, pk: UUID, rev: int, *, return_new: bool = True) -> R | None:
+        self._ensure_writable()
+
         if not self._supports_soft_delete():
             raise exc.internal("Soft deletion is not supported for this model")
         with self.state.lock:

@@ -89,11 +89,21 @@ class MeilisearchClient(MeilisearchClientPort):
 
     # ....................... #
 
-    @exc_interceptor.coroutine("meilisearch.health")  # type: ignore[untyped-decorator]
-    async def health(self) -> bool:
-        client = self._require_client()
-        result = await client.health()
-        return str(getattr(result, "status", "")).lower() == "available"
+    async def health(self) -> tuple[str, bool]:
+        """Check Meilisearch availability.
+
+        :returns: A pair ``(message, ok)``. ``ok`` is ``True`` when the server
+            reports the ``available`` status. Never raises.
+        """
+
+        try:
+            client = self._require_client()
+            result = await client.health()
+            status = str(getattr(result, "status", "")).lower()
+            return status or "unknown", status == "available"
+
+        except Exception as e:  # noqa: BLE001 - health must not raise
+            return str(e) or "Meilisearch health check failed", False
 
     # ....................... #
 

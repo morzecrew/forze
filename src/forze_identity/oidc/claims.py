@@ -53,6 +53,11 @@ class OidcClaimMapper:
                 f"OIDC claims missing required '{self.issuer_claim}' or '{self.subject_claim}'",
             )
 
+        if not issuer_raw.strip() or not subject_raw.strip():
+            raise ValueError(
+                f"OIDC claims '{self.issuer_claim}' and '{self.subject_claim}' must be non-empty",
+            )
+
         audience: str | None = None
         if self.audience_claim is not None:
             aud_raw = claims.get(self.audience_claim)

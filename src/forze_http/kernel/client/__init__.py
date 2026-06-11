@@ -1,17 +1,17 @@
 """HTTP kernel client."""
 
-from .client import HttpxClient
-from .port import HttpxClientPort
-from .routed_client import RoutedHttpxClient
+from .client import HttpClient
+from .port import HttpClientPort
+from .routed_client import RoutedHttpClient
 from .routing_credentials import HttpRoutingCredentials
-from .value_objects import HttpxConfig
+from .value_objects import HttpConfig
 
 # ----------------------- #
 
 __all__ = [
-    "HttpxClient",
-    "HttpxClientPort",
-    "HttpxConfig",
+    "HttpClient",
+    "HttpClientPort",
+    "HttpConfig",
     "HttpRoutingCredentials",
-    "RoutedHttpxClient",
+    "RoutedHttpClient",
 ]

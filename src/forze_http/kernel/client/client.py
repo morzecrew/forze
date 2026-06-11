@@ -8,18 +8,16 @@ require_http()
 
 # ....................... #
 
-import asyncio
-
 import httpx
 
 import attrs
 
 from forze.base.exceptions import exc
-from forze.base.primitives import JsonDict
+from forze.base.primitives import GuardedLifecycle, JsonDict
 
 from .errors import exc_interceptor
-from .port import HttpxClientPort
-from .value_objects import HttpxConfig
+from .port import HttpClientPort
+from .value_objects import HttpConfig
 
 # ----------------------- #
 
@@ -39,12 +37,12 @@ def _merge_url(base_url: str | None, url: str) -> str:
 
 @final
 @attrs.define(slots=True)
-class HttpxClient(HttpxClientPort):
+class HttpClient(HttpClientPort):
     """Thin wrapper around :class:`httpx.AsyncClient`."""
 
     __client: httpx.AsyncClient | None = attrs.field(default=None, init=False)
     __base_url: str | None = attrs.field(default=None, init=False)
-    __init_lock: asyncio.Lock = attrs.field(factory=asyncio.Lock, init=False)
+    __lifecycle: GuardedLifecycle = attrs.field(factory=GuardedLifecycle, init=False)
 
     # ....................... #
 
@@ -52,15 +50,12 @@ class HttpxClient(HttpxClientPort):
         self,
         base_url: str | None = None,
         *,
-        config: HttpxConfig | None = None,
+        config: HttpConfig | None = None,
         default_headers: Mapping[str, str] | None = None,
         transport: httpx.AsyncBaseTransport | None = None,
     ) -> None:
-        async with self.__init_lock:
-            if self.__client is not None:
-                return
-
-            cfg = config or HttpxConfig()
+        async def setup() -> None:
+            cfg = config or HttpConfig()
             self.__base_url = base_url
             timeout = httpx.Timeout(cfg.timeout.total_seconds())
             client_kwargs: dict[str, Any] = {
@@ -77,11 +72,16 @@ class HttpxClient(HttpxClientPort):
 
             self.__client = httpx.AsyncClient(**client_kwargs)
 
+        await self.__lifecycle.initialize(
+            setup,
+            ready=lambda: self.__client is not None,
+        )
+
     # ....................... #
 
     def _require_client(self) -> httpx.AsyncClient:
         if self.__client is None:
-            raise exc.internal("HttpxClient is not initialized")
+            raise exc.internal("HttpClient is not initialized")
 
         return self.__client
 
@@ -100,8 +100,7 @@ class HttpxClient(HttpxClientPort):
         return None
 
     async def close(self) -> None:
-        async with self.__init_lock:
-            await self.aclose()
+        await self.__lifecycle.close(self.aclose)
 
     async def evict_tenant(self, tenant_id: Any) -> None:
         return None

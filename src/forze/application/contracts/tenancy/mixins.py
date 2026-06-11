@@ -31,7 +31,9 @@ class TenancyMixin:
         tenant = self.tenant_provider()
 
         if tenant is None:
-            #! most likely wrong exception kind
-            raise exc.internal("Tenant ID is required")
+            # Missing tenant on a tenant-aware adapter mirrors the
+            # ``TenantRequired`` before-hook: the caller context lacks a bound
+            # tenant identity, so it egresses as an authentication failure.
+            raise exc.authentication("Tenant ID is required", code="tenant_required")
 
         return tenant.tenant_id

@@ -169,7 +169,76 @@ class TestLifecyclePlan:
             LifecycleStep(id="ok"),
         ).freeze()
 
+        await frozen.startup(ctx)
         await frozen.shutdown(ctx)
+
+    @pytest.mark.asyncio
+    async def test_shutdown_after_failed_startup_rollback_is_noop(
+        self, ctx: ExecutionContext
+    ) -> None:
+        shutdowns: list[str] = []
+
+        async def up_fail(_ctx: ExecutionContext) -> None:
+            raise RuntimeError("startup failed")
+
+        def _down(name: str):
+            async def _hook(_ctx: ExecutionContext) -> None:
+                shutdowns.append(name)
+
+            return _hook
+
+        frozen = LifecyclePlan.from_steps(
+            LifecycleStep(id="first", shutdown=_down("first")),
+            LifecycleStep(
+                id="second",
+                startup=up_fail,
+                shutdown=_down("second"),
+                depends_on=("first",),
+            ),
+        ).freeze()
+
+        with pytest.raises(RuntimeError, match="startup failed"):
+            await frozen.startup(ctx)
+
+        # Rollback shut "first" down once; "second" never started.
+        assert shutdowns == ["first"]
+
+        # A later full shutdown (e.g. runtime scope exit) must not re-run it.
+        await frozen.shutdown(ctx)
+        assert shutdowns == ["first"]
+
+    @pytest.mark.asyncio
+    async def test_second_shutdown_is_noop(self, ctx: ExecutionContext) -> None:
+        shutdowns: list[str] = []
+
+        async def down(_ctx: ExecutionContext) -> None:
+            shutdowns.append("down")
+
+        frozen = LifecyclePlan.from_steps(
+            LifecycleStep(id="s", shutdown=down),
+        ).freeze()
+
+        await frozen.startup(ctx)
+        await frozen.shutdown(ctx)
+        await frozen.shutdown(ctx)
+
+        assert shutdowns == ["down"]
+
+    @pytest.mark.asyncio
+    async def test_shutdown_without_startup_is_noop(
+        self, ctx: ExecutionContext
+    ) -> None:
+        shutdowns: list[str] = []
+
+        async def down(_ctx: ExecutionContext) -> None:
+            shutdowns.append("down")
+
+        frozen = LifecyclePlan.from_steps(
+            LifecycleStep(id="s", shutdown=down),
+        ).freeze()
+
+        await frozen.shutdown(ctx)
+        assert shutdowns == []
 
     @pytest.mark.asyncio
     async def test_concurrent_startup_runs_same_wave_in_parallel(

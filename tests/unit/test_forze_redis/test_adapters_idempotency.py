@@ -21,6 +21,7 @@ def mock_redis_client() -> MagicMock:
     client = MagicMock()
     client.set = AsyncMock(return_value=True)
     client.get = AsyncMock(return_value=None)
+    client.delete = AsyncMock(return_value=1)
 
     @asynccontextmanager
     async def _pipe(**_kwargs: object) -> AsyncGenerator[MagicMock]:
@@ -150,6 +151,73 @@ async def test_commit_failed_missing_or_expired(
 
     with pytest.raises(CoreException, match="Idempotency commit failed"):
         await adapter_with_tenant.commit("op", "test-key", "hash123", snapshot)
+
+
+@pytest.mark.asyncio
+async def test_fail_deletes_pending_claim(
+    adapter_with_tenant: RedisIdempotencyAdapter,
+    mock_redis_client: MagicMock,
+) -> None:
+    import json
+
+    mock_redis_client.get.return_value = json.dumps({"st": "P", "ph": "hash123"})
+
+    await adapter_with_tenant.fail("op", "test-key", "hash123")
+
+    mock_redis_client.delete.assert_awaited_once_with(
+        _expected_key_with_tenant(),
+        _expected_body_with_tenant(),
+    )
+
+
+@pytest.mark.asyncio
+async def test_fail_no_key_is_noop(
+    adapter_with_tenant: RedisIdempotencyAdapter,
+    mock_redis_client: MagicMock,
+) -> None:
+    await adapter_with_tenant.fail("op", None, "hash123")
+    mock_redis_client.delete.assert_not_called()
+    mock_redis_client.get.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_fail_missing_claim_is_noop(
+    adapter_with_tenant: RedisIdempotencyAdapter,
+    mock_redis_client: MagicMock,
+) -> None:
+    mock_redis_client.get.return_value = None
+
+    await adapter_with_tenant.fail("op", "test-key", "hash123")
+
+    mock_redis_client.delete.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_fail_leaves_done_record_untouched(
+    adapter_with_tenant: RedisIdempotencyAdapter,
+    mock_redis_client: MagicMock,
+) -> None:
+    import json
+
+    mock_redis_client.get.return_value = json.dumps({"st": "D", "ph": "hash123"})
+
+    await adapter_with_tenant.fail("op", "test-key", "hash123")
+
+    mock_redis_client.delete.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_fail_leaves_other_payload_claim_untouched(
+    adapter_with_tenant: RedisIdempotencyAdapter,
+    mock_redis_client: MagicMock,
+) -> None:
+    import json
+
+    mock_redis_client.get.return_value = json.dumps({"st": "P", "ph": "other"})
+
+    await adapter_with_tenant.fail("op", "test-key", "hash123")
+
+    mock_redis_client.delete.assert_not_called()
 
 
 @pytest.mark.asyncio

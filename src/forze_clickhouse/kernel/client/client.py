@@ -6,7 +6,7 @@ require_clickhouse()
 
 import asyncio
 from datetime import timedelta
-from typing import Any, Awaitable, Callable, Sequence, TypeVar, final
+from typing import Any, Awaitable, Callable, Sequence, TypeVar, cast, final
 
 import attrs
 from clickhouse_connect.driver import (  # type: ignore[import-untyped]
@@ -15,8 +15,12 @@ from clickhouse_connect.driver import (  # type: ignore[import-untyped]
 from clickhouse_connect.driver.asyncclient import (  # type: ignore[import-untyped]
     AsyncClient,
 )
+from clickhouse_connect.driver.query import (  # type: ignore[import-untyped]
+    QueryResult,
+)
 from pydantic import BaseModel
 
+from forze.application.execution.resilience.read_retry import retry_read
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
 
@@ -28,13 +32,11 @@ from .value_objects import (
     ClickHouseConfig,
     ClickHouseInsertResult,
     ClickHouseQueryResult,
-    resolve_password,
 )
 
 # ----------------------- #
 
 T = TypeVar("T")
-_READ_RETRY_EXC = (TimeoutError, OSError, ConnectionError)
 
 # ....................... #
 
@@ -63,7 +65,7 @@ class ClickHouseClient(ClickHouseClientPort):
                 host=config.host,
                 port=config.port,
                 username=config.username,
-                password=resolve_password(config.password),
+                password=config.password.get_secret_value(),
                 database=config.database,
                 secure=config.secure,
                 connect_timeout=timeout_sec,
@@ -140,30 +142,15 @@ class ClickHouseClient(ClickHouseClientPort):
 
     async def __maybe_read_retry(
         self,
-        op: str,
         fn: Callable[[], Awaitable[T]],
     ) -> T:
         cfg = self.__require_config()
-        attempts = max(0, cfg.read_retry_attempts)
-        base = max(0.0, cfg.read_retry_base_delay.total_seconds())
-        last: BaseException | None = None
 
-        for i in range(attempts + 1):
-            try:
-                return await fn()
-
-            except _READ_RETRY_EXC as e:
-                last = e
-
-                if i >= attempts:
-                    raise
-
-                await asyncio.sleep(base * (2**i))
-
-        if last is None:
-            raise exc.internal("Last exception is None")
-
-        raise last
+        return await retry_read(
+            fn,
+            attempts=cfg.read_retry_attempts,
+            base_delay=cfg.read_retry_base_delay.total_seconds(),
+        )
 
     # ....................... #
 
@@ -232,7 +219,7 @@ class ClickHouseClient(ClickHouseClientPort):
 
             return ClickHouseQueryResult(rows=rows, row_count=len(rows))
 
-        return await self.__maybe_read_retry("run_query", _run)
+        return await self.__maybe_read_retry(_run)
 
     # ....................... #
 
@@ -247,42 +234,82 @@ class ClickHouseClient(ClickHouseClientPort):
         timeout: timedelta | None = None,
         fetch_batch_size: int = 2000,
     ) -> list[JsonDict]:
+        """Fetch every row of *sql* via a single streaming query execution.
+
+        The query is executed exactly once and the result is consumed in
+        row blocks (:meth:`AsyncClient.query_row_block_stream`), so the
+        rows come from one consistent result set — no per-page rescans and
+        no duplicated/missing rows between pages, even when the registered
+        SQL has no deterministic ``ORDER BY``.
+
+        :param max_rows: Hard cap on returned rows; pushed into the SQL as
+            ``LIMIT`` and additionally enforced while consuming blocks.
+        :param fetch_batch_size: Streaming block-size hint forwarded as the
+            ClickHouse ``max_block_size`` setting (server treats it as a
+            recommendation; actual block sizes may differ).
+        """
+
         if fetch_batch_size < 1:
             raise exc.internal("fetch_batch_size must be >= 1")
 
+        query_sql = apply_limit_offset(sql, limit=max_rows, offset=None)
+
+        if isinstance(params, BaseModel):
+            bound_params = parameters_from_model(params)
+
+        else:
+            bound_params = params  # type: ignore[assignment]
+
+        timeout_sec = self.__timeout_sec(timeout)
+        target_db = self.__database(database)
+        settings = self.__query_settings(database=target_db, timeout_sec=timeout_sec)
+        settings["max_block_size"] = fetch_batch_size
+
+        # Single retry layer: the streaming execution below does not go
+        # through ``run_query`` (which retries itself), so a transient
+        # failure restarts at most ``read_retry_attempts`` times total.
         async def _run() -> list[JsonDict]:
+            ch = self.__require_client()
             all_rows: list[JsonDict] = []
-            offset = 0
 
-            while True:
-                batch_limit = fetch_batch_size
+            stream = await ch.query_row_block_stream(  # type: ignore[untyped-call]
+                query_sql,
+                parameters=bound_params,
+                settings=settings,
+            )
 
-                if max_rows is not None:
-                    remaining = max_rows - len(all_rows)
+            async with stream:
+                # ``StreamContext.source`` is typed as a bare ``Closable``; for a
+                # query row-block stream it is the underlying ``QueryResult``,
+                # whose first block is parsed eagerly so ``column_names`` is set.
+                source = cast(QueryResult, stream.source)
+                column_names: tuple[str, ...] = source.column_names
 
-                    if remaining <= 0:
+                # Badly typed...
+                async for block in stream:  # pyright: ignore[reportUnknownVariableType]
+                    for (
+                        row
+                    ) in (  # pyright: ignore[reportOptionalIterable, reportUnknownVariableType]
+                        block
+                    ):  # pyright: ignore[reportOptionalIterable, reportUnknownVariableType]
+                        all_rows.append(
+                            dict(
+                                zip(
+                                    column_names,
+                                    row,  # pyright: ignore[reportUnknownArgumentType]
+                                )
+                            )
+                        )
+
+                    # ``LIMIT`` already caps the result server-side; this is a
+                    # defensive client-side stop that also ends consumption early.
+                    if max_rows is not None and len(all_rows) >= max_rows:
+                        del all_rows[max_rows:]
                         break
-
-                    batch_limit = min(batch_limit, remaining)
-
-                result = await self.run_query(
-                    sql,
-                    params,
-                    database=database,
-                    limit=batch_limit,
-                    offset=offset,
-                    timeout=timeout,
-                )
-                all_rows.extend(result.rows)
-
-                if result.row_count < batch_limit:
-                    break
-
-                offset += batch_limit
 
             return all_rows
 
-        return await self.__maybe_read_retry("run_query_all_pages", _run)
+        return await self.__maybe_read_retry(_run)
 
     # ....................... #
 

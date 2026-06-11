@@ -121,7 +121,7 @@ async def _bootstrap_schedules(
             bootstrap.schedule_id,
             bootstrap.default_args,
             bootstrap.timing,
-            workflow_id_template=bootstrap.workflow_id_template,
+            workflow_id_base=bootstrap.workflow_id_base,
             trigger_immediately=bootstrap.trigger_immediately,
             note=bootstrap.note,
         )

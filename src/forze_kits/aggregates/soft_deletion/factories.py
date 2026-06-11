@@ -56,11 +56,13 @@ def build_soft_deletion_registry(
                     input_type=DocumentIdRevDTO,
                     output_type=spec.read,
                     description="Soft-delete a document by primary key.",
+                    sensitive=spec.sensitive,
                 ),
                 SoftDeletionKernelOp.RESTORE: OperationDescriptor(
                     input_type=DocumentIdRevDTO,
                     output_type=spec.read,
                     description="Restore a soft-deleted document by primary key.",
+                    sensitive=spec.sensitive,
                 ),
             },
             namespace=ns,

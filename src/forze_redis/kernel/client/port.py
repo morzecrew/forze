@@ -31,7 +31,14 @@ class RedisClientPort(Protocol):
         self,
         *,
         transaction: bool = True,
-    ) -> AsyncContextManager[Pipeline]: ...  # pragma: no cover
+    ) -> AsyncContextManager[Pipeline]:
+        """Bind a context-local pipeline for **write batching**.
+
+        Value-returning methods called inside the scope raise a precondition
+        error (code ``redis_read_in_pipeline``) because pipeline results only
+        materialize at ``execute()``.
+        """
+        ...  # pragma: no cover
 
     def exists(self, key: str) -> Awaitable[bool]: ...  # pragma: no cover
 

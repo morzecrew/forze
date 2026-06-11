@@ -33,14 +33,17 @@ class S3StartupHook(LifecycleHook):
     endpoint: str
     """S3-compatible endpoint URL."""
 
-    access_key_id: str = attrs.field(repr=False)
-    """Access key for authentication."""
+    access_key_id: str | None = attrs.field(default=None, repr=False)
+    """Access key for authentication; ``None`` defers to the default
+    botocore credential chain."""
 
-    secret_access_key: SecretStr = attrs.field(
-        converter=pydantic_secret_converter,
+    secret_access_key: SecretStr | None = attrs.field(
+        default=None,
+        converter=attrs.converters.optional(pydantic_secret_converter),
         repr=False,
     )
-    """Secret key for authentication."""
+    """Secret key for authentication; ``None`` defers to the default
+    botocore credential chain."""
 
     config: S3Config | None = attrs.field(default=None, repr=False)
     """Optional botocore config for retries, timeouts, etc."""
@@ -79,16 +82,18 @@ def s3_lifecycle_step(
     name: str = "s3_lifecycle",
     *,
     endpoint: str,
-    access_key_id: str,
-    secret_access_key: str | SecretStr,
+    access_key_id: str | None = None,
+    secret_access_key: str | SecretStr | None = None,
     config: S3Config | None = None,
 ) -> LifecycleStep:
     """Build a lifecycle step for S3 client init and shutdown.
 
     :param name: Step name for collision detection.
     :param endpoint: S3-compatible endpoint URL.
-    :param access_key_id: Access key for authentication.
-    :param secret_access_key: Secret key for authentication.
+    :param access_key_id: Access key for authentication, or ``None`` to
+        defer to botocore's default credential chain.
+    :param secret_access_key: Secret key for authentication, or ``None`` to
+        defer to the chain.
     :param config: Optional botocore config.
     :returns: Lifecycle step with startup and shutdown hooks.
     """

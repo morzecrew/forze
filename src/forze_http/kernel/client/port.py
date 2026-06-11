@@ -7,8 +7,8 @@ from forze.base.primitives import JsonDict
 # ----------------------- #
 
 
-class HttpxClientPort(Protocol):
-    """Operations implemented by :class:`~forze_http.kernel.client.client.HttpxClient`."""
+class HttpClientPort(Protocol):
+    """Operations implemented by :class:`~forze_http.kernel.client.client.HttpClient`."""
 
     def request(
         self,

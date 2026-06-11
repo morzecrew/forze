@@ -14,9 +14,14 @@ from forze.base.exceptions import (
     ExceptionInterceptor,
     ExceptionMapper,
     default_chain_exc_mapper,
+    fallback_exception_mapper,
 )
 
 # ----------------------- #
+
+_fallback = fallback_exception_mapper("S3")
+
+# ....................... #
 
 
 @static_fn_conformity(ExceptionMapper)  # type: ignore[type-abstract]
@@ -100,16 +105,13 @@ def _s3_eh(
         # --- broad fallback for other botocore errors ---
         case s3_errors.BotoCoreError() as be:
             return CoreException.infrastructure(
-                f"S3 core error: {be}",
-                details=details,
+                "S3 core error.",
+                details={**(details or {}), "error": str(be)},
             )
 
         # --- ultimate fallback ---
         case _:
-            return CoreException.infrastructure(
-                f"An error occurred while executing S3 operation {site}: {exc}",
-                details=details,
-            )
+            return _fallback(exc, site=site, details=details)
 
 
 # ....................... #

@@ -32,6 +32,10 @@ from .constants import AuthnResourceName
 
 # ----------------------- #
 
+# The read models below carry credential material (Argon2 password hashes, HMAC
+# key/token digests), so the specs are marked ``sensitive`` — generated external
+# surfaces (HTTP route generators, MCP tools/resources) refuse to project them.
+
 password_account_spec = DocumentSpec(
     name=AuthnResourceName.PASSWORD_ACCOUNTS,
     read=ReadPasswordAccount,
@@ -40,6 +44,7 @@ password_account_spec = DocumentSpec(
         "create_cmd": CreatePasswordAccountCmd,
         "update_cmd": UpdatePasswordAccountCmd,
     },
+    sensitive=True,
 )
 
 api_key_account_spec = DocumentSpec(
@@ -50,6 +55,7 @@ api_key_account_spec = DocumentSpec(
         "create_cmd": CreateApiKeyAccountCmd,
         "update_cmd": UpdateApiKeyAccountCmd,
     },
+    sensitive=True,
 )
 
 # ....................... #
@@ -62,6 +68,7 @@ password_invite_spec = DocumentSpec(
         "create_cmd": CreatePasswordInviteCmd,
         "update_cmd": UpdatePasswordInviteCmd,
     },
+    sensitive=True,
 )
 
 # ....................... #
@@ -74,6 +81,7 @@ session_spec = DocumentSpec(
         "create_cmd": CreateSessionCmd,
         "update_cmd": UpdateSessionCmd,
     },
+    sensitive=True,
 )
 
 # ....................... #

@@ -54,7 +54,9 @@ _EXC_KIND_POLICY: Mapping[ExceptionKind, ExceptionKindEgress] = {
         retryable=False,
     ),
     ExceptionKind.CONFIGURATION: ExceptionKindEgress(
-        expose_details=True,
+        # Configuration errors carry internal wiring info (dep keys, policy
+        # names) that must never reach clients.
+        expose_details=False,
         retryable=False,
     ),
     ExceptionKind.INFRASTRUCTURE: ExceptionKindEgress(

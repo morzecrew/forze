@@ -28,6 +28,15 @@ class _StubIdempotency:
         k = f"{op}:{key}:{payload_hash}"
         self._store[k] = record
 
+    async def fail(
+        self,
+        op: str,
+        key: str | None,
+        payload_hash: str,
+    ) -> None:
+        k = f"{op}:{key}:{payload_hash}"
+        self._store.pop(k, None)
+
 
 class TestIdempotencyPort:
     def test_is_runtime_checkable(self) -> None:
@@ -53,6 +62,13 @@ class TestIdempotencyPort:
         await stub.commit("create", "k1", "h1", record)
         assert await stub.begin("create", "k2", "h1") is None
         assert await stub.begin("create", "k1", "h2") is None
+
+    async def test_fail_releases_claim(self) -> None:
+        stub = _StubIdempotency()
+        record = IdempotencyRecord(result=b"ok")
+        await stub.commit("create", "k1", "h1", record)
+        await stub.fail("create", "k1", "h1")
+        assert await stub.begin("create", "k1", "h1") is None
 
     def test_non_conforming_not_instance(self) -> None:
         class Bad:

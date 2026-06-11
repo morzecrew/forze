@@ -58,7 +58,9 @@ lifecycle = LifecyclePlan.from_steps(
   messages, publisher confirms; `prefetch_count` is the consumer backpressure
   knob.
 - **Delayed delivery** needs `delayed_delivery=True` on the queue config (it
-  declares a delay sibling queue); enqueuing with a `delay` without it is a
+  declares one delay sibling queue per distinct delay value, with a queue-level
+  TTL so a long delay never blocks a shorter one; idle delay queues are
+  auto-expired by the broker); enqueuing with a `delay` without it is a
   precondition error.
 - Exchange/queue/binding topology and DLQs are operational config, managed
   outside Forze.

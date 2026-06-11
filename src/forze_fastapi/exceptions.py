@@ -87,8 +87,14 @@ def _log_server_error(exc: BaseException, *, core: CoreException | None = None) 
 # ....................... #
 
 
-async def _forze_exception_handler(_: Request, exc: CoreException) -> JSONResponse:
-    """FastAPI exception handler that converts :class:`exc.internal` to a JSON response."""
+def build_core_exception_response(exc: CoreException) -> JSONResponse:
+    """Build the standard JSON response for a :class:`CoreException`.
+
+    Server errors (``>= 500``) are logged and their summary is replaced with a
+    generic detail message so internal diagnostics never leak to clients. The
+    sanitized ``context`` field is only included when the egress policy for
+    the exception kind allows exposing details.
+    """
 
     policy = exception_egress_policy(exc.kind)
     status_code = _status_code_mapper(exc.kind)
@@ -96,9 +102,10 @@ async def _forze_exception_handler(_: Request, exc: CoreException) -> JSONRespon
     if status_code >= 500:
         _log_server_error(exc, core=exc)
 
-    content: JsonDict = {"detail": exc.summary}
+    detail = GENERIC_500_DETAIL if status_code >= 500 else exc.summary
+    content: JsonDict = {"detail": detail}
 
-    if exc.details and policy.expose_details:
+    if exc.details and policy.expose_details and status_code < 500:
         content["context"] = sanitize(exc.details, context="egress")
 
     return JSONResponse(
@@ -106,6 +113,15 @@ async def _forze_exception_handler(_: Request, exc: CoreException) -> JSONRespon
         content=content,
         headers={ERROR_CODE_HEADER: exc.code},
     )
+
+
+# ....................... #
+
+
+async def _forze_exception_handler(_: Request, exc: CoreException) -> JSONResponse:
+    """FastAPI exception handler that converts :class:`exc.internal` to a JSON response."""
+
+    return build_core_exception_response(exc)
 
 
 # ....................... #

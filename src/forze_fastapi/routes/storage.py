@@ -15,10 +15,12 @@ require_fastapi()
 
 # ....................... #
 
-from typing import AbstractSet, Annotated, Any, Awaitable, Callable, Mapping
+from functools import partial
+from typing import AbstractSet, Annotated, Any, Awaitable, Callable, Final, Mapping
 from urllib.parse import quote
 
-from fastapi import APIRouter, Form, Response, UploadFile
+import attrs
+from fastapi import APIRouter, Form, Request, Response, UploadFile
 from pydantic import BaseModel
 
 from forze.application.execution.context import ExecutionContextFactory
@@ -34,15 +36,57 @@ from ._attach import (
     attach_operation_routes,
     body_endpoint,
     require_input_type,
+    validate_payload,
 )
 
 # ----------------------- #
+
+DEFAULT_MAX_UPLOAD_SIZE: Final[int] = 64 * 1024 * 1024
+"""Default upload size cap (64 MiB) — a deliberate safe-by-default bound."""
+
+_UPLOAD_CHUNK_SIZE: Final[int] = 1024 * 1024
+"""Chunk size (1 MiB) for streaming uploads into memory under the cap."""
+
+
+def _upload_too_large(max_size: int) -> Exception:
+    """Over-cap rejection; ``validation`` is the closest kind (no 413 mapping)."""
+
+    return exc.validation(
+        f"Uploaded file exceeds the maximum allowed size of {max_size} bytes",
+        code="upload_too_large",
+        details={"max_upload_size": max_size},
+    )
+
+
+async def _read_capped(file: UploadFile, max_size: int | None) -> bytes:
+    """Read *file* in chunks, refusing to buffer more than *max_size* bytes."""
+
+    if max_size is None:
+        return await file.read()
+
+    chunks: list[bytes] = []
+    total = 0
+
+    while chunk := await file.read(_UPLOAD_CHUNK_SIZE):
+        total += len(chunk)
+
+        if total > max_size:
+            raise _upload_too_large(max_size)
+
+        chunks.append(chunk)
+
+    return b"".join(chunks)
+
+
+# ....................... #
 
 
 def _upload_endpoint(
     runner: OperationRunner,
     input_type: type[BaseModel] | None,
     op: str,
+    *,
+    max_upload_size: int | None,
 ) -> Callable[..., Awaitable[Any]]:
     """Multipart endpoint assembling the upload DTO from a file + form fields."""
 
@@ -55,17 +99,27 @@ def _upload_endpoint(
         )
 
     async def endpoint(
+        request: Request,
         file: UploadFile,
         description: Annotated[str | None, Form()] = None,
         prefix: Annotated[str | None, Form()] = None,
     ) -> Any:
-        payload = dto_type.model_validate(
+        if max_upload_size is not None:
+            declared = request.headers.get("content-length")
+
+            if declared is not None and declared.isdigit():
+                if int(declared) > max_upload_size:
+                    raise _upload_too_large(max_upload_size)
+
+        payload = validate_payload(
+            dto_type,
             {
                 "filename": file.filename or "upload",
-                "data": await file.read(),
+                "data": await _read_capped(file, max_upload_size),
                 "description": description,
                 "prefix": prefix,
-            }
+            },
+            op,
         )
         return await runner(payload)
 
@@ -136,7 +190,7 @@ _REST_BINDINGS: Mapping[str, RouteBinding] = {
     StorageKernelOp.UPLOAD: RouteBinding(
         method="POST",
         path="",
-        build=_upload_endpoint,
+        build=partial(_upload_endpoint, max_upload_size=DEFAULT_MAX_UPLOAD_SIZE),
         status_code=201,
     ),
     StorageKernelOp.LIST: RouteBinding(
@@ -161,7 +215,7 @@ _RPC_BINDINGS: Mapping[str, RouteBinding] = {
     StorageKernelOp.UPLOAD: RouteBinding(
         method="POST",
         path=f"/{StorageKernelOp.UPLOAD.value}",
-        build=_upload_endpoint,
+        build=partial(_upload_endpoint, max_upload_size=DEFAULT_MAX_UPLOAD_SIZE),
     ),
     StorageKernelOp.LIST: RouteBinding(
         method="POST",
@@ -188,6 +242,29 @@ _RPC_BINDINGS: Mapping[str, RouteBinding] = {
 # ....................... #
 
 
+def _bindings(
+    style: RouteStyle,
+    max_upload_size: int | None,
+) -> Mapping[str, RouteBinding]:
+    """Pick the style's binding table, rebinding upload to the requested cap."""
+
+    base = _REST_BINDINGS if style == "rest" else _RPC_BINDINGS
+
+    if max_upload_size == DEFAULT_MAX_UPLOAD_SIZE:
+        return base
+
+    return {
+        **base,
+        StorageKernelOp.UPLOAD: attrs.evolve(
+            base[StorageKernelOp.UPLOAD],
+            build=partial(_upload_endpoint, max_upload_size=max_upload_size),
+        ),
+    }
+
+
+# ....................... #
+
+
 def attach_storage_routes(
     router: APIRouter,
     *,
@@ -196,6 +273,7 @@ def attach_storage_routes(
     ctx_dep: ExecutionContextFactory,
     style: RouteStyle,
     include: AbstractSet[StorageKernelOp | str] | None = None,
+    max_upload_size: int | None = DEFAULT_MAX_UPLOAD_SIZE,
 ) -> APIRouter:
     """Attach the registered storage operations under *ns* to *router*.
 
@@ -219,6 +297,12 @@ def attach_storage_routes(
         ``POST /delete/{key}``).
     :param include: Optional narrowing to a subset of kernel operations; including
         an operation the registry lacks is a configuration error.
+    :param max_upload_size: Upload size cap in bytes, enforced by streaming the
+        file in chunks (and by an early ``Content-Length`` check covering the
+        whole multipart body). Defaults to
+        :data:`DEFAULT_MAX_UPLOAD_SIZE` (64 MiB); requests over the cap answer
+        a 422 validation error with code ``upload_too_large`` before the
+        operation runs. ``None`` disables the cap (pre-cap unbounded behavior).
     :returns: *router*, for chaining.
     """
 
@@ -227,6 +311,6 @@ def attach_storage_routes(
         registry=registry,
         ns=ns,
         ctx_dep=ctx_dep,
-        bindings=_REST_BINDINGS if style == "rest" else _RPC_BINDINGS,
+        bindings=_bindings(style, max_upload_size),
         include=include,
     )

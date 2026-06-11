@@ -1,15 +1,15 @@
 """Base64-JSON cursors and sort normalization (agnostic of SQL vs Mongo)."""
 
-import base64
-import json
 from typing import Any, Sequence
 
+from forze.base.codecs import B64UrlJsonCodec
 from forze.base.exceptions import exc
 
 # ----------------------- #
 
 _KEYSET_V1 = 1
 _DIRECTIONS = ("asc", "desc")
+_CODEC = B64UrlJsonCodec()
 
 # ....................... #
 
@@ -65,8 +65,15 @@ def compare_keyset_sort_values(left: Any, right: Any) -> int:
     if rc is None:
         return 1
 
-    if lc < rc:
-        return -1
+    # Cursor values are client-controlled: a tampered token can put a value of
+    # the wrong type next to a row value (e.g. ``int < str``) — surface that as
+    # an invalid-cursor validation error instead of a raw TypeError (500).
+    try:
+        if lc < rc:
+            return -1
+
+    except TypeError as e:
+        raise exc.validation("Invalid cursor token") from e
 
     return 1
 
@@ -116,10 +123,9 @@ def _parse_value(v: Any) -> Any:
     if isinstance(v, (int, float, str, bool)):
         return v
 
-    if isinstance(v, (list, dict)):
-
-        return v  # type: ignore[return-value]
-    return v
+    # Token values are client-controlled: only JSON scalars are valid sort-key
+    # values; containers (and anything else) are rejected as a tampered cursor.
+    raise exc.validation("Invalid cursor token")
 
 
 # ....................... #
@@ -146,13 +152,7 @@ def encode_keyset_v1(
         "d": list(directions),
         "x": [_jsonify_value(x) for x in values],
     }
-    raw = json.dumps(
-        payload,
-        ensure_ascii=True,
-        separators=(",", ":"),
-        sort_keys=True,
-    ).encode("utf-8")
-    return base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii")
+    return _CODEC.dumps(payload)
 
 
 # ....................... #
@@ -174,34 +174,31 @@ def row_value_for_sort_key(row: dict[str, Any], key: str) -> Any:
 
 
 def decode_keyset_v1(token: str) -> tuple[list[str], list[str], list[Any]]:
-    pad = "=" * (-len(token) % 4)
-
     try:
-        raw = base64.urlsafe_b64decode(token + pad)
-        data: Any = json.loads(raw.decode("utf-8"))
+        data: Any = _CODEC.loads(token)
 
-    except (ValueError, json.JSONDecodeError) as e:
-        raise exc.internal("Invalid cursor token") from e
+    except ValueError as e:
+        raise exc.validation("Invalid cursor token") from e
 
     if not isinstance(data, dict) or int(data.get("v", 0)) != _KEYSET_V1:  # type: ignore[arg-type]
-        raise exc.internal("Invalid cursor token")
+        raise exc.validation("Invalid cursor token")
 
     k = data.get("k")  # type: ignore[assignment, misc]
     d = data.get("d")  # type: ignore[assignment, misc]
     x = data.get("x")  # type: ignore[assignment, misc]
 
     if not isinstance(k, list) or not isinstance(d, list) or not isinstance(x, list):
-        raise exc.internal("Invalid cursor token")
+        raise exc.validation("Invalid cursor token")
 
     if len(k) != len(d) or len(k) != len(x):  # type: ignore[arg-type]
-        raise exc.internal("Invalid cursor token")
+        raise exc.validation("Invalid cursor token")
 
     keys = [str(a) for a in k]  # type: ignore[arg-type]
     dirs = [str(a).lower() for a in d]  # type: ignore[arg-type]
 
     for dr in dirs:
         if dr not in _DIRECTIONS:
-            raise exc.internal("Invalid cursor token")
+            raise exc.validation("Invalid cursor token")
 
     vals = [_parse_value(v) for v in x]  # type: ignore[arg-type]
 
@@ -219,7 +216,7 @@ def validate_cursor_token(
 ) -> list[Any]:
     """Decode a keyset *token* and verify it matches the active sort; return its values.
 
-    Raises :func:`~forze.base.exceptions.exc.internal` when the token's keys or
+    Raises :func:`~forze.base.exceptions.exc.validation` when the token's keys or
     directions do not align with the current search sort (a stale or mismatched
     cursor). Shared by every keyset-cursor search path so the validation is identical.
     """
@@ -227,11 +224,11 @@ def validate_cursor_token(
     tk, td, tv = decode_keyset_v1(token)
 
     if list(tk) != list(sort_keys) or len(td) != len(directions):
-        raise exc.internal("Cursor does not match current search sort")
+        raise exc.validation("Cursor does not match current search sort")
 
     for i, di in enumerate(directions):
         if (td[i] or "").lower() != di:
-            raise exc.internal("Cursor does not match current search sort")
+            raise exc.validation("Cursor does not match current search sort")
 
     return list(tv)
 

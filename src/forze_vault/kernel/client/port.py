@@ -27,3 +27,8 @@ class VaultClientPort(Protocol):
         """Return whether a secret exists at *path*."""
 
         ...  # pragma: no cover
+
+    def health(self) -> Awaitable[tuple[str, bool]]:
+        """Return ``(message, ok)``; must not raise."""
+
+        ...  # pragma: no cover

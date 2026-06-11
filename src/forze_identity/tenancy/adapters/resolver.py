@@ -6,6 +6,7 @@ import attrs
 from forze.application.contracts.document import DocumentQueryPort
 from forze.application.contracts.tenancy import TenantIdentity, TenantResolverPort
 from forze.base.exceptions import exc
+from forze_identity._secure_spec import forbid_cache_and_history
 
 from ..application.specs import principal_tenant_binding_spec, tenant_spec
 from ..domain.models.principal_tenant_binding import ReadPrincipalTenantBinding
@@ -38,6 +39,14 @@ class TenantResolverAdapter(TenantResolverPort):
             and self.tenant_qry.spec.name != tenant_spec.name
         ):
             raise exc.internal("tenant_qry spec must match tenant_spec")
+
+        forbid_cache_and_history(
+            self.binding_qry.spec,
+            label="Principal-tenant binding",
+        )
+
+        if self.tenant_qry is not None:
+            forbid_cache_and_history(self.tenant_qry.spec, label="Tenant")
 
     # ....................... #
 

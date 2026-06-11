@@ -56,7 +56,7 @@ class TestTemporalWorkflowScheduleCommandAdapter:
             "nightly",
             _In(x=1),
             _timing(),
-            workflow_id_template="run-{date}",
+            workflow_id_base="run-{date}",
         )
 
         assert handle == DurableWorkflowScheduleHandle(schedule_id="nightly")

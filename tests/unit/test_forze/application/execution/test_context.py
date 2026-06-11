@@ -15,6 +15,7 @@ from forze.application.contracts.storage import (
     StorageSpec,
 )
 from forze.application.execution import Deps, ExecutionContext
+from forze.base.exceptions import CoreException, ExceptionKind
 from forze.domain.models import CreateDocumentCmd, Document, ReadDocument
 from tests.support.execution_context import context_from_deps, context_from_modules, frozen_deps_from_deps
 from forze_mock import MockDepsModule, MockState
@@ -164,6 +165,126 @@ class TestExecutionContextTransaction:
                 await ctx.tx_ctx.run_or_defer(_inner)
 
         assert order == ["outer", "inner"]
+
+
+class TestAfterCommitCallbackFailures:
+    @pytest.mark.asyncio
+    async def test_all_callbacks_run_and_failures_aggregate(
+        self, ctx: ExecutionContext
+    ) -> None:
+        order: list[str] = []
+
+        async def _a() -> None:
+            order.append("a")
+            raise RuntimeError("a failed")
+
+        async def _b() -> None:
+            order.append("b")
+
+        async def _c() -> None:
+            order.append("c")
+            raise ValueError("c failed")
+
+        with pytest.raises(CoreException) as ei:
+            async with ctx.tx_ctx.scope("mock"):
+                await ctx.tx_ctx.run_or_defer(_a)
+                await ctx.tx_ctx.run_or_defer(_b)
+                await ctx.tx_ctx.run_or_defer(_c)
+
+        # Every callback ran despite earlier failures.
+        assert order == ["a", "b", "c"]
+
+        # A single aggregated internal error, chained from the first failure.
+        assert ei.value.kind is ExceptionKind.INTERNAL
+        assert ei.value.code == "after_commit_failed"
+        assert isinstance(ei.value.__cause__, RuntimeError)
+        assert str(ei.value.__cause__) == "a failed"
+
+        # Details carry which callbacks failed (names + error strings).
+        assert ei.value.details is not None
+        failed = ei.value.details["failed"]
+        assert len(failed) == 2
+        assert failed[0]["error"] == "a failed"
+        assert failed[1]["error"] == "c failed"
+        assert all("callback" in f and "index" in f for f in failed)
+
+    @pytest.mark.asyncio
+    async def test_single_failure_still_raises_after_all_ran(
+        self, ctx: ExecutionContext
+    ) -> None:
+        ran: list[str] = []
+
+        async def _fail() -> None:
+            raise RuntimeError("boom")
+
+        async def _ok() -> None:
+            ran.append("ok")
+
+        with pytest.raises(CoreException, match="After-commit callbacks failed"):
+            async with ctx.tx_ctx.scope("mock"):
+                await ctx.tx_ctx.run_or_defer(_fail)
+                await ctx.tx_ctx.run_or_defer(_ok)
+
+        assert ran == ["ok"]
+
+
+class TestNestedReadOnly:
+    @pytest.mark.asyncio
+    async def test_nested_conflicting_read_only_raises_precondition(
+        self, ctx: ExecutionContext, mock_state: MockState
+    ) -> None:
+        with pytest.raises(CoreException) as ei:
+            async with ctx.tx_ctx.scope("mock"):
+                async with ctx.tx_ctx.scope("mock", read_only=True):
+                    pass
+
+        assert ei.value.kind is ExceptionKind.PRECONDITION
+        assert ei.value.code == "tx_nested_read_only_conflict"
+
+    @pytest.mark.asyncio
+    async def test_nested_conflicting_read_write_inside_read_only_raises(
+        self, ctx: ExecutionContext
+    ) -> None:
+        with pytest.raises(CoreException) as ei:
+            async with ctx.tx_ctx.scope("mock", read_only=True):
+                async with ctx.tx_ctx.scope("mock", read_only=False):
+                    pass
+
+        assert ei.value.kind is ExceptionKind.PRECONDITION
+
+    @pytest.mark.asyncio
+    async def test_nested_same_value_passes(self, ctx: ExecutionContext) -> None:
+        async with ctx.tx_ctx.scope("mock", read_only=True):
+            async with ctx.tx_ctx.scope("mock", read_only=True):
+                pass
+
+        async with ctx.tx_ctx.scope("mock", read_only=False):
+            async with ctx.tx_ctx.scope("mock", read_only=False):
+                pass
+
+    @pytest.mark.asyncio
+    async def test_nested_unspecified_inherits_root(
+        self, ctx: ExecutionContext
+    ) -> None:
+        async with ctx.tx_ctx.scope("mock", read_only=True):
+            async with ctx.tx_ctx.scope("mock"):
+                pass
+
+        async with ctx.tx_ctx.scope("mock"):
+            async with ctx.tx_ctx.scope("mock"):
+                pass
+
+    @pytest.mark.asyncio
+    async def test_read_only_not_forwarded_to_nested_transaction(
+        self, ctx: ExecutionContext, mock_state: MockState
+    ) -> None:
+        async with ctx.tx_ctx.scope("mock", read_only=True):
+            async with ctx.tx_ctx.scope("mock", read_only=True):
+                pass
+
+        # Root opens read-only; the nested call gets no read_only option (the
+        # mock adapter records its parameter default, False).
+        assert mock_state.tx_read_only_calls == [True, False]
 
 
 class TestExecutionContextPorts:

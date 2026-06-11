@@ -8,7 +8,6 @@ require_rabbitmq()
 
 import asyncio
 from contextlib import asynccontextmanager
-from contextvars import ContextVar
 from datetime import datetime, timedelta, timezone
 from typing import AsyncGenerator, Mapping, Sequence, final
 from uuid import uuid4
@@ -24,7 +23,9 @@ from aio_pika.abc import (
 
 from forze.application.contracts.queue import resolve_delivery_delay
 from forze.base.exceptions import exc
+from forze.base.primitives import ContextScopedResource, GuardedLifecycle
 
+from .._logger import logger
 from .errors import exc_interceptor
 from .port import RabbitMQClientPort
 from .types import RabbitMQQueueMessage
@@ -34,10 +35,28 @@ from .value_objects import RabbitMQConfig
 
 _KEY_HEADER = "forze_key"
 _DELAY_QUEUE_SUFFIX = ".__forze_delay"
-"""Suffix for the DLX delay queue paired with a work queue."""
+"""Suffix for the per-delay-value DLX queues paired with a work queue."""
 
 _RABBITMQ_MAX_EXPIRATION_MS = 2**32 - 1
-"""Upper bound for per-message ``expiration`` (milliseconds) on the wire."""
+"""Upper bound for TTL/expiry values (milliseconds) on the wire."""
+
+_DELAY_QUEUE_EXPIRES_FACTOR = 10
+"""Idle ``x-expires`` for a delay queue, as a multiple of its TTL."""
+
+_DELAY_QUEUE_MIN_EXPIRES_MS = 60_000
+"""Floor for delay-queue ``x-expires`` so very short delays do not race
+queue deletion against in-flight publishes."""
+
+_DELAY_QUEUE_MAX_EXPIRES_GRACE_MS = 24 * 60 * 60 * 1000
+"""Cap on how long past its TTL an idle delay queue may linger (24h), so
+very long one-off delays do not pin broker resources for ~10x their TTL."""
+
+_DEFAULT_RECEIVE_WINDOW = timedelta(seconds=2)
+"""Bounded wait window for :meth:`RabbitMQClient.receive` when *timeout* is unset.
+
+Keeps ``receive(timeout=None)`` a bounded call: it returns whatever messages
+arrived within the window instead of blocking until a full batch shows up.
+"""
 
 # ....................... #
 
@@ -50,12 +69,8 @@ class RabbitMQClient(RabbitMQClientPort):
     )
     __config: RabbitMQConfig = attrs.field(factory=RabbitMQConfig, init=False)
 
-    __ctx_channel: ContextVar[AbstractChannel | None] = attrs.field(
-        factory=lambda: ContextVar("rabbitmq_channel", default=None),
-        init=False,
-    )
-    __ctx_depth: ContextVar[int] = attrs.field(
-        factory=lambda: ContextVar("rabbitmq_channel_depth", default=0),
+    __channel_scope: ContextScopedResource[AbstractChannel] = attrs.field(
+        factory=lambda: ContextScopedResource[AbstractChannel]("rabbitmq_channel"),
         init=False,
     )
 
@@ -72,8 +87,8 @@ class RabbitMQClient(RabbitMQClientPort):
         factory=asyncio.Lock,
         init=False,
     )
-    __delay_queues_ready: set[str] = attrs.field(factory=set, init=False)
-    __init_lock: asyncio.Lock = attrs.field(factory=asyncio.Lock, init=False)
+    __pending_watermark_warned: bool = attrs.field(default=False, init=False)
+    __lifecycle: GuardedLifecycle = attrs.field(factory=GuardedLifecycle, init=False)
 
     # ....................... #
     # Lifecycle
@@ -84,39 +99,91 @@ class RabbitMQClient(RabbitMQClientPort):
         *,
         config: RabbitMQConfig = RabbitMQConfig(),
     ) -> None:
-        async with self.__init_lock:
-            if self.__connection is not None and not self.__connection.is_closed:
-                return
-
-            if isinstance(dsn, SecretStr):
-                dsn = dsn.get_secret_value()
+        async def setup() -> None:
+            resolved_dsn = dsn.get_secret_value() if isinstance(dsn, SecretStr) else dsn
 
             self.__config = config
             self.__connection = await connect_robust(
-                dsn,
+                resolved_dsn,
                 timeout=config.connect_timeout.total_seconds(),
                 heartbeat=config.heartbeat.total_seconds(),
             )
 
+        await self.__lifecycle.initialize(
+            setup,
+            ready=lambda: (
+                self.__connection is not None and not self.__connection.is_closed
+            ),
+        )
+
     # ....................... #
 
     async def close(self) -> None:
-        async with self.__init_lock:
+        await self.__lifecycle.close(self.__teardown)
+
+    # ....................... #
+
+    async def __teardown(self) -> None:
+        # Return unacked deliveries to the broker *before* tearing the
+        # channel down: nack(requeue=True) makes them redeliverable
+        # immediately instead of only after the broker notices the
+        # connection drop. Best-effort — close() must never raise.
+        await self.__nack_pending_on_close()
+
+        try:
             if (
                 self.__pending_channel is not None
                 and not self.__pending_channel.is_closed
             ):
                 await self.__pending_channel.close()
+        except Exception as e:
+            logger.warning("RabbitMQ close: pending channel close failed: %s", e)
 
-            self.__pending_channel = None
+        self.__pending_channel = None
 
+        try:
             if self.__connection is not None and not self.__connection.is_closed:
                 await self.__connection.close()
+        except Exception as e:
+            logger.warning("RabbitMQ close: connection close failed: %s", e)
 
-            self.__connection = None
+        self.__connection = None
 
-            async with self.__pending_lock:
-                self.__pending.clear()
+        async with self.__pending_lock:
+            self.__pending.clear()
+            self.__pending_watermark_warned = False
+
+    # ....................... #
+
+    async def __nack_pending_on_close(self) -> None:
+        """Best-effort ``nack(requeue=True)`` of every pending delivery.
+
+        Failures are logged and swallowed: the broker redelivers unacked
+        messages once the connection drops anyway, so a failed nack only
+        delays redelivery — it must not turn ``close()`` into an error path.
+        """
+
+        async with self.__pending_lock:
+            entries = list(self.__pending.items())
+            self.__pending.clear()
+            self.__pending_watermark_warned = False
+
+        if not entries:
+            return
+
+        results = await asyncio.gather(
+            *(message.nack(requeue=True) for _, (_, message) in entries),
+            return_exceptions=True,
+        )
+
+        for (message_id, _), result in zip(entries, results, strict=True):
+            if isinstance(result, BaseException):
+                logger.warning(
+                    "RabbitMQ close: failed to nack pending message %s "
+                    "(broker redelivers it after the connection drops): %s",
+                    message_id,
+                    result,
+                )
 
     # ....................... #
 
@@ -140,26 +207,7 @@ class RabbitMQClient(RabbitMQClientPort):
     # ....................... #
     # Context helpers
 
-    def __current_channel(self) -> AbstractChannel | None:
-        return self.__ctx_channel.get()
-
-    # ....................... #
-
-    @exc_interceptor.asynccontextmanager("rabbitmq.channel")  # type: ignore[untyped-decorator]
-    @asynccontextmanager
-    async def channel(self) -> AsyncGenerator[AbstractChannel]:
-        depth = self.__ctx_depth.get()
-        parent = self.__current_channel()
-
-        if depth > 0 and parent is not None and not parent.is_closed:
-            token_depth = self.__ctx_depth.set(depth + 1)
-            try:
-                yield parent
-            finally:
-                self.__ctx_depth.reset(token_depth)
-
-            return
-
+    async def __open_channel(self) -> AbstractChannel:
         channel = await self.__require_connection().channel(
             publisher_confirms=self.__config.publisher_confirms
         )
@@ -167,18 +215,26 @@ class RabbitMQClient(RabbitMQClientPort):
         if self.__config.prefetch_count > 0:
             await channel.set_qos(prefetch_count=self.__config.prefetch_count)
 
-        token_channel = self.__ctx_channel.set(channel)
-        token_depth = self.__ctx_depth.set(1)
+        return channel
 
-        try:
+    # ....................... #
+
+    @staticmethod
+    async def __close_channel(channel: AbstractChannel) -> None:
+        if not channel.is_closed:
+            await channel.close()
+
+    # ....................... #
+
+    @exc_interceptor.asynccontextmanager("rabbitmq.channel")  # type: ignore[untyped-decorator]
+    @asynccontextmanager
+    async def channel(self) -> AsyncGenerator[AbstractChannel]:
+        async with self.__channel_scope.scope(
+            self.__open_channel,
+            closer=self.__close_channel,
+            reusable=lambda channel: not channel.is_closed,
+        ) as channel:
             yield channel
-
-        finally:
-            self.__ctx_depth.reset(token_depth)
-            self.__ctx_channel.reset(token_channel)
-
-            if not channel.is_closed:
-                await channel.close()
 
     # ....................... #
     # Message helpers
@@ -196,8 +252,29 @@ class RabbitMQClient(RabbitMQClientPort):
     # ....................... #
 
     @staticmethod
-    def _delay_queue_name(work_queue: str) -> str:
-        return f"{work_queue}{_DELAY_QUEUE_SUFFIX}"
+    def _delay_queue_name(work_queue: str, delay_ms: int) -> str:
+        return f"{work_queue}{_DELAY_QUEUE_SUFFIX}.{delay_ms}"
+
+    # ....................... #
+
+    @staticmethod
+    def _delay_queue_expires_ms(delay_ms: int) -> int:
+        """Idle ``x-expires`` for the delay queue holding ``delay_ms`` messages.
+
+        Roughly 10x the TTL, floored at one minute and capped at TTL + 24h,
+        and always within the wire-level 32-bit millisecond bound. The result
+        is always >= the TTL (declaration at publish time resets the idle
+        timer), so a delay queue never disappears under messages still
+        waiting to expire.
+        """
+
+        expires = max(
+            _DELAY_QUEUE_MIN_EXPIRES_MS,
+            delay_ms * _DELAY_QUEUE_EXPIRES_FACTOR,
+        )
+        expires = min(expires, delay_ms + _DELAY_QUEUE_MAX_EXPIRES_GRACE_MS)
+
+        return min(expires, _RABBITMQ_MAX_EXPIRATION_MS)
 
     # ....................... #
 
@@ -205,11 +282,27 @@ class RabbitMQClient(RabbitMQClientPort):
         self,
         channel: AbstractChannel,
         work_queue: str,
+        delay_ms: int,
     ) -> str:
-        delay_queue = self._delay_queue_name(work_queue)
+        """Declare the per-delay-value DLX queue and return its name.
 
-        if delay_queue in self.__delay_queues_ready:
-            return delay_queue
+        Delayed delivery uses one delay queue *per distinct delay value*
+        (``<queue>.__forze_delay.<ms>``) declared with a queue-level
+        ``x-message-ttl`` instead of per-message expirations. RabbitMQ only
+        expires messages from the queue head, so mixing TTLs in a single
+        delay queue lets a long delay block shorter ones behind it
+        (head-of-line blocking); a uniform TTL per queue makes that
+        impossible. Expired messages dead-letter through the default
+        exchange back into the work queue, and ``x-expires`` lets the broker
+        drop delay queues for one-off delay values once idle.
+
+        Deliberately *not* cached: ``x-expires`` may delete an idle delay
+        queue between publishes, so re-declaring on every delayed publish is
+        required for correctness (it also refreshes the idle timer) and is a
+        cheap idempotent operation.
+        """
+
+        delay_queue = self._delay_queue_name(work_queue, delay_ms)
 
         await self.__declare_queue(channel, work_queue)
         await channel.declare_queue(
@@ -218,16 +311,17 @@ class RabbitMQClient(RabbitMQClientPort):
             arguments={
                 "x-dead-letter-exchange": "",
                 "x-dead-letter-routing-key": work_queue,
+                "x-message-ttl": delay_ms,
+                "x-expires": self._delay_queue_expires_ms(delay_ms),
             },
         )
-        self.__delay_queues_ready.add(delay_queue)
 
         return delay_queue
 
     # ....................... #
 
     @staticmethod
-    def _resolve_message_expiration(
+    def _resolve_enqueue_delay(
         *,
         delay: timedelta | None,
         not_before: datetime | None,
@@ -251,7 +345,7 @@ class RabbitMQClient(RabbitMQClientPort):
 
         if milliseconds > _RABBITMQ_MAX_EXPIRATION_MS:
             raise exc.precondition(
-                "RabbitMQ enqueue delay exceeds the maximum message expiration"
+                "RabbitMQ enqueue delay exceeds the maximum supported delay"
             )
 
         return timedelta(milliseconds=milliseconds)
@@ -308,6 +402,35 @@ class RabbitMQClient(RabbitMQClientPort):
 
     # ....................... #
 
+    def __check_pending_watermark_locked(self) -> None:
+        """Warn once when the pending map crosses the configured watermark.
+
+        The threshold is :attr:`RabbitMQConfig.pending_watermark` — a soft
+        cap for observability, never enforcement. Must be called with
+        ``__pending_lock`` held. Re-arms once the map drains back to half
+        the watermark so a long-lived process that recovers and leaks again
+        warns again.
+        """
+
+        size = len(self.__pending)
+        watermark = self.__config.pending_watermark
+
+        if size > watermark:
+            if not self.__pending_watermark_warned:
+                self.__pending_watermark_warned = True
+                logger.warning(
+                    "RabbitMQ pending-delivery map exceeds %d entries (%d): "
+                    "deliveries are likely leaking without ack/nack (e.g. "
+                    "handler crashes between receive and ack); they stay "
+                    "invisible to other consumers until this client closes",
+                    watermark,
+                    size,
+                )
+        elif size <= watermark // 2:
+            self.__pending_watermark_warned = False
+
+    # ....................... #
+
     async def __register_pending_batch(
         self,
         queue: str,
@@ -334,6 +457,8 @@ class RabbitMQClient(RabbitMQClientPort):
                 self.__pending[candidate] = (queue, raw)
                 ids.append(candidate)
 
+            self.__check_pending_watermark_locked()
+
             return ids
 
     # ....................... #
@@ -357,6 +482,7 @@ class RabbitMQClient(RabbitMQClientPort):
                 candidate = f"{base}:{suffix}"
 
             self.__pending[candidate] = (queue, message)
+            self.__check_pending_watermark_locked()
 
         return candidate
 
@@ -405,8 +531,9 @@ class RabbitMQClient(RabbitMQClientPort):
     # ....................... #
     # Canonical queue methods
 
-    #! TODO: Rewrite without enqueue_many
-
+    # ``enqueue`` deliberately delegates to ``enqueue_many`` so queue
+    # declaration, delay-queue routing, and expiration handling live in a
+    # single publish path; a standalone rewrite would only duplicate it.
     @exc_interceptor.coroutine("rabbitmq.enqueue")  # type: ignore[untyped-decorator]
     async def enqueue(
         self,
@@ -421,6 +548,7 @@ class RabbitMQClient(RabbitMQClientPort):
         not_before: datetime | None = None,
         delayed_delivery: bool = False,
     ) -> str:
+        """Publish one message; see :meth:`enqueue_many` for delay semantics."""
         return (
             await self.enqueue_many(
                 queue,
@@ -451,6 +579,19 @@ class RabbitMQClient(RabbitMQClientPort):
         not_before: datetime | None = None,
         delayed_delivery: bool = False,
     ) -> list[str]:
+        """Publish a batch of messages, optionally with delayed delivery.
+
+        Delayed delivery uses the standard RabbitMQ per-TTL-queue pattern:
+        each distinct delay value gets its own DLX queue
+        (``<queue>.__forze_delay.<delay_ms>``) declared with a queue-level
+        ``x-message-ttl`` equal to the delay, dead-lettering back into the
+        work queue, and ``x-expires`` so one-off delay values do not
+        accumulate queues forever. Because RabbitMQ only expires messages
+        from the queue head, a *single* shared delay queue with per-message
+        TTLs would let a long delay block shorter ones enqueued after it
+        (head-of-line blocking); one uniform-TTL queue per delay value makes
+        that impossible while keeping same-delay messages FIFO.
+        """
         if not bodies:
             return []
 
@@ -475,7 +616,11 @@ class RabbitMQClient(RabbitMQClientPort):
             else DeliveryMode.NOT_PERSISTENT
         )
 
-        expiration = self._resolve_message_expiration(
+        # Delay is realized via the per-delay-value DLX queue's queue-level
+        # ``x-message-ttl`` (see ``__ensure_delay_queue``), not a per-message
+        # ``expiration``: per-message TTLs only expire from the queue head,
+        # so a long delay published first would hold shorter ones back.
+        resolved_delay = self._resolve_enqueue_delay(
             delay=delay,
             not_before=not_before,
             delayed_delivery=delayed_delivery,
@@ -491,15 +636,17 @@ class RabbitMQClient(RabbitMQClientPort):
                 timestamp=enqueued_at,
                 type=type,
                 headers=headers,  # type: ignore[arg-type]
-                expiration=expiration,
             )
             messages.append(message)
 
         async with self.channel() as channel:
             publish_queue = queue
 
-            if expiration is not None:
-                publish_queue = await self.__ensure_delay_queue(channel, queue)
+            if resolved_delay is not None:
+                delay_ms = int(resolved_delay.total_seconds() * 1000)
+                publish_queue = await self.__ensure_delay_queue(
+                    channel, queue, delay_ms
+                )
             else:
                 await self.__declare_queue(channel, queue)
 
@@ -525,24 +672,39 @@ class RabbitMQClient(RabbitMQClientPort):
         limit: int | None = None,
         timeout: timedelta | None = None,
     ) -> list[RabbitMQQueueMessage]:
+        """Fetch up to ``limit`` messages within a bounded wait window.
+
+        ``timeout`` caps the **total** wait; ``None`` (or a non-positive
+        value) falls back to :data:`_DEFAULT_RECEIVE_WINDOW`. The call
+        returns early once ``limit`` messages arrived and otherwise
+        returns whatever arrived when the window elapses (possibly none).
+        """
         max_messages = 1 if limit is None else limit
 
         if max_messages <= 0:
             return []
 
-        timeout_seconds = timeout.total_seconds() if timeout is not None else 0
+        window = (
+            timeout
+            if timeout is not None and timeout.total_seconds() > 0
+            else _DEFAULT_RECEIVE_WINDOW
+        )
         raw_messages: list[AbstractIncomingMessage] = []
 
         channel = await self.__require_pending_channel()
         declared = await self.__declare_queue(channel, queue)
 
         try:
-            async with declared.iterator(timeout=timeout_seconds, no_ack=False) as it:
-                async for raw in it:
-                    raw_messages.append(raw)
+            async with asyncio.timeout(window.total_seconds()):
+                # No iterator timeout: the surrounding ``asyncio.timeout``
+                # bounds the whole drain loop (aio_pika treats its iterator
+                # ``timeout`` as a per-``__anext__`` wait, not a total one).
+                async with declared.iterator(no_ack=False) as it:
+                    async for raw in it:
+                        raw_messages.append(raw)
 
-                    if len(raw_messages) >= max_messages:
-                        break
+                        if len(raw_messages) >= max_messages:
+                            break
         except TimeoutError:
             pass
 
@@ -557,12 +719,37 @@ class RabbitMQClient(RabbitMQClientPort):
         *,
         timeout: timedelta | None = None,
     ) -> AsyncGenerator[RabbitMQQueueMessage]:
-        timeout_seconds = timeout.total_seconds() if timeout is not None else 1.0
+        """Yield messages continuously from ``queue``.
+
+        ``timeout`` is an **idle** timeout: ``None`` (or a non-positive
+        value) consumes forever, yielding messages as they arrive; a finite
+        value stops the generator cleanly (no error) once no message has
+        arrived for that duration. Each message resets the idle window.
+        """
+        idle_seconds = (
+            timeout.total_seconds()
+            if timeout is not None and timeout.total_seconds() > 0
+            else None
+        )
         channel = await self.__require_pending_channel()
         declared = await self.__declare_queue(channel, queue)
 
-        async with declared.iterator(timeout=timeout_seconds, no_ack=False) as it:
-            async for raw in it:
+        # aio_pika applies ``timeout`` per ``__anext__`` wait, which matches
+        # idle-timeout semantics; ``None`` waits unbounded (consume forever).
+        async with declared.iterator(timeout=idle_seconds, no_ack=False) as it:
+            while True:
+                try:
+                    raw = await it.__anext__()
+
+                except StopAsyncIteration:
+                    return
+
+                except TimeoutError:
+                    # Idle window elapsed: terminate cleanly per the queue
+                    # port contract instead of surfacing an infrastructure
+                    # error (aio_pika closes the iterator before raising).
+                    return
+
                 yield await self.__to_message(queue, raw)
 
     # ....................... #
@@ -596,6 +783,8 @@ class RabbitMQClient(RabbitMQClientPort):
         async with self.__pending_lock:
             for mid in message_ids:
                 self.__pending.pop(mid, None)
+
+            self.__check_pending_watermark_locked()
 
     # ....................... #
 

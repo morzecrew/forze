@@ -39,7 +39,7 @@ class IssuedInvite:
     via ``accept_invite_with_password``; only its digest is persisted.
     """
 
-    token: str
+    token: str = attrs.field(repr=False)
     """Opaque invite token string (only shown at issuance time)."""
 
     principal_id: UUID

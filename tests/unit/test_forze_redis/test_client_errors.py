@@ -47,3 +47,17 @@ class TestRedisErrorHandler:
         r = _redis_eh(RuntimeError("boom"), site="my_op")
         assert isinstance(r, CoreException) and r.kind == ExceptionKind.INFRASTRUCTURE
         assert "my_op" in r.summary
+
+
+class TestAssembledChain:
+    """Regression: the package mapper must be reachable through the chain
+    wired into ``exc_interceptor`` (nested default chain used to shadow it)."""
+
+    def test_connection_error_through_assembled_chain(self) -> None:
+        from forze_redis.kernel.client.errors import exc_interceptor
+
+        out = exc_interceptor.mapper(redis_errors.ConnectionError(), site="get")
+        assert out is not None
+        assert out.kind == ExceptionKind.INFRASTRUCTURE
+        assert out.code != "core.unhandled"
+        assert "connection" in out.summary.lower()

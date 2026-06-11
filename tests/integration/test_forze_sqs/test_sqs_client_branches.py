@@ -313,45 +313,50 @@ async def test_enqueued_at_falls_back_to_sent_timestamp(
 
 
 @pytest.mark.asyncio
-async def test_ack_failed_entry_raises(
+async def test_ack_unknown_id_returns_zero(
     sqs_client: SQSClient,
     sqs_queue_url: str,
 ) -> None:
-    """Deleting with an invalid receipt handle surfaces a failed-entry error."""
+    """Acking an id with no pending delivery on this client is a no-op."""
 
     async with sqs_client.client():
-        with pytest.raises(CoreException):
-            await sqs_client.ack(sqs_queue_url, ["this-is-not-a-valid-receipt-handle"])
+        assert await sqs_client.ack(sqs_queue_url, ["never-received-id"]) == 0
 
 
 @pytest.mark.asyncio
-async def test_nack_without_requeue_deletes(
+async def test_nack_without_requeue_does_not_delete(
     sqs_client: SQSClient,
     sqs_queue_url: str,
 ) -> None:
-    """nack(requeue=False) delegates to ack and removes the message."""
+    """nack(requeue=False) leaves the message in the queue (invisible until
+    its visibility timeout) instead of deleting it."""
 
     async with sqs_client.client():
-        await sqs_client.enqueue(sqs_queue_url, b"drop-me")
+        await sqs_client.enqueue(sqs_queue_url, b"keep-me")
         msg = (await _receive_until(sqs_client, sqs_queue_url))[0]
         assert await sqs_client.nack(sqs_queue_url, [msg.id], requeue=False) == 1
+        # Still owned by the original receive's visibility timeout, so not
+        # visible — but crucially never deleted (see test_sqs_client.py for
+        # the reappearance assertion on a short-visibility queue).
         assert await sqs_client.receive(sqs_queue_url, limit=1) == []
 
 
 @pytest.mark.asyncio
-async def test_nack_failed_entry_raises(
+async def test_nack_unknown_id_returns_zero(
     sqs_client: SQSClient,
     sqs_queue_url: str,
 ) -> None:
-    """Changing visibility on an invalid handle surfaces a failed-entry error."""
+    """Nacking an id with no pending delivery on this client is a no-op."""
 
     async with sqs_client.client():
-        with pytest.raises(CoreException):
+        assert (
             await sqs_client.nack(
                 sqs_queue_url,
-                ["definitely-not-a-real-receipt"],
+                ["never-received-id"],
                 requeue=True,
             )
+            == 0
+        )
 
 
 @pytest.mark.asyncio
@@ -367,7 +372,12 @@ async def test_health_ok(
 
 @pytest.mark.asyncio
 async def test_client_options_missing_raises() -> None:
-    """Entering client() with a session but no opts raises internal."""
+    """Entering client() with a session but no opts raises internal.
+
+    After ``initialize`` the persistent client would be yielded without
+    consulting opts, so it is dropped too: the lazy fallback path is the
+    only one that still builds a client from opts.
+    """
 
     client = SQSClient()
     await client.initialize(
@@ -376,8 +386,10 @@ async def test_client_options_missing_raises() -> None:
         access_key_id="test",
         secret_access_key="test",
     )
-    # Drop opts while keeping the session to hit the guard branch.
+    # Drop opts and the persistent client while keeping the session to hit
+    # the lazy-construction guard branch.
     client._SQSClient__opts = None  # type: ignore[attr-defined]
+    client._SQSClient__persistent_client = None  # type: ignore[attr-defined]
     with pytest.raises(CoreException):
         async with client.client():
             pass

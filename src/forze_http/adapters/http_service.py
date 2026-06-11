@@ -1,4 +1,4 @@
-"""Httpx-backed :class:`~forze.application.contracts.http.HttpServicePort`."""
+"""httpx-backed :class:`~forze.application.contracts.http.HttpServicePort`."""
 
 from __future__ import annotations
 
@@ -18,8 +18,8 @@ from forze.base.exceptions._utils import reraise_mapped
 from forze.base.primitives import StrKey
 from forze.base.scrubbing import sanitize_pydantic_errors
 from forze_http.adapters._logger import logger
-from forze_http.execution.deps.configs import HttpxHttpServiceConfig
-from forze_http.kernel.client import HttpxClientPort
+from forze_http.execution.deps.configs import HttpServiceConfig
+from forze_http.kernel.client import HttpClientPort
 from forze_http.kernel.client.errors import httpx_chain_mapper
 
 # ----------------------- #
@@ -36,11 +36,11 @@ def _return_type_allows_empty(return_type: type[BaseModel]) -> bool:
 
 @final
 @attrs.define(slots=True, kw_only=True)
-class HttpxHttpServiceAdapter(HttpServicePort):
+class HttpServiceAdapter(HttpServicePort):
     """Invoke HTTP operations using a shared or routed httpx client."""
 
-    client: HttpxClientPort
-    config: HttpxHttpServiceConfig
+    client: HttpClientPort
+    config: HttpServiceConfig
     spec: HttpServiceSpec
 
     # ....................... #
@@ -126,7 +126,7 @@ class HttpxHttpServiceAdapter(HttpServicePort):
 
         if base is None:
             raise exc.configuration(
-                "HttpxHttpServiceConfig.base_url is required for non-tenant routes",
+                "HttpServiceConfig.base_url is required for non-tenant routes",
             )
 
         url = f"{base.rstrip('/')}/{path.lstrip('/')}"

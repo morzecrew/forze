@@ -196,7 +196,13 @@ class TraceLevelResolver:
 
 @attrs.define(slots=True, frozen=True, kw_only=True)
 class EventDictSanitizer:
-    """Scrub sensitive values from structlog event fields (not the ``event`` message)."""
+    """Scrub sensitive values from structlog event fields.
+
+    The rendered ``event`` message itself is scrubbed with log string rules when
+    ``text_scrub`` is enabled (after positional args are interpolated), so secrets
+    embedded in the message text (e.g. ``logger.info("token=%s", token)``) are
+    masked alongside the extras.
+    """
 
     text_scrub: bool = True
     """When true, apply log string scrub rules to string leaves in ``log`` context."""
@@ -205,7 +211,11 @@ class EventDictSanitizer:
 
     def __call__(self, _: Any, __: str, event_dict: EventDict) -> EventDict:
         from forze.base.scrubbing import sanitize
-        from forze.base.scrubbing.policy import SECRET_PLACEHOLDER, is_sensitive_key
+        from forze.base.scrubbing.policy import (
+            SECRET_PLACEHOLDER,
+            is_sensitive_key,
+            scrub_log_string,
+        )
 
         for key in list(event_dict.keys()):
             if key in _EVENT_DICT_SANITIZE_SKIP:
@@ -220,4 +230,14 @@ class EventDictSanitizer:
                 context="log",
                 text_scrub=self.text_scrub,
             )
+
+        # The message text is client-visible output too: positional args are
+        # already interpolated by the time this sanitizer runs, so apply the
+        # log string rules to ``event`` itself when text scrubbing is on.
+        if self.text_scrub:
+            event_value = event_dict.get("event")
+
+            if isinstance(event_value, str):
+                event_dict["event"] = scrub_log_string(event_value)
+
         return event_dict

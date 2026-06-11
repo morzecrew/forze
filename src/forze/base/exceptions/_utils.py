@@ -1,3 +1,4 @@
+import asyncio
 import inspect
 from functools import lru_cache
 from typing import Any, Callable, Mapping, Never
@@ -34,13 +35,24 @@ def reraise_mapped(
     if isinstance(exc, CoreException):
         raise exc
 
-    if isinstance(exc, (GeneratorExit, KeyboardInterrupt, SystemExit)):
+    if isinstance(
+        exc,
+        (GeneratorExit, KeyboardInterrupt, SystemExit, asyncio.CancelledError),
+    ):
         raise exc
 
     err = mapper(exc, site=site, details=details)
 
     if err is None:
         err = default_exception(exc, site)
+
+    # Every mapped exception carries the interception site for observability,
+    # even when the package-specific mapper didn't include it itself.
+    elif err.details is None:
+        err.details = {"site": site}
+
+    elif "site" not in err.details:
+        err.details = {**err.details, "site": site}
 
     raise err from exc
 

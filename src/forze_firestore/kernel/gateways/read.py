@@ -56,6 +56,16 @@ class FirestoreReadGateway[M: BaseModel](
         kw_only=True,
     )
 
+    def _effective_find_limit(self, limit: int | None) -> int | None:
+        """Apply :attr:`~forze_firestore.kernel.gateways.base.FirestoreGateway.find_many_implicit_limit` when *limit* is omitted."""
+
+        if limit is not None:
+            return limit
+
+        return self.find_many_implicit_limit
+
+    # ....................... #
+
     async def get(self, pk: UUID, *, for_update: RowLockMode = False) -> M:
         if row_lock_requires_transaction(for_update):
             log_non_postgres_lock_degrade(for_update, backend="firestore")
@@ -296,15 +306,12 @@ class FirestoreReadGateway[M: BaseModel](
                 "Firestore adapter does not support offset pagination; use cursor pagination"
             )
 
-        if not filters and limit is None:
-            raise exc.precondition("Filters or limit must be provided")
-
         flt = self.render_filters(filters, parsed=parsed)
         rows = await self.client.query_stream(
             await self.coll(),
             filters=flt,
             order_by=self.render_sorts(sorts),
-            limit=limit,
+            limit=self._effective_find_limit(limit),
         )
         normalized = [self._from_storage_doc(row) for row in rows]
 

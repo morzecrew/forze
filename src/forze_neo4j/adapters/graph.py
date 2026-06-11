@@ -2,8 +2,9 @@
 
 Focused vertical slice: vertex/edge CRUD, ``ensure_edge``, ``neighbors``, ``expand``,
 ``shortest_path``, and the raw escape hatch. The remaining port methods raise a clear
-``NotImplementedError`` and are filled in follow-ups. Tenancy uses property partition:
-a ``tenant_property`` is stamped on writes and constrains anchor-node matches.
+``exc.internal`` (code ``graph_not_implemented``) and are filled in follow-ups. Tenancy
+uses property partition: a ``tenant_property`` is stamped on writes and constrains
+anchor-node matches.
 """
 
 from forze_neo4j._compat import require_neo4j
@@ -32,7 +33,7 @@ from forze.application.contracts.graph import (
     VertexRef,
 )
 from forze.application.contracts.tenancy import TenancyMixin
-from forze.base.exceptions import exc
+from forze.base.exceptions import CoreException, exc
 from forze.base.primitives import JsonDict
 from forze.base.serialization import default_model_codec
 
@@ -42,8 +43,17 @@ from ..kernel.cypher import builders
 # ----------------------- #
 
 
-def _nyi(method: str) -> NotImplementedError:
-    return NotImplementedError(f"forze_neo4j: {method} is not yet implemented")
+def _nyi(method: str) -> CoreException:
+    """Build the standard not-implemented error for a deferred port slice.
+
+    Stays inside the :class:`~forze.base.exceptions.CoreException` taxonomy so
+    egress mapping can classify it (a bare ``NotImplementedError`` cannot be).
+    """
+
+    return exc.internal(
+        f"{method} is not implemented by forze_neo4j yet",
+        code="graph_not_implemented",
+    )
 
 
 # ....................... #

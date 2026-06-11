@@ -11,6 +11,7 @@ from forze.application.contracts.transaction import AfterCommitPort
 from forze.base.exceptions import exc
 from forze.base.primitives import StrKey
 
+from ...context.active_operation import operation_running
 from ..planning.plans import OperationKind, ResolvedOperationPlan
 from .plan import TransactionRunner, run_resolved_operation_plan
 
@@ -63,13 +64,17 @@ class ResolvedOperation[Args, R](Handler[Args, R]):
 
         A QUERY operation runs under a read-only flag, so a command (write) port cannot be
         acquired for its duration (enforced in ``ConvenientDeps._resolve_command``).
+        Execution is marked via the module-level active-operation flag so that
+        constructing an :class:`ExecutionContext` mid-operation (per-request
+        creation, an unsupported mode) can be detected and warned about.
         """
 
-        if self.plan.kind is OperationKind.QUERY:
-            with self.inv_ctx.bind_read_only():
-                return await self._run(args)
+        with operation_running():
+            if self.plan.kind is OperationKind.QUERY:
+                with self.inv_ctx.bind_read_only():
+                    return await self._run(args)
 
-        return await self._run(args)
+            return await self._run(args)
 
 
 # ....................... #

@@ -6,6 +6,7 @@ import attrs
 import msgspec
 from pydantic import BaseModel
 
+from forze.application._logger import logger
 from forze.application.contracts.execution import (
     Middleware,
     MiddlewareFactory,
@@ -47,6 +48,8 @@ class IdempotencyWrap(MiddlewareFactory):
 
     On a cache hit the handler (and its transaction) is skipped and the stored,
     typed result is returned; on a miss the handler runs and its result is stored.
+    When the handler fails, the pending claim is released (best-effort) so a retry
+    of the failed request re-executes instead of conflicting until the claim TTL.
     The wrap is a no-op when no idempotency key is bound on the invocation.
     """
 
@@ -89,7 +92,25 @@ class IdempotencyWrap(MiddlewareFactory):
             if existing is not None:
                 return codec.decode_json_bytes(existing.result)
 
-            result = await next(args)
+            try:
+                result = await next(args)
+
+            except Exception:
+                # Release the pending claim so a legitimate retry of the failed
+                # request can re-execute. Best-effort: a fail() error must not
+                # mask the handler error.
+                try:
+                    await port.fail(self.op, key, payload_hash)
+
+                except Exception:
+                    logger.exception(
+                        "Idempotency fail() errored for op '%s'; the pending "
+                        "claim may persist until its TTL",
+                        self.op,
+                    )
+
+                raise
+
             await port.commit(
                 self.op,
                 key,

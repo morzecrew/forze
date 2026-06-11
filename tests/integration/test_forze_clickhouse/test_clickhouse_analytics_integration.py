@@ -120,6 +120,41 @@ async def test_run_chunked_reads_batches(clickhouse_client, analytics_table) -> 
 
 
 @pytest.mark.asyncio
+async def test_run_chunked_exactly_once_in_order(
+    clickhouse_client,
+    analytics_table,
+) -> None:
+    """run_chunked over the streaming client yields each row once, in order."""
+
+    database_id, table_id = analytics_table
+    spec = _spec()
+    adapter = ClickHouseAnalyticsAdapter(
+        client=clickhouse_client,
+        spec=spec,
+        config=_config(
+            database_id,
+            table_id,
+            sql=f"SELECT event, value FROM {database_id}.{table_id} ORDER BY value",
+        ),
+    )
+
+    total = 9
+    await adapter.append([_Ingest(event=f"ord_{i}", value=i) for i in range(total)])
+
+    batches = [
+        batch
+        async for batch in adapter.run_chunked(
+            "all",
+            _Params(),
+            fetch_batch_size=4,
+        )
+    ]
+    assert [len(batch) for batch in batches] == [4, 4, 1]
+    values = [row.value for batch in batches for row in batch]
+    assert values == list(range(total))
+
+
+@pytest.mark.asyncio
 async def test_run_cursor_offset_pagination(
     clickhouse_client,
     analytics_table,

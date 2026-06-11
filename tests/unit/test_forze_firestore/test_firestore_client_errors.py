@@ -9,7 +9,7 @@ pytest.importorskip("google.cloud.firestore")
 from google.api_core import exceptions as gax_exceptions
 
 from forze.base.exceptions import CoreException, ExceptionKind, exc
-from forze_firestore.kernel.client.errors import _firestore_eh
+from forze_firestore.kernel.client.errors import _firestore_eh, _fs_chain
 
 
 class TestFirestoreErrorHandler:
@@ -67,5 +67,26 @@ class TestFirestoreErrorHandler:
 
     def test_unknown_maps_to_infrastructure(self) -> None:
         mapped = _firestore_eh(RuntimeError("weird"), site="op")
+        assert isinstance(mapped, CoreException)
+        assert mapped.kind == ExceptionKind.INFRASTRUCTURE
+
+
+class TestFirestoreInterceptorChain:
+    """Regression guard: the assembled chain (what the interceptor actually
+    uses) must reach ``_firestore_eh``. Nesting ``default_chain_exc_mapper``
+    swallowed every error into INTERNAL before the Firestore arm ran."""
+
+    def test_chain_maps_aborted_to_concurrency(self) -> None:
+        mapped = _fs_chain(gax_exceptions.Aborted("tx contention"), site="tx")
+        assert isinstance(mapped, CoreException)
+        assert mapped.kind == ExceptionKind.CONCURRENCY
+
+    def test_chain_maps_not_found(self) -> None:
+        mapped = _fs_chain(gax_exceptions.NotFound("missing"), site="get")
+        assert isinstance(mapped, CoreException)
+        assert mapped.kind == ExceptionKind.NOT_FOUND
+
+    def test_chain_maps_unknown_to_infrastructure(self) -> None:
+        mapped = _fs_chain(RuntimeError("weird"), site="op")
         assert isinstance(mapped, CoreException)
         assert mapped.kind == ExceptionKind.INFRASTRUCTURE

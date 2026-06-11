@@ -10,6 +10,7 @@ from datetime import timedelta
 import pytest
 from pydantic import BaseModel
 
+from forze.base.exceptions import CoreException, ExceptionKind
 from forze_duckdb import DuckDbClient, DuckDbConfig
 
 # A query heavy enough to take well over the timeouts/ticks below, but bounded.
@@ -114,8 +115,12 @@ async def test_timeout_interrupts_and_client_recovers(client: DuckDbClient) -> N
     """A short timeout aborts the running query via cursor interrupt, and the
     client remains usable for subsequent queries (executor/connection intact)."""
 
-    with pytest.raises(Exception, match="timeout"):
+    with pytest.raises(CoreException, match="timeout") as ei:
         await client.run_query(_HEAVY_SQL, timeout=timedelta(milliseconds=100))
+
+    # Timeouts are transient backend conditions → infrastructure kind
+    # (retry classification), mirroring Postgres/ClickHouse.
+    assert ei.value.kind is ExceptionKind.INFRASTRUCTURE
 
     # The interrupted query must not have wedged the client.
     result = await client.run_query("SELECT 42 AS a")

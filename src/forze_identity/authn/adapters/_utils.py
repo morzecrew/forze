@@ -1,11 +1,19 @@
+from typing import Any, Mapping
 from uuid import UUID
 
 from forze.application.contracts.authn import AuthnIdentity
-from forze.application.contracts.document import DocumentQueryPort
+from forze.application.contracts.document import DocumentCommandPort, DocumentQueryPort
 from forze.base.exceptions import exc
+from forze.base.primitives import utcnow
 
 from ..domain.models.account import ReadApiKeyAccount, ReadPasswordAccount
 from ..domain.models.invite import ReadPasswordInvite
+from ..domain.models.session import (
+    CreateSessionCmd,
+    ReadSession,
+    Session,
+    UpdateSessionCmd,
+)
 
 # ----------------------- #
 
@@ -92,6 +100,36 @@ async def find_api_key_account_by_id(
             },
         }
     )
+
+
+# ....................... #
+
+
+async def revoke_sessions_matching(
+    session_qry: DocumentQueryPort[ReadSession],
+    session_cmd: DocumentCommandPort[
+        ReadSession,
+        Session,
+        CreateSessionCmd,
+        UpdateSessionCmd,
+    ],
+    values: Mapping[str, Any],
+) -> None:
+    """Revoke (set ``revoked_at``) every session matching the ``$values`` filter.
+
+    Shared by cascaded principal deactivation (token lifecycle) and the
+    password-change "log out everywhere" cascade.
+    """
+
+    sessions = await session_qry.find_many(
+        filters={
+            "$values": dict(values),
+        }
+    )
+
+    upds = [(x.id, x.rev, UpdateSessionCmd(revoked_at=utcnow())) for x in sessions.hits]
+
+    await session_cmd.update_many(upds, return_new=False)
 
 
 # ....................... #

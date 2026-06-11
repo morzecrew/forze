@@ -74,6 +74,13 @@ class MongoGateway[M: BaseModel](
     renderer: MongoQueryRenderer = attrs.field(factory=MongoQueryRenderer)
     """Query expression renderer."""
 
+    find_many_implicit_limit: int | None = 10_000
+    """When ``limit`` is omitted on :meth:`~forze_mongo.kernel.gateways.read.MongoReadGateway.find_many` (and aggregate variants), cap rows at this count.
+
+    ``None`` disables the cap (unbounded reads). Defaults to ``10_000`` to reduce
+    accidental full-collection scans in application code.
+    """
+
     filter_limits: QueryFilterLimits | None = attrs.field(default=None)
     """Optional filter DSL abuse limits."""
 
@@ -86,7 +93,12 @@ class MongoGateway[M: BaseModel](
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
-        """Post-init hook for subclasses; ``filter_parser`` is built via its factory."""
+        """Validate the implicit find cap; ``filter_parser`` is built via its factory."""
+
+        cap = self.find_many_implicit_limit
+
+        if cap is not None and cap < 1:
+            raise exc.internal("find_many_implicit_limit must be at least 1 when set")
 
     # ....................... #
 

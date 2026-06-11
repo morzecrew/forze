@@ -4,27 +4,24 @@ Pagination and counting wrap the registered query SQL in an outer subquery rathe
 than requiring the query author to embed ``LIMIT`` / ``OFFSET`` placeholders.
 Integer bounds are validated and rendered inline; named ``$param`` bindings inside
 the inner query are untouched.
+
+Thin wrappers over the shared analytics SQL builders in
+:mod:`forze.application.integrations.analytics.sql`.
 """
 
-from forze.base.exceptions import exc
+from forze.application.integrations.analytics.sql import (
+    build_count_sql as build_count_sql,  # thin re-export of the shared builder
+)
+from forze.application.integrations.analytics.sql import (
+    apply_limit_offset as _apply_limit_offset,
+)
 
 # ----------------------- #
 
-_COUNT_COLUMN = "forze_cnt"
-
-# ....................... #
-
-
-def build_count_sql(inner_sql: str) -> str:
-    """Wrap *inner_sql* in ``SELECT COUNT(*)`` for total row counts."""
-
-    stripped = inner_sql.strip().rstrip(";")
-
-    return (
-        f"SELECT COUNT(*) AS {_COUNT_COLUMN} "  # nosec B608
-        f"FROM ({stripped}) AS forze_analytics_subq"
-    )
-
+__all__ = [
+    "apply_limit_offset",
+    "build_count_sql",
+]
 
 # ....................... #
 
@@ -36,22 +33,4 @@ def apply_limit_offset(
 ) -> str:
     """Wrap *sql* with ``LIMIT`` / ``OFFSET`` when a window is requested."""
 
-    if limit is None and offset is None:
-        return sql
-
-    stripped = sql.strip().rstrip(";")
-    clause = ""
-
-    if limit is not None:
-        if limit < 0:
-            raise exc.internal("Analytics pagination 'limit' must be >= 0.")
-
-        clause += f" LIMIT {int(limit)}"
-
-    if offset is not None:
-        if offset < 0:
-            raise exc.internal("Analytics pagination 'offset' must be >= 0.")
-
-        clause += f" OFFSET {int(offset)}"
-
-    return f"SELECT * FROM ({stripped}) AS forze_page_subq{clause}"  # nosec B608
+    return _apply_limit_offset(sql, limit=limit, offset=offset)

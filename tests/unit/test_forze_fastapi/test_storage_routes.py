@@ -2,27 +2,41 @@
 
 from __future__ import annotations
 
+import inspect
+from typing import Any
+
 import pytest
 
 pytest.importorskip("fastapi")
 
+import starlette.datastructures
 from fastapi import APIRouter, FastAPI
 from fastapi.testclient import TestClient
 
 from forze.application.contracts.storage import StorageSpec
 from forze.base.exceptions import CoreException
-from forze_fastapi.exceptions import register_exception_handlers
-from forze_fastapi.routes import attach_storage_routes
+from forze_fastapi.exceptions import ERROR_CODE_HEADER, register_exception_handlers
+from forze_fastapi.routes import DEFAULT_MAX_UPLOAD_SIZE, attach_storage_routes
 from forze_kits.aggregates.storage import StorageKernelOp, build_storage_registry
 from forze_mock import MockDepsModule, MockState
 from tests.support.execution_context import context_from_modules
 
 # ----------------------- #
 
+_UNSET: Any = object()
 
-def _build_app(style="rest", *, state: MockState | None = None, include=None) -> FastAPI:
+
+def _build_app(
+    style="rest",
+    *,
+    state: MockState | None = None,
+    include=None,
+    max_upload_size: int | None = _UNSET,
+) -> FastAPI:
     spec = StorageSpec(name="files")
     state = state or MockState()
+
+    kwargs = {} if max_upload_size is _UNSET else {"max_upload_size": max_upload_size}
 
     router = APIRouter(prefix="/files")
     attach_storage_routes(
@@ -32,6 +46,7 @@ def _build_app(style="rest", *, state: MockState | None = None, include=None) ->
         ctx_dep=lambda: context_from_modules(MockDepsModule(state=state)),
         style=style,
         include=include,
+        **kwargs,
     )
 
     app = FastAPI()
@@ -155,3 +170,98 @@ class TestStorageRoutes:
     def test_include_of_unknown_operation_raises(self) -> None:
         with pytest.raises(CoreException, match="Unknown operations"):
             _build_app("rest", include={"nope"})
+
+
+# ....................... #
+
+
+class TestStorageUploadCap:
+    def test_default_cap_is_64_mib(self) -> None:
+        assert DEFAULT_MAX_UPLOAD_SIZE == 64 * 1024 * 1024
+
+        parameters = inspect.signature(attach_storage_routes).parameters
+        assert parameters["max_upload_size"].default is DEFAULT_MAX_UPLOAD_SIZE
+
+    def test_upload_below_cap_succeeds(self) -> None:
+        client = TestClient(_build_app("rest", max_upload_size=1024))
+
+        uploaded = client.post(
+            "/files",
+            files={"file": ("small.txt", b"hello", "text/plain")},
+        )
+
+        assert uploaded.status_code == 201
+        assert uploaded.json()["filename"] == "small.txt"
+
+    def test_upload_above_cap_is_rejected_with_standard_payload(self) -> None:
+        state = MockState()
+        client = TestClient(_build_app("rest", state=state, max_upload_size=10))
+
+        uploaded = client.post(
+            "/files",
+            files={"file": ("big.bin", b"x" * 1000, "application/octet-stream")},
+        )
+
+        assert uploaded.status_code == 422
+        assert "maximum allowed size" in uploaded.json()["detail"]
+        assert uploaded.headers[ERROR_CODE_HEADER] == "upload_too_large"
+
+        # The operation pipeline (and storage port) was never invoked.
+        assert client.post("/files/list", json={}).json()["hits"] == []
+
+    def test_content_length_short_circuits_before_reading(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        client = TestClient(_build_app("rest", max_upload_size=10))
+
+        reads: list[int] = []
+        original = starlette.datastructures.UploadFile.read
+
+        async def tracked(self: Any, *args: Any, **kwargs: Any) -> bytes:
+            reads.append(1)
+            return await original(self, *args, **kwargs)
+
+        monkeypatch.setattr(starlette.datastructures.UploadFile, "read", tracked)
+
+        rejected = client.post(
+            "/files",
+            files={"file": ("big.bin", b"x" * 1000, "application/octet-stream")},
+        )
+
+        assert rejected.status_code == 422
+        assert rejected.headers[ERROR_CODE_HEADER] == "upload_too_large"
+        assert reads == []
+
+    def test_none_disables_the_cap(self) -> None:
+        client = TestClient(_build_app("rest", max_upload_size=None))
+
+        # Larger than the 64 MiB default — only ``None`` lets it through.
+        data = b"x" * (DEFAULT_MAX_UPLOAD_SIZE + 1)
+        uploaded = client.post(
+            "/files",
+            files={"file": ("huge.bin", data, "application/octet-stream")},
+        )
+
+        assert uploaded.status_code == 201
+
+    def test_streaming_cap_applies_without_content_length(self) -> None:
+        # A chunked transfer carries no Content-Length, so only the streamed
+        # read loop can enforce the cap.
+        app = _build_app("rest", max_upload_size=10)
+        client = TestClient(app)
+
+        boundary = "capboundary"
+        body = (
+            f"--{boundary}\r\n"
+            'Content-Disposition: form-data; name="file"; filename="big.bin"\r\n'
+            "Content-Type: application/octet-stream\r\n\r\n"
+        ).encode() + b"x" * 1000 + f"\r\n--{boundary}--\r\n".encode()
+
+        rejected = client.post(
+            "/files",
+            content=iter([body]),
+            headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
+        )
+
+        assert rejected.status_code == 422
+        assert rejected.headers[ERROR_CODE_HEADER] == "upload_too_large"

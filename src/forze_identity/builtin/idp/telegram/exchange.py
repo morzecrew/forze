@@ -6,6 +6,7 @@ import attrs
 
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
+from forze_identity.oidc import verify_id_token_nonce
 
 from .._exchange import oidc_code_exchange
 from .config import TelegramLoginOidcConfig
@@ -71,9 +72,16 @@ async def exchange_authorization_code(
     code: str,
     code_verifier: str,
     redirect_uri: str | None = None,
+    expected_nonce: str | None = None,
     timeout: float = 10.0,
 ) -> TelegramTokenResponse:
-    """Exchange an authorization code for tokens (PKCE + Basic client auth)."""
+    """Exchange an authorization code for tokens (PKCE + Basic client auth).
+
+    When ``expected_nonce`` is set (the session nonce you sent on the authorize URL),
+    the returned ``id_token`` is bound to it via
+    :func:`forze_identity.oidc.verify_id_token_nonce` — a missing or mismatched
+    ``nonce`` claim raises an authentication error. ``None`` skips the binding.
+    """
 
     data = {
         "grant_type": "authorization_code",
@@ -95,4 +103,9 @@ async def exchange_authorization_code(
         timeout=timeout,
     )
 
-    return _parse_token_response(payload)
+    response = _parse_token_response(payload)
+
+    if expected_nonce is not None:
+        verify_id_token_nonce(response.id_token, expected_nonce)
+
+    return response

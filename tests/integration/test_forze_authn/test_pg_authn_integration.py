@@ -440,17 +440,40 @@ async def test_pg_change_password(pg_client: PostgresClient) -> None:
             return_new=False,
         )
 
+    # Open a live session so the "log out everywhere" cascade has something to revoke.
+    token_adapter = TokenLifecycleAdapter(
+        access_svc=AccessTokenService(secret_key=secrets.token_bytes(32)),
+        refresh_svc=RefreshTokenService(pepper=secrets.token_bytes(32)),
+        session_qry=ctx.document.query(session_spec),
+        session_cmd=ctx.document.command(session_spec),
+        eligibility=_eligibility(ctx),
+    )
+
+    with ctx.inv_ctx.bind(metadata=_invocation_metadata()):
+        await token_adapter.issue_tokens(AuthnIdentity(principal_id=pid))
+
     plc = PasswordLifecycleAdapter(
         password_svc=pwd_svc,
         pa_qry=ctx.document.query(password_account_spec),
         pa_cmd=pwd_cmd,
         eligibility=_eligibility(ctx),
+        session_qry=ctx.document.query(session_spec),
+        session_cmd=ctx.document.command(session_spec),
     )
 
     with ctx.inv_ctx.bind(metadata=_invocation_metadata()):
         await plc.change_password(
             AuthnIdentity(principal_id=pid), "old-secret", "new-secret"
         )
+
+    # Password change revokes all of the principal's sessions by default.
+    with ctx.inv_ctx.bind(metadata=_invocation_metadata()):
+        page = await ctx.document.query(session_spec).find_many(
+            filters={"$values": {"principal_id": pid}}
+        )
+
+    assert page.hits
+    assert all(s.revoked_at is not None for s in page.hits)
 
     authn = _orchestrator(
         eligibility=_eligibility(ctx),

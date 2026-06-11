@@ -11,6 +11,13 @@ class SQSRoutingCredentials(BaseModel):
     """JSON shape stored in secrets for :class:`~forze_sqs.kernel.client.RoutedSQSClient`.
 
     Use with :func:`~forze.application.contracts.secrets.resolve_structured`.
+
+    Explicit static credentials **and region** are **required** here (unlike
+    :meth:`~forze_sqs.kernel.client.SQSClient.initialize`, which falls back
+    to botocore's default credential chain for both): per-tenant routing
+    isolates tenants explicitly, so the process-ambient chain identity — or a
+    process-ambient region silently shared across tenants — would defeat the
+    purpose.
     """
 
     endpoint: str = Field(..., min_length=1)

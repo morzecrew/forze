@@ -4,7 +4,6 @@ from enum import StrEnum
 from typing import final
 
 # ----------------------- #
-#! Maybe literals
 
 
 @final

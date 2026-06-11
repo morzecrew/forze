@@ -4,7 +4,6 @@ require_temporal()
 
 # ....................... #
 
-import asyncio
 import base64
 from typing import Any, final
 
@@ -27,6 +26,7 @@ from forze.application.contracts.durable.workflow import (
     DurableWorkflowScheduleTiming,
 )
 from forze.base.exceptions import exc
+from forze.base.primitives import GuardedLifecycle
 
 from .port import TemporalClientPort
 from .schedule_mapping import (
@@ -48,7 +48,7 @@ class TemporalClient(TemporalClientPort):
     """Low level client for temporal.io."""
 
     __client: Client | None = attrs.field(default=None, init=False)
-    __init_lock: asyncio.Lock = attrs.field(factory=asyncio.Lock, init=False)
+    __lifecycle: GuardedLifecycle = attrs.field(factory=GuardedLifecycle, init=False)
 
     # ....................... #
     # Lifecycle
@@ -59,26 +59,41 @@ class TemporalClient(TemporalClientPort):
         *,
         config: TemporalConfig = TemporalConfig(),
     ) -> None:
-        async with self.__init_lock:
-            if self.__client is not None:
-                # log
-                return
+        async def setup() -> None:
+            # Only forward optional security kwargs when set so the default
+            # connect call stays byte-identical to previous releases.
+            connect_kwargs: dict[str, Any] = {}
+
+            if config.tls:
+                connect_kwargs["tls"] = config.tls
+
+            if config.api_key is not None:
+                connect_kwargs["api_key"] = config.api_key.get_secret_value()
+
+            if config.rpc_metadata:
+                connect_kwargs["rpc_metadata"] = dict(config.rpc_metadata)
 
             self.__client = await Client.connect(
                 host,
                 namespace=config.namespace,
                 lazy=config.lazy,
-                # Default values (not configurable)
-                data_converter=pydantic_data_converter,
+                data_converter=config.data_converter or pydantic_data_converter,
                 interceptors=config.interceptors or [],
+                **connect_kwargs,
             )
+
+        await self.__lifecycle.initialize(
+            setup,
+            ready=lambda: self.__client is not None,
+        )
 
     # ....................... #
 
     async def close(self) -> None:
-        async with self.__init_lock:
-            if self.__client is not None:
-                self.__client = None
+        async def teardown() -> None:
+            self.__client = None
+
+        await self.__lifecycle.close(teardown)
 
     # ....................... #
 

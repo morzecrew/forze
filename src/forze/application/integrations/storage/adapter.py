@@ -197,6 +197,7 @@ class ObjectStorageAdapter(StorageQueryPort, StorageCommandPort, TenancyMixin):
         data = obj.data
         prefix = obj.prefix
         description = obj.description
+        tags = dict(obj.tags) if obj.tags else None
 
         if description:
             description = default_b64_codec.dumps(description)
@@ -227,6 +228,7 @@ class ObjectStorageAdapter(StorageQueryPort, StorageCommandPort, TenancyMixin):
                 data=data,
                 content_type=content_type,
                 metadata=safe_meta,
+                tags=tags,
             )
 
         return StoredObject(
@@ -236,6 +238,7 @@ class ObjectStorageAdapter(StorageQueryPort, StorageCommandPort, TenancyMixin):
             content_type=content_type,
             size=len(data),
             created_at=now,
+            tags=tags,
         )
 
     # ....................... #
@@ -288,8 +291,17 @@ class ObjectStorageAdapter(StorageQueryPort, StorageCommandPort, TenancyMixin):
         offset: int,
         *,
         prefix: tuple[str, ...] | str | None = None,
+        include_tags: bool = False,
     ) -> tuple[list[StoredObject], int]:
-        """List stored objects with pagination."""
+        """List stored objects with pagination.
+
+        ``include_tags`` is a guarantee, not a filter: with the default
+        ``False`` tags may be absent on backends that need extra calls (S3) —
+        backends that get them for free (GCS) still include them via head
+        metadata; with ``True`` tags are guaranteed populated and backends
+        needing extra calls pay them (S3 fans out ``GetObjectTagging`` per
+        listed object with bounded concurrency).
+        """
 
         prefix = default_path_codec.join(prefix)
         self._validate_prefix(prefix)
@@ -306,6 +318,7 @@ class ObjectStorageAdapter(StorageQueryPort, StorageCommandPort, TenancyMixin):
                 prefix=path,
                 limit=limit,
                 offset=offset,
+                include_tags=include_tags,
             )
 
             for o in objects:
@@ -331,6 +344,11 @@ class ObjectStorageAdapter(StorageQueryPort, StorageCommandPort, TenancyMixin):
                 except Exception as e:
                     raise exc.internal("Invalid object metadata") from e
 
+                # Tags either ride on the listed object (S3 with
+                # ``include_tags=True``) or on the head metadata (GCS, which
+                # round-trips them for free); prefer the listed-object tags.
+                tags = dict(o.tags) if o.tags else (dict(h.tags) if h.tags else None)
+
                 out.append(
                     StoredObject(
                         key=o.key,
@@ -343,6 +361,7 @@ class ObjectStorageAdapter(StorageQueryPort, StorageCommandPort, TenancyMixin):
                         content_type=h.content_type,
                         size=meta.size,
                         created_at=meta.created_at,
+                        tags=tags,
                     )
                 )
 

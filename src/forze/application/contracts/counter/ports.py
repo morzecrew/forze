@@ -1,9 +1,13 @@
-"""Port for monotonic application counters."""
+"""Port for monotonic application counters.
+
+Counters expose a single command-style port: values are only meaningful at
+allocation time (``incr``/``incr_batch``), so a separate read-only query port
+is deliberately not provided.
+"""
 
 from typing import Awaitable, Protocol, runtime_checkable
 
 # ----------------------- #
-#! Command port... query (most likely) is not necessary
 
 
 @runtime_checkable

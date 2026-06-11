@@ -21,9 +21,14 @@ from forze.base.exceptions import (
     ExceptionMapper,
     default_chain_exc_mapper,
     exc,
+    fallback_exception_mapper,
 )
 
 # ----------------------- #
+
+_fallback = fallback_exception_mapper("Meilisearch")
+
+# ....................... #
 
 
 @static_fn_conformity(ExceptionMapper)  # type: ignore[type-abstract, arg-type]
@@ -49,7 +54,7 @@ def _meilisearch_eh(
             )
 
         case _:
-            return None
+            return _fallback(exc_, site=site, details=details)
 
 
 # ....................... #

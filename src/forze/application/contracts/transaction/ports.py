@@ -8,14 +8,10 @@ from typing import (
     final,
     runtime_checkable,
 )
-from uuid import UUID
 
 import attrs
 
-from forze.base.primitives import uuid7
-
 # ----------------------- #
-#! TODO: get rid of redundant things
 
 
 @final
@@ -37,12 +33,11 @@ class TransactionHandle:
     scope: TransactionScopeKey
     """The scope of the transaction."""
 
-    id: UUID = attrs.field(factory=uuid7, init=False)  #!? not necessary ?
-    """The unique identifier of the transaction."""
+    read_only: bool = attrs.field(default=False, kw_only=True)
+    """Whether the root transaction was opened read-only (nested scopes inherit it)."""
 
 
 # ....................... #
-#! TODO: rename to deferrable* or so
 
 
 @runtime_checkable
@@ -77,5 +72,11 @@ class TransactionManagerPort(Protocol):
         according to implementation policy. When ``read_only`` is true the backend opens a
         read-only transaction where supported (e.g. Postgres ``BEGIN ... READ ONLY``), so
         the database rejects writes — used for ``QUERY`` operations.
+
+        Nesting contract: a nested call (one issued while a transaction on the same
+        scope key is already active) opens a **savepoint**, not a new transaction.
+        Transaction options (isolation, ``read_only``) are honored only at the root —
+        the kernel never forwards ``read_only`` to nested calls, and implementations
+        must not attempt mid-transaction option changes.
         """
         ...

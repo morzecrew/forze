@@ -9,6 +9,7 @@ from typing import final
 import attrs
 
 from forze.application.contracts.dlock import (
+    AcquiredLock,
     DistributedLockCommandPort,
     DistributedLockQueryPort,
     DistributedLockSpec,
@@ -40,6 +41,10 @@ class MockDistributedLockAdapter(
     def _store(self) -> dict[str, tuple[str, float]]:
         with self.state.lock:
             return self.state.dlocks.setdefault(self._route(), {})
+
+    def _fences(self) -> dict[str, int]:
+        with self.state.lock:
+            return self.state.dlock_fences.setdefault(self._route(), {})
 
     # ....................... #
 
@@ -80,16 +85,26 @@ class MockDistributedLockAdapter(
             remaining = max(0.0, entry[1] - self._now())
             return timedelta(seconds=remaining)
 
-    async def acquire(self, key: str, owner: str) -> bool:
+    async def acquire(self, key: str, owner: str) -> AcquiredLock | None:
+        """Acquire the lock and issue a fencing token.
+
+        The per-key counter is bumped on every fresh acquisition and survives
+        release and expiry within the :class:`MockState` lifetime — tokens are
+        monotonic across lock generations, mirroring the Redis adapter.
+        """
+
         ttl = self.spec.ttl.total_seconds()
         expires = self._now() + ttl
         with self.state.lock:
             store = self._store()
             entry = store.get(key)
             if entry is not None and not self._is_expired(entry[1]):
-                return False
+                return None
             store[key] = (owner, expires)
-            return True
+            fences = self._fences()
+            token = fences.get(key, 0) + 1
+            fences[key] = token
+            return AcquiredLock(key=key, owner=owner, token=token)
 
     async def release(self, key: str, owner: str) -> bool:
         with self.state.lock:

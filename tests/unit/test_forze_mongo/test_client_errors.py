@@ -66,6 +66,10 @@ class TestMongoErrorHandler:
         result = _mongo_eh(e, site="some_op")
         assert isinstance(result, CoreException) and result.kind == ExceptionKind.INFRASTRUCTURE
         assert "some_op" in result.summary
+        # raw driver text must not leak into the summary, only into details
+        assert "unexpected" not in result.summary
+        assert result.details is not None
+        assert result.details["error"] == "unexpected"
 
     def test_bulk_write_duplicate_key(self) -> None:
         from pymongo.errors import BulkWriteError
@@ -112,6 +116,26 @@ class TestMongoErrorHandler:
         assert isinstance(result, CoreException) and result.kind == ExceptionKind.CONCURRENCY
         assert "transaction" in result.summary.lower()
 
+    def test_operation_failure_write_conflict(self) -> None:
+        from pymongo.errors import OperationFailure
+
+        e = OperationFailure("WriteConflict", code=112)
+        result = _mongo_eh(e, site="x")
+        assert isinstance(result, CoreException) and result.kind == ExceptionKind.CONCURRENCY
+        assert "conflict" in result.summary.lower()
+
+    def test_operation_failure_transient_transaction_label(self) -> None:
+        from pymongo.errors import OperationFailure
+
+        e = OperationFailure(
+            "some transient error",
+            code=999,
+            details={"errorLabels": ["TransientTransactionError"]},
+        )
+        result = _mongo_eh(e, site="x")
+        assert isinstance(result, CoreException) and result.kind == ExceptionKind.CONCURRENCY
+        assert "transient" in result.summary.lower()
+
     def test_operation_failure_unauthorized(self) -> None:
         from pymongo.errors import OperationFailure
 
@@ -127,3 +151,33 @@ class TestMongoErrorHandler:
         result = _mongo_eh(e, site="my_op")
         assert isinstance(result, CoreException) and result.kind == ExceptionKind.INFRASTRUCTURE
         assert "my_op" in result.summary
+
+
+class TestAssembledChain:
+    """Drive the actual chain wired into ``exc_interceptor``.
+
+    Regression: the nested default chain used to make ``_mongo_eh``
+    unreachable, so in-transaction write conflicts (code 112) surfaced as
+    INTERNAL "Unhandled exception" instead of CONCURRENCY and were never
+    retried by OCC machinery.
+    """
+
+    def test_write_conflict_code_112_maps_to_concurrency(self) -> None:
+        from pymongo.errors import OperationFailure
+
+        from forze_mongo.kernel.client.errors import exc_interceptor
+
+        out = exc_interceptor.mapper(
+            OperationFailure("WriteConflict", code=112),
+            site="tx",
+        )
+        assert out is not None
+        assert out.kind == ExceptionKind.CONCURRENCY
+
+    def test_unknown_exception_reaches_package_fallback(self) -> None:
+        from forze_mongo.kernel.client.errors import exc_interceptor
+
+        out = exc_interceptor.mapper(RuntimeError("weird"), site="op")
+        assert out is not None
+        assert out.kind == ExceptionKind.INFRASTRUCTURE
+        assert out.code != "core.unhandled"

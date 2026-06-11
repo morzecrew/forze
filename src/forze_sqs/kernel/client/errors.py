@@ -14,9 +14,14 @@ from forze.base.exceptions import (
     ExceptionInterceptor,
     ExceptionMapper,
     default_chain_exc_mapper,
+    fallback_exception_mapper,
 )
 
 # ----------------------- #
+
+_fallback = fallback_exception_mapper("SQS")
+
+# ....................... #
 
 
 @static_fn_conformity(ExceptionMapper)  # type: ignore[type-abstract]
@@ -101,15 +106,12 @@ def _sqs_eh(
 
         case sqs_errors.BotoCoreError() as be:
             return CoreException.infrastructure(
-                f"SQS core error: {be}",
-                details=details,
+                "SQS core error.",
+                details={**(details or {}), "error": str(be)},
             )
 
         case _:
-            return CoreException.infrastructure(
-                f"An error occurred while executing SQS operation {site}: {exc}",
-                details=details,
-            )
+            return _fallback(exc, site=site, details=details)
 
 
 # ....................... #

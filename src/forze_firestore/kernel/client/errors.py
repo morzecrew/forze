@@ -12,13 +12,19 @@ from google.api_core import exceptions as gax_exceptions
 
 from forze.base.conformity import static_fn_conformity
 from forze.base.exceptions import (
+    ChainExceptionMapper,
     CoreException,
     ExceptionInterceptor,
     ExceptionMapper,
-    default_chain_exc_mapper,
+    fallback_exception_mapper,
+    map_pydantic,
 )
 
 # ----------------------- #
+
+_fallback = fallback_exception_mapper("Firestore")
+
+# ....................... #
 
 
 @static_fn_conformity(ExceptionMapper)  # type: ignore[type-abstract]
@@ -68,13 +74,17 @@ def _firestore_eh(
             )
 
         case _:
-            return CoreException.infrastructure(
-                f"An error occurred while executing Firestore operation {site}: {exc}",
-                details=details,
-            )
+            return _fallback(exc, site=site, details=details)
 
 
 # ....................... #
 
-_fs_chain = default_chain_exc_mapper.chain(_firestore_eh)
+# NOTE: build a flat chain instead of `default_chain_exc_mapper.chain(...)`.
+# Nesting the default chain as the first arm is a trap: a nested
+# ChainExceptionMapper never returns ``None`` (it falls through to
+# ``default_exception``), so ``_firestore_eh`` would be dead code and every
+# Firestore error — including ABORTED transaction contention — would surface
+# as a generic INTERNAL error instead of CONCURRENCY (which is what plugs
+# into forze's OCC retry machinery).
+_fs_chain = ChainExceptionMapper.chain(map_pydantic, _firestore_eh)
 exc_interceptor = ExceptionInterceptor(mapper=_fs_chain)

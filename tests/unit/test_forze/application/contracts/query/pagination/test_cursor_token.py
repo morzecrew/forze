@@ -19,7 +19,7 @@ from forze.application.contracts.querying.pagination.cursor_token import (
 from forze.application.contracts.querying.sort_resolution import (
     normalize_sorts_with_id,
 )
-from forze.base.exceptions import CoreException
+from forze.base.exceptions import CoreException, ExceptionKind
 from forze.domain.constants import ID_FIELD
 
 
@@ -77,8 +77,9 @@ def test_encode_keyset_misaligned_raises() -> None:
 
 
 def test_decode_keyset_invalid_base64() -> None:
-    with pytest.raises(CoreException, match="Invalid cursor token"):
+    with pytest.raises(CoreException, match="Invalid cursor token") as exc_info:
         decode_keyset_v1("not-valid-base64!!!")
+    assert exc_info.value.kind == ExceptionKind.VALIDATION
 
 
 def test_decode_keyset_wrong_version() -> None:
@@ -158,15 +159,17 @@ def test_validate_cursor_token_roundtrip_returns_values() -> None:
 def test_validate_cursor_token_rejects_key_mismatch() -> None:
     token = encode_keyset_v1(sort_keys=["a"], directions=["asc"], values=[1])
 
-    with pytest.raises(CoreException, match="Cursor does not match"):
+    with pytest.raises(CoreException, match="Cursor does not match") as exc_info:
         validate_cursor_token(token, sort_keys=["b"], directions=["asc"])
+    assert exc_info.value.kind == ExceptionKind.VALIDATION
 
 
 def test_validate_cursor_token_rejects_direction_mismatch() -> None:
     token = encode_keyset_v1(sort_keys=["a"], directions=["asc"], values=[1])
 
-    with pytest.raises(CoreException, match="Cursor does not match"):
+    with pytest.raises(CoreException, match="Cursor does not match") as exc_info:
         validate_cursor_token(token, sort_keys=["a"], directions=["desc"])
+    assert exc_info.value.kind == ExceptionKind.VALIDATION
 
 
 def _rows(n: int) -> list[dict[str, int]]:
@@ -249,6 +252,82 @@ def test_keyset_canonical_value(value: object, expected: object) -> None:
 )
 def test_compare_keyset_sort_values(left: object, right: object, expected: int) -> None:
     assert compare_keyset_sort_values(left, right) == expected
+
+
+def test_decode_keyset_rejects_container_values() -> None:
+    # Tampered token: client-controlled values must be JSON scalars only.
+    import base64
+    import json
+
+    for bad in ({"a": 1}, [1, 2]):
+        raw = json.dumps({"v": 1, "k": ["a"], "d": ["asc"], "x": [bad]}).encode()
+        token = base64.urlsafe_b64encode(raw).decode().rstrip("=")
+        with pytest.raises(CoreException, match="Invalid cursor token") as exc_info:
+            decode_keyset_v1(token)
+        assert exc_info.value.kind == ExceptionKind.VALIDATION
+
+
+def test_compare_keyset_mixed_types_raises_validation_not_type_error() -> None:
+    # A tampered cursor can put an int next to a str row value; that must surface
+    # as an invalid-cursor validation error, never a raw TypeError (500).
+    with pytest.raises(CoreException, match="Invalid cursor token") as exc_info:
+        compare_keyset_sort_values(1, "abc")
+    assert exc_info.value.kind == ExceptionKind.VALIDATION
+
+
+def test_well_formed_token_round_trips_unchanged() -> None:
+    sort_keys = ["name", ID_FIELD]
+    directions = ["asc", "asc"]
+    values = ["alice", "a1"]
+    token = encode_keyset_v1(
+        sort_keys=sort_keys, directions=directions, values=values
+    )
+
+    assert (
+        validate_cursor_token(token, sort_keys=sort_keys, directions=directions)
+        == values
+    )
+
+
+def test_pre_codec_fixed_token_decodes_and_reencodes_identically() -> None:
+    # Token hard-coded from the hand-rolled json/base64 implementation that
+    # predates the :class:`~forze.base.codecs.B64UrlJsonCodec` swap. In-flight
+    # cursors must keep decoding, and re-encoding the same payload must produce
+    # the identical token bytes (wire compatibility in both directions).
+    token = (
+        "eyJkIjpbImRlc2MiLCJkZXNjIiwiZGVzYyJdLCJrIjpbImNyZWF0ZWRfYXQiLCJuYW1l"
+        "IiwiaWQiXSwidiI6MSwieCI6WyIyMDI2LTAxLTAyVDAzOjA0OjA1IiwiYWxpY2UiLCIw"
+        "MTkzZTRjMi1hYWFhLWJiYmItY2NjYy0xMjM0NTY3ODkwYWIiXX0"
+    )
+
+    keys, dirs, vals = decode_keyset_v1(token)
+
+    assert keys == ["created_at", "name", "id"]
+    assert dirs == ["desc", "desc", "desc"]
+    assert vals == [
+        "2026-01-02T03:04:05",
+        "alice",
+        "0193e4c2-aaaa-bbbb-cccc-1234567890ab",
+    ]
+    assert encode_keyset_v1(sort_keys=keys, directions=dirs, values=vals) == token
+
+
+def test_pre_codec_token_with_escaped_unicode_still_decodes() -> None:
+    # The old encoder escaped non-ASCII as \uXXXX (ensure_ascii=True); such
+    # tokens must keep decoding to the same values.
+    token = "eyJkIjpbImFzYyJdLCJrIjpbIm5hbWUiXSwidiI6MSwieCI6WyJoXHUwMGU5bGxvIl19"
+
+    keys, dirs, vals = decode_keyset_v1(token)
+
+    assert keys == ["name"]
+    assert dirs == ["asc"]
+    assert vals == ["héllo"]
+
+
+def test_non_ascii_value_round_trips() -> None:
+    token = encode_keyset_v1(sort_keys=["name"], directions=["asc"], values=["héllo"])
+
+    assert decode_keyset_v1(token) == (["name"], ["asc"], ["héllo"])
 
 
 def test_decode_keyset_rejects_non_list_payload() -> None:

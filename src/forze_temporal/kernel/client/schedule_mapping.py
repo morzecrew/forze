@@ -105,12 +105,12 @@ def build_schedule(
 def resolve_scheduled_workflow_id(
     schedule_id: str,
     *,
-    workflow_id_template: str | None,
+    workflow_id_base: str | None,
 ) -> str:
     """Resolve the workflow id used for each scheduled workflow start."""
 
-    if workflow_id_template is not None:
-        return workflow_id_template
+    if workflow_id_base is not None:
+        return workflow_id_base
 
     return f"{schedule_id}-scheduled"
 

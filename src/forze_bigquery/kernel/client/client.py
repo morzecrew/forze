@@ -14,6 +14,7 @@ from aiohttp import ClientSession
 from gcloud.aio.bigquery import Job, Table, query_response_to_dict
 from pydantic import BaseModel
 
+from forze.application.execution.resilience.read_retry import retry_read
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
 from forze.base.primitives.owned_temp_path import OwnedTempPath
@@ -31,7 +32,6 @@ from .value_objects import (
 
 T = TypeVar("T")
 
-_READ_RETRY_EXC = (TimeoutError, OSError, ConnectionError)
 _MAX_INSERT_ERRORS = 50
 
 # ....................... #
@@ -166,30 +166,15 @@ class BigQueryClient(BigQueryClientPort):
 
     async def __maybe_read_retry(
         self,
-        op: str,
         fn: Callable[[], Awaitable[T]],
     ) -> T:
         cfg = self.__require_config()
-        attempts = max(0, cfg.read_retry_attempts)
-        base = max(0.0, cfg.read_retry_base_delay.total_seconds())
-        last: BaseException | None = None
 
-        for i in range(attempts + 1):
-            try:
-                return await fn()
-
-            except _READ_RETRY_EXC as e:
-                last = e
-
-                if i >= attempts:
-                    raise
-
-                await asyncio.sleep(base * (2**i))
-
-        if last is None:
-            raise exc.internal("Last exception is None")
-
-        raise last
+        return await retry_read(
+            fn,
+            attempts=cfg.read_retry_attempts,
+            base_delay=cfg.read_retry_base_delay.total_seconds(),
+        )
 
     # ....................... #
 
@@ -248,7 +233,7 @@ class BigQueryClient(BigQueryClientPort):
             async def _probe() -> None:
                 await self.run_query("SELECT 1", dry_run=True, timeout=None)
 
-            await self.__maybe_read_retry("health", _probe)
+            await self.__maybe_read_retry(_probe)
             return "ok", True
 
         except Exception as e:
@@ -378,7 +363,7 @@ class BigQueryClient(BigQueryClientPort):
 
             return self.__parse_rows(results)
 
-        return await self.__maybe_read_retry("run_query", _run)
+        return await self.__maybe_read_retry(_run)
 
     # ....................... #
 
@@ -420,7 +405,7 @@ class BigQueryClient(BigQueryClientPort):
 
             return all_rows
 
-        return await self.__maybe_read_retry("run_query_all_pages", _run)
+        return await self.__maybe_read_retry(_run)
 
     # ....................... #
 

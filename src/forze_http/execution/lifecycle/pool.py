@@ -13,19 +13,19 @@ from forze.application.execution.lifecycle.builtin import (
     routed_client_lifecycle_step,
 )
 from forze.base.serialization.pydantic import pydantic_secret_converter
-from forze_http.execution.deps.keys import HttpxClientDepKey
-from forze_http.kernel.client import HttpxClient, HttpxConfig, RoutedHttpxClient
+from forze_http.execution.deps.keys import HttpClientDepKey
+from forze_http.kernel.client import HttpClient, HttpConfig, RoutedHttpClient
 
 # ----------------------- #
 
 
 @final
 @attrs.define(slots=True, frozen=True, kw_only=True)
-class HttpxStartupHook(LifecycleHook):
+class HttpStartupHook(LifecycleHook):
     """Initialize the httpx async client."""
 
     base_url: str | None = None
-    config: HttpxConfig = attrs.field(factory=HttpxConfig, repr=False)
+    config: HttpConfig = attrs.field(factory=HttpConfig, repr=False)
     default_headers: dict[str, str] = attrs.field(factory=dict)
     auth_token: SecretStr | None = attrs.field(
         default=None,
@@ -36,7 +36,7 @@ class HttpxStartupHook(LifecycleHook):
     # ....................... #
 
     async def __call__(self, ctx: ExecutionContext) -> None:
-        client = cast(HttpxClient, ctx.deps.provide(HttpxClientDepKey))
+        client = cast(HttpClient, ctx.deps.provide(HttpClientDepKey))
         headers = dict(self.default_headers)
 
         if self.auth_token is not None:
@@ -57,10 +57,10 @@ class HttpxStartupHook(LifecycleHook):
 
 @final
 @attrs.define(slots=True, frozen=True, kw_only=True)
-class HttpxShutdownHook(ClientShutdownHook):
+class HttpShutdownHook(ClientShutdownHook):
     """Close the httpx client."""
 
-    dep_key: DepKey[Any] = attrs.field(default=HttpxClientDepKey, init=False)
+    dep_key: DepKey[Any] = attrs.field(default=HttpClientDepKey, init=False)
     close_method: str = attrs.field(default="aclose", init=False)
 
 
@@ -71,21 +71,21 @@ def http_lifecycle_step(
     name: str = "http_lifecycle",
     *,
     base_url: str | None = None,
-    config: HttpxConfig | None = None,
+    config: HttpConfig | None = None,
     default_headers: dict[str, str] | None = None,
     auth_token: str | SecretStr | None = None,
 ) -> LifecycleStep:
-    """Build a lifecycle step for :class:`HttpxClient` init and shutdown."""
+    """Build a lifecycle step for :class:`HttpClient` init and shutdown."""
 
     return LifecycleStep(
         id=name,
-        startup=HttpxStartupHook(
+        startup=HttpStartupHook(
             base_url=base_url,
-            config=config or HttpxConfig(),
+            config=config or HttpConfig(),
             default_headers=default_headers or {},
             auth_token=auth_token,  # type: ignore[arg-type]
         ),
-        shutdown=HttpxShutdownHook(),
+        shutdown=HttpShutdownHook(),
     )
 
 
@@ -95,8 +95,8 @@ def http_lifecycle_step(
 def routed_http_lifecycle_step(
     name: str = "routed_http_lifecycle",
     *,
-    client: RoutedHttpxClient,
+    client: RoutedHttpClient,
 ) -> LifecycleStep:
-    """Lifecycle for :class:`RoutedHttpxClient` registered as :data:`HttpxClientDepKey`."""
+    """Lifecycle for :class:`RoutedHttpClient` registered as :data:`HttpClientDepKey`."""
 
     return routed_client_lifecycle_step(name, client=client)

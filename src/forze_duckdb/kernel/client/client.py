@@ -217,7 +217,12 @@ class DuckDbClient(DuckDbClientPort):
                     pass
 
             await asyncio.gather(fut, return_exceptions=True)
-            raise exc.internal(f"DuckDB query exceeded timeout of {timeout_sec}s")
+            # Infrastructure (not internal): timeouts are transient backend
+            # conditions, mirroring how Postgres/ClickHouse classify query
+            # timeouts for retry purposes.
+            raise exc.infrastructure(
+                f"DuckDB query exceeded timeout of {timeout_sec}s"
+            )
 
         return fut.result()
 

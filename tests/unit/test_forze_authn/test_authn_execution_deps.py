@@ -194,6 +194,26 @@ class TestAuthnDepsModule:
         assert deps.exists(ApiKeyLifecycleDepKey, route="a")
         assert deps.exists(PasswordAccountProvisioningDepKey, route="a")
 
+    def test_token_verifier_override_without_resolver_rejected(self) -> None:
+        with pytest.raises(CoreException, match="'main'"):
+            AuthnDepsModule(
+                kernel=_kernel_min_access(),
+                authn={"main": frozenset({"token"})},
+                token_verifiers={"main": MagicMock()},
+            )()
+
+    def test_token_verifier_override_with_resolver_passes(self) -> None:
+        deps = AuthnDepsModule(
+            kernel=AuthnKernelConfig(),
+            authn={"main": frozenset({"token"})},
+            token_verifiers={"main": MagicMock()},
+            resolvers={"main": ConfigurableJwtNativeUuidResolver()},
+        )()
+
+        assert deps.exists(AuthnDepKey, route="main")
+        assert deps.exists(TokenVerifierDepKey, route="main")
+        assert deps.exists(PrincipalResolverDepKey, route="main")
+
     def test_resolver_override(self) -> None:
         sentinel = ConfigurableJwtNativeUuidResolver()
         deps = AuthnDepsModule(
@@ -208,6 +228,47 @@ class TestAuthnDepsModule:
         )
 
         assert isinstance(resolver, JwtNativeUuidResolver)
+
+    def test_module_flags_flow_into_password_factories(self) -> None:
+        deps = AuthnDepsModule(
+            kernel=AuthnKernelConfig(password=_slow_password_config()),
+            authn={"main": frozenset({"password"})},
+            password_lifecycle={"main"},
+            revoke_sessions_on_password_change=False,
+            password_rehash_on_login=True,
+        )().merge(_document_deps_only())
+
+        ctx = context_from_deps(deps)
+        spec = AuthnSpec(name="main", enabled_methods=frozenset({"password"}))
+
+        verifier = ctx.deps.provide(PasswordVerifierDepKey, route="main")(ctx, spec)
+        lifecycle = ctx.deps.provide(PasswordLifecycleDepKey, route="main")(ctx, spec)
+
+        assert isinstance(verifier, Argon2PasswordVerifier)
+        assert verifier.pa_cmd is not None
+        assert isinstance(lifecycle, PasswordLifecycleAdapter)
+        assert lifecycle.revoke_sessions_on_password_change is False
+        assert lifecycle.session_qry is None
+
+    def test_module_defaults_revoke_sessions_and_skip_rehash(self) -> None:
+        deps = AuthnDepsModule(
+            kernel=AuthnKernelConfig(password=_slow_password_config()),
+            authn={"main": frozenset({"password"})},
+            password_lifecycle={"main"},
+        )().merge(_document_deps_only())
+
+        ctx = context_from_deps(deps)
+        spec = AuthnSpec(name="main", enabled_methods=frozenset({"password"}))
+
+        verifier = ctx.deps.provide(PasswordVerifierDepKey, route="main")(ctx, spec)
+        lifecycle = ctx.deps.provide(PasswordLifecycleDepKey, route="main")(ctx, spec)
+
+        assert isinstance(verifier, Argon2PasswordVerifier)
+        assert verifier.pa_cmd is None
+        assert isinstance(lifecycle, PasswordLifecycleAdapter)
+        assert lifecycle.revoke_sessions_on_password_change is True
+        assert lifecycle.session_qry is not None
+        assert lifecycle.session_cmd is not None
 
 
 # ....................... #
@@ -256,6 +317,23 @@ class TestConfigurableFactories:
         )
 
         assert isinstance(port, Argon2PasswordVerifier)
+        assert port.pa_cmd is None
+
+    def test_password_verifier_factory_rehash_on_login_wires_command_port(self) -> None:
+        ctx = self._ctx()
+
+        kernel = AuthnKernelConfig(password=_slow_password_config())
+        factory = ConfigurableArgon2PasswordVerifier(
+            shared=build_authn_shared_services(kernel),
+            rehash_on_login=True,
+        )
+
+        port = factory(
+            ctx, AuthnSpec(name="s", enabled_methods=frozenset({"password"}))
+        )
+
+        assert isinstance(port, Argon2PasswordVerifier)
+        assert port.pa_cmd is not None
 
     def test_api_key_verifier_factory(self) -> None:
         ctx = self._ctx()
@@ -325,6 +403,25 @@ class TestConfigurableFactories:
         port = factory(ctx, AuthnSpec(name="s"))
 
         assert isinstance(port, PasswordLifecycleAdapter)
+        assert port.revoke_sessions_on_password_change is True
+        assert port.session_qry is not None
+        assert port.session_cmd is not None
+
+    def test_password_lifecycle_factory_revocation_opt_out(self) -> None:
+        ctx = self._ctx()
+
+        kernel = AuthnKernelConfig(password=_slow_password_config())
+        factory = ConfigurablePasswordLifecycle(
+            shared=build_authn_shared_services(kernel),
+            revoke_sessions_on_password_change=False,
+        )
+
+        port = factory(ctx, AuthnSpec(name="s"))
+
+        assert isinstance(port, PasswordLifecycleAdapter)
+        assert port.revoke_sessions_on_password_change is False
+        assert port.session_qry is None
+        assert port.session_cmd is None
 
     def test_api_key_lifecycle_factory(self) -> None:
         ctx = self._ctx()
@@ -387,3 +484,21 @@ class TestConfigurableFactories:
         factory = ConfigurableAuthn(enabled_methods=frozenset({"token"}))
 
         assert factory.enabled_methods == frozenset({"token"})
+
+
+class TestCredentialSpecsAreSensitive:
+    """Credential-bearing authn specs must be marked ``sensitive`` so generated
+    external surfaces (HTTP route generators, MCP) refuse to project them."""
+
+    def test_credential_specs_marked_sensitive(self) -> None:
+        from forze_identity.authn.application.specs import (
+            api_key_account_spec,
+            password_account_spec,
+            password_invite_spec,
+            session_spec,
+        )
+
+        assert password_account_spec.sensitive is True
+        assert api_key_account_spec.sensitive is True
+        assert password_invite_spec.sensitive is True
+        assert session_spec.sensitive is True

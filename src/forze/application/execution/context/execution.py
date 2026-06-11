@@ -27,6 +27,7 @@ from forze.application.contracts.transaction import TransactionDeps
 from ..deps import FrozenDeps
 from ..deps.tx_tracer import tx_tracer_from_runtime
 from ..tracing import bind_active_deps, init_runtime_tracing
+from .active_operation import warn_if_constructed_in_operation
 from .invocation import InvocationContext
 from .outbox_staging import OutboxStagingContext
 from .transaction import TransactionContext
@@ -77,6 +78,18 @@ class ExecutionContext:
     """Per-scope resolved-port memo: ``(dep key, route) -> (spec, port)`` (``None`` when
     caching is disabled)."""
 
+    lifecycle_started: set[StrKey] = attrs.field(
+        factory=set,
+        init=False,
+        repr=False,
+        eq=False,
+        hash=False,
+    )
+    """Lifecycle step ids that completed startup and were not yet shut down.
+
+    Managed by the lifecycle runner so each step's shutdown runs at most once per
+    successful startup and never without one (e.g. after a partial startup failure)."""
+
     # ....................... #
 
     tx_ctx: TransactionContext = attrs.field(factory=TransactionContext, init=False)
@@ -126,7 +139,6 @@ class ExecutionContext:
     dlock: DistributedLockDeps = attrs.field(factory=DistributedLockDeps, init=False)
     """Distributed lock dependencies."""
 
-    #! maybe rename to TenancyDeps, TenancyResolver, TenancyManager
     tenancy: TenancyDeps = attrs.field(factory=TenancyDeps, init=False)
     """Tenancy dependencies."""
 
@@ -185,10 +197,13 @@ class ExecutionContext:
     # ....................... #
 
     def cached_port(self, key: Any, spec: Any) -> Any | None:
-        """Return a memoized port for ``key`` if cached for the *same* ``spec``.
+        """Return a memoized port for ``key`` if cached for an *equal* ``spec``.
 
-        Returns ``None`` on a miss, a spec mismatch, or when caching is disabled;
-        callers resolve and then call :meth:`store_port`.
+        Spec match uses an identity fast-path, then value equality — spec types
+        are frozen attrs classes, so per-call-constructed but structurally equal
+        specs still hit the cache. Returns ``None`` on a miss, a spec mismatch,
+        or when caching is disabled; callers resolve and then call
+        :meth:`store_port`.
         """
 
         cache = self._resolved_port_cache
@@ -198,7 +213,7 @@ class ExecutionContext:
 
         entry = cache.get(key)
 
-        if entry is not None and entry[0] is spec:
+        if entry is not None and (entry[0] is spec or entry[0] == spec):
             return entry[1]
 
         return None
@@ -209,7 +224,7 @@ class ExecutionContext:
         """Memoize a resolved port for this scope (no-op when disabled).
 
         Stores ``(spec, port)`` keyed by ``(dep key, route)``; a later resolve with a
-        different spec object on the same key rebuilds and replaces the entry.
+        non-equal spec on the same key rebuilds and replaces the entry.
         """
 
         cache = self._resolved_port_cache
@@ -220,6 +235,8 @@ class ExecutionContext:
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
+        warn_if_constructed_in_operation()
+
         bind_active_deps(self.deps)
         init_runtime_tracing(self.deps)
 
@@ -252,4 +269,14 @@ class ExecutionContext:
 # ....................... #
 
 ExecutionContextFactory = Callable[[], ExecutionContext]
-"""Factory callable for creating :class:`ExecutionContext` instances."""
+"""Factory callable for creating :class:`ExecutionContext` instances.
+
+Invoke it once per runtime scope. Context objects own per-instance
+:class:`~contextvars.ContextVar` state (e.g. the per-route outbox staging buffers) and
+per-scope caches, so creating execution contexts repeatedly — per request, per
+operation — is **not** a supported mode: stale per-instance ``ContextVar``s cannot be
+cleaned from still-referenced ``Context`` objects. One context per runtime scope; see
+:class:`~forze.base.primitives.ContextualBuffer` for the rationale. Enforced as a
+tripwire: constructing a context while an operation is executing logs a warning (see
+:mod:`forze.application.execution.context.active_operation`).
+"""

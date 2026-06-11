@@ -11,6 +11,7 @@ from forze.base.exceptions import exc
 
 from forze_identity._secure_spec import forbid_cache_and_history
 
+from .._logger import logger
 from ..domain.models.policy_principal import ReadPolicyPrincipal
 
 # ----------------------- #
@@ -42,14 +43,25 @@ def validate_authz_query_ports(
     a principal's grants leak across tenants. Refusing to construct the adapter
     surfaces the misconfiguration at startup rather than failing open at request time.
 
+    Conversely, when the route is ``global`` (the default) but the wired ports
+    *are* tenant-aware — the detectable signal of a multi-tenant deployment —
+    a warning is logged once per adapter: grant resolution ignores tenant
+    context in global mode, so roles/permissions are shared across all tenants.
+    That can be a deliberate choice (platform-wide roles over tenant-partitioned
+    stores), hence a warning rather than an error.
+
     :raises CoreException: When a port enables cache/history, or when a tenant-scoped
         route is wired with a non-tenant-aware port.
     """
 
     require_tenant_aware = spec.tenancy_mode == "require_invocation_tenant"
+    tenant_aware_ports: list[str] = []
 
     for port in ports:
         validate_secure_authz_document_spec(port.spec)
+
+        if port.tenant_aware:
+            tenant_aware_ports.append(port.spec.name)
 
         if require_tenant_aware and not port.tenant_aware:
             raise exc.configuration(
@@ -58,6 +70,18 @@ def validate_authz_query_ports(
                 "tenant-scoped route (tenancy_mode='require_invocation_tenant'); "
                 "otherwise effective grants are not partitioned by tenant.",
             )
+
+    if spec.tenancy_mode == "global" and tenant_aware_ports:
+        logger.warning(
+            "Authz route uses tenancy_mode='global' over tenant-aware document "
+            "ports: grant resolution ignores tenant context, so roles and "
+            "permissions are shared across all tenants. Set "
+            "tenancy_mode='require_invocation_tenant' on the AuthzSpec for "
+            "per-tenant grant isolation; keep 'global' only if platform-wide "
+            "roles over tenant-partitioned stores are intended.",
+            route=spec.name,
+            tenant_aware_ports=sorted(set(tenant_aware_ports)),
+        )
 
 
 # ....................... #

@@ -3,13 +3,17 @@
 # covers: OutboxCommandPort.flush
 # covers: OutboxQueryPort.claim_pending
 # covers: OutboxQueryPort.mark_published
+# covers: OutboxQueryPort.mark_retry
+# covers: OutboxQueryPort.mark_failed
 # covers: OutboxQueryPort.reclaim_stale_processing
 # covers: OutboxQueryPort.requeue_failed
 """
 
 from __future__ import annotations
 
+import asyncio
 from datetime import timedelta
+from typing import Any
 from uuid import uuid4
 
 import pytest
@@ -17,6 +21,7 @@ from pydantic import BaseModel
 
 from forze.application.contracts.outbox import (
     IntegrationEvent,
+    OutboxClaim,
     OutboxDestination,
     OutboxSpec,
     OutboxStatus,
@@ -30,6 +35,7 @@ from forze.application.execution import Deps, DepsRegistry, ExecutionRuntime
 from forze.base.primitives import utcnow
 from forze.base.serialization import PydanticModelCodec
 from forze_kits.integrations.outbox import relay_outbox_to_queue
+from forze_kits.integrations.outbox._relay_core import relay_outbox_claims
 from forze_mock import MockStateDepKey
 from forze_mock.adapters import MockState
 from forze_mock.execution.module import ConfigurableMockQueue, MockDepsModule
@@ -67,7 +73,9 @@ async def outbox_collection(
     coll = await mongo_client_replica.collection(coll_name, db_name=db_name)
 
     await coll.create_index([("outbox_route", 1), ("event_id", 1)], unique=True)
-    await coll.create_index([("outbox_route", 1), ("status", 1), ("created_at", 1)])
+    await coll.create_index(
+        [("outbox_route", 1), ("status", 1), ("available_at", 1), ("created_at", 1)]
+    )
     await coll.create_index([("outbox_route", 1), ("status", 1), ("processing_at", 1)])
 
     yield db_name, coll_name
@@ -425,3 +433,255 @@ async def test_mongo_outbox_requeue_failed_then_relay(
 
     assert result.published == 1
     assert len(shared_state.queues["relay"]["relay"]) == 1
+
+
+# ----------------------- #
+# Relay failure model (mark_retry / mark_failed / requeue_failed / available_at)
+
+
+def _mongo_runtime(
+    mongo_client_replica: MongoClient,
+    outbox_collection: tuple[str, str],
+) -> ExecutionRuntime:
+    db_name, coll_name = outbox_collection
+    mongo_module = MongoDepsModule(
+        client=mongo_client_replica,
+        tx={"default"},
+        outboxes={
+            "integration": MongoOutboxConfig(
+                collection=(db_name, coll_name),
+            ),
+        },
+    )
+    return ExecutionRuntime(deps=DepsRegistry.from_modules(mongo_module).freeze())
+
+
+def _outbox_doc(row_id: Any, **overrides: Any) -> dict[str, Any]:
+    doc: dict[str, Any] = {
+        "id": str(row_id),
+        "outbox_route": "integration",
+        "event_id": str(uuid4()),
+        "event_type": "demo.created",
+        "occurred_at": utcnow(),
+        "payload": {"label": "row"},
+        "status": OutboxStatus.PENDING.value,
+        "created_at": utcnow(),
+        "processing_at": None,
+        "published_at": None,
+        "last_error": None,
+        "tenant_id": None,
+        "execution_id": None,
+        "correlation_id": None,
+        "causation_id": None,
+        "attempts": 0,
+        "available_at": None,
+    }
+    doc.update(overrides)
+    return doc
+
+
+@pytest.mark.asyncio
+async def test_mongo_outbox_retry_cycle_publishes_after_transient_failures(
+    mongo_client_replica: MongoClient,
+    outbox_collection: tuple[str, str],
+) -> None:
+    codec = PydanticModelCodec(_OutboxPayload)
+    outbox_spec = OutboxSpec(name="integration", codec=codec)
+    runtime = _mongo_runtime(mongo_client_replica, outbox_collection)
+    db_name, coll_name = outbox_collection
+
+    fail_counts: dict[str, int] = {}
+
+    async def flaky_publish(claim: OutboxClaim, payload: Any) -> None:
+        count = fail_counts.get(str(claim.event_id), 0)
+        if count < 2:
+            fail_counts[str(claim.event_id)] = count + 1
+            raise RuntimeError("transient broker error")
+
+    async with runtime.scope():
+        ctx = runtime.get_context()
+        async with ctx.tx_ctx.scope("default"):
+            outbox = ctx.outbox.command(outbox_spec)
+            await outbox.stage_many(
+                [
+                    ("a", _OutboxPayload(label="one")),
+                    ("b", _OutboxPayload(label="two")),
+                    ("c", _OutboxPayload(label="three")),
+                ]
+            )
+            assert await outbox.flush() == 3
+
+        published_total = 0
+        retried_total = 0
+
+        for _ in range(20):
+            result = await relay_outbox_claims(
+                ctx,
+                outbox_spec=outbox_spec,
+                publish_one=flaky_publish,
+                reclaim_stale_after=None,
+                max_attempts=5,
+                retry_base_delay=timedelta(milliseconds=10),
+                retry_max_backoff=timedelta(milliseconds=40),
+            )
+            published_total += result.published
+            retried_total += result.retried
+            assert result.failed == 0
+
+            if published_total == 3:
+                break
+
+            # Sleep past the maximum possible backoff (capped at 40ms).
+            await asyncio.sleep(0.06)
+
+        coll = await mongo_client_replica.collection(coll_name, db_name=db_name)
+        rows = await mongo_client_replica.find_many(
+            coll,
+            {"outbox_route": "integration"},
+        )
+
+    assert published_total == 3
+    assert retried_total == 6  # two reschedules per row
+    assert len(rows) == 3
+
+    for row in rows:
+        assert row["status"] == OutboxStatus.PUBLISHED.value
+        assert row["attempts"] == 2
+        assert row["published_at"] is not None
+
+
+@pytest.mark.asyncio
+async def test_mongo_outbox_terminal_failure_after_max_attempts(
+    mongo_client_replica: MongoClient,
+    outbox_collection: tuple[str, str],
+) -> None:
+    codec = PydanticModelCodec(_OutboxPayload)
+    outbox_spec = OutboxSpec(name="integration", codec=codec)
+    runtime = _mongo_runtime(mongo_client_replica, outbox_collection)
+    db_name, coll_name = outbox_collection
+
+    async def always_fail(claim: OutboxClaim, payload: Any) -> None:
+        raise RuntimeError("broker exploded")
+
+    async with runtime.scope():
+        ctx = runtime.get_context()
+        async with ctx.tx_ctx.scope("default"):
+            outbox = ctx.outbox.command(outbox_spec)
+            await outbox.stage("demo.created", _OutboxPayload(label="doomed"))
+            assert await outbox.flush() == 1
+
+        failed_total = 0
+
+        for _ in range(20):
+            result = await relay_outbox_claims(
+                ctx,
+                outbox_spec=outbox_spec,
+                publish_one=always_fail,
+                reclaim_stale_after=None,
+                max_attempts=2,
+                retry_base_delay=timedelta(milliseconds=10),
+                retry_max_backoff=timedelta(milliseconds=20),
+            )
+            failed_total += result.failed
+            assert result.published == 0
+
+            if failed_total:
+                break
+
+            await asyncio.sleep(0.05)
+
+        coll = await mongo_client_replica.collection(coll_name, db_name=db_name)
+        rows = await mongo_client_replica.find_many(
+            coll,
+            {"outbox_route": "integration"},
+        )
+
+    assert failed_total == 1
+    assert len(rows) == 1
+    assert rows[0]["status"] == OutboxStatus.FAILED.value
+    assert rows[0]["attempts"] == 1  # one reschedule before the terminal failure
+    assert rows[0]["last_error"] is not None
+    assert "broker exploded" in rows[0]["last_error"]
+
+
+@pytest.mark.asyncio
+async def test_mongo_outbox_requeue_failed_resets_attempts_then_drains(
+    mongo_client_replica: MongoClient,
+    outbox_collection: tuple[str, str],
+) -> None:
+    codec = PydanticModelCodec(_OutboxPayload)
+    outbox_spec = OutboxSpec(name="integration", codec=codec)
+    runtime = _mongo_runtime(mongo_client_replica, outbox_collection)
+    db_name, coll_name = outbox_collection
+    row_id = uuid4()
+
+    coll = await mongo_client_replica.collection(coll_name, db_name=db_name)
+    await mongo_client_replica.insert_one(
+        coll,
+        _outbox_doc(
+            row_id,
+            payload={"label": "revived"},
+            status=OutboxStatus.FAILED.value,
+            last_error="exhausted",
+            attempts=3,
+            available_at=utcnow() + timedelta(hours=1),
+        ),
+    )
+
+    published: list[Any] = []
+
+    async def record_publish(claim: OutboxClaim, payload: Any) -> None:
+        published.append(payload)
+
+    async with runtime.scope():
+        ctx = runtime.get_context()
+        query = ctx.outbox.query(outbox_spec)
+        assert await query.requeue_failed([row_id]) == 1
+
+        rows = await mongo_client_replica.find_many(coll, {"id": str(row_id)})
+        assert rows[0]["status"] == OutboxStatus.PENDING.value
+        assert rows[0]["attempts"] == 0
+        assert rows[0]["available_at"] is None
+        assert rows[0]["last_error"] is None
+
+        result = await relay_outbox_claims(
+            ctx,
+            outbox_spec=outbox_spec,
+            publish_one=record_publish,
+            reclaim_stale_after=None,
+        )
+
+    assert result.published == 1
+    assert published == [_OutboxPayload(label="revived")]
+
+
+@pytest.mark.asyncio
+async def test_mongo_outbox_future_available_at_invisible_to_claim(
+    mongo_client_replica: MongoClient,
+    outbox_collection: tuple[str, str],
+) -> None:
+    codec = PydanticModelCodec(_OutboxPayload)
+    outbox_spec = OutboxSpec(name="integration", codec=codec)
+    runtime = _mongo_runtime(mongo_client_replica, outbox_collection)
+    db_name, coll_name = outbox_collection
+    row_id = uuid4()
+
+    coll = await mongo_client_replica.collection(coll_name, db_name=db_name)
+    await mongo_client_replica.insert_one(
+        coll,
+        _outbox_doc(
+            row_id,
+            payload={"label": "later"},
+            attempts=1,
+            available_at=utcnow() + timedelta(hours=1),
+        ),
+    )
+
+    async with runtime.scope():
+        ctx = runtime.get_context()
+        claims = await ctx.outbox.query(outbox_spec).claim_pending()
+
+        rows = await mongo_client_replica.find_many(coll, {"id": str(row_id)})
+
+    assert list(claims) == []
+    assert rows[0]["status"] == OutboxStatus.PENDING.value

@@ -91,7 +91,7 @@ class AuthzBeforeAuthorize(BeforeFactory):
             identity = ctx.inv_ctx.get_authn()
 
             if identity is None:
-                raise exc.authorization(
+                raise exc.authentication(
                     "Authentication required",
                     code="auth_required",
                 )
@@ -201,7 +201,7 @@ class AuthzDocumentScopeWrap(MiddlewareFactory):
             identity = ctx.inv_ctx.get_authn()
 
             if identity is None:
-                raise exc.authorization(
+                raise exc.authentication(
                     "Authentication required",
                     code="auth_required",
                 )
@@ -222,7 +222,16 @@ class AuthzDocumentScopeWrap(MiddlewareFactory):
                     code="scope_denied",
                 )
 
-            if doc_scope.filters is not None and hasattr(args, self.args_filter_attr):
+            if doc_scope.filters is not None:
+                if not hasattr(args, self.args_filter_attr):
+                    raise exc.configuration(
+                        f"AuthzDocumentScopeWrap for document "
+                        f"{self.document_name!r} (operation {self.operation!r}) "
+                        f"received policy filters, but args of type "
+                        f"{type(args).__name__!r} has no "
+                        f"{self.args_filter_attr!r} attribute to apply them to",
+                    )
+
                 merged = merge_query_filters(base_filters, doc_scope.filters)
 
                 if isinstance(args, BaseDTO):

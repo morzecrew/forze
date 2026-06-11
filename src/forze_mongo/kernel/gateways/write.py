@@ -726,12 +726,17 @@ class MongoWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
         """Hard-delete a document from the collection.
 
         :param pk: Document primary key.
+        :raises NotFoundError: If the document does not exist (or is not
+            accessible in the current tenant scope).
         """
 
-        await self.client.delete_one(
+        n = await self.client.delete_one(
             await self.coll(),
             self._add_tenant_filter({"_id": self._storage_pk(pk)}),
         )
+
+        if n == 0:
+            raise exc.not_found(f"Record not found: {pk}")
 
     # ....................... #
 
@@ -740,6 +745,8 @@ class MongoWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
 
         :param pks: Document primary keys (must be unique). No-ops when empty.
         :raises ValidationError: If *pks* contains duplicates.
+        :raises NotFoundError: If any document does not exist (or is not
+            accessible in the current tenant scope).
         """
 
         if not pks:
@@ -748,9 +755,17 @@ class MongoWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
         if len(pks) != len(set(pks)):
             raise exc.precondition("Primary keys must be unique")
 
-        await self.client.delete_many(
+        n = await self.client.delete_many(
             await self.coll(),
             self._add_tenant_filter(
                 {"_id": {"$in": [self._storage_pk(pk) for pk in pks]}}
             ),
         )
+
+        if n != len(pks):
+            if self.tenant_aware:
+                raise exc.not_found(
+                    "Some records not found or not accessible in this tenant scope"
+                )
+
+            raise exc.not_found("Some records not found")

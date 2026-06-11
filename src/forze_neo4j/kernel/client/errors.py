@@ -24,9 +24,14 @@ from forze.base.exceptions import (
     ExceptionInterceptor,
     ExceptionMapper,
     default_chain_exc_mapper,
+    fallback_exception_mapper,
 )
 
 # ----------------------- #
+
+_fallback = fallback_exception_mapper("Neo4j")
+
+# ....................... #
 
 
 @static_fn_conformity(ExceptionMapper)  # type: ignore[type-abstract]
@@ -79,10 +84,7 @@ def _neo4j_eh(
             )
 
         case _:
-            return CoreException.infrastructure(
-                f"An error occurred while executing Neo4j operation {site}: {exc}",
-                details=details,
-            )
+            return _fallback(exc, site=site, details=details)
 
 
 # ....................... #

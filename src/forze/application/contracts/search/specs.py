@@ -69,6 +69,11 @@ class SearchSpec[M: BaseModel](BaseSpec):
     fuzzy: SearchFuzzySpec | None = attrs.field(default=None)
     """Fuzzy matching configuration."""
 
+    sensitive: bool = attrs.field(default=False)
+    """Read model carries credential/secret material (password hashes, token digests);
+    generated external surfaces (HTTP route generators, MCP tools/resources) must refuse
+    to project it. Defaults to ``False``."""
+
     snapshot: SearchResultSnapshotSpec | None = attrs.field(default=None)
     """Optional defaults for result-ID snapshotting."""
 

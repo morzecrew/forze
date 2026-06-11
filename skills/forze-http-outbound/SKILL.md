@@ -2,7 +2,7 @@
 name: forze-http-outbound
 description: >-
   Calls external HTTP APIs from Forze handlers with declarative
-  BaseHttpIntegration / async_http_op operations, HttpServiceSpec, HttpxDepsModule,
+  BaseHttpIntegration / async_http_op operations, HttpServiceSpec, HttpDepsModule,
   static and tenant-routed clients, auth, and mock tests. Use when a handler needs
   to call a remote service over HTTP.
 ---
@@ -51,23 +51,23 @@ orders_spec = build_http_service_spec(OrdersClient, name="orders")
 
 ## Wire the client and service routes
 
-`HttpxDepsModule` registers the shared client plus one route per service. `HttpServiceSpec.name` is the route; it must match a key in `services`.
+`HttpDepsModule` registers the shared client plus one route per service. `HttpServiceSpec.name` is the route; it must match a key in `services`.
 
 ```python
 from datetime import timedelta
 
 from forze_http import (
     HttpAuthConfig,
-    HttpxClient,
-    HttpxDepsModule,
-    HttpxHttpServiceConfig,
+    HttpClient,
+    HttpDepsModule,
+    HttpServiceConfig,
     http_lifecycle_step,
 )
 
-http_module = HttpxDepsModule(
-    client=HttpxClient(),
+http_module = HttpDepsModule(
+    client=HttpClient(),
     services={
-        "orders": HttpxHttpServiceConfig(
+        "orders": HttpServiceConfig(
             base_url="https://api.example.com",
             timeout=timedelta(seconds=30),
             default_headers={"Accept": "application/json"},
@@ -77,11 +77,11 @@ http_module = HttpxDepsModule(
 )
 ```
 
-`HttpAuthConfig.kind` is `"bearer"` | `"api_key"` | `"header"` (with `header_name` / `prefix` knobs). Resolve `token` from secrets — never hard-code it (see [`forze-auth-tenancy-secrets`](../forze-auth-tenancy-secrets/SKILL.md)). `HttpxDepsModule(client=...)` alone registers only the client; `ctx.http.service(spec)` needs a matching `services` route.
+`HttpAuthConfig.kind` is `"bearer"` | `"api_key"` | `"header"` (with `header_name` / `prefix` knobs). Resolve `token` from secrets — never hard-code it (see [`forze-auth-tenancy-secrets`](../forze-auth-tenancy-secrets/SKILL.md)). `HttpDepsModule(client=...)` alone registers only the client; `ctx.http.service(spec)` needs a matching `services` route.
 
 ## Lifecycle
 
-The bare `HttpxClient()` opens its connection pool in a lifecycle step:
+The bare `HttpClient()` opens its connection pool in a lifecycle step:
 
 ```python
 from forze.application.execution import LifecyclePlan
@@ -114,7 +114,7 @@ class ListOrders(Handler[ListOrdersCmd, OrdersListResponse]):
 
 ## Tenant-routed services
 
-For per-tenant base URLs / credentials, use `RoutedHttpxClient` with `routed_http_lifecycle_step()` and set `tenant_aware=True` on the service config. The client resolves each tenant's `HttpRoutingCredentials` (base URL, headers, bearer token) from a `SecretRef` per tenant, so the adapter never needs a `tenant_provider`. Bind `TenantIdentity` at the boundary before the handler runs.
+For per-tenant base URLs / credentials, use `RoutedHttpClient` with `routed_http_lifecycle_step()` and set `tenant_aware=True` on the service config. The client resolves each tenant's `HttpRoutingCredentials` (base URL, headers, bearer token) from a `SecretRef` per tenant, so the adapter never needs a `tenant_provider`. Bind `TenantIdentity` at the boundary before the handler runs.
 
 ## Testing
 
@@ -127,9 +127,9 @@ HTTP client/adapter/execution loggers are named under `FORZE_HTTP_LOGGER_NAMES`;
 ## Anti-patterns
 
 1. **Building `httpx` calls inside a handler** — declare an `async_http_op` and resolve via `ctx.http.service(spec)`; keep transport details out of domain logic.
-2. **Hard-coding tokens/URLs in `HttpxHttpServiceConfig`** — resolve credentials from secrets; only base routing belongs in config.
+2. **Hard-coding tokens/URLs in `HttpServiceConfig`** — resolve credentials from secrets; only base routing belongs in config.
 3. **Mismatched route names** — `HttpServiceSpec.name` must equal the `services` key, or resolution fails.
-4. **Passing tenant ids through DTOs for routing** — use `tenant_aware=True` + `RoutedHttpxClient` and bind `TenantIdentity` at the boundary.
+4. **Passing tenant ids through DTOs for routing** — use `tenant_aware=True` + `RoutedHttpClient` and bind `TenantIdentity` at the boundary.
 5. **Marking non-idempotent operations `idempotent=True`** — only safe-to-retry calls; it affects retry behavior.
 
 ## Reference

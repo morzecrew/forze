@@ -5,8 +5,7 @@ require_sqs()
 # ....................... #
 
 from datetime import datetime, timedelta
-from typing import AsyncGenerator, Sequence, final
-from uuid import UUID
+from typing import AsyncGenerator, ClassVar, Sequence, final
 
 import attrs
 from pydantic import BaseModel
@@ -16,13 +15,11 @@ from forze.application.contracts.queue import (
     QueueMessage,
     QueueQueryPort,
 )
-from forze.application.contracts.resolution import NamedResourceSpec, is_static_named_resource
-from forze.application.contracts.tenancy import TenancyMixin
+from forze.application.integrations.queue import ScopedQueueNamingMixin
 from forze.base.exceptions import exc
-from forze.base.primitives import OnceCell
 
 from ..kernel.client import SQSClientPort
-from ..kernel.relation import resolve_sqs_namespace
+from ._logger import logger
 from .codecs import SQSQueueCodec
 
 # ----------------------- #
@@ -33,9 +30,18 @@ from .codecs import SQSQueueCodec
 class SQSQueueAdapter[M: BaseModel](
     QueueQueryPort[M],
     QueueCommandPort[M],
-    TenancyMixin,
+    ScopedQueueNamingMixin,
 ):
-    """SQS queue adapter."""
+    """SQS queue adapter.
+
+    Poison messages: a payload that fails codec decoding in :meth:`receive`
+    or :meth:`consume` is rejected with ``nack(requeue=False)`` (the message
+    stays invisible until its visibility timeout lapses, so the queue's
+    redrive policy eventually dead-letters it — terminal disposition is
+    broker-specific per the queue port contract), logged by message id only
+    (never payload contents), and *skipped*: the remaining batch is still
+    returned and a continuous consumer keeps consuming.
+    """
 
     client: SQSClientPort
     """SQS client instance."""
@@ -43,53 +49,14 @@ class SQSQueueAdapter[M: BaseModel](
     codec: SQSQueueCodec[M]
     """SQS queue codec instance."""
 
-    namespace: NamedResourceSpec = ""
-    """SQS queue namespace."""
-
-    _namespace_cell: OnceCell[str] = attrs.field(
-        factory=OnceCell,
-        init=False,
-        eq=False,
-        repr=False,
-    )
+    queue_name_separator: ClassVar[str] = "-"
+    queue_backend_label: ClassVar[str] = "SQS queue"
 
     # ....................... #
 
     @staticmethod
     def __is_queue_url(queue: str) -> bool:
         return queue.startswith("https://") or queue.startswith("http://")
-
-    # ....................... #
-
-    def _tenant_id_for_resolve(self) -> UUID | None:
-        if self.tenant_provider is None:
-            return None
-
-        tenant = self.tenant_provider()
-
-        if tenant is None:
-            if self.tenant_aware:
-                raise exc.internal("Tenant ID is required for the SQS queue adapter")
-
-            return None
-
-        return tenant.tenant_id
-
-    # ....................... #
-
-    async def _resolved_namespace(self) -> str:
-        async def _factory() -> str:
-            return await resolve_sqs_namespace(
-                self.namespace,
-                self._tenant_id_for_resolve(),
-            )
-
-        # Only memoize tenant-independent (static) namespaces; a dynamic resolver
-        # depends on the bound tenant and the adapter may be shared across tenants.
-        return await self._namespace_cell.resolve(
-            _factory,
-            cache=is_static_named_resource(self.namespace),
-        )
 
     # ....................... #
 
@@ -105,23 +72,7 @@ class SQSQueueAdapter[M: BaseModel](
 
             return queue
 
-        tenant_id = self.require_tenant_if_aware()
-
-        if tenant_id is not None:
-            tenant_prefix = f"tenant-{tenant_id}"
-
-        else:
-            tenant_prefix = ""
-
-        namespace = await self._resolved_namespace()
-
-        if namespace:
-            namespaced_queue = f"{namespace}-{queue}"
-
-        else:
-            namespaced_queue = queue
-
-        return f"{tenant_prefix}-{namespaced_queue}".lstrip("-")
+        return await self._scoped_queue_name(queue)
 
     # ....................... #
 
@@ -182,6 +133,30 @@ class SQSQueueAdapter[M: BaseModel](
 
     # ....................... #
 
+    async def __nack_poison(self, physical_queue: str, message_id: str) -> None:
+        """Reject an undecodable message without requeue (redrive/dead-letter).
+
+        ``requeue=False`` leaves the message invisible until its visibility
+        timeout lapses, so the queue's redrive policy counts the receive and
+        eventually dead-letters it — requeueing a poison message would only
+        redeliver it forever. Best-effort: a failed nack leaves the message
+        invisible until its visibility timeout lapses anyway.
+        """
+
+        try:
+            async with self.client.client():
+                await self.client.nack(physical_queue, [message_id], requeue=False)
+        except Exception:
+            logger.error(
+                "SQS queue %s: failed to nack undecodable message %s; "
+                "it stays invisible until its visibility timeout lapses",
+                physical_queue,
+                message_id,
+                exc_info=True,
+            )
+
+    # ....................... #
+
     async def receive(
         self,
         queue: str,
@@ -189,6 +164,12 @@ class SQSQueueAdapter[M: BaseModel](
         limit: int | None = None,
         timeout: timedelta | None = None,
     ) -> list[QueueMessage[M]]:
+        """Receive up to ``limit`` decoded messages.
+
+        Undecodable (poison) entries are nacked away with ``requeue=False``
+        and excluded from the result; the decodable remainder of the batch
+        is still returned. See the class docstring for the full contract.
+        """
         physical_queue = await self.__queue_name(queue)
 
         async with self.client.client():
@@ -198,7 +179,25 @@ class SQSQueueAdapter[M: BaseModel](
                 timeout=timeout,
             )
 
-        return [self.codec.decode(queue, msg) for msg in raw]
+        decoded: list[QueueMessage[M]] = []
+
+        for msg in raw:
+            try:
+                decoded.append(self.codec.decode(queue, msg))
+            except Exception:
+                # Poison entries are nacked away (requeue=False) and the
+                # successfully decoded remainder is still returned: one bad
+                # payload must not fail or wedge the whole batch.
+                logger.error(
+                    "SQS queue %s: failed to decode message %s; "
+                    "rejecting without requeue",
+                    physical_queue,
+                    msg.id,
+                    exc_info=True,
+                )
+                await self.__nack_poison(physical_queue, msg.id)
+
+        return decoded
 
     # ....................... #
 
@@ -208,11 +207,34 @@ class SQSQueueAdapter[M: BaseModel](
         *,
         timeout: timedelta | None = None,
     ) -> AsyncGenerator[QueueMessage[M]]:
+        """Yield decoded messages continuously from ``queue``.
+
+        A decode failure must not kill the consumer: undecodable (poison)
+        messages are nacked away with ``requeue=False`` and the stream keeps
+        yielding subsequent messages. See the class docstring for the full
+        contract.
+        """
         physical_queue = await self.__queue_name(queue)
 
         async with self.client.client():
             async for msg in self.client.consume(physical_queue, timeout=timeout):
-                yield self.codec.decode(queue, msg)
+                try:
+                    decoded = self.codec.decode(queue, msg)
+                except Exception:
+                    # A poison message is nacked away (requeue=False) and the
+                    # loop keeps consuming: a single undecodable payload must
+                    # not crash (and thereby wedge) the consumer stream.
+                    logger.error(
+                        "SQS queue %s: failed to decode message %s; "
+                        "rejecting without requeue",
+                        physical_queue,
+                        msg.id,
+                        exc_info=True,
+                    )
+                    await self.__nack_poison(physical_queue, msg.id)
+                    continue
+
+                yield decoded
 
     # ....................... #
 

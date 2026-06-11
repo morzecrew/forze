@@ -230,6 +230,28 @@ async def test_run_query_all_pages_paginates(
 
 
 @pytest.mark.asyncio
+async def test_run_query_all_pages_exactly_once_in_order(
+    clickhouse_client: ClickHouseClient,
+    analytics_table: tuple[str, str],
+) -> None:
+    """Streaming fetch returns every row exactly once, in query order."""
+
+    database_id, table_id = analytics_table
+    total = 25
+    await clickhouse_client.insert_rows(
+        database_id,
+        table_id,
+        [{"event": f"s{i}", "value": i} for i in range(total)],
+    )
+    rows = await clickhouse_client.run_query_all_pages(
+        f"SELECT event, value FROM {database_id}.{table_id} ORDER BY value",
+        fetch_batch_size=4,
+    )
+    assert [row["value"] for row in rows] == list(range(total))
+    assert [row["event"] for row in rows] == [f"s{i}" for i in range(total)]
+
+
+@pytest.mark.asyncio
 async def test_run_query_all_pages_max_rows_stops(
     clickhouse_client: ClickHouseClient,
     analytics_table: tuple[str, str],

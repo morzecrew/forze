@@ -4,7 +4,7 @@ from pydantic import BaseModel, Field, SecretStr
 
 from forze.base.primitives.fingerprint import build_routing_fingerprint
 
-from .value_objects import ClickHouseConfig, resolve_password
+from .value_objects import ClickHouseConfig
 
 # ----------------------- #
 
@@ -18,7 +18,7 @@ class ClickHouseRoutingCredentials(BaseModel):
     host: str = Field(default="localhost", min_length=1)
     port: int = 8123
     username: str = "default"
-    password: str | SecretStr = ""
+    password: SecretStr = SecretStr("")
     database: str = "default"
     secure: bool = False
 
@@ -38,8 +38,6 @@ class ClickHouseRoutingCredentials(BaseModel):
 def routing_fingerprint(creds: ClickHouseRoutingCredentials) -> str:
     """Stable fingerprint for LRU deduplication (never embeds raw password)."""
 
-    password = resolve_password(creds.password)
-
     return build_routing_fingerprint(
         public=[
             creds.host,
@@ -48,5 +46,5 @@ def routing_fingerprint(creds: ClickHouseRoutingCredentials) -> str:
             creds.database,
             str(creds.secure),
         ],
-        secret=[password or None],
+        secret=[creds.password],
     )

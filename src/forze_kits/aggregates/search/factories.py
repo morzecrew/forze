@@ -38,29 +38,41 @@ def _parametrized(generic: Any, arg: Any) -> Any:
     return generic[arg]
 
 
-def _typed_search_descriptors(model_type: type) -> dict[StrKey, OperationDescriptor]:
-    """Descriptors for the four single-index/hub search operations."""
+def _typed_search_descriptors(
+    model_type: type,
+    *,
+    sensitive: bool = False,
+) -> dict[StrKey, OperationDescriptor]:
+    """Descriptors for the four single-index/hub search operations.
+
+    A ``sensitive`` spec propagates the flag onto every descriptor so projection
+    surfaces (generated routes, MCP) can refuse it at build time.
+    """
 
     return {
         SearchKernelOp.TYPED: OperationDescriptor(
             input_type=SearchRequestDTO,
             output_type=_parametrized(SearchPaginated, model_type),
             description="Full-text search with typed results (offset pagination).",
+            sensitive=sensitive,
         ),
         SearchKernelOp.RAW: OperationDescriptor(
             input_type=ProjectedSearchRequestDTO,
             output_type=ProjectedSearchPaginated,
             description="Full-text search with field-projected results (offset pagination).",
+            sensitive=sensitive,
         ),
         SearchKernelOp.TYPED_CURSOR: OperationDescriptor(
             input_type=CursorSearchRequestDTO,
             output_type=_parametrized(CursorPaginated, model_type),
             description="Full-text search with typed results (cursor pagination).",
+            sensitive=sensitive,
         ),
         SearchKernelOp.RAW_CURSOR: OperationDescriptor(
             input_type=ProjectedCursorSearchRequestDTO,
             output_type=ProjectedCursorPaginated,
             description="Full-text search with field-projected results (cursor pagination).",
+            sensitive=sensitive,
         ),
     }
 
@@ -121,7 +133,8 @@ def build_search_registry[M: BaseModel](
     reg = reg.bind(*_ALL_SEARCH_OPS, namespace=ns).as_query().finish()
 
     return reg.set_descriptors(
-        _typed_search_descriptors(spec.model_type), namespace=ns
+        _typed_search_descriptors(spec.model_type, sensitive=spec.sensitive),
+        namespace=ns,
     )
 
 
@@ -173,8 +186,13 @@ def build_hub_search_registry[M: BaseModel](
 
     reg = reg.bind(*_ALL_SEARCH_OPS, namespace=ns).as_query().finish()
 
+    # A hub projects every member's rows, so it is sensitive if any member is.
     return reg.set_descriptors(
-        _typed_search_descriptors(spec.model_type), namespace=ns
+        _typed_search_descriptors(
+            spec.model_type,
+            sensitive=any(member.sensitive for member in spec.members),
+        ),
+        namespace=ns,
     )
 
 
@@ -214,6 +232,15 @@ def build_federated_search_registry[M: BaseModel](
         SearchKernelOp.TYPED, SearchKernelOp.TYPED_CURSOR, namespace=ns
     ).as_query().finish()
 
+    # A federated surface projects every member's rows, so it is sensitive if any
+    # member (or any nested hub member) is.
+    sensitive = any(
+        member.sensitive
+        if isinstance(member, SearchSpec)
+        else any(leg.sensitive for leg in member.members)
+        for member in spec.members
+    )
+
     # Federated search is heterogeneous (no single model type), so results carry no
     # single response schema — descriptors record the request shape only.
     return reg.set_descriptors(
@@ -221,10 +248,12 @@ def build_federated_search_registry[M: BaseModel](
             SearchKernelOp.TYPED: OperationDescriptor(
                 input_type=SearchRequestDTO,
                 description="Federated full-text search across members (offset pagination).",
+                sensitive=sensitive,
             ),
             SearchKernelOp.TYPED_CURSOR: OperationDescriptor(
                 input_type=CursorSearchRequestDTO,
                 description="Federated full-text search across members (cursor pagination).",
+                sensitive=sensitive,
             ),
         },
         namespace=ns,

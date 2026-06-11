@@ -15,9 +15,14 @@ from forze.base.exceptions import (
     ExceptionInterceptor,
     ExceptionMapper,
     default_chain_exc_mapper,
+    fallback_exception_mapper,
 )
 
 # ----------------------- #
+
+_fallback = fallback_exception_mapper("Postgres")
+
+# ....................... #
 
 FK_pattern = re.compile(
     r'Key \((?P<column>[^)]+)\)=\((?P<value>[0-9a-fA-F-]+)\) is not present in table "(?P<table>[^"]+)"'
@@ -257,10 +262,7 @@ def _psycopg_eh(
             )
 
         case _:
-            return CoreException.infrastructure(
-                f"An error occurred while executing the operation {site}: {exc}",
-                details=details,
-            )
+            return _fallback(exc, site=site, details=details)
 
 
 # ....................... #

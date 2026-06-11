@@ -9,6 +9,12 @@ class S3RoutingCredentials(BaseModel):
     """JSON shape stored in secrets for :class:`~forze_s3.kernel.client.RoutedS3Client`.
 
     Use with :func:`~forze.application.contracts.secrets.resolve_structured`.
+
+    Explicit static credentials are **required** here (unlike
+    :meth:`~forze_s3.kernel.client.S3Client.initialize`, which falls back to
+    botocore's default credential chain): per-tenant routing isolates tenants
+    by credentials, so the process-ambient chain identity would defeat the
+    purpose.
     """
 
     endpoint: str = Field(..., min_length=1)

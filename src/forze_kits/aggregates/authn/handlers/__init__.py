@@ -1,3 +1,7 @@
+from .deactivate_principal import (
+    DeactivatePrincipalHandler,
+    DeactivatePrincipalRequestDTO,
+)
 from .handlers import (
     AuthnChangePassword,
     AuthnLogout,
@@ -12,4 +16,6 @@ __all__ = [
     "AuthnLogout",
     "AuthnPasswordLogin",
     "AuthnRefreshTokens",
+    "DeactivatePrincipalHandler",
+    "DeactivatePrincipalRequestDTO",
 ]

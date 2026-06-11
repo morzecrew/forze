@@ -1,5 +1,6 @@
 """Unit tests for :class:`FrozenDeps` resolution."""
 
+import attrs
 import pytest
 
 from forze.application.contracts.deps import DepKey
@@ -25,6 +26,13 @@ class _NamedSpec:
 
 _SPEC_A = _NamedSpec("a")
 _SPEC_B = _NamedSpec("b")
+
+
+@attrs.define(slots=True, frozen=True)
+class _ValueSpec:
+    """Spec with value equality, like the real frozen-attrs spec types."""
+
+    name: str
 
 
 def _resolve(*registration: Deps, **freeze_kw) -> "FrozenDeps":
@@ -141,6 +149,8 @@ class TestFrozenDepsPortCache:
         assert calls[0] == 2
 
     def test_different_spec_on_same_route_rebuilds(self) -> None:
+        # _NamedSpec compares by identity, so a fresh instance is a non-equal
+        # spec on the same key and must rebuild.
         reg, calls = self._counting_reg()
         ctx = self._ctx(reg)
         other_spec = _NamedSpec("a")  # same route name, different object
@@ -150,6 +160,59 @@ class TestFrozenDepsPortCache:
 
         assert first is not second
         assert calls[0] == 2
+
+    def test_structurally_equal_spec_hits_cache(self) -> None:
+        # Per-call-constructed specs with value equality must reuse the cached
+        # port instead of rebuilding on every resolve.
+        calls = [0]
+
+        def factory(ctx: ExecutionContext, spec: _ValueSpec) -> object:
+            calls[0] += 1
+            return object()
+
+        reg = Deps.routed({_A: {"a": factory}})
+        ctx = self._ctx(reg)
+
+        first = ctx.deps.resolve_configurable(ctx, _A, _ValueSpec(name="a"), route="a")
+        second = ctx.deps.resolve_configurable(ctx, _A, _ValueSpec(name="a"), route="a")
+
+        assert first is second
+        assert calls[0] == 1
+
+    def test_structurally_different_value_spec_rebuilds(self) -> None:
+        calls = [0]
+
+        def factory(ctx: ExecutionContext, spec: _ValueSpec) -> object:
+            calls[0] += 1
+            return object()
+
+        reg = Deps.routed({_A: {"a": factory}})
+        ctx = self._ctx(reg)
+
+        first = ctx.deps.resolve_configurable(ctx, _A, _ValueSpec(name="a"), route="a")
+        second = ctx.deps.resolve_configurable(ctx, _A, _ValueSpec(name="b"), route="a")
+
+        assert first is not second
+        assert calls[0] == 2
+
+    def test_real_spec_types_have_value_equality(self) -> None:
+        # Locks the assumption behind equality-based port caching: structurally
+        # identical spec literals compare equal.
+        from pydantic import BaseModel
+
+        from forze.application.contracts.document import DocumentSpec
+
+        class _Read(BaseModel):
+            id: str
+
+        assert DocumentSpec(name="doc", read=_Read) == DocumentSpec(
+            name="doc",
+            read=_Read,
+        )
+        assert DocumentSpec(name="doc", read=_Read) != DocumentSpec(
+            name="other",
+            read=_Read,
+        )
 
     def test_resolution_tracing_bypasses_cache(self) -> None:
         reg, calls = self._counting_reg()

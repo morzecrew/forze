@@ -79,6 +79,8 @@ class PasswordService:
     # ....................... #
 
     def password_needs_rehash(self, password_hash: str) -> bool:
+        """Whether ``password_hash`` was produced with outdated Argon2 parameters."""
+
         try:
             ph = self._require_hasher()
 

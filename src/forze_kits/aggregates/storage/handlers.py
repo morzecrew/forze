@@ -117,6 +117,7 @@ class UploadObject(Handler[UploadObjectRequestDTO, StoredObjectDTO]):
             filename=args.filename,
             data=args.data,
             description=args.description,
+            tags=args.tags,
             prefix=args.prefix,
         )
 

@@ -10,24 +10,24 @@ from forze.application.execution import Deps, DepsModule
 from forze.application.execution.deps.builders import merge_deps, routed_from_mapping
 from forze.base.primitives import StrKey
 from forze_http.execution.deps._warnings import HTTP_SERVICE_WARNING
-from forze_http.execution.deps.configs import HttpxHttpServiceConfig
-from forze_http.execution.deps.factories import ConfigurableHttpxHttpService
-from forze_http.execution.deps.keys import HttpxClientDepKey
+from forze_http.execution.deps.configs import HttpServiceConfig
+from forze_http.execution.deps.factories import ConfigurableHttpService
+from forze_http.execution.deps.keys import HttpClientDepKey
 from forze_http.execution._logger import logger
-from forze_http.kernel.client import HttpxClientPort
+from forze_http.kernel.client import HttpClientPort
 
 # ----------------------- #
 
 
 @final
 @attrs.define(slots=True, frozen=True, kw_only=True)
-class HttpxDepsModule(DepsModule):
+class HttpDepsModule(DepsModule):
     """Registers httpx client and HTTP service ports."""
 
-    client: HttpxClientPort
+    client: HttpClientPort
     """Pre-constructed httpx client (single base URL or routed)."""
 
-    services: Mapping[StrKey, HttpxHttpServiceConfig] | None = attrs.field(
+    services: Mapping[StrKey, HttpServiceConfig] | None = attrs.field(
         default=None,
     )
     """Mapping from :class:`~forze.application.contracts.http.HttpServiceSpec` name to config."""
@@ -45,14 +45,14 @@ class HttpxDepsModule(DepsModule):
     # ....................... #
 
     def __call__(self) -> Deps:
-        plain: dict[Any, Any] = {HttpxClientDepKey: self.client}
+        plain: dict[Any, Any] = {HttpClientDepKey: self.client}
         plain_deps = Deps.plain(plain)
         service_deps = Deps()
 
         if self.services:
             service_deps = routed_from_mapping(
                 self.services,
-                bindings=[(HttpServiceDepKey, ConfigurableHttpxHttpService)],
+                bindings=[(HttpServiceDepKey, ConfigurableHttpService)],
             )
 
         return merge_deps(plain_deps, service_deps)

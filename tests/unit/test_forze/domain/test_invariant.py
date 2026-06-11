@@ -1,14 +1,14 @@
 """``@invariant``: an always-true state rule enforced on create AND update.
 
-The headline case is the footgun it closes: a raw Pydantic ``@model_validator`` is silently
-skipped by Forze's merge-patch update (which uses ``model_copy``), so it can't guard updates.
-``@invariant`` runs on both paths from one declaration.
+Forze's merge-patch update fully re-validates the merged state, so both raw Pydantic
+``@model_validator`` hooks and ``@invariant`` methods guard updates as well as creates;
+``@invariant`` additionally raises domain-kind errors and composes across the hierarchy.
 """
 
 from __future__ import annotations
 
 import pytest
-from pydantic import model_validator
+from pydantic import ValidationError, model_validator
 
 from forze.base.exceptions import CoreException, ExceptionKind, exc
 from forze.domain.models import Document, invariant
@@ -44,9 +44,9 @@ class TestInvariant:
             account.update({"balance": -3})
         assert ei.value.kind is ExceptionKind.DOMAIN
 
-    def test_model_validator_alone_misses_the_update(self) -> None:
-        # Contrast: a raw @model_validator is NOT run on update (model_copy bypass), so the
-        # violating update slips through — exactly the gap @invariant closes.
+    def test_model_validator_also_runs_on_update(self) -> None:
+        # Document.update fully re-validates the merged state, so a raw
+        # @model_validator now guards updates too (no model_copy bypass).
         class LooseAccount(Document):
             balance: int = 0
 
@@ -57,9 +57,9 @@ class TestInvariant:
                 return self
 
         account = LooseAccount(balance=10)
-        bad, _ = account.update({"balance": -5})
 
-        assert bad.balance == -5  # invalid state persisted — no error raised
+        with pytest.raises(ValidationError, match="negative"):
+            account.update({"balance": -5})
 
     def test_subclass_override_is_honoured(self) -> None:
         class Strict(Account):

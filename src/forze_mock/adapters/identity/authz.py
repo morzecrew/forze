@@ -216,7 +216,14 @@ class MockDelegationPort(DelegationPort):
 @final
 @attrs.define(slots=True, kw_only=True)
 class MockAuthzDecisionPort(AuthzDecisionPort):
-    allow_by_default: bool = True
+    """Constant authz decision stub.
+
+    Deny-by-default (proper enforcement semantics, consistent with
+    :class:`MockDelegationPort`); set ``allow_by_default=True`` explicitly for a
+    permissive stub when a test's purpose isn't authz.
+    """
+
+    allow_by_default: bool = False
 
     async def authorize(self, request: AuthzRequest) -> AuthzDecision:
         _ = request
@@ -226,6 +233,14 @@ class MockAuthzDecisionPort(AuthzDecisionPort):
 @final
 @attrs.define(slots=True, kw_only=True)
 class MockAuthzScopePort(AuthzScopePort):
+    """Authz scoping stub.
+
+    ``authorize_sensitive_resource`` is deny-by-default; set
+    ``allow_sensitive_by_default=True`` explicitly for a permissive stub.
+    """
+
+    allow_sensitive_by_default: bool = False
+
     async def scope_document(
         self,
         request: AuthzDocumentScopeRequest,
@@ -238,4 +253,4 @@ class MockAuthzScopePort(AuthzScopePort):
         request: AuthzSensitiveAccessRequest,
     ) -> bool:
         _ = request
-        return True
+        return self.allow_sensitive_by_default

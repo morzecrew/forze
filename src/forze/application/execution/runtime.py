@@ -116,6 +116,10 @@ class ExecutionRuntime:
 
         Shutdown runs in reverse wave order. Context is reset in a
         ``finally`` block so it is cleared even if shutdown raises.
+
+        Only steps whose startup completed and that were not already shut down
+        (e.g. rolled back after a partial startup failure) are shut down, so each
+        step's shutdown runs at most once per successful startup.
         """
 
         logger.info("Shutting down execution runtime")

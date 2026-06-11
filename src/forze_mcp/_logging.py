@@ -12,7 +12,6 @@ class ForzeMCPLogger(StrEnum):
 
     ACCESS = "mcp.access"
     ERRORS = "mcp.errors"
-    MIDDLEWARES = "mcp.middlewares"
 
 
 # ....................... #

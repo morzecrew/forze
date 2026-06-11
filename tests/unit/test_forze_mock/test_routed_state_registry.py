@@ -4,8 +4,12 @@ from uuid import UUID
 
 import pytest
 
+from forze.application.execution.lifecycle import LifecyclePlan
+from tests.support.execution_context import context_from_deps
+
+from forze_mock import MockDepsModule
 from forze_mock.state import MockState
-from forze_mock.tenancy import MockRoutedStateRegistry
+from forze_mock.tenancy import MockRoutedStateRegistry, mock_routed_state_lifecycle_step
 
 # ----------------------- #
 
@@ -49,3 +53,27 @@ async def test_routed_state_factory_custom() -> None:
         assert len(seen) == 1
     finally:
         await registry.close()
+
+
+@pytest.mark.asyncio
+async def test_lifecycle_step_starts_and_stops_registry() -> None:
+    """`mock_routed_state_lifecycle_step` wires the registry into a runtime scope."""
+
+    registry = MockRoutedStateRegistry(max_entries=4)
+    step = mock_routed_state_lifecycle_step(registry=registry)
+    assert step.id == "mock_routed_state"
+
+    ctx = context_from_deps(MockDepsModule(state=MockState())())
+    frozen = LifecyclePlan.from_steps(step).freeze()
+
+    await frozen.startup(ctx)
+    try:
+        # The routed state resolves per tenant within the started scope.
+        async with registry.use(_T1) as state:
+            assert isinstance(state, MockState)
+            state.documents.setdefault("d", {})[_T1] = {"id": str(_T1)}
+
+        async with registry.use(_T1) as again:
+            assert _T1 in again.documents["d"]
+    finally:
+        await frozen.shutdown(ctx)

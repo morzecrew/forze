@@ -6,7 +6,7 @@ require_psycopg()
 
 # ....................... #
 
-from typing import Any, Mapping, Self, Sequence, final
+from typing import Any, Mapping, Sequence, final
 from uuid import UUID
 
 import attrs
@@ -91,23 +91,6 @@ class PostgresQualifiedName:
         """Construct a literal SQL expression for the qualified name."""
 
         return sql.Literal(f"{self.schema}.{self.name}")
-
-    # ....................... #
-
-    @classmethod
-    def from_string(cls, x: str) -> Self:
-        """Construct a qualified name from a string in the format "schema.relation".
-
-        :param x: Qualified name string.
-        :returns: Qualified name.
-        :raises: :class:`exc.internal` if the string is not in the correct format.
-        """
-
-        if "." not in x:
-            raise exc.internal(f"Invalid qualified name: {x}")
-
-        schema, name = x.split(".", 1)
-        return cls(schema=schema, name=name)
 
 
 # ....................... #
@@ -225,9 +208,10 @@ class PostgresGateway[M: BaseModel](
         )
 
     # ....................... #
-    #! We need introspection to make sure of tenancy compatibility
+    # Tenancy/schema compatibility (tenant column present, uuid, NOT NULL) is
+    # verified by introspection in ``kernel.catalog.validation.validate_schema``.
 
-    def _add_tenant_where(  #! ..._if_aware ?
+    def _add_tenant_where(
         self,
         query: sql.Composable,
         params: list[Any],
@@ -259,9 +243,10 @@ class PostgresGateway[M: BaseModel](
         return query, params
 
     # ....................... #
-    #! We need introspection to make sure of tenancy compatibility
+    # Tenancy/schema compatibility (tenant column present, uuid, NOT NULL) is
+    # verified by introspection in ``kernel.catalog.validation.validate_schema``.
 
-    def _add_tenant_id(self, data: JsonDict) -> JsonDict:  #! ..._if_aware ?
+    def _add_tenant_id(self, data: JsonDict) -> JsonDict:
         """Add tenant ID to the data if gateway is tenant aware."""
 
         out = dict(data)
@@ -321,6 +306,12 @@ class PostgresGateway[M: BaseModel](
         parts: list[sql.Composable] = []
 
         for field, order in sorts.items():
+            if order not in ("asc", "desc"):
+                raise exc.validation(
+                    f"Invalid sort direction {order!r} for field {field!r}; "
+                    "expected 'asc' or 'desc'",
+                )
+
             key = sort_key_expr(
                 field=field,
                 column_types=types,
@@ -328,7 +319,8 @@ class PostgresGateway[M: BaseModel](
                 nested_field_hints=self.nested_field_hints,
                 table_alias=alias,
             )
-            parts.append(sql.SQL("{} {}").format(key, sql.SQL(order.upper())))
+            direction = sql.SQL("ASC") if order == "asc" else sql.SQL("DESC")
+            parts.append(sql.SQL("{} {}").format(key, direction))
 
         return sql.SQL(", ").join(parts)
 
@@ -388,7 +380,8 @@ class PostgresGateway[M: BaseModel](
     ) -> sql.Composable:
         bad = [f for f in use if f not in self.read_fields]
 
-        #!? explicitly exclude bad fields or not ?!
+        # Raising (rather than silently excluding) on unknown fields is
+        # deliberate: a bad field here is a caller bug, not user input.
         if bad:
             raise exc.internal(f"Invalid fields: {bad}")
 

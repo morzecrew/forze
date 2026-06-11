@@ -39,30 +39,74 @@ class _TenantRouteStore:
 @final
 @attrs.define(slots=True, kw_only=True)
 class MockTenantResolverPort(_TenantRouteStore, TenantResolverPort):
+    """Resolve tenants from seeded principal→tenant memberships.
+
+    Mirrors the real document-backed resolver
+    (:class:`forze_identity.tenancy.adapters.resolver.TenantResolverAdapter`):
+
+    - ``requested_tenant_id`` resolves only when the principal is a member of
+      that tenant; otherwise raises ``tenant_mismatch``;
+    - ambiguous membership (no request, >1 tenant) raises ``tenant_ambiguous``;
+    - inactive tenants raise ``tenant_inactive``.
+
+    Seed memberships via :meth:`MockTenantManagementPort.attach_principal`.
+    """
+
     async def resolve_from_principal(
         self,
         principal_id: UUID,
         *,
         requested_tenant_id: UUID | None = None,
     ) -> TenantIdentity | None:
-        _ = principal_id
         with self.state.lock:
+            tenants = self._tenants()
+
+            member_of = [
+                (tid, entry)
+                for tid, entry in tenants.items()
+                if principal_id in entry.get("principals", [])  # type: ignore[operator]
+            ]
+
             if requested_tenant_id is not None:
-                entry = self._tenants().get(str(requested_tenant_id))
-                if entry is None:
-                    return None
-                return TenantIdentity(
-                    tenant_id=requested_tenant_id,
-                    tenant_key=str(entry.get("tenant_key", requested_tenant_id)),
+                match = next(
+                    (
+                        (tid, entry)
+                        for tid, entry in member_of
+                        if tid == str(requested_tenant_id)
+                    ),
+                    None,
                 )
-            for tid, entry in self._tenants().items():
-                members = entry.get("principals", [])
-                if principal_id in members:  # type: ignore[operator]
-                    return TenantIdentity(
-                        tenant_id=UUID(tid),
-                        tenant_key=str(entry.get("tenant_key", tid)),
+
+                if match is None:
+                    raise exc.authentication(
+                        "Requested tenant does not match principal membership",
+                        code="tenant_mismatch",
                     )
-        return None
+
+                tid, entry = match
+
+            else:
+                if not member_of:
+                    return None
+
+                if len(member_of) > 1:
+                    raise exc.authentication(
+                        "Tenant identity is ambiguous for this principal",
+                        code="tenant_ambiguous",
+                    )
+
+                tid, entry = member_of[0]
+
+            if not entry.get("active", True):
+                raise exc.authentication(
+                    "Tenant is inactive",
+                    code="tenant_inactive",
+                )
+
+            return TenantIdentity(
+                tenant_id=UUID(tid),
+                tenant_key=str(entry.get("tenant_key", tid)),
+            )
 
 
 @final

@@ -114,7 +114,6 @@ socketio = [
     "python-socketio-stubs>=5.16.1.0.20260211",
 ]
 neo4j = ["neo4j>=6.1.0"]
-arango = ["python-arango-async>=1.2.2"]
 authn = [
     "argon2-cffi>=25.1.0",
     "email-validator>=2.3.0",
@@ -365,6 +364,20 @@ source_modules = ["forze_kits.domain"]
 forbidden_modules = ["forze_kits.aggregates"]
 
 [[tool.importlinter.contracts]]
+name = "Only sanctioned consumers may import forze_kits"
+type = "protected"
+protected_modules = ["forze_kits"]
+allowed_importers = ["forze_fastapi"]
+as_packages = true
+
+[[tool.importlinter.contracts]]
+name = "Nothing imports forze_identity"
+type = "protected"
+protected_modules = ["forze_identity"]
+allowed_importers = []
+as_packages = true
+
+[[tool.importlinter.contracts]]
 name = "Protect integration subpackages"
 type = "protected"
 protected_modules = [
@@ -477,7 +490,6 @@ DEP002 = [
     "python-multipart",
     "email-validator",       # required for pydantic.EmailStr
     #! Added temporarily
-    "python-arango-async",
     "uvicorn",
     "types-hvac",
 ]

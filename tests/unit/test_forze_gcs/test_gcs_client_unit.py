@@ -8,7 +8,7 @@ import pytest
 from forze.base.exceptions import CoreException
 from forze.base.primitives.owned_temp_path import OwnedTempPath
 
-from forze_gcs.kernel.client.client import GCSClient
+from forze_gcs.kernel.client.client import TAG_METADATA_PREFIX, GCSClient
 from forze_gcs.kernel.client.value_objects import GCSConfig
 
 
@@ -146,6 +146,79 @@ async def test_upload_bytes_passes_nested_metadata() -> None:
 
 
 @pytest.mark.asyncio
+async def test_upload_bytes_namespaces_tags_into_custom_metadata() -> None:
+    client = GCSClient()
+    fake_storage = MagicMock()
+    fake_storage.upload = AsyncMock()
+    client._GCSClient__storage = fake_storage
+
+    await client.upload_bytes(
+        "bucket",
+        "key",
+        b"data",
+        content_type="text/plain",
+        metadata={"filename": "x"},
+        tags={"env": "dev", "team": "core"},
+    )
+
+    fake_storage.upload.assert_awaited_once_with(
+        "bucket",
+        "key",
+        b"data",
+        content_type="text/plain",
+        metadata={
+            "metadata": {
+                "filename": "x",
+                f"{TAG_METADATA_PREFIX}env": "dev",
+                f"{TAG_METADATA_PREFIX}team": "core",
+            }
+        },
+        timeout=30,
+    )
+
+
+@pytest.mark.asyncio
+async def test_upload_bytes_tags_without_metadata() -> None:
+    client = GCSClient()
+    fake_storage = MagicMock()
+    fake_storage.upload = AsyncMock()
+    client._GCSClient__storage = fake_storage
+
+    await client.upload_bytes("bucket", "key", b"data", tags={"env": "dev"})
+
+    fake_storage.upload.assert_awaited_once_with(
+        "bucket",
+        "key",
+        b"data",
+        content_type=None,
+        metadata={"metadata": {f"{TAG_METADATA_PREFIX}env": "dev"}},
+        timeout=30,
+    )
+
+
+@pytest.mark.asyncio
+async def test_head_object_splits_tags_from_custom_metadata() -> None:
+    client = GCSClient()
+    fake_storage = MagicMock()
+    fake_storage.download_metadata = AsyncMock(
+        return_value={
+            "contentType": "text/plain",
+            "metadata": {
+                "filename": "Zm9v",
+                f"{TAG_METADATA_PREFIX}env": "dev",
+            },
+            "size": 3,
+        },
+    )
+    client._GCSClient__storage = fake_storage
+
+    head = await client.head_object("bucket", "key")
+
+    assert head.metadata == {"filename": "Zm9v"}
+    assert head.tags == {"env": "dev"}
+
+
+@pytest.mark.asyncio
 async def test_head_object_maps_download_metadata() -> None:
     client = GCSClient()
     fake_storage = MagicMock()
@@ -189,3 +262,48 @@ async def test_close_unlinks_owned_service_file() -> None:
 
     assert credential_path.path is not None
     assert not Path(credential_path.path).exists()
+
+
+@pytest.mark.asyncio
+async def test_list_objects_include_tags_is_a_free_no_op() -> None:
+    """GCS tags ride on head metadata; ``include_tags`` adds no extra calls."""
+
+    client = GCSClient()
+    fake_storage = MagicMock()
+    bucket_ref = MagicMock()
+    bucket_ref.list_blobs = AsyncMock(return_value=["a", "b"])
+    fake_storage.get_bucket.return_value = bucket_ref
+    client._GCSClient__storage = fake_storage
+
+    without_flag = await client.list_objects(bucket="bucket", prefix="")
+    with_flag = await client.list_objects(bucket="bucket", prefix="", include_tags=True)
+
+    assert with_flag == without_flag
+    # One list call per invocation -- the flag triggered no extra requests.
+    assert bucket_ref.list_blobs.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_head_object_include_tags_is_a_free_no_op() -> None:
+    """Tags are already round-tripped from custom metadata regardless of the flag."""
+
+    client = GCSClient()
+    fake_storage = MagicMock()
+    fake_storage.download_metadata = AsyncMock(
+        return_value={
+            "contentType": "text/plain",
+            "metadata": {
+                "plain": "value",
+                f"{TAG_METADATA_PREFIX}env": "dev",
+            },
+            "size": "3",
+        }
+    )
+    client._GCSClient__storage = fake_storage
+
+    without_flag = await client.head_object("bucket", "key")
+    with_flag = await client.head_object("bucket", "key", include_tags=True)
+
+    assert with_flag == without_flag
+    assert dict(with_flag.tags) == {"env": "dev"}
+    assert fake_storage.download_metadata.await_count == 2

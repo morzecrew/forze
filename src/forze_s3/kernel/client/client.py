@@ -6,9 +6,11 @@ require_s3()
 
 import asyncio
 import io
-from contextlib import asynccontextmanager
+from collections.abc import Mapping as MappingABC
+from contextlib import AsyncExitStack, asynccontextmanager
 from contextvars import ContextVar
-from typing import Any, AsyncGenerator, cast, final
+from typing import Any, AsyncContextManager, AsyncGenerator, Final, Mapping, cast, final
+from urllib.parse import urlencode
 
 import aioboto3
 import attrs
@@ -28,19 +30,39 @@ from .value_objects import S3Config, S3ConnectionOpts
 
 # ----------------------- #
 
+GET_OBJECT_TAGGING_CONCURRENCY: Final[int] = 8
+"""Max concurrent ``GetObjectTagging`` calls when :meth:`S3Client.list_objects`
+fans out per-object tag fetches for ``include_tags=True``."""
+
+# ....................... #
+
 
 @final
 @attrs.define(slots=True)
 class S3Client(S3ClientPort):
-    """Async S3 client with context-scoped connection reuse.
+    """Async S3 client with a long-lived connection and context-scoped reuse.
 
-    Must be :meth:`initialize`d with endpoint credentials before use. The
-    :meth:`client` context manager creates an ``aioboto3`` S3 client for the
-    current context; nested entries reuse the same client via context variables.
+    Must be :meth:`initialize`d with an endpoint before use; ``initialize``
+    opens a single long-lived ``aioboto3`` client that all :meth:`client`
+    scopes share until :meth:`close`. Nested entries reuse the same client
+    via context variables.
     """
 
     __opts: S3ConnectionOpts | None = attrs.field(default=None, init=False)
     __session: aioboto3.Session | None = attrs.field(default=None, init=False)
+
+    __persistent_client: AsyncS3Client | None = attrs.field(default=None, init=False)
+    """Long-lived S3 client opened by :meth:`initialize`, shared by all scopes.
+
+    aiobotocore clients are coroutine-safe for concurrent calls: each client
+    owns one ``aiohttp.ClientSession`` with a pooled ``TCPConnector``
+    (bounded by ``max_pool_connections``) and serializes credential refresh
+    behind an ``asyncio.Lock``, so a single instance can serve concurrent
+    operations from multiple tasks.
+    """
+
+    __exit_stack: AsyncExitStack | None = attrs.field(default=None, init=False)
+    """Owns the persistent client's async context; closed by :meth:`close`."""
 
     __ctx_client: ContextVar[AsyncS3Client | None] = attrs.field(
         factory=lambda: ContextVar("s3_client", default=None),
@@ -58,20 +80,33 @@ class S3Client(S3ClientPort):
     async def initialize(
         self,
         endpoint: str,
-        access_key_id: str,
-        secret_access_key: str | SecretStr,
+        access_key_id: str | None = None,
+        secret_access_key: str | SecretStr | None = None,
         config: S3Config | None = None,
     ) -> None:
-        """Configure the client with S3 credentials and create a session.
+        """Configure the client and open a long-lived ``aioboto3`` client.
 
-        No-ops if the session is already initialized. When no ``retries``
-        key is present in *config*, a default adaptive retry strategy with
-        up to 3 attempts is applied automatically. Concurrent calls serialize
-        on an internal lock so only one coroutine performs the setup.
+        No-ops if the session is already initialized. The underlying
+        ``aiobotocore`` client is created **once** here; subsequent
+        :meth:`client` scopes reuse it (depth tracking only) until
+        :meth:`close` releases it. When no ``retries`` key is present in
+        *config*, a default adaptive retry strategy with up to 3 attempts is
+        applied automatically. Concurrent calls serialize on an internal lock
+        so only one coroutine performs the setup.
+
+        Credentials are optional: when *access_key_id* and
+        *secret_access_key* are both ``None`` (the default), they are **not**
+        passed to the client and botocore's default credential chain resolves
+        them instead (environment variables, shared config/credentials files,
+        container/instance roles — ECS task roles, EC2 instance profiles,
+        EKS IRSA). Passing explicit static credentials keeps the previous
+        behavior. Providing only one of the two raises a configuration error.
 
         :param endpoint: S3-compatible endpoint URL.
-        :param access_key_id: AWS access key identifier.
-        :param secret_access_key: AWS secret access key (plain or :class:`SecretStr`).
+        :param access_key_id: AWS access key identifier, or ``None`` to defer
+            to the default credential chain.
+        :param secret_access_key: AWS secret access key (plain or
+            :class:`SecretStr`), or ``None`` to defer to the chain.
         :param config: Optional botocore configuration overrides.
         """
 
@@ -90,14 +125,45 @@ class S3Client(S3ClientPort):
             )
             self.__session = aioboto3.Session()
 
+            stack = AsyncExitStack()
+
+            try:
+                self.__persistent_client = await stack.enter_async_context(
+                    self.__create_client_cm()
+                )
+
+            except BaseException:
+                await stack.aclose()
+                self.__persistent_client = None
+                self.__session = None
+                self.__opts = None
+                raise
+
+            self.__exit_stack = stack
+
     # ....................... #
 
     async def close(self) -> None:
-        """Release the session and connection options."""
+        """Close the long-lived client and release session and options.
+
+        ``close()`` invalidates ambient scopes: scopes still nested when it
+        runs keep their (now closed) client reference and fail on next use,
+        but exit cleanly — they only reset context variables and never
+        re-exit the shared client, so there is no deadlock or double-close.
+        """
 
         async with self.__init_lock:
-            self.__session = None
-            self.__opts = None
+            stack = self.__exit_stack
+            self.__exit_stack = None
+            self.__persistent_client = None
+
+            try:
+                if stack is not None:
+                    await stack.aclose()
+
+            finally:
+                self.__session = None
+                self.__opts = None
 
     # ....................... #
 
@@ -124,13 +190,44 @@ class S3Client(S3ClientPort):
 
     # ....................... #
 
+    def __create_client_cm(self) -> AsyncContextManager[AsyncS3Client]:
+        """Build the ``aiobotocore`` client async context manager from opts.
+
+        When credentials are absent in the options, the ``aws_*`` kwargs are
+        omitted so botocore's default credential chain resolves them.
+        """
+
+        session = self.__require_session()
+        opts = self.__opts
+
+        if opts is None:
+            raise exc.internal("S3 client options are not initialized")
+
+        kwargs: dict[str, Any] = {
+            "endpoint_url": opts.endpoint,
+            "config": opts.config,
+        }
+
+        if opts.access_key_id is not None and opts.secret_access_key is not None:
+            kwargs["aws_access_key_id"] = opts.access_key_id
+            kwargs["aws_secret_access_key"] = opts.secret_access_key.get_secret_value()
+
+        cm = session.client("s3", **kwargs)  # type: ignore
+
+        return cast(AsyncContextManager[AsyncS3Client], cm)
+
+    # ....................... #
+
     @asynccontextmanager
     async def client(self) -> AsyncGenerator[AsyncS3Client]:
         """Yield a context-scoped S3 client.
 
-        On first entry a new ``aioboto3`` client is created; nested calls reuse
-        the existing client and increment a depth counter so the underlying
-        connection is only closed when the outermost context exits.
+        When :meth:`initialize` has opened the long-lived client, scopes are
+        cheap: they bind the shared client to the current context (depth
+        tracking only), and nested calls reuse it until the outermost context
+        exits. Lazy per-scope client construction remains as a fallback for
+        instances whose options were configured without the persistent client
+        (un-lifecycled usage).
         """
 
         depth = self.__ctx_depth.get()
@@ -147,22 +244,22 @@ class S3Client(S3ClientPort):
 
             return
 
-        session = self.__require_session()
-        opts = self.__opts
+        persistent = self.__persistent_client
 
-        if opts is None:
-            raise exc.internal("S3 client options are not initialized")
+        if persistent is not None:
+            token_client = self.__ctx_client.set(persistent)
+            token_depth = self.__ctx_depth.set(1)
 
-        cm = session.client(  # type: ignore
-            "s3",
-            endpoint_url=opts.endpoint,
-            aws_access_key_id=opts.access_key_id,
-            aws_secret_access_key=opts.secret_access_key.get_secret_value(),
-            config=opts.config,  # type: ignore
-        )
-        cm = cast(AsyncS3Client, cm)
+            try:
+                yield persistent
 
-        async with cm as c:
+            finally:
+                self.__ctx_client.reset(token_client)
+                self.__ctx_depth.reset(token_depth)
+
+            return
+
+        async with self.__create_client_cm() as c:
             token_client = self.__ctx_client.set(c)
             token_depth = self.__ctx_depth.set(1)
 
@@ -216,17 +313,51 @@ class S3Client(S3ClientPort):
 
     # ....................... #
 
+    def __region_name(self) -> str | None:
+        opts = self.__opts
+
+        if opts is None or opts.config is None:
+            return None
+
+        region = getattr(opts.config, "region_name", None)
+
+        return cast(str | None, region)
+
+    # ....................... #
+
     @exc_interceptor.coroutine("s3.create_bucket")  # type: ignore[untyped-decorator]
     async def create_bucket(self, bucket: str) -> None:
         """Create a bucket, silently succeeding if it already exists.
+
+        S3 requires a ``LocationConstraint`` for every region except
+        ``us-east-1``, where it must be omitted. The configured region is
+        forwarded when set; with no configured region the **resolved** region
+        of the live client (``client.meta.region_name``, i.e. what botocore's
+        chain resolved from env/profile/IMDS) is used, so the bucket lands in
+        the region the client actually targets.
 
         :param bucket: Bucket name to create.
         """
 
         c = self.__require_client()
+        region = self.__region_name()
+
+        if region is None:
+            meta = getattr(c, "meta", None)
+            region = getattr(meta, "region_name", None) if meta is not None else None
 
         try:
-            await c.create_bucket(Bucket=bucket)
+            if region and region != "us-east-1":
+                await c.create_bucket(
+                    Bucket=bucket,
+                    CreateBucketConfiguration=cast(
+                        Any,
+                        {"LocationConstraint": region},
+                    ),
+                )
+
+            else:
+                await c.create_bucket(Bucket=bucket)
 
         except c.exceptions.ClientError as e:  # type: ignore[attr-defined]
             code = (e.response or {}).get("Error", {}).get("Code")
@@ -240,14 +371,17 @@ class S3Client(S3ClientPort):
 
     @exc_interceptor.coroutine("s3.ensure_bucket")  # type: ignore[untyped-decorator]
     async def ensure_bucket(self, bucket: str) -> None:
-        """Assert that the bucket exists.
+        """Create the bucket when it does not exist (idempotent).
 
-        :param bucket: Bucket name to verify.
-        :raises NotFoundError: If the bucket does not exist.
+        Concurrent creation races are tolerated: ``BucketAlreadyOwnedByYou``
+        (and equivalent conflicts) from :meth:`create_bucket` are treated as
+        success.
+
+        :param bucket: Bucket name to ensure.
         """
 
         if not await self.bucket_exists(bucket):
-            raise exc.not_found("Bucket does not exist")
+            await self.create_bucket(bucket)
 
     # ....................... #
 
@@ -307,7 +441,7 @@ class S3Client(S3ClientPort):
             extra["Metadata"] = metadata
 
         if tags:
-            extra["Tagging"] = "&".join(f"{k}={v}" for k, v in tags.items())
+            extra["Tagging"] = urlencode(tags)
 
         fileobj = io.BytesIO(data)
 
@@ -359,16 +493,30 @@ class S3Client(S3ClientPort):
         *,
         limit: int | None = None,
         offset: int | None = None,
+        include_tags: bool = False,
     ) -> tuple[list[ObjectStorageListedObject], int]:
         """List objects in a bucket with optional pagination.
 
         Streams all pages from the ``list_objects_v2`` paginator and applies
         the requested offset/limit window in memory.
 
+        ``include_tags`` is a guarantee, not a filter: ``ListObjectsV2`` never
+        returns tags, so ``include_tags=True`` fans out one extra
+        ``GetObjectTagging`` call **per listed object** (N extra calls for N
+        items in the window), bounded by
+        :data:`GET_OBJECT_TAGGING_CONCURRENCY` concurrent requests, and
+        requires the ``s3:GetObjectTagging`` permission. A failing tagging
+        call propagates through the normal error mapping (the caller asked
+        for a guarantee).
+
         :param bucket: Bucket name.
         :param prefix: Key prefix filter.
         :param limit: Maximum number of objects to return.
         :param offset: Number of objects to skip before collecting results.
+        :param include_tags: When ``True``, guarantee
+            :attr:`~forze.application.integrations.storage.client.ObjectStorageListedObject.tags`
+            is populated for every returned item (at the cost of N extra
+            ``GetObjectTagging`` calls).
         :returns: A tuple of ``(items, total_count)`` where *total_count*
             reflects the full (unpaginated) result set.
         :raises exc.internal: If *limit* is non-positive or *offset* is negative.
@@ -414,16 +562,72 @@ class S3Client(S3ClientPort):
             if collected_enough and limit is not None:
                 break
 
+        if include_tags and items:
+            items = await self.__attach_tags(c, bucket, items)
+
         return items, total_count
 
     # ....................... #
 
+    async def __attach_tags(
+        self,
+        c: AsyncS3Client,
+        bucket: str,
+        items: list[ObjectStorageListedObject],
+    ) -> list[ObjectStorageListedObject]:
+        """Fan out ``GetObjectTagging`` per item with bounded concurrency.
+
+        Concurrency is capped by :data:`GET_OBJECT_TAGGING_CONCURRENCY`. Any
+        failure propagates (cancelling the remaining fetches) — the caller
+        asked for the tag guarantee.
+        """
+
+        semaphore = asyncio.Semaphore(GET_OBJECT_TAGGING_CONCURRENCY)
+
+        async def _tags_for(item: ObjectStorageListedObject) -> Mapping[str, str]:
+            async with semaphore:
+                resp = await c.get_object_tagging(Bucket=bucket, Key=item.key)
+
+                return _decode_tag_set(resp)
+
+        try:
+            async with asyncio.TaskGroup() as tg:
+                tasks = [tg.create_task(_tags_for(item)) for item in items]
+
+        except BaseExceptionGroup as eg:
+            # Unwrap so the original botocore error reaches the normal error
+            # mapping (code-specific mapping instead of a generic fallback).
+            raise eg.exceptions[0] from eg
+
+        return [
+            ObjectStorageListedObject(key=item.key, tags=task.result())
+            for item, task in zip(items, tasks, strict=True)
+        ]
+
+    # ....................... #
+
     @exc_interceptor.coroutine("s3.head_object")  # type: ignore[untyped-decorator]
-    async def head_object(self, bucket: str, key: str) -> ObjectStorageHead:
+    async def head_object(
+        self,
+        bucket: str,
+        key: str,
+        *,
+        include_tags: bool = False,
+    ) -> ObjectStorageHead:
         """Retrieve object metadata without downloading the body.
+
+        ``include_tags`` is a guarantee, not a filter: ``HeadObject`` never
+        returns tags, so ``include_tags=True`` issues one extra
+        ``GetObjectTagging`` call and requires the ``s3:GetObjectTagging``
+        permission. A failing tagging call propagates through the normal
+        error mapping (the caller asked for a guarantee). With the default
+        ``False``, :attr:`ObjectStorageHead.tags` stays empty on S3.
 
         :param bucket: Bucket name.
         :param key: Object key.
+        :param include_tags: When ``True``, guarantee
+            :attr:`ObjectStorageHead.tags` is populated (one extra
+            ``GetObjectTagging`` call).
         :returns: An :class:`S3Head` with content type, metadata, size, last
             modified timestamp, and ETag.
         """
@@ -431,10 +635,42 @@ class S3Client(S3ClientPort):
         c = self.__require_client()
         head = await c.head_object(Bucket=bucket, Key=key)
 
+        tags: Mapping[str, str] = {}
+
+        if include_tags:
+            resp = await c.get_object_tagging(Bucket=bucket, Key=key)
+            tags = _decode_tag_set(resp)
+
         return ObjectStorageHead(
             content_type=head.get("ContentType", "application/octet-stream"),
             metadata=head.get("Metadata", {}),
             size=head.get("ContentLength", 0),
             last_modified=head.get("LastModified"),
             etag=head.get("ETag", "").strip('"'),
+            tags=tags,
         )
+
+
+# ....................... #
+
+
+def _decode_tag_set(resp: Mapping[str, Any]) -> dict[str, str]:
+    """Decode a ``GetObjectTagging`` response ``TagSet`` into a mapping."""
+
+    tags: dict[str, str] = {}
+
+    tag_set = cast(list[dict[str, str]], resp.get("TagSet") or [])
+
+    for entry in tag_set:
+        if not isinstance(
+            entry, MappingABC
+        ):  # pyright: ignore[reportUnnecessaryIsInstance]
+            continue
+
+        tag_key = entry.get("Key")
+        tag_value = entry.get("Value")
+
+        if isinstance(tag_key, str) and isinstance(tag_value, str):
+            tags[tag_key] = tag_value
+
+    return tags

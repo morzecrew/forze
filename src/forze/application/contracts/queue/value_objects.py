@@ -15,7 +15,13 @@ class QueueMessage[M]:
     """Logical queue name or channel."""
 
     id: str
-    """Backend-specific identifier for the message."""
+    """Broker message identifier.
+
+    Stable across redeliveries of the same message and correlatable with the
+    identifier returned by enqueue (RabbitMQ publisher message id; SQS broker
+    ``MessageId``) — safe to use for consumer-side deduplication. Backends
+    accept it in ``ack``/``nack`` calls.
+    """
 
     payload: M
     """Structured payload carried by the message."""

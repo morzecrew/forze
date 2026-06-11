@@ -1,17 +1,22 @@
 """Tests for forze.domain.models.document."""
 
 from forze.base.exceptions import CoreException, exc
-from datetime import datetime
+from datetime import datetime, timezone
 from uuid import UUID
 
 import pytest
 
 from forze.base.primitives import JsonDict
 from forze.domain.models import (
+    AggregateRoot,
+    CoreModel,
     CreateDocumentCmd,
     Document,
     DocumentHistory,
+    DomainEvent,
     ReadDocument,
+    event_emitter,
+    invariant,
 )
 from forze.domain.validation import update_validator
 
@@ -20,6 +25,14 @@ from forze.domain.validation import update_validator
 class SampleDocument(Document):
     name: str
     value: int = 0
+
+class Address(CoreModel):
+    street: str
+    city: str
+
+class NestedDocument(Document):
+    address: Address
+    due: datetime
 
 class TestDocumentBasics:
     def test_default_fields(self) -> None:
@@ -70,6 +83,160 @@ class TestDocumentUpdate:
         after, diff = doc.update({"name": "new", "value": 99})
         assert after.name == "new"
         assert after.value == 99
+
+class TestDocumentUpdateCanonicalization:
+    """Update merges into python-mode state and fully re-validates the result."""
+
+    def test_same_datetime_object_is_a_noop(self) -> None:
+        # Regression: a python datetime equal to the stored value must not produce
+        # a spurious diff (previously compared against a json-mode ISO string).
+        due = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        doc = NestedDocument(address=Address(street="main", city="LA"), due=due)
+        before_update = doc.last_update_at
+
+        after, diff = doc.update({"due": due})
+
+        assert diff == {}
+        assert after is doc
+        assert after.rev == doc.rev
+        assert after.last_update_at == before_update
+
+    def test_noop_update_does_not_fire_field_matched_emitters(self) -> None:
+        class _DueMoved(DomainEvent):
+            pass
+
+        class Task(Document, AggregateRoot):
+            due: datetime
+
+            @event_emitter(fields=["due"])
+            def _due_moved(self, after: "Task", diff: JsonDict) -> DomainEvent | None:
+                return _DueMoved()
+
+        due = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        task = Task(due=due)
+
+        after, diff = task.update({"due": due})
+
+        assert diff == {}
+        assert after.has_pending_events is False
+
+        # Sanity: a real change still fires the emitter.
+        moved, diff = task.update({"due": datetime(2027, 1, 1, tzinfo=timezone.utc)})
+        assert "due" in diff
+        assert [type(e) for e in moved.collect_events()] == [_DueMoved]
+
+    def test_partial_nested_dict_merges_and_validates(self) -> None:
+        doc = NestedDocument(
+            address=Address(street="main", city="LA"),
+            due=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        )
+
+        after, diff = doc.update({"address": {"city": "NY"}})
+
+        # The instance carries a fully validated nested model, siblings preserved.
+        assert isinstance(after.address, Address)
+        assert after.address.city == "NY"
+        assert after.address.street == "main"
+
+        # The diff keeps its merge-patch shape: only the changed nested key.
+        assert diff["address"] == {"city": "NY"}
+        assert "last_update_at" in diff
+        assert set(diff) == {"address", "last_update_at"}
+
+    def test_iso_string_patch_yields_real_datetime(self) -> None:
+        doc = NestedDocument(
+            address=Address(street="main", city="LA"),
+            due=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        )
+
+        after, diff = doc.update({"due": "2027-05-04T00:00:00Z"})
+
+        assert isinstance(after.due, datetime)
+        assert after.due == datetime(2027, 5, 4, tzinfo=timezone.utc)
+        assert isinstance(diff["due"], datetime)
+
+    def test_iso_string_equal_to_current_value_is_a_noop(self) -> None:
+        doc = NestedDocument(
+            address=Address(street="main", city="LA"),
+            due=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        )
+
+        after, diff = doc.update({"due": "2026-01-01T00:00:00Z"})
+
+        assert diff == {}
+        assert after is doc
+
+    def test_validators_and_invariants_observe_validated_instance(self) -> None:
+        seen: list[str] = []
+
+        class Doc(Document):
+            address: Address
+
+            @invariant
+            def _city_not_empty(self) -> None:
+                # Crashes with AttributeError if address is a plain (partial) dict.
+                assert self.address.city
+
+            @update_validator(fields=["address"])
+            def _check_address(self, after: "Doc", diff: JsonDict) -> None:
+                assert isinstance(after.address, Address)
+                seen.append(after.address.city)
+
+        doc = Doc(address=Address(street="main", city="LA"))
+        after, _ = doc.update({"address": {"city": "NY"}})
+
+        assert seen == ["NY"]
+        assert after.address.street == "main"
+
+    def test_computed_fields_never_appear_in_diff(self) -> None:
+        # Regression: re-validation recomputes @computed_field values on the
+        # candidate; they must not leak into the diff (gateways would try to
+        # write them as table columns — not-persisted by contract).
+        from pydantic import computed_field
+
+        class Doc(Document):
+            value: int
+
+            @computed_field  # type: ignore[prop-decorator]
+            @property
+            def doubled(self) -> int:
+                return self.value * 2
+
+        doc = Doc(value=2)
+        after, diff = doc.update({"value": 5})
+
+        assert "doubled" not in diff
+        assert set(diff) == {"value", "last_update_at"}
+        assert after.doubled == 10
+
+    def test_nested_computed_fields_excluded_from_dump_and_diff(self) -> None:
+        # Regression: the round-1 fix only stripped *top-level* computed fields
+        # (the explicit model_fields filter). A @computed_field declared on a
+        # nested model leaked through `_dump_stored_fields` and therefore into
+        # update diffs whenever the nested field was patched.
+        from pydantic import computed_field
+
+        class GeoAddress(CoreModel):
+            street: str
+            city: str
+
+            @computed_field  # type: ignore[prop-decorator]
+            @property
+            def label(self) -> str:
+                return f"{self.street}, {self.city}"
+
+        class Doc(Document):
+            address: GeoAddress
+
+        doc = Doc(address=GeoAddress(street="main", city="LA"))
+
+        dump = doc._dump_stored_fields()
+        assert "label" not in dump["address"]
+
+        after, diff = doc.update({"address": {"city": "NY"}})
+        assert diff["address"] == {"city": "NY"}
+        assert "label" not in diff["address"]
+        assert after.address.label == "main, NY"
 
 class TestDocumentTouch:
     def test_updates_last_update_only(self) -> None:
@@ -177,6 +344,83 @@ class TestValidateHistoricalConsistency:
         after, _ = old.update({"name": "v2"})
         data: JsonDict = {"name": "v2"}
         assert after.validate_historical_consistency(old, data)
+
+    def test_noop_datetime_resend_of_concurrently_changed_field_no_conflict(
+        self,
+    ) -> None:
+        # THE false-positive regression: old/self used to be dumped json-mode
+        # while `data` is python-mode, so a re-sent identical datetime looked
+        # like a touch (datetime != ISO string) and a no-op echo of a field
+        # another writer concurrently changed raised a false conflict.
+        due = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        old = NestedDocument(address=Address(street="main", city="LA"), due=due)
+        current, _ = old.update({"due": datetime(2027, 2, 2, tzinfo=timezone.utc)})
+
+        # Stale client echoes exactly what it read: no intent to change `due`.
+        assert current.validate_historical_consistency(old, {"due": due})
+
+    def test_noop_uuid_resend_of_concurrently_changed_field_no_conflict(self) -> None:
+        from forze.base.primitives.uuid import uuid7
+
+        class RefDoc(Document):
+            ref: UUID
+
+        ref = uuid7()
+        old = RefDoc(ref=ref)
+        current, _ = old.update({"ref": uuid7()})
+
+        assert current.validate_historical_consistency(old, {"ref": ref})
+
+    def test_genuine_datetime_conflict_still_flagged(self) -> None:
+        # A *different* value for a concurrently-changed field is a real conflict.
+        due = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        old = NestedDocument(address=Address(street="main", city="LA"), due=due)
+        current, _ = old.update({"due": datetime(2027, 2, 2, tzinfo=timezone.utc)})
+
+        data: JsonDict = {"due": datetime(2028, 3, 3, tzinfo=timezone.utc)}
+        assert not current.validate_historical_consistency(old, data)
+
+    def test_same_datetime_change_no_conflict(self) -> None:
+        # Concurrent agreement: both writers set the same datetime. The
+        # compatible-scalar-overlap rule used to break for datetimes because
+        # the values were compared across modes (ISO string vs datetime).
+        due = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        new_due = datetime(2027, 2, 2, tzinfo=timezone.utc)
+        old = NestedDocument(address=Address(street="main", city="LA"), due=due)
+        current, _ = old.update({"due": new_due})
+
+        assert current.validate_historical_consistency(old, {"due": new_due})
+
+    def test_non_overlapping_python_mode_changes_pass(self) -> None:
+        due = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        old = NestedDocument(address=Address(street="main", city="LA"), due=due)
+        current, _ = old.update({"due": datetime(2027, 2, 2, tzinfo=timezone.utc)})
+
+        assert current.validate_historical_consistency(
+            old, {"address": {"city": "NY"}}
+        )
+
+    def test_nested_scalar_conflict_still_flagged(self) -> None:
+        # Hybrid merge-patch semantics are unchanged: overlapping nested
+        # scalar paths with different values still conflict.
+        due = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        old = NestedDocument(address=Address(street="main", city="LA"), due=due)
+        current, _ = old.update({"address": {"city": "NY"}})
+
+        assert not current.validate_historical_consistency(
+            old, {"address": {"city": "SF"}}
+        )
+
+    def test_container_conflict_still_flagged(self) -> None:
+        # Hybrid semantics: container touches on overlapping paths conflict
+        # even when scalar equality cannot be established.
+        class TaggedDoc(Document):
+            tags: list[str]
+
+        old = TaggedDoc(tags=["a"])
+        current, _ = old.update({"tags": ["a", "b"]})
+
+        assert not current.validate_historical_consistency(old, {"tags": ["c"]})
 
 # ----------------------- #
 # DTOs

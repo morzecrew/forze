@@ -117,6 +117,6 @@ async def test_execution_context_resolves_optional_contract_ports() -> None:
     await pubsub.publish("topic", _Msg(value="ping"))
 
     stream_id = await stream_write.append("events", _Msg(value="a"))
-    rows = await stream_group.read("g", "c", {"events": "0"})
+    rows = await stream_group.read("g", "c", {"events": ">"})
     assert rows[0].id == stream_id
     assert rows[0].payload.value == "a"

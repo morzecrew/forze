@@ -31,6 +31,37 @@ def _snapshot_to_dict(snapshot: Any) -> JsonDict:
     return out
 
 
+# ----------------------- #
+# Private SDK transaction API.
+#
+# The async Firestore SDK exposes no public begin/commit/rollback on
+# ``AsyncTransaction``: its only public transaction entrypoint is the
+# ``async_transactional`` decorator, which retries a wrapped coroutine and
+# cannot back a context-manager API. The driver-level lifecycle lives in the
+# private (but docstring-documented) coroutines ``_begin`` / ``_commit`` /
+# ``_rollback``, which we call through the helpers below.
+#
+# Verified against google-cloud-firestore 2.27.0. A unit test
+# (tests/unit/test_forze_firestore/test_firestore_client_tx.py::
+# TestPrivateTransactionApiCanary) asserts these attributes still exist on the
+# installed SDK so a driver upgrade fails loudly in CI instead of at runtime.
+
+_TX_PRIVATE_API = ("_begin", "_commit", "_rollback")
+
+
+async def _tx_begin(tx: AsyncTransaction) -> None:
+    await tx._begin()  # type: ignore[attr-defined]
+
+
+async def _tx_commit(tx: AsyncTransaction) -> None:
+    await tx._commit()  # type: ignore[attr-defined]
+
+
+async def _tx_rollback(tx: AsyncTransaction) -> None:
+    if tx.in_progress:
+        await tx._rollback()  # type: ignore[attr-defined]
+
+
 # ....................... #
 
 
@@ -113,7 +144,16 @@ class FirestoreClient(FirestoreClientPort):
         *,
         database: str | None = None,
     ) -> AsyncCollectionReference:
-        _ = database or self.__database_id
+        if database is not None and database != self.__database_id:
+            raise exc.configuration(
+                "forze_firestore does not support per-call database selection; "
+                "configure the client's database_id",
+                details={
+                    "requested_database": database,
+                    "configured_database": self.__database_id,
+                },
+            )
+
         return self.__require_client().collection(name)
 
     # ....................... #
@@ -153,14 +193,20 @@ class FirestoreClient(FirestoreClientPort):
         token_d = self.__ctx_depth.set(1)
 
         try:
-            await tx._begin()  # type: ignore[attr-defined]
+            await _tx_begin(tx)
             yield tx
-            await tx._commit()  # type: ignore[attr-defined]
+            await _tx_commit(tx)
 
-        except Exception:
-            if tx.in_progress:
-                await tx._rollback()  # type: ignore[attr-defined]
-
+        except BaseException:
+            # Roll back on *any* exit path — including asyncio.CancelledError —
+            # so a cancelled scope does not leak an in-progress server-side
+            # transaction. CancelledError is re-raised unmapped (the exc
+            # interceptor bypasses control-flow exceptions). An ABORTED commit
+            # (contention) also lands here: the transaction is rolled back and
+            # the error is mapped to the CONCURRENCY kind, which plugs into
+            # forze's OCC retry machinery (the whole scope is re-executed with
+            # a fresh transaction).
+            await _tx_rollback(tx)
             raise
 
         finally:
@@ -305,12 +351,13 @@ class FirestoreClient(FirestoreClientPort):
         *,
         filters: BaseFilter | None = None,
     ) -> int:
+        tx = self.__current_transaction()
         query = coll
 
         if filters is not None:
             query = query.where(filter=filters)  # type: ignore[assignment]
 
-        results = await query.count().get()  # type: ignore[no-untyped-call]
+        results = await query.count().get(transaction=tx)  # type: ignore[no-untyped-call]
         return int(results[0][0].value)  # type: ignore[arg-type]
 
     # ....................... #

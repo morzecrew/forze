@@ -3,14 +3,7 @@ from typing import final
 
 import attrs
 
-from forze.application.integrations.storage.client import (
-    ObjectStorageHead,
-    ObjectStorageListedObject,
-)
 from forze.base.exceptions import exc
-
-GCSHead = ObjectStorageHead
-GCSListedObject = ObjectStorageListedObject
 
 # ----------------------- #
 

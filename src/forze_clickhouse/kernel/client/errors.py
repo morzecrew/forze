@@ -13,10 +13,15 @@ from forze.base.exceptions import (
     CoreException,
     ExceptionInterceptor,
     default_chain_exc_mapper,
+    fallback_exception_mapper,
     make_http_exception_mapper,
 )
 
 # ----------------------- #
+
+_shared_fallback = fallback_exception_mapper("ClickHouse")
+
+# ....................... #
 
 
 def _clickhouse_http_message(status: int | None) -> str:
@@ -37,10 +42,7 @@ def _clickhouse_fallback(
             details=details,
         )
 
-    return CoreException.infrastructure(
-        f"ClickHouse error during {site}.",
-        details=details,
-    )
+    return _shared_fallback(exc, site=site, details=details)
 
 
 # ....................... #

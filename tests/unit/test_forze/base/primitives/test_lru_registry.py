@@ -497,6 +497,148 @@ class TestGuardedLruRegistry:
         dispose.assert_not_awaited()
 
 
+class TestGuardedLruRegistryRaces:
+    @pytest.mark.asyncio
+    async def test_use_never_yields_value_disposed_by_concurrent_evict(self) -> None:
+        """Regression: lookup -> refcount increment is atomic w.r.t. eviction.
+
+        Before the fix, ``use()`` fetched the entry under the registry lock but
+        incremented the refcount only after awaiting the entry condition. A task
+        paused in that gap (simulated here by holding the entry condition) let
+        ``evict()`` observe ``refcount == 0`` and dispose the value the first
+        task was about to receive.
+        """
+
+        disposed: list[str] = []
+
+        async def tracking_dispose(value: str) -> None:
+            disposed.append(value)
+
+        create = AsyncMock(return_value="v-a")
+        reg = GuardedLruRegistry(
+            max_entries=4,
+            create=create,
+            dispose=tracking_dispose,
+        )
+
+        async with reg.use("a"):
+            pass
+
+        entry = reg._slots["a"]  # noqa: SLF001
+        # Hold the entry condition: the old code blocked here BEFORE the
+        # refcount increment; the fixed code reserves under the registry lock
+        # and only touches the condition on scope exit.
+        await entry.condition.acquire()
+
+        observed: dict[str, object] = {}
+
+        async def task_a() -> None:
+            async with reg.use("a") as value:
+                observed["value"] = value
+                observed["was_disposed_at_yield"] = value in disposed
+
+        t_a = asyncio.create_task(task_a())
+        await asyncio.sleep(0.05)
+
+        # Concurrent eviction: must NOT dispose, the value is reserved by A.
+        await reg.evict("a")
+        assert disposed == []
+        assert observed.get("was_disposed_at_yield") is False
+        assert observed.get("value") == "v-a"
+
+        entry.condition.release()
+        await asyncio.wait_for(t_a, timeout=2)
+
+        # Deferred disposal happens only after A's use scope exits.
+        assert disposed == ["v-a"]
+
+    @pytest.mark.asyncio
+    async def test_new_entry_not_disposed_by_overflow_before_first_use(self) -> None:
+        """The create path reserves the new entry before overflow eviction runs,
+        so a concurrent insert can only drain it, never dispose it mid-use."""
+
+        disposed: list[str] = []
+
+        async def tracking_dispose(value: str) -> None:
+            disposed.append(value)
+
+        create = AsyncMock(side_effect=lambda k: f"v-{k}")
+        reg = GuardedLruRegistry(
+            max_entries=1,
+            create=create,
+            dispose=tracking_dispose,
+        )
+
+        gate = asyncio.Event()
+        seen: dict[str, object] = {}
+
+        async def hold_a() -> None:
+            async with reg.use("a") as value:
+                seen["a_disposed_mid_use"] = value in disposed
+                await gate.wait()
+                seen["a_disposed_after_wait"] = value in disposed
+
+        t_a = asyncio.create_task(hold_a())
+        await asyncio.sleep(0.05)
+
+        # Overflow: "a" is the LRU entry but in use -> drained, not disposed.
+        async with reg.use("b"):
+            pass
+
+        assert "v-a" not in disposed
+
+        gate.set()
+        await asyncio.wait_for(t_a, timeout=2)
+
+        assert seen == {"a_disposed_mid_use": False, "a_disposed_after_wait": False}
+        assert disposed == ["v-a"]
+
+    @pytest.mark.asyncio
+    async def test_dispose_error_during_drain_deregisters_slot(self) -> None:
+        """A failing ``dispose`` in the drain path must still lift the draining
+        barrier; otherwise every later ``use()`` of the slot hangs."""
+
+        create = AsyncMock(side_effect=["v-1", "v-2"])
+        dispose_calls: list[str] = []
+
+        async def failing_dispose(value: str) -> None:
+            dispose_calls.append(value)
+
+            if len(dispose_calls) == 1:
+                raise RuntimeError("dispose boom")
+
+        reg = GuardedLruRegistry(
+            max_entries=4,
+            create=create,
+            dispose=failing_dispose,
+        )
+
+        gate = asyncio.Event()
+
+        async def hold() -> None:
+            async with reg.use("a"):
+                await gate.wait()
+
+        t = asyncio.create_task(hold())
+        await asyncio.sleep(0.05)
+
+        await reg.evict("a")  # in use -> drain deferred until scope exit
+        gate.set()
+
+        # The dispose error propagates out of the use scope after cleanup.
+        with pytest.raises(RuntimeError, match="dispose boom"):
+            await asyncio.wait_for(t, timeout=2)
+
+        # Slot is deregistered: no draining leftovers, fresh create succeeds.
+        assert reg._draining == {}  # noqa: SLF001
+
+        async def fresh() -> str:
+            async with reg.use("a") as value:
+                return value
+
+        assert await asyncio.wait_for(fresh(), timeout=2) == "v-2"
+
+
 class TestGuardedEntryDrain:
     @pytest.mark.asyncio
     async def test_wait_until_drained_resolves_when_barrier_set(self) -> None:

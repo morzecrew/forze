@@ -65,6 +65,14 @@ def _assertion_from_store(entry: dict[str, Any]) -> VerifiedAssertion:
 @final
 @attrs.define(slots=True, kw_only=True)
 class MockPasswordVerifierPort(PasswordVerifierPort):
+    """Verify seeded login/password pairs.
+
+    Seed entries under ``state.identity["authn"][route]["passwords"][login]`` and
+    include a ``"password"`` field with the expected plaintext; entries without it
+    never verify. Mismatches raise the same uniform :func:`exc.authentication`
+    message as unknown logins (no account enumeration, mirroring real verifiers).
+    """
+
     state: MockState
     route: str = "main"
 
@@ -77,6 +85,9 @@ class MockPasswordVerifierPort(PasswordVerifierPort):
         if entry is None:
             raise exc.authentication("Invalid login or password")
         assert isinstance(entry, dict)  # nosec: B101
+
+        if entry.get("password") != credentials.password:  # type: ignore[union-attr]
+            raise exc.authentication("Invalid login or password")
         return _assertion_from_store(entry)  # type: ignore[arg-type]
 
 

@@ -51,6 +51,19 @@ class ObjectStorageHead:
     etag: str = ""
     """Entity tag with surrounding quotes stripped when applicable."""
 
+    tags: Mapping[str, str] = attrs.field(factory=dict[str, str])
+    """Object tags when the backend surfaces them on a head request.
+
+    Population depends on the ``include_tags`` flag of
+    :meth:`ObjectStorageClientPort.head_object`: with ``include_tags=False``
+    (the default) backends that get tags for free still include them (GCS
+    round-trips tags via namespaced custom metadata; the mock adapter stores
+    them in-memory), but S3 head responses do not carry tags, so this mapping
+    may be empty even when the object carries tags. With ``include_tags=True``
+    the mapping is guaranteed to be populated — S3 issues a separate
+    ``GetObjectTagging`` call to fetch them.
+    """
+
 
 # ....................... #
 
@@ -62,6 +75,17 @@ class ObjectStorageListedObject:
 
     key: str
     """Object key (blob name)."""
+
+    tags: Mapping[str, str] = attrs.field(factory=dict[str, str])
+    """Object tags when requested via ``include_tags=True`` on
+    :meth:`ObjectStorageClientPort.list_objects`.
+
+    Listing APIs do not return tags natively, so this mapping is empty unless
+    the caller asked for the tag guarantee (S3 then fans out
+    ``GetObjectTagging`` per listed object). Backends whose tags only travel
+    on head metadata (GCS, mock) leave this empty either way — their tags
+    surface on :class:`ObjectStorageHead` instead.
+    """
 
 
 # ....................... #
@@ -80,7 +104,9 @@ class ObjectStorageClientPort(Protocol):
 
     def create_bucket(self, bucket: str) -> Awaitable[None]: ...  # pragma: no cover
 
-    def ensure_bucket(self, bucket: str) -> Awaitable[None]: ...  # pragma: no cover
+    def ensure_bucket(self, bucket: str) -> Awaitable[None]:
+        """Create *bucket* when it does not exist (idempotent create-if-missing)."""
+        ...  # pragma: no cover
 
     def object_exists(
         self, bucket: str, key: str
@@ -116,10 +142,31 @@ class ObjectStorageClientPort(Protocol):
         *,
         limit: int | None = None,
         offset: int | None = None,
-    ) -> Awaitable[tuple[list[ObjectStorageListedObject], int]]: ...  # pragma: no cover
+        include_tags: bool = False,
+    ) -> Awaitable[tuple[list[ObjectStorageListedObject], int]]:
+        """List objects under *prefix* with an offset/limit window.
+
+        ``include_tags`` is a **guarantee, not a filter**: with ``False``
+        (default) tags on the returned descriptors may be absent — backends
+        that get them for free still include them; with ``True`` tags are
+        guaranteed populated, and backends needing extra calls (S3:
+        ``GetObjectTagging`` per object) pay them.
+        """
+        ...  # pragma: no cover
 
     def head_object(
         self,
         bucket: str,
         key: str,
-    ) -> Awaitable[ObjectStorageHead]: ...  # pragma: no cover
+        *,
+        include_tags: bool = False,
+    ) -> Awaitable[ObjectStorageHead]:
+        """Fetch object metadata without downloading the body.
+
+        ``include_tags`` is a **guarantee, not a filter**: with ``False``
+        (default) :attr:`ObjectStorageHead.tags` may be absent — backends
+        that get tags for free still include them; with ``True`` the tags
+        mapping is guaranteed populated, and backends needing an extra call
+        (S3: ``GetObjectTagging``) pay it.
+        """
+        ...  # pragma: no cover

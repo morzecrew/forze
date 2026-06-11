@@ -7,9 +7,10 @@ from unittest.mock import AsyncMock
 import pytest
 from starlette.testclient import TestClient
 
-from forze.base.exceptions import CoreException, exc
+from forze.base.exceptions import exc
 from forze.base.logging import configure_logging
 from forze_fastapi._logging import ForzeFastAPILogger
+from forze_fastapi.exceptions import ERROR_CODE_HEADER
 from forze_fastapi.middlewares.logging import LoggingMiddleware
 
 # ----------------------- #
@@ -57,8 +58,8 @@ class TestLoggingMiddleware:
 
         app.assert_awaited_once()
 
-    def test_core_error_propagates(self) -> None:
-        """exc.internal is not converted to a 500 JSON response."""
+    def test_core_error_converted_to_standard_response(self) -> None:
+        """CoreException raised below is converted to the standard JSON response."""
 
         async def core_app(scope: object, receive: object, send: object) -> None:
             raise exc.internal("boundary", code="test")
@@ -66,8 +67,13 @@ class TestLoggingMiddleware:
         mw = LoggingMiddleware(core_app)
         client = TestClient(mw, raise_server_exceptions=True)
 
-        with pytest.raises(CoreException, match="boundary"):
-            client.get("/")
+        response = client.get("/")
+
+        assert response.status_code == 500
+        # internal summaries must not leak to clients
+        assert response.json() == {"detail": "Internal server error"}
+        assert response.headers.get(ERROR_CODE_HEADER) == "test"
+        assert "x-process-time" in response.headers
 
     def test_unhandled_exception_returns_500_json(self) -> None:
         """Non-exc.internal exceptions yield a generic 500 JSON body."""

@@ -113,6 +113,16 @@ class AuthnDepsModule(DepsModule):
     """When set (e.g. ``"act"``), token routes read this claim as an RFC 8693 delegation
     actor and attach it as :attr:`AuthnIdentity.actor`; ``None`` ignores delegation claims."""
 
+    revoke_sessions_on_password_change: bool = attrs.field(default=True)
+    """Whether first-party password lifecycle routes revoke ALL of the principal's
+    sessions after a successful password change ("log out everywhere"). The caller must
+    re-authenticate with the new password; set ``False`` to keep existing sessions alive."""
+
+    password_rehash_on_login: bool = attrs.field(default=False)
+    """When ``True``, the default :class:`Argon2PasswordVerifier` upgrades stored hashes
+    to the current Argon2 parameters after a successful login (wires the password
+    account command port into the verifier). Best-effort; never fails the login."""
+
     # ....................... #
 
     def __call__(self) -> Deps:  # noqa: C901
@@ -137,6 +147,23 @@ class AuthnDepsModule(DepsModule):
 
         api_key_overrides_keys = frozenset((self.api_key_verifiers or {}).keys())
         token_overrides_keys = frozenset((self.token_verifiers or {}).keys())
+        resolver_overrides_keys = frozenset((self.resolvers or {}).keys())
+
+        # An external token verifier paired with the default JwtNativeUuidResolver
+        # would trust the external IdP's ``sub`` as an internal principal UUID —
+        # a UUID-shaped external subject could collide with an internal principal.
+        # Scoped to token_verifiers only: api_key/password overrides (e.g. the
+        # builtin local wiring) legitimately emit internal principal UUIDs.
+        for name in token_overrides_keys - resolver_overrides_keys:
+            methods = authn_map.get(name)
+
+            if methods is not None and "token" in methods:
+                raise exc.configuration(
+                    f"token_verifiers override for route {name!r} requires an "
+                    "explicit resolvers override; the default JwtNativeUuidResolver "
+                    "trusts the assertion subject as an internal principal UUID, "
+                    "which is unsafe for external token verifiers",
+                )
 
         validate_shared_matches_route_sets(
             shared=shared,
@@ -200,7 +227,10 @@ class AuthnDepsModule(DepsModule):
                 if "password" in methods_fs:
                     password_verifier_routes[name] = password_overrides.get(
                         name,
-                        ConfigurableArgon2PasswordVerifier(shared=shared),
+                        ConfigurableArgon2PasswordVerifier(
+                            shared=shared,
+                            rehash_on_login=self.password_rehash_on_login,
+                        ),
                     )
 
                 if "token" in methods_fs:
@@ -258,7 +288,12 @@ class AuthnDepsModule(DepsModule):
                 Deps.routed(
                     {
                         PasswordLifecycleDepKey: {
-                            name: ConfigurablePasswordLifecycle(shared=shared)
+                            name: ConfigurablePasswordLifecycle(
+                                shared=shared,
+                                revoke_sessions_on_password_change=(
+                                    self.revoke_sessions_on_password_change
+                                ),
+                            )
                             for name in pl
                         },
                     },

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from uuid import uuid4
 
 import pytest
@@ -38,6 +39,26 @@ class HistUpdate(BaseDTO):
 
 class HistRead(ReadDocument):
     name: str
+
+
+class HistDueDoc(Document):
+    name: str
+    due: datetime
+
+
+class HistDueCreate(CreateDocumentCmd):
+    name: str
+    due: datetime
+
+
+class HistDueUpdate(BaseDTO):
+    name: str | None = None
+    due: datetime | None = None
+
+
+class HistDueRead(ReadDocument):
+    name: str
+    due: datetime
 
 
 def _deps(
@@ -147,6 +168,95 @@ async def test_history_application_strategy_writes_history_rows(
     assert updated.rev == 2
     n_after_update = await _history_row_count(pg_client, hist, source_literal)
     assert n_after_update == 2
+
+
+@pytest.mark.asyncio
+async def test_stale_rev_identical_datetime_resend_does_not_false_conflict(
+    pg_client: PostgresClient,
+) -> None:
+    """Regression: OCC validation compares all inputs in python-mode space.
+
+    A stale-rev update that echoes the identical datetime it read (no intent
+    to change it) while another writer concurrently changed that field used to
+    raise a false ``historical_consistency_violation``: the historical snapshot
+    was dumped json-mode (ISO strings) and compared against the python-mode
+    update mapping, so the identical datetime registered as a touch. The
+    genuinely-changed field (``name``) does not overlap the concurrent change,
+    so the update must succeed (deliberate loosening: no-op resends no longer
+    conflict — the echoed value wins, last-write style).
+    """
+    suf = uuid4().hex[:12]
+    main = f"doc_hist_occ_{suf}"
+    hist = f"doc_hist_occ_h_{suf}"
+
+    await pg_client.execute(
+        f"""
+        CREATE TABLE {main} (
+            id uuid PRIMARY KEY,
+            rev integer NOT NULL,
+            created_at timestamptz NOT NULL,
+            last_update_at timestamptz NOT NULL,
+            name text NOT NULL,
+            due timestamptz NOT NULL
+        );
+        """
+    )
+    await pg_client.execute(
+        f"""
+        CREATE TABLE {hist} (
+            source text NOT NULL,
+            id uuid NOT NULL,
+            rev integer NOT NULL,
+            created_at timestamptz NOT NULL,
+            data jsonb NOT NULL,
+            PRIMARY KEY (source, id, rev)
+        );
+        """
+    )
+
+    ctx = _deps(
+        pg_client,
+        main_table=main,
+        history_table=hist,
+        bookkeeping_strategy="application",
+    )
+    spec = DocumentSpec(
+        name="hist_occ_ns",
+        read=HistDueRead,
+        write={
+            "domain": HistDueDoc,
+            "create_cmd": HistDueCreate,
+            "update_cmd": HistDueUpdate,
+        },
+        history_enabled=True,
+    )
+    cmd = ctx.document.command(spec)
+
+    due_v1 = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+    doc = await cmd.create(HistDueCreate(name="v1", due=due_v1))
+    assert doc.rev == 1
+
+    # Concurrent writer moves `due` (a DIFFERENT field than the stale client
+    # intends to change) — document is now at rev 2.
+    moved = await cmd.update(
+        doc.id,
+        doc.rev,
+        HistDueUpdate(due=datetime(2027, 2, 2, 12, 0, tzinfo=timezone.utc)),
+    )
+    assert moved.rev == 2
+
+    # Stale client (still at rev 1) changes `name` and echoes the identical
+    # `due` it read. Was: false historical_consistency_violation.
+    updated = await cmd.update(
+        doc.id,
+        1,
+        HistDueUpdate(name="v2", due=due_v1),
+    )
+
+    assert updated.rev == 3
+    assert updated.name == "v2"
+    # The echo is treated as intent (last write wins on echoed fields).
+    assert updated.due == due_v1
 
 
 @pytest.mark.asyncio

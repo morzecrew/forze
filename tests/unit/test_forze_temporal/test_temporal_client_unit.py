@@ -9,6 +9,9 @@ from temporalio.exceptions import WorkflowAlreadyStartedError
 
 pytest.importorskip("temporalio")
 
+from temporalio.client import TLSConfig
+from temporalio.contrib.pydantic import pydantic_data_converter
+
 from forze_temporal.kernel.client.client import TemporalClient, TemporalConfig
 
 class _Arg(BaseModel):
@@ -39,6 +42,115 @@ class TestTemporalConfig:
         cfg = TemporalConfig(interceptors=[sentinel])  # type: ignore[list-item]
         assert cfg.interceptors is not None
         assert cfg.interceptors[0] is sentinel
+
+class TestTemporalConfigSecurity:
+    """TLS / api-key / data-converter configuration."""
+
+    def test_security_defaults(self) -> None:
+        """Defaults: plaintext, no api key, no converter override."""
+        cfg = TemporalConfig()
+        assert cfg.tls is False
+        assert cfg.api_key is None
+        assert cfg.data_converter is None
+        assert cfg.rpc_metadata is None
+
+    def test_api_key_without_tls_raises(self) -> None:
+        """api_key requires TLS to be enabled."""
+        with pytest.raises(CoreException, match="requires TLS"):
+            TemporalConfig(api_key="cloud-key")
+
+        with pytest.raises(CoreException, match="requires TLS"):
+            TemporalConfig(api_key="cloud-key", tls=False)
+
+    def test_api_key_with_tls_accepted(self) -> None:
+        """api_key works with tls=True or an explicit TLSConfig."""
+        cfg = TemporalConfig(api_key="cloud-key", tls=True)
+        assert cfg.api_key is not None
+        assert cfg.api_key.get_secret_value() == "cloud-key"
+
+        cfg = TemporalConfig(api_key="cloud-key", tls=TLSConfig())
+        assert cfg.api_key is not None
+
+    def test_api_key_not_leaked_in_repr(self) -> None:
+        """The api key is excluded from repr entirely."""
+        cfg = TemporalConfig(api_key="super-secret-key", tls=True)
+        rendered = repr(cfg)
+
+        assert "super-secret-key" not in rendered
+        assert "api_key" not in rendered
+
+class TestTemporalClientConnectKwargs:
+    """Wiring of TemporalConfig into Client.connect."""
+
+    @staticmethod
+    def _backend() -> MagicMock:
+        backend = MagicMock()
+        backend.count_workflows = AsyncMock()
+        return backend
+
+    @pytest.mark.asyncio
+    async def test_default_config_preserves_connect_kwargs(self) -> None:
+        """Default config passes exactly the historical connect kwargs."""
+        with patch(
+            "forze_temporal.kernel.client.client.Client.connect",
+            new_callable=AsyncMock,
+            return_value=self._backend(),
+        ) as connect:
+            client = TemporalClient()
+            await client.initialize("localhost:7233")
+
+        assert connect.await_args.args == ("localhost:7233",)
+        kwargs = connect.await_args.kwargs
+        assert set(kwargs) == {"namespace", "lazy", "data_converter", "interceptors"}
+        assert kwargs["namespace"] == "default"
+        assert kwargs["lazy"] is False
+        assert kwargs["data_converter"] is pydantic_data_converter
+        assert kwargs["interceptors"] == []
+
+    @pytest.mark.asyncio
+    async def test_security_options_propagate_to_connect(self) -> None:
+        """tls/api_key/rpc_metadata/data_converter reach Client.connect."""
+        tls_cfg = TLSConfig()
+        converter = MagicMock()
+        config = TemporalConfig(
+            tls=tls_cfg,
+            api_key="cloud-key",
+            rpc_metadata={"x-custom": "1"},
+            data_converter=converter,
+        )
+
+        with patch(
+            "forze_temporal.kernel.client.client.Client.connect",
+            new_callable=AsyncMock,
+            return_value=self._backend(),
+        ) as connect:
+            client = TemporalClient()
+            await client.initialize("eu.cloud.temporal.io:7233", config=config)
+
+        kwargs = connect.await_args.kwargs
+        assert kwargs["tls"] is tls_cfg
+        assert kwargs["api_key"] == "cloud-key"
+        assert kwargs["rpc_metadata"] == {"x-custom": "1"}
+        assert kwargs["data_converter"] is converter
+
+    @pytest.mark.asyncio
+    async def test_tls_true_propagates_without_api_key(self) -> None:
+        """tls=True alone is forwarded; api_key stays unset."""
+        with patch(
+            "forze_temporal.kernel.client.client.Client.connect",
+            new_callable=AsyncMock,
+            return_value=self._backend(),
+        ) as connect:
+            client = TemporalClient()
+            await client.initialize(
+                "localhost:7233",
+                config=TemporalConfig(tls=True),
+            )
+
+        kwargs = connect.await_args.kwargs
+        assert kwargs["tls"] is True
+        assert "api_key" not in kwargs
+        assert "rpc_metadata" not in kwargs
 
 class TestTemporalClientLifecycle:
     """Initialize, close, and health checks."""

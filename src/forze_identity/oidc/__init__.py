@@ -14,6 +14,7 @@ package only needs to:
 
 from .claims import OidcClaimMapper
 from .keys import JwksKeyProvider, SigningKeyProviderPort, StaticKeyProvider
+from .nonce import verify_id_token_nonce
 from .preset import ConfigurableOidcIdpVerifier, OidcIdpPreset
 from .verifier import OidcTokenVerifier
 
@@ -27,4 +28,5 @@ __all__ = [
     "OidcTokenVerifier",
     "SigningKeyProviderPort",
     "StaticKeyProvider",
+    "verify_id_token_nonce",
 ]

@@ -71,6 +71,8 @@ class PostgresOutboxStore[M: BaseModel](TenancyMixin, OutboxQueryPort):
             "payload",
             "status",
             "created_at",
+            "attempts",
+            "available_at",
         )
         col_idents = [sql.Identifier(c) for c in cols]
         row_template = (
@@ -97,6 +99,8 @@ class PostgresOutboxStore[M: BaseModel](TenancyMixin, OutboxQueryPort):
                     Jsonb(entry.payload_json),
                     OutboxStatus.PENDING.value,
                     created_at,
+                    0,
+                    None,
                 ]
             )
 
@@ -135,6 +139,7 @@ class PostgresOutboxStore[M: BaseModel](TenancyMixin, OutboxQueryPort):
             "pending": OutboxStatus.PENDING.value,
             "processing": OutboxStatus.PROCESSING.value,
             "processing_at": now,
+            "now": now,
         }
 
         if tenant_id is not None:
@@ -148,6 +153,7 @@ class PostgresOutboxStore[M: BaseModel](TenancyMixin, OutboxQueryPort):
                 FROM {table}
                 WHERE outbox_route = %(route)s
                   AND status = %(pending)s
+                  AND (available_at IS NULL OR available_at <= %(now)s)
                   {tenant_filter}
                 ORDER BY created_at
                 LIMIT %(limit)s
@@ -161,7 +167,7 @@ class PostgresOutboxStore[M: BaseModel](TenancyMixin, OutboxQueryPort):
             RETURNING
                 t.id, t.outbox_route, t.event_id, t.event_type, t.payload,
                 t.tenant_id, t.execution_id, t.correlation_id, t.causation_id,
-                t.occurred_at
+                t.occurred_at, t.attempts
             """
         ).format(table=table.ident(), tenant_filter=tenant_filter)
 
@@ -179,6 +185,7 @@ class PostgresOutboxStore[M: BaseModel](TenancyMixin, OutboxQueryPort):
                 correlation_id=row.get("correlation_id"),
                 causation_id=row.get("causation_id"),
                 occurred_at=row.get("occurred_at"),
+                attempts=int(row.get("attempts") or 0),
             )
             for row in rows
         ]
@@ -219,6 +226,43 @@ class PostgresOutboxStore[M: BaseModel](TenancyMixin, OutboxQueryPort):
             UPDATE {table}
             SET status = %(status)s,
                 published_at = COALESCE(%(published_at)s, published_at),
+                last_error = %(last_error)s
+            WHERE id = ANY(%(ids)s::uuid[])
+              AND status = %(processing)s
+            """
+        ).format(table=table.ident())
+
+        rowcount = await self.client.execute(stmt, params, return_rowcount=True)
+        return int(rowcount or 0)
+
+    async def mark_retry(
+        self,
+        ids: Sequence[UUID],
+        *,
+        attempts: int,
+        available_at: datetime,
+        error: str | None = None,
+    ) -> int:
+        if not ids:
+            return 0
+
+        table = await self._table()
+        params: dict[str, Any] = {
+            "ids": list(ids),
+            "pending": OutboxStatus.PENDING.value,
+            "processing": OutboxStatus.PROCESSING.value,
+            "attempts": attempts,
+            "available_at": available_at,
+            "last_error": error,
+        }
+
+        stmt = sql.SQL(
+            """
+            UPDATE {table}
+            SET status = %(pending)s,
+                processing_at = NULL,
+                attempts = %(attempts)s,
+                available_at = %(available_at)s,
                 last_error = %(last_error)s
             WHERE id = ANY(%(ids)s::uuid[])
               AND status = %(processing)s
@@ -282,7 +326,9 @@ class PostgresOutboxStore[M: BaseModel](TenancyMixin, OutboxQueryPort):
             SET status = %(pending)s,
                 processing_at = NULL,
                 published_at = NULL,
-                last_error = NULL
+                last_error = NULL,
+                attempts = 0,
+                available_at = NULL
             WHERE id = ANY(%(ids)s::uuid[])
               AND status = %(failed)s
             """

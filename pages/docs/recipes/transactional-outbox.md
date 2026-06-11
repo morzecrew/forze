@@ -60,6 +60,80 @@ lifecycle = LifecyclePlan.from_steps(
 )
 ```
 
+## Failures and retries
+
+The relay classifies errors by **where** they arise:
+
+- **Poison** — the payload can't be decoded into the codec model. The row can
+  never publish, so it's marked `failed` immediately. Fix the cause, then
+  re-drive with `ctx.outbox.query(spec).requeue_failed([id])` (this resets the
+  retry counter).
+- **Transient** — the broker publish call raised. The row is rescheduled with
+  exponential backoff plus jitter (`retry_base_delay * 2**attempts`, capped at
+  `retry_max_backoff`) and stays invisible to claims until its `available_at`.
+  After `max_attempts` publish attempts it's marked `failed` (terminal).
+
+Defaults: `max_attempts=5`, `retry_base_delay=1s`, `retry_max_backoff=5min` —
+kw-only on every relay function and on the lifecycle step. One row's failure
+never blocks the rest of the batch.
+
+!!! warning "Ordering is not preserved"
+    Delivery is at-least-once and ordering is **not** preserved across
+    failures/retries — later events keep publishing while a failed one waits
+    for its retry. Consumers must key on `event_id` and tolerate reordering as
+    well as redelivery (dedupe with the
+    [inbox](../in-depth/events-sagas.md)).
+
+## Table schema
+
+The outbox table is application-owned. For Postgres
+(`PostgresOutboxConfig(relation=("app", "outbox"))`):
+
+```sql
+CREATE TABLE app.outbox (
+    id UUID PRIMARY KEY,
+    outbox_route TEXT NOT NULL,
+    event_id UUID NOT NULL,
+    event_type TEXT NOT NULL,
+    tenant_id UUID,
+    execution_id UUID,
+    correlation_id UUID,
+    causation_id UUID,
+    occurred_at TIMESTAMPTZ NOT NULL,
+    payload JSONB NOT NULL,
+    status TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL,
+    published_at TIMESTAMPTZ,
+    processing_at TIMESTAMPTZ,
+    last_error TEXT,
+    attempts INT NOT NULL DEFAULT 0,
+    available_at TIMESTAMPTZ,
+    UNIQUE (outbox_route, event_id)
+);
+
+-- covers the claim predicate (route + pending + ripe, oldest first)
+CREATE INDEX outbox_claim_idx
+    ON app.outbox (outbox_route, status, available_at, created_at);
+```
+
+`attempts` is the durable retry counter; `available_at` schedules the next
+retry (`NULL` = claimable now). Existing tables migrate with:
+
+```sql
+ALTER TABLE app.outbox
+    ADD COLUMN attempts INT NOT NULL DEFAULT 0,
+    ADD COLUMN available_at TIMESTAMPTZ;
+```
+
+For Mongo (`MongoOutboxConfig`), documents mirror these fields; recommended
+indexes:
+
+```javascript
+db.outbox.createIndex({ outbox_route: 1, event_id: 1 }, { unique: true })
+db.outbox.createIndex({ outbox_route: 1, status: 1, available_at: 1, created_at: 1 })
+db.outbox.createIndex({ outbox_route: 1, status: 1, processing_at: 1 })
+```
+
 ## Notes
 
 - **Store the outbox where you store the data** so the stage shares the
@@ -67,4 +141,6 @@ lifecycle = LifecyclePlan.from_steps(
   `forze_postgres.execution.deps.configs`) or `MongoOutboxConfig`.
 - **At-least-once.** The relay can publish a row twice (claim, publish, crash
   before marking). Consumers dedupe with the [inbox](../in-depth/events-sagas.md).
-- Permanently-failed rows are retried with `ctx.outbox.query(spec).requeue_failed([id])`.
+- The background lifecycle step drains the whole backlog each tick (batches
+  until a short claim, capped at `max_batches_per_tick=100`), then sleeps
+  `interval`.

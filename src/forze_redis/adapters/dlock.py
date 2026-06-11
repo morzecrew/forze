@@ -11,17 +11,20 @@ require_redis()
 from typing import Final, final
 
 from forze.application.contracts.dlock import (
+    AcquiredLock,
     DistributedLockCommandPort,
     DistributedLockQueryPort,
     DistributedLockSpec,
 )
 
-from ..kernel.scripts import RELEASE_DLOCK, RESET_DLOCK
+from ..kernel.scripts import ACQUIRE_DLOCK, RELEASE_DLOCK, RESET_DLOCK
 from .base import RedisBaseAdapter
 
 # ----------------------- #
 
 _DLOCK_SCOPE: Final[str] = "dlock"
+
+_FENCE_SUFFIX: Final[str] = "fence"
 
 # ....................... #
 
@@ -40,6 +43,11 @@ class RedisDistributedLockAdapter(
 
     def __key(self, key: str) -> str:
         return self.construct_key(_DLOCK_SCOPE, key)
+
+    # ....................... #
+
+    def __fence_key(self, key: str) -> str:
+        return self.construct_key(_DLOCK_SCOPE, key, _FENCE_SUFFIX)
 
     # ....................... #
 
@@ -86,16 +94,31 @@ class RedisDistributedLockAdapter(
 
     # ....................... #
 
-    async def acquire(self, key: str, owner: str) -> bool:
+    async def acquire(self, key: str, owner: str) -> AcquiredLock | None:
+        """Acquire the lock and issue a fencing token atomically.
+
+        Runs ``ACQUIRE_DLOCK``: ``SET NX PX`` on the lock key plus, on success,
+        ``INCR`` of the per-key fencing counter (``<lock key>:fence``). The
+        counter has no TTL so tokens stay monotonic across lock generations —
+        one small permanent key per lock key; :meth:`release` never deletes it.
+        """
+
         await self._prepare_keys()
         _k = self.__key(key)
+        _fk = self.__fence_key(key)
 
-        return await self.client.set(
-            _k,
-            owner,
-            nx=True,
-            px=self.__ttl_ms(),
+        res = await self.client.run_script(
+            ACQUIRE_DLOCK,
+            [_k, _fk],
+            [owner, self.__ttl_ms()],
         )
+
+        token = int(res) if res else 0
+
+        if token <= 0:
+            return None
+
+        return AcquiredLock(key=key, owner=owner, token=token)
 
     # ....................... #
 

@@ -137,10 +137,11 @@ def test_extract_enqueued_at_iso_and_sent_timestamp() -> None:
     )
     assert bad_iso == datetime.fromtimestamp(1_700_000_000, tz=timezone.utc)
 
-def test_chunked_ids() -> None:
-    assert SQSClient._SQSClient__chunked_ids(["a", "b", "c"], size=2) == [
-        ["a", "b"],
-        ["c"],
+def test_chunked_pending() -> None:
+    pending = [("a", "ra"), ("b", "rb"), ("c", "rc")]
+    assert SQSClient._SQSClient__chunked_pending(pending, size=2) == [
+        [("a", "ra"), ("b", "rb")],
+        [("c", "rc")],
     ]
 
 @pytest.mark.asyncio
@@ -275,6 +276,47 @@ async def test_enqueue_many_parallel_batches_respects_concurrency_cap() -> None:
         assert len(ids) == 25
         assert fake.send_message_batch.await_count == 3
         assert max_in_flight == 2
+    finally:
+        client._SQSClient__ctx_depth.reset(tok_d)  # type: ignore[attr-defined]
+        client._SQSClient__ctx_client.reset(tok_c)  # type: ignore[attr-defined]
+
+    await client.close()
+
+@pytest.mark.asyncio
+async def test_enqueue_many_returns_broker_message_ids_in_order() -> None:
+    """enqueue/enqueue_many return broker-assigned MessageIds (entry order
+    preserved across concurrent chunks), correlatable with received ids."""
+    import base64
+
+    client = SQSClient()
+    await client.initialize(
+        endpoint="http://localhost:4566",
+        access_key_id="k",
+        secret_access_key="s",
+        region_name="us-east-1",
+    )
+
+    async def send_message_batch(**kwargs: object) -> dict[str, list[dict[str, str]]]:
+        entries = kwargs["Entries"]
+        successful = []
+        for entry in entries:  # type: ignore[union-attr]
+            body = base64.b64decode(entry["MessageBody"]).decode()
+            successful.append({"Id": entry["Id"], "MessageId": f"broker-{body}"})
+        return {"Successful": successful, "Failed": []}
+
+    fake = AsyncMock()
+    fake.send_message_batch = AsyncMock(side_effect=send_message_batch)
+
+    client._SQSClient__queue_url_cache["q"] = "https://x/q"  # type: ignore[attr-defined]
+    tok_c = client._SQSClient__ctx_client.set(fake)  # type: ignore[attr-defined]
+    tok_d = client._SQSClient__ctx_depth.set(1)
+    try:
+        bodies = [f"b{i}".encode() for i in range(25)]  # 3 chunks
+        ids = await client.enqueue_many("q", bodies)
+        assert ids == [f"broker-b{i}" for i in range(25)]
+
+        single = await client.enqueue("q", b"solo")
+        assert single == "broker-solo"
     finally:
         client._SQSClient__ctx_depth.reset(tok_d)  # type: ignore[attr-defined]
         client._SQSClient__ctx_client.reset(tok_c)  # type: ignore[attr-defined]

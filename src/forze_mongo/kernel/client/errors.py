@@ -29,9 +29,14 @@ from forze.base.exceptions import (
     ExceptionInterceptor,
     ExceptionMapper,
     default_chain_exc_mapper,
+    fallback_exception_mapper,
 )
 
 # ----------------------- #
+
+_fallback = fallback_exception_mapper("Mongo")
+
+# ....................... #
 
 
 @static_fn_conformity(ExceptionMapper)  # type: ignore[type-abstract]
@@ -145,6 +150,19 @@ def _mongo_eh(
                     details=details,
                 )
 
+            if code == 112:
+                # WriteConflict: standard retryable in-transaction conflict.
+                return CoreException.concurrency(
+                    "Write conflict during transaction. Please retry.",
+                    details=details,
+                )
+
+            if exc.has_error_label("TransientTransactionError"):
+                return CoreException.concurrency(
+                    "Transient transaction error. Please retry.",
+                    details=details,
+                )
+
             msg = str(exc)
 
             if "not authorized" in msg.lower() or "unauthorized" in msg.lower():
@@ -161,10 +179,7 @@ def _mongo_eh(
         # --- fallback ---
 
         case _:
-            return CoreException.infrastructure(
-                f"An error occurred while executing Mongo operation {site}: {exc}",
-                details=details,
-            )
+            return _fallback(exc, site=site, details=details)
 
 
 # ....................... #

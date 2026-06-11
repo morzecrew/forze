@@ -42,6 +42,11 @@ class DocumentSpec(BaseSpec, Generic[R, D, C, U]):
     history_enabled: bool = attrs.field(default=False)
     """Enable history for the document aggregate. Defaults to ``False``."""
 
+    sensitive: bool = attrs.field(default=False)
+    """Read model carries credential/secret material (password hashes, token digests);
+    generated external surfaces (HTTP route generators, MCP tools/resources) must refuse
+    to project it. Defaults to ``False``."""
+
     cache: CacheSpec | None = attrs.field(default=None)
     """Cache specification for the document aggregate."""
 

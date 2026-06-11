@@ -91,7 +91,7 @@ async def test_schedule_trigger_starts_workflow(temporal_dev_env) -> None:
             "it-sum-hourly",
             SumIn(a=2, b=3),
             timing,
-            workflow_id_template="it-sum-scheduled-run",
+            workflow_id_base="it-sum-scheduled-run",
         )
 
         await cmd.trigger(handle)

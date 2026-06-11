@@ -66,13 +66,35 @@ class SQSConfig:
 @final
 @attrs.define(frozen=True, slots=True, kw_only=True)
 class SQSConnectionOpts:
-    """SQS connection options."""
+    """SQS connection options.
+
+    Static credentials are optional: when both *access_key_id* and
+    *secret_access_key* are ``None``, the client defers to botocore's default
+    credential chain (environment variables, shared config/credentials files,
+    container/instance roles). Providing only one of the two is rejected.
+
+    *region_name* is optional as well: when ``None``, the region kwarg is
+    omitted from the client construction so botocore's chain resolves it
+    (``AWS_REGION``/``AWS_DEFAULT_REGION``, profile, IMDS). With no region
+    anywhere, botocore's ``NoRegionError`` surfaces through the normal error
+    mapping.
+    """
 
     endpoint: str
-    region_name: str  #! Should NOT be required
-    access_key_id: str = attrs.field(repr=False)
-    secret_access_key: SecretStr = attrs.field(
-        converter=pydantic_secret_converter,
+    region_name: str | None = None
+    access_key_id: str | None = attrs.field(default=None, repr=False)
+    secret_access_key: SecretStr | None = attrs.field(
+        default=None,
+        converter=attrs.converters.optional(pydantic_secret_converter),
         repr=False,
     )
     config: AioConfig | None = attrs.field(default=None, repr=False)
+
+    # ....................... #
+
+    def __attrs_post_init__(self) -> None:
+        if (self.access_key_id is None) != (self.secret_access_key is None):
+            raise exc.configuration(
+                "SQS static credentials require both access_key_id and "
+                "secret_access_key; provide both or neither (credential chain)"
+            )

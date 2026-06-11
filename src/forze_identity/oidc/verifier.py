@@ -69,6 +69,10 @@ class OidcTokenVerifier(TokenVerifierPort):
     holds no per-authentication-request state. Enabling this forces the IdP to issue
     the token through an interactive flow that carried a nonce, which blocks replaying
     a nonce-less token (e.g. minted via a non-interactive grant) into a login slot.
+
+    For value binding, the callback handler calls
+    :func:`forze_identity.oidc.verify_id_token_nonce` with the nonce it stored in the
+    session (the VK/Telegram exchange helpers accept ``expected_nonce`` directly).
     """
 
     claim_mapper: OidcClaimMapper = attrs.field(factory=OidcClaimMapper)

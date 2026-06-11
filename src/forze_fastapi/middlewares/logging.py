@@ -16,6 +16,7 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 from forze.base.exceptions import CoreException
 from forze.base.logging import Logger
 from forze_fastapi._logging import ForzeFastAPILogger
+from forze_fastapi.exceptions import build_core_exception_response
 
 # ----------------------- #
 
@@ -47,11 +48,13 @@ class LoggingMiddleware:
         status_code: int = 500
         process_time_ms: int = 0
         logged = False
+        response_started = False
 
         async def send_wrapper(message: Message) -> None:
-            nonlocal status_code, logged, process_time_ms
+            nonlocal status_code, logged, process_time_ms, response_started
 
             if message["type"] == "http.response.start":
+                response_started = True
                 status_code = int(message["status"])
 
                 headers = list(message.get("headers", []))
@@ -76,9 +79,16 @@ class LoggingMiddleware:
         try:
             await self.app(scope, receive, send_wrapper)
 
-        except CoreException:
-            # Pass through exc.internal to be handled by the exception handler
-            raise
+        except CoreException as exc:
+            if response_started:
+                # The response already started: nothing can be sent anymore.
+                raise
+
+            # This middleware runs above Starlette's ExceptionMiddleware, so
+            # the registered CoreException handler never sees errors raised by
+            # sibling middlewares. Convert them to the standard JSON response.
+            response = build_core_exception_response(exc)
+            await response(scope, receive, send_wrapper)
 
         except Exception as exc:
             # fallback only for unhandled exceptions

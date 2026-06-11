@@ -51,6 +51,23 @@ class TestAuthzSharedServices:
         shared = build_authz_shared_services(AuthzKernelConfig())
 
         assert shared.policy is not None
+        # Default reserved owner-override keys are preserved.
+        assert shared.policy.owner_override_permissions == frozenset(
+            {"admin", "{resource_type}.admin"},
+        )
+
+    def test_kernel_owner_override_permissions_flow_through(self) -> None:
+        shared = build_authz_shared_services(
+            AuthzKernelConfig(owner_override_permissions=frozenset({"superuser"})),
+        )
+
+        assert shared.policy.owner_override_permissions == frozenset({"superuser"})
+
+        disabled = build_authz_shared_services(
+            AuthzKernelConfig(owner_override_permissions=frozenset()),
+        )
+
+        assert disabled.policy.owner_override_permissions == frozenset()
 
 
 class TestConfigurableRuntimeFactory:

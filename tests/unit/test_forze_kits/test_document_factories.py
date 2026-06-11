@@ -185,3 +185,52 @@ class TestDocumentCatalog:
         kill = cat[ns.key(DocumentKernelOp.KILL)].descriptor
         assert kill is not None
         assert kill.output_schema() is None
+
+
+class TestSensitivePropagation:
+    def test_descriptors_not_sensitive_by_default(self) -> None:
+        spec = _write_spec()
+        cat = build_document_registry(spec, _write_dtos()).freeze().catalog()
+
+        assert all(
+            entry.descriptor is not None and entry.descriptor.sensitive is False
+            for entry in cat.values()
+        )
+
+    def test_sensitive_spec_marks_every_descriptor(self) -> None:
+        spec = DocumentSpec(
+            name="test",
+            read=ReadDocument,
+            write={
+                "domain": Document,
+                "create_cmd": CreateDocumentCmd,
+                "update_cmd": _UpdateCmd,
+            },
+            sensitive=True,
+        )
+        cat = build_document_registry(spec, _write_dtos()).freeze().catalog()
+
+        assert cat
+        assert all(
+            entry.descriptor is not None and entry.descriptor.sensitive is True
+            for entry in cat.values()
+        )
+
+    def test_sensitive_spec_marks_soft_deletion_descriptors(self) -> None:
+        spec = DocumentSpec(
+            name="test",
+            read=ReadDocument,
+            write={
+                "domain": _SoftDoc,
+                "create_cmd": CreateDocumentCmd,
+                "update_cmd": _UpdateCmd,
+            },
+            sensitive=True,
+        )
+        ns = spec.default_namespace
+        cat = build_soft_deletion_registry(spec).freeze().catalog()
+
+        for op in (SoftDeletionKernelOp.DELETE, SoftDeletionKernelOp.RESTORE):
+            descriptor = cat[ns.key(op)].descriptor
+            assert descriptor is not None
+            assert descriptor.sensitive is True

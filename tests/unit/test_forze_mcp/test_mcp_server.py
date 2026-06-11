@@ -449,3 +449,78 @@ class TestWriteEnablement:
         async with Client(server) as client:
             tools = {t.name for t in await client.list_tools()}
             assert "calc.write" not in tools
+
+
+def _sensitive_doc_setup():
+    from forze.application.contracts.document import DocumentSpec, DocumentWriteTypes
+    from forze.domain.models import Document
+    from forze_kits.aggregates.document import (
+        DocumentDTOs,
+        DocumentKernelOp,
+        build_document_registry,
+    )
+
+    class _Secret(Document):
+        title: str = ""
+
+    spec = DocumentSpec(
+        name="secrets",
+        read=_NoteRead,
+        write=DocumentWriteTypes(domain=_Secret, create_cmd=_NoteInput),
+        sensitive=True,
+    )
+    reg = build_document_registry(spec, DocumentDTOs(read=_NoteRead, create=_NoteInput))
+    return spec, reg.freeze(), DocumentKernelOp
+
+
+class TestSensitiveRefusal:
+    def test_register_tools_refuses_sensitive_operations(self) -> None:
+        from forze.base.exceptions import CoreException
+
+        _spec, reg, _op = _sensitive_doc_setup()
+        server = FastMCP("secrets")
+
+        with pytest.raises(CoreException, match="sensitive") as e:
+            register_tools(server, reg, _ctx_factory)
+
+        assert e.value.kind.value == "configuration"
+
+    def test_register_schema_resources_refuses_sensitive_spec(self) -> None:
+        from forze.base.exceptions import CoreException
+
+        spec, _reg, _op = _sensitive_doc_setup()
+        server = FastMCP("secrets")
+
+        with pytest.raises(CoreException, match="sensitive") as e:
+            register_schema_resources(server, spec)
+
+        assert e.value.kind.value == "configuration"
+
+    def test_register_resource_templates_refuses_sensitive_op(self) -> None:
+        from forze.base.exceptions import CoreException
+        from forze_mcp import ResourceTemplateSpec, register_resource_templates
+
+        spec, reg, op = _sensitive_doc_setup()
+        server = FastMCP("secrets")
+
+        with pytest.raises(CoreException, match="sensitive") as e:
+            register_resource_templates(
+                server,
+                reg,
+                _ctx_factory,
+                [
+                    ResourceTemplateSpec(
+                        op=spec.default_namespace.key(op.GET), scheme="secrets"
+                    )
+                ],
+            )
+
+        assert e.value.kind.value == "configuration"
+
+    def test_non_sensitive_specs_register_unchanged(self) -> None:
+        _spec, reg, _op = _doc_setup()
+        server = FastMCP("notes")
+
+        names = register_tools(server, reg, _ctx_factory)
+
+        assert names

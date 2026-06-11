@@ -109,14 +109,27 @@ class RoutedObjectStorageClientBase[C: _RoutedStorageInnerClient](
         *,
         limit: int | None = None,
         offset: int | None = None,
+        include_tags: bool = False,
     ) -> tuple[list[ObjectStorageListedObject], int]:
         inner = await self._get_client()
 
         async with inner.client():
-            return await inner.list_objects(bucket, prefix, limit=limit, offset=offset)
+            return await inner.list_objects(
+                bucket,
+                prefix,
+                limit=limit,
+                offset=offset,
+                include_tags=include_tags,
+            )
 
-    async def head_object(self, bucket: str, key: str) -> ObjectStorageHead:
+    async def head_object(
+        self,
+        bucket: str,
+        key: str,
+        *,
+        include_tags: bool = False,
+    ) -> ObjectStorageHead:
         inner = await self._get_client()
 
         async with inner.client():
-            return await inner.head_object(bucket, key)
+            return await inner.head_object(bucket, key, include_tags=include_tags)

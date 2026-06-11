@@ -1,6 +1,6 @@
 """Unit tests for ``forze_postgres.kernel.gateways.write``."""
 
-from forze.base.exceptions import CoreException
+from forze.base.exceptions import CoreException, ExceptionKind
 import asyncio
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock
@@ -114,7 +114,6 @@ async def test_patch_group_sql_includes_column_casts() -> None:
     await gw._PostgresWriteGateway__patch_group(  # type: ignore[attr-defined]
         ("amount", "rev"),
         [(pk, 1, {"amount": None, "rev": 2})],
-        column_types,
     )
 
     stmt = client.fetch_all.await_args.args[0]
@@ -324,6 +323,53 @@ def _build_tenant_aware_gateway() -> (
         tenant_provider=lambda: TenantIdentity(tenant_id=tid),
     )
     return gw, client
+
+@pytest.mark.asyncio
+async def test_kill_non_tenant_uses_rowcount_and_raises_when_missing() -> None:
+    """Non-tenant ``kill`` verifies rowcount the same way the tenant-aware path does."""
+
+    gw, client = _build_gateway()
+    client.execute = AsyncMock(return_value=1)
+    pk = UUID("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
+
+    await gw.kill(pk)
+
+    client.execute.assert_awaited_once()
+    assert client.execute.await_args.kwargs.get("return_rowcount") is True
+
+    client.execute = AsyncMock(return_value=0)
+    with pytest.raises(CoreException, match="Record not found") as ei:
+        await gw.kill(pk)
+
+    assert ei.value.kind is ExceptionKind.NOT_FOUND
+
+@pytest.mark.asyncio
+async def test_kill_many_non_tenant_raises_when_rowcount_mismatch() -> None:
+    gw, client = _build_gateway()
+    client.execute = AsyncMock(return_value=1)
+    pks = [UUID("11111111-1111-1111-1111-111111111111")]
+
+    await gw.kill_many(pks, batch_size=10)
+
+    client.execute.assert_awaited_once()
+    assert client.execute.await_args.kwargs.get("return_rowcount") is True
+
+    client.execute = AsyncMock(return_value=0)
+    with pytest.raises(CoreException, match="Some records not found") as ei:
+        await gw.kill_many(pks)
+
+    assert ei.value.kind is ExceptionKind.NOT_FOUND
+
+def test_patch_codec_missing_update_codec_raises_configuration() -> None:
+    """A missing update codec is a spec-wiring problem → ``configuration`` kind."""
+
+    gw, _ = _build_gateway()
+    object.__setattr__(gw, "update_codec", None)
+
+    with pytest.raises(CoreException, match="Update codec is required") as ei:
+        gw._patch_codec()
+
+    assert ei.value.kind is ExceptionKind.CONFIGURATION
 
 @pytest.mark.asyncio
 async def test_kill_tenant_aware_uses_rowcount_and_raises_when_missing() -> None:

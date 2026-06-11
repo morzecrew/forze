@@ -53,7 +53,14 @@ class OutboxCommandPort[M: BaseModel](Protocol):
 
 @runtime_checkable
 class OutboxQueryPort(Protocol):
-    """Claim and update staged outbox rows for relay workers."""
+    """Claim and update staged outbox rows for relay workers.
+
+    Delivery through the outbox is **at-least-once**, and ordering is **not**
+    preserved across failures and retries: a row rescheduled with
+    :meth:`mark_retry` (or parked with :meth:`mark_failed`) does not stall
+    later rows of the same route or aggregate. Consumers must key on
+    ``event_id`` and tolerate both redelivery and reordering.
+    """
 
     spec: OutboxSpec[Any]
     """Outbox specification for this port instance."""
@@ -63,7 +70,12 @@ class OutboxQueryPort(Protocol):
         *,
         limit: int | None = None,
     ) -> Awaitable[Sequence[OutboxClaim]]:
-        """Claim a batch of pending rows for relay."""
+        """Claim a batch of pending rows for relay.
+
+        Rows scheduled for a future retry (``available_at`` in the future) are
+        invisible to claims; rows with a ``NULL`` ``available_at`` are always
+        eligible.
+        """
         ...  # pragma: no cover
 
     def mark_published(self, ids: Sequence[UUID]) -> Awaitable[int]:
@@ -76,7 +88,27 @@ class OutboxQueryPort(Protocol):
         *,
         error: str | None = None,
     ) -> Awaitable[int]:
-        """Mark rows as failed; returns rows updated."""
+        """Mark rows as terminally failed; returns rows updated.
+
+        Failed rows stay parked until an operator calls :meth:`requeue_failed`.
+        For transient publish errors prefer :meth:`mark_retry`.
+        """
+        ...  # pragma: no cover
+
+    def mark_retry(
+        self,
+        ids: Sequence[UUID],
+        *,
+        attempts: int,
+        available_at: datetime,
+        error: str | None = None,
+    ) -> Awaitable[int]:
+        """Reschedule claimed rows for a future retry; returns rows updated.
+
+        Moves ``processing`` rows back to ``pending`` with the durable retry
+        counter set to *attempts* and the row invisible to
+        :meth:`claim_pending` until *available_at*.
+        """
         ...  # pragma: no cover
 
     def reclaim_stale_processing(
@@ -88,5 +120,9 @@ class OutboxQueryPort(Protocol):
         ...  # pragma: no cover
 
     def requeue_failed(self, ids: Sequence[UUID]) -> Awaitable[int]:
-        """Reset failed rows to pending for manual or automated re-drive."""
+        """Reset failed rows to pending for manual or automated re-drive.
+
+        Resets the retry counter (``attempts``) to ``0`` and clears any retry
+        schedule — operator intent is a fresh start.
+        """
         ...  # pragma: no cover

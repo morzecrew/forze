@@ -177,6 +177,62 @@ class TestOnFailureAndFinally:
         assert order == ["finally:failure"]
 
 
+class TestBeforeFailureHookPhases:
+    """A before-guard denial always reaches finally hooks but never on_failure."""
+
+    def _registry(self, order: list[str], *, handler_fails: bool = False):
+        def _before_factory_deny(_ctx):
+            async def _before(_args) -> None:
+                order.append("before")
+                raise RuntimeError("denied")
+
+            return _before
+
+        handler = FailHandler() if handler_fails else EchoHandler()
+        before = (
+            BeforeStep(id="b", factory=_before_factory_deny)
+            if not handler_fails
+            else BeforeStep(id="b", factory=_before_factory(order, "before"))
+        )
+
+        return (
+            OperationRegistry(handlers={"op": lambda _ctx: handler})
+            .bind("op")
+            .bind_outer()
+            .before(before)
+            .on_failure(
+                OnFailureStep(id="f", factory=_on_failure_factory(order, "on_failure"))
+            )
+            .finally_(FinallyStep(id="fin", factory=_finally_factory(order, "finally")))
+            .finish(deep=True)
+            .freeze()
+        )
+
+    @pytest.mark.asyncio
+    async def test_before_failure_runs_finally_but_not_on_failure(
+        self, ctx: ExecutionContext
+    ) -> None:
+        order: list[str] = []
+        reg = self._registry(order)
+
+        with pytest.raises(RuntimeError, match="denied"):
+            await reg.resolve("op", ctx)("x")
+
+        assert order == ["before", "finally:failure"]
+
+    @pytest.mark.asyncio
+    async def test_handler_failure_runs_both_on_failure_and_finally(
+        self, ctx: ExecutionContext
+    ) -> None:
+        order: list[str] = []
+        reg = self._registry(order, handler_fails=True)
+
+        with pytest.raises(RuntimeError, match="boom"):
+            await reg.resolve("op", ctx)("boom")
+
+        assert order == ["before", "on_failure", "finally:failure"]
+
+
 class TestWrapOrdering:
     @pytest.mark.asyncio
     async def test_wrap_higher_priority_closer_to_handler(
@@ -214,9 +270,7 @@ class TestWrapOrdering:
 
 class TestTransactionScope:
     @pytest.mark.asyncio
-    async def test_tx_before_runs_inside_scope(
-        self, ctx: ExecutionContext
-    ) -> None:
+    async def test_tx_before_runs_inside_scope(self, ctx: ExecutionContext) -> None:
         order: list[str] = []
         depth_at_before: list[int] = []
 
@@ -270,6 +324,36 @@ class TestAfterCommit:
         await reg.resolve("op", ctx)("x")
 
         assert order == ["after_commit", "outer_os"]
+
+
+class TestAfterCommitRegistrationGuard:
+    @pytest.mark.asyncio
+    async def test_empty_after_commit_stages_register_no_deferred_callback(
+        self, ctx: ExecutionContext
+    ) -> None:
+        from forze.application.execution.operations.planning.scopes import (
+            ResolvedTransactionScope,
+        )
+        from forze.application.execution.operations.run.plan import (
+            run_resolved_tx_scope,
+        )
+
+        deferred: list[object] = []
+
+        async def _defer(cb) -> None:
+            deferred.append(cb)
+
+        tx = ResolvedTransactionScope(route="mock")
+        result = await run_resolved_tx_scope(
+            tx,
+            EchoHandler(),
+            "x",
+            tx_runner=ctx.tx_ctx.scope,
+            defer_after_commit=_defer,
+        )
+
+        assert result == "handler:x"
+        assert deferred == []  # nothing to run after commit -> nothing registered
 
 
 class TestDispatch:

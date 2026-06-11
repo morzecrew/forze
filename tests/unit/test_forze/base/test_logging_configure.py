@@ -296,6 +296,98 @@ class TestConfigureLogging:
         assert row["event"] == "login"
         assert row["password"] == "**********"
 
+    def test_configure_logging_scrubs_event_message_text(self) -> None:
+        stream = io.StringIO()
+
+        configure_logging(
+            level="info",
+            render_mode="json",
+            logger_names=["forze.test"],
+            stream=stream,
+        )
+
+        logger = Logger("forze.test")
+        logger.info("authorization header was Bearer abc.def.ghi")
+
+        row = _json_records(stream)[-1]
+        assert "abc.def.ghi" not in str(row["event"])
+        assert SECRET_PLACEHOLDER in str(row["event"])
+
+    def test_configure_logging_scrubs_dsn_in_event_message(self) -> None:
+        stream = io.StringIO()
+
+        configure_logging(
+            level="info",
+            render_mode="json",
+            logger_names=["forze.test"],
+            stream=stream,
+        )
+
+        logger = Logger("forze.test")
+        logger.info("connecting to postgresql://user:hunter2@db.host/app")
+
+        row = _json_records(stream)[-1]
+        assert "hunter2" not in str(row["event"])
+        assert SECRET_PLACEHOLDER in str(row["event"])
+
+    def test_configure_logging_scrubs_positional_args_in_event_message(self) -> None:
+        stream = io.StringIO()
+
+        configure_logging(
+            level="info",
+            render_mode="json",
+            logger_names=["forze.test"],
+            stream=stream,
+        )
+
+        logger = Logger("forze.test")
+        logger.info("token=%s", "supersecretvalue")
+
+        row = _json_records(stream)[-1]
+        assert "supersecretvalue" not in str(row["event"])
+        assert SECRET_PLACEHOLDER in str(row["event"])
+
+    def test_configure_logging_event_message_untouched_when_sanitize_disabled(
+        self,
+    ) -> None:
+        stream = io.StringIO()
+
+        configure_logging(
+            level="info",
+            render_mode="json",
+            logger_names=["forze.test"],
+            stream=stream,
+            sanitize_logs=False,
+        )
+
+        logger = Logger("forze.test")
+        logger.info("token=hunter2 via Bearer abc.def.ghi")
+
+        row = _json_records(stream)[-1]
+        assert row["event"] == "token=hunter2 via Bearer abc.def.ghi"
+
+    def test_configure_logging_event_message_untouched_when_text_scrub_disabled(
+        self,
+    ) -> None:
+        stream = io.StringIO()
+
+        configure_logging(
+            level="info",
+            render_mode="json",
+            logger_names=["forze.test"],
+            stream=stream,
+            text_scrub=False,
+        )
+
+        logger = Logger("forze.test")
+        logger.info("connecting via Bearer abc.def.ghi", password="hunter2")
+
+        row = _json_records(stream)[-1]
+        # Message text is left alone without text scrubbing...
+        assert row["event"] == "connecting via Bearer abc.def.ghi"
+        # ...while key-based extras masking still applies.
+        assert row["password"] == SECRET_PLACEHOLDER
+
     def test_configure_logging_sanitize_logs_disabled(self) -> None:
         stream = io.StringIO()
 

@@ -167,3 +167,95 @@ async def test_list_enriches_objects_from_head_metadata(
     assert len(objects) == 1
     assert objects[0].key == "docs/k1"
     assert objects[0].content_type == "text/plain"
+    assert objects[0].tags is None
+
+
+@pytest.mark.asyncio
+async def test_upload_passes_tags_to_client_and_returns_them(
+    storage_adapter: ObjectStorageAdapter,
+) -> None:
+    storage_adapter.client.client.return_value.__aenter__ = AsyncMock()
+    storage_adapter.client.client.return_value.__aexit__ = AsyncMock()
+    storage_adapter.client.ensure_bucket = AsyncMock()
+    storage_adapter.client.upload_bytes = AsyncMock()
+
+    stored = await storage_adapter.upload(
+        UploadedObject(filename="file.txt", data=b"data", tags={"env": "dev"}),
+    )
+
+    kwargs = storage_adapter.client.upload_bytes.await_args.kwargs
+    assert kwargs["tags"] == {"env": "dev"}
+    assert stored.tags == {"env": "dev"}
+
+
+@pytest.mark.asyncio
+async def test_list_surfaces_tags_from_head(
+    storage_adapter: ObjectStorageAdapter,
+) -> None:
+    storage_adapter.client.client.return_value.__aenter__ = AsyncMock()
+    storage_adapter.client.client.return_value.__aexit__ = AsyncMock()
+    storage_adapter.client.ensure_bucket = AsyncMock()
+    storage_adapter.client.list_objects = AsyncMock(
+        return_value=([ObjectStorageListedObject(key="docs/k1")], 1),
+    )
+    storage_adapter.client.head_object = AsyncMock(
+        return_value=ObjectStorageHead(
+            content_type="text/plain",
+            metadata={
+                "filename": "Zm9v.txt",
+                "size": "3",
+                "created_at": "2025-01-15T12:00:00+00:00",
+            },
+            tags={"env": "dev"},
+        ),
+    )
+
+    objects, _ = await storage_adapter.list(10, 0, prefix="docs")
+
+    assert objects[0].tags == {"env": "dev"}
+
+
+@pytest.mark.asyncio
+async def test_list_threads_include_tags_to_client(
+    storage_adapter: ObjectStorageAdapter,
+) -> None:
+    storage_adapter.client.client.return_value.__aenter__ = AsyncMock()
+    storage_adapter.client.client.return_value.__aexit__ = AsyncMock()
+    storage_adapter.client.ensure_bucket = AsyncMock()
+    storage_adapter.client.list_objects = AsyncMock(return_value=([], 0))
+
+    await storage_adapter.list(10, 0, include_tags=True)
+
+    kwargs = storage_adapter.client.list_objects.await_args.kwargs
+    assert kwargs["include_tags"] is True
+
+
+@pytest.mark.asyncio
+async def test_list_prefers_listed_object_tags_over_head_tags(
+    storage_adapter: ObjectStorageAdapter,
+) -> None:
+    """S3-style: tags ride on the listed object when ``include_tags=True``."""
+
+    storage_adapter.client.client.return_value.__aenter__ = AsyncMock()
+    storage_adapter.client.client.return_value.__aexit__ = AsyncMock()
+    storage_adapter.client.ensure_bucket = AsyncMock()
+    storage_adapter.client.list_objects = AsyncMock(
+        return_value=(
+            [ObjectStorageListedObject(key="docs/k1", tags={"env": "dev"})],
+            1,
+        ),
+    )
+    storage_adapter.client.head_object = AsyncMock(
+        return_value=ObjectStorageHead(
+            content_type="text/plain",
+            metadata={
+                "filename": "Zm9v.txt",
+                "size": "3",
+                "created_at": "2025-01-15T12:00:00+00:00",
+            },
+        ),
+    )
+
+    objects, _ = await storage_adapter.list(10, 0, include_tags=True)
+
+    assert objects[0].tags == {"env": "dev"}

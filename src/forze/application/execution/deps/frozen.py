@@ -185,8 +185,10 @@ class FrozenDeps:
         """Resolve a configurable dependency: lookup factory and invoke with ``spec``.
 
         Resolved ports are memoized per scope on ``ctx`` (keyed by ``(key, route)`` and
-        validated against ``spec``) when port caching is enabled. Caching is bypassed
-        while resolution tracing is active so per-task resolution traces stay complete.
+        validated against ``spec`` by value equality, so per-call-constructed but
+        structurally equal specs reuse the cached port) when port caching is enabled.
+        Caching is bypassed while resolution tracing is active so per-task resolution
+        traces stay complete.
         """
 
         cache_key = (key, route)

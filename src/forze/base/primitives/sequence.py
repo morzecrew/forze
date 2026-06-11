@@ -7,7 +7,6 @@ import attrs
 from forze.base.descriptors import hybridmethod
 
 # ----------------------- #
-#! Maybe add 'unique: bool' or dedupe callable
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)

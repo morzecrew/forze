@@ -50,3 +50,17 @@ class TestBigQueryErrorHandler:
         r = _bigquery_eh(RuntimeError("boom"), site="connect")
         assert isinstance(r, CoreException) and r.kind == ExceptionKind.INFRASTRUCTURE
         assert "connect" in r.summary
+
+
+class TestAssembledChain:
+    """Regression: the package mapper must be reachable through the chain
+    wired into ``exc_interceptor`` (nested default chain used to shadow it)."""
+
+    def test_http_404_through_assembled_chain(self) -> None:
+        from forze_bigquery.kernel.client.errors import exc_interceptor
+
+        out = exc_interceptor.mapper(_client_error(404), site="query")
+        assert out is not None
+        assert out.kind == ExceptionKind.INFRASTRUCTURE
+        assert out.code != "core.unhandled"
+        assert "not found" in out.summary.lower()

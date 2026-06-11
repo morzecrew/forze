@@ -1,3 +1,4 @@
+import asyncio
 from contextlib import (
     AbstractAsyncContextManager,
     AbstractContextManager,
@@ -32,7 +33,12 @@ from .protocols import ExceptionMapper
 P = ParamSpec("P")
 R = TypeVar("R")
 
-_BYPASS_INTERCEPTION = (GeneratorExit, KeyboardInterrupt, SystemExit)
+_BYPASS_INTERCEPTION = (
+    GeneratorExit,
+    KeyboardInterrupt,
+    SystemExit,
+    asyncio.CancelledError,
+)
 
 # ....................... #
 

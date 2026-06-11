@@ -25,7 +25,7 @@ class DurableWorkflowScheduleCommandPort(
         args: In,
         timing: DurableWorkflowScheduleTiming,
         *,
-        workflow_id_template: str | None = None,
+        workflow_id_base: str | None = None,
         trigger_immediately: bool = False,
         note: str | None = None,
     ) -> Awaitable[DurableWorkflowScheduleHandle]:
@@ -40,7 +40,7 @@ class DurableWorkflowScheduleCommandPort(
         args: In,
         timing: DurableWorkflowScheduleTiming,
         *,
-        workflow_id_template: str | None = None,
+        workflow_id_base: str | None = None,
         trigger_immediately: bool = False,
         note: str | None = None,
     ) -> Awaitable[DurableWorkflowScheduleHandle]:
@@ -55,7 +55,7 @@ class DurableWorkflowScheduleCommandPort(
         *,
         timing: DurableWorkflowScheduleTiming | None = None,
         args: In | None = None,
-        workflow_id_template: str | None = None,
+        workflow_id_base: str | None = None,
         note: str | None = None,
     ) -> Awaitable[None]:
         """Update an existing schedule."""

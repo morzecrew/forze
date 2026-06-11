@@ -77,3 +77,40 @@ await ctx.tx_ctx.run_or_defer(send_confirmation)
 Inside a transaction, the callback is queued and runs after the **root** scope
 commits successfully. Outside any transaction, it runs immediately. This single
 mechanism is the foundation of the transactional outbox — covered next.
+
+## Strict transactions under mock
+
+By default, the mock plane's transaction manager is a **no-op**: a write inside
+a transaction that later rolls back still persists, so a "forgot to run it in
+the same transaction" bug is invisible in tests. Opt into real rollback
+semantics when wiring:
+
+```python
+from forze_mock import MockDepsModule
+
+module = MockDepsModule(strict_tx=True)
+```
+
+Strict mode rolls back exactly what a database transaction would:
+
+- **Rolls back** — documents, outbox rows, inbox marks, and the
+  document-backed identity stores. A handler that stages an outbox event and
+  then fails leaves *no* rows behind, same as Postgres.
+- **Survives rollback, on purpose** — queues, streams, storage blobs, caches,
+  counters, idempotency keys, locks, search and analytics state. Those backends
+  are not transactional in production; rolling them back would make the mock
+  *less* faithful, hiding the very cross-system consistency gaps the
+  [outbox pattern](#after-the-commit) exists to close.
+
+Nested scopes behave as savepoints — an inner rollback reverts only the inner
+writes. `QUERY` operations open their root `read_only=True`, and strict mode
+enforces it: a write to a participating store raises a precondition error with
+code `read_only_tx`, mirroring Postgres `BEGIN … READ ONLY`.
+
+!!! warning "Strict roots serialize, and Python objects don't roll back"
+
+    Rollback restores a global snapshot of the shared mock state, so concurrent
+    root transactions on one `MockState` are **serialized** (real databases
+    serialize conflicting writers anyway). And only mock stores are restored —
+    in-process side effects outside them, like a handler mutating a Python
+    object it captured, cannot be rolled back.

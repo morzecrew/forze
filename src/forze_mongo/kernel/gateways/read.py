@@ -71,6 +71,16 @@ class MongoReadGateway[M: BaseModel](
     )
     """Row decode mode for query results (``trusted`` skips validation)."""
 
+    def _effective_find_limit(self, limit: int | None) -> int | None:
+        """Apply :attr:`~forze_mongo.kernel.gateways.base.MongoGateway.find_many_implicit_limit` when *limit* is omitted."""
+
+        if limit is not None:
+            return limit
+
+        return self.find_many_implicit_limit
+
+    # ....................... #
+
     async def get(
         self,
         pk: UUID,
@@ -349,8 +359,8 @@ class MongoReadGateway[M: BaseModel](
     ) -> list[M] | list[T] | list[JsonDict]:
         """Find multiple documents with optional filters, sorting, and pagination.
 
-        At least one of *filters* or *limit* must be provided to prevent
-        unbounded queries.
+        When *limit* is omitted, :attr:`~forze_mongo.kernel.gateways.base.MongoGateway.find_many_implicit_limit`
+        caps the result set to prevent unbounded queries.
 
         :param filters: Optional filter expression.
         :param limit: Maximum number of results.
@@ -358,7 +368,6 @@ class MongoReadGateway[M: BaseModel](
         :param sorts: Sort expression; defaults to descending by ID.
         :param return_model: Optional alternative Pydantic model.
         :param return_fields: Optional field subset to project.
-        :raises ValidationError: If neither *filters* nor *limit* is provided.
         """
 
         if aggregates is not None:
@@ -373,16 +382,13 @@ class MongoReadGateway[M: BaseModel](
                 parsed=parsed,
             )
 
-        if not filters and limit is None:
-            raise exc.precondition("Filters or limit must be provided")
-
         query = self.render_filters(filters, parsed=parsed)
         rows = await self.client.find_many(
             await self.coll(),
             query,
             projection=self.render_projection(return_fields),
             sort=self.render_sorts(sorts),
-            limit=limit,
+            limit=self._effective_find_limit(limit),
             skip=offset,
         )
         normalized = [self._from_storage_doc(row) for row in rows]
@@ -414,21 +420,23 @@ class MongoReadGateway[M: BaseModel](
         if return_fields is not None:
             raise exc.internal("Aggregates cannot be combined with return_fields")
 
+        eff_limit = self._effective_find_limit(limit)
+
         match = self.render_filters(filters, parsed=parsed)
         parsed_, pipeline = self.renderer.render_aggregates(
             aggregates,
             match=match or None,
             sorts=sorts,
-            limit=limit,
+            limit=eff_limit,
             skip=offset,
         )
-        rows = await self.client.aggregate(await self.coll(), pipeline, limit=limit)
+        rows = await self.client.aggregate(await self.coll(), pipeline, limit=eff_limit)
 
         if (
             not rows
             and not parsed_.groups
             and (offset is None or offset == 0)
-            and (limit is None or limit > 0)
+            and (eff_limit is None or eff_limit > 0)
         ):
             rows = [_empty_global_aggregate_row(parsed_)]
 

@@ -15,6 +15,7 @@ from forze_kits.integrations.notify import (
     EmailNotification,
     NotificationRouter,
     dispatch_notification,
+    integration_event_from_queue_message,
     process_notification_message,
 )
 from forze_kits.integrations.notify.payloads import (
@@ -138,6 +139,76 @@ async def test_process_notification_message_uses_queue_type_and_key() -> None:
 
     assert count == 1
     assert senders.emails[0].body == "abc"
+
+
+def test_integration_event_id_deterministic_without_key() -> None:
+    """Redelivery of the same keyless message must yield the SAME event_id."""
+
+    def build() -> QueueMessage[_ProjectCreated]:
+        return QueueMessage(
+            queue="jobs",
+            id="broker-msg-42",
+            payload=_ProjectCreated(project_id="abc"),
+            type="project.created",
+        )
+
+    first = integration_event_from_queue_message(build())
+    second = integration_event_from_queue_message(build())
+
+    assert first.event_id == second.event_id
+
+    other = integration_event_from_queue_message(
+        QueueMessage(
+            queue="jobs",
+            id="broker-msg-43",
+            payload=_ProjectCreated(project_id="abc"),
+            type="project.created",
+        )
+    )
+    assert other.event_id != first.event_id
+
+
+def test_integration_event_id_uses_valid_key() -> None:
+    event_id = uuid4()
+    message = QueueMessage(
+        queue="jobs",
+        id="broker-msg-1",
+        payload=_ProjectCreated(project_id="abc"),
+        type="project.created",
+        key=str(event_id),
+    )
+
+    event = integration_event_from_queue_message(message)
+
+    assert event.event_id == event_id
+
+
+def test_integration_event_id_invalid_key_falls_back_to_message_id() -> None:
+    def build() -> QueueMessage[_ProjectCreated]:
+        return QueueMessage(
+            queue="jobs",
+            id="broker-msg-7",
+            payload=_ProjectCreated(project_id="abc"),
+            type="project.created",
+            key="not-a-uuid",
+        )
+
+    first = integration_event_from_queue_message(build())
+    second = integration_event_from_queue_message(build())
+
+    assert first.event_id == second.event_id
+
+
+def test_integration_event_id_no_key_no_id_raises() -> None:
+    message = QueueMessage(
+        queue="jobs",
+        id="",
+        payload=_ProjectCreated(project_id="abc"),
+        type="project.created",
+    )
+
+    with pytest.raises(CoreException, match="deterministic event_id"):
+        integration_event_from_queue_message(message)
 
 
 @pytest.mark.asyncio

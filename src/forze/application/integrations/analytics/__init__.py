@@ -17,11 +17,21 @@ from .adapter_common import (
     validated_params,
 )
 from .port import AnalyticsQueryPortMixin
+from .sql import (
+    COUNT_COLUMN,
+    apply_limit_offset,
+    build_count_sql,
+    parameters_from_model,
+)
 
 # ----------------------- #
 
 __all__ = [
     "AnalyticsQueryPortMixin",
+    "COUNT_COLUMN",
+    "apply_limit_offset",
+    "build_count_sql",
+    "parameters_from_model",
     "dry_run_enabled",
     "dry_run_offset_page",
     "encode_keyset_cursor_next",

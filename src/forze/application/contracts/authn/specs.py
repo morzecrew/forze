@@ -12,7 +12,6 @@ AuthnMethod = Literal["password", "token", "api_key"]
 """Supported credential families for an authn route."""
 
 # ....................... #
-#! str | StrEnum | None
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)

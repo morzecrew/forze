@@ -51,8 +51,15 @@ async def test_routed_meilisearch_requires_startup() -> None:
     )
 
     tenant = _T1
+
+    # ``health`` never raises — the failure is reported in the message slot.
+    msg, ok = await routed.health()
+    assert ok is False
+    assert "not started" in msg
+
+    # Other port methods still raise before startup.
     with pytest.raises(CoreException, match="not started"):
-        await routed.health()
+        await routed.get_or_create_index("idx")
 
 
 @pytest.mark.asyncio
@@ -74,7 +81,7 @@ async def test_routed_meilisearch_eviction() -> None:
         inst = MagicMock()
         inst.initialize = AsyncMock()
         inst.close = AsyncMock()
-        inst.health = AsyncMock(return_value=True)
+        inst.health = AsyncMock(return_value=("ok", True))
         instances.append(inst)
         return inst
 
@@ -113,5 +120,12 @@ async def test_routed_meilisearch_requires_tenant() -> None:
         max_cached_tenants=4,
     )
     await routed.startup()
+
+    # ``health`` never raises — the failure is reported in the message slot.
+    msg, ok = await routed.health()
+    assert ok is False
+    assert "Tenant ID" in msg
+
+    # Other port methods still raise without a tenant.
     with pytest.raises(CoreException, match="Tenant ID"):
-        await routed.health()
+        await routed.get_or_create_index("idx")

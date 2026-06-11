@@ -182,6 +182,11 @@ class InProcessResilienceExecutor:
         fn: Callable[[], Awaitable[T]],
         route: StrKey | None,
     ) -> T:
+        # Fixed composition order, innermost-out: timeout -> retry -> circuit
+        # breaker -> bulkhead. The breaker deliberately wraps *outside* retry:
+        # it admits once and records one outcome per logical call, so a retry
+        # storm counts as a single breaker failure (thresholds track logical
+        # calls, not attempts). Mirrors ResiliencePolicy's canonical order.
         call: Callable[[], Awaitable[T]] = fn
         timeout = pol.timeout
 

@@ -16,8 +16,14 @@ from ..domain.models.account import (
     ReadPasswordAccount,
     UpdatePasswordAccountCmd,
 )
+from ..domain.models.session import (
+    CreateSessionCmd,
+    ReadSession,
+    Session,
+    UpdateSessionCmd,
+)
 from ..services import PasswordService
-from ._utils import find_password_account_by_authn_identity
+from ._utils import find_password_account_by_authn_identity, revoke_sessions_matching
 
 # ----------------------- #
 
@@ -44,6 +50,25 @@ class PasswordLifecycleAdapter(PasswordLifecyclePort):
     eligibility: PrincipalEligibilityPort
     """Principal eligibility gate."""
 
+    session_qry: DocumentQueryPort[ReadSession] | None = None
+    """Session query port; required when ``revoke_sessions_on_password_change``."""
+
+    session_cmd: (
+        DocumentCommandPort[
+            ReadSession,
+            Session,
+            CreateSessionCmd,
+            UpdateSessionCmd,
+        ]
+        | None
+    ) = None
+    """Session command port; required when ``revoke_sessions_on_password_change``."""
+
+    revoke_sessions_on_password_change: bool = True
+    """Revoke ALL of the principal's sessions (refresh families and their ``sid``-bound
+    access tokens) after a successful password change ("log out everywhere"); the caller
+    must re-authenticate with the new password. Opt out to keep existing sessions alive."""
+
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
@@ -51,6 +76,20 @@ class PasswordLifecycleAdapter(PasswordLifecyclePort):
         cmd_spec = self.pa_cmd.spec
 
         forbid_cache_and_history(qry_spec, cmd_spec, label="Password account")
+
+        if self.revoke_sessions_on_password_change:
+            if self.session_qry is None or self.session_cmd is None:
+                raise exc.configuration(
+                    "revoke_sessions_on_password_change requires session_qry and "
+                    "session_cmd; wire the session document ports or explicitly "
+                    "opt out with revoke_sessions_on_password_change=False",
+                )
+
+            forbid_cache_and_history(
+                self.session_qry.spec,
+                self.session_cmd.spec,
+                label="Session",
+            )
 
     # ....................... #
 
@@ -86,3 +125,15 @@ class PasswordLifecycleAdapter(PasswordLifecyclePort):
         upd_cmd = UpdatePasswordAccountCmd(password_hash=new_pwd_hash)
 
         await self.pa_cmd.update(pa.id, pa.rev, upd_cmd, return_new=False)
+
+        # "Log out everywhere": a password change is the canonical response to a
+        # suspected credential compromise, so a hijacked session must not survive it.
+        # The current session id is not part of AuthnIdentity, so all sessions are
+        # revoked and the caller re-authenticates with the new password.
+        if self.revoke_sessions_on_password_change:
+            # Ports are guaranteed non-None by __attrs_post_init__ when the flag is set.
+            await revoke_sessions_matching(
+                self.session_qry,  # type: ignore[arg-type]
+                self.session_cmd,  # type: ignore[arg-type]
+                {"principal_id": identity.principal_id},
+            )

@@ -44,6 +44,42 @@ class TestRunWaveForward:
         with pytest.raises(ValueError, match="boom"):
             await run_wave_forward(("x",), {"x": 1}, run_step, concurrent=True)
 
+    @pytest.mark.asyncio
+    async def test_concurrent_single_failure_raises_directly(self) -> None:
+        seen: list[int] = []
+
+        async def run_step(step: int) -> None:
+            if step == 1:
+                raise ValueError("boom")
+
+            seen.append(step)
+
+        with pytest.raises(ValueError, match="boom"):
+            await run_wave_forward(
+                ("a", "b"),
+                {"a": 1, "b": 2},
+                run_step,
+                concurrent=True,
+            )
+
+        assert seen == [2]
+
+    @pytest.mark.asyncio
+    async def test_concurrent_multiple_failures_raise_exception_group(self) -> None:
+        async def run_step(step: int) -> None:
+            raise ValueError(f"boom-{step}")
+
+        with pytest.raises(ExceptionGroup) as exc_info:
+            await run_wave_forward(
+                ("a", "b"),
+                {"a": 1, "b": 2},
+                run_step,
+                concurrent=True,
+            )
+
+        messages = sorted(str(e) for e in exc_info.value.exceptions)
+        assert messages == ["boom-1", "boom-2"]
+
 
 class TestRunWaveReverse:
     @pytest.mark.asyncio
@@ -120,6 +156,24 @@ class TestRunGraphWaves:
 
         with pytest.raises(RuntimeError, match="reverse"):
             await run_wave_reverse(("x",), {"x": 1}, run_step, concurrent=True)
+
+    @pytest.mark.asyncio
+    async def test_reverse_concurrent_multiple_failures_raise_exception_group(
+        self,
+    ) -> None:
+        async def run_step(step: int) -> None:
+            raise RuntimeError(f"reverse-{step}")
+
+        with pytest.raises(ExceptionGroup) as exc_info:
+            await run_wave_reverse(
+                ("a", "b"),
+                {"a": 1, "b": 2},
+                run_step,
+                concurrent=True,
+            )
+
+        messages = sorted(str(e) for e in exc_info.value.exceptions)
+        assert messages == ["reverse-1", "reverse-2"]
 
     @pytest.mark.asyncio
     async def test_graph_forward_concurrent(self) -> None:

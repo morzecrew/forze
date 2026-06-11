@@ -18,6 +18,13 @@ class ContextualBuffer[T]:
 
     Each async task or thread gets its own buffer via a :class:`~contextvars.ContextVar`.
     Use :meth:`scope` to create a nested scope that clears on exit.
+
+    The per-instance :class:`~contextvars.ContextVar` is intentional and safe under the
+    usage contract that one buffer instance lives for the whole runtime scope (e.g. one
+    per outbox route per execution context). CPython recommends module-level
+    ``ContextVar``s because variables created in churning objects cannot be removed from
+    still-referenced ``Context`` objects — hence the constraint: never instantiate a
+    ``ContextualBuffer`` per request or per operation.
     """
 
     __buffer: ContextVar[list[T]] = attrs.field(

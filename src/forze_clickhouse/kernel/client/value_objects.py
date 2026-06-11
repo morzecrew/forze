@@ -8,6 +8,7 @@ from pydantic import SecretStr
 
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
+from forze.base.serialization.pydantic import pydantic_secret_converter
 
 # ----------------------- #
 
@@ -17,18 +18,6 @@ _DEFAULT_CONNECTOR_LIMIT_PER_HOST = 20
 _DEFAULT_KEEPALIVE_TIMEOUT = timedelta(seconds=30)
 _DEFAULT_INSERT_BATCH_SIZE = 1000
 _MAX_INSERT_ERRORS = 50
-
-# ....................... #
-
-
-def resolve_password(password: str | SecretStr) -> str:
-    """Return a plain password string from config."""
-
-    if isinstance(password, SecretStr):
-        return password.get_secret_value()
-
-    return password
-
 
 # ....................... #
 
@@ -47,8 +36,12 @@ class ClickHouseConfig:
     username: str = "default"
     """Database user."""
 
-    password: str | SecretStr = ""
-    """Database password."""
+    password: SecretStr = attrs.field(
+        default=SecretStr(""),
+        converter=pydantic_secret_converter,
+        repr=False,
+    )
+    """Database password (plain ``str`` input is coerced to :class:`~pydantic.SecretStr`)."""
 
     database: str = "default"
     """Default database for queries and inserts."""

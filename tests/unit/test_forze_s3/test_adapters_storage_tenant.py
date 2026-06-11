@@ -55,4 +55,5 @@ async def test_list_with_tenant(storage_adapter_with_tenant: S3StorageAdapter) -
         prefix="tenant_12345678-1234-5678-1234-567812345678/docs",
         limit=10,
         offset=0,
+        include_tags=False,
     )

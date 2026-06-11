@@ -15,9 +15,14 @@ from forze.base.exceptions import (
     ExceptionMapper,
     default_chain_exc_mapper,
     exc as forze_exc,
+    fallback_exception_mapper,
 )
 
 # ----------------------- #
+
+_fallback = fallback_exception_mapper("HTTP")
+
+# ....................... #
 
 
 def _response_status(exc: BaseException) -> int | None:
@@ -88,10 +93,7 @@ def _httpx_eh(
             )
 
         case _:
-            return CoreException.internal(
-                f"An error occurred during HTTP operation {site}: {exc}",
-                details=details,
-            )
+            return _fallback(exc, site=site, details=details)
 
 
 # ....................... #
