@@ -46,7 +46,7 @@ ResilienceDepsModule(
 
 ### Bulkheads: fixed or adaptive
 
-`BulkheadStrategy(max_concurrency=, max_queue=)` is a fixed cap. `AdaptiveBulkheadStrategy(latency_threshold=, max_concurrency=)` sets the cap by observed latency (AIMD): starts at `max_concurrency`, backs off multiplicatively when a completion exceeds the threshold, recovers additively. Errors never shrink the limit (that is the breaker's job); the two strategies are mutually exclusive in one policy.
+`BulkheadStrategy(max_concurrency=, max_queue=)` is a fixed cap. `AdaptiveBulkheadStrategy(latency_threshold=, max_concurrency=)` sets the cap by observed latency (AIMD): starts at `max_concurrency`, backs off multiplicatively when a completion exceeds the threshold, recovers additively. Errors never shrink the limit (that is the breaker's job); the two strategies are mutually exclusive in one policy. Add `latency_quantile=0.95` to breach on the *observed p95* (windowed P² estimate) instead of any single slow completion — outlier-immune; the contract becomes "the p95 stays under the threshold".
 
 Queued bulkheads (`max_queue >= 1`) take opt-in queue management on both kinds: `queue_target=` (CoDel — shed waiters parked too long under sustained congestion) and `queue_adaptive_lifo=True` (serve newest first while congested; pair with `queue_target`).
 

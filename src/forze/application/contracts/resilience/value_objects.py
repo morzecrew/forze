@@ -260,6 +260,18 @@ class AdaptiveBulkheadStrategy:
     latency_threshold: timedelta
     """Completed-call latency above this counts as congestion."""
 
+    latency_quantile: float | None = None
+    """Opt-in percentile-windowed congestion signal: instead of *any single*
+    completion over the threshold counting as a breach, breach only when this
+    quantile of recent completed-call latencies (windowed streaming P²
+    estimate) exceeds ``latency_threshold``. Typical ``0.95``: the contract
+    becomes "the p95 must stay under the threshold" — one GC pause or cold
+    query can no longer crater concurrency, only a genuinely shifted
+    distribution can. A backoff opens a fresh measurement epoch (the estimator
+    resets), so a stale-high quantile never ratchets the limit to the floor
+    after the downstream recovers. ``None`` (default) keeps the per-sample
+    signal."""
+
     max_concurrency: int
     """Ceiling and initial limit."""
 
@@ -302,6 +314,11 @@ class AdaptiveBulkheadStrategy:
     def __attrs_post_init__(self) -> None:
         if self.latency_threshold.total_seconds() <= 0:
             raise exc.configuration("Adaptive bulkhead latency_threshold must be positive")
+
+        if self.latency_quantile is not None and not (0.0 < self.latency_quantile < 1.0):
+            raise exc.configuration(
+                "Adaptive bulkhead latency_quantile must be in (0, 1)"
+            )
 
         if self.min_concurrency < 1:
             raise exc.configuration("Adaptive bulkhead min_concurrency must be >= 1")

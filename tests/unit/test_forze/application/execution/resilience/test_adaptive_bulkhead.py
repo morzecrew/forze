@@ -137,6 +137,8 @@ class TestStrategyValidation:
     def test_rejects_invalid_params(self) -> None:
         for kw in (
             {"latency_threshold": timedelta(0)},
+            {"latency_quantile": 0.0},
+            {"latency_quantile": 1.0},
             {"min_concurrency": 0},
             {"max_concurrency": 1, "min_concurrency": 2},
             {"backoff_ratio": 1.0},
@@ -393,3 +395,105 @@ class TestQueueManagement:
         assert state.queue_target_s == 0.005
         assert state.queue_adaptive_lifo is True
         assert state.limit == 2.0
+
+class TestQuantileSignal:
+    """Percentile-windowed breach: the quantile shifts, not a single sample."""
+
+    def _q_state(self, **kw: object) -> AdaptiveBulkheadState:
+        params: dict[str, object] = {
+            "latency_threshold": 0.1,
+            "latency_quantile": 0.95,
+            "max_concurrency": 8,
+            "backoff_ratio": 0.5,
+            "cooldown": 1.0,
+        }
+        params.update(kw)
+        return _state(**params)
+
+    def test_single_outlier_does_not_back_off(self) -> None:
+        state = self._q_state()
+
+        for _ in range(30):
+            assert state.on_complete(0.01, now=100.0) is False
+
+        # One 10s outlier: a per-sample signal would halve the limit here.
+        assert state.on_complete(10.0, now=100.0) is False
+        assert state.limit == 8.0
+
+    def test_shifted_distribution_backs_off(self) -> None:
+        state = self._q_state()
+
+        decreases = 0
+
+        for _ in range(10):
+            decreases += state.on_complete(1.0, now=100.0)
+
+        # The estimator warms at five samples, breaches once (cooldown
+        # coalesces the rest of the burst).
+        assert decreases == 1
+        assert state.limit == 4.0
+
+    def test_backoff_opens_fresh_measurement_epoch(self) -> None:
+        state = self._q_state()
+
+        for _ in range(5):
+            state.on_complete(1.0, now=100.0)
+
+        assert state.limit == 4.0  # first breach
+
+        # Past the cooldown, the reset estimator is still warming: four more
+        # slow completions cannot re-breach...
+        for _ in range(4):
+            assert state.on_complete(1.0, now=102.0) is False
+
+        assert state.limit == 4.0
+
+        # ...the fifth defines the new epoch's estimate and breaches again.
+        assert state.on_complete(1.0, now=102.0) is True
+        assert state.limit == 2.0
+
+    def test_recovery_after_backoff_increases_additively(self) -> None:
+        state = self._q_state()
+
+        for _ in range(5):
+            state.on_complete(1.0, now=100.0)
+
+        assert state.limit == 4.0
+
+        # The new concurrency is healthy: fast completions recover the limit
+        # without the stale slow history vetoing the increase.
+        for _ in range(8):
+            state.on_complete(0.01, now=102.0)
+
+        assert state.limit > 4.0
+
+    def test_warming_estimator_holds_the_limit(self) -> None:
+        state = self._q_state()
+
+        for _ in range(4):
+            assert state.on_complete(5.0, now=100.0) is False
+
+        assert state.limit == 8.0  # no signal yet: neither breach nor growth
+
+    async def test_executor_threads_latency_quantile(self) -> None:
+        clock = _Clock()
+        executor = InProcessResilienceExecutor(
+            policies={
+                "p": ResiliencePolicy(
+                    name="p",
+                    strategies=(
+                        _strategy(max_concurrency=8, latency_quantile=0.95),
+                    ),
+                )
+            },
+            clock=clock,
+        )
+
+        async def slow() -> str:
+            clock.now += 1.0  # one slow sample: per-sample mode would back off
+            return "ok"
+
+        assert await executor.run(slow, policy="p") == "ok"
+
+        ((_, _, limit),) = executor.adaptive_bulkhead_limits()
+        assert limit == 8.0  # per-sample mode would have halved it

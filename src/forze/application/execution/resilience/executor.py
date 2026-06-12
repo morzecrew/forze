@@ -712,6 +712,7 @@ class InProcessResilienceExecutor:
         if state is None:
             state = AdaptiveBulkheadState(
                 latency_threshold=strat.latency_threshold.total_seconds(),
+                latency_quantile=strat.latency_quantile,
                 min_concurrency=strat.min_concurrency,
                 max_concurrency=strat.max_concurrency,
                 max_queue=strat.max_queue,

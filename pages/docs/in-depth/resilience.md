@@ -137,6 +137,17 @@ fast failures are the circuit breaker's signal, and a fast-failing downstream
 must not crater concurrency exactly when failures are cheap. And shrinking
 never evicts in-flight work — the limit only gates admission.
 
+By default any *single* completion over the threshold is a breach — instant
+reaction, but one GC pause or cold query halves your concurrency.
+`latency_quantile=0.95` makes the signal distributional instead: breach only
+when the **observed p95** of recent completions (a windowed streaming P²
+estimate, the same machinery as [adaptive hedging](#hedging-the-tail))
+exceeds the threshold. The contract becomes "the p95 must stay under the
+threshold" — outliers can't move a quantile, only a genuinely shifted
+distribution can. Each backoff opens a fresh measurement epoch, so the
+decision to shrink again is made from the *new* concurrency's latencies, not
+the stale history that justified the last one.
+
 ### Managing the queue
 
 When a bulkhead has a queue (`max_queue >= 1`), a size bound alone isn't

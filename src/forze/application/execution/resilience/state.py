@@ -229,6 +229,11 @@ class AdaptiveBulkheadState:
     Waiter *deadlines* always compare against ``time.monotonic`` — they come
     from the deadline ContextVar, which is monotonic-based by contract."""
 
+    latency_quantile: float | None = None
+    """Percentile-windowed congestion signal: when set, a breach is "this
+    quantile of recent completed-call latencies exceeds the threshold", not
+    "this one sample did". ``None`` keeps the per-sample signal."""
+
     queue_target_s: float | None = None
     """CoDel target sojourn (seconds): under sustained congestion, a waiter
     queued longer than this is shed at dequeue. ``None`` disables CoDel."""
@@ -266,6 +271,19 @@ class AdaptiveBulkheadState:
         factory=deque,
         init=False,
     )
+
+    _latency_estimator: WindowedP2Quantile | None = attrs.field(
+        default=attrs.Factory(
+            lambda self: (
+                WindowedP2Quantile(p=self.latency_quantile)
+                if self.latency_quantile is not None
+                else None
+            ),
+            takes_self=True,
+        ),
+        init=False,
+    )
+    """Windowed P² estimate of completed-call latency (quantile mode only)."""
 
     # ....................... #
 
@@ -396,23 +414,55 @@ class AdaptiveBulkheadState:
     # ....................... #
 
     def on_complete(self, latency: float, now: float) -> bool:
-        """Adjust the limit for a completed call; return ``True`` on a decrease."""
+        """Adjust the limit for a completed call; return ``True`` on a decrease.
 
-        if latency > self.latency_threshold:
-            if now - self.last_decrease_at < self.cooldown:
+        Per-sample mode: this completion's latency over the threshold is a
+        breach. Quantile mode (``latency_quantile`` set): the windowed P²
+        estimate over the threshold is — one outlier can't move a quantile,
+        only a shifted distribution can. An undefined estimate (warming up)
+        never breaches.
+        """
+
+        estimator = self._latency_estimator
+
+        if estimator is not None:
+            estimator.observe(latency)
+            value = estimator.value()
+
+            if value is None:
+                # Warming (fewer than five samples this epoch): no signal in
+                # either direction — hold the limit rather than reading
+                # "unknown" as "healthy" and creeping back up mid-incident.
                 return False
 
-            self.last_decrease_at = now
-            self.limit = max(float(self.min_concurrency), self.limit * self.backoff_ratio)
+            breached = value > self.latency_threshold
 
-            return True
+        else:
+            breached = latency > self.latency_threshold
 
-        self.limit = min(
-            float(self.max_concurrency),
-            self.limit + self.increase_step / max(self.limit, 1.0),
-        )
+        if not breached:
+            self.limit = min(
+                float(self.max_concurrency),
+                self.limit + self.increase_step / max(self.limit, 1.0),
+            )
 
-        return False
+            return False
+
+        if now - self.last_decrease_at < self.cooldown:
+            return False
+
+        self.last_decrease_at = now
+        self.limit = max(float(self.min_concurrency), self.limit * self.backoff_ratio)
+
+        if estimator is not None:
+            # Fresh measurement epoch: the old distribution justified this
+            # decrease; only the *new* concurrency's latencies should decide
+            # the next move. Without the reset, a stale-high quantile keeps
+            # re-breaching for up to two windows after the downstream
+            # recovers, ratcheting the limit to the floor once per cooldown.
+            self._latency_estimator = WindowedP2Quantile(p=estimator.p)
+
+        return True
 
 
 # ....................... #
