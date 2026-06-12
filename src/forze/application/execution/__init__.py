@@ -49,9 +49,13 @@ from .resilience import (
     resolve_resilience_executor,
 )
 from .observability import (
+    BREAKER_STATE_GAUGE,
+    BULKHEAD_QUEUE_GAUGE,
     DURATION_HISTOGRAM,
     OPERATIONS_COUNTER,
+    RESILIENCE_EVENTS_COUNTER,
     instrument_operations,
+    instrument_resilience,
 )
 from .runtime import ExecutionRuntime
 from .assemble import build_runtime
@@ -116,8 +120,12 @@ __all__ = [
     "OperationPlan",
     "OperationRegistry",
     "instrument_operations",
+    "instrument_resilience",
     "OPERATIONS_COUNTER",
     "DURATION_HISTOGRAM",
+    "RESILIENCE_EVENTS_COUNTER",
+    "BREAKER_STATE_GAUGE",
+    "BULKHEAD_QUEUE_GAUGE",
     "ResilienceDepsModule",
     "builtin_default_policies",
     "default_resilience_executor",

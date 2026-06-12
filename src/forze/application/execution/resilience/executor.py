@@ -3,7 +3,7 @@
 import asyncio
 import random
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Iterator
 
 import attrs
 
@@ -28,6 +28,14 @@ from .store import CircuitBreakerStore, InMemoryCircuitBreakerStore
 # ----------------------- #
 
 _StateKey = tuple[StrKey, StrKey | None]
+
+MetricsSink = Callable[[str, str, str | None], None]
+"""Callback receiving every resilience event as ``(event, policy, route)``.
+
+Unlike the tracing emitter, the sink is **not** gated behind tracing — attach
+one (e.g. via ``instrument_resilience``) to export breaker transitions and
+rejection counts as always-on metrics in production.
+"""
 
 # ....................... #
 
@@ -81,6 +89,37 @@ class InProcessResilienceExecutor:
 
     _hedge_budgets: dict[_StateKey, BudgetState] = attrs.field(factory=dict, init=False)
     """Hedge budget state for the executor."""
+
+    _metrics_sink: MetricsSink | None = attrs.field(default=None, init=False, repr=False)
+    """Optional always-on metrics callback (see :data:`MetricsSink`)."""
+
+    # ....................... #
+
+    def set_metrics_sink(self, sink: MetricsSink | None) -> None:
+        """Attach (or detach with ``None``) the always-on metrics sink.
+
+        Called once at assembly time (``instrument_resilience``); the sink
+        receives every resilience event regardless of the tracing gate.
+        """
+
+        self._metrics_sink = sink
+
+    # ....................... #
+
+    def bulkhead_queue_depths(self) -> Iterator[tuple[str, str | None, int]]:
+        """Yield ``(policy, route, waiting)`` for every bulkhead with live state.
+
+        Snapshot accessor for observable gauges: ``waiting`` is the number of
+        calls queued behind the semaphore right now. State appears lazily on
+        first use of a bulkhead-bearing policy.
+        """
+
+        for (policy, route), state in self._bulkheads.items():
+            yield (
+                str(policy),
+                str(route) if route is not None else None,
+                state.waiting,
+            )
 
     # ....................... #
 
@@ -566,10 +605,17 @@ class InProcessResilienceExecutor:
     # ....................... #
 
     def _emit(self, op: str, pol: ResiliencePolicy, route: StrKey | None) -> None:
+        route_name = str(route) if route is not None else None
+
+        # The metrics sink is independent of the tracing gate: production runs
+        # with tracing off still export breaker/rejection metrics.
+        if self._metrics_sink is not None:
+            self._metrics_sink(op, str(pol.name), route_name)
+
         record(
             domain="resilience",
             op=op,
             surface="resilience_executor",
-            route=str(route) if route is not None else None,
+            route=route_name,
             phase=str(pol.name),
         )
