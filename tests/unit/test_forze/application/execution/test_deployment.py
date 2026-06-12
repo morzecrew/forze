@@ -7,6 +7,7 @@ from typing import Any
 import attrs
 import pytest
 
+from forze.application.contracts.dlock import DistributedLockSpec
 from forze.application.contracts.execution import LifecycleStep
 from forze.application.execution import DeploymentProfile, build_runtime
 from forze.application.execution.lifecycle import LifecyclePlan
@@ -49,6 +50,27 @@ class _FakeLock:
 
     async def reset(self, key: str, owner: str) -> bool:
         return True
+
+
+@attrs.define(slots=True)
+class _FakeDlockDeps:
+    """``ctx.dlock`` double: hands back the same lock for any spec."""
+
+    lock: _FakeLock
+
+    def command(self, _spec: DistributedLockSpec) -> _FakeLock:
+        return self.lock
+
+
+@attrs.define(slots=True)
+class _FakeCtx:
+    """Minimal execution-context double exposing only ``dlock``."""
+
+    dlock: _FakeDlockDeps
+
+
+def _ctx_for(lock: _FakeLock) -> Any:
+    return _FakeCtx(dlock=_FakeDlockDeps(lock=lock))
 
 
 # ----------------------- #
@@ -123,15 +145,16 @@ class TestSingletonLifecycleStep:
         lock = _FakeLock()
         step = singleton_lifecycle_step(
             LifecycleStep(id="seed", startup=_start, shutdown=_shut),
-            cmd=lock,
+            spec=DistributedLockSpec(name="seed"),
             owner="replica-a",
         )
 
         assert step.mutates_shared_state is True
         assert step.singleton_guarded is True
 
-        await step.startup(None)  # type: ignore[arg-type]
-        await step.shutdown(None)  # type: ignore[arg-type]
+        ctx = _ctx_for(lock)
+        await step.startup(ctx)
+        await step.shutdown(ctx)
 
         assert ran == ["start", "shut"]
         assert lock.releases == 1
@@ -146,12 +169,13 @@ class TestSingletonLifecycleStep:
         lock = _FakeLock(holder="replica-a")
         step = singleton_lifecycle_step(
             LifecycleStep(id="seed", startup=_start),
-            cmd=lock,
+            spec=DistributedLockSpec(name="seed"),
             owner="replica-b",
         )
 
-        await step.startup(None)  # type: ignore[arg-type]
-        await step.shutdown(None)  # type: ignore[arg-type]
+        ctx = _ctx_for(lock)
+        await step.startup(ctx)
+        await step.shutdown(ctx)
 
         assert ran == []
         assert lock.releases == 0
@@ -164,11 +188,11 @@ class TestSingletonLifecycleStep:
         lock = _FakeLock()
         step = singleton_lifecycle_step(
             LifecycleStep(id="seed", startup=_boom),
-            cmd=lock,
+            spec=DistributedLockSpec(name="seed"),
             owner="replica-a",
         )
 
         with pytest.raises(RuntimeError):
-            await step.startup(None)  # type: ignore[arg-type]
+            await step.startup(_ctx_for(lock))
 
         assert lock.releases == 1

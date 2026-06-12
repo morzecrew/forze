@@ -75,14 +75,19 @@ The guard itself ships in `forze_kits`: wrap a step in a distributed lock so
 one replica runs it and the rest skip —
 
 ```python
+from forze.application.contracts.dlock import DistributedLockSpec
 from forze_kits.lifecycle import singleton_lifecycle_step
 
 step = singleton_lifecycle_step(
     ensure_indexes_step,
-    cmd=dlock_command,    # a DistributedLockCommandPort
+    spec=DistributedLockSpec(name="ensure-indexes"),  # resolved from the scope
     owner=instance_id,
 )
 ```
+
+You pass the lock *spec*, not a live port: the guard resolves the command port
+from the execution context (`ctx.dlock.command(spec)`) at startup, so it slots
+into a lifecycle plan that's assembled before any scope exists.
 
 The first replica to acquire the lock runs the startup and releases it;
 replicas that find the lock held **skip** — the holder is doing the work.

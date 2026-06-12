@@ -88,7 +88,7 @@ attach_readiness_route(router, runtime)   # GET /readyz → 200 / 503 draining
 runtime = build_runtime(..., deployment=DeploymentProfile.FLEET)
 ```
 
-`FLEET` fails assembly for any lifecycle step marked `mutates_shared_state=True` that is not `singleton_guarded`. Guard ensure-style startup work (indexes, queue declarations, seeds) with `singleton_lifecycle_step(step, cmd=dlock_command, owner=instance_id)` from `forze_kits.lifecycle` — one replica runs it, the rest skip. Run one-shot migrations as deploy steps, never as runtime steps.
+`FLEET` fails assembly for any lifecycle step marked `mutates_shared_state=True` that is not `singleton_guarded`. Guard ensure-style startup work (indexes, queue declarations, seeds) with `singleton_lifecycle_step(step, spec=DistributedLockSpec(name=...), owner=instance_id)` from `forze_kits.lifecycle` (pass the lock spec, not a live port — the guard resolves the command port from the scope at startup) — one replica runs it, the rest skip. Run one-shot migrations as deploy steps, never as runtime steps.
 
 Fleet-wide resilience state (`forze[redis]`): `ResilienceDepsModule(breaker_store=redis_circuit_breaker_store(redis), rate_limit_store=redis_rate_limit_store(redis))` — otherwise breakers protect one replica and the effective rate is `permits × replicas`. Both fail open to process-local state. Bulkheads stay process-local by design.
 
