@@ -119,6 +119,44 @@ design: tenant-*routed* clients (a tracking stream bound to one tenant's
 Redis would miss every other tenant's writes) and dynamic per-tenant
 namespaces (no stable broadcast prefix) — both log and degrade gracefully.
 
+## Adaptive lifetimes
+
+A fixed TTL is a compromise: tight enough for the documents that churn,
+wasteful for the ones that don't. Two opt-ins adapt it per entry — both
+freshness-safe, because in-band writes invalidate regardless of TTL; these
+only govern the revalidation cadence and the out-of-band safety net.
+
+**Stable documents earn longer lifetimes** (the HTTP heuristic-freshness
+rule — RFC 7234's "10% of age"):
+
+```python
+CacheSpec(
+    name="products",
+    age_ttl=AgeBasedTtl(alpha=0.1, min_ttl=timedelta(seconds=30), max_ttl=timedelta(hours=1)),
+)
+```
+
+At warm time the entry's lifetime becomes `alpha ×` the document's age since
+`last_update_at`, clamped: a product untouched for a day caches for an hour;
+one edited a minute ago revalidates within seconds — and resets to cautious
+the moment it's written again. No state, no tuning per document.
+
+**Hot documents stay cached while they're hot** (sliding expiration):
+
+```python
+CacheSpec(name="products", ttl=timedelta(hours=1), sliding_ttl=timedelta(seconds=60))
+```
+
+Each cache hit extends the entry's life to the sliding window, so a
+frequently-read document never expires mid-heat — and one quiet window after
+its last read, it's gone. Seasonality and time-of-day patterns need no
+prediction: the entry simply lives while in season. `ttl` remains the
+**absolute cap** — even a perpetually-hot entry revalidates against the
+source within that bound.
+
+The two compose: the age heuristic sets each entry's initial lifetime and
+cap, sliding keeps it alive under access within that cap.
+
 ## Run it
 
 ```bash

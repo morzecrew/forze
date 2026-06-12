@@ -5,6 +5,7 @@ import json
 import math
 import random
 import time
+from datetime import datetime, timedelta, timezone
 from typing import Any, Awaitable, Callable, Protocol, Sequence, cast, runtime_checkable
 from uuid import UUID
 
@@ -250,13 +251,63 @@ class DocumentCache[R: BaseModel]:
 
     # ....................... #
 
-    def _encode_cache_value(self, doc: R, *, delta: float = 0.0) -> Any:
+    def _entry_ttl(self, doc: R) -> timedelta | None:
+        """Age-proportional per-entry lifetime, or ``None`` for the spec default.
+
+        The HTTP heuristic-freshness rule: a document untouched for a long
+        time earns a long lifetime; one changed minutes ago revalidates soon
+        (write locality). Falls back to the default when the read model
+        carries no usable ``last_update_at``.
+        """
+
+        cfg = self.cache_spec.age_ttl if self.cache_spec is not None else None
+
+        if cfg is None:
+            return None
+
+        last_update_at = getattr(doc, "last_update_at", None)
+
+        if not isinstance(last_update_at, datetime):
+            return None
+
+        if last_update_at.tzinfo is None:
+            last_update_at = last_update_at.replace(tzinfo=timezone.utc)
+
+        age = max(0.0, (datetime.now(timezone.utc) - last_update_at).total_seconds())
+        seconds = min(
+            max(cfg.alpha * age, cfg.min_ttl.total_seconds()),
+            cfg.max_ttl.total_seconds(),
+        )
+
+        # Quantize to two significant digits: batch warms group documents by
+        # computed lifetime, and exact ages would shatter every batch into
+        # one write per document for precision nobody needs.
+        if seconds > 0:
+            magnitude = 10.0 ** max(0, math.floor(math.log10(seconds)) - 1)
+            seconds = min(
+                math.ceil(seconds / magnitude) * magnitude,
+                cfg.max_ttl.total_seconds(),
+            )
+
+        return timedelta(seconds=seconds)
+
+    # ....................... #
+
+    def _encode_cache_value(
+        self,
+        doc: R,
+        *,
+        delta: float = 0.0,
+        ttl: timedelta | None = None,
+    ) -> Any:
         """Codec bytes, or — with early refresh on — a metadata envelope.
 
         The envelope records the write instant and the observed recompute cost
         (*delta*, seconds) the XFetch election needs at read time. Write-path
         warms pass ``delta=0.0`` and therefore never elect early refresh —
-        they are re-warmed on every write anyway.
+        they are re-warmed on every write anyway. With a per-entry *ttl*
+        (age-based lifetime), the envelope carries it so the election compares
+        against the entry's real expiry instead of the spec default.
         """
 
         payload = self._encode_for_cache(doc)
@@ -264,7 +315,12 @@ class DocumentCache[R: BaseModel]:
         if self._early_refresh_beta() is None:
             return payload
 
-        return {"_xf": {"at": time.time(), "d": delta}, "doc": json.loads(payload)}
+        meta: JsonDict = {"at": time.time(), "d": delta}
+
+        if ttl is not None:
+            meta["ttl"] = ttl.total_seconds()
+
+        return {"_xf": meta, "doc": json.loads(payload)}
 
     # ....................... #
 
@@ -303,7 +359,13 @@ class DocumentCache[R: BaseModel]:
         if delta <= 0:
             return False
 
-        expiry = at + self.cache_spec.ttl.total_seconds()
+        entry_ttl = meta.get("ttl")
+        ttl_s = (
+            float(entry_ttl)
+            if isinstance(entry_ttl, (int, float)) and entry_ttl > 0
+            else self.cache_spec.ttl.total_seconds()
+        )
+        expiry = at + ttl_s
 
         # Refresh-election probability, not security randomness.
         rand = max(random.random(), 1e-12)  # nosec B311
@@ -383,10 +445,11 @@ class DocumentCache[R: BaseModel]:
         self._l1_put(casted_doc.id, doc)
 
         try:
-            payload = self._encode_cache_value(doc, delta=delta)
+            ttl = self._entry_ttl(doc)
+            payload = self._encode_cache_value(doc, delta=delta, ttl=ttl)
 
             await self.cache.set_versioned(
-                str(casted_doc.id), str(casted_doc.rev), payload
+                str(casted_doc.id), str(casted_doc.rev), payload, ttl=ttl
             )
 
             logger.trace("Cache set successfully")
@@ -416,12 +479,18 @@ class DocumentCache[R: BaseModel]:
             self._l1_put(casted.id, cast(R, casted))
 
         try:
-            versioned_mapping = {
-                (str(doc.id), str(doc.rev)): self._encode_cache_value(cast(R, doc))
-                for doc in docs_casted
-            }
+            # Per-entry (age-based) lifetimes vary per document while the port
+            # takes one ttl per batch: group documents by computed lifetime.
+            groups: dict[timedelta | None, dict[tuple[str, str], Any]] = {}
 
-            await self.cache.set_many_versioned(versioned_mapping)
+            for casted in docs_casted:
+                ttl = self._entry_ttl(cast(R, casted))
+                groups.setdefault(ttl, {})[(str(casted.id), str(casted.rev))] = (
+                    self._encode_cache_value(cast(R, casted), ttl=ttl)
+                )
+
+            for ttl, versioned_mapping in groups.items():
+                await self.cache.set_many_versioned(versioned_mapping, ttl=ttl)
 
         except Exception:
             logger.debug(

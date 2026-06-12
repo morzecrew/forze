@@ -6,11 +6,12 @@ from .invalidation import (
     Unsubscribe,
 )
 from .ports import CachePort
-from .specs import CacheSpec, L1Spec
+from .specs import AgeBasedTtl, CacheSpec, L1Spec
 
 # ----------------------- #
 
 __all__ = [
+    "AgeBasedTtl",
     "CacheDepPort",
     "CacheDepKey",
     "CacheInvalidation",

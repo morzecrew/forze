@@ -95,7 +95,13 @@ class RedisClientPort(Protocol):
 
     def unlink(self, *keys: str) -> Awaitable[int]: ...  # pragma: no cover
 
-    def expire(self, key: str, seconds: int) -> Awaitable[bool]: ...  # pragma: no cover
+    def expire(
+        self,
+        key: str,
+        seconds: int,
+        *,
+        gt: bool = False,
+    ) -> Awaitable[bool]: ...  # pragma: no cover
 
     def incr(self, key: str, by: int = 1) -> Awaitable[int]: ...  # pragma: no cover
 

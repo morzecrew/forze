@@ -42,4 +42,5 @@ class ConfigurableRedisCache(CacheDepPort):
             tenant_aware=self.config.tenant_aware,
             tenant_provider=ctx.inv_ctx.get_tenant,
             invalidation_push=getattr(self.config, "invalidation_push", False),
+            sliding_ttl=spec.sliding_ttl,
         )

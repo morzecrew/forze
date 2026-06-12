@@ -49,6 +49,47 @@ class L1Spec:
 
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
+class AgeBasedTtl:
+    """Age-proportional entry lifetime (the HTTP heuristic-freshness rule).
+
+    RFC 7234 §4.2.2, the rule every HTTP cache ships: an object's freshness
+    lifetime is a fraction of its age since last modification — long-stable
+    documents earn long cache lifetimes, recently-changed ones get short ones
+    (write locality: what changed a minute ago will likely change again).
+    At warm time the document coordinator computes
+    ``ttl = clamp(alpha × (now − last_update_at), min_ttl, max_ttl)`` and
+    writes the entry with that per-entry lifetime. Freshness for in-band
+    writes is unaffected either way — write-invalidation handles it; this
+    governs the out-of-band safety net and the revalidation cadence.
+    """
+
+    alpha: float = 0.1
+    """Fraction of the document's age used as its lifetime (HTTP's 10%)."""
+
+    min_ttl: timedelta = timedelta(seconds=30)
+    """Floor — recently-changed documents revalidate at least this often."""
+
+    max_ttl: timedelta = timedelta(hours=1)
+    """Cap — even ancient documents revalidate within this bound."""
+
+    # ....................... #
+
+    def __attrs_post_init__(self) -> None:
+        if self.alpha <= 0:
+            raise exc.configuration("Age-based TTL alpha must be positive")
+
+        if self.min_ttl.total_seconds() <= 0:
+            raise exc.configuration("Age-based TTL min_ttl must be positive")
+
+        if self.min_ttl > self.max_ttl:
+            raise exc.configuration("Age-based TTL min_ttl must be <= max_ttl")
+
+
+# ....................... #
+
+
+@final
+@attrs.define(slots=True, kw_only=True, frozen=True)
 class CacheSpec(BaseSpec):
     """Cache specification."""
 
@@ -73,6 +114,24 @@ class CacheSpec(BaseSpec):
     """Opt-in in-process L1 for document read-through (see :class:`L1Spec`).
     ``None`` (default) keeps every read on the backend cache."""
 
+    sliding_ttl: timedelta | None = None
+    """Opt-in sliding expiration (expire-after-access) for versioned entries.
+
+    When set, a backend hit extends the entry's *pointer* lifetime to this
+    idle window (extend-only, never shortened) — a hot entry stays cached for
+    as long as it keeps being read instead of dying of TTL mid-heat, and a
+    cold one expires within one quiet window of its last access. Seasonality
+    and time-of-day patterns are handled by construction: nothing is
+    predicted, the entry simply lives while in season. The entry's *body*
+    TTL is never extended, so :attr:`ttl` (or the per-entry age-based
+    lifetime) remains the **absolute revalidation cap** — a perpetually-hot
+    entry still re-checks the source within that bound. Must be smaller than
+    :attr:`ttl`."""
+
+    age_ttl: AgeBasedTtl | None = None
+    """Opt-in age-proportional per-entry lifetime (see :class:`AgeBasedTtl`).
+    ``None`` (default) keeps the fixed :attr:`ttl`/:attr:`ttl_pointer`."""
+
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
@@ -90,3 +149,14 @@ class CacheSpec(BaseSpec):
                 "L1 TTL must be strictly smaller than the cache TTL — the "
                 "backend cache must keep seeing periodic reads",
             )
+
+        if self.sliding_ttl is not None:
+            if self.sliding_ttl.total_seconds() <= 0:
+                raise exc.configuration("Sliding TTL must be positive")
+
+            if self.sliding_ttl >= self.ttl:
+                raise exc.configuration(
+                    "Sliding TTL must be smaller than the cache TTL — the "
+                    "body TTL is the absolute revalidation cap sliding "
+                    "expiration is bounded by",
+                )

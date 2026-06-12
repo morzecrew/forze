@@ -1,3 +1,4 @@
+from datetime import timedelta
 from typing import Any, Awaitable, Protocol, Sequence, runtime_checkable, Mapping
 
 from forze.base.primitives import JsonDict
@@ -23,25 +24,51 @@ class CacheQueryPort(Protocol):  # pragma: no cover
 
 @runtime_checkable
 class CacheCommandPort(Protocol):  # pragma: no cover
-    """Contract for writing, versioning, and deleting cached values."""
+    """Contract for writing, versioning, and deleting cached values.
 
-    def set(self, key: str, value: Any) -> Awaitable[None]:
-        """Store *value* under *key*."""
+    Every setter takes an optional per-entry ``ttl`` overriding the adapter's
+    configured default lifetime for that entry alone — the seam adaptive-TTL
+    policies (e.g. age-proportional document caching) write through. ``None``
+    keeps the configured default.
+    """
+
+    def set(
+        self,
+        key: str,
+        value: Any,
+        *,
+        ttl: timedelta | None = None,
+    ) -> Awaitable[None]:
+        """Store *value* under *key* (optionally with a per-entry *ttl*)."""
         ...
 
-    def set_many(self, key_mapping: JsonDict) -> Awaitable[None]:
-        """Bulk-store multiple key/value pairs."""
+    def set_many(
+        self,
+        key_mapping: JsonDict,
+        *,
+        ttl: timedelta | None = None,
+    ) -> Awaitable[None]:
+        """Bulk-store multiple key/value pairs (one *ttl* for the batch)."""
         ...
 
-    def set_versioned(self, key: str, version: str, value: Any) -> Awaitable[None]:
+    def set_versioned(
+        self,
+        key: str,
+        version: str,
+        value: Any,
+        *,
+        ttl: timedelta | None = None,
+    ) -> Awaitable[None]:
         """Store *value* under *key* tagged with a *version* identifier."""
         ...
 
     def set_many_versioned(
         self,
         key_version_mapping: Mapping[tuple[str, str], Any],
+        *,
+        ttl: timedelta | None = None,
     ) -> Awaitable[None]:
-        """Bulk-store multiple versioned key/value pairs."""
+        """Bulk-store multiple versioned key/value pairs (one *ttl* for the batch)."""
         ...
 
     def delete(self, key: str, *, hard: bool) -> Awaitable[None]:

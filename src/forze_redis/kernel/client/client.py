@@ -546,8 +546,11 @@ class RedisClient(RedisClientPort):
     # ....................... #
 
     @exc_interceptor.coroutine("redis.expire")  # type: ignore[untyped-decorator]
-    async def expire(self, key: str, seconds: int) -> bool:
-        res = await self.__executor().expire(key, seconds)
+    async def expire(self, key: str, seconds: int, *, gt: bool = False) -> bool:
+        # ``gt=True`` maps to Redis 7+ ``EXPIRE ... GT``: extend-only — the TTL
+        # is set only when larger than the current remaining one (the sliding
+        # cache window must never shorten an age-stretched entry).
+        res = await self.__executor().expire(key, seconds, gt=gt)
 
         # Queued onto the pipeline; whether the key existed materializes at execute().
         if self.__in_pipeline():

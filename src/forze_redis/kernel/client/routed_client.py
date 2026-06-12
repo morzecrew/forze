@@ -142,9 +142,9 @@ class RoutedRedisClient(DsnRoutedTenantClientBase[RedisClient], RedisClientPort)
         inner = await self._get_client()
         return await inner.unlink(*keys)
 
-    async def expire(self, key: str, seconds: int) -> bool:
+    async def expire(self, key: str, seconds: int, *, gt: bool = False) -> bool:
         inner = await self._get_client()
-        return await inner.expire(key, seconds)
+        return await inner.expire(key, seconds, gt=gt)
 
     async def incr(self, key: str, by: int = 1) -> int:
         inner = await self._get_client()
