@@ -112,7 +112,7 @@ class TestStorageRoutes:
         assert downloaded.status_code == 200
         assert downloaded.content == b"hello world"
 
-        deleted = client.post(f"/files/delete/{stored['key']}")
+        deleted = client.delete(f"/files/delete/{stored['key']}")
         assert deleted.status_code == 204
 
         assert client.post("/files/list", json={}).json()["hits"] == []
@@ -155,6 +155,9 @@ class TestStorageRoutes:
             "/files/download/{key}",
             "/files/delete/{key}",
         }
+        assert set(paths["/files/upload"]) == {"post"}
+        assert set(paths["/files/download/{key}"]) == {"get"}
+        assert set(paths["/files/delete/{key}"]) == {"delete"}
 
     @pytest.mark.parametrize("style", ["rest", "rpc"])
     def test_operation_ids_are_registry_keys_verbatim(self, style: str) -> None:

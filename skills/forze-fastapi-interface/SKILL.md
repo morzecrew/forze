@@ -68,14 +68,18 @@ attach_document_routes(
 app.include_router(router)
 ```
 
-- `style="rest"` gives resource paths (`POST ""` 201, `GET /{id}`,
-  `PATCH /{id}?rev=`, `DELETE /{id}` 204); `style="rpc"` gives uniform
-  `POST /<op>` with the input DTO as body. List operations are `POST /<op>` in
-  both styles.
+- Both styles use the same REST verbs; they differ only in how the resource is
+  addressed. `style="rest"` puts the id in the path (`POST ""` 201, `GET /{id}`,
+  `PATCH /{id}?rev=`, `DELETE /{id}` 204); `style="rpc"` keeps one
+  operation-named path per op and puts the id in a query parameter
+  (`GET /get?id=`, `PATCH /update?id=&rev=` with the patch body,
+  `DELETE /kill?id=` 204). `create` and list operations are `POST /<op>` with
+  the input DTO as body in both styles (no id to address).
 - Only operations the registry holds are attached (a read-only spec yields a
   read-only router); narrow with `include={"get", "list"}`.
 - Merging `build_soft_deletion_registry(spec)` into the document registry adds
-  `POST /{id}/delete|restore?rev=` automatically.
+  soft delete/restore automatically — `POST /{id}/delete|restore?rev=` (REST) or
+  `PATCH /delete|restore?id=&rev=` (RPC); hard delete keeps the `DELETE` verb.
 - `attach_search_routes` (no `style` — every search request is a filter body,
   always `POST /<op>`) and `attach_storage_routes` (`style` required; multipart
   upload, raw-bytes download) follow the same pattern.

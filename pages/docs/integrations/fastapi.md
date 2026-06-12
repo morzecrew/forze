@@ -134,7 +134,10 @@ Merging a soft-deletion registry (`build_soft_deletion_registry`) into the
 document registry adds its `delete`/`restore` operations to the same router
 automatically.
 
-The `style` is an explicit choice:
+Both styles use the same REST verbs; they differ only in how a resource is
+addressed — REST puts the id in the path, RPC keeps one operation-named path per
+operation (mirroring the catalog one-to-one) and puts the id in a query
+parameter:
 
 - `"rest"` — resource paths: `POST /notes` (201), `GET /notes/{id}`,
   `PATCH /notes/{id}?rev=` with the patch DTO as body, `DELETE /notes/{id}`
@@ -142,8 +145,12 @@ The `style` is an explicit choice:
   `POST /notes/{id}/delete?rev=` and `POST /notes/{id}/restore?rev=`. List
   operations keep `POST /notes/list`-style paths since their filter bodies
   have no natural REST verb.
-- `"rpc"` — one `POST /notes/<op>` per operation with the input DTO as the
-  body; the routes mirror the catalog one-to-one.
+- `"rpc"` — `GET /notes/get?id=`, `PATCH /notes/update?id=&rev=` with the patch
+  DTO as body, `DELETE /notes/kill?id=` (204), and `PATCH /notes/delete?id=&rev=`
+  / `PATCH /notes/restore?id=&rev=` for soft deletion. `create` and the list
+  operations keep `POST /notes/<op>` with the input DTO as body (a new entity or
+  a filter payload has no id to address). So an RPC read is a plain linkable,
+  cacheable `GET`, not an opaque `POST`.
 
 `attach_search_routes` does the same for a search registry
 (`build_search_registry` or its hub/federated siblings). Search requests are
@@ -173,8 +180,8 @@ contain slashes. The style only decides paths and verbs:
 - `"rest"` — `POST /files` (201), `POST /files/list`, `GET /files/{key}`,
   `DELETE /files/{key}`.
 - `"rpc"` — `POST /files/upload`, `POST /files/list`,
-  `GET /files/download/{key}`, `POST /files/delete/{key}`. Download stays
-  `GET` so byte responses remain linkable and cacheable.
+  `GET /files/download/{key}`, `DELETE /files/delete/{key}`. The key rides the
+  path tail in both styles since it is slash-bearing, not a JSON field.
 
 ```python
 from forze_fastapi.routes import attach_storage_routes

@@ -46,11 +46,15 @@ from forze_fastapi.middlewares.invocation import IDEMPOTENCY_KEY_HEADER
 RouteStyle = Literal["rest", "rpc"]
 """Path/verb mapping for generated routes.
 
-``"rest"`` maps operations onto resource-style paths and verbs; ``"rpc"``
-exposes one operation-named path per operation, mirroring the catalog
-one-to-one. Each attacher documents its concrete mapping. Attachers whose
-operations have a single natural surface (search, where every request is a
-filter body) take no style argument.
+Both styles use REST verbs (``GET``/``POST``/``PATCH``/``DELETE``); they differ
+only in how a resource is addressed. ``"rest"`` maps operations onto
+resource-style paths with the id in the path (``GET /{id}``). ``"rpc"`` exposes
+one operation-named path per operation — mirroring the catalog one-to-one — with
+the id (and rev) carried as query parameters (``GET /notes.get?id=``); only
+genuine bodies (create, filter/list payloads, multipart upload) stay ``POST``.
+Each attacher documents its concrete mapping. Attachers whose operations have a
+single natural surface (search, where every request is a filter body) take no
+style argument.
 """
 
 OperationRunner = Callable[[Any], Awaitable[Any]]
