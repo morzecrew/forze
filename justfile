@@ -60,6 +60,33 @@ test *args='':
 
     uv run pytest -m "not perf" {{ args }}
 
+# Save a local perf baseline for the gated (in-process) benchmark subset
+perf-save:
+    {{ _uv_sync }}
+
+    uv run pytest \
+        --benchmark-only \
+        --benchmark-warmup=on \
+        --benchmark-disable-gc \
+        --benchmark-save=local \
+        -m perf_gate \
+        tests/perf
+
+# Compare the gated benchmark subset against the saved local baseline (fail >10% on min)
+perf-check:
+    {{ _uv_sync }}
+
+    uv run pytest \
+        --benchmark-only \
+        --benchmark-warmup=on \
+        --benchmark-disable-gc \
+        --benchmark-compare \
+        --benchmark-compare-fail=min:10% \
+        --benchmark-columns=min,mean,max \
+        --benchmark-time-unit=ms \
+        -m perf_gate \
+        tests/perf
+
 # Run performance benchmarks (-m perf; Docker only where a perf conftest starts containers)
 perf *args='tests/perf':
     {{ _uv_sync }}

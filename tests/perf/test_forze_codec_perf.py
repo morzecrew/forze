@@ -170,3 +170,7 @@ def test_codec_pydantic_single_decode_info_logging_benchmark(
 
 
 CODEC_TIER_NAMES: tuple[CodecTierName, ...] = tuple(t.name for t in CODEC_BENCHMARK_TIERS)
+
+
+# In-process and deterministic: participates in the CI perf regression gate.
+pytestmark = pytest.mark.perf_gate

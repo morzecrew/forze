@@ -269,3 +269,7 @@ def test_resolve_port_cache_off_benchmark(benchmark: Any) -> None:
             ctx, _PORT_KEY, _PORT_SPEC, route=_PORT_ROUTE
         ),
     )
+
+
+# In-process and deterministic: participates in the CI perf regression gate.
+pytestmark = pytest.mark.perf_gate

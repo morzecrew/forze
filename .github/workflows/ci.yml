@@ -326,3 +326,134 @@ jobs:
           fi
 
           echo "required-ci passed"
+
+  perf-gate:
+    name: Perf regression gate (A/B vs merge-base)
+    needs: changes
+    if: >-
+      github.event_name == 'pull_request' &&
+      (needs.changes.outputs.force_full == 'true' || needs.changes.outputs.code == 'true') &&
+      !contains(github.event.pull_request.labels.*.name, 'skip-perf-gate')
+    runs-on: ubuntu-latest
+    # Burn-in: observe-only while the false-positive rate is measured on real
+    # PRs; flip to enforcing (remove continue-on-error) once it proves quiet.
+    continue-on-error: true
+    permissions:
+      contents: read
+
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+
+      - name: Checkout code (full history for merge-base)
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          fetch-depth: 0
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+        with:
+          enable-cache: true
+          cache-dependency-glob: |
+            uv.lock
+            pyproject.toml
+
+      # Both refs are benchmarked on this one VM seconds apart, so the
+      # runner-lottery noise cancels and min:15% is signal, not coin flip.
+      - name: Benchmark merge-base (same runner)
+        run: |
+          BASE="$(git merge-base HEAD "origin/${{ github.base_ref }}")"
+          git worktree add /tmp/base-ref "$BASE"
+          cd /tmp/base-ref
+          uv sync --all-groups --all-extras
+          # Tolerate a base ref that predates the perf_gate marker: the head
+          # run skips the comparison when no baseline was produced.
+          uv run pytest \
+            --benchmark-only \
+            --benchmark-warmup=on \
+            --benchmark-disable-gc \
+            --benchmark-storage="file://${GITHUB_WORKSPACE}/.benchmarks" \
+            --benchmark-save=base \
+            -m perf_gate \
+            tests/perf || true
+
+      - name: Benchmark head and compare (fail >15% on min)
+        run: |
+          uv sync --all-groups --all-extras
+
+          if ls "${GITHUB_WORKSPACE}"/.benchmarks/*/0001_base.json >/dev/null 2>&1; then
+            COMPARE=(--benchmark-compare --benchmark-compare-fail=min:15%)
+          else
+            echo "No baseline produced on merge-base; reporting head numbers only"
+            COMPARE=()
+          fi
+
+          uv run pytest \
+            --benchmark-only \
+            --benchmark-warmup=on \
+            --benchmark-disable-gc \
+            --benchmark-storage="file://${GITHUB_WORKSPACE}/.benchmarks" \
+            --benchmark-columns=min,mean,max \
+            --benchmark-time-unit=ms \
+            "${COMPARE[@]}" \
+            -m perf_gate \
+            tests/perf
+
+  perf-trend:
+    name: Publish perf trend (main)
+    needs: changes
+    if: >-
+      github.event_name == 'push' &&
+      github.ref == 'refs/heads/main' &&
+      (needs.changes.outputs.force_full == 'true' || needs.changes.outputs.code == 'true')
+    runs-on: ubuntu-latest
+    permissions:
+      # Pushes trend data to the dedicated `benchmarks` branch (NOT gh-pages:
+      # docs deploy via the Pages artifact flow, so that branch is never served
+      # and stays a pure data store + alert source).
+      contents: write
+
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+
+      - name: Checkout code
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+        with:
+          enable-cache: true
+          cache-dependency-glob: |
+            uv.lock
+            pyproject.toml
+
+      - name: Run gated benchmarks
+        run: |
+          uv sync --all-groups --all-extras
+          uv run pytest \
+            --benchmark-only \
+            --benchmark-warmup=on \
+            --benchmark-disable-gc \
+            --benchmark-json=benchmark-output.json \
+            -m perf_gate \
+            tests/perf
+
+      # Cross-run comparisons are runner-lottery territory: alert (never fail)
+      # at a generous threshold; the PR gate is the enforcing mechanism.
+      - name: Store trend and alert on drift
+        uses: benchmark-action/github-action-benchmark@52576c92bccf6ac60c8223ec7eb2565637cae9ba # v1.22.1
+        with:
+          tool: pytest
+          output-file-path: benchmark-output.json
+          gh-pages-branch: benchmarks
+          benchmark-data-dir-path: dev/bench
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          auto-push: true
+          comment-on-alert: true
+          alert-threshold: "125%"
+          fail-on-alert: false
