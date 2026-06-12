@@ -24,6 +24,8 @@ Raise expected domain/application failures as `CoreException`, built through the
 | `exc.authentication(...)` | `authentication` | 401 | authentication failed |
 | `exc.authorization(...)` | `authorization` | 403 | permission denied |
 | `exc.infrastructure(...)` | `infrastructure` | 500 | backend/service failure |
+| `exc.throttled(...)` | `throttled` | 429 | rate limit / draining rejection (retryable) |
+| `exc.timeout(...)` | `timeout` | 504 | invocation time budget spent (non-retryable) |
 | `exc.internal(...)` / `exc.concurrency(...)` / `exc.configuration(...)` | — | 500 | unexpected/internal failures |
 
 Each factory takes `(summary, *, code=None, details=None)`. Set a stable `code` for machine handling and use `details` for structured context.
@@ -90,6 +92,10 @@ logger.info("project_created", project_id=str(project_id))
 
 `ExecutionContext.inv_ctx.bind(...)` binds `execution_id`, `correlation_id`, optional `causation_id`, `principal_id`, and `tenant_id` into logging context.
 
+## Operation and resilience metrics
+
+`instrument_operations(registry)` (before freeze) emits an OpenTelemetry span plus `forze.operations` / `forze.operation.duration` metrics per operation. `instrument_resilience(ctx.resilience())` (once the runtime scope is up) exports resilience events — retries, rejections, breaker state, bulkhead queue depth/limit — as always-on metrics, independent of tracing. Both emit via the global OTel providers; the app brings the exporter. See [`forze-resilience-deadlines`](../forze-resilience-deadlines/SKILL.md) for the policies behind those events.
+
 ## FastAPI mapping
 
 Call `register_exception_handlers(app)` once. It converts `CoreException` to a JSON response (and maps unhandled exceptions to 500).
@@ -111,4 +117,5 @@ register_exception_handlers(app)
 ## Reference
 
 - [Base layer (errors and logging)](https://morzecrew.github.io/forze/reference/errors/)
+- [Observability](https://morzecrew.github.io/forze/in-depth/observability/)
 - [FastAPI integration](https://morzecrew.github.io/forze/integrations/fastapi/)

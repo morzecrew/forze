@@ -43,6 +43,30 @@ Alongside each span, two **metrics** — `forze.operations` (a counter) and
 `forze.operation.duration` (a histogram, in ms) — labelled by operation, kind,
 and outcome.
 
+## Resilience metrics
+
+The [resilience layer](resilience.md) makes decisions worth watching —
+retries, rejections, breaker trips, bulkhead backoff. `instrument_resilience`
+exports them as **always-on metrics**, independent of any tracing gate, so a
+production process with tracing off still reports them:
+
+```python
+from forze.application.execution import instrument_resilience
+
+instrument_resilience(ctx.resilience())  # once, when the scope is up
+```
+
+| Metric | What it carries |
+|--------|-----------------|
+| `forze.resilience.events` (counter) | every event — retry attempts, timeouts, rate-limit and bulkhead rejections, breaker transitions — labelled by event, policy, and route |
+| `forze.resilience.breaker.state` (gauge) | breaker phase per policy/route: 0 closed, 1 half-open, 2 open |
+| `forze.resilience.bulkhead.queue_depth` (gauge) | calls queued behind each bulkhead, sampled at collection |
+| `forze.resilience.bulkhead.limit` (gauge) | the current adaptive-bulkhead concurrency limit |
+
+Two reading notes: `breaker_open` counts the open transition *and* every
+admission shed while open, so its rate tracks shed load; and a breaker that
+never tripped reports no state at all — closed by absence.
+
 ## Logs correlate for free
 
 `configure_logging(otel_config=...)` injects the active span's `trace_id` and

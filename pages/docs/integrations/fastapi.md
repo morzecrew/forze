@@ -58,6 +58,12 @@ app.add_middleware(SecurityContextMiddleware, ctx_dep=runtime.get_context)
 `Idempotency-Key` header; `SecurityContextMiddleware` binds the authenticated
 identity and tenant.
 
+When an upstream Forze service forwards its remaining [time
+budget](../in-depth/deadlines.md) as `X-Forze-Deadline-Budget`, opt in to
+honoring it with `InvocationMetadataMiddleware(...,
+bind_deadline_from_header=True)` — binding is tighten-only, so a forged value
+can only shorten the sender's own request.
+
 ## Map errors to HTTP
 
 `register_exception_handlers` turns a `CoreException` into a response — the kind
@@ -70,6 +76,14 @@ from forze_fastapi.exceptions import register_exception_handlers
 register_exception_handlers(app)
 # raise exc.not_found("...") in a handler → 404 {"detail": "..."}
 ```
+
+## Readiness probe
+
+`attach_readiness_route(router, runtime)` adds a `GET /readyz` that reflects
+the runtime's scope state: `200` while serving, `503 draining` once shutdown
+flips the [drain gate](../in-depth/shutdown-and-fleets.md), `503 unavailable`
+before the scope exists. Point your load balancer's readiness check at it so
+routing stops before the drain window starts.
 
 ## Routes
 
@@ -112,7 +126,10 @@ app.include_router(router)
 ```
 
 Only operations the registry actually holds are attached, so a read-only spec
-yields a read-only router; narrow further with `include={"get", "list"}`.
+yields a read-only router; narrow further with `include={"get", "list"}`. A
+plan-declared [deadline](../in-depth/deadlines.md) surfaces on each generated
+route as an `x-deadline-seconds` OpenAPI extension and a "Time budget" line in
+its description, so API clients can set their own timeouts.
 Merging a soft-deletion registry (`build_soft_deletion_registry`) into the
 document registry adds its `delete`/`restore` operations to the same router
 automatically.

@@ -116,6 +116,10 @@ class ListOrders(Handler[ListOrdersCmd, OrdersListResponse]):
 
 For per-tenant base URLs / credentials, use `RoutedHttpClient` with `routed_http_lifecycle_step()` and set `tenant_aware=True` on the service config. The client resolves each tenant's `HttpRoutingCredentials` (base URL, headers, bearer token) from a `SecretRef` per tenant, so the adapter never needs a `tenant_provider`. Bind `TenantIdentity` at the boundary before the handler runs.
 
+## Deadline propagation
+
+When the caller has an invocation deadline bound, the adapter automatically forwards the remaining budget as an `X-Forze-Deadline-Budget` header (a duration in seconds), so a downstream Forze service can inherit it. Opt out per service with `HttpServiceConfig(propagate_deadline=False)`. See [`forze-resilience-deadlines`](../forze-resilience-deadlines/SKILL.md).
+
 ## Testing
 
 Inject a stub `HttpServicePort` (any object with a `spec` attribute and an async `invoke`) in unit tests, or construct the facade with that port — no real network calls. Keep request/response model assertions in the test rather than asserting on raw HTTP.

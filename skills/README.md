@@ -39,6 +39,7 @@ Skills load automatically when the agent detects a relevant task (handlers, wiri
 | **forze-auth-tenancy-secrets** | Authn/authz, tenancy, secrets, OIDC, FastAPI identity binding. |
 | **forze-graph-contracts** | Graph specs and ports; custom adapter wiring (no official graph package). |
 | **forze-observability-errors** | `CoreException` / `exc` factories, logging, call context, FastAPI error responses. |
+| **forze-resilience-deadlines** | Resilience policies, invocation deadlines, graceful drain/readiness, fleet deployment posture. |
 | **forze-analytics-clickhouse** | `AnalyticsSpec`, ClickHouse query/ingest, local Docker setup. |
 | **forze-analytics-bigquery** | BigQuery analytics, emulator env, streaming ingest. |
 
