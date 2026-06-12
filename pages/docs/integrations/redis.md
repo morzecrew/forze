@@ -64,6 +64,18 @@ lifecycle = LifecyclePlan.from_steps(
 | Search-result snapshots | `SearchResultSnapshotSpec.name` (`search_snapshots`) |
 | Distributed locks | `DistributedLockSpec.name` (`dlocks`) |
 
+## L1 push invalidation
+
+`RedisCacheConfig(invalidation_push=True)` enables Redis 6+ **client-side
+caching** (`CLIENT TRACKING`, RESP3 push) for caches backing the
+[document L1](../recipes/cache-reads-with-redis.md#push-invalidation-shrink-the-staleness-window-to-zero):
+one pinned connection per client receives an invalidation push for every
+write, expiration, or eviction under the cache's key prefix — by any replica —
+and the in-process L1 drops the entry immediately, demoting the L1 TTL to a
+backstop. Fails open (stream loss flushes the L1 and falls back to TTL
+semantics while reconnecting); tenant-routed clients and dynamic namespaces
+stay TTL-only by design.
+
 ## Fleet-wide resilience state
 
 Two builders turn the process-local [resilience](../in-depth/resilience.md)

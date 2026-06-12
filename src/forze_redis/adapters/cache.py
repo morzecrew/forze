@@ -9,11 +9,16 @@ require_redis()
 # ....................... #
 
 from datetime import timedelta
-from typing import Any, Callable, Final, Iterable, Mapping, Sequence, final
+from typing import Any, Awaitable, Callable, Final, Iterable, Mapping, Sequence, final
 
 import attrs
 
-from forze.application.contracts.cache import CachePort
+from forze.application.contracts.cache import (
+    CacheInvalidation,
+    CachePort,
+    InvalidationCallback,
+)
+from forze.application.contracts.resolution import is_static_named_resource
 from forze.base.exceptions import exc
 
 from ._logger import logger
@@ -63,6 +68,13 @@ class RedisCacheAdapter(CachePort, RedisBaseAdapter):
 
     ttl_kv: timedelta = timedelta(seconds=300)
     """TTL for the cache key-value pairs (when using plain cache)."""
+
+    invalidation_push: bool = False
+    """Opt-in client-side-caching invalidation push (Redis 6+ ``CLIENT
+    TRACKING``). When enabled, :meth:`subscribe_invalidations` streams key
+    invalidations to in-process subscribers (the document L1); when disabled
+    (default) the capability reports unavailable and subscribers keep their
+    TTL-only semantics."""
 
     # ....................... #
 
@@ -239,6 +251,92 @@ class RedisCacheAdapter(CachePort, RedisBaseAdapter):
 
         redis_keys = [self.__kv_key(k) for k in keys]
         await self.client.unlink(*redis_keys)
+
+    # ....................... #
+    # Public: invalidation push (SupportsInvalidationPush)
+
+    async def subscribe_invalidations(
+        self,
+        callback: InvalidationCallback,
+    ) -> Callable[[], Awaitable[None]] | None:
+        """Stream pointer-key invalidations to *callback* (L1 consumers).
+
+        Tracks the **pointer** scope only: every versioned write re-sets the
+        pointer, every delete unlinks it, and pointer TTL expiry broadcasts
+        too — so the pointer is a complete invalidation signal for versioned
+        read-through entries. Tenant-aware adapters track the ``tenant:``
+        prefix and filter; the parsed tenant rides the event so subscribers
+        can compose their own tenant-scoped keys.
+
+        Returns ``None`` (push unavailable) when the feature is disabled, the
+        namespace is dynamic (per-tenant-resolved namespaces have no stable
+        broadcast prefix), or the client cannot track (tenant-routed clients).
+        """
+
+        if not self.invalidation_push:
+            return None
+
+        if not is_static_named_resource(self.namespace):
+            logger.warning(
+                "Invalidation push requires a static namespace; falling back "
+                "to TTL-only L1 semantics",
+            )
+
+            return None
+
+        namespace = await self._resolved_namespace()
+        sep = self.key_sep
+        pointer_prefix = sep.join((_CACHE_SCOPE, _POINTER_SCOPE, namespace)) + sep
+        tenant_marker = f"tenant{sep}"
+
+        if self.tenant_aware:
+            # Tenant ids prefix the key, so there is no per-namespace
+            # broadcast prefix — subscribe to the tenant scope and filter.
+            prefixes: tuple[str, ...] = (tenant_marker,)
+
+        else:
+            prefixes = (pointer_prefix,)
+
+        def _parse(server_key: str) -> CacheInvalidation | None:
+            tenant: str | None = None
+            rest = server_key
+
+            if self.tenant_aware:
+                if not rest.startswith(tenant_marker):
+                    return None
+
+                parts = rest.split(sep, 2)
+
+                if len(parts) < 3:
+                    return None
+
+                tenant, rest = parts[1], parts[2]
+
+            if not rest.startswith(pointer_prefix):
+                return None
+
+            logical = rest[len(pointer_prefix) :]
+
+            if not logical:
+                return None
+
+            return CacheInvalidation(key=logical, tenant=tenant)
+
+        def _on_keys(keys: Sequence[str]) -> None:
+            for key in keys:
+                inv = _parse(key)
+
+                if inv is not None:
+                    callback(inv)
+
+        def _on_reset() -> None:
+            callback(CacheInvalidation(key=None))
+
+        return await self.client.track_invalidations(
+            prefixes=prefixes,
+            on_keys=_on_keys,
+            on_reset=_on_reset,
+        )
 
     # ....................... #
     # Public: read

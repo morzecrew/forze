@@ -35,6 +35,7 @@ from forze_redis.kernel._logger import logger
 from forze_redis.kernel.scripts import MSET_BULK_SET
 
 from .errors import exc_interceptor
+from .invalidation import InvalidationHub
 from .port import RedisClientPort
 from .types import (
     RedisAutoClaimResponse,
@@ -109,6 +110,8 @@ class RedisClient(RedisClientPort):
     __redis_config: RedisConfig = attrs.field(factory=RedisConfig, init=False)
 
     __init_lock: asyncio.Lock = attrs.field(factory=asyncio.Lock, init=False)
+
+    __invalidation_hub: "InvalidationHub | None" = attrs.field(default=None, init=False)
 
     # ....................... #
     # Lifecycle
@@ -215,6 +218,10 @@ class RedisClient(RedisClientPort):
     async def close(self) -> None:
         async with self.__init_lock:
             self.__script_registry.clear()
+
+            if self.__invalidation_hub is not None:
+                await self.__invalidation_hub.stop()
+                self.__invalidation_hub = None
 
             if self.__client is not None:
                 logger.trace("Client found, closing")
@@ -595,6 +602,55 @@ class RedisClient(RedisClientPort):
             return 0
 
         return int(res)
+
+    # ....................... #
+
+    async def track_invalidations(
+        self,
+        *,
+        prefixes: Sequence[str],
+        on_keys: Callable[[Sequence[str]], None],
+        on_reset: Callable[[], None],
+    ) -> Callable[[], Awaitable[None]] | None:
+        """Subscribe to server-side key invalidations (``CLIENT TRACKING`` BCAST).
+
+        *on_keys* receives raw server keys touched by any client's writes (and
+        expirations/evictions) under the registered *prefixes*; *on_reset*
+        fires whenever events may have been missed (stream (re)connect or
+        failure) — subscribers must flush on it. Returns an unsubscribe
+        callable. The hub (one pinned RESP3 connection consuming the server's
+        ``invalidate`` push frames) starts lazily on first subscription, takes
+        one pool slot while active, and stops with the client.
+        """
+
+        self.__require_client()
+        pool = self.__pool
+
+        if pool is None:  # pragma: no cover — require_client guards this
+            raise exc.internal("Redis pool is not initialized")
+
+        if self.__invalidation_hub is None:
+
+            async def _acquire() -> Any:
+                return await pool.get_connection()  # type: ignore[no-untyped-call]
+
+            async def _release(conn: Any) -> None:
+                try:
+                    await conn.disconnect()
+
+                finally:
+                    await pool.release(conn)
+
+            self.__invalidation_hub = InvalidationHub(
+                acquire_connection=_acquire,
+                release_connection=_release,
+            )
+
+        return await self.__invalidation_hub.subscribe(
+            prefixes=prefixes,
+            on_keys=on_keys,
+            on_reset=on_reset,
+        )
 
     # ....................... #
 

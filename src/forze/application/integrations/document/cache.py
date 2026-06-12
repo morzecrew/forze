@@ -11,7 +11,12 @@ from uuid import UUID
 import attrs
 from pydantic import BaseModel
 
-from forze.application.contracts.cache import CachePort, CacheSpec
+from forze.application.contracts.cache import (
+    CacheInvalidation,
+    CachePort,
+    CacheSpec,
+    SupportsInvalidationPush,
+)
 from forze.application.contracts.transaction import AfterCommitPort
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
@@ -99,6 +104,69 @@ class DocumentCache[R: BaseModel]:
         eq=False,
     )
     """Active L1 store (override, spec-built default, or ``None``)."""
+
+    _l1_push: dict[str, Any] = attrs.field(
+        factory=dict,
+        init=False,
+        repr=False,
+        eq=False,
+    )
+    """Invalidation-push subscription state (mutable holder on a frozen class).
+
+    Empty until the first L1 read attempts a subscription; ``started`` is set
+    before the await so concurrent first readers subscribe once."""
+
+    # ....................... #
+
+    def _on_invalidation(self, inv: CacheInvalidation) -> None:
+        """Push-invalidation sink: drop the affected L1 entry, or flush on reset."""
+
+        if self._l1 is None:
+            return
+
+        if inv.key is None:
+            # The push stream (re)connected or degraded: anything cached may
+            # predate a gap in the stream — flush rather than trust it.
+            self._l1.clear()
+            return
+
+        self._l1.invalidate(f"{inv.tenant or ''}:{inv.key}")
+
+    # ....................... #
+
+    async def _subscribe_invalidation_push(self) -> None:
+        """One-shot subscription attempt (TTL stays the backstop either way)."""
+
+        self._l1_push["started"] = True
+
+        if not isinstance(self.cache, SupportsInvalidationPush):
+            return
+
+        try:
+            unsubscribe = await self.cache.subscribe_invalidations(
+                self._on_invalidation
+            )
+
+        except Exception:
+            logger.warning(
+                "L1 invalidation-push subscription failed for '%s'; "
+                "falling back to TTL-only staleness bounds",
+                self.document_name,
+                exc_info=True,
+            )
+
+            return
+
+        if unsubscribe is None:
+            logger.debug(
+                "L1 invalidation push unavailable for '%s' (TTL-only)",
+                self.document_name,
+            )
+
+            return
+
+        self._l1_push["unsubscribe"] = unsubscribe
+        logger.debug("L1 invalidation push active for '%s'", self.document_name)
 
     # ....................... #
 
@@ -408,6 +476,9 @@ class DocumentCache[R: BaseModel]:
         if self.cache is None:
             return await fetch_on_cache_fault()
 
+        if self._l1 is not None and not self._l1_push:
+            await self._subscribe_invalidation_push()
+
         l1_hit = self._l1_get(pk)
 
         if l1_hit is not None:
@@ -528,6 +599,9 @@ class DocumentCache[R: BaseModel]:
         l1_docs: dict[UUID, R] = {}
 
         if self._l1 is not None:
+            if not self._l1_push:
+                await self._subscribe_invalidation_push()
+
             for pk in pks:
                 hit = self._l1_get(pk)
 

@@ -97,6 +97,28 @@ product never leave the process, the entry pool is LRU-bounded at `capacity`,
 and expired entries fall back to Redis (which keeps the early-refresh
 machinery above fully functional — set the L1 TTL well below the cache TTL).
 
+### Push invalidation: shrink the staleness window to ~zero
+
+On Redis 6+, the staleness budget above can become a *backstop* instead of
+the contract. Opt in on the Redis side:
+
+```python
+RedisCacheConfig(namespace="app:products", invalidation_push=True)
+```
+
+This turns on Redis **client-side caching** (`CLIENT TRACKING`): the server
+pushes an invalidation to every replica the moment *any* replica writes a
+cached product — the L1 entry drops within a network round-trip instead of
+waiting out its TTL. With push on, you can comfortably raise the L1 TTL
+(e.g. to 30–60 s) for a better hit rate.
+
+The failure posture is fail-open: if the push stream drops, every L1 flushes
+(events may have been missed), reconnects with backoff, and in the meantime
+the TTL bounds staleness exactly as before. Two setups stay TTL-only by
+design: tenant-*routed* clients (a tracking stream bound to one tenant's
+Redis would miss every other tenant's writes) and dynamic per-tenant
+namespaces (no stable broadcast prefix) — both log and degrade gracefully.
+
 ## Run it
 
 ```bash

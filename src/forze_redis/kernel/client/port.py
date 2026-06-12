@@ -6,6 +6,7 @@ from typing import (
     AsyncContextManager,
     AsyncGenerator,
     Awaitable,
+    Callable,
     Mapping,
     Protocol,
     Sequence,
@@ -115,6 +116,20 @@ class RedisClientPort(Protocol):
         timeout: timedelta | None = None,
     ) -> AsyncGenerator[RedisPubSubMessage]:
         """Yield pub/sub messages until cancelled (async iterator / async generator)."""
+        ...  # pragma: no cover
+
+    def track_invalidations(
+        self,
+        *,
+        prefixes: Sequence[str],
+        on_keys: Callable[[Sequence[str]], None],
+        on_reset: Callable[[], None],
+    ) -> Awaitable[Callable[[], Awaitable[None]] | None]:
+        """Subscribe to server-side key invalidations (``CLIENT TRACKING`` BCAST).
+
+        Returns an unsubscribe callable, or ``None`` when the client cannot
+        provide push (e.g. tenant-routed clients).
+        """
         ...  # pragma: no cover
 
     def xadd(
