@@ -4,6 +4,7 @@ from typing import TYPE_CHECKING, Any, Self
 
 import attrs
 
+from forze.application._logger import logger
 from forze.application.contracts.execution import DispatchStep, HandlerFactory
 from forze.base.descriptors import hybridmethod
 from forze.base.exceptions import exc
@@ -207,6 +208,45 @@ class OperationRegistry:
 
     # ....................... #
 
+    def register(
+        self,
+        op: StrKey,
+        handler: HandlerFactory,
+        *,
+        descriptor: OperationDescriptor | None = None,
+        override: bool = False,
+        namespace: StrKeyNamespace | None = None,
+    ) -> OperationRegistryBinder:
+        """Register a handler (and optionally its catalog descriptor) in one step.
+
+        Returns the same binder :meth:`bind` returns, so plan binding chains
+        naturally::
+
+            registry = (
+                registry.register("notes.get", factory, descriptor=descriptor)
+                .as_query()
+                .finish()
+            )
+
+        Equivalent to ``set_handler`` + ``set_descriptor`` + ``bind`` — but keeps the
+        handler and its catalog metadata in one statement, so an operation cannot end
+        up registered yet invisible to catalog-driven surfaces (generated FastAPI
+        routes, MCP tools) because its descriptor was forgotten. Call ``.finish()``
+        (after any plan steps) to get the updated registry back.
+        """
+
+        if namespace is not None:
+            op = namespace.key(op)
+
+        registry = self.set_handler(op, handler, override=override)
+
+        if descriptor is not None:
+            registry = registry.set_descriptor(op, descriptor, override=override)
+
+        return registry.bind(op)
+
+    # ....................... #
+
     def patch(self, selector: StrKeySelector.Spec) -> OperationRegistryBinder:
         """Spawn a binder that commits a plan patch for operations matching ``selector``.
 
@@ -296,8 +336,14 @@ class OperationRegistry:
     # ....................... #
 
     @hybridmethod
-    def merge(cls: type[Self], *registries: Self) -> Self:  # type: ignore[misc, override]
-        """Merge multiple operation registries into a single registry."""
+    def merge(cls: type[Self], *registries: Self, override: bool = False) -> Self:  # type: ignore[misc, override]
+        """Merge multiple operation registries into a single registry.
+
+        Registries are expected to be *disjoint*: a duplicate operation key (handler,
+        plan, or descriptor) or duplicate patch selector raises a configuration error
+        naming the colliding keys. Pass ``override=True`` to explicitly let later
+        registries replace earlier entries instead.
+        """
 
         merged = RegistryMerge.merge(
             *(
@@ -309,6 +355,7 @@ class OperationRegistry:
                 )
                 for reg in registries
             ),
+            override=override,
         )
 
         return cls(
@@ -321,8 +368,8 @@ class OperationRegistry:
     # ....................... #
 
     @merge.instancemethod
-    def _merge_instance(self: Self, *registries: Self) -> Self:  # type: ignore[misc, override]
-        return type(self).merge(self, *registries)
+    def _merge_instance(self: Self, *registries: Self, override: bool = False) -> Self:  # type: ignore[misc, override]
+        return type(self).merge(self, *registries, override=override)
 
     # ....................... #
 
@@ -337,6 +384,19 @@ class OperationRegistry:
 
         for op in frozen_handlers:
             frozen_plans[op] = resolution.resolve(str(op)).freeze()
+
+        # Visibility, not an error: descriptor-less operations stay executable but are
+        # invisible/half-visible to catalog-driven surfaces (generated routes refuse
+        # them, MCP tools lose schema + description). Internal-only operations may be
+        # descriptor-less legitimately, so this is a single INFO line.
+        if missing_descriptors := sorted(
+            str(op) for op in frozen_handlers if op not in self._descriptors
+        ):
+            logger.info(
+                "Operation registry frozen with operations lacking catalog "
+                "descriptors (invisible to catalog-driven surfaces): %s",
+                missing_descriptors,
+            )
 
         return FrozenOperationRegistry(
             handlers=frozen_handlers,
@@ -378,6 +438,12 @@ class FrozenOperationRegistry:
         One entry per registered handler. Operations without a declared descriptor still
         appear (with ``descriptor=None``) so callers can see the full operation surface;
         a driving adapter decides which entries it actually exposes.
+
+        Entries also carry plan-derived facts computed at freeze:
+        ``supports_idempotency_key`` (the plan has an idempotency wrap — optional-key
+        replay, not a requirement) and ``required_permissions`` (union of permission
+        keys declared by the plan's authz hooks; declared-hook introspection, not a
+        security statement).
         """
 
         return {
@@ -385,6 +451,8 @@ class FrozenOperationRegistry:
                 op=op,
                 kind=self.plans[op].kind,
                 descriptor=self.descriptors.get(op),
+                supports_idempotency_key=self.plans[op].supports_idempotency_key,
+                required_permissions=self.plans[op].required_permissions,
             )
             for op in self.handlers
         }

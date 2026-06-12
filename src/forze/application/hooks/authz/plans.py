@@ -156,6 +156,17 @@ class AuthzBeforeAuthorize(BeforeFactory):
 
     # ....................... #
 
+    def permission_keys(self) -> tuple[str, ...]:
+        """Marker (``DeclaresAuthz``): the permission key this hook enforces.
+
+        Surfaced on the operation catalog as ``required_permissions``. Declared-hook
+        introspection only — handlers may enforce further checks invisibly.
+        """
+
+        return (self.action,)
+
+    # ....................... #
+
     def to_step(
         self,
         *,
@@ -242,6 +253,18 @@ class AuthzDocumentScopeWrap(MiddlewareFactory):
             return await next(args)
 
         return _wrap
+
+    # ....................... #
+
+    def permission_keys(self) -> tuple[str, ...]:
+        """Marker (``DeclaresAuthz``): the explicit action key, when one is set.
+
+        Empty when no ``action`` is configured — the wrap still scopes (and may deny)
+        access via the policy's document scoping, it just declares no named permission.
+        Declared-hook introspection only, not a security statement.
+        """
+
+        return (self.action,) if self.action is not None else ()
 
     # ....................... #
 

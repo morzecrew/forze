@@ -34,10 +34,12 @@ from pydantic import BaseModel, ValidationError
 from forze.application.execution.context import ExecutionContextFactory
 from forze.application.execution.operations import (
     FrozenOperationRegistry,
+    OperationCatalogEntry,
     run_operation,
 )
 from forze.base.exceptions import exc
 from forze.base.primitives import StrKeyNamespace
+from forze_fastapi.middlewares.invocation import IDEMPOTENCY_KEY_HEADER
 
 # ----------------------- #
 
@@ -173,6 +175,74 @@ def _operation_runner(
         return await run_operation(registry, op, args, ctx_dep())
 
     return run
+
+
+# ....................... #
+
+
+def _route_description(
+    entry: OperationCatalogEntry,
+) -> str | None:
+    """Route description: the descriptor's text plus a declared-permissions line.
+
+    The permissions line reflects *declared-hook introspection* only (the catalog's
+    ``required_permissions``), not a complete security statement — an operation may
+    enforce further checks inside its handler invisibly.
+    """
+
+    base = entry.descriptor.description if entry.descriptor is not None else None
+
+    if not entry.required_permissions:
+        return base
+
+    keys = ", ".join(f"`{key}`" for key in entry.required_permissions)
+    line = (
+        f"Requires permissions: {keys} (declared by attached authorization hooks; "
+        "the operation may enforce additional checks internally)."
+    )
+
+    return f"{base}\n\n{line}" if base else line
+
+
+# ....................... #
+
+
+def _route_openapi_extra(
+    entry: OperationCatalogEntry,
+) -> dict[str, Any] | None:
+    """Catalog-derived OpenAPI additions for one route, or ``None`` when unflagged.
+
+    Idempotency-capable operations (``supports_idempotency_key``) document the
+    ``Idempotency-Key`` request header as an **optional** parameter — the wrap
+    replays only for callers that send a key; there is no enforcement. A
+    "required-mode" knob (reject keyless requests) is a follow-up.
+
+    Declared permissions surface as the ``x-required-permissions`` vendor
+    extension; mapping them onto OpenAPI ``securitySchemes`` is a follow-up.
+    FastAPI deep-merges ``openapi_extra`` into the operation object, appending
+    to ``parameters``, so unflagged routes (``None``) are emitted unchanged.
+    """
+
+    extra: dict[str, Any] = {}
+
+    if entry.supports_idempotency_key:
+        extra["parameters"] = [
+            {
+                "name": IDEMPOTENCY_KEY_HEADER,
+                "in": "header",
+                "required": False,
+                "schema": {"type": "string", "title": IDEMPOTENCY_KEY_HEADER},
+                "description": (
+                    "Optional idempotency key. Retrying with the same key replays "
+                    "the stored result instead of re-executing the operation."
+                ),
+            }
+        ]
+
+    if entry.required_permissions:
+        extra["x-required-permissions"] = list(entry.required_permissions)
+
+    return extra or None
 
 
 # ....................... #
@@ -364,8 +434,9 @@ def attach_operation_routes(
             operation_id=op,
             name=op,
             summary=descriptor.title if descriptor is not None else None,
-            description=descriptor.description if descriptor is not None else None,
+            description=_route_description(entry),
             tags=tags or None,
+            openapi_extra=_route_openapi_extra(entry),
         )
         attached += 1
 

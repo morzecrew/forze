@@ -4,6 +4,7 @@ require_fastapi()
 
 # ....................... #
 
+from typing import Final
 from uuid import UUID
 
 import attrs
@@ -17,6 +18,14 @@ from forze.application.execution.context import (
 from forze.base.primitives import uuid7
 
 # ----------------------- #
+
+IDEMPOTENCY_KEY_HEADER: Final[str] = "Idempotency-Key"
+"""Canonical idempotency key header name (per the IETF httpapi draft).
+
+Default for :attr:`InvocationMetadataMiddleware.idem_header` and the name the
+generated route OpenAPI documents for idempotency-capable operations. If an app
+overrides ``idem_header``, the documented header name will not match — making
+the projection follow the override is a follow-up."""
 
 
 @attrs.define(slots=True, frozen=True)
@@ -38,7 +47,7 @@ class InvocationMetadataMiddleware:
     caus_header: str = attrs.field(default="X-Causation-ID", kw_only=True)
     """Header name for the causation id."""
 
-    idem_header: str = attrs.field(default="Idempotency-Key", kw_only=True)
+    idem_header: str = attrs.field(default=IDEMPOTENCY_KEY_HEADER, kw_only=True)
     """Header name for the idempotency key (canonical, per the IETF httpapi draft)."""
 
     # ....................... #

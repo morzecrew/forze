@@ -6,9 +6,12 @@ from typing import TYPE_CHECKING, Any, Callable, Iterable, Never, Self
 import attrs
 
 from forze.application.contracts.execution import (
+    BeforeStep,
+    DeclaresAuthz,
     DispatchStep,
     MiddlewareStep,
     OnSuccess,
+    ProvidesIdempotency,
 )
 from forze.base.descriptors import hybridmethod
 from forze.base.exceptions import exc
@@ -101,6 +104,54 @@ class OperationPlan:
 
     # ....................... #
 
+    def iter_before_steps(self) -> Iterable[BeforeStep]:
+        """Yield every before step across the plan's scopes."""
+
+        yield from self._outer.before.items
+        yield from self._tx.before.items
+
+    # ....................... #
+
+    def supports_idempotency_key(self) -> bool:
+        """Whether the plan carries a wrap that deduplicates on a bound idempotency key.
+
+        Structural detection (:class:`ProvidesIdempotency`), shared by the freeze-time
+        hedging gate and the operation catalog. "Supports", not "requires": such a wrap
+        is a no-op when the invocation binds no idempotency key — it replays a stored
+        result only for callers that *do* send one.
+        """
+
+        return any(
+            isinstance(step.factory, ProvidesIdempotency)
+            and step.factory.provides_idempotency()
+            for step in self.iter_wrap_steps()
+        )
+
+    # ....................... #
+
+    def declared_permission_keys(self) -> tuple[str, ...]:
+        """Sorted union of permission keys declared by the plan's authz hooks.
+
+        Structural detection (:class:`DeclaresAuthz`) over the plan's before and wrap
+        steps. Honesty caveat: declared-hook introspection only, **not** a security
+        statement — an empty result does not mean the operation is unguarded (its
+        handler may enforce authorization invisibly), and a declaring hook may scope
+        or deny access beyond its named keys.
+        """
+
+        factories: list[Any] = [step.factory for step in self.iter_before_steps()]
+        factories += [step.factory for step in self.iter_wrap_steps()]
+
+        keys: set[str] = set()
+
+        for factory in factories:
+            if isinstance(factory, DeclaresAuthz):
+                keys.update(factory.permission_keys())
+
+        return tuple(sorted(keys))
+
+    # ....................... #
+
     def bind_outer(self) -> ScopeBinder[Self, Never]:
         """Enter an outer scope and return a binder for it."""
 
@@ -129,7 +180,13 @@ class OperationPlan:
         frozen_outer = self._outer.freeze()
         frozen_tx = self._tx.freeze()
 
-        return FrozenOperationPlan(outer=frozen_outer, tx=frozen_tx, kind=self.kind)
+        return FrozenOperationPlan(
+            outer=frozen_outer,
+            tx=frozen_tx,
+            kind=self.kind,
+            supports_idempotency_key=self.supports_idempotency_key(),
+            required_permissions=self.declared_permission_keys(),
+        )
 
     # ....................... #
 
@@ -171,6 +228,16 @@ class FrozenOperationPlan:
 
     kind: OperationKind = attrs.field(default=OperationKind.COMMAND)
     """Read (``QUERY``) vs write (``COMMAND``) classification."""
+
+    supports_idempotency_key: bool = attrs.field(default=False)
+    """Derived at freeze (:meth:`OperationPlan.supports_idempotency_key`): the plan
+    carries an idempotency wrap that replays a stored result for a duplicate bound
+    idempotency key. The wrap is a no-op when the invocation binds no key."""
+
+    required_permissions: tuple[str, ...] = attrs.field(factory=tuple)
+    """Derived at freeze (:meth:`OperationPlan.declared_permission_keys`): sorted union
+    of permission keys declared by the plan's authz hooks. Declared-hook introspection
+    only, not a security statement — empty does not mean unguarded."""
 
     # ....................... #
 

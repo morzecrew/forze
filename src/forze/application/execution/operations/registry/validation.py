@@ -6,7 +6,6 @@ from typing import final
 from forze.application.contracts.execution import (
     DeclaresHedge,
     HandlerFactory,
-    ProvidesIdempotency,
 )
 from forze.base.exceptions import exc
 from forze.base.primitives import (
@@ -151,21 +150,22 @@ class RegistryFreezeValidator:
         """
 
         for op in handlers:
-            factories = [
-                step.factory for step in resolution.resolve(str(op)).iter_wrap_steps()
-            ]
+            plan = resolution.resolve(str(op))
 
-            hedges = [f for f in factories if isinstance(f, DeclaresHedge)]
+            hedges = [
+                step.factory
+                for step in plan.iter_wrap_steps()
+                if isinstance(step.factory, DeclaresHedge)
+            ]
 
             if not hedges:
                 continue
 
-            has_idempotency = any(
-                isinstance(f, ProvidesIdempotency) and f.provides_idempotency()
-                for f in factories
-            )
-
-            if has_idempotency or all(h.hedge_safety_declared() for h in hedges):
+            # Shared structural ProvidesIdempotency detection — the same derivation
+            # the catalog's ``supports_idempotency_key`` flag uses.
+            if plan.supports_idempotency_key() or all(
+                h.hedge_safety_declared() for h in hedges
+            ):
                 continue
 
             raise exc.configuration(

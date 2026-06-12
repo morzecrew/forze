@@ -89,6 +89,22 @@ class OperationCatalogEntry:
     descriptor: OperationDescriptor | None = None
     """Catalog metadata, if the operation declared one."""
 
+    supports_idempotency_key: bool = False
+    """The operation's plan carries an idempotency wrap: a duplicate invocation that
+    binds the same idempotency key replays the stored result instead of re-executing.
+
+    Derived at freeze via structural ``ProvidesIdempotency`` detection. "Supports",
+    not "requires" — the wrap is a no-op when the caller binds no key, so surfaces
+    should document the key as an *optional* parameter."""
+
+    required_permissions: tuple[str, ...] = ()
+    """Sorted union of permission keys declared by the plan's authz hooks
+    (structural ``DeclaresAuthz`` detection at freeze); empty = no declared authz.
+
+    Honesty caveat: declared-hook introspection, **not** a security statement. An
+    operation may enforce authorization inside its handler (or via an undeclared
+    hook) invisibly, so an empty tuple must not be read as "unauthenticated/open"."""
+
     # ....................... #
 
     @property

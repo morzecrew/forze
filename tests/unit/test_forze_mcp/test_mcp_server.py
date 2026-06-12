@@ -451,6 +451,108 @@ class TestWriteEnablement:
             assert "calc.write" not in tools
 
 
+class TestCatalogDerivedDescriptions:
+    """Tool descriptions pick up catalog-derived idempotency/authz facts."""
+
+    def _flagged_registry(self) -> FrozenOperationRegistry:
+        from forze.application.contracts.authz import AuthzSpec
+        from forze.application.contracts.idempotency import IdempotencySpec
+        from forze.application.hooks.authz import AuthzBeforeAuthorize
+        from forze.application.hooks.idempotency import IdempotencyWrap
+
+        reg = OperationRegistry(
+            handlers={
+                "calc.double": lambda _c: _Doubler(),
+                "calc.write": lambda _c: _Doubler(),
+            }
+        )
+        reg = reg.set_descriptor(
+            "calc.double",
+            OperationDescriptor(input_type=_In, output_type=_Out, description="double n"),
+        )
+        reg = reg.set_descriptor(
+            "calc.write",
+            OperationDescriptor(input_type=_In, output_type=_Out, description="write n"),
+        )
+        reg = reg.bind("calc.double").as_query().finish()
+        reg = (
+            reg.bind("calc.write")
+            .bind_outer()
+            .before(
+                AuthzBeforeAuthorize(
+                    spec=AuthzSpec(name="z"), action="calc.write"
+                ).to_step(step_id="authz", requires=())
+            )
+            .wrap(
+                IdempotencyWrap(
+                    op="calc.write",
+                    spec=IdempotencySpec(name="s"),
+                    result_type=_Out,
+                ).to_step()
+            )
+            .finish(deep=True)
+        )
+
+        return reg.freeze()
+
+    async def test_flagged_write_tool_gets_both_suffixes(self) -> None:
+        server = FastMCP("calc")
+        register_tools(server, self._flagged_registry(), _ctx_factory, include_writes=True)
+
+        async with Client(server) as client:
+            tool = {t.name: t for t in await client.list_tools()}["calc.write"]
+
+        assert tool.description is not None
+        assert tool.description.startswith("write n")
+        assert "Supports idempotent retries via an invocation-bound idempotency key" in (
+            tool.description
+        )
+        assert "Requires permissions: calc.write" in tool.description
+        # Honesty caveat: declared-hook introspection, not a security statement.
+        assert "declared by attached authorization hooks" in tool.description
+
+    async def test_unflagged_tool_description_is_unchanged(self) -> None:
+        server = FastMCP("calc")
+        register_tools(server, self._flagged_registry(), _ctx_factory, include_writes=True)
+
+        async with Client(server) as client:
+            tool = {t.name: t for t in await client.list_tools()}["calc.double"]
+
+        assert tool.description == "double n"
+
+    async def test_read_only_op_gets_no_idempotency_sentence(self) -> None:
+        from forze.application.contracts.idempotency import IdempotencySpec
+        from forze.application.hooks.idempotency import IdempotencyWrap
+
+        reg = OperationRegistry(handlers={"calc.double": lambda _c: _Doubler()})
+        reg = reg.set_descriptor(
+            "calc.double",
+            OperationDescriptor(input_type=_In, output_type=_Out, description="double n"),
+        )
+        reg = (
+            reg.bind("calc.double")
+            .as_query()
+            .bind_outer()
+            .wrap(
+                IdempotencyWrap(
+                    op="calc.double",
+                    spec=IdempotencySpec(name="s"),
+                    result_type=_Out,
+                ).to_step()
+            )
+            .finish(deep=True)
+        )
+
+        server = FastMCP("calc")
+        register_tools(server, reg.freeze(), _ctx_factory)
+
+        async with Client(server) as client:
+            tool = {t.name: t for t in await client.list_tools()}["calc.double"]
+
+        # The retry-replay sentence is only advertised for write tools.
+        assert tool.description == "double n"
+
+
 def _sensitive_doc_setup():
     from forze.application.contracts.document import DocumentSpec, DocumentWriteTypes
     from forze.domain.models import Document

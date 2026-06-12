@@ -38,19 +38,23 @@ def test_merge_combines_disjoint_handlers_plans_and_patches() -> None:
     assert len(merged.patches) == 2
 
 
-def test_merge_handler_conflict_raises() -> None:
+def test_merge_handler_conflict_raises_configuration_naming_keys() -> None:
     a = RegistryMerge(handlers={"op": lambda _ctx: None})
     b = RegistryMerge(handlers={"op": lambda _ctx: None})
 
-    with pytest.raises(CoreException, match="Conflicting handler factories"):
+    with pytest.raises(
+        CoreException, match=r"duplicate handler factories.*'op'"
+    ) as excinfo:
         RegistryMerge.merge(a, b)
 
+    assert excinfo.value.kind.value == "configuration"
 
-def test_merge_plan_conflict_raises() -> None:
+
+def test_merge_plan_conflict_raises_naming_keys() -> None:
     a = RegistryMerge(plans={"op": OperationPlan()})
     b = RegistryMerge(plans={"op": OperationPlan()})
 
-    with pytest.raises(CoreException, match="Conflicting operation plans"):
+    with pytest.raises(CoreException, match=r"duplicate operation plans.*'op'"):
         RegistryMerge.merge(a, b)
 
 
@@ -63,5 +67,31 @@ def test_merge_patch_selector_conflict_raises() -> None:
         patches=(PlanPatch(selector=selector, plan=OperationPlan()),),
     )
 
-    with pytest.raises(CoreException, match="Conflicting operation plan patches"):
+    with pytest.raises(CoreException, match="duplicate plan patch selector"):
         RegistryMerge.merge(a, b)
+
+
+def test_merge_handler_conflict_override_last_wins() -> None:
+    first = lambda _ctx: None  # noqa: E731
+    second = lambda _ctx: None  # noqa: E731
+
+    a = RegistryMerge(handlers={"op": first})
+    b = RegistryMerge(handlers={"op": second})
+
+    merged = RegistryMerge.merge(a, b, override=True)
+
+    assert merged.handlers["op"] is second
+
+
+def test_merge_patch_selector_conflict_override_last_wins() -> None:
+    selector = str_key_selector.all_keys()
+    first = PlanPatch(selector=selector, plan=OperationPlan())
+    second = PlanPatch(selector=selector, plan=OperationPlan())
+
+    merged = RegistryMerge.merge(
+        RegistryMerge(patches=(first,)),
+        RegistryMerge(patches=(second,)),
+        override=True,
+    )
+
+    assert merged.patches == (second,)

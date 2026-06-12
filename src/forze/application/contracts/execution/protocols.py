@@ -133,6 +133,25 @@ class DeclaresHedge(Protocol):  # pragma: no cover
 # ....................... #
 
 
+@runtime_checkable
+class DeclaresAuthz(Protocol):  # pragma: no cover
+    """Marker: a hook factory that declares the permission keys it enforces.
+
+    Detected structurally at freeze time (like :class:`ProvidesIdempotency`) so the
+    operation catalog can surface the union of declared permission keys per operation.
+
+    Honesty caveat: this is declared-hook introspection, **not** a security statement.
+    It only sees hooks attached to the plan that opt into this protocol — an operation
+    may enforce authorization inside its handler (or via an undeclared hook) invisibly,
+    and a hook may declare no named key while still scoping/denying access.
+    """
+
+    def permission_keys(self) -> tuple[str, ...]: ...
+
+
+# ....................... #
+
+
 class BeforeFactory(Protocol):  # pragma: no cover
     """Protocol for a factory that builds a before hook."""
 
