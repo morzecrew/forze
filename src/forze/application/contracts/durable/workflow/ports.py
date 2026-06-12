@@ -30,7 +30,15 @@ class BaseDurableWorkflowPort(Protocol, Generic[In, Out]):
 class DurableWorkflowCommandPort(
     BaseDurableWorkflowPort[In, Out], Generic[In, Out], Protocol
 ):
-    """Port for commands on long-running workflow orchestration engines."""
+    """Port for commands on long-running workflow orchestration engines.
+
+    Child workflows and continue-as-new are deliberately **not** exposed on
+    this contract: they only exist *inside* a workflow definition, which is
+    already backend-native code — use the raw SDK there (e.g. Temporal's
+    ``workflow.execute_child_workflow`` / ``workflow.continue_as_new``), per
+    the escape-hatch policy. This port stays the app-side surface for
+    starting and steering runs from outside the workflow.
+    """
 
     def start(
         self,

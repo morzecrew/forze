@@ -5,8 +5,6 @@ from fastapi import Request
 from forze.application.contracts.authn import (
     AccessTokenCredentials,
     ApiKeyCredentials,
-    AuthnDepKey,
-    AuthnPort,
     AuthnResult,
 )
 from forze.application.contracts.tenancy import (
@@ -61,12 +59,7 @@ async def _resolve_cookie_token_authn(
         scheme=ingress.scheme,
     )
 
-    authn: AuthnPort = ctx.deps.resolve_configurable(
-        ctx,
-        AuthnDepKey,
-        ingress.authn_spec,
-        route=ingress.authn_spec.name,
-    )
+    authn = ctx.authn.authn(ingress.authn_spec)
 
     return await authn.authenticate_with_token(creds)
 
@@ -96,13 +89,7 @@ async def _resolve_header_token_authn(
     else:
         creds = AccessTokenCredentials(token=token, scheme=scheme)
 
-    #! TODO: add authn convenient deps
-    authn: AuthnPort = ctx.deps.resolve_configurable(
-        ctx,
-        AuthnDepKey,
-        ingress.authn_spec,
-        route=ingress.authn_spec.name,
-    )
+    authn = ctx.authn.authn(ingress.authn_spec)
 
     return await authn.authenticate_with_token(creds)
 
@@ -132,13 +119,7 @@ async def _resolve_header_api_key_authn(
     else:
         creds = ApiKeyCredentials(key=key, prefix=prefix)
 
-    #! TODO: add authn convenient deps
-    authn: AuthnPort = ctx.deps.resolve_configurable(
-        ctx,
-        AuthnDepKey,
-        ingress.authn_spec,
-        route=ingress.authn_spec.name,
-    )
+    authn = ctx.authn.authn(ingress.authn_spec)
 
     return await authn.authenticate_with_api_key(creds)
 

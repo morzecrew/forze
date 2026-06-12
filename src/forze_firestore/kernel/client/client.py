@@ -20,7 +20,14 @@ from .errors import exc_interceptor
 from .port import FirestoreClientPort
 
 # ----------------------- #
-#! TODO: configurable timeout for operations (ref.get etc)
+# Per-operation timeouts are deliberately not configured here. The SDK calls
+# accept ``timeout=``, but exposing it is not a client-local change: the client
+# has no config object, so a timeout would have to thread through
+# ``initialize`` → ``FirestoreStartupHook`` → ``firestore_lifecycle_step`` and
+# the routed-client credential path, while the transaction lifecycle runs on
+# private SDK coroutines that take no deadline. Callers that need a deadline
+# bound their operations with ``asyncio.timeout`` today; a config surface can
+# be added when a concrete deployment needs per-op deadlines.
 
 
 def _snapshot_to_dict(snapshot: Any) -> JsonDict:

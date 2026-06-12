@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import timedelta
 from typing import TYPE_CHECKING, Any
 
+from forze.application._logger import logger
 from forze.application.contracts.base import BaseSpec
 from forze.application.contracts.deps import DepKey
 from forze.application.contracts.envelope import (
@@ -32,6 +33,37 @@ if TYPE_CHECKING:
     from forze.application.execution.context import ExecutionContext
 
 # ----------------------- #
+
+_PUBSUB_DOWNGRADE_WARNED: set[str] = set()
+"""Outbox routes already warned about the pubsub delivery downgrade (once per process)."""
+
+
+def _warn_pubsub_downgrade_once(outbox_route: str, channel: str) -> None:
+    """Warn once per outbox route that a pubsub destination downgrades delivery.
+
+    The outbox promises at-least-once up to the broker, but pubsub is
+    at-most-once past it: rows are marked ``published`` after a
+    fire-and-forget publish, so events with no live subscriber are silently
+    lost. Logged once per route per process so periodic relay loops do not
+    spam the log.
+    """
+
+    if outbox_route in _PUBSUB_DOWNGRADE_WARNED:
+        return
+
+    _PUBSUB_DOWNGRADE_WARNED.add(outbox_route)
+    logger.warning(
+        "Outbox route relays to a pubsub topic: delivery downgrades to "
+        "at-most-once past the broker (rows are marked published after a "
+        "fire-and-forget publish; zero live subscribers means silent loss). "
+        "Legitimate for lossy broadcast; use a queue or stream destination "
+        "for must-arrive events.",
+        outbox_route=outbox_route,
+        channel=channel,
+    )
+
+
+# ....................... #
 
 
 def _require_destination(
@@ -306,11 +338,22 @@ async def relay_outbox_to_pubsub(
 ) -> OutboxRelayResult:
     """Claim pending outbox rows, publish to a topic, and mark each row's outcome.
 
-    Same failure model and ordering caveats as :func:`relay_outbox_to_queue`:
-    at-least-once delivery, no ordering across failures/retries, poison rows
-    fail immediately, transient publish errors retry with backoff up to
-    *max_attempts*.
+    Same failure model and ordering caveats as :func:`relay_outbox_to_queue` —
+    **but the at-least-once guarantee ends at the broker**: pubsub is
+    at-most-once (fire-and-forget), and a row is marked ``published`` after a
+    publish that no live subscriber may have received (see
+    :meth:`~forze.application.contracts.outbox.OutboxDestination.pubsub`).
+    A one-time warning per outbox route is logged to make the downgrade
+    visible. Poison rows still fail immediately and transient publish errors
+    still retry with backoff up to *max_attempts*.
     """
+
+    destination = outbox_spec.destination
+
+    if destination is not None and destination.kind == "pubsub":
+        # Missing/mismatched destinations fall through to the precondition
+        # error inside ``_relay_outbox_to`` without a spurious warning.
+        _warn_pubsub_downgrade_once(str(outbox_spec.name), destination.channel)
 
     return await _relay_outbox_to(
         ctx,

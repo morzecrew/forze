@@ -224,3 +224,29 @@ class TestApiKeyLifecycleAdapterRefresh:
 
         with pytest.raises(exc, match="Invalid API key"):
             await adapter.refresh_api_key(ApiKeyCredentials(key="whatever"))
+
+
+class TestApiKeyPrefixConfig:
+    def test_configured_prefix_is_minted_into_keys(self) -> None:
+        svc = ApiKeyService(pepper=b"x" * 32, config=ApiKeyConfig(prefix="sk"))
+
+        res = svc.generate_key()
+
+        assert isinstance(res, tuple)
+        prefix, key = res
+        assert prefix == "sk"
+        assert key
+
+    def test_empty_prefix_rejected_at_config(self) -> None:
+        with pytest.raises(exc, match="prefix"):
+            ApiKeyConfig(prefix="")
+
+    def test_whitespace_prefix_rejected_at_config(self) -> None:
+        with pytest.raises(exc, match="prefix"):
+            ApiKeyConfig(prefix="sk live")
+
+    def test_whitespace_prefix_rejected_on_generate_override(self) -> None:
+        svc = ApiKeyService(pepper=b"x" * 32, config=ApiKeyConfig())
+
+        with pytest.raises(exc, match="prefix"):
+            svc.generate_key(prefix=" sk")

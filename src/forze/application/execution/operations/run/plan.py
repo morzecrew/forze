@@ -52,8 +52,10 @@ async def _run_scope_body[Args, R](
     - ``finally`` hooks always run once the scope is entered — including when a
       ``before`` hook raises (e.g. an authn/authz/tenancy denial), so audit and
       metrics hooks observe denials as a :class:`Failure` outcome.
-    - ``on_failure`` hooks are handler-only: they run when the wrap chain / handler
-      fails, **not** when a ``before`` guard denies the operation.
+    - ``on_failure`` hooks run when the wrap chain / handler fails **or** when an
+      ``on_success``/dispatch hook raises after a successful handler (the
+      operation fails as a whole either way); they do **not** run when a
+      ``before`` guard denies the operation.
     """
 
     result: R | None = None
@@ -68,7 +70,8 @@ async def _run_scope_body[Args, R](
             await run_pipeline_on_success(scope.dispatch, args, result)
 
         except Exception as e:
-            # on_failure is handler-only: before-hook errors bypass it (see above).
+            # Covers handler/wrap failures AND on_success/dispatch hooks raising
+            # after a successful handler; before-hook errors bypass it (see above).
             await run_pipeline_on_failure(scope.on_failure, args, e)
             raise
 

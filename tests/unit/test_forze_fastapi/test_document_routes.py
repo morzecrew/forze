@@ -418,3 +418,56 @@ class TestSensitiveSpecRefusal:
         app = _build_app("rest")
 
         assert _operation_ids(app)
+
+
+class TestDescriptorTags:
+    def _build_app_with_get_tags(self, tags: tuple[str, ...]) -> FastAPI:
+        """Build the app with the ``get`` descriptor carrying OpenAPI tags."""
+
+        from forze_kits.aggregates.document import DocumentIdDTO
+
+        spec = _spec()
+        dtos = DocumentDTOs(read=_NoteRead, create=_NoteCreate, update=_NoteUpdate)
+        reg = build_document_registry(spec, dtos)
+        reg = reg.merge(build_soft_deletion_registry(spec))
+        reg = reg.set_descriptors(
+            {
+                DocumentKernelOp.GET: OperationDescriptor(
+                    input_type=DocumentIdDTO,
+                    output_type=_NoteRead,
+                    tags=tags,
+                )
+            },
+            override=True,
+            namespace=spec.default_namespace,
+        )
+
+        router = APIRouter(prefix="/notes")
+        attach_document_routes(
+            router,
+            registry=reg.freeze(),
+            ns=spec.default_namespace,
+            ctx_dep=lambda: context_from_modules(MockDepsModule(state=MockState())),
+            style="rest",
+        )
+
+        app = FastAPI()
+        app.include_router(router)
+
+        return app
+
+    def test_tagged_descriptor_projects_openapi_tags(self) -> None:
+        app = self._build_app_with_get_tags(("notes", "read-side"))
+
+        paths = app.openapi()["paths"]
+
+        assert paths["/notes/{id}"]["get"]["tags"] == ["notes", "read-side"]
+        # Sibling operations without descriptor tags stay untagged.
+        assert "tags" not in paths["/notes"]["post"]
+
+    def test_untagged_descriptors_unchanged(self) -> None:
+        paths = _build_app("rest").openapi()["paths"]
+
+        for methods in paths.values():
+            for operation in methods.values():
+                assert "tags" not in operation

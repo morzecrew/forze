@@ -15,6 +15,7 @@ require_fastapi()
 # ....................... #
 
 import inspect
+from enum import Enum
 from typing import (
     AbstractSet,
     Any,
@@ -347,6 +348,13 @@ def attach_operation_routes(
             op,
         )
 
+        # Descriptor tags project onto OpenAPI route tags (additive to any
+        # router-level tags). MCP attachers have no tag concept — this mapping
+        # is HTTP-surface-specific by design.
+        tags: list[str | Enum] = (
+            list(descriptor.tags) if descriptor is not None else []
+        )
+
         router.add_api_route(
             binding.path,
             endpoint,
@@ -357,6 +365,7 @@ def attach_operation_routes(
             name=op,
             summary=descriptor.title if descriptor is not None else None,
             description=descriptor.description if descriptor is not None else None,
+            tags=tags or None,
         )
         attached += 1
 

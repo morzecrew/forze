@@ -107,6 +107,7 @@ class RoutedTemporalClient(DsnRoutedTenantClientBase[TemporalClient], TemporalCl
         workflow_id: str,
         *,
         run_id: str | None = None,
+        result_type: type | None = None,
     ) -> WorkflowHandle[Any, Any]:
         self._pool.require_started()
 
@@ -119,7 +120,11 @@ class RoutedTemporalClient(DsnRoutedTenantClientBase[TemporalClient], TemporalCl
                 "(e.g. :meth:`start_workflow` or :meth:`health`) first to connect.",
             )
 
-        return inner.get_workflow_handle(workflow_id, run_id=run_id)
+        return inner.get_workflow_handle(
+            workflow_id,
+            run_id=run_id,
+            result_type=result_type,
+        )
 
     # ....................... #
 
@@ -148,6 +153,7 @@ class RoutedTemporalClient(DsnRoutedTenantClientBase[TemporalClient], TemporalCl
         query: str,
         arg: BaseModel,
         run_id: str | None = None,
+        result_type: type | None = None,
     ) -> Any:
         inner = await self._get_client()
         return await inner.query_workflow(
@@ -155,6 +161,7 @@ class RoutedTemporalClient(DsnRoutedTenantClientBase[TemporalClient], TemporalCl
             query=query,
             arg=arg,
             run_id=run_id,
+            result_type=result_type,
         )
 
     # ....................... #
@@ -166,6 +173,7 @@ class RoutedTemporalClient(DsnRoutedTenantClientBase[TemporalClient], TemporalCl
         update: str,
         arg: BaseModel,
         run_id: str | None = None,
+        result_type: type | None = None,
     ) -> Any:
         inner = await self._get_client()
         return await inner.update_workflow(
@@ -173,6 +181,7 @@ class RoutedTemporalClient(DsnRoutedTenantClientBase[TemporalClient], TemporalCl
             update=update,
             arg=arg,
             run_id=run_id,
+            result_type=result_type,
         )
 
     # ....................... #
@@ -182,9 +191,14 @@ class RoutedTemporalClient(DsnRoutedTenantClientBase[TemporalClient], TemporalCl
         workflow_id: str,
         *,
         run_id: str | None = None,
+        result_type: type | None = None,
     ) -> Any:
         inner = await self._get_client()
-        return await inner.get_workflow_result(workflow_id, run_id=run_id)
+        return await inner.get_workflow_result(
+            workflow_id,
+            run_id=run_id,
+            result_type=result_type,
+        )
 
     # ....................... #
 

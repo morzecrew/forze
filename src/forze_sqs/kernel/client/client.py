@@ -40,7 +40,8 @@ from .types import SQSQueueMessage
 from .value_objects import SQSConfig, SQSConnectionOpts
 
 # ----------------------- #
-#! TODO: Move to constants (?)
+# Transport constants live next to the client that owns them (same convention
+# as the rabbitmq/redis siblings) — no separate constants module.
 
 _TYPE_ATTR = "forze_type"
 _KEY_ATTR = "forze_key"

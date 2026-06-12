@@ -11,12 +11,28 @@ from forze.base.exceptions import exc
 # ----------------------- #
 
 
+def _validate_prefix(prefix: str) -> None:
+    """Reject prefixes that would not survive header transport.
+
+    Ingress parses ``prefix:key`` by splitting on whitespace, so an empty or
+    whitespace-bearing prefix would silently corrupt presented credentials.
+    """
+
+    if not prefix or any(ch.isspace() for ch in prefix):
+        raise exc.configuration(
+            "API key prefix must be non-empty and contain no whitespace",
+        )
+
+
+# ....................... #
+
+
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class ApiKeyConfig:
     """API key configuration."""
 
     prefix: str | None = attrs.field(default=None)
-    """Optional API key prefix."""
+    """Optional API key prefix (e.g. ``"sk"``); validated non-empty, no whitespace."""
 
     length: int = 32
     """Length of the random key material."""
@@ -29,6 +45,9 @@ class ApiKeyConfig:
     def __attrs_post_init__(self) -> None:
         if self.expires_in is not None and self.expires_in.total_seconds() <= 0:
             raise exc.configuration("Expires in must be positive")
+
+        if self.prefix is not None:
+            _validate_prefix(self.prefix)
 
 
 # ....................... #
@@ -51,6 +70,8 @@ class ApiKeyService:
 
         if actual_prefix is None:
             return key
+
+        _validate_prefix(actual_prefix)
 
         return actual_prefix, key
 

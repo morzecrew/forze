@@ -30,7 +30,14 @@ class SagaProgress:
     (the in-process executor) share the exact same decision logic.
     """
 
-    saga_name: str  #! TODO: rename ('id' or 'name')
+    saga_name: str
+    """Display name of the saga, used in validation and failure messages.
+
+    Deliberately ``saga_name`` rather than ``name``: the coordinator also
+    tracks per-*step* names, and the qualified field keeps the error-building
+    code unambiguous. Shipped in v0.3.0, so renaming would also break custom
+    drivers constructing :class:`SagaProgress` directly.
+    """
 
     # ....................... #
 
@@ -83,7 +90,25 @@ class SagaProgress:
         error: BaseException,
         comp_errors: Sequence[BaseException],
     ) -> CoreException:
-        """Build the failure raised when a step fails *before* the pivot commits."""
+        """Build the failure raised when a step fails *before* the pivot commits.
+
+        The kind encodes the **saga outcome**, not the failing step's cause:
+
+        - ``saga.step_failed`` is DOMAIN *by decision*: every compensation
+          succeeded, so the system is consistent and "the process did not
+          complete and was rolled back" is the saga's modeled business
+          outcome — exactly what sagas exist to make a normal, handled
+          result. DOMAIN egress exposes the details (saga/step/cause) to the
+          caller and is non-retryable: a rolled-back saga must not be
+          blind-retried by resilience policies; re-running it is a business
+          decision. The step's original failure is not lost — drivers chain
+          it as ``__cause__`` and ``details["cause"]`` carries its message.
+          Deriving the wrapper's kind from the cause instead would make the
+          saga's failure kind unpredictable to callers and require an
+          arbitrary kind mapping for non-``CoreException`` causes.
+        - ``saga.compensation_failed`` is INFRASTRUCTURE: the rollback itself
+          failed, the system may be inconsistent, and an operator must act.
+        """
 
         step_name = self._names[index]
 
@@ -104,7 +129,8 @@ class SagaProgress:
                 },
             )
 
-        return exc.domain(  #! Why it's domain? It shouldn't be domain
+        # DOMAIN, deliberately — consistent state + modeled outcome (see docstring).
+        return exc.domain(
             f"Saga {self.saga_name!r} failed at step {step_name!r}; completed steps "
             "were compensated.",
             code="saga.step_failed",

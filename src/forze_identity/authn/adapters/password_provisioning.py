@@ -31,6 +31,25 @@ from ..services import InviteTokenService, PasswordService
 from ._utils import find_password_account_by_login, find_password_invite_by_digest
 
 # ----------------------- #
+# Invite acceptance deliberately keeps GRANULAR error messages, unlike password
+# reset's single uniform :data:`~forze_identity.authn.adapters.password_reset.
+# INVALID_RESET_TOKEN_MSG`. The postures differ because the inputs differ:
+# a reset flow begins from a guessable login, so uniform errors deny account
+# enumeration; an invite's only input is a high-entropy emailed token — there
+# is nothing enumerable to protect, and telling a legitimate invitee *why*
+# their token failed (missing vs. expired) is plain UX.
+
+INVITE_TOKEN_REQUIRED_MSG = "Invite token is required"  # nosec B105
+"""Raised when the invite token is empty."""
+
+INVALID_INVITE_TOKEN_MSG = "Invalid invite token"  # nosec B105
+"""Raised for unknown, consumed, mismatched, or unverifiable invite tokens."""
+
+INVITE_TOKEN_EXPIRED_MSG = "Invite token expired"  # nosec B105
+"""Raised when the invite exists but its TTL has elapsed."""
+
+
+# ....................... #
 
 
 @final
@@ -168,18 +187,22 @@ class PasswordAccountProvisioningAdapter(PasswordAccountProvisioningPort):
         join the ambient transaction when one is open. The order is recovery-safe even
         without a transaction: a failed provisioning leaves the invite open for a retry,
         and the consume is rev-conditional (optimistic concurrency) against double use.
+
+        Failure modes raise granular messages (see the module-level constants) —
+        deliberately not the uniform anti-enumeration posture of password reset,
+        because the token is the only input and is not enumerable.
         """
 
         svc, qry, cmd = self._require_invites()
 
         if not invite_token:
-            raise exc.authentication("Invite token is required")
+            raise exc.authentication(INVITE_TOKEN_REQUIRED_MSG)
 
         try:
             digest = svc.calculate_token_digest(invite_token)
 
         except Exception as e:
-            raise exc.authentication("Invalid invite token") from e
+            raise exc.authentication(INVALID_INVITE_TOKEN_MSG) from e
 
         invite = await find_password_invite_by_digest(qry, digest)
 
@@ -188,13 +211,13 @@ class PasswordAccountProvisioningAdapter(PasswordAccountProvisioningPort):
             or invite.consumed_at is not None
             or invite.principal_id != principal_id
         ):
-            raise exc.authentication("Invalid invite token")
+            raise exc.authentication(INVALID_INVITE_TOKEN_MSG)
 
         if invite.expires_at <= utcnow():
-            raise exc.authentication("Invite token expired")
+            raise exc.authentication(INVITE_TOKEN_EXPIRED_MSG)
 
         if not svc.verify_token(invite_token, invite.token_digest):
-            raise exc.authentication("Invalid invite token")
+            raise exc.authentication(INVALID_INVITE_TOKEN_MSG)
 
         # Provision first so a failed registration (e.g. duplicate login) leaves the
         # invite open for a retry; mark consumed only once the account exists.

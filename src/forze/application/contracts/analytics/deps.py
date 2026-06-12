@@ -60,3 +60,15 @@ class AnalyticsDeps(ConvenientDeps):
             spec,
             route=spec.name,
         )
+
+    # ....................... #
+
+    def command(self, spec: AnalyticsSpec[Any, Ing]) -> AnalyticsIngestPort[Ing]:
+        """Alias for :meth:`ingest`, for accessor-shape consistency across deps.
+
+        Other convenient deps expose ``query``/``command`` pairs; ``ingest``
+        remains the domain-precise name for the analytics write side. Both
+        resolve the same port and carry the same write guard.
+        """
+
+        return self.ingest(spec)

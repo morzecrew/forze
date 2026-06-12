@@ -15,6 +15,7 @@ from forze.base.exceptions import CoreException
 from forze_kits.integrations.notify import (
     EmailNotification,
     NotificationRouter,
+    RecordingNotificationSenders,
     dispatch_notification,
     integration_event_from_queue_message,
     process_notification_message,
@@ -23,24 +24,10 @@ from forze_kits.integrations.notify.payloads import (
     PushNotification,
     WebhookNotification,
 )
+
+
 class _ProjectCreated(BaseModel):
     project_id: str
-
-
-class _RecordingSenders:
-    def __init__(self) -> None:
-        self.emails: list[EmailNotification] = []
-        self.pushes: list[PushNotification] = []
-        self.webhooks: list[WebhookNotification] = []
-
-    async def send_email(self, notification: EmailNotification) -> None:
-        self.emails.append(notification)
-
-    async def send_push(self, notification: PushNotification) -> None:
-        self.pushes.append(notification)
-
-    async def send_webhook(self, notification: WebhookNotification) -> None:
-        self.webhooks.append(notification)
 
 
 @pytest.mark.asyncio
@@ -67,8 +54,36 @@ async def test_router_maps_event_to_commands() -> None:
 
 
 @pytest.mark.asyncio
+async def test_recording_senders_records_kinds_and_clears() -> None:
+    from forze_kits.integrations.notify import NotificationSenders
+
+    senders = RecordingNotificationSenders()
+    assert isinstance(senders, NotificationSenders)
+
+    email = EmailNotification(to="a@b.c", subject="s", body="b")
+    push = PushNotification(device_token="tok", title="t", body="b")
+    hook = WebhookNotification(url="https://example.com/hook")
+
+    await senders.send_email(email)
+    await senders.send_push(push)
+    await senders.send_webhook(hook)
+
+    assert senders.sent == [("email", email), ("push", push), ("webhook", hook)]
+    assert senders.emails == [email]
+    assert senders.pushes == [push]
+    assert senders.webhooks == [hook]
+
+    senders.clear()
+
+    assert senders.sent == []
+    assert senders.emails == []
+    assert senders.pushes == []
+    assert senders.webhooks == []
+
+
+@pytest.mark.asyncio
 async def test_dispatch_notification_calls_sender() -> None:
-    senders = _RecordingSenders()
+    senders = RecordingNotificationSenders()
     await dispatch_notification(
         EmailNotification(to="a@b.c", subject="hi", body="there"),
         senders,
@@ -78,7 +93,7 @@ async def test_dispatch_notification_calls_sender() -> None:
 
 @pytest.mark.asyncio
 async def test_dispatch_notification_routes_push() -> None:
-    senders = _RecordingSenders()
+    senders = RecordingNotificationSenders()
     await dispatch_notification(
         PushNotification(device_token="tok", title="t", body="b"),
         senders,
@@ -89,7 +104,7 @@ async def test_dispatch_notification_routes_push() -> None:
 
 @pytest.mark.asyncio
 async def test_dispatch_notification_routes_webhook() -> None:
-    senders = _RecordingSenders()
+    senders = RecordingNotificationSenders()
     await dispatch_notification(
         WebhookNotification(url="https://example.com/hook"),
         senders,
@@ -99,7 +114,7 @@ async def test_dispatch_notification_routes_webhook() -> None:
 
 @pytest.mark.asyncio
 async def test_dispatch_notification_rejects_unsupported_command() -> None:
-    senders = _RecordingSenders()
+    senders = RecordingNotificationSenders()
 
     class _Unknown(BaseModel):
         kind: str = "mystery"
@@ -122,7 +137,7 @@ async def test_process_notification_message_uses_queue_type_and_key() -> None:
             )
         ],
     )
-    senders = _RecordingSenders()
+    senders = RecordingNotificationSenders()
     message = QueueMessage(
         queue="jobs",
         id="1",
@@ -294,7 +309,7 @@ def test_integration_event_id_no_key_no_id_raises() -> None:
 
 @pytest.mark.asyncio
 async def test_process_notification_message_skips_unmapped() -> None:
-    senders = _RecordingSenders()
+    senders = RecordingNotificationSenders()
     message = QueueMessage(
         queue="jobs",
         id="1",

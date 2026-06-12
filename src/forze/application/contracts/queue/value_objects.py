@@ -38,7 +38,12 @@ class QueueMessage[M]:
     """Optional timestamp associated with the message."""
 
     key: str | None = None
-    """Optional partitioning key for the message."""
+    """Optional partition/correlation token, round-tripped from enqueue.
+
+    Portably an opaque grouping token; what the broker does with it differs
+    per backend — see the canonical table on
+    :meth:`~forze.application.contracts.queue.QueueCommandPort.enqueue`.
+    """
 
     headers: Mapping[str, str] = _EMPTY_HEADERS
     """String-to-string transport metadata carried alongside the payload.

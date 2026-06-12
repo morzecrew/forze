@@ -16,7 +16,13 @@ if TYPE_CHECKING:
 
 
 class StartupWavePartialError(Exception):
-    """Startup failed partway through a concurrent wave."""
+    """Startup failed partway through a concurrent wave.
+
+    Deliberately a raw ``Exception``, not ``CoreException``: a harness-level
+    control signal consumed by the lifecycle runner itself (to roll back the
+    completed steps before re-raising the original cause) — it must never be
+    caught or mapped by the framework error envelope.
+    """
 
     def __init__(self, cause: BaseException, completed: list[StrKey]) -> None:
         super().__init__(str(cause))

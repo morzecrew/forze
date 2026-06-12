@@ -161,11 +161,19 @@ class TemporalClient(TemporalClientPort):
     # ....................... #
 
     def get_workflow_handle(
-        self, workflow_id: str, *, run_id: str | None = None
+        self,
+        workflow_id: str,
+        *,
+        run_id: str | None = None,
+        result_type: type | None = None,
     ) -> WorkflowHandle[Any, Any]:
         c = self.__require_client()
 
-        return c.get_workflow_handle(workflow_id, run_id=run_id)
+        return c.get_workflow_handle(
+            workflow_id,
+            run_id=run_id,
+            result_type=result_type,
+        )
 
     # ....................... #
 
@@ -190,10 +198,11 @@ class TemporalClient(TemporalClientPort):
         query: str,
         arg: BaseModel,
         run_id: str | None = None,
+        result_type: type | None = None,
     ) -> Any:
         h = self.get_workflow_handle(workflow_id, run_id=run_id)
 
-        return await h.query(query=query, arg=arg)
+        return await h.query(query=query, arg=arg, result_type=result_type)
 
     # ....................... #
 
@@ -204,10 +213,15 @@ class TemporalClient(TemporalClientPort):
         update: str,
         arg: BaseModel,
         run_id: str | None = None,
+        result_type: type | None = None,
     ) -> Any:
         h = self.get_workflow_handle(workflow_id, run_id=run_id)
 
-        return await h.execute_update(update=update, arg=arg)  # type: ignore[misc]
+        return await h.execute_update(  # type: ignore[misc]
+            update=update,
+            arg=arg,
+            result_type=result_type,
+        )
 
     # ....................... #
 
@@ -216,8 +230,13 @@ class TemporalClient(TemporalClientPort):
         workflow_id: str,
         *,
         run_id: str | None = None,
+        result_type: type | None = None,
     ) -> Any:
-        h = self.get_workflow_handle(workflow_id, run_id=run_id)
+        h = self.get_workflow_handle(
+            workflow_id,
+            run_id=run_id,
+            result_type=result_type,
+        )
 
         return await h.result()
 

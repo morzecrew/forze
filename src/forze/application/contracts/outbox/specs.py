@@ -44,7 +44,16 @@ class OutboxDestination:
 
     @classmethod
     def pubsub(cls, *, route: StrKey, channel: str) -> Self:
-        """Target a :class:`~forze.application.contracts.pubsub.PubSubCommandPort`."""
+        """Target a :class:`~forze.application.contracts.pubsub.PubSubCommandPort`.
+
+        **Deliberate delivery downgrade.** The outbox guarantees at-least-once
+        only up to the broker; pubsub is at-most-once past it. A relay marks a
+        row ``published`` after a fire-and-forget publish, so an event with no
+        live subscriber at that moment is silently lost. Legitimate for lossy
+        broadcast (cache invalidation, presence, live notifications); choose a
+        queue or stream destination when consumers must eventually see every
+        event.
+        """
 
         return cls(kind="pubsub", route=route, channel=channel)
 
@@ -61,7 +70,7 @@ class OutboxSpec[M](BaseSpec):
     """Payload record codec for staged integration events."""
 
     destination: OutboxDestination | None = None
-    """Optional default relay target for :func:`~forze_kits.integrations.outbox.relay_outbox`."""
+    """Optional default relay target honored by relay workers."""
 
     # ....................... #
 
