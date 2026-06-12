@@ -26,7 +26,7 @@ from forze_gcs.kernel.client.value_objects import GCSConfig
 def service_key_pem() -> str:
     """A throwaway PKCS#1 RSA key for local V4 signing."""
 
-    _pub, priv = rsa.newkeys(1024)
+    _pub, priv = rsa.newkeys(2048)
 
     return priv.save_pkcs1().decode()
 

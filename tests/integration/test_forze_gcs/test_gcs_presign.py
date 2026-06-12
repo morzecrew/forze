@@ -37,7 +37,7 @@ FAKE_GCS_PUBLIC_HOST = "0.0.0.0"  # the conftest's ``-public-host``
 def service_account_file(tmp_path_factory: pytest.TempPathFactory) -> str:
     """A throwaway service-account JSON key enabling local V4 signing."""
 
-    _pub, priv = rsa.newkeys(1024)
+    _pub, priv = rsa.newkeys(2048)
 
     path = tmp_path_factory.mktemp("gcs-presign") / "service-account.json"
     path.write_text(
