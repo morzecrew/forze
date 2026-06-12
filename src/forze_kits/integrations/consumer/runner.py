@@ -187,9 +187,10 @@ async def run_consumer[M](
     :param retry_policy: Optional **named** resilience policy wrapping the
         process step before the nack-for-redelivery fallback.
     :param message_id: Dedup-id extractor override, forwarded to
-        :func:`~forze_kits.integrations.inbox.process_with_inbox` (default:
-        ``message.key or message.id``; the relay sets ``key`` to the
-        integration ``event_id``).
+        :func:`~forze_kits.integrations.inbox.process_with_inbox` (default
+        priority: ``forze_event_id`` header, then ``message.key``, then
+        ``message.id`` — the relay carries the integration ``event_id`` in
+        the header and the staged ``ordering_key`` in ``key``).
     :param bind_tenant_from_headers: Forwarded to ``process_with_inbox``;
         **opt-in** because headers are untrusted input.
     """

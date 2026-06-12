@@ -126,3 +126,102 @@ async def test_stream_group_adapter_read_and_ack(codec: RedisStreamCodec[_Payloa
     n = await adapter.ack("g1", "jobs", ["0-3"])
     assert n == 1
     client.xack.assert_awaited_once_with("jobs", "g1", ["0-3"])
+
+
+@pytest.mark.asyncio
+async def test_stream_group_adapter_claim_loops_cursor_until_exhaustion(
+    codec: RedisStreamCodec[_Payload],
+) -> None:
+    """claim() converts idle to ms and follows the XAUTOCLAIM cursor to 0-0."""
+
+    client = Mock(spec=RedisClient)
+    client.xautoclaim = AsyncMock(
+        side_effect=[
+            ("5-0", [("1-0", {b"payload": b'{"n":1}'}), ("2-0", {b"payload": b'{"n":2}'})], []),
+            ("0-0", [("6-0", {b"payload": b'{"n":6}'})], ["3-0"]),
+        ],
+    )
+    adapter = RedisStreamGroupAdapter(client=client, codec=codec)
+
+    msgs = await adapter.claim("g1", "c2", "jobs", idle=timedelta(seconds=2))
+
+    assert [m.id for m in msgs] == ["1-0", "2-0", "6-0"]
+    assert [m.payload.n for m in msgs] == [1, 2, 6]
+    assert all(m.stream == "jobs" for m in msgs)
+
+    assert client.xautoclaim.await_count == 2
+    first, second = client.xautoclaim.await_args_list
+    assert first.args == ("jobs", "g1", "c2")
+    assert first.kwargs == {"min_idle_ms": 2000, "start_id": "0-0", "count": None}
+    assert second.kwargs == {"min_idle_ms": 2000, "start_id": "5-0", "count": None}
+
+
+@pytest.mark.asyncio
+async def test_stream_group_adapter_claim_stops_at_limit(
+    codec: RedisStreamCodec[_Payload],
+) -> None:
+    """claim() requests only the remaining budget per page and stops once filled."""
+
+    client = Mock(spec=RedisClient)
+    client.xautoclaim = AsyncMock(
+        side_effect=[
+            ("4-0", [("1-0", {b"payload": b'{"n":1}'})], []),
+            ("9-0", [("5-0", {b"payload": b'{"n":5}'}), ("6-0", {b"payload": b'{"n":6}'})], []),
+        ],
+    )
+    adapter = RedisStreamGroupAdapter(client=client, codec=codec)
+
+    msgs = await adapter.claim("g1", "c2", "jobs", idle=timedelta(milliseconds=500), limit=3)
+
+    assert [m.id for m in msgs] == ["1-0", "5-0", "6-0"]
+
+    # Cursor 9-0 is not exhausted, but the limit is met: no third call.
+    assert client.xautoclaim.await_count == 2
+    first, second = client.xautoclaim.await_args_list
+    assert first.kwargs == {"min_idle_ms": 500, "start_id": "0-0", "count": 3}
+    assert second.kwargs == {"min_idle_ms": 500, "start_id": "4-0", "count": 2}
+
+
+@pytest.mark.asyncio
+async def test_stream_group_adapter_pending_maps_rows(
+    codec: RedisStreamCodec[_Payload],
+) -> None:
+    """pending() maps XPENDING rows into PendingEntry with timedelta idle."""
+
+    client = Mock(spec=RedisClient)
+    client.xpending = AsyncMock(return_value=[("1-0", "a", 1500, 2), ("2-0", "b", 30, 1)])
+    adapter = RedisStreamGroupAdapter(client=client, codec=codec)
+
+    rows = await adapter.pending("g1", "jobs", limit=5)
+
+    client.xpending.assert_awaited_once_with("jobs", "g1", count=5, start_id="-")
+    assert [
+        (r.id, r.consumer, r.idle, r.delivery_count) for r in rows
+    ] == [
+        ("1-0", "a", timedelta(milliseconds=1500), 2),
+        ("2-0", "b", timedelta(milliseconds=30), 1),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_stream_group_adapter_pending_pages_with_exclusive_cursor(
+    codec: RedisStreamCodec[_Payload],
+) -> None:
+    """Unbounded pending() walks full pages and advances an exclusive ( cursor."""
+
+    page_one = [(f"1-{i}", "a", 1000, 1) for i in range(100)]
+    page_two = [("2-0", "a", 1000, 1)]
+
+    client = Mock(spec=RedisClient)
+    client.xpending = AsyncMock(side_effect=[page_one, page_two])
+    adapter = RedisStreamGroupAdapter(client=client, codec=codec)
+
+    rows = await adapter.pending("g1", "jobs")
+
+    assert len(rows) == 101
+    assert rows[-1].id == "2-0"
+
+    assert client.xpending.await_count == 2
+    first, second = client.xpending.await_args_list
+    assert first.kwargs == {"count": 100, "start_id": "-"}
+    assert second.kwargs == {"count": 100, "start_id": "(1-99"}

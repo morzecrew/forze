@@ -12,7 +12,11 @@ from forze.application.contracts.deps import DepKey
 from forze.application.execution.tracing import RuntimeTrace
 from forze.base.primitives import StrKey
 
-from .port_instrumentation import maybe_wrap_configurable, record_simple_resolve
+from .port_instrumentation import (
+    maybe_wrap_configurable,
+    maybe_wrap_port_policy,
+    record_simple_resolve,
+)
 from .resolution import ResolutionFrame, frame_for
 from .resolution_context import ResolutionContext
 from .resolution_tracer import NOOP_RESOLUTION_TRACER, ResolutionTracer
@@ -189,6 +193,11 @@ class FrozenDeps:
         structurally equal specs reuse the cached port) when port caching is enabled.
         Caching is bypassed while resolution tracing is active so per-task resolution
         traces stay complete.
+
+        Wrapping order: the resilience port-policy proxy (when a
+        :class:`~forze.application.contracts.resilience.PortPolicy` targets ``key``)
+        wraps **outside** the runtime-tracing proxy, and the fully wrapped instance
+        is what gets cached.
         """
 
         cache_key = (key, route)
@@ -207,6 +216,7 @@ class FrozenDeps:
             factory = self.store.get_provider(key, route=route)
             result = factory(ctx, spec)
             port = maybe_wrap_configurable(self, ctx, key, spec, route, result)
+            port = maybe_wrap_port_policy(self, ctx, key, route, port)
 
         finally:
             self._resolution.pop(token)

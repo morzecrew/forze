@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from uuid import UUID
 
+from forze.application.contracts.envelope import HEADER_EVENT_ID
 from forze.application.contracts.outbox import IntegrationEvent
 from forze.application.contracts.queue import QueueMessage
 from forze.base.exceptions import exc
@@ -15,33 +16,48 @@ from .senders import NotificationSenders
 # ----------------------- #
 
 
+def _uuid_or_none(value: str | None) -> UUID | None:
+    if not value:
+        return None
+
+    try:
+        return UUID(value)
+    except ValueError:
+        return None
+
+
+# ....................... #
+
+
 def integration_event_from_queue_message[M](
     message: QueueMessage[M],
 ) -> IntegrationEvent[M]:
     """Build an :class:`IntegrationEvent` from a relayed queue message.
 
-    Outbox relay sets ``message.type`` to the staged ``event_type`` and
-    ``message.key`` to ``str(event_id)`` when the backend supports it.
+    Outbox relay sets ``message.type`` to the staged ``event_type``, carries
+    the event id in the ``forze_event_id`` header, and sets ``message.key``
+    to the staged *ordering key* (falling back to ``str(event_id)``).
 
     ``event_id`` derivation is **deterministic** so redeliveries of the same
     message always produce the same id (the dedup contract documented on
     :func:`process_notification_message` relies on it):
 
-    1. a valid UUID ``message.key`` is used verbatim;
-    2. otherwise the id is derived from the stable broker identity
+    1. a valid UUID ``forze_event_id`` header is used verbatim — it outranks
+       ``key`` because a UUID-shaped *ordering key* in ``key`` would otherwise
+       masquerade as the event id and collapse different events;
+    2. otherwise a valid UUID ``message.key`` (legacy relays put the event id
+       there);
+    3. otherwise the id is derived from the stable broker identity
        ``"<queue>:<message.id>"``;
-    3. a message with neither (empty ``message.id``) raises
+    4. a message with none of these (empty ``message.id``) raises
        :func:`exc.precondition` — a random id would silently break dedup.
     """
 
-    event_id: UUID
-    if message.key is not None:
-        try:
-            event_id = UUID(message.key)
-        except ValueError:
-            event_id = _event_id_from_message_identity(message)
-    else:
-        event_id = _event_id_from_message_identity(message)
+    event_id = (
+        _uuid_or_none(message.headers.get(HEADER_EVENT_ID))
+        or _uuid_or_none(message.key)
+        or _event_id_from_message_identity(message)
+    )
 
     return IntegrationEvent(
         event_type=message.type or "",

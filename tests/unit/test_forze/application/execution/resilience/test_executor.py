@@ -12,6 +12,7 @@ from forze.application.contracts.resilience import (
     BulkheadStrategy,
     CircuitBreakerStrategy,
     FallbackStrategy,
+    RateLimitStrategy,
     ResiliencePolicy,
     RetryBudget,
     RetryStrategy,
@@ -338,6 +339,247 @@ class TestBulkhead:
 # ....................... #
 
 
+def _rate_limit_policy(
+    name: str = "p",
+    *,
+    permits: int = 2,
+    per_seconds: float = 1.0,
+    burst: int | None = None,
+) -> ResiliencePolicy:
+    return ResiliencePolicy(
+        name=name,
+        strategies=(
+            RateLimitStrategy(
+                permits=permits,
+                per=timedelta(seconds=per_seconds),
+                burst=burst,
+            ),
+        ),
+    )
+
+
+async def _ok() -> str:
+    return "ok"
+
+
+class TestRateLimit:
+    async def test_burst_consumed_then_rejects_with_throttled(self) -> None:
+        clock = _Clock()
+        executor = _executor(_rate_limit_policy(permits=2), clock=clock)
+
+        # The bucket starts full: exactly `capacity` calls pass at t=0.
+        assert await executor.run(_ok, policy="p") == "ok"
+        assert await executor.run(_ok, policy="p") == "ok"
+
+        with pytest.raises(CoreException) as ei:
+            await executor.run(_ok, policy="p")
+
+        assert ei.value.kind is ExceptionKind.THROTTLED
+        assert ei.value.code == "rate_limited"
+        assert ei.value.details == {"policy": "p", "route": None}
+
+    async def test_rejection_does_not_run_fn(self) -> None:
+        clock = _Clock()
+        executor = _executor(_rate_limit_policy(permits=1), clock=clock)
+        counter = _Counter()
+
+        async def fn() -> str:
+            counter.calls += 1
+            return "ok"
+
+        assert await executor.run(fn, policy="p") == "ok"
+
+        with pytest.raises(CoreException):
+            await executor.run(fn, policy="p")
+
+        assert counter.calls == 1
+
+    async def test_refill_over_time_grants_more_permits(self) -> None:
+        clock = _Clock()
+        executor = _executor(
+            _rate_limit_policy(permits=2, per_seconds=1.0),
+            clock=clock,
+        )
+
+        for _ in range(2):
+            assert await executor.run(_ok, policy="p") == "ok"
+
+        with pytest.raises(CoreException):
+            await executor.run(_ok, policy="p")
+
+        # Half the window refills one token (rate = 2/s).
+        clock.now = 0.5
+        assert await executor.run(_ok, policy="p") == "ok"
+
+        with pytest.raises(CoreException):
+            await executor.run(_ok, policy="p")
+
+    async def test_sustained_rate_honored(self) -> None:
+        clock = _Clock()
+        executor = _executor(
+            _rate_limit_policy(permits=2, per_seconds=1.0),
+            clock=clock,
+        )
+
+        # Drain the initial burst.
+        for _ in range(2):
+            await executor.run(_ok, policy="p")
+
+        # Each elapsed second grants exactly `permits` more calls.
+        granted = 0
+        for second in (1.0, 2.0, 3.0):
+            clock.now = second
+            for _ in range(2):
+                assert await executor.run(_ok, policy="p") == "ok"
+                granted += 1
+
+            with pytest.raises(CoreException):
+                await executor.run(_ok, policy="p")
+
+        assert granted == 6
+
+    async def test_burst_caps_saved_up_capacity(self) -> None:
+        clock = _Clock()
+        executor = _executor(
+            _rate_limit_policy(permits=1, per_seconds=1.0, burst=3),
+            clock=clock,
+        )
+
+        # Bucket starts at burst capacity.
+        for _ in range(3):
+            assert await executor.run(_ok, policy="p") == "ok"
+
+        with pytest.raises(CoreException):
+            await executor.run(_ok, policy="p")
+
+        # A long idle period refills to at most `burst` tokens.
+        clock.now = 100.0
+        for _ in range(3):
+            assert await executor.run(_ok, policy="p") == "ok"
+
+        with pytest.raises(CoreException):
+            await executor.run(_ok, policy="p")
+
+    async def test_state_isolated_per_route(self) -> None:
+        clock = _Clock()
+        executor = _executor(_rate_limit_policy(permits=1), clock=clock)
+
+        assert await executor.run(_ok, policy="p", route="a") == "ok"
+
+        with pytest.raises(CoreException):
+            await executor.run(_ok, policy="p", route="a")
+
+        # Another route under the same policy has its own bucket.
+        assert await executor.run(_ok, policy="p", route="b") == "ok"
+
+        with pytest.raises(CoreException) as ei:
+            await executor.run(_ok, policy="p", route="b")
+
+        assert ei.value.details == {"policy": "p", "route": "b"}
+
+    async def test_state_isolated_per_policy(self) -> None:
+        clock = _Clock()
+        pol_a = _rate_limit_policy("a", permits=1)
+        pol_b = _rate_limit_policy("b", permits=1)
+        executor = InProcessResilienceExecutor(
+            policies={"a": pol_a, "b": pol_b},
+            sleep=_no_sleep,
+            clock=clock,
+        )
+
+        assert await executor.run(_ok, policy="a") == "ok"
+
+        with pytest.raises(CoreException):
+            await executor.run(_ok, policy="a")
+
+        assert await executor.run(_ok, policy="b") == "ok"
+
+    async def test_rate_limit_rejects_before_bulkhead_admits(self) -> None:
+        # RateLimit composes outermost: with the bucket empty, the call is
+        # throttled without ever touching the (full) bulkhead queue.
+        clock = _Clock()
+        policy = ResiliencePolicy(
+            name="p",
+            strategies=(
+                RateLimitStrategy(permits=1, per=timedelta(seconds=1)),
+                BulkheadStrategy(max_concurrency=1, max_queue=0),
+            ),
+        )
+        executor = _executor(policy, clock=clock)
+        started = asyncio.Event()
+        release = asyncio.Event()
+
+        async def holder() -> str:
+            started.set()
+            await release.wait()
+            return "held"
+
+        task = asyncio.create_task(executor.run(holder, policy="p"))
+        await started.wait()
+
+        try:
+            # Bucket is empty (the holder spent the only token) and the
+            # bulkhead is full — the rate limit must reject first.
+            with pytest.raises(CoreException) as ei:
+                await executor.run(_ok, policy="p")
+
+            assert ei.value.kind is ExceptionKind.THROTTLED
+
+            # With a refilled bucket, the same call now reaches the bulkhead.
+            clock.now = 5.0
+            with pytest.raises(CoreException, match="Bulkhead full"):
+                await executor.run(_ok, policy="p")
+        finally:
+            release.set()
+
+        assert await task == "held"
+
+    async def test_rate_limited_call_plus_retry_waits_and_succeeds(self) -> None:
+        # The composition story: a rate-limited call raises THROTTLED, and a
+        # retry-with-backoff policy *around* it waits the limit out. Sleeping
+        # advances the controlled clock, refilling the bucket.
+        clock = _Clock()
+
+        async def sleeping(delay: float) -> None:
+            clock.now += delay
+
+        limited = _rate_limit_policy("limited", permits=1, per_seconds=1.0)
+        patient = ResiliencePolicy(
+            name="patient",
+            strategies=(
+                RetryStrategy(
+                    max_attempts=3,
+                    backoff=BackoffStrategy(
+                        base=timedelta(seconds=1),
+                        max=timedelta(seconds=2),
+                        jitter="none",
+                    ),
+                    retry_on=frozenset({ExceptionKind.THROTTLED}),
+                ),
+            ),
+        )
+        executor = InProcessResilienceExecutor(
+            policies={"limited": limited, "patient": patient},
+            sleep=sleeping,
+            clock=clock,
+        )
+        counter = _Counter()
+
+        async def limited_call() -> str:
+            counter.calls += 1
+            return await executor.run(_ok, policy="limited")
+
+        # Drain the bucket so the first attempt is throttled.
+        assert await executor.run(_ok, policy="limited") == "ok"
+
+        assert await executor.run(limited_call, policy="patient") == "ok"
+        # Attempt 1 throttled; the 1s backoff refills one token; attempt 2 wins.
+        assert counter.calls == 2
+
+
+# ....................... #
+
+
 class TestFallbackAndConfig:
     async def test_fallback_invoked_on_failure(self) -> None:
         policy = ResiliencePolicy(
@@ -401,3 +643,21 @@ class TestTracing:
         assert trace is not None
         ops = {(e.domain, e.op) for e in trace.events}
         assert ("resilience", "retry_attempt") in ops
+
+    async def test_emits_rate_limit_reject_event(self, traced_deps: object) -> None:
+        bind_active_deps(traced_deps)  # type: ignore[arg-type]
+        clock = _Clock()
+        executor = _executor(_rate_limit_policy(permits=1), clock=clock)
+
+        assert await executor.run(_ok, policy="p", route="r") == "ok"
+
+        with pytest.raises(CoreException):
+            await executor.run(_ok, policy="p", route="r")
+
+        trace = traced_deps.runtime_trace()  # type: ignore[attr-defined]
+        assert trace is not None
+        events = [e for e in trace.events if e.op == "rate_limit_reject"]
+        assert len(events) == 1
+        assert events[0].domain == "resilience"
+        assert events[0].route == "r"
+        assert events[0].phase == "p"

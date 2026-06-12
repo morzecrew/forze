@@ -3,9 +3,12 @@ from typing import Any, final
 import attrs
 
 from forze.application.contracts.authn import (
+    AuthnEventEmitter,
+    AuthnEventKind,
     IssuedPasswordReset,
     PasswordResetPort,
     PrincipalEligibilityPort,
+    login_digest,
 )
 from forze.application.contracts.document import DocumentCommandPort, DocumentQueryPort
 from forze.base.exceptions import CoreException, exc
@@ -125,6 +128,14 @@ class PasswordResetAdapter(PasswordResetPort):
     credential, so surviving sessions would defeat its purpose. Opt out only
     when sessions are managed by an external lifecycle."""
 
+    events: AuthnEventEmitter | None = None
+    """Optional authn event emitter (best-effort; ``None`` disables emission).
+
+    Emits ``PASSWORD_RESET_REQUESTED`` on actual token issuance only (unknown or
+    ineligible logins produce no event — the uniform 202 toward callers is the
+    kit handler's job; the event stream records what really happened) and
+    ``PASSWORD_RESET_COMPLETED`` after a successful reset."""
+
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
@@ -214,6 +225,13 @@ class PasswordResetAdapter(PasswordResetPort):
             return_new=False,
         )
 
+        if self.events is not None:
+            await self.events.emit(
+                AuthnEventKind.PASSWORD_RESET_REQUESTED,
+                principal_id=account.principal_id,
+                login_digest=login_digest(login),
+            )
+
         return IssuedPasswordReset(
             token=token,
             principal_id=account.principal_id,
@@ -294,4 +312,10 @@ class PasswordResetAdapter(PasswordResetPort):
                 self.session_qry,  # type: ignore[arg-type]
                 self.session_cmd,  # type: ignore[arg-type]
                 {"principal_id": reset.principal_id},
+            )
+
+        if self.events is not None:
+            await self.events.emit(
+                AuthnEventKind.PASSWORD_RESET_COMPLETED,
+                principal_id=reset.principal_id,
             )

@@ -9,6 +9,8 @@ from forze.application.contracts.authn import (
     ApiKeyVerifierDepKey,
     ApiKeyVerifierDepPort,
     AuthnDepKey,
+    AuthnEventSinkDepKey,
+    AuthnEventSinkDepPort,
     AuthnMethod,
     PasswordAccountProvisioningDepKey,
     PasswordLifecycleDepKey,
@@ -24,6 +26,7 @@ from forze.application.contracts.authn import (
     TokenVerifierDepPort,
 )
 from forze.application.execution import Deps, DepsModule
+from forze.application.integrations.authn import LOCKOUT_COUNTER_ROUTE, LockoutConfig
 from forze.base.exceptions import exc
 from forze.base.primitives import MappingConverter, StrKey, StrKeyMapping
 from forze_identity._routes import normalize_route_set as _normalize_route_set
@@ -142,6 +145,26 @@ class AuthnDepsModule(DepsModule):
     to the current Argon2 parameters after a successful login (wires the password
     account command port into the verifier). Best-effort; never fails the login."""
 
+    events: AuthnEventSinkDepPort | None = attrs.field(default=None)
+    """Optional authn event sink factory (e.g.
+    :class:`ConfigurableLoggingAuthnEventSink`). ``None`` (default) disables
+    emission entirely.
+
+    One **shared** sink registered for every route this module wires — the
+    module's cross-cutting policy knobs (``actor_claim``,
+    ``revoke_sessions_on_*``) are likewise module-wide, and observability is the
+    same kind of concern. Per-route divergence uses the module's standard
+    override path: merge an extra routed :data:`AuthnEventSinkDepKey`
+    registration after the module's output."""
+
+    lockout: LockoutConfig | None = attrs.field(default=None)
+    """Optional fixed-window login lockout for password routes. ``None``
+    (default) disables it. Requires a registered counter backend resolvable on
+    :attr:`lockout_counter_route`."""
+
+    lockout_counter_route: StrKey = attrs.field(default=LOCKOUT_COUNTER_ROUTE)
+    """Counter route the lockout guard resolves its ``CounterPort`` from."""
+
     # ....................... #
 
     def __call__(self) -> Deps:  # noqa: C901
@@ -212,6 +235,20 @@ class AuthnDepsModule(DepsModule):
                 ),
             )
 
+        # One shared sink for every wired route (observability is cross-cutting,
+        # like actor_claim); override per route by merging an extra routed
+        # AuthnEventSinkDepKey registration after this module's output.
+        if self.events is not None and eligibility_routes:
+            merged = merged.merge(
+                Deps.routed(
+                    {
+                        AuthnEventSinkDepKey: {
+                            name: self.events for name in eligibility_routes
+                        },
+                    },
+                ),
+            )
+
         if pd:
             if self.authz_route is None:
                 raise exc.internal(
@@ -274,6 +311,8 @@ class AuthnDepsModule(DepsModule):
                 authn_routes[name] = ConfigurableAuthn(
                     enabled_methods=methods_fs,
                     actor_claim=self.actor_claim,
+                    lockout=self.lockout if "password" in methods_fs else None,
+                    lockout_counter_route=self.lockout_counter_route,
                 )
 
             routed_map: dict[object, dict[StrKey, object]] = {AuthnDepKey: authn_routes}

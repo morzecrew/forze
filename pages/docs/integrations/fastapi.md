@@ -21,27 +21,28 @@ No external service — FastAPI is in-process.
 ## Run the runtime from lifespan
 
 The runtime's lifecycle opens and closes every backing client (Postgres, Redis,
-…). Drive it from the app lifespan:
+…). `runtime_lifespan` holds `runtime.scope()` open for the app's lifetime —
+context created and startup run on app startup, shutdown run (and the context
+reset) on app shutdown, even if the app's lifetime ends with an error:
 
 ```python
-from contextlib import asynccontextmanager
 from fastapi import FastAPI
+from forze.application.execution import build_runtime
+from forze_fastapi import runtime_lifespan
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    await runtime.startup()
-    try:
-        yield
-    finally:
-        await runtime.shutdown()
+runtime = build_runtime(...)  # deps modules + lifecycle modules/steps
 
-app = FastAPI(title="Orders API", lifespan=lifespan)
+app = FastAPI(title="Orders API", lifespan=runtime_lifespan(runtime))
 ```
+
+`build_runtime` assembles the runtime in one call — it builds and freezes the
+deps registry and the lifecycle plan and returns the
+[`ExecutionRuntime`](../core-concepts/runtime.md).
 
 ## Bind request context
 
 Two ASGI middlewares attach the per-request context, both given a factory that
-returns the current `ExecutionContext`:
+returns the current `ExecutionContext` — `runtime.get_context` is that factory:
 
 ```python
 from forze_fastapi.middlewares import (
@@ -49,11 +50,8 @@ from forze_fastapi.middlewares import (
     SecurityContextMiddleware,
 )
 
-def context() -> "ExecutionContext":
-    return runtime.get_context()
-
-app.add_middleware(InvocationMetadataMiddleware, ctx_dep=context)
-app.add_middleware(SecurityContextMiddleware, ctx_dep=context)
+app.add_middleware(InvocationMetadataMiddleware, ctx_dep=runtime.get_context)
+app.add_middleware(SecurityContextMiddleware, ctx_dep=runtime.get_context)
 ```
 
 `InvocationMetadataMiddleware` binds correlation/execution metadata and the

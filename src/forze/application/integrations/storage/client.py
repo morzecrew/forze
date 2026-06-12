@@ -1,13 +1,55 @@
 """Unified object-storage client port and value objects for S3/GCS integrations."""
 
-from datetime import datetime
-from typing import AsyncContextManager, Awaitable, Mapping, Protocol, final
+import math
+from datetime import datetime, timedelta
+from typing import AsyncContextManager, Awaitable, Final, Mapping, Protocol, final
 
 import attrs
 
+from forze.application.contracts.storage import PresignedUrl
 from forze.base.exceptions import exc
 
 # ----------------------- #
+
+PRESIGN_MAX_EXPIRY: Final[timedelta] = timedelta(days=7)
+"""Hard upper bound on presigned-URL lifetimes shared by S3 (SigV4) and GCS (V4)."""
+
+# ....................... #
+
+
+def presign_expiry_seconds(
+    expires_in: timedelta,
+    *,
+    max_expiry: timedelta | None = PRESIGN_MAX_EXPIRY,
+) -> int:
+    """Validate a presign expiry window and convert it to whole seconds.
+
+    Sub-second windows round **up**, so any positive ``expires_in`` yields at
+    least one second (backends take integral seconds).
+
+    :param expires_in: Requested URL lifetime.
+    :param max_expiry: Hard backend cap (defaults to the 7-day S3/GCS limit);
+        ``None`` disables the cap check.
+    :returns: The lifetime in whole seconds.
+    :raises CoreException: ``validation`` when ``expires_in`` is not positive
+        or exceeds *max_expiry*.
+    """
+
+    if expires_in <= timedelta(0):
+        raise exc.validation(
+            f"Presigned URL expiry must be positive, got {expires_in!r}",
+        )
+
+    if max_expiry is not None and expires_in > max_expiry:
+        raise exc.validation(
+            f"Presigned URL expiry {expires_in!r} exceeds the backend cap "
+            f"of {max_expiry!r}",
+        )
+
+    return math.ceil(expires_in.total_seconds())
+
+
+# ....................... #
 
 
 def normalize_list_window(limit: int | None, offset: int | None) -> tuple[int, int]:
@@ -168,5 +210,42 @@ class ObjectStorageClientPort(Protocol):
         that get tags for free still include them; with ``True`` the tags
         mapping is guaranteed populated, and backends needing an extra call
         (S3: ``GetObjectTagging``) pay it.
+        """
+        ...  # pragma: no cover
+
+    def presign_download_url(
+        self,
+        bucket: str,
+        key: str,
+        *,
+        expires_in: timedelta,
+    ) -> Awaitable[PresignedUrl]:
+        """Sign a time-limited ``GET`` URL for *key* in *bucket*.
+
+        Signing is local on both backends (no API round-trip); the URL grants
+        unauthenticated read access until expiry — see
+        :class:`~forze.application.contracts.storage.PresignedUrl` for the
+        trust model. ``expires_in`` must be positive and within
+        :data:`PRESIGN_MAX_EXPIRY` (the shared 7-day S3/GCS cap).
+        """
+        ...  # pragma: no cover
+
+    def presign_upload_url(
+        self,
+        bucket: str,
+        key: str,
+        *,
+        expires_in: timedelta,
+        content_type: str | None = None,
+    ) -> Awaitable[PresignedUrl]:
+        """Sign a time-limited ``PUT`` URL for *key* in *bucket*.
+
+        Signing is local on both backends (no API round-trip); the URL grants
+        unauthenticated write access until expiry — see
+        :class:`~forze.application.contracts.storage.PresignedUrl` for the
+        trust model. When ``content_type`` is given the signature binds it and
+        the returned :attr:`PresignedUrl.headers` carries the header the
+        client must send. ``expires_in`` must be positive and within
+        :data:`PRESIGN_MAX_EXPIRY` (the shared 7-day S3/GCS cap).
         """
         ...  # pragma: no cover

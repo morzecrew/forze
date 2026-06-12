@@ -4,6 +4,7 @@ import asyncio
 import mimetypes
 import re
 from collections.abc import Awaitable, Callable
+from datetime import timedelta
 from uuid import UUID
 
 import attrs
@@ -20,6 +21,7 @@ from forze.application.contracts.storage.ports import (
 from forze.application.contracts.storage.value_objects import (
     DownloadedObject,
     ObjectMetadata,
+    PresignedUrl,
     StoredObject,
     UploadedObject,
 )
@@ -270,6 +272,69 @@ class ObjectStorageAdapter(StorageQueryPort, StorageCommandPort, TenancyMixin):
                 data=data,
                 content_type=h.content_type,
                 filename=default_b64_codec.loads(meta.filename),
+            )
+
+    # ....................... #
+
+    async def presign_download(
+        self,
+        key: str,
+        *,
+        expires_in: timedelta,
+    ) -> PresignedUrl:
+        """Mint a time-limited direct-download URL for an existing key.
+
+        Applies the same key validation as :meth:`download` (path traversal,
+        absolute paths, and control characters are rejected before anything is
+        signed) and the same tenant-aware bucket resolution, then delegates the
+        signing to the client. Existence is **not** checked — signing is local
+        and a ``GET`` on a missing object simply fails at request time.
+        """
+
+        self._validate_key(key)
+        bucket = await self._resolved_bucket()
+
+        async with self.client.client():
+            return await self.client.presign_download_url(
+                bucket=bucket,
+                key=key,
+                expires_in=expires_in,
+            )
+
+    # ....................... #
+
+    async def presign_upload(
+        self,
+        key: str,
+        *,
+        expires_in: timedelta,
+        content_type: str | None = None,
+    ) -> PresignedUrl:
+        """Mint a time-limited direct-upload URL for a caller-supplied key.
+
+        Unlike :meth:`upload`, which mints its own keys, the target *key* is
+        supplied by the caller (e.g. built via :meth:`construct_key`) and runs
+        through the same validation as :meth:`download` / :meth:`delete`
+        before anything is signed. The bucket is tenant-resolved and ensured
+        like :meth:`upload`, so the handed-out URL targets a bucket that
+        exists.
+
+        Objects uploaded through the URL bypass this adapter's metadata
+        envelope — see
+        :meth:`forze.application.contracts.storage.StorageCommandPort.presign_upload`.
+        """
+
+        self._validate_key(key)
+        bucket = await self._resolved_bucket()
+
+        async with self.client.client():
+            await self.client.ensure_bucket(bucket)
+
+            return await self.client.presign_upload_url(
+                bucket=bucket,
+                key=key,
+                expires_in=expires_in,
+                content_type=content_type,
             )
 
     # ....................... #

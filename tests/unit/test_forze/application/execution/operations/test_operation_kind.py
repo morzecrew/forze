@@ -15,6 +15,7 @@ from forze.application.contracts.counter import CounterSpec
 from forze.application.contracts.document import DocumentSpec, DocumentWriteTypes
 from forze.application.contracts.execution import Handler
 from forze.application.contracts.outbox import OutboxSpec
+from forze.application.contracts.storage import StorageSpec
 from forze.application.execution import ExecutionContext, OperationKind
 from forze.application.execution.operations import run_operation
 from forze.application.execution.operations.registry import OperationRegistry
@@ -163,6 +164,27 @@ class _AcquireCounter(Handler[None, str]):
         return "counted"
 
 
+@attrs.define(slots=True)
+class _AcquireStorageCommand(Handler[None, str]):
+    ctx: ExecutionContext
+
+    async def __call__(self, _args: None) -> str:
+        self.ctx.storage.command(StorageSpec(name="files"))
+        return "granted"
+
+
+@attrs.define(slots=True)
+class _PresignDownloadInQuery(Handler[None, str]):
+    ctx: ExecutionContext
+
+    async def __call__(self, _args: None) -> str:
+        from datetime import timedelta
+
+        port = self.ctx.storage.query(StorageSpec(name="files"))
+        vo = await port.presign_download("some/key", expires_in=timedelta(minutes=5))
+        return vo.method
+
+
 def _frozen(op: str, factory, *, query: bool):
     binder = OperationRegistry(handlers={op: factory}).bind(op)
     if query:
@@ -299,3 +321,29 @@ class TestUniformWriteGuard:
         reg = _frozen("q", lambda c: _AcquireCounter(ctx=c), query=True)
 
         assert await run_operation(reg, "q", None, ctx) == "counted"
+
+    async def test_query_op_cannot_acquire_storage_command_for_presign_upload(
+        self,
+    ) -> None:
+        # presign_upload is a write grant on StorageCommandPort: a QUERY op
+        # cannot even acquire the command port, so it cannot mint upload URLs.
+        ctx = context_from_modules(MockDepsModule())
+        reg = _frozen("q", lambda c: _AcquireStorageCommand(ctx=c), query=True)
+
+        with pytest.raises(CoreException) as ei:
+            await run_operation(reg, "q", None, ctx)
+        assert ei.value.kind is ExceptionKind.PRECONDITION
+
+    async def test_query_op_may_presign_download_via_query_port(self) -> None:
+        # presign_download grants read access only — it lives on the query
+        # port and stays available to QUERY operations.
+        ctx = context_from_modules(MockDepsModule())
+        reg = _frozen("q", lambda c: _PresignDownloadInQuery(ctx=c), query=True)
+
+        assert await run_operation(reg, "q", None, ctx) == "GET"
+
+    async def test_command_op_acquires_storage_command_normally(self) -> None:
+        ctx = context_from_modules(MockDepsModule())
+        reg = _frozen("c", lambda c: _AcquireStorageCommand(ctx=c), query=False)
+
+        assert await run_operation(reg, "c", None, ctx) == "granted"

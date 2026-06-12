@@ -60,6 +60,33 @@ async def test_mock_outbox_flush_and_relay_to_queue() -> None:
 
 
 @pytest.mark.asyncio
+async def test_mock_outbox_ordering_key_round_trips_stage_row_claim() -> None:
+    codec = PydanticModelCodec(_EventPayload)
+    outbox_spec = OutboxSpec(name="events", codec=codec)
+
+    module = MockDepsModule()
+    runtime = ExecutionRuntime(deps=DepsRegistry.from_modules(module).freeze())
+    async with runtime.scope():
+        ctx = runtime.get_context()
+        state = ctx.deps.provide(MockStateDepKey)
+        outbox = ctx.outbox.command(outbox_spec)
+        await outbox.stage("job.requested", _EventPayload(n=1), ordering_key="agg-1")
+        await outbox.stage("job.updated", _EventPayload(n=2))
+        assert await outbox.flush() == 2
+
+        rows = {r.event_type: r for r in state.outbox_rows["events"]}
+        assert rows["job.requested"].ordering_key == "agg-1"
+        assert rows["job.updated"].ordering_key is None
+
+        claims = {
+            c.event_type: c
+            for c in await ctx.outbox.query(outbox_spec).claim_pending()
+        }
+        assert claims["job.requested"].ordering_key == "agg-1"
+        assert claims["job.updated"].ordering_key is None
+
+
+@pytest.mark.asyncio
 async def test_mock_outbox_duplicate_event_id_skips_second_flush() -> None:
     codec = PydanticModelCodec(_EventPayload)
     outbox_spec = OutboxSpec(name="events", codec=codec)

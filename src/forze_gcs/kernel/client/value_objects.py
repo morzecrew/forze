@@ -23,6 +23,17 @@ class GCSConfig:
     timeout: timedelta = attrs.field(default=DEFAULT_TIMEOUT)
     """Request timeout for GCS API calls."""
 
+    signing_service_account_email: str | None = None
+    """Service account used for IAM ``signBlob``-based presigned URLs.
+
+    Only consulted when the bound credentials carry **no private key** (ADC /
+    metadata-server tokens): presigned URLs are then signed remotely via the
+    IAM Credentials API on behalf of this account, which requires the ambient
+    credentials to hold ``iam.serviceAccounts.signBlob`` on it (e.g.
+    ``roles/iam.serviceAccountTokenCreator``) and an IAM-capable token scope.
+    With an explicit service-account JSON key this is ignored — URLs are
+    signed locally with the key."""
+
     # ....................... #
 
     def __attrs_post_init__(self) -> None:

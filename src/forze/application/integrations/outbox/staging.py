@@ -64,14 +64,22 @@ class OutboxStaging[M: BaseModel]:
         *,
         event_id: UUID | None = None,
         occurred_at: datetime | None = None,
+        ordering_key: str | None = None,
     ) -> None:
-        """Buffer an integration event."""
+        """Buffer an integration event.
+
+        *ordering_key* partitions delivery on capable transports (SQS FIFO
+        ``MessageGroupId``, stream partition key); same-key events relay in
+        ``created_at`` order on the happy path, and a retrying/failed row
+        never stalls later rows of its key.
+        """
 
         event = self.enricher.enrich(
             event_type,
             payload,
             event_id=event_id,
             occurred_at=occurred_at,
+            ordering_key=ordering_key,
         )
         await self.stage_event(event)
 

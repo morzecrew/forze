@@ -6,6 +6,8 @@ import attrs
 
 from forze.application.contracts.authn import (
     AccessTokenCredentials,
+    AuthnEventEmitter,
+    AuthnEventKind,
     AuthnIdentity,
     CredentialLifetime,
     IssuedAccessToken,
@@ -57,6 +59,13 @@ class TokenLifecycleAdapter(TokenLifecyclePort):
 
     eligibility: PrincipalEligibilityPort
     """Principal eligibility gate."""
+
+    events: AuthnEventEmitter | None = None
+    """Optional authn event emitter (best-effort; ``None`` disables emission).
+
+    Emits ``TOKEN_REFRESHED`` on successful rotation, ``REFRESH_REUSE_DETECTED``
+    when an already-rotated refresh token triggers family revocation, and
+    ``LOGOUT`` on :meth:`revoke_tokens`."""
 
     # ....................... #
 
@@ -140,6 +149,12 @@ class TokenLifecycleAdapter(TokenLifecyclePort):
             {"principal_id": identity.principal_id},
         )
 
+        if self.events is not None:
+            await self.events.emit(
+                AuthnEventKind.LOGOUT,
+                principal_id=identity.principal_id,
+            )
+
     # ....................... #
 
     async def revoke_chain_of_tokens(self, principal_id: UUID, family_id: UUID) -> None:
@@ -178,6 +193,16 @@ class TokenLifecycleAdapter(TokenLifecyclePort):
             await self.revoke_chain_of_tokens(
                 old_session.principal_id, old_session.family_id
             )
+
+            # Reuse of a rotated token is the canonical token-theft signal:
+            # emitted (best-effort) before the uniform error propagates.
+            if self.events is not None:
+                await self.events.emit(
+                    AuthnEventKind.REFRESH_REUSE_DETECTED,
+                    principal_id=old_session.principal_id,
+                    tenant_id=old_session.tenant_id,
+                )
+
             raise exc.authentication("Invalid refresh token")
 
         if old_session.expires_at <= utcnow():
@@ -220,6 +245,13 @@ class TokenLifecycleAdapter(TokenLifecyclePort):
             old_session_cmd,
             return_new=False,
         )
+
+        if self.events is not None:
+            await self.events.emit(
+                AuthnEventKind.TOKEN_REFRESHED,
+                principal_id=old_session.principal_id,
+                tenant_id=old_session.tenant_id,
+            )
 
         return IssuedTokens(
             access=IssuedAccessToken(

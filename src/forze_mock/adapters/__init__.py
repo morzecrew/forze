@@ -15,6 +15,7 @@ from forze_mock.adapters.durable import (
     MockDurableWorkflowScheduleCommandAdapter,
     MockDurableWorkflowScheduleQueryAdapter,
 )
+from forze_mock.adapters.events import RecordingAuthnEventSink
 from forze_mock.adapters.graph import MockGraphAdapter
 from forze_mock.adapters.idempotency import MockIdempotencyAdapter
 from forze_mock.adapters.inbox import MockInboxAdapter
@@ -34,6 +35,7 @@ from forze_mock.state import MockState
 
 __all__ = [
     "MockState",
+    "RecordingAuthnEventSink",
     "MockDocumentAdapter",
     "MockSearchAdapter",
     "MockSearchCommandAdapter",

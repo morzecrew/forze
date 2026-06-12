@@ -29,6 +29,7 @@ import attrs
 from pydantic import SecretStr
 from types_aiobotocore_sqs.client import SQSClient as AsyncSQSClient
 
+from forze.application.contracts.envelope import HEADER_EVENT_ID
 from forze.application.contracts.queue import SQS_MAX_DELAY, resolve_delivery_delay
 from forze.base.exceptions import exc
 
@@ -671,7 +672,16 @@ class SQSClient(SQSClientPort):
         not_before: datetime | None = None,
         headers: Mapping[str, str] | None = None,
     ) -> str:
-        """Send a single message and return the broker-assigned ``MessageId``."""
+        """Send a single message and return the broker-assigned ``MessageId``.
+
+        FIFO targets (``.fifo``): ``MessageGroupId`` is *key* (or ``"forze"``)
+        — the per-aggregate ordering lane — and ``MessageDeduplicationId``
+        follows the priority documented on :meth:`enqueue_many`: explicit
+        *message_id*, else the ``forze_event_id`` header, else a fresh random
+        id. The caller ``key`` is deliberately **never** the dedup id:
+        distinct events may share a key (ordering), and key-based dedup would
+        silently drop them within the FIFO five-minute window.
+        """
         return (
             await self.enqueue_many(
                 queue,
@@ -708,6 +718,21 @@ class SQSClient(SQSClientPort):
         messages (stable across redeliveries). Caller-provided *message_ids*
         are used as FIFO deduplication ids, not as the returned identifiers.
 
+        FIFO targets (``.fifo``) build the FIFO entry fields as:
+
+        - ``MessageGroupId`` = *key* (or ``"forze"`` when unset) — the
+          ordering lane: the outbox relay passes the staged ``ordering_key``
+          here, so same-key events deliver in order on the happy path.
+        - ``MessageDeduplicationId`` priority: explicit *message_ids* entry →
+          the ``forze_event_id`` header (single-message sends only — headers
+          are batch-wide, so a shared event id must not collapse a multi-body
+          batch) → a fresh random id per message. The event id header is the
+          stable per-event identity, so a relay republishing the same event
+          within the five-minute window dedupes, while **different** events
+          sharing an ordering ``key`` never dedupe each other. The caller
+          ``key`` is deliberately never used as the dedup id — that would
+          drop distinct same-key events (event loss).
+
         Caller *headers* ride SQS message attributes (``String`` type)
         verbatim; the reserved transport attributes (``forze_type``,
         ``forze_key``, ``forze_enqueued_at``, ``forze_encoding``) always win
@@ -725,11 +750,17 @@ class SQSClient(SQSClientPort):
         if message_ids is not None and len(message_ids) != len(bodies):
             raise exc.precondition("SQS message_ids size must match batch body size")
 
-        resolved_ids = (
-            list(message_ids)
-            if message_ids is not None
-            else [uuid4().hex for _ in range(len(bodies))]
-        )
+        header_event_id = headers.get(HEADER_EVENT_ID) if headers else None
+
+        if message_ids is not None:
+            resolved_ids = list(message_ids)
+
+        elif header_event_id and len(bodies) == 1:
+            resolved_ids = [header_event_id]
+
+        else:
+            resolved_ids = [uuid4().hex for _ in range(len(bodies))]
+
         queue_url = await self.__resolve_queue_url(queue)
         msg_attrs = self.__build_message_attributes(
             type=type,

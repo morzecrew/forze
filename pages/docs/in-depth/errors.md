@@ -34,6 +34,7 @@ Every `CoreException` carries a `kind`, a human `summary`, a machine `code`
 | `authentication` / `authorization` | who they are / what they may do |
 | `configuration` | the app is wired wrong (a startup-time mistake) |
 | `infrastructure` | a backing system failed (transient) |
+| `throttled` | a rate limit rejected the call (transient — capacity refills) |
 | `internal` | an unexpected bug |
 
 ## Raising aborts the operation
@@ -54,11 +55,11 @@ a raise — a `finally_` hook, say — it receives an `Outcome`: `Success(value)
 Beyond its meaning, each kind has an **egress policy** with two booleans:
 
 - **`expose_details`** — are the details safe to show a caller? (`internal`,
-  `authentication`, `authorization`, and `infrastructure` say no.)
-- **`retryable`** — is this transient? Only **`concurrency`** and
-  **`infrastructure`** are. This flag is what the [resilience](resilience.md)
-  retry policies key on — you can only retry a kind that declares itself
-  retryable.
+  `authentication`, `authorization`, `infrastructure`, and `throttled` say no.)
+- **`retryable`** — is this transient? Only **`concurrency`**,
+  **`infrastructure`**, and **`throttled`** are. This flag is what the
+  [resilience](resilience.md) retry policies key on — you can only retry a kind
+  that declares itself retryable.
 
 ## At the edge
 

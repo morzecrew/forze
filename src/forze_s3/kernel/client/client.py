@@ -9,6 +9,7 @@ import io
 from collections.abc import Mapping as MappingABC
 from contextlib import AsyncExitStack, asynccontextmanager
 from contextvars import ContextVar
+from datetime import timedelta
 from typing import Any, AsyncContextManager, AsyncGenerator, Final, Mapping, cast, final
 from urllib.parse import urlencode
 
@@ -17,12 +18,16 @@ import attrs
 from pydantic import SecretStr
 from types_aiobotocore_s3.client import S3Client as AsyncS3Client
 
+from forze.application.contracts.storage import PresignedUrl
 from forze.application.integrations.storage.client import (
+    PRESIGN_MAX_EXPIRY,
     ObjectStorageHead,
     ObjectStorageListedObject,
     normalize_list_window,
+    presign_expiry_seconds,
 )
 from forze.base.exceptions import exc
+from forze.base.primitives import utcnow
 
 from .errors import exc_interceptor
 from .port import S3ClientPort
@@ -648,6 +653,94 @@ class S3Client(S3ClientPort):
             last_modified=head.get("LastModified"),
             etag=head.get("ETag", "").strip('"'),
             tags=tags,
+        )
+
+    # ....................... #
+
+    @exc_interceptor.coroutine("s3.presign_download_url")  # type: ignore[untyped-decorator]
+    async def presign_download_url(
+        self,
+        bucket: str,
+        key: str,
+        *,
+        expires_in: timedelta,
+    ) -> PresignedUrl:
+        """Sign a time-limited ``GET`` URL for the object (SigV4 query auth).
+
+        Signing is **local** (``generate_presigned_url`` computes the
+        signature in-process; no S3 round-trip) and does not check that the
+        object exists. SigV4 caps ``expires_in`` at 7 days; with chain or
+        temporary credentials (STS, instance roles) the effective lifetime is
+        further bounded by the session token's expiry, whichever comes first.
+
+        :param bucket: Bucket name.
+        :param key: Object key.
+        :param expires_in: URL lifetime (positive, at most 7 days).
+        :raises CoreException: ``validation`` when *expires_in* is out of range.
+        """
+
+        c = self.__require_client()
+        seconds = presign_expiry_seconds(expires_in, max_expiry=PRESIGN_MAX_EXPIRY)
+
+        expires_at = utcnow() + timedelta(seconds=seconds)
+        url = await c.generate_presigned_url(
+            "get_object",
+            Params={"Bucket": bucket, "Key": key},
+            ExpiresIn=seconds,
+        )
+
+        return PresignedUrl(url=url, method="GET", expires_at=expires_at)
+
+    # ....................... #
+
+    @exc_interceptor.coroutine("s3.presign_upload_url")  # type: ignore[untyped-decorator]
+    async def presign_upload_url(
+        self,
+        bucket: str,
+        key: str,
+        *,
+        expires_in: timedelta,
+        content_type: str | None = None,
+    ) -> PresignedUrl:
+        """Sign a time-limited ``PUT`` URL for the object (SigV4 query auth).
+
+        Signing is **local** (no S3 round-trip). When *content_type* is given
+        it is added to the signed parameters (``ContentType``), so SigV4 binds
+        it — the returned :attr:`PresignedUrl.headers` then carries the
+        ``Content-Type`` header the uploader must send verbatim. SigV4 caps
+        ``expires_in`` at 7 days; with chain or temporary credentials (STS,
+        instance roles) the effective lifetime is further bounded by the
+        session token's expiry, whichever comes first.
+
+        :param bucket: Bucket name.
+        :param key: Object key to upload to.
+        :param expires_in: URL lifetime (positive, at most 7 days).
+        :param content_type: Optional MIME type to bind into the signature.
+        :raises CoreException: ``validation`` when *expires_in* is out of range.
+        """
+
+        c = self.__require_client()
+        seconds = presign_expiry_seconds(expires_in, max_expiry=PRESIGN_MAX_EXPIRY)
+
+        params: dict[str, Any] = {"Bucket": bucket, "Key": key}
+        headers: dict[str, str] = {}
+
+        if content_type is not None:
+            params["ContentType"] = content_type
+            headers["Content-Type"] = content_type
+
+        expires_at = utcnow() + timedelta(seconds=seconds)
+        url = await c.generate_presigned_url(
+            "put_object",
+            Params=params,
+            ExpiresIn=seconds,
+        )
+
+        return PresignedUrl(
+            url=url,
+            method="PUT",
+            expires_at=expires_at,
+            headers=headers,
         )
 
 

@@ -72,6 +72,9 @@ def _claim_from_doc(doc: JsonDict) -> OutboxClaim:
         ),
         occurred_at=doc.get("occurred_at"),
         attempts=int(doc.get("attempts") or 0),
+        ordering_key=(
+            str(doc["ordering_key"]) if doc.get("ordering_key") is not None else None
+        ),
     )
 
 
@@ -161,6 +164,7 @@ class MongoOutboxStore[M: BaseModel](TenancyMixin, OutboxQueryPort):
                         else None
                     ),
                     "occurred_at": event.occurred_at,
+                    "ordering_key": event.ordering_key,
                     "payload": dict(entry.payload_json),
                     "status": OutboxStatus.PENDING.value,
                     "created_at": created_at,

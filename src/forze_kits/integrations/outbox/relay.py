@@ -146,8 +146,10 @@ async def _relay_outbox_to(
     ``(channel, payload, *, type, key, headers)`` signature across queue, stream,
     and pubsub, so only the resolved command, dep key, and method name differ per
     transport. Each publish forwards the claim's invocation envelope as
-    transport headers (see :func:`_claim_envelope_headers`); ``type``/``key``
-    stay exactly as before for backward compatibility.
+    transport headers (see :func:`_claim_envelope_headers`); ``key`` is the
+    claim's ``ordering_key`` when staged (partitioning on capable transports),
+    falling back to ``str(event_id)`` — the event id itself always rides the
+    ``forze_event_id`` header either way.
     """
 
     if reclaim_stale_after is not None and reclaim_stale_after.total_seconds() <= 0:
@@ -167,7 +169,7 @@ async def _relay_outbox_to(
             channel,
             payload,
             type=claim.event_type,
-            key=str(claim.event_id),
+            key=claim.ordering_key or str(claim.event_id),
             headers=_claim_envelope_headers(claim),
         )
 
@@ -201,11 +203,13 @@ async def relay_outbox_to_queue(
 
     Delivery is **at-least-once**, and ordering is **not preserved across
     failures/retries**: a row rescheduled (or parked as ``failed``) does not
-    stall later rows. Rows are claimed (``pending`` → ``processing``), enqueued
-    one message per claim, then marked ``published``. Enqueue and
+    stall later rows — including later rows of the same ``ordering_key``
+    (deliberate trade-off: no per-key head-of-line blocking). Rows are claimed
+    (``pending`` → ``processing``) in ``created_at`` order, enqueued one
+    message per claim, then marked ``published``. Enqueue and
     ``mark_published`` are not atomic—consumers must deduplicate on
-    :attr:`~forze.application.contracts.outbox.IntegrationEvent.event_id` (or the
-    claim ``event_id``) and tolerate reordering.
+    :attr:`~forze.application.contracts.outbox.IntegrationEvent.event_id` (the
+    ``forze_event_id`` header) and tolerate reordering.
 
     Failure handling per row (one row's failure never aborts the batch):
 
@@ -216,9 +220,13 @@ async def relay_outbox_to_queue(
       *retry_max_backoff*) until *max_attempts* publish attempts are exhausted,
       then ``mark_failed`` (terminal). ``requeue_failed`` resets the counter.
 
-    Each successful enqueue passes ``key=str(claim.event_id)`` to
-    :meth:`~forze.application.contracts.queue.QueueCommandPort.enqueue` when the
-    queue backend supports deduplication (for example SQS FIFO).
+    Each successful enqueue passes ``key=claim.ordering_key or str(claim.event_id)``
+    to :meth:`~forze.application.contracts.queue.QueueCommandPort.enqueue`: on
+    transports that honor ``key`` for partitioning (for example SQS FIFO
+    ``MessageGroupId``), same-``ordering_key`` events deliver in staged
+    (``created_at``) order on the happy path. The event id always rides the
+    ``forze_event_id`` header for consumer-side dedup, so occupying ``key``
+    with the ordering key loses nothing.
 
     When *reclaim_stale_after* is set, rows stuck in ``processing`` longer than that
     lease are reset to ``pending`` before claim (requires ``processing_at`` on the

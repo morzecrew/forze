@@ -1,4 +1,4 @@
-"""Process-local mutable state for circuit breaker, bulkhead, and retry budget."""
+"""Process-local mutable state for circuit breaker, bulkhead, rate limit, and retry budget."""
 
 import asyncio
 from typing import Literal
@@ -131,6 +131,52 @@ class BulkheadState:
             return True
 
         return self.waiting < self.max_queue
+
+
+# ....................... #
+
+
+@attrs.define(slots=True)
+class RateLimitState:
+    """Token-bucket rate limiter state keyed by ``(policy, route)``.
+
+    Refill is computed lazily on each acquire from the monotonic-clock delta —
+    no background task. Mutation happens synchronously between awaits, so the
+    state is safe under a single event loop without locks (same model as
+    :class:`BulkheadState` and :class:`BudgetState`).
+    """
+
+    rate: float
+    """Tokens refilled per second (``permits / per``)."""
+
+    capacity: float
+    """Maximum tokens the bucket holds (``burst or permits``); starts full."""
+
+    tokens: float = attrs.field(
+        default=attrs.Factory(lambda self: self.capacity, takes_self=True),
+    )
+    """Currently available tokens."""
+
+    updated_at: float = 0.0
+    """Monotonic timestamp of the last refill computation."""
+
+    # ....................... #
+
+    def try_acquire(self, now: float) -> bool:
+        """Refill from elapsed time, then spend one token if available."""
+
+        elapsed = now - self.updated_at
+
+        if elapsed > 0:
+            self.tokens = min(self.capacity, self.tokens + elapsed * self.rate)
+
+        self.updated_at = now
+
+        if self.tokens >= 1.0:
+            self.tokens -= 1.0
+            return True
+
+        return False
 
 
 # ....................... #

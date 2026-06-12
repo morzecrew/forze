@@ -48,6 +48,7 @@ from .observability import (
     instrument_operations,
 )
 from .runtime import ExecutionRuntime
+from .assemble import build_runtime
 from .saga import (
     InProcessSagaExecutor,
     SagaDepsModule,
@@ -74,6 +75,7 @@ from .tracing import (
 # ----------------------- #
 
 __all__ = [
+    "build_runtime",
     "InvocationMetadata",
     "Deps",
     "DepsModule",

@@ -18,6 +18,8 @@ from forze.application.contracts.authn import (
     AccessTokenCredentials,
     ApiKeyCredentials,
     ApiKeyVerifierPort,
+    AuthnEventEmitter,
+    AuthnEventKind,
     AuthnIdentity,
     AuthnPort,
     AuthnResult,
@@ -28,8 +30,11 @@ from forze.application.contracts.authn import (
     PrincipalResolverPort,
     TokenVerifierPort,
     VerifiedAssertion,
+    login_digest,
 )
-from forze.base.exceptions import exc
+from forze.base.exceptions import CoreException, ExceptionKind, exc
+
+from .lockout import LOCKED_LOGIN_CODE, LOCKED_LOGIN_MSG, LoginLockoutGuard
 
 # ----------------------- #
 
@@ -76,6 +81,25 @@ class AuthnOrchestrator(AuthnPort):
     delegation assertion: the on-behalf-of **actor** is resolved through the same principal
     resolver and attached as :attr:`AuthnIdentity.actor`. ``None`` (default) ignores any such
     claim. Only the token path honors it — password/API-key assertions carry no actor."""
+
+    events: AuthnEventEmitter | None = attrs.field(default=None)
+    """Optional authn event emitter. ``None`` (default) disables emission.
+
+    The password path emits ``LOGIN_SUCCEEDED`` / ``LOGIN_FAILED`` /
+    ``LOGIN_LOCKED``. Emission is best-effort (the emitter never raises) and the
+    failure emission happens **after** the verifier has produced the uniform
+    ``invalid_credentials`` error, so the Argon2 timing parity between
+    unknown-login and wrong-password failures is untouched — both failure shapes
+    flow through the same post-error accounting branch and pick up the same
+    marginal counter/sink latency."""
+
+    lockout: LoginLockoutGuard | None = attrs.field(default=None)
+    """Optional fixed-window login lockout guard. ``None`` (default) disables it.
+
+    Checked **before** password verification against the digest of the presented
+    login string — regardless of whether the account exists — so nonexistent
+    logins lock exactly like real ones (no account enumeration). A locked
+    attempt raises ``exc.throttled`` (HTTP 429) with code ``login_locked``."""
 
     # ....................... #
 
@@ -133,9 +157,61 @@ class AuthnOrchestrator(AuthnPort):
                 code="method_disabled",
             )
 
-        assertion = await self.password_verifier.verify_password(credentials)
-        identity = await self.resolver.resolve(assertion)
-        await self.eligibility.require_authentication_allowed(identity.principal_id)
+        # One digest serves both collaborators: lockout counter keys and event
+        # records carry the pseudonym, never the raw login.
+        digest = (
+            login_digest(credentials.login)
+            if self.lockout is not None or self.events is not None
+            else None
+        )
+
+        # Lockout gates BEFORE verification on the login *string* — nonexistent
+        # logins lock identically to real ones (no account enumeration).
+        if self.lockout is not None and digest is not None:
+            if await self.lockout.is_locked(digest):
+                # Throttle-once semantics are not required: every attempt in a
+                # locked window re-emits LOGIN_LOCKED.
+                if self.events is not None:
+                    await self.events.emit(
+                        AuthnEventKind.LOGIN_LOCKED,
+                        login_digest=digest,
+                    )
+
+                raise exc.throttled(LOCKED_LOGIN_MSG, code=LOCKED_LOGIN_CODE)
+
+        try:
+            assertion = await self.password_verifier.verify_password(credentials)
+            identity = await self.resolver.resolve(assertion)
+            await self.eligibility.require_authentication_allowed(identity.principal_id)
+
+        except CoreException as e:
+            # Only credential-shaped failures count toward lockout / LOGIN_FAILED;
+            # infrastructure errors propagate untouched (an outage must not lock
+            # users out). Accounting and emission happen AFTER the verifier built
+            # the uniform error: unknown-login and wrong-password failures take
+            # the identical branch with identical extra work, so the verifier's
+            # Argon2 timing parity (the no-enumeration posture) is preserved.
+            if e.kind is ExceptionKind.AUTHENTICATION:
+                if self.lockout is not None and digest is not None:
+                    await self.lockout.record_failure(digest)
+
+                if self.events is not None:
+                    await self.events.emit(
+                        AuthnEventKind.LOGIN_FAILED,
+                        login_digest=digest,
+                    )
+
+            raise
+
+        if self.lockout is not None and digest is not None:
+            await self.lockout.record_success(digest)
+
+        if self.events is not None:
+            await self.events.emit(
+                AuthnEventKind.LOGIN_SUCCEEDED,
+                principal_id=identity.principal_id,
+                login_digest=digest,
+            )
 
         return AuthnResult(
             identity=identity,

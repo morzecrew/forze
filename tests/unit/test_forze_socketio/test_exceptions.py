@@ -38,6 +38,8 @@ class TestServerErrorKindMapping:
             ExceptionKind.PRECONDITION,
             ExceptionKind.AUTHENTICATION,
             ExceptionKind.AUTHORIZATION,
+            # Mirrors the FastAPI 429 mapping: throttled is a client error.
+            ExceptionKind.THROTTLED,
         ):
             assert is_server_error_kind(kind) is False
 
@@ -92,6 +94,25 @@ class TestBuildCoreExceptionAck:
         build_core_exception_ack(exc.not_found("Document not found"))
 
         assert json_records(error_log_buf) == []
+
+    def test_throttled_exposes_summary_but_not_details(self) -> None:
+        err = exc.throttled(
+            "Rate limit exceeded",
+            code="rate_limited",
+            details={"policy": "p", "route": "r"},
+        )
+
+        ack = build_core_exception_ack(err)
+
+        # Client error: summary stays visible; details (policy/route wiring)
+        # stay hidden per the THROTTLED egress policy.
+        assert ack == {
+            "error": {
+                "detail": "Rate limit exceeded",
+                "code": "rate_limited",
+                "kind": "throttled",
+            }
+        }
 
     def test_infrastructure_acked_generic_and_logged(
         self, error_log_buf: io.StringIO

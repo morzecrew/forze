@@ -8,6 +8,8 @@ from forze.application.contracts.authn import (
     ApiKeyLifecyclePort,
     ApiKeyVerifierDepKey,
     ApiKeyVerifierPort,
+    AuthnEventEmitter,
+    AuthnEventSink,
     AuthnPort,
     AuthnSpec,
     PasswordAccountProvisioningPort,
@@ -24,9 +26,17 @@ from forze.application.contracts.authn import (
     TokenLifecyclePort,
     TokenVerifierDepKey,
     TokenVerifierPort,
+    resolve_authn_event_emitter,
 )
 from forze.application.contracts.authz import AuthzSpec
+from forze.application.contracts.counter import CounterSpec
 from forze.application.execution import ExecutionContext
+from forze.application.integrations.authn import (
+    LOCKOUT_COUNTER_ROUTE,
+    LockoutConfig,
+    LoggingAuthnEventSink,
+    LoginLockoutGuard,
+)
 from forze.base.exceptions import exc
 
 from forze_identity.authz.application import policy_principal_spec
@@ -72,6 +82,18 @@ def _resolve_eligibility(
     spec: AuthnSpec,
 ) -> PrincipalEligibilityPort:
     return ctx.deps.provide(PrincipalEligibilityDepKey, route=spec.name)(ctx, spec)
+
+
+# ....................... #
+
+
+def _resolve_events(
+    ctx: ExecutionContext,
+    spec: AuthnSpec,
+) -> AuthnEventEmitter | None:
+    """Resolve the route's optional event emitter (``None`` = emission off)."""
+
+    return resolve_authn_event_emitter(ctx, spec)
 
 
 # ----------------------- #
@@ -261,6 +283,13 @@ class ConfigurableAuthn:
     actor_claim: str | None = attrs.field(default=None)
     """Token claim carrying the RFC 8693 delegation actor; ``None`` ignores delegation."""
 
+    lockout: LockoutConfig | None = attrs.field(default=None)
+    """Optional fixed-window login lockout policy for the password path; ``None`` disables it."""
+
+    lockout_counter_route: StrKey = attrs.field(default=LOCKOUT_COUNTER_ROUTE)
+    """Counter route the lockout guard resolves its ``CounterPort`` from (plain
+    registrations match any route, so a single app-wide counter backend suffices)."""
+
     # ....................... #
 
     def __call__(self, ctx: ExecutionContext, spec: AuthnSpec) -> AuthnPort:
@@ -292,6 +321,14 @@ class ConfigurableAuthn:
         resolver = ctx.deps.provide(PrincipalResolverDepKey, route=spec.name)(ctx, spec)
         eligibility = _resolve_eligibility(ctx, spec)
 
+        guard: LoginLockoutGuard | None = None
+
+        if self.lockout is not None:
+            guard = LoginLockoutGuard(
+                counter=ctx.counter(CounterSpec(name=self.lockout_counter_route)),
+                config=self.lockout,
+            )
+
         return AuthnOrchestrator(
             resolver=resolver,
             eligibility=eligibility,
@@ -300,6 +337,8 @@ class ConfigurableAuthn:
             token_verifier=token_v,
             api_key_verifier=api_key_v,
             actor_claim=self.actor_claim,
+            events=_resolve_events(ctx, spec),
+            lockout=guard,
         )
 
 
@@ -353,6 +392,7 @@ class ConfigurablePrincipalDeactivation:
             principal_registry=registry,
             token_lifecycle=token_lifecycle,
             credentials=credentials,
+            events=_resolve_events(ctx, spec),
         )
 
 
@@ -383,6 +423,7 @@ class ConfigurableTokenLifecycle:
             session_qry=ctx.doc.query(session_spec),
             session_cmd=ctx.doc.command(session_spec),
             eligibility=_resolve_eligibility(ctx, spec),
+            events=_resolve_events(ctx, spec),
         )
 
 
@@ -422,6 +463,7 @@ class ConfigurablePasswordLifecycle:
             session_qry=ctx.doc.query(session_spec) if revoke else None,
             session_cmd=ctx.doc.command(session_spec) if revoke else None,
             revoke_sessions_on_password_change=revoke,
+            events=_resolve_events(ctx, spec),
         )
 
 
@@ -467,6 +509,7 @@ class ConfigurablePasswordReset:
             session_qry=ctx.doc.query(session_spec) if revoke else None,
             session_cmd=ctx.doc.command(session_spec) if revoke else None,
             revoke_sessions_on_reset=revoke,
+            events=_resolve_events(ctx, spec),
         )
 
 
@@ -535,3 +578,25 @@ class ConfigurablePasswordAccountProvisioning:
             invite_qry=invite_qry,
             invite_cmd=invite_cmd,
         )
+
+
+# ....................... #
+# Event sink factory
+
+
+@final
+@attrs.define(slots=True, frozen=True, kw_only=True)
+class ConfigurableLoggingAuthnEventSink:
+    """Build the core :class:`LoggingAuthnEventSink` (no execution-context dependencies).
+
+    Pass as ``AuthnDepsModule(events=ConfigurableLoggingAuthnEventSink())`` for
+    one structured log line per authn event.
+    """
+
+    def __call__(
+        self,
+        ctx: ExecutionContext,
+        spec: AuthnSpec,
+    ) -> AuthnEventSink:
+        _ = ctx, spec
+        return LoggingAuthnEventSink()

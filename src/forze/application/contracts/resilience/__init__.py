@@ -1,6 +1,12 @@
 """Resilience policy pipeline contracts."""
 
-from .deps import ResilienceDeps, ResilienceExecutorDepKey
+from .deps import (
+    PortPolicy,
+    PortPolicyTable,
+    ResilienceDeps,
+    ResilienceExecutorDepKey,
+    ResiliencePortPoliciesDepKey,
+)
 from .ports import ResilienceExecutorPort
 from .specs import ResilienceSpec
 from .value_objects import (
@@ -11,6 +17,7 @@ from .value_objects import (
     HedgeSafety,
     HedgeStrategy,
     JitterMode,
+    RateLimitStrategy,
     ResiliencePolicy,
     RetryBudget,
     RetryStrategy,
@@ -28,10 +35,14 @@ __all__ = [
     "HedgeSafety",
     "HedgeStrategy",
     "JitterMode",
+    "PortPolicy",
+    "PortPolicyTable",
+    "RateLimitStrategy",
     "ResilienceDeps",
     "ResilienceExecutorDepKey",
-    "ResilienceExecutorPort",
     "ResiliencePolicy",
+    "ResiliencePortPoliciesDepKey",
+    "ResilienceExecutorPort",
     "ResilienceSpec",
     "RetryBudget",
     "RetryStrategy",

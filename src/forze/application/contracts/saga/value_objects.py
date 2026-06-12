@@ -115,6 +115,7 @@ def validate_saga_order(
                 raise exc.configuration(
                     f"Saga {saga_name!r}: at most one pivot step is allowed."
                 )
+
             seen_pivot = True
 
         else:  # RETRYABLE
@@ -123,6 +124,7 @@ def validate_saga_order(
                     f"Saga {saga_name!r}: retryable step {name!r} requires a preceding "
                     "pivot step."
                 )
+
             seen_retryable = True
 
 
@@ -161,6 +163,7 @@ class SagaDefinition(BaseSpec, Generic[Ctx]):
                     if step.kind is SagaStepKind.RETRYABLE
                     else "declares retry_policy"
                 )
+
                 raise exc.configuration(
                     f"Saga {self.name!r}: step {step.name!r} {reason} and must declare "
                     "idempotent=True (re-execution must be safe)."

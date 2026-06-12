@@ -79,6 +79,27 @@ class TestForzeExceptionHandler:
         assert response.headers.get(ERROR_CODE_HEADER) == "core.validation"
 
     @pytest.mark.asyncio
+    async def test_throttled_returns_429(self) -> None:
+        err = exc.throttled("Rate limit exceeded", code="rate_limited")
+        request = Request(scope={"type": "http", "path": "/", "method": "GET"})
+        response = await _forze_exception_handler(request, err)
+        assert response.status_code == 429
+        assert response.headers.get(ERROR_CODE_HEADER) == "rate_limited"
+
+    @pytest.mark.asyncio
+    async def test_throttled_exposes_summary_but_not_details(
+        self, error_log_buf: io.StringIO
+    ) -> None:
+        # 429 is a client error: the summary stays visible, but the egress
+        # policy hides details (policy names / routes are internal wiring).
+        err = exc.throttled("Rate limit exceeded", details={"policy": "p"})
+        request = Request(scope={"type": "http", "path": "/", "method": "GET"})
+        response = await _forze_exception_handler(request, err)
+        body = json.loads(response.body)
+        assert body == {"detail": "Rate limit exceeded"}
+        assert _json_records(error_log_buf) == []
+
+    @pytest.mark.asyncio
     async def test_internal_returns_500(self) -> None:
         err = exc.internal("Something went wrong", code="internal")
         request = Request(scope={"type": "http", "path": "/", "method": "GET"})

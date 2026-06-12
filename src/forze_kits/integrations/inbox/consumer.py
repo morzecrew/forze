@@ -67,8 +67,13 @@ async def process_with_inbox[M](
     handler's writes commit atomically. A redelivered message (already marked in a
     prior committed transaction) is skipped.
 
-    The dedup id defaults to ``message.key or message.id`` (outbox relay sets
-    ``key`` to the integration ``event_id``); pass *message_id* to override.
+    **Dedup id priority**: an explicit *message_id* extractor wins; otherwise
+    the ``forze_event_id`` header (written by the outbox relay), then
+    ``message.key``, then ``message.id``. The header outranks ``key`` because
+    the relay publishes ``key`` as the staged *ordering key* when one is set —
+    two **different** events of the same aggregate then share a ``key`` and
+    must not dedupe each other, while a redelivery of the **same** event keeps
+    its ``forze_event_id`` and is skipped.
 
     **Envelope rebinding** — when the message carries the well-known envelope
     headers (see :mod:`forze.application.contracts.envelope`, written by the
@@ -97,23 +102,30 @@ async def process_with_inbox[M](
     :returns: ``True`` if the message was processed, ``False`` if skipped as a duplicate.
     """
 
+    headers = _message_headers(message)
+    header_event_id = headers.get(HEADER_EVENT_ID)
+
     if message_id is not None:
         dedup_id: str | None = message_id(message)
 
     else:
-        dedup_id = getattr(message, "key", None) or getattr(message, "id", None)
+        dedup_id = (
+            header_event_id
+            or getattr(message, "key", None)
+            or getattr(message, "id", None)
+        )
 
     if not dedup_id:
         raise exc.precondition(
-            "Cannot deduplicate message: no key or id; pass a message_id extractor",
+            "Cannot deduplicate message: no event-id header, key, or id; "
+            "pass a message_id extractor",
         )
 
-    headers = _message_headers(message)
     correlation_id = _parse_uuid(headers.get(HEADER_CORRELATION_ID))
 
     with ExitStack() as stack:
         if correlation_id is not None:
-            causation_id = _parse_uuid(headers.get(HEADER_EVENT_ID)) or _parse_uuid(
+            causation_id = _parse_uuid(header_event_id) or _parse_uuid(
                 getattr(message, "key", None)
             )
             current = ctx.inv_ctx.get_metadata()

@@ -1,6 +1,7 @@
 from datetime import datetime
-from typing import Mapping
+from typing import Literal, Mapping, final
 
+import attrs
 import msgspec
 
 # ----------------------- #
@@ -84,3 +85,37 @@ class StoredObject(_InternalMetadata):
 
     description: str | None = None
     """Optional human-readable description."""
+
+
+# ....................... #
+
+
+@final
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class PresignedUrl:
+    """A time-limited URL granting direct (unauthenticated) object access.
+
+    **Trust model.** Anyone holding :attr:`url` can perform :attr:`method` on
+    the object until :attr:`expires_at` — the URL *is* the credential. Treat
+    it like a secret: hand it only to the intended client, prefer short
+    expiries, and never log it (:attr:`url` is excluded from ``repr`` so the
+    value object itself is safe to log/trace).
+
+    The backend signature may also bind request headers (e.g. a constrained
+    ``Content-Type`` on uploads); :attr:`headers` carries everything the
+    client **must** send verbatim for the request to verify.
+    """
+
+    url: str = attrs.field(repr=False)
+    """The presigned URL. The bearer credential itself — excluded from
+    ``repr`` so accidental logging of the value object does not leak it."""
+
+    method: Literal["GET", "PUT"]
+    """HTTP method the signature authorizes."""
+
+    expires_at: datetime
+    """UTC instant after which the URL stops verifying."""
+
+    headers: Mapping[str, str] = attrs.field(factory=dict[str, str])
+    """Headers the client **must** send with the request (the signature binds
+    them); empty when the request needs no extra headers."""

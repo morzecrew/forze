@@ -8,6 +8,7 @@ from typing import AsyncGenerator, Sequence
 from pydantic import BaseModel
 
 from forze.application.contracts.stream import (
+    PendingEntry,
     StreamCommandPort,
     StreamGroupQueryPort,
     StreamMessage,
@@ -76,6 +77,39 @@ class _StubStreamGroupQuery:
     async def ack(self, group: str, stream: str, ids: Sequence[str]) -> int:
         return len(ids)
 
+    async def claim(
+        self,
+        group: str,
+        consumer: str,
+        stream: str,
+        *,
+        idle: timedelta,
+        limit: int | None = None,
+    ) -> list[StreamMessage[_Msg]]:
+        return [
+            StreamMessage(
+                stream=stream,
+                id="c1",
+                payload=_Msg(v=4),
+            )
+        ]
+
+    async def pending(
+        self,
+        group: str,
+        stream: str,
+        *,
+        limit: int | None = None,
+    ) -> list[PendingEntry]:
+        return [
+            PendingEntry(
+                id="c1",
+                consumer="c",
+                idle=timedelta(seconds=5),
+                delivery_count=2,
+            )
+        ]
+
 
 class _StubStreamCommand:
     async def append(
@@ -113,6 +147,22 @@ class TestStreamGroupQueryPort:
         stub = _StubStreamGroupQuery()
         assert await stub.read("g", "c", {"a": "0"}) == []
         assert await stub.ack("g", "s", ("1", "2")) == 2
+
+    async def test_claim_and_pending(self) -> None:
+        stub = _StubStreamGroupQuery()
+
+        claimed = await stub.claim("g", "c", "s", idle=timedelta(seconds=30), limit=5)
+        assert [m.id for m in claimed] == ["c1"]
+
+        rows = await stub.pending("g", "s", limit=5)
+        assert rows == [
+            PendingEntry(
+                id="c1",
+                consumer="c",
+                idle=timedelta(seconds=5),
+                delivery_count=2,
+            )
+        ]
 
     async def test_tail_yields_messages(self) -> None:
         stub = _StubStreamGroupQuery()

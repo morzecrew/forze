@@ -9,6 +9,11 @@ from uuid import UUID, uuid4
 import attrs
 
 from forze.application.contracts.authn import AuthnSpec
+from forze.application.contracts.authn.events import (
+    AuthnEventEmitter,
+    AuthnEventKind,
+    login_digest,
+)
 from forze.application.contracts.authn.ports.authn import AuthnPort
 from forze.application.contracts.authn.ports.deactivation import (
     PrincipalDeactivationPort,
@@ -59,6 +64,26 @@ def _route_store(state: MockState, route: str) -> dict[str, Any]:
     authn = identity.setdefault("authn", {})
     assert isinstance(authn, dict)  # nosec: B101
     return authn.setdefault(route, {})  # type: ignore[assignment]
+
+
+def _tenant_uuid(value: Any) -> UUID | None:
+    """Parse the session store's string-or-None tenant id into a UUID for events."""
+
+    return UUID(str(value)) if value else None
+
+
+class _RefreshReuse(Exception):
+    """Internal marker: a rotated refresh token was presented (family revoked).
+
+    Raised under the state lock by ``_validate_refresh``; the caller emits the
+    ``REFRESH_REUSE_DETECTED`` event outside the lock and converts the marker
+    into the same uniform ``Invalid refresh token`` authentication error as
+    every other refresh failure (no failure-mode enumeration toward callers).
+    """
+
+    def __init__(self, session: dict[str, Any]) -> None:
+        super().__init__("refresh token reuse")
+        self.session = session
 
 
 def _assertion_from_store(entry: dict[str, Any]) -> VerifiedAssertion:
@@ -285,8 +310,15 @@ class MockPrincipalEligibilityPort(PrincipalEligibilityPort):
 @final
 @attrs.define(slots=True, kw_only=True)
 class MockPrincipalDeactivationPort(PrincipalDeactivationPort):
+    events: AuthnEventEmitter | None = None
+    """Optional authn event emitter; emits ``PRINCIPAL_DEACTIVATED``."""
+
     async def deactivate(self, principal_id: UUID) -> None:
-        _ = principal_id
+        if self.events is not None:
+            await self.events.emit(
+                AuthnEventKind.PRINCIPAL_DEACTIVATED,
+                principal_id=principal_id,
+            )
 
 
 @final
@@ -318,6 +350,10 @@ class MockTokenLifecyclePort(TokenLifecyclePort):
     eligibility: PrincipalEligibilityPort | None = None
     """Optional eligibility gate applied before issue/refresh (mirrors the real
     adapter); ``None`` skips the gate, matching the allow-all default stub."""
+
+    events: AuthnEventEmitter | None = None
+    """Optional authn event emitter (mirrors the real adapter): ``TOKEN_REFRESHED``
+    on rotation, ``REFRESH_REUSE_DETECTED`` on reuse, ``LOGOUT`` on revoke."""
 
     access_expires_in: timedelta = timedelta(minutes=15)
     """Access token lifetime."""
@@ -362,11 +398,31 @@ class MockTokenLifecyclePort(TokenLifecyclePort):
         ensure_mock_tx_writable(store=f"identity:authn:{self.route}")
 
         now = utcnow()
+        old_session: dict[str, Any] | None = None
+        reused_session: dict[str, Any] | None = None
 
         with self.state.lock:
             store = _route_store(self.state, self.route)
-            old_session = self._validate_refresh(store, refresh_token.token, now)
-            principal_id = str(old_session["principal_id"])
+
+            try:
+                old_session = self._validate_refresh(store, refresh_token.token, now)
+
+            except _RefreshReuse as reuse:
+                # Family already revoked under the lock; emit (best-effort,
+                # outside the lock) before the uniform error propagates.
+                reused_session = reuse.session
+
+        if reused_session is not None or old_session is None:
+            if self.events is not None and reused_session is not None:
+                await self.events.emit(
+                    AuthnEventKind.REFRESH_REUSE_DETECTED,
+                    principal_id=UUID(str(reused_session["principal_id"])),
+                    tenant_id=_tenant_uuid(reused_session.get("tenant_id")),
+                )
+
+            raise exc.authentication("Invalid refresh token")
+
+        principal_id = str(old_session["principal_id"])
 
         if self.eligibility is not None:
             await self.eligibility.require_authentication_allowed(UUID(principal_id))
@@ -386,6 +442,13 @@ class MockTokenLifecyclePort(TokenLifecyclePort):
             old_session["rotated_at"] = now
             old_session["replaced_by"] = new_sid
 
+        if self.events is not None:
+            await self.events.emit(
+                AuthnEventKind.TOKEN_REFRESHED,
+                principal_id=UUID(principal_id),
+                tenant_id=_tenant_uuid(old_session.get("tenant_id")),
+            )
+
         return tokens
 
     # ....................... #
@@ -399,6 +462,12 @@ class MockTokenLifecyclePort(TokenLifecyclePort):
                 store,
                 principal_id=str(identity.principal_id),
                 now=utcnow(),
+            )
+
+        if self.events is not None:
+            await self.events.emit(
+                AuthnEventKind.LOGOUT,
+                principal_id=identity.principal_id,
             )
 
     # ....................... #
@@ -428,14 +497,16 @@ class MockTokenLifecyclePort(TokenLifecyclePort):
 
         if session.get("rotated_at") is not None:
             # Refresh token reuse: revoke the whole rotation family, mirroring
-            # the real adapter's revoke_chain_of_tokens semantics.
+            # the real adapter's revoke_chain_of_tokens semantics. The caller
+            # turns this marker into the uniform error (and an event) — the
+            # emission cannot happen here because the state lock is held.
             _revoke_sessions_matching(
                 store,
                 principal_id=str(session["principal_id"]),
                 family_id=str(session["family_id"]),
                 now=now,
             )
-            raise exc.authentication("Invalid refresh token")
+            raise _RefreshReuse(session)
 
         if session["expires_at"] <= now:
             raise exc.authentication("Refresh token expired")
@@ -527,6 +598,10 @@ class MockPasswordLifecyclePort(PasswordLifecyclePort):
     """Optional eligibility gate applied before the change (mirrors the real
     adapter); ``None`` skips the gate, matching the allow-all default stub."""
 
+    events: AuthnEventEmitter | None = None
+    """Optional authn event emitter (mirrors the real adapter):
+    ``PASSWORD_CHANGED`` after a successful change."""
+
     # ....................... #
 
     async def change_password(
@@ -575,6 +650,12 @@ class MockPasswordLifecyclePort(PasswordLifecyclePort):
                 now=utcnow(),
             )
 
+        if self.events is not None:
+            await self.events.emit(
+                AuthnEventKind.PASSWORD_CHANGED,
+                principal_id=identity.principal_id,
+            )
+
 
 @final
 @attrs.define(slots=True, kw_only=True)
@@ -605,6 +686,11 @@ class MockPasswordResetPort(PasswordResetPort):
     eligibility: PrincipalEligibilityPort | None = None
     """Optional eligibility gate (mirrors the real adapter); ``None`` skips the
     gate, matching the allow-all default stub."""
+
+    events: AuthnEventEmitter | None = None
+    """Optional authn event emitter (mirrors the real adapter):
+    ``PASSWORD_RESET_REQUESTED`` on actual issuance only,
+    ``PASSWORD_RESET_COMPLETED`` after a successful reset."""
 
     expires_in: timedelta = timedelta(hours=1)
     """Reset token lifetime (matches ``ResetTokenConfig`` default)."""
@@ -664,6 +750,13 @@ class MockPasswordResetPort(PasswordResetPort):
                 "used_at": None,
             }
 
+        if self.events is not None:
+            await self.events.emit(
+                AuthnEventKind.PASSWORD_RESET_REQUESTED,
+                principal_id=UUID(str(principal)),
+                login_digest=login_digest(login),
+            )
+
         return IssuedPasswordReset(
             token=token,
             principal_id=UUID(str(principal)),
@@ -706,6 +799,14 @@ class MockPasswordResetPort(PasswordResetPort):
                 store,
                 principal_id=str(record["principal_id"]),
                 now=now,
+            )
+
+            reset_principal_id = UUID(str(record["principal_id"]))
+
+        if self.events is not None:
+            await self.events.emit(
+                AuthnEventKind.PASSWORD_RESET_COMPLETED,
+                principal_id=reset_principal_id,
             )
 
 

@@ -41,8 +41,9 @@ policy.
 | `not_found` | the target doesn't exist | ✅ | — | `core.not_found` |
 | `authentication` | who is calling | — | — | `core.authentication` |
 | `authorization` | what they may do | — | — | `core.authorization` |
-| `configuration` | the app is wired wrong | ✅ | — | `core.configuration` |
+| `configuration` | the app is wired wrong | — | — | `core.configuration` |
 | `infrastructure` | a backing system failed | — | ✅ | `core.infrastructure` |
+| `throttled` | a rate limit rejected the call | — | ✅ | `core.throttled` |
 | `internal` | an unexpected bug | — | — | `core.internal` |
 
 ## Outcomes

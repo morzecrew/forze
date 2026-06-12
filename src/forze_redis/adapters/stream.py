@@ -16,6 +16,7 @@ from redis.exceptions import ConnectionError as RedisConnectionError
 from redis.exceptions import TimeoutError as RedisTimeoutError
 
 from forze.application.contracts.stream import (
+    PendingEntry,
     StreamCommandPort,
     StreamGroupQueryPort,
     StreamMessage,
@@ -34,6 +35,12 @@ _STREAM_READ_RETRY_EXC: tuple[type[BaseException], ...] = (
     TimeoutError,
     OSError,
 )
+
+_AUTOCLAIM_EXHAUSTED: str = "0-0"
+"""``XAUTOCLAIM`` cursor value signalling the pending list was fully scanned."""
+
+_PENDING_PAGE_SIZE: int = 100
+"""``XPENDING`` page size used when walking an unbounded pending list."""
 
 
 def _stream_wire_and_back(
@@ -173,7 +180,10 @@ class RedisStreamGroupAdapter[M: BaseModel](StreamGroupQueryPort[M], TenancyMixi
 
     Reads via ``XREADGROUP`` with ``noack=False`` so messages enter the pending
     list until :meth:`ack` is called.  :meth:`tail` polls continuously,
-    advancing the per-stream cursor after each message.
+    advancing the per-stream cursor after each message.  Pending-entry recovery
+    maps to the native commands: :meth:`claim` sweeps the PEL with
+    ``XAUTOCLAIM`` (looping the scan cursor) and :meth:`pending` pages the
+    extended ``XPENDING`` form.
     """
 
     client: RedisClientPort
@@ -246,3 +256,98 @@ class RedisStreamGroupAdapter[M: BaseModel](StreamGroupQueryPort[M], TenancyMixi
 
     async def ack(self, group: str, stream: str, ids: Sequence[str]) -> int:
         return await self.client.xack(_stream_physical(self, stream), group, ids)
+
+    # ....................... #
+
+    async def claim(
+        self,
+        group: str,
+        consumer: str,
+        stream: str,
+        *,
+        idle: timedelta,
+        limit: int | None = None,
+    ) -> list[StreamMessage[M]]:
+        physical = _stream_physical(self, stream)
+        min_idle_ms = int(idle.total_seconds() * 1000)
+
+        out: list[StreamMessage[M]] = []
+        cursor = _AUTOCLAIM_EXHAUSTED
+
+        while True:
+            remaining = None if limit is None else limit - len(out)
+
+            if remaining is not None and remaining <= 0:
+                break
+
+            # One XAUTOCLAIM page; ``count=None`` lets the server default
+            # (100) drive unbounded sweeps, page by page.
+            next_cursor, entries, _deleted = await self.client.xautoclaim(
+                physical,
+                group,
+                consumer,
+                min_idle_ms=min_idle_ms,
+                start_id=cursor,
+                count=remaining,
+            )
+
+            for msg_id, fields in entries:
+                out.append(self.codec.decode(stream, msg_id, fields))
+
+            if next_cursor == _AUTOCLAIM_EXHAUSTED:
+                break
+
+            cursor = next_cursor
+
+        return out
+
+    # ....................... #
+
+    async def pending(
+        self,
+        group: str,
+        stream: str,
+        *,
+        limit: int | None = None,
+    ) -> list[PendingEntry]:
+        physical = _stream_physical(self, stream)
+
+        out: list[PendingEntry] = []
+        cursor = "-"
+
+        while True:
+            remaining = None if limit is None else limit - len(out)
+
+            if remaining is not None and remaining <= 0:
+                break
+
+            count = (
+                _PENDING_PAGE_SIZE
+                if remaining is None
+                else min(_PENDING_PAGE_SIZE, remaining)
+            )
+
+            rows = await self.client.xpending(
+                physical,
+                group,
+                count=count,
+                start_id=cursor,
+            )
+
+            for msg_id, owner, idle_ms, delivered in rows:
+                out.append(
+                    PendingEntry(
+                        id=msg_id,
+                        consumer=owner,
+                        idle=timedelta(milliseconds=idle_ms),
+                        delivery_count=delivered,
+                    )
+                )
+
+            if len(rows) < count:
+                break
+
+            # Advance past the last seen id (exclusive range cursor).
+            cursor = f"({rows[-1][0]}"
+
+        return out

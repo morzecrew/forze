@@ -9,8 +9,6 @@ Kept lean (only ``base.exceptions`` + same-package ``SagaStepKind``) to hold the
 ``contracts.saga`` boundary and stay safe to import inside the Temporal workflow sandbox.
 """
 
-from __future__ import annotations
-
 from typing import Sequence, final
 
 import attrs
@@ -32,7 +30,9 @@ class SagaProgress:
     (the in-process executor) share the exact same decision logic.
     """
 
-    saga_name: str
+    saga_name: str  #! TODO: rename ('id' or 'name')
+
+    # ....................... #
 
     _kinds: list[SagaStepKind] = attrs.field(factory=list, init=False)
     _names: list[str] = attrs.field(factory=list, init=False)
@@ -104,7 +104,7 @@ class SagaProgress:
                 },
             )
 
-        return exc.domain(
+        return exc.domain(  #! Why it's domain? It shouldn't be domain
             f"Saga {self.saga_name!r} failed at step {step_name!r}; completed steps "
             "were compensated.",
             code="saga.step_failed",

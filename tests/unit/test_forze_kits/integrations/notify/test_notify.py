@@ -8,6 +8,7 @@ from uuid import uuid4
 import pytest
 from pydantic import BaseModel
 
+from forze.application.contracts.envelope import HEADER_EVENT_ID
 from forze.application.contracts.outbox import IntegrationEvent
 from forze.application.contracts.queue import QueueMessage
 from forze.base.exceptions import CoreException
@@ -176,6 +177,86 @@ def test_integration_event_id_uses_valid_key() -> None:
         payload=_ProjectCreated(project_id="abc"),
         type="project.created",
         key=str(event_id),
+    )
+
+    event = integration_event_from_queue_message(message)
+
+    assert event.event_id == event_id
+
+
+# ....................... #
+# event_id priority: forze_event_id header > UUID key > broker identity.
+
+
+def test_integration_event_id_header_beats_uuid_shaped_key() -> None:
+    """A UUID-shaped ordering key in ``key`` must not masquerade as the event id."""
+
+    event_id = uuid4()
+    ordering_key = uuid4()  # aggregate id used as ordering key — UUID-shaped!
+    message = QueueMessage(
+        queue="jobs",
+        id="broker-msg-8",
+        payload=_ProjectCreated(project_id="abc"),
+        type="project.created",
+        key=str(ordering_key),
+        headers={HEADER_EVENT_ID: str(event_id)},
+    )
+
+    event = integration_event_from_queue_message(message)
+
+    assert event.event_id == event_id
+    assert event.event_id != ordering_key
+
+
+def test_integration_event_ids_distinct_for_same_ordering_key() -> None:
+    """Two different events sharing an ordering key keep distinct event ids."""
+
+    ordering_key = str(uuid4())
+
+    def build(event_id) -> QueueMessage[_ProjectCreated]:
+        return QueueMessage(
+            queue="jobs",
+            id=f"broker-{event_id}",
+            payload=_ProjectCreated(project_id="abc"),
+            type="project.created",
+            key=ordering_key,
+            headers={HEADER_EVENT_ID: str(event_id)},
+        )
+
+    first_id, second_id = uuid4(), uuid4()
+    first = integration_event_from_queue_message(build(first_id))
+    second = integration_event_from_queue_message(build(second_id))
+
+    assert first.event_id == first_id
+    assert second.event_id == second_id
+    assert first.event_id != second.event_id
+
+
+def test_integration_event_id_malformed_header_falls_back_to_key() -> None:
+    event_id = uuid4()
+    message = QueueMessage(
+        queue="jobs",
+        id="broker-msg-9",
+        payload=_ProjectCreated(project_id="abc"),
+        type="project.created",
+        key=str(event_id),
+        headers={HEADER_EVENT_ID: "not-a-uuid"},
+    )
+
+    event = integration_event_from_queue_message(message)
+
+    assert event.event_id == event_id
+
+
+def test_integration_event_id_header_with_non_uuid_key_uses_header() -> None:
+    event_id = uuid4()
+    message = QueueMessage(
+        queue="jobs",
+        id="broker-msg-10",
+        payload=_ProjectCreated(project_id="abc"),
+        type="project.created",
+        key="order-1",  # non-UUID ordering key
+        headers={HEADER_EVENT_ID: str(event_id)},
     )
 
     event = integration_event_from_queue_message(message)

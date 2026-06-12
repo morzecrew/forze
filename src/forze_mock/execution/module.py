@@ -15,6 +15,7 @@ from forze.application.contracts.authn import (
     ApiKeyLifecycleDepKey,
     ApiKeyVerifierDepKey,
     AuthnDepKey,
+    AuthnEventSinkDepKey,
     AuthnSpec,
     PasswordAccountProvisioningDepKey,
     PasswordLifecycleDepKey,
@@ -25,6 +26,7 @@ from forze.application.contracts.authn import (
     PrincipalResolverDepKey,
     TokenLifecycleDepKey,
     TokenVerifierDepKey,
+    resolve_authn_event_emitter,
 )
 from forze.application.contracts.authz import (
     AuthzDecisionDepKey,
@@ -138,7 +140,12 @@ from forze.application.execution import (
 )
 from forze.application.execution.domain import domain_dispatcher_provider
 from forze.application.execution.outbox import build_staging_outbox_command_for_store
-from forze.application.integrations.authn import AuthnOrchestrator
+from forze.application.integrations.authn import (
+    LOCKOUT_COUNTER_ROUTE,
+    AuthnOrchestrator,
+    LockoutConfig,
+    LoginLockoutGuard,
+)
 from forze.application.integrations.outbox import StagingOutboxCommand
 from forze.application.integrations.search import SearchResultSnapshot
 from forze.base.exceptions import exc
@@ -172,6 +179,7 @@ from forze_mock.adapters import (
     MockStrictTxManagerAdapter,
     MockTxManagerAdapter,
 )
+from forze_mock.adapters.events import RecordingAuthnEventSink
 from forze_mock.adapters.identity import (
     MockApiKeyLifecyclePort,
     MockApiKeyVerifierPort,
@@ -769,7 +777,10 @@ class ConfigurableMockAuthn(_MockFactoryBase):
     password/token/API-key authentication runs for real against the seeded mock
     verifiers, principal resolver, and eligibility gate of the same route, with
     the spec's ``enabled_methods`` gating each credential family — exactly like
-    the identity plane's ``ConfigurableAuthn``, minus the crypto.
+    the identity plane's ``ConfigurableAuthn``, minus the crypto. The optional
+    event emitter and login lockout guard wire in the same way the identity
+    factory wires them (events resolve from ``AuthnEventSinkDepKey``; lockout
+    comes from the module's ``lockout`` config over the mock counter).
     """
 
     def __call__(
@@ -782,6 +793,14 @@ class ConfigurableMockAuthn(_MockFactoryBase):
 
         methods = frozenset(spec.enabled_methods)
 
+        guard: LoginLockoutGuard | None = None
+
+        if self.module.lockout is not None and "password" in methods:
+            guard = LoginLockoutGuard(
+                counter=context.counter(CounterSpec(name=LOCKOUT_COUNTER_ROUTE)),
+                config=self.module.lockout,
+            )
+
         return AuthnOrchestrator(
             resolver=port(PrincipalResolverDepKey),
             eligibility=port(PrincipalEligibilityDepKey),
@@ -793,6 +812,8 @@ class ConfigurableMockAuthn(_MockFactoryBase):
             api_key_verifier=(
                 port(ApiKeyVerifierDepKey) if "api_key" in methods else None
             ),
+            events=resolve_authn_event_emitter(context, spec),
+            lockout=guard,
         )
 
 
@@ -810,6 +831,7 @@ class ConfigurableMockTokenLifecycle(_MockFactoryBase):
             state=self._state(context),
             route=str(spec.name),
             eligibility=_route_eligibility(context, spec),
+            events=resolve_authn_event_emitter(context, spec),
         )
 
 
@@ -827,6 +849,7 @@ class ConfigurableMockPasswordLifecycle(_MockFactoryBase):
             state=self._state(context),
             route=str(spec.name),
             eligibility=_route_eligibility(context, spec),
+            events=resolve_authn_event_emitter(context, spec),
         )
 
 
@@ -844,6 +867,22 @@ class ConfigurableMockPasswordReset(_MockFactoryBase):
             state=self._state(context),
             route=str(spec.name),
             eligibility=_route_eligibility(context, spec),
+            events=resolve_authn_event_emitter(context, spec),
+        )
+
+
+@final
+@attrs.define(slots=True, kw_only=True)
+class ConfigurableMockPrincipalDeactivation(_MockFactoryBase):
+    """Build the mock principal deactivation stub with the route's event emitter."""
+
+    def __call__(
+        self,
+        context: ExecutionContext,
+        spec: AuthnSpec,
+    ) -> MockPrincipalDeactivationPort:
+        return MockPrincipalDeactivationPort(
+            events=resolve_authn_event_emitter(context, spec),
         )
 
 
@@ -898,6 +937,18 @@ class MockDepsModule(DepsModule):
     (``code="read_only_tx"``). Default ``False`` keeps the documented no-op
     transaction manager — zero behavior change.
     """
+
+    authn_events: bool = attrs.field(default=False)
+    """Register :class:`~forze_mock.adapters.events.RecordingAuthnEventSink`
+    for every authn route (optional — like the real module's ``events`` knob,
+    nothing is recorded by default). Recorded events land on
+    ``state.authn_events`` for seed-style test inspection. A custom sink can
+    still be merged under ``AuthnEventSinkDepKey`` after the module's output."""
+
+    lockout: LockoutConfig | None = attrs.field(default=None)
+    """Optional fixed-window login lockout for password authn routes, backed by
+    the in-memory mock counter (route ``authn_lockout``). ``None`` disables it,
+    mirroring the real :class:`~forze_identity.authn.AuthnDepsModule`."""
 
     def __call__(self) -> Deps:
         document = ConfigurableMockDocument(module=self)
@@ -1008,9 +1059,10 @@ class MockDepsModule(DepsModule):
             PrincipalEligibilityDepKey: _route_stubs(
                 MockPrincipalEligibilityPort, authn_keys
             ),
-            PrincipalDeactivationDepKey: _route_stubs(
-                MockPrincipalDeactivationPort, authn_keys
-            ),
+            PrincipalDeactivationDepKey: {
+                route: ConfigurableMockPrincipalDeactivation(module=self)
+                for route in authn_keys
+            },
             TokenLifecycleDepKey: {route: token_lifecycle for route in authn_keys},
             PasswordLifecycleDepKey: {
                 route: password_lifecycle for route in authn_keys
@@ -1042,5 +1094,11 @@ class MockDepsModule(DepsModule):
                 MockTenantManagementPort, tenancy_keys, state=self.state
             ),
         }
+
+        if self.authn_events:
+            recording = RecordingAuthnEventSink(state=self.state)
+            identity_routed[AuthnEventSinkDepKey] = {
+                route: ConstantMockPortFactory(port=recording) for route in authn_keys
+            }
 
         return Deps.merge(Deps.plain(deps), Deps.routed(identity_routed))

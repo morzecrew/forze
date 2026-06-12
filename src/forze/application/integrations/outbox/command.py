@@ -37,12 +37,14 @@ class StagingOutboxCommand[M: BaseModel]:
         *,
         event_id: UUID | None = None,
         occurred_at: datetime | None = None,
+        ordering_key: str | None = None,
     ) -> None:
         await self.staging.stage(
             event_type,
             payload,
             event_id=event_id,
             occurred_at=occurred_at,
+            ordering_key=ordering_key,
         )
 
     # ....................... #

@@ -11,6 +11,7 @@ from forze.application.contracts.resilience import (
     BulkheadStrategy,
     CircuitBreakerStrategy,
     HedgeStrategy,
+    RateLimitStrategy,
     ResiliencePolicy,
     RetryStrategy,
     TimeoutStrategy,
@@ -20,7 +21,7 @@ from forze.base.primitives import MappingConverter, StrKey, StrKeyMapping
 
 from ..tracing import record
 from .backoff import compute_delay
-from .state import BudgetState, BulkheadState, Transition
+from .state import BudgetState, BulkheadState, RateLimitState, Transition
 from .store import CircuitBreakerStore, InMemoryCircuitBreakerStore
 
 # ----------------------- #
@@ -34,11 +35,11 @@ _StateKey = tuple[StrKey, StrKey | None]
 class InProcessResilienceExecutor:
     """Process-wide singleton applying named policies.
 
-    Bulkhead/budget state lives on this instance keyed by ``(policy_name, route)``;
-    breaker state lives behind :attr:`breaker_store` (process-local by default, or a
-    distributed store so the fleet trips together). The instance must be registered
-    once via :meth:`Deps.plain` (not a per-scope factory), or that state would reset
-    every request.
+    Bulkhead/rate-limit/budget state lives on this instance keyed by
+    ``(policy_name, route)``; breaker state lives behind :attr:`breaker_store`
+    (process-local by default, or a distributed store so the fleet trips
+    together). The instance must be registered once via :meth:`Deps.plain` (not
+    a per-scope factory), or that state would reset every request.
     """
 
     policies: StrKeyMapping[ResiliencePolicy] = attrs.field(
@@ -67,6 +68,12 @@ class InProcessResilienceExecutor:
 
     _bulkheads: dict[_StateKey, BulkheadState] = attrs.field(factory=dict, init=False)
     """Bulkhead state for the executor."""
+
+    _rate_limits: dict[_StateKey, RateLimitState] = attrs.field(
+        factory=dict,
+        init=False,
+    )
+    """Rate limit token-bucket state for the executor."""
 
     _budgets: dict[_StateKey, BudgetState] = attrs.field(factory=dict, init=False)
     """Budget state for the executor."""
@@ -197,10 +204,13 @@ class InProcessResilienceExecutor:
         route: StrKey | None,
     ) -> T:
         # Fixed composition order, innermost-out: timeout -> retry -> circuit
-        # breaker -> bulkhead. The breaker deliberately wraps *outside* retry:
-        # it admits once and records one outcome per logical call, so a retry
-        # storm counts as a single breaker failure (thresholds track logical
-        # calls, not attempts). Mirrors ResiliencePolicy's canonical order.
+        # breaker -> bulkhead -> rate limit. The breaker deliberately wraps
+        # *outside* retry: it admits once and records one outcome per logical
+        # call, so a retry storm counts as a single breaker failure (thresholds
+        # track logical calls, not attempts). The rate limit wraps outermost:
+        # throttled calls are rejected before consuming a bulkhead slot or
+        # registering a breaker outcome. Mirrors ResiliencePolicy's canonical
+        # order.
         call: Callable[[], Awaitable[T]] = fn
         timeout = pol.timeout
 
@@ -241,6 +251,16 @@ class InProcessResilienceExecutor:
                 return await self._with_bulkhead(bh, bh_inner, pol, route)
 
             call = with_bulkhead
+
+        rate_limit = pol.rate_limit
+
+        if rate_limit is not None:
+            rl, rl_inner = rate_limit, call
+
+            async def with_rate_limit() -> T:
+                return await self._with_rate_limit(rl, rl_inner, pol, route)
+
+            call = with_rate_limit
 
         return await call()
 
@@ -347,6 +367,30 @@ class InProcessResilienceExecutor:
 
     # ....................... #
 
+    async def _with_rate_limit[T](
+        self,
+        strat: RateLimitStrategy,
+        inner: Callable[[], Awaitable[T]],
+        pol: ResiliencePolicy,
+        route: StrKey | None,
+    ) -> T:
+        state = self._rate_limit_for(strat, pol, route)
+
+        if not state.try_acquire(self.clock()):
+            self._emit("rate_limit_reject", pol, route)
+            raise exc.throttled(
+                f"Rate limit exceeded for policy {pol.name!r}",
+                code="rate_limited",
+                details={
+                    "policy": str(pol.name),
+                    "route": str(route) if route is not None else None,
+                },
+            )
+
+        return await inner()
+
+    # ....................... #
+
     async def _with_bulkhead[T](
         self,
         strat: BulkheadStrategy,
@@ -387,6 +431,27 @@ class InProcessResilienceExecutor:
 
         elif transition == "closed":
             self._emit("breaker_close", pol, route)
+
+    # ....................... #
+
+    def _rate_limit_for(
+        self,
+        strat: RateLimitStrategy,
+        pol: ResiliencePolicy,
+        route: StrKey | None,
+    ) -> RateLimitState:
+        key = (pol.name, route)
+        state = self._rate_limits.get(key)
+
+        if state is None:
+            state = RateLimitState(
+                rate=strat.permits / strat.per.total_seconds(),
+                capacity=float(strat.capacity),
+                updated_at=self.clock(),
+            )
+            self._rate_limits[key] = state
+
+        return state
 
     # ....................... #
 

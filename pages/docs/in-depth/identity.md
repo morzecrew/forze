@@ -89,6 +89,53 @@ authorizes the operation, and a `wrap` step injects scope filters into
 list/search queries. Both read the bound `AuthnIdentity` and `TenantIdentity` to
 build the decision.
 
+## Authn events and login lockout
+
+Authentication flows can narrate themselves. Wire an optional **authn event
+sink** and every flow emits a structured `AuthnEvent` — login success/failure,
+lockout, token refresh, **refresh-reuse detection** (the token-theft signal),
+logout, password change, reset request/completion, principal deactivation:
+
+```python
+from datetime import timedelta
+
+from forze.application.integrations.authn import LockoutConfig
+from forze_identity.authn import AuthnDepsModule, ConfigurableLoggingAuthnEventSink
+
+authn_module = AuthnDepsModule(
+    kernel=kernel,
+    authn={"main": frozenset({"password", "token"})},
+    events=ConfigurableLoggingAuthnEventSink(),  # one log line per event
+    lockout=LockoutConfig(threshold=5, window=timedelta(minutes=15)),
+)
+```
+
+Emission is **best-effort by contract**: a sink failure (or no sink at all)
+never fails the auth flow, and the failed-login event is emitted *after* the
+verifier has produced its uniform error, so the Argon2 timing parity between
+unknown-login and wrong-password failures is untouched. The shipped
+`LoggingAuthnEventSink` logs failures, lockouts, and refresh reuse at WARNING
+and everything else at INFO; in tests, `MockDepsModule(authn_events=True)`
+records events onto `state.authn_events` for inspection.
+
+**Privacy: events carry a digest, never the login.** `AuthnEvent.login_digest`
+is `sha256("lockout:" + login.lower())` — unpeppered *pseudonymization, not
+secrecy*: it keeps raw logins out of logs and counter key spaces, while anyone
+who can already read those stores could brute-force a known login anyway. The
+same digest keys the lockout counters, so a locked login correlates with its
+events.
+
+**Lockout is a fixed window over `CounterPort`.** After `threshold` failed
+attempts within the current window, further attempts raise a `throttled` error
+(`code="login_locked"`, HTTP 429 — retryable by kind) *before* password
+verification, and unlock when the window rolls over. The window is fixed —
+bucketed by `floor(unix_now / window_seconds)` — because `CounterPort` has no
+TTL surface: without key expiry there is nothing to hang a sliding window or a
+`lock_for` duration on (both are noted as future counter-port capabilities, as
+is backend-side expiry of stale buckets, which today remain as dead value-only
+keys). Lockout counts **login strings, not accounts**: a nonexistent login
+locks exactly like a real one, preserving the no-enumeration posture.
+
 ## The identity plane
 
 All of this lives in `forze_identity`, separate from the core: `authn`, `authz`,

@@ -26,8 +26,15 @@ class OutboxCommandPort[M: BaseModel](Protocol):
         *,
         event_id: UUID | None = None,
         occurred_at: datetime | None = None,
+        ordering_key: str | None = None,
     ) -> Awaitable[None]:
-        """Buffer an integration event for a later :meth:`flush`."""
+        """Buffer an integration event for a later :meth:`flush`.
+
+        *ordering_key* partitions delivery on capable transports (SQS FIFO
+        ``MessageGroupId``, stream partition key): same-key events relay in
+        ``created_at`` order on the happy path. It does **not** guarantee
+        ordering — a retrying/failed row never stalls later rows of its key.
+        """
         ...  # pragma: no cover
 
     def stage_many(
@@ -58,8 +65,11 @@ class OutboxQueryPort(Protocol):
     Delivery through the outbox is **at-least-once**, and ordering is **not**
     preserved across failures and retries: a row rescheduled with
     :meth:`mark_retry` (or parked with :meth:`mark_failed`) does not stall
-    later rows of the same route or aggregate. Consumers must key on
-    ``event_id`` and tolerate both redelivery and reordering.
+    later rows of the same route or aggregate — deliberately, so one poison
+    row never head-of-line blocks its key. ``claim_pending`` returns rows in
+    ``created_at`` order, which preserves same-``ordering_key`` order on the
+    happy path. Consumers must dedup on ``event_id`` and tolerate both
+    redelivery and reordering.
     """
 
     spec: OutboxSpec[Any]

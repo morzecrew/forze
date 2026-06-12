@@ -4,10 +4,18 @@ from __future__ import annotations
 
 from datetime import timedelta
 
+import pytest
+
+from forze.application.contracts.deps import DepKey
+from forze.application.contracts.document import DocumentQueryDepKey
+from forze.application.contracts.http import HttpServiceDepKey
 from forze.application.contracts.resilience import (
     BackoffStrategy,
+    PortPolicy,
+    RateLimitStrategy,
     ResilienceExecutorDepKey,
     ResiliencePolicy,
+    ResiliencePortPoliciesDepKey,
     ResilienceSpec,
     RetryStrategy,
 )
@@ -15,7 +23,7 @@ from forze.application.execution import (
     InProcessResilienceExecutor,
     ResilienceDepsModule,
 )
-from forze.base.exceptions import ExceptionKind
+from forze.base.exceptions import CoreException, ExceptionKind
 from tests.support.execution_context import context_from_modules
 
 from forze_mock import MockDepsModule
@@ -95,6 +103,75 @@ class TestModule:
 # ....................... #
 
 
+def _rl_spec() -> ResilienceSpec:
+    policy = ResiliencePolicy(
+        name="rl",
+        strategies=(RateLimitStrategy(permits=1, per=timedelta(seconds=1)),),
+    )
+    return ResilienceSpec(name="catalog", policies={"rl": policy})
+
+
+class TestPortPolicies:
+    def test_registers_port_policy_table(self) -> None:
+        deps = ResilienceDepsModule(
+            spec=_rl_spec(),
+            port_policies=(
+                PortPolicy(key=DocumentQueryDepKey, policy="rl"),
+                PortPolicy(key=HttpServiceDepKey, policy="transient", route="vendor"),
+            ),
+        )()
+
+        table = deps.plain_deps[ResiliencePortPoliciesDepKey]
+        assert set(table) == {DocumentQueryDepKey, HttpServiceDepKey}
+        assert table[DocumentQueryDepKey].policy == "rl"
+        assert table[HttpServiceDepKey].route == "vendor"
+
+    def test_no_port_policies_registers_no_table(self) -> None:
+        deps = ResilienceDepsModule()()
+        assert ResiliencePortPoliciesDepKey not in deps.plain_deps
+
+    def test_duplicate_dep_key_rejected(self) -> None:
+        with pytest.raises(CoreException, match="Duplicate port policy"):
+            ResilienceDepsModule(
+                port_policies=(
+                    PortPolicy(key=DocumentQueryDepKey, policy="occ"),
+                    PortPolicy(key=DocumentQueryDepKey, policy="transient"),
+                ),
+            )
+
+    def test_unknown_policy_name_rejected(self) -> None:
+        module = ResilienceDepsModule(
+            port_policies=(PortPolicy(key=DocumentQueryDepKey, policy="missing"),),
+        )
+
+        with pytest.raises(CoreException, match="unknown resilience policies"):
+            module()
+
+    def test_port_policy_empty_methods_rejected(self) -> None:
+        with pytest.raises(CoreException, match="empty"):
+            PortPolicy(key=DocumentQueryDepKey, policy="occ", methods=())
+
+    def test_port_policy_private_methods_rejected(self) -> None:
+        with pytest.raises(CoreException, match="public"):
+            PortPolicy(key=DocumentQueryDepKey, policy="occ", methods=("_hidden",))
+
+    def test_port_policy_empty_policy_name_rejected(self) -> None:
+        with pytest.raises(CoreException, match="must name"):
+            PortPolicy(key=DocumentQueryDepKey, policy="")
+
+    def test_port_policy_works_for_any_dep_key(self) -> None:
+        # The binding is key-agnostic: any dependency key may carry a policy.
+        custom: DepKey[object] = DepKey("custom_port")
+        module = ResilienceDepsModule(
+            port_policies=(PortPolicy(key=custom, policy="occ"),),
+        )
+        table = module().plain_deps[ResiliencePortPoliciesDepKey]
+        assert table[custom].policy == "occ"
+
+
+# ....................... #
+
+
 class TestMockWiring:
     async def test_passthrough_default_runs(self) -> None:
         ctx = context_from_modules(MockDepsModule())
@@ -128,3 +205,22 @@ class TestMockWiring:
         ctx = context_from_modules(MockDepsModule(resilience="real"))
         executor = ctx.deps.provide(ResilienceExecutorDepKey)
         assert isinstance(executor, InProcessResilienceExecutor)
+
+    async def test_passthrough_ignores_rate_limit_strategies(self) -> None:
+        # The passthrough double interprets no strategies at all, so a policy
+        # that would throttle under the real executor runs unlimited in tests.
+        ctx = context_from_modules(MockDepsModule())
+        executor = ctx.deps.provide(ResilienceExecutorDepKey)
+        assert isinstance(executor, PassthroughResilienceExecutor)
+
+        calls = 0
+
+        async def fn() -> str:
+            nonlocal calls
+            calls += 1
+            return "ok"
+
+        for _ in range(10):
+            assert await ctx.resilience().run(fn, policy="rl") == "ok"
+
+        assert calls == 10

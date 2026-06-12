@@ -6,16 +6,15 @@ Exercised by tests/unit/test_examples/test_quickstart.py (FastAPI TestClient, no
 
 from __future__ import annotations
 
-from contextlib import asynccontextmanager
 from uuid import UUID
 
 from fastapi import FastAPI
 from pydantic import computed_field
 
 from forze.application.contracts.document import DocumentSpec
-from forze.application.execution import DepsRegistry, ExecutionContext, ExecutionRuntime
-from forze.base.primitives import RuntimeVar
+from forze.application.execution import build_runtime
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
+from forze_fastapi import runtime_lifespan
 from forze_fastapi.exceptions import register_exception_handlers
 from forze_kits.aggregates.document import (
     DocumentDTOs,
@@ -70,40 +69,20 @@ registry = build_document_registry(
 
 
 # --8<-- [start:runtime]
-_rt = RuntimeVar[ExecutionRuntime]("rt")
-
-
-def get_context() -> ExecutionContext:
-    return _rt.get().get_context()
-
-
-def construct_runtime() -> ExecutionRuntime:
-    runtime = ExecutionRuntime(
-        deps=DepsRegistry.from_modules(MockDepsModule()).freeze()
-    )
-    _rt.set_once(runtime)
-    return runtime
-
-
+runtime = build_runtime(MockDepsModule())
 # --8<-- [end:runtime]
 
 
 def users() -> DocumentFacade[ReadUser, CreateUserCmd, BaseDTO]:
     return DocumentFacade(
-        ctx=get_context(),
+        ctx=runtime.get_context(),
         registry=registry,
         namespace=user_spec.default_namespace,
     )
 
 
 # --8<-- [start:routes]
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    async with construct_runtime().scope():
-        yield
-
-
-app = FastAPI(title="Users API", lifespan=lifespan)
+app = FastAPI(title="Users API", lifespan=runtime_lifespan(runtime))
 register_exception_handlers(app)  # CoreException → HTTP (e.g. not_found → 404)
 
 
@@ -119,7 +98,7 @@ async def get_user(user_id: UUID) -> ReadUser:
 
 @app.get("/users")
 async def list_users() -> list[ReadUser]:
-    page = await get_context().document.query(user_spec).find_many()
+    page = await runtime.get_context().document.query(user_spec).find_many()
     return list(page.hits)
 
 

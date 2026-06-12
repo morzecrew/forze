@@ -148,11 +148,30 @@ Defaults: `max_attempts=5`, `retry_base_delay=1s`, `retry_max_backoff=5min` —
 kw-only on every relay function and on the lifecycle step. One row's failure
 never blocks the rest of the batch.
 
-!!! warning "Ordering is not preserved"
-    Delivery is at-least-once and ordering is **not** preserved across
-    failures/retries — later events keep publishing while a failed one waits
-    for its retry. Consumers must key on `event_id` and tolerate reordering as
-    well as redelivery (dedupe with the
+## Per-aggregate ordering
+
+Stage with an `ordering_key` (typically the aggregate id) and the relay
+publishes it as the transport `key` instead of the event id:
+
+```python
+await ctx.outbox.command(ORDER_EVENTS).stage(
+    "order.shipped", payload, ordering_key=str(order_id),
+)
+```
+
+On transports that honor `key` for partitioning — SQS FIFO (`MessageGroupId`),
+stream partition keys — same-key events deliver in staged (`created_at`) order
+on the happy path. Events staged without an `ordering_key` keep
+`key=str(event_id)` as before. Either way the event id rides the
+`forze_event_id` header, which is what consumers dedupe on.
+
+!!! warning "Ordering is expressible, not guaranteed"
+    Delivery is at-least-once and ordering is **not** guaranteed across
+    failures/retries: a row rescheduled for retry (or parked as `failed`) does
+    **not** stall later rows of the same `ordering_key` — deliberately, so one
+    poison event never head-of-line blocks its aggregate. Consumers must
+    dedupe on `event_id` (the `forze_event_id` header) and tolerate
+    reordering as well as redelivery (dedupe with the
     [inbox](../in-depth/events-sagas.md)).
 
 ## Table schema
@@ -179,6 +198,7 @@ CREATE TABLE app.outbox (
     last_error TEXT,
     attempts INT NOT NULL DEFAULT 0,
     available_at TIMESTAMPTZ,
+    ordering_key TEXT,
     UNIQUE (outbox_route, event_id)
 );
 
@@ -188,12 +208,15 @@ CREATE INDEX outbox_claim_idx
 ```
 
 `attempts` is the durable retry counter; `available_at` schedules the next
-retry (`NULL` = claimable now). Existing tables migrate with:
+retry (`NULL` = claimable now); `ordering_key` is the optional delivery
+partition key (`NULL` = no partitioning, key falls back to the event id).
+Existing tables migrate with:
 
 ```sql
 ALTER TABLE app.outbox
     ADD COLUMN attempts INT NOT NULL DEFAULT 0,
-    ADD COLUMN available_at TIMESTAMPTZ;
+    ADD COLUMN available_at TIMESTAMPTZ,
+    ADD COLUMN ordering_key TEXT;
 ```
 
 For Mongo (`MongoOutboxConfig`), documents mirror these fields; recommended

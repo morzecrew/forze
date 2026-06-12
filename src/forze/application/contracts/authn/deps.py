@@ -1,4 +1,7 @@
+from typing import TYPE_CHECKING
+
 from ..deps import ConfigurableDepPort, ConvenientDeps, DepKey
+from .events import AuthnEventEmitter, AuthnEventSink
 from .ports import (
     ApiKeyLifecyclePort,
     ApiKeyVerifierPort,
@@ -14,6 +17,9 @@ from .ports import (
     TokenVerifierPort,
 )
 from .specs import AuthnSpec
+
+if TYPE_CHECKING:
+    from forze.application.execution import ExecutionContext
 
 # ----------------------- #
 
@@ -89,6 +95,9 @@ PrincipalEligibilityDepPort = ConfigurableDepPort[AuthnSpec, PrincipalEligibilit
 PrincipalDeactivationDepPort = ConfigurableDepPort[AuthnSpec, PrincipalDeactivationPort]
 """Principal deactivation dependency port."""
 
+AuthnEventSinkDepPort = ConfigurableDepPort[AuthnSpec, AuthnEventSink]
+"""Authn event sink dependency port (optional observability seam)."""
+
 # ....................... #
 
 PrincipalEligibilityDepKey = DepKey[PrincipalEligibilityDepPort]("authn_principal_eligibility")
@@ -98,6 +107,42 @@ PrincipalDeactivationDepKey = DepKey[PrincipalDeactivationDepPort](
     "authn_principal_deactivation"
 )
 """Key used to register the `PrincipalDeactivationPort` builder implementation."""
+
+AuthnEventSinkDepKey = DepKey[AuthnEventSinkDepPort]("authn_event_sink")
+"""Key used to register an `AuthnEventSink` builder implementation.
+
+The sink is **optional**: flows that find no registration (routed or plain)
+simply do not emit. Flow wiring resolves it through
+:func:`resolve_authn_event_emitter` rather than failing on a missing key.
+"""
+
+# ....................... #
+
+
+def resolve_authn_event_emitter(
+    ctx: "ExecutionContext",
+    spec: AuthnSpec,
+) -> AuthnEventEmitter | None:
+    """Resolve the route's optional event emitter; ``None`` means emission is off.
+
+    Probes the routed registration first, then a plain one (a single shared
+    sink), and only then resolves — a missing :data:`AuthnEventSinkDepKey` is a
+    feature toggle, not an error. Dependency factories call this and hand the
+    emitter to the flow adapters.
+    """
+
+    deps = ctx.deps
+
+    if not (
+        deps.exists(AuthnEventSinkDepKey, route=spec.name)
+        or deps.exists(AuthnEventSinkDepKey)
+    ):
+        return None
+
+    sink = deps.resolve_configurable(ctx, AuthnEventSinkDepKey, spec, route=spec.name)
+
+    return AuthnEventEmitter(sink=sink, route=spec.name)
+
 
 # ....................... #
 
@@ -167,3 +212,12 @@ class AuthnDeps(ConvenientDeps):
             spec,
             route=spec.name,
         )
+
+    def event_sink(self, spec: AuthnSpec) -> AuthnEventSink:
+        """Resolve the authn event sink for ``spec``.
+
+        Raises when no sink is registered for the route; flow wiring that treats
+        the sink as optional uses :func:`resolve_authn_event_emitter` instead.
+        """
+
+        return self._resolve_configurable(AuthnEventSinkDepKey, spec, route=spec.name)

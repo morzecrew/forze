@@ -47,6 +47,7 @@ class MockOutboxRow:
     last_error: str | None = None
     attempts: int = 0
     available_at: datetime | None = None
+    ordering_key: str | None = None
 
 
 # ....................... #
@@ -103,6 +104,7 @@ class MockOutboxStore[M: BaseModel](MockTenancyMixin, OutboxQueryPort):
                         causation_id=event.causation_id,
                         occurred_at=event.occurred_at,
                         created_at=utcnow(),
+                        ordering_key=event.ordering_key,
                     )
                 )
                 written += 1
@@ -147,6 +149,7 @@ class MockOutboxStore[M: BaseModel](MockTenancyMixin, OutboxQueryPort):
                 causation_id=r.causation_id,
                 occurred_at=r.occurred_at,
                 attempts=r.attempts,
+                ordering_key=r.ordering_key,
             )
             for r in batch
         ]

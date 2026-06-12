@@ -54,6 +54,9 @@ def _status_code_mapper(kind: ExceptionKind) -> int:
         case ExceptionKind.AUTHORIZATION:
             return 403
 
+        case ExceptionKind.THROTTLED:
+            return 429
+
         case _:
             return 500
 

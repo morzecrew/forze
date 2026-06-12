@@ -90,6 +90,86 @@ class RetryBudget:
 
 @final
 @attrs.define(slots=True, frozen=True, kw_only=True)
+class RateLimitStrategy:
+    """Token-bucket rate limiter: sustained rate ``permits/per``, capacity ``burst or permits``.
+
+    The bucket starts full and refills continuously at the sustained rate.
+    Each call consumes one token; a call that finds the bucket empty is
+    **rejected immediately** (no queuing) with
+    ``exc.throttled(code="rate_limited", details={"policy": ..., "route": ...})``.
+
+    The limiter composes **outermost** (before Bulkhead): it caps the admission
+    rate of the whole pipeline, and its rejection is *not* retried by the same
+    policy's (inner) Retry strategy. To **wait** for capacity instead of failing
+    fast, compose at the next level out: ``THROTTLED`` is classified retryable,
+    so a retry-with-backoff policy *around* the rate-limited call turns
+    rejection into waiting::
+
+        # Policy A: the limit itself (e.g. attached to a port via PortPolicy).
+        limited = ResiliencePolicy(
+            name="vendor_api",
+            strategies=(RateLimitStrategy(permits=10, per=timedelta(seconds=1)),),
+        )
+
+        # Policy B: wait out the throttle at the call site.
+        patient = ResiliencePolicy(
+            name="patient",
+            strategies=(
+                RetryStrategy(
+                    max_attempts=4,
+                    backoff=BackoffStrategy(
+                        base=timedelta(milliseconds=100),
+                        max=timedelta(seconds=2),
+                    ),
+                    retry_on=frozenset({ExceptionKind.THROTTLED}),
+                ),
+            ),
+        )
+
+        result = await ctx.resilience().run(
+            lambda: vendor.fetch(...),  # raises THROTTLED when the bucket is empty
+            policy="patient",
+        )
+
+    The same retry also waits out backend-raised throttles (e.g. an HTTP 429
+    mapped to ``THROTTLED``) — the limiter and the backend reject the same way.
+    """
+
+    permits: int
+    """Permits issued per ``per`` window (sustained rate numerator, ``>= 1``)."""
+
+    per: timedelta
+    """Window over which ``permits`` tokens refill (sustained rate denominator)."""
+
+    burst: int | None = None
+    """Bucket capacity (max tokens saved up); defaults to ``permits``."""
+
+    # ....................... #
+
+    def __attrs_post_init__(self) -> None:
+        if self.permits < 1:
+            raise exc.configuration("Rate limit permits must be >= 1")
+
+        if self.per.total_seconds() <= 0:
+            raise exc.configuration("Rate limit per must be positive")
+
+        if self.burst is not None and self.burst < 1:
+            raise exc.configuration("Rate limit burst must be >= 1")
+
+    # ....................... #
+
+    @property
+    def capacity(self) -> int:
+        """Effective bucket capacity (``burst`` or ``permits``)."""
+
+        return self.burst if self.burst is not None else self.permits
+
+
+# ....................... #
+
+
+@final
+@attrs.define(slots=True, frozen=True, kw_only=True)
 class BulkheadStrategy:
     """Concurrency limiter with a bounded waiting queue."""
 
@@ -255,7 +335,8 @@ class HedgeStrategy:
 # ....................... #
 
 Strategy = (
-    BulkheadStrategy
+    RateLimitStrategy
+    | BulkheadStrategy
     | CircuitBreakerStrategy
     | RetryStrategy
     | TimeoutStrategy
@@ -264,6 +345,7 @@ Strategy = (
 """Union of all strategy value objects composable into a policy."""
 
 _STRATEGY_ORDER: tuple[type, ...] = (
+    RateLimitStrategy,
     BulkheadStrategy,
     CircuitBreakerStrategy,
     RetryStrategy,
@@ -280,11 +362,14 @@ _STRATEGY_ORDER: tuple[type, ...] = (
 class ResiliencePolicy:
     """Ordered composition of strategies applied outer-to-inner around a call.
 
-    The canonical order is Bulkhead -> CircuitBreaker -> Retry -> Timeout, which
-    means the circuit breaker composes **outside** retry: the breaker admits and
-    records exactly **one** outcome per logical call, after the whole retry loop
-    has run. A retry storm (``max_attempts`` failing attempts) therefore counts
-    as a *single* breaker failure — breaker thresholds are tuned against logical
+    The canonical order is RateLimit -> Bulkhead -> CircuitBreaker -> Retry ->
+    Timeout. The rate limiter composes **outermost**: it gates admission before
+    a call may even occupy a bulkhead slot, so throttled calls are rejected
+    without consuming concurrency or counting against the breaker. The circuit
+    breaker composes **outside** retry: the breaker admits and records exactly
+    **one** outcome per logical call, after the whole retry loop has run. A
+    retry storm (``max_attempts`` failing attempts) therefore counts as a
+    *single* breaker failure — breaker thresholds are tuned against logical
     calls, not individual attempts.
     """
 
@@ -315,7 +400,7 @@ class ResiliencePolicy:
         if ranks != sorted(ranks):
             raise exc.configuration(
                 "Resilience policy strategies must be ordered "
-                "Bulkhead -> CircuitBreaker -> Retry -> Timeout",
+                "RateLimit -> Bulkhead -> CircuitBreaker -> Retry -> Timeout",
             )
 
     # ....................... #
@@ -328,6 +413,12 @@ class ResiliencePolicy:
         return None
 
     # ....................... #
+
+    @property
+    def rate_limit(self) -> RateLimitStrategy | None:
+        """Rate limit strategy if declared."""
+
+        return self._of_type(RateLimitStrategy)
 
     @property
     def bulkhead(self) -> BulkheadStrategy | None:

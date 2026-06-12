@@ -73,6 +73,7 @@ class PostgresOutboxStore[M: BaseModel](TenancyMixin, OutboxQueryPort):
             "created_at",
             "attempts",
             "available_at",
+            "ordering_key",
         )
         col_idents = [sql.Identifier(c) for c in cols]
         row_template = (
@@ -101,6 +102,7 @@ class PostgresOutboxStore[M: BaseModel](TenancyMixin, OutboxQueryPort):
                     created_at,
                     0,
                     None,
+                    event.ordering_key,
                 ]
             )
 
@@ -167,7 +169,7 @@ class PostgresOutboxStore[M: BaseModel](TenancyMixin, OutboxQueryPort):
             RETURNING
                 t.id, t.outbox_route, t.event_id, t.event_type, t.payload,
                 t.tenant_id, t.execution_id, t.correlation_id, t.causation_id,
-                t.occurred_at, t.attempts
+                t.occurred_at, t.attempts, t.ordering_key
             """
         ).format(table=table.ident(), tenant_filter=tenant_filter)
 
@@ -186,6 +188,7 @@ class PostgresOutboxStore[M: BaseModel](TenancyMixin, OutboxQueryPort):
                 causation_id=row.get("causation_id"),
                 occurred_at=row.get("occurred_at"),
                 attempts=int(row.get("attempts") or 0),
+                ordering_key=row.get("ordering_key"),
             )
             for row in rows
         ]

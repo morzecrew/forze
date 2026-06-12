@@ -3,6 +3,8 @@ from typing import Any, final
 import attrs
 
 from forze.application.contracts.authn import (
+    AuthnEventEmitter,
+    AuthnEventKind,
     AuthnIdentity,
     PasswordLifecyclePort,
     PrincipalEligibilityPort,
@@ -68,6 +70,11 @@ class PasswordLifecycleAdapter(PasswordLifecyclePort):
     """Revoke ALL of the principal's sessions (refresh families and their ``sid``-bound
     access tokens) after a successful password change ("log out everywhere"); the caller
     must re-authenticate with the new password. Opt out to keep existing sessions alive."""
+
+    events: AuthnEventEmitter | None = None
+    """Optional authn event emitter (best-effort; ``None`` disables emission).
+
+    Emits ``PASSWORD_CHANGED`` after a successful change."""
 
     # ....................... #
 
@@ -136,4 +143,10 @@ class PasswordLifecycleAdapter(PasswordLifecyclePort):
                 self.session_qry,  # type: ignore[arg-type]
                 self.session_cmd,  # type: ignore[arg-type]
                 {"principal_id": identity.principal_id},
+            )
+
+        if self.events is not None:
+            await self.events.emit(
+                AuthnEventKind.PASSWORD_CHANGED,
+                principal_id=identity.principal_id,
             )
