@@ -66,6 +66,22 @@ ENVELOPE_HEADER_KEYS: Final = frozenset(
 
 # ....................... #
 
+HTTP_HEADER_DEADLINE_BUDGET: Final = "X-Forze-Deadline-Budget"
+"""Remaining invocation time budget in seconds (decimal string) — HTTP-only.
+
+Forwarded on synchronous service-to-service hops (the outbound HTTP adapter
+attaches the caller's :func:`remaining_time` automatically) and honored by the
+receiving boundary only behind an explicit opt-in; binding is tighten-only, so
+a forged value can shorten the receiver's work but never extend a deadline.
+The budget is a *duration*, never an absolute instant — replica clocks diverge.
+
+Deliberately **not** part of :data:`ENVELOPE_HEADER_KEYS`: deadlines belong to
+the synchronous call chain. A queued event consumed after a backlog must not
+inherit its producer's leftover budget — it would expire legitimate work.
+"""
+
+# ....................... #
+
 __all__ = [
     "HEADER_CORRELATION_ID",
     "HEADER_CAUSATION_ID",
@@ -74,4 +90,5 @@ __all__ = [
     "HEADER_EVENT_ID",
     "HEADER_OCCURRED_AT",
     "ENVELOPE_HEADER_KEYS",
+    "HTTP_HEADER_DEADLINE_BUDGET",
 ]

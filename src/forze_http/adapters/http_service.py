@@ -7,11 +7,13 @@ from typing import Any, final
 import attrs
 from pydantic import BaseModel, ValidationError
 
+from forze.application.contracts.envelope import HTTP_HEADER_DEADLINE_BUDGET
 from forze.application.contracts.http import (
     HttpOperationSpec,
     HttpServicePort,
     HttpServiceSpec,
 )
+from forze.application.execution.context import remaining_time
 from forze.application.integrations.http import request_parts
 from forze.base.exceptions import exc
 from forze.base.exceptions._utils import reraise_mapped
@@ -62,6 +64,15 @@ class HttpServiceAdapter(HttpServicePort):
         try:
             url, headers = self._resolve_url_and_headers(path)
             details["url"] = url
+
+            if self.config.propagate_deadline:
+                budget = remaining_time()
+
+                if budget is not None:
+                    headers = {
+                        **(headers or {}),
+                        HTTP_HEADER_DEADLINE_BUDGET: f"{budget:.3f}",
+                    }
 
             response = await self.client.request(
                 operation.method,

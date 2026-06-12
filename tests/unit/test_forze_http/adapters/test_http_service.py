@@ -120,3 +120,53 @@ async def test_invoke_unknown_operation() -> None:
         await adapter.invoke("missing")
 
     await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_invoke_propagates_deadline_budget_header() -> None:
+    from forze.application.contracts.envelope import HTTP_HEADER_DEADLINE_BUDGET
+    from forze.application.execution.context import bind_deadline
+
+    spec = build_http_service_spec(DemoClient, name="demo")
+    seen: dict[str, str | None] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["budget"] = request.headers.get(HTTP_HEADER_DEADLINE_BUDGET)
+        return httpx.Response(200, json={"items": [{"id": "1"}]})
+
+    client = HttpClient()
+    await client.initialize(
+        base_url="https://api.example.com",
+        transport=httpx.MockTransport(handler),
+    )
+    adapter = HttpServiceAdapter(
+        client=client,
+        config=HttpServiceConfig(base_url="https://api.example.com"),
+        spec=spec,
+    )
+
+    # No deadline bound -> header absent.
+    await adapter.invoke("list_items")
+    assert seen["budget"] is None
+
+    # Bound deadline -> remaining budget forwarded.
+    with bind_deadline(5.0):
+        await adapter.invoke("list_items")
+
+    assert seen["budget"] is not None
+    assert 0.0 < float(seen["budget"]) <= 5.0
+
+    # Opt-out via config.
+    adapter_off = HttpServiceAdapter(
+        client=client,
+        config=HttpServiceConfig(
+            base_url="https://api.example.com", propagate_deadline=False
+        ),
+        spec=spec,
+    )
+
+    with bind_deadline(5.0):
+        await adapter_off.invoke("list_items")
+
+    assert seen["budget"] is None
+    await client.aclose()

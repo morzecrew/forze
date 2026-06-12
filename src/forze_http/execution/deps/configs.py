@@ -77,6 +77,14 @@ class HttpServiceConfig(TenantAwareIntegrationConfig):
     default_headers: dict[str, str] = attrs.field(factory=dict)
     """Headers merged into every request."""
 
+    propagate_deadline: bool = attrs.field(default=True)
+    """Attach the caller's remaining time budget as the
+    ``X-Forze-Deadline-Budget`` header on every request when an invocation
+    deadline is bound (no-op otherwise). Harmless to non-Forze receivers (an
+    ignored header carrying only a duration); a Forze receiver honors it only
+    behind its own opt-in (``bind_deadline_from_header``), and binding is
+    tighten-only either way."""
+
     auth: HttpAuthConfig | None = None
     """Optional static authentication."""
 

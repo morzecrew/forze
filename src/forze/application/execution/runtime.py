@@ -1,11 +1,13 @@
 """Execution runtime for scoped dependency and lifecycle management."""
 
 from contextlib import asynccontextmanager
+from enum import StrEnum
 from typing import AsyncGenerator, final
 
 import attrs
 
 from forze.application._logger import logger
+from forze.base.exceptions import CoreException, exc
 from forze.base.primitives import RuntimeVar
 
 from .context import ExecutionContext
@@ -13,6 +15,22 @@ from .deps import FrozenDepsRegistry
 from .lifecycle import FrozenLifecyclePlan
 
 # ----------------------- #
+
+
+class DeploymentProfile(StrEnum):
+    """Declared deployment posture, consulted by assembly-time validation.
+
+    ``FLEET`` states the app runs as N replicas behind a load balancer: a
+    lifecycle step declared ``mutates_shared_state`` must be
+    ``singleton_guarded`` (e.g. wrapped in ``forze_kits``'
+    ``singleton_lifecycle_step``), or runtime assembly fails — N replicas
+    stampeding a migration is a deploy-time mistake, caught at composition.
+    Advisory by design: the marker is declared by the step author, not
+    detected structurally.
+    """
+
+    SINGLE_PROCESS = "single_process"
+    FLEET = "fleet"
 
 
 @final
@@ -39,6 +57,13 @@ class ExecutionRuntime:
     (identity/tenant/tx) to execution time, so a resolved operation is a pure
     function of its key within a scope. Disable only if you wire a *stateful*
     handler or hook factory that must rebuild on every invocation.
+    """
+
+    deployment: DeploymentProfile = attrs.field(default=DeploymentProfile.SINGLE_PROCESS)
+    """Declared deployment posture (see :class:`DeploymentProfile`).
+
+    ``FLEET`` enables assembly-time validation: a lifecycle step declared
+    ``mutates_shared_state`` must be ``singleton_guarded`` or construction fails.
     """
 
     drain_timeout: float = attrs.field(default=10.0)
@@ -74,6 +99,59 @@ class ExecutionRuntime:
         init=False,
     )
     """Per-scope execution context."""
+
+    # ....................... #
+
+    def __attrs_post_init__(self) -> None:
+        if self.deployment is not DeploymentProfile.FLEET:
+            return
+
+        offending = sorted(
+            str(step.id)
+            for step in self.lifecycle.graph.steps.values()
+            if step.mutates_shared_state and not step.singleton_guarded
+        )
+
+        if offending:
+            raise exc.configuration(
+                "FLEET deployment forbids unguarded shared-state-mutating "
+                "lifecycle steps (N replicas would stampede them at startup): "
+                + ", ".join(offending)
+                + ". Wrap each in a singleton guard (e.g. forze_kits "
+                "singleton_lifecycle_step) or run it as a deploy step instead.",
+            )
+
+    # ....................... #
+
+    @property
+    def draining(self) -> bool:
+        """Whether the scope is draining (rejecting new invocations).
+
+        ``False`` outside a scope. Flip your readiness probe on this so the
+        load balancer stops routing before the drain window starts.
+        """
+
+        try:
+            ctx = self.__ctx.get()
+
+        except CoreException:
+            return False
+
+        return ctx.drain_gate.draining
+
+    # ....................... #
+
+    @property
+    def ready(self) -> bool:
+        """Readiness probe payload: a scope is active and not draining."""
+
+        try:
+            ctx = self.__ctx.get()
+
+        except CoreException:
+            return False
+
+        return not ctx.drain_gate.draining
 
     # ....................... #
 

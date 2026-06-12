@@ -4,7 +4,7 @@ from typing import Iterable
 
 from .deps import Deps, DepsModule, DepsRegistry
 from .lifecycle import LifecycleModule, LifecyclePlan, LifecycleStep
-from .runtime import ExecutionRuntime
+from .runtime import DeploymentProfile, ExecutionRuntime
 
 # ----------------------- #
 
@@ -18,6 +18,7 @@ def build_runtime(
     cache_resolved_operations: bool = True,
     cache_resolved_ports: bool = True,
     drain_timeout: float = 10.0,
+    deployment: DeploymentProfile = DeploymentProfile.SINGLE_PROCESS,
 ) -> ExecutionRuntime:
     """Assemble an :class:`ExecutionRuntime` in one call.
 
@@ -54,6 +55,9 @@ def build_runtime(
     :param drain_timeout: Passed through to
         :attr:`ExecutionRuntime.drain_timeout` (bounded wait for in-flight
         operations before lifecycle shutdown).
+    :param deployment: Passed through to :attr:`ExecutionRuntime.deployment`
+        (``FLEET`` validates that shared-state-mutating lifecycle steps are
+        singleton-guarded).
     :returns: Runtime ready for :meth:`ExecutionRuntime.scope`.
     """
 
@@ -70,4 +74,5 @@ def build_runtime(
         cache_resolved_operations=cache_resolved_operations,
         cache_resolved_ports=cache_resolved_ports,
         drain_timeout=drain_timeout,
+        deployment=deployment,
     )

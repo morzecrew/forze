@@ -11,6 +11,7 @@ import attrs
 from fastapi import Request
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
+from forze.application.contracts.envelope import HTTP_HEADER_DEADLINE_BUDGET
 from forze.application.execution.context import (
     ExecutionContextFactory,
     InvocationMetadata,
@@ -46,6 +47,18 @@ class InvocationMetadataMiddleware:
 
     caus_header: str = attrs.field(default="X-Causation-ID", kw_only=True)
     """Header name for the causation id."""
+
+    deadline_header: str = attrs.field(default=HTTP_HEADER_DEADLINE_BUDGET, kw_only=True)
+    """Header carrying the caller's remaining time budget in seconds."""
+
+    bind_deadline_from_header: bool = attrs.field(default=False, kw_only=True)
+    """Honor the deadline-budget header (opt-in: any client can send it).
+
+    Low-risk by construction — binding is tighten-only, so a forged value can
+    only shorten the sender's own request, never extend a deadline — but kept
+    opt-in so honoring caller budgets is a declared trust decision. Enable for
+    service-to-service surfaces where callers propagate budgets (the outbound
+    HTTP adapter attaches this header automatically)."""
 
     idem_header: str = attrs.field(default=IDEMPOTENCY_KEY_HEADER, kw_only=True)
     """Header name for the idempotency key (canonical, per the IETF httpapi draft)."""
@@ -126,6 +139,11 @@ class InvocationMetadataMiddleware:
         ctx = self.ctx_dep()
         metadata = self._decode_metadata(request)
         idempotency_key = request.headers.get(self.idem_header) or None
+        budget = (
+            _parse_budget_header(request.headers.get(self.deadline_header))
+            if self.bind_deadline_from_header
+            else None
+        )
 
         async def send_wrapper(message: Message) -> None:
             if message["type"] == "http.response.start":
@@ -138,5 +156,27 @@ class InvocationMetadataMiddleware:
         with (
             ctx.inv_ctx.bind_metadata(metadata=metadata),
             ctx.inv_ctx.bind_idempotency(idempotency_key),
+            # None is a no-op passthrough; a bound budget is tighten-only.
+            ctx.inv_ctx.bind_deadline(budget),
         ):
             await self.app(scope, receive, send_wrapper)
+
+# ....................... #
+
+
+def _parse_budget_header(value: str | None) -> float | None:
+    """Best-effort positive-seconds parse; malformed values are ignored."""
+
+    if value is None:
+        return None
+
+    try:
+        budget = float(value)
+
+    except ValueError:
+        return None
+
+    if budget <= 0 or budget != budget or budget == float("inf"):
+        return None
+
+    return budget

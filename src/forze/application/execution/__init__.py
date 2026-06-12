@@ -57,7 +57,7 @@ from .observability import (
     instrument_operations,
     instrument_resilience,
 )
-from .runtime import ExecutionRuntime
+from .runtime import DeploymentProfile, ExecutionRuntime
 from .assemble import build_runtime
 from .saga import (
     InProcessSagaExecutor,
@@ -106,6 +106,7 @@ __all__ = [
     "DomainEventsDepsModule",
     "ExecutionContext",
     "ExecutionRuntime",
+    "DeploymentProfile",
     "CircuitBreakerStore",
     "FrozenOperationRegistry",
     "InMemoryCircuitBreakerStore",
