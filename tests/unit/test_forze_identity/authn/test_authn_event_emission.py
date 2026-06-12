@@ -211,8 +211,8 @@ class TestPasswordLifecycleEmission:
         account = _read_account(principal_id=principal_id)
 
         password_svc = MagicMock()
-        password_svc.verify_password = MagicMock(return_value=True)
-        password_svc.hash_password = MagicMock(return_value="new-hash")
+        password_svc.verify_password = AsyncMock(return_value=True)
+        password_svc.hash_password = AsyncMock(return_value="new-hash")
 
         pa_qry = _qry(ReadPasswordAccount)
         pa_qry.find = AsyncMock(return_value=account)
@@ -243,7 +243,7 @@ class TestPasswordLifecycleEmission:
         account = _read_account(principal_id=principal_id)
 
         password_svc = MagicMock()
-        password_svc.verify_password = MagicMock(return_value=False)
+        password_svc.verify_password = AsyncMock(return_value=False)
 
         pa_qry = _qry(ReadPasswordAccount)
         pa_qry.find = AsyncMock(return_value=account)
@@ -271,7 +271,7 @@ class TestPasswordLifecycleEmission:
 class TestPasswordResetEmission:
     def _adapter(self, **overrides: Any) -> PasswordResetAdapter:
         password_svc = MagicMock()
-        password_svc.hash_password = MagicMock(return_value="argon2-hash")
+        password_svc.hash_password = AsyncMock(return_value="argon2-hash")
 
         kwargs: dict[str, Any] = {
             "password_svc": password_svc,

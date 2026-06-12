@@ -13,7 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- ...
+- **Argon2 password hashing no longer blocks the event loop (`forze_identity`).** `PasswordService.hash_password` / `verify_password` / `timing_dummy_hash` are now `async` and run Argon2 on a dedicated bounded thread pool; blocking `hash_password_sync` / `verify_password_sync` variants are available for scripts and tests. New `PasswordConfig.hashing_concurrency` (default 4) caps concurrent hashing operations, bounding peak hashing memory to `hashing_concurrency × memory_cost` under login bursts.
 
 ### Fixed
 

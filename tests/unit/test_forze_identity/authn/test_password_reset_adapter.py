@@ -58,7 +58,7 @@ def _adapter(**overrides: object) -> PasswordResetAdapter:
     eligibility.require_authentication_allowed = AsyncMock()
 
     password_svc = MagicMock()
-    password_svc.hash_password = MagicMock(return_value="argon2-hash")
+    password_svc.hash_password = AsyncMock(return_value="argon2-hash")
 
     kwargs: dict[str, Any] = {
         "password_svc": password_svc,

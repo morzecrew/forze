@@ -80,7 +80,7 @@ def _old_params_hash(password: str) -> str:
     old_svc = PasswordService(
         config=PasswordConfig(time_cost=2, memory_cost=16384, parallelism=1),
     )
-    return old_svc.hash_password(password)
+    return old_svc.hash_password_sync(password)
 
 
 def _assert_invalid_login(exc: BaseException) -> None:
@@ -106,7 +106,7 @@ async def test_unknown_login_raises_generic_invalid_credentials() -> None:
 async def test_inactive_account_raises_generic_invalid_credentials() -> None:
     pwd = PasswordService(config=_slow_password_config())
     account = _account(
-        password_hash=pwd.hash_password("secret"),
+        password_hash=pwd.hash_password_sync("secret"),
         is_active=False,
     )
     verifier = _verifier(account=account, password_svc=pwd)
@@ -122,7 +122,7 @@ async def test_inactive_account_raises_generic_invalid_credentials() -> None:
 @pytest.mark.asyncio
 async def test_wrong_password_raises_generic_invalid_credentials() -> None:
     pwd = PasswordService(config=_slow_password_config())
-    account = _account(password_hash=pwd.hash_password("correct"))
+    account = _account(password_hash=pwd.hash_password_sync("correct"))
     verifier = _verifier(account=account, password_svc=pwd)
 
     with pytest.raises(CoreException) as raised:
@@ -136,7 +136,7 @@ async def test_wrong_password_raises_generic_invalid_credentials() -> None:
 @pytest.mark.asyncio
 async def test_valid_password_returns_assertion() -> None:
     pwd = PasswordService(config=_slow_password_config())
-    account = _account(password_hash=pwd.hash_password("correct"))
+    account = _account(password_hash=pwd.hash_password_sync("correct"))
     verifier = _verifier(account=account, password_svc=pwd)
 
     assertion = await verifier.verify_password(
@@ -173,7 +173,7 @@ async def test_outdated_hash_is_rehashed_when_command_port_wired() -> None:
     new_hash = upd_cmd.password_hash
     assert new_hash is not None
     assert new_hash != old_hash
-    assert pwd.verify_password(password_hash=new_hash, password="correct")
+    assert pwd.verify_password_sync(password_hash=new_hash, password="correct")
     assert not pwd.password_needs_rehash(new_hash)
 
 
@@ -219,7 +219,7 @@ async def test_no_command_port_skips_rehash_write() -> None:
 @pytest.mark.asyncio
 async def test_up_to_date_hash_is_not_rewritten() -> None:
     pwd = PasswordService(config=_slow_password_config())
-    account = _account(password_hash=pwd.hash_password("correct"))
+    account = _account(password_hash=pwd.hash_password_sync("correct"))
     pa_cmd = _pa_cmd()
     verifier = _verifier(account=account, password_svc=pwd, pa_cmd=pa_cmd)
 
@@ -256,14 +256,14 @@ async def test_missing_account_invokes_verify_once() -> None:
     calls = 0
     original = PasswordService.verify_password
 
-    def counting_verify(
+    async def counting_verify(
         self: PasswordService,
         password_hash: str,
         password: str,
     ) -> bool:
         nonlocal calls
         calls += 1
-        return original(self, password_hash, password)
+        return await original(self, password_hash, password)
 
     with (
         patch.object(PasswordService, "verify_password", counting_verify),

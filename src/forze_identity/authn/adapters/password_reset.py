@@ -287,7 +287,7 @@ class PasswordResetAdapter(PasswordResetPort):
         if account is None or not account.is_active:
             raise exc.authentication(INVALID_RESET_TOKEN_MSG)
 
-        new_hash = self.password_svc.hash_password(new_password)
+        new_hash = await self.password_svc.hash_password(new_password)
 
         await self.pa_cmd.update(
             account.id,

@@ -119,7 +119,7 @@ class PasswordLifecycleAdapter(PasswordLifecyclePort):
         # Re-authenticate with the current password before allowing the change, so a
         # hijacked session (a valid bearer identity) cannot escalate to a full account
         # takeover by silently resetting the password.
-        if not self.password_svc.verify_password(
+        if not await self.password_svc.verify_password(
             password_hash=pa.password_hash,
             password=current_password,
         ):
@@ -128,7 +128,7 @@ class PasswordLifecycleAdapter(PasswordLifecyclePort):
                 code="invalid_credentials",
             )
 
-        new_pwd_hash = self.password_svc.hash_password(new_password)
+        new_pwd_hash = await self.password_svc.hash_password(new_password)
         upd_cmd = UpdatePasswordAccountCmd(password_hash=new_pwd_hash)
 
         await self.pa_cmd.update(pa.id, pa.rev, upd_cmd, return_new=False)

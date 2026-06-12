@@ -237,7 +237,7 @@ class PasswordAccountProvisioningAdapter(PasswordAccountProvisioningPort):
                 code="password_account_exists",
             )
 
-        pwd_hash = self.password_svc.hash_password(credentials.password)
+        pwd_hash = await self.password_svc.hash_password(credentials.password)
 
         create_cmd = CreatePasswordAccountCmd(
             username=credentials.login,

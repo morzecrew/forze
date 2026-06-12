@@ -246,7 +246,7 @@ async def test_pg_password_authentication(pg_client: PostgresClient) -> None:
         principal_id=pid,
     )
 
-    hashed = pwd_svc.hash_password("correct horse battery staple")
+    hashed = pwd_svc.hash_password_sync("correct horse battery staple")
     pwd_cmd = ctx.document.command(password_account_spec)
 
     with ctx.inv_ctx.bind(metadata=_invocation_metadata()):
@@ -450,7 +450,7 @@ async def test_pg_change_password(pg_client: PostgresClient) -> None:
             CreatePasswordAccountCmd(
                 principal_id=pid,
                 username="bob",
-                password_hash=pwd_svc.hash_password("old-secret"),
+                password_hash=pwd_svc.hash_password_sync("old-secret"),
             ),
             return_new=False,
         )
@@ -532,7 +532,7 @@ async def test_pg_password_reset_flow(pg_client: PostgresClient) -> None:
             CreatePasswordAccountCmd(
                 principal_id=pid,
                 username="dave",
-                password_hash=pwd_svc.hash_password("lost-secret"),
+                password_hash=pwd_svc.hash_password_sync("lost-secret"),
             ),
             return_new=False,
         )
@@ -708,7 +708,7 @@ async def test_pg_execution_deps_password_authentication(
     pwd_svc = shared.password_svc
     assert pwd_svc is not None
 
-    hashed = pwd_svc.hash_password("correct horse battery staple")
+    hashed = pwd_svc.hash_password_sync("correct horse battery staple")
     pwd_cmd = ctx.document.command(password_account_spec)
 
     with ctx.inv_ctx.bind(metadata=_invocation_metadata()):
