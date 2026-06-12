@@ -86,6 +86,14 @@ app.include_router(router)
 - An operation with a plan-declared deadline surfaces it as an
   `x-deadline-seconds` OpenAPI extension and a "Time budget" description line —
   see [`forze-resilience-deadlines`](../forze-resilience-deadlines/SKILL.md).
+- `apply_openapi_security(app, requirement)` (from `forze_fastapi.security`) makes
+  the generated OpenAPI honest about auth: it derives `securitySchemes` from the
+  same `AuthnRequirement` you give `SecurityContextMiddleware` (bearer for an
+  `Authorization` token; `apiKey` in header/cookie otherwise) and attaches
+  `security` to operations flagged `requires_authn` (derived at freeze from the
+  plan's `AuthnRequired`/authz hooks). Call once after attaching routers; token-
+  minting routes (`/login`, `/refresh`) stay open. Documents auth, does not enforce
+  it — `exclude={op, ...}` leaves a flagged op open.
 
 ## Readiness and deadline headers
 

@@ -214,3 +214,38 @@ wiring (including how the reset token reaches the user via the outbox) is in the
 Identity, invocation metadata, and error mapping stay with the middlewares and
 exception handlers above — generated routes only validate the input DTO and run
 the operation through the normal pipeline.
+
+## Document auth in OpenAPI
+
+`SecurityContextMiddleware` extracts identity; it doesn't tell the schema. By
+default the generated OpenAPI (and the Scalar/Swagger UI) shows every endpoint as
+open — no Authorize button. `apply_openapi_security` closes that gap from the
+**same** `AuthnRequirement` you handed the middleware, so the scheme is declared
+once:
+
+```python
+from forze_fastapi.security import (
+    AuthnRequirement,
+    HeaderTokenAuthn,
+    apply_openapi_security,
+)
+
+requirement = AuthnRequirement(
+    ingress=(HeaderTokenAuthn(authn_spec=API, header_name="Authorization"),),
+)
+app.add_middleware(SecurityContextMiddleware, ctx_dep=runtime.get_context, authn=requirement, ...)
+
+# After every router is attached:
+apply_openapi_security(app, requirement)
+```
+
+It registers one `securityScheme` per ingress (bearer for a token on
+`Authorization`; `apiKey` in header or cookie otherwise) and attaches a `security`
+requirement — the ingress methods as alternatives — to exactly the operations the
+catalog flagged as needing a bound principal. That flag (`requires_authn`) is
+derived at freeze from the plan's `AuthnRequired` or authz hooks, so protected
+routes advertise the scheme while token-minting routes (`/login`, `/refresh`) stay
+open. Use `exclude={"orders.deactivate", ...}` to leave a flagged operation open.
+
+This **documents** auth; it doesn't enforce it — enforcement stays in the engine
+(the `AuthnRequired`/authz hooks) and identity extraction in the middleware.

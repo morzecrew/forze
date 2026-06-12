@@ -104,6 +104,15 @@ class OperationCatalogEntry:
     operation may enforce authorization inside its handler (or via an undeclared
     hook) invisibly, so an empty tuple must not be read as "unauthenticated/open"."""
 
+    requires_authn: bool = False
+    """The plan declares it needs an authenticated principal (structural
+    ``DeclaresAuthn`` detection at freeze — an authn guard, or any authz hook, since
+    authorization presupposes a bound principal). Transports project this into their
+    auth surface (FastAPI ``security`` / OpenAPI, MCP tool text).
+
+    Same honesty caveat as :attr:`required_permissions`: declared-hook introspection,
+    **not** a security statement — ``False`` does not prove the operation is open."""
+
     deadline: timedelta | None = None
     """Per-invocation time budget declared by the plan, or ``None`` for no cap.
 

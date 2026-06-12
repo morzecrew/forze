@@ -7,6 +7,7 @@ from .protocols import (
     Before,
     BeforeFactory,
     Finally,
+    DeclaresAuthn,
     DeclaresAuthz,
     DeclaresHedge,
     FinallyFactory,
@@ -41,6 +42,7 @@ from .value_objects import (
 # ----------------------- #
 
 __all__ = [
+    "DeclaresAuthn",
     "DeclaresAuthz",
     "DeclaresHedge",
     "ProvidesIdempotency",

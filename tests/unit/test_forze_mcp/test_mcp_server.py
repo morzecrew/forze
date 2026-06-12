@@ -510,6 +510,10 @@ class TestCatalogDerivedDescriptions:
         assert "Supports idempotent retries via an invocation-bound idempotency key" in (
             tool.description
         )
+        # The authz hook implies a bound principal — the authn line is advertised too.
+        assert "Requires authentication: a verified principal must be bound" in (
+            tool.description
+        )
         assert "Requires permissions: calc.write" in tool.description
         # Honesty caveat: declared-hook introspection, not a security statement.
         assert "declared by attached authorization hooks" in tool.description

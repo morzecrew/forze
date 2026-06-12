@@ -229,7 +229,9 @@ def _route_openapi_extra(
     "required-mode" knob (reject keyless requests) is a follow-up.
 
     Declared permissions surface as the ``x-required-permissions`` vendor
-    extension; mapping them onto OpenAPI ``securitySchemes`` is a follow-up.
+    extension; an operation that declares it needs a bound principal surfaces as
+    ``x-requires-authn: true`` — :func:`forze_fastapi.security.apply_openapi_security`
+    reads that flag to attach OpenAPI ``security`` to the protected operations.
     A plan-declared deadline surfaces as ``x-deadline-seconds`` (the merged
     per-invocation budget; expiry returns **504**). FastAPI deep-merges
     ``openapi_extra`` into the operation object, appending to ``parameters``,
@@ -254,6 +256,9 @@ def _route_openapi_extra(
 
     if entry.required_permissions:
         extra["x-required-permissions"] = list(entry.required_permissions)
+
+    if entry.requires_authn:
+        extra["x-requires-authn"] = True
 
     if entry.deadline is not None:
         extra["x-deadline-seconds"] = entry.deadline.total_seconds()

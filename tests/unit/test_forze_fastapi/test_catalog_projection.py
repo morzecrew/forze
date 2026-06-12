@@ -121,11 +121,19 @@ class TestEndToEndProjection:
 
         assert catalog[_CREATE_OP].supports_idempotency_key is True
         assert catalog[_CREATE_OP].required_permissions == ("notes.write",)
+        assert catalog[_CREATE_OP].requires_authn is True
         assert catalog[_CREATE_OP].deadline == timedelta(seconds=5)
 
         assert catalog[_GET_OP].supports_idempotency_key is False
         assert catalog[_GET_OP].required_permissions == ()
+        assert catalog[_GET_OP].requires_authn is False
         assert catalog[_GET_OP].deadline is None
+
+    def test_flagged_route_carries_requires_authn_extension(self) -> None:
+        ops = _operations(_openapi(with_hooks=True))
+
+        assert ops[_CREATE_OP]["x-requires-authn"] is True
+        assert "x-requires-authn" not in ops[_GET_OP]
 
     def test_flagged_route_documents_optional_idempotency_header(self) -> None:
         create = _operations(_openapi(with_hooks=True))[_CREATE_OP]
@@ -164,6 +172,7 @@ class TestEndToEndProjection:
         descriptor = _registry(with_hooks=True).descriptors[_GET_OP]
 
         assert "x-required-permissions" not in get
+        assert "x-requires-authn" not in get
         assert "x-deadline-seconds" not in get
         assert not any(
             param.get("name") == IDEMPOTENCY_KEY_HEADER
@@ -192,5 +201,6 @@ class TestEndToEndProjection:
         assert IDEMPOTENCY_KEY_HEADER not in raw
         assert "x-required-permissions" not in raw
         assert "Requires permissions" not in raw
+        assert "x-requires-authn" not in raw
         assert "x-deadline-seconds" not in raw
         assert "Time budget" not in raw

@@ -103,7 +103,8 @@ def _tool_description(entry: OperationCatalogEntry) -> str | None:
 
     Write operations whose plan carries an idempotency wrap advertise key-based
     retry replay (the key is bound by the invoking boundary; without one the wrap
-    is a no-op). Declared permissions are appended as well — declared-hook
+    is a no-op). Operations whose plan requires a bound principal advertise that
+    too. Declared permissions are appended as well — declared-hook
     introspection only, **not** a complete security statement: an operation may
     enforce authorization inside its handler invisibly. A plan-declared deadline
     documents the call's time budget so agents can set client timeouts and avoid
@@ -120,6 +121,12 @@ def _tool_description(entry: OperationCatalogEntry) -> str | None:
             "Supports idempotent retries via an invocation-bound idempotency key: "
             "a duplicate call with the same key replays the stored result instead "
             "of re-executing."
+        )
+
+    if entry.requires_authn:
+        parts.append(
+            "Requires authentication: a verified principal must be bound for this "
+            "call (declared by the operation's plan; it may enforce more internally)."
         )
 
     if entry.required_permissions:

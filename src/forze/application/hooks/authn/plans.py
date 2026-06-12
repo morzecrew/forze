@@ -28,6 +28,14 @@ class AuthnRequired(BeforeFactory):
 
     # ....................... #
 
+    def requires_authn(self) -> bool:
+        """Marker (:class:`~forze.application.contracts.execution.DeclaresAuthn`):
+        this hook demands a bound principal."""
+
+        return True
+
+    # ....................... #
+
     def to_step(
         self,
         *,

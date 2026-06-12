@@ -152,6 +152,27 @@ class DeclaresAuthz(Protocol):  # pragma: no cover
 # ....................... #
 
 
+@runtime_checkable
+class DeclaresAuthn(Protocol):  # pragma: no cover
+    """Marker: a hook factory that declares it requires an authenticated principal.
+
+    Detected structurally at freeze time (like :class:`DeclaresAuthz`) so the operation
+    catalog can surface, per operation, whether a bound principal is required — which
+    transports project into their auth descriptions (OpenAPI ``security``, MCP tool
+    text). An authorization hook (:class:`DeclaresAuthz`) implies this too: you cannot
+    check a principal's grants without a principal.
+
+    Honesty caveat: declared-hook introspection, **not** a security statement. A
+    ``False`` result does not prove the operation is open — its handler may enforce
+    authentication invisibly.
+    """
+
+    def requires_authn(self) -> bool: ...
+
+
+# ....................... #
+
+
 class BeforeFactory(Protocol):  # pragma: no cover
     """Protocol for a factory that builds a before hook."""
 
