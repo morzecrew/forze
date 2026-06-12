@@ -19,6 +19,7 @@ from forze.application.contracts.resilience import (
 from forze.base.exceptions import CoreException, exc, exception_egress_policy
 from forze.base.primitives import MappingConverter, StrKey, StrKeyMapping
 
+from ..context.deadline import remaining_time
 from ..tracing import record
 from .backoff import compute_delay
 from .state import BudgetState, BulkheadState, RateLimitState, Transition
@@ -262,6 +263,39 @@ class InProcessResilienceExecutor:
 
             call = with_rate_limit
 
+        # An invocation deadline (see ``context.deadline``) bounds the whole
+        # strategy chain from the outside: retries, breaker admission, bulkhead
+        # queueing, and rate-limit rejection all share the remaining budget.
+        # Raises non-retryable TIMEOUT — distinct from the per-attempt
+        # TimeoutStrategy, which raises retryable INFRASTRUCTURE.
+        remaining = remaining_time()
+
+        if remaining is not None:
+            if remaining <= 0.0:
+                self._emit("deadline_exceeded", pol, route)
+                raise exc.timeout(
+                    f"Invocation deadline exceeded before call "
+                    f"under policy {pol.name!r}",
+                    code="deadline_exceeded",
+                )
+
+            d_inner = call
+
+            async def with_deadline() -> T:
+                try:
+                    async with asyncio.timeout(remaining):
+                        return await d_inner()
+
+                except TimeoutError as error:
+                    self._emit("deadline_exceeded", pol, route)
+                    raise exc.timeout(
+                        f"Invocation deadline exceeded during call "
+                        f"under policy {pol.name!r}",
+                        code="deadline_exceeded",
+                    ) from error
+
+            call = with_deadline
+
         return await call()
 
     # ....................... #
@@ -321,6 +355,16 @@ class InProcessResilienceExecutor:
                     raise
 
                 delay = compute_delay(strat.backoff, attempt, prev_delay, self.rng)
+
+                # Deadline-aware retry: when the backoff sleep would outlive
+                # the invocation deadline, surface the real error now instead
+                # of sleeping into a guaranteed deadline timeout.
+                deadline_left = remaining_time()
+
+                if deadline_left is not None and delay >= deadline_left:
+                    self._emit("retry_deadline_exhausted", pol, route)
+                    raise
+
                 prev_delay = delay
                 self._emit("retry_attempt", pol, route)
                 await self.sleep(delay)

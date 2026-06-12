@@ -57,6 +57,9 @@ def _status_code_mapper(kind: ExceptionKind) -> int:
         case ExceptionKind.THROTTLED:
             return 429
 
+        case ExceptionKind.TIMEOUT:
+            return 504
+
         case _:
             return 500
 

@@ -70,6 +70,13 @@ _EXC_KIND_POLICY: Mapping[ExceptionKind, ExceptionKindEgress] = {
         expose_details=False,
         retryable=True,
     ),
+    ExceptionKind.TIMEOUT: ExceptionKindEgress(
+        # Deadline exceeded: the invocation's time budget is spent, so an
+        # in-process retry under the same deadline is pointless. Details may
+        # carry wiring info (policy names, routes).
+        expose_details=False,
+        retryable=False,
+    ),
     ExceptionKind.INTERNAL: ExceptionKindEgress(
         expose_details=False,
         retryable=False,

@@ -1,5 +1,6 @@
 """Tests for forze.application.execution.context."""
 
+import asyncio
 from datetime import timedelta
 from enum import StrEnum
 
@@ -224,6 +225,107 @@ class TestAfterCommitCallbackFailures:
             async with ctx.tx_ctx.scope("mock"):
                 await ctx.tx_ctx.run_or_defer(_fail)
                 await ctx.tx_ctx.run_or_defer(_ok)
+
+        assert ran == ["ok"]
+
+
+class TestTransactionCancellation:
+    """Post-commit deferred callbacks are a critical section.
+
+    Once the root transaction has committed, a task cancellation must not
+    skip or tear the deferred drain (idempotency commits, after-commit
+    dispatch); the drain runs to completion and the cancellation is
+    re-raised afterwards. Cancellation during the body still rolls back.
+    """
+
+    @pytest.mark.asyncio
+    async def test_cancel_during_drain_completes_all_callbacks(
+        self, ctx: ExecutionContext
+    ) -> None:
+        started = asyncio.Event()
+        release = asyncio.Event()
+        ran: list[str] = []
+
+        async def _slow() -> None:
+            started.set()
+            await release.wait()
+            ran.append("slow")
+
+        async def _second() -> None:
+            ran.append("second")
+
+        async def _op() -> None:
+            async with ctx.tx_ctx.scope("mock"):
+                await ctx.tx_ctx.run_or_defer(_slow)
+                await ctx.tx_ctx.run_or_defer(_second)
+
+        task = asyncio.create_task(_op())
+        await started.wait()
+        task.cancel()
+        await asyncio.sleep(0)
+        release.set()
+
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+        assert ran == ["slow", "second"]
+
+    @pytest.mark.asyncio
+    async def test_cancel_during_body_skips_callbacks(
+        self, ctx: ExecutionContext
+    ) -> None:
+        in_body = asyncio.Event()
+        ran: list[str] = []
+
+        async def _cb() -> None:
+            ran.append("cb")
+
+        async def _op() -> None:
+            async with ctx.tx_ctx.scope("mock"):
+                await ctx.tx_ctx.run_or_defer(_cb)
+                in_body.set()
+                await asyncio.Event().wait()
+
+        task = asyncio.create_task(_op())
+        await in_body.wait()
+        task.cancel()
+
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+        assert ran == []
+
+    @pytest.mark.asyncio
+    async def test_cancellation_wins_over_callback_failure(
+        self, ctx: ExecutionContext
+    ) -> None:
+        started = asyncio.Event()
+        release = asyncio.Event()
+        ran: list[str] = []
+
+        async def _fail() -> None:
+            started.set()
+            await release.wait()
+            raise RuntimeError("cb failed")
+
+        async def _ok() -> None:
+            ran.append("ok")
+
+        async def _op() -> None:
+            async with ctx.tx_ctx.scope("mock"):
+                await ctx.tx_ctx.run_or_defer(_fail)
+                await ctx.tx_ctx.run_or_defer(_ok)
+
+        task = asyncio.create_task(_op())
+        await started.wait()
+        task.cancel()
+        await asyncio.sleep(0)
+        release.set()
+
+        # The cancellation propagates (not the aggregated after-commit
+        # error), and the remaining callbacks still ran.
+        with pytest.raises(asyncio.CancelledError):
+            await task
 
         assert ran == ["ok"]
 

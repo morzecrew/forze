@@ -18,6 +18,7 @@ from forze.application.contracts.resilience import (
     RetryStrategy,
     TimeoutStrategy,
 )
+from forze.application.execution.context.deadline import bind_deadline
 from forze.application.execution.resilience import InProcessResilienceExecutor
 from forze.application.execution.tracing import bind_active_deps
 from forze.base.exceptions import CoreException, ExceptionKind, exc
@@ -661,3 +662,77 @@ class TestTracing:
         assert events[0].domain == "resilience"
         assert events[0].route == "r"
         assert events[0].phase == "p"
+
+
+# ....................... #
+
+
+class TestDeadline:
+    """Invocation-deadline integration (see ``context.deadline``)."""
+
+    async def test_expired_deadline_rejects_before_call(self) -> None:
+        executor = _executor(_retry_policy())
+        counter = _Counter()
+
+        async def fn() -> str:
+            counter.calls += 1
+            return "ok"
+
+        with bind_deadline(0.0):
+            with pytest.raises(CoreException) as ei:
+                await executor.run(fn, policy="p")
+
+        assert ei.value.kind is ExceptionKind.TIMEOUT
+        assert ei.value.code == "deadline_exceeded"
+        assert counter.calls == 0
+
+    async def test_deadline_bounds_whole_call(self) -> None:
+        executor = _executor(_retry_policy())
+
+        async def fn() -> str:
+            await asyncio.Event().wait()
+            return "ok"
+
+        with bind_deadline(0.05):
+            with pytest.raises(CoreException) as ei:
+                await executor.run(fn, policy="p")
+
+        assert ei.value.kind is ExceptionKind.TIMEOUT
+        assert ei.value.code == "deadline_exceeded"
+
+    async def test_retry_abandons_backoff_past_deadline(self) -> None:
+        # Backoff far larger than the remaining budget: the retry loop must
+        # surface the real error instead of sleeping into the deadline.
+        policy = _retry_policy(
+            backoff=BackoffStrategy(
+                base=timedelta(seconds=60),
+                max=timedelta(seconds=60),
+                jitter="none",
+            ),
+        )
+        executor = _executor(policy)
+        counter = _Counter()
+
+        async def fn() -> str:
+            counter.calls += 1
+            raise exc.infrastructure("down")
+
+        with bind_deadline(5.0):
+            with pytest.raises(CoreException) as ei:
+                await executor.run(fn, policy="p")
+
+        assert ei.value.kind is ExceptionKind.INFRASTRUCTURE
+        assert counter.calls == 1
+
+    async def test_no_deadline_leaves_behavior_unchanged(self) -> None:
+        executor = _executor(_retry_policy())
+        counter = _Counter()
+
+        async def fn() -> str:
+            counter.calls += 1
+            if counter.calls < 3:
+                raise exc.infrastructure("transient")
+            return "ok"
+
+        assert await executor.run(fn, policy="p") == "ok"
+        assert counter.calls == 3

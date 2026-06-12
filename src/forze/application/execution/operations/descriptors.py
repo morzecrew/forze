@@ -11,14 +11,12 @@ read/write classification lives on the plan (:class:`OperationKind`), not the de
 because it is execution-semantic; :meth:`OperationCatalogEntry` joins the two.
 """
 
-from __future__ import annotations
-
-from typing import Any, final
+from typing import final
 
 import attrs
 from pydantic import BaseModel
 
-from forze.base.primitives import StrKey
+from forze.base.primitives import JsonDict, StrKey
 
 from .planning import OperationKind
 
@@ -57,14 +55,14 @@ class OperationDescriptor:
 
     # ....................... #
 
-    def input_schema(self) -> dict[str, Any] | None:
+    def input_schema(self) -> JsonDict | None:
         """JSON schema for the input DTO, or ``None`` when the operation takes no input."""
 
         return None if self.input_type is None else self.input_type.model_json_schema()
 
     # ....................... #
 
-    def output_schema(self) -> dict[str, Any] | None:
+    def output_schema(self) -> JsonDict | None:
         """JSON schema for the output DTO, or ``None`` when the operation returns nothing."""
 
         return (

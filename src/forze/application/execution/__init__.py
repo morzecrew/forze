@@ -1,6 +1,12 @@
 """Execution kernel, dependency injection, and lifecycle."""
 
-from .context import ExecutionContext, InvocationMetadata
+from .context import (
+    ExecutionContext,
+    InvocationMetadata,
+    bind_deadline,
+    current_deadline,
+    remaining_time,
+)
 from .domain import (
     DomainEventHandler,
     DomainEventHandlerFactory,
@@ -77,6 +83,9 @@ from .tracing import (
 __all__ = [
     "build_runtime",
     "InvocationMetadata",
+    "bind_deadline",
+    "current_deadline",
+    "remaining_time",
     "Deps",
     "DepsModule",
     "DepsRegistry",

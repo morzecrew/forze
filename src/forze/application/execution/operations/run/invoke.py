@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from typing import TYPE_CHECKING, Any, Callable, cast, final
 
 import attrs
@@ -12,6 +13,7 @@ from forze.base.exceptions import exc
 from forze.base.primitives import StrKey
 
 from ...context.active_operation import active_operation_var
+from ...context.deadline import remaining_time
 from ..planning.plans import OperationKind, ResolvedOperationPlan
 from .plan import TransactionRunner, run_resolved_operation_plan
 
@@ -49,13 +51,44 @@ class ResolvedOperation[Args, R](Handler[Args, R]):
     # ....................... #
 
     async def _run(self, args: Args) -> R:
-        return await run_resolved_operation_plan(
-            self.plan,
-            self.handler,
-            args,
-            tx_runner=self.tx_runner,
-            defer_after_commit=self.defer_after_commit,
-        )
+        # Deadline enforcement: a bound invocation deadline (see
+        # ``context.deadline``) bounds the whole plan — hooks, transaction,
+        # dispatch. Unbound is the hot path: one ContextVar read, no timeout
+        # machinery. The post-commit drain is cancellation-protected in
+        # ``TransactionContext.scope``, so a deadline firing mid-drain still
+        # lets the drain finish before the timeout surfaces here.
+        remaining = remaining_time()
+
+        if remaining is None:
+            return await run_resolved_operation_plan(
+                self.plan,
+                self.handler,
+                args,
+                tx_runner=self.tx_runner,
+                defer_after_commit=self.defer_after_commit,
+            )
+
+        if remaining <= 0.0:
+            raise exc.timeout(
+                f"Invocation deadline exceeded before operation {str(self.op)!r} started",
+                code="deadline_exceeded",
+            )
+
+        try:
+            async with asyncio.timeout(remaining):
+                return await run_resolved_operation_plan(
+                    self.plan,
+                    self.handler,
+                    args,
+                    tx_runner=self.tx_runner,
+                    defer_after_commit=self.defer_after_commit,
+                )
+
+        except TimeoutError as error:
+            raise exc.timeout(
+                f"Operation {str(self.op)!r} exceeded the invocation deadline",
+                code="deadline_exceeded",
+            ) from error
 
     # ....................... #
 

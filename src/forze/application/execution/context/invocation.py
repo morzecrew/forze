@@ -9,6 +9,8 @@ from structlog.contextvars import bind_contextvars, reset_contextvars
 from forze.application.contracts.authn import AuthnIdentity
 from forze.application.contracts.tenancy import TenantIdentity
 
+from .deadline import bind_deadline, current_deadline, remaining_time
+
 # ----------------------- #
 
 EXEC_ID_KEY: Final = "execution_id"
@@ -147,6 +149,39 @@ class InvocationContext:
 
         finally:
             self.reset_read_only(token)
+
+    # ....................... #
+
+    def get_deadline(self) -> float | None:
+        """The absolute monotonic deadline for the current invocation, if any.
+
+        The deadline is task-scoped module-level state (see
+        :mod:`~forze.application.execution.context.deadline`) so the engine and
+        the resilience executor can read it without wiring; this accessor is
+        the boundary-facing surface.
+        """
+
+        return current_deadline()
+
+    # ....................... #
+
+    def remaining_time(self) -> float | None:
+        """Seconds left until the invocation deadline (clamped at ``0.0``), or ``None``."""
+
+        return remaining_time()
+
+    # ....................... #
+
+    @contextmanager
+    def bind_deadline(self, timeout: float | None) -> Iterator[None]:
+        """Bind an invocation deadline of *timeout* seconds from now (tighten-only).
+
+        ``None`` is a no-op passthrough. See
+        :func:`~forze.application.execution.context.deadline.bind_deadline`.
+        """
+
+        with bind_deadline(timeout):
+            yield
 
     # ....................... #
 

@@ -39,6 +39,17 @@ class ExceptionKind(StrEnum):
     wait-with-backoff. Maps to HTTP 429 at the FastAPI edge.
     """
 
+    TIMEOUT = "timeout"
+    """The invocation deadline elapsed before the call completed.
+
+    **Not retryable**: within the same invocation the time budget is already
+    spent, so an in-process retry would only burn what little remains. A fresh
+    invocation carries a fresh deadline — retrying is the *caller's* decision.
+    Distinct from a per-attempt resilience timeout, which raises
+    ``INFRASTRUCTURE`` precisely so retry strategies can take another attempt.
+    Maps to HTTP 504 at the FastAPI edge.
+    """
+
 
 # ....................... #
 
@@ -172,6 +183,9 @@ class CoreException(Exception):
 
     throttled = _exc_of_kind(ExceptionKind.THROTTLED)
     """Build a throttled (rate-limited) exception."""
+
+    timeout = _exc_of_kind(ExceptionKind.TIMEOUT)
+    """Build a timeout (deadline exceeded) exception."""
 
     # ....................... #
 
