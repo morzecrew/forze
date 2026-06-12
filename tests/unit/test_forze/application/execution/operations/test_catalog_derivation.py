@@ -270,3 +270,25 @@ class TestCombinedDerivation:
         assert entry.kind is OperationKind.COMMAND
         assert entry.supports_idempotency_key is True
         assert entry.required_permissions == ("notes.write",)
+
+
+class TestDeadlineDerivation:
+    """The catalog entry carries the plan's merged per-invocation budget."""
+
+    def test_declared_deadline_lands_on_entry(self) -> None:
+        from datetime import timedelta
+
+        reg = (
+            _registry()
+            .bind("op")
+            .with_deadline(timedelta(seconds=5))
+            .finish()
+            .freeze()
+        )
+
+        assert reg.catalog()["op"].deadline == timedelta(seconds=5)
+
+    def test_undeclared_deadline_is_none(self) -> None:
+        reg = _registry().freeze()
+
+        assert reg.catalog()["op"].deadline is None

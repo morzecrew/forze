@@ -183,25 +183,32 @@ def _operation_runner(
 def _route_description(
     entry: OperationCatalogEntry,
 ) -> str | None:
-    """Route description: the descriptor's text plus a declared-permissions line.
+    """Route description: the descriptor's text plus catalog-derived lines.
 
     The permissions line reflects *declared-hook introspection* only (the catalog's
     ``required_permissions``), not a complete security statement — an operation may
-    enforce further checks inside its handler invisibly.
+    enforce further checks inside its handler invisibly. A plan-declared deadline
+    documents the operation's time budget: exceeding it fails with **504**.
     """
 
     base = entry.descriptor.description if entry.descriptor is not None else None
+    lines: list[str] = [base] if base else []
 
-    if not entry.required_permissions:
-        return base
+    if entry.required_permissions:
+        keys = ", ".join(f"`{key}`" for key in entry.required_permissions)
+        lines.append(
+            f"Requires permissions: {keys} (declared by attached authorization "
+            "hooks; the operation may enforce additional checks internally)."
+        )
 
-    keys = ", ".join(f"`{key}`" for key in entry.required_permissions)
-    line = (
-        f"Requires permissions: {keys} (declared by attached authorization hooks; "
-        "the operation may enforce additional checks internally)."
-    )
+    if entry.deadline is not None:
+        budget = f"{entry.deadline.total_seconds():g}"
+        lines.append(
+            f"Time budget: {budget}s — requests exceeding it fail with "
+            "504 (`deadline_exceeded`)."
+        )
 
-    return f"{base}\n\n{line}" if base else line
+    return "\n\n".join(lines) if lines else None
 
 
 # ....................... #
@@ -219,8 +226,10 @@ def _route_openapi_extra(
 
     Declared permissions surface as the ``x-required-permissions`` vendor
     extension; mapping them onto OpenAPI ``securitySchemes`` is a follow-up.
-    FastAPI deep-merges ``openapi_extra`` into the operation object, appending
-    to ``parameters``, so unflagged routes (``None``) are emitted unchanged.
+    A plan-declared deadline surfaces as ``x-deadline-seconds`` (the merged
+    per-invocation budget; expiry returns **504**). FastAPI deep-merges
+    ``openapi_extra`` into the operation object, appending to ``parameters``,
+    so unflagged routes (``None``) are emitted unchanged.
     """
 
     extra: dict[str, Any] = {}
@@ -241,6 +250,9 @@ def _route_openapi_extra(
 
     if entry.required_permissions:
         extra["x-required-permissions"] = list(entry.required_permissions)
+
+    if entry.deadline is not None:
+        extra["x-deadline-seconds"] = entry.deadline.total_seconds()
 
     return extra or None
 

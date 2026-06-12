@@ -105,7 +105,9 @@ def _tool_description(entry: OperationCatalogEntry) -> str | None:
     retry replay (the key is bound by the invoking boundary; without one the wrap
     is a no-op). Declared permissions are appended as well — declared-hook
     introspection only, **not** a complete security statement: an operation may
-    enforce authorization inside its handler invisibly.
+    enforce authorization inside its handler invisibly. A plan-declared deadline
+    documents the call's time budget so agents can set client timeouts and avoid
+    retrying a call that failed by running out of budget.
     """
 
     parts: list[str] = []
@@ -125,6 +127,13 @@ def _tool_description(entry: OperationCatalogEntry) -> str | None:
         parts.append(
             f"Requires permissions: {keys} (declared by attached authorization "
             "hooks; the operation may enforce additional checks internally)."
+        )
+
+    if entry.deadline is not None:
+        budget = f"{entry.deadline.total_seconds():g}"
+        parts.append(
+            f"Calls are bounded by a {budget}s time budget; exceeding it fails "
+            "with a non-retryable timeout (deadline_exceeded)."
         )
 
     return " ".join(parts) if parts else None

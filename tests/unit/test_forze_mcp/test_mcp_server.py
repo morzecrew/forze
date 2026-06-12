@@ -455,6 +455,8 @@ class TestCatalogDerivedDescriptions:
     """Tool descriptions pick up catalog-derived idempotency/authz facts."""
 
     def _flagged_registry(self) -> FrozenOperationRegistry:
+        from datetime import timedelta
+
         from forze.application.contracts.authz import AuthzSpec
         from forze.application.contracts.idempotency import IdempotencySpec
         from forze.application.hooks.authz import AuthzBeforeAuthorize
@@ -477,6 +479,7 @@ class TestCatalogDerivedDescriptions:
         reg = reg.bind("calc.double").as_query().finish()
         reg = (
             reg.bind("calc.write")
+            .with_deadline(timedelta(seconds=5))
             .bind_outer()
             .before(
                 AuthzBeforeAuthorize(
@@ -510,6 +513,8 @@ class TestCatalogDerivedDescriptions:
         assert "Requires permissions: calc.write" in tool.description
         # Honesty caveat: declared-hook introspection, not a security statement.
         assert "declared by attached authorization hooks" in tool.description
+        assert "bounded by a 5s time budget" in tool.description
+        assert "deadline_exceeded" in tool.description
 
     async def test_unflagged_tool_description_is_unchanged(self) -> None:
         server = FastMCP("calc")

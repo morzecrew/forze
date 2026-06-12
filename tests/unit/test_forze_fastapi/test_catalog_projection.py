@@ -9,6 +9,7 @@ operation, frozen, and projected via ``attach_document_routes`` with a
 from __future__ import annotations
 
 import json
+from datetime import timedelta
 
 import pytest
 
@@ -67,6 +68,7 @@ def _registry(*, with_hooks: bool) -> FrozenOperationRegistry:
     if with_hooks:
         reg = (
             reg.bind(_CREATE_OP)
+            .with_deadline(timedelta(seconds=5))
             .bind_outer()
             .before(
                 AuthzBeforeAuthorize(
@@ -114,14 +116,16 @@ def _operations(doc: dict[str, Any]) -> dict[str, dict[str, Any]]:
 
 
 class TestEndToEndProjection:
-    def test_catalog_entry_shows_both_derived_facts(self) -> None:
+    def test_catalog_entry_shows_all_derived_facts(self) -> None:
         catalog = _registry(with_hooks=True).catalog()
 
         assert catalog[_CREATE_OP].supports_idempotency_key is True
         assert catalog[_CREATE_OP].required_permissions == ("notes.write",)
+        assert catalog[_CREATE_OP].deadline == timedelta(seconds=5)
 
         assert catalog[_GET_OP].supports_idempotency_key is False
         assert catalog[_GET_OP].required_permissions == ()
+        assert catalog[_GET_OP].deadline is None
 
     def test_flagged_route_documents_optional_idempotency_header(self) -> None:
         create = _operations(_openapi(with_hooks=True))[_CREATE_OP]
@@ -148,11 +152,19 @@ class TestEndToEndProjection:
         assert "Requires permissions: `notes.write`" in create["description"]
         assert "declared by attached authorization hooks" in create["description"]
 
+    def test_flagged_route_carries_deadline_extension_and_description(self) -> None:
+        create = _operations(_openapi(with_hooks=True))[_CREATE_OP]
+
+        assert create["x-deadline-seconds"] == 5.0
+        assert "Time budget: 5s" in create["description"]
+        assert "deadline_exceeded" in create["description"]
+
     def test_unflagged_route_is_untouched(self) -> None:
         get = _operations(_openapi(with_hooks=True))[_GET_OP]
         descriptor = _registry(with_hooks=True).descriptors[_GET_OP]
 
         assert "x-required-permissions" not in get
+        assert "x-deadline-seconds" not in get
         assert not any(
             param.get("name") == IDEMPOTENCY_KEY_HEADER
             for param in get.get("parameters", [])
@@ -180,3 +192,5 @@ class TestEndToEndProjection:
         assert IDEMPOTENCY_KEY_HEADER not in raw
         assert "x-required-permissions" not in raw
         assert "Requires permissions" not in raw
+        assert "x-deadline-seconds" not in raw
+        assert "Time budget" not in raw

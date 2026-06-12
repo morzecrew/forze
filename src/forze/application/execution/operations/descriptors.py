@@ -11,6 +11,7 @@ read/write classification lives on the plan (:class:`OperationKind`), not the de
 because it is execution-semantic; :meth:`OperationCatalogEntry` joins the two.
 """
 
+from datetime import timedelta
 from typing import final
 
 import attrs
@@ -102,6 +103,14 @@ class OperationCatalogEntry:
     Honesty caveat: declared-hook introspection, **not** a security statement. An
     operation may enforce authorization inside its handler (or via an undeclared
     hook) invisibly, so an empty tuple must not be read as "unauthenticated/open"."""
+
+    deadline: timedelta | None = None
+    """Per-invocation time budget declared by the plan, or ``None`` for no cap.
+
+    The effective merged budget (tightest across patches and the explicit plan).
+    Enforced at operation entry: exceeding it fails with a non-retryable
+    ``TIMEOUT`` (``code="deadline_exceeded"``; **504** over the FastAPI edge).
+    A caller-bound deadline can only tighten it further, never extend it."""
 
     # ....................... #
 
