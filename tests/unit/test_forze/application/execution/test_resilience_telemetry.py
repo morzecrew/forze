@@ -242,3 +242,32 @@ class TestResilienceMetrics:
         ((labels, point),) = _points(reader, BULKHEAD_LIMIT_GAUGE)
         assert point.value == 8.0
         assert labels["forze.policy"] == "p"
+
+    async def test_adaptive_hedge_delay_observed(self) -> None:
+        from forze.application.contracts.resilience import (
+            HedgeStrategy,
+            TimeoutStrategy,
+        )
+        from forze.application.execution.observability import HEDGE_DELAY_GAUGE
+
+        meter, reader = _meter()
+        policy = ResiliencePolicy(
+            name="p",
+            strategies=(TimeoutStrategy(timeout=timedelta(seconds=10)),),
+            hedge=HedgeStrategy(
+                delay=timedelta(milliseconds=250),
+                max_attempts=2,
+                adaptive_delay_quantile=0.95,
+            ),
+        )
+        executor = instrument_resilience(_executor(policy), meter=meter)
+
+        async def fn() -> str:
+            return "ok"
+
+        assert await executor.run_hedged(fn, policy="p", route="r") == "ok"
+
+        ((labels, point),) = _points(reader, HEDGE_DELAY_GAUGE)
+        assert point.value == pytest.approx(0.25)  # unwarmed: fixed fallback
+        assert labels["forze.policy"] == "p"
+        assert labels["forze.route"] == "r"

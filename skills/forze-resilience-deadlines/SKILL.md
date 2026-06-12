@@ -50,6 +50,10 @@ ResilienceDepsModule(
 
 Queued bulkheads (`max_queue >= 1`) take opt-in queue management on both kinds: `queue_target=` (CoDel — shed waiters parked too long under sustained congestion) and `queue_adaptive_lifo=True` (serve newest first while congested; pair with `queue_target`).
 
+### Tail-based hedging
+
+`HedgeStrategy(delay=, max_attempts=)` races a concurrent copy against a slow primary (idempotent reads only; `budget=` caps amplification), run via `ctx.resilience().run_hedged(...)`. Set `adaptive_delay_quantile=0.95` to hedge after the *observed* p95 per `(policy, route)` (streaming P² estimate, windowed) instead of the fixed delay — `delay` becomes the pre-warmup fallback, `delay_min`/`delay_max` clamp the estimate.
+
 ## Invocation deadlines
 
 Declare a time budget on the **operation plan**, not per route or caller:

@@ -471,13 +471,34 @@ class HedgeStrategy:
     """
 
     delay: timedelta
-    """Wait before firing the next concurrent copy (~p95 latency)."""
+    """Wait before firing the next concurrent copy (~p95 latency). With
+    :attr:`adaptive_delay_quantile` set, this is the fallback used until the
+    estimator has warmed up."""
 
     max_attempts: int
     """Total concurrent attempts including the primary (``>= 2``)."""
 
     budget: RetryBudget | None = None
     """Optional token-bucket cap on extra attempts (load amplification)."""
+
+    adaptive_delay_quantile: float | None = None
+    """Opt-in tail-based hedge delay (*The Tail at Scale*): track this quantile
+    of observed primary-attempt latencies per ``(policy, route)`` (streaming P²
+    estimation — five floats, no sample storage) and hedge after *that* instead
+    of the fixed :attr:`delay`. Typical ``0.95``: the hedge fires only for the
+    slowest ~5% of calls, and the trigger point follows the downstream's
+    latency distribution as it moves. ``None`` (default) keeps the fixed
+    delay."""
+
+    delay_min: timedelta | None = None
+    """Floor for the adaptive delay. Guards against over-eager hedging when the
+    observed distribution collapses (every call fast → tiny quantile → hedges
+    fire on the slightest blip). Requires :attr:`adaptive_delay_quantile`."""
+
+    delay_max: timedelta | None = None
+    """Cap for the adaptive delay. Guards against a degraded downstream
+    dragging the quantile so high the hedge never rescues anything. Requires
+    :attr:`adaptive_delay_quantile`."""
 
     # ....................... #
 
@@ -487,6 +508,31 @@ class HedgeStrategy:
 
         if self.max_attempts < 2:
             raise exc.configuration("Hedge max_attempts must be >= 2")
+
+        if self.adaptive_delay_quantile is not None and not (
+            0.0 < self.adaptive_delay_quantile < 1.0
+        ):
+            raise exc.configuration("Hedge adaptive_delay_quantile must be in (0, 1)")
+
+        if (
+            self.delay_min is not None or self.delay_max is not None
+        ) and self.adaptive_delay_quantile is None:
+            raise exc.configuration(
+                "Hedge delay_min/delay_max require adaptive_delay_quantile"
+            )
+
+        if self.delay_min is not None and self.delay_min.total_seconds() <= 0:
+            raise exc.configuration("Hedge delay_min must be positive")
+
+        if self.delay_max is not None and self.delay_max.total_seconds() <= 0:
+            raise exc.configuration("Hedge delay_max must be positive")
+
+        if (
+            self.delay_min is not None
+            and self.delay_max is not None
+            and self.delay_min > self.delay_max
+        ):
+            raise exc.configuration("Hedge delay_min must be <= delay_max")
 
 
 # ....................... #

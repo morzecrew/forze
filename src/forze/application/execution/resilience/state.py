@@ -10,6 +10,7 @@ import attrs
 from forze.base.exceptions import exc
 
 from ..context.deadline import current_deadline
+from .quantile import WindowedP2Quantile
 
 # ----------------------- #
 
@@ -412,3 +413,55 @@ class AdaptiveBulkheadState:
         )
 
         return False
+
+
+# ....................... #
+
+
+@attrs.define(slots=True)
+class HedgeDelayState:
+    """Tail-based hedge delay keyed by ``(policy, route)``.
+
+    Tracks a quantile of observed **primary-attempt** latencies (windowed P²)
+    and serves it — clamped by the configured floor/cap — as the hedge delay.
+    Until the estimator has warmed up (five observations), the strategy's
+    fixed delay is served unchanged.
+    """
+
+    quantile: float
+    fixed_delay: float
+    floor: float | None = None
+    cap: float | None = None
+
+    _estimator: WindowedP2Quantile = attrs.field(
+        default=attrs.Factory(
+            lambda self: WindowedP2Quantile(p=self.quantile),
+            takes_self=True,
+        ),
+        init=False,
+    )
+
+    # ....................... #
+
+    def observe(self, latency: float) -> None:
+        """Record one primary-attempt latency sample (seconds)."""
+
+        self._estimator.observe(latency)
+
+    # ....................... #
+
+    def delay(self) -> float:
+        """The effective hedge delay in seconds."""
+
+        estimate = self._estimator.value()
+
+        if estimate is None:
+            return self.fixed_delay
+
+        if self.floor is not None:
+            estimate = max(self.floor, estimate)
+
+        if self.cap is not None:
+            estimate = min(self.cap, estimate)
+
+        return estimate

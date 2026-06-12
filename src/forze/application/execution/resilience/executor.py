@@ -23,7 +23,7 @@ from forze.base.primitives import MappingConverter, StrKey, StrKeyMapping
 from ..context.deadline import remaining_time
 from ..tracing import record
 from .backoff import compute_delay
-from .state import AdaptiveBulkheadState, BudgetState, Transition
+from .state import AdaptiveBulkheadState, BudgetState, HedgeDelayState, Transition
 from .store import (
     CircuitBreakerStore,
     InMemoryCircuitBreakerStore,
@@ -109,6 +109,12 @@ class InProcessResilienceExecutor:
     _hedge_budgets: dict[_StateKey, BudgetState] = attrs.field(factory=dict, init=False)
     """Hedge budget state for the executor."""
 
+    _hedge_delays: dict[_StateKey, HedgeDelayState] = attrs.field(
+        factory=dict,
+        init=False,
+    )
+    """Adaptive hedge-delay state (windowed P² quantile per policy/route)."""
+
     _metrics_sink: MetricsSink | None = attrs.field(default=None, init=False, repr=False)
     """Optional always-on metrics callback (see :data:`MetricsSink`)."""
 
@@ -161,6 +167,24 @@ class InProcessResilienceExecutor:
                 str(policy),
                 str(route) if route is not None else None,
                 state.limit,
+            )
+
+    # ....................... #
+
+    def hedge_delays(self) -> Iterator[tuple[str, str | None, float]]:
+        """Yield ``(policy, route, delay_seconds)`` for every adaptive hedge delay.
+
+        Snapshot accessor for observable gauges: the effective hedge delay —
+        the windowed P² quantile estimate clamped by the strategy's
+        floor/cap, or the fixed fallback until warmed up. State appears
+        lazily on first ``run_hedged`` of an adaptive-delay policy.
+        """
+
+        for (policy, route), state in self._hedge_delays.items():
+            yield (
+                str(policy),
+                str(route) if route is not None else None,
+                state.delay(),
             )
 
     # ....................... #
@@ -221,21 +245,33 @@ class InProcessResilienceExecutor:
         if budget is not None:
             budget.on_call()
 
-        delay = hedge.delay.total_seconds()
+        delay_state = self._hedge_delay_for(hedge, pol, route)
+        delay = delay_state.delay() if delay_state is not None else (
+            hedge.delay.total_seconds()
+        )
         tasks: set[asyncio.Future[T]] = set()
         errors: list[BaseException] = []
         attempts = 0
         budget_spent = False
 
-        def spawn() -> None:
+        def spawn() -> asyncio.Future[T]:
             nonlocal attempts
             attempts += 1
-            tasks.add(asyncio.ensure_future(fn()))
+            task = asyncio.ensure_future(fn())
+            tasks.add(task)
 
             if attempts > 1:
                 self._emit("hedge_attempt", pol, route)
 
-        spawn()  # primary attempt
+            return task
+
+        # The estimator samples the *primary* attempt only: a completed primary
+        # is an unbiased latency sample, and hedge attempts are excluded so a
+        # hedged call doesn't double-weight one logical request. Sampling
+        # winners-of-races instead would bias the quantile down, making the
+        # delay ever more eager (the classic hedging feedback spiral).
+        primary_start = self.clock()
+        primary = spawn()
 
         try:
             while tasks:
@@ -262,6 +298,9 @@ class InProcessResilienceExecutor:
                     tasks.discard(task)
                     error = task.exception()
 
+                    if task is primary and delay_state is not None and error is None:
+                        delay_state.observe(self.clock() - primary_start)
+
                     if error is None:
                         self._emit("hedge_won", pol, route)
                         return task.result()
@@ -271,6 +310,14 @@ class InProcessResilienceExecutor:
             raise errors[-1]
 
         finally:
+            if primary in tasks and delay_state is not None:
+                # A hedge won and the primary is being cancelled: record its
+                # elapsed time as a right-censored sample. It understates the
+                # true latency but is >= the current delay, so it still pulls
+                # the estimated tail up instead of silently dropping the
+                # slowest calls from the distribution.
+                delay_state.observe(self.clock() - primary_start)
+
             for task in tasks:
                 task.cancel()
 
@@ -727,6 +774,39 @@ class InProcessResilienceExecutor:
                 min_throughput=strat.budget.min_throughput,
             )
             self._hedge_budgets[key] = state
+
+        return state
+
+    # ....................... #
+
+    def _hedge_delay_for(
+        self,
+        strat: HedgeStrategy,
+        pol: ResiliencePolicy,
+        route: StrKey | None,
+    ) -> HedgeDelayState | None:
+        if strat.adaptive_delay_quantile is None:
+            return None
+
+        key = (pol.name, route)
+        state = self._hedge_delays.get(key)
+
+        if state is None:
+            state = HedgeDelayState(
+                quantile=strat.adaptive_delay_quantile,
+                fixed_delay=strat.delay.total_seconds(),
+                floor=(
+                    strat.delay_min.total_seconds()
+                    if strat.delay_min is not None
+                    else None
+                ),
+                cap=(
+                    strat.delay_max.total_seconds()
+                    if strat.delay_max is not None
+                    else None
+                ),
+            )
+            self._hedge_delays[key] = state
 
         return state
 

@@ -158,6 +158,35 @@ A parked waiter whose [invocation deadline](deadlines.md) has already expired
 is failed at wake instead of being granted a slot it can no longer use — no
 knob needed.
 
+## Hedging the tail
+
+Even a healthy downstream has a slow tail. A **hedge** races it: if the
+primary attempt hasn't completed after `delay`, fire a concurrent copy and
+take whichever finishes first (losers are cancelled). Only safe on idempotent
+reads — and `budget` caps the extra load it may add.
+
+The textbook delay is "about the p95 latency" — but a fixed number is always
+either too eager (wasted duplicate load) or too late (no tail rescue) as the
+downstream's distribution moves. Let it track the observed tail instead:
+
+```python
+HedgeStrategy(
+    delay=timedelta(milliseconds=200),   # fallback until the estimator warms
+    max_attempts=2,
+    adaptive_delay_quantile=0.95,        # hedge after the *observed* p95
+    delay_min=timedelta(milliseconds=10),
+)
+```
+
+The executor keeps a streaming quantile estimate (P² — five floats, no sample
+storage) of primary-attempt latencies per `(policy, route)`, windowed so a
+shifted distribution is picked up quickly, and hedges after *that* instead of
+the fixed delay. `delay_min` / `delay_max` clamp it: the floor guards against
+over-eager hedging when every call is fast, the cap against a degraded
+downstream pushing the trigger past usefulness. The effective delay is
+visible as the `forze.resilience.hedge.delay` gauge once
+[`instrument_resilience`](observability.md#resilience-metrics) is attached.
+
 ## Port-level policies
 
 Instead of wrapping individual calls, bind a policy to a **dependency key** —

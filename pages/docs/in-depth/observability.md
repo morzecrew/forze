@@ -62,6 +62,7 @@ instrument_resilience(ctx.resilience())  # once, when the scope is up
 | `forze.resilience.breaker.state` (gauge) | breaker phase per policy/route: 0 closed, 1 half-open, 2 open |
 | `forze.resilience.bulkhead.queue_depth` (gauge) | calls queued behind each bulkhead, sampled at collection |
 | `forze.resilience.bulkhead.limit` (gauge) | the current adaptive-bulkhead concurrency limit |
+| `forze.resilience.hedge.delay` (gauge) | the effective adaptive hedge delay (P² quantile estimate), in seconds |
 
 Two reading notes: `breaker_open` counts the open transition *and* every
 admission shed while open, so its rate tracks shed load; and a breaker that

@@ -45,6 +45,7 @@ RESILIENCE_EVENTS_COUNTER = "forze.resilience.events"
 BREAKER_STATE_GAUGE = "forze.resilience.breaker.state"
 BULKHEAD_QUEUE_GAUGE = "forze.resilience.bulkhead.queue_depth"
 BULKHEAD_LIMIT_GAUGE = "forze.resilience.bulkhead.limit"
+HEDGE_DELAY_GAUGE = "forze.resilience.hedge.delay"
 
 _BREAKER_PHASE_VALUES: dict[str, int] = {
     "breaker_close": 0,
@@ -126,6 +127,10 @@ def instrument_resilience(
     - ``forze.resilience.bulkhead.limit`` (observable gauge): the current AIMD
       concurrency limit per adaptive bulkhead (``bulkhead_backoff`` events in
       the counter mark each multiplicative decrease).
+    - ``forze.resilience.hedge.delay`` (observable gauge): the effective
+      adaptive hedge delay in seconds — the windowed P² quantile estimate,
+      clamped by the strategy's floor/cap. Appears once an adaptive-delay
+      hedge policy is first used.
 
     Emits via the global OTel meter unless *meter* is supplied. Call once at
     assembly time, alongside :func:`instrument_operations`.
@@ -187,6 +192,22 @@ def instrument_resilience(
         callbacks=[_observe_limits],
         unit="1",
         description="Current AIMD concurrency limit per adaptive bulkhead.",
+    )
+
+    def _observe_hedge_delays(_options: CallbackOptions) -> Iterable[Observation]:
+        for policy, route, delay in executor.hedge_delays():
+            labels = {"forze.policy": policy}
+
+            if route is not None:
+                labels["forze.route"] = route
+
+            yield Observation(delay, labels)
+
+    meter.create_observable_gauge(
+        HEDGE_DELAY_GAUGE,
+        callbacks=[_observe_hedge_delays],
+        unit="s",
+        description="Effective adaptive hedge delay (P² quantile estimate) per policy/route.",
     )
 
     executor.set_metrics_sink(_sink)
