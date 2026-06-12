@@ -68,6 +68,27 @@ Two reading notes: `breaker_open` counts the open transition *and* every
 admission shed while open, so its rate tracks shed load; and a breaker that
 never tripped reports no state at all — closed by absence.
 
+## Tenant pool metrics
+
+[Routed clients](multi-tenancy.md) keep one connection pool per tenant in a
+bounded LRU, and evicting a pool is expensive — the next request rebuilds the
+connection from scratch. `instrument_tenant_pools` exports the churn
+counters:
+
+```python
+from forze.application.execution import instrument_tenant_pools
+
+instrument_tenant_pools({"postgres": pg, "redis": redis})
+```
+
+Per client (labelled `forze.client`): `forze.tenancy.pool.size` and
+`….capacity` gauges, plus cumulative `….created`, `….disposed`, and
+`….evicted_explicit` counters. The alert worth setting: a **sustained
+creation rate while `size` sits at `capacity`** means the LRU is thrashing —
+hot tenants' pools evicted by cold one-off traffic, each rebuild paying full
+connection establishment. The fix is usually a larger `max_cached_tenants`;
+the metric tells you when.
+
 ## Logs correlate for free
 
 `configure_logging(otel_config=...)` injects the active span's `trace_id` and

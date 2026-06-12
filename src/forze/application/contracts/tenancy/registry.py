@@ -2,7 +2,7 @@ import time
 from collections import OrderedDict
 from contextlib import asynccontextmanager
 from datetime import timedelta
-from typing import AsyncGenerator, Awaitable, Callable
+from typing import AsyncGenerator, Awaitable, Callable, final
 from uuid import UUID
 
 import attrs
@@ -11,6 +11,35 @@ from forze.base.exceptions import exc
 from forze.base.primitives import GuardedLruRegistry, SimpleLruRegistry
 
 # ----------------------- #
+
+
+@final
+@attrs.define(slots=True, frozen=True, kw_only=True)
+class TenantPoolStats:
+    """Snapshot of a tenant pool registry's churn counters.
+
+    The thrash signature to alert on: a sustained ``created`` rate while
+    ``size == capacity`` — pools are being rebuilt for tenants the LRU just
+    evicted, and every rebuild pays full connection establishment.
+    """
+
+    size: int
+    """Live pools right now (guarded registries exclude draining entries)."""
+
+    capacity: int
+    """The registry's ``max_entries`` bound."""
+
+    created: int
+    """Cumulative successful pool creations."""
+
+    disposed: int
+    """Cumulative pool disposals (capacity evictions, rotations, shutdown)."""
+
+    evicted_explicit: int
+    """Cumulative explicit evictions (rotation signals, manual ``evict_tenant``)."""
+
+
+# ....................... #
 
 
 @attrs.define(slots=True)
@@ -55,6 +84,10 @@ class TenantClientRegistry[C, R = str]:
 
     __started: bool = attrs.field(default=False, init=False)
 
+    __created_count: int = attrs.field(default=0, init=False, repr=False)
+    __disposed_count: int = attrs.field(default=0, init=False, repr=False)
+    __evicted_explicit_count: int = attrs.field(default=0, init=False, repr=False)
+
     __registry: GuardedLruRegistry[UUID, C, R] | SimpleLruRegistry[UUID, C, R] = (
         attrs.field(init=False, repr=False)
     )
@@ -73,9 +106,42 @@ class TenantClientRegistry[C, R = str]:
 
         self.__registry = registry_cls(
             max_entries=self.max_entries,
-            create=self.create,
-            dispose=self.dispose,
+            create=self._counted_create,
+            dispose=self._counted_dispose,
             dedup_key=lambda tid: self.__fingerprints[tid],
+        )
+
+    # ....................... #
+
+    async def _counted_create(self, tenant_id: UUID) -> C:
+        client = await self.create(tenant_id)
+        # Incremented after `create` returns, so failed attempts don't count.
+        self.__created_count += 1
+
+        return client
+
+    # ....................... #
+
+    async def _counted_dispose(self, client: C) -> None:
+        self.__disposed_count += 1
+        await self.dispose(client)
+
+    # ....................... #
+
+    def stats(self) -> TenantPoolStats:
+        """Best-effort snapshot of pool churn counters (no lock).
+
+        A sustained ``created`` rate while ``size == capacity`` means LRU
+        thrash: pools rebuilt for tenants just evicted, each rebuild paying
+        full connection establishment.
+        """
+
+        return TenantPoolStats(
+            size=self.__registry.size,
+            capacity=self.max_entries,
+            created=self.__created_count,
+            disposed=self.__disposed_count,
+            evicted_explicit=self.__evicted_explicit_count,
         )
 
     # ....................... #
@@ -94,6 +160,7 @@ class TenantClientRegistry[C, R = str]:
     # ....................... #
 
     async def evict(self, tenant_id: UUID) -> None:
+        self.__evicted_explicit_count += 1
         self.__fingerprints.pop(tenant_id, None)
         self.__fingerprint_times.pop(tenant_id, None)
         await self.__registry.evict(tenant_id)

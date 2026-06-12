@@ -10,7 +10,7 @@ app.
 from __future__ import annotations
 
 from time import perf_counter
-from typing import TYPE_CHECKING, Any, Iterable
+from typing import TYPE_CHECKING, Any, Callable, Iterable
 
 from opentelemetry import metrics, trace
 from opentelemetry.metrics import Observation
@@ -21,6 +21,7 @@ from forze.application.contracts.execution import (
     MiddlewareFactory,
     MiddlewareStep,
 )
+from forze.application.contracts.tenancy import TenantPoolStats
 
 from .operations.registry import OperationRegistry
 from .resilience import InProcessResilienceExecutor
@@ -46,6 +47,12 @@ BREAKER_STATE_GAUGE = "forze.resilience.breaker.state"
 BULKHEAD_QUEUE_GAUGE = "forze.resilience.bulkhead.queue_depth"
 BULKHEAD_LIMIT_GAUGE = "forze.resilience.bulkhead.limit"
 HEDGE_DELAY_GAUGE = "forze.resilience.hedge.delay"
+
+TENANT_POOL_SIZE_GAUGE = "forze.tenancy.pool.size"
+TENANT_POOL_CAPACITY_GAUGE = "forze.tenancy.pool.capacity"
+TENANT_POOL_CREATED_COUNTER = "forze.tenancy.pool.created"
+TENANT_POOL_DISPOSED_COUNTER = "forze.tenancy.pool.disposed"
+TENANT_POOL_EVICTED_COUNTER = "forze.tenancy.pool.evicted_explicit"
 
 _BREAKER_PHASE_VALUES: dict[str, int] = {
     "breaker_close": 0,
@@ -213,6 +220,78 @@ def instrument_resilience(
     executor.set_metrics_sink(_sink)
 
     return executor
+
+
+# ....................... #
+
+
+def instrument_tenant_pools(
+    pools: dict[str, Any],
+    *,
+    meter: Meter | None = None,
+) -> None:
+    """Export tenant pool churn counters as OpenTelemetry observable metrics.
+
+    *pools* maps a label (e.g. ``"postgres"``) to anything exposing
+    ``pool_stats() -> TenantPoolStats`` — every routed client does. Emits, per
+    pool (labelled ``forze.client``):
+
+    - ``forze.tenancy.pool.size`` / ``forze.tenancy.pool.capacity`` (gauges)
+    - ``forze.tenancy.pool.created`` / ``….disposed`` /
+      ``….evicted_explicit`` (cumulative observable counters)
+
+    The alert that matters: a sustained ``created`` rate while ``size`` sits
+    at ``capacity`` is LRU thrash — hot tenants' pools evicted by cold
+    one-off traffic, each rebuild paying full connection establishment. That
+    signal is what gates any future admission-policy work on the registries.
+
+    Emits via the global OTel meter unless *meter* is supplied. Call once at
+    assembly time, alongside the other ``instrument_*`` calls.
+    """
+
+    meter = meter or metrics.get_meter("forze")
+
+    def _observe(
+        pick: Callable[[TenantPoolStats], int],
+    ) -> Callable[[CallbackOptions], Iterable[Observation]]:
+        def callback(_options: CallbackOptions) -> Iterable[Observation]:
+            for label, client in pools.items():
+                stats: TenantPoolStats = client.pool_stats()
+
+                yield Observation(pick(stats), {"forze.client": label})
+
+        return callback
+
+    meter.create_observable_gauge(
+        TENANT_POOL_SIZE_GAUGE,
+        callbacks=[_observe(lambda s: s.size)],
+        unit="1",
+        description="Live tenant pools per routed client.",
+    )
+    meter.create_observable_gauge(
+        TENANT_POOL_CAPACITY_GAUGE,
+        callbacks=[_observe(lambda s: s.capacity)],
+        unit="1",
+        description="Tenant pool capacity (max_cached_tenants) per routed client.",
+    )
+    meter.create_observable_counter(
+        TENANT_POOL_CREATED_COUNTER,
+        callbacks=[_observe(lambda s: s.created)],
+        unit="1",
+        description="Cumulative tenant pool creations.",
+    )
+    meter.create_observable_counter(
+        TENANT_POOL_DISPOSED_COUNTER,
+        callbacks=[_observe(lambda s: s.disposed)],
+        unit="1",
+        description="Cumulative tenant pool disposals.",
+    )
+    meter.create_observable_counter(
+        TENANT_POOL_EVICTED_COUNTER,
+        callbacks=[_observe(lambda s: s.evicted_explicit)],
+        unit="1",
+        description="Cumulative explicit tenant evictions (rotation signals).",
+    )
 
 
 # ....................... #

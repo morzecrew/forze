@@ -185,6 +185,14 @@ class SimpleLruRegistry(Generic[K, V, R]):
 
     # ....................... #
 
+    @property
+    def size(self) -> int:
+        """Number of live entries (best-effort snapshot, no lock)."""
+
+        return len(self._entries)
+
+    # ....................... #
+
     @staticmethod
     def _assert_slot_not_creating(slot: R) -> None:
         if _creating_slot.get() == slot:
@@ -473,6 +481,14 @@ class GuardedLruRegistry(Generic[K, V, R]):
         _validate_max_entries(self.max_entries)
 
         self._dedup = _DedupIndex(dedup_key=self.dedup_key)
+
+    # ....................... #
+
+    @property
+    def size(self) -> int:
+        """Number of live (non-draining) entries (best-effort snapshot, no lock)."""
+
+        return len(self._slots)
 
     # ....................... #
 

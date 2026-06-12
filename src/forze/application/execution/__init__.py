@@ -57,6 +57,7 @@ from .observability import (
     RESILIENCE_EVENTS_COUNTER,
     instrument_operations,
     instrument_resilience,
+    instrument_tenant_pools,
 )
 from .runtime import DeploymentProfile, ExecutionRuntime
 from .assemble import build_runtime
@@ -123,6 +124,7 @@ __all__ = [
     "OperationRegistry",
     "instrument_operations",
     "instrument_resilience",
+    "instrument_tenant_pools",
     "OPERATIONS_COUNTER",
     "DURATION_HISTOGRAM",
     "RESILIENCE_EVENTS_COUNTER",

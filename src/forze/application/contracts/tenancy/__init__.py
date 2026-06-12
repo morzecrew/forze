@@ -20,7 +20,7 @@ from .helpers import (
 from .integration_config import TenantAwareIntegrationConfig
 from .mixins import TenancyMixin
 from .ports import TenantManagementPort, TenantProviderPort, TenantResolverPort
-from .registry import TenantClientRegistry
+from .registry import TenantClientRegistry, TenantPoolStats
 from .value_objects import TenantIdentity
 from .wiring import (
     IntegrationRouteWarning,
@@ -61,6 +61,7 @@ __all__ = [
     "warn_dynamic_relation_with_tenant_aware",
     "warn_integration_routes",
     "TenantClientRegistry",
+    "TenantPoolStats",
     "ensure_dsn_fingerprint",
     "resolve_dsn_for_tenant",
     "resolve_structured_for_tenant",
