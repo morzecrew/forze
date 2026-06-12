@@ -1,12 +1,17 @@
 """Document read-through cache coordination (versioned keys, deferred warm, invalidation)."""
 
+import asyncio
+import json
+import math
+import random
+import time
 from typing import Any, Awaitable, Callable, Protocol, Sequence, cast, runtime_checkable
 from uuid import UUID
 
 import attrs
 from pydantic import BaseModel
 
-from forze.application.contracts.cache import CachePort
+from forze.application.contracts.cache import CachePort, CacheSpec
 from forze.application.contracts.transaction import AfterCommitPort
 from forze.base.primitives import JsonDict
 from forze.base.serialization import CACHE_DUMP_EXCLUDE_OPTS, ModelCodec
@@ -56,6 +61,19 @@ class DocumentCache[R: BaseModel]:
     after_commit: AfterCommitPort | None = None
     """Optional deferral aligned with execution-context commit."""
 
+    cache_spec: CacheSpec | None = None
+    """Cache spec backing :attr:`cache` — supplies the TTL and the opt-in
+    probabilistic early-refresh beta (see ``CacheSpec.early_refresh_beta``)."""
+
+    _inflight: dict[str, asyncio.Future[Any]] = attrs.field(
+        factory=dict,
+        init=False,
+        repr=False,
+        eq=False,
+    )
+    """Singleflight: in-flight miss/refresh loads keyed by cache key, so
+    concurrent readers of one key collapse into a single gateway fetch."""
+
     # ....................... #
 
     def _encode_for_cache(self, doc: R) -> bytes:
@@ -72,6 +90,73 @@ class DocumentCache[R: BaseModel]:
 
         msg = f"Unsupported cache payload type: {type(cached)!r}"
         raise TypeError(msg)
+
+    # ....................... #
+
+    def _early_refresh_beta(self) -> float | None:
+        return self.cache_spec.early_refresh_beta if self.cache_spec else None
+
+    # ....................... #
+
+    def _encode_cache_value(self, doc: R, *, delta: float = 0.0) -> Any:
+        """Codec bytes, or — with early refresh on — a metadata envelope.
+
+        The envelope records the write instant and the observed recompute cost
+        (*delta*, seconds) the XFetch election needs at read time. Write-path
+        warms pass ``delta=0.0`` and therefore never elect early refresh —
+        they are re-warmed on every write anyway.
+        """
+
+        payload = self._encode_for_cache(doc)
+
+        if self._early_refresh_beta() is None:
+            return payload
+
+        return {"_xf": {"at": time.time(), "d": delta}, "doc": json.loads(payload)}
+
+    # ....................... #
+
+    def _decode_cached(self, cached: Any) -> tuple[R, JsonDict | None]:
+        """Decode a cached payload, unwrapping the early-refresh envelope if present."""
+
+        if isinstance(cached, dict) and "_xf" in cached and "doc" in cached:
+            return (
+                self.read_codec.decode_mapping(cast(JsonDict, cached["doc"])),
+                cast(JsonDict, cached["_xf"]),
+            )
+
+        return self._decode_from_cache(cached), None
+
+    # ....................... #
+
+    def _elects_early_refresh(self, meta: JsonDict | None) -> bool:
+        """XFetch election: ``now - delta * beta * ln(rand()) >= expiry``.
+
+        The probability of volunteering rises smoothly as expiry approaches,
+        scaled by how expensive the recompute was — optimal desynchronization
+        without coordination (Vattani et al.). ``delta == 0`` never elects.
+        """
+
+        beta = self._early_refresh_beta()
+
+        if beta is None or meta is None or self.cache_spec is None:
+            return False
+
+        at = meta.get("at")
+        delta = meta.get("d")
+
+        if not isinstance(at, (int, float)) or not isinstance(delta, (int, float)):
+            return False
+
+        if delta <= 0:
+            return False
+
+        expiry = at + self.cache_spec.ttl.total_seconds()
+
+        # Refresh-election probability, not security randomness.
+        rand = max(random.random(), 1e-12)  # nosec B311
+
+        return time.time() - delta * beta * math.log(rand) >= expiry
 
     # ....................... #
 
@@ -120,8 +205,12 @@ class DocumentCache[R: BaseModel]:
 
     # ....................... #
 
-    async def set_one(self, doc: R) -> None:
-        """Store one read-model snapshot when versioned caching is permitted."""
+    async def set_one(self, doc: R, *, delta: float = 0.0) -> None:
+        """Store one read-model snapshot when versioned caching is permitted.
+
+        *delta* is the observed recompute cost in seconds (miss-path loads
+        pass it; write-path warms keep the default and never early-refresh).
+        """
 
         if self.cache is None:
             return
@@ -137,7 +226,7 @@ class DocumentCache[R: BaseModel]:
         try:
             casted_doc = cast(_ReadModelWithIdAndRev, doc)
 
-            payload = self._encode_for_cache(doc)
+            payload = self._encode_cache_value(doc, delta=delta)
 
             await self.cache.set_versioned(
                 str(casted_doc.id), str(casted_doc.rev), payload
@@ -168,7 +257,7 @@ class DocumentCache[R: BaseModel]:
 
         try:
             versioned_mapping = {
-                (str(doc.id), str(doc.rev)): self._encode_for_cache(cast(R, doc))
+                (str(doc.id), str(doc.rev)): self._encode_cache_value(cast(R, doc))
                 for doc in docs_casted
             }
 
@@ -236,16 +325,82 @@ class DocumentCache[R: BaseModel]:
             return await fetch_on_cache_fault()
 
         if cached is not None:
-            logger.trace("Retrieved 1 cached '%s' document", self.document_name)
-            return self._decode_from_cache(cached)
+            doc, meta = self._decode_cached(cached)
 
-        logger.debug(
-            "Fetching 1 '%s' document from database (cache miss)", self.document_name
-        )
+            if not self._elects_early_refresh(meta):
+                logger.trace("Retrieved 1 cached '%s' document", self.document_name)
+                return doc
 
-        res = await fetch_on_miss_without_lock()
+            logger.trace(
+                "Early refresh elected for 1 '%s' document", self.document_name
+            )
 
-        await self.after_commit_or_now(lambda: self.set_one(res))
+        else:
+            logger.debug(
+                "Fetching 1 '%s' document from database (cache miss)",
+                self.document_name,
+            )
+
+        return await self._fetch_singleflight(str(pk), fetch_on_miss_without_lock)
+
+    # ....................... #
+
+    async def _fetch_singleflight(
+        self,
+        key: str,
+        fetch: Callable[[], Awaitable[R]],
+    ) -> R:
+        """Collapse concurrent loads of one key into a single gateway fetch.
+
+        Followers await the leader's result (errors are shared too — every
+        caller would have hit the same failure) and do not re-write the cache.
+        A leader cancelled mid-fetch cancels its future; followers observing
+        that retry for leadership rather than failing with the leader's
+        cancellation. Process-local by design — cross-replica desynchronization
+        is the early-refresh election's job.
+        """
+
+        while True:
+            existing = self._inflight.get(key)
+
+            if existing is None:
+                break
+
+            try:
+                return cast(R, await existing)
+
+            except asyncio.CancelledError:
+                if existing.cancelled():
+                    # The leader's request died, not ours: retry for leadership.
+                    continue
+
+                raise
+
+        future: asyncio.Future[Any] = asyncio.get_running_loop().create_future()
+        self._inflight[key] = future
+
+        try:
+            start = time.monotonic()
+            res = await fetch()
+            delta = time.monotonic() - start
+            future.set_result(res)
+
+        except BaseException as error:
+            if isinstance(error, asyncio.CancelledError):
+                future.cancel()
+
+            else:
+                future.set_exception(error)
+                # The leader re-raises its own exception; mark the future's
+                # copy retrieved so follower-less failures do not warn on GC.
+                future.exception()
+
+            raise
+
+        finally:
+            self._inflight.pop(key, None)
+
+        await self.after_commit_or_now(lambda: self.set_one(res, delta=delta))
 
         return res
 
@@ -301,7 +456,7 @@ class DocumentCache[R: BaseModel]:
 
             await self.after_commit_or_now(lambda: self.set_many(miss_res))
 
-        hits_validated = [self._decode_from_cache(value) for value in hits.values()]
+        hits_validated = [self._decode_cached(value)[0] for value in hits.values()]
         hits_validated_cast = [cast(_ReadModelWithIdAndRev, x) for x in hits_validated]
         miss_res_cast = [cast(_ReadModelWithIdAndRev, x) for x in miss_res]
 

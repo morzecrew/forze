@@ -76,6 +76,7 @@ class ConfigurablePostgresReadOnlyDocument(DocumentQueryDepPort[R]):
             document_name=spec.name,
             cache=cache,
             after_commit=after_commit,
+            cache_spec=spec.cache,
         )
 
         return PostgresDocumentAdapter(
@@ -164,6 +165,7 @@ class ConfigurablePostgresDocument(DocumentCommandDepPort[R, D, C, U]):
             document_name=spec.name,
             cache=cache,
             after_commit=after_commit,
+            cache_spec=spec.cache,
         )
 
         return PostgresDocumentAdapter(

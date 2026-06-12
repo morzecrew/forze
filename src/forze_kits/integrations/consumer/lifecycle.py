@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import random
 from collections.abc import Awaitable, Callable
 from contextlib import suppress
 from datetime import timedelta
@@ -85,7 +86,14 @@ class _QueueConsumerBackgroundStartup(LifecycleHook):
                 # Reached on crash — or if the consume generator ever ends
                 # despite timeout=None: restart either way after the backoff
                 # so a flapping broker cannot hot-loop the consumer.
-                await asyncio.sleep(self.restart_backoff.total_seconds())
+                # Jittered restart: a downstream outage crashes every
+                # replica's consumer at once; without jitter they all restart
+                # (and re-crash) in lockstep.
+                await asyncio.sleep(
+                    # Desynchronization jitter, not security randomness.
+                    self.restart_backoff.total_seconds()
+                    * random.uniform(1.0, 1.5)  # nosec B311
+                )
 
         if self.task is not None and not self.task.done():
             # The runtime invokes startup once per scope; a direct double call

@@ -1,10 +1,15 @@
 """Process-local mutable state for circuit breaker, bulkhead, rate limit, and retry budget."""
 
 import asyncio
+import time
 from collections import deque
 from typing import Literal
 
 import attrs
+
+from forze.base.exceptions import exc
+
+from ..context.deadline import current_deadline
 
 # ----------------------- #
 
@@ -262,7 +267,10 @@ class AdaptiveBulkheadState:
     last_decrease_at: float = attrs.field(default=float("-inf"), init=False)
     """Clock of the last multiplicative decrease (cooldown anchor)."""
 
-    _waiters: deque[asyncio.Future[None]] = attrs.field(factory=deque, init=False)
+    _waiters: deque[tuple[asyncio.Future[None], float | None]] = attrs.field(
+        factory=deque,
+        init=False,
+    )
 
     # ....................... #
 
@@ -277,14 +285,21 @@ class AdaptiveBulkheadState:
     # ....................... #
 
     async def acquire(self) -> None:
-        """Take a slot, waiting in FIFO order when the limit is saturated."""
+        """Take a slot, waiting in FIFO order when the limit is saturated.
+
+        Waiters carry their invocation deadline (captured at park time): a
+        waiter whose budget expired while parked is failed at wake instead of
+        being granted a slot it can only waste — the outer deadline timeout
+        would reclaim the grant immediately anyway.
+        """
 
         if self.in_use < int(self.limit) and not self._waiters:
             self.in_use += 1
             return
 
         waiter: asyncio.Future[None] = asyncio.get_running_loop().create_future()
-        self._waiters.append(waiter)
+        entry = (waiter, current_deadline())
+        self._waiters.append(entry)
         self.waiting += 1
 
         try:
@@ -303,7 +318,7 @@ class AdaptiveBulkheadState:
             self.waiting -= 1
 
             if not waiter.done():
-                self._waiters.remove(waiter)
+                self._waiters.remove(entry)
 
     # ....................... #
 
@@ -317,9 +332,20 @@ class AdaptiveBulkheadState:
 
     def _wake(self) -> None:
         while self._waiters and self.in_use < int(self.limit):
-            waiter = self._waiters.popleft()
+            waiter, deadline = self._waiters.popleft()
 
             if waiter.cancelled():
+                continue
+
+            if deadline is not None and time.monotonic() >= deadline:
+                # Expired while parked: fail it instead of granting a slot the
+                # outer deadline timeout would reclaim before any work ran.
+                waiter.set_exception(
+                    exc.timeout(
+                        "Invocation deadline expired while queued for a bulkhead slot",
+                        code="deadline_exceeded",
+                    )
+                )
                 continue
 
             self.in_use += 1

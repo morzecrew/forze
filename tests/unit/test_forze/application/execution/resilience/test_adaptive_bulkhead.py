@@ -212,3 +212,44 @@ class TestExecutorIntegration:
 
         ((_, _, limit),) = executor.adaptive_bulkhead_limits()
         assert limit == 8.0
+
+
+class TestExpiredWaiterDrop:
+    async def test_expired_waiter_failed_at_wake_instead_of_granted(self) -> None:
+        from forze.application.execution.context.deadline import bind_deadline
+
+        state = _state(max_concurrency=1, max_queue=2)
+        await state.acquire()  # hold the only slot
+
+        async def park_with_deadline() -> None:
+            with bind_deadline(0.01):
+                await state.acquire()
+
+        waiter = asyncio.create_task(park_with_deadline())
+        await asyncio.sleep(0.03)  # let the parked waiter's budget expire
+
+        state.release()  # wake path runs: expired waiter must be dropped
+
+        with pytest.raises(CoreException) as ei:
+            await waiter
+
+        assert ei.value.kind is ExceptionKind.TIMEOUT
+        assert ei.value.code == "deadline_exceeded"
+        assert state.in_use == 0  # slot was returned, not granted to the dead waiter
+
+    async def test_waiter_with_budget_left_is_granted(self) -> None:
+        from forze.application.execution.context.deadline import bind_deadline
+
+        state = _state(max_concurrency=1, max_queue=2)
+        await state.acquire()
+
+        async def park_with_deadline() -> None:
+            with bind_deadline(30.0):
+                await state.acquire()
+                state.release()
+
+        waiter = asyncio.create_task(park_with_deadline())
+        await asyncio.sleep(0)
+        state.release()
+
+        await waiter  # granted normally
