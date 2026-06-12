@@ -173,7 +173,9 @@ frequently-read document never expires mid-heat — and one quiet window after
 its last read, it's gone. Seasonality and time-of-day patterns need no
 prediction: the entry simply lives while in season. `ttl` remains the
 **absolute cap** — even a perpetually-hot entry revalidates against the
-source within that bound.
+source within that bound. Sliding applies to document read-through
+(versioned) entries; plain `set`/`get` key-value usage keeps fixed
+lifetimes.
 
 The two compose: the age heuristic sets each entry's initial lifetime and
 cap, sliding keeps it alive under access within that cap.

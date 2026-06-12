@@ -3,6 +3,7 @@
 from .adapter import DocumentAdapter
 from .cache import DocumentCache
 from .l1 import L1Stats, L1Store, LruTtlStore, TinyLfuStore, tiny_lfu_l1_store
+from .observability import instrument_document_l1
 
 __all__ = [
     "DocumentAdapter",
@@ -10,6 +11,7 @@ __all__ = [
     "L1Stats",
     "L1Store",
     "LruTtlStore",
+    "instrument_document_l1",
     "TinyLfuStore",
     "tiny_lfu_l1_store",
 ]

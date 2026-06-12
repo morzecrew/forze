@@ -8,8 +8,9 @@ coordinator.
 """
 
 import time
+import weakref
 from collections import OrderedDict
-from typing import Any, Callable, Protocol, final, runtime_checkable
+from typing import Any, Callable, Iterator, Protocol, final, runtime_checkable
 
 import attrs
 
@@ -381,3 +382,48 @@ def tiny_lfu_l1_store(spec: Any) -> TinyLfuStore:
         capacity=spec.capacity,
         ttl=spec.ttl.total_seconds(),
     )
+
+
+# ....................... #
+# Live-store registry (feeds the OTel exporter)
+
+_LIVE_STORES: "list[tuple[str, weakref.ReferenceType[Any]]]" = []
+
+
+def register_l1_store(name: str, store: Any) -> None:
+    """Register a live L1 store under its document name (weakly referenced).
+
+    Called by the document cache coordinator at construction; the exporter
+    reads the registry at metric collection time. Weak references keep
+    per-scope rebuilds from leaking — a store dies with its coordinator and
+    is pruned on the next iteration.
+    """
+
+    _LIVE_STORES.append((name, weakref.ref(store)))
+
+
+def iter_l1_stats() -> "Iterator[tuple[str, L1Stats]]":
+    """Yield ``(document_name, stats)`` for every live, stats-capable store.
+
+    Custom :class:`L1Store` implementations without a ``stats()`` method are
+    skipped. Dead references are pruned in passing.
+    """
+
+    dead: list[int] = []
+
+    for index, (name, ref) in enumerate(_LIVE_STORES):
+        store = ref()
+
+        if store is None:
+            dead.append(index)
+            continue
+
+        stats_fn = getattr(store, "stats", None)
+
+        if stats_fn is None:
+            continue
+
+        yield name, stats_fn()
+
+    for index in reversed(dead):
+        del _LIVE_STORES[index]

@@ -58,6 +58,15 @@ class MockCacheAdapter(MockTenancyMixin, CachePort):
 
     # ....................... #
 
+    async def exists(self, key: str) -> bool:
+        with self.state.lock:
+            pointer = self._pointers().get(key)
+            if pointer is not None and (key, pointer) in self._bodies():
+                return True
+            return key in self._kv()
+
+    # ....................... #
+
     async def get_many(self, keys: Sequence[str]) -> tuple[dict[str, Any], list[str]]:
         with self.state.lock:
             hits: dict[str, Any] = {}

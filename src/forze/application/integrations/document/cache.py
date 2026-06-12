@@ -25,7 +25,7 @@ from forze.base.serialization import CACHE_DUMP_EXCLUDE_OPTS, ModelCodec
 from forze.domain.constants import ID_FIELD, REV_FIELD
 
 from ..._logger import logger
-from .l1 import L1Store, LruTtlStore
+from .l1 import L1Store, LruTtlStore, register_l1_store
 
 # ----------------------- #
 
@@ -196,12 +196,17 @@ class DocumentCache[R: BaseModel]:
         spec = self.cache_spec.l1
 
         if spec.store_factory is not None:
-            return cast(L1Store, spec.store_factory(spec))
+            store = cast(L1Store, spec.store_factory(spec))
 
-        return LruTtlStore(
-            capacity=spec.capacity,
-            ttl=spec.ttl.total_seconds(),
-        )
+        else:
+            store = LruTtlStore(
+                capacity=spec.capacity,
+                ttl=spec.ttl.total_seconds(),
+            )
+
+        register_l1_store(self.document_name, store)
+
+        return store
 
     # ....................... #
 

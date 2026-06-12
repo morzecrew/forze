@@ -18,6 +18,11 @@ class CacheQueryPort(Protocol):  # pragma: no cover
         """Return found entries and a list of missing keys."""
         ...
 
+    def exists(self, key: str) -> Awaitable[bool]:
+        """Whether a live entry exists for *key* — a presence check without
+        transferring or decoding the payload."""
+        ...
+
 
 # ....................... #
 
@@ -30,6 +35,11 @@ class CacheCommandPort(Protocol):  # pragma: no cover
     configured default lifetime for that entry alone — the seam adaptive-TTL
     policies (e.g. age-proportional document caching) write through. ``None``
     keeps the configured default.
+
+    **Value contract:** values must be JSON-serializable, or pre-encoded
+    ``bytes`` (stored verbatim and returned for the caller to decode).
+    Adapters may serialize with any JSON codec — do not rely on key ordering
+    or non-JSON types surviving a round trip.
     """
 
     def set(

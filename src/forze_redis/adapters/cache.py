@@ -404,6 +404,27 @@ class RedisCacheAdapter(CachePort, RedisBaseAdapter):
 
     # ....................... #
 
+    async def exists(self, key: str) -> bool:
+        """Presence check without payload transfer or decode.
+
+        Mirrors :meth:`get`'s effective semantics: a versioned entry counts
+        only when its pointer *and* the pointed body are both live; otherwise
+        falls back to the plain key-value scope.
+        """
+
+        await self._prepare_keys()
+
+        pointers = await self.__mget_pointers([key])
+
+        if pointers and await self.client.exists(
+            self.__body_key(key, pointers[key])
+        ):
+            return True
+
+        return await self.client.exists(self.__kv_key(key))
+
+    # ....................... #
+
     async def get_many(self, keys: Sequence[str]) -> tuple[dict[str, Any], list[str]]:
         await self._prepare_keys()
         if not keys:
