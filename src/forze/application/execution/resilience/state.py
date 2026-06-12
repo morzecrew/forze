@@ -3,7 +3,7 @@
 import asyncio
 import time
 from collections import deque
-from typing import Literal
+from typing import Callable, Literal
 
 import attrs
 
@@ -108,35 +108,6 @@ class BreakerState:
             return "open"
 
         return None
-
-
-# ....................... #
-
-
-@attrs.define(slots=True)
-class BulkheadState:
-    """Concurrency limiter with a bounded waiting queue."""
-
-    max_concurrency: int
-    max_queue: int
-    sem: asyncio.Semaphore = attrs.field(
-        default=attrs.Factory(
-            lambda self: asyncio.Semaphore(self.max_concurrency),
-            takes_self=True,
-        ),
-        init=False,
-    )
-    waiting: int = 0
-
-    # ....................... #
-
-    def can_admit(self) -> bool:
-        """Return whether a call may acquire a slot or join the wait queue."""
-
-        if not self.sem.locked():
-            return True
-
-        return self.waiting < self.max_queue
 
 
 # ....................... #
@@ -252,6 +223,23 @@ class AdaptiveBulkheadState:
     increase_step: float
     cooldown: float
 
+    clock: Callable[[], float] = time.monotonic
+    """Time source for queue sojourn/congestion tracking (injectable for tests).
+    Waiter *deadlines* always compare against ``time.monotonic`` — they come
+    from the deadline ContextVar, which is monotonic-based by contract."""
+
+    queue_target_s: float | None = None
+    """CoDel target sojourn (seconds): under sustained congestion, a waiter
+    queued longer than this is shed at dequeue. ``None`` disables CoDel."""
+
+    queue_interval_s: float = 0.1
+    """CoDel interval (seconds): the sojourn allowance while the queue has
+    recently been empty, and the congestion detection window."""
+
+    queue_adaptive_lifo: bool = False
+    """Serve the *newest* waiter first while congested (its client is the most
+    likely to still be waiting); FIFO otherwise."""
+
     limit: float = attrs.field(
         default=attrs.Factory(lambda self: float(self.max_concurrency), takes_self=True),
         init=False,
@@ -267,7 +255,13 @@ class AdaptiveBulkheadState:
     last_decrease_at: float = attrs.field(default=float("-inf"), init=False)
     """Clock of the last multiplicative decrease (cooldown anchor)."""
 
-    _waiters: deque[tuple[asyncio.Future[None], float | None]] = attrs.field(
+    last_empty_at: float = attrs.field(
+        default=attrs.Factory(lambda self: self.clock(), takes_self=True),
+        init=False,
+    )
+    """Last instant the wait queue was observed empty (congestion anchor)."""
+
+    _waiters: deque[tuple[asyncio.Future[None], float | None, float]] = attrs.field(
         factory=deque,
         init=False,
     )
@@ -297,8 +291,12 @@ class AdaptiveBulkheadState:
             self.in_use += 1
             return
 
+        if self._tracks_congestion() and not self._waiters:
+            # The queue was empty until this park: reset the congestion anchor.
+            self.last_empty_at = self.clock()
+
         waiter: asyncio.Future[None] = asyncio.get_running_loop().create_future()
-        entry = (waiter, current_deadline())
+        entry = (waiter, current_deadline(), self.clock())
         self._waiters.append(entry)
         self.waiting += 1
 
@@ -330,12 +328,52 @@ class AdaptiveBulkheadState:
 
     # ....................... #
 
+    def _tracks_congestion(self) -> bool:
+        """Whether any queue feature needs the congestion anchor maintained."""
+
+        return self.queue_target_s is not None or self.queue_adaptive_lifo
+
+    # ....................... #
+
+    def _congested(self, now: float) -> bool:
+        """Sustained congestion: the queue has not been empty for an interval."""
+
+        return bool(self._waiters) and now - self.last_empty_at >= self.queue_interval_s
+
+    # ....................... #
+
     def _wake(self) -> None:
+        now = self.clock()
+        congested = self._congested(now)
+
         while self._waiters and self.in_use < int(self.limit):
-            waiter, deadline = self._waiters.popleft()
+            # Adaptive LIFO: while congested, the newest waiter is the one
+            # whose client most likely still cares about the answer.
+            entry = (
+                self._waiters.pop()
+                if self.queue_adaptive_lifo and congested
+                else self._waiters.popleft()
+            )
+            waiter, deadline, enqueued_at = entry
 
             if waiter.cancelled():
                 continue
+
+            if self.queue_target_s is not None:
+                # CoDel (simplified, Facebook-style): generous sojourn
+                # allowance while the queue has recently been empty, tight
+                # allowance under sustained congestion.
+                allowed = self.queue_target_s if congested else self.queue_interval_s
+
+                if now - enqueued_at > allowed:
+                    waiter.set_exception(
+                        exc.infrastructure(
+                            "Bulkhead queue shed: waiter exceeded its sojourn "
+                            "allowance under congestion",
+                            code="bulkhead_queue_shed",
+                        )
+                    )
+                    continue
 
             if deadline is not None and time.monotonic() >= deadline:
                 # Expired while parked: fail it instead of granting a slot the
@@ -350,6 +388,9 @@ class AdaptiveBulkheadState:
 
             self.in_use += 1
             waiter.set_result(None)
+
+        if self._tracks_congestion() and not self._waiters:
+            self.last_empty_at = self.clock()
 
     # ....................... #
 

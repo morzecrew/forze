@@ -253,3 +253,143 @@ class TestExpiredWaiterDrop:
         state.release()
 
         await waiter  # granted normally
+
+
+class TestQueueManagement:
+    """CoDel sojourn shedding + adaptive LIFO on the unified wait queue."""
+
+    def _q_state(self, clock: _Clock, **kw: object) -> AdaptiveBulkheadState:
+        params: dict[str, object] = {
+            "max_concurrency": 1,
+            "max_queue": 3,
+            "clock": clock,
+            "queue_target_s": 0.005,
+            "queue_interval_s": 0.1,
+        }
+        params.update(kw)
+        return _state(**params)
+
+    async def test_codel_sheds_stale_waiter_under_congestion(self) -> None:
+        clock = _Clock()
+        state = self._q_state(clock)
+        await state.acquire()  # hold the slot
+
+        stale = asyncio.create_task(state.acquire())
+        await asyncio.sleep(0)
+
+        clock.now += 0.2  # congested (queue non-empty > interval); sojourn 0.2 > target
+        fresh = asyncio.create_task(state.acquire())
+        await asyncio.sleep(0)
+
+        state.release()
+
+        with pytest.raises(CoreException) as ei:
+            await stale
+
+        assert ei.value.code == "bulkhead_queue_shed"
+
+        await fresh  # the fresh waiter got the slot instead
+        assert state.in_use == 1
+        state.release()
+
+    async def test_recently_empty_queue_tolerates_interval_sojourn(self) -> None:
+        clock = _Clock()
+        state = self._q_state(clock)
+        await state.acquire()
+
+        waiter = asyncio.create_task(state.acquire())
+        await asyncio.sleep(0)
+
+        clock.now += 0.05  # below the interval: not congested, generous allowance
+        state.release()
+
+        await waiter  # granted, not shed
+        state.release()
+
+    async def test_adaptive_lifo_serves_newest_first_under_congestion(self) -> None:
+        clock = _Clock()
+        state = self._q_state(
+            clock, queue_target_s=None, queue_adaptive_lifo=True
+        )
+        await state.acquire()
+        order: list[str] = []
+
+        async def waiter(name: str) -> None:
+            await state.acquire()
+            order.append(name)
+            state.release()
+
+        a = asyncio.create_task(waiter("a"))
+        await asyncio.sleep(0)
+        b = asyncio.create_task(waiter("b"))
+        await asyncio.sleep(0)
+
+        clock.now += 0.2  # sustained congestion
+        state.release()
+        await asyncio.gather(a, b)
+
+        assert order == ["b", "a"]  # newest first while congested
+
+    async def test_fifo_preserved_without_congestion(self) -> None:
+        clock = _Clock()
+        state = self._q_state(
+            clock, queue_target_s=None, queue_adaptive_lifo=True
+        )
+        await state.acquire()
+        order: list[str] = []
+
+        async def waiter(name: str) -> None:
+            await state.acquire()
+            order.append(name)
+            state.release()
+
+        a = asyncio.create_task(waiter("a"))
+        await asyncio.sleep(0)
+        b = asyncio.create_task(waiter("b"))
+        await asyncio.sleep(0)
+
+        clock.now += 0.05  # queue young: not congested
+        state.release()
+        await asyncio.gather(a, b)
+
+        assert order == ["a", "b"]
+
+    def test_queue_knob_validation(self) -> None:
+        for kw in (
+            {"queue_target": timedelta(seconds=0), "max_queue": 1},
+            {"queue_target": timedelta(seconds=1), "max_queue": 1},  # >= interval
+            {"queue_target": timedelta(milliseconds=5)},  # max_queue == 0
+            {"queue_adaptive_lifo": True},  # max_queue == 0
+        ):
+            with pytest.raises(CoreException):
+                _strategy(**kw)
+
+            with pytest.raises(CoreException):
+                BulkheadStrategy(max_concurrency=1, **kw)  # type: ignore[arg-type]
+
+    async def test_fixed_strategy_threads_queue_knobs(self) -> None:
+        executor = InProcessResilienceExecutor(
+            policies={
+                "p": ResiliencePolicy(
+                    name="p",
+                    strategies=(
+                        BulkheadStrategy(
+                            max_concurrency=2,
+                            max_queue=4,
+                            queue_target=timedelta(milliseconds=5),
+                            queue_adaptive_lifo=True,
+                        ),
+                    ),
+                )
+            },
+        )
+
+        async def fn() -> str:
+            return "ok"
+
+        assert await executor.run(fn, policy="p") == "ok"
+
+        ((_, state),) = executor._bulkheads.items()  # noqa: SLF001
+        assert state.queue_target_s == 0.005
+        assert state.queue_adaptive_lifo is True
+        assert state.limit == 2.0

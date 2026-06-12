@@ -23,7 +23,7 @@ from forze.base.primitives import MappingConverter, StrKey, StrKeyMapping
 from ..context.deadline import remaining_time
 from ..tracing import record
 from .backoff import compute_delay
-from .state import AdaptiveBulkheadState, BudgetState, BulkheadState, Transition
+from .state import AdaptiveBulkheadState, BudgetState, Transition
 from .store import (
     CircuitBreakerStore,
     InMemoryCircuitBreakerStore,
@@ -90,8 +90,12 @@ class InProcessResilienceExecutor:
 
     # ....................... #
 
-    _bulkheads: dict[_StateKey, BulkheadState] = attrs.field(factory=dict, init=False)
-    """Bulkhead state for the executor."""
+    _bulkheads: dict[_StateKey, AdaptiveBulkheadState] = attrs.field(
+        factory=dict,
+        init=False,
+    )
+    """Fixed bulkhead state: the unified admission machinery with a constant
+    limit (the AIMD controller is simply never consulted)."""
 
     _adaptive_bulkheads: dict[_StateKey, AdaptiveBulkheadState] = attrs.field(
         factory=dict,
@@ -533,19 +537,32 @@ class InProcessResilienceExecutor:
             self._emit("bulkhead_reject", pol, route)
             raise exc.infrastructure(f"Bulkhead full for policy {pol.name!r}")
 
-        state.waiting += 1
-
-        try:
-            await state.sem.acquire()
-
-        finally:
-            state.waiting -= 1
+        await self._admit(state, pol, route)
 
         try:
             return await inner()
 
         finally:
-            state.sem.release()
+            state.release()
+
+    # ....................... #
+
+    async def _admit(
+        self,
+        state: AdaptiveBulkheadState,
+        pol: ResiliencePolicy,
+        route: StrKey | None,
+    ) -> None:
+        """Acquire a bulkhead slot, surfacing CoDel sheds as resilience events."""
+
+        try:
+            await state.acquire()
+
+        except CoreException as error:
+            if error.code == "bulkhead_queue_shed":
+                self._emit("bulkhead_shed", pol, route)
+
+            raise
 
     # ....................... #
 
@@ -562,7 +579,7 @@ class InProcessResilienceExecutor:
             self._emit("bulkhead_reject", pol, route)
             raise exc.infrastructure(f"Bulkhead full for policy {pol.name!r}")
 
-        await state.acquire()
+        await self._admit(state, pol, route)
         start = self.clock()
         failed = False
 
@@ -606,14 +623,29 @@ class InProcessResilienceExecutor:
         strat: BulkheadStrategy,
         pol: ResiliencePolicy,
         route: StrKey | None,
-    ) -> BulkheadState:
+    ) -> AdaptiveBulkheadState:
         key = (pol.name, route)
         state = self._bulkheads.get(key)
 
         if state is None:
-            state = BulkheadState(
+            # Unified admission with a constant limit: the AIMD controller
+            # fields are inert because the fixed path never calls on_complete.
+            state = AdaptiveBulkheadState(
+                latency_threshold=float("inf"),
+                min_concurrency=strat.max_concurrency,
                 max_concurrency=strat.max_concurrency,
                 max_queue=strat.max_queue,
+                backoff_ratio=0.5,
+                increase_step=1.0,
+                cooldown=0.0,
+                clock=self.clock,
+                queue_target_s=(
+                    strat.queue_target.total_seconds()
+                    if strat.queue_target is not None
+                    else None
+                ),
+                queue_interval_s=strat.queue_interval.total_seconds(),
+                queue_adaptive_lifo=strat.queue_adaptive_lifo,
             )
             self._bulkheads[key] = state
 
@@ -639,6 +671,14 @@ class InProcessResilienceExecutor:
                 backoff_ratio=strat.backoff_ratio,
                 increase_step=strat.increase_step,
                 cooldown=strat.cooldown.total_seconds(),
+                clock=self.clock,
+                queue_target_s=(
+                    strat.queue_target.total_seconds()
+                    if strat.queue_target is not None
+                    else None
+                ),
+                queue_interval_s=strat.queue_interval.total_seconds(),
+                queue_adaptive_lifo=strat.queue_adaptive_lifo,
             )
             self._adaptive_bulkheads[key] = state
 

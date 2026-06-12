@@ -179,6 +179,24 @@ class BulkheadStrategy:
     max_queue: int = 0
     """Maximum number of calls allowed to wait for a slot before rejection."""
 
+    queue_target: timedelta | None = None
+    """CoDel target sojourn: under *sustained* congestion (the queue has not
+    been empty for ``queue_interval``), a waiter parked longer than this is
+    shed at dequeue with ``code="bulkhead_queue_shed"`` — bounding queueing by
+    *time* the caller experiences, not just queue length. ``None`` (default)
+    keeps the size-only bound. Requires ``max_queue >= 1``."""
+
+    queue_interval: timedelta = timedelta(milliseconds=100)
+    """CoDel interval: the congestion-detection window and the generous sojourn
+    allowance while the queue has recently been empty."""
+
+    queue_adaptive_lifo: bool = False
+    """Serve the *newest* waiter first while congested — its client is the one
+    most likely still waiting (Facebook, "Fail at Scale"); FIFO otherwise.
+    Deliberately starves the old tail under overload; pair with
+    ``queue_target`` so the starved tail is shed instead of parked forever.
+    Requires ``max_queue >= 1``."""
+
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
@@ -187,6 +205,28 @@ class BulkheadStrategy:
 
         if self.max_queue < 0:
             raise exc.configuration("Bulkhead max_queue must be >= 0")
+
+        if self.queue_target is not None and self.queue_target.total_seconds() <= 0:
+            raise exc.configuration("Bulkhead queue_target must be positive")
+
+        if self.queue_interval.total_seconds() <= 0:
+            raise exc.configuration("Bulkhead queue_interval must be positive")
+
+        if (
+            self.queue_target is not None
+            and self.queue_target >= self.queue_interval
+        ):
+            raise exc.configuration(
+                "Bulkhead queue_target must be smaller than queue_interval"
+            )
+
+        if (
+            self.queue_target is not None or self.queue_adaptive_lifo
+        ) and self.max_queue < 1:
+            raise exc.configuration(
+                "Bulkhead queue management (queue_target / queue_adaptive_lifo) "
+                "requires max_queue >= 1"
+            )
 
 
 # ....................... #
@@ -239,6 +279,24 @@ class AdaptiveBulkheadStrategy:
     """Minimum spacing between decreases — coalesces a burst of slow
     completions into one backoff instead of collapsing the limit to the floor."""
 
+    queue_target: timedelta | None = None
+    """CoDel target sojourn: under *sustained* congestion (the queue has not
+    been empty for ``queue_interval``), a waiter parked longer than this is
+    shed at dequeue with ``code="bulkhead_queue_shed"`` — bounding queueing by
+    *time* the caller experiences, not just queue length. ``None`` (default)
+    keeps the size-only bound. Requires ``max_queue >= 1``."""
+
+    queue_interval: timedelta = timedelta(milliseconds=100)
+    """CoDel interval: the congestion-detection window and the generous sojourn
+    allowance while the queue has recently been empty."""
+
+    queue_adaptive_lifo: bool = False
+    """Serve the *newest* waiter first while congested — its client is the one
+    most likely still waiting (Facebook, "Fail at Scale"); FIFO otherwise.
+    Deliberately starves the old tail under overload; pair with
+    ``queue_target`` so the starved tail is shed instead of parked forever.
+    Requires ``max_queue >= 1``."""
+
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
@@ -264,6 +322,28 @@ class AdaptiveBulkheadStrategy:
 
         if self.cooldown.total_seconds() < 0:
             raise exc.configuration("Adaptive bulkhead cooldown must be >= 0")
+
+        if self.queue_target is not None and self.queue_target.total_seconds() <= 0:
+            raise exc.configuration("Bulkhead queue_target must be positive")
+
+        if self.queue_interval.total_seconds() <= 0:
+            raise exc.configuration("Bulkhead queue_interval must be positive")
+
+        if (
+            self.queue_target is not None
+            and self.queue_target >= self.queue_interval
+        ):
+            raise exc.configuration(
+                "Bulkhead queue_target must be smaller than queue_interval"
+            )
+
+        if (
+            self.queue_target is not None or self.queue_adaptive_lifo
+        ) and self.max_queue < 1:
+            raise exc.configuration(
+                "Bulkhead queue management (queue_target / queue_adaptive_lifo) "
+                "requires max_queue >= 1"
+            )
 
 
 # ....................... #
