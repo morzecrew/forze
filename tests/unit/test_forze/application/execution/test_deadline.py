@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import timedelta
 
 import attrs
 import pytest
@@ -10,12 +11,14 @@ import pytest
 from forze.application.contracts.execution import Handler
 from forze.application.execution import (
     ExecutionContext,
+    OperationPlan,
     bind_deadline,
     current_deadline,
     remaining_time,
 )
 from forze.application.execution.operations.registry import OperationRegistry
 from forze.base.exceptions import CoreException, ExceptionKind
+from forze.base.primitives import str_key_selector
 from forze_mock import MockDepsModule
 from tests.support.execution_context import context_from_deps
 
@@ -146,6 +149,126 @@ class TestOperationDeadlineEnforcement:
         with bind_deadline(0.05):
             with pytest.raises(CoreException) as ei:
                 await resolved("x")
+
+        assert ei.value.kind is ExceptionKind.TIMEOUT
+        assert ei.value.code == "deadline_exceeded"
+
+
+class TestPlanDeadline:
+    """Plan-declared deadlines: validation, restrictive merge, enforcement."""
+
+    def test_non_positive_deadline_rejected(self) -> None:
+        with pytest.raises(CoreException) as ei:
+            OperationPlan(deadline=timedelta(seconds=0))
+
+        assert ei.value.kind is ExceptionKind.CONFIGURATION
+
+    def test_merge_tightest_wins(self) -> None:
+        merged = OperationPlan.merge(
+            OperationPlan(deadline=timedelta(seconds=10)),
+            OperationPlan(),
+            OperationPlan(deadline=timedelta(seconds=5)),
+        )
+
+        assert merged.deadline == timedelta(seconds=5)
+
+    def test_merge_without_deadlines_stays_unbounded(self) -> None:
+        merged = OperationPlan.merge(OperationPlan(), OperationPlan())
+
+        assert merged.deadline is None
+
+    @pytest.mark.asyncio
+    async def test_plan_deadline_enforced_without_caller_bind(
+        self, ctx: ExecutionContext
+    ) -> None:
+        reg = (
+            OperationRegistry(handlers={"op": lambda _ctx: StallHandler()})
+            .bind("op")
+            .with_deadline(timedelta(milliseconds=50))
+            .finish()
+            .freeze()
+        )
+        resolved = reg.resolve("op", ctx)
+
+        with pytest.raises(CoreException) as ei:
+            await resolved("x")
+
+        assert ei.value.kind is ExceptionKind.TIMEOUT
+        assert ei.value.code == "deadline_exceeded"
+
+    @pytest.mark.asyncio
+    async def test_caller_cannot_extend_plan_deadline(
+        self, ctx: ExecutionContext
+    ) -> None:
+        reg = (
+            OperationRegistry(handlers={"op": lambda _ctx: StallHandler()})
+            .bind("op")
+            .with_deadline(timedelta(milliseconds=50))
+            .finish()
+            .freeze()
+        )
+        resolved = reg.resolve("op", ctx)
+
+        async def _invoke() -> str:
+            with bind_deadline(60.0):
+                return await resolved("x")
+
+        # A generous caller budget must not stretch the plan's 50ms cap.
+        with pytest.raises(CoreException) as ei:
+            await asyncio.wait_for(_invoke(), timeout=5.0)
+
+        assert ei.value.kind is ExceptionKind.TIMEOUT
+
+    @pytest.mark.asyncio
+    async def test_caller_can_tighten_plan_deadline(
+        self, ctx: ExecutionContext
+    ) -> None:
+        reg = (
+            OperationRegistry(handlers={"op": lambda _ctx: StallHandler()})
+            .bind("op")
+            .with_deadline(timedelta(seconds=60))
+            .finish()
+            .freeze()
+        )
+        resolved = reg.resolve("op", ctx)
+
+        async def _invoke() -> str:
+            with bind_deadline(0.05):
+                return await resolved("x")
+
+        with pytest.raises(CoreException) as ei:
+            await asyncio.wait_for(_invoke(), timeout=5.0)
+
+        assert ei.value.kind is ExceptionKind.TIMEOUT
+
+    @pytest.mark.asyncio
+    async def test_within_plan_deadline_runs_normally(
+        self, ctx: ExecutionContext
+    ) -> None:
+        reg = (
+            OperationRegistry(handlers={"op": lambda _ctx: EchoHandler()})
+            .bind("op")
+            .with_deadline(timedelta(seconds=5))
+            .finish()
+            .freeze()
+        )
+        resolved = reg.resolve("op", ctx)
+
+        assert await resolved("x") == "handler:x"
+
+    @pytest.mark.asyncio
+    async def test_patch_sets_default_budget(self, ctx: ExecutionContext) -> None:
+        reg = (
+            OperationRegistry(handlers={"slow.op": lambda _ctx: StallHandler()})
+            .patch(str_key_selector.glob("slow.*"))
+            .with_deadline(timedelta(milliseconds=50))
+            .finish()
+            .freeze()
+        )
+        resolved = reg.resolve("slow.op", ctx)
+
+        with pytest.raises(CoreException) as ei:
+            await resolved("x")
 
         assert ei.value.kind is ExceptionKind.TIMEOUT
         assert ei.value.code == "deadline_exceeded"

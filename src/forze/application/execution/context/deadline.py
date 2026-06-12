@@ -15,7 +15,7 @@ the enclosing deadline (gRPC-style propagation).
 
 import time
 from contextlib import contextmanager
-from contextvars import ContextVar
+from contextvars import ContextVar, Token
 from typing import Generator
 
 # ----------------------- #
@@ -51,6 +51,35 @@ def remaining_time() -> float | None:
 # ....................... #
 
 
+def set_deadline(timeout: float) -> Token[float | None]:
+    """Set a deadline of *timeout* seconds from now; reset with :func:`reset_deadline`.
+
+    Tighten-only, like :func:`bind_deadline`. Engine fast path: a raw
+    ContextVar set/reset pair avoids the ``@contextmanager`` generator
+    overhead on the per-operation hot path (mirrors
+    ``InvocationContext.set_read_only``). Prefer :func:`bind_deadline`
+    outside the engine.
+    """
+
+    requested = time.monotonic() + timeout
+    existing = _deadline_var.get()
+    effective = requested if existing is None else min(existing, requested)
+
+    return _deadline_var.set(effective)
+
+
+# ....................... #
+
+
+def reset_deadline(token: Token[float | None]) -> None:
+    """Reset the deadline to its state before :func:`set_deadline`."""
+
+    _deadline_var.reset(token)
+
+
+# ....................... #
+
+
 @contextmanager
 def bind_deadline(timeout: float | None) -> Generator[None]:
     """Bind an invocation deadline of *timeout* seconds from now.
@@ -65,14 +94,10 @@ def bind_deadline(timeout: float | None) -> Generator[None]:
         yield
         return
 
-    requested = time.monotonic() + timeout
-    existing = _deadline_var.get()
-    effective = requested if existing is None else min(existing, requested)
-
-    token = _deadline_var.set(effective)
+    token = set_deadline(timeout)
 
     try:
         yield
 
     finally:
-        _deadline_var.reset(token)
+        reset_deadline(token)

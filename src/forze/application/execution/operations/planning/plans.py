@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import timedelta
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any, Callable, Iterable, Never, Self
 
@@ -67,6 +68,23 @@ class OperationPlan:
 
     kind: OperationKind = attrs.field(default=OperationKind.COMMAND)
     """Read (``QUERY``) vs write (``COMMAND``) classification; defaults to ``COMMAND``."""
+
+    deadline: timedelta | None = attrs.field(default=None)
+    """Per-invocation time budget for this operation, or ``None`` for no cap.
+
+    Bound at operation entry via the task-scoped deadline (see
+    ``context.deadline``), so it covers the whole plan — hooks, transaction,
+    dispatch chains — and propagates to dispatched operations. Tighten-only
+    against a caller-bound deadline: the earlier of the two wins, so a caller
+    can shorten the budget but never extend it past the plan's cap. Expiry
+    raises a non-retryable ``TIMEOUT`` (``code="deadline_exceeded"``).
+    """
+
+    # ....................... #
+
+    def __attrs_post_init__(self) -> None:
+        if self.deadline is not None and self.deadline.total_seconds() <= 0:
+            raise exc.configuration("Operation deadline must be positive")
 
     # ....................... #
 
@@ -184,6 +202,7 @@ class OperationPlan:
             outer=frozen_outer,
             tx=frozen_tx,
             kind=self.kind,
+            deadline=self.deadline,
             supports_idempotency_key=self.supports_idempotency_key(),
             required_permissions=self.declared_permission_keys(),
         )
@@ -204,7 +223,19 @@ class OperationPlan:
             else OperationKind.COMMAND
         )
 
-        return cls(outer=merged_outer, tx=merged_tx, kind=merged_kind)
+        # Restrictive wins (commutative, like ``kind``): the tightest declared
+        # deadline caps the operation — a layer can shorten the budget, never
+        # extend it. To give one operation a longer budget than a broad patch
+        # default, narrow the patch selector instead.
+        deadlines = [plan.deadline for plan in plans if plan.deadline is not None]
+        merged_deadline = min(deadlines) if deadlines else None
+
+        return cls(
+            outer=merged_outer,
+            tx=merged_tx,
+            kind=merged_kind,
+            deadline=merged_deadline,
+        )
 
     # ....................... #
 
@@ -228,6 +259,9 @@ class FrozenOperationPlan:
 
     kind: OperationKind = attrs.field(default=OperationKind.COMMAND)
     """Read (``QUERY``) vs write (``COMMAND``) classification."""
+
+    deadline: timedelta | None = attrs.field(default=None)
+    """Per-invocation time budget declared by the plan, or ``None`` for no cap."""
 
     supports_idempotency_key: bool = attrs.field(default=False)
     """Derived at freeze (:meth:`OperationPlan.supports_idempotency_key`): the plan
@@ -253,7 +287,14 @@ class FrozenOperationPlan:
         resolved_tx = self.tx.resolve(ctx, dispatch_resolver)
 
         return ResolvedOperationPlan(
-            outer=resolved_outer, tx=resolved_tx, kind=self.kind
+            outer=resolved_outer,
+            tx=resolved_tx,
+            kind=self.kind,
+            # Seconds precomputed once at resolve so the per-call hot path
+            # never touches timedelta arithmetic.
+            deadline_s=(
+                None if self.deadline is None else self.deadline.total_seconds()
+            ),
         )
 
 
@@ -272,3 +313,6 @@ class ResolvedOperationPlan:
 
     kind: OperationKind = attrs.field(default=OperationKind.COMMAND)
     """Read (``QUERY``) vs write (``COMMAND``) classification."""
+
+    deadline_s: float | None = attrs.field(default=None)
+    """Plan-declared time budget in seconds (precomputed at resolve), or ``None``."""

@@ -13,7 +13,7 @@ from forze.base.exceptions import exc
 from forze.base.primitives import StrKey
 
 from ...context.active_operation import active_operation_var
-from ...context.deadline import remaining_time
+from ...context.deadline import remaining_time, reset_deadline, set_deadline
 from ..planning.plans import OperationKind, ResolvedOperationPlan
 from .plan import TransactionRunner, run_resolved_operation_plan
 
@@ -51,31 +51,22 @@ class ResolvedOperation[Args, R](Handler[Args, R]):
     # ....................... #
 
     async def _run(self, args: Args) -> R:
-        # Deadline enforcement: a bound invocation deadline (see
-        # ``context.deadline``) bounds the whole plan — hooks, transaction,
-        # dispatch. Unbound is the hot path: one ContextVar read, no timeout
-        # machinery. The post-commit drain is cancellation-protected in
-        # ``TransactionContext.scope``, so a deadline firing mid-drain still
-        # lets the drain finish before the timeout surfaces here.
-        remaining = remaining_time()
-
-        if remaining is None:
-            return await run_resolved_operation_plan(
-                self.plan,
-                self.handler,
-                args,
-                tx_runner=self.tx_runner,
-                defer_after_commit=self.defer_after_commit,
-            )
-
-        if remaining <= 0.0:
-            raise exc.timeout(
-                f"Invocation deadline exceeded before operation {str(self.op)!r} started",
-                code="deadline_exceeded",
-            )
+        # Deadline enforcement: the plan's declared budget (if any) is bound
+        # first — tighten-only, so a caller-bound deadline can shorten it but
+        # never extend past the plan's cap — then the effective deadline (see
+        # ``context.deadline``) bounds the whole plan: hooks, transaction,
+        # dispatch. No deadline anywhere is the hot path: one attribute and
+        # one ContextVar read, no timeout machinery. The post-commit drain is
+        # cancellation-protected in ``TransactionContext.scope``, so a
+        # deadline firing mid-drain still lets the drain finish before the
+        # timeout surfaces here.
+        plan_budget = self.plan.deadline_s
+        token = None if plan_budget is None else set_deadline(plan_budget)
 
         try:
-            async with asyncio.timeout(remaining):
+            remaining = remaining_time()
+
+            if remaining is None:
                 return await run_resolved_operation_plan(
                     self.plan,
                     self.handler,
@@ -84,11 +75,32 @@ class ResolvedOperation[Args, R](Handler[Args, R]):
                     defer_after_commit=self.defer_after_commit,
                 )
 
-        except TimeoutError as error:
-            raise exc.timeout(
-                f"Operation {str(self.op)!r} exceeded the invocation deadline",
-                code="deadline_exceeded",
-            ) from error
+            if remaining <= 0.0:
+                raise exc.timeout(
+                    f"Invocation deadline exceeded before operation "
+                    f"{str(self.op)!r} started",
+                    code="deadline_exceeded",
+                )
+
+            try:
+                async with asyncio.timeout(remaining):
+                    return await run_resolved_operation_plan(
+                        self.plan,
+                        self.handler,
+                        args,
+                        tx_runner=self.tx_runner,
+                        defer_after_commit=self.defer_after_commit,
+                    )
+
+            except TimeoutError as error:
+                raise exc.timeout(
+                    f"Operation {str(self.op)!r} exceeded the invocation deadline",
+                    code="deadline_exceeded",
+                ) from error
+
+        finally:
+            if token is not None:
+                reset_deadline(token)
 
     # ....................... #
 
