@@ -205,8 +205,9 @@ token response), `POST /logout` (204, no body), `POST /change-password` (204),
 `POST /password-reset/confirm` (204), and `POST /deactivate` (204). Login,
 refresh, and the password-reset pair are meant to be reachable without a bearer
 token (the operations authenticate via their bodies, or deliberately not at all
-for the reset request); logout and change-password 401 on their own without a
-bound identity, while `deactivate_principal` ships unguarded — bind
+for the reset request); logout and change-password declare `AuthnRequired` (so
+they 401 without a bound identity and show up protected under
+`apply_openapi_security`), while `deactivate_principal` ships unguarded — bind
 `AuthnRequired` + authz hooks on it or exclude it via `include=`. The full
 wiring (including how the reset token reaches the user via the outbox) is in the
 [Authn, authz & tenancy recipe](../recipes/authn-authz-tenancy-fastapi.md#http-login-endpoints).

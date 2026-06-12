@@ -14,6 +14,7 @@ from forze.application.contracts.outbox import OutboxSpec
 from forze.application.execution import ExecutionContext
 from forze.application.execution.operations import OperationDescriptor
 from forze.application.execution.operations.registry import OperationRegistry
+from forze.application.hooks.authn import AuthnRequired
 from .dto import (
     AuthnChangePasswordRequestDTO,
     AuthnLoginRequestDTO,
@@ -153,7 +154,7 @@ def build_authn_registry(
     )
 
     # All authn operations mutate auth state (issue/rotate/revoke tokens) — kept COMMAND.
-    return reg.set_descriptors(
+    reg = reg.set_descriptors(
         {
             AuthnKernelOp.PASSWORD_LOGIN: OperationDescriptor(
                 input_type=AuthnLoginRequestDTO,
@@ -197,4 +198,21 @@ def build_authn_registry(
             ),
         },
         namespace=ns,
+    )
+
+    # ``logout`` and ``change_password`` act on the *current* identity, so they
+    # require a bound principal. Declaring it as a hook (rather than only the
+    # handler's own guard) makes the requirement introspectable: the catalog
+    # flags ``requires_authn``, which the FastAPI/MCP surfaces project into their
+    # auth descriptions. The 401 (``auth_required``) is unchanged. Login/refresh
+    # and the reset pair authenticate via their bodies (no bound principal);
+    # ``deactivate_principal`` ships unguarded by design (apps bind authn+authz).
+    return (
+        reg.bind(
+            ns.key(AuthnKernelOp.LOGOUT),
+            ns.key(AuthnKernelOp.CHANGE_PASSWORD),
+        )
+        .bind_outer()
+        .before(AuthnRequired().to_step())
+        .finish(deep=True)
     )
