@@ -497,6 +497,7 @@ class FrozenOperationRegistry:
             tx_runner=ctx.tx_ctx.scope,
             defer_after_commit=ctx.tx_ctx.run_or_defer,
             inv_ctx=ctx.inv_ctx,
+            drain_gate=ctx.drain_gate,
         )
 
         ctx.store_operation(op, resolved)

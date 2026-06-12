@@ -41,6 +41,17 @@ class ExecutionRuntime:
     handler or hook factory that must rebuild on every invocation.
     """
 
+    drain_timeout: float = attrs.field(default=10.0)
+    """Bounded wait (seconds) for in-flight operations during :meth:`shutdown`.
+
+    Shutdown first flips the scope's drain gate — new top-level invocations
+    fail with a retryable ``THROTTLED`` (``code="draining"``) — then waits up
+    to this long for in-flight operations to finish before running lifecycle
+    teardown (which closes the clients they depend on). ``0.0`` skips the
+    wait (still rejects new work); expiry proceeds with a logged warning, it
+    never blocks shutdown indefinitely. No in-flight work exits immediately.
+    """
+
     cache_resolved_ports: bool = attrs.field(default=True)
     """Memoize resolved configurable ports (document/search/cache/storage/... adapters)
     per scope, so each ``ctx.<x>.query(spec)`` reuses one gateway/adapter (and its codecs,
@@ -112,7 +123,12 @@ class ExecutionRuntime:
     # ....................... #
 
     async def shutdown(self) -> None:
-        """Run lifecycle shutdown hooks and reset the context.
+        """Drain in-flight operations, run lifecycle shutdown hooks, reset the context.
+
+        Draining comes first (see :attr:`drain_timeout`): the scope stops
+        admitting new top-level invocations and gives in-flight operations a
+        bounded window to finish before lifecycle teardown closes the clients
+        they depend on. A drain-timeout expiry is logged and shutdown proceeds.
 
         Shutdown runs in reverse wave order. Context is reset in a
         ``finally`` block so it is cleared even if shutdown raises.
@@ -126,6 +142,15 @@ class ExecutionRuntime:
 
         try:
             ctx = self.__ctx.get()
+
+            if not await ctx.drain_gate.drain(self.drain_timeout):
+                logger.warning(
+                    "Drain timeout (%.1fs) expired with %d operation(s) still "
+                    "in flight; proceeding with lifecycle shutdown",
+                    self.drain_timeout,
+                    ctx.drain_gate.in_flight,
+                )
+
             await self.lifecycle.shutdown(ctx)
 
         finally:

@@ -17,6 +17,7 @@ def build_runtime(
     concurrent_lifecycle: bool = False,
     cache_resolved_operations: bool = True,
     cache_resolved_ports: bool = True,
+    drain_timeout: float = 10.0,
 ) -> ExecutionRuntime:
     """Assemble an :class:`ExecutionRuntime` in one call.
 
@@ -50,6 +51,9 @@ def build_runtime(
         :attr:`ExecutionRuntime.cache_resolved_operations`.
     :param cache_resolved_ports: Passed through to
         :attr:`ExecutionRuntime.cache_resolved_ports`.
+    :param drain_timeout: Passed through to
+        :attr:`ExecutionRuntime.drain_timeout` (bounded wait for in-flight
+        operations before lifecycle shutdown).
     :returns: Runtime ready for :meth:`ExecutionRuntime.scope`.
     """
 
@@ -65,4 +69,5 @@ def build_runtime(
         lifecycle=plan.freeze(),
         cache_resolved_operations=cache_resolved_operations,
         cache_resolved_ports=cache_resolved_ports,
+        drain_timeout=drain_timeout,
     )

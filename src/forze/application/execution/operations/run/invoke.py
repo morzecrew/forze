@@ -14,6 +14,7 @@ from forze.base.primitives import StrKey
 
 from ...context.active_operation import active_operation_var
 from ...context.deadline import remaining_time, reset_deadline, set_deadline
+from ...context.drain import OperationDrainGate
 from ..planning.plans import OperationKind, ResolvedOperationPlan
 from .plan import TransactionRunner, run_resolved_operation_plan
 
@@ -47,6 +48,9 @@ class ResolvedOperation[Args, R](Handler[Args, R]):
 
     inv_ctx: InvocationContext
     """Invocation context — used to bind the read-only flag for a QUERY operation."""
+
+    drain_gate: OperationDrainGate
+    """Admits top-level invocations; rejects new ones while the scope drains."""
 
     # ....................... #
 
@@ -113,11 +117,23 @@ class ResolvedOperation[Args, R](Handler[Args, R]):
         constructing an :class:`ExecutionContext` mid-operation (per-request
         creation, an unsupported mode) can be detected and warned about.
 
+        A **top-level** invocation (no operation already active on this task)
+        is admitted through the scope's drain gate: rejected with ``THROTTLED``
+        (``code="draining"``) once the runtime is draining, counted in flight
+        otherwise. Nested dispatch rides the outer invocation's slot — the
+        active-operation marker doubles as the nesting signal — so draining
+        never starves an admitted operation of its own dispatch chains.
+
         Hot path: both flags are token set/reset directly (the equivalent of the
         :func:`~forze.application.execution.context.active_operation.operation_running`
         and ``InvocationContext.bind_read_only`` context managers) — a
         ``@contextmanager`` enter/exit costs ~5x a raw ContextVar set/reset pair.
         """
+
+        gate = None if active_operation_var.get() else self.drain_gate
+
+        if gate is not None:
+            gate.admit(self.op)
 
         marker_token = active_operation_var.set(True)
 
@@ -135,6 +151,9 @@ class ResolvedOperation[Args, R](Handler[Args, R]):
 
         finally:
             active_operation_var.reset(marker_token)
+
+            if gate is not None:
+                gate.release()
 
 
 # ....................... #
