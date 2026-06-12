@@ -117,6 +117,18 @@ class DocumentCache[R: BaseModel]:
     Empty until the first L1 read attempts a subscription; ``started`` is set
     before the await so concurrent first readers subscribe once."""
 
+    _bg_tasks: set["asyncio.Task[Any]"] = attrs.field(
+        factory=set,
+        init=False,
+        repr=False,
+        eq=False,
+    )
+    """Strong refs to in-flight background refresh tasks.
+
+    asyncio holds only weak references to tasks — without this set a running
+    refresh could be garbage-collected mid-flight. Entries discard themselves
+    on completion."""
+
     # ....................... #
 
     def _on_invalidation(self, inv: CacheInvalidation) -> None:
@@ -374,6 +386,72 @@ class DocumentCache[R: BaseModel]:
 
     # ....................... #
 
+    def _background_refresh_enabled(self) -> bool:
+        return self.cache_spec is not None and self.cache_spec.early_refresh_background
+
+    # ....................... #
+
+    async def _background_refresh(
+        self,
+        key: str,
+        fetch: Callable[[], Awaitable[R]],
+    ) -> None:
+        """Detached elected refresh: best-effort by contract.
+
+        Failures (including lifecycle teardown closing clients underneath a
+        shutdown-time refresh) are logged and swallowed — the entry being
+        refreshed is still valid, and a later election retries.
+        """
+
+        try:
+            await self._fetch_singleflight(key, fetch)
+
+        except asyncio.CancelledError:
+            raise
+
+        except Exception:
+            logger.debug(
+                "Background early refresh failed for 1 '%s' document, continuing",
+                self.document_name,
+                exc_info=True,
+            )
+
+    # ....................... #
+
+    async def _schedule_background_refresh(
+        self,
+        key: str,
+        fetch: Callable[[], Awaitable[R]],
+    ) -> None:
+        """Spawn an elected refresh after the enclosing transaction commits.
+
+        The spawn rides :meth:`after_commit_or_now` deliberately: the task
+        snapshots the caller's ContextVars, and a copy taken *inside* an
+        active transaction would let the detached fetch share the tx
+        connection concurrently with (or after) the request. Post-commit the
+        tx binding is gone while tenant/invocation bindings remain. A load
+        already in flight for the key makes the spawn a no-op — it will
+        re-warm the entry anyway (the rare same-tick double-spawn collapses
+        into the singleflight as a follower).
+        """
+
+        if key in self._inflight:
+            return
+
+        async def _spawn() -> None:
+            if key in self._inflight:
+                return
+
+            task = asyncio.get_running_loop().create_task(
+                self._background_refresh(key, fetch)
+            )
+            self._bg_tasks.add(task)
+            task.add_done_callback(self._bg_tasks.discard)
+
+        await self.after_commit_or_now(_spawn)
+
+    # ....................... #
+
     def read_through_eligible(
         self,
         *,
@@ -573,6 +651,21 @@ class DocumentCache[R: BaseModel]:
                 logger.trace("Retrieved 1 cached '%s' document", self.document_name)
                 # Backend data is committed by construction: safe to warm L1.
                 self._l1_put(pk, doc)
+                return doc
+
+            if self._background_refresh_enabled():
+                # Election fires *before* expiry: the entry is still valid.
+                # Serve it and let the recompute run detached — the elected
+                # reader never pays the refresh latency.
+                logger.trace(
+                    "Early refresh elected (background) for 1 '%s' document",
+                    self.document_name,
+                )
+                self._l1_put(pk, doc)
+                await self._schedule_background_refresh(
+                    str(pk), fetch_on_miss_without_lock
+                )
+
                 return doc
 
             logger.trace(

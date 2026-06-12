@@ -66,7 +66,12 @@ expiry may volunteer to recompute *before* the entry dies, with probability
 scaled by how expensive the recompute was observed to be — so refreshes
 desynchronize across replicas and a hot key never expires for everyone at
 once. Enabled entries carry a small metadata envelope in the cached value;
-the default (`None`) keeps the payload format unchanged.
+the default (`None`) keeps the payload format unchanged. By default the
+elected reader waits for the recompute; add
+`early_refresh_background=True` and it serves the still-valid cached entry
+immediately while the refresh runs detached — the reader never pays the
+recompute latency, and a failed refresh is logged rather than surfaced (the
+entry is still valid; a later election retries).
 
 ## An in-process L1 for hot documents
 

@@ -110,6 +110,16 @@ class CacheSpec(BaseSpec):
     envelope; ``None`` (default) keeps the payload format byte-identical.
     Higher values refresh earlier/more often."""
 
+    early_refresh_background: bool = False
+    """Run elected early refreshes in the background instead of inline.
+
+    By default the XFetch-elected reader pays the recompute latency. When
+    enabled, the elected read serves the still-valid cached entry immediately
+    and the refresh runs as a detached task — the reader never sees the
+    refresh latency, and refresh *failures* become logged-only (the entry is
+    still valid; a later election retries). Requires
+    :attr:`early_refresh_beta`."""
+
     l1: L1Spec | None = None
     """Opt-in in-process L1 for document read-through (see :class:`L1Spec`).
     ``None`` (default) keeps every read on the backend cache."""
@@ -143,6 +153,12 @@ class CacheSpec(BaseSpec):
 
         if self.early_refresh_beta is not None and self.early_refresh_beta <= 0:
             raise exc.configuration("Early refresh beta must be positive")
+
+        if self.early_refresh_background and self.early_refresh_beta is None:
+            raise exc.configuration(
+                "early_refresh_background requires early_refresh_beta — it "
+                "only changes how an elected refresh runs",
+            )
 
         if self.l1 is not None and self.l1.ttl >= self.ttl:
             raise exc.configuration(
