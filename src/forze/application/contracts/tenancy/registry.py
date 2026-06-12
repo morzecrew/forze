@@ -123,8 +123,9 @@ class TenantClientRegistry[C, R = str]:
     # ....................... #
 
     async def _counted_dispose(self, client: C) -> None:
-        self.__disposed_count += 1
         await self.dispose(client)
+        # Incremented after `dispose` returns, so failed disposals don't count.
+        self.__disposed_count += 1
 
     # ....................... #
 

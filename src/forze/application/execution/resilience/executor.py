@@ -285,6 +285,7 @@ class InProcessResilienceExecutor:
         # delay ever more eager (the classic hedging feedback spiral).
         primary_start = self.clock()
         primary = spawn()
+        hedge_won = False
 
         try:
             while tasks:
@@ -315,6 +316,9 @@ class InProcessResilienceExecutor:
                         delay_state.observe(self.clock() - primary_start)
 
                     if error is None:
+                        if task is not primary:
+                            hedge_won = True
+
                         self._emit("hedge_won", pol, route)
                         return task.result()
 
@@ -323,12 +327,14 @@ class InProcessResilienceExecutor:
             raise errors[-1]
 
         finally:
-            if primary in tasks and delay_state is not None:
+            if hedge_won and primary in tasks and delay_state is not None:
                 # A hedge won and the primary is being cancelled: record its
                 # elapsed time as a right-censored sample. It understates the
                 # true latency but is >= the current delay, so it still pulls
                 # the estimated tail up instead of silently dropping the
-                # slowest calls from the distribution.
+                # slowest calls from the distribution. Guarded by `hedge_won`:
+                # a *caller* cancellation can land at any elapsed time, and
+                # recording it would feed arbitrary garbage into the quantile.
                 delay_state.observe(self.clock() - primary_start)
 
             for task in tasks:

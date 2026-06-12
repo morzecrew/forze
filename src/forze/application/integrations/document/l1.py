@@ -10,7 +10,7 @@ coordinator.
 import time
 import weakref
 from collections import OrderedDict
-from typing import Any, Callable, Iterator, Protocol, final, runtime_checkable
+from typing import Any, Callable, Iterator, Protocol, cast, final, runtime_checkable
 
 import attrs
 
@@ -70,7 +70,9 @@ class LruTtlStore:
     ttl: float
     clock: Callable[[], float] = time.monotonic
 
-    _entries: "OrderedDict[str, tuple[Any, float]]" = attrs.field(
+    # ....................... #
+
+    _entries: OrderedDict[str, tuple[Any, float]] = attrs.field(
         factory=OrderedDict,
         init=False,
         repr=False,
@@ -137,6 +139,7 @@ class LruTtlStore:
 # ....................... #
 
 
+@attrs.define(slots=True)
 class _FrequencySketch:
     """4-bit count-min sketch with periodic aging (the TinyLFU frequency filter).
 
@@ -148,30 +151,52 @@ class _FrequencySketch:
     need).
     """
 
-    __slots__ = ("_width", "_rows", "_ops", "_sample_size")
-
     _DEPTH = 4
     _SEEDS = (0x9E3779B9, 0x85EBCA6B, 0xC2B2AE35, 0x27D4EB2F)
 
-    def __init__(self, capacity: int) -> None:
-        width = 1
+    # ....................... #
 
-        while width < capacity * 4:
-            width <<= 1
+    capacity: int
 
-        self._width = width
-        self._rows = [bytearray(width) for _ in range(self._DEPTH)]
-        self._ops = 0
-        self._sample_size = max(64, capacity * 10)
+    # ....................... #
+
+    _width: int = attrs.field(
+        default=attrs.Factory(
+            # Smallest power of two >= 4x capacity (a pow2 width keeps the
+            # index computation a mask instead of a modulo).
+            lambda self: 1 << (self.capacity * 4 - 1).bit_length(),
+            takes_self=True,
+        ),
+        init=False,
+        repr=False,
+        eq=False,
+    )
+    _rows: list[bytearray] = attrs.field(
+        default=attrs.Factory(
+            lambda self: [bytearray(self._width) for _ in range(self._DEPTH)],
+            takes_self=True,
+        ),
+        init=False,
+        repr=False,
+        eq=False,
+    )
+    _ops: int = attrs.field(default=0, init=False, repr=False, eq=False)
+    _sample_size: int = attrs.field(
+        default=attrs.Factory(
+            lambda self: max(64, self.capacity * 10),
+            takes_self=True,
+        ),
+        init=False,
+        repr=False,
+        eq=False,
+    )
 
     # ....................... #
 
     def _indexes(self, key: str) -> tuple[int, ...]:
         mask = self._width - 1
 
-        return tuple(
-            hash((seed, key)) & mask for seed in self._SEEDS
-        )
+        return tuple(hash((seed, key)) & mask for seed in self._SEEDS)
 
     # ....................... #
 
@@ -227,14 +252,22 @@ class TinyLfuStore:
     ttl: float
     clock: Callable[[], float] = time.monotonic
 
+    # ....................... #
+
     _window: "OrderedDict[str, tuple[Any, float]]" = attrs.field(
-        factory=OrderedDict, init=False, repr=False
+        factory=OrderedDict,
+        init=False,
+        repr=False,
     )
     _probation: "OrderedDict[str, tuple[Any, float]]" = attrs.field(
-        factory=OrderedDict, init=False, repr=False
+        factory=OrderedDict,
+        init=False,
+        repr=False,
     )
     _protected: "OrderedDict[str, tuple[Any, float]]" = attrs.field(
-        factory=OrderedDict, init=False, repr=False
+        factory=OrderedDict,
+        init=False,
+        repr=False,
     )
     _sketch: _FrequencySketch = attrs.field(init=False, repr=False)
     _hits: int = attrs.field(default=0, init=False, repr=False)
@@ -387,7 +420,7 @@ def tiny_lfu_l1_store(spec: Any) -> TinyLfuStore:
 # ....................... #
 # Live-store registry (feeds the OTel exporter)
 
-_LIVE_STORES: "list[tuple[str, weakref.ReferenceType[Any]]]" = []
+_LIVE_STORES: list[tuple[str, weakref.ReferenceType[Any]]] = []
 
 
 def register_l1_store(name: str, store: Any) -> None:
@@ -402,7 +435,7 @@ def register_l1_store(name: str, store: Any) -> None:
     _LIVE_STORES.append((name, weakref.ref(store)))
 
 
-def iter_l1_stats() -> "Iterator[tuple[str, L1Stats]]":
+def iter_l1_stats() -> Iterator[tuple[str, L1Stats]]:
     """Yield ``(document_name, stats)`` for every live, stats-capable store.
 
     Custom :class:`L1Store` implementations without a ``stats()`` method are
@@ -420,10 +453,10 @@ def iter_l1_stats() -> "Iterator[tuple[str, L1Stats]]":
 
         stats_fn = getattr(store, "stats", None)
 
-        if stats_fn is None:
+        if not callable(stats_fn):
             continue
 
-        yield name, stats_fn()
+        yield name, cast(L1Stats, stats_fn())
 
     for index in reversed(dead):
         del _LIVE_STORES[index]

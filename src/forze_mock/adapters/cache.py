@@ -114,7 +114,7 @@ class MockCacheAdapter(MockTenancyMixin, CachePort):
 
     async def set_many(
         self,
-        key_mapping: dict[str, Any],
+        key_mapping: Mapping[str, Any],
         *,
         ttl: timedelta | None = None,
     ) -> None:

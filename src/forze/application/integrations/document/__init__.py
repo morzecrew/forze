@@ -11,7 +11,7 @@ __all__ = [
     "L1Stats",
     "L1Store",
     "LruTtlStore",
-    "instrument_document_l1",
     "TinyLfuStore",
+    "instrument_document_l1",
     "tiny_lfu_l1_store",
 ]

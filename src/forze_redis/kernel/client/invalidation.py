@@ -100,6 +100,12 @@ class InvalidationHub:
         async def _unsubscribe() -> None:
             sub.active = False
 
+            if not self._active_subs():
+                # Re-arm the loop: the inner read exits, teardown releases the
+                # pinned connection, and `_run` then stops because no active
+                # subscriber remains (same path as a prefix-set change).
+                self._resubscribe.set()
+
         return _unsubscribe
 
     # ....................... #

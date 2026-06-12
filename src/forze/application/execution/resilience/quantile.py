@@ -15,6 +15,8 @@ serving estimator never holds more than two windows of history.
 
 import attrs
 
+from forze.base.exceptions import exc
+
 # ----------------------- #
 
 _MARKERS = 5
@@ -30,14 +32,22 @@ class P2Quantile:
     markers (the algorithm is undefined before that — callers fall back).
     """
 
-    p: float
+    p: float = attrs.field()
     """Target quantile in ``(0, 1)``."""
+
+    # ....................... #
 
     _heights: list[float] = attrs.field(factory=list, init=False)
     _positions: list[float] = attrs.field(factory=list, init=False)
     _desired: list[float] = attrs.field(factory=list, init=False)
     _increments: list[float] = attrs.field(factory=list, init=False)
     _count: int = attrs.field(default=0, init=False)
+
+    # ....................... #
+
+    def __attrs_post_init__(self) -> None:
+        if not 0.0 < self.p < 1.0:
+            raise exc.configuration("P2 quantile p must be in (0, 1)")
 
     # ....................... #
 
@@ -153,8 +163,10 @@ class WindowedP2Quantile:
     p: float
     """Target quantile in ``(0, 1)``."""
 
-    window: int = 512
+    window: int = attrs.field(default=512)
     """Observations per rotation; staleness is bounded by ``2 * window``."""
+
+    # ....................... #
 
     _old: P2Quantile = attrs.field(
         default=attrs.Factory(lambda self: P2Quantile(p=self.p), takes_self=True),
@@ -165,6 +177,15 @@ class WindowedP2Quantile:
         init=False,
     )
     _since_rotation: int = attrs.field(default=0, init=False)
+
+    # ....................... #
+
+    def __attrs_post_init__(self) -> None:
+        if not 0.0 < self.p < 1.0:
+            raise exc.configuration("Windowed P2 quantile p must be in (0, 1)")
+
+        if self.window < 5:
+            raise exc.configuration("Windowed P2 window must be >= 5")
 
     # ....................... #
 

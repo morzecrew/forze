@@ -54,11 +54,15 @@ class CacheCommandPort(Protocol):  # pragma: no cover
 
     def set_many(
         self,
-        key_mapping: JsonDict,
+        key_mapping: Mapping[str, Any],
         *,
         ttl: timedelta | None = None,
     ) -> Awaitable[None]:
-        """Bulk-store multiple key/value pairs (one *ttl* for the batch)."""
+        """Bulk-store multiple key/value pairs (one *ttl* for the batch).
+
+        Values follow the same contract as :meth:`set` — JSON-serializable,
+        or pre-encoded ``bytes``.
+        """
         ...
 
     def set_versioned(

@@ -1,6 +1,7 @@
 """Redis-backed :class:`~forze.application.contracts.cache.CachePort` adapter."""
 
 import asyncio
+import math
 
 from forze_redis._compat import require_redis
 
@@ -31,6 +32,16 @@ _CACHE_SCOPE: Final[str] = "cache"
 _KV_SCOPE: Final[str] = "kv"
 _POINTER_SCOPE: Final[str] = "pointer"
 _BODY_SCOPE: Final[str] = "body"
+
+
+def _ttl_seconds(ttl: "timedelta") -> int:
+    """Whole seconds for Redis expiry, never truncating a live TTL to zero.
+
+    ``int()`` would turn a sub-second TTL into ``EX 0`` (rejected by Redis) or
+    an ``EXPIRE 0`` (immediate deletion): round up and floor at one second.
+    """
+
+    return max(1, math.ceil(ttl.total_seconds()))
 
 
 def _loads_cache_body(raw: bytes | str) -> Any:
@@ -159,7 +170,7 @@ class RedisCacheAdapter(CachePort, RedisBaseAdapter):
             return
 
         redis_mapping = {self.__pointer_key(k): v for k, v in mapping.items()}
-        await self.client.mset(redis_mapping, ex=int(ttl.total_seconds()))
+        await self.client.mset(redis_mapping, ex=_ttl_seconds(ttl))
 
     # ....................... #
 
@@ -207,7 +218,7 @@ class RedisCacheAdapter(CachePort, RedisBaseAdapter):
             )
             for (k, v), val in mapping.items()
         }
-        await self.client.mset(redis_mapping, ex=int(ttl.total_seconds()))
+        await self.client.mset(redis_mapping, ex=_ttl_seconds(ttl))
 
     # ....................... #
 
@@ -240,7 +251,7 @@ class RedisCacheAdapter(CachePort, RedisBaseAdapter):
 
     # ....................... #
 
-    async def __mset_kv(self, mapping: dict[str, Any], *, ttl: timedelta) -> None:
+    async def __mset_kv(self, mapping: Mapping[str, Any], *, ttl: timedelta) -> None:
         if not mapping:
             return
 
@@ -248,7 +259,7 @@ class RedisCacheAdapter(CachePort, RedisBaseAdapter):
             self.__kv_key(k): v if isinstance(v, bytes) else default_json_codec.dumps(v)
             for k, v in mapping.items()
         }
-        await self.client.mset(redis_mapping, ex=int(ttl.total_seconds()))
+        await self.client.mset(redis_mapping, ex=_ttl_seconds(ttl))
 
     # ....................... #
 
@@ -359,7 +370,7 @@ class RedisCacheAdapter(CachePort, RedisBaseAdapter):
         if self.sliding_ttl is None or not keys:
             return
 
-        seconds = int(self.sliding_ttl.total_seconds())
+        seconds = _ttl_seconds(self.sliding_ttl)
 
         try:
             if len(keys) == 1:
@@ -499,7 +510,7 @@ class RedisCacheAdapter(CachePort, RedisBaseAdapter):
 
     async def set_many(
         self,
-        key_mapping: dict[str, Any],
+        key_mapping: Mapping[str, Any],
         *,
         ttl: timedelta | None = None,
     ) -> None:

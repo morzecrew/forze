@@ -133,7 +133,7 @@ class TestAging:
                 store.get(key)
 
         # Season changes: B is accessed heavily, long enough that the sketch
-        # ages A's ancient popularity away (sample_size = 10 × capacity).
+        # ages A's ancient popularity away (sample_size = 10 * capacity).
         for _ in range(40):
             for key in season_b:
                 store.set(key, key)

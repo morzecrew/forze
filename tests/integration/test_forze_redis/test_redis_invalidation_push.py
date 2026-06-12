@@ -1,4 +1,4 @@
-"""Integration tests for invalidation push (CLIENT TRACKING, REDIRECT mode).
+"""Integration tests for invalidation push (CLIENT TRACKING, RESP3 push frames).
 
 Real Redis: a subscriber on client A must observe invalidations caused by
 writes performed through client B — the cross-replica scenario the document
@@ -66,15 +66,23 @@ class TestInvalidationPush:
         unsubscribe = await subscriber.subscribe_invalidations(events.append)
         assert unsubscribe is not None
 
-        # The hub flushes on (re)connect: wait for the initial reset so the
-        # subsequent key event is unambiguous.
-        await _wait_for(lambda: any(e.key is None for e in events))
+        try:
+            # The hub flushes on (re)connect: wait for the initial reset so the
+            # subsequent key event is unambiguous.
+            await _wait_for(lambda: any(e.key is None for e in events))
 
-        await writer.set_versioned("pk-1", "1", {"hello": "world"})
+            await writer.set_versioned("pk-1", "1", {"hello": "world"})
 
-        await _wait_for(lambda: any(e.key == "pk-1" for e in events))
+            await _wait_for(lambda: any(e.key == "pk-1" for e in events))
 
-        await unsubscribe()
+        finally:
+            await unsubscribe()
+
+        # The last unsubscribe winds the hub down: its listener task exits and
+        # the pinned connection is released back to the pool.
+        hub = redis_client._RedisClient__invalidation_hub  # noqa: SLF001
+        assert hub is not None
+        await _wait_for(lambda: hub._task is None or hub._task.done())  # noqa: SLF001
 
     async def test_delete_pushes_invalidation(
         self,
@@ -90,12 +98,16 @@ class TestInvalidationPush:
         events: list[CacheInvalidation] = []
         unsubscribe = await subscriber.subscribe_invalidations(events.append)
         assert unsubscribe is not None
-        await _wait_for(lambda: any(e.key is None for e in events))
 
-        await writer.delete("pk-2", hard=True)
+        try:
+            await _wait_for(lambda: any(e.key is None for e in events))
 
-        await _wait_for(lambda: any(e.key == "pk-2" for e in events))
-        await unsubscribe()
+            await writer.delete("pk-2", hard=True)
+
+            await _wait_for(lambda: any(e.key == "pk-2" for e in events))
+
+        finally:
+            await unsubscribe()
 
     async def test_other_namespace_writes_not_delivered(
         self,
@@ -111,12 +123,15 @@ class TestInvalidationPush:
         events: list[CacheInvalidation] = []
         unsubscribe = await subscriber.subscribe_invalidations(events.append)
         assert unsubscribe is not None
-        await _wait_for(lambda: any(e.key is None for e in events))
 
-        await writer_other.set_versioned("pk-other", "1", {"x": 1})
-        await writer_same.set_versioned("pk-same", "1", {"x": 1})
+        try:
+            await _wait_for(lambda: any(e.key is None for e in events))
 
-        await _wait_for(lambda: any(e.key == "pk-same" for e in events))
-        assert not any(e.key == "pk-other" for e in events)
+            await writer_other.set_versioned("pk-other", "1", {"x": 1})
+            await writer_same.set_versioned("pk-same", "1", {"x": 1})
 
-        await unsubscribe()
+            await _wait_for(lambda: any(e.key == "pk-same" for e in events))
+            assert not any(e.key == "pk-other" for e in events)
+
+        finally:
+            await unsubscribe()

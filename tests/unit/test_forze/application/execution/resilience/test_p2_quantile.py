@@ -4,10 +4,13 @@ from __future__ import annotations
 
 import random
 
+import pytest
+
 from forze.application.execution.resilience.quantile import (
     P2Quantile,
     WindowedP2Quantile,
 )
+from forze.base.exceptions import CoreException
 
 # ----------------------- #
 
@@ -85,6 +88,11 @@ class TestP2Quantile:
             est.observe(float(x))
 
         assert est.count == 10
+
+    def test_rejects_invalid_quantile(self) -> None:
+        for p in (0.0, 1.0, -0.5, 1.5):
+            with pytest.raises(CoreException):
+                P2Quantile(p=p)
 
 
 class TestWindowedP2Quantile:

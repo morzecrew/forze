@@ -157,6 +157,24 @@ class TestExecutorIntegration:
         # The cancelled primary was recorded at >= the hedge delay.
         assert state._estimator._old.count == 1  # noqa: SLF001
 
+    async def test_caller_cancellation_records_no_sample(self) -> None:
+        # A caller cancel can land at any elapsed time — recording it would
+        # feed arbitrary garbage into the quantile (only hedge wins are
+        # legitimate censoring points).
+        ex = _executor(_strategy(delay=timedelta(seconds=60)))
+
+        fn = _Fn([(5.0, "slow")])
+        task = asyncio.create_task(ex.run_hedged(fn, policy="h", route="r"))
+        await asyncio.sleep(0.01)
+
+        task.cancel()
+
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+        ((_, state),) = ex._hedge_delays.items()  # noqa: SLF001
+        assert state._estimator._old.count == 0  # noqa: SLF001
+
     async def test_routes_keep_separate_estimators(self) -> None:
         ex = _executor(_strategy())
 
