@@ -50,6 +50,7 @@ from .resilience import (
 )
 from .observability import (
     BREAKER_STATE_GAUGE,
+    BULKHEAD_LIMIT_GAUGE,
     BULKHEAD_QUEUE_GAUGE,
     DURATION_HISTOGRAM,
     OPERATIONS_COUNTER,
@@ -127,6 +128,7 @@ __all__ = [
     "RESILIENCE_EVENTS_COUNTER",
     "BREAKER_STATE_GAUGE",
     "BULKHEAD_QUEUE_GAUGE",
+    "BULKHEAD_LIMIT_GAUGE",
     "ResilienceDepsModule",
     "builtin_default_policies",
     "default_resilience_executor",

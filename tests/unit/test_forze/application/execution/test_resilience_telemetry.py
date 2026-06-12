@@ -216,3 +216,29 @@ class TestResilienceMetrics:
 
         assert await executor.run(fn, policy="p") == "ok"
         assert _points(reader, RESILIENCE_EVENTS_COUNTER) == []
+
+
+    async def test_adaptive_bulkhead_limit_observed(self) -> None:
+        from forze.application.contracts.resilience import AdaptiveBulkheadStrategy
+        from forze.application.execution.observability import BULKHEAD_LIMIT_GAUGE
+
+        meter, reader = _meter()
+        policy = ResiliencePolicy(
+            name="p",
+            strategies=(
+                AdaptiveBulkheadStrategy(
+                    latency_threshold=timedelta(milliseconds=100),
+                    max_concurrency=8,
+                ),
+            ),
+        )
+        executor = instrument_resilience(_executor(policy), meter=meter)
+
+        async def fn() -> str:
+            return "ok"
+
+        assert await executor.run(fn, policy="p") == "ok"
+
+        ((labels, point),) = _points(reader, BULKHEAD_LIMIT_GAUGE)
+        assert point.value == 8.0
+        assert labels["forze.policy"] == "p"

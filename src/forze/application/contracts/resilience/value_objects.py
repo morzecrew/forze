@@ -194,6 +194,83 @@ class BulkheadStrategy:
 
 @final
 @attrs.define(slots=True, frozen=True, kw_only=True)
+class AdaptiveBulkheadStrategy:
+    """AIMD concurrency limiter: a bulkhead that backs off under latency pressure.
+
+    Starts at ``max_concurrency`` and behaves exactly like a fixed bulkhead
+    until a completed call exceeds ``latency_threshold``; the limit then
+    decreases multiplicatively (``limit *= backoff_ratio``, at most once per
+    ``cooldown``) and recovers additively (``+= increase_step / limit`` per
+    in-budget completion — one slot per ~limit successes, the TCP-style probe).
+    AIMD is the principled choice for *uncoordinated* replicas: N process-local
+    limits sharing one downstream converge like N TCP flows sharing a link, so
+    no distributed state is needed.
+
+    Congestion signal is **latency only** — errors stay the circuit breaker's
+    job (a fast-failing downstream must not crater concurrency exactly when
+    failures are cheap). A per-attempt timeout firing counts as a breach at the
+    timeout value. The sample is the whole guarded call (retries and backoff
+    sleeps included when composed with a Retry strategy) — set the threshold
+    for the logical call, not the single attempt.
+
+    Shrinking never evicts in-flight work: the limit only gates admission.
+    Mutually exclusive with :class:`BulkheadStrategy` within one policy.
+    """
+
+    latency_threshold: timedelta
+    """Completed-call latency above this counts as congestion."""
+
+    max_concurrency: int
+    """Ceiling and initial limit."""
+
+    min_concurrency: int = 1
+    """Floor the limit never decreases below."""
+
+    max_queue: int = 0
+    """Maximum number of calls allowed to wait for a slot before rejection."""
+
+    backoff_ratio: float = 0.9
+    """Multiplicative decrease applied on a latency breach."""
+
+    increase_step: float = 1.0
+    """Additive recovery: ``increase_step / limit`` per in-budget completion."""
+
+    cooldown: timedelta = timedelta(seconds=1)
+    """Minimum spacing between decreases — coalesces a burst of slow
+    completions into one backoff instead of collapsing the limit to the floor."""
+
+    # ....................... #
+
+    def __attrs_post_init__(self) -> None:
+        if self.latency_threshold.total_seconds() <= 0:
+            raise exc.configuration("Adaptive bulkhead latency_threshold must be positive")
+
+        if self.min_concurrency < 1:
+            raise exc.configuration("Adaptive bulkhead min_concurrency must be >= 1")
+
+        if self.max_concurrency < self.min_concurrency:
+            raise exc.configuration(
+                "Adaptive bulkhead max_concurrency must be >= min_concurrency"
+            )
+
+        if self.max_queue < 0:
+            raise exc.configuration("Adaptive bulkhead max_queue must be >= 0")
+
+        if not 0.0 < self.backoff_ratio < 1.0:
+            raise exc.configuration("Adaptive bulkhead backoff_ratio must be in (0, 1)")
+
+        if self.increase_step <= 0:
+            raise exc.configuration("Adaptive bulkhead increase_step must be positive")
+
+        if self.cooldown.total_seconds() < 0:
+            raise exc.configuration("Adaptive bulkhead cooldown must be >= 0")
+
+
+# ....................... #
+
+
+@final
+@attrs.define(slots=True, frozen=True, kw_only=True)
 class CircuitBreakerStrategy:
     """Rolling-window circuit breaker."""
 
@@ -337,6 +414,7 @@ class HedgeStrategy:
 Strategy = (
     RateLimitStrategy
     | BulkheadStrategy
+    | AdaptiveBulkheadStrategy
     | CircuitBreakerStrategy
     | RetryStrategy
     | TimeoutStrategy
@@ -347,6 +425,7 @@ Strategy = (
 _STRATEGY_ORDER: tuple[type, ...] = (
     RateLimitStrategy,
     BulkheadStrategy,
+    AdaptiveBulkheadStrategy,
     CircuitBreakerStrategy,
     RetryStrategy,
     TimeoutStrategy,
@@ -395,6 +474,12 @@ class ResiliencePolicy:
         if len(set(functional)) != len(functional):
             raise exc.configuration("Resilience policy has duplicate strategy types")
 
+        if BulkheadStrategy in functional and AdaptiveBulkheadStrategy in functional:
+            raise exc.configuration(
+                "Resilience policy cannot combine BulkheadStrategy with "
+                "AdaptiveBulkheadStrategy — they occupy the same slot",
+            )
+
         ranks = [_STRATEGY_ORDER.index(t) for t in functional]
 
         if ranks != sorted(ranks):
@@ -425,6 +510,12 @@ class ResiliencePolicy:
         """Bulkhead strategy if declared."""
 
         return self._of_type(BulkheadStrategy)
+
+    @property
+    def adaptive_bulkhead(self) -> AdaptiveBulkheadStrategy | None:
+        """Adaptive (AIMD) bulkhead strategy if declared."""
+
+        return self._of_type(AdaptiveBulkheadStrategy)
 
     @property
     def circuit_breaker(self) -> CircuitBreakerStrategy | None:

@@ -1,6 +1,7 @@
 """Process-local mutable state for circuit breaker, bulkhead, rate limit, and retry budget."""
 
 import asyncio
+from collections import deque
 from typing import Literal
 
 import attrs
@@ -215,5 +216,132 @@ class BudgetState:
         if self.tokens >= 1.0:
             self.tokens -= 1.0
             return True
+
+        return False
+
+
+# ....................... #
+
+
+@attrs.define(slots=True)
+class AdaptiveBulkheadState:
+    """AIMD concurrency limiter: counter-based admission with a dynamic limit.
+
+    A semaphore cannot change capacity, so admission is an ``in_use`` counter
+    plus a FIFO of waiter futures: admit while ``in_use < floor(limit)``, park
+    up to ``max_queue`` waiters, wake them on release. Shrinking the limit
+    never evicts in-flight work — it only gates new admissions.
+
+    The AIMD controller: an in-budget completion adds ``increase_step / limit``
+    (one slot per ~limit successes); a breach multiplies by ``backoff_ratio``,
+    at most once per ``cooldown`` so a burst of slow completions backs off once
+    instead of collapsing the limit to the floor. Single-event-loop discipline:
+    state mutations happen between awaits.
+    """
+
+    latency_threshold: float
+    min_concurrency: int
+    max_concurrency: int
+    max_queue: int
+    backoff_ratio: float
+    increase_step: float
+    cooldown: float
+
+    limit: float = attrs.field(
+        default=attrs.Factory(lambda self: float(self.max_concurrency), takes_self=True),
+        init=False,
+    )
+    """Current concurrency limit (floored to int for admission)."""
+
+    in_use: int = attrs.field(default=0, init=False)
+    """Admitted calls currently in flight."""
+
+    waiting: int = attrs.field(default=0, init=False)
+    """Calls parked waiting for a slot."""
+
+    last_decrease_at: float = attrs.field(default=float("-inf"), init=False)
+    """Clock of the last multiplicative decrease (cooldown anchor)."""
+
+    _waiters: deque[asyncio.Future[None]] = attrs.field(factory=deque, init=False)
+
+    # ....................... #
+
+    def can_admit(self) -> bool:
+        """Whether a call may take a slot or join the wait queue."""
+
+        if self.in_use < int(self.limit):
+            return True
+
+        return self.waiting < self.max_queue
+
+    # ....................... #
+
+    async def acquire(self) -> None:
+        """Take a slot, waiting in FIFO order when the limit is saturated."""
+
+        if self.in_use < int(self.limit) and not self._waiters:
+            self.in_use += 1
+            return
+
+        waiter: asyncio.Future[None] = asyncio.get_running_loop().create_future()
+        self._waiters.append(waiter)
+        self.waiting += 1
+
+        try:
+            await waiter
+
+        except asyncio.CancelledError:
+            if not waiter.cancelled() and waiter.done():
+                # Slot was granted concurrently with the cancellation: return
+                # it so the capacity is not leaked.
+                self.in_use -= 1
+                self._wake()
+
+            raise
+
+        finally:
+            self.waiting -= 1
+
+            if not waiter.done():
+                self._waiters.remove(waiter)
+
+    # ....................... #
+
+    def release(self) -> None:
+        """Return a slot and wake a waiter if capacity allows."""
+
+        self.in_use -= 1
+        self._wake()
+
+    # ....................... #
+
+    def _wake(self) -> None:
+        while self._waiters and self.in_use < int(self.limit):
+            waiter = self._waiters.popleft()
+
+            if waiter.cancelled():
+                continue
+
+            self.in_use += 1
+            waiter.set_result(None)
+
+    # ....................... #
+
+    def on_complete(self, latency: float, now: float) -> bool:
+        """Adjust the limit for a completed call; return ``True`` on a decrease."""
+
+        if latency > self.latency_threshold:
+            if now - self.last_decrease_at < self.cooldown:
+                return False
+
+            self.last_decrease_at = now
+            self.limit = max(float(self.min_concurrency), self.limit * self.backoff_ratio)
+
+            return True
+
+        self.limit = min(
+            float(self.max_concurrency),
+            self.limit + self.increase_step / max(self.limit, 1.0),
+        )
 
         return False

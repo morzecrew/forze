@@ -44,6 +44,7 @@ DURATION_HISTOGRAM = "forze.operation.duration"
 RESILIENCE_EVENTS_COUNTER = "forze.resilience.events"
 BREAKER_STATE_GAUGE = "forze.resilience.breaker.state"
 BULKHEAD_QUEUE_GAUGE = "forze.resilience.bulkhead.queue_depth"
+BULKHEAD_LIMIT_GAUGE = "forze.resilience.bulkhead.limit"
 
 _BREAKER_PHASE_VALUES: dict[str, int] = {
     "breaker_close": 0,
@@ -122,6 +123,9 @@ def instrument_resilience(
     - ``forze.resilience.bulkhead.queue_depth`` (observable gauge): calls
       queued behind each bulkhead's semaphore, sampled at collection time.
       State appears lazily once a bulkhead-bearing policy is first used.
+    - ``forze.resilience.bulkhead.limit`` (observable gauge): the current AIMD
+      concurrency limit per adaptive bulkhead (``bulkhead_backoff`` events in
+      the counter mark each multiplicative decrease).
 
     Emits via the global OTel meter unless *meter* is supplied. Call once at
     assembly time, alongside :func:`instrument_operations`.
@@ -167,6 +171,22 @@ def instrument_resilience(
         callbacks=[_observe_queue_depth],
         unit="1",
         description="Calls queued behind each bulkhead's semaphore.",
+    )
+
+    def _observe_limits(_options: CallbackOptions) -> Iterable[Observation]:
+        for policy, route, limit in executor.adaptive_bulkhead_limits():
+            labels = {"forze.policy": policy}
+
+            if route is not None:
+                labels["forze.route"] = route
+
+            yield Observation(limit, labels)
+
+    meter.create_observable_gauge(
+        BULKHEAD_LIMIT_GAUGE,
+        callbacks=[_observe_limits],
+        unit="1",
+        description="Current AIMD concurrency limit per adaptive bulkhead.",
     )
 
     executor.set_metrics_sink(_sink)

@@ -11,6 +11,7 @@ from .ports import ResilienceExecutorPort
 from .specs import ResilienceSpec
 from .value_objects import (
     BackoffStrategy,
+    AdaptiveBulkheadStrategy,
     BulkheadStrategy,
     CircuitBreakerStrategy,
     FallbackStrategy,
@@ -29,6 +30,7 @@ from .value_objects import (
 
 __all__ = [
     "BackoffStrategy",
+    "AdaptiveBulkheadStrategy",
     "BulkheadStrategy",
     "CircuitBreakerStrategy",
     "FallbackStrategy",

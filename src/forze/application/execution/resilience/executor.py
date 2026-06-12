@@ -8,6 +8,7 @@ from collections.abc import Awaitable, Callable, Iterator
 import attrs
 
 from forze.application.contracts.resilience import (
+    AdaptiveBulkheadStrategy,
     BulkheadStrategy,
     CircuitBreakerStrategy,
     HedgeStrategy,
@@ -22,7 +23,7 @@ from forze.base.primitives import MappingConverter, StrKey, StrKeyMapping
 from ..context.deadline import remaining_time
 from ..tracing import record
 from .backoff import compute_delay
-from .state import BudgetState, BulkheadState, Transition
+from .state import AdaptiveBulkheadState, BudgetState, BulkheadState, Transition
 from .store import (
     CircuitBreakerStore,
     InMemoryCircuitBreakerStore,
@@ -92,6 +93,12 @@ class InProcessResilienceExecutor:
     _bulkheads: dict[_StateKey, BulkheadState] = attrs.field(factory=dict, init=False)
     """Bulkhead state for the executor."""
 
+    _adaptive_bulkheads: dict[_StateKey, AdaptiveBulkheadState] = attrs.field(
+        factory=dict,
+        init=False,
+    )
+    """Adaptive (AIMD) bulkhead state for the executor."""
+
     _budgets: dict[_StateKey, BudgetState] = attrs.field(factory=dict, init=False)
     """Budget state for the executor."""
 
@@ -127,6 +134,29 @@ class InProcessResilienceExecutor:
                 str(policy),
                 str(route) if route is not None else None,
                 state.waiting,
+            )
+
+        for (policy, route), adaptive in self._adaptive_bulkheads.items():
+            yield (
+                str(policy),
+                str(route) if route is not None else None,
+                adaptive.waiting,
+            )
+
+    # ....................... #
+
+    def adaptive_bulkhead_limits(self) -> Iterator[tuple[str, str | None, float]]:
+        """Yield ``(policy, route, limit)`` for every adaptive bulkhead with live state.
+
+        Snapshot accessor for observable gauges: the current AIMD concurrency
+        limit. State appears lazily on first use of an adaptive policy.
+        """
+
+        for (policy, route), state in self._adaptive_bulkheads.items():
+            yield (
+                str(policy),
+                str(route) if route is not None else None,
+                state.limit,
             )
 
     # ....................... #
@@ -299,6 +329,16 @@ class InProcessResilienceExecutor:
                 return await self._with_bulkhead(bh, bh_inner, pol, route)
 
             call = with_bulkhead
+
+        adaptive = pol.adaptive_bulkhead
+
+        if adaptive is not None:
+            ab, ab_inner = adaptive, call
+
+            async def with_adaptive_bulkhead() -> T:
+                return await self._with_adaptive_bulkhead(ab, ab_inner, pol, route)
+
+            call = with_adaptive_bulkhead
 
         rate_limit = pol.rate_limit
 
@@ -509,6 +549,44 @@ class InProcessResilienceExecutor:
 
     # ....................... #
 
+    async def _with_adaptive_bulkhead[T](
+        self,
+        strat: AdaptiveBulkheadStrategy,
+        inner: Callable[[], Awaitable[T]],
+        pol: ResiliencePolicy,
+        route: StrKey | None,
+    ) -> T:
+        state = self._adaptive_bulkhead_for(strat, pol, route)
+
+        if not state.can_admit():
+            self._emit("bulkhead_reject", pol, route)
+            raise exc.infrastructure(f"Bulkhead full for policy {pol.name!r}")
+
+        await state.acquire()
+        start = self.clock()
+        failed = False
+
+        try:
+            return await inner()
+
+        except BaseException:
+            failed = True
+            raise
+
+        finally:
+            state.release()
+            elapsed = self.clock() - start
+
+            # Latency-only congestion signal: a failure adjusts the limit only
+            # when it ALSO breached the threshold (a per-attempt timeout firing
+            # is a breach at the timeout value); fast failures are the circuit
+            # breaker's job and leave the limit untouched.
+            if not failed or elapsed > state.latency_threshold:
+                if state.on_complete(elapsed, self.clock()):
+                    self._emit("bulkhead_backoff", pol, route)
+
+    # ....................... #
+
     def _breaker_outcome(
         self,
         transition: Transition,
@@ -538,6 +616,31 @@ class InProcessResilienceExecutor:
                 max_queue=strat.max_queue,
             )
             self._bulkheads[key] = state
+
+        return state
+
+    # ....................... #
+
+    def _adaptive_bulkhead_for(
+        self,
+        strat: AdaptiveBulkheadStrategy,
+        pol: ResiliencePolicy,
+        route: StrKey | None,
+    ) -> AdaptiveBulkheadState:
+        key = (pol.name, route)
+        state = self._adaptive_bulkheads.get(key)
+
+        if state is None:
+            state = AdaptiveBulkheadState(
+                latency_threshold=strat.latency_threshold.total_seconds(),
+                min_concurrency=strat.min_concurrency,
+                max_concurrency=strat.max_concurrency,
+                max_queue=strat.max_queue,
+                backoff_ratio=strat.backoff_ratio,
+                increase_step=strat.increase_step,
+                cooldown=strat.cooldown.total_seconds(),
+            )
+            self._adaptive_bulkheads[key] = state
 
         return state
 
