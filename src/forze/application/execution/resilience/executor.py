@@ -9,6 +9,7 @@ import attrs
 
 from forze.application.contracts.resilience import (
     AdaptiveBulkheadStrategy,
+    AdaptiveThrottleStrategy,
     BulkheadStrategy,
     CircuitBreakerStrategy,
     HedgeStrategy,
@@ -23,7 +24,13 @@ from forze.base.primitives import MappingConverter, StrKey, StrKeyMapping
 from ..context.deadline import remaining_time
 from ..tracing import record
 from .backoff import compute_delay
-from .state import AdaptiveBulkheadState, BudgetState, HedgeDelayState, Transition
+from .state import (
+    AdaptiveBulkheadState,
+    AdaptiveThrottleState,
+    BudgetState,
+    HedgeDelayState,
+    Transition,
+)
 from .store import (
     CircuitBreakerStore,
     InMemoryCircuitBreakerStore,
@@ -108,6 +115,12 @@ class InProcessResilienceExecutor:
 
     _hedge_budgets: dict[_StateKey, BudgetState] = attrs.field(factory=dict, init=False)
     """Hedge budget state for the executor."""
+
+    _throttles: dict[_StateKey, AdaptiveThrottleState] = attrs.field(
+        factory=dict,
+        init=False,
+    )
+    """Adaptive client-throttle counters (requests/accepts per policy/route)."""
 
     _hedge_delays: dict[_StateKey, HedgeDelayState] = attrs.field(
         factory=dict,
@@ -371,6 +384,16 @@ class InProcessResilienceExecutor:
 
             call = with_breaker
 
+        throttle = pol.adaptive_throttle
+
+        if throttle is not None:
+            th, th_inner = throttle, call
+
+            async def with_throttle() -> T:
+                return await self._with_adaptive_throttle(th, th_inner, pol, route)
+
+            call = with_throttle
+
         bulkhead = pol.bulkhead
 
         if bulkhead is not None:
@@ -545,6 +568,47 @@ class InProcessResilienceExecutor:
         self._breaker_outcome(
             await self.breaker_store.record(key, strat, True), pol, route
         )
+        return result
+
+    # ....................... #
+
+    async def _with_adaptive_throttle[T](
+        self,
+        strat: AdaptiveThrottleStrategy,
+        inner: Callable[[], Awaitable[T]],
+        pol: ResiliencePolicy,
+        route: StrKey | None,
+    ) -> T:
+        state = self._throttle_for(strat, pol, route)
+        now = self.clock()
+        probability = state.reject_probability(now)
+
+        # Shed calls count as requests but not accepts — the algorithm's
+        # self-limiting property (the client converges on ~k× the downstream's
+        # current capacity instead of hammering it with full traffic).
+        if probability > 0.0 and self.rng.random() < probability:
+            state.record_request(now)
+            self._emit("throttle_reject", pol, route)
+            raise exc.throttled(
+                f"Adaptive throttle shedding for policy {pol.name!r}",
+                code="adaptive_throttle",
+            )
+
+        state.record_request(now)
+
+        try:
+            result = await inner()
+
+        except CoreException as error:
+            # Same outcome classification as the breaker, inverted: a
+            # non-retryable failure is the downstream doing its job (a domain
+            # rejection), not buckling — it counts as an accept.
+            if not exception_egress_policy(error.kind).retryable:
+                state.record_accept(self.clock())
+
+            raise
+
+        state.record_accept(self.clock())
         return result
 
     # ....................... #
@@ -752,6 +816,27 @@ class InProcessResilienceExecutor:
                 min_throughput=strat.budget.min_throughput,
             )
             self._budgets[key] = state
+
+        return state
+
+    # ....................... #
+
+    def _throttle_for(
+        self,
+        strat: AdaptiveThrottleStrategy,
+        pol: ResiliencePolicy,
+        route: StrKey | None,
+    ) -> AdaptiveThrottleState:
+        key = (pol.name, route)
+        state = self._throttles.get(key)
+
+        if state is None:
+            state = AdaptiveThrottleState(
+                k=strat.k,
+                window=strat.window.total_seconds(),
+                min_throughput=strat.min_throughput,
+            )
+            self._throttles[key] = state
 
         return state
 

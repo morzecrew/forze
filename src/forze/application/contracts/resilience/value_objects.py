@@ -410,6 +410,59 @@ class CircuitBreakerStrategy:
 
 @final
 @attrs.define(slots=True, frozen=True, kw_only=True)
+class AdaptiveThrottleStrategy:
+    """Probabilistic client-side shedding for a degraded downstream (SRE book).
+
+    Tracks ``requests`` and ``accepts`` per window and rejects locally with
+    probability ``max(0, (requests − k·accepts) / (requests + 1))``. Where the
+    circuit breaker is binary — full traffic or a half-open trickle — this
+    sheds *proportionally*: at 50% downstream failure it sends roughly the
+    traffic the downstream is absorbing, and as the downstream recovers,
+    passed-through successes rebuild the accept ratio and shedding decays to
+    zero on its own. Locally-shed calls count as requests but not accepts,
+    which is what makes the steady state self-limiting (the client converges
+    on roughly ``k ×`` the downstream's current capacity).
+
+    "Accepted" mirrors the breaker's outcome classification inverted: a
+    success, or a failure whose kind is *non-retryable* (a domain error is
+    the downstream doing its job, not buckling). Mutually exclusive with
+    :class:`CircuitBreakerStrategy` in one policy — composed, the throttle
+    would observe the breaker's own local rejections as overload evidence.
+    Position the throttle on degraded-but-alive downstreams and the breaker
+    on ones that fail outright.
+    """
+
+    k: float = 2.0
+    """Permissiveness multiplier. Higher tolerates more failure before
+    shedding; ``2.0`` is the published production default. Must be ``>= 1``
+    (below that, a perfectly healthy downstream would already be shed)."""
+
+    window: timedelta = timedelta(minutes=2)
+    """Counting window. Counters reset when it elapses, so shedding decays
+    within one window of a recovery even with no traffic passing."""
+
+    min_throughput: int = 10
+    """Requests per window below which nothing is shed — trivial volume is
+    never throttled."""
+
+    # ....................... #
+
+    def __attrs_post_init__(self) -> None:
+        if self.k < 1.0:
+            raise exc.configuration("Adaptive throttle k must be >= 1")
+
+        if self.window.total_seconds() <= 0:
+            raise exc.configuration("Adaptive throttle window must be positive")
+
+        if self.min_throughput < 1:
+            raise exc.configuration("Adaptive throttle min_throughput must be >= 1")
+
+
+# ....................... #
+
+
+@final
+@attrs.define(slots=True, frozen=True, kw_only=True)
 class RetryStrategy:
     """Bounded retry on classified-retryable failures."""
 
@@ -559,6 +612,7 @@ Strategy = (
     | BulkheadStrategy
     | AdaptiveBulkheadStrategy
     | CircuitBreakerStrategy
+    | AdaptiveThrottleStrategy
     | RetryStrategy
     | TimeoutStrategy
     | FallbackStrategy
@@ -570,6 +624,7 @@ _STRATEGY_ORDER: tuple[type, ...] = (
     BulkheadStrategy,
     AdaptiveBulkheadStrategy,
     CircuitBreakerStrategy,
+    AdaptiveThrottleStrategy,
     RetryStrategy,
     TimeoutStrategy,
 )
@@ -623,6 +678,17 @@ class ResiliencePolicy:
                 "AdaptiveBulkheadStrategy — they occupy the same slot",
             )
 
+        if (
+            CircuitBreakerStrategy in functional
+            and AdaptiveThrottleStrategy in functional
+        ):
+            raise exc.configuration(
+                "Resilience policy cannot combine CircuitBreakerStrategy with "
+                "AdaptiveThrottleStrategy — composed, the throttle would count "
+                "the breaker's own local rejections as overload evidence; pick "
+                "the throttle for degraded downstreams, the breaker for dead ones",
+            )
+
         ranks = [_STRATEGY_ORDER.index(t) for t in functional]
 
         if ranks != sorted(ranks):
@@ -665,6 +731,12 @@ class ResiliencePolicy:
         """Circuit breaker strategy if declared."""
 
         return self._of_type(CircuitBreakerStrategy)
+
+    @property
+    def adaptive_throttle(self) -> AdaptiveThrottleStrategy | None:
+        """Adaptive client-throttle strategy if declared."""
+
+        return self._of_type(AdaptiveThrottleStrategy)
 
     @property
     def retry(self) -> RetryStrategy | None:

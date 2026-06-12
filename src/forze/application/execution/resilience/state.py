@@ -515,3 +515,62 @@ class HedgeDelayState:
             estimate = min(self.cap, estimate)
 
         return estimate
+
+
+# ....................... #
+
+
+@attrs.define(slots=True)
+class AdaptiveThrottleState:
+    """Adaptive client-throttle counters keyed by ``(policy, route)``.
+
+    Tumbling window (same shape as :class:`BreakerState`): ``requests`` and
+    ``accepts`` reset when the window elapses, so shedding decays within one
+    window of a downstream recovery even when no traffic is passing. Shed
+    calls count as requests but not accepts — the self-limiting property of
+    the SRE-book algorithm.
+    """
+
+    k: float
+    window: float
+    min_throughput: int
+
+    window_start: float = 0.0
+    requests: int = 0
+    accepts: int = 0
+
+    # ....................... #
+
+    def _roll(self, now: float) -> None:
+        if now - self.window_start >= self.window:
+            self.window_start = now
+            self.requests = 0
+            self.accepts = 0
+
+    # ....................... #
+
+    def reject_probability(self, now: float) -> float:
+        """Current local-rejection probability: ``max(0, (req − k·acc)/(req + 1))``."""
+
+        self._roll(now)
+
+        if self.requests < self.min_throughput:
+            return 0.0
+
+        return max(0.0, (self.requests - self.k * self.accepts) / (self.requests + 1))
+
+    # ....................... #
+
+    def record_request(self, now: float) -> None:
+        """Count one request — sent downstream or shed locally."""
+
+        self._roll(now)
+        self.requests += 1
+
+    # ....................... #
+
+    def record_accept(self, now: float) -> None:
+        """Count one downstream accept (success, or a non-retryable failure)."""
+
+        self._roll(now)
+        self.accepts += 1

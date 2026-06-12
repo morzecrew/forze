@@ -21,6 +21,7 @@ fallback and hedge:
 | **Retry** | re-run on a [retryable](errors.md) failure — `max_attempts`, `backoff` (base, max, multiplier, jitter) |
 | **Timeout** | a per-attempt timeout |
 | **Circuit breaker** | stop calling a failing dependency once a failure ratio trips, for a cool-off window |
+| **Adaptive throttle** | [shed proportionally](#shedding-for-a-degraded-downstream) when the downstream stops accepting — the breaker's sibling for degraded-but-alive dependencies |
 | **Bulkhead** | cap concurrent calls, fixed or [adaptive](#bulkheads), with an optional managed queue |
 | **Fallback / Hedge** | a fallback value on failure; or race staggered attempts |
 
@@ -197,6 +198,38 @@ over-eager hedging when every call is fast, the cap against a degraded
 downstream pushing the trigger past usefulness. The effective delay is
 visible as the `forze.resilience.hedge.delay` gauge once
 [`instrument_resilience`](observability.md#resilience-metrics) is attached.
+
+## Shedding for a degraded downstream
+
+The circuit breaker is **binary**: full traffic, or a half-open trickle. At
+50% downstream failure both answers are wrong — the right one is to send
+roughly the traffic the downstream is still absorbing. That's the **adaptive
+client throttle** (Google's SRE book): track `requests` and `accepts` per
+window, and reject locally with probability
+
+```
+max(0, (requests − k·accepts) / (requests + 1))
+```
+
+```python
+AdaptiveThrottleStrategy()   # k=2.0, window=2min, min_throughput=10
+```
+
+A healthy downstream (`accepts ≈ requests`, `k=2`) computes a negative number
+— nothing is shed, ever. As the accept ratio degrades, shedding rises
+*proportionally*, and the steady state is self-limiting: shed calls count as
+requests but not accepts, so the client converges on roughly `k ×` the
+downstream's current capacity, leaving a continuous probe stream that detects
+recovery on its own (no half-open ceremony). Shed calls fail with a
+**retryable** `throttled` (`code="adaptive_throttle"`, 429 at the edge) and a
+`throttle_reject` resilience event. "Accepted" uses the breaker's outcome
+classification inverted — a domain rejection is the downstream doing its job,
+not buckling, so it never triggers shedding.
+
+The throttle and the breaker are **mutually exclusive in one policy** (they
+occupy the same outcome-observing slot, and composed, the throttle would read
+the breaker's own local rejections as overload). Pick per dependency: the
+throttle for downstreams that degrade, the breaker for ones that die outright.
 
 ## Port-level policies
 
