@@ -307,6 +307,4 @@ pass trivially; renames silently drop out of comparison, so prefer keeping
 names stable. Locally: `just perf-save` to snapshot a baseline, `just
 perf-check` to compare your changes against it (10% threshold). Mark a new
 benchmark with `perf_gate` only if it is in-process and deterministic (no
-Docker). Trend history for `main` lives on the `benchmarks` branch
-(`dev/bench`), maintained by the `perf-trend` CI job, which comments on >25%
-drift but never fails.
+Docker).
