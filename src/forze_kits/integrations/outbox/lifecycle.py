@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import random
 from contextlib import suppress
 from datetime import timedelta
 from typing import Any, final
@@ -37,6 +38,7 @@ class _OutboxRelayBackgroundStartup(LifecycleHook):
     stream_spec: StreamSpec[Any] | None
     pubsub_spec: PubSubSpec[Any] | None
     interval: timedelta
+    jitter: float = 0.2
     reclaim_stale_after: timedelta | None
     limit: int | None
     max_attempts: int
@@ -50,6 +52,9 @@ class _OutboxRelayBackgroundStartup(LifecycleHook):
     def __attrs_post_init__(self) -> None:
         if self.interval.total_seconds() <= 0:
             raise exc.configuration("Interval must be positive")
+
+        if not 0.0 <= self.jitter < 1.0:
+            raise exc.configuration("Jitter must be in [0, 1)")
 
         if (
             self.reclaim_stale_after is not None
@@ -148,7 +153,20 @@ class _OutboxRelayBackgroundStartup(LifecycleHook):
                 except Exception:
                     logger.exception("Outbox background relay failed")
 
-                await asyncio.sleep(self.interval.total_seconds())
+                # Jittered tick: N replicas polling at the same fixed
+                # interval synchronize into a thundering herd against the
+                # claim query; the multiplicative jitter desynchronizes them.
+                await asyncio.sleep(
+                    self.interval.total_seconds()
+                    # Desynchronization jitter, not security randomness.
+                    * (1.0 + random.uniform(-self.jitter, self.jitter))  # nosec B311
+                )
+
+        if self.task is not None and not self.task.done():
+            # The runtime invokes startup once per scope; a direct double call
+            # must not leak (and orphan) the previous relay task.
+            logger.warning("Outbox relay already running; ignoring duplicate startup")
+            return
 
         self.task = asyncio.create_task(_loop(), name="outbox_relay_background")
 
@@ -189,6 +207,7 @@ def outbox_relay_background_lifecycle_step(
     stream_spec: StreamSpec[Any] | None = None,
     pubsub_spec: PubSubSpec[Any] | None = None,
     interval: timedelta = timedelta(seconds=30),
+    jitter: float = 0.2,
     reclaim_stale_after: timedelta | None = timedelta(minutes=5),
     limit: int | None = None,
     max_attempts: int = 5,
@@ -208,7 +227,9 @@ def outbox_relay_background_lifecycle_step(
     Each tick **drains the backlog**: batches of up to *limit* rows are relayed
     until a claim returns fewer rows than the batch size, capped at
     *max_batches_per_tick* batches so a large backlog cannot starve the loop;
-    then the task sleeps *interval*. A failing batch is logged and does not
+    then the task sleeps *interval* with multiplicative *jitter* (default
+    ±20%) so N replicas' relay loops do not synchronize into a thundering
+    herd against the claim query. A failing batch is logged and does not
     abort the tick.
 
     *max_attempts*, *retry_base_delay*, and *retry_max_backoff* configure the
@@ -236,6 +257,7 @@ def outbox_relay_background_lifecycle_step(
         stream_spec=stream_spec,
         pubsub_spec=pubsub_spec,
         interval=interval,
+        jitter=jitter,
         reclaim_stale_after=reclaim_stale_after,
         limit=limit,
         max_attempts=max_attempts,

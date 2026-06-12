@@ -221,7 +221,7 @@ class TestPasswordInviteAccept:
         pwd_cmd.create = AsyncMock()
 
         password_svc = MagicMock()
-        password_svc.hash_password = MagicMock(return_value="hashed")
+        password_svc.hash_password = AsyncMock(return_value="hashed")
 
         adapter = _adapter(
             password_svc=password_svc,

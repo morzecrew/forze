@@ -17,6 +17,7 @@ from mcp.types import ToolAnnotations
 from forze.application.execution.context import ExecutionContextFactory
 from forze.application.execution.operations import (
     FrozenOperationRegistry,
+    OperationCatalogEntry,
     OperationDescriptor,
 )
 from forze.base.exceptions import exc
@@ -97,6 +98,50 @@ def _flat_tool_handler(
 # ....................... #
 
 
+def _tool_description(entry: OperationCatalogEntry) -> str | None:
+    """Tool description: descriptor text plus catalog-derived suffix sentences.
+
+    Write operations whose plan carries an idempotency wrap advertise key-based
+    retry replay (the key is bound by the invoking boundary; without one the wrap
+    is a no-op). Declared permissions are appended as well — declared-hook
+    introspection only, **not** a complete security statement: an operation may
+    enforce authorization inside its handler invisibly. A plan-declared deadline
+    documents the call's time budget so agents can set client timeouts and avoid
+    retrying a call that failed by running out of budget.
+    """
+
+    parts: list[str] = []
+
+    if entry.descriptor is not None and entry.descriptor.description:
+        parts.append(entry.descriptor.description)
+
+    if entry.supports_idempotency_key and not entry.is_read_only:
+        parts.append(
+            "Supports idempotent retries via an invocation-bound idempotency key: "
+            "a duplicate call with the same key replays the stored result instead "
+            "of re-executing."
+        )
+
+    if entry.required_permissions:
+        keys = ", ".join(entry.required_permissions)
+        parts.append(
+            f"Requires permissions: {keys} (declared by attached authorization "
+            "hooks; the operation may enforce additional checks internally)."
+        )
+
+    if entry.deadline is not None:
+        budget = f"{entry.deadline.total_seconds():g}"
+        parts.append(
+            f"Calls are bounded by a {budget}s time budget; exceeding it fails "
+            "with a non-retryable timeout (deadline_exceeded)."
+        )
+
+    return " ".join(parts) if parts else None
+
+
+# ....................... #
+
+
 def register_tools(
     server: FastMCP,
     registry: FrozenOperationRegistry,
@@ -150,7 +195,7 @@ def register_tools(
                     descriptor=descriptor,
                 ),
                 name=tool_name,
-                description=descriptor.description if descriptor is not None else None,
+                description=_tool_description(entry),
                 annotations=ToolAnnotations(
                     readOnlyHint=entry.is_read_only,
                     destructiveHint=not entry.is_read_only,

@@ -30,6 +30,7 @@ from .adapters import (
     MockStreamGroupAdapter,
     MockStrictTxManagerAdapter,
     MockTxManagerAdapter,
+    RecordingAuthnEventSink,
 )
 from .adapters.identity import (
     MockSecretsPort,
@@ -92,4 +93,5 @@ __all__ = [
     "MockTenantResolverPort",
     "MockTenantManagementPort",
     "MockHashEmbeddingsProvider",
+    "RecordingAuthnEventSink",
 ]

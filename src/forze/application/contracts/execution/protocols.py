@@ -45,10 +45,13 @@ class OnSuccess[Args, R](Protocol):  # pragma: no cover
 
 
 class OnFailure[Args](Protocol):  # pragma: no cover
-    """Protocol for a hook that runs after the operation handler fails.
+    """Protocol for a hook that runs when the operation fails past its guards.
 
-    Handler-only: runs when the wrap chain / handler raises, **not** when a
-    ``before`` guard (authn/authz/tenancy) denies the operation.
+    Two triggers: the wrap chain / handler raises, **or** an ``on_success`` /
+    dispatch hook raises after the handler already succeeded (the operation
+    still fails as a whole, so failure observers fire even though the
+    handler's own work completed). Never runs when a ``before`` guard
+    (authn/authz/tenancy) denies the operation.
     """
 
     def __call__(self, args: Args, exc: Exception) -> Awaitable[None]: ...
@@ -125,6 +128,25 @@ class DeclaresHedge(Protocol):  # pragma: no cover
     """
 
     def hedge_safety_declared(self) -> bool: ...
+
+
+# ....................... #
+
+
+@runtime_checkable
+class DeclaresAuthz(Protocol):  # pragma: no cover
+    """Marker: a hook factory that declares the permission keys it enforces.
+
+    Detected structurally at freeze time (like :class:`ProvidesIdempotency`) so the
+    operation catalog can surface the union of declared permission keys per operation.
+
+    Honesty caveat: this is declared-hook introspection, **not** a security statement.
+    It only sees hooks attached to the plan that opt into this protocol — an operation
+    may enforce authorization inside its handler (or via an undeclared hook) invisibly,
+    and a hook may declare no named key while still scoping/denying access.
+    """
+
+    def permission_keys(self) -> tuple[str, ...]: ...
 
 
 # ....................... #

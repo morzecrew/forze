@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Any, Final, final
+from typing import Any, Final, Mapping, final
 
 import attrs
 
@@ -58,6 +58,7 @@ _F_TYPE: Final[str] = "type"
 _F_PUBLISHED_AT: Final[str] = "published_at"
 _F_KEY: Final[str] = "key"
 _F_TIMESTAMP: Final[str] = "timestamp"
+_F_HEADERS: Final[str] = "headers"
 
 # ....................... #
 
@@ -70,8 +71,15 @@ def _encode_envelope[M](
     key: str | None,
     time_field: str,
     time_value: datetime | None,
+    headers: Mapping[str, str] | None = None,
 ) -> dict[str, str]:
-    """Build the field envelope shared by the pubsub and stream encoders."""
+    """Build the field envelope shared by the pubsub and stream encoders.
+
+    *headers* ride the JSON envelope as a JSON-encoded object under the
+    ``headers`` field, next to ``type``/``key`` — caller keys pass through
+    verbatim (the envelope field names cannot collide with header keys
+    because headers live in their own nested object).
+    """
 
     data: dict[str, str] = {
         _F_PAYLOAD: payload_codec.encode_json_bytes(payload).decode(),
@@ -86,7 +94,36 @@ def _encode_envelope[M](
     if time_value is not None:
         data[time_field] = time_value.isoformat()
 
+    if headers:
+        data[_F_HEADERS] = default_json_codec.dumps(dict(headers)).decode()
+
     return data
+
+
+# ....................... #
+
+
+def _decode_headers(raw: object) -> dict[str, str]:
+    """Decode the JSON-encoded ``headers`` envelope field (best-effort)."""
+
+    if not isinstance(raw, str):
+        return {}
+
+    try:
+        decoded = default_json_codec.loads(raw)
+    except Exception:
+        return {}
+
+    if not isinstance(decoded, dict):
+        return {}
+
+    out: dict[str, str] = {}
+
+    for k, v in decoded.items():  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+        if isinstance(k, str) and isinstance(v, str):
+            out[k] = v
+
+    return out
 
 
 # ....................... #
@@ -115,6 +152,7 @@ class RedisPubSubCodec[M]:
         type: str | None = None,
         key: str | None = None,
         published_at: datetime | None = None,
+        headers: Mapping[str, str] | None = None,
     ) -> bytes:
         data = _encode_envelope(
             self.payload_codec,
@@ -123,6 +161,7 @@ class RedisPubSubCodec[M]:
             key=key,
             time_field=_F_PUBLISHED_AT,
             time_value=published_at,
+            headers=headers,
         )
 
         return default_json_codec.dumps(data)
@@ -151,6 +190,9 @@ class RedisPubSubCodec[M]:
         published_at_raw = decoded.get(  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
             _F_PUBLISHED_AT
         )
+        headers_raw = decoded.get(  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+            _F_HEADERS
+        )
 
         return PubSubMessage(
             topic=topic,
@@ -162,6 +204,7 @@ class RedisPubSubCodec[M]:
                 if isinstance(published_at_raw, str)
                 else None
             ),
+            headers=_decode_headers(headers_raw),  # pyright: ignore[reportUnknownArgumentType]
         )
 
 
@@ -191,6 +234,7 @@ class RedisStreamCodec[M]:
         type: str | None = None,
         key: str | None = None,
         timestamp: datetime | None = None,
+        headers: Mapping[str, str] | None = None,
     ) -> dict[str, str]:
         return _encode_envelope(
             self.payload_codec,
@@ -199,6 +243,7 @@ class RedisStreamCodec[M]:
             key=key,
             time_field=_F_TIMESTAMP,
             time_value=timestamp,
+            headers=headers,
         )
 
     # ....................... #
@@ -226,4 +271,5 @@ class RedisStreamCodec[M]:
             type=decoded.get(_F_TYPE),
             key=decoded.get(_F_KEY),
             timestamp=datetime.fromisoformat(timestamp_raw) if timestamp_raw else None,
+            headers=_decode_headers(decoded.get(_F_HEADERS)),
         )

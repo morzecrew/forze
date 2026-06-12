@@ -46,6 +46,25 @@ class TestTenancyDeps:
         assert deps.resolver() is port
         ctx.deps.resolve_simple.assert_called_once()
 
+    def test_require_resolver_returns_port_when_registered(self) -> None:
+        port = object()
+        ctx = MagicMock()
+        ctx.deps.exists.return_value = True
+        ctx.deps.resolve_simple.return_value = port
+        deps = TenancyDeps()
+        deps.lock(ctx)
+
+        assert deps.require_resolver() is port
+
+    def test_require_resolver_raises_when_not_registered(self) -> None:
+        ctx = MagicMock()
+        ctx.deps.exists.return_value = False
+        deps = TenancyDeps()
+        deps.lock(ctx)
+
+        with pytest.raises(CoreException, match="Tenant resolver is not registered"):
+            deps.require_resolver()
+
     def test_manager_resolves_when_registered(self) -> None:
         port = object()
         ctx = MagicMock()

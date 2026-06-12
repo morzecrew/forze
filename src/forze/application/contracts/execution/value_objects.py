@@ -1,8 +1,8 @@
-from typing import Any, Callable, Mapping, final
+from typing import Any, Callable, final
 
 import attrs
 
-from forze.base.primitives import StrKey
+from forze.base.primitives import MappingConverter, StrKey, StrKeyMapping
 
 from .defaults import noop_lifecycle_hook
 from .protocols import (
@@ -50,7 +50,10 @@ type Outcome[R] = Success[R] | Failure
 class ExecutionGraph[G]:
     """Execution graph."""
 
-    steps: Mapping[StrKey, G] = attrs.field(factory=dict[StrKey, G])
+    steps: StrKeyMapping[G] = attrs.field(
+        factory=dict[StrKey, G],
+        converter=MappingConverter.to_str_key_frozen,  # type: ignore[misc]
+    )
     """Steps for this graph."""
 
     waves: tuple[tuple[StrKey, ...], ...] = attrs.field(factory=tuple)
@@ -201,3 +204,17 @@ class LifecycleStep(GraphStep):
 
     shutdown: LifecycleHook = noop_lifecycle_hook
     """Shutdown hook."""
+
+    mutates_shared_state: bool = False
+    """Honesty marker: startup writes to *shared* infrastructure (migrations,
+    index/queue/topic creation, seeding) rather than process-local state.
+
+    Declared by the step author — mutation cannot be detected structurally, so
+    an unmarked mutating step goes unvalidated. Under a ``FLEET`` deployment
+    profile an unguarded mutating step fails runtime assembly: N replicas
+    starting concurrently would stampede it."""
+
+    singleton_guarded: bool = False
+    """The startup runs on one replica at a time (e.g. wrapped by ``forze_kits``
+    ``singleton_lifecycle_step`` under a distributed lock). Satisfies the
+    ``FLEET`` validation for a ``mutates_shared_state`` step."""

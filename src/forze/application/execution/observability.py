@@ -10,9 +10,10 @@ app.
 from __future__ import annotations
 
 from time import perf_counter
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Iterable
 
 from opentelemetry import metrics, trace
+from opentelemetry.metrics import Observation
 from opentelemetry.trace import Status, StatusCode
 
 from forze.application.contracts.execution import (
@@ -22,9 +23,10 @@ from forze.application.contracts.execution import (
 )
 
 from .operations.registry import OperationRegistry
+from .resilience import InProcessResilienceExecutor
 
 if TYPE_CHECKING:
-    from opentelemetry.metrics import Counter, Histogram, Meter
+    from opentelemetry.metrics import CallbackOptions, Counter, Histogram, Meter
     from opentelemetry.trace import Tracer
 
     from .context import ExecutionContext
@@ -38,6 +40,18 @@ _TELEMETRY_PRIORITY = -1_000_000
 
 OPERATIONS_COUNTER = "forze.operations"
 DURATION_HISTOGRAM = "forze.operation.duration"
+
+RESILIENCE_EVENTS_COUNTER = "forze.resilience.events"
+BREAKER_STATE_GAUGE = "forze.resilience.breaker.state"
+BULKHEAD_QUEUE_GAUGE = "forze.resilience.bulkhead.queue_depth"
+BULKHEAD_LIMIT_GAUGE = "forze.resilience.bulkhead.limit"
+
+_BREAKER_PHASE_VALUES: dict[str, int] = {
+    "breaker_close": 0,
+    "breaker_half_open": 1,
+    "breaker_open": 2,
+}
+"""Breaker gauge encoding: 0 = closed, 1 = half-open, 2 = open."""
 
 
 def instrument_operations(
@@ -81,6 +95,103 @@ def instrument_operations(
         registry = registry.bind(op).bind_outer().wrap(step).finish(deep=True)
 
     return registry
+
+
+# ....................... #
+
+
+def instrument_resilience(
+    executor: InProcessResilienceExecutor,
+    *,
+    meter: Meter | None = None,
+) -> InProcessResilienceExecutor:
+    """Export the executor's resilience events as always-on OpenTelemetry metrics.
+
+    Attaches a metrics sink to *executor* (returned for chaining) — unlike the
+    runtime-trace events, these are **independent of the tracing gate**, so a
+    production process with tracing off still reports:
+
+    - ``forze.resilience.events`` (counter): every event, labelled by
+      ``forze.event`` / ``forze.policy`` / ``forze.route`` — retry attempts,
+      timeouts, rate-limit/bulkhead rejections, budget exhaustion, breaker
+      transitions. Note ``breaker_open`` counts the open *transition* and every
+      admission rejected while open, so its rate tracks shed load.
+    - ``forze.resilience.breaker.state`` (gauge): per policy/route breaker
+      phase (0 = closed, 1 = half-open, 2 = open). Reported on transitions and
+      on rejected admissions; a breaker that never tripped reports nothing
+      (closed by absence).
+    - ``forze.resilience.bulkhead.queue_depth`` (observable gauge): calls
+      queued behind each bulkhead's semaphore, sampled at collection time.
+      State appears lazily once a bulkhead-bearing policy is first used.
+    - ``forze.resilience.bulkhead.limit`` (observable gauge): the current AIMD
+      concurrency limit per adaptive bulkhead (``bulkhead_backoff`` events in
+      the counter mark each multiplicative decrease).
+
+    Emits via the global OTel meter unless *meter* is supplied. Call once at
+    assembly time, alongside :func:`instrument_operations`.
+    """
+
+    meter = meter or metrics.get_meter("forze")
+
+    events = meter.create_counter(
+        RESILIENCE_EVENTS_COUNTER,
+        unit="1",
+        description="Count of resilience events (retries, rejections, breaker transitions).",
+    )
+    breaker_state = meter.create_gauge(
+        BREAKER_STATE_GAUGE,
+        unit="1",
+        description="Circuit breaker phase per policy/route (0=closed, 1=half-open, 2=open).",
+    )
+
+    def _sink(event: str, policy: str, route: str | None) -> None:
+        labels: dict[str, str] = {"forze.policy": policy}
+
+        if route is not None:
+            labels["forze.route"] = route
+
+        events.add(1, {**labels, "forze.event": event})
+
+        phase = _BREAKER_PHASE_VALUES.get(event)
+
+        if phase is not None:
+            breaker_state.set(phase, labels)
+
+    def _observe_queue_depth(_options: CallbackOptions) -> Iterable[Observation]:
+        for policy, route, waiting in executor.bulkhead_queue_depths():
+            labels = {"forze.policy": policy}
+
+            if route is not None:
+                labels["forze.route"] = route
+
+            yield Observation(waiting, labels)
+
+    meter.create_observable_gauge(
+        BULKHEAD_QUEUE_GAUGE,
+        callbacks=[_observe_queue_depth],
+        unit="1",
+        description="Calls queued behind each bulkhead's semaphore.",
+    )
+
+    def _observe_limits(_options: CallbackOptions) -> Iterable[Observation]:
+        for policy, route, limit in executor.adaptive_bulkhead_limits():
+            labels = {"forze.policy": policy}
+
+            if route is not None:
+                labels["forze.route"] = route
+
+            yield Observation(limit, labels)
+
+    meter.create_observable_gauge(
+        BULKHEAD_LIMIT_GAUGE,
+        callbacks=[_observe_limits],
+        unit="1",
+        description="Current AIMD concurrency limit per adaptive bulkhead.",
+    )
+
+    executor.set_metrics_sink(_sink)
+
+    return executor
 
 
 # ....................... #

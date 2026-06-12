@@ -57,6 +57,16 @@ class IntegrationEvent[M]:
     causation_id: UUID | None = None
     """Optional causation id from invocation metadata."""
 
+    ordering_key: str | None = None
+    """Optional partition key for delivery ordering (typically the aggregate id).
+
+    On capable transports the relay publishes it as the message ``key``
+    (SQS FIFO ``MessageGroupId``, stream partition key), so same-key events
+    relay in ``created_at`` order on the happy path. Best-effort by design:
+    a retrying or failed row does **not** stall later rows of its key —
+    consumers must still tolerate reordering and redelivery.
+    """
+
 
 # ....................... #
 
@@ -116,6 +126,16 @@ class OutboxClaim:
 
     attempts: int = 0
     """Completed publish attempts so far (durable retry counter)."""
+
+    ordering_key: str | None = None
+    """Optional partition key staged with the event (see :class:`IntegrationEvent`).
+
+    The relay publishes ``ordering_key or str(event_id)`` as the transport
+    ``key``: same-key events partition together on capable transports (SQS
+    FIFO ``MessageGroupId``, stream partition key) and relay in ``created_at``
+    order on the happy path. A retrying/failed row does **not** stall later
+    rows of its key.
+    """
 
 
 # ....................... #

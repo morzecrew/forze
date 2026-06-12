@@ -2,6 +2,7 @@ from datetime import datetime, timedelta
 from typing import (
     AsyncGenerator,
     Awaitable,
+    Mapping,
     Protocol,
     Sequence,
     runtime_checkable,
@@ -97,12 +98,42 @@ class QueueCommandPort[M](Protocol):
         enqueued_at: datetime | None = None,
         delay: timedelta | None = None,
         not_before: datetime | None = None,
+        headers: Mapping[str, str] | None = None,
     ) -> Awaitable[str]:
         """Enqueue a single message and return its identifier.
 
+        :param key: Opaque partition/correlation token. Portably it only
+            means "these messages belong together": it always round-trips to
+            :attr:`~forze.application.contracts.queue.QueueMessage.key` on
+            received messages, while any broker-side semantics are
+            per backend (this is the canonical table):
+
+            - **RabbitMQ** — inert ``forze_key`` AMQP header; pure metadata,
+              no routing or ordering effect (publishing routes by queue name
+              on the default exchange).
+            - **SQS, standard queue** — inert ``forze_key`` message attribute
+              only.
+            - **SQS, FIFO queue** (``.fifo``) — becomes ``MessageGroupId``,
+              the per-key ordering lane. Deduplication never uses *key*:
+              ``MessageDeduplicationId`` comes from an explicit message id or
+              the ``forze_event_id`` header (distinct events may share a key,
+              so key-based dedup would silently drop them).
+            - **Mock** — stored verbatim on the message.
+
+            The outbox relay sets ``key`` to the staged ``ordering_key`` when
+            present, else ``str(event_id)``. The sibling stream/pubsub ports
+            accept the same ``key`` but carry it as a field of the encoded
+            message envelope (for streams, a partition hint on partitioned
+            backends) rather than native broker metadata.
         :param enqueued_at: Logical enqueue timestamp stored on the message (metadata).
         :param delay: Relative delay before the message is visible to consumers.
         :param not_before: Absolute UTC instant before which the message is not visible.
+        :param headers: String-to-string transport metadata, propagated
+            best-effort via the backend's native metadata channel and surfaced
+            on received messages as ``QueueMessage.headers``. Not part of the
+            payload contract. Reserved transport keys (``forze_type``,
+            ``forze_key``, ``forze_encoding``, ``forze_enqueued_at``) cannot
+            be overridden by caller headers.
         """
 
         ...  # pragma: no cover
@@ -119,10 +150,13 @@ class QueueCommandPort[M](Protocol):
         enqueued_at: datetime | None = None,
         delay: timedelta | None = None,
         not_before: datetime | None = None,
+        headers: Mapping[str, str] | None = None,
     ) -> Awaitable[list[str]]:
         """Enqueue multiple messages and return their identifiers.
 
-        The same *delay* or *not_before* applies to every message in the batch.
+        The same *delay*, *not_before*, and *headers* apply to every message
+        in the batch. *key* follows the per-backend semantics documented on
+        :meth:`enqueue`.
         """
 
         ...  # pragma: no cover

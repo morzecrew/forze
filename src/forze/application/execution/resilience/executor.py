@@ -1,34 +1,47 @@
 """In-process resilience executor composing strategies into a call pipeline."""
 
-from __future__ import annotations
-
 import asyncio
 import random
 import time
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable, Iterator
 
 import attrs
 
 from forze.application.contracts.resilience import (
+    AdaptiveBulkheadStrategy,
     BulkheadStrategy,
     CircuitBreakerStrategy,
     HedgeStrategy,
+    RateLimitStrategy,
     ResiliencePolicy,
     RetryStrategy,
     TimeoutStrategy,
 )
 from forze.base.exceptions import CoreException, exc, exception_egress_policy
-from forze.base.primitives import StrKey
+from forze.base.primitives import MappingConverter, StrKey, StrKeyMapping
 
+from ..context.deadline import remaining_time
 from ..tracing import record
 from .backoff import compute_delay
-from .state import BudgetState, BulkheadState, Transition
-from .store import CircuitBreakerStore, InMemoryCircuitBreakerStore
+from .state import AdaptiveBulkheadState, BudgetState, Transition
+from .store import (
+    CircuitBreakerStore,
+    InMemoryCircuitBreakerStore,
+    InMemoryRateLimitStore,
+    RateLimitStore,
+)
 
 # ----------------------- #
 
 _StateKey = tuple[StrKey, StrKey | None]
 
+MetricsSink = Callable[[str, str, str | None], None]
+"""Callback receiving every resilience event as ``(event, policy, route)``.
+
+Unlike the tracing emitter, the sink is **not** gated behind tracing — attach
+one (e.g. via ``instrument_resilience``) to export breaker transitions and
+rejection counts as always-on metrics in production.
+"""
 
 # ....................... #
 
@@ -37,17 +50,26 @@ _StateKey = tuple[StrKey, StrKey | None]
 class InProcessResilienceExecutor:
     """Process-wide singleton applying named policies.
 
-    Bulkhead/budget state lives on this instance keyed by ``(policy_name, route)``;
-    breaker state lives behind :attr:`breaker_store` (process-local by default, or a
-    distributed store so the fleet trips together). The instance must be registered
-    once via :meth:`Deps.plain` (not a per-scope factory), or that state would reset
-    every request.
+    Bulkhead/rate-limit/budget state lives on this instance keyed by
+    ``(policy_name, route)``; breaker state lives behind :attr:`breaker_store`
+    (process-local by default, or a distributed store so the fleet trips
+    together). The instance must be registered once via :meth:`Deps.plain` (not
+    a per-scope factory), or that state would reset every request.
     """
 
-    policies: Mapping[StrKey, ResiliencePolicy]
+    policies: StrKeyMapping[ResiliencePolicy] = attrs.field(
+        converter=MappingConverter.to_str_key,  # type: ignore[misc]
+    )
+    """Named policies, keyed by policy name."""
+
     clock: Callable[[], float] = attrs.field(default=time.monotonic)
+    """Time source for the executor."""
+
     rng: random.Random = attrs.field(factory=random.Random)
+    """Random number generator for the executor."""
+
     sleep: Callable[[float], Awaitable[None]] = attrs.field(default=asyncio.sleep)
+    """Sleep function for the executor."""
 
     breaker_store: CircuitBreakerStore = attrs.field(
         default=attrs.Factory(
@@ -55,10 +77,91 @@ class InProcessResilienceExecutor:
             takes_self=True,
         ),
     )
+    """Circuit breaker store for the executor."""
 
-    _bulkheads: dict[_StateKey, BulkheadState] = attrs.field(factory=dict, init=False)
+    rate_limit_store: RateLimitStore = attrs.field(
+        default=attrs.Factory(
+            lambda self: InMemoryRateLimitStore(clock=self.clock),
+            takes_self=True,
+        ),
+    )
+    """Rate-limit token-bucket store (process-local by default, or a distributed
+    store so ``permits/per`` is the fleet's rate instead of per-replica)."""
+
+    # ....................... #
+
+    _bulkheads: dict[_StateKey, AdaptiveBulkheadState] = attrs.field(
+        factory=dict,
+        init=False,
+    )
+    """Fixed bulkhead state: the unified admission machinery with a constant
+    limit (the AIMD controller is simply never consulted)."""
+
+    _adaptive_bulkheads: dict[_StateKey, AdaptiveBulkheadState] = attrs.field(
+        factory=dict,
+        init=False,
+    )
+    """Adaptive (AIMD) bulkhead state for the executor."""
+
     _budgets: dict[_StateKey, BudgetState] = attrs.field(factory=dict, init=False)
+    """Budget state for the executor."""
+
     _hedge_budgets: dict[_StateKey, BudgetState] = attrs.field(factory=dict, init=False)
+    """Hedge budget state for the executor."""
+
+    _metrics_sink: MetricsSink | None = attrs.field(default=None, init=False, repr=False)
+    """Optional always-on metrics callback (see :data:`MetricsSink`)."""
+
+    # ....................... #
+
+    def set_metrics_sink(self, sink: MetricsSink | None) -> None:
+        """Attach (or detach with ``None``) the always-on metrics sink.
+
+        Called once at assembly time (``instrument_resilience``); the sink
+        receives every resilience event regardless of the tracing gate.
+        """
+
+        self._metrics_sink = sink
+
+    # ....................... #
+
+    def bulkhead_queue_depths(self) -> Iterator[tuple[str, str | None, int]]:
+        """Yield ``(policy, route, waiting)`` for every bulkhead with live state.
+
+        Snapshot accessor for observable gauges: ``waiting`` is the number of
+        calls queued behind the semaphore right now. State appears lazily on
+        first use of a bulkhead-bearing policy.
+        """
+
+        for (policy, route), state in self._bulkheads.items():
+            yield (
+                str(policy),
+                str(route) if route is not None else None,
+                state.waiting,
+            )
+
+        for (policy, route), adaptive in self._adaptive_bulkheads.items():
+            yield (
+                str(policy),
+                str(route) if route is not None else None,
+                adaptive.waiting,
+            )
+
+    # ....................... #
+
+    def adaptive_bulkhead_limits(self) -> Iterator[tuple[str, str | None, float]]:
+        """Yield ``(policy, route, limit)`` for every adaptive bulkhead with live state.
+
+        Snapshot accessor for observable gauges: the current AIMD concurrency
+        limit. State appears lazily on first use of an adaptive policy.
+        """
+
+        for (policy, route), state in self._adaptive_bulkheads.items():
+            yield (
+                str(policy),
+                str(route) if route is not None else None,
+                state.limit,
+            )
 
     # ....................... #
 
@@ -183,10 +286,13 @@ class InProcessResilienceExecutor:
         route: StrKey | None,
     ) -> T:
         # Fixed composition order, innermost-out: timeout -> retry -> circuit
-        # breaker -> bulkhead. The breaker deliberately wraps *outside* retry:
-        # it admits once and records one outcome per logical call, so a retry
-        # storm counts as a single breaker failure (thresholds track logical
-        # calls, not attempts). Mirrors ResiliencePolicy's canonical order.
+        # breaker -> bulkhead -> rate limit. The breaker deliberately wraps
+        # *outside* retry: it admits once and records one outcome per logical
+        # call, so a retry storm counts as a single breaker failure (thresholds
+        # track logical calls, not attempts). The rate limit wraps outermost:
+        # throttled calls are rejected before consuming a bulkhead slot or
+        # registering a breaker outcome. Mirrors ResiliencePolicy's canonical
+        # order.
         call: Callable[[], Awaitable[T]] = fn
         timeout = pol.timeout
 
@@ -227,6 +333,59 @@ class InProcessResilienceExecutor:
                 return await self._with_bulkhead(bh, bh_inner, pol, route)
 
             call = with_bulkhead
+
+        adaptive = pol.adaptive_bulkhead
+
+        if adaptive is not None:
+            ab, ab_inner = adaptive, call
+
+            async def with_adaptive_bulkhead() -> T:
+                return await self._with_adaptive_bulkhead(ab, ab_inner, pol, route)
+
+            call = with_adaptive_bulkhead
+
+        rate_limit = pol.rate_limit
+
+        if rate_limit is not None:
+            rl, rl_inner = rate_limit, call
+
+            async def with_rate_limit() -> T:
+                return await self._with_rate_limit(rl, rl_inner, pol, route)
+
+            call = with_rate_limit
+
+        # An invocation deadline (see ``context.deadline``) bounds the whole
+        # strategy chain from the outside: retries, breaker admission, bulkhead
+        # queueing, and rate-limit rejection all share the remaining budget.
+        # Raises non-retryable TIMEOUT — distinct from the per-attempt
+        # TimeoutStrategy, which raises retryable INFRASTRUCTURE.
+        remaining = remaining_time()
+
+        if remaining is not None:
+            if remaining <= 0.0:
+                self._emit("deadline_exceeded", pol, route)
+                raise exc.timeout(
+                    f"Invocation deadline exceeded before call "
+                    f"under policy {pol.name!r}",
+                    code="deadline_exceeded",
+                )
+
+            d_inner = call
+
+            async def with_deadline() -> T:
+                try:
+                    async with asyncio.timeout(remaining):
+                        return await d_inner()
+
+                except TimeoutError as error:
+                    self._emit("deadline_exceeded", pol, route)
+                    raise exc.timeout(
+                        f"Invocation deadline exceeded during call "
+                        f"under policy {pol.name!r}",
+                        code="deadline_exceeded",
+                    ) from error
+
+            call = with_deadline
 
         return await call()
 
@@ -287,6 +446,16 @@ class InProcessResilienceExecutor:
                     raise
 
                 delay = compute_delay(strat.backoff, attempt, prev_delay, self.rng)
+
+                # Deadline-aware retry: when the backoff sleep would outlive
+                # the invocation deadline, surface the real error now instead
+                # of sleeping into a guaranteed deadline timeout.
+                deadline_left = remaining_time()
+
+                if deadline_left is not None and delay >= deadline_left:
+                    self._emit("retry_deadline_exhausted", pol, route)
+                    raise
+
                 prev_delay = delay
                 self._emit("retry_attempt", pol, route)
                 await self.sleep(delay)
@@ -333,6 +502,28 @@ class InProcessResilienceExecutor:
 
     # ....................... #
 
+    async def _with_rate_limit[T](
+        self,
+        strat: RateLimitStrategy,
+        inner: Callable[[], Awaitable[T]],
+        pol: ResiliencePolicy,
+        route: StrKey | None,
+    ) -> T:
+        if not await self.rate_limit_store.try_acquire((pol.name, route), strat):
+            self._emit("rate_limit_reject", pol, route)
+            raise exc.throttled(
+                f"Rate limit exceeded for policy {pol.name!r}",
+                code="rate_limited",
+                details={
+                    "policy": str(pol.name),
+                    "route": str(route) if route is not None else None,
+                },
+            )
+
+        return await inner()
+
+    # ....................... #
+
     async def _with_bulkhead[T](
         self,
         strat: BulkheadStrategy,
@@ -346,19 +537,70 @@ class InProcessResilienceExecutor:
             self._emit("bulkhead_reject", pol, route)
             raise exc.infrastructure(f"Bulkhead full for policy {pol.name!r}")
 
-        state.waiting += 1
-
-        try:
-            await state.sem.acquire()
-
-        finally:
-            state.waiting -= 1
+        await self._admit(state, pol, route)
 
         try:
             return await inner()
 
         finally:
-            state.sem.release()
+            state.release()
+
+    # ....................... #
+
+    async def _admit(
+        self,
+        state: AdaptiveBulkheadState,
+        pol: ResiliencePolicy,
+        route: StrKey | None,
+    ) -> None:
+        """Acquire a bulkhead slot, surfacing CoDel sheds as resilience events."""
+
+        try:
+            await state.acquire()
+
+        except CoreException as error:
+            if error.code == "bulkhead_queue_shed":
+                self._emit("bulkhead_shed", pol, route)
+
+            raise
+
+    # ....................... #
+
+    async def _with_adaptive_bulkhead[T](
+        self,
+        strat: AdaptiveBulkheadStrategy,
+        inner: Callable[[], Awaitable[T]],
+        pol: ResiliencePolicy,
+        route: StrKey | None,
+    ) -> T:
+        state = self._adaptive_bulkhead_for(strat, pol, route)
+
+        if not state.can_admit():
+            self._emit("bulkhead_reject", pol, route)
+            raise exc.infrastructure(f"Bulkhead full for policy {pol.name!r}")
+
+        await self._admit(state, pol, route)
+        start = self.clock()
+        failed = False
+
+        try:
+            return await inner()
+
+        except BaseException:
+            failed = True
+            raise
+
+        finally:
+            state.release()
+            elapsed = self.clock() - start
+
+            # Latency-only congestion signal: a failure adjusts the limit only
+            # when it ALSO breached the threshold (a per-attempt timeout firing
+            # is a breach at the timeout value); fast failures are the circuit
+            # breaker's job and leave the limit untouched.
+            if not failed or elapsed > state.latency_threshold:
+                if state.on_complete(elapsed, self.clock()):
+                    self._emit("bulkhead_backoff", pol, route)
 
     # ....................... #
 
@@ -381,16 +623,64 @@ class InProcessResilienceExecutor:
         strat: BulkheadStrategy,
         pol: ResiliencePolicy,
         route: StrKey | None,
-    ) -> BulkheadState:
+    ) -> AdaptiveBulkheadState:
         key = (pol.name, route)
         state = self._bulkheads.get(key)
 
         if state is None:
-            state = BulkheadState(
+            # Unified admission with a constant limit: the AIMD controller
+            # fields are inert because the fixed path never calls on_complete.
+            state = AdaptiveBulkheadState(
+                latency_threshold=float("inf"),
+                min_concurrency=strat.max_concurrency,
                 max_concurrency=strat.max_concurrency,
                 max_queue=strat.max_queue,
+                backoff_ratio=0.5,
+                increase_step=1.0,
+                cooldown=0.0,
+                clock=self.clock,
+                queue_target_s=(
+                    strat.queue_target.total_seconds()
+                    if strat.queue_target is not None
+                    else None
+                ),
+                queue_interval_s=strat.queue_interval.total_seconds(),
+                queue_adaptive_lifo=strat.queue_adaptive_lifo,
             )
             self._bulkheads[key] = state
+
+        return state
+
+    # ....................... #
+
+    def _adaptive_bulkhead_for(
+        self,
+        strat: AdaptiveBulkheadStrategy,
+        pol: ResiliencePolicy,
+        route: StrKey | None,
+    ) -> AdaptiveBulkheadState:
+        key = (pol.name, route)
+        state = self._adaptive_bulkheads.get(key)
+
+        if state is None:
+            state = AdaptiveBulkheadState(
+                latency_threshold=strat.latency_threshold.total_seconds(),
+                min_concurrency=strat.min_concurrency,
+                max_concurrency=strat.max_concurrency,
+                max_queue=strat.max_queue,
+                backoff_ratio=strat.backoff_ratio,
+                increase_step=strat.increase_step,
+                cooldown=strat.cooldown.total_seconds(),
+                clock=self.clock,
+                queue_target_s=(
+                    strat.queue_target.total_seconds()
+                    if strat.queue_target is not None
+                    else None
+                ),
+                queue_interval_s=strat.queue_interval.total_seconds(),
+                queue_adaptive_lifo=strat.queue_adaptive_lifo,
+            )
+            self._adaptive_bulkheads[key] = state
 
         return state
 
@@ -443,10 +733,17 @@ class InProcessResilienceExecutor:
     # ....................... #
 
     def _emit(self, op: str, pol: ResiliencePolicy, route: StrKey | None) -> None:
+        route_name = str(route) if route is not None else None
+
+        # The metrics sink is independent of the tracing gate: production runs
+        # with tracing off still export breaker/rejection metrics.
+        if self._metrics_sink is not None:
+            self._metrics_sink(op, str(pol.name), route_name)
+
         record(
             domain="resilience",
             op=op,
             surface="resilience_executor",
-            route=str(route) if route is not None else None,
+            route=route_name,
             phase=str(pol.name),
         )

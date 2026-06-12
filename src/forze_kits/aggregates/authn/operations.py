@@ -22,5 +22,11 @@ class AuthnKernelOp(StrEnum):
     CHANGE_PASSWORD = "change_password"  # nosec B105
     """Change the password of the currently authenticated identity."""
 
+    REQUEST_PASSWORD_RESET = "request_password_reset"  # nosec B105
+    """Request a self-service password reset for a login (uniform ack, no enumeration)."""
+
+    RESET_PASSWORD = "reset_password"  # nosec B105
+    """Consume a single-use reset token and set a new password."""
+
     DEACTIVATE_PRINCIPAL = "deactivate_principal"
     """Deactivate a principal for the application (policy, sessions, credentials)."""

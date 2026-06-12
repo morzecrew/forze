@@ -125,6 +125,7 @@ class RoutedSQSClient(StructuredSecretRoutedTenantClientBase[SQSClient], SQSClie
         message_id: str | None = None,
         delay: timedelta | None = None,
         not_before: datetime | None = None,
+        headers: Mapping[str, str] | None = None,
     ) -> str:
         inner = await self._get_client()
 
@@ -138,6 +139,7 @@ class RoutedSQSClient(StructuredSecretRoutedTenantClientBase[SQSClient], SQSClie
                 message_id=message_id,
                 delay=delay,
                 not_before=not_before,
+                headers=headers,
             )
 
     async def enqueue_many(
@@ -151,6 +153,7 @@ class RoutedSQSClient(StructuredSecretRoutedTenantClientBase[SQSClient], SQSClie
         message_ids: Sequence[str] | None = None,
         delay: timedelta | None = None,
         not_before: datetime | None = None,
+        headers: Mapping[str, str] | None = None,
     ) -> list[str]:
         inner = await self._get_client()
 
@@ -164,6 +167,7 @@ class RoutedSQSClient(StructuredSecretRoutedTenantClientBase[SQSClient], SQSClie
                 message_ids=message_ids,
                 delay=delay,
                 not_before=not_before,
+                headers=headers,
             )
 
     async def receive(

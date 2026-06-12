@@ -34,8 +34,11 @@ server = build_mcp_server(
 ```
 
 Each tool's input schema is flattened to the operation's DTO fields, so agents
-see a natural flat contract. For a custom FastMCP server, use `register_tools(...)`
-instead of `build_mcp_server`.
+see a natural flat contract. A plan-declared
+[deadline](../in-depth/deadlines.md) adds a time-budget sentence to the tool's
+description, so an agent can set its client timeout instead of retrying a call
+that died of budget exhaustion. For a custom FastMCP server, use
+`register_tools(...)` instead of `build_mcp_server`.
 
 ## What it provides
 

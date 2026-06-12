@@ -8,15 +8,15 @@ from forze.base.exceptions import CoreException
 
 pytest.importorskip("psycopg")
 
+from psycopg import IsolationLevel
+
 from forze_postgres.kernel.client.client import (
     PostgresClient,
     PostgresConfig,
     PostgresTransactionOptions,
+    _pool_reset_transaction_attributes,
 )
-from forze_postgres.kernel.client.helpers import (
-    isolation_level_sql_fragment,
-    set_transaction_sql,
-)
+from forze_postgres.kernel.client.helpers import isolation_level_enum
 
 # ----------------------- #
 
@@ -57,64 +57,340 @@ class TestPostgresConfig:
         assert "Maximum size is greater than 100" in joined
 
 
-class TestIsolationLevelSql:
+class TestIsolationLevelEnum:
     def test_rejects_unknown_level(self) -> None:
         with pytest.raises(CoreException, match="Unsupported transaction isolation"):
-            isolation_level_sql_fragment("phantom")
+            isolation_level_enum("phantom")
+
+    def test_maps_all_levels(self) -> None:
+        assert isolation_level_enum("read_committed") is IsolationLevel.READ_COMMITTED
+        assert isolation_level_enum("repeatable_read") is IsolationLevel.REPEATABLE_READ
+        assert isolation_level_enum("serializable") is IsolationLevel.SERIALIZABLE
 
 
-class TestSetTransactionSql:
-    """``SET TRANSACTION`` statement generation for root transaction options."""
+class TestTransactionOptionsAreDefault:
+    """Default options (read-write + read committed) must touch nothing at all."""
 
-    def test_default_options(self) -> None:
-        stmt = set_transaction_sql(PostgresTransactionOptions())
-        assert stmt.as_string() == "SET TRANSACTION ISOLATION LEVEL READ COMMITTED"
+    def test_defaults(self) -> None:
+        assert PostgresClient._options_are_default(PostgresTransactionOptions())
 
-    def test_read_only(self) -> None:
-        stmt = set_transaction_sql(PostgresTransactionOptions(read_only=True))
-        assert (
-            stmt.as_string()
-            == "SET TRANSACTION ISOLATION LEVEL READ COMMITTED READ ONLY"
+    def test_read_only_is_not_default(self) -> None:
+        assert not PostgresClient._options_are_default(
+            PostgresTransactionOptions(read_only=True),
         )
 
-    def test_serializable_read_only(self) -> None:
-        stmt = set_transaction_sql(
-            PostgresTransactionOptions(isolation="serializable", read_only=True),
-        )
-        assert (
-            stmt.as_string() == "SET TRANSACTION ISOLATION LEVEL SERIALIZABLE READ ONLY"
-        )
-
-    def test_repeatable_read(self) -> None:
-        stmt = set_transaction_sql(
+    def test_isolation_is_not_default(self) -> None:
+        assert not PostgresClient._options_are_default(
             PostgresTransactionOptions(isolation="repeatable_read"),
         )
-        assert stmt.as_string() == "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ"
+
+
+def _mock_conn() -> MagicMock:
+    """Connection mock with awaitable attribute setters and a strict cursor."""
+
+    conn = MagicMock()
+    conn.set_isolation_level = AsyncMock()
+    conn.set_read_only = AsyncMock()
+    conn.set_autocommit = AsyncMock()
+    return conn
 
 
 class TestApplyTransactionOptions:
-    """Options must be scoped via ``SET TRANSACTION``, never connection attributes."""
+    """Options are applied as connection attributes BEFORE ``BEGIN`` (0 round-trips).
+
+    psycopg folds ``isolation_level`` / ``read_only`` into the ``BEGIN``
+    statement itself; a separate ``SET TRANSACTION`` statement must never be
+    executed (that was the +1 round-trip per root transaction). The attribute
+    setters are pure client-side on an idle connection.
+    """
 
     @pytest.mark.asyncio
-    async def test_emits_set_transaction_without_mutating_connection(self) -> None:
-        cursor = AsyncMock()
-        conn = MagicMock()
-        conn.cursor.return_value.__aenter__ = AsyncMock(return_value=cursor)
-        conn.cursor.return_value.__aexit__ = AsyncMock(return_value=False)
+    async def test_sets_attributes_and_executes_no_sql(self) -> None:
+        conn = _mock_conn()
 
         options = PostgresTransactionOptions(isolation="serializable", read_only=True)
         await PostgresClient._apply_transaction_options(conn, options)
 
-        cursor.execute.assert_awaited_once()
-        (stmt,) = cursor.execute.await_args.args
-        assert (
-            stmt.as_string() == "SET TRANSACTION ISOLATION LEVEL SERIALIZABLE READ ONLY"
-        )
+        conn.set_isolation_level.assert_awaited_once_with(IsolationLevel.SERIALIZABLE)
+        conn.set_read_only.assert_awaited_once_with(True)
 
-        # Connection attributes must stay untouched — they persist across pool
-        # check-ins and previously leaked READ ONLY / isolation to later work.
+        # No SET TRANSACTION (or any other statement) may be executed: the
+        # whole point of the attribute approach is zero extra round-trips.
+        conn.cursor.assert_not_called()
+        conn.execute.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_read_write_leaves_read_only_attribute_alone(self) -> None:
+        conn = _mock_conn()
+
+        options = PostgresTransactionOptions(isolation="repeatable_read")
+        await PostgresClient._apply_transaction_options(conn, options)
+
+        conn.set_isolation_level.assert_awaited_once_with(
+            IsolationLevel.REPEATABLE_READ,
+        )
         conn.set_read_only.assert_not_called()
+
+
+class TestRestoreTransactionAttributes:
+    """The ``finally`` belt: attributes are cleared back to psycopg defaults."""
+
+    @pytest.mark.asyncio
+    async def test_clears_both_attributes(self) -> None:
+        conn = _mock_conn()
+
+        await PostgresClient._restore_transaction_attributes(conn)
+
+        conn.set_isolation_level.assert_awaited_once_with(None)
+        conn.set_read_only.assert_awaited_once_with(None)
+        conn.cursor.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_swallows_restore_failure(self) -> None:
+        """A broken connection must not mask the original transaction error."""
+
+        conn = _mock_conn()
+        conn.set_isolation_level.side_effect = RuntimeError("connection is broken")
+
+        await PostgresClient._restore_transaction_attributes(conn)  # does not raise
+
+
+class TestPoolResetCallback:
+    """The pool ``reset`` belt: attributes are cleared on every check-in."""
+
+    @pytest.mark.asyncio
+    async def test_clears_leaked_attributes(self) -> None:
+        conn = _mock_conn()
+        conn.isolation_level = IsolationLevel.SERIALIZABLE
+        conn.read_only = True
+        conn.autocommit = False
+
+        await _pool_reset_transaction_attributes(conn)
+
+        conn.set_isolation_level.assert_awaited_once_with(None)
+        conn.set_read_only.assert_awaited_once_with(None)
+
+    @pytest.mark.asyncio
+    async def test_noop_when_attributes_are_default(self) -> None:
+        """Common check-in path (nothing leaked) must not even call the setters."""
+
+        conn = _mock_conn()
+        conn.isolation_level = None
+        conn.read_only = None
+        conn.autocommit = False
+
+        await _pool_reset_transaction_attributes(conn)
+
         conn.set_isolation_level.assert_not_called()
+        conn.set_read_only.assert_not_called()
+        conn.set_autocommit.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_clears_poisoned_autocommit(self) -> None:
+        """Second belt for P12a: a leaked autocommit flag is cleared on check-in."""
+
+        conn = _mock_conn()
+        conn.isolation_level = None
+        conn.read_only = None
+        conn.autocommit = True
+
+        await _pool_reset_transaction_attributes(conn)
+
+        conn.set_autocommit.assert_awaited_once_with(False)
+        # The other attributes stay untouched on this clean path.
+        conn.set_isolation_level.assert_not_called()
+        conn.set_read_only.assert_not_called()
+
+
+class _StubCursor:
+    """Records executed statements; usable as an async context manager."""
+
+    def __init__(self) -> None:
+        self.executed: list[tuple] = []
+        self.rowcount = 3
+        self.description = None
+
+    async def execute(self, query, params=None) -> None:
+        self.executed.append((query, params))
+
+    async def executemany(self, query, params) -> None:
+        self.executed.append((query, tuple(params)))
+
+    async def fetchone(self):
+        return None
+
+    async def fetchall(self):
+        return []
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *args):
+        return False
+
+
+class _StubConn:
+    """Connection stub recording autocommit transitions and commit calls."""
+
+    def __init__(self) -> None:
+        self.cursor_obj = _StubCursor()
+        self.autocommit_calls: list[bool] = []
+        self.commit_calls = 0
+        self.autocommit = False
+        self.isolation_level = None
+        self.read_only = None
+        self.fail_autocommit_restore = False
+
+    def cursor(self, *args, **kwargs) -> _StubCursor:
+        return self.cursor_obj
+
+    async def set_autocommit(self, value: bool) -> None:
+        if self.fail_autocommit_restore and value is False:
+            raise RuntimeError("connection is broken")
+
+        self.autocommit_calls.append(value)
+        self.autocommit = value
+
+    async def commit(self) -> None:
+        self.commit_calls += 1
+
+
+class _StubPool:
+    """Pool stub handing out a single stub connection."""
+
+    def __init__(self, conn: _StubConn) -> None:
+        self.conn = conn
+        self.checkouts = 0
+
+    def connection(self, timeout=None):
+        from contextlib import asynccontextmanager
+
+        @asynccontextmanager
+        async def _cm():
+            self.checkouts += 1
+            yield self.conn
+
+        return _cm()
+
+
+def _client_with_stub_pool() -> tuple[PostgresClient, _StubConn, _StubPool]:
+    client = PostgresClient()
+    conn = _StubConn()
+    pool = _StubPool(conn)
+    client._PostgresClient__pool = pool  # type: ignore[attr-defined]
+    return client, conn, pool
+
+
+class TestStatementAutocommitPath:
+    """Out-of-tx statements ride an autocommit checkout: exactly one server
+    statement (psycopg skips the implicit BEGIN), NO explicit commit, and the
+    autocommit flag set-then-restored around the statement."""
+
+    @pytest.mark.asyncio
+    async def test_execute_sets_and_restores_autocommit_without_commit(self) -> None:
+        client, conn, pool = _client_with_stub_pool()
+
+        await client.execute("INSERT INTO t (v) VALUES (1)")
+
+        assert conn.autocommit_calls == [True, False]
+        assert conn.commit_calls == 0
+        assert conn.cursor_obj.executed == [("INSERT INTO t (v) VALUES (1)", None)]
+        assert pool.checkouts == 1
+
+    @pytest.mark.asyncio
+    async def test_execute_returns_rowcount(self) -> None:
+        client, conn, _ = _client_with_stub_pool()
+
+        rowcount = await client.execute("UPDATE t SET v = 1", return_rowcount=True)
+
+        assert rowcount == 3
+        assert conn.commit_calls == 0
+
+    @pytest.mark.asyncio
+    async def test_fetch_one_sets_and_restores_autocommit_without_commit(self) -> None:
+        client, conn, _ = _client_with_stub_pool()
+
+        res = await client.fetch_one("SELECT 1", commit=True)
+
+        assert res is None
+        assert conn.autocommit_calls == [True, False]
+        assert conn.commit_calls == 0
+
+    @pytest.mark.asyncio
+    async def test_fetch_all_and_fetch_value_use_autocommit(self) -> None:
+        client, conn, _ = _client_with_stub_pool()
+
+        assert await client.fetch_all("SELECT 1", commit=True) == []
+        assert await client.fetch_value("SELECT 1", default=7) == 7
+
+        assert conn.autocommit_calls == [True, False, True, False]
+        assert conn.commit_calls == 0
+
+    @pytest.mark.asyncio
+    async def test_execute_many_uses_autocommit_without_commit(self) -> None:
+        client, conn, _ = _client_with_stub_pool()
+
+        await client.execute_many("INSERT INTO t (v) VALUES (%s)", [(1,), (2,)])
+
+        assert conn.autocommit_calls == [True, False]
+        assert conn.commit_calls == 0
+
+    @pytest.mark.asyncio
+    async def test_autocommit_restored_when_statement_raises(self) -> None:
+        client, conn, _ = _client_with_stub_pool()
+
+        async def boom(query, params=None):
+            raise RuntimeError("statement failed")
+
+        conn.cursor_obj.execute = boom  # type: ignore[method-assign]
+
+        with pytest.raises(Exception):
+            await client.execute("SELECT broken")
+
+        assert conn.autocommit_calls == [True, False]
+        assert conn.autocommit is False
+
+    @pytest.mark.asyncio
+    async def test_restore_failure_is_swallowed(self) -> None:
+        """A broken connection on restore must not mask the statement result;
+        the pool reset callback is the second belt."""
+
+        client, conn, _ = _client_with_stub_pool()
+        conn.fail_autocommit_restore = True
+
+        res = await client.fetch_value("SELECT 1", default="ok")
+
+        assert res == "ok"
+        assert conn.autocommit_calls == [True]  # restore raised, was swallowed
+        assert conn.autocommit is True  # cleared later by the pool reset belt
+
+    @pytest.mark.asyncio
+    async def test_context_bound_connection_path_is_untouched(self) -> None:
+        """In-tx / bound paths never toggle autocommit and never commit: the
+        context owner controls the transaction."""
+
+        client, pooled_conn, pool = _client_with_stub_pool()
+        bound_conn = _StubConn()
+
+        token = client._PostgresClient__ctx_conn.set(bound_conn)  # type: ignore[attr-defined]
+
+        try:
+            await client.execute("INSERT INTO t (v) VALUES (1)")
+            await client.fetch_one("SELECT 1")
+            await client.fetch_all("SELECT 1")
+            await client.fetch_value("SELECT 1")
+            await client.execute_many("INSERT INTO t (v) VALUES (%s)", [(1,)])
+
+        finally:
+            client._PostgresClient__ctx_conn.reset(token)  # type: ignore[attr-defined]
+
+        assert bound_conn.autocommit_calls == []
+        assert bound_conn.commit_calls == 0
+        assert len(bound_conn.cursor_obj.executed) == 5
+
+        # The pool was never touched.
+        assert pool.checkouts == 0
+        assert pooled_conn.autocommit_calls == []
 
 
 class TestPostgresClientRowHelpers:

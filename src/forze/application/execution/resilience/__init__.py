@@ -7,7 +7,14 @@ from .policies import builtin_default_policies
 from .read_retry import DEFAULT_READ_RETRY_EXC, retry_read
 from .resolve import default_resilience_executor, resolve_resilience_executor
 from .state import Transition
-from .store import BreakerKey, CircuitBreakerStore, InMemoryCircuitBreakerStore
+from .store import (
+    BreakerKey,
+    CircuitBreakerStore,
+    InMemoryCircuitBreakerStore,
+    InMemoryRateLimitStore,
+    RateLimitKey,
+    RateLimitStore,
+)
 
 # ----------------------- #
 
@@ -15,6 +22,9 @@ __all__ = [
     "BreakerKey",
     "CircuitBreakerStore",
     "InMemoryCircuitBreakerStore",
+    "InMemoryRateLimitStore",
+    "RateLimitKey",
+    "RateLimitStore",
     "Transition",
     "InProcessResilienceExecutor",
     "OCC_POLICY",

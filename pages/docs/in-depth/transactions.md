@@ -78,6 +78,11 @@ Inside a transaction, the callback is queued and runs after the **root** scope
 commits successfully. Outside any transaction, it runs immediately. This single
 mechanism is the foundation of the transactional outbox — covered next.
 
+Deferred work is also **cancellation-protected**: a client disconnect or a
+[deadline](deadlines.md) expiring between the commit and the deferred
+callbacks can't skip them — they run to completion, then the cancellation
+re-raises. A committed transaction is never left half-announced.
+
 ## Strict transactions under mock
 
 By default, the mock plane's transaction manager is a **no-op**: a write inside

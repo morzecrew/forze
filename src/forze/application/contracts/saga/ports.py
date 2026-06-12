@@ -1,9 +1,6 @@
 """Port for executing a saga definition."""
 
-from __future__ import annotations
-
-from collections.abc import Awaitable
-from typing import TYPE_CHECKING, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Awaitable, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
     from forze.application.execution.context import ExecutionContext

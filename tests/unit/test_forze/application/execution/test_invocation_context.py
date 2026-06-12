@@ -3,7 +3,7 @@
 from uuid import uuid4
 
 import pytest
-from structlog.contextvars import get_contextvars
+from structlog.contextvars import bound_contextvars, get_contextvars
 
 from forze.application.contracts.authn import AuthnIdentity
 from forze.application.contracts.tenancy import TenantIdentity
@@ -12,6 +12,7 @@ from forze.application.execution.context.invocation import (
     CAUS_ID_KEY,
     CORR_ID_KEY,
     EXEC_ID_KEY,
+    IDEMPOTENCY_KEY_KEY,
     PRINCIPAL_ID_KEY,
     TENANT_ID_KEY,
     InvocationContext,
@@ -128,6 +129,75 @@ def test_bind_resets_on_exception() -> None:
     assert ctx.get_authn() is None
     assert ctx.get_tenant() is None
     assert _bound_log_vars() == {}
+
+
+def test_bind_with_identity_sans_actor_and_tenant_binds_exact_fields() -> None:
+    ctx = InvocationContext()
+    metadata = _metadata()
+    authn = AuthnIdentity(principal_id=uuid4())  # no actor
+
+    with ctx.bind(metadata=metadata, authn=authn):
+        assert _bound_log_vars() == {
+            EXEC_ID_KEY: str(metadata.execution_id),
+            CORR_ID_KEY: str(metadata.correlation_id),
+            CAUS_ID_KEY: str(metadata.causation_id),
+            PRINCIPAL_ID_KEY: authn.principal_id,
+        }
+
+    assert _bound_log_vars() == {}
+
+
+def test_bind_identity_empty_binds_no_log_fields_and_preserves_outer() -> None:
+    """An identity bind contributing zero keys must not touch structlog state."""
+
+    ctx = InvocationContext()
+
+    with bound_contextvars(custom="outer"):
+        with ctx.bind_identity():
+            assert ctx.get_authn() is None
+            assert ctx.get_tenant() is None
+            assert _bound_log_vars() == {}
+            assert get_contextvars().get("custom") == "outer"
+
+        assert get_contextvars().get("custom") == "outer"
+
+
+def test_bind_identity_empty_resets_contextvars_on_exception() -> None:
+    ctx = InvocationContext()
+    outer_authn = _authn()
+
+    with ctx.bind_identity(authn=outer_authn):
+        with pytest.raises(RuntimeError, match="boom"):
+            with ctx.bind_identity():
+                assert ctx.get_authn() is None
+                raise RuntimeError("boom")
+
+        assert ctx.get_authn() is outer_authn
+
+    assert ctx.get_authn() is None
+
+
+def test_bind_idempotency_none_binds_no_log_fields() -> None:
+    ctx = InvocationContext()
+
+    with bound_contextvars(custom="outer"):
+        with ctx.bind_idempotency(None):
+            assert ctx.get_idempotency_key() is None
+            assert IDEMPOTENCY_KEY_KEY not in get_contextvars()
+            assert get_contextvars().get("custom") == "outer"
+
+    assert ctx.get_idempotency_key() is None
+
+
+def test_bind_idempotency_key_binds_log_field_and_resets() -> None:
+    ctx = InvocationContext()
+
+    with ctx.bind_idempotency("idem-1"):
+        assert ctx.get_idempotency_key() == "idem-1"
+        assert get_contextvars()[IDEMPOTENCY_KEY_KEY] == "idem-1"
+
+    assert ctx.get_idempotency_key() is None
+    assert IDEMPOTENCY_KEY_KEY not in get_contextvars()
 
 
 def test_bind_nests_and_restores_outer_values() -> None:

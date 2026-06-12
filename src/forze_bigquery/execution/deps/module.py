@@ -1,6 +1,6 @@
 """BigQuery dependency module for the application kernel."""
 
-from typing import Mapping, final
+from typing import final
 
 import attrs
 
@@ -10,7 +10,7 @@ from forze.application.contracts.analytics import (
 )
 from forze.application.execution import Deps, DepsModule
 from forze.application.execution.deps.builders import merge_deps, routed_from_mapping
-from forze.base.primitives import StrKey
+from forze.base.primitives import MappingConverter, StrKeyMapping
 
 from ...kernel.client import BigQueryClientPort
 from .configs import BigQueryAnalyticsConfig
@@ -28,8 +28,9 @@ class BigQueryDepsModule(DepsModule):
     client: BigQueryClientPort
     """Pre-constructed BigQuery client (initialized via :func:`bigquery_lifecycle_step`)."""
 
-    analytics: Mapping[StrKey, BigQueryAnalyticsConfig] | None = attrs.field(
-        default=None
+    analytics: StrKeyMapping[BigQueryAnalyticsConfig] | None = attrs.field(
+        converter=MappingConverter.to_str_key_frozen,  # type: ignore[misc]
+        default=None,
     )
     """Mapping from analytics route names to BigQuery configuration."""
 

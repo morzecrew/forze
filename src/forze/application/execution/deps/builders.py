@@ -1,12 +1,9 @@
 """Internal helpers for integration DepsModule registration."""
 
-from __future__ import annotations
-
-from collections.abc import Callable, Mapping, Sequence
-from typing import Any, TypeVar
+from typing import Any, Callable, Sequence, TypeVar
 
 from forze.application.contracts.deps import DepKey
-from forze.base.primitives import StrKey
+from forze.base.primitives import StrKey, StrKeyMapping
 
 from .container import Deps
 from .store import PlainDepsMap
@@ -43,7 +40,7 @@ def merge_deps(
 
 
 def routed_from_mapping(
-    configs: Mapping[StrKey, ConfigT] | None,
+    configs: StrKeyMapping[ConfigT] | None,
     *,
     bindings: Sequence[tuple[DepKey[Any], FactoryT]],
 ) -> Deps:
@@ -74,8 +71,7 @@ def routed_constant(
         return Deps()
 
     parts = [
-        Deps.routed_group({key: provider}, routes=routes)
-        for key, provider in bindings
+        Deps.routed_group({key: provider}, routes=routes) for key, provider in bindings
     ]
 
     return Deps.merge(*parts)
@@ -85,7 +81,7 @@ def routed_constant(
 
 
 def routed_shared_factories(
-    configs: Mapping[StrKey, ConfigT] | None,
+    configs: StrKeyMapping[ConfigT] | None,
     *,
     dep_keys: Sequence[DepKey[Any]],
     factory: FactoryT,

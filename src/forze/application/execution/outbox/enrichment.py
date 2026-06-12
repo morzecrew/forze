@@ -31,6 +31,7 @@ class InvocationOutboxEnricher:
         *,
         event_id: UUID | None = None,
         occurred_at: datetime | None = None,
+        ordering_key: str | None = None,
     ) -> IntegrationEvent[M]:
         event_id = event_id or uuid7()
         metadata = self.inv.get_metadata()
@@ -45,4 +46,5 @@ class InvocationOutboxEnricher:
             execution_id=metadata.execution_id if metadata is not None else None,
             correlation_id=metadata.correlation_id if metadata is not None else None,
             causation_id=metadata.causation_id if metadata is not None else None,
+            ordering_key=ordering_key,
         )

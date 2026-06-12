@@ -5,7 +5,7 @@ require_rabbitmq()
 # ....................... #
 
 from datetime import datetime, timedelta
-from typing import AsyncGenerator, ClassVar, Sequence, final
+from typing import AsyncGenerator, ClassVar, Mapping, Sequence, final
 
 import attrs
 from pydantic import BaseModel
@@ -70,6 +70,7 @@ class RabbitMQQueueAdapter[M: BaseModel](
         enqueued_at: datetime | None = None,
         delay: timedelta | None = None,
         not_before: datetime | None = None,
+        headers: Mapping[str, str] | None = None,
     ) -> str:
         physical_queue = await self.__queue_name(queue)
         body = self.codec.encode(payload)
@@ -83,6 +84,7 @@ class RabbitMQQueueAdapter[M: BaseModel](
             delay=delay,
             not_before=not_before,
             delayed_delivery=self.delayed_delivery,
+            headers=headers,
         )
 
     # ....................... #
@@ -97,6 +99,7 @@ class RabbitMQQueueAdapter[M: BaseModel](
         enqueued_at: datetime | None = None,
         delay: timedelta | None = None,
         not_before: datetime | None = None,
+        headers: Mapping[str, str] | None = None,
     ) -> list[str]:
         if not payloads:
             return []
@@ -113,6 +116,7 @@ class RabbitMQQueueAdapter[M: BaseModel](
             delay=delay,
             not_before=not_before,
             delayed_delivery=self.delayed_delivery,
+            headers=headers,
         )
 
     # ....................... #

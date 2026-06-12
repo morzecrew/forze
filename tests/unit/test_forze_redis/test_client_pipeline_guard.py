@@ -56,6 +56,8 @@ _VALUE_RETURNING: dict[str, Callable[[RedisClient], Awaitable[Any]]] = {
     "xgroup_create": lambda c: c.xgroup_create("s", "g"),
     "xgroup_read": lambda c: c.xgroup_read("g", "consumer", {"s": ">"}),
     "xack": lambda c: c.xack("s", "g", ["1-1"]),
+    "xautoclaim": lambda c: c.xautoclaim("s", "g", "consumer", min_idle_ms=1000),
+    "xpending": lambda c: c.xpending("s", "g", count=10),
 }
 
 

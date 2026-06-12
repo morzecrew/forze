@@ -1,6 +1,6 @@
 """Inngest dependency module for the application kernel."""
 
-from typing import Any, Mapping, Sequence, final
+from typing import Any, Sequence, final
 
 import attrs
 
@@ -11,7 +11,7 @@ from forze.application.contracts.durable.function import (
     DurableFunctionStepPort,
 )
 from forze.application.execution import Deps, DepsModule
-from forze.base.primitives import StrKey
+from forze.base.primitives import MappingConverter, StrKeyMapping
 
 from ...adapters import InngestStepAdapter
 from ...kernel.client import InngestClientPort
@@ -38,7 +38,10 @@ class InngestDepsModule(DepsModule):
     client: InngestClientPort
     """Pre-constructed Inngest client."""
 
-    events: Mapping[StrKey, InngestEventConfig] | None = attrs.field(default=None)
+    events: StrKeyMapping[InngestEventConfig] | None = attrs.field(
+        default=None,
+        converter=MappingConverter.to_str_key_frozen,  # type: ignore[misc]
+    )
     """Mapping from event spec names to Inngest event command configuration."""
 
     function_bindings: Sequence[InngestFunctionBinding[Any, Any]] | None = attrs.field(

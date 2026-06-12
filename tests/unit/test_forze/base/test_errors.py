@@ -34,6 +34,13 @@ class TestCoreException:
         assert exc.conflict("x").code == "core.conflict"
         assert exc.validation("x").code == "core.validation"
         assert exc.infrastructure("x").code == "core.infrastructure"
+        assert exc.throttled("x").code == "core.throttled"
+
+    def test_throttled_factory_builds_throttled_kind(self) -> None:
+        err = exc.throttled("rate limited", code="rate_limited", details={"policy": "p"})
+        assert err.kind is ExceptionKind.THROTTLED
+        assert err.code == "rate_limited"
+        assert err.details == {"policy": "p"}
 
     def test_custom_code_and_details(self) -> None:
         err = exc.conflict("mismatch", code="rev", details={"rev": 1})
@@ -300,3 +307,20 @@ class TestExceptionEgressPolicy:
     def test_configuration_hides_details(self) -> None:
         # Configuration errors carry internal wiring info and must stay opaque.
         assert exception_egress_policy(ExceptionKind.CONFIGURATION).expose_details is False
+
+    def test_throttled_hides_details_and_is_retryable(self) -> None:
+        # Throttle details carry policy/route wiring info; capacity refills over
+        # time, so Retry strategies may legitimately wait a rate limit out.
+        policy = exception_egress_policy(ExceptionKind.THROTTLED)
+        assert policy.expose_details is False
+        assert policy.retryable is True
+
+    def test_retryable_kinds_are_exactly_pinned(self) -> None:
+        retryable = {
+            kind for kind in ExceptionKind if exception_egress_policy(kind).retryable
+        }
+        assert retryable == {
+            ExceptionKind.CONCURRENCY,
+            ExceptionKind.INFRASTRUCTURE,
+            ExceptionKind.THROTTLED,
+        }

@@ -24,6 +24,11 @@ class OutboxEventEnricher(Protocol):
         *,
         event_id: UUID | None = None,
         occurred_at: datetime | None = None,
+        ordering_key: str | None = None,
     ) -> IntegrationEvent[M]:
-        """Return a fully enriched integration event."""
+        """Return a fully enriched integration event.
+
+        *ordering_key* is carried verbatim onto the event (see
+        :attr:`~forze.application.contracts.outbox.IntegrationEvent.ordering_key`).
+        """
         ...

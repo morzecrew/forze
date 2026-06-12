@@ -55,6 +55,10 @@ class TestSagaProgress:
         assert p.steps_to_compensate() == [1, 0]
 
     def test_step_failed_error_is_domain_when_compensation_succeeds(self) -> None:
+        """DOMAIN by decision: compensations succeeded, so the system is consistent
+        and the rolled-back saga is a modeled business outcome — the kind encodes
+        the saga outcome, not the failing step's cause (chained as ``__cause__``).
+        """
         p = _progress()
         err = p.step_failed_error(2, RuntimeError("boom"), comp_errors=[])
 

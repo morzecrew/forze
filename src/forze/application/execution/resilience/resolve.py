@@ -5,8 +5,6 @@ out of the box even when an app has not registered :class:`ResilienceDepsModule`
 Apps override behavior by registering the module (the registered executor wins).
 """
 
-from __future__ import annotations
-
 from typing import TYPE_CHECKING
 
 from forze.application.contracts.resilience import (

@@ -124,7 +124,7 @@ class TestDescriptorMerge:
 
         assert set(merged.get_descriptors()) == {"a", "b"}
 
-    def test_merge_conflicting_descriptors_raises(self) -> None:
+    def test_merge_conflicting_descriptors_raises_naming_keys(self) -> None:
         a = OperationRegistry(handlers={"a": lambda _c: None}).set_descriptor(
             "a", OperationDescriptor(description="a")
         )
@@ -132,5 +132,17 @@ class TestDescriptorMerge:
             "a", OperationDescriptor(description="b")
         )
 
-        with pytest.raises(exc, match="Conflicting operation descriptors"):
+        with pytest.raises(exc, match=r"duplicate operation descriptors.*'a'"):
             OperationRegistry.merge(a, b)
+
+    def test_merge_conflicting_descriptors_override_last_wins(self) -> None:
+        a = OperationRegistry(handlers={"a": lambda _c: None}).set_descriptor(
+            "a", OperationDescriptor(description="a")
+        )
+        b = OperationRegistry(handlers={"a2": lambda _c: None}).set_descriptor(
+            "a", OperationDescriptor(description="b")
+        )
+
+        merged = OperationRegistry.merge(a, b, override=True)
+
+        assert merged.get_descriptors()["a"].description == "b"

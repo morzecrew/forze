@@ -356,6 +356,103 @@ class TestAfterCommitRegistrationGuard:
         assert deferred == []  # nothing to run after commit -> nothing registered
 
 
+class TestResolveTimeTxValidation:
+    """A route-less tx scope with stages is rejected when the plan is resolved.
+
+    The plan is frozen after resolution, so the configuration error surfaces at
+    resolve (construction) time — not on the first call — and the runner performs
+    no per-call emptiness re-validation.
+    """
+
+    def test_unrouted_tx_scope_with_stages_rejected_at_construction(self) -> None:
+        from forze.application.contracts.execution.value_objects import (
+            ExecutionPipeline,
+        )
+        from forze.application.execution.operations.planning.scopes import (
+            ResolvedTransactionScope,
+        )
+        from forze.base.exceptions import CoreException, ExceptionKind
+
+        async def _wrap(next_, args):
+            return await next_(args)
+
+        with pytest.raises(CoreException) as ei:
+            ResolvedTransactionScope(wrap=ExecutionPipeline(steps=(_wrap,)))
+
+        assert ei.value.kind is ExceptionKind.INTERNAL
+        assert "no route" in str(ei.value)
+
+    def test_unrouted_tx_scope_without_stages_is_fine(self) -> None:
+        from forze.application.execution.operations.planning.scopes import (
+            ResolvedTransactionScope,
+        )
+
+        tx = ResolvedTransactionScope()
+
+        assert tx.is_empty() is True
+        assert tx.body_is_empty() is True
+
+    @pytest.mark.asyncio
+    async def test_no_per_call_emptiness_revalidation(
+        self, ctx: ExecutionContext, monkeypatch
+    ) -> None:
+        # Emptiness is precomputed at resolution time: running the operation must
+        # not call the emptiness methods at all.
+        from forze.application.execution.operations.planning.scopes import (
+            ResolvedScope,
+            ResolvedTransactionScope,
+        )
+
+        reg = (
+            OperationRegistry(handlers={"op": lambda _ctx: EchoHandler()})
+            .bind("op")
+            .finish()
+            .freeze()
+        )
+        resolved = reg.resolve("op", ctx)
+
+        def _spy(_self):
+            raise AssertionError("emptiness recomputed on the call path")
+
+        monkeypatch.setattr(ResolvedScope, "body_is_empty", _spy)
+        monkeypatch.setattr(ResolvedTransactionScope, "is_empty", _spy)
+
+        assert await resolved("x") == "handler:x"
+
+    def test_precomputed_emptiness_matches_contents(self) -> None:
+        from forze.application.contracts.execution.value_objects import (
+            ExecutionPipeline,
+        )
+        from forze.application.execution.operations.planning.scopes import (
+            ResolvedScope,
+            ResolvedTransactionScope,
+        )
+
+        async def _fin(_args, _outcome):
+            pass
+
+        scope = ResolvedScope(finally_=ExecutionPipeline(steps=(_fin,)))
+
+        assert scope.finally_empty is False
+        assert scope.body_empty is False
+        assert scope.body_is_empty() is False
+
+        empty = ResolvedScope()
+
+        assert empty.finally_empty is True
+        assert empty.body_empty is True
+
+        tx = ResolvedTransactionScope(
+            route="mock",
+            finally_=ExecutionPipeline(steps=(_fin,)),
+        )
+
+        assert tx.body_empty is False
+        assert tx.after_commit_empty is True
+        assert tx.empty is False
+        assert tx.is_empty() is False
+
+
 class TestDispatch:
     @pytest.mark.asyncio
     async def test_dispatch_invokes_target_operation(

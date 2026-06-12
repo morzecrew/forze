@@ -1,6 +1,6 @@
 """SQS dependency module for the application kernel."""
 
-from typing import Mapping, final
+from typing import final
 
 import attrs
 
@@ -8,7 +8,7 @@ from forze.application.contracts.queue import QueueCommandDepKey, QueueQueryDepK
 from forze.application.contracts.tenancy import warn_integration_routes
 from forze.application.execution import Deps, DepsModule
 from forze.application.execution.deps.builders import merge_deps, routed_from_mapping
-from forze.base.primitives import StrKey
+from forze.base.primitives import MappingConverter, StrKeyMapping
 
 from ...kernel.client import SQSClientPort
 from ._warnings import SQS_QUEUE_READER_WARNING, SQS_QUEUE_WRITER_WARNING
@@ -27,11 +27,19 @@ class SQSDepsModule(DepsModule):
     client: SQSClientPort
     """Pre-constructed SQS client (single endpoint or routed, session not initialized until lifecycle)."""
 
-    queue_readers: Mapping[StrKey, SQSQueueConfig] | None = attrs.field(default=None)
+    queue_readers: StrKeyMapping[SQSQueueConfig] | None = attrs.field(
+        default=None,
+        converter=MappingConverter.to_str_key_frozen,  # type: ignore[misc]
+    )
     """Mapping from queue names to their SQS-specific configurations."""
 
-    queue_writers: Mapping[StrKey, SQSQueueConfig] | None = attrs.field(default=None)
+    queue_writers: StrKeyMapping[SQSQueueConfig] | None = attrs.field(
+        default=None,
+        converter=MappingConverter.to_str_key_frozen,  # type: ignore[misc]
+    )
     """Mapping from queue names to their SQS-specific configurations."""
+
+    # ....................... #
 
     def __attrs_post_init__(self) -> None:
         warn_integration_routes(

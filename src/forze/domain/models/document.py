@@ -1,5 +1,6 @@
 """Domain document models and commands."""
 
+from copy import deepcopy
 from datetime import datetime
 from typing import Any, ClassVar, Literal, Self, cast
 from uuid import UUID
@@ -165,24 +166,59 @@ class Document(CoreModel):
 
     # ....................... #
 
-    def _materialize_update(self, candidate: Self, diff: JsonDict) -> Self:
+    def _materialize_update(
+        self,
+        candidate: Self,
+        diff: JsonDict,
+        *,
+        last_update_at: datetime | None = None,
+    ) -> Self:
         """Copy self, taking validated values of the changed fields from ``candidate``.
 
         Copying from ``self`` (rather than returning ``candidate``) preserves runtime
         state that does not round-trip through a dump — e.g. pending domain events on
         an :class:`AggregateRoot` (via its ``model_copy`` override) and fields excluded
         from serialization.
+
+        Unchanged fields are shared with ``self`` — the normal
+        ``model_copy(deep=False)`` contract. Changed values that are plain
+        containers (dict/list) are deep-copied **individually**: pydantic
+        validation passes ``Any``-typed (and untyped) dict/list values through
+        unchanged, so without the copy the returned instance could alias the
+        caller's patch containers. Typed fields get fresh containers from
+        validation already. This replaces the old whole-model
+        ``model_copy(deep=True)``, which deep-copied every unchanged field while
+        ``model_copy`` inserted the update values uncopied anyway.
+
+        When ``last_update_at`` is given it overrides the value sourced from
+        ``candidate``, folding the timestamp bump into this single ``model_copy``
+        instead of requiring a second copy of the candidate.
         """
 
         fields = type(self).model_fields
-        update = {k: getattr(candidate, k) for k in diff if k in fields}
-        needs_deep = any(isinstance(v, (dict, list)) for v in diff.values())
+        update: dict[str, Any] = {}
+
+        for k in diff:
+            if k not in fields:
+                continue
+
+            v = getattr(candidate, k)
+
+            if isinstance(v, (dict, list)):
+                v = deepcopy(cast("dict[str, Any] | list[Any]", v))
+
+            update[k] = v
+
+        if last_update_at is not None:
+            update[LAST_UPDATE_AT_FIELD] = last_update_at
 
         logger.trace(
-            "Applying diff to %s (needs_deep=%s)", type(self).__qualname__, needs_deep
+            "Applying diff to %s (fields=%s)",
+            type(self).__qualname__,
+            tuple(update),
         )
 
-        return self.model_copy(update=update, deep=needs_deep)
+        return self.model_copy(update=update)
 
     # ....................... #
 
@@ -267,8 +303,9 @@ class Document(CoreModel):
         if diff:
             now = utcnow()
             diff[LAST_UPDATE_AT_FIELD] = now
-            candidate = candidate.model_copy(update={LAST_UPDATE_AT_FIELD: now})
-            after = self._materialize_update(candidate, diff)
+            # `candidate` still carries the old timestamp; `_materialize_update`
+            # overrides it from `now` directly so exactly one model_copy happens.
+            after = self._materialize_update(candidate, diff, last_update_at=now)
 
         else:
             logger.trace("Update diff is empty; document remains unchanged")

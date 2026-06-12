@@ -748,6 +748,184 @@ async def test_create_bucket_omits_constraint_for_resolved_us_east_1() -> None:
         client._S3Client__ctx_client.reset(tok)
 
 
+# ----------------------- #
+# presigned URLs
+
+
+class _PresignApi:
+    """Fake S3 API recording ``generate_presigned_url`` calls (local signing)."""
+
+    def __init__(self) -> None:
+        self.exceptions = _S3Exceptions()
+        self.presign_calls: list[dict[str, Any]] = []
+
+    async def generate_presigned_url(
+        self,
+        ClientMethod: str,
+        *,
+        Params: dict[str, Any],
+        ExpiresIn: int,
+    ) -> str:
+        self.presign_calls.append(
+            {
+                "ClientMethod": ClientMethod,
+                "Params": Params,
+                "ExpiresIn": ExpiresIn,
+            }
+        )
+        return f"https://s3.local/{Params['Bucket']}/{Params['Key']}?X-Amz-Signature=sig"
+
+
+@pytest.mark.asyncio
+async def test_presign_download_url_signs_get_object() -> None:
+    from datetime import timedelta
+
+    client = S3Client()
+    api = _PresignApi()
+    tok = client._S3Client__ctx_client.set(api)  # type: ignore[arg-type]
+    try:
+        vo = await client.presign_download_url(
+            "b",
+            "docs/k1",
+            expires_in=timedelta(minutes=15),
+        )
+    finally:
+        client._S3Client__ctx_client.reset(tok)
+
+    assert api.presign_calls == [
+        {
+            "ClientMethod": "get_object",
+            "Params": {"Bucket": "b", "Key": "docs/k1"},
+            "ExpiresIn": 900,
+        }
+    ]
+    assert vo.method == "GET"
+    assert vo.url.startswith("https://s3.local/b/docs/k1")
+    assert dict(vo.headers) == {}
+
+
+@pytest.mark.asyncio
+async def test_presign_upload_url_binds_content_type() -> None:
+    from datetime import timedelta
+
+    client = S3Client()
+    api = _PresignApi()
+    tok = client._S3Client__ctx_client.set(api)  # type: ignore[arg-type]
+    try:
+        vo = await client.presign_upload_url(
+            "b",
+            "docs/k1",
+            expires_in=timedelta(hours=1),
+            content_type="text/plain",
+        )
+    finally:
+        client._S3Client__ctx_client.reset(tok)
+
+    assert api.presign_calls == [
+        {
+            "ClientMethod": "put_object",
+            "Params": {"Bucket": "b", "Key": "docs/k1", "ContentType": "text/plain"},
+            "ExpiresIn": 3600,
+        }
+    ]
+    assert vo.method == "PUT"
+    # SigV4 binds ContentType, so the client MUST send it back verbatim.
+    assert dict(vo.headers) == {"Content-Type": "text/plain"}
+
+
+@pytest.mark.asyncio
+async def test_presign_upload_url_without_content_type_has_no_headers() -> None:
+    from datetime import timedelta
+
+    client = S3Client()
+    api = _PresignApi()
+    tok = client._S3Client__ctx_client.set(api)  # type: ignore[arg-type]
+    try:
+        vo = await client.presign_upload_url(
+            "b",
+            "docs/k1",
+            expires_in=timedelta(minutes=5),
+        )
+    finally:
+        client._S3Client__ctx_client.reset(tok)
+
+    assert "ContentType" not in api.presign_calls[0]["Params"]
+    assert dict(vo.headers) == {}
+
+
+@pytest.mark.asyncio
+async def test_presign_expires_at_reflects_expiry_window() -> None:
+    from datetime import datetime, timedelta, timezone
+
+    from forze.base.primitives import FrozenTimeSource, bind_time_source
+
+    instant = datetime(2026, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+    client = S3Client()
+    api = _PresignApi()
+    tok = client._S3Client__ctx_client.set(api)  # type: ignore[arg-type]
+    try:
+        with bind_time_source(FrozenTimeSource(instant)):
+            vo = await client.presign_download_url(
+                "b",
+                "k",
+                expires_in=timedelta(minutes=15),
+            )
+    finally:
+        client._S3Client__ctx_client.reset(tok)
+
+    assert vo.expires_at == instant + timedelta(minutes=15)
+
+
+@pytest.mark.asyncio
+async def test_presign_rejects_expiry_over_seven_days() -> None:
+    from datetime import timedelta
+
+    from forze.base.exceptions import ExceptionKind
+
+    client = S3Client()
+    api = _PresignApi()
+    tok = client._S3Client__ctx_client.set(api)  # type: ignore[arg-type]
+    try:
+        with pytest.raises(CoreException) as ei:
+            await client.presign_download_url(
+                "b",
+                "k",
+                expires_in=timedelta(days=7, seconds=1),
+            )
+
+        with pytest.raises(CoreException) as ei_up:
+            await client.presign_upload_url(
+                "b",
+                "k",
+                expires_in=timedelta(days=8),
+            )
+    finally:
+        client._S3Client__ctx_client.reset(tok)
+
+    assert ei.value.kind is ExceptionKind.VALIDATION
+    assert ei_up.value.kind is ExceptionKind.VALIDATION
+    assert api.presign_calls == []  # nothing signed
+
+
+@pytest.mark.asyncio
+async def test_presign_rejects_non_positive_expiry() -> None:
+    from datetime import timedelta
+
+    from forze.base.exceptions import ExceptionKind
+
+    client = S3Client()
+    api = _PresignApi()
+    tok = client._S3Client__ctx_client.set(api)  # type: ignore[arg-type]
+    try:
+        with pytest.raises(CoreException) as ei:
+            await client.presign_download_url("b", "k", expires_in=timedelta(0))
+    finally:
+        client._S3Client__ctx_client.reset(tok)
+
+    assert ei.value.kind is ExceptionKind.VALIDATION
+    assert api.presign_calls == []
+
+
 @pytest.mark.asyncio
 async def test_initialize_without_region_omits_region_from_config(
     monkeypatch: pytest.MonkeyPatch,

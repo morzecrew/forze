@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from typing import TYPE_CHECKING, Any, Callable, cast, final
 
 import attrs
@@ -11,7 +12,9 @@ from forze.application.contracts.transaction import AfterCommitPort
 from forze.base.exceptions import exc
 from forze.base.primitives import StrKey
 
-from ...context.active_operation import operation_running
+from ...context.active_operation import active_operation_var
+from ...context.deadline import remaining_time, reset_deadline, set_deadline
+from ...context.drain import OperationDrainGate
 from ..planning.plans import OperationKind, ResolvedOperationPlan
 from .plan import TransactionRunner, run_resolved_operation_plan
 
@@ -46,16 +49,62 @@ class ResolvedOperation[Args, R](Handler[Args, R]):
     inv_ctx: InvocationContext
     """Invocation context — used to bind the read-only flag for a QUERY operation."""
 
+    drain_gate: OperationDrainGate
+    """Admits top-level invocations; rejects new ones while the scope drains."""
+
     # ....................... #
 
     async def _run(self, args: Args) -> R:
-        return await run_resolved_operation_plan(
-            self.plan,
-            self.handler,
-            args,
-            tx_runner=self.tx_runner,
-            defer_after_commit=self.defer_after_commit,
-        )
+        # Deadline enforcement: the plan's declared budget (if any) is bound
+        # first — tighten-only, so a caller-bound deadline can shorten it but
+        # never extend past the plan's cap — then the effective deadline (see
+        # ``context.deadline``) bounds the whole plan: hooks, transaction,
+        # dispatch. No deadline anywhere is the hot path: one attribute and
+        # one ContextVar read, no timeout machinery. The post-commit drain is
+        # cancellation-protected in ``TransactionContext.scope``, so a
+        # deadline firing mid-drain still lets the drain finish before the
+        # timeout surfaces here.
+        plan_budget = self.plan.deadline_s
+        token = None if plan_budget is None else set_deadline(plan_budget)
+
+        try:
+            remaining = remaining_time()
+
+            if remaining is None:
+                return await run_resolved_operation_plan(
+                    self.plan,
+                    self.handler,
+                    args,
+                    tx_runner=self.tx_runner,
+                    defer_after_commit=self.defer_after_commit,
+                )
+
+            if remaining <= 0.0:
+                raise exc.timeout(
+                    f"Invocation deadline exceeded before operation "
+                    f"{str(self.op)!r} started",
+                    code="deadline_exceeded",
+                )
+
+            try:
+                async with asyncio.timeout(remaining):
+                    return await run_resolved_operation_plan(
+                        self.plan,
+                        self.handler,
+                        args,
+                        tx_runner=self.tx_runner,
+                        defer_after_commit=self.defer_after_commit,
+                    )
+
+            except TimeoutError as error:
+                raise exc.timeout(
+                    f"Operation {str(self.op)!r} exceeded the invocation deadline",
+                    code="deadline_exceeded",
+                ) from error
+
+        finally:
+            if token is not None:
+                reset_deadline(token)
 
     # ....................... #
 
@@ -67,14 +116,44 @@ class ResolvedOperation[Args, R](Handler[Args, R]):
         Execution is marked via the module-level active-operation flag so that
         constructing an :class:`ExecutionContext` mid-operation (per-request
         creation, an unsupported mode) can be detected and warned about.
+
+        A **top-level** invocation (no operation already active on this task)
+        is admitted through the scope's drain gate: rejected with ``THROTTLED``
+        (``code="draining"``) once the runtime is draining, counted in flight
+        otherwise. Nested dispatch rides the outer invocation's slot — the
+        active-operation marker doubles as the nesting signal — so draining
+        never starves an admitted operation of its own dispatch chains.
+
+        Hot path: both flags are token set/reset directly (the equivalent of the
+        :func:`~forze.application.execution.context.active_operation.operation_running`
+        and ``InvocationContext.bind_read_only`` context managers) — a
+        ``@contextmanager`` enter/exit costs ~5x a raw ContextVar set/reset pair.
         """
 
-        with operation_running():
+        gate = None if active_operation_var.get() else self.drain_gate
+
+        if gate is not None:
+            gate.admit(self.op)
+
+        marker_token = active_operation_var.set(True)
+
+        try:
             if self.plan.kind is OperationKind.QUERY:
-                with self.inv_ctx.bind_read_only():
+                ro_token = self.inv_ctx.set_read_only()
+
+                try:
                     return await self._run(args)
 
+                finally:
+                    self.inv_ctx.reset_read_only(ro_token)
+
             return await self._run(args)
+
+        finally:
+            active_operation_var.reset(marker_token)
+
+            if gate is not None:
+                gate.release()
 
 
 # ....................... #

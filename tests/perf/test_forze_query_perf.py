@@ -139,3 +139,7 @@ def test_meili_renderer_reused_benchmark(benchmark: Any) -> None:
     )
 
     benchmark(lambda: renderer.render_filters(_SMALL))
+
+
+# In-process and deterministic: participates in the CI perf regression gate.
+pytestmark = pytest.mark.perf_gate

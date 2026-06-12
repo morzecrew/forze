@@ -1,19 +1,26 @@
 """Factories for authn usecase registries."""
 
+from typing import Any
+
 from forze.application.contracts.authn import (
     AuthnDepKey,
     AuthnSpec,
     PasswordLifecycleDepKey,
+    PasswordResetDepKey,
     PrincipalDeactivationDepKey,
     TokenLifecycleDepKey,
 )
+from forze.application.contracts.outbox import OutboxSpec
 from forze.application.execution import ExecutionContext
 from forze.application.execution.operations import OperationDescriptor
 from forze.application.execution.operations.registry import OperationRegistry
 from .dto import (
     AuthnChangePasswordRequestDTO,
     AuthnLoginRequestDTO,
+    AuthnPasswordResetAckDTO,
     AuthnRefreshRequestDTO,
+    AuthnRequestPasswordResetDTO,
+    AuthnResetPasswordDTO,
     AuthnTokenResponseDTO,
 )
 from .handlers import (
@@ -21,6 +28,8 @@ from .handlers import (
     AuthnLogout,
     AuthnPasswordLogin,
     AuthnRefreshTokens,
+    AuthnRequestPasswordReset,
+    AuthnResetPassword,
     DeactivatePrincipalHandler,
     DeactivatePrincipalRequestDTO,
 )
@@ -35,8 +44,19 @@ def build_authn_registry(
     spec: AuthnSpec,
     *,
     ns: StrKeyNamespace | None = None,
+    reset_events: OutboxSpec[Any] | None = None,
 ) -> OperationRegistry:
-    """Build authn operation registry."""
+    """Build authn operation registry.
+
+    :param reset_events: Optional outbox route for the password-reset delivery
+        seam. When set, ``request_password_reset`` stages an
+        ``authn.password_reset_requested`` integration event (payload:
+        ``login``, ``principal_id``, raw ``token``, ``expires_at``) for the app
+        to relay to its notify/e-mail pipeline. The raw token transits the
+        outbox row — see :mod:`forze_kits.aggregates.authn.events` for the
+        exposure trade-off. When ``None`` and no custom delivery exists,
+        requesting a reset mints a token nobody receives.
+    """
 
     ns = ns or spec.default_namespace
 
@@ -85,6 +105,31 @@ def build_authn_registry(
             ),
         )
 
+    def _request_password_reset(ctx: ExecutionContext) -> AuthnRequestPasswordReset:
+        return AuthnRequestPasswordReset(
+            password_reset=ctx.deps.resolve_configurable(
+                ctx,
+                PasswordResetDepKey,
+                spec,
+                route=spec.name,
+            ),
+            outbox=(
+                ctx.outbox.command(reset_events)
+                if reset_events is not None
+                else None
+            ),
+        )
+
+    def _reset_password(ctx: ExecutionContext) -> AuthnResetPassword:
+        return AuthnResetPassword(
+            password_reset=ctx.deps.resolve_configurable(
+                ctx,
+                PasswordResetDepKey,
+                spec,
+                route=spec.name,
+            ),
+        )
+
     def _deactivate_principal(ctx: ExecutionContext) -> DeactivatePrincipalHandler:
         return DeactivatePrincipalHandler(
             deactivation=ctx.deps.resolve_configurable(
@@ -101,6 +146,8 @@ def build_authn_registry(
             ns.key(AuthnKernelOp.REFRESH_TOKENS): _refresh_tokens,
             ns.key(AuthnKernelOp.LOGOUT): _logout,
             ns.key(AuthnKernelOp.CHANGE_PASSWORD): _change_password,
+            ns.key(AuthnKernelOp.REQUEST_PASSWORD_RESET): _request_password_reset,
+            ns.key(AuthnKernelOp.RESET_PASSWORD): _reset_password,
             ns.key(AuthnKernelOp.DEACTIVATE_PRINCIPAL): _deactivate_principal,
         },
     )
@@ -124,6 +171,22 @@ def build_authn_registry(
             AuthnKernelOp.CHANGE_PASSWORD: OperationDescriptor(
                 input_type=AuthnChangePasswordRequestDTO,
                 description="Change the password of the authenticated identity.",
+            ),
+            AuthnKernelOp.REQUEST_PASSWORD_RESET: OperationDescriptor(
+                input_type=AuthnRequestPasswordResetDTO,
+                output_type=AuthnPasswordResetAckDTO,
+                description=(
+                    "Request a self-service password reset for a login; the "
+                    "response is a uniform acknowledgment regardless of "
+                    "whether the login exists (no account enumeration)."
+                ),
+            ),
+            AuthnKernelOp.RESET_PASSWORD: OperationDescriptor(
+                input_type=AuthnResetPasswordDTO,
+                description=(
+                    "Consume a single-use reset token and set a new password; "
+                    "all of the principal's sessions are revoked."
+                ),
             ),
             AuthnKernelOp.DEACTIVATE_PRINCIPAL: OperationDescriptor(
                 input_type=DeactivatePrincipalRequestDTO,

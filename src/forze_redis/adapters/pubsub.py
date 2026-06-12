@@ -7,7 +7,7 @@ require_redis()
 # ....................... #
 
 from datetime import datetime, timedelta
-from typing import AsyncGenerator, Sequence, final
+from typing import AsyncGenerator, Mapping, Sequence, final
 
 import attrs
 from pydantic import BaseModel
@@ -66,12 +66,14 @@ class RedisPubSubAdapter[M: BaseModel](
         type: str | None = None,
         key: str | None = None,
         published_at: datetime | None = None,
+        headers: Mapping[str, str] | None = None,
     ) -> None:
         data = self.codec.encode(
             payload,
             type=type,
             key=key,
             published_at=published_at,
+            headers=headers,
         )
         topic = self.__topic(topic)
 

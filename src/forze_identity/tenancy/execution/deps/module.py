@@ -1,6 +1,6 @@
 """Tenancy dependency module for the application kernel."""
 
-from typing import Collection, Mapping, final
+from typing import Collection, final
 
 import attrs
 
@@ -10,7 +10,7 @@ from forze.application.contracts.tenancy import (
     TenantResolverDepPort,
 )
 from forze.application.execution import Deps, DepsModule
-from forze.base.primitives import StrKey
+from forze.base.primitives import MappingConverter, StrKey, StrKeyMapping
 from forze_identity._routes import normalize_route_set as _normalize_route_set
 
 from .deps import (
@@ -35,8 +35,9 @@ class TenancyDepsModule(DepsModule):
     verify_tenant_active: bool = attrs.field(default=True)
     """Forwarded to :class:`~forze_tenancy.execution.deps.deps.ConfigurableTenantResolver`."""
 
-    tenant_resolvers: Mapping[StrKey, TenantResolverDepPort] | None = attrs.field(
+    tenant_resolvers: StrKeyMapping[TenantResolverDepPort] | None = attrs.field(
         default=None,
+        converter=MappingConverter.to_str_key_frozen,  # type: ignore[misc]
     )
     """Optional per-route tenant resolver overrides (e.g. local file/env backend)."""
 

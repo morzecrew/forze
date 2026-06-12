@@ -4,8 +4,14 @@ from __future__ import annotations
 
 from datetime import timedelta
 
-from forze.application.contracts.resilience import CircuitBreakerStrategy
-from forze.application.execution.resilience import InMemoryCircuitBreakerStore
+from forze.application.contracts.resilience import (
+    CircuitBreakerStrategy,
+    RateLimitStrategy,
+)
+from forze.application.execution.resilience import (
+    InMemoryCircuitBreakerStore,
+    InMemoryRateLimitStore,
+)
 
 # ----------------------- #
 
@@ -82,3 +88,40 @@ class TestInMemoryCircuitBreakerStore:
 
         allowed, _ = await store.admit(("p", "b"), strat)
         assert allowed is True  # route b unaffected
+
+
+# ....................... #
+
+
+class TestInMemoryRateLimitStore:
+    def _strat(self, *, permits: int = 2, per_s: float = 1.0) -> RateLimitStrategy:
+        return RateLimitStrategy(permits=permits, per=timedelta(seconds=per_s))
+
+    async def test_bucket_starts_full_and_drains(self) -> None:
+        store = InMemoryRateLimitStore(clock=_Clock())
+        strat = self._strat(permits=2)
+
+        assert await store.try_acquire(_KEY, strat) is True
+        assert await store.try_acquire(_KEY, strat) is True
+        assert await store.try_acquire(_KEY, strat) is False
+
+    async def test_refills_at_sustained_rate(self) -> None:
+        clock = _Clock()
+        store = InMemoryRateLimitStore(clock=clock)
+        strat = self._strat(permits=2, per_s=1.0)
+
+        assert await store.try_acquire(_KEY, strat) is True
+        assert await store.try_acquire(_KEY, strat) is True
+        assert await store.try_acquire(_KEY, strat) is False
+
+        clock.t += 0.5  # 2 permits/s -> one token back after 0.5s
+        assert await store.try_acquire(_KEY, strat) is True
+        assert await store.try_acquire(_KEY, strat) is False
+
+    async def test_keys_are_independent(self) -> None:
+        store = InMemoryRateLimitStore(clock=_Clock())
+        strat = self._strat(permits=1)
+
+        assert await store.try_acquire(("p", "a"), strat) is True
+        assert await store.try_acquire(("p", "a"), strat) is False
+        assert await store.try_acquire(("p", "b"), strat) is True

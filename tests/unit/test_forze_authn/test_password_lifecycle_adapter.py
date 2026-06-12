@@ -186,7 +186,7 @@ def _token_lifecycle(store: _SessionStore) -> tuple[TokenLifecycleAdapter, Any]:
 @pytest.mark.asyncio
 async def test_change_password_succeeds_with_correct_current_password() -> None:
     svc = PasswordService(config=_slow_password_config())
-    account = _account(svc.hash_password("old-secret"))
+    account = _account(svc.hash_password_sync("old-secret"))
     adapter, pa_cmd = _adapter(svc, account, store=_SessionStore())
 
     await adapter.change_password(
@@ -201,7 +201,7 @@ async def test_change_password_succeeds_with_correct_current_password() -> None:
 @pytest.mark.asyncio
 async def test_change_password_rejects_wrong_current_password() -> None:
     svc = PasswordService(config=_slow_password_config())
-    account = _account(svc.hash_password("old-secret"))
+    account = _account(svc.hash_password_sync("old-secret"))
     adapter, pa_cmd = _adapter(svc, account, store=_SessionStore())
 
     with pytest.raises(CoreException, match="Current password is incorrect"):
@@ -221,7 +221,7 @@ async def test_change_password_rejects_wrong_current_password() -> None:
 @pytest.mark.asyncio
 async def test_change_password_revokes_all_sessions() -> None:
     svc = PasswordService(config=_slow_password_config())
-    account = _account(svc.hash_password("old-secret"))
+    account = _account(svc.hash_password_sync("old-secret"))
     identity = AuthnIdentity(principal_id=account.principal_id)
 
     store = _SessionStore()
@@ -256,7 +256,7 @@ async def test_change_password_revokes_all_sessions() -> None:
 @pytest.mark.asyncio
 async def test_change_password_opt_out_keeps_sessions_alive() -> None:
     svc = PasswordService(config=_slow_password_config())
-    account = _account(svc.hash_password("old-secret"))
+    account = _account(svc.hash_password_sync("old-secret"))
     identity = AuthnIdentity(principal_id=account.principal_id)
 
     store = _SessionStore()
@@ -286,7 +286,7 @@ async def test_change_password_opt_out_keeps_sessions_alive() -> None:
 @pytest.mark.asyncio
 async def test_change_password_does_not_revoke_when_current_password_wrong() -> None:
     svc = PasswordService(config=_slow_password_config())
-    account = _account(svc.hash_password("old-secret"))
+    account = _account(svc.hash_password_sync("old-secret"))
     identity = AuthnIdentity(principal_id=account.principal_id)
 
     store = _SessionStore()
@@ -303,7 +303,7 @@ async def test_change_password_does_not_revoke_when_current_password_wrong() -> 
 
 def test_revocation_default_requires_session_ports() -> None:
     svc = PasswordService(config=_slow_password_config())
-    account = _account(svc.hash_password("old-secret"))
+    account = _account(svc.hash_password_sync("old-secret"))
 
     with pytest.raises(CoreException, match="revoke_sessions_on_password_change"):
         _adapter(svc, account, store=None)

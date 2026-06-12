@@ -13,6 +13,12 @@ verifiers and reuse the resolvers here, then plug into the same dep keys via ove
 :class:`AuthnDepsModule`.
 """
 
+from forze.application.integrations.authn import (
+    LockoutConfig,
+    LoggingAuthnEventSink,
+    LoginLockoutGuard,
+)
+
 from .execution import (
     AuthnDepsModule,
     AuthnKernelConfig,
@@ -24,9 +30,11 @@ from .execution import (
     ConfigurableForzeJwtTokenVerifier,
     ConfigurableHmacApiKeyVerifier,
     ConfigurableJwtNativeUuidResolver,
+    ConfigurableLoggingAuthnEventSink,
     ConfigurableMappingTableResolver,
     ConfigurablePasswordAccountProvisioning,
     ConfigurablePasswordLifecycle,
+    ConfigurablePasswordReset,
     ConfigurableTokenLifecycle,
     build_authn_shared_services,
 )
@@ -58,13 +66,18 @@ __all__ = [
     "ConfigurableForzeJwtTokenVerifier",
     "ConfigurableHmacApiKeyVerifier",
     "ConfigurableJwtNativeUuidResolver",
+    "ConfigurableLoggingAuthnEventSink",
     "ConfigurableMappingTableResolver",
     "ConfigurablePasswordAccountProvisioning",
     "ConfigurablePasswordLifecycle",
+    "ConfigurablePasswordReset",
     "ConfigurableTokenLifecycle",
     "DeterministicUuidResolver",
     "ForzeJwtTokenVerifier",
     "HmacApiKeyVerifier",
     "JwtNativeUuidResolver",
+    "LockoutConfig",
+    "LoggingAuthnEventSink",
+    "LoginLockoutGuard",
     "MappingTableResolver",
 ]

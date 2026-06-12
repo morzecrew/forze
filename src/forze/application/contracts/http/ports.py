@@ -1,13 +1,12 @@
 """Ports for outbound HTTP service integrations."""
 
-from typing import Protocol, runtime_checkable
+from typing import Awaitable, Protocol, runtime_checkable
 
 from pydantic import BaseModel
 
 from forze.base.primitives import StrKey
 
 from .specs import HttpServiceSpec
-from collections.abc import Awaitable
 
 # ----------------------- #
 

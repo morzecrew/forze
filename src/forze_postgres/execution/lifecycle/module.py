@@ -1,6 +1,6 @@
 """Postgres lifecycle module (pool, catalog warmup, schema validation)."""
 
-from typing import Mapping, Sequence, final
+from typing import Sequence, final
 
 import attrs
 from pydantic import SecretStr
@@ -8,7 +8,7 @@ from pydantic import SecretStr
 from forze.application.contracts.execution import LifecycleStep
 from forze.application.execution.lifecycle import LifecycleModule
 from forze.base.exceptions import exc
-from forze.base.primitives import StrKey
+from forze.base.primitives import MappingConverter, StrKeyMapping
 
 from ...kernel.catalog.validation.validate_schema import PostgresDocumentSchemaSpec
 from ...kernel.client import (
@@ -51,17 +51,22 @@ class PostgresLifecycleModule(LifecycleModule):
     schema_step_name: str = "postgres_document_schema_validate"
     """Step id for document schema validation."""
 
-    searches: Mapping[StrKey, PostgresSearchConfig] | None = attrs.field(default=None)
+    searches: StrKeyMapping[PostgresSearchConfig] | None = attrs.field(
+        default=None,
+        converter=MappingConverter.to_str_key_frozen,  # type: ignore[misc]
+    )
     """When set, registers catalog warmup for these search routes."""
 
-    hub_searches: Mapping[StrKey, PostgresHubSearchConfig] | None = attrs.field(
-        default=None
+    hub_searches: StrKeyMapping[PostgresHubSearchConfig] | None = attrs.field(
+        default=None,
+        converter=MappingConverter.to_str_key_frozen,  # type: ignore[misc]
     )
     """When set, registers catalog warmup for hub search routes."""
 
-    federated_searches: Mapping[StrKey, PostgresFederatedSearchConfig] | None = (
+    federated_searches: StrKeyMapping[PostgresFederatedSearchConfig] | None = (
         attrs.field(
             default=None,
+            converter=MappingConverter.to_str_key_frozen,  # type: ignore[misc]
         )
     )
     """When set, registers catalog warmup for federated search routes."""

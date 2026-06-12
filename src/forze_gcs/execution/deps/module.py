@@ -1,6 +1,6 @@
 """GCS dependency module for the application kernel."""
 
-from typing import Mapping, final
+from typing import final
 
 import attrs
 
@@ -11,7 +11,7 @@ from forze.application.contracts.storage import (
 from forze.application.contracts.tenancy import warn_integration_routes
 from forze.application.execution import Deps, DepsModule
 from forze.application.execution.deps.builders import merge_deps, routed_from_mapping
-from forze.base.primitives import StrKey
+from forze.base.primitives import MappingConverter, StrKeyMapping
 
 from ...kernel._logger import logger
 from ...kernel.client import GCSClientPort
@@ -31,7 +31,10 @@ class GCSDepsModule(DepsModule):
     client: GCSClientPort
     """Pre-constructed GCS client (initialized via :func:`gcs_lifecycle_step`)."""
 
-    storages: Mapping[StrKey, GCSStorageConfig] | None = attrs.field(default=None)
+    storages: StrKeyMapping[GCSStorageConfig] | None = attrs.field(
+        default=None,
+        converter=MappingConverter.to_str_key_frozen,  # type: ignore[misc]
+    )
     """Mapping from storage route names to GCS bucket configuration."""
 
     # ....................... #

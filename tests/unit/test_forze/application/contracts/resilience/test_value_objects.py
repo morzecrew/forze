@@ -11,6 +11,7 @@ from forze.application.contracts.resilience import (
     BulkheadStrategy,
     CircuitBreakerStrategy,
     FallbackStrategy,
+    RateLimitStrategy,
     ResiliencePolicy,
     RetryBudget,
     RetryStrategy,
@@ -87,6 +88,32 @@ class TestStrategyValidation:
         with pytest.raises(CoreException, match="must not be empty"):
             _retry(retry_on=frozenset())
 
+    def test_retry_accepts_throttled_kind(self) -> None:
+        # THROTTLED is retryable by classification: retry-with-backoff around
+        # a rate-limited call turns reject-immediately into waiting.
+        strat = _retry(retry_on=frozenset({ExceptionKind.THROTTLED}))
+        assert ExceptionKind.THROTTLED in strat.retry_on
+
+    def test_rate_limit_permits_floor(self) -> None:
+        with pytest.raises(CoreException, match="permits must be >= 1"):
+            RateLimitStrategy(permits=0, per=timedelta(seconds=1))
+
+    def test_rate_limit_per_must_be_positive(self) -> None:
+        with pytest.raises(CoreException, match="per must be positive"):
+            RateLimitStrategy(permits=1, per=timedelta(0))
+
+    def test_rate_limit_burst_floor(self) -> None:
+        with pytest.raises(CoreException, match="burst must be >= 1"):
+            RateLimitStrategy(permits=1, per=timedelta(seconds=1), burst=0)
+
+    def test_rate_limit_capacity_defaults_to_permits(self) -> None:
+        strat = RateLimitStrategy(permits=5, per=timedelta(seconds=1))
+        assert strat.capacity == 5
+
+    def test_rate_limit_burst_overrides_capacity(self) -> None:
+        strat = RateLimitStrategy(permits=5, per=timedelta(seconds=1), burst=20)
+        assert strat.capacity == 20
+
 
 # ....................... #
 
@@ -111,6 +138,7 @@ class TestPolicyComposition:
         policy = ResiliencePolicy(
             name="p",
             strategies=(
+                RateLimitStrategy(permits=10, per=timedelta(seconds=1)),
                 BulkheadStrategy(max_concurrency=5),
                 CircuitBreakerStrategy(
                     failure_ratio=0.5,
@@ -122,11 +150,42 @@ class TestPolicyComposition:
                 TimeoutStrategy(timeout=timedelta(seconds=1)),
             ),
         )
+        assert policy.rate_limit is not None
         assert policy.bulkhead is not None
         assert policy.circuit_breaker is not None
         assert policy.retry is not None
         assert policy.timeout is not None
         assert policy.has_fallback is False
+
+    def test_rate_limit_must_be_outermost(self) -> None:
+        # Bulkhead before RateLimit violates the canonical order.
+        with pytest.raises(CoreException, match="must be ordered"):
+            ResiliencePolicy(
+                name="p",
+                strategies=(
+                    BulkheadStrategy(max_concurrency=5),
+                    RateLimitStrategy(permits=10, per=timedelta(seconds=1)),
+                ),
+            )
+
+    def test_rate_limit_before_bulkhead_accepted(self) -> None:
+        policy = ResiliencePolicy(
+            name="p",
+            strategies=(
+                RateLimitStrategy(permits=10, per=timedelta(seconds=1)),
+                BulkheadStrategy(max_concurrency=5),
+            ),
+        )
+        assert policy.rate_limit is not None
+        assert policy.bulkhead is not None
+
+    def test_rate_limit_alone_accepted(self) -> None:
+        policy = ResiliencePolicy(
+            name="p",
+            strategies=(RateLimitStrategy(permits=10, per=timedelta(seconds=1)),),
+        )
+        assert policy.rate_limit is not None
+        assert policy.retry is None
 
     def test_fallback_marker_allowed_anywhere(self) -> None:
         policy = ResiliencePolicy(

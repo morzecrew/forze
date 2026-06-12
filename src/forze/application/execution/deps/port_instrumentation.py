@@ -1,9 +1,10 @@
-"""Runtime tracing hooks for resolved dependency ports."""
+"""Runtime tracing and resilience-policy hooks for resolved dependency ports."""
 
 from typing import TYPE_CHECKING, Any
 
 from forze.application.contracts.base import BaseSpec
 from forze.application.contracts.deps import DepKey
+from forze.application.contracts.resilience import ResiliencePortPoliciesDepKey
 from forze.base.primitives import StrKey
 
 if TYPE_CHECKING:
@@ -43,6 +44,45 @@ def maybe_wrap_configurable(
         route=route_name,
         phase=phase,
         tx_depth_getter=ctx.tx_ctx.depth,
+    )
+
+
+# ....................... #
+
+
+def maybe_wrap_port_policy(
+    deps: "FrozenDeps",
+    ctx: "ExecutionContext",
+    key: DepKey[Any],
+    route: StrKey | None,
+    result: Any,
+) -> Any:
+    """Wrap a configurable port under a declared resilience port policy.
+
+    Applied **outside** the tracing wrap from :func:`maybe_wrap_configurable`,
+    so trace events record the real call: each retry attempt inside the policy
+    re-invokes the traced method, and a rejected (throttled / bulkhead-full /
+    breaker-open) call never records a phantom port event — rejections surface
+    as the executor's own ``domain="resilience"`` events instead.
+    """
+
+    table = deps.store.plain_deps.get(ResiliencePortPoliciesDepKey)
+
+    if not table:
+        return result
+
+    port_policy = table.get(key)
+
+    if port_policy is None:
+        return result
+
+    from ..resilience.port_policy import wrap_port_policy
+
+    return wrap_port_policy(
+        result,
+        ctx=ctx,
+        port_policy=port_policy,
+        resolved_route=route,
     )
 
 

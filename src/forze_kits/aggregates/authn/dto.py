@@ -39,6 +39,45 @@ class AuthnChangePasswordRequestDTO(BaseDTO):
 # ....................... #
 
 
+class AuthnRequestPasswordResetDTO(BaseDTO):
+    """DTO for requesting a self-service password reset."""
+
+    login: str
+    """Login name the reset is requested for (e.g. username or email address)."""
+
+
+# ....................... #
+
+
+class AuthnPasswordResetAckDTO(BaseDTO):
+    """Uniform acknowledgment for a password reset request (202-shaped).
+
+    Returned for **every** request — known and unknown logins alike — so the
+    response neither confirms nor denies that an account exists (no account
+    enumeration). The reset token itself never appears here; it reaches the
+    account holder out of band (see ``AuthnRequestPasswordReset``).
+    """
+
+    detail: str = "If an account exists for this login, a password reset has been initiated."
+    """Static, login-independent acknowledgment text."""
+
+
+# ....................... #
+
+
+class AuthnResetPasswordDTO(BaseDTO):
+    """DTO for confirming a self-service password reset."""
+
+    token: str
+    """Single-use reset token received out of band."""
+
+    new_password: str
+    """New plaintext password to set once the token verifies."""
+
+
+# ....................... #
+
+
 class AuthnTokenResponseDTO(BaseDTO):
     """DTO for authentication token response.
 

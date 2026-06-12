@@ -1,3 +1,4 @@
+from datetime import timedelta
 from typing import TYPE_CHECKING, Self
 
 import attrs
@@ -80,6 +81,23 @@ class OperationRegistryBinder:
         return attrs.evolve(
             self, acc=attrs.evolve(self._acc, kind=OperationKind.COMMAND)
         )
+
+    # ....................... #
+
+    def with_deadline(self, deadline: timedelta) -> Self:
+        """Declare a per-invocation time budget for these operations.
+
+        Bound at operation entry, so the budget covers the whole plan (hooks,
+        transaction, dispatch) and propagates to dispatched operations; expiry
+        raises a non-retryable ``TIMEOUT`` (``code="deadline_exceeded"``).
+        Merge is restrictive: across patches, explicit plans, and a
+        caller-bound deadline, the tightest budget wins — a layer can shorten
+        it, never extend it. Works in patch mode too, e.g.
+        ``registry.patch(selector).with_deadline(timedelta(seconds=10)).finish()``
+        for a fleet-wide default.
+        """
+
+        return attrs.evolve(self, acc=attrs.evolve(self._acc, deadline=deadline))
 
     # ....................... #
 

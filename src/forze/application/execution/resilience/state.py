@@ -1,11 +1,15 @@
-"""Process-local mutable state for circuit breaker, bulkhead, and retry budget."""
-
-from __future__ import annotations
+"""Process-local mutable state for circuit breaker, bulkhead, rate limit, and retry budget."""
 
 import asyncio
-from typing import Literal
+import time
+from collections import deque
+from typing import Callable, Literal
 
 import attrs
+
+from forze.base.exceptions import exc
+
+from ..context.deadline import current_deadline
 
 # ----------------------- #
 
@@ -14,7 +18,6 @@ BreakerPhase = Literal["closed", "open", "half_open"]
 
 Transition = Literal["open", "closed", "half_open"] | None
 """Phase transition emitted by a state update, or ``None`` when unchanged."""
-
 
 # ....................... #
 
@@ -111,29 +114,46 @@ class BreakerState:
 
 
 @attrs.define(slots=True)
-class BulkheadState:
-    """Concurrency limiter with a bounded waiting queue."""
+class RateLimitState:
+    """Token-bucket rate limiter state keyed by ``(policy, route)``.
 
-    max_concurrency: int
-    max_queue: int
-    sem: asyncio.Semaphore = attrs.field(
-        default=attrs.Factory(
-            lambda self: asyncio.Semaphore(self.max_concurrency),
-            takes_self=True,
-        ),
-        init=False,
+    Refill is computed lazily on each acquire from the monotonic-clock delta —
+    no background task. Mutation happens synchronously between awaits, so the
+    state is safe under a single event loop without locks (same model as
+    :class:`BulkheadState` and :class:`BudgetState`).
+    """
+
+    rate: float
+    """Tokens refilled per second (``permits / per``)."""
+
+    capacity: float
+    """Maximum tokens the bucket holds (``burst or permits``); starts full."""
+
+    tokens: float = attrs.field(
+        default=attrs.Factory(lambda self: self.capacity, takes_self=True),
     )
-    waiting: int = 0
+    """Currently available tokens."""
+
+    updated_at: float = 0.0
+    """Monotonic timestamp of the last refill computation."""
 
     # ....................... #
 
-    def can_admit(self) -> bool:
-        """Return whether a call may acquire a slot or join the wait queue."""
+    def try_acquire(self, now: float) -> bool:
+        """Refill from elapsed time, then spend one token if available."""
 
-        if not self.sem.locked():
+        elapsed = now - self.updated_at
+
+        if elapsed > 0:
+            self.tokens = min(self.capacity, self.tokens + elapsed * self.rate)
+
+        self.updated_at = now
+
+        if self.tokens >= 1.0:
+            self.tokens -= 1.0
             return True
 
-        return self.waiting < self.max_queue
+        return False
 
 
 # ....................... #
@@ -172,5 +192,223 @@ class BudgetState:
         if self.tokens >= 1.0:
             self.tokens -= 1.0
             return True
+
+        return False
+
+
+# ....................... #
+
+
+@attrs.define(slots=True)
+class AdaptiveBulkheadState:
+    """AIMD concurrency limiter: counter-based admission with a dynamic limit.
+
+    A semaphore cannot change capacity, so admission is an ``in_use`` counter
+    plus a FIFO of waiter futures: admit while ``in_use < floor(limit)``, park
+    up to ``max_queue`` waiters, wake them on release. Shrinking the limit
+    never evicts in-flight work — it only gates new admissions.
+
+    The AIMD controller: an in-budget completion adds ``increase_step / limit``
+    (one slot per ~limit successes); a breach multiplies by ``backoff_ratio``,
+    at most once per ``cooldown`` so a burst of slow completions backs off once
+    instead of collapsing the limit to the floor. Single-event-loop discipline:
+    state mutations happen between awaits.
+    """
+
+    latency_threshold: float
+    min_concurrency: int
+    max_concurrency: int
+    max_queue: int
+    backoff_ratio: float
+    increase_step: float
+    cooldown: float
+
+    clock: Callable[[], float] = time.monotonic
+    """Time source for queue sojourn/congestion tracking (injectable for tests).
+    Waiter *deadlines* always compare against ``time.monotonic`` — they come
+    from the deadline ContextVar, which is monotonic-based by contract."""
+
+    queue_target_s: float | None = None
+    """CoDel target sojourn (seconds): under sustained congestion, a waiter
+    queued longer than this is shed at dequeue. ``None`` disables CoDel."""
+
+    queue_interval_s: float = 0.1
+    """CoDel interval (seconds): the sojourn allowance while the queue has
+    recently been empty, and the congestion detection window."""
+
+    queue_adaptive_lifo: bool = False
+    """Serve the *newest* waiter first while congested (its client is the most
+    likely to still be waiting); FIFO otherwise."""
+
+    limit: float = attrs.field(
+        default=attrs.Factory(lambda self: float(self.max_concurrency), takes_self=True),
+        init=False,
+    )
+    """Current concurrency limit (floored to int for admission)."""
+
+    in_use: int = attrs.field(default=0, init=False)
+    """Admitted calls currently in flight."""
+
+    waiting: int = attrs.field(default=0, init=False)
+    """Calls parked waiting for a slot."""
+
+    last_decrease_at: float = attrs.field(default=float("-inf"), init=False)
+    """Clock of the last multiplicative decrease (cooldown anchor)."""
+
+    last_empty_at: float = attrs.field(
+        default=attrs.Factory(lambda self: self.clock(), takes_self=True),
+        init=False,
+    )
+    """Last instant the wait queue was observed empty (congestion anchor)."""
+
+    _waiters: deque[tuple[asyncio.Future[None], float | None, float]] = attrs.field(
+        factory=deque,
+        init=False,
+    )
+
+    # ....................... #
+
+    def can_admit(self) -> bool:
+        """Whether a call may take a slot or join the wait queue."""
+
+        if self.in_use < int(self.limit):
+            return True
+
+        return self.waiting < self.max_queue
+
+    # ....................... #
+
+    async def acquire(self) -> None:
+        """Take a slot, waiting in FIFO order when the limit is saturated.
+
+        Waiters carry their invocation deadline (captured at park time): a
+        waiter whose budget expired while parked is failed at wake instead of
+        being granted a slot it can only waste — the outer deadline timeout
+        would reclaim the grant immediately anyway.
+        """
+
+        if self.in_use < int(self.limit) and not self._waiters:
+            self.in_use += 1
+            return
+
+        if self._tracks_congestion() and not self._waiters:
+            # The queue was empty until this park: reset the congestion anchor.
+            self.last_empty_at = self.clock()
+
+        waiter: asyncio.Future[None] = asyncio.get_running_loop().create_future()
+        entry = (waiter, current_deadline(), self.clock())
+        self._waiters.append(entry)
+        self.waiting += 1
+
+        try:
+            await waiter
+
+        except asyncio.CancelledError:
+            if not waiter.cancelled() and waiter.done():
+                # Slot was granted concurrently with the cancellation: return
+                # it so the capacity is not leaked.
+                self.in_use -= 1
+                self._wake()
+
+            raise
+
+        finally:
+            self.waiting -= 1
+
+            if not waiter.done():
+                self._waiters.remove(entry)
+
+    # ....................... #
+
+    def release(self) -> None:
+        """Return a slot and wake a waiter if capacity allows."""
+
+        self.in_use -= 1
+        self._wake()
+
+    # ....................... #
+
+    def _tracks_congestion(self) -> bool:
+        """Whether any queue feature needs the congestion anchor maintained."""
+
+        return self.queue_target_s is not None or self.queue_adaptive_lifo
+
+    # ....................... #
+
+    def _congested(self, now: float) -> bool:
+        """Sustained congestion: the queue has not been empty for an interval."""
+
+        return bool(self._waiters) and now - self.last_empty_at >= self.queue_interval_s
+
+    # ....................... #
+
+    def _wake(self) -> None:
+        now = self.clock()
+        congested = self._congested(now)
+
+        while self._waiters and self.in_use < int(self.limit):
+            # Adaptive LIFO: while congested, the newest waiter is the one
+            # whose client most likely still cares about the answer.
+            entry = (
+                self._waiters.pop()
+                if self.queue_adaptive_lifo and congested
+                else self._waiters.popleft()
+            )
+            waiter, deadline, enqueued_at = entry
+
+            if waiter.cancelled():
+                continue
+
+            if self.queue_target_s is not None:
+                # CoDel (simplified, Facebook-style): generous sojourn
+                # allowance while the queue has recently been empty, tight
+                # allowance under sustained congestion.
+                allowed = self.queue_target_s if congested else self.queue_interval_s
+
+                if now - enqueued_at > allowed:
+                    waiter.set_exception(
+                        exc.infrastructure(
+                            "Bulkhead queue shed: waiter exceeded its sojourn "
+                            "allowance under congestion",
+                            code="bulkhead_queue_shed",
+                        )
+                    )
+                    continue
+
+            if deadline is not None and time.monotonic() >= deadline:
+                # Expired while parked: fail it instead of granting a slot the
+                # outer deadline timeout would reclaim before any work ran.
+                waiter.set_exception(
+                    exc.timeout(
+                        "Invocation deadline expired while queued for a bulkhead slot",
+                        code="deadline_exceeded",
+                    )
+                )
+                continue
+
+            self.in_use += 1
+            waiter.set_result(None)
+
+        if self._tracks_congestion() and not self._waiters:
+            self.last_empty_at = self.clock()
+
+    # ....................... #
+
+    def on_complete(self, latency: float, now: float) -> bool:
+        """Adjust the limit for a completed call; return ``True`` on a decrease."""
+
+        if latency > self.latency_threshold:
+            if now - self.last_decrease_at < self.cooldown:
+                return False
+
+            self.last_decrease_at = now
+            self.limit = max(float(self.min_concurrency), self.limit * self.backoff_ratio)
+
+            return True
+
+        self.limit = min(
+            float(self.max_concurrency),
+            self.limit + self.increase_step / max(self.limit, 1.0),
+        )
 
         return False

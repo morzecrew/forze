@@ -1,7 +1,14 @@
 """Structural protocol for RabbitMQ clients (single DSN or tenant-routed)."""
 
 from datetime import datetime, timedelta
-from typing import AsyncContextManager, AsyncGenerator, Awaitable, Protocol, Sequence
+from typing import (
+    AsyncContextManager,
+    AsyncGenerator,
+    Awaitable,
+    Mapping,
+    Protocol,
+    Sequence,
+)
 
 from aio_pika.abc import AbstractChannel
 
@@ -31,6 +38,7 @@ class RabbitMQClientPort(Protocol):
         delay: timedelta | None = None,
         not_before: datetime | None = None,
         delayed_delivery: bool = False,
+        headers: Mapping[str, str] | None = None,
     ) -> Awaitable[str]: ...  # pragma: no cover
 
     def enqueue_many(
@@ -45,6 +53,7 @@ class RabbitMQClientPort(Protocol):
         delay: timedelta | None = None,
         not_before: datetime | None = None,
         delayed_delivery: bool = False,
+        headers: Mapping[str, str] | None = None,
     ) -> Awaitable[list[str]]: ...  # pragma: no cover
 
     def receive(

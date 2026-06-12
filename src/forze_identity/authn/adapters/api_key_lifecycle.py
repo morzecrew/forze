@@ -26,13 +26,18 @@ from ..services import ApiKeyService
 from ._utils import find_api_key_account_by_id, find_api_key_account_by_key_hash
 
 # ----------------------- #
-#! TODO: configurable prefix
 
 
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class ApiKeyLifecycleAdapter(ApiKeyLifecyclePort):
-    """API key lifecycle adapter."""
+    """API key lifecycle adapter.
+
+    The key prefix is configured on the service
+    (:class:`~forze_identity.authn.services.api_key.ApiKeyConfig.prefix`);
+    issued keys carry it verbatim and verification digests cover only the key
+    material, so the prefix is presentation/routing metadata, not a secret.
+    """
 
     api_key_svc: ApiKeyService
     """API key service."""

@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 from typing import (
     Any,
     AsyncGenerator,
+    Mapping,
     Sequence,
     cast,
     final,
@@ -33,7 +34,16 @@ from forze_mock.tenancy import MockTenancyMixin
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class MockPubSubAdapter(MockTenancyMixin, PubSubCommandPort[M], PubSubQueryPort[M]):
-    """In-memory pub/sub adapter backed by append-only topic logs."""
+    """In-memory pub/sub adapter backed by append-only topic logs.
+
+    **More durable than production.** The pubsub contract is at-most-once
+    (fire-and-forget), but this adapter retains every publish in an
+    inspectable per-topic log (``MockState.pubsub_logs``), and a slow
+    subscriber catches up from its cursor instead of dropping messages.
+    Consequently tests running against this mock cannot observe the
+    production loss mode (publish with zero live subscribers = silent loss) —
+    do not let a green test suite imply pubsub delivery guarantees.
+    """
 
     state: MockState
     namespace: str
@@ -60,6 +70,7 @@ class MockPubSubAdapter(MockTenancyMixin, PubSubCommandPort[M], PubSubQueryPort[
         type: str | None = None,
         key: str | None = None,
         published_at: datetime | None = None,
+        headers: Mapping[str, str] | None = None,
     ) -> None:
         message = PubSubMessage(
             topic=topic,
@@ -67,6 +78,7 @@ class MockPubSubAdapter(MockTenancyMixin, PubSubCommandPort[M], PubSubQueryPort[
             type=type,
             key=key,
             published_at=published_at or utcnow(),
+            headers=dict(headers) if headers else {},
         )
         with self.state.lock:
             self._topic_store().setdefault(topic, []).append(message)

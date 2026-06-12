@@ -14,7 +14,7 @@
 
 </div>
 
-**Forze** is a lightweight infrastructure toolkit for building backend services
+**Forze** is an infrastructure toolkit for building backend services
 with Domain-Driven Design and Hexagonal Architecture.
 
 It provides a set of reusable primitives, contracts, and structural patterns

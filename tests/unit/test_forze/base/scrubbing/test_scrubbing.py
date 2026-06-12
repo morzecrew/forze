@@ -142,8 +142,6 @@ class TestRegisterSensitivePatterns:
 
         keys = list(policy._EXTRA_SENSITIVE_KEY_PATTERNS)
         logs = list(policy._EXTRA_LOG_STRING_PATTERNS)
-        key_re = policy._sensitive_key_re
-        log_re = policy._log_string_re
 
         try:
             yield
@@ -151,8 +149,9 @@ class TestRegisterSensitivePatterns:
         finally:
             policy._EXTRA_SENSITIVE_KEY_PATTERNS[:] = keys
             policy._EXTRA_LOG_STRING_PATTERNS[:] = logs
-            policy._sensitive_key_re = key_re
-            policy._log_string_re = log_re
+            # Rebuild through the chokepoint so the key memo and the
+            # prefilter literals are regenerated, not just the regexes.
+            policy._rebuild_matchers()
 
     def test_custom_key_pattern_masks_value(self) -> None:
         field = "acme_widget_handle"
@@ -180,3 +179,154 @@ class TestRegisterSensitivePatterns:
         # An empty fragment would otherwise match everything; it must be dropped.
         assert sanitize({"plain_field": "v"}, context="log") == {"plain_field": "v"}
         assert scrub_log_string("nothing sensitive here") == "nothing sensitive here"
+
+    def test_key_cache_invalidated_on_register(self) -> None:
+        from forze.base.scrubbing.policy import is_sensitive_key
+
+        field = "acme_widget_handle"
+
+        # Prime the memo with a negative answer, twice (second call is a cache hit).
+        assert is_sensitive_key(field) is False
+        assert is_sensitive_key(field) is False
+
+        register_sensitive_patterns(keys=[r"widget[._ -]?handle"])
+
+        # The mutator must clear the memo, or the stale False would leak secrets.
+        assert is_sensitive_key(field) is True
+
+    def test_pattern_without_literal_disables_prefilter_but_scrubs(self) -> None:
+        from forze.base.scrubbing import policy
+
+        # Built-in patterns all contribute literals: prefilter starts active.
+        assert policy._log_string_literals is not None
+
+        # A raw digit-run pattern has no required literal substring.
+        register_sensitive_patterns(log_strings=[r"\d{16}"])
+
+        assert policy._log_string_literals is None  # prefilter disabled for safety
+        result = scrub_log_string("card 1234567812345678 charged")
+        assert "1234567812345678" not in result
+        assert SECRET_PLACEHOLDER in result
+        # No-match strings still pass through unchanged (just slower).
+        assert scrub_log_string("plain order message") == "plain order message"
+
+    def test_custom_literal_pattern_keeps_prefilter_active(self) -> None:
+        from forze.base.scrubbing import policy
+
+        register_sensitive_patterns(log_strings=[r"ACME-TOKEN-\S+"])
+
+        literals = policy._log_string_literals
+        assert literals is not None
+        assert any(lit in "acme-token-" for lit in literals)
+        assert SECRET_PLACEHOLDER in scrub_log_string("issued ACME-TOKEN-abc123")
+
+
+# ----------------------- #
+# Prefilter supersetness proof
+# ----------------------- #
+
+# One matching sample per built-in log-string fragment. The exhaustiveness test
+# below fails when a fragment is added without a sample here.
+_FRAGMENT_SAMPLES: dict[str, str] = {
+    r"(?:password|passwd|secret|token|api[._ -]?key)\s*[=:]\s*\S+": "retry with api key=abc123",
+    "password": "the password leaked",
+    "passwd": "passwd file touched",
+    "mysql_pwd": "MYSQL_PWD was exported",
+    "secret": "a secret value appeared",
+    r"auth(?!ors?\b)": "auth handshake failed",
+    "credential": "credential rotation due",
+    "private[._ -]?key": "private key on disk",
+    "api[._ -]?key": "api_key present in env",
+    "session": "session expired early",
+    "cookie": "cookie jar persisted",
+    "social[._ -]?security": "social security number on file",
+    "credit[._ -]?card": "credit card declined",
+    "logfire[._ -]?token": "logfire token configured",
+    r"(?:\b|_)csrf(?:\b|_)": "csrf check failed",
+    r"(?:\b|_)xsrf(?:\b|_)": "xsrf header missing",
+    r"(?:\b|_)jwt(?:\b|_)": "jwt validation error",
+    r"(?:\b|_)ssn(?:\b|_)": "ssn redaction needed",
+    r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}": "mail sent to alice@example.com today",
+    r"Bearer\s+\S+": "header was Bearer eyJhbGci.x.y",
+    r"postgresql(?:\+[a-z]+)?://\S+": "dsn postgresql+asyncpg://u:p@db:5432/app",
+    r"mysql(?:\+[a-z]+)?://\S+": "dsn mysql://u:p@db:3306/app",
+    r"redis(?:\+[a-z]+)?://\S+": "cache at redis://cache:6379/0",
+    r"amqps?://\S+": "broker amqps://guest:guest@mq:5671/",
+    r'"private_key"\s*:\s*"[^"]*"': 'cfg {"private_key": "-----BEGIN-----"}',
+}
+
+
+class TestPrefilterSupersetness:
+    """The literal prefilter must never skip a string the combined regex scrubs."""
+
+    def test_every_builtin_fragment_has_a_sample(self) -> None:
+        from forze.base.scrubbing import policy
+
+        builtin = {
+            *policy._LOG_ASSIGNMENT_FRAGMENTS,
+            *policy._LOGFIRE_SENSITIVE_FRAGMENTS,
+            *policy._LOG_STRING_EXTRAS,
+        }
+        assert builtin == set(_FRAGMENT_SAMPLES)
+
+    def test_prefilter_is_active_by_default(self) -> None:
+        from forze.base.scrubbing import policy
+
+        assert policy._log_string_literals is not None
+
+    @pytest.mark.parametrize(
+        ("fragment", "sample"),
+        sorted(_FRAGMENT_SAMPLES.items()),
+        ids=lambda v: repr(v)[:40],
+    )
+    def test_prefilter_passes_every_matching_sample(
+        self, fragment: str, sample: str
+    ) -> None:
+        import re
+
+        from forze.base.scrubbing import policy
+
+        # The sample really matches this individual fragment...
+        assert re.compile(fragment, policy._SCRUB_FLAGS).search(sample), fragment
+
+        # ...the prefilter does not reject it (a literal is present)...
+        literals = policy._log_string_literals
+        assert literals is not None
+        lowered = sample.lower()
+        assert any(lit in lowered for lit in literals), (fragment, sample)
+
+        # ...and end-to-end scrubbing through the prefilter masks it.
+        result = scrub_log_string(sample)
+        assert result != sample
+        assert SECRET_PLACEHOLDER in result
+
+
+class TestScrubPrefilterBehaviorIdentical:
+    """Prefiltered scrub_log_string is byte-identical to the raw combined regex."""
+
+    _CORPUS = (
+        "order 12345 fulfilled for customer 9876 in region eu-west-1",
+        "call back at +1 (555) 010-2030 tomorrow",  # phone: no pattern, untouched
+        "Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.payload.sig",
+        "connect failed: postgresql://user:hunter2@db.example.com:5432/app",
+        "cache: redis://:p4ss@cache.internal:6379/2",
+        "broker amqp://guest:guest@mq:5672/vhost",
+        "notify alice@example.com and bob.smith+tag@sub.example.org",
+        "login failed: password=hunter2 attempt=3",
+        'loaded {"private_key": "-----BEGIN PRIVATE KEY-----"}',
+        "the jwt expired; csrf token mismatch",
+        "plain message with no sensitive content at all",
+        "",
+    )
+
+    @pytest.mark.parametrize("text", _CORPUS, ids=lambda t: t[:32] or "<empty>")
+    def test_matches_raw_regex_substitution(self, text: str) -> None:
+        from forze.base.scrubbing import policy
+
+        assert scrub_log_string(text) == policy._log_string_re.sub(
+            SECRET_PLACEHOLDER, text
+        )
+
+    def test_no_match_strings_returned_unchanged(self) -> None:
+        msg = "order 12345 fulfilled for customer 9876"
+        assert scrub_log_string(msg) == msg

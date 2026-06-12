@@ -77,5 +77,5 @@ class TestOperationRegistryFreeze:
     def test_registry_merge_detects_handler_conflicts(self) -> None:
         left = OperationRegistry(handlers={"op": lambda _ctx: None})
         right = OperationRegistry(handlers={"op": lambda _ctx: None})
-        with pytest.raises(CoreException, match="Conflicting handler"):
+        with pytest.raises(CoreException, match=r"duplicate handler factories.*'op'"):
             OperationRegistry.merge(left, right)

@@ -1,9 +1,11 @@
 """Tenant-routed object-storage client base shared by S3/GCS integrations."""
 
+from datetime import timedelta
 from typing import Protocol
 
 import attrs
 
+from forze.application.contracts.storage import PresignedUrl
 from forze.application.contracts.tenancy.routed_client_base import (
     StructuredSecretRoutedTenantClientBase,
 )
@@ -133,3 +135,37 @@ class RoutedObjectStorageClientBase[C: _RoutedStorageInnerClient](
 
         async with inner.client():
             return await inner.head_object(bucket, key, include_tags=include_tags)
+
+    async def presign_download_url(
+        self,
+        bucket: str,
+        key: str,
+        *,
+        expires_in: timedelta,
+    ) -> PresignedUrl:
+        inner = await self._get_client()
+
+        async with inner.client():
+            return await inner.presign_download_url(
+                bucket,
+                key,
+                expires_in=expires_in,
+            )
+
+    async def presign_upload_url(
+        self,
+        bucket: str,
+        key: str,
+        *,
+        expires_in: timedelta,
+        content_type: str | None = None,
+    ) -> PresignedUrl:
+        inner = await self._get_client()
+
+        async with inner.client():
+            return await inner.presign_upload_url(
+                bucket,
+                key,
+                expires_in=expires_in,
+                content_type=content_type,
+            )

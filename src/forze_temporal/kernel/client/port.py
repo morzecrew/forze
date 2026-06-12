@@ -34,7 +34,11 @@ class TemporalClientPort(Protocol):
     ) -> Awaitable[WorkflowHandle[Any, Any]]: ...  # pragma: no cover
 
     def get_workflow_handle(
-        self, workflow_id: str, *, run_id: str | None = None
+        self,
+        workflow_id: str,
+        *,
+        run_id: str | None = None,
+        result_type: type | None = None,
     ) -> WorkflowHandle[Any, Any]: ...  # pragma: no cover
 
     def signal_workflow(
@@ -53,6 +57,7 @@ class TemporalClientPort(Protocol):
         query: str,
         arg: BaseModel,
         run_id: str | None = None,
+        result_type: type | None = None,
     ) -> Awaitable[Any]: ...  # pragma: no cover
 
     def update_workflow(
@@ -62,6 +67,7 @@ class TemporalClientPort(Protocol):
         update: str,
         arg: BaseModel,
         run_id: str | None = None,
+        result_type: type | None = None,
     ) -> Awaitable[Any]: ...  # pragma: no cover
 
     def get_workflow_result(
@@ -69,6 +75,7 @@ class TemporalClientPort(Protocol):
         workflow_id: str,
         *,
         run_id: str | None = None,
+        result_type: type | None = None,
     ) -> Awaitable[Any]: ...  # pragma: no cover
 
     def describe_workflow(

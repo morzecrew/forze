@@ -11,8 +11,8 @@ from forze.application.contracts.execution import ExecutionGraph, LifecycleStep
 from forze.application.contracts.execution.builders import steps_graph_from_sequence
 from forze.base.primitives import AbstractSequence
 
-from .run import run_lifecycle_shutdown, run_lifecycle_startup
 from .module import LifecycleModule
+from .run import run_lifecycle_shutdown, run_lifecycle_startup
 
 if TYPE_CHECKING:
     from ..context import ExecutionContext

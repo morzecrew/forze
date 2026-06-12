@@ -31,6 +31,7 @@ from forze.application.contracts.authz.value_objects import (
     PrincipalRef,
     RoleRef,
 )
+from forze.base.exceptions import exc
 from forze.base.primitives import utcnow, uuid7
 from forze_mock.state import MockState
 
@@ -213,21 +214,95 @@ class MockDelegationPort(DelegationPort):
         return self.allow_by_default
 
 
+def _grant_store(state: MockState, route: str) -> set[tuple[str, str, str | None]]:
+    """Seeded permission grants: ``(principal_id, permission_key, tenant_id | None)``."""
+
+    store = _route_store(state, route)
+    grants = store.setdefault("grants", set())  # type: ignore[assignment]
+    assert isinstance(grants, set)  # nosec: B101
+    return grants  # type: ignore[return-value]
+
+
 @final
 @attrs.define(slots=True, kw_only=True)
 class MockAuthzDecisionPort(AuthzDecisionPort):
-    """Constant authz decision stub.
+    """Grant-aware authz decision stub.
 
-    Deny-by-default (proper enforcement semantics, consistent with
-    :class:`MockDelegationPort`); set ``allow_by_default=True`` explicitly for a
-    permissive stub when a test's purpose isn't authz.
+    Mirrors the real catalog-backed evaluation at mock fidelity: a request is
+    allowed when ``request.action`` matches a permission key seeded for the
+    subject via :meth:`seed_grant`. Grants are tenant-scoped — a grant seeded
+    with a ``tenant_id`` only matches requests whose policy scope carries that
+    tenant; a grant seeded without one is global and matches any scope.
+
+    Back-compat fallback: with no bound state, or **no grants seeded at all** on
+    the route, the port behaves as the original constant stub — deny-by-default
+    (proper enforcement semantics, consistent with :class:`MockDelegationPort`);
+    set ``allow_by_default=True`` explicitly for a permissive stub when a test's
+    purpose isn't authz.
     """
 
+    state: MockState | None = None
+    route: str = "main"
     allow_by_default: bool = False
 
+    # ....................... #
+
+    def seed_grant(
+        self,
+        principal_id: UUID,
+        permission: str,
+        tenant_id: UUID | None = None,
+    ) -> None:
+        """Seed a permission grant for ``principal_id`` (optionally tenant-scoped)."""
+
+        if self.state is None:
+            raise exc.configuration(
+                "MockAuthzDecisionPort.seed_grant requires a bound MockState",
+            )
+
+        with self.state.lock:
+            _grant_store(self.state, self.route).add(
+                (
+                    str(principal_id),
+                    permission,
+                    str(tenant_id) if tenant_id is not None else None,
+                )
+            )
+
+    # ....................... #
+
     async def authorize(self, request: AuthzRequest) -> AuthzDecision:
-        _ = request
-        return AuthzDecision(allowed=self.allow_by_default)
+        if self.state is None:
+            return AuthzDecision(allowed=self.allow_by_default)
+
+        with self.state.lock:
+            grants = _grant_store(self.state, self.route)
+
+            if not grants:
+                return AuthzDecision(allowed=self.allow_by_default)
+
+            principal_id = str(request.subject.principal_id)
+            tenant_id = (
+                str(request.scope.tenant_id)
+                if request.scope.tenant_id is not None
+                else None
+            )
+
+            matched = (principal_id, request.action, None) in grants or (
+                tenant_id is not None
+                and (principal_id, request.action, tenant_id) in grants
+            )
+
+        if matched:
+            return AuthzDecision(
+                allowed=True,
+                matched_permission_key=request.action,
+            )
+
+        return AuthzDecision(
+            allowed=False,
+            reason=f"No grant for permission {request.action!r}",
+        )
 
 
 @final

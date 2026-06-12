@@ -22,7 +22,12 @@ from forze.base.primitives import JsonDict
 
 from .client import RedisClient
 from .port import RedisClientPort
-from .types import RedisPubSubMessage, RedisStreamResponse
+from .types import (
+    RedisAutoClaimResponse,
+    RedisPendingEntry,
+    RedisPubSubMessage,
+    RedisStreamResponse,
+)
 from .value_objects import RedisConfig
 
 # ----------------------- #
@@ -260,3 +265,41 @@ class RoutedRedisClient(DsnRoutedTenantClientBase[RedisClient], RedisClientPort)
     async def xack(self, stream: str, group: str, ids: Sequence[str]) -> int:
         inner = await self._get_client()
         return await inner.xack(stream, group, ids)
+
+    async def xautoclaim(
+        self,
+        stream: str,
+        group: str,
+        consumer: str,
+        *,
+        min_idle_ms: int,
+        start_id: str = "0-0",
+        count: int | None = None,
+    ) -> RedisAutoClaimResponse:
+        inner = await self._get_client()
+        return await inner.xautoclaim(
+            stream,
+            group,
+            consumer,
+            min_idle_ms=min_idle_ms,
+            start_id=start_id,
+            count=count,
+        )
+
+    async def xpending(
+        self,
+        stream: str,
+        group: str,
+        *,
+        count: int,
+        start_id: str = "-",
+        end_id: str = "+",
+    ) -> list[RedisPendingEntry]:
+        inner = await self._get_client()
+        return await inner.xpending(
+            stream,
+            group,
+            count=count,
+            start_id=start_id,
+            end_id=end_id,
+        )

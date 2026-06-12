@@ -275,3 +275,44 @@ min_throughput, break_duration_s, half_open_max_calls, ttl_ms.
 
 Returns ``"<phase>:<transition>"`` — transition ``none``/``open``/``closed``.
 """
+
+RATE_LIMIT_ACQUIRE: Final = """
+local t = redis.call('TIME')
+local now = tonumber(t[1]) + tonumber(t[2]) / 1000000
+
+local rate = tonumber(ARGV[1])
+local capacity = tonumber(ARGV[2])
+local ttl_ms = tonumber(ARGV[3])
+
+local data = redis.call('HMGET', KEYS[1], 'tokens', 'updated_at')
+local tokens = tonumber(data[1])
+local updated_at = tonumber(data[2])
+
+if tokens == nil or updated_at == nil then
+    tokens = capacity
+    updated_at = now
+end
+
+local elapsed = now - updated_at
+if elapsed > 0 then
+    tokens = math.min(capacity, tokens + elapsed * rate)
+end
+
+local allowed = 0
+if tokens >= 1 then
+    tokens = tokens - 1
+    allowed = 1
+end
+
+redis.call('HSET', KEYS[1], 'tokens', tokens, 'updated_at', now)
+redis.call('PEXPIRE', KEYS[1], ttl_ms)
+
+return tostring(allowed)
+"""
+"""Atomic token-bucket acquire (server-side port of ``RateLimitState.try_acquire``).
+
+KEYS[1]: bucket state hash. ARGV: rate (tokens/second), capacity, ttl_ms. Uses
+server ``TIME`` (no clock skew); the bucket starts full on first touch.
+
+Returns ``"1"`` (token consumed) or ``"0"`` (rejected, bucket empty).
+"""

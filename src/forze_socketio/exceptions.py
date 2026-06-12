@@ -70,6 +70,7 @@ def is_server_error_kind(kind: ExceptionKind) -> bool:
             | ExceptionKind.PRECONDITION
             | ExceptionKind.AUTHENTICATION
             | ExceptionKind.AUTHORIZATION
+            | ExceptionKind.THROTTLED
         ):
             return False
 

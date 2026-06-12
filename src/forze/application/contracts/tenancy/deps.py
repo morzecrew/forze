@@ -1,5 +1,7 @@
 from uuid import UUID
 
+from forze.base.exceptions import exc
+
 from ..deps import ConvenientDeps, DepKey, SimpleDepPort
 from .helpers import require_tenant_id
 from .ports import TenantManagementPort, TenantResolverPort
@@ -36,6 +38,26 @@ class TenancyDeps(ConvenientDeps):
             return None
 
         return self._resolve_simple(TenantResolverDepKey)
+
+    # ....................... #
+
+    def require_resolver(self) -> TenantResolverPort:
+        """Return the tenant resolver port, raising when none is registered.
+
+        Raising variant of :meth:`resolver` (mirroring :meth:`require_current_id`)
+        for callers that treat a missing resolver as a wiring error rather than
+        a feature toggle.
+        """
+
+        resolver = self.resolver()
+
+        if resolver is None:
+            raise exc.configuration(
+                "Tenant resolver is not registered "
+                f"(no {TenantResolverDepKey.name!r} dependency)",
+            )
+
+        return resolver
 
     # ....................... #
 

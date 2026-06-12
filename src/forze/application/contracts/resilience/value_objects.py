@@ -90,6 +90,86 @@ class RetryBudget:
 
 @final
 @attrs.define(slots=True, frozen=True, kw_only=True)
+class RateLimitStrategy:
+    """Token-bucket rate limiter: sustained rate ``permits/per``, capacity ``burst or permits``.
+
+    The bucket starts full and refills continuously at the sustained rate.
+    Each call consumes one token; a call that finds the bucket empty is
+    **rejected immediately** (no queuing) with
+    ``exc.throttled(code="rate_limited", details={"policy": ..., "route": ...})``.
+
+    The limiter composes **outermost** (before Bulkhead): it caps the admission
+    rate of the whole pipeline, and its rejection is *not* retried by the same
+    policy's (inner) Retry strategy. To **wait** for capacity instead of failing
+    fast, compose at the next level out: ``THROTTLED`` is classified retryable,
+    so a retry-with-backoff policy *around* the rate-limited call turns
+    rejection into waiting::
+
+        # Policy A: the limit itself (e.g. attached to a port via PortPolicy).
+        limited = ResiliencePolicy(
+            name="vendor_api",
+            strategies=(RateLimitStrategy(permits=10, per=timedelta(seconds=1)),),
+        )
+
+        # Policy B: wait out the throttle at the call site.
+        patient = ResiliencePolicy(
+            name="patient",
+            strategies=(
+                RetryStrategy(
+                    max_attempts=4,
+                    backoff=BackoffStrategy(
+                        base=timedelta(milliseconds=100),
+                        max=timedelta(seconds=2),
+                    ),
+                    retry_on=frozenset({ExceptionKind.THROTTLED}),
+                ),
+            ),
+        )
+
+        result = await ctx.resilience().run(
+            lambda: vendor.fetch(...),  # raises THROTTLED when the bucket is empty
+            policy="patient",
+        )
+
+    The same retry also waits out backend-raised throttles (e.g. an HTTP 429
+    mapped to ``THROTTLED``) — the limiter and the backend reject the same way.
+    """
+
+    permits: int
+    """Permits issued per ``per`` window (sustained rate numerator, ``>= 1``)."""
+
+    per: timedelta
+    """Window over which ``permits`` tokens refill (sustained rate denominator)."""
+
+    burst: int | None = None
+    """Bucket capacity (max tokens saved up); defaults to ``permits``."""
+
+    # ....................... #
+
+    def __attrs_post_init__(self) -> None:
+        if self.permits < 1:
+            raise exc.configuration("Rate limit permits must be >= 1")
+
+        if self.per.total_seconds() <= 0:
+            raise exc.configuration("Rate limit per must be positive")
+
+        if self.burst is not None and self.burst < 1:
+            raise exc.configuration("Rate limit burst must be >= 1")
+
+    # ....................... #
+
+    @property
+    def capacity(self) -> int:
+        """Effective bucket capacity (``burst`` or ``permits``)."""
+
+        return self.burst if self.burst is not None else self.permits
+
+
+# ....................... #
+
+
+@final
+@attrs.define(slots=True, frozen=True, kw_only=True)
 class BulkheadStrategy:
     """Concurrency limiter with a bounded waiting queue."""
 
@@ -99,6 +179,24 @@ class BulkheadStrategy:
     max_queue: int = 0
     """Maximum number of calls allowed to wait for a slot before rejection."""
 
+    queue_target: timedelta | None = None
+    """CoDel target sojourn: under *sustained* congestion (the queue has not
+    been empty for ``queue_interval``), a waiter parked longer than this is
+    shed at dequeue with ``code="bulkhead_queue_shed"`` — bounding queueing by
+    *time* the caller experiences, not just queue length. ``None`` (default)
+    keeps the size-only bound. Requires ``max_queue >= 1``."""
+
+    queue_interval: timedelta = timedelta(milliseconds=100)
+    """CoDel interval: the congestion-detection window and the generous sojourn
+    allowance while the queue has recently been empty."""
+
+    queue_adaptive_lifo: bool = False
+    """Serve the *newest* waiter first while congested — its client is the one
+    most likely still waiting (Facebook, "Fail at Scale"); FIFO otherwise.
+    Deliberately starves the old tail under overload; pair with
+    ``queue_target`` so the starved tail is shed instead of parked forever.
+    Requires ``max_queue >= 1``."""
+
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
@@ -107,6 +205,145 @@ class BulkheadStrategy:
 
         if self.max_queue < 0:
             raise exc.configuration("Bulkhead max_queue must be >= 0")
+
+        if self.queue_target is not None and self.queue_target.total_seconds() <= 0:
+            raise exc.configuration("Bulkhead queue_target must be positive")
+
+        if self.queue_interval.total_seconds() <= 0:
+            raise exc.configuration("Bulkhead queue_interval must be positive")
+
+        if (
+            self.queue_target is not None
+            and self.queue_target >= self.queue_interval
+        ):
+            raise exc.configuration(
+                "Bulkhead queue_target must be smaller than queue_interval"
+            )
+
+        if (
+            self.queue_target is not None or self.queue_adaptive_lifo
+        ) and self.max_queue < 1:
+            raise exc.configuration(
+                "Bulkhead queue management (queue_target / queue_adaptive_lifo) "
+                "requires max_queue >= 1"
+            )
+
+
+# ....................... #
+
+
+@final
+@attrs.define(slots=True, frozen=True, kw_only=True)
+class AdaptiveBulkheadStrategy:
+    """AIMD concurrency limiter: a bulkhead that backs off under latency pressure.
+
+    Starts at ``max_concurrency`` and behaves exactly like a fixed bulkhead
+    until a completed call exceeds ``latency_threshold``; the limit then
+    decreases multiplicatively (``limit *= backoff_ratio``, at most once per
+    ``cooldown``) and recovers additively (``+= increase_step / limit`` per
+    in-budget completion — one slot per ~limit successes, the TCP-style probe).
+    AIMD is the principled choice for *uncoordinated* replicas: N process-local
+    limits sharing one downstream converge like N TCP flows sharing a link, so
+    no distributed state is needed.
+
+    Congestion signal is **latency only** — errors stay the circuit breaker's
+    job (a fast-failing downstream must not crater concurrency exactly when
+    failures are cheap). A per-attempt timeout firing counts as a breach at the
+    timeout value. The sample is the whole guarded call (retries and backoff
+    sleeps included when composed with a Retry strategy) — set the threshold
+    for the logical call, not the single attempt.
+
+    Shrinking never evicts in-flight work: the limit only gates admission.
+    Mutually exclusive with :class:`BulkheadStrategy` within one policy.
+    """
+
+    latency_threshold: timedelta
+    """Completed-call latency above this counts as congestion."""
+
+    max_concurrency: int
+    """Ceiling and initial limit."""
+
+    min_concurrency: int = 1
+    """Floor the limit never decreases below."""
+
+    max_queue: int = 0
+    """Maximum number of calls allowed to wait for a slot before rejection."""
+
+    backoff_ratio: float = 0.9
+    """Multiplicative decrease applied on a latency breach."""
+
+    increase_step: float = 1.0
+    """Additive recovery: ``increase_step / limit`` per in-budget completion."""
+
+    cooldown: timedelta = timedelta(seconds=1)
+    """Minimum spacing between decreases — coalesces a burst of slow
+    completions into one backoff instead of collapsing the limit to the floor."""
+
+    queue_target: timedelta | None = None
+    """CoDel target sojourn: under *sustained* congestion (the queue has not
+    been empty for ``queue_interval``), a waiter parked longer than this is
+    shed at dequeue with ``code="bulkhead_queue_shed"`` — bounding queueing by
+    *time* the caller experiences, not just queue length. ``None`` (default)
+    keeps the size-only bound. Requires ``max_queue >= 1``."""
+
+    queue_interval: timedelta = timedelta(milliseconds=100)
+    """CoDel interval: the congestion-detection window and the generous sojourn
+    allowance while the queue has recently been empty."""
+
+    queue_adaptive_lifo: bool = False
+    """Serve the *newest* waiter first while congested — its client is the one
+    most likely still waiting (Facebook, "Fail at Scale"); FIFO otherwise.
+    Deliberately starves the old tail under overload; pair with
+    ``queue_target`` so the starved tail is shed instead of parked forever.
+    Requires ``max_queue >= 1``."""
+
+    # ....................... #
+
+    def __attrs_post_init__(self) -> None:
+        if self.latency_threshold.total_seconds() <= 0:
+            raise exc.configuration("Adaptive bulkhead latency_threshold must be positive")
+
+        if self.min_concurrency < 1:
+            raise exc.configuration("Adaptive bulkhead min_concurrency must be >= 1")
+
+        if self.max_concurrency < self.min_concurrency:
+            raise exc.configuration(
+                "Adaptive bulkhead max_concurrency must be >= min_concurrency"
+            )
+
+        if self.max_queue < 0:
+            raise exc.configuration("Adaptive bulkhead max_queue must be >= 0")
+
+        if not 0.0 < self.backoff_ratio < 1.0:
+            raise exc.configuration("Adaptive bulkhead backoff_ratio must be in (0, 1)")
+
+        if self.increase_step <= 0:
+            raise exc.configuration("Adaptive bulkhead increase_step must be positive")
+
+        if self.cooldown.total_seconds() < 0:
+            raise exc.configuration("Adaptive bulkhead cooldown must be >= 0")
+
+        if self.queue_target is not None and self.queue_target.total_seconds() <= 0:
+            raise exc.configuration("Bulkhead queue_target must be positive")
+
+        if self.queue_interval.total_seconds() <= 0:
+            raise exc.configuration("Bulkhead queue_interval must be positive")
+
+        if (
+            self.queue_target is not None
+            and self.queue_target >= self.queue_interval
+        ):
+            raise exc.configuration(
+                "Bulkhead queue_target must be smaller than queue_interval"
+            )
+
+        if (
+            self.queue_target is not None or self.queue_adaptive_lifo
+        ) and self.max_queue < 1:
+            raise exc.configuration(
+                "Bulkhead queue management (queue_target / queue_adaptive_lifo) "
+                "requires max_queue >= 1"
+            )
 
 
 # ....................... #
@@ -255,7 +492,9 @@ class HedgeStrategy:
 # ....................... #
 
 Strategy = (
-    BulkheadStrategy
+    RateLimitStrategy
+    | BulkheadStrategy
+    | AdaptiveBulkheadStrategy
     | CircuitBreakerStrategy
     | RetryStrategy
     | TimeoutStrategy
@@ -264,7 +503,9 @@ Strategy = (
 """Union of all strategy value objects composable into a policy."""
 
 _STRATEGY_ORDER: tuple[type, ...] = (
+    RateLimitStrategy,
     BulkheadStrategy,
+    AdaptiveBulkheadStrategy,
     CircuitBreakerStrategy,
     RetryStrategy,
     TimeoutStrategy,
@@ -280,11 +521,14 @@ _STRATEGY_ORDER: tuple[type, ...] = (
 class ResiliencePolicy:
     """Ordered composition of strategies applied outer-to-inner around a call.
 
-    The canonical order is Bulkhead -> CircuitBreaker -> Retry -> Timeout, which
-    means the circuit breaker composes **outside** retry: the breaker admits and
-    records exactly **one** outcome per logical call, after the whole retry loop
-    has run. A retry storm (``max_attempts`` failing attempts) therefore counts
-    as a *single* breaker failure — breaker thresholds are tuned against logical
+    The canonical order is RateLimit -> Bulkhead -> CircuitBreaker -> Retry ->
+    Timeout. The rate limiter composes **outermost**: it gates admission before
+    a call may even occupy a bulkhead slot, so throttled calls are rejected
+    without consuming concurrency or counting against the breaker. The circuit
+    breaker composes **outside** retry: the breaker admits and records exactly
+    **one** outcome per logical call, after the whole retry loop has run. A
+    retry storm (``max_attempts`` failing attempts) therefore counts as a
+    *single* breaker failure — breaker thresholds are tuned against logical
     calls, not individual attempts.
     """
 
@@ -310,12 +554,18 @@ class ResiliencePolicy:
         if len(set(functional)) != len(functional):
             raise exc.configuration("Resilience policy has duplicate strategy types")
 
+        if BulkheadStrategy in functional and AdaptiveBulkheadStrategy in functional:
+            raise exc.configuration(
+                "Resilience policy cannot combine BulkheadStrategy with "
+                "AdaptiveBulkheadStrategy — they occupy the same slot",
+            )
+
         ranks = [_STRATEGY_ORDER.index(t) for t in functional]
 
         if ranks != sorted(ranks):
             raise exc.configuration(
                 "Resilience policy strategies must be ordered "
-                "Bulkhead -> CircuitBreaker -> Retry -> Timeout",
+                "RateLimit -> Bulkhead -> CircuitBreaker -> Retry -> Timeout",
             )
 
     # ....................... #
@@ -330,10 +580,22 @@ class ResiliencePolicy:
     # ....................... #
 
     @property
+    def rate_limit(self) -> RateLimitStrategy | None:
+        """Rate limit strategy if declared."""
+
+        return self._of_type(RateLimitStrategy)
+
+    @property
     def bulkhead(self) -> BulkheadStrategy | None:
         """Bulkhead strategy if declared."""
 
         return self._of_type(BulkheadStrategy)
+
+    @property
+    def adaptive_bulkhead(self) -> AdaptiveBulkheadStrategy | None:
+        """Adaptive (AIMD) bulkhead strategy if declared."""
+
+        return self._of_type(AdaptiveBulkheadStrategy)
 
     @property
     def circuit_breaker(self) -> CircuitBreakerStrategy | None:

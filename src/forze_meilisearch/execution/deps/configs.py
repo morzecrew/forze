@@ -11,7 +11,7 @@ from forze.application.contracts.resolution import (
 )
 from forze.application.contracts.tenancy import TenantAwareIntegrationConfig
 from forze.base.exceptions import exc
-from forze.base.primitives import frozen_mapping
+from forze.base.primitives import MappingConverter, StrKeyMapping
 
 if TYPE_CHECKING:
     from forze.application.contracts.search import FederatedSearchSpec
@@ -65,8 +65,8 @@ class MeilisearchSearchConfig(TenantAwareIntegrationConfig):
 class MeilisearchFederatedSearchConfig(TenantAwareIntegrationConfig):
     """Configuration for federated Meilisearch search."""
 
-    members: Mapping[str, MeilisearchSearchConfig] = attrs.field(
-        converter=frozen_mapping,
+    members: StrKeyMapping[MeilisearchSearchConfig] = attrs.field(
+        converter=MappingConverter.to_str_key_frozen,  # type: ignore[misc]
     )
     """Per-member index configuration (keys are :class:`SearchSpec` names)."""
 

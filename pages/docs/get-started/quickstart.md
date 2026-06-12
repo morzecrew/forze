@@ -67,9 +67,10 @@ makes the registry immutable and shareable.
 
 ## Step 5 — Wire the runtime
 
-`MockDepsModule` provides in-memory adapters for every contract. The
-[`ExecutionRuntime`](../core-concepts/runtime.md) builds the context on startup;
-a `RuntimeVar` holds it for per-request access.
+`MockDepsModule` provides in-memory adapters for every contract. `build_runtime`
+assembles an [`ExecutionRuntime`](../core-concepts/runtime.md) around it — the
+runtime builds the context on startup, and `runtime.get_context()` reaches it
+per request.
 
 ```python
 --8<-- "quickstart/app.py:runtime"
@@ -77,7 +78,7 @@ a `RuntimeVar` holds it for per-request access.
 
 ## Step 6 — Attach the routes
 
-The runtime runs inside the app's lifespan. Each route resolves a
+`runtime_lifespan` runs the runtime inside the app's lifespan. Each route resolves a
 [`DocumentFacade`](../core-concepts/application-layer.md) from the context and
 calls an operation — the handlers never touch HTTP:
 

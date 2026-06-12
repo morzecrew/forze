@@ -65,3 +65,7 @@ def test_return_clause_uncached_benchmark(benchmark: Any) -> None:
     use = list(gw.read_fields)
 
     benchmark(lambda: gw._build_return_clause(use, None))
+
+
+# In-process and deterministic: participates in the CI perf regression gate.
+pytestmark = pytest.mark.perf_gate

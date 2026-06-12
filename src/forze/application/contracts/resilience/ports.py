@@ -1,7 +1,6 @@
 """Port for executing a callable under a named resilience policy."""
 
-from collections.abc import Awaitable, Callable
-from typing import Protocol, runtime_checkable
+from typing import Awaitable, Callable, Protocol, runtime_checkable
 
 from forze.base.primitives import StrKey
 

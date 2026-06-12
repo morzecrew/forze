@@ -21,6 +21,17 @@ RedisStreamResponse = list[RedisStreamBatch]
 RawRedisStreamResponse = XReadResponse | XReadGroupResponse | None
 """Raw ``redis-py`` response before normalisation to :data:`RedisStreamResponse`."""
 
+RedisAutoClaimResponse = tuple[str, list[RedisStreamEntry], list[str]]
+"""Parsed ``XAUTOCLAIM`` page: ``(next_cursor, claimed_entries, deleted_ids)``.
+
+``next_cursor`` of ``"0-0"`` means the pending-entries list was fully scanned;
+``deleted_ids`` are entries dropped from the PEL because they no longer exist
+in the stream (empty on servers predating Redis 7).
+"""
+
+RedisPendingEntry = tuple[str, str, int, int]
+"""Parsed extended ``XPENDING`` row: ``(message_id, consumer, idle_ms, delivery_count)``."""
+
 # ....................... #
 
 RedisPubSubMessage = tuple[str, bytes]

@@ -6,14 +6,17 @@ import attrs
 
 from forze.application.contracts.deps import DepKey
 from forze.application.contracts.resilience import (
+    PortPolicy,
     ResilienceExecutorDepKey,
+    ResiliencePortPoliciesDepKey,
     ResilienceSpec,
 )
+from forze.base.exceptions import exc
 
 from ..deps import Deps
 from .executor import InProcessResilienceExecutor
 from .policies import builtin_default_policies
-from .store import CircuitBreakerStore
+from .store import CircuitBreakerStore, RateLimitStore
 
 # ----------------------- #
 
@@ -29,6 +32,33 @@ class ResilienceDepsModule:
     breaker_store: CircuitBreakerStore | None = None
     """Optional shared breaker store (e.g. Redis). Defaults to process-local."""
 
+    rate_limit_store: RateLimitStore | None = None
+    """Optional shared rate-limit store (e.g. Redis), making ``permits/per`` the
+    fleet's rate. Defaults to process-local — each replica enforces the rate
+    independently, so the fleet-effective rate is ``permits × replicas``."""
+
+    port_policies: tuple[PortPolicy, ...] = attrs.field(
+        default=(),
+        converter=tuple,
+    )
+    """Declarative port-level policy bindings: each resolved configurable port
+    matching a :class:`~forze.application.contracts.resilience.PortPolicy` key is
+    wrapped so its public coroutine methods run under the named policy."""
+
+    # ....................... #
+
+    def __attrs_post_init__(self) -> None:
+        seen: set[DepKey[Any]] = set()
+
+        for port_policy in self.port_policies:
+            if port_policy.key in seen:
+                raise exc.configuration(
+                    f"Duplicate port policy for dependency key "
+                    f"{port_policy.key.name!r}",
+                )
+
+            seen.add(port_policy.key)
+
     # ....................... #
 
     def __call__(self) -> Deps:
@@ -40,14 +70,33 @@ class ResilienceDepsModule:
             **(self.spec.policies if self.spec is not None else {}),
         }
 
-        executor = (
-            InProcessResilienceExecutor(
-                policies=policies,
-                breaker_store=self.breaker_store,
-            )
-            if self.breaker_store is not None
-            else InProcessResilienceExecutor(policies=policies)
+        unknown = sorted(
+            str(pp.policy) for pp in self.port_policies if pp.policy not in policies
         )
+
+        if unknown:
+            raise exc.configuration(
+                "Port policies reference unknown resilience policies: "
+                + ", ".join(unknown),
+            )
+
+        # Stores fall back to the executor's process-local defaults when not
+        # provided; only pass what was configured so the default Factory wiring
+        # (clock injection) stays in one place.
+        executor_kwargs: dict[str, Any] = {"policies": policies}
+
+        if self.breaker_store is not None:
+            executor_kwargs["breaker_store"] = self.breaker_store
+
+        if self.rate_limit_store is not None:
+            executor_kwargs["rate_limit_store"] = self.rate_limit_store
+
+        executor = InProcessResilienceExecutor(**executor_kwargs)
         deps: dict[DepKey[Any], Any] = {ResilienceExecutorDepKey: executor}
+
+        if self.port_policies:
+            deps[ResiliencePortPoliciesDepKey] = {
+                pp.key: pp for pp in self.port_policies
+            }
 
         return Deps.plain(deps)

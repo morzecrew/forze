@@ -1,12 +1,11 @@
 """Resilience specification: the named-policy catalog an app registers."""
 
-from collections.abc import Mapping
 from typing import final
 
 import attrs
 
 from forze.base.exceptions import exc
-from forze.base.primitives import StrKey
+from forze.base.primitives import MappingConverter, StrKeyMapping
 
 from ..base import BaseSpec
 from .value_objects import ResiliencePolicy
@@ -19,7 +18,9 @@ from .value_objects import ResiliencePolicy
 class ResilienceSpec(BaseSpec):
     """Catalog of named resilience policies handed to the executor."""
 
-    policies: Mapping[StrKey, ResiliencePolicy]
+    policies: StrKeyMapping[ResiliencePolicy] = attrs.field(
+        converter=MappingConverter.to_str_key_frozen,  # type: ignore[misc]
+    )
     """Named policies, keyed by policy name."""
 
     # ....................... #

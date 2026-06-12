@@ -5,9 +5,12 @@ from __future__ import annotations
 import asyncio
 import copy
 import threading
-from typing import Any, ClassVar, final
+from typing import TYPE_CHECKING, Any, ClassVar, final
 
 import attrs
+
+if TYPE_CHECKING:
+    from forze.application.contracts.authn import AuthnEvent
 
 # ----------------------- #
 
@@ -76,6 +79,9 @@ class MockState:
     - ``durable_*`` — durable engines (Temporal/Inngest)
     - ``identity["secrets"]`` — Vault-backed in production
     - ``tx_read_only_calls`` — test observability of transaction attempts
+    - ``storage_presigns`` — test observability of issued presigned URLs
+    - ``authn_events`` — observability records (production sinks are
+      logs/streams, which do not roll back with the database)
     - the internal id sequence — sequences do not roll back in Postgres either
     """
 
@@ -96,6 +102,12 @@ class MockState:
     """Records the ``read_only`` flag of each mock transaction (test observability)."""
     storage: dict[str, dict[str, Any]] = attrs.field(factory=dict)
     storage_bytes: dict[str, dict[str, bytes]] = attrs.field(factory=dict)
+    storage_presigns: list[dict[str, Any]] = attrs.field(factory=list)
+    """Presigned URLs issued by the mock storage adapter (test observability).
+
+    Each record carries ``bucket``, ``key``, ``method`` (``GET``/``PUT``),
+    ``expires_at`` and ``content_type`` so tests can assert issuance without
+    parsing the fake URLs."""
     queues: dict[str, dict[str, list[Any]]] = attrs.field(factory=dict)
     queue_pending: dict[str, dict[str, dict[str, Any]]] = attrs.field(factory=dict)
     pubsub_logs: dict[str, dict[str, list[Any]]] = attrs.field(factory=dict)
@@ -145,6 +157,10 @@ class MockState:
         }
     )
     """Nested in-memory identity plane (authn, authz, tenants, secrets)."""
+
+    authn_events: list[AuthnEvent] = attrs.field(factory=list)
+    """Authn events recorded by :class:`~forze_mock.adapters.events.RecordingAuthnEventSink`
+    (test observability; appended in emission order)."""
 
     __lock: threading.RLock = attrs.field(
         factory=threading.RLock, init=False, repr=False

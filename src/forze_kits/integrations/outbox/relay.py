@@ -5,8 +5,17 @@ from __future__ import annotations
 from datetime import timedelta
 from typing import TYPE_CHECKING, Any
 
+from forze.application._logger import logger
 from forze.application.contracts.base import BaseSpec
 from forze.application.contracts.deps import DepKey
+from forze.application.contracts.envelope import (
+    HEADER_CAUSATION_ID,
+    HEADER_CORRELATION_ID,
+    HEADER_EVENT_ID,
+    HEADER_EXECUTION_ID,
+    HEADER_OCCURRED_AT,
+    HEADER_TENANT_ID,
+)
 from forze.application.contracts.outbox import (
     OutboxDestinationKind,
     OutboxRelayResult,
@@ -24,6 +33,37 @@ if TYPE_CHECKING:
     from forze.application.execution.context import ExecutionContext
 
 # ----------------------- #
+
+_PUBSUB_DOWNGRADE_WARNED: set[str] = set()
+"""Outbox routes already warned about the pubsub delivery downgrade (once per process)."""
+
+
+def _warn_pubsub_downgrade_once(outbox_route: str, channel: str) -> None:
+    """Warn once per outbox route that a pubsub destination downgrades delivery.
+
+    The outbox promises at-least-once up to the broker, but pubsub is
+    at-most-once past it: rows are marked ``published`` after a
+    fire-and-forget publish, so events with no live subscriber are silently
+    lost. Logged once per route per process so periodic relay loops do not
+    spam the log.
+    """
+
+    if outbox_route in _PUBSUB_DOWNGRADE_WARNED:
+        return
+
+    _PUBSUB_DOWNGRADE_WARNED.add(outbox_route)
+    logger.warning(
+        "Outbox route relays to a pubsub topic: delivery downgrades to "
+        "at-most-once past the broker (rows are marked published after a "
+        "fire-and-forget publish; zero live subscribers means silent loss). "
+        "Legitimate for lossy broadcast; use a queue or stream destination "
+        "for must-arrive events.",
+        outbox_route=outbox_route,
+        channel=channel,
+    )
+
+
+# ....................... #
 
 
 def _require_destination(
@@ -85,6 +125,38 @@ def _resolve_channel(
 # ....................... #
 
 
+def _claim_envelope_headers(claim: OutboxClaim) -> dict[str, str]:
+    """Build the well-known envelope headers carried by a relayed claim.
+
+    Every destination kind forwards the staged invocation envelope as
+    transport headers (see :mod:`forze.application.contracts.envelope`):
+    ``event_id`` always, ``occurred_at`` as ISO-8601, and the
+    correlation/causation/execution/tenant ids only when set on the row.
+    """
+
+    headers: dict[str, str] = {HEADER_EVENT_ID: str(claim.event_id)}
+
+    if claim.occurred_at is not None:
+        headers[HEADER_OCCURRED_AT] = claim.occurred_at.isoformat()
+
+    if claim.correlation_id is not None:
+        headers[HEADER_CORRELATION_ID] = str(claim.correlation_id)
+
+    if claim.causation_id is not None:
+        headers[HEADER_CAUSATION_ID] = str(claim.causation_id)
+
+    if claim.execution_id is not None:
+        headers[HEADER_EXECUTION_ID] = str(claim.execution_id)
+
+    if claim.tenant_id is not None:
+        headers[HEADER_TENANT_ID] = str(claim.tenant_id)
+
+    return headers
+
+
+# ....................... #
+
+
 async def _relay_outbox_to(
     ctx: ExecutionContext,
     *,
@@ -103,8 +175,13 @@ async def _relay_outbox_to(
     """Claim pending outbox rows and relay each via ``command.<method>(channel, ...)``.
 
     The command-port method (``enqueue``/``append``/``publish``) shares the same
-    ``(channel, payload, *, type, key)`` signature across queue, stream, and pubsub,
-    so only the resolved command, dep key, and method name differ per transport.
+    ``(channel, payload, *, type, key, headers)`` signature across queue, stream,
+    and pubsub, so only the resolved command, dep key, and method name differ per
+    transport. Each publish forwards the claim's invocation envelope as
+    transport headers (see :func:`_claim_envelope_headers`); ``key`` is the
+    claim's ``ordering_key`` when staged (partitioning on capable transports),
+    falling back to ``str(event_id)`` — the event id itself always rides the
+    ``forze_event_id`` header either way.
     """
 
     if reclaim_stale_after is not None and reclaim_stale_after.total_seconds() <= 0:
@@ -124,7 +201,8 @@ async def _relay_outbox_to(
             channel,
             payload,
             type=claim.event_type,
-            key=str(claim.event_id),
+            key=claim.ordering_key or str(claim.event_id),
+            headers=_claim_envelope_headers(claim),
         )
 
     return await relay_outbox_claims(
@@ -157,11 +235,13 @@ async def relay_outbox_to_queue(
 
     Delivery is **at-least-once**, and ordering is **not preserved across
     failures/retries**: a row rescheduled (or parked as ``failed``) does not
-    stall later rows. Rows are claimed (``pending`` → ``processing``), enqueued
-    one message per claim, then marked ``published``. Enqueue and
+    stall later rows — including later rows of the same ``ordering_key``
+    (deliberate trade-off: no per-key head-of-line blocking). Rows are claimed
+    (``pending`` → ``processing``) in ``created_at`` order, enqueued one
+    message per claim, then marked ``published``. Enqueue and
     ``mark_published`` are not atomic—consumers must deduplicate on
-    :attr:`~forze.application.contracts.outbox.IntegrationEvent.event_id` (or the
-    claim ``event_id``) and tolerate reordering.
+    :attr:`~forze.application.contracts.outbox.IntegrationEvent.event_id` (the
+    ``forze_event_id`` header) and tolerate reordering.
 
     Failure handling per row (one row's failure never aborts the batch):
 
@@ -172,9 +252,13 @@ async def relay_outbox_to_queue(
       *retry_max_backoff*) until *max_attempts* publish attempts are exhausted,
       then ``mark_failed`` (terminal). ``requeue_failed`` resets the counter.
 
-    Each successful enqueue passes ``key=str(claim.event_id)`` to
-    :meth:`~forze.application.contracts.queue.QueueCommandPort.enqueue` when the
-    queue backend supports deduplication (for example SQS FIFO).
+    Each successful enqueue passes ``key=claim.ordering_key or str(claim.event_id)``
+    to :meth:`~forze.application.contracts.queue.QueueCommandPort.enqueue`: on
+    transports that honor ``key`` for partitioning (for example SQS FIFO
+    ``MessageGroupId``), same-``ordering_key`` events deliver in staged
+    (``created_at``) order on the happy path. The event id always rides the
+    ``forze_event_id`` header for consumer-side dedup, so occupying ``key``
+    with the ordering key loses nothing.
 
     When *reclaim_stale_after* is set, rows stuck in ``processing`` longer than that
     lease are reset to ``pending`` before claim (requires ``processing_at`` on the
@@ -254,11 +338,22 @@ async def relay_outbox_to_pubsub(
 ) -> OutboxRelayResult:
     """Claim pending outbox rows, publish to a topic, and mark each row's outcome.
 
-    Same failure model and ordering caveats as :func:`relay_outbox_to_queue`:
-    at-least-once delivery, no ordering across failures/retries, poison rows
-    fail immediately, transient publish errors retry with backoff up to
-    *max_attempts*.
+    Same failure model and ordering caveats as :func:`relay_outbox_to_queue` —
+    **but the at-least-once guarantee ends at the broker**: pubsub is
+    at-most-once (fire-and-forget), and a row is marked ``published`` after a
+    publish that no live subscriber may have received (see
+    :meth:`~forze.application.contracts.outbox.OutboxDestination.pubsub`).
+    A one-time warning per outbox route is logged to make the downgrade
+    visible. Poison rows still fail immediately and transient publish errors
+    still retry with backoff up to *max_attempts*.
     """
+
+    destination = outbox_spec.destination
+
+    if destination is not None and destination.kind == "pubsub":
+        # Missing/mismatched destinations fall through to the precondition
+        # error inside ``_relay_outbox_to`` without a spurious warning.
+        _warn_pubsub_downgrade_once(str(outbox_spec.name), destination.channel)
 
     return await _relay_outbox_to(
         ctx,

@@ -1,14 +1,18 @@
 from __future__ import annotations
 
+from datetime import timedelta
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any, Callable, Iterable, Never, Self
 
 import attrs
 
 from forze.application.contracts.execution import (
+    BeforeStep,
+    DeclaresAuthz,
     DispatchStep,
     MiddlewareStep,
     OnSuccess,
+    ProvidesIdempotency,
 )
 from forze.base.descriptors import hybridmethod
 from forze.base.exceptions import exc
@@ -65,6 +69,23 @@ class OperationPlan:
     kind: OperationKind = attrs.field(default=OperationKind.COMMAND)
     """Read (``QUERY``) vs write (``COMMAND``) classification; defaults to ``COMMAND``."""
 
+    deadline: timedelta | None = attrs.field(default=None)
+    """Per-invocation time budget for this operation, or ``None`` for no cap.
+
+    Bound at operation entry via the task-scoped deadline (see
+    ``context.deadline``), so it covers the whole plan — hooks, transaction,
+    dispatch chains — and propagates to dispatched operations. Tighten-only
+    against a caller-bound deadline: the earlier of the two wins, so a caller
+    can shorten the budget but never extend it past the plan's cap. Expiry
+    raises a non-retryable ``TIMEOUT`` (``code="deadline_exceeded"``).
+    """
+
+    # ....................... #
+
+    def __attrs_post_init__(self) -> None:
+        if self.deadline is not None and self.deadline.total_seconds() <= 0:
+            raise exc.configuration("Operation deadline must be positive")
+
     # ....................... #
 
     def iter_dispatch(self) -> Iterable[StrKey]:
@@ -101,6 +122,54 @@ class OperationPlan:
 
     # ....................... #
 
+    def iter_before_steps(self) -> Iterable[BeforeStep]:
+        """Yield every before step across the plan's scopes."""
+
+        yield from self._outer.before.items
+        yield from self._tx.before.items
+
+    # ....................... #
+
+    def supports_idempotency_key(self) -> bool:
+        """Whether the plan carries a wrap that deduplicates on a bound idempotency key.
+
+        Structural detection (:class:`ProvidesIdempotency`), shared by the freeze-time
+        hedging gate and the operation catalog. "Supports", not "requires": such a wrap
+        is a no-op when the invocation binds no idempotency key — it replays a stored
+        result only for callers that *do* send one.
+        """
+
+        return any(
+            isinstance(step.factory, ProvidesIdempotency)
+            and step.factory.provides_idempotency()
+            for step in self.iter_wrap_steps()
+        )
+
+    # ....................... #
+
+    def declared_permission_keys(self) -> tuple[str, ...]:
+        """Sorted union of permission keys declared by the plan's authz hooks.
+
+        Structural detection (:class:`DeclaresAuthz`) over the plan's before and wrap
+        steps. Honesty caveat: declared-hook introspection only, **not** a security
+        statement — an empty result does not mean the operation is unguarded (its
+        handler may enforce authorization invisibly), and a declaring hook may scope
+        or deny access beyond its named keys.
+        """
+
+        factories: list[Any] = [step.factory for step in self.iter_before_steps()]
+        factories += [step.factory for step in self.iter_wrap_steps()]
+
+        keys: set[str] = set()
+
+        for factory in factories:
+            if isinstance(factory, DeclaresAuthz):
+                keys.update(factory.permission_keys())
+
+        return tuple(sorted(keys))
+
+    # ....................... #
+
     def bind_outer(self) -> ScopeBinder[Self, Never]:
         """Enter an outer scope and return a binder for it."""
 
@@ -129,7 +198,14 @@ class OperationPlan:
         frozen_outer = self._outer.freeze()
         frozen_tx = self._tx.freeze()
 
-        return FrozenOperationPlan(outer=frozen_outer, tx=frozen_tx, kind=self.kind)
+        return FrozenOperationPlan(
+            outer=frozen_outer,
+            tx=frozen_tx,
+            kind=self.kind,
+            deadline=self.deadline,
+            supports_idempotency_key=self.supports_idempotency_key(),
+            required_permissions=self.declared_permission_keys(),
+        )
 
     # ....................... #
 
@@ -147,7 +223,19 @@ class OperationPlan:
             else OperationKind.COMMAND
         )
 
-        return cls(outer=merged_outer, tx=merged_tx, kind=merged_kind)
+        # Restrictive wins (commutative, like ``kind``): the tightest declared
+        # deadline caps the operation — a layer can shorten the budget, never
+        # extend it. To give one operation a longer budget than a broad patch
+        # default, narrow the patch selector instead.
+        deadlines = [plan.deadline for plan in plans if plan.deadline is not None]
+        merged_deadline = min(deadlines) if deadlines else None
+
+        return cls(
+            outer=merged_outer,
+            tx=merged_tx,
+            kind=merged_kind,
+            deadline=merged_deadline,
+        )
 
     # ....................... #
 
@@ -172,6 +260,19 @@ class FrozenOperationPlan:
     kind: OperationKind = attrs.field(default=OperationKind.COMMAND)
     """Read (``QUERY``) vs write (``COMMAND``) classification."""
 
+    deadline: timedelta | None = attrs.field(default=None)
+    """Per-invocation time budget declared by the plan, or ``None`` for no cap."""
+
+    supports_idempotency_key: bool = attrs.field(default=False)
+    """Derived at freeze (:meth:`OperationPlan.supports_idempotency_key`): the plan
+    carries an idempotency wrap that replays a stored result for a duplicate bound
+    idempotency key. The wrap is a no-op when the invocation binds no key."""
+
+    required_permissions: tuple[str, ...] = attrs.field(factory=tuple)
+    """Derived at freeze (:meth:`OperationPlan.declared_permission_keys`): sorted union
+    of permission keys declared by the plan's authz hooks. Declared-hook introspection
+    only, not a security statement — empty does not mean unguarded."""
+
     # ....................... #
 
     def resolve(
@@ -186,7 +287,14 @@ class FrozenOperationPlan:
         resolved_tx = self.tx.resolve(ctx, dispatch_resolver)
 
         return ResolvedOperationPlan(
-            outer=resolved_outer, tx=resolved_tx, kind=self.kind
+            outer=resolved_outer,
+            tx=resolved_tx,
+            kind=self.kind,
+            # Seconds precomputed once at resolve so the per-call hot path
+            # never touches timedelta arithmetic.
+            deadline_s=(
+                None if self.deadline is None else self.deadline.total_seconds()
+            ),
         )
 
 
@@ -205,3 +313,6 @@ class ResolvedOperationPlan:
 
     kind: OperationKind = attrs.field(default=OperationKind.COMMAND)
     """Read (``QUERY``) vs write (``COMMAND``) classification."""
+
+    deadline_s: float | None = attrs.field(default=None)
+    """Plan-declared time budget in seconds (precomputed at resolve), or ``None``."""

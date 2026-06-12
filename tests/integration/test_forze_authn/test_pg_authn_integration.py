@@ -37,6 +37,7 @@ from forze_identity.authn.adapters import (
     ApiKeyLifecycleAdapter,
     PasswordAccountProvisioningAdapter,
     PasswordLifecycleAdapter,
+    PasswordResetAdapter,
     PolicyPrincipalEligibilityAdapter,
     TokenLifecycleAdapter,
 )
@@ -44,6 +45,7 @@ from forze_identity.authn.application.constants import AuthnResourceName
 from forze_identity.authn.application.specs import (
     api_key_account_spec,
     password_account_spec,
+    password_reset_spec,
     session_spec,
 )
 from forze_identity.authn.domain.models.account import CreatePasswordAccountCmd
@@ -66,6 +68,7 @@ from forze_identity.authn.services import (
     PasswordService,
     RefreshTokenConfig,
     RefreshTokenService,
+    ResetTokenService,
 )
 from forze_postgres.execution.deps import (
     ConfigurablePostgresDocument,
@@ -103,6 +106,7 @@ def _authn_pg_deps(pg_client: PostgresClient, *, suffix: str) -> Deps:
     pwd = f"authn_pwd_{suffix}"
     ak = f"authn_ak_{suffix}"
     sess = f"authn_sess_{suffix}"
+    reset = f"authn_reset_{suffix}"
 
     policy_ro = PostgresReadOnlyDocumentConfig(read=("public", policy_pri))
     pwd_cfg = PostgresDocumentConfig(
@@ -118,6 +122,11 @@ def _authn_pg_deps(pg_client: PostgresClient, *, suffix: str) -> Deps:
     sess_cfg = PostgresDocumentConfig(
         read=("public", sess),
         write=("public", sess),
+        bookkeeping_strategy="application",
+    )
+    reset_cfg = PostgresDocumentConfig(
+        read=("public", reset),
+        write=("public", reset),
         bookkeeping_strategy="application",
     )
 
@@ -137,6 +146,9 @@ def _authn_pg_deps(pg_client: PostgresClient, *, suffix: str) -> Deps:
             config=pwd_cfg
         ),
         AuthnResourceName.API_KEY_ACCOUNTS: ConfigurablePostgresDocument(config=ak_cfg),
+        AuthnResourceName.PASSWORD_RESETS: ConfigurablePostgresDocument(
+            config=reset_cfg
+        ),
         AuthnResourceName.TOKEN_SESSIONS: ConfigurablePostgresDocument(config=sess_cfg),
     }
 
@@ -148,6 +160,9 @@ def _authn_pg_deps(pg_client: PostgresClient, *, suffix: str) -> Deps:
             config=pwd_cfg
         ),
         AuthnResourceName.API_KEY_ACCOUNTS: ConfigurablePostgresDocument(config=ak_cfg),
+        AuthnResourceName.PASSWORD_RESETS: ConfigurablePostgresDocument(
+            config=reset_cfg
+        ),
         AuthnResourceName.TOKEN_SESSIONS: ConfigurablePostgresDocument(config=sess_cfg),
     }
 
@@ -231,7 +246,7 @@ async def test_pg_password_authentication(pg_client: PostgresClient) -> None:
         principal_id=pid,
     )
 
-    hashed = pwd_svc.hash_password("correct horse battery staple")
+    hashed = pwd_svc.hash_password_sync("correct horse battery staple")
     pwd_cmd = ctx.document.command(password_account_spec)
 
     with ctx.inv_ctx.bind(metadata=_invocation_metadata()):
@@ -435,7 +450,7 @@ async def test_pg_change_password(pg_client: PostgresClient) -> None:
             CreatePasswordAccountCmd(
                 principal_id=pid,
                 username="bob",
-                password_hash=pwd_svc.hash_password("old-secret"),
+                password_hash=pwd_svc.hash_password_sync("old-secret"),
             ),
             return_new=False,
         )
@@ -491,6 +506,125 @@ async def test_pg_change_password(pg_client: PostgresClient) -> None:
         with ctx.inv_ctx.bind(metadata=_invocation_metadata()):
             await authn.authenticate_with_password(
                 PasswordCredentials(login="bob", password="old-secret"),
+            )
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_pg_password_reset_flow(pg_client: PostgresClient) -> None:
+    """request_reset → digest-only row → reset_password → sessions revoked."""
+
+    suffix = uuid4().hex[:12]
+    ctx = await _authn_pg_setup(pg_client, suffix=suffix)
+
+    pwd_svc = PasswordService()
+    reset_svc = ResetTokenService(pepper=secrets.token_bytes(32))
+    pid = uuid4()
+    await insert_policy_principal_row(
+        pg_client,
+        table=f"authz_pri_{suffix}",
+        principal_id=pid,
+    )
+
+    pwd_cmd = ctx.document.command(password_account_spec)
+    with ctx.inv_ctx.bind(metadata=_invocation_metadata()):
+        await pwd_cmd.create(
+            CreatePasswordAccountCmd(
+                principal_id=pid,
+                username="dave",
+                password_hash=pwd_svc.hash_password_sync("lost-secret"),
+            ),
+            return_new=False,
+        )
+
+    # Open a live session so the "log out everywhere" cascade has something to revoke.
+    token_adapter = TokenLifecycleAdapter(
+        access_svc=AccessTokenService(secret_key=secrets.token_bytes(32)),
+        refresh_svc=RefreshTokenService(pepper=secrets.token_bytes(32)),
+        session_qry=ctx.document.query(session_spec),
+        session_cmd=ctx.document.command(session_spec),
+        eligibility=_eligibility(ctx),
+    )
+
+    with ctx.inv_ctx.bind(metadata=_invocation_metadata()):
+        await token_adapter.issue_tokens(AuthnIdentity(principal_id=pid))
+
+    adapter = PasswordResetAdapter(
+        password_svc=pwd_svc,
+        reset_svc=reset_svc,
+        pa_qry=ctx.document.query(password_account_spec),
+        pa_cmd=pwd_cmd,
+        reset_qry=ctx.document.query(password_reset_spec),
+        reset_cmd=ctx.document.command(password_reset_spec),
+        eligibility=_eligibility(ctx),
+        session_qry=ctx.document.query(session_spec),
+        session_cmd=ctx.document.command(session_spec),
+    )
+
+    # 1. Unknown login: the port tells the truth and writes nothing.
+    with ctx.inv_ctx.bind(metadata=_invocation_metadata()):
+        assert await adapter.request_reset("nobody") is None
+
+    # 2. Known login: a reset is issued; only the digest hits the table.
+    with ctx.inv_ctx.bind(metadata=_invocation_metadata()):
+        first = await adapter.request_reset("dave")
+        second = await adapter.request_reset("dave")
+
+    assert first is not None and second is not None
+    assert first.token != second.token
+
+    with ctx.inv_ctx.bind(metadata=_invocation_metadata()):
+        rows = await ctx.document.query(password_reset_spec).find_many(
+            filters={"$values": {"principal_id": pid}}
+        )
+
+    assert len(rows.hits) == 2
+    digests = {r.token_digest for r in rows.hits}
+    assert second.token not in digests  # raw token never persisted
+    assert reset_svc.calculate_token_digest(second.token) in digests
+    # The first reset was superseded by the second (single active reset).
+    outstanding = [r for r in rows.hits if r.used_at is None]
+    assert len(outstanding) == 1
+    assert outstanding[0].token_digest == reset_svc.calculate_token_digest(second.token)
+
+    # 3. The superseded token is uniformly rejected; the fresh one resets.
+    with ctx.inv_ctx.bind(metadata=_invocation_metadata()):
+        with pytest.raises(Exception, match="Invalid or expired reset token"):
+            await adapter.reset_password(first.token, "new-secret")
+
+        await adapter.reset_password(second.token, "new-secret")
+
+    # 4. Single-use: the consumed token is dead.
+    with ctx.inv_ctx.bind(metadata=_invocation_metadata()):
+        with pytest.raises(Exception, match="Invalid or expired reset token"):
+            await adapter.reset_password(second.token, "again")
+
+    # 5. All sessions revoked.
+    with ctx.inv_ctx.bind(metadata=_invocation_metadata()):
+        page = await ctx.document.query(session_spec).find_many(
+            filters={"$values": {"principal_id": pid}}
+        )
+
+    assert page.hits
+    assert all(s.revoked_at is not None for s in page.hits)
+
+    # 6. Old password dead; the new one authenticates.
+    authn = _orchestrator(
+        eligibility=_eligibility(ctx),
+        password_svc=pwd_svc,
+        pa_qry=ctx.document.query(password_account_spec),
+        methods=frozenset({"password"}),
+    )
+
+    with ctx.inv_ctx.bind(metadata=_invocation_metadata()):
+        await authn.authenticate_with_password(
+            PasswordCredentials(login="dave", password="new-secret"),
+        )
+
+    with pytest.raises(Exception, match="Invalid login or password"):
+        with ctx.inv_ctx.bind(metadata=_invocation_metadata()):
+            await authn.authenticate_with_password(
+                PasswordCredentials(login="dave", password="lost-secret"),
             )
 
 
@@ -574,7 +708,7 @@ async def test_pg_execution_deps_password_authentication(
     pwd_svc = shared.password_svc
     assert pwd_svc is not None
 
-    hashed = pwd_svc.hash_password("correct horse battery staple")
+    hashed = pwd_svc.hash_password_sync("correct horse battery staple")
     pwd_cmd = ctx.document.command(password_account_spec)
 
     with ctx.inv_ctx.bind(metadata=_invocation_metadata()):

@@ -1,11 +1,11 @@
 """ClickHouse analytics execution configs."""
 
-from typing import TYPE_CHECKING, Any, Mapping
+from typing import TYPE_CHECKING, Any
 
 import attrs
 
 from forze.base.exceptions import exc
-from forze.base.primitives import StrKey, frozen_mapping
+from forze.base.primitives import MappingConverter, StrKeyMapping
 from forze_clickhouse.kernel.relation import RelationSpec, coerce_relation_spec
 
 if TYPE_CHECKING:
@@ -54,8 +54,8 @@ class ClickHouseAnalyticsConfig:
     database: str
     """ClickHouse database id."""
 
-    queries: Mapping[StrKey, ClickHouseQueryConfig] = attrs.field(
-        converter=frozen_mapping,
+    queries: StrKeyMapping[ClickHouseQueryConfig] = attrs.field(
+        converter=MappingConverter.to_str_key_frozen,  # type: ignore[misc]
     )
     """Named queries; keys must match ``AnalyticsSpec.queries``."""
 

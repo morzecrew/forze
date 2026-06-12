@@ -9,6 +9,7 @@ from forze.application.contracts.transaction import (
     TransactionHandle,
     TransactionManagerPort,
 )
+from forze.base.asyncio import run_to_completion
 from forze.base.exceptions import exc
 from forze.base.primitives import StrKey
 
@@ -132,6 +133,14 @@ class TransactionContext:
         to a nested ``transaction()`` call. A nested scope explicitly requesting a
         ``read_only`` value that conflicts with the root's raises a precondition error;
         the same value or ``None`` (unspecified) is fine.
+
+        Cancellation semantics: cancellation during the body follows the
+        rollback path as usual. Once the root transaction has committed, the
+        deferred post-commit callbacks are a critical section — they run to
+        completion even if the task is cancelled, and the cancellation is
+        re-raised afterwards. Cancellation landing inside the driver commit
+        itself is outside the engine's control (the adapter rolls back
+        best-effort; the server-side outcome can be ambiguous).
         """
 
         if self.resolver is None:
@@ -201,7 +210,14 @@ class TransactionContext:
             self.__tx_depth.reset(token_d)
 
         if deferred:
-            await self._run_deferred(deferred)
+            # The transaction is committed: the drain is a critical section.
+            # Run it to completion even if the surrounding task is cancelled
+            # (client disconnect, deadline) — otherwise idempotency commits and
+            # after-commit dispatch would be silently skipped after a commit.
+            # The cancellation is re-raised once the drain finishes. A
+            # cancellation landing during the driver commit itself is adapter
+            # territory and follows the rollback path above.
+            await run_to_completion(self._run_deferred(deferred))
 
     # ....................... #
 

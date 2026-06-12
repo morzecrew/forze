@@ -120,6 +120,113 @@ async def test_mongo_outbox_flush_commits_with_transaction(
 
 
 @pytest.mark.asyncio
+async def test_mongo_outbox_ordering_key_round_trips_stage_doc_claim(
+    mongo_client_replica: MongoClient,
+    outbox_collection: tuple[str, str],
+) -> None:
+    codec = PydanticModelCodec(_OutboxPayload)
+    outbox_spec = OutboxSpec(name="integration", codec=codec)
+    db_name, coll_name = outbox_collection
+    mongo_module = MongoDepsModule(
+        client=mongo_client_replica,
+        tx={"default"},
+        outboxes={
+            "integration": MongoOutboxConfig(
+                collection=(db_name, coll_name),
+            ),
+        },
+    )
+    runtime = ExecutionRuntime(deps=DepsRegistry.from_modules(mongo_module).freeze())
+
+    async with runtime.scope():
+        ctx = runtime.get_context()
+        async with ctx.tx_ctx.scope("default"):
+            outbox = ctx.outbox.command(outbox_spec)
+            await outbox.stage(
+                "demo.created",
+                _OutboxPayload(label="keyed"),
+                ordering_key="order-1",
+            )
+            await outbox.stage("demo.updated", _OutboxPayload(label="unkeyed"))
+            assert await outbox.flush() == 2
+
+        coll = await mongo_client_replica.collection(coll_name, db_name=db_name)
+        docs = await mongo_client_replica.find_many(
+            coll,
+            {"outbox_route": "integration"},
+        )
+        by_type = {doc["event_type"]: doc.get("ordering_key") for doc in docs}
+        assert by_type == {"demo.created": "order-1", "demo.updated": None}
+
+        claims = {
+            c.event_type: c
+            for c in await ctx.outbox.query(outbox_spec).claim_pending()
+        }
+        assert claims["demo.created"].ordering_key == "order-1"
+        assert claims["demo.updated"].ordering_key is None
+
+
+@pytest.mark.asyncio
+async def test_mongo_outbox_relay_publishes_ordering_key_to_queue(
+    mongo_client_replica: MongoClient,
+    outbox_collection: tuple[str, str],
+) -> None:
+    codec = PydanticModelCodec(_OutboxPayload)
+    outbox_spec = OutboxSpec(
+        name="integration",
+        codec=codec,
+        destination=OutboxDestination.queue(route="relay", channel="relay"),
+    )
+    queue_spec = QueueSpec(name="relay", codec=codec)
+    db_name, coll_name = outbox_collection
+    mongo_module = MongoDepsModule(
+        client=mongo_client_replica,
+        tx={"default"},
+        outboxes={
+            "integration": MongoOutboxConfig(
+                collection=(db_name, coll_name),
+            ),
+        },
+    )
+    shared_state = MockState()
+    runtime = ExecutionRuntime(
+        deps=DepsRegistry.from_modules(mongo_module)
+        .with_deps(_mock_queue_deps(shared_state))
+        .freeze(),
+    )
+    unkeyed_event_id = uuid4()
+
+    async with runtime.scope():
+        ctx = runtime.get_context()
+        async with ctx.tx_ctx.scope("default"):
+            outbox = ctx.outbox.command(outbox_spec)
+            await outbox.stage(
+                "demo.created",
+                _OutboxPayload(label="keyed"),
+                ordering_key="order-1",
+            )
+            await outbox.stage(
+                "demo.updated",
+                _OutboxPayload(label="unkeyed"),
+                event_id=unkeyed_event_id,
+            )
+            await outbox.flush()
+
+        result = await relay_outbox_to_queue(
+            ctx,
+            outbox_spec=outbox_spec,
+            queue_spec=queue_spec,
+        )
+
+    assert result.published == 2
+    messages = [e.message for e in shared_state.queues["relay"]["relay"]]
+    by_type = {m.type: m for m in messages}
+    assert by_type["demo.created"].key == "order-1"
+    assert by_type["demo.updated"].key == str(unkeyed_event_id)
+    assert by_type["demo.updated"].headers["forze_event_id"] == str(unkeyed_event_id)
+
+
+@pytest.mark.asyncio
 async def test_mongo_outbox_rollback_discards_staged_rows(
     mongo_client_replica: MongoClient,
     outbox_collection: tuple[str, str],

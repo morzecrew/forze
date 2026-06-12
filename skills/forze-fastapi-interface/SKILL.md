@@ -79,6 +79,18 @@ app.include_router(router)
 - `attach_search_routes` (no `style` — every search request is a filter body,
   always `POST /<op>`) and `attach_storage_routes` (`style` required; multipart
   upload, raw-bytes download) follow the same pattern.
+- An operation with a plan-declared deadline surfaces it as an
+  `x-deadline-seconds` OpenAPI extension and a "Time budget" description line —
+  see [`forze-resilience-deadlines`](../forze-resilience-deadlines/SKILL.md).
+
+## Readiness and deadline headers
+
+- `attach_readiness_route(router, runtime)` (from `forze_fastapi.routes`) adds
+  `GET /readyz`: `200` while serving, `503` once shutdown starts draining —
+  point the load balancer's readiness check here.
+- `InvocationMetadataMiddleware(..., bind_deadline_from_header=True)` opts in
+  to honoring an upstream `X-Forze-Deadline-Budget` header (tighten-only, so a
+  forged value can only shorten the sender's own request).
 
 ## Hand-written routes
 

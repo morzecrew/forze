@@ -1,10 +1,11 @@
 """Tests for forze.application.contracts.storage.ports."""
 
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from forze.application.contracts.storage import (
     DownloadedObject,
+    PresignedUrl,
     StoredObject,
     UploadedObject,
 )
@@ -32,6 +33,32 @@ class _StubStorage:
             data=b"content",
             content_type="application/octet-stream",
             filename=key.split("/")[-1],
+        )
+
+    async def presign_download(
+        self,
+        key: str,
+        *,
+        expires_in: timedelta,
+    ) -> PresignedUrl:
+        return PresignedUrl(
+            url=f"https://stub/{key}",
+            method="GET",
+            expires_at=datetime.now(timezone.utc) + expires_in,
+        )
+
+    async def presign_upload(
+        self,
+        key: str,
+        *,
+        expires_in: timedelta,
+        content_type: Optional[str] = None,
+    ) -> PresignedUrl:
+        return PresignedUrl(
+            url=f"https://stub/{key}",
+            method="PUT",
+            expires_at=datetime.now(timezone.utc) + expires_in,
+            headers={"Content-Type": content_type} if content_type else {},
         )
 
     async def delete(self, key: str) -> None:
@@ -76,6 +103,21 @@ class TestStoragePorts:
         items, total = await stub.list(10, 0)
         assert items == []
         assert total == 0
+
+    async def test_presign_download(self) -> None:
+        stub = _StubStorage()
+        vo = await stub.presign_download("files/a", expires_in=timedelta(minutes=5))
+        assert vo.method == "GET"
+
+    async def test_presign_upload(self) -> None:
+        stub = _StubStorage()
+        vo = await stub.presign_upload(
+            "files/a",
+            expires_in=timedelta(minutes=5),
+            content_type="text/plain",
+        )
+        assert vo.method == "PUT"
+        assert dict(vo.headers) == {"Content-Type": "text/plain"}
 
     async def test_upload_with_description(self) -> None:
         stub = _StubStorage()

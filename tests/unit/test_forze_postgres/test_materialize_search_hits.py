@@ -137,11 +137,15 @@ def test_decode_search_hits_return_type_uses_projection_codec() -> None:
     assert isinstance(out[0], HitView)
 
 
-def test_materialize_trusted_skips_validators() -> None:
+def test_materialize_trusted_runs_validators() -> None:
+    """Trusted decode trusts columns only: values are still validated/coerced."""
+
+    from pydantic import ValidationError
+
     codec = PydanticModelCodec(_StrictHit)
-    rows: list[JsonDict] = [{"id": 1, "name": "x"}]
+    valid_rows: list[JsonDict] = [{"id": 1, "name": "x" * 100}]
     out = materialize_search_page(
-        page_rows=rows,
+        page_rows=valid_rows,
         pool=None,
         u=0,
         page_limit=10,
@@ -152,7 +156,19 @@ def test_materialize_trusted_skips_validators() -> None:
         trust_source=True,
     )
     assert isinstance(out[0], _StrictHit)
-    assert out[0].name == "x"
+
+    with pytest.raises(ValidationError):
+        materialize_search_page(
+            page_rows=[{"id": 1, "name": "x"}],
+            pool=None,
+            u=0,
+            page_limit=10,
+            return_type=None,
+            return_fields=None,
+            model_type=_StrictHit,
+            codec=codec,
+            trust_source=True,
+        )
 
 
 def test_materialize_trusted_rejects_extra_columns() -> None:

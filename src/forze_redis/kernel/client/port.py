@@ -15,7 +15,12 @@ from redis.asyncio.client import Pipeline
 
 from forze.base.primitives import JsonDict
 
-from .types import RedisPubSubMessage, RedisStreamResponse
+from .types import (
+    RedisAutoClaimResponse,
+    RedisPendingEntry,
+    RedisPubSubMessage,
+    RedisStreamResponse,
+)
 
 # ----------------------- #
 
@@ -183,3 +188,28 @@ class RedisClientPort(Protocol):
         group: str,
         ids: Sequence[str],
     ) -> Awaitable[int]: ...  # pragma: no cover
+
+    def xautoclaim(
+        self,
+        stream: str,
+        group: str,
+        consumer: str,
+        *,
+        min_idle_ms: int,
+        start_id: str = "0-0",
+        count: int | None = None,
+    ) -> Awaitable[RedisAutoClaimResponse]:
+        """One ``XAUTOCLAIM`` page; loop on the returned cursor until ``"0-0"``."""
+        ...  # pragma: no cover
+
+    def xpending(
+        self,
+        stream: str,
+        group: str,
+        *,
+        count: int,
+        start_id: str = "-",
+        end_id: str = "+",
+    ) -> Awaitable[list[RedisPendingEntry]]:
+        """Extended ``XPENDING`` summary rows for *group*, oldest first."""
+        ...  # pragma: no cover

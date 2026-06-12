@@ -66,6 +66,24 @@ async def test_flush_delegates_buffered_rows() -> None:
 
 
 @pytest.mark.asyncio
+async def test_stage_threads_ordering_key_onto_event() -> None:
+    """`stage(..., ordering_key=...)` reaches the flushed entry's event verbatim."""
+
+    ctx = ExecutionContext(deps=DepsRegistry().freeze().resolve())
+    flushed: list[StagedOutboxEntry] = []
+    coord = _coord(ctx, "events", flushed)
+
+    await coord.stage("demo.created", _Payload(value="keyed"), ordering_key="agg-7")
+    await coord.stage("demo.updated", _Payload(value="unkeyed"))
+    assert await coord.flush() == 2
+
+    by_type = {e.event.event_type: e.event for e in flushed}
+    assert by_type["demo.created"].ordering_key == "agg-7"
+    # Default stays None: relay falls back to key=str(event_id).
+    assert by_type["demo.updated"].ordering_key is None
+
+
+@pytest.mark.asyncio
 async def test_cannot_stage_after_flush() -> None:
     spec = OutboxSpec(
         name="events",

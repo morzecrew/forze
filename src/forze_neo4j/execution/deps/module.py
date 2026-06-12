@@ -1,6 +1,6 @@
 """Neo4j dependency module for the application kernel."""
 
-from typing import Mapping, final
+from typing import final
 
 import attrs
 
@@ -14,7 +14,7 @@ from forze.application.execution.deps.builders import (
     merge_deps,
     routed_shared_factories,
 )
-from forze.base.primitives import StrKey
+from forze.base.primitives import MappingConverter, StrKeyMapping
 
 from ...kernel.client import Neo4jClientPort
 from .configs import Neo4jGraphConfig
@@ -36,7 +36,10 @@ class Neo4jDepsModule(DepsModule):
     client: Neo4jClientPort
     """Pre-constructed Neo4j client (driver not opened until lifecycle startup)."""
 
-    graphs: Mapping[StrKey, Neo4jGraphConfig] | None = attrs.field(default=None)
+    graphs: StrKeyMapping[Neo4jGraphConfig] | None = attrs.field(
+        default=None,
+        converter=MappingConverter.to_str_key_frozen,  # type: ignore[misc]
+    )
     """Mapping from graph module names to their Neo4j configuration."""
 
     # ....................... #

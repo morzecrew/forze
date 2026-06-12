@@ -215,6 +215,7 @@ timeout = 300
 timeout_method = "thread"
 markers = [
     "perf: Performance benchmark (excluded from default just test; not all perf tests need Docker)",
+    "perf_gate: In-process, deterministic benchmark gated for regressions in CI (same-runner A/B vs merge-base)",
     "integration: Integration test",
     "unit: Unit test",
     "asyncio: Async test",

@@ -72,6 +72,7 @@ class ConfigurableFirestoreReadOnlyDocument(DocumentQueryDepPort[R]):
             document_name=spec.name,
             cache=cache,
             after_commit=after_commit,
+            cache_spec=spec.cache,
             read_codec=read.read_codec,
         )
 
@@ -156,6 +157,7 @@ class ConfigurableFirestoreDocument(DocumentCommandDepPort[R, D, C, U]):
             document_name=spec.name,
             cache=cache,
             after_commit=after_commit,
+            cache_spec=spec.cache,
             read_codec=read.read_codec,
         )
 

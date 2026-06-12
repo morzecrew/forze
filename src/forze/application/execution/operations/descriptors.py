@@ -11,14 +11,13 @@ read/write classification lives on the plan (:class:`OperationKind`), not the de
 because it is execution-semantic; :meth:`OperationCatalogEntry` joins the two.
 """
 
-from __future__ import annotations
-
-from typing import Any, final
+from datetime import timedelta
+from typing import final
 
 import attrs
 from pydantic import BaseModel
 
-from forze.base.primitives import StrKey
+from forze.base.primitives import JsonDict, StrKey
 
 from .planning import OperationKind
 
@@ -57,14 +56,14 @@ class OperationDescriptor:
 
     # ....................... #
 
-    def input_schema(self) -> dict[str, Any] | None:
+    def input_schema(self) -> JsonDict | None:
         """JSON schema for the input DTO, or ``None`` when the operation takes no input."""
 
         return None if self.input_type is None else self.input_type.model_json_schema()
 
     # ....................... #
 
-    def output_schema(self) -> dict[str, Any] | None:
+    def output_schema(self) -> JsonDict | None:
         """JSON schema for the output DTO, or ``None`` when the operation returns nothing."""
 
         return (
@@ -88,6 +87,30 @@ class OperationCatalogEntry:
 
     descriptor: OperationDescriptor | None = None
     """Catalog metadata, if the operation declared one."""
+
+    supports_idempotency_key: bool = False
+    """The operation's plan carries an idempotency wrap: a duplicate invocation that
+    binds the same idempotency key replays the stored result instead of re-executing.
+
+    Derived at freeze via structural ``ProvidesIdempotency`` detection. "Supports",
+    not "requires" — the wrap is a no-op when the caller binds no key, so surfaces
+    should document the key as an *optional* parameter."""
+
+    required_permissions: tuple[str, ...] = ()
+    """Sorted union of permission keys declared by the plan's authz hooks
+    (structural ``DeclaresAuthz`` detection at freeze); empty = no declared authz.
+
+    Honesty caveat: declared-hook introspection, **not** a security statement. An
+    operation may enforce authorization inside its handler (or via an undeclared
+    hook) invisibly, so an empty tuple must not be read as "unauthenticated/open"."""
+
+    deadline: timedelta | None = None
+    """Per-invocation time budget declared by the plan, or ``None`` for no cap.
+
+    The effective merged budget (tightest across patches and the explicit plan).
+    Enforced at operation entry: exceeding it fails with a non-retryable
+    ``TIMEOUT`` (``code="deadline_exceeded"``; **504** over the FastAPI edge).
+    A caller-bound deadline can only tighten it further, never extend it."""
 
     # ....................... #
 

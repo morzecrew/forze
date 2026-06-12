@@ -296,3 +296,17 @@ Before tagging a release, move the relevant entries from the `[Unreleased]` sect
 ## Questions
 
 If you have questions about contributing or the codebase, please open an issue or start a discussion on GitHub.
+
+## Performance regression gate
+
+The in-process benchmark subset (marked `perf_gate`) is compared in CI against
+your PR's merge-base **on the same runner** and fails on a >15% regression of
+`min`. If it fires: fix the regression, or justify it in the PR and apply the
+`skip-perf-gate` label. Comparisons match benchmarks by name — new benchmarks
+pass trivially; renames silently drop out of comparison, so prefer keeping
+names stable. Locally: `just perf-save` to snapshot a baseline, `just
+perf-check` to compare your changes against it (10% threshold). Mark a new
+benchmark with `perf_gate` only if it is in-process and deterministic (no
+Docker). Trend history for `main` lives on the `benchmarks` branch
+(`dev/bench`), maintained by the `perf-trend` CI job, which comments on >25%
+drift but never fails.

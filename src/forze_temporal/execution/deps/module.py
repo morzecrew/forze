@@ -1,4 +1,4 @@
-from typing import Any, Mapping, Sequence, final
+from typing import Any, Sequence, final
 
 import attrs
 
@@ -12,7 +12,7 @@ from forze.application.contracts.durable.workflow import (
 )
 from forze.application.contracts.tenancy import warn_dynamic_relation_with_tenant_aware
 from forze.application.execution import Deps, DepsModule
-from forze.base.primitives import StrKey
+from forze.base.primitives import MappingConverter, StrKeyMapping
 
 from ...kernel._logger import logger
 from ...kernel.client import TemporalClientPort
@@ -36,8 +36,9 @@ class TemporalDepsModule(DepsModule):
     client: TemporalClientPort
     """Pre-constructed Temporal client (single cluster or routed, not connected until lifecycle)."""
 
-    workflows: Mapping[StrKey, TemporalWorkflowConfig] | None = attrs.field(
-        default=None
+    workflows: StrKeyMapping[TemporalWorkflowConfig] | None = attrs.field(
+        default=None,
+        converter=MappingConverter.to_str_key_frozen,  # type: ignore[misc]
     )
     """Mapping from workflow names to their Temporal-specific configurations."""
 
@@ -47,6 +48,8 @@ class TemporalDepsModule(DepsModule):
         )
     )
     """Declarative schedules upserted on Temporal lifecycle startup."""
+
+    # ....................... #
 
     def __attrs_post_init__(self) -> None:
         if self.workflows:

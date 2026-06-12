@@ -129,9 +129,17 @@ class TestTemporalWorkflowCommandAdapter:
         await adapter.terminate(h, reason="bye")
 
         assert out.v == 9
-        backend.get_workflow_handle.assert_called_with("w1", run_id="r1")
+        backend.get_workflow_handle.assert_called_with(
+            "w1",
+            run_id="r1",
+            result_type=None,
+        )
         wh.signal.assert_awaited_once_with(signal="sig", arg=_Sig(s=2))
-        wh.execute_update.assert_awaited_once_with(update="up", arg=_UpIn(u=3))
+        wh.execute_update.assert_awaited_once_with(
+            update="up",
+            arg=_UpIn(u=3),
+            result_type=_UpOut,
+        )
         wh.cancel.assert_awaited_once()
         wh.terminate.assert_awaited_once_with(reason="bye")
 
@@ -161,8 +169,14 @@ class TestTemporalWorkflowQueryAdapter:
 
         assert qo.r == "x"
         assert res.y == "done"
-        backend.get_workflow_handle.assert_called_with("w2", run_id="r2")
-        wh.query.assert_awaited_once_with(query="q", arg=_QIn(q=1))
+        # The last handle fetch is result()'s, carrying the workflow's run
+        # return type so the data converter deserializes into the spec model.
+        backend.get_workflow_handle.assert_called_with(
+            "w2",
+            run_id="r2",
+            result_type=_Out,
+        )
+        wh.query.assert_awaited_once_with(query="q", arg=_QIn(q=1), result_type=_QOut)
         wh.result.assert_awaited_once()
 
     @pytest.mark.asyncio

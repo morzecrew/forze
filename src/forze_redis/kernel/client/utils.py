@@ -13,6 +13,8 @@ from redis.typing import (
 from .types import (
     RawRedisPubSubMessage,
     RawRedisStreamResponse,
+    RedisAutoClaimResponse,
+    RedisPendingEntry,
     RedisPubSubMessage,
     RedisStreamEntry,
     RedisStreamFields,
@@ -43,6 +45,69 @@ def parse_stream_entries(raw: RawRedisStreamResponse) -> RedisStreamResponse:
         (_to_str(stream), _parse_stream_messages(_flatten_stream_messages(messages)))
         for stream, messages in _iter_stream_batches(raw)
     ]
+
+
+# ....................... #
+
+
+def parse_xautoclaim_response(raw: list[Any]) -> RedisAutoClaimResponse:
+    """Normalise a raw ``XAUTOCLAIM`` response into :data:`RedisAutoClaimResponse`.
+
+    Decodes the next cursor and deleted-entry ids to strings and parses the
+    claimed entries like an ``XREAD`` batch. Tolerates the two-element shape
+    returned by servers predating Redis 7 (no deleted-ids array) and the
+    ``(None, None)`` placeholders redis-py emits for entries trimmed from the
+    stream on 6.2 servers.
+
+    :param raw: Raw response from ``redis-py`` ``xautoclaim``.
+    :returns: Parsed ``(next_cursor, claimed_entries, deleted_ids)`` page.
+    """
+
+    next_cursor = _to_str(raw[0]) if raw else "0-0"
+
+    entries_raw = (  # pyright: ignore[reportUnknownVariableType]
+        raw[1] if len(raw) > 1 and raw[1] else []
+    )
+    deleted_raw = (  # pyright: ignore[reportUnknownVariableType]
+        raw[2] if len(raw) > 2 and raw[2] else []
+    )
+
+    return (
+        next_cursor,
+        _parse_stream_messages(cast(list[StreamEntry], entries_raw)),
+        [_to_str(d) for d in cast(Iterable[Any], deleted_raw)],
+    )
+
+
+# ....................... #
+
+
+def parse_xpending_entries(raw: Iterable[Any] | None) -> list[RedisPendingEntry]:
+    """Normalise extended ``XPENDING`` rows into :data:`RedisPendingEntry` tuples.
+
+    Accepts the redis-py detail dicts (``message_id`` / ``consumer`` /
+    ``time_since_delivered`` / ``times_delivered``), decoding ids and consumer
+    names to strings and coercing the idle time and delivery counter to ints.
+
+    :param raw: Raw detail rows from ``redis-py`` ``xpending_range``.
+    :returns: Parsed ``(message_id, consumer, idle_ms, delivery_count)`` rows.
+    """
+
+    out: list[RedisPendingEntry] = []
+
+    for row in raw or []:
+        mapping = cast(dict[str, Any], row)
+
+        out.append(
+            (
+                _to_str(mapping["message_id"]),
+                _to_str(mapping["consumer"]),
+                int(mapping["time_since_delivered"]),
+                int(mapping["times_delivered"]),
+            )
+        )
+
+    return out
 
 
 # ....................... #

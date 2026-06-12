@@ -81,9 +81,9 @@ class Argon2PasswordVerifier(PasswordVerifierPort):
         if account is not None and account.is_active:
             password_hash = account.password_hash
         else:
-            password_hash = self.password_svc.timing_dummy_hash()
+            password_hash = await self.password_svc.timing_dummy_hash()
 
-        ok = self.password_svc.verify_password(
+        ok = await self.password_svc.verify_password(
             password_hash=password_hash,
             password=credentials.password,
         )
@@ -119,7 +119,7 @@ class Argon2PasswordVerifier(PasswordVerifierPort):
             if not self.password_svc.password_needs_rehash(account.password_hash):
                 return
 
-            new_hash = self.password_svc.hash_password(password)
+            new_hash = await self.password_svc.hash_password(password)
             upd_cmd = UpdatePasswordAccountCmd(password_hash=new_hash)
 
             await self.pa_cmd.update(  # type: ignore[union-attr]

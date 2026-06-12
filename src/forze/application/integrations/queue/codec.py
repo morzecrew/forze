@@ -1,7 +1,7 @@
 """Shared queue payload codec for message-queue adapters (SQS, RabbitMQ, ...)."""
 
 from datetime import datetime
-from typing import Any, Protocol
+from typing import Any, Mapping, Protocol
 
 import attrs
 
@@ -29,6 +29,12 @@ class RawQueueMessage(Protocol):
     @property
     def key(self) -> str | None: ...
 
+    @property
+    def headers(self) -> Mapping[str, str] | None: ...
+
+    @property
+    def delivery_count(self) -> int | None: ...
+
 
 # ....................... #
 
@@ -47,6 +53,11 @@ class BaseQueueMessage:
     type: str | None = None
     enqueued_at: datetime | None = None
     key: str | None = None
+    headers: Mapping[str, str] | None = None
+    """Caller-visible transport headers (reserved transport keys excluded)."""
+
+    delivery_count: int | None = None
+    """Approximate deliveries including this one; ``None`` when unknown."""
 
 
 # ....................... #
@@ -78,4 +89,6 @@ class QueueMessageCodec[M]:
             type=raw.type,
             enqueued_at=raw.enqueued_at,
             key=raw.key,
+            headers=raw.headers or {},
+            delivery_count=raw.delivery_count,
         )

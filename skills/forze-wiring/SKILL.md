@@ -115,6 +115,8 @@ async with runtime.scope():
     ctx = runtime.get_context()
 ```
 
+`build_runtime(*modules, lifecycle_modules=, lifecycle_steps=, ...)` (from `forze.application.execution`) assembles the same thing in one call — it freezes both plans for you. Production knobs live there too: `drain_timeout=` (graceful drain window on shutdown, default 10s) and `deployment=DeploymentProfile.FLEET` (fails assembly for unguarded shared-state-mutating lifecycle steps when running N replicas; guard them with `forze_kits.lifecycle.singleton_lifecycle_step`). See [`forze-resilience-deadlines`](../forze-resilience-deadlines/SKILL.md).
+
 ## Document composition
 
 ### Registry and transaction plan

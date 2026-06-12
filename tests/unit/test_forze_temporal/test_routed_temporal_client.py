@@ -197,7 +197,11 @@ async def test_routed_temporal_delegates_to_inner_client() -> None:
         arg=arg,
         run_id="run-1",
     )
-    inner.get_workflow_handle.assert_called_once_with("wf", run_id="run-1")
+    inner.get_workflow_handle.assert_called_once_with(
+        "wf",
+        run_id="run-1",
+        result_type=None,
+    )
 
 
 @pytest.mark.asyncio

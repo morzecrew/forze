@@ -202,6 +202,9 @@ def configure_logging(
     """Configure logging for the application.
 
     :param level: The logging level to use: "notset", "trace", "debug", "info", "warning", "error", "critical".
+        Trace is opt-in: until ``configure_logging`` runs, the :meth:`~forze.base.logging.Logger.trace`
+        gate defaults to the INFO rank, so unconfigured processes drop trace events
+        entirely; pass ``level="trace"`` to emit them.
     :param render_mode: The render mode to use: "console", "json".
     :param custom_console_renderer: A custom console renderer to use for the console mode.
     :param logger_names: The logger names to configure logging for.

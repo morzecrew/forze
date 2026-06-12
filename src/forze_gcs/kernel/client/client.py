@@ -8,20 +8,23 @@ require_gcs()
 import json
 import os
 from contextlib import asynccontextmanager
-from datetime import datetime
-from typing import Any, AsyncGenerator, cast, final
+from datetime import datetime, timedelta
+from typing import Any, AsyncGenerator, Literal, cast, final
 
 import aiohttp
 import attrs
-from gcloud.aio.storage import Storage
+from gcloud.aio.storage import Blob, Storage
 
+from forze.application.contracts.storage import PresignedUrl
 from forze.application.integrations.storage.client import (
+    PRESIGN_MAX_EXPIRY,
     ObjectStorageHead,
     ObjectStorageListedObject,
     normalize_list_window,
+    presign_expiry_seconds,
 )
 from forze.base.exceptions import exc
-from forze.base.primitives import ContextScopedResource, GuardedLifecycle
+from forze.base.primitives import ContextScopedResource, GuardedLifecycle, utcnow
 from forze.base.primitives.owned_temp_path import OwnedTempPath
 
 from .errors import exc_interceptor
@@ -381,6 +384,174 @@ class GCSClient(GCSClientPort):
         )
 
         return _head_from_object_json(raw)
+
+    # ....................... #
+
+    @exc_interceptor.coroutine("gcs.presign_download_url")  # type: ignore[untyped-decorator]
+    async def presign_download_url(
+        self,
+        bucket: str,
+        key: str,
+        *,
+        expires_in: timedelta,
+    ) -> PresignedUrl:
+        """Sign a time-limited ``GET`` URL for the blob (V4 query auth).
+
+        See :meth:`__presign` for the credential requirements and limits.
+
+        :param bucket: Bucket name.
+        :param key: Blob name.
+        :param expires_in: URL lifetime (positive, at most 7 days).
+        :raises CoreException: ``validation`` when *expires_in* is out of
+            range; ``configuration`` when the bound credentials cannot sign.
+        """
+
+        return await self.__presign(
+            bucket,
+            key,
+            expires_in=expires_in,
+            method="GET",
+            content_type=None,
+        )
+
+    # ....................... #
+
+    @exc_interceptor.coroutine("gcs.presign_upload_url")  # type: ignore[untyped-decorator]
+    async def presign_upload_url(
+        self,
+        bucket: str,
+        key: str,
+        *,
+        expires_in: timedelta,
+        content_type: str | None = None,
+    ) -> PresignedUrl:
+        """Sign a time-limited ``PUT`` URL for the blob (V4 query auth).
+
+        When *content_type* is given it becomes a **signed header**, so the
+        uploader must send it verbatim — the returned
+        :attr:`PresignedUrl.headers` carries it. See :meth:`__presign` for
+        the credential requirements and limits.
+
+        :param bucket: Bucket name.
+        :param key: Blob name to upload to.
+        :param expires_in: URL lifetime (positive, at most 7 days).
+        :param content_type: Optional MIME type to bind into the signature.
+        :raises CoreException: ``validation`` when *expires_in* is out of
+            range; ``configuration`` when the bound credentials cannot sign.
+        """
+
+        return await self.__presign(
+            bucket,
+            key,
+            expires_in=expires_in,
+            method="PUT",
+            content_type=content_type,
+        )
+
+    # ....................... #
+
+    async def __presign(
+        self,
+        bucket: str,
+        key: str,
+        *,
+        expires_in: timedelta,
+        method: Literal["GET", "PUT"],
+        content_type: str | None,
+    ) -> PresignedUrl:
+        """Build a V4 signed URL via :meth:`gcloud.aio.storage.Blob.get_signed_url`.
+
+        **Credential requirements.** V4 signing needs signing material:
+
+        - With an explicit service-account JSON key (``service_file`` /
+          ``GOOGLE_APPLICATION_CREDENTIALS`` carrying ``client_email`` +
+          ``private_key``) the URL is signed **locally** — no API round-trip.
+        - Without a private key (ADC / metadata-server tokens) the installed
+          ``gcloud-aio-storage`` can sign **remotely** via the IAM
+          Credentials API (``signBlob``), but only for an explicitly named
+          account: set :attr:`GCSConfig.signing_service_account_email`. The
+          ambient credentials must hold ``iam.serviceAccounts.signBlob`` on
+          that account; this path costs one IAM API round-trip per URL.
+        - ``AUTHORIZED_USER`` (gcloud user) credentials cannot sign at all —
+          the library rejects them (mapped to a configuration error).
+
+        When neither a private key nor a configured signing account is
+        available this raises ``exc.configuration`` instead of producing an
+        unverifiable URL. GCS V4 caps expiries at 7 days. The URL host is
+        resolved by the library at import time (``STORAGE_EMULATOR_HOST`` or
+        ``storage.googleapis.com``) with a fixed ``https`` scheme.
+        """
+
+        seconds = presign_expiry_seconds(expires_in, max_expiry=PRESIGN_MAX_EXPIRY)
+        storage = self.__require_storage()
+
+        token = storage.token
+        service_data: dict[str, Any] = getattr(token, "service_data", None) or {}
+        has_local_key = bool(service_data.get("client_email")) and bool(
+            service_data.get("private_key")
+        )
+
+        signing_email = (
+            self.__config.signing_service_account_email
+            if self.__config is not None
+            else None
+        )
+
+        if not has_local_key and not signing_email:
+            raise exc.configuration(
+                "GCS presigned URLs require signing material: provide a "
+                "service-account JSON key (client_email + private_key) via "
+                "service_file / GOOGLE_APPLICATION_CREDENTIALS for local "
+                "signing, or set GCSConfig.signing_service_account_email to "
+                "sign remotely via the IAM Credentials API (signBlob). The "
+                "bound credentials (ADC/metadata token without a private "
+                "key) cannot sign URLs."
+            )
+
+        signed_headers: dict[str, str] | None = None
+        out_headers: dict[str, str] = {}
+
+        if content_type is not None:
+            signed_headers = {"content-type": content_type}
+            out_headers["Content-Type"] = content_type
+
+        blob = Blob(storage.get_bucket(bucket), key, {"size": 0})
+
+        sign_kwargs: dict[str, Any] = {}
+
+        if not has_local_key:
+            # IAM signBlob path: name the account and reuse the pooled session
+            # (also keeps the library from closing it after the call).
+            sign_kwargs["service_account_email"] = signing_email
+            sign_kwargs["session"] = storage.session.session
+
+        expires_at = utcnow() + timedelta(seconds=seconds)
+
+        try:
+            url = await blob.get_signed_url(
+                seconds,
+                headers=signed_headers,
+                http_method=method,
+                **sign_kwargs,
+            )
+
+        except ValueError as e:
+            # Defensive: the library enforces the same 7-day V4 cap.
+            raise exc.validation(str(e)) from e
+
+        except TypeError as e:
+            raise exc.configuration(
+                "GCS presigned URLs cannot be signed with the bound "
+                "credentials (AUTHORIZED_USER tokens are not supported by "
+                "gcloud-aio-storage signing)"
+            ) from e
+
+        return PresignedUrl(
+            url=url,
+            method=method,
+            expires_at=expires_at,
+            headers=out_headers,
+        )
 
     # ....................... #
 

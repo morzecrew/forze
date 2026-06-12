@@ -1,10 +1,13 @@
+import random
 from copy import deepcopy
+from typing import Any
 
 import pytest
 
 from forze.base.primitives import JsonDict
 from forze.base.serialization.diff import (
     _is_prefix,
+    _set_nested,
     apply_dict_patch,
     calculate_dict_difference,
     has_hybrid_patch_conflict,
@@ -147,6 +150,176 @@ class TestCalculateDictDifference:
 
 
 # ----------------------- #
+# Diff short-circuit parity
+
+
+def _reference_diff(
+    before: Any,
+    after: Any,
+    *,
+    deletions_as_none: bool = True,
+) -> JsonDict:
+    """Pre-optimization diff walk (no subtree-equality short-circuit).
+
+    Golden reference: the optimized ``calculate_dict_difference`` must agree
+    with this on every input.
+    """
+
+    patch: JsonDict = {}
+
+    def walk(b: Any, a: Any, path: tuple[str, ...]) -> None:
+        if isinstance(b, dict) and isinstance(a, dict):
+            for k in a:
+                if k not in b:
+                    _set_nested(patch, path + (k,), deepcopy(a[k]))
+                else:
+                    walk(b[k], a[k], path + (k,))
+
+            if deletions_as_none:
+                for k in b:
+                    if k not in a:
+                        _set_nested(patch, path + (k,), None)
+
+            return
+
+        if isinstance(b, list) and isinstance(a, list):
+            if b != a:
+                _set_nested(patch, path, deepcopy(a))
+
+            return
+
+        if b != a:
+            _set_nested(
+                patch,
+                path,
+                deepcopy(a) if isinstance(a, (dict, list, set, tuple)) else a,
+            )
+
+    walk(before, after, ())
+
+    return patch
+
+
+class TestDiffShortCircuitParity:
+    """The subtree-equality fast path must be a behavioral no-op: optimized and
+    reference walks agree on identical, partially-changed, and randomized
+    nested structures."""
+
+    def _random_value(self, rng: random.Random, depth: int) -> Any:
+        kind = rng.randrange(6 if depth > 0 else 4)
+
+        if kind == 0:
+            return rng.randrange(100)
+        if kind == 1:
+            return rng.choice(["alpha", "beta", "gamma", ""])
+        if kind == 2:
+            return rng.choice([True, False, None])
+        if kind == 3:
+            return rng.random()
+        if kind == 4:
+            return [self._random_value(rng, depth - 1) for _ in range(rng.randrange(4))]
+
+        return self._random_dict(rng, depth - 1)
+
+    def _random_dict(self, rng: random.Random, depth: int) -> JsonDict:
+        return {
+            f"k{i}": self._random_value(rng, depth) for i in range(rng.randrange(1, 6))
+        }
+
+    def _mutate(self, rng: random.Random, node: JsonDict) -> None:
+        """Apply a few random in-place mutations: change, delete, add, recurse."""
+
+        for _ in range(rng.randrange(1, 4)):
+            if not node:
+                node["added"] = self._random_value(rng, 1)
+                continue
+
+            key = rng.choice(sorted(node))
+            op = rng.randrange(4)
+
+            if op == 0:
+                node[key] = self._random_value(rng, 1)
+            elif op == 1:
+                del node[key]
+            elif op == 2:
+                node[f"new_{key}"] = self._random_value(rng, 1)
+            elif isinstance(node[key], dict):
+                self._mutate(rng, node[key])
+            else:
+                node[key] = self._random_value(rng, 1)
+
+    @pytest.mark.parametrize("deletions_as_none", [True, False])
+    def test_randomized_structures_match_reference(
+        self, deletions_as_none: bool
+    ) -> None:
+        rng = random.Random(1337)
+
+        for _ in range(100):
+            before = self._random_dict(rng, depth=3)
+            after = deepcopy(before)
+
+            if rng.random() < 0.8:  # keep some exact no-op pairs in the mix
+                self._mutate(rng, after)
+
+            expected = _reference_diff(
+                before, after, deletions_as_none=deletions_as_none
+            )
+            actual = calculate_dict_difference(
+                before, after, deletions_as_none=deletions_as_none
+            )
+
+            assert actual == expected
+
+    @pytest.mark.parametrize("deletions_as_none", [True, False])
+    def test_handcrafted_cases_match_reference(self, deletions_as_none: bool) -> None:
+        cases: list[tuple[JsonDict, JsonDict]] = [
+            # equal subtree next to a changed one
+            (
+                {"same": {"a": 1, "b": [1, 2]}, "diff": {"x": 1}},
+                {"same": {"a": 1, "b": [1, 2]}, "diff": {"x": 2}},
+            ),
+            # deletion below an otherwise-equal sibling
+            (
+                {"keep": {"deep": {"v": 1}}, "drop": {"a": 1, "b": 2}},
+                {"keep": {"deep": {"v": 1}}, "drop": {"a": 1}},
+            ),
+            # type flips (dict→scalar, scalar→list)
+            ({"a": {"b": 1}, "c": 1}, {"a": 2, "c": [1]}),
+            # empty containers
+            ({"a": {}, "b": []}, {"a": {}, "b": []}),
+            ({"a": {}}, {"a": {"x": 1}}),
+        ]
+
+        for before, after in cases:
+            assert calculate_dict_difference(
+                before, after, deletions_as_none=deletions_as_none
+            ) == _reference_diff(before, after, deletions_as_none=deletions_as_none)
+
+    def test_shared_subtree_objects_short_circuit_to_empty_diff(self) -> None:
+        # The same container object on both sides is by definition equal;
+        # the fast path must yield an empty diff, like the full walk does.
+        shared: JsonDict = {"x": {"y": [1, 2]}}
+        before: JsonDict = {"a": shared, "b": 1}
+        after: JsonDict = {"a": shared, "b": 1}
+
+        assert calculate_dict_difference(before, after) == {}
+
+    def test_diff_values_remain_isolated_copies(self) -> None:
+        # Changed containers still land in the patch as deep copies, never as
+        # references into `after`.
+        before: JsonDict = {"a": {"b": [1]}}
+        after: JsonDict = {"a": {"b": [1, 2]}, "c": {"d": 1}}
+
+        diff = calculate_dict_difference(before, after)
+        assert diff == {"a": {"b": [1, 2]}, "c": {"d": 1}}
+
+        after["a"]["b"].append(3)
+        after["c"]["d"] = 99
+        assert diff["a"]["b"] == [1, 2]
+        assert diff["c"]["d"] == 1
+
+
+# ----------------------- #
 # _is_prefix / is_prefix
 
 
@@ -243,3 +416,175 @@ class TestHasHybridPatchConflict:
 
     def test_no_conflict_independent_containers(self) -> None:
         assert not has_hybrid_patch_conflict({}, {("a",)}, {}, {("b",)})
+
+
+# ----------------------- #
+# has_hybrid_patch_conflict: bucketed rewrite parity
+#
+# The root-bucketed implementation must be a drop-in behavioral no-op vs the
+# original quadratic scan. The reference below is a verbatim copy of the OLD
+# implementation (pre-bucketing); the fuzz harness compares both on randomized
+# path sets including shared-root nested prefixes both directions, empty-path
+# edges, and equal-scalar overlaps.
+
+
+DictPath = tuple[str, ...]
+
+
+def _reference_has_hybrid_patch_conflict(
+    a_scalars: dict[DictPath, Any],
+    a_containers: set[DictPath],
+    b_scalars: dict[DictPath, Any],
+    b_containers: set[DictPath],
+) -> bool:
+    """Verbatim copy of the pre-bucketing implementation (golden reference)."""
+
+    all_a = set(a_containers) | set(a_scalars.keys())
+    all_b = set(b_containers) | set(b_scalars.keys())
+
+    for pa in all_a:
+        for pb in all_b:
+            if not is_prefix(pa, pb):
+                continue
+
+            is_both_scalar = pa in a_scalars and pb in b_scalars
+
+            if is_both_scalar and pa == pb and a_scalars[pa] == b_scalars[pb]:
+                continue
+
+            return True
+
+    return False
+
+
+class TestHasHybridPatchConflictBucketedParity:
+    """Seeded property-style fuzz: optimized and reference verdicts must agree."""
+
+    @staticmethod
+    def _rand_path(rng: random.Random, roots: list[str], max_depth: int = 4) -> DictPath:
+        depth = rng.randint(1, max_depth)
+        segs = [rng.choice(roots)] + [
+            rng.choice(["aa", "bb", "cc", "dd"]) for _ in range(depth - 1)
+        ]
+        return tuple(segs)
+
+    @classmethod
+    def _rand_side(
+        cls,
+        rng: random.Random,
+        roots: list[str],
+        n_paths: int,
+    ) -> tuple[dict[DictPath, Any], set[DictPath]]:
+        scalars: dict[DictPath, Any] = {}
+        containers: set[DictPath] = set()
+
+        for _ in range(n_paths):
+            p = cls._rand_path(rng, roots)
+
+            if rng.random() < 0.3:
+                containers.add(p)
+
+            else:
+                # Few distinct values => frequent equal-scalar overlaps.
+                scalars[p] = rng.choice([0, 1, "x"])
+
+        return scalars, containers
+
+    def test_fuzz_parity_with_reference(self) -> None:
+        rng = random.Random(20260611)
+        conflicts = 0
+
+        for _ in range(500):
+            # A small shared root universe forces shared-root nested prefixes
+            # in both directions (A-in-B and B-in-A).
+            roots = [f"r{k}" for k in range(rng.randint(1, 6))]
+            a_s, a_c = self._rand_side(rng, roots, rng.randint(0, 8))
+            b_s, b_c = self._rand_side(rng, roots, rng.randint(0, 8))
+
+            # Occasionally inject the exact same path on both sides, half the
+            # time with an equal value (compatible overlap exemption).
+            if rng.random() < 0.5 and a_s:
+                p = rng.choice(sorted(a_s))
+                b_s[p] = a_s[p] if rng.random() < 0.5 else "different"
+
+            # Occasionally inject empty-path edges on either side.
+            if rng.random() < 0.05:
+                a_s[()] = 1
+
+            if rng.random() < 0.05:
+                b_c.add(())
+
+            expected = _reference_has_hybrid_patch_conflict(a_s, a_c, b_s, b_c)
+            actual = has_hybrid_patch_conflict(a_s, a_c, b_s, b_c)
+
+            assert actual == expected, (a_s, a_c, b_s, b_c)
+            conflicts += expected
+
+        # Sanity: the seed exercises both verdicts.
+        assert 0 < conflicts < 500
+
+    # explicit edge cases #
+
+    def test_empty_path_in_a_conflicts_with_everything(self) -> None:
+        assert has_hybrid_patch_conflict({(): 1}, set(), {("a", "b"): 2}, set())
+        assert has_hybrid_patch_conflict({(): 1}, set(), {}, {("z",)})
+
+    def test_empty_path_in_b_conflicts_with_everything(self) -> None:
+        assert has_hybrid_patch_conflict({("a", "b"): 2}, set(), {(): 1}, set())
+        assert has_hybrid_patch_conflict({}, {("z",)}, {}, {()})
+
+    def test_empty_paths_both_sides_equal_scalar_is_compatible(self) -> None:
+        assert not has_hybrid_patch_conflict({(): 1}, set(), {(): 1}, set())
+        assert has_hybrid_patch_conflict({(): 1}, set(), {(): 2}, set())
+
+    def test_shared_root_prefix_a_in_b(self) -> None:
+        assert has_hybrid_patch_conflict(
+            {("root", "x"): 1},
+            set(),
+            {("root", "x", "deep"): 2},
+            set(),
+        )
+
+    def test_shared_root_prefix_b_in_a(self) -> None:
+        assert has_hybrid_patch_conflict(
+            {("root", "x", "deep"): 1},
+            set(),
+            {("root", "x"): 2},
+            set(),
+        )
+
+    def test_shared_root_disjoint_subpaths_do_not_conflict(self) -> None:
+        assert not has_hybrid_patch_conflict(
+            {("root", "x", "p"): 1},
+            set(),
+            {("root", "y", "q"): 2},
+            set(),
+        )
+
+    def test_equal_scalar_same_path_exemption(self) -> None:
+        assert not has_hybrid_patch_conflict(
+            {("root", "x"): "same"},
+            set(),
+            {("root", "x"): "same"},
+            set(),
+        )
+
+    def test_equal_scalar_exemption_does_not_mask_other_conflicts(self) -> None:
+        assert has_hybrid_patch_conflict(
+            {("root", "x"): "same", ("root", "y"): 1},
+            set(),
+            {("root", "x"): "same", ("root", "y", "z"): 2},
+            set(),
+        )
+
+    def test_disjoint_roots_never_conflict(self) -> None:
+        assert not has_hybrid_patch_conflict(
+            {("a", "x"): 1, ("b", "y"): 2},
+            {("c",)},
+            {("d", "x"): 1, ("e", "y"): 2},
+            {("f",)},
+        )
+
+    def test_container_same_path_is_always_a_conflict(self) -> None:
+        # The exemption is scalar-only: identical container paths conflict.
+        assert has_hybrid_patch_conflict({}, {("a", "b")}, {}, {("a", "b")})

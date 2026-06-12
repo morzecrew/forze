@@ -1,28 +1,34 @@
-"""Circuit-breaker state store seam.
+"""Resilience state store seams (circuit breaker, rate limit).
 
 The executor touches the breaker at two points — ``admit`` (before a call) and
-``record`` (after) — and otherwise does not care where breaker state lives. This
-abstracts that storage so the breaker can be process-local (default) or shared across
-replicas (e.g. a Redis adapter), making the fleet trip and recover together.
+``record`` (after) — and the rate limiter at one (``try_acquire``); it otherwise
+does not care where the state lives. These seams abstract that storage so the
+state can be process-local (default) or shared across replicas (e.g. a Redis
+adapter): a shared breaker makes the fleet trip and recover together, and a
+shared rate limit makes ``permits/per`` mean the *fleet's* rate instead of
+silently becoming ``permits × replicas``.
 """
 
-from __future__ import annotations
-
 import time
-from collections.abc import Awaitable, Callable
-from typing import Protocol, final, runtime_checkable
+from typing import Awaitable, Callable, Protocol, final, runtime_checkable
 
 import attrs
 
-from forze.application.contracts.resilience import CircuitBreakerStrategy
+from forze.application.contracts.resilience import (
+    CircuitBreakerStrategy,
+    RateLimitStrategy,
+)
 from forze.base.primitives import StrKey
 
-from .state import BreakerState, Transition
+from .state import BreakerState, RateLimitState, Transition
 
 # ----------------------- #
 
 BreakerKey = tuple[StrKey, StrKey | None]
 """Identifies a breaker instance by ``(policy_name, route)``."""
+
+RateLimitKey = tuple[StrKey, StrKey | None]
+"""Identifies a rate-limit bucket by ``(policy_name, route)``."""
 
 
 # ....................... #
@@ -112,3 +118,68 @@ class InMemoryCircuitBreakerStore(CircuitBreakerStore):
             return state.on_success(self.clock())
 
         return state.on_failure(self.clock())
+
+
+# ....................... #
+
+
+@runtime_checkable
+class RateLimitStore(Protocol):
+    """Stores token-bucket state and applies acquisition atomically.
+
+    With the in-memory default each replica enforces ``permits/per``
+    independently, so the fleet-effective rate is ``permits × replicas``; a
+    shared store (e.g. Redis) makes the declared rate the *fleet's* rate.
+    Implementations own their time source — in-memory uses an injected clock,
+    a distributed store uses server time — so ``now`` is never passed across
+    the seam (replica clocks diverge).
+    """
+
+    def try_acquire(
+        self,
+        key: RateLimitKey,
+        strat: RateLimitStrategy,
+    ) -> Awaitable[bool]:
+        """Consume one token if available; return whether the call may proceed."""
+        ...  # pragma: no cover
+
+
+# ....................... #
+
+
+@final
+@attrs.define(slots=True, kw_only=True)
+class InMemoryRateLimitStore(RateLimitStore):
+    """Process-local token buckets keyed by ``(policy, route)`` (the default store)."""
+
+    clock: Callable[[], float] = attrs.field(default=time.monotonic)
+
+    _states: dict[RateLimitKey, RateLimitState] = attrs.field(factory=dict, init=False)
+
+    # ....................... #
+
+    def _state_for(
+        self,
+        key: RateLimitKey,
+        strat: RateLimitStrategy,
+    ) -> RateLimitState:
+        state = self._states.get(key)
+
+        if state is None:
+            state = RateLimitState(
+                rate=strat.permits / strat.per.total_seconds(),
+                capacity=float(strat.capacity),
+                updated_at=self.clock(),
+            )
+            self._states[key] = state
+
+        return state
+
+    # ....................... #
+
+    async def try_acquire(
+        self,
+        key: RateLimitKey,
+        strat: RateLimitStrategy,
+    ) -> bool:
+        return self._state_for(key, strat).try_acquire(self.clock())

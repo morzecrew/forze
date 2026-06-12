@@ -16,5 +16,11 @@ class TestAuthnKernelOp:
     def test_change_password_suffix(self) -> None:
         assert AuthnKernelOp.CHANGE_PASSWORD == "change_password"
 
+    def test_request_password_reset_suffix(self) -> None:
+        assert AuthnKernelOp.REQUEST_PASSWORD_RESET == "request_password_reset"
+
+    def test_reset_password_suffix(self) -> None:
+        assert AuthnKernelOp.RESET_PASSWORD == "reset_password"
+
     def test_deactivate_principal_suffix(self) -> None:
         assert AuthnKernelOp.DEACTIVATE_PRINCIPAL == "deactivate_principal"

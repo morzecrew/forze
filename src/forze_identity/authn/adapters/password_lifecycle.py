@@ -3,6 +3,8 @@ from typing import Any, final
 import attrs
 
 from forze.application.contracts.authn import (
+    AuthnEventEmitter,
+    AuthnEventKind,
     AuthnIdentity,
     PasswordLifecyclePort,
     PrincipalEligibilityPort,
@@ -69,6 +71,11 @@ class PasswordLifecycleAdapter(PasswordLifecyclePort):
     access tokens) after a successful password change ("log out everywhere"); the caller
     must re-authenticate with the new password. Opt out to keep existing sessions alive."""
 
+    events: AuthnEventEmitter | None = None
+    """Optional authn event emitter (best-effort; ``None`` disables emission).
+
+    Emits ``PASSWORD_CHANGED`` after a successful change."""
+
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
@@ -112,7 +119,7 @@ class PasswordLifecycleAdapter(PasswordLifecyclePort):
         # Re-authenticate with the current password before allowing the change, so a
         # hijacked session (a valid bearer identity) cannot escalate to a full account
         # takeover by silently resetting the password.
-        if not self.password_svc.verify_password(
+        if not await self.password_svc.verify_password(
             password_hash=pa.password_hash,
             password=current_password,
         ):
@@ -121,7 +128,7 @@ class PasswordLifecycleAdapter(PasswordLifecyclePort):
                 code="invalid_credentials",
             )
 
-        new_pwd_hash = self.password_svc.hash_password(new_password)
+        new_pwd_hash = await self.password_svc.hash_password(new_password)
         upd_cmd = UpdatePasswordAccountCmd(password_hash=new_pwd_hash)
 
         await self.pa_cmd.update(pa.id, pa.rev, upd_cmd, return_new=False)
@@ -136,4 +143,10 @@ class PasswordLifecycleAdapter(PasswordLifecyclePort):
                 self.session_qry,  # type: ignore[arg-type]
                 self.session_cmd,  # type: ignore[arg-type]
                 {"principal_id": identity.principal_id},
+            )
+
+        if self.events is not None:
+            await self.events.emit(
+                AuthnEventKind.PASSWORD_CHANGED,
+                principal_id=identity.principal_id,
             )

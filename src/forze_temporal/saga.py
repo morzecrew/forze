@@ -10,10 +10,9 @@ Imports no ``temporalio`` (the activity calls are supplied by the caller as thun
 safe to import inside the workflow sandbox.
 """
 
-from __future__ import annotations
+from typing import Awaitable, Callable, final
 
-from collections.abc import Awaitable, Callable
-from typing import final
+import attrs
 
 from forze.application.contracts.saga import SagaProgress, SagaStepKind
 
@@ -21,6 +20,7 @@ from forze.application.contracts.saga import SagaProgress, SagaStepKind
 
 
 @final
+@attrs.define(slots=True)
 class TemporalSaga:
     """Drives :class:`SagaProgress` from inside a Temporal workflow.
 
@@ -34,11 +34,19 @@ class TemporalSaga:
     and runs no compensation.
     """
 
-    __slots__ = ("_compensations", "_progress")
+    name: str = attrs.field(kw_only=True)
 
-    def __init__(self, *, name: str) -> None:
-        self._progress = SagaProgress(saga_name=name)
-        self._compensations: dict[int, Callable[[], Awaitable[object]]] = {}
+    _progress: SagaProgress = attrs.field(
+        init=False,
+        default=attrs.Factory(
+            lambda self: SagaProgress(saga_name=self.name),
+            takes_self=True,
+        ),
+    )
+    _compensations: dict[int, Callable[[], Awaitable[object]]] = attrs.field(
+        factory=dict,
+        init=False,
+    )
 
     # ....................... #
 

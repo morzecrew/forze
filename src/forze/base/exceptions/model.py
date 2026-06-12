@@ -29,6 +29,27 @@ class ExceptionKind(StrEnum):
     CONFIGURATION = "configuration"
     INFRASTRUCTURE = "infrastructure"
 
+    THROTTLED = "throttled"
+    """The call was rejected by a rate limit (no capacity right now).
+
+    Transient by definition — capacity refills over time — so the kind is
+    **retryable**: composing a rate-limited call with a
+    :class:`~forze.application.contracts.resilience.RetryStrategy` that
+    includes ``THROTTLED`` in ``retry_on`` turns reject-immediately into
+    wait-with-backoff. Maps to HTTP 429 at the FastAPI edge.
+    """
+
+    TIMEOUT = "timeout"
+    """The invocation deadline elapsed before the call completed.
+
+    **Not retryable**: within the same invocation the time budget is already
+    spent, so an in-process retry would only burn what little remains. A fresh
+    invocation carries a fresh deadline — retrying is the *caller's* decision.
+    Distinct from a per-attempt resilience timeout, which raises
+    ``INFRASTRUCTURE`` precisely so retry strategies can take another attempt.
+    Maps to HTTP 504 at the FastAPI edge.
+    """
+
 
 # ....................... #
 
@@ -159,6 +180,12 @@ class CoreException(Exception):
 
     infrastructure = _exc_of_kind(ExceptionKind.INFRASTRUCTURE)
     """Build an infrastructure exception."""
+
+    throttled = _exc_of_kind(ExceptionKind.THROTTLED)
+    """Build a throttled (rate-limited) exception."""
+
+    timeout = _exc_of_kind(ExceptionKind.TIMEOUT)
+    """Build a timeout (deadline exceeded) exception."""
 
     # ....................... #
 

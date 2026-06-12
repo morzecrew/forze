@@ -15,6 +15,7 @@ require_fastapi()
 # ....................... #
 
 import inspect
+from enum import Enum
 from typing import (
     AbstractSet,
     Any,
@@ -33,10 +34,12 @@ from pydantic import BaseModel, ValidationError
 from forze.application.execution.context import ExecutionContextFactory
 from forze.application.execution.operations import (
     FrozenOperationRegistry,
+    OperationCatalogEntry,
     run_operation,
 )
 from forze.base.exceptions import exc
 from forze.base.primitives import StrKeyNamespace
+from forze_fastapi.middlewares.invocation import IDEMPOTENCY_KEY_HEADER
 
 # ----------------------- #
 
@@ -58,6 +61,8 @@ EndpointBuilder = Callable[
     Callable[..., Awaitable[Any]],
 ]
 """Builds a route endpoint from ``(runner, descriptor input type, op key)``."""
+
+# ....................... #
 
 
 @final
@@ -113,9 +118,7 @@ def _require_satisfiable(
     """
 
     required = {
-        name
-        for name, field in dto_type.model_fields.items()
-        if field.is_required()
+        name for name, field in dto_type.model_fields.items() if field.is_required()
     }
 
     if missing := required - set(supplied):
@@ -172,6 +175,86 @@ def _operation_runner(
         return await run_operation(registry, op, args, ctx_dep())
 
     return run
+
+
+# ....................... #
+
+
+def _route_description(
+    entry: OperationCatalogEntry,
+) -> str | None:
+    """Route description: the descriptor's text plus catalog-derived lines.
+
+    The permissions line reflects *declared-hook introspection* only (the catalog's
+    ``required_permissions``), not a complete security statement — an operation may
+    enforce further checks inside its handler invisibly. A plan-declared deadline
+    documents the operation's time budget: exceeding it fails with **504**.
+    """
+
+    base = entry.descriptor.description if entry.descriptor is not None else None
+    lines: list[str] = [base] if base else []
+
+    if entry.required_permissions:
+        keys = ", ".join(f"`{key}`" for key in entry.required_permissions)
+        lines.append(
+            f"Requires permissions: {keys} (declared by attached authorization "
+            "hooks; the operation may enforce additional checks internally)."
+        )
+
+    if entry.deadline is not None:
+        budget = f"{entry.deadline.total_seconds():g}"
+        lines.append(
+            f"Time budget: {budget}s — requests exceeding it fail with "
+            "504 (`deadline_exceeded`)."
+        )
+
+    return "\n\n".join(lines) if lines else None
+
+
+# ....................... #
+
+
+def _route_openapi_extra(
+    entry: OperationCatalogEntry,
+) -> dict[str, Any] | None:
+    """Catalog-derived OpenAPI additions for one route, or ``None`` when unflagged.
+
+    Idempotency-capable operations (``supports_idempotency_key``) document the
+    ``Idempotency-Key`` request header as an **optional** parameter — the wrap
+    replays only for callers that send a key; there is no enforcement. A
+    "required-mode" knob (reject keyless requests) is a follow-up.
+
+    Declared permissions surface as the ``x-required-permissions`` vendor
+    extension; mapping them onto OpenAPI ``securitySchemes`` is a follow-up.
+    A plan-declared deadline surfaces as ``x-deadline-seconds`` (the merged
+    per-invocation budget; expiry returns **504**). FastAPI deep-merges
+    ``openapi_extra`` into the operation object, appending to ``parameters``,
+    so unflagged routes (``None``) are emitted unchanged.
+    """
+
+    extra: dict[str, Any] = {}
+
+    if entry.supports_idempotency_key:
+        extra["parameters"] = [
+            {
+                "name": IDEMPOTENCY_KEY_HEADER,
+                "in": "header",
+                "required": False,
+                "schema": {"type": "string", "title": IDEMPOTENCY_KEY_HEADER},
+                "description": (
+                    "Optional idempotency key. Retrying with the same key replays "
+                    "the stored result instead of re-executing the operation."
+                ),
+            }
+        ]
+
+    if entry.required_permissions:
+        extra["x-required-permissions"] = list(entry.required_permissions)
+
+    if entry.deadline is not None:
+        extra["x-deadline-seconds"] = entry.deadline.total_seconds()
+
+    return extra or None
 
 
 # ....................... #
@@ -273,12 +356,8 @@ def id_rev_body_endpoint(
 
     endpoint.__signature__ = inspect.Signature(  # type: ignore[attr-defined]
         [
-            inspect.Parameter(
-                "id", inspect.Parameter.KEYWORD_ONLY, annotation=UUID
-            ),
-            inspect.Parameter(
-                "rev", inspect.Parameter.KEYWORD_ONLY, annotation=int
-            ),
+            inspect.Parameter("id", inspect.Parameter.KEYWORD_ONLY, annotation=UUID),
+            inspect.Parameter("rev", inspect.Parameter.KEYWORD_ONLY, annotation=int),
             inspect.Parameter(
                 "payload", inspect.Parameter.KEYWORD_ONLY, annotation=inner
             ),
@@ -351,6 +430,13 @@ def attach_operation_routes(
             op,
         )
 
+        # Descriptor tags project onto OpenAPI route tags (additive to any
+        # router-level tags). MCP attachers have no tag concept — this mapping
+        # is HTTP-surface-specific by design.
+        tags: list[str | Enum] = (
+            list(descriptor.tags) if descriptor is not None else []
+        )
+
         router.add_api_route(
             binding.path,
             endpoint,
@@ -360,7 +446,9 @@ def attach_operation_routes(
             operation_id=op,
             name=op,
             summary=descriptor.title if descriptor is not None else None,
-            description=descriptor.description if descriptor is not None else None,
+            description=_route_description(entry),
+            tags=tags or None,
+            openapi_extra=_route_openapi_extra(entry),
         )
         attached += 1
 

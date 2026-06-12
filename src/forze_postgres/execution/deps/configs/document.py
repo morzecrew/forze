@@ -36,7 +36,7 @@ class PostgresReadOnlyDocumentConfig(TenantAwareIntegrationConfig):
     """Chunk size for bulk writes and internal chunked offset reads."""
 
     read_validation: Literal["strict", "trusted"] = "strict"
-    """How SELECT rows are turned into read models (``trusted`` uses ``model_construct``)."""
+    """How SELECT rows are turned into read models (``trusted`` rejects unknown columns up front, then validates like ``strict``)."""
 
 
 # ....................... #

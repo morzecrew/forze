@@ -49,6 +49,25 @@ Postgres stores the documents; Redis answers the repeat reads.
 - An `update` invalidates the entry; the next `get` repopulates it with the new
   value — so a cached read is never stale.
 
+## Stampedes are handled
+
+Two protections come with read-through caching; you wire neither.
+
+**Concurrent misses collapse.** When many requests miss the same key at once
+(a cold start, an invalidation on a hot key), one of them fetches from the
+database and the rest wait for that result — per process, one gateway fetch
+instead of a thundering herd. Followers share the leader's failure too, so a
+broken fetch fails fast everywhere instead of retrying in a pile.
+
+**Hot keys can refresh early.** Even with collapsed misses, a popular entry
+expiring means every replica misses at the same moment. Opt in with
+`CacheSpec(name="products", early_refresh_beta=1.0)`: a cache hit close to
+expiry may volunteer to recompute *before* the entry dies, with probability
+scaled by how expensive the recompute was observed to be — so refreshes
+desynchronize across replicas and a hot key never expires for everyone at
+once. Enabled entries carry a small metadata envelope in the cached value;
+the default (`None`) keeps the payload format unchanged.
+
 ## Run it
 
 ```bash

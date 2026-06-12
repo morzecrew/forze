@@ -1,6 +1,6 @@
 """ClickHouse dependency module for the application kernel."""
 
-from typing import Mapping, final
+from typing import final
 
 import attrs
 
@@ -10,7 +10,7 @@ from forze.application.contracts.analytics import (
 )
 from forze.application.execution import Deps, DepsModule
 from forze.application.execution.deps.builders import merge_deps, routed_from_mapping
-from forze.base.primitives import StrKey
+from forze.base.primitives import MappingConverter, StrKeyMapping
 
 from ...kernel.client import ClickHouseClientPort
 from .configs import ClickHouseAnalyticsConfig
@@ -28,8 +28,9 @@ class ClickHouseDepsModule(DepsModule):
     client: ClickHouseClientPort
     """Pre-constructed ClickHouse client (initialized via :func:`clickhouse_lifecycle_step`)."""
 
-    analytics: Mapping[StrKey, ClickHouseAnalyticsConfig] | None = attrs.field(
-        default=None
+    analytics: StrKeyMapping[ClickHouseAnalyticsConfig] | None = attrs.field(
+        default=None,
+        converter=MappingConverter.to_str_key_frozen,  # type: ignore[misc]
     )
     """Mapping from analytics route names to ClickHouse configuration."""
 

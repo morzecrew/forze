@@ -1,13 +1,13 @@
 """DuckDB dependency module for the application kernel."""
 
-from typing import Mapping, final
+from typing import final
 
 import attrs
 
 from forze.application.contracts.analytics import AnalyticsQueryDepKey
 from forze.application.execution import Deps, DepsModule
 from forze.application.execution.deps.builders import merge_deps, routed_from_mapping
-from forze.base.primitives import StrKey
+from forze.base.primitives import MappingConverter, StrKeyMapping
 
 from ...kernel.client import DuckDbClientPort
 from .configs import DuckDbAnalyticsConfig
@@ -28,8 +28,9 @@ class DuckDbDepsModule(DepsModule):
     client: DuckDbClientPort
     """Pre-constructed DuckDB client (initialized via :func:`duckdb_lifecycle_step`)."""
 
-    analytics: Mapping[StrKey, DuckDbAnalyticsConfig] | None = attrs.field(
-        default=None
+    analytics: StrKeyMapping[DuckDbAnalyticsConfig] | None = attrs.field(
+        default=None,
+        converter=MappingConverter.to_str_key_frozen,  # type: ignore[misc]
     )
     """Mapping from analytics route names to DuckDB configuration."""
 

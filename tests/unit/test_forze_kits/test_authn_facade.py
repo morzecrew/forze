@@ -11,6 +11,8 @@ from forze.application.contracts.authn import AuthnSpec
 from forze.application.execution.operations.facade import facade_op
 from forze_kits.aggregates.authn.handlers import (
     AuthnPasswordLogin,
+    AuthnRequestPasswordReset,
+    AuthnResetPassword,
     DeactivatePrincipalHandler,
 )
 from forze.base.exceptions import exc
@@ -32,6 +34,18 @@ class TestAuthnFacade:
         assert isinstance(AuthnFacade.deactivate_principal, facade_op)
         assert AuthnFacade.deactivate_principal.op == AuthnKernelOp.DEACTIVATE_PRINCIPAL
         assert AuthnFacade.deactivate_principal.uc is DeactivatePrincipalHandler
+
+    def test_password_reset_facade_ops(self) -> None:
+        assert isinstance(AuthnFacade.request_password_reset, facade_op)
+        assert (
+            AuthnFacade.request_password_reset.op
+            == AuthnKernelOp.REQUEST_PASSWORD_RESET
+        )
+        assert AuthnFacade.request_password_reset.uc is AuthnRequestPasswordReset
+
+        assert isinstance(AuthnFacade.reset_password, facade_op)
+        assert AuthnFacade.reset_password.op == AuthnKernelOp.RESET_PASSWORD
+        assert AuthnFacade.reset_password.uc is AuthnResetPassword
 
     def test_resolve_deactivate_principal_operation(self) -> None:
         spec = _authn_spec()

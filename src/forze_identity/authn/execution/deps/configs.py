@@ -1,12 +1,12 @@
 """Kernel and shared-service configuration for authn dependency factories."""
 
-from typing import Collection, Mapping, final
+from typing import Collection, final
 
 import attrs
 
 from forze.application.contracts.authn import AuthnMethod
 from forze.base.exceptions import exc
-from forze.base.primitives import StrKey
+from forze.base.primitives import StrKey, StrKeyMapping
 
 from ...services import (
     AccessTokenConfig,
@@ -19,6 +19,8 @@ from ...services import (
     PasswordService,
     RefreshTokenConfig,
     RefreshTokenService,
+    ResetTokenConfig,
+    ResetTokenService,
 )
 
 # ----------------------- #
@@ -67,6 +69,20 @@ class AuthnKernelConfig:
     invite_token: InviteTokenConfig = attrs.field(factory=InviteTokenConfig)
     """Password invite token service configuration."""
 
+    reset_token_pepper: bytes | None = attrs.field(
+        default=None,
+        repr=False,
+        validator=attrs.validators.optional(attrs.validators.min_len(32)),
+    )
+    """Minimum 32 bytes when set; required for self-service password reset routes.
+
+    Deliberately a separate pepper from ``invite_token_pepper`` so the two
+    single-use token populations stay cryptographically disjoint (a leaked reset
+    pepper does not compromise invites, and vice versa)."""
+
+    reset_token: ResetTokenConfig = attrs.field(factory=ResetTokenConfig)
+    """Password reset token service configuration."""
+
     api_key_pepper: bytes | None = attrs.field(
         default=None,
         repr=False,
@@ -94,6 +110,7 @@ class AuthnSharedServices:
     refresh_svc: RefreshTokenService | None
     password_svc: PasswordService | None
     invite_svc: InviteTokenService | None
+    reset_svc: ResetTokenService | None
     api_key_svc: ApiKeyService | None
 
 
@@ -132,6 +149,12 @@ def build_authn_shared_services(kernel: AuthnKernelConfig) -> AuthnSharedService
         else None
     )
 
+    reset_svc = (
+        ResetTokenService(pepper=kernel.reset_token_pepper, config=kernel.reset_token)
+        if kernel.reset_token_pepper is not None
+        else None
+    )
+
     api_key_svc = (
         ApiKeyService(pepper=kernel.api_key_pepper, config=kernel.api_key)
         if kernel.api_key_pepper is not None
@@ -143,6 +166,7 @@ def build_authn_shared_services(kernel: AuthnKernelConfig) -> AuthnSharedService
         refresh_svc=refresh_svc,
         password_svc=password_svc,
         invite_svc=invite_svc,
+        reset_svc=reset_svc,
         api_key_svc=api_key_svc,
     )
 
@@ -182,11 +206,12 @@ def validate_route_methods(
 def validate_shared_matches_route_sets(
     *,
     shared: AuthnSharedServices,
-    authn: Mapping[StrKey, frozenset[AuthnMethod]],
+    authn: StrKeyMapping[frozenset[AuthnMethod]],
     token_lifecycle: Collection[StrKey],
     password_lifecycle: Collection[StrKey],
     api_key_lifecycle: Collection[StrKey],
     password_account_provisioning: Collection[StrKey],
+    password_reset: Collection[StrKey] = (),
     api_key_verifier_overrides: Collection[StrKey] | None = None,
     token_verifier_overrides: Collection[StrKey] | None = None,
 ) -> None:
@@ -220,6 +245,17 @@ def validate_shared_matches_route_sets(
                 "password_lifecycle / password_account_provisioning routes require "
                 "kernel.password"
             )
+
+            raise exc.internal(msg)
+
+    if password_reset:
+        if shared.password_svc is None:
+            msg = "password_reset routes require kernel.password"
+
+            raise exc.internal(msg)
+
+        if shared.reset_svc is None:
+            msg = "password_reset routes require kernel.reset_token_pepper"
 
             raise exc.internal(msg)
 

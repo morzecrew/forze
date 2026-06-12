@@ -43,7 +43,7 @@ relay. See [Transactional outbox](../../recipes/transactional-outbox.md).
 
 | Method | Signature | Notes |
 |--------|-----------|-------|
-| `stage` | `stage(event_type, payload, *, event_id=None, occurred_at=None)` | buffer one event |
+| `stage` | `stage(event_type, payload, *, event_id=None, occurred_at=None, ordering_key=None)` | buffer one event; `ordering_key` partitions delivery on capable transports |
 | `stage_many` | `stage_many(events, *, event_ids=None)` | buffer `(event_type, payload)` pairs |
 | `stage_event` | `stage_event(event)` | buffer a built `IntegrationEvent` |
 | `flush` | `flush()` | persist buffered events; returns rows inserted |
@@ -60,8 +60,12 @@ relay. See [Transactional outbox](../../recipes/transactional-outbox.md).
 | `requeue_failed` | `requeue_failed(ids)` | re-drive failed rows; resets `attempts` to 0 |
 
 (Most apps use the `relay_outbox_to_queue` kit rather than these directly.)
-Delivery is at-least-once and ordering is not preserved across
-failures/retries — consumers key on `event_id` and tolerate reordering.
+Delivery is at-least-once and ordering is not guaranteed across
+failures/retries — a retrying row never stalls later rows of its
+`ordering_key`. Staging an `ordering_key` makes same-key events partition
+together (SQS FIFO `MessageGroupId`, stream partition key) and relay in
+`created_at` order on the happy path; consumers still dedupe on `event_id`
+(the `forze_event_id` header) and tolerate reordering.
 
 ## Inbox
 

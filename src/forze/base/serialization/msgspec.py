@@ -18,6 +18,7 @@ from typing import (
 )
 from uuid import UUID
 
+import attrs
 import msgspec
 from pydantic import BaseModel
 
@@ -134,34 +135,305 @@ def _raise_unknown_field(name: str, path: str) -> NoReturn:
 # ....................... #
 
 
-def _validate_union_no_unknown_fields(
-    value: Any,
-    tp: Any,
-    path: str,
-) -> None:
-    args = get_args(tp)
-    non_none = [arg for arg in args if arg is not NoneType]
+# ....................... #
+# Unknown-field pre-pass: precompiled scan plans.
+#
+# Per struct type we compile (once, cached) a plan holding the allowed
+# encode-names and, for each field, which child plan (if any) must be walked
+# (direct struct, list-of, dict-of, tuple, union). The per-row runtime walk
+# uses only the plan — no ``get_origin`` / ``get_args`` / field-dict rebuilds
+# per row. Rejection semantics and error messages are byte-identical to the
+# previous recursive introspection.
 
-    if len(non_none) == 1 and len(non_none) != len(args):
-        _validate_no_unknown_fields(value, non_none[0], path)
-        return
+_UNKNOWN_FIELD: Final = object()
+"""Sentinel distinguishing "unknown field" from "known field, no recursion needed"."""
 
-    structish = [arg for arg in args if _type_may_contain_struct(arg)]
+# ....................... #
 
-    if not structish:
-        return
 
-    errors: list[msgspec.ValidationError] = []
-    for arg in structish:
-        try:
-            _validate_no_unknown_fields(value, arg, path)
-        except msgspec.ValidationError as exc:
-            errors.append(exc)
-        else:
+@attrs.define(slots=True)
+class _StructScan:
+    """Scan plan for one struct type.
+
+    ``fields`` maps allowed encode-names to the child scan plan, or ``None``
+    when the field type cannot contain a struct (no recursion needed).
+    """
+
+    fields: dict[str, Any] = attrs.field(factory=dict)
+
+    # ....................... #
+
+    def scan(self, value: Any, path: str) -> None:
+        if value is None or not isinstance(value, Mapping):
             return
 
-    if len(structish) == len(args) and errors:
-        raise errors[0]
+        fields = self.fields
+
+        for key, child in value.items():  # pyright: ignore[reportUnknownVariableType]
+            key_str = str(key)  # pyright: ignore[reportUnknownArgumentType]
+            sub = fields.get(key_str, _UNKNOWN_FIELD)
+
+            if sub is _UNKNOWN_FIELD:
+                _raise_unknown_field(key_str, path)
+
+            if sub is not None:
+                sub.scan(child, _object_path(path, key_str))
+
+
+# ....................... #
+
+
+@attrs.define(slots=True)
+class _OptionalScan:
+    """Union with exactly one non-``None`` member: skip ``None``, walk the member."""
+
+    inner: Any
+
+    # ....................... #
+
+    def scan(self, value: Any, path: str) -> None:
+        if value is None:
+            return
+
+        self.inner.scan(value, path)
+
+
+# ....................... #
+
+
+@attrs.define(slots=True)
+class _UnionScan:
+    """Multi-member union: first member that accepts wins.
+
+    The collected error is re-raised only when *every* union member is
+    struct-ish (mirrors the previous walker).
+    """
+
+    members: list[Any]
+    raise_when_all_fail: bool = attrs.field(kw_only=True)
+
+    # ....................... #
+
+    def scan(self, value: Any, path: str) -> None:
+        if value is None:
+            return
+
+        first_error: msgspec.ValidationError | None = None
+
+        for member in self.members:
+            try:
+                member.scan(value, path)
+            except msgspec.ValidationError as error:
+                if first_error is None:
+                    first_error = error
+            else:
+                return
+
+        if self.raise_when_all_fail and first_error is not None:
+            raise first_error
+
+
+# ....................... #
+
+
+@attrs.define(slots=True)
+class _ItemsScan:
+    """Homogeneous collection (list/set/frozenset, or variadic tuple) of struct-ish items."""
+
+    inner: Any
+    include_sets: bool = attrs.field(kw_only=True)
+
+    # ....................... #
+
+    def scan(self, value: Any, path: str) -> None:
+        if value is None:
+            return
+
+        if self.include_sets:
+            if not isinstance(value, Sequence | set | frozenset):
+                return
+        elif not isinstance(value, Sequence):
+            return
+
+        inner = self.inner
+
+        for index, item in enumerate(value):  # type: ignore[unknown-type]
+            inner.scan(item, _index_path(path, index))
+
+
+# ....................... #
+
+
+@attrs.define(slots=True)
+class _TupleFixedScan:
+    """Fixed-shape tuple: positional member plans (``None`` entries are skipped)."""
+
+    members: list[Any]
+
+    # ....................... #
+
+    def scan(self, value: Any, path: str) -> None:
+        if value is None or not isinstance(value, Sequence):
+            return
+
+        for index, (
+            item,  # pyright: ignore[reportUnknownVariableType]
+            member,
+        ) in enumerate(
+            zip(
+                value,  # pyright: ignore[reportUnknownArgumentType]
+                self.members,
+                strict=False,
+            )
+        ):
+            if member is not None:
+                member.scan(item, _index_path(path, index))
+
+
+# ....................... #
+
+
+@attrs.define(slots=True)
+class _MappingScan:
+    """Mapping with struct-ish values: walk each value under its repr'd key path."""
+
+    inner: Any
+
+    # ....................... #
+
+    def scan(self, value: Any, path: str) -> None:
+        if value is None or not isinstance(value, Mapping):
+            return
+
+        inner = self.inner
+
+        for key, item in value.items():  # type: ignore[unknown-type]
+            inner.scan(item, _mapping_path(path, key))
+
+
+# ....................... #
+
+_STRUCT_SCAN_CACHE: dict[type[msgspec.Struct], _StructScan] = {}
+"""Module-level plan cache: one compiled :class:`_StructScan` per struct type."""
+
+_STRUCT_SCAN_CACHE_MAX: Final = 1024
+"""Bound on the plan cache; on overflow the cache is cleared and plans recompile lazily."""
+
+# ....................... #
+
+
+def _compile_struct_scan(
+    cls: type[msgspec.Struct],
+    memo: dict[type[msgspec.Struct], _StructScan],
+) -> _StructScan:
+    """Compile (or fetch the cached) scan plan for ``cls``.
+
+    ``memo`` holds in-progress plans for the current compilation so recursive
+    struct graphs resolve to the same node instead of recursing forever.
+    """
+
+    cached = _STRUCT_SCAN_CACHE.get(cls)
+    if cached is not None:
+        return cached
+
+    in_progress = memo.get(cls)
+    if in_progress is not None:
+        return in_progress
+
+    node = _StructScan()
+    memo[cls] = node
+
+    try:
+        node.fields = {
+            field.encode_name: _compile_scan(field.type, memo)
+            for field in _struct_fields_cached(cls)
+        }
+
+    finally:
+        del memo[cls]
+
+    if len(_STRUCT_SCAN_CACHE) >= _STRUCT_SCAN_CACHE_MAX:
+        _STRUCT_SCAN_CACHE.clear()
+
+    _STRUCT_SCAN_CACHE[cls] = node
+
+    return node
+
+
+# ....................... #
+
+
+def _compile_scan(
+    tp: Any,
+    memo: dict[type[msgspec.Struct], _StructScan],
+) -> Any | None:
+    """Compile a scan plan for ``tp``; ``None`` when nothing reachable can reject."""
+
+    tp = _strip_annotated(tp)
+
+    if _is_msgspec_struct_type(tp):
+        return _compile_struct_scan(tp, memo)
+
+    origin = get_origin(tp)
+
+    if origin in (Union, UnionType):
+        args = get_args(tp)
+        non_none = [arg for arg in args if arg is not NoneType]
+
+        if len(non_none) == 1 and len(non_none) != len(args):
+            inner = _compile_scan(non_none[0], memo)
+            return _OptionalScan(inner) if inner is not None else None
+
+        structish = [arg for arg in args if _type_may_contain_struct(arg)]
+
+        if not structish:
+            return None
+
+        members = [_compile_scan(arg, memo) for arg in structish]
+
+        if any(member is None for member in members):
+            # A member that can never reject always "accepts", and the walker
+            # returns on the first accepting member — the union never raises.
+            return None
+
+        return _UnionScan(members, raise_when_all_fail=len(structish) == len(args))
+
+    if origin in (list, set, frozenset):
+        args = get_args(tp)
+
+        if not args:
+            return None
+
+        inner = _compile_scan(args[0], memo)
+        return _ItemsScan(inner, include_sets=True) if inner is not None else None
+
+    if origin is tuple:
+        args = get_args(tp)
+
+        if not args:
+            return None
+
+        if len(args) == 2 and args[1] is Ellipsis:
+            inner = _compile_scan(args[0], memo)
+            return _ItemsScan(inner, include_sets=False) if inner is not None else None
+
+        members = [_compile_scan(arg, memo) for arg in args]
+
+        if all(member is None for member in members):
+            return None
+
+        return _TupleFixedScan(members)
+
+    if origin in (dict, Mapping):
+        args = get_args(tp)
+
+        if len(args) != 2:
+            return None
+
+        inner = _compile_scan(args[1], memo)
+        return _MappingScan(inner) if inner is not None else None
+
+    return None
 
 
 # ....................... #
@@ -172,90 +444,78 @@ def _validate_no_unknown_fields(
     expected_type: Any,
     path: str = "$",
 ) -> None:
-    tp = _strip_annotated(expected_type)
+    """Reject mappings carrying keys not declared on the target struct tree.
 
-    if value is None:
-        return
+    Backed by per-struct precompiled scan plans (allowed encode-names plus
+    which fields need recursion), compiled once per struct type and cached.
+    Error messages are byte-identical to msgspec's native
+    ``forbid_unknown_fields`` enforcement; prefer setting
+    ``forbid_unknown_fields=True`` on your Structs so this pre-pass can be
+    skipped entirely.
+    """
+
+    plan = _compile_scan(expected_type, {})
+
+    if plan is not None:
+        plan.scan(value, path)
+
+
+# ....................... #
+
+
+def _collect_struct_types(tp: Any, out: set[type[msgspec.Struct]]) -> None:
+    """Collect struct types syntactically reachable from a type expression."""
+
+    tp = _strip_annotated(tp)
 
     if _is_msgspec_struct_type(tp):
-        if not isinstance(value, Mapping):
-            return
-
-        field_map = {field.encode_name: field for field in _struct_fields_cached(tp)}
-
-        for key, child in value.items():  # pyright: ignore[reportUnknownVariableType]
-            key_str = str(key)  # pyright: ignore[reportUnknownArgumentType]
-            field = field_map.get(key_str)
-
-            if field is None:
-                _raise_unknown_field(key_str, path)
-
-            _validate_no_unknown_fields(
-                child,
-                field.type,
-                _object_path(path, field.encode_name),
-            )
-
+        out.add(tp)
         return
 
     origin = get_origin(tp)
 
-    if origin in (Union, UnionType):
-        _validate_union_no_unknown_fields(value, tp, path)
-        return
+    if origin in (Union, UnionType, list, set, frozenset, tuple, dict, Mapping):
+        for arg in get_args(tp):
+            if arg is not Ellipsis:
+                _collect_struct_types(arg, out)
 
-    if origin in (list, set, frozenset):
-        args = get_args(tp)
-        if not args or not isinstance(value, Sequence | set | frozenset):
-            return
 
-        inner = args[0]
-        if not _type_may_contain_struct(inner):
-            return
+# ....................... #
 
-        for index, item in enumerate(value):  # type: ignore[unknown-type]
-            _validate_no_unknown_fields(item, inner, _index_path(path, index))
 
-        return
+@lru_cache(maxsize=256)
+def _struct_tree_forbids_unknown_fields(cls: type[msgspec.Struct]) -> bool:
+    """True when ``cls`` and every reachable child struct forbid unknown fields natively.
 
-    if origin is tuple:
-        args = get_args(tp)
-        if not args or not isinstance(value, Sequence):
-            return
+    When true, ``msgspec.convert`` already enforces ``forbid_extra`` with
+    byte-identical error messages at zero extra cost, so the Python pre-pass
+    is skipped. The rule is conservative: a mixed tree (any reachable struct
+    without ``forbid_unknown_fields=True``) keeps the full Python pre-pass
+    for the whole tree.
+    """
 
-        if len(args) == 2 and args[1] is Ellipsis:
-            inner = args[0]
-            if not _type_may_contain_struct(inner):
-                return
+    seen: set[type[msgspec.Struct]] = set()
+    stack: list[type[msgspec.Struct]] = [cls]
 
-            for index, item in enumerate(value):  # type: ignore[unknown-type]
-                _validate_no_unknown_fields(item, inner, _index_path(path, index))
+    while stack:
+        struct = stack.pop()
 
-            return
+        if struct in seen:
+            continue
 
-        for index, (item, inner) in enumerate(  # type: ignore[unknown-type]
-            zip(  # type: ignore[unknown-type]
-                value,  # pyright: ignore[reportUnknownArgumentType]
-                args,
-                strict=False,
-            )
-        ):
-            if _type_may_contain_struct(inner):
-                _validate_no_unknown_fields(item, inner, _index_path(path, index))
+        seen.add(struct)
 
-        return
+        if not struct.__struct_config__.forbid_unknown_fields:
+            return False
 
-    if origin in (dict, Mapping):
-        args = get_args(tp)
-        if len(args) != 2 or not isinstance(value, Mapping):
-            return
+        children: set[type[msgspec.Struct]] = set()
 
-        inner = args[1]
-        if not _type_may_contain_struct(inner):
-            return
+        for field in _struct_fields_cached(struct):
+            _collect_struct_types(field.type, children)
 
-        for key, item in value.items():  # type: ignore[unknown-type]
-            _validate_no_unknown_fields(item, inner, _mapping_path(path, key))
+        stack.extend(children)
+
+    return True
 
 
 # ....................... #
@@ -361,7 +621,14 @@ def msgspec_validate[T: msgspec.Struct](
     *,
     forbid_extra: bool = False,
 ) -> T:
-    """Validate raw ``data`` into a msgspec struct instance."""
+    """Validate raw ``data`` into a msgspec struct instance.
+
+    Tip: set ``forbid_unknown_fields=True`` on your Structs for free
+    ``forbid_extra`` enforcement — when the target struct and every reachable
+    child struct forbid unknown fields natively, the Python pre-pass is
+    skipped and ``msgspec.convert`` rejects unknowns with identical error
+    messages. A mixed tree conservatively keeps the full Python pre-pass.
+    """
 
     logger.trace(
         "Validating data into %s (forbid_extra=%s)",
@@ -369,7 +636,7 @@ def msgspec_validate[T: msgspec.Struct](
         forbid_extra,
     )
 
-    if forbid_extra:
+    if forbid_extra and not _struct_tree_forbids_unknown_fields(cls):
         _validate_no_unknown_fields(data, cls)
 
     return msgspec.convert(data, cls, strict=False)
@@ -444,7 +711,13 @@ def msgspec_validate_many[T: msgspec.Struct](
     *,
     forbid_extra: bool = False,
 ) -> list[T]:
-    """Validate raw mapping rows into a list of msgspec structs."""
+    """Validate raw mapping rows into a list of msgspec structs.
+
+    Tip: set ``forbid_unknown_fields=True`` on your Structs for free
+    ``forbid_extra`` enforcement (the per-row Python pre-pass is skipped when
+    the whole struct tree forbids unknown fields natively; see
+    :func:`msgspec_validate`).
+    """
 
     payload = sequence_as_list(data)
 
@@ -455,7 +728,7 @@ def msgspec_validate_many[T: msgspec.Struct](
         forbid_extra,
     )
 
-    if forbid_extra:
+    if forbid_extra and not _struct_tree_forbids_unknown_fields(cls):
         for index, item in enumerate(payload):
             _validate_no_unknown_fields(item, cls, _index_path("$", index))
 
@@ -600,7 +873,13 @@ def msgspec_decode_json_bytes[T: msgspec.Struct](
     forbid_extra: bool = False,
     encoding: str = "utf-8",
 ) -> T:
-    """Deserialize JSON UTF-8 bytes or text into a msgspec struct instance."""
+    """Deserialize JSON UTF-8 bytes or text into a msgspec struct instance.
+
+    Tip: set ``forbid_unknown_fields=True`` on your Structs for free
+    ``forbid_extra`` enforcement (the Python pre-pass is skipped when the
+    whole struct tree forbids unknown fields natively; see
+    :func:`msgspec_validate`).
+    """
 
     if isinstance(raw, str):
         raw = raw.encode(encoding)
@@ -617,7 +896,9 @@ def msgspec_decode_json_bytes[T: msgspec.Struct](
             msg = f"Expected object at $, got {type(data).__name__}"
             raise msgspec.ValidationError(msg)
 
-        _validate_no_unknown_fields(data, cls)
+        if not _struct_tree_forbids_unknown_fields(cls):
+            _validate_no_unknown_fields(data, cls)
+
         return msgspec.convert(data, cls, strict=False)
 
     return msgspec.json.decode(raw, type=cls)

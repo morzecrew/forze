@@ -8,6 +8,10 @@ from .handlers import (
     AuthnPasswordLogin,
     AuthnRefreshTokens,
 )
+from .password_reset import (
+    AuthnRequestPasswordReset,
+    AuthnResetPassword,
+)
 
 # ----------------------- #
 
@@ -16,6 +20,8 @@ __all__ = [
     "AuthnLogout",
     "AuthnPasswordLogin",
     "AuthnRefreshTokens",
+    "AuthnRequestPasswordReset",
+    "AuthnResetPassword",
     "DeactivatePrincipalHandler",
     "DeactivatePrincipalRequestDTO",
 ]

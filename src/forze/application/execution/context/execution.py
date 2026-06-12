@@ -28,6 +28,7 @@ from ..deps import FrozenDeps
 from ..deps.tx_tracer import tx_tracer_from_runtime
 from ..tracing import bind_active_deps, init_runtime_tracing
 from .active_operation import warn_if_constructed_in_operation
+from .drain import OperationDrainGate
 from .invocation import InvocationContext
 from .outbox_staging import OutboxStagingContext
 from .transaction import TransactionContext
@@ -97,6 +98,14 @@ class ExecutionContext:
 
     inv_ctx: InvocationContext = attrs.field(factory=InvocationContext, init=False)
     """Invocation context."""
+
+    drain_gate: OperationDrainGate = attrs.field(
+        factory=OperationDrainGate,
+        init=False,
+        repr=False,
+    )
+    """In-flight operation accounting for graceful shutdown (see
+    :mod:`~forze.application.execution.context.drain`)."""
 
     outbox_staging: OutboxStagingContext = attrs.field(
         factory=OutboxStagingContext,

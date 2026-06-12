@@ -13,7 +13,12 @@ RuntimeTraceValidator = Callable[[Sequence[TracingEvent]], list[TracingViolation
 
 
 class RuntimeTraceValidationError(Exception):
-    """Raised when :meth:`validate_runtime_trace` is called with ``on_violation='raise'``."""
+    """Raised when :meth:`validate_runtime_trace` is called with ``on_violation='raise'``.
+
+    Deliberately a raw ``Exception``, not ``CoreException``: a test/CI harness
+    signal that must fail the run loudly and must never be caught or mapped by
+    the framework error envelope.
+    """
 
 
 # ....................... #

@@ -1,10 +1,14 @@
+from typing import TYPE_CHECKING
+
 from ..deps import ConfigurableDepPort, ConvenientDeps, DepKey
+from .events import AuthnEventEmitter, AuthnEventSink
 from .ports import (
     ApiKeyLifecyclePort,
     ApiKeyVerifierPort,
     AuthnPort,
     PasswordAccountProvisioningPort,
     PasswordLifecyclePort,
+    PasswordResetPort,
     PasswordVerifierPort,
     PrincipalDeactivationPort,
     PrincipalEligibilityPort,
@@ -13,6 +17,9 @@ from .ports import (
     TokenVerifierPort,
 )
 from .specs import AuthnSpec
+
+if TYPE_CHECKING:
+    from forze.application.execution import ExecutionContext
 
 # ----------------------- #
 
@@ -33,6 +40,9 @@ PrincipalResolverDepPort = ConfigurableDepPort[AuthnSpec, PrincipalResolverPort]
 
 PasswordLifecycleDepPort = ConfigurableDepPort[AuthnSpec, PasswordLifecyclePort]
 """Password lifecycle dependency port."""
+
+PasswordResetDepPort = ConfigurableDepPort[AuthnSpec, PasswordResetPort]
+"""Self-service password reset dependency port."""
 
 TokenLifecycleDepPort = ConfigurableDepPort[AuthnSpec, TokenLifecyclePort]
 """Token lifecycle dependency port."""
@@ -65,6 +75,9 @@ PrincipalResolverDepKey = DepKey[PrincipalResolverDepPort]("authn_principal_reso
 PasswordLifecycleDepKey = DepKey[PasswordLifecycleDepPort]("authn_password_lifecycle")
 """Key used to register the `PasswordLifecyclePort` builder implementation."""
 
+PasswordResetDepKey = DepKey[PasswordResetDepPort]("authn_password_reset")
+"""Key used to register the `PasswordResetPort` builder implementation."""
+
 TokenLifecycleDepKey = DepKey[TokenLifecycleDepPort]("authn_token_lifecycle")
 """Key used to register the `TokenLifecyclePort` builder implementation."""
 
@@ -82,6 +95,9 @@ PrincipalEligibilityDepPort = ConfigurableDepPort[AuthnSpec, PrincipalEligibilit
 PrincipalDeactivationDepPort = ConfigurableDepPort[AuthnSpec, PrincipalDeactivationPort]
 """Principal deactivation dependency port."""
 
+AuthnEventSinkDepPort = ConfigurableDepPort[AuthnSpec, AuthnEventSink]
+"""Authn event sink dependency port (optional observability seam)."""
+
 # ....................... #
 
 PrincipalEligibilityDepKey = DepKey[PrincipalEligibilityDepPort]("authn_principal_eligibility")
@@ -91,6 +107,42 @@ PrincipalDeactivationDepKey = DepKey[PrincipalDeactivationDepPort](
     "authn_principal_deactivation"
 )
 """Key used to register the `PrincipalDeactivationPort` builder implementation."""
+
+AuthnEventSinkDepKey = DepKey[AuthnEventSinkDepPort]("authn_event_sink")
+"""Key used to register an `AuthnEventSink` builder implementation.
+
+The sink is **optional**: flows that find no registration (routed or plain)
+simply do not emit. Flow wiring resolves it through
+:func:`resolve_authn_event_emitter` rather than failing on a missing key.
+"""
+
+# ....................... #
+
+
+def resolve_authn_event_emitter(
+    ctx: "ExecutionContext",
+    spec: AuthnSpec,
+) -> AuthnEventEmitter | None:
+    """Resolve the route's optional event emitter; ``None`` means emission is off.
+
+    Probes the routed registration first, then a plain one (a single shared
+    sink), and only then resolves — a missing :data:`AuthnEventSinkDepKey` is a
+    feature toggle, not an error. Dependency factories call this and hand the
+    emitter to the flow adapters.
+    """
+
+    deps = ctx.deps
+
+    if not (
+        deps.exists(AuthnEventSinkDepKey, route=spec.name)
+        or deps.exists(AuthnEventSinkDepKey)
+    ):
+        return None
+
+    sink = deps.resolve_configurable(ctx, AuthnEventSinkDepKey, spec, route=spec.name)
+
+    return AuthnEventEmitter(sink=sink, route=spec.name)
+
 
 # ....................... #
 
@@ -126,6 +178,15 @@ class AuthnDeps(ConvenientDeps):
             route=spec.name,
         )
 
+    def password_reset(self, spec: AuthnSpec) -> PasswordResetPort:
+        """Resolve self-service password reset for ``spec`` (a write — guarded)."""
+
+        return self._resolve_command(
+            PasswordResetDepKey,
+            spec,
+            route=spec.name,
+        )
+
     def api_key_lifecycle(self, spec: AuthnSpec) -> ApiKeyLifecyclePort:
         """Resolve API key lifecycle for ``spec`` (a write — guarded)."""
 
@@ -151,3 +212,12 @@ class AuthnDeps(ConvenientDeps):
             spec,
             route=spec.name,
         )
+
+    def event_sink(self, spec: AuthnSpec) -> AuthnEventSink:
+        """Resolve the authn event sink for ``spec``.
+
+        Raises when no sink is registered for the route; flow wiring that treats
+        the sink as optional uses :func:`resolve_authn_event_emitter` instead.
+        """
+
+        return self._resolve_configurable(AuthnEventSinkDepKey, spec, route=spec.name)

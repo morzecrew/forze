@@ -69,6 +69,63 @@ def test_trusted_many_rejects_unknown_columns() -> None:
     assert raised.value.kind is ExceptionKind.PRECONDITION
 
 
+class _Child(BaseModel):
+    x: int
+    label: str
+
+
+class _Nested(BaseModel):
+    id: str
+    child: _Child
+    items: list[_Child]
+
+
+def test_trusted_nested_decode_yields_real_nested_instances() -> None:
+    """Regression: the old ``model_construct`` loop left nested values as raw dicts."""
+
+    row = {
+        "id": "1",
+        "child": {"x": 1, "label": "a"},
+        "items": [{"x": 2, "label": "b"}, {"x": 3, "label": "c"}],
+    }
+
+    single = pydantic_validate_trusted(_Nested, row)
+    (many,) = pydantic_validate_many_trusted(_Nested, [row])
+
+    for model in (single, many):
+        assert isinstance(model.child, _Child)
+        assert all(isinstance(item, _Child) for item in model.items)
+        assert model == pydantic_validate(_Nested, row)
+
+
+def test_trusted_decode_coerces_wire_types_and_runs_validators() -> None:
+    """Trusted decode validates/coerces values like strict (only columns are trusted)."""
+
+    from datetime import datetime
+    from uuid import UUID
+
+    from pydantic import ValidationError
+
+    class _Wire(BaseModel):
+        id: UUID
+        created_at: datetime
+        name: str = Field(min_length=1)
+
+    uid = uuid4()
+    row = {"id": str(uid), "created_at": "2024-01-02T03:04:05+00:00", "name": "ok"}
+
+    model = pydantic_validate_trusted(_Wire, row)
+
+    assert model.id == uid
+    assert isinstance(model.created_at, datetime)
+
+    with pytest.raises(ValidationError):
+        pydantic_validate_trusted(_Wire, {**row, "name": ""})
+
+    with pytest.raises(ValidationError):
+        pydantic_validate_many_trusted(_Wire, [{**row, "name": ""}])
+
+
 def test_trusted_many_batched_matches_many() -> None:
     rows = [{"id": str(i), "name": f"n{i}"} for i in range(5)]
     flat = pydantic_validate_many_trusted(_Model, rows)

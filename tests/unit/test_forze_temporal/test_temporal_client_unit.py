@@ -355,7 +355,11 @@ class TestTemporalClientWorkflowApi:
         out = client.get_workflow_handle("w-1", run_id="r-9")
 
         assert out is handle
-        backend.get_workflow_handle.assert_called_once_with("w-1", run_id="r-9")
+        backend.get_workflow_handle.assert_called_once_with(
+            "w-1",
+            run_id="r-9",
+            result_type=None,
+        )
 
     @pytest.mark.asyncio
     async def test_signal_query_update_result_cancel_terminate(self) -> None:
@@ -382,8 +386,12 @@ class TestTemporalClientWorkflowApi:
         await client.terminate_workflow("w-1", reason="stop")
 
         handle.signal.assert_awaited_once_with(signal="sig", arg=arg)
-        handle.query.assert_awaited_once_with(query="q", arg=arg)
-        handle.execute_update.assert_awaited_once_with(update="u", arg=arg)
+        handle.query.assert_awaited_once_with(query="q", arg=arg, result_type=None)
+        handle.execute_update.assert_awaited_once_with(
+            update="u",
+            arg=arg,
+            result_type=None,
+        )
         handle.result.assert_awaited_once()
         handle.cancel.assert_awaited_once()
         handle.terminate.assert_awaited_once_with(reason="stop")
@@ -421,6 +429,10 @@ class TestTemporalClientWorkflowApi:
             out = await client.describe_workflow("w-1", run_id="r-9")
 
         assert out is mapped
-        backend.get_workflow_handle.assert_called_once_with("w-1", run_id="r-9")
+        backend.get_workflow_handle.assert_called_once_with(
+            "w-1",
+            run_id="r-9",
+            result_type=None,
+        )
         handle.describe.assert_awaited_once()
         map_fn.assert_called_once_with(temporal_desc)

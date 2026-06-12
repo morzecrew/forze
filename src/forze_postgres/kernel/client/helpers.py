@@ -4,46 +4,35 @@ require_psycopg()
 
 # ....................... #
 
-from psycopg import sql
+from psycopg import IsolationLevel as PsycopgIsolationLevel
 
 from forze.base.exceptions import exc
 
 from .types import IsolationLevel
-from .value_objects import PostgresTransactionOptions
 
 # ----------------------- #
 
-
-def isolation_level_sql_fragment(isolation: IsolationLevel) -> sql.Composable:
-    """Return an SQL fragment for ``SET TRANSACTION ISOLATION LEVEL …`` (keyword, not quoted)."""
-
-    levels: dict[IsolationLevel, sql.SQL] = {
-        "read_committed": sql.SQL("READ COMMITTED"),
-        "repeatable_read": sql.SQL("REPEATABLE READ"),
-        "serializable": sql.SQL("SERIALIZABLE"),
-    }
-    frag = levels.get(isolation)
-
-    if frag is None:
-        raise exc.internal(
-            f"Unsupported transaction isolation level {isolation!r}; "
-            f"expected one of: {', '.join(sorted(levels))}",
-        )
-
-    return frag
+_ISOLATION_LEVELS: dict[IsolationLevel, PsycopgIsolationLevel] = {
+    "read_committed": PsycopgIsolationLevel.READ_COMMITTED,
+    "repeatable_read": PsycopgIsolationLevel.REPEATABLE_READ,
+    "serializable": PsycopgIsolationLevel.SERIALIZABLE,
+}
 
 
-def set_transaction_sql(options: PostgresTransactionOptions) -> sql.Composed:
-    """Build the ``SET TRANSACTION …`` statement for a just-started root transaction.
+def isolation_level_enum(isolation: IsolationLevel) -> PsycopgIsolationLevel:
+    """Map a Forze isolation level literal to :class:`psycopg.IsolationLevel`.
 
-    Emitted *inside* the open transaction so the options apply to that
-    transaction only and never mutate psycopg connection attributes (which
-    would persist across pool check-ins — psycopg_pool only rolls back on
-    return). ``READ ONLY`` is appended only when requested; otherwise the
-    session/server default access mode is left untouched.
+    Used to set :attr:`psycopg.AsyncConnection.isolation_level` *before* a root
+    transaction starts, so psycopg composes the level into the ``BEGIN``
+    statement itself (``BEGIN ISOLATION LEVEL …``) with zero extra round-trips.
     """
 
-    return sql.SQL("SET TRANSACTION ISOLATION LEVEL {isolation}{read_only}").format(
-        isolation=isolation_level_sql_fragment(options.isolation),
-        read_only=sql.SQL(" READ ONLY") if options.read_only else sql.SQL(""),
-    )
+    level = _ISOLATION_LEVELS.get(isolation)
+
+    if level is None:
+        raise exc.internal(
+            f"Unsupported transaction isolation level {isolation!r}; "
+            f"expected one of: {', '.join(sorted(_ISOLATION_LEVELS))}",
+        )
+
+    return level

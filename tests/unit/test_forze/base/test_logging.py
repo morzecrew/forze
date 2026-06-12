@@ -523,6 +523,57 @@ class TestForzeConsoleRenderer:
         assert "Traceback" in out
 
 
+def test_unconfigured_process_drops_trace_but_emits_info() -> None:
+    """Trace is opt-in: without ``configure_logging`` the gate defaults to INFO.
+
+    Runs in a subprocess so the module-level default is observed untouched by
+    other tests (the rank is process-global mutable state).
+    """
+
+    import subprocess
+
+    code = (
+        "import forze.base.logging.logger as lm\n"
+        "from forze.base.logging.constants import LogLevelToRank\n"
+        "assert lm._configured_min_rank == LogLevelToRank['info'], lm._configured_min_rank\n"
+        "log = lm.Logger('unconfigured')\n"
+        "log.trace('trace-firehose', n=1)\n"
+        "log.info('info-line')\n"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", code],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    out = result.stdout + result.stderr
+    assert "trace-firehose" not in out  # unconfigured trace is dropped at the gate
+    assert "info-line" in out  # everything else keeps structlog default behavior
+
+
+def test_configure_logging_trace_level_opens_the_gate() -> None:
+    """``configure_logging(level='trace')`` re-enables trace emission (subprocess)."""
+
+    import subprocess
+
+    code = (
+        "import io\n"
+        "from forze.base.logging import Logger, configure_logging\n"
+        "buf = io.StringIO()\n"
+        "configure_logging(level='trace', logger_names=['t'], stream=buf, render_mode='json')\n"
+        "Logger('t').trace('trace-on', n=1)\n"
+        "assert 'trace-on' in buf.getvalue(), buf.getvalue()\n"
+        "print('OK')\n"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", code],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert "OK" in result.stdout
+
+
 def test_trace_fast_skips_below_configured_level(monkeypatch: pytest.MonkeyPatch) -> None:
     """``Logger.trace`` short-circuits before touching the backend when gated out."""
 

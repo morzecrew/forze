@@ -238,6 +238,139 @@ class TestDocumentUpdateCanonicalization:
         assert "label" not in diff["address"]
         assert after.address.label == "main, NY"
 
+class TestMaterializeUpdateIsolation:
+    """Pin the aliasing safety of the scoped per-value deepcopy in
+    ``_materialize_update``: updated container values must not alias the
+    caller's patch containers or the before-document's containers (pydantic
+    passes ``Any``-typed dict/list values through validation unchanged)."""
+
+    def test_updated_dict_field_isolated_from_caller_patch(self) -> None:
+        class Doc(Document):
+            meta: JsonDict = {}
+
+        doc = Doc(meta={"a": {"b": 1}})
+        patch: JsonDict = {"meta": {"a": {"b": 2}, "new": {"x": 1}}}
+
+        after, diff = doc.update(patch)
+        assert after.meta == {"a": {"b": 2}, "new": {"x": 1}}
+
+        # Mutating the caller's patch containers must not leak into the result.
+        patch["meta"]["new"]["x"] = 999
+        patch["meta"]["a"]["b"] = 999
+        assert after.meta["new"]["x"] == 1
+        assert after.meta["a"]["b"] == 2
+
+        # Mutating the BEFORE document's nested containers must not leak either.
+        doc.meta["a"]["b"] = 777
+        assert after.meta["a"]["b"] == 2
+
+        # And vice versa: mutating the result touches neither patch nor before.
+        after.meta["a"]["b"] = -1
+        assert doc.meta["a"]["b"] == 777
+        assert patch["meta"]["a"]["b"] == 999
+
+        # The diff itself is independent of all three as well.
+        assert diff["meta"] == {"a": {"b": 2}, "new": {"x": 1}}
+
+    def test_updated_list_field_isolated_from_caller_patch(self) -> None:
+        from typing import Any
+
+        class Doc(Document):
+            entries: list[Any] = []
+
+        doc = Doc(entries=[{"a": 1}])
+        patch: JsonDict = {"entries": [{"a": 2}, {"b": 3}]}
+
+        after, _ = doc.update(patch)
+
+        patch["entries"][0]["a"] = 999
+        patch["entries"].append({"c": 4})
+        assert after.entries == [{"a": 2}, {"b": 3}]
+
+        after.entries[0]["a"] = -1
+        after.entries.append("x")
+        assert doc.entries == [{"a": 1}]
+        assert patch["entries"][0]["a"] == 999
+
+    def test_updated_nested_model_isolated_from_before_and_patch(self) -> None:
+        doc = NestedDocument(
+            address=Address(street="main", city="LA"),
+            due=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        )
+        patch: JsonDict = {"address": {"city": "NY"}}
+
+        after, _ = doc.update(patch)
+
+        patch["address"]["city"] = "MUT"
+        assert after.address.city == "NY"
+
+        # Mutating the result's nested model leaves the before document intact.
+        after.address.city = "SF"
+        assert doc.address.city == "LA"
+
+
+class TestUpdateSingleModelCopy:
+    """Pin that ``update`` performs exactly one ``model_copy`` (the
+    ``last_update_at`` bump is folded into the materialize copy) and never
+    requests a whole-model deep copy."""
+
+    def test_scalar_and_nested_updates_copy_once_and_shallow(self) -> None:
+        copies: list[tuple[tuple[str, ...], bool]] = []
+
+        class SpyDoc(Document):
+            name: str
+            address: Address
+
+            def model_copy(  # type: ignore[override]
+                self,
+                *,
+                update: dict[str, object] | None = None,
+                deep: bool = False,
+            ) -> "SpyDoc":
+                copies.append((tuple(update or ()), deep))
+                return super().model_copy(update=update, deep=deep)
+
+        doc = SpyDoc(name="a", address=Address(street="main", city="LA"))
+
+        copies.clear()
+        after, _ = doc.update({"name": "b"})
+        assert after.name == "b"
+        assert len(copies) == 1
+        keys, deep = copies[0]
+        assert set(keys) == {"name", "last_update_at"}
+        assert deep is False
+
+        copies.clear()
+        after, _ = doc.update({"address": {"city": "NY"}})
+        assert after.address.city == "NY"
+        assert len(copies) == 1
+        keys, deep = copies[0]
+        assert set(keys) == {"address", "last_update_at"}
+        assert deep is False
+
+    def test_noop_update_copies_zero_times(self) -> None:
+        copies: list[bool] = []
+
+        class SpyDoc(Document):
+            name: str
+
+            def model_copy(  # type: ignore[override]
+                self,
+                *,
+                update: dict[str, object] | None = None,
+                deep: bool = False,
+            ) -> "SpyDoc":
+                copies.append(deep)
+                return super().model_copy(update=update, deep=deep)
+
+        doc = SpyDoc(name="same")
+        copies.clear()
+        after, diff = doc.update({"name": "same"})
+        assert diff == {}
+        assert after is doc
+        assert copies == []
+
+
 class TestDocumentTouch:
     def test_updates_last_update_only(self) -> None:
         doc = SampleDocument(name="x")

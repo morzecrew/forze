@@ -10,6 +10,7 @@ from .specs import StorageSpec
 from .value_objects import (
     DownloadedObject,
     ObjectMetadata,
+    PresignedUrl,
     StoredObject,
     UploadedObject,
 )
@@ -23,6 +24,7 @@ __all__ = [
     "StoredObject",
     "DownloadedObject",
     "ObjectMetadata",
+    "PresignedUrl",
     "StorageQueryDepKey",
     "StorageCommandDepKey",
     "StorageQueryDepPort",

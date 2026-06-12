@@ -52,10 +52,32 @@ def test_api_key_prefix_tuple() -> None:
 
 def test_password_hash_and_verify_fast_config() -> None:
     pwd = PasswordService(config=_slow_password_config())
-    h = pwd.hash_password("hunter2")
-    assert pwd.verify_password(h, "hunter2")
-    assert not pwd.verify_password(h, "hunter3")
-    assert not pwd.verify_password("$invalid", "x")
+    h = pwd.hash_password_sync("hunter2")
+    assert pwd.verify_password_sync(h, "hunter2")
+    assert not pwd.verify_password_sync(h, "hunter3")
+    assert not pwd.verify_password_sync("$invalid", "x")
+
+@pytest.mark.asyncio
+async def test_password_async_offload_round_trip() -> None:
+    # The async methods run Argon2 on the service's bounded executor; results
+    # must round-trip with the blocking variants (same hasher underneath).
+    pwd = PasswordService(config=_slow_password_config())
+    h = await pwd.hash_password("hunter2")
+    assert await pwd.verify_password(h, "hunter2")
+    assert not await pwd.verify_password(h, "hunter3")
+    assert pwd.verify_password_sync(h, "hunter2")
+
+@pytest.mark.asyncio
+async def test_password_timing_dummy_hash_is_cached_and_verifiable() -> None:
+    pwd = PasswordService(config=_slow_password_config())
+    first = await pwd.timing_dummy_hash()
+    second = await pwd.timing_dummy_hash()
+    assert first == second
+    assert not await pwd.verify_password(first, "not-the-sentinel")
+
+def test_password_config_rejects_non_positive_concurrency() -> None:
+    with pytest.raises(ValueError):
+        PasswordConfig(hashing_concurrency=0)
 
 def test_refresh_digest_round_trip() -> None:
     pepper = secrets.token_bytes(32)

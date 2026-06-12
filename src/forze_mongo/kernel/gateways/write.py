@@ -6,6 +6,7 @@ require_mongo()
 
 # ....................... #
 
+from datetime import UTC, datetime
 from typing import Any, Mapping, Sequence, cast, final
 from uuid import UUID
 
@@ -31,6 +32,40 @@ from .history import MongoHistoryGateway
 from .read import MongoReadGateway
 
 # ----------------------- #
+
+
+def _bson_normalize_value(value: Any) -> Any:
+    """Normalize a value the way a BSON write/read round trip would.
+
+    BSON stores datetimes as UTC milliseconds since the epoch, and the client
+    is not ``tz_aware``, so reads yield naive UTC datetimes truncated to
+    millisecond precision. Applying the same normalization to an insert
+    payload lets us decode it in memory and return a model identical to what
+    a subsequent read would produce.
+    """
+
+    if isinstance(value, datetime):
+        if value.tzinfo is not None:
+            value = value.astimezone(UTC).replace(tzinfo=None)
+
+        return value.replace(microsecond=(value.microsecond // 1000) * 1000)
+
+    if isinstance(value, list):
+        return [
+            _bson_normalize_value(item)
+            for item in value  # pyright: ignore[reportUnknownVariableType]
+        ]
+
+    if isinstance(value, dict):
+        return {
+            key: _bson_normalize_value(item)
+            for key, item in cast(JsonDict, value).items()
+        }
+
+    return value
+
+
+# ....................... #
 
 
 @final
@@ -222,6 +257,25 @@ class MongoWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
 
     # ....................... #
 
+    def _decode_inserted(self, storage_doc: JsonDict) -> D:
+        """Decode the exact inserted storage document back into a domain model.
+
+        Mongo applies no server-side defaults or transforms, so the insert
+        payload *is* the stored document; decoding it in memory replaces the
+        post-insert read-back round trip. The document is first normalized via
+        :func:`_bson_normalize_value` (millisecond truncation, naive UTC) so
+        the returned model matches what a subsequent read returns. Unlike the
+        raw ``_from_cdto`` model, the decoded model has every field explicitly
+        set, which the adapter's ``hydrate_from_write`` transform
+        (``exclude={"unset": True}``) relies on.
+        """
+
+        normalized = cast(JsonDict, _bson_normalize_value(storage_doc))
+
+        return self._decode_row(self._from_storage_doc(normalized))
+
+    # ....................... #
+
     @occ_retry
     async def create(self, payload: C, *, id: UUID | None = None) -> D:
         """Insert a new document from a creation payload and record its history.
@@ -234,10 +288,11 @@ class MongoWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
         model = self._from_cdto(payload, id)
         data = self.read_codec.encode_persistence_mapping(model)
         data = self.adapt_payload_for_write(data, create=True)
+        storage = self._storage_doc(data)
 
-        await self.client.insert_one(await self.coll(), self._storage_doc(data))
+        await self.client.insert_one(await self.coll(), storage)
 
-        created = await self.read_gw.get(model.id)
+        created = self._decode_inserted(storage)
         await self._write_history(created)
 
         return created
@@ -266,7 +321,7 @@ class MongoWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
 
         await self.client.insert_many(await self.coll(), docs, batch_size=batch_size)
 
-        created = await self.read_gw.get_many([model.id for model in models])
+        created = [self._decode_inserted(doc) for doc in docs]
         await self._write_history(*created)
 
         return created
@@ -288,8 +343,9 @@ class MongoWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
         )
 
         if res.upserted_id is not None:
-            await self._write_history(model)
-            return model
+            created = self._decode_inserted(storage)
+            await self._write_history(created)
+            return created
 
         return await self.read_gw.get(model.id)
 
@@ -323,15 +379,19 @@ class MongoWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
                 offset=offset,
             )
 
-        if inserted_idx:
-            inserted = [models[i] for i in inserted_idx]
-            await self._write_history(*inserted)
+        by_inserted: dict[int, D] = {
+            i: self._decode_inserted(self._storage_doc(write_payloads[i]))
+            for i in inserted_idx
+        }
+
+        if by_inserted:
+            await self._write_history(*by_inserted.values())
 
         conflict_ids = [m.id for i, m in enumerate(models) if i not in inserted_idx]
         by_existing = await self._load_existing_by_ids(conflict_ids)
 
         return [
-            models[i] if i in inserted_idx else by_existing[models[i].id]
+            by_inserted[i] if i in inserted_idx else by_existing[models[i].id]
             for i in range(len(models))
         ]
 
@@ -354,8 +414,9 @@ class MongoWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
             {"$setOnInsert": storage},
         )
         if res.upserted_id is not None:
-            await self._write_history(model)
-            return model
+            created = self._decode_inserted(storage)
+            await self._write_history(created)
+            return created
 
         current = await self.read_gw.get(model.id)
         u_res, _ = await self.update(model.id, update, rev=current.rev)
@@ -395,9 +456,13 @@ class MongoWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
                 offset=offset,
             )
 
-        if inserted_idx:
-            inserted = [models[i] for i in inserted_idx]
-            await self._write_history(*inserted)
+        by_inserted: dict[int, D] = {
+            i: self._decode_inserted(self._storage_doc(payloads[i]))
+            for i in inserted_idx
+        }
+
+        if by_inserted:
+            await self._write_history(*by_inserted.values())
 
         to_update: list[tuple[UUID, U]] = []
         by_updated: dict[UUID, D] = {}
@@ -419,7 +484,7 @@ class MongoWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
             by_updated = {d.id: d for d in updated}
 
         return [
-            models[i] if i in inserted_idx else by_updated[models[i].id]
+            by_inserted[i] if i in inserted_idx else by_updated[models[i].id]
             for i in range(len(models))
         ]
 
@@ -460,16 +525,21 @@ class MongoWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
         flt = self._add_tenant_filter(
             {"_id": self._storage_pk(current.id), REV_FIELD: current.rev}
         )
-        matched = await self.client.update_one(
+        # Atomic update-and-return: one round trip instead of update + re-get,
+        # and the returned document cannot contain a concurrent writer's fields
+        # (no read-back race between the update and the snapshot).
+        raw = await self.client.find_one_and_update(
             await self.coll(),
             flt,
             {"$set": self._coerce_query_value(diff)},
         )
 
-        if matched != 1:
+        if raw is None:
+            # Not-found vs stale-rev are indistinguishable here; the preceding
+            # ``read_gw.get`` already raised NOT_FOUND for missing documents.
             raise exc.concurrency("Failed to update record")
 
-        updated = await self.read_gw.get(pk)
+        updated = self._decode_row(self._from_storage_doc(raw))
         await self._write_history(updated)
 
         return updated, diff

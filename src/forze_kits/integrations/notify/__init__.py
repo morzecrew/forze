@@ -9,7 +9,7 @@ from .payloads import (
     WebhookNotification,
 )
 from .routing import NotificationRouter
-from .senders import NotificationSenders
+from .senders import NotificationSenders, RecordingNotificationSenders
 
 __all__ = [
     "EmailNotification",
@@ -17,6 +17,7 @@ __all__ = [
     "NotificationRouter",
     "NotificationSenders",
     "PushNotification",
+    "RecordingNotificationSenders",
     "WebhookNotification",
     "dispatch_notification",
     "integration_event_from_queue_message",

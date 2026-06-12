@@ -17,6 +17,7 @@ from typing import (
     AsyncContextManager,
     AsyncGenerator,
     Final,
+    Mapping,
     Sequence,
     cast,
     final,
@@ -28,6 +29,7 @@ import attrs
 from pydantic import SecretStr
 from types_aiobotocore_sqs.client import SQSClient as AsyncSQSClient
 
+from forze.application.contracts.envelope import HEADER_EVENT_ID
 from forze.application.contracts.queue import SQS_MAX_DELAY, resolve_delivery_delay
 from forze.base.exceptions import exc
 
@@ -38,13 +40,22 @@ from .types import SQSQueueMessage
 from .value_objects import SQSConfig, SQSConnectionOpts
 
 # ----------------------- #
-#! TODO: Move to constants
+# Transport constants live next to the client that owns them (same convention
+# as the rabbitmq/redis siblings) — no separate constants module.
 
 _TYPE_ATTR = "forze_type"
 _KEY_ATTR = "forze_key"
 _ENQUEUED_AT_ATTR = "forze_enqueued_at"
 _ENCODING_ATTR = "forze_encoding"
 _ENCODING_B64 = "b64"
+
+_RESERVED_ATTRS = frozenset({_TYPE_ATTR, _KEY_ATTR, _ENQUEUED_AT_ATTR, _ENCODING_ATTR})
+"""Message-attribute names owned by the transport: caller header values are
+overwritten and the keys are excluded from the caller-visible ``headers``
+mapping on read."""
+
+_RECEIVE_COUNT_ATTR = "ApproximateReceiveCount"
+"""SQS system attribute reporting deliveries including the current one."""
 
 _SQS_SEND_MESSAGE_BATCH_MAX: Final[int] = 10
 """AWS limit for ``send_message_batch`` entries per request."""
@@ -471,10 +482,22 @@ class SQSClient(SQSClientPort):
         type: str | None,
         key: str | None,
         enqueued_at: datetime | None,
+        headers: Mapping[str, str] | None = None,
     ) -> dict[str, dict[str, str]]:
-        attrs: dict[str, dict[str, str]] = {
-            _ENCODING_ATTR: {"StringValue": _ENCODING_B64, "DataType": "String"}
-        }
+        # Caller headers pass through verbatim as String attributes; the
+        # reserved transport attributes are written after them so they always
+        # win on collision. Note AWS caps message attributes at 10 per
+        # message — headers count against that limit.
+        attrs: dict[str, dict[str, str]] = {}
+
+        if headers:
+            for header_key, header_value in headers.items():
+                attrs[header_key] = {
+                    "StringValue": header_value,
+                    "DataType": "String",
+                }
+
+        attrs[_ENCODING_ATTR] = {"StringValue": _ENCODING_B64, "DataType": "String"}
 
         if type is not None:
             attrs[_TYPE_ATTR] = {"StringValue": type, "DataType": "String"}
@@ -506,6 +529,52 @@ class SQSClient(SQSClientPort):
 
         value = raw.get("StringValue")
         return value if isinstance(value, str) else None
+
+    # ....................... #
+
+    @staticmethod
+    def __extract_headers(
+        attrs: dict[str, dict[str, str]] | None,
+    ) -> dict[str, str] | None:
+        """Return caller-visible string headers from message attributes.
+
+        Reserved transport attributes are excluded; only ``String`` values
+        survive — the port contract is string-to-string.
+        """
+
+        if not attrs:
+            return None
+
+        out: dict[str, str] = {}
+
+        for attr_key, raw in attrs.items():
+            if attr_key in _RESERVED_ATTRS or not isinstance(
+                raw, dict
+            ):  # pyright: ignore[reportUnnecessaryIsInstance]
+                continue
+
+            value = raw.get("StringValue")
+
+            if isinstance(value, str):
+                out[attr_key] = value
+
+        return out or None
+
+    # ....................... #
+
+    @staticmethod
+    def __extract_delivery_count(system_attrs: dict[str, str] | None) -> int | None:
+        """Parse ``ApproximateReceiveCount`` (deliveries including this one)."""
+
+        if not system_attrs:
+            return None
+
+        raw = system_attrs.get(_RECEIVE_COUNT_ATTR)
+
+        if isinstance(raw, str) and raw.isdigit():
+            return int(raw)
+
+        return None
 
     # ....................... #
 
@@ -602,8 +671,18 @@ class SQSClient(SQSClientPort):
         message_id: str | None = None,
         delay: timedelta | None = None,
         not_before: datetime | None = None,
+        headers: Mapping[str, str] | None = None,
     ) -> str:
-        """Send a single message and return the broker-assigned ``MessageId``."""
+        """Send a single message and return the broker-assigned ``MessageId``.
+
+        FIFO targets (``.fifo``): ``MessageGroupId`` is *key* (or ``"forze"``)
+        — the per-aggregate ordering lane — and ``MessageDeduplicationId``
+        follows the priority documented on :meth:`enqueue_many`: explicit
+        *message_id*, else the ``forze_event_id`` header, else a fresh random
+        id. The caller ``key`` is deliberately **never** the dedup id:
+        distinct events may share a key (ordering), and key-based dedup would
+        silently drop them within the FIFO five-minute window.
+        """
         return (
             await self.enqueue_many(
                 queue,
@@ -614,6 +693,7 @@ class SQSClient(SQSClientPort):
                 message_ids=[message_id] if message_id is not None else None,
                 delay=delay,
                 not_before=not_before,
+                headers=headers,
             )
         )[0]
 
@@ -631,12 +711,33 @@ class SQSClient(SQSClientPort):
         message_ids: Sequence[str] | None = None,
         delay: timedelta | None = None,
         not_before: datetime | None = None,
+        headers: Mapping[str, str] | None = None,
     ) -> list[str]:
         """Send a batch of messages and return broker-assigned ``MessageId``s.
 
         The returned identifiers correlate with the ``id`` of received
         messages (stable across redeliveries). Caller-provided *message_ids*
         are used as FIFO deduplication ids, not as the returned identifiers.
+
+        FIFO targets (``.fifo``) build the FIFO entry fields as:
+
+        - ``MessageGroupId`` = *key* (or ``"forze"`` when unset) — the
+          ordering lane: the outbox relay passes the staged ``ordering_key``
+          here, so same-key events deliver in order on the happy path.
+        - ``MessageDeduplicationId`` priority: explicit *message_ids* entry →
+          the ``forze_event_id`` header (single-message sends only — headers
+          are batch-wide, so a shared event id must not collapse a multi-body
+          batch) → a fresh random id per message. The event id header is the
+          stable per-event identity, so a relay republishing the same event
+          within the five-minute window dedupes, while **different** events
+          sharing an ordering ``key`` never dedupe each other. The caller
+          ``key`` is deliberately never used as the dedup id — that would
+          drop distinct same-key events (event loss).
+
+        Caller *headers* ride SQS message attributes (``String`` type)
+        verbatim; the reserved transport attributes (``forze_type``,
+        ``forze_key``, ``forze_enqueued_at``, ``forze_encoding``) always win
+        on collision.
 
         Splits into chunks of up to :data:`_SQS_SEND_MESSAGE_BATCH_MAX` (AWS limit).
         Multiple chunks are sent with bounded concurrency derived from
@@ -650,16 +751,23 @@ class SQSClient(SQSClientPort):
         if message_ids is not None and len(message_ids) != len(bodies):
             raise exc.precondition("SQS message_ids size must match batch body size")
 
-        resolved_ids = (
-            list(message_ids)
-            if message_ids is not None
-            else [uuid4().hex for _ in range(len(bodies))]
-        )
+        header_event_id = headers.get(HEADER_EVENT_ID) if headers else None
+
+        if message_ids is not None:
+            resolved_ids = list(message_ids)
+
+        elif header_event_id and len(bodies) == 1:
+            resolved_ids = [header_event_id]
+
+        else:
+            resolved_ids = [uuid4().hex for _ in range(len(bodies))]
+
         queue_url = await self.__resolve_queue_url(queue)
         msg_attrs = self.__build_message_attributes(
             type=type,
             key=key,
             enqueued_at=enqueued_at,
+            headers=headers,
         )
         is_fifo = self.__is_fifo_target(queue, queue_url)
         c = self.__require_client()
@@ -782,7 +890,7 @@ class SQSClient(SQSClientPort):
             MaxNumberOfMessages=max_messages,
             WaitTimeSeconds=wait_time,
             MessageAttributeNames=["All"],
-            AttributeNames=["SentTimestamp"],
+            AttributeNames=["SentTimestamp", "ApproximateReceiveCount"],
         )
         raw_messages = resp.get("Messages") or []
         out: list[SQSQueueMessage] = []
@@ -817,6 +925,8 @@ class SQSClient(SQSClientPort):
                     type=self.__extract_attr(attrs, _TYPE_ATTR),  # type: ignore[arg-type]
                     enqueued_at=self.__extract_enqueued_at(attrs, system_attrs),  # type: ignore[arg-type]
                     key=self.__extract_attr(attrs, _KEY_ATTR),  # type: ignore[arg-type]
+                    headers=self.__extract_headers(attrs),  # type: ignore[arg-type]
+                    delivery_count=self.__extract_delivery_count(system_attrs),  # type: ignore[arg-type]
                 )
             )
 

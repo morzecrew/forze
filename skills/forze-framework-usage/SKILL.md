@@ -55,6 +55,7 @@ from forze_postgres.adapters.document import PostgresDocumentAdapter  # Never in
 | `ctx.search.federated(spec)` | `SearchQueryPort` | Federated search |
 | `ctx.tx_ctx.resolver(route)` | `TransactionManagerPort` | Transaction route (e.g. `"default"`) |
 | `ctx.tx_ctx.scope(route)` | async context manager | Transaction scope |
+| `ctx.resilience()` | `ResilienceExecutorPort` | Run a call under a named policy — see [`forze-resilience-deadlines`](../forze-resilience-deadlines/SKILL.md) |
 
 For configurable keys without a convenience wrapper, use `ctx.deps.resolve_configurable(ctx, DepKey, spec, route=spec.name)`.
 

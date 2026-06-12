@@ -22,6 +22,12 @@ from ..domain.models.invite import (
     ReadPasswordInvite,
     UpdatePasswordInviteCmd,
 )
+from ..domain.models.reset import (
+    CreatePasswordResetCmd,
+    PasswordReset,
+    ReadPasswordReset,
+    UpdatePasswordResetCmd,
+)
 from ..domain.models.session import (
     CreateSessionCmd,
     ReadSession,
@@ -67,6 +73,19 @@ password_invite_spec = DocumentSpec(
         "domain": PasswordInvite,
         "create_cmd": CreatePasswordInviteCmd,
         "update_cmd": UpdatePasswordInviteCmd,
+    },
+    sensitive=True,
+)
+
+# ....................... #
+
+password_reset_spec = DocumentSpec(
+    name=AuthnResourceName.PASSWORD_RESETS,
+    read=ReadPasswordReset,
+    write={
+        "domain": PasswordReset,
+        "create_cmd": CreatePasswordResetCmd,
+        "update_cmd": UpdatePasswordResetCmd,
     },
     sensitive=True,
 )

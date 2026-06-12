@@ -36,8 +36,18 @@ from forze_redis.kernel.scripts import MSET_BULK_SET
 
 from .errors import exc_interceptor
 from .port import RedisClientPort
-from .types import RedisPubSubMessage, RedisStreamResponse
-from .utils import parse_pubsub_message, parse_stream_entries
+from .types import (
+    RedisAutoClaimResponse,
+    RedisPendingEntry,
+    RedisPubSubMessage,
+    RedisStreamResponse,
+)
+from .utils import (
+    parse_pubsub_message,
+    parse_stream_entries,
+    parse_xautoclaim_response,
+    parse_xpending_entries,
+)
 from .value_objects import RedisConfig
 
 # ----------------------- #
@@ -263,7 +273,8 @@ class RedisClient(RedisClientPort):
 
         Value-returning methods (``get``, ``mget``, ``exists``, ``pttl``,
         ``pttl_raw_ms``, ``run_script``, ``incr``, ``decr``, ``reset``,
-        ``xadd``, ``xread``, ``xgroup_read``, ``xgroup_create``, ``xack``)
+        ``xadd``, ``xread``, ``xgroup_read``, ``xgroup_create``, ``xack``,
+        ``xautoclaim``, ``xpending``)
         raise a ``precondition`` error with code ``redis_read_in_pipeline``
         when called inside the scope — their results cannot be observed before
         ``execute()``, so returning anything would be silent corruption.
@@ -872,3 +883,70 @@ class RedisClient(RedisClientPort):
         res = await self.__executor().xack(stream, group, *ids)
 
         return int(res)
+
+    # ....................... #
+
+    @exc_interceptor.coroutine("redis.xautoclaim")  # type: ignore[untyped-decorator]
+    async def xautoclaim(
+        self,
+        stream: str,
+        group: str,
+        consumer: str,
+        *,
+        min_idle_ms: int,
+        start_id: str = "0-0",
+        count: int | None = None,
+    ) -> RedisAutoClaimResponse:
+        """One ``XAUTOCLAIM`` page: claim entries idle for at least *min_idle_ms*.
+
+        Scans the group's pending-entries list from *start_id* and transfers
+        ownership of matching entries to *consumer*. Returns the next scan
+        cursor (``"0-0"`` once the list is exhausted), the claimed entries,
+        and the ids dropped because they no longer exist in the stream —
+        callers loop on the cursor for a full sweep.
+        """
+
+        self.__require_no_pipeline("xautoclaim")
+
+        res = await self.__executor().xautoclaim(
+            stream,
+            group,
+            consumer,
+            min_idle_time=min_idle_ms,
+            start_id=start_id,
+            count=count,
+        )
+
+        return parse_xautoclaim_response(res)
+
+    # ....................... #
+
+    @exc_interceptor.coroutine("redis.xpending")  # type: ignore[untyped-decorator]
+    async def xpending(
+        self,
+        stream: str,
+        group: str,
+        *,
+        count: int,
+        start_id: str = "-",
+        end_id: str = "+",
+    ) -> list[RedisPendingEntry]:
+        """Extended ``XPENDING``: up to *count* pending rows in ``[start_id, end_id]``.
+
+        Each row reports the entry id, owning consumer, idle milliseconds, and
+        delivery counter, oldest first. Inspection only — never alters the
+        pending-entries list. Page with an exclusive cursor (``"(<last_id>"``
+        as *start_id*) to walk lists larger than *count*.
+        """
+
+        self.__require_no_pipeline("xpending")
+
+        res = await self.__executor().xpending_range(
+            stream,
+            group,
+            min=start_id,
+            max=end_id,
+            count=count,
+        )
+
+        return parse_xpending_entries(res)

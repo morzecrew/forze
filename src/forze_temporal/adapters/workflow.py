@@ -24,7 +24,11 @@ from forze.base.exceptions import exc
 from .base import TemporalBaseAdapter
 
 # ----------------------- #
-#! TODO: Need to check serialization and deserialization
+# Serialization contract: argument models are serialized by the client's data
+# converter (``pydantic_data_converter`` unless overridden); results are
+# deserialized back into the spec-declared models by passing the spec's
+# ``return_type`` as ``result_type`` on query/update/result calls below. A
+# ``None`` return type yields the converter's raw payload unchanged.
 
 
 @final
@@ -90,6 +94,7 @@ class TemporalWorkflowCommandAdapter[In: BaseModel, Out: BaseModel](
             update=update.name,
             arg=args,
             run_id=handle.run_id,
+            result_type=update.return_type,
         )
 
         return res
@@ -145,6 +150,7 @@ class TemporalWorkflowQueryAdapter[In: BaseModel, Out: BaseModel](
             query=query.name,
             arg=args,
             run_id=handle.run_id,
+            result_type=query.return_type,
         )
 
         return res
@@ -155,6 +161,7 @@ class TemporalWorkflowQueryAdapter[In: BaseModel, Out: BaseModel](
         return await self.client.get_workflow_result(
             workflow_id=handle.workflow_id,
             run_id=handle.run_id,
+            result_type=self.spec.run.return_type,
         )
 
     # ....................... #

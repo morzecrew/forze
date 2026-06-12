@@ -1,6 +1,12 @@
 """Execution kernel, dependency injection, and lifecycle."""
 
-from .context import ExecutionContext, InvocationMetadata
+from .context import (
+    ExecutionContext,
+    InvocationMetadata,
+    bind_deadline,
+    current_deadline,
+    remaining_time,
+)
 from .domain import (
     DomainEventHandler,
     DomainEventHandlerFactory,
@@ -43,11 +49,17 @@ from .resilience import (
     resolve_resilience_executor,
 )
 from .observability import (
+    BREAKER_STATE_GAUGE,
+    BULKHEAD_LIMIT_GAUGE,
+    BULKHEAD_QUEUE_GAUGE,
     DURATION_HISTOGRAM,
     OPERATIONS_COUNTER,
+    RESILIENCE_EVENTS_COUNTER,
     instrument_operations,
+    instrument_resilience,
 )
-from .runtime import ExecutionRuntime
+from .runtime import DeploymentProfile, ExecutionRuntime
+from .assemble import build_runtime
 from .saga import (
     InProcessSagaExecutor,
     SagaDepsModule,
@@ -74,7 +86,11 @@ from .tracing import (
 # ----------------------- #
 
 __all__ = [
+    "build_runtime",
     "InvocationMetadata",
+    "bind_deadline",
+    "current_deadline",
+    "remaining_time",
     "Deps",
     "DepsModule",
     "DepsRegistry",
@@ -91,6 +107,7 @@ __all__ = [
     "DomainEventsDepsModule",
     "ExecutionContext",
     "ExecutionRuntime",
+    "DeploymentProfile",
     "CircuitBreakerStore",
     "FrozenOperationRegistry",
     "InMemoryCircuitBreakerStore",
@@ -105,8 +122,13 @@ __all__ = [
     "OperationPlan",
     "OperationRegistry",
     "instrument_operations",
+    "instrument_resilience",
     "OPERATIONS_COUNTER",
     "DURATION_HISTOGRAM",
+    "RESILIENCE_EVENTS_COUNTER",
+    "BREAKER_STATE_GAUGE",
+    "BULKHEAD_QUEUE_GAUGE",
+    "BULKHEAD_LIMIT_GAUGE",
     "ResilienceDepsModule",
     "builtin_default_policies",
     "default_resilience_executor",
