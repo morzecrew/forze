@@ -6,21 +6,27 @@ summary: Methods on the cache, counter, and object-storage contracts
 
 ## Cache
 
-`ctx.cache(spec)` returns a combined read/write `CachePort`. Values are arbitrary;
-keys are strings within the spec's namespace.
+`ctx.cache(spec)` returns a combined read/write `CachePort`. Keys are strings
+within the spec's namespace. **Values must be JSON-serializable, or
+pre-encoded `bytes`** (stored verbatim, returned for the caller to decode) —
+don't rely on key ordering or non-JSON types surviving a round trip.
 
 | Method | Signature | Notes |
 |--------|-----------|-------|
 | `get` | `get(key)` | value or `None` on miss |
 | `get_many` | `get_many(keys)` | `(found_mapping, missing_keys)` |
-| `set` | `set(key, value)` | store |
-| `set_many` | `set_many(mapping)` | bulk store |
-| `set_versioned` | `set_versioned(key, version, value)` | store tagged with a version |
-| `set_many_versioned` | `set_many_versioned(mapping)` | keyed by `(key, version)` |
+| `exists` | `exists(key)` | presence check without payload transfer |
+| `set` | `set(key, value, *, ttl=None)` | store |
+| `set_many` | `set_many(mapping, *, ttl=None)` | bulk store |
+| `set_versioned` | `set_versioned(key, version, value, *, ttl=None)` | store tagged with a version |
+| `set_many_versioned` | `set_many_versioned(mapping, *, ttl=None)` | keyed by `(key, version)` |
 | `delete` | `delete(key, *, hard)` | `hard` is required |
 | `delete_many` | `delete_many(keys, *, hard)` | `hard` is required |
 
-TTLs come from the `CacheSpec`, not these calls. See
+TTLs default from the `CacheSpec`; the per-entry `ttl=` overrides that entry's
+lifetime alone (the seam the
+[adaptive lifetimes](../../recipes/cache-reads-with-redis.md#adaptive-lifetimes)
+write through). See
 [Cache reads with Redis](../../recipes/cache-reads-with-redis.md).
 
 ## Counter

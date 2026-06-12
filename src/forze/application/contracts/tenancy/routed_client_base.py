@@ -18,7 +18,7 @@ from .helpers import (
     resolve_dsn_for_tenant,
     resolve_structured_for_tenant,
 )
-from .registry import TenantClientRegistry
+from .registry import TenantClientRegistry, TenantPoolStats
 from .value_objects import TenantIdentity
 from collections.abc import Awaitable
 
@@ -118,6 +118,18 @@ class RoutedTenantClientBase(Generic[C]):
         """
 
         await self._pool.evict(tenant_id)
+
+    # ....................... #
+
+    def pool_stats(self) -> TenantPoolStats:
+        """Snapshot of the tenant pool's churn counters (see :class:`TenantPoolStats`).
+
+        Feed this to ``instrument_tenant_pools`` for OpenTelemetry gauges — a
+        sustained creation rate while the pool sits at capacity means LRU
+        thrash, and each rebuild pays full connection establishment.
+        """
+
+        return self._pool.stats()
 
     # ....................... #
 

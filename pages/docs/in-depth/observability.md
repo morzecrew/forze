@@ -62,10 +62,50 @@ instrument_resilience(ctx.resilience())  # once, when the scope is up
 | `forze.resilience.breaker.state` (gauge) | breaker phase per policy/route: 0 closed, 1 half-open, 2 open |
 | `forze.resilience.bulkhead.queue_depth` (gauge) | calls queued behind each bulkhead, sampled at collection |
 | `forze.resilience.bulkhead.limit` (gauge) | the current adaptive-bulkhead concurrency limit |
+| `forze.resilience.hedge.delay` (gauge) | the effective adaptive hedge delay (P² quantile estimate), in seconds |
 
 Two reading notes: `breaker_open` counts the open transition *and* every
 admission shed while open, so its rate tracks shed load; and a breaker that
 never tripped reports no state at all — closed by absence.
+
+## Tenant pool metrics
+
+[Routed clients](multi-tenancy.md) keep one connection pool per tenant in a
+bounded LRU, and evicting a pool is expensive — the next request rebuilds the
+connection from scratch. `instrument_tenant_pools` exports the churn
+counters:
+
+```python
+from forze.application.execution import instrument_tenant_pools
+
+instrument_tenant_pools({"postgres": pg, "redis": redis})
+```
+
+Per client (labelled `forze.client`): `forze.tenancy.pool.size` and
+`….capacity` gauges, plus cumulative `….created`, `….disposed`, and
+`….evicted_explicit` counters. The alert worth setting: a **sustained
+creation rate while `size` sits at `capacity`** means the LRU is thrashing —
+hot tenants' pools evicted by cold one-off traffic, each rebuild paying full
+connection establishment. The fix is usually a larger `max_cached_tenants`;
+the metric tells you when.
+
+## Document L1 metrics
+
+The [in-process L1](../recipes/cache-reads-with-redis.md#an-in-process-l1-for-hot-documents)
+exports its counters the same way:
+
+```python
+from forze.application.integrations.document import instrument_document_l1
+
+instrument_document_l1()
+```
+
+Per document (labelled `forze.document`): `forze.cache.l1.size` /
+`….capacity` gauges and cumulative `….hits` / `….misses` / `….evictions`
+counters. The hit rate validates that the L1 is earning its staleness budget,
+and **sustained evictions at full capacity with a sagging hit rate** is the
+scan-pollution signature — the signal to switch the eviction policy to the
+in-box W-TinyLFU store or raise `capacity`.
 
 ## Logs correlate for free
 

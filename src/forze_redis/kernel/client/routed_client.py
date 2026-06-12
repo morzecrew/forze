@@ -6,6 +6,7 @@ from typing import (
     Any,
     AsyncContextManager,
     AsyncGenerator,
+    Awaitable,
     Callable,
     Mapping,
     Sequence,
@@ -141,9 +142,9 @@ class RoutedRedisClient(DsnRoutedTenantClientBase[RedisClient], RedisClientPort)
         inner = await self._get_client()
         return await inner.unlink(*keys)
 
-    async def expire(self, key: str, seconds: int) -> bool:
+    async def expire(self, key: str, seconds: int, *, gt: bool = False) -> bool:
         inner = await self._get_client()
-        return await inner.expire(key, seconds)
+        return await inner.expire(key, seconds, gt=gt)
 
     async def incr(self, key: str, by: int = 1) -> int:
         inner = await self._get_client()
@@ -170,6 +171,20 @@ class RoutedRedisClient(DsnRoutedTenantClientBase[RedisClient], RedisClientPort)
         inner = await self._get_client()
         async for msg in inner.subscribe(channels, timeout=timeout):
             yield msg
+
+    async def track_invalidations(
+        self,
+        *,
+        prefixes: Sequence[str],
+        on_keys: Callable[[Sequence[str]], None],
+        on_reset: Callable[[], None],
+    ) -> Callable[[], Awaitable[None]] | None:
+        # A tracking subscription outlives any single request, but the routed
+        # client picks its endpoint per *current tenant* — a long-lived stream
+        # bound to one tenant's Redis would silently miss every other tenant's
+        # invalidations. Unsupported by design; subscribers keep their TTL
+        # backstop.
+        return None
 
     async def xadd(
         self,

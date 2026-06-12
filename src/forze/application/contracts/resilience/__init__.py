@@ -12,6 +12,7 @@ from .specs import ResilienceSpec
 from .value_objects import (
     BackoffStrategy,
     AdaptiveBulkheadStrategy,
+    AdaptiveThrottleStrategy,
     BulkheadStrategy,
     CircuitBreakerStrategy,
     FallbackStrategy,
@@ -31,6 +32,7 @@ from .value_objects import (
 __all__ = [
     "BackoffStrategy",
     "AdaptiveBulkheadStrategy",
+    "AdaptiveThrottleStrategy",
     "BulkheadStrategy",
     "CircuitBreakerStrategy",
     "FallbackStrategy",

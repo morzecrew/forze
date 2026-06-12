@@ -5,19 +5,27 @@ import json
 import math
 import random
 import time
+from datetime import datetime, timedelta, timezone
 from typing import Any, Awaitable, Callable, Protocol, Sequence, cast, runtime_checkable
 from uuid import UUID
 
 import attrs
 from pydantic import BaseModel
 
-from forze.application.contracts.cache import CachePort, CacheSpec
+from forze.application.contracts.cache import (
+    CacheInvalidation,
+    CachePort,
+    CacheSpec,
+    SupportsInvalidationPush,
+)
 from forze.application.contracts.transaction import AfterCommitPort
+from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
 from forze.base.serialization import CACHE_DUMP_EXCLUDE_OPTS, ModelCodec
 from forze.domain.constants import ID_FIELD, REV_FIELD
 
 from ..._logger import logger
+from .l1 import L1Store, LruTtlStore, register_l1_store
 
 # ----------------------- #
 
@@ -65,6 +73,19 @@ class DocumentCache[R: BaseModel]:
     """Cache spec backing :attr:`cache` — supplies the TTL and the opt-in
     probabilistic early-refresh beta (see ``CacheSpec.early_refresh_beta``)."""
 
+    tenant_key: Callable[[], str | None] | None = None
+    """Current-tenant discriminator for L1 keys (e.g. the bound tenant id).
+
+    The backend cache applies tenant scoping in its adapter, *below* this
+    coordinator — the in-process L1 cannot rely on that, so it composes the
+    tenant into its own keys. Required whenever L1 is active; return ``None``
+    when no tenant is bound (single-tenant deployments)."""
+
+    l1_store: L1Store | None = None
+    """Optional L1 store override (eviction-policy seam, e.g. a W-TinyLFU
+    implementation). When unset and ``cache_spec.l1`` is configured, a default
+    LRU+TTL store is built from the spec."""
+
     _inflight: dict[str, asyncio.Future[Any]] = attrs.field(
         factory=dict,
         init=False,
@@ -73,6 +94,160 @@ class DocumentCache[R: BaseModel]:
     )
     """Singleflight: in-flight miss/refresh loads keyed by cache key, so
     concurrent readers of one key collapse into a single gateway fetch."""
+
+    _l1: L1Store | None = attrs.field(
+        default=attrs.Factory(
+            lambda self: self._build_l1(),
+            takes_self=True,
+        ),
+        init=False,
+        repr=False,
+        eq=False,
+    )
+    """Active L1 store (override, spec-built default, or ``None``)."""
+
+    _l1_push: dict[str, Any] = attrs.field(
+        factory=dict,
+        init=False,
+        repr=False,
+        eq=False,
+    )
+    """Invalidation-push subscription state (mutable holder on a frozen class).
+
+    Empty until the first L1 read attempts a subscription; ``started`` is set
+    before the await so concurrent first readers subscribe once."""
+
+    _bg_tasks: set["asyncio.Task[Any]"] = attrs.field(
+        factory=set,
+        init=False,
+        repr=False,
+        eq=False,
+    )
+    """Strong refs to in-flight background refresh tasks.
+
+    asyncio holds only weak references to tasks — without this set a running
+    refresh could be garbage-collected mid-flight. Entries discard themselves
+    on completion."""
+
+    # ....................... #
+
+    def _on_invalidation(self, inv: CacheInvalidation) -> None:
+        """Push-invalidation sink: drop the affected L1 entry, or flush on reset."""
+
+        if self._l1 is None:
+            return
+
+        if inv.key is None:
+            # The push stream (re)connected or degraded: anything cached may
+            # predate a gap in the stream — flush rather than trust it.
+            self._l1.clear()
+            return
+
+        self._l1.invalidate(f"{inv.tenant or ''}:{inv.key}")
+
+    # ....................... #
+
+    async def _subscribe_invalidation_push(self) -> None:
+        """One-shot subscription attempt (TTL stays the backstop either way)."""
+
+        self._l1_push["started"] = True
+
+        if not isinstance(self.cache, SupportsInvalidationPush):
+            return
+
+        try:
+            unsubscribe = await self.cache.subscribe_invalidations(
+                self._on_invalidation
+            )
+
+        except Exception:
+            logger.warning(
+                "L1 invalidation-push subscription failed for '%s'; "
+                "falling back to TTL-only staleness bounds",
+                self.document_name,
+                exc_info=True,
+            )
+
+            return
+
+        if unsubscribe is None:
+            logger.debug(
+                "L1 invalidation push unavailable for '%s' (TTL-only)",
+                self.document_name,
+            )
+
+            return
+
+        self._l1_push["unsubscribe"] = unsubscribe
+        logger.debug("L1 invalidation push active for '%s'", self.document_name)
+
+    # ....................... #
+
+    def _build_l1(self) -> L1Store | None:
+        if self.cache is None:
+            return None
+
+        if self.l1_store is not None:
+            return self.l1_store
+
+        if self.cache_spec is None or self.cache_spec.l1 is None:
+            return None
+
+        spec = self.cache_spec.l1
+
+        if spec.store_factory is not None:
+            store = cast(L1Store, spec.store_factory(spec))
+
+        else:
+            store = LruTtlStore(
+                capacity=spec.capacity,
+                ttl=spec.ttl.total_seconds(),
+            )
+
+        register_l1_store(self.document_name, store)
+
+        return store
+
+    # ....................... #
+
+    def __attrs_post_init__(self) -> None:
+        if self._l1 is not None and self.tenant_key is None:
+            raise exc.configuration(
+                "Document L1 cache requires a tenant_key provider — the L1 "
+                "key must include the current tenant (backend tenant scoping "
+                "happens below this coordinator). Pass tenant_key=lambda: "
+                "str(t.tenant_id) if (t := ctx.inv_ctx.get_tenant()) else None",
+            )
+
+    # ....................... #
+
+    def _l1_key(self, pk: Any) -> str:
+        tenant = self.tenant_key() if self.tenant_key is not None else None
+
+        return f"{tenant or ''}:{pk}"
+
+    # ....................... #
+
+    def _l1_get(self, pk: Any) -> R | None:
+        if self._l1 is None:
+            return None
+
+        cached = self._l1.get(self._l1_key(pk))
+
+        if cached is None:
+            return None
+
+        # Hand out a copy so a caller mutating the result cannot poison the
+        # cached instance (and vice versa).
+        return cast(R, cached).model_copy()
+
+    # ....................... #
+
+    def _l1_put(self, pk: Any, doc: R) -> None:
+        if self._l1 is None:
+            return
+
+        self._l1.set(self._l1_key(pk), doc.model_copy())
 
     # ....................... #
 
@@ -98,13 +273,63 @@ class DocumentCache[R: BaseModel]:
 
     # ....................... #
 
-    def _encode_cache_value(self, doc: R, *, delta: float = 0.0) -> Any:
+    def _entry_ttl(self, doc: R) -> timedelta | None:
+        """Age-proportional per-entry lifetime, or ``None`` for the spec default.
+
+        The HTTP heuristic-freshness rule: a document untouched for a long
+        time earns a long lifetime; one changed minutes ago revalidates soon
+        (write locality). Falls back to the default when the read model
+        carries no usable ``last_update_at``.
+        """
+
+        cfg = self.cache_spec.age_ttl if self.cache_spec is not None else None
+
+        if cfg is None:
+            return None
+
+        last_update_at = getattr(doc, "last_update_at", None)
+
+        if not isinstance(last_update_at, datetime):
+            return None
+
+        if last_update_at.tzinfo is None:
+            last_update_at = last_update_at.replace(tzinfo=timezone.utc)
+
+        age = max(0.0, (datetime.now(timezone.utc) - last_update_at).total_seconds())
+        seconds = min(
+            max(cfg.alpha * age, cfg.min_ttl.total_seconds()),
+            cfg.max_ttl.total_seconds(),
+        )
+
+        # Quantize to two significant digits: batch warms group documents by
+        # computed lifetime, and exact ages would shatter every batch into
+        # one write per document for precision nobody needs.
+        if seconds > 0:
+            magnitude = 10.0 ** max(0, math.floor(math.log10(seconds)) - 1)
+            seconds = min(
+                math.ceil(seconds / magnitude) * magnitude,
+                cfg.max_ttl.total_seconds(),
+            )
+
+        return timedelta(seconds=seconds)
+
+    # ....................... #
+
+    def _encode_cache_value(
+        self,
+        doc: R,
+        *,
+        delta: float = 0.0,
+        ttl: timedelta | None = None,
+    ) -> Any:
         """Codec bytes, or — with early refresh on — a metadata envelope.
 
         The envelope records the write instant and the observed recompute cost
         (*delta*, seconds) the XFetch election needs at read time. Write-path
         warms pass ``delta=0.0`` and therefore never elect early refresh —
-        they are re-warmed on every write anyway.
+        they are re-warmed on every write anyway. With a per-entry *ttl*
+        (age-based lifetime), the envelope carries it so the election compares
+        against the entry's real expiry instead of the spec default.
         """
 
         payload = self._encode_for_cache(doc)
@@ -112,7 +337,12 @@ class DocumentCache[R: BaseModel]:
         if self._early_refresh_beta() is None:
             return payload
 
-        return {"_xf": {"at": time.time(), "d": delta}, "doc": json.loads(payload)}
+        meta: JsonDict = {"at": time.time(), "d": delta}
+
+        if ttl is not None:
+            meta["ttl"] = ttl.total_seconds()
+
+        return {"_xf": meta, "doc": json.loads(payload)}
 
     # ....................... #
 
@@ -151,12 +381,84 @@ class DocumentCache[R: BaseModel]:
         if delta <= 0:
             return False
 
-        expiry = at + self.cache_spec.ttl.total_seconds()
+        entry_ttl = meta.get("ttl")
+        ttl_s = (
+            float(entry_ttl)
+            if isinstance(entry_ttl, (int, float)) and entry_ttl > 0
+            else self.cache_spec.ttl.total_seconds()
+        )
+        expiry = at + ttl_s
 
         # Refresh-election probability, not security randomness.
         rand = max(random.random(), 1e-12)  # nosec B311
 
         return time.time() - delta * beta * math.log(rand) >= expiry
+
+    # ....................... #
+
+    def _background_refresh_enabled(self) -> bool:
+        return self.cache_spec is not None and self.cache_spec.early_refresh_background
+
+    # ....................... #
+
+    async def _background_refresh(
+        self,
+        key: str,
+        fetch: Callable[[], Awaitable[R]],
+    ) -> None:
+        """Detached elected refresh: best-effort by contract.
+
+        Failures (including lifecycle teardown closing clients underneath a
+        shutdown-time refresh) are logged and swallowed — the entry being
+        refreshed is still valid, and a later election retries.
+        """
+
+        try:
+            await self._fetch_singleflight(key, fetch)
+
+        except asyncio.CancelledError:
+            raise
+
+        except Exception:
+            logger.debug(
+                "Background early refresh failed for 1 '%s' document, continuing",
+                self.document_name,
+                exc_info=True,
+            )
+
+    # ....................... #
+
+    async def _schedule_background_refresh(
+        self,
+        key: str,
+        fetch: Callable[[], Awaitable[R]],
+    ) -> None:
+        """Spawn an elected refresh after the enclosing transaction commits.
+
+        The spawn rides :meth:`after_commit_or_now` deliberately: the task
+        snapshots the caller's ContextVars, and a copy taken *inside* an
+        active transaction would let the detached fetch share the tx
+        connection concurrently with (or after) the request. Post-commit the
+        tx binding is gone while tenant/invocation bindings remain. A load
+        already in flight for the key makes the spawn a no-op — it will
+        re-warm the entry anyway (the rare same-tick double-spawn collapses
+        into the singleflight as a follower).
+        """
+
+        if key in self._inflight:
+            return
+
+        async def _spawn() -> None:
+            if key in self._inflight:
+                return
+
+            task = asyncio.get_running_loop().create_task(
+                self._background_refresh(key, fetch)
+            )
+            self._bg_tasks.add(task)
+            task.add_done_callback(self._bg_tasks.discard)
+
+        await self.after_commit_or_now(_spawn)
 
     # ....................... #
 
@@ -223,13 +525,19 @@ class DocumentCache[R: BaseModel]:
 
             return
 
-        try:
-            casted_doc = cast(_ReadModelWithIdAndRev, doc)
+        casted_doc = cast(_ReadModelWithIdAndRev, doc)
 
-            payload = self._encode_cache_value(doc, delta=delta)
+        # Local L1 refresh first (cannot fail on transport): write-path warms
+        # land here via after-commit deferral, which is what preserves
+        # same-replica read-your-writes with L1 enabled.
+        self._l1_put(casted_doc.id, doc)
+
+        try:
+            ttl = self._entry_ttl(doc)
+            payload = self._encode_cache_value(doc, delta=delta, ttl=ttl)
 
             await self.cache.set_versioned(
-                str(casted_doc.id), str(casted_doc.rev), payload
+                str(casted_doc.id), str(casted_doc.rev), payload, ttl=ttl
             )
 
             logger.trace("Cache set successfully")
@@ -255,13 +563,22 @@ class DocumentCache[R: BaseModel]:
 
         docs_casted = [cast(_ReadModelWithIdAndRev, x) for x in docs]
 
-        try:
-            versioned_mapping = {
-                (str(doc.id), str(doc.rev)): self._encode_cache_value(cast(R, doc))
-                for doc in docs_casted
-            }
+        for casted in docs_casted:
+            self._l1_put(casted.id, cast(R, casted))
 
-            await self.cache.set_many_versioned(versioned_mapping)
+        try:
+            # Per-entry (age-based) lifetimes vary per document while the port
+            # takes one ttl per batch: group documents by computed lifetime.
+            groups: dict[timedelta | None, dict[tuple[str, str], Any]] = {}
+
+            for casted in docs_casted:
+                ttl = self._entry_ttl(cast(R, casted))
+                groups.setdefault(ttl, {})[(str(casted.id), str(casted.rev))] = (
+                    self._encode_cache_value(cast(R, casted), ttl=ttl)
+                )
+
+            for ttl, versioned_mapping in groups.items():
+                await self.cache.set_many_versioned(versioned_mapping, ttl=ttl)
 
         except Exception:
             logger.debug(
@@ -286,6 +603,10 @@ class DocumentCache[R: BaseModel]:
             )
 
             return
+
+        if self._l1 is not None:
+            for pk in pks:
+                self._l1.invalidate(self._l1_key(pk))
 
         try:
             await self.cache.delete_many([str(pk) for pk in pks], hard=True)
@@ -312,6 +633,15 @@ class DocumentCache[R: BaseModel]:
         if self.cache is None:
             return await fetch_on_cache_fault()
 
+        if self._l1 is not None and not self._l1_push:
+            await self._subscribe_invalidation_push()
+
+        l1_hit = self._l1_get(pk)
+
+        if l1_hit is not None:
+            logger.trace("Retrieved 1 L1-cached '%s' document", self.document_name)
+            return l1_hit
+
         try:
             cached = await self.cache.get(str(pk))
 
@@ -329,6 +659,23 @@ class DocumentCache[R: BaseModel]:
 
             if not self._elects_early_refresh(meta):
                 logger.trace("Retrieved 1 cached '%s' document", self.document_name)
+                # Backend data is committed by construction: safe to warm L1.
+                self._l1_put(pk, doc)
+                return doc
+
+            if self._background_refresh_enabled():
+                # Election fires *before* expiry: the entry is still valid.
+                # Serve it and let the recompute run detached — the elected
+                # reader never pays the refresh latency.
+                logger.trace(
+                    "Early refresh elected (background) for 1 '%s' document",
+                    self.document_name,
+                )
+                self._l1_put(pk, doc)
+                await self._schedule_background_refresh(
+                    str(pk), fetch_on_miss_without_lock
+                )
+
                 return doc
 
             logger.trace(
@@ -421,8 +768,31 @@ class DocumentCache[R: BaseModel]:
         if self.cache is None:
             return await fetch_many_on_cache_fault()
 
+        l1_docs: dict[UUID, R] = {}
+
+        if self._l1 is not None:
+            if not self._l1_push:
+                await self._subscribe_invalidation_push()
+
+            for pk in pks:
+                hit = self._l1_get(pk)
+
+                if hit is not None:
+                    l1_docs[pk] = hit
+
+            if len(l1_docs) == len(pks):
+                logger.trace(
+                    "Retrieved %s L1-cached '%s' document(s)",
+                    len(pks),
+                    self.document_name,
+                )
+
+                return [l1_docs[pk] for pk in pks]
+
+        remaining = [pk for pk in pks if pk not in l1_docs] if l1_docs else list(pks)
+
         try:
-            hits, misses = await self.cache.get_many([str(pk) for pk in pks])
+            hits, misses = await self.cache.get_many([str(pk) for pk in remaining])
 
             if hits:
                 logger.trace(
@@ -431,7 +801,7 @@ class DocumentCache[R: BaseModel]:
                     self.document_name,
                 )
 
-        except Exception as exc:
+        except Exception as error:
             logger.debug(
                 "Cache get failed for %s '%s' document(s), falling back to read gateway",
                 len(pks),
@@ -439,7 +809,7 @@ class DocumentCache[R: BaseModel]:
                 exc_info=True,
             )
 
-            logger.trace("Cache exception: %s", exc)
+            logger.trace("Cache exception: %s", error)
 
             return await fetch_many_on_cache_fault()
 
@@ -460,7 +830,12 @@ class DocumentCache[R: BaseModel]:
         hits_validated_cast = [cast(_ReadModelWithIdAndRev, x) for x in hits_validated]
         miss_res_cast = [cast(_ReadModelWithIdAndRev, x) for x in miss_res]
 
-        by_pk = {x.id: x for x in hits_validated_cast}
+        for casted in hits_validated_cast:
+            # Backend data is committed by construction: safe to warm L1.
+            self._l1_put(casted.id, cast(R, casted))
+
+        by_pk: dict[UUID, Any] = dict(l1_docs)
+        by_pk.update({x.id: x for x in hits_validated_cast})
         by_pk.update({x.id: x for x in miss_res_cast})
 
         return [cast(R, by_pk[pk]) for pk in pks]

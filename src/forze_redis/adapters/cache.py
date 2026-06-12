@@ -1,6 +1,7 @@
 """Redis-backed :class:`~forze.application.contracts.cache.CachePort` adapter."""
 
 import asyncio
+import math
 
 from forze_redis._compat import require_redis
 
@@ -9,11 +10,16 @@ require_redis()
 # ....................... #
 
 from datetime import timedelta
-from typing import Any, Callable, Final, Iterable, Mapping, Sequence, final
+from typing import Any, Awaitable, Callable, Final, Iterable, Mapping, Sequence, final
 
 import attrs
 
-from forze.application.contracts.cache import CachePort
+from forze.application.contracts.cache import (
+    CacheInvalidation,
+    CachePort,
+    InvalidationCallback,
+)
+from forze.application.contracts.resolution import is_static_named_resource
 from forze.base.exceptions import exc
 
 from ._logger import logger
@@ -26,6 +32,16 @@ _CACHE_SCOPE: Final[str] = "cache"
 _KV_SCOPE: Final[str] = "kv"
 _POINTER_SCOPE: Final[str] = "pointer"
 _BODY_SCOPE: Final[str] = "body"
+
+
+def _ttl_seconds(ttl: "timedelta") -> int:
+    """Whole seconds for Redis expiry, never truncating a live TTL to zero.
+
+    ``int()`` would turn a sub-second TTL into ``EX 0`` (rejected by Redis) or
+    an ``EXPIRE 0`` (immediate deletion): round up and floor at one second.
+    """
+
+    return max(1, math.ceil(ttl.total_seconds()))
 
 
 def _loads_cache_body(raw: bytes | str) -> Any:
@@ -63,6 +79,20 @@ class RedisCacheAdapter(CachePort, RedisBaseAdapter):
 
     ttl_kv: timedelta = timedelta(seconds=300)
     """TTL for the cache key-value pairs (when using plain cache)."""
+
+    invalidation_push: bool = False
+    """Opt-in client-side-caching invalidation push (Redis 6+ ``CLIENT
+    TRACKING``). When enabled, :meth:`subscribe_invalidations` streams key
+    invalidations to in-process subscribers (the document L1); when disabled
+    (default) the capability reports unavailable and subscribers keep their
+    TTL-only semantics."""
+
+    sliding_ttl: timedelta | None = None
+    """Opt-in sliding expiration: a versioned hit extends the *pointer* key's
+    lifetime to this idle window (``EXPIRE ... GT``, Redis 7+ — extend-only).
+    The *body* key keeps its write-time TTL, which therefore remains the
+    absolute revalidation cap. Extension failures are swallowed: a hit must
+    never fail because the slide did."""
 
     # ....................... #
 
@@ -140,7 +170,7 @@ class RedisCacheAdapter(CachePort, RedisBaseAdapter):
             return
 
         redis_mapping = {self.__pointer_key(k): v for k, v in mapping.items()}
-        await self.client.mset(redis_mapping, ex=int(ttl.total_seconds()))
+        await self.client.mset(redis_mapping, ex=_ttl_seconds(ttl))
 
     # ....................... #
 
@@ -188,7 +218,7 @@ class RedisCacheAdapter(CachePort, RedisBaseAdapter):
             )
             for (k, v), val in mapping.items()
         }
-        await self.client.mset(redis_mapping, ex=int(ttl.total_seconds()))
+        await self.client.mset(redis_mapping, ex=_ttl_seconds(ttl))
 
     # ....................... #
 
@@ -221,7 +251,7 @@ class RedisCacheAdapter(CachePort, RedisBaseAdapter):
 
     # ....................... #
 
-    async def __mset_kv(self, mapping: dict[str, Any], *, ttl: timedelta) -> None:
+    async def __mset_kv(self, mapping: Mapping[str, Any], *, ttl: timedelta) -> None:
         if not mapping:
             return
 
@@ -229,7 +259,7 @@ class RedisCacheAdapter(CachePort, RedisBaseAdapter):
             self.__kv_key(k): v if isinstance(v, bytes) else default_json_codec.dumps(v)
             for k, v in mapping.items()
         }
-        await self.client.mset(redis_mapping, ex=int(ttl.total_seconds()))
+        await self.client.mset(redis_mapping, ex=_ttl_seconds(ttl))
 
     # ....................... #
 
@@ -239,6 +269,122 @@ class RedisCacheAdapter(CachePort, RedisBaseAdapter):
 
         redis_keys = [self.__kv_key(k) for k in keys]
         await self.client.unlink(*redis_keys)
+
+    # ....................... #
+    # Public: invalidation push (SupportsInvalidationPush)
+
+    async def subscribe_invalidations(
+        self,
+        callback: InvalidationCallback,
+    ) -> Callable[[], Awaitable[None]] | None:
+        """Stream pointer-key invalidations to *callback* (L1 consumers).
+
+        Tracks the **pointer** scope only: every versioned write re-sets the
+        pointer, every delete unlinks it, and pointer TTL expiry broadcasts
+        too — so the pointer is a complete invalidation signal for versioned
+        read-through entries. Tenant-aware adapters track the ``tenant:``
+        prefix and filter; the parsed tenant rides the event so subscribers
+        can compose their own tenant-scoped keys.
+
+        Returns ``None`` (push unavailable) when the feature is disabled, the
+        namespace is dynamic (per-tenant-resolved namespaces have no stable
+        broadcast prefix), or the client cannot track (tenant-routed clients).
+        """
+
+        if not self.invalidation_push:
+            return None
+
+        if not is_static_named_resource(self.namespace):
+            logger.warning(
+                "Invalidation push requires a static namespace; falling back "
+                "to TTL-only L1 semantics",
+            )
+
+            return None
+
+        namespace = await self._resolved_namespace()
+        sep = self.key_sep
+        pointer_prefix = sep.join((_CACHE_SCOPE, _POINTER_SCOPE, namespace)) + sep
+        tenant_marker = f"tenant{sep}"
+
+        if self.tenant_aware:
+            # Tenant ids prefix the key, so there is no per-namespace
+            # broadcast prefix — subscribe to the tenant scope and filter.
+            prefixes: tuple[str, ...] = (tenant_marker,)
+
+        else:
+            prefixes = (pointer_prefix,)
+
+        def _parse(server_key: str) -> CacheInvalidation | None:
+            tenant: str | None = None
+            rest = server_key
+
+            if self.tenant_aware:
+                if not rest.startswith(tenant_marker):
+                    return None
+
+                parts = rest.split(sep, 2)
+
+                if len(parts) < 3:
+                    return None
+
+                tenant, rest = parts[1], parts[2]
+
+            if not rest.startswith(pointer_prefix):
+                return None
+
+            logical = rest[len(pointer_prefix) :]
+
+            if not logical:
+                return None
+
+            return CacheInvalidation(key=logical, tenant=tenant)
+
+        def _on_keys(keys: Sequence[str]) -> None:
+            for key in keys:
+                inv = _parse(key)
+
+                if inv is not None:
+                    callback(inv)
+
+        def _on_reset() -> None:
+            callback(CacheInvalidation(key=None))
+
+        return await self.client.track_invalidations(
+            prefixes=prefixes,
+            on_keys=_on_keys,
+            on_reset=_on_reset,
+        )
+
+    # ....................... #
+    # Internal: sliding expiration
+
+    async def __slide_pointers(self, keys: Sequence[str]) -> None:
+        """Extend hit pointers' lifetime to the sliding window (extend-only).
+
+        Best-effort: a failed slide must never fail the hit it rides on. The
+        body key is deliberately untouched — its write-time TTL is the
+        absolute revalidation cap.
+        """
+
+        if self.sliding_ttl is None or not keys:
+            return
+
+        seconds = _ttl_seconds(self.sliding_ttl)
+
+        try:
+            if len(keys) == 1:
+                await self.client.expire(self.__pointer_key(keys[0]), seconds, gt=True)
+
+            else:
+                async with self.client.pipeline(transaction=False):
+                    for key in keys:
+                        await self.client.expire(
+                            self.__pointer_key(key), seconds, gt=True
+                        )
+
+        except Exception:
+            logger.debug("Sliding TTL extension failed, continuing", exc_info=True)
 
     # ....................... #
     # Public: read
@@ -254,6 +400,7 @@ class RedisCacheAdapter(CachePort, RedisBaseAdapter):
             bodies = await self.__mget_bodies({key: pointers[key]})
             if key in bodies:
                 logger.debug("Cache hit (versioned) key=%s", key)
+                await self.__slide_pointers([key])
                 return bodies[key]
 
         # Fallback to plain
@@ -265,6 +412,27 @@ class RedisCacheAdapter(CachePort, RedisBaseAdapter):
 
         logger.debug("Cache miss key=%s", key)
         return None
+
+    # ....................... #
+
+    async def exists(self, key: str) -> bool:
+        """Presence check without payload transfer or decode.
+
+        Mirrors :meth:`get`'s effective semantics: a versioned entry counts
+        only when its pointer *and* the pointed body are both live; otherwise
+        falls back to the plain key-value scope.
+        """
+
+        await self._prepare_keys()
+
+        pointers = await self.__mget_pointers([key])
+
+        if pointers and await self.client.exists(
+            self.__body_key(key, pointers[key])
+        ):
+            return True
+
+        return await self.client.exists(self.__kv_key(key))
 
     # ....................... #
 
@@ -282,6 +450,9 @@ class RedisCacheAdapter(CachePort, RedisBaseAdapter):
 
         if pointers:
             versioned_hits = await self.__mget_bodies(pointers)
+
+        if versioned_hits:
+            await self.__slide_pointers(list(versioned_hits.keys()))
 
         # 2) for the rest, try plain KV
         remaining = [k for k in keys if k not in versioned_hits]
@@ -301,33 +472,61 @@ class RedisCacheAdapter(CachePort, RedisBaseAdapter):
     # ....................... #
     # Public: write
 
-    async def set(self, key: str, value: Any) -> None:
+    async def set(
+        self,
+        key: str,
+        value: Any,
+        *,
+        ttl: timedelta | None = None,
+    ) -> None:
         await self._prepare_keys()
         # Plain set. (We do not touch pointer/body.)
-        await self.__mset_kv({key: value}, ttl=self.ttl_kv)
+        await self.__mset_kv({key: value}, ttl=ttl if ttl is not None else self.ttl_kv)
 
     # ....................... #
 
-    async def set_versioned(self, key: str, version: str, value: Any) -> None:
+    async def set_versioned(
+        self,
+        key: str,
+        version: str,
+        value: Any,
+        *,
+        ttl: timedelta | None = None,
+    ) -> None:
         await self._prepare_keys()
+        # A per-entry ttl is the entry's whole lifetime: it overrides both the
+        # pointer (revalidation cadence) and the body (retention cap).
         async with self.client.pipeline(transaction=True):
-            await self.__mset_bodies({(key, version): value}, ttl=self.ttl_body)
-            await self.__mset_pointers({key: version}, ttl=self.ttl_pointer)
+            await self.__mset_bodies(
+                {(key, version): value},
+                ttl=ttl if ttl is not None else self.ttl_body,
+            )
+            await self.__mset_pointers(
+                {key: version},
+                ttl=ttl if ttl is not None else self.ttl_pointer,
+            )
 
     # ....................... #
 
-    async def set_many(self, key_mapping: dict[str, Any]) -> None:
+    async def set_many(
+        self,
+        key_mapping: Mapping[str, Any],
+        *,
+        ttl: timedelta | None = None,
+    ) -> None:
         await self._prepare_keys()
         if not key_mapping:
             return
 
-        await self.__mset_kv(key_mapping, ttl=self.ttl_kv)
+        await self.__mset_kv(key_mapping, ttl=ttl if ttl is not None else self.ttl_kv)
 
     # ....................... #
 
     async def set_many_versioned(
         self,
         key_version_mapping: Mapping[tuple[str, str], Any],
+        *,
+        ttl: timedelta | None = None,
     ) -> None:
         await self._prepare_keys()
         if not key_version_mapping:
@@ -338,8 +537,14 @@ class RedisCacheAdapter(CachePort, RedisBaseAdapter):
         }
 
         async with self.client.pipeline(transaction=True):
-            await self.__mset_bodies(key_version_mapping, ttl=self.ttl_body)
-            await self.__mset_pointers(pointer_mapping, ttl=self.ttl_pointer)
+            await self.__mset_bodies(
+                key_version_mapping,
+                ttl=ttl if ttl is not None else self.ttl_body,
+            )
+            await self.__mset_pointers(
+                pointer_mapping,
+                ttl=ttl if ttl is not None else self.ttl_pointer,
+            )
 
     # ....................... #
 

@@ -10,6 +10,7 @@ import attrs
 from forze.base.exceptions import exc
 
 from ..context.deadline import current_deadline
+from .quantile import WindowedP2Quantile
 
 # ----------------------- #
 
@@ -228,6 +229,11 @@ class AdaptiveBulkheadState:
     Waiter *deadlines* always compare against ``time.monotonic`` — they come
     from the deadline ContextVar, which is monotonic-based by contract."""
 
+    latency_quantile: float | None = None
+    """Percentile-windowed congestion signal: when set, a breach is "this
+    quantile of recent completed-call latencies exceeds the threshold", not
+    "this one sample did". ``None`` keeps the per-sample signal."""
+
     queue_target_s: float | None = None
     """CoDel target sojourn (seconds): under sustained congestion, a waiter
     queued longer than this is shed at dequeue. ``None`` disables CoDel."""
@@ -265,6 +271,19 @@ class AdaptiveBulkheadState:
         factory=deque,
         init=False,
     )
+
+    _latency_estimator: WindowedP2Quantile | None = attrs.field(
+        default=attrs.Factory(
+            lambda self: (
+                WindowedP2Quantile(p=self.latency_quantile)
+                if self.latency_quantile is not None
+                else None
+            ),
+            takes_self=True,
+        ),
+        init=False,
+    )
+    """Windowed P² estimate of completed-call latency (quantile mode only)."""
 
     # ....................... #
 
@@ -395,20 +414,163 @@ class AdaptiveBulkheadState:
     # ....................... #
 
     def on_complete(self, latency: float, now: float) -> bool:
-        """Adjust the limit for a completed call; return ``True`` on a decrease."""
+        """Adjust the limit for a completed call; return ``True`` on a decrease.
 
-        if latency > self.latency_threshold:
-            if now - self.last_decrease_at < self.cooldown:
+        Per-sample mode: this completion's latency over the threshold is a
+        breach. Quantile mode (``latency_quantile`` set): the windowed P²
+        estimate over the threshold is — one outlier can't move a quantile,
+        only a shifted distribution can. An undefined estimate (warming up)
+        never breaches.
+        """
+
+        estimator = self._latency_estimator
+
+        if estimator is not None:
+            estimator.observe(latency)
+            value = estimator.value()
+
+            if value is None:
+                # Warming (fewer than five samples this epoch): no signal in
+                # either direction — hold the limit rather than reading
+                # "unknown" as "healthy" and creeping back up mid-incident.
                 return False
 
-            self.last_decrease_at = now
-            self.limit = max(float(self.min_concurrency), self.limit * self.backoff_ratio)
+            breached = value > self.latency_threshold
 
-            return True
+        else:
+            breached = latency > self.latency_threshold
 
-        self.limit = min(
-            float(self.max_concurrency),
-            self.limit + self.increase_step / max(self.limit, 1.0),
-        )
+        if not breached:
+            self.limit = min(
+                float(self.max_concurrency),
+                self.limit + self.increase_step / max(self.limit, 1.0),
+            )
 
-        return False
+            return False
+
+        if now - self.last_decrease_at < self.cooldown:
+            return False
+
+        self.last_decrease_at = now
+        self.limit = max(float(self.min_concurrency), self.limit * self.backoff_ratio)
+
+        if estimator is not None:
+            # Fresh measurement epoch: the old distribution justified this
+            # decrease; only the *new* concurrency's latencies should decide
+            # the next move. Without the reset, a stale-high quantile keeps
+            # re-breaching for up to two windows after the downstream
+            # recovers, ratcheting the limit to the floor once per cooldown.
+            self._latency_estimator = WindowedP2Quantile(p=estimator.p)
+
+        return True
+
+
+# ....................... #
+
+
+@attrs.define(slots=True)
+class HedgeDelayState:
+    """Tail-based hedge delay keyed by ``(policy, route)``.
+
+    Tracks a quantile of observed **primary-attempt** latencies (windowed P²)
+    and serves it — clamped by the configured floor/cap — as the hedge delay.
+    Until the estimator has warmed up (five observations), the strategy's
+    fixed delay is served unchanged.
+    """
+
+    quantile: float
+    fixed_delay: float
+    floor: float | None = None
+    cap: float | None = None
+
+    _estimator: WindowedP2Quantile = attrs.field(
+        default=attrs.Factory(
+            lambda self: WindowedP2Quantile(p=self.quantile),
+            takes_self=True,
+        ),
+        init=False,
+    )
+
+    # ....................... #
+
+    def observe(self, latency: float) -> None:
+        """Record one primary-attempt latency sample (seconds)."""
+
+        self._estimator.observe(latency)
+
+    # ....................... #
+
+    def delay(self) -> float:
+        """The effective hedge delay in seconds."""
+
+        estimate = self._estimator.value()
+
+        if estimate is None:
+            return self.fixed_delay
+
+        if self.floor is not None:
+            estimate = max(self.floor, estimate)
+
+        if self.cap is not None:
+            estimate = min(self.cap, estimate)
+
+        return estimate
+
+
+# ....................... #
+
+
+@attrs.define(slots=True)
+class AdaptiveThrottleState:
+    """Adaptive client-throttle counters keyed by ``(policy, route)``.
+
+    Tumbling window (same shape as :class:`BreakerState`): ``requests`` and
+    ``accepts`` reset when the window elapses, so shedding decays within one
+    window of a downstream recovery even when no traffic is passing. Shed
+    calls count as requests but not accepts — the self-limiting property of
+    the SRE-book algorithm.
+    """
+
+    k: float
+    window: float
+    min_throughput: int
+
+    window_start: float = 0.0
+    requests: int = 0
+    accepts: int = 0
+
+    # ....................... #
+
+    def _roll(self, now: float) -> None:
+        if now - self.window_start >= self.window:
+            self.window_start = now
+            self.requests = 0
+            self.accepts = 0
+
+    # ....................... #
+
+    def reject_probability(self, now: float) -> float:
+        """Current local-rejection probability: ``max(0, (req − k·acc)/(req + 1))``."""
+
+        self._roll(now)
+
+        if self.requests < self.min_throughput:
+            return 0.0
+
+        return max(0.0, (self.requests - self.k * self.accepts) / (self.requests + 1))
+
+    # ....................... #
+
+    def record_request(self, now: float) -> None:
+        """Count one request — sent downstream or shed locally."""
+
+        self._roll(now)
+        self.requests += 1
+
+    # ....................... #
+
+    def record_accept(self, now: float) -> None:
+        """Count one downstream accept (success, or a non-retryable failure)."""
+
+        self._roll(now)
+        self.accepts += 1

@@ -9,6 +9,7 @@ import attrs
 
 from forze.application.contracts.resilience import (
     AdaptiveBulkheadStrategy,
+    AdaptiveThrottleStrategy,
     BulkheadStrategy,
     CircuitBreakerStrategy,
     HedgeStrategy,
@@ -23,7 +24,13 @@ from forze.base.primitives import MappingConverter, StrKey, StrKeyMapping
 from ..context.deadline import remaining_time
 from ..tracing import record
 from .backoff import compute_delay
-from .state import AdaptiveBulkheadState, BudgetState, Transition
+from .state import (
+    AdaptiveBulkheadState,
+    AdaptiveThrottleState,
+    BudgetState,
+    HedgeDelayState,
+    Transition,
+)
 from .store import (
     CircuitBreakerStore,
     InMemoryCircuitBreakerStore,
@@ -109,6 +116,18 @@ class InProcessResilienceExecutor:
     _hedge_budgets: dict[_StateKey, BudgetState] = attrs.field(factory=dict, init=False)
     """Hedge budget state for the executor."""
 
+    _throttles: dict[_StateKey, AdaptiveThrottleState] = attrs.field(
+        factory=dict,
+        init=False,
+    )
+    """Adaptive client-throttle counters (requests/accepts per policy/route)."""
+
+    _hedge_delays: dict[_StateKey, HedgeDelayState] = attrs.field(
+        factory=dict,
+        init=False,
+    )
+    """Adaptive hedge-delay state (windowed P² quantile per policy/route)."""
+
     _metrics_sink: MetricsSink | None = attrs.field(default=None, init=False, repr=False)
     """Optional always-on metrics callback (see :data:`MetricsSink`)."""
 
@@ -161,6 +180,24 @@ class InProcessResilienceExecutor:
                 str(policy),
                 str(route) if route is not None else None,
                 state.limit,
+            )
+
+    # ....................... #
+
+    def hedge_delays(self) -> Iterator[tuple[str, str | None, float]]:
+        """Yield ``(policy, route, delay_seconds)`` for every adaptive hedge delay.
+
+        Snapshot accessor for observable gauges: the effective hedge delay —
+        the windowed P² quantile estimate clamped by the strategy's
+        floor/cap, or the fixed fallback until warmed up. State appears
+        lazily on first ``run_hedged`` of an adaptive-delay policy.
+        """
+
+        for (policy, route), state in self._hedge_delays.items():
+            yield (
+                str(policy),
+                str(route) if route is not None else None,
+                state.delay(),
             )
 
     # ....................... #
@@ -221,21 +258,34 @@ class InProcessResilienceExecutor:
         if budget is not None:
             budget.on_call()
 
-        delay = hedge.delay.total_seconds()
+        delay_state = self._hedge_delay_for(hedge, pol, route)
+        delay = delay_state.delay() if delay_state is not None else (
+            hedge.delay.total_seconds()
+        )
         tasks: set[asyncio.Future[T]] = set()
         errors: list[BaseException] = []
         attempts = 0
         budget_spent = False
 
-        def spawn() -> None:
+        def spawn() -> asyncio.Future[T]:
             nonlocal attempts
             attempts += 1
-            tasks.add(asyncio.ensure_future(fn()))
+            task = asyncio.ensure_future(fn())
+            tasks.add(task)
 
             if attempts > 1:
                 self._emit("hedge_attempt", pol, route)
 
-        spawn()  # primary attempt
+            return task
+
+        # The estimator samples the *primary* attempt only: a completed primary
+        # is an unbiased latency sample, and hedge attempts are excluded so a
+        # hedged call doesn't double-weight one logical request. Sampling
+        # winners-of-races instead would bias the quantile down, making the
+        # delay ever more eager (the classic hedging feedback spiral).
+        primary_start = self.clock()
+        primary = spawn()
+        hedge_won = False
 
         try:
             while tasks:
@@ -262,7 +312,13 @@ class InProcessResilienceExecutor:
                     tasks.discard(task)
                     error = task.exception()
 
+                    if task is primary and delay_state is not None and error is None:
+                        delay_state.observe(self.clock() - primary_start)
+
                     if error is None:
+                        if task is not primary:
+                            hedge_won = True
+
                         self._emit("hedge_won", pol, route)
                         return task.result()
 
@@ -271,6 +327,16 @@ class InProcessResilienceExecutor:
             raise errors[-1]
 
         finally:
+            if hedge_won and primary in tasks and delay_state is not None:
+                # A hedge won and the primary is being cancelled: record its
+                # elapsed time as a right-censored sample. It understates the
+                # true latency but is >= the current delay, so it still pulls
+                # the estimated tail up instead of silently dropping the
+                # slowest calls from the distribution. Guarded by `hedge_won`:
+                # a *caller* cancellation can land at any elapsed time, and
+                # recording it would feed arbitrary garbage into the quantile.
+                delay_state.observe(self.clock() - primary_start)
+
             for task in tasks:
                 task.cancel()
 
@@ -323,6 +389,16 @@ class InProcessResilienceExecutor:
                 return await self._with_breaker(b, b_inner, pol, route)
 
             call = with_breaker
+
+        throttle = pol.adaptive_throttle
+
+        if throttle is not None:
+            th, th_inner = throttle, call
+
+            async def with_throttle() -> T:
+                return await self._with_adaptive_throttle(th, th_inner, pol, route)
+
+            call = with_throttle
 
         bulkhead = pol.bulkhead
 
@@ -502,6 +578,47 @@ class InProcessResilienceExecutor:
 
     # ....................... #
 
+    async def _with_adaptive_throttle[T](
+        self,
+        strat: AdaptiveThrottleStrategy,
+        inner: Callable[[], Awaitable[T]],
+        pol: ResiliencePolicy,
+        route: StrKey | None,
+    ) -> T:
+        state = self._throttle_for(strat, pol, route)
+        now = self.clock()
+        probability = state.reject_probability(now)
+
+        # Shed calls count as requests but not accepts — the algorithm's
+        # self-limiting property (the client converges on ~k× the downstream's
+        # current capacity instead of hammering it with full traffic).
+        if probability > 0.0 and self.rng.random() < probability:
+            state.record_request(now)
+            self._emit("throttle_reject", pol, route)
+            raise exc.throttled(
+                f"Adaptive throttle shedding for policy {pol.name!r}",
+                code="adaptive_throttle",
+            )
+
+        state.record_request(now)
+
+        try:
+            result = await inner()
+
+        except CoreException as error:
+            # Same outcome classification as the breaker, inverted: a
+            # non-retryable failure is the downstream doing its job (a domain
+            # rejection), not buckling — it counts as an accept.
+            if not exception_egress_policy(error.kind).retryable:
+                state.record_accept(self.clock())
+
+            raise
+
+        state.record_accept(self.clock())
+        return result
+
+    # ....................... #
+
     async def _with_rate_limit[T](
         self,
         strat: RateLimitStrategy,
@@ -665,6 +782,7 @@ class InProcessResilienceExecutor:
         if state is None:
             state = AdaptiveBulkheadState(
                 latency_threshold=strat.latency_threshold.total_seconds(),
+                latency_quantile=strat.latency_quantile,
                 min_concurrency=strat.min_concurrency,
                 max_concurrency=strat.max_concurrency,
                 max_queue=strat.max_queue,
@@ -709,6 +827,27 @@ class InProcessResilienceExecutor:
 
     # ....................... #
 
+    def _throttle_for(
+        self,
+        strat: AdaptiveThrottleStrategy,
+        pol: ResiliencePolicy,
+        route: StrKey | None,
+    ) -> AdaptiveThrottleState:
+        key = (pol.name, route)
+        state = self._throttles.get(key)
+
+        if state is None:
+            state = AdaptiveThrottleState(
+                k=strat.k,
+                window=strat.window.total_seconds(),
+                min_throughput=strat.min_throughput,
+            )
+            self._throttles[key] = state
+
+        return state
+
+    # ....................... #
+
     def _hedge_budget_for(
         self,
         strat: HedgeStrategy,
@@ -727,6 +866,39 @@ class InProcessResilienceExecutor:
                 min_throughput=strat.budget.min_throughput,
             )
             self._hedge_budgets[key] = state
+
+        return state
+
+    # ....................... #
+
+    def _hedge_delay_for(
+        self,
+        strat: HedgeStrategy,
+        pol: ResiliencePolicy,
+        route: StrKey | None,
+    ) -> HedgeDelayState | None:
+        if strat.adaptive_delay_quantile is None:
+            return None
+
+        key = (pol.name, route)
+        state = self._hedge_delays.get(key)
+
+        if state is None:
+            state = HedgeDelayState(
+                quantile=strat.adaptive_delay_quantile,
+                fixed_delay=strat.delay.total_seconds(),
+                floor=(
+                    strat.delay_min.total_seconds()
+                    if strat.delay_min is not None
+                    else None
+                ),
+                cap=(
+                    strat.delay_max.total_seconds()
+                    if strat.delay_max is not None
+                    else None
+                ),
+            )
+            self._hedge_delays[key] = state
 
         return state
 

@@ -26,6 +26,12 @@ class RedisUniversalConfig(TenantAwareIntegrationConfig):
 class RedisCacheConfig(RedisUniversalConfig):
     """Configuration for a Redis cache."""
 
+    invalidation_push: bool = False
+    """Opt-in client-side-caching invalidation push (Redis 6+ ``CLIENT
+    TRACKING``): the document L1 drops entries when any replica writes them,
+    demoting the L1 TTL to a backstop. Requires a static namespace and a
+    non-routed client; unsupported setups silently stay TTL-only."""
+
 
 # ....................... #
 

@@ -260,6 +260,18 @@ class AdaptiveBulkheadStrategy:
     latency_threshold: timedelta
     """Completed-call latency above this counts as congestion."""
 
+    latency_quantile: float | None = None
+    """Opt-in percentile-windowed congestion signal: instead of *any single*
+    completion over the threshold counting as a breach, breach only when this
+    quantile of recent completed-call latencies (windowed streaming P²
+    estimate) exceeds ``latency_threshold``. Typical ``0.95``: the contract
+    becomes "the p95 must stay under the threshold" — one GC pause or cold
+    query can no longer crater concurrency, only a genuinely shifted
+    distribution can. A backoff opens a fresh measurement epoch (the estimator
+    resets), so a stale-high quantile never ratchets the limit to the floor
+    after the downstream recovers. ``None`` (default) keeps the per-sample
+    signal."""
+
     max_concurrency: int
     """Ceiling and initial limit."""
 
@@ -302,6 +314,11 @@ class AdaptiveBulkheadStrategy:
     def __attrs_post_init__(self) -> None:
         if self.latency_threshold.total_seconds() <= 0:
             raise exc.configuration("Adaptive bulkhead latency_threshold must be positive")
+
+        if self.latency_quantile is not None and not (0.0 < self.latency_quantile < 1.0):
+            raise exc.configuration(
+                "Adaptive bulkhead latency_quantile must be in (0, 1)"
+            )
 
         if self.min_concurrency < 1:
             raise exc.configuration("Adaptive bulkhead min_concurrency must be >= 1")
@@ -393,6 +410,59 @@ class CircuitBreakerStrategy:
 
 @final
 @attrs.define(slots=True, frozen=True, kw_only=True)
+class AdaptiveThrottleStrategy:
+    """Probabilistic client-side shedding for a degraded downstream (SRE book).
+
+    Tracks ``requests`` and ``accepts`` per window and rejects locally with
+    probability ``max(0, (requests − k·accepts) / (requests + 1))``. Where the
+    circuit breaker is binary — full traffic or a half-open trickle — this
+    sheds *proportionally*: at 50% downstream failure it sends roughly the
+    traffic the downstream is absorbing, and as the downstream recovers,
+    passed-through successes rebuild the accept ratio and shedding decays to
+    zero on its own. Locally-shed calls count as requests but not accepts,
+    which is what makes the steady state self-limiting (the client converges
+    on roughly ``k ×`` the downstream's current capacity).
+
+    "Accepted" mirrors the breaker's outcome classification inverted: a
+    success, or a failure whose kind is *non-retryable* (a domain error is
+    the downstream doing its job, not buckling). Mutually exclusive with
+    :class:`CircuitBreakerStrategy` in one policy — composed, the throttle
+    would observe the breaker's own local rejections as overload evidence.
+    Position the throttle on degraded-but-alive downstreams and the breaker
+    on ones that fail outright.
+    """
+
+    k: float = 2.0
+    """Permissiveness multiplier. Higher tolerates more failure before
+    shedding; ``2.0`` is the published production default. Must be ``>= 1``
+    (below that, a perfectly healthy downstream would already be shed)."""
+
+    window: timedelta = timedelta(minutes=2)
+    """Counting window. Counters reset when it elapses, so shedding decays
+    within one window of a recovery even with no traffic passing."""
+
+    min_throughput: int = 10
+    """Requests per window below which nothing is shed — trivial volume is
+    never throttled."""
+
+    # ....................... #
+
+    def __attrs_post_init__(self) -> None:
+        if self.k < 1.0:
+            raise exc.configuration("Adaptive throttle k must be >= 1")
+
+        if self.window.total_seconds() <= 0:
+            raise exc.configuration("Adaptive throttle window must be positive")
+
+        if self.min_throughput < 1:
+            raise exc.configuration("Adaptive throttle min_throughput must be >= 1")
+
+
+# ....................... #
+
+
+@final
+@attrs.define(slots=True, frozen=True, kw_only=True)
 class RetryStrategy:
     """Bounded retry on classified-retryable failures."""
 
@@ -471,13 +541,34 @@ class HedgeStrategy:
     """
 
     delay: timedelta
-    """Wait before firing the next concurrent copy (~p95 latency)."""
+    """Wait before firing the next concurrent copy (~p95 latency). With
+    :attr:`adaptive_delay_quantile` set, this is the fallback used until the
+    estimator has warmed up."""
 
     max_attempts: int
     """Total concurrent attempts including the primary (``>= 2``)."""
 
     budget: RetryBudget | None = None
     """Optional token-bucket cap on extra attempts (load amplification)."""
+
+    adaptive_delay_quantile: float | None = None
+    """Opt-in tail-based hedge delay (*The Tail at Scale*): track this quantile
+    of observed primary-attempt latencies per ``(policy, route)`` (streaming P²
+    estimation — five floats, no sample storage) and hedge after *that* instead
+    of the fixed :attr:`delay`. Typical ``0.95``: the hedge fires only for the
+    slowest ~5% of calls, and the trigger point follows the downstream's
+    latency distribution as it moves. ``None`` (default) keeps the fixed
+    delay."""
+
+    delay_min: timedelta | None = None
+    """Floor for the adaptive delay. Guards against over-eager hedging when the
+    observed distribution collapses (every call fast → tiny quantile → hedges
+    fire on the slightest blip). Requires :attr:`adaptive_delay_quantile`."""
+
+    delay_max: timedelta | None = None
+    """Cap for the adaptive delay. Guards against a degraded downstream
+    dragging the quantile so high the hedge never rescues anything. Requires
+    :attr:`adaptive_delay_quantile`."""
 
     # ....................... #
 
@@ -488,6 +579,31 @@ class HedgeStrategy:
         if self.max_attempts < 2:
             raise exc.configuration("Hedge max_attempts must be >= 2")
 
+        if self.adaptive_delay_quantile is not None and not (
+            0.0 < self.adaptive_delay_quantile < 1.0
+        ):
+            raise exc.configuration("Hedge adaptive_delay_quantile must be in (0, 1)")
+
+        if (
+            self.delay_min is not None or self.delay_max is not None
+        ) and self.adaptive_delay_quantile is None:
+            raise exc.configuration(
+                "Hedge delay_min/delay_max require adaptive_delay_quantile"
+            )
+
+        if self.delay_min is not None and self.delay_min.total_seconds() <= 0:
+            raise exc.configuration("Hedge delay_min must be positive")
+
+        if self.delay_max is not None and self.delay_max.total_seconds() <= 0:
+            raise exc.configuration("Hedge delay_max must be positive")
+
+        if (
+            self.delay_min is not None
+            and self.delay_max is not None
+            and self.delay_min > self.delay_max
+        ):
+            raise exc.configuration("Hedge delay_min must be <= delay_max")
+
 
 # ....................... #
 
@@ -496,6 +612,7 @@ Strategy = (
     | BulkheadStrategy
     | AdaptiveBulkheadStrategy
     | CircuitBreakerStrategy
+    | AdaptiveThrottleStrategy
     | RetryStrategy
     | TimeoutStrategy
     | FallbackStrategy
@@ -507,6 +624,7 @@ _STRATEGY_ORDER: tuple[type, ...] = (
     BulkheadStrategy,
     AdaptiveBulkheadStrategy,
     CircuitBreakerStrategy,
+    AdaptiveThrottleStrategy,
     RetryStrategy,
     TimeoutStrategy,
 )
@@ -560,6 +678,17 @@ class ResiliencePolicy:
                 "AdaptiveBulkheadStrategy — they occupy the same slot",
             )
 
+        if (
+            CircuitBreakerStrategy in functional
+            and AdaptiveThrottleStrategy in functional
+        ):
+            raise exc.configuration(
+                "Resilience policy cannot combine CircuitBreakerStrategy with "
+                "AdaptiveThrottleStrategy — composed, the throttle would count "
+                "the breaker's own local rejections as overload evidence; pick "
+                "the throttle for degraded downstreams, the breaker for dead ones",
+            )
+
         ranks = [_STRATEGY_ORDER.index(t) for t in functional]
 
         if ranks != sorted(ranks):
@@ -602,6 +731,12 @@ class ResiliencePolicy:
         """Circuit breaker strategy if declared."""
 
         return self._of_type(CircuitBreakerStrategy)
+
+    @property
+    def adaptive_throttle(self) -> AdaptiveThrottleStrategy | None:
+        """Adaptive client-throttle strategy if declared."""
+
+        return self._of_type(AdaptiveThrottleStrategy)
 
     @property
     def retry(self) -> RetryStrategy | None:

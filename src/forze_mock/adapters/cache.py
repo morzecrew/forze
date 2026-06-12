@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import timedelta
 from typing import (
     Any,
     Mapping,
@@ -57,6 +58,15 @@ class MockCacheAdapter(MockTenancyMixin, CachePort):
 
     # ....................... #
 
+    async def exists(self, key: str) -> bool:
+        with self.state.lock:
+            pointer = self._pointers().get(key)
+            if pointer is not None and (key, pointer) in self._bodies():
+                return True
+            return key in self._kv()
+
+    # ....................... #
+
     async def get_many(self, keys: Sequence[str]) -> tuple[dict[str, Any], list[str]]:
         with self.state.lock:
             hits: dict[str, Any] = {}
@@ -74,20 +84,40 @@ class MockCacheAdapter(MockTenancyMixin, CachePort):
 
     # ....................... #
 
-    async def set(self, key: str, value: Any) -> None:
+    async def set(
+        self,
+        key: str,
+        value: Any,
+        *,
+        ttl: timedelta | None = None,
+    ) -> None:
+        # The mock has no clock-based expiry; per-entry ttl is accepted for
+        # contract parity and ignored.
         with self.state.lock:
             self._kv()[key] = value
 
     # ....................... #
 
-    async def set_versioned(self, key: str, version: str, value: Any) -> None:
+    async def set_versioned(
+        self,
+        key: str,
+        version: str,
+        value: Any,
+        *,
+        ttl: timedelta | None = None,
+    ) -> None:
         with self.state.lock:
             self._pointers()[key] = version
             self._bodies()[(key, version)] = value
 
     # ....................... #
 
-    async def set_many(self, key_mapping: dict[str, Any]) -> None:
+    async def set_many(
+        self,
+        key_mapping: Mapping[str, Any],
+        *,
+        ttl: timedelta | None = None,
+    ) -> None:
         with self.state.lock:
             self._kv().update(key_mapping)
 
@@ -96,6 +126,8 @@ class MockCacheAdapter(MockTenancyMixin, CachePort):
     async def set_many_versioned(
         self,
         key_version_mapping: Mapping[tuple[str, str], Any],
+        *,
+        ttl: timedelta | None = None,
     ) -> None:
         with self.state.lock:
             for (key, version), value in key_version_mapping.items():

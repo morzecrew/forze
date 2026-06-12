@@ -46,9 +46,17 @@ ResilienceDepsModule(
 
 ### Bulkheads: fixed or adaptive
 
-`BulkheadStrategy(max_concurrency=, max_queue=)` is a fixed cap. `AdaptiveBulkheadStrategy(latency_threshold=, max_concurrency=)` sets the cap by observed latency (AIMD): starts at `max_concurrency`, backs off multiplicatively when a completion exceeds the threshold, recovers additively. Errors never shrink the limit (that is the breaker's job); the two strategies are mutually exclusive in one policy.
+`BulkheadStrategy(max_concurrency=, max_queue=)` is a fixed cap. `AdaptiveBulkheadStrategy(latency_threshold=, max_concurrency=)` sets the cap by observed latency (AIMD): starts at `max_concurrency`, backs off multiplicatively when a completion exceeds the threshold, recovers additively. Errors never shrink the limit (that is the breaker's job); the two strategies are mutually exclusive in one policy. Add `latency_quantile=0.95` to breach on the *observed p95* (windowed P² estimate) instead of any single slow completion — outlier-immune; the contract becomes "the p95 stays under the threshold".
 
 Queued bulkheads (`max_queue >= 1`) take opt-in queue management on both kinds: `queue_target=` (CoDel — shed waiters parked too long under sustained congestion) and `queue_adaptive_lifo=True` (serve newest first while congested; pair with `queue_target`).
+
+### Adaptive client throttling
+
+`AdaptiveThrottleStrategy(k=2.0, window=timedelta(minutes=2), min_throughput=10)` is the breaker's sibling for **degraded-but-alive** downstreams: it sheds locally with probability `max(0, (requests − k·accepts)/(requests + 1))`, so at 50% downstream failure it sends roughly the traffic the downstream absorbs (the breaker is all-or-trickle). Healthy traffic is never shed; shed calls raise retryable `throttled` (`code="adaptive_throttle"`); domain rejections count as accepts. **Mutually exclusive with `CircuitBreakerStrategy` in one policy** — pick the throttle for downstreams that degrade, the breaker for ones that die outright.
+
+### Tail-based hedging
+
+`HedgeStrategy(delay=, max_attempts=)` races a concurrent copy against a slow primary (idempotent reads only; `budget=` caps amplification), run via `ctx.resilience().run_hedged(...)`. Set `adaptive_delay_quantile=0.95` to hedge after the *observed* p95 per `(policy, route)` (streaming P² estimate, windowed) instead of the fixed delay — `delay` becomes the pre-warmup fallback, `delay_min`/`delay_max` clamp the estimate.
 
 ## Invocation deadlines
 

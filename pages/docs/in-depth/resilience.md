@@ -21,6 +21,7 @@ fallback and hedge:
 | **Retry** | re-run on a [retryable](errors.md) failure — `max_attempts`, `backoff` (base, max, multiplier, jitter) |
 | **Timeout** | a per-attempt timeout |
 | **Circuit breaker** | stop calling a failing dependency once a failure ratio trips, for a cool-off window |
+| **Adaptive throttle** | [shed proportionally](#shedding-for-a-degraded-downstream) when the downstream stops accepting — the breaker's sibling for degraded-but-alive dependencies |
 | **Bulkhead** | cap concurrent calls, fixed or [adaptive](#bulkheads), with an optional managed queue |
 | **Fallback / Hedge** | a fallback value on failure; or race staggered attempts |
 
@@ -137,6 +138,17 @@ fast failures are the circuit breaker's signal, and a fast-failing downstream
 must not crater concurrency exactly when failures are cheap. And shrinking
 never evicts in-flight work — the limit only gates admission.
 
+By default any *single* completion over the threshold is a breach — instant
+reaction, but one GC pause or cold query halves your concurrency.
+`latency_quantile=0.95` makes the signal distributional instead: breach only
+when the **observed p95** of recent completions (a windowed streaming P²
+estimate, the same machinery as [adaptive hedging](#hedging-the-tail))
+exceeds the threshold. The contract becomes "the p95 must stay under the
+threshold" — outliers can't move a quantile, only a genuinely shifted
+distribution can. Each backoff opens a fresh measurement epoch, so the
+decision to shrink again is made from the *new* concurrency's latencies, not
+the stale history that justified the last one.
+
 ### Managing the queue
 
 When a bulkhead has a queue (`max_queue >= 1`), a size bound alone isn't
@@ -157,6 +169,67 @@ controls for that, straight from Facebook's *Fail at Scale*:
 A parked waiter whose [invocation deadline](deadlines.md) has already expired
 is failed at wake instead of being granted a slot it can no longer use — no
 knob needed.
+
+## Hedging the tail
+
+Even a healthy downstream has a slow tail. A **hedge** races it: if the
+primary attempt hasn't completed after `delay`, fire a concurrent copy and
+take whichever finishes first (losers are cancelled). Only safe on idempotent
+reads — and `budget` caps the extra load it may add.
+
+The textbook delay is "about the p95 latency" — but a fixed number is always
+either too eager (wasted duplicate load) or too late (no tail rescue) as the
+downstream's distribution moves. Let it track the observed tail instead:
+
+```python
+HedgeStrategy(
+    delay=timedelta(milliseconds=200),   # fallback until the estimator warms
+    max_attempts=2,
+    adaptive_delay_quantile=0.95,        # hedge after the *observed* p95
+    delay_min=timedelta(milliseconds=10),
+)
+```
+
+The executor keeps a streaming quantile estimate (P² — five floats, no sample
+storage) of primary-attempt latencies per `(policy, route)`, windowed so a
+shifted distribution is picked up quickly, and hedges after *that* instead of
+the fixed delay. `delay_min` / `delay_max` clamp it: the floor guards against
+over-eager hedging when every call is fast, the cap against a degraded
+downstream pushing the trigger past usefulness. The effective delay is
+visible as the `forze.resilience.hedge.delay` gauge once
+[`instrument_resilience`](observability.md#resilience-metrics) is attached.
+
+## Shedding for a degraded downstream
+
+The circuit breaker is **binary**: full traffic, or a half-open trickle. At
+50% downstream failure both answers are wrong — the right one is to send
+roughly the traffic the downstream is still absorbing. That's the **adaptive
+client throttle** (Google's SRE book): track `requests` and `accepts` per
+window, and reject locally with probability
+
+```
+max(0, (requests − k·accepts) / (requests + 1))
+```
+
+```python
+AdaptiveThrottleStrategy()   # k=2.0, window=2min, min_throughput=10
+```
+
+A healthy downstream (`accepts ≈ requests`, `k=2`) computes a negative number
+— nothing is shed, ever. As the accept ratio degrades, shedding rises
+*proportionally*, and the steady state is self-limiting: shed calls count as
+requests but not accepts, so the client converges on roughly `k ×` the
+downstream's current capacity, leaving a continuous probe stream that detects
+recovery on its own (no half-open ceremony). Shed calls fail with a
+**retryable** `throttled` (`code="adaptive_throttle"`, 429 at the edge) and a
+`throttle_reject` resilience event. "Accepted" uses the breaker's outcome
+classification inverted — a domain rejection is the downstream doing its job,
+not buckling, so it never triggers shedding.
+
+The throttle and the breaker are **mutually exclusive in one policy** (they
+occupy the same outcome-observing slot, and composed, the throttle would read
+the breaker's own local rejections as overload). Pick per dependency: the
+throttle for downstreams that degrade, the breaker for ones that die outright.
 
 ## Port-level policies
 

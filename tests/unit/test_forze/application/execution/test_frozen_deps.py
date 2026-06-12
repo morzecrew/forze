@@ -4,8 +4,7 @@ import attrs
 import pytest
 
 from forze.application.contracts.deps import DepKey
-from forze.application.execution import Deps, DepsRegistry, ExecutionContext
-from forze.application.execution.deps import DepsResolutionTrace
+from forze.application.execution import Deps, DepsRegistry, ExecutionContext, FrozenDeps
 from forze.application.execution.deps.resolution import frame_for
 from forze.application.execution.deps.store import ProviderStore
 from forze.base.exceptions import CoreException
@@ -36,7 +35,6 @@ class _ValueSpec:
 
 
 def _resolve(*registration: Deps, **freeze_kw) -> "FrozenDeps":
-    from forze.application.execution import FrozenDeps
 
     return DepsRegistry.from_deps(*registration).freeze(**freeze_kw).resolve()
 

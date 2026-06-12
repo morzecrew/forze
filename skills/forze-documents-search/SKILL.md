@@ -63,6 +63,10 @@ project_spec = DocumentSpec(
 
 When `AfterCommitPort` is wired, document cache warm/invalidation happens after a successful commit.
 
+Stampede protection is built in (concurrent misses collapse per process; opt-in probabilistic early refresh via `CacheSpec(early_refresh_beta=1.0)`). For hot documents, `CacheSpec(l1=L1Spec(ttl=timedelta(seconds=2)))` adds an opt-in in-process L1 — reads skip the backend round-trip and the decode. **The L1 TTL is a cross-replica staleness budget** (writes invalidate only the writing replica's L1; must be below the cache TTL) — enable it only on read models that tolerate reads that stale.
+
+Adaptive lifetimes (both freshness-safe — in-band writes invalidate regardless): `CacheSpec(age_ttl=AgeBasedTtl(...))` gives each entry a lifetime proportional to the document's age since `last_update_at` (stable docs cache long, churning docs revalidate fast); `CacheSpec(sliding_ttl=timedelta(seconds=60))` extends an entry's life on each hit (hot entries never expire mid-heat; `ttl` stays the absolute cap; needs Redis 7+). Every `CachePort` setter also takes a per-entry `ttl=` for custom policies.
+
 ## Search (`SearchQueryPort`)
 
 Use **`SearchSpec`** for logical searchable models. `ctx.search.query(spec)` resolves **`SearchQueryDepKey`** for route `spec.name` and returns **`SearchQueryPort`**; physical FTS/PGroonga layout belongs in **`PostgresDepsModule.searches`** (or hub/federated maps), not on the spec.

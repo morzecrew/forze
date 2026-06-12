@@ -156,7 +156,7 @@ async def test_expire_queues_and_reports_queued(
     res = await redis_client.expire("k", 60)
 
     assert res is True
-    recording_pipe.expire.assert_awaited_once_with("k", 60)
+    recording_pipe.expire.assert_awaited_once_with("k", 60, gt=False)
 
 
 @pytest.mark.asyncio
