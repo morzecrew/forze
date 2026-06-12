@@ -193,9 +193,14 @@ class DocumentCache[R: BaseModel]:
         if self.cache_spec is None or self.cache_spec.l1 is None:
             return None
 
+        spec = self.cache_spec.l1
+
+        if spec.store_factory is not None:
+            return cast(L1Store, spec.store_factory(spec))
+
         return LruTtlStore(
-            capacity=self.cache_spec.l1.capacity,
-            ttl=self.cache_spec.l1.ttl.total_seconds(),
+            capacity=spec.capacity,
+            ttl=spec.ttl.total_seconds(),
         )
 
     # ....................... #

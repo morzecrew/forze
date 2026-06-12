@@ -13,6 +13,8 @@ from typing import Any, Callable, Protocol, final, runtime_checkable
 
 import attrs
 
+from forze.base.exceptions import exc
+
 # ----------------------- #
 
 
@@ -129,3 +131,253 @@ class LruTtlStore:
             misses=self._misses,
             evictions=self._evictions,
         )
+
+
+# ....................... #
+
+
+class _FrequencySketch:
+    """4-bit count-min sketch with periodic aging (the TinyLFU frequency filter).
+
+    Counters saturate at 15; after ``sample_size`` increments every counter is
+    halved — recent popularity outweighs ancient popularity, which is what
+    lets the admission policy follow regime changes (seasonality) instead of
+    fossilizing last month's hot set. Counters are stored one-per-byte for
+    simplicity (a packed-nibble layout saves memory the L1's scale doesn't
+    need).
+    """
+
+    __slots__ = ("_width", "_rows", "_ops", "_sample_size")
+
+    _DEPTH = 4
+    _SEEDS = (0x9E3779B9, 0x85EBCA6B, 0xC2B2AE35, 0x27D4EB2F)
+
+    def __init__(self, capacity: int) -> None:
+        width = 1
+
+        while width < capacity * 4:
+            width <<= 1
+
+        self._width = width
+        self._rows = [bytearray(width) for _ in range(self._DEPTH)]
+        self._ops = 0
+        self._sample_size = max(64, capacity * 10)
+
+    # ....................... #
+
+    def _indexes(self, key: str) -> tuple[int, ...]:
+        mask = self._width - 1
+
+        return tuple(
+            hash((seed, key)) & mask for seed in self._SEEDS
+        )
+
+    # ....................... #
+
+    def increment(self, key: str) -> None:
+        for row, idx in zip(self._rows, self._indexes(key), strict=True):
+            if row[idx] < 15:
+                row[idx] += 1
+
+        self._ops += 1
+
+        if self._ops >= self._sample_size:
+            self._age()
+
+    # ....................... #
+
+    def estimate(self, key: str) -> int:
+        return min(
+            row[idx] for row, idx in zip(self._rows, self._indexes(key), strict=True)
+        )
+
+    # ....................... #
+
+    def _age(self) -> None:
+        for row in self._rows:
+            for i in range(self._width):
+                row[i] >>= 1
+
+        self._ops //= 2
+
+
+# ....................... #
+
+
+@attrs.define(slots=True)
+class TinyLfuStore:
+    """W-TinyLFU :class:`L1Store`: scan-resistant frequency-based admission.
+
+    The Caffeine design (Einziger, Friedman & Manes — "TinyLFU: A Highly
+    Efficient Cache Admission Policy"): new keys land in a small **admission
+    window** (LRU, ~1% of capacity); when the window overflows, its eviction
+    candidate must win a frequency duel against the **main region's** eviction
+    victim to be admitted — a one-pass scan's one-hit wonders lose that duel
+    every time, so they can never displace the hot set. The main region is a
+    segmented LRU (probation 20% / protected 80%); a probation hit promotes
+    to protected.
+
+    TTL is orthogonal (lazy expiry on access, same as :class:`LruTtlStore`);
+    ``invalidate``/``clear`` touch the segments only — the frequency sketch
+    deliberately survives, so a push-invalidated hot key re-admits instantly.
+    """
+
+    capacity: int
+    ttl: float
+    clock: Callable[[], float] = time.monotonic
+
+    _window: "OrderedDict[str, tuple[Any, float]]" = attrs.field(
+        factory=OrderedDict, init=False, repr=False
+    )
+    _probation: "OrderedDict[str, tuple[Any, float]]" = attrs.field(
+        factory=OrderedDict, init=False, repr=False
+    )
+    _protected: "OrderedDict[str, tuple[Any, float]]" = attrs.field(
+        factory=OrderedDict, init=False, repr=False
+    )
+    _sketch: _FrequencySketch = attrs.field(init=False, repr=False)
+    _hits: int = attrs.field(default=0, init=False, repr=False)
+    _misses: int = attrs.field(default=0, init=False, repr=False)
+    _evictions: int = attrs.field(default=0, init=False, repr=False)
+
+    # ....................... #
+
+    def __attrs_post_init__(self) -> None:
+        if self.capacity < 2:
+            raise exc.configuration("TinyLfuStore capacity must be >= 2")
+
+        self._sketch = _FrequencySketch(self.capacity)
+
+    # ....................... #
+
+    @property
+    def _window_cap(self) -> int:
+        return max(1, self.capacity // 100)
+
+    @property
+    def _main_cap(self) -> int:
+        return self.capacity - self._window_cap
+
+    @property
+    def _protected_cap(self) -> int:
+        return max(1, (self._main_cap * 4) // 5)
+
+    # ....................... #
+
+    def _expired(self, entry: tuple[Any, float]) -> bool:
+        return self.clock() >= entry[1]
+
+    # ....................... #
+
+    def get(self, key: str) -> Any | None:
+        self._sketch.increment(key)
+
+        for segment in (self._window, self._probation, self._protected):
+            entry = segment.get(key)
+
+            if entry is None:
+                continue
+
+            if self._expired(entry):
+                del segment[key]
+                self._misses += 1
+                return None
+
+            if segment is self._probation:
+                # Reuse while on probation proves worth: promote.
+                del self._probation[key]
+                self._protected[key] = entry
+                self._demote_protected_overflow()
+
+            else:
+                segment.move_to_end(key)
+
+            self._hits += 1
+            return entry[0]
+
+        self._misses += 1
+        return None
+
+    # ....................... #
+
+    def _demote_protected_overflow(self) -> None:
+        while len(self._protected) > self._protected_cap:
+            demoted, entry = self._protected.popitem(last=False)
+            self._probation[demoted] = entry
+
+    # ....................... #
+
+    def set(self, key: str, value: Any) -> None:
+        entry = (value, self.clock() + self.ttl)
+        self._sketch.increment(key)
+
+        for segment in (self._window, self._probation, self._protected):
+            if key in segment:
+                segment[key] = entry
+                segment.move_to_end(key)
+                return
+
+        self._window[key] = entry
+
+        if len(self._window) <= self._window_cap:
+            return
+
+        candidate, candidate_entry = self._window.popitem(last=False)
+
+        if len(self._probation) + len(self._protected) < self._main_cap:
+            self._probation[candidate] = candidate_entry
+            return
+
+        victims = self._probation if self._probation else self._protected
+        victim = next(iter(victims))
+
+        # The admission duel: a newcomer must be provably hotter than the
+        # incumbent victim. One-hit wonders (scans) lose and are dropped —
+        # the hot set is never displaced by traffic that won't return.
+        if self._sketch.estimate(candidate) > self._sketch.estimate(victim):
+            del victims[victim]
+            self._probation[candidate] = candidate_entry
+
+        self._evictions += 1
+
+    # ....................... #
+
+    def invalidate(self, key: str) -> None:
+        for segment in (self._window, self._probation, self._protected):
+            if segment.pop(key, None) is not None:
+                return
+
+    # ....................... #
+
+    def clear(self) -> None:
+        self._window.clear()
+        self._probation.clear()
+        self._protected.clear()
+
+    # ....................... #
+
+    def stats(self) -> L1Stats:
+        """Best-effort snapshot (evictions include rejected admissions)."""
+
+        return L1Stats(
+            size=len(self._window) + len(self._probation) + len(self._protected),
+            capacity=self.capacity,
+            hits=self._hits,
+            misses=self._misses,
+            evictions=self._evictions,
+        )
+
+
+# ....................... #
+
+
+def tiny_lfu_l1_store(spec: Any) -> TinyLfuStore:
+    """``L1Spec.store_factory`` building a W-TinyLFU store from the spec.
+
+    Usage: ``L1Spec(ttl=..., capacity=..., store_factory=tiny_lfu_l1_store)``.
+    """
+
+    return TinyLfuStore(
+        capacity=spec.capacity,
+        ttl=spec.ttl.total_seconds(),
+    )

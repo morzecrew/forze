@@ -1,5 +1,5 @@
 from datetime import timedelta
-from typing import final
+from typing import Any, Callable, final
 
 import attrs
 
@@ -33,6 +33,19 @@ class L1Spec:
 
     capacity: int = 1024
     """Maximum entries held in process memory (LRU-evicted beyond this)."""
+
+    store_factory: "Callable[[L1Spec], Any] | None" = None
+    """Eviction-policy seam: build a custom L1 store from this spec.
+
+    The callable receives this spec and returns an object satisfying the
+    integration-layer ``L1Store`` protocol (sync ``get``/``set``/
+    ``invalidate``/``clear``). ``None`` (default) keeps the built-in LRU+TTL
+    store. The in-box scan-resistant alternative is W-TinyLFU::
+
+        from forze.application.integrations.document import tiny_lfu_l1_store
+
+        L1Spec(ttl=..., store_factory=tiny_lfu_l1_store)
+    """
 
     # ....................... #
 
