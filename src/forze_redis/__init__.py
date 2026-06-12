@@ -22,6 +22,10 @@ from .adapters.circuit_breaker import (
     RedisCircuitBreakerStore,
     redis_circuit_breaker_store,
 )
+from .adapters.rate_limit import (
+    RedisRateLimitStore,
+    redis_rate_limit_store,
+)
 from .kernel.client import RedisClient, RedisClientPort, RedisConfig, RoutedRedisClient
 from .kernel.relation import (
     NamedResourceSpec,
@@ -51,4 +55,6 @@ __all__ = [
     "resolve_redis_namespace",
     "RedisCircuitBreakerStore",
     "redis_circuit_breaker_store",
+    "RedisRateLimitStore",
+    "redis_rate_limit_store",
 ]

@@ -16,7 +16,7 @@ from forze.base.exceptions import exc
 from ..deps import Deps
 from .executor import InProcessResilienceExecutor
 from .policies import builtin_default_policies
-from .store import CircuitBreakerStore
+from .store import CircuitBreakerStore, RateLimitStore
 
 # ----------------------- #
 
@@ -31,6 +31,11 @@ class ResilienceDepsModule:
 
     breaker_store: CircuitBreakerStore | None = None
     """Optional shared breaker store (e.g. Redis). Defaults to process-local."""
+
+    rate_limit_store: RateLimitStore | None = None
+    """Optional shared rate-limit store (e.g. Redis), making ``permits/per`` the
+    fleet's rate. Defaults to process-local — each replica enforces the rate
+    independently, so the fleet-effective rate is ``permits × replicas``."""
 
     port_policies: tuple[PortPolicy, ...] = attrs.field(
         default=(),
@@ -75,14 +80,18 @@ class ResilienceDepsModule:
                 + ", ".join(unknown),
             )
 
-        executor = (
-            InProcessResilienceExecutor(
-                policies=policies,
-                breaker_store=self.breaker_store,
-            )
-            if self.breaker_store is not None
-            else InProcessResilienceExecutor(policies=policies)
-        )
+        # Stores fall back to the executor's process-local defaults when not
+        # provided; only pass what was configured so the default Factory wiring
+        # (clock injection) stays in one place.
+        executor_kwargs: dict[str, Any] = {"policies": policies}
+
+        if self.breaker_store is not None:
+            executor_kwargs["breaker_store"] = self.breaker_store
+
+        if self.rate_limit_store is not None:
+            executor_kwargs["rate_limit_store"] = self.rate_limit_store
+
+        executor = InProcessResilienceExecutor(**executor_kwargs)
         deps: dict[DepKey[Any], Any] = {ResilienceExecutorDepKey: executor}
 
         if self.port_policies:

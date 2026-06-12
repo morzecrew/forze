@@ -22,8 +22,13 @@ from forze.base.primitives import MappingConverter, StrKey, StrKeyMapping
 from ..context.deadline import remaining_time
 from ..tracing import record
 from .backoff import compute_delay
-from .state import BudgetState, BulkheadState, RateLimitState, Transition
-from .store import CircuitBreakerStore, InMemoryCircuitBreakerStore
+from .state import BudgetState, BulkheadState, Transition
+from .store import (
+    CircuitBreakerStore,
+    InMemoryCircuitBreakerStore,
+    InMemoryRateLimitStore,
+    RateLimitStore,
+)
 
 # ----------------------- #
 
@@ -73,16 +78,19 @@ class InProcessResilienceExecutor:
     )
     """Circuit breaker store for the executor."""
 
+    rate_limit_store: RateLimitStore = attrs.field(
+        default=attrs.Factory(
+            lambda self: InMemoryRateLimitStore(clock=self.clock),
+            takes_self=True,
+        ),
+    )
+    """Rate-limit token-bucket store (process-local by default, or a distributed
+    store so ``permits/per`` is the fleet's rate instead of per-replica)."""
+
     # ....................... #
 
     _bulkheads: dict[_StateKey, BulkheadState] = attrs.field(factory=dict, init=False)
     """Bulkhead state for the executor."""
-
-    _rate_limits: dict[_StateKey, RateLimitState] = attrs.field(
-        factory=dict,
-        init=False,
-    )
-    """Rate limit token-bucket state for the executor."""
 
     _budgets: dict[_StateKey, BudgetState] = attrs.field(factory=dict, init=False)
     """Budget state for the executor."""
@@ -457,9 +465,7 @@ class InProcessResilienceExecutor:
         pol: ResiliencePolicy,
         route: StrKey | None,
     ) -> T:
-        state = self._rate_limit_for(strat, pol, route)
-
-        if not state.try_acquire(self.clock()):
+        if not await self.rate_limit_store.try_acquire((pol.name, route), strat):
             self._emit("rate_limit_reject", pol, route)
             raise exc.throttled(
                 f"Rate limit exceeded for policy {pol.name!r}",
@@ -514,27 +520,6 @@ class InProcessResilienceExecutor:
 
         elif transition == "closed":
             self._emit("breaker_close", pol, route)
-
-    # ....................... #
-
-    def _rate_limit_for(
-        self,
-        strat: RateLimitStrategy,
-        pol: ResiliencePolicy,
-        route: StrKey | None,
-    ) -> RateLimitState:
-        key = (pol.name, route)
-        state = self._rate_limits.get(key)
-
-        if state is None:
-            state = RateLimitState(
-                rate=strat.permits / strat.per.total_seconds(),
-                capacity=float(strat.capacity),
-                updated_at=self.clock(),
-            )
-            self._rate_limits[key] = state
-
-        return state
 
     # ....................... #
 
