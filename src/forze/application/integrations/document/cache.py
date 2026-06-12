@@ -13,11 +13,13 @@ from pydantic import BaseModel
 
 from forze.application.contracts.cache import CachePort, CacheSpec
 from forze.application.contracts.transaction import AfterCommitPort
+from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
 from forze.base.serialization import CACHE_DUMP_EXCLUDE_OPTS, ModelCodec
 from forze.domain.constants import ID_FIELD, REV_FIELD
 
 from ..._logger import logger
+from .l1 import L1Store, LruTtlStore
 
 # ----------------------- #
 
@@ -65,6 +67,19 @@ class DocumentCache[R: BaseModel]:
     """Cache spec backing :attr:`cache` — supplies the TTL and the opt-in
     probabilistic early-refresh beta (see ``CacheSpec.early_refresh_beta``)."""
 
+    tenant_key: Callable[[], str | None] | None = None
+    """Current-tenant discriminator for L1 keys (e.g. the bound tenant id).
+
+    The backend cache applies tenant scoping in its adapter, *below* this
+    coordinator — the in-process L1 cannot rely on that, so it composes the
+    tenant into its own keys. Required whenever L1 is active; return ``None``
+    when no tenant is bound (single-tenant deployments)."""
+
+    l1_store: L1Store | None = None
+    """Optional L1 store override (eviction-policy seam, e.g. a W-TinyLFU
+    implementation). When unset and ``cache_spec.l1`` is configured, a default
+    LRU+TTL store is built from the spec."""
+
     _inflight: dict[str, asyncio.Future[Any]] = attrs.field(
         factory=dict,
         init=False,
@@ -73,6 +88,75 @@ class DocumentCache[R: BaseModel]:
     )
     """Singleflight: in-flight miss/refresh loads keyed by cache key, so
     concurrent readers of one key collapse into a single gateway fetch."""
+
+    _l1: L1Store | None = attrs.field(
+        default=attrs.Factory(
+            lambda self: self._build_l1(),
+            takes_self=True,
+        ),
+        init=False,
+        repr=False,
+        eq=False,
+    )
+    """Active L1 store (override, spec-built default, or ``None``)."""
+
+    # ....................... #
+
+    def _build_l1(self) -> L1Store | None:
+        if self.cache is None:
+            return None
+
+        if self.l1_store is not None:
+            return self.l1_store
+
+        if self.cache_spec is None or self.cache_spec.l1 is None:
+            return None
+
+        return LruTtlStore(
+            capacity=self.cache_spec.l1.capacity,
+            ttl=self.cache_spec.l1.ttl.total_seconds(),
+        )
+
+    # ....................... #
+
+    def __attrs_post_init__(self) -> None:
+        if self._l1 is not None and self.tenant_key is None:
+            raise exc.configuration(
+                "Document L1 cache requires a tenant_key provider — the L1 "
+                "key must include the current tenant (backend tenant scoping "
+                "happens below this coordinator). Pass tenant_key=lambda: "
+                "str(t.tenant_id) if (t := ctx.inv_ctx.get_tenant()) else None",
+            )
+
+    # ....................... #
+
+    def _l1_key(self, pk: Any) -> str:
+        tenant = self.tenant_key() if self.tenant_key is not None else None
+
+        return f"{tenant or ''}:{pk}"
+
+    # ....................... #
+
+    def _l1_get(self, pk: Any) -> R | None:
+        if self._l1 is None:
+            return None
+
+        cached = self._l1.get(self._l1_key(pk))
+
+        if cached is None:
+            return None
+
+        # Hand out a copy so a caller mutating the result cannot poison the
+        # cached instance (and vice versa).
+        return cast(R, cached).model_copy()
+
+    # ....................... #
+
+    def _l1_put(self, pk: Any, doc: R) -> None:
+        if self._l1 is None:
+            return
+
+        self._l1.set(self._l1_key(pk), doc.model_copy())
 
     # ....................... #
 
@@ -223,9 +307,14 @@ class DocumentCache[R: BaseModel]:
 
             return
 
-        try:
-            casted_doc = cast(_ReadModelWithIdAndRev, doc)
+        casted_doc = cast(_ReadModelWithIdAndRev, doc)
 
+        # Local L1 refresh first (cannot fail on transport): write-path warms
+        # land here via after-commit deferral, which is what preserves
+        # same-replica read-your-writes with L1 enabled.
+        self._l1_put(casted_doc.id, doc)
+
+        try:
             payload = self._encode_cache_value(doc, delta=delta)
 
             await self.cache.set_versioned(
@@ -254,6 +343,9 @@ class DocumentCache[R: BaseModel]:
             return
 
         docs_casted = [cast(_ReadModelWithIdAndRev, x) for x in docs]
+
+        for casted in docs_casted:
+            self._l1_put(casted.id, cast(R, casted))
 
         try:
             versioned_mapping = {
@@ -287,6 +379,10 @@ class DocumentCache[R: BaseModel]:
 
             return
 
+        if self._l1 is not None:
+            for pk in pks:
+                self._l1.invalidate(self._l1_key(pk))
+
         try:
             await self.cache.delete_many([str(pk) for pk in pks], hard=True)
 
@@ -312,6 +408,12 @@ class DocumentCache[R: BaseModel]:
         if self.cache is None:
             return await fetch_on_cache_fault()
 
+        l1_hit = self._l1_get(pk)
+
+        if l1_hit is not None:
+            logger.trace("Retrieved 1 L1-cached '%s' document", self.document_name)
+            return l1_hit
+
         try:
             cached = await self.cache.get(str(pk))
 
@@ -329,6 +431,8 @@ class DocumentCache[R: BaseModel]:
 
             if not self._elects_early_refresh(meta):
                 logger.trace("Retrieved 1 cached '%s' document", self.document_name)
+                # Backend data is committed by construction: safe to warm L1.
+                self._l1_put(pk, doc)
                 return doc
 
             logger.trace(
@@ -421,8 +525,28 @@ class DocumentCache[R: BaseModel]:
         if self.cache is None:
             return await fetch_many_on_cache_fault()
 
+        l1_docs: dict[UUID, R] = {}
+
+        if self._l1 is not None:
+            for pk in pks:
+                hit = self._l1_get(pk)
+
+                if hit is not None:
+                    l1_docs[pk] = hit
+
+            if len(l1_docs) == len(pks):
+                logger.trace(
+                    "Retrieved %s L1-cached '%s' document(s)",
+                    len(pks),
+                    self.document_name,
+                )
+
+                return [l1_docs[pk] for pk in pks]
+
+        remaining = [pk for pk in pks if pk not in l1_docs] if l1_docs else list(pks)
+
         try:
-            hits, misses = await self.cache.get_many([str(pk) for pk in pks])
+            hits, misses = await self.cache.get_many([str(pk) for pk in remaining])
 
             if hits:
                 logger.trace(
@@ -431,7 +555,7 @@ class DocumentCache[R: BaseModel]:
                     self.document_name,
                 )
 
-        except Exception as exc:
+        except Exception as error:
             logger.debug(
                 "Cache get failed for %s '%s' document(s), falling back to read gateway",
                 len(pks),
@@ -439,7 +563,7 @@ class DocumentCache[R: BaseModel]:
                 exc_info=True,
             )
 
-            logger.trace("Cache exception: %s", exc)
+            logger.trace("Cache exception: %s", error)
 
             return await fetch_many_on_cache_fault()
 
@@ -460,7 +584,12 @@ class DocumentCache[R: BaseModel]:
         hits_validated_cast = [cast(_ReadModelWithIdAndRev, x) for x in hits_validated]
         miss_res_cast = [cast(_ReadModelWithIdAndRev, x) for x in miss_res]
 
-        by_pk = {x.id: x for x in hits_validated_cast}
+        for casted in hits_validated_cast:
+            # Backend data is committed by construction: safe to warm L1.
+            self._l1_put(casted.id, cast(R, casted))
+
+        by_pk: dict[UUID, Any] = dict(l1_docs)
+        by_pk.update({x.id: x for x in hits_validated_cast})
         by_pk.update({x.id: x for x in miss_res_cast})
 
         return [cast(R, by_pk[pk]) for pk in pks]

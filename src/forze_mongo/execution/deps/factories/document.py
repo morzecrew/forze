@@ -73,6 +73,9 @@ class ConfigurableMongoReadOnlyDocument(DocumentQueryDepPort[R]):
             cache=cache,
             after_commit=after_commit,
             cache_spec=spec.cache,
+            tenant_key=lambda: (
+                str(t.tenant_id) if (t := ctx.inv_ctx.get_tenant()) else None
+            ),
             read_codec=read.read_codec,
         )
 
@@ -160,6 +163,9 @@ class ConfigurableMongoDocument(DocumentCommandDepPort[R, D, C, U]):
             cache=cache,
             after_commit=after_commit,
             cache_spec=spec.cache,
+            tenant_key=lambda: (
+                str(t.tenant_id) if (t := ctx.inv_ctx.get_tenant()) else None
+            ),
             read_codec=read.read_codec,
         )
 

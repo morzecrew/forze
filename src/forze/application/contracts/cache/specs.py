@@ -12,6 +12,43 @@ from ..base import BaseSpec
 
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
+class L1Spec:
+    """Opt-in in-process L1 ahead of the distributed document cache.
+
+    Hot-document reads are served from process memory — decoded, no transport
+    round-trip and no JSON decode — instead of hitting the cache backend.
+
+    **This is a consistency contract change.** Writes invalidate the L1 only
+    on the replica that performed them; other replicas serve their L1 entry
+    until :attr:`ttl` expires. The TTL is therefore the **cross-replica
+    staleness budget** — keep it small, and enable L1 only on read models
+    that tolerate reads that stale. Same-replica read-your-writes is
+    preserved (local writes refresh or invalidate the local L1).
+    """
+
+    ttl: timedelta
+    """Maximum cross-replica staleness; entries expire after this. Must be
+    strictly smaller than the owning :attr:`CacheSpec.ttl` so the backend
+    cache still sees periodic reads (keeping early refresh functional)."""
+
+    capacity: int = 1024
+    """Maximum entries held in process memory (LRU-evicted beyond this)."""
+
+    # ....................... #
+
+    def __attrs_post_init__(self) -> None:
+        if self.ttl.total_seconds() <= 0:
+            raise exc.configuration("L1 TTL must be positive")
+
+        if self.capacity < 1:
+            raise exc.configuration("L1 capacity must be >= 1")
+
+
+# ....................... #
+
+
+@final
+@attrs.define(slots=True, kw_only=True, frozen=True)
 class CacheSpec(BaseSpec):
     """Cache specification."""
 
@@ -32,6 +69,10 @@ class CacheSpec(BaseSpec):
     envelope; ``None`` (default) keeps the payload format byte-identical.
     Higher values refresh earlier/more often."""
 
+    l1: L1Spec | None = None
+    """Opt-in in-process L1 for document read-through (see :class:`L1Spec`).
+    ``None`` (default) keeps every read on the backend cache."""
+
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
@@ -43,3 +84,9 @@ class CacheSpec(BaseSpec):
 
         if self.early_refresh_beta is not None and self.early_refresh_beta <= 0:
             raise exc.configuration("Early refresh beta must be positive")
+
+        if self.l1 is not None and self.l1.ttl >= self.ttl:
+            raise exc.configuration(
+                "L1 TTL must be strictly smaller than the cache TTL — the "
+                "backend cache must keep seeing periodic reads",
+            )

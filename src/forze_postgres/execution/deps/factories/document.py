@@ -77,6 +77,9 @@ class ConfigurablePostgresReadOnlyDocument(DocumentQueryDepPort[R]):
             cache=cache,
             after_commit=after_commit,
             cache_spec=spec.cache,
+            tenant_key=lambda: (
+                str(t.tenant_id) if (t := ctx.inv_ctx.get_tenant()) else None
+            ),
         )
 
         return PostgresDocumentAdapter(
@@ -166,6 +169,9 @@ class ConfigurablePostgresDocument(DocumentCommandDepPort[R, D, C, U]):
             cache=cache,
             after_commit=after_commit,
             cache_spec=spec.cache,
+            tenant_key=lambda: (
+                str(t.tenant_id) if (t := ctx.inv_ctx.get_tenant()) else None
+            ),
         )
 
         return PostgresDocumentAdapter(
