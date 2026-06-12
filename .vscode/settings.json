@@ -34,8 +34,6 @@
         ".gitleaks.toml": true,
         ".coderabbit.yaml": true,
         "coverage.json": true,
-        "entities.json": true,
-        "mempalace.yaml": true,
         ".pre-commit-config.yaml": true,
         "**/.hypothesis": true
     },

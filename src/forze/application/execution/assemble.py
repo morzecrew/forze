@@ -1,6 +1,7 @@
 """One-call assembly of an :class:`ExecutionRuntime` from modules, deps, and steps."""
 
 from typing import Iterable
+from datetime import timedelta
 
 from .deps import Deps, DepsModule, DepsRegistry
 from .lifecycle import LifecycleModule, LifecyclePlan, LifecycleStep
@@ -17,7 +18,7 @@ def build_runtime(
     concurrent_lifecycle: bool = False,
     cache_resolved_operations: bool = True,
     cache_resolved_ports: bool = True,
-    drain_timeout: float = 10.0,
+    drain_timeout: timedelta = timedelta(seconds=10),
     deployment: DeploymentProfile = DeploymentProfile.SINGLE_PROCESS,
 ) -> ExecutionRuntime:
     """Assemble an :class:`ExecutionRuntime` in one call.

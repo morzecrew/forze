@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import timedelta
 from typing import Any
 
 import attrs
@@ -183,10 +184,11 @@ class TestRuntimeDrain:
         async def _shut(_ctx: Any) -> None:
             order.append("lifecycle_shutdown")
 
-        plan = LifecyclePlan.from_steps(
-            LifecycleStep(id="s", shutdown=_shut)
-        ).freeze()
-        rt = ExecutionRuntime(lifecycle=plan, drain_timeout=5.0)
+        plan = LifecyclePlan.from_steps(LifecycleStep(id="s", shutdown=_shut)).freeze()
+        rt = ExecutionRuntime(
+            lifecycle=plan,
+            drain_timeout=timedelta(seconds=5.0),
+        )
 
         @attrs.define(slots=True, kw_only=True, frozen=True)
         class SlowHandler(Handler[str, str]):
@@ -217,7 +219,7 @@ class TestRuntimeDrain:
 
     @pytest.mark.asyncio
     async def test_scope_exit_proceeds_after_drain_timeout(self) -> None:
-        rt = ExecutionRuntime(drain_timeout=0.01)
+        rt = ExecutionRuntime(drain_timeout=timedelta(seconds=0.01))
         stall = asyncio.Event()
 
         @attrs.define(slots=True, kw_only=True, frozen=True)
@@ -241,4 +243,6 @@ class TestRuntimeDrain:
             await task
 
     def test_build_runtime_passes_drain_timeout(self) -> None:
-        assert build_runtime(drain_timeout=3.0).drain_timeout == 3.0
+        assert build_runtime(
+            drain_timeout=timedelta(seconds=3.0)
+        ).drain_timeout == timedelta(seconds=3.0)

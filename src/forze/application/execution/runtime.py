@@ -1,6 +1,7 @@
 """Execution runtime for scoped dependency and lifecycle management."""
 
 from contextlib import asynccontextmanager
+from datetime import timedelta
 from enum import StrEnum
 from typing import AsyncGenerator, final
 
@@ -59,15 +60,17 @@ class ExecutionRuntime:
     handler or hook factory that must rebuild on every invocation.
     """
 
-    deployment: DeploymentProfile = attrs.field(default=DeploymentProfile.SINGLE_PROCESS)
+    deployment: DeploymentProfile = attrs.field(
+        default=DeploymentProfile.SINGLE_PROCESS
+    )
     """Declared deployment posture (see :class:`DeploymentProfile`).
 
     ``FLEET`` enables assembly-time validation: a lifecycle step declared
     ``mutates_shared_state`` must be ``singleton_guarded`` or construction fails.
     """
 
-    drain_timeout: float = attrs.field(default=10.0)
-    """Bounded wait (seconds) for in-flight operations during :meth:`shutdown`.
+    drain_timeout: timedelta = attrs.field(default=timedelta(seconds=10))
+    """Bounded wait for in-flight operations during :meth:`shutdown`.
 
     Shutdown first flips the scope's drain gate — new top-level invocations
     fail with a retryable ``THROTTLED`` (``code="draining"``) — then waits up
@@ -221,11 +224,11 @@ class ExecutionRuntime:
         try:
             ctx = self.__ctx.get()
 
-            if not await ctx.drain_gate.drain(self.drain_timeout):
+            if not await ctx.drain_gate.drain(self.drain_timeout.total_seconds()):
                 logger.warning(
                     "Drain timeout (%.1fs) expired with %d operation(s) still "
                     "in flight; proceeding with lifecycle shutdown",
-                    self.drain_timeout,
+                    self.drain_timeout.total_seconds(),
                     ctx.drain_gate.in_flight,
                 )
 
