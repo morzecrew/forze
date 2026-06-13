@@ -44,6 +44,7 @@ from forze.application.contracts.authn.value_objects.credentials import (
 from forze.application.contracts.authn.value_objects.identity import AuthnIdentity
 from forze.application.contracts.authn.value_objects.lifetime import CredentialLifetime
 from forze.application.contracts.authn.value_objects.tokens import (
+    ApiKeyInfo,
     IssuedAccessToken,
     IssuedApiKey,
     IssuedInvite,
@@ -821,9 +822,14 @@ class MockApiKeyLifecyclePort(ApiKeyLifecyclePort):
         identity: AuthnIdentity,
         *,
         actor_principal_id: UUID | None = None,
+        label: str | None = None,
     ) -> IssuedApiKey:
-        _ = identity, actor_principal_id
+        _ = identity, actor_principal_id, label
         raise exc.internal("Mock API key lifecycle not configured")
+
+    async def list_api_keys(self, identity: AuthnIdentity) -> Sequence[ApiKeyInfo]:
+        _ = identity
+        return []
 
     async def refresh_api_key(self, credentials: ApiKeyCredentials) -> IssuedApiKey:
         _ = credentials

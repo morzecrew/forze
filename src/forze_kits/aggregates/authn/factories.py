@@ -3,6 +3,7 @@
 from typing import Any
 
 from forze.application.contracts.authn import (
+    ApiKeyLifecycleDepKey,
     AuthnDepKey,
     AuthnSpec,
     PasswordLifecycleDepKey,
@@ -16,21 +17,28 @@ from forze.application.execution.operations import OperationDescriptor
 from forze.application.execution.operations.registry import OperationRegistry
 from forze.application.hooks.authn import AuthnRequired
 from .dto import (
+    AuthnApiKeyListDTO,
     AuthnChangePasswordRequestDTO,
+    AuthnIssueApiKeyRequestDTO,
+    AuthnIssuedApiKeyDTO,
     AuthnLoginRequestDTO,
     AuthnPasswordResetAckDTO,
     AuthnRefreshRequestDTO,
     AuthnRequestPasswordResetDTO,
     AuthnResetPasswordDTO,
+    AuthnRevokeApiKeyRequestDTO,
     AuthnTokenResponseDTO,
 )
 from .handlers import (
     AuthnChangePassword,
+    AuthnIssueApiKey,
+    AuthnListApiKeys,
     AuthnLogout,
     AuthnPasswordLogin,
     AuthnRefreshTokens,
     AuthnRequestPasswordReset,
     AuthnResetPassword,
+    AuthnRevokeApiKey,
     DeactivatePrincipalHandler,
     DeactivatePrincipalRequestDTO,
 )
@@ -141,6 +149,32 @@ def build_authn_registry(
             ),
         )
 
+    def _api_key_lifecycle(ctx: ExecutionContext) -> Any:
+        return ctx.deps.resolve_configurable(
+            ctx,
+            ApiKeyLifecycleDepKey,
+            spec,
+            route=spec.name,
+        )
+
+    def _issue_api_key(ctx: ExecutionContext) -> AuthnIssueApiKey:
+        return AuthnIssueApiKey(
+            resolver=ctx.inv_ctx.get_authn,
+            api_key_lifecycle=_api_key_lifecycle(ctx),
+        )
+
+    def _list_api_keys(ctx: ExecutionContext) -> AuthnListApiKeys:
+        return AuthnListApiKeys(
+            resolver=ctx.inv_ctx.get_authn,
+            api_key_lifecycle=_api_key_lifecycle(ctx),
+        )
+
+    def _revoke_api_key(ctx: ExecutionContext) -> AuthnRevokeApiKey:
+        return AuthnRevokeApiKey(
+            resolver=ctx.inv_ctx.get_authn,
+            api_key_lifecycle=_api_key_lifecycle(ctx),
+        )
+
     reg = OperationRegistry(
         handlers={
             ns.key(AuthnKernelOp.PASSWORD_LOGIN): _password_login,
@@ -150,6 +184,9 @@ def build_authn_registry(
             ns.key(AuthnKernelOp.REQUEST_PASSWORD_RESET): _request_password_reset,
             ns.key(AuthnKernelOp.RESET_PASSWORD): _reset_password,
             ns.key(AuthnKernelOp.DEACTIVATE_PRINCIPAL): _deactivate_principal,
+            ns.key(AuthnKernelOp.ISSUE_API_KEY): _issue_api_key,
+            ns.key(AuthnKernelOp.LIST_API_KEYS): _list_api_keys,
+            ns.key(AuthnKernelOp.REVOKE_API_KEY): _revoke_api_key,
         },
     )
 
@@ -196,21 +233,53 @@ def build_authn_registry(
                     "(policy, sessions, credentials)."
                 ),
             ),
+            AuthnKernelOp.ISSUE_API_KEY: OperationDescriptor(
+                input_type=AuthnIssueApiKeyRequestDTO,
+                output_type=AuthnIssuedApiKeyDTO,
+                description=(
+                    "Issue an API key for the authenticated identity; the secret "
+                    "is returned once. Optionally a user→agent delegation key."
+                ),
+            ),
+            AuthnKernelOp.LIST_API_KEYS: OperationDescriptor(
+                output_type=AuthnApiKeyListDTO,
+                description=(
+                    "List the authenticated identity's API keys "
+                    "(non-secret descriptors — never the key or its hash)."
+                ),
+            ),
+            AuthnKernelOp.REVOKE_API_KEY: OperationDescriptor(
+                input_type=AuthnRevokeApiKeyRequestDTO,
+                description="Revoke one of the authenticated identity's API keys.",
+            ),
         },
         namespace=ns,
     )
 
-    # ``logout`` and ``change_password`` act on the *current* identity, so they
-    # require a bound principal. Declaring it as a hook (rather than only the
-    # handler's own guard) makes the requirement introspectable: the catalog
-    # flags ``requires_authn``, which the FastAPI/MCP surfaces project into their
-    # auth descriptions. The 401 (``auth_required``) is unchanged. Login/refresh
-    # and the reset pair authenticate via their bodies (no bound principal);
-    # ``deactivate_principal`` ships unguarded by design (apps bind authn+authz).
+    # ``list_api_keys`` is a read (no mutation) — classify it QUERY, and require a
+    # bound principal (self-service: you list your own keys).
+    reg = (
+        reg.bind(ns.key(AuthnKernelOp.LIST_API_KEYS))
+        .as_query()
+        .bind_outer()
+        .before(AuthnRequired().to_step())
+        .finish(deep=True)
+    )
+
+    # ``logout``/``change_password`` and the API-key issue/revoke ops act on the
+    # *current* identity, so they require a bound principal. Declaring it as a hook
+    # (rather than only the handler's own guard) makes the requirement
+    # introspectable: the catalog flags ``requires_authn``, which the FastAPI/MCP
+    # surfaces project into their auth descriptions. The 401 (``auth_required``) is
+    # unchanged. Login/refresh and the reset pair authenticate via their bodies (no
+    # bound principal); ``deactivate_principal`` ships unguarded by design (apps
+    # bind authn+authz).
     return (
         reg.bind(
             ns.key(AuthnKernelOp.LOGOUT),
             ns.key(AuthnKernelOp.CHANGE_PASSWORD),
+            ns.key(AuthnKernelOp.ISSUE_API_KEY),
+            ns.key(AuthnKernelOp.REVOKE_API_KEY),
         )
         .bind_outer()
         .before(AuthnRequired().to_step())

@@ -24,8 +24,51 @@ class IssuedApiKey:
     key_id: str | None = attrs.field(default=None)
     """Identifier of the issued API key, when the provider exposes one."""
 
+    hint: str | None = attrs.field(default=None)
+    """Non-secret fingerprint of the key (e.g. ``ab12…wxyz``) for display."""
+
+    label: str | None = attrs.field(default=None)
+    """Optional human label for the key (the issued one echoes the request)."""
+
     lifetime: CredentialLifetime | None = attrs.field(default=None)
     """Lifetime of the API key."""
+
+
+# ....................... #
+
+
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class ApiKeyInfo:
+    """Non-secret descriptor of an issued API key, for listing/management.
+
+    Carries everything a "connected apps" UI needs to show and revoke a key —
+    **never** the secret or its hash. ``hint`` is a stable fingerprint and ``label``
+    an optional human name; show ``label or hint``.
+    """
+
+    key_id: UUID
+    """Identifier of the key (used to revoke it)."""
+
+    hint: str | None = attrs.field(default=None)
+    """Non-secret fingerprint of the key for display."""
+
+    label: str | None = attrs.field(default=None)
+    """Optional human label."""
+
+    actor_principal_id: UUID | None = attrs.field(default=None)
+    """Delegation agent the key acts as, when it is a user→agent key."""
+
+    prefix: str | None = attrs.field(default=None)
+    """Presentation/routing prefix, when the key carries one."""
+
+    is_active: bool = attrs.field(default=True)
+    """Whether the key is still usable (revocation flips this off)."""
+
+    created_at: datetime | None = attrs.field(default=None)
+    """When the key was issued."""
+
+    expires_at: datetime | None = attrs.field(default=None)
+    """Absolute expiry, or ``None`` for a non-expiring key."""
 
 
 # ....................... #

@@ -3,6 +3,7 @@ from typing import Callable
 import attrs
 
 from forze.application.contracts.authn import (
+    ApiKeyLifecyclePort,
     AuthnIdentity,
     AuthnPort,
     IssuedTokens,
@@ -15,12 +16,30 @@ from forze.application.contracts.execution import Handler
 from forze.base.exceptions import exc
 
 from ..dto import (
+    AuthnApiKeyListDTO,
+    AuthnApiKeyListItemDTO,
     AuthnChangePasswordRequestDTO,
+    AuthnIssueApiKeyRequestDTO,
+    AuthnIssuedApiKeyDTO,
     AuthnLoginRequestDTO,
     AuthnRefreshRequestDTO,
+    AuthnRevokeApiKeyRequestDTO,
     AuthnTokenResponseDTO,
 )
 from ._utils import token_response_from_issued_tokens
+
+
+def _require_identity(
+    resolver: "Callable[[], AuthnIdentity | None]",
+) -> AuthnIdentity:
+    """Pull the bound identity or raise the uniform 401 (self-service guard)."""
+
+    identity = resolver()
+
+    if identity is None:
+        raise exc.authentication("Authentication required", code="auth_required")
+
+    return identity
 
 # ----------------------- #
 
@@ -134,3 +153,113 @@ class AuthnChangePassword(Handler[AuthnChangePasswordRequestDTO, None]):
             args.current_password,
             args.new_password,
         )
+
+
+# ....................... #
+
+
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class AuthnIssueApiKey(
+    Handler[AuthnIssueApiKeyRequestDTO, AuthnIssuedApiKeyDTO]
+):
+    """Self-service: issue an API key for the current identity (secret returned once).
+
+    Optionally a user→agent **delegation** key (``actor_principal_id``). The secret
+    is in the response body by design — the only time it is returned — exactly like
+    a token response.
+    """
+
+    resolver: Callable[[], AuthnIdentity | None]
+    """Callable that resolves the current authenticated identity."""
+
+    api_key_lifecycle: ApiKeyLifecyclePort
+    """API key lifecycle port."""
+
+    # ....................... #
+
+    async def __call__(
+        self, args: AuthnIssueApiKeyRequestDTO
+    ) -> AuthnIssuedApiKeyDTO:
+        identity = _require_identity(self.resolver)
+
+        issued = await self.api_key_lifecycle.issue_api_key(
+            identity,
+            actor_principal_id=args.actor_principal_id,
+            label=args.label,
+        )
+
+        return AuthnIssuedApiKeyDTO(
+            api_key=issued.key.key,
+            key_id=issued.key_id,
+            prefix=issued.key.prefix,
+            hint=issued.hint,
+            label=issued.label,
+            expires_at=(
+                issued.lifetime.expires_at if issued.lifetime is not None else None
+            ),
+        )
+
+
+# ....................... #
+
+
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class AuthnListApiKeys(Handler[None, AuthnApiKeyListDTO]):
+    """Self-service: list the current identity's API keys (non-secret descriptors)."""
+
+    resolver: Callable[[], AuthnIdentity | None]
+    """Callable that resolves the current authenticated identity."""
+
+    api_key_lifecycle: ApiKeyLifecyclePort
+    """API key lifecycle port."""
+
+    # ....................... #
+
+    async def __call__(self, args: None) -> AuthnApiKeyListDTO:
+        _ = args
+
+        identity = _require_identity(self.resolver)
+
+        keys = await self.api_key_lifecycle.list_api_keys(identity)
+
+        return AuthnApiKeyListDTO(
+            keys=[
+                AuthnApiKeyListItemDTO(
+                    key_id=info.key_id,
+                    hint=info.hint,
+                    label=info.label,
+                    actor_principal_id=info.actor_principal_id,
+                    prefix=info.prefix,
+                    is_active=info.is_active,
+                    created_at=info.created_at,
+                    expires_at=info.expires_at,
+                )
+                for info in keys
+            ]
+        )
+
+
+# ....................... #
+
+
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class AuthnRevokeApiKey(Handler[AuthnRevokeApiKeyRequestDTO, None]):
+    """Self-service: revoke one of the current identity's API keys.
+
+    The lifecycle port scopes revocation to the caller's own keys (a key id that
+    is not theirs is rejected as not-found), so this cannot revoke another
+    principal's key.
+    """
+
+    resolver: Callable[[], AuthnIdentity | None]
+    """Callable that resolves the current authenticated identity."""
+
+    api_key_lifecycle: ApiKeyLifecyclePort
+    """API key lifecycle port."""
+
+    # ....................... #
+
+    async def __call__(self, args: AuthnRevokeApiKeyRequestDTO) -> None:
+        identity = _require_identity(self.resolver)
+
+        await self.api_key_lifecycle.revoke_api_key(identity, str(args.id))

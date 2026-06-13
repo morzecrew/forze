@@ -114,6 +114,14 @@ class ApiKeyAccountImmutableFields(CoreModel):
     prefix: str | None = Field(default=None, frozen=True)
     """Prefix."""
 
+    hint: str | None = Field(default=None, frozen=True)
+    """Non-secret fingerprint of the key (e.g. ``ab12…wxyz``), set at issuance from
+    the raw key so a management UI can identify a key without ever seeing the secret
+    (only the digest is stored). ``None`` on keys minted before this field existed."""
+
+    label: str | None = Field(default=None, frozen=True)
+    """Optional human label for the key. Display ``label or hint``."""
+
     expires_at: datetime | None = Field(default=None, frozen=True)
     """Absolute expiration time; ``None`` means the key does not expire."""
 

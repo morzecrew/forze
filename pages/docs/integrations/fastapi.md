@@ -212,6 +212,15 @@ they 401 without a bound identity and show up protected under
 wiring (including how the reset token reaches the user via the outbox) is in the
 [Authn, authz & tenancy recipe](../recipes/authn-authz-tenancy-fastapi.md#http-login-endpoints).
 
+It also generates **self-service API-key management** as a resource collection
+(all `AuthnRequired`): `POST /api-keys` issues a key for the caller — the raw
+secret is in the response **once**, optionally a user→agent delegation key
+(`actor_principal_id`) with a human `label` — `GET /api-keys` lists the caller's
+keys as non-secret descriptors (a `hint` like `ab12…wxyz`, never the secret), and
+`DELETE /api-keys/{id}` revokes one. This is the minting surface for the
+[MCP API-key flow](mcp.md#protect-it-with-api-key-auth): the user issues a key
+here and pastes it into the agent host.
+
 Identity, invocation metadata, and error mapping stay with the middlewares and
 exception handlers above — generated routes only validate the input DTO and run
 the operation through the normal pipeline.

@@ -4,9 +4,12 @@ from .deactivate_principal import (
 )
 from .handlers import (
     AuthnChangePassword,
+    AuthnIssueApiKey,
+    AuthnListApiKeys,
     AuthnLogout,
     AuthnPasswordLogin,
     AuthnRefreshTokens,
+    AuthnRevokeApiKey,
 )
 from .password_reset import (
     AuthnRequestPasswordReset,
@@ -17,6 +20,9 @@ from .password_reset import (
 
 __all__ = [
     "AuthnChangePassword",
+    "AuthnIssueApiKey",
+    "AuthnListApiKeys",
+    "AuthnRevokeApiKey",
     "AuthnLogout",
     "AuthnPasswordLogin",
     "AuthnRefreshTokens",

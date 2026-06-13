@@ -3,6 +3,7 @@ from uuid import UUID
 
 from ..value_objects import (
     ApiKeyCredentials,
+    ApiKeyInfo,
     AuthnIdentity,
     IssuedApiKey,
     IssuedTokens,
@@ -60,7 +61,13 @@ class ApiKeyLifecyclePort(Protocol):  # pragma: no cover
         identity: AuthnIdentity,  # noqa: F841
         *,
         actor_principal_id: UUID | None = None,  # noqa: F841
+        label: str | None = None,  # noqa: F841
     ) -> Awaitable[IssuedApiKey]: ...
+
+    def list_api_keys(
+        self,
+        identity: AuthnIdentity,  # noqa: F841
+    ) -> Awaitable[Sequence[ApiKeyInfo]]: ...
 
     def refresh_api_key(
         self,

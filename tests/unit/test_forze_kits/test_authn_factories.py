@@ -133,10 +133,10 @@ class TestBuildAuthnRegistry:
         for entry in catalog.values():
             assert entry.descriptor is not None
 
-    def test_logout_and_change_password_require_authn(self) -> None:
-        # The two ops that act on the current identity declare AuthnRequired, so
-        # the catalog flags them (FastAPI/MCP project it into auth surfaces).
-        # Body-authenticated flows and the unguarded deactivate stay unflagged.
+    def test_self_service_ops_require_authn(self) -> None:
+        # Ops that act on the current identity declare AuthnRequired, so the catalog
+        # flags them (FastAPI/MCP project it into auth surfaces). Body-authenticated
+        # flows and the unguarded deactivate stay unflagged.
         spec = _authn_spec()
         catalog = build_authn_registry(spec).freeze().catalog()
         ns = spec.default_namespace
@@ -147,7 +147,13 @@ class TestBuildAuthnRegistry:
             if catalog[ns.key(op)].requires_authn
         }
 
-        assert flagged == {"logout", "change_password"}
+        assert flagged == {
+            "logout",
+            "change_password",
+            "issue_api_key",
+            "list_api_keys",
+            "revoke_api_key",
+        }
 
     def test_custom_namespace(self) -> None:
         spec = _authn_spec()
