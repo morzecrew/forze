@@ -9,6 +9,7 @@ coordinator.
 
 import time
 import weakref
+import zlib
 from collections import OrderedDict
 from typing import Any, Callable, Iterator, Protocol, cast, final, runtime_checkable
 
@@ -152,7 +153,6 @@ class _FrequencySketch:
     """
 
     _DEPTH = 4
-    _SEEDS = (0x9E3779B9, 0x85EBCA6B, 0xC2B2AE35, 0x27D4EB2F)
 
     # ....................... #
 
@@ -195,8 +195,17 @@ class _FrequencySketch:
 
     def _indexes(self, key: str) -> tuple[int, ...]:
         mask = self._width - 1
+        # Deterministic, salt-free hashing: the builtin ``hash`` is salted per process
+        # (``PYTHONHASHSEED``), which makes the count-min bucket placement — and so the
+        # admission duel — non-reproducible across runs/machines. One fast CRC of the key
+        # gives the base; enhanced double hashing (a second value from its high bits)
+        # derives the per-row indices. Two keys collide in *all* rows only when both the
+        # low and high CRC bits collide (≈ 1/width²), so the rows stay independent — with a
+        # single CRC and no crypto digest, keeping the L1 hot path cheap.
+        base = zlib.crc32(key.encode("utf-8"))
+        step = (base >> 15) | 1
 
-        return tuple(hash((seed, key)) & mask for seed in self._SEEDS)
+        return tuple((base + i * step) & mask for i in range(self._DEPTH))
 
     # ....................... #
 
