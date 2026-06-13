@@ -71,6 +71,8 @@ class TestCompatiblePass:
             {"$values": {"active": {"$null": True}}},
             {"$values": {"tags": {"$superset": ["a", "b"]}}},
             {"$values": {"tags": {"$overlaps": ["a"]}}},
+            {"$values": {"tags": {"$in": ["a"]}}},  # array membership = overlap
+            {"$values": {"tags": {"$nin": ["a"]}}},  # = disjoint
             {"$values": {"nums": {"$empty": True}}},
             {"$values": {"tags": {"$any": "hot"}}},
             {"$values": {"nums": {"$all": {"$gte": 2}}}},
@@ -97,7 +99,6 @@ class TestIncompatibleRaise:
             ({"$values": {"age": {"$empty": True}}}, "$empty"),
             ({"$values": {"name": {"$empty": True}}}, "$empty"),
             ({"$values": {"tags": {"$like": "x"}}}, "$like"),
-            ({"$values": {"tags": {"$in": ["a"]}}}, "$in"),
         ],
     )
     def test_raises(self, expr: dict, needle: str) -> None:

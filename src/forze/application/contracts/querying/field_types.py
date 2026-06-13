@@ -91,7 +91,10 @@ _ALLOWED: Final[dict[str, frozenset[str]]] = {
     _TEMPORAL: _ORD_OPS | _MEMB_OPS,
     _BOOL: _MEMB_OPS,
     _SCALAR_OTHER: _ORD_OPS | _MEMB_OPS,
-    _COLLECTION: _SET_OPS | frozenset({"$empty"}),
+    # ``$in`` / ``$nin`` on an array compile to overlap / disjoint (element-wise) on
+    # every backend — ``unnest … = ANY`` (Postgres), ``$in`` on an array field (Mongo) —
+    # so they are valid alongside the set operators.
+    _COLLECTION: _SET_OPS | _MEMB_OPS | frozenset({"$empty"}),
     _MAPPING: frozenset(),
     _OBJECT: frozenset(),
 }
