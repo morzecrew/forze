@@ -55,10 +55,15 @@ class MockGraphAdapter(MockTenancyMixin):
     # ....................... #
 
     def _verts(self) -> dict[tuple[str, str], JsonDict]:
-        return self.state.graph_vertices.setdefault(self.namespace, {})
+        # Tenant-partition the store like the other mocks (fails closed when tenant_aware
+        # with no bound tenant) so unit tests catch cross-tenant leaks instead of the mock
+        # silently sharing one store across tenants.
+        ns = self._partitioned_namespace(self.namespace)
+        return self.state.graph_vertices.setdefault(ns, {})
 
     def _edges_store(self) -> list[JsonDict]:
-        return self.state.graph_edges.setdefault(self.namespace, [])
+        ns = self._partitioned_namespace(self.namespace)
+        return self.state.graph_edges.setdefault(ns, [])
 
     # ....................... #
 

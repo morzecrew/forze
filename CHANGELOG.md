@@ -76,6 +76,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Mock graph adapter now enforces tenant isolation (parity with the real adapters):** `MockGraphAdapter` mixed in `MockTenancyMixin` but stored vertices/edges under the bare namespace, so two tenants shared one in-memory store — a cross-tenant leak in the test double that meant unit tests using the mock graph could not catch tenancy regressions (only the live-Neo4j integration tests could). Its store is now tenant-partitioned via `_partitioned_namespace` like every other mock (document/cache/storage/search/analytics), and fails closed (`tenant_required`) when `tenant_aware` with no bound tenant. No production code path affected (real adapters already enforced tenancy).
 - **Post-commit work can no longer be silently skipped by task cancellation:** once a root-transaction commit succeeds, the deferred after-commit drain runs to completion as a cancellation-protected critical section (new `forze.base.asyncio.run_to_completion`), then re-raises the cancellation. Cancellation during the body still rolls back as before.
 
 ### Removed

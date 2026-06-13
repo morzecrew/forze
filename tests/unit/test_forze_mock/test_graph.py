@@ -132,3 +132,62 @@ async def test_expand_not_implemented(ctx: ExecutionContext) -> None:
     qry = ctx.graph.query(_spec())
     with pytest.raises(NotImplementedError):
         await qry.expand(VertexRef(kind="User", key="a"), GraphWalkParams(max_depth=2, max_results=10))
+
+
+# ----------------------- #
+# tenant isolation (parity with the real adapters)
+
+
+def _tenant_adapter(state: MockState, tenant_provider: object) -> object:
+    from forze_mock.adapters import MockGraphAdapter
+
+    return MockGraphAdapter(
+        spec=_spec(),
+        state=state,
+        namespace="social",
+        tenant_aware=True,
+        tenant_provider=tenant_provider,  # type: ignore[arg-type]
+    )
+
+
+@pytest.mark.asyncio
+async def test_mock_graph_partitions_store_by_tenant() -> None:
+    from uuid import uuid4
+
+    from forze.application.contracts.tenancy import TenantIdentity
+
+    t1, t2 = uuid4(), uuid4()
+    current: dict[str, TenantIdentity] = {"id": TenantIdentity(tenant_id=t1)}
+    adapter = _tenant_adapter(MockState(), lambda: current["id"])
+
+    await adapter.create_vertex("User", UserCreate(id="shared", name="T1"))
+    await adapter.create_vertex("User", UserCreate(id="b"))
+    await adapter.ensure_edge("FOLLOWS", FollowsCreate(from_key="shared", to_key="b"))
+
+    # Tenant 2 shares the key namespace but must not see tenant 1's data.
+    current["id"] = TenantIdentity(tenant_id=t2)
+    assert await adapter.get_vertex(VertexRef(kind="User", key="shared")) is None
+    assert (
+        await adapter.neighbors(
+            VertexRef(kind="User", key="shared"),
+            GraphDirection.OUT,
+            frozenset({"FOLLOWS"}),
+            limit=10,
+        )
+        == []
+    )
+
+    # Back to tenant 1 — visible again.
+    current["id"] = TenantIdentity(tenant_id=t1)
+    got = await adapter.get_vertex(VertexRef(kind="User", key="shared"))
+    assert got is not None and got.name == "T1"
+
+
+@pytest.mark.asyncio
+async def test_mock_graph_fails_closed_without_tenant() -> None:
+    from forze.base.exceptions import CoreException
+
+    adapter = _tenant_adapter(MockState(), lambda: None)
+
+    with pytest.raises(CoreException, match="tenant_required"):
+        await adapter.create_vertex("User", UserCreate(id="x"))
