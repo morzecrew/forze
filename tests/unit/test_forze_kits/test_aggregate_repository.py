@@ -6,10 +6,12 @@ from typing import Any
 from uuid import UUID
 
 import pytest
+from pydantic import Field, computed_field
 
 from forze.application.contracts.document import DocumentSpec, DocumentWriteTypes
 from forze.application.execution import DomainEventRegistry
 from forze.base.exceptions import CoreException, exc
+from forze.base.primitives import utcnow, uuid7
 from forze.domain.models import (
     AggregateRoot,
     BaseDTO,
@@ -18,6 +20,7 @@ from forze.domain.models import (
     DomainEvent,
     ReadDocument,
     event_emitter,
+    invariant,
 )
 from tests.support.execution_context import context_from_deps
 
@@ -121,3 +124,72 @@ class TestAggregateRepository:
 
         with pytest.raises(CoreException):
             order.confirm()
+
+
+# ----------------------- #
+# read-model -> domain conversion fidelity
+#
+# ``AggregateRepository.load`` reconstructs the domain aggregate via
+# ``model_validate(read, from_attributes=True)`` instead of the prior
+# ``model_validate(read.model_dump())`` roundtrip. These pin the two as equivalent on
+# the cases that distinguish them — computed fields and serialization aliases — so the
+# cheaper path can never silently diverge from the dump-roundtrip semantics.
+# ----------------------- #
+
+
+class _LoadRead(ReadDocument):
+    amount: float
+    label: str = Field(serialization_alias="label_out")
+
+    @computed_field
+    @property
+    def doubled(self) -> float:
+        return self.amount * 2
+
+
+class _LoadAgg(Document):
+    amount: float
+    label: str
+    doubled: float  # regular field on the domain, fed from the read's computed field
+
+    @invariant
+    def _amount_non_negative(self) -> None:
+        if self.amount < 0:
+            raise exc.domain("amount must be >= 0")
+
+
+def _load_read(amount: float = 50.0) -> _LoadRead:
+    return _LoadRead(
+        id=uuid7(),
+        rev=1,
+        created_at=utcnow(),
+        last_update_at=utcnow(),
+        amount=amount,
+        label="x",
+    )
+
+
+def test_from_attributes_load_matches_model_dump_roundtrip() -> None:
+    """``from_attributes`` reconstructs the same aggregate as the dump roundtrip.
+
+    Covers a computed field (``doubled``) and a serialization alias (``label``) —
+    exactly where ``read.__dict__`` would crash or drop data.
+    """
+
+    read = _load_read()
+
+    via_attributes = _LoadAgg.model_validate(read, from_attributes=True)
+    via_roundtrip = _LoadAgg.model_validate(read.model_dump())
+
+    assert via_attributes == via_roundtrip
+    assert via_attributes.doubled == 100.0  # computed field carried through
+    assert via_attributes.label == "x"
+
+
+def test_from_attributes_load_still_enforces_invariants() -> None:
+    """The cheaper conversion path keeps running the domain type's invariants."""
+
+    bad = _load_read(amount=-1.0)
+
+    with pytest.raises(CoreException):
+        _LoadAgg.model_validate(bad, from_attributes=True)

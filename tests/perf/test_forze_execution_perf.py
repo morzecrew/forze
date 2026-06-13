@@ -27,14 +27,20 @@ Save a baseline (optional)::
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any, Awaitable, Callable
+from uuid import UUID
 
 import attrs
 import pytest
 
+from forze.base.primitives import utcnow, uuid7
+from forze.domain.models import BaseDTO, Document, invariant
+
 from forze.application.contracts.deps import DepKey
 from forze.application.contracts.execution import (
     BeforeStep,
+    ExecutionPipeline,
     Handler,
     MiddlewareStep,
 )
@@ -423,6 +429,219 @@ def test_provide_plain_instance_benchmark(benchmark: Any) -> None:
     ctx = _simple_context(cache=True)
 
     benchmark(lambda: ctx.deps.provide(_PLAIN_INSTANCE_KEY))
+
+
+# ----------------------- #
+# Middleware wrap composition (does prebuilding the composed callable pay off?).
+#
+# Per call, ``run_wrap_pipeline`` re-FOLDS the chain: for N middleware it allocates
+# N ``_wrap_step`` closures, then awaits through them. Prebuilding would move the
+# FOLD (composition) to once-per-scope; it cannot remove the EXECUTION (the N awaits
+# still happen every call). So the addressable per-call saving is exactly the fold
+# cost measured here (a cross-check against the amortized end-to-end path put the
+# realized saving at ~1.05 µs/op for 3 middleware — the fold plus the
+# ``run_wrap_pipeline`` coroutine wrapper that prebuilding also elides).
+# ----------------------- #
+
+
+def _passthrough_mw() -> Any:
+    """One resolved passthrough middleware (``mw(next, args) -> await next(args)``)."""
+
+    return _middleware_factory(_context(cache=True))
+
+
+def _wrap_pipeline(n: int) -> ExecutionPipeline[Any]:
+    """A resolved wrap pipeline of *n* passthrough middleware."""
+
+    return ExecutionPipeline(steps=tuple(_passthrough_mw() for _ in range(n)))
+
+
+async def _wrap_inner(args: Any) -> Any:
+    """Trivial innermost callable (stands in for the transactional core / handler)."""
+
+    return args
+
+
+def _compose_wrap(
+    pipeline: ExecutionPipeline[Any],
+    inner: Any,
+) -> Any:
+    """Fold the wrap chain once — identical to the loop inside ``run_wrap_pipeline``."""
+
+    steps = pipeline.steps
+
+    if not steps:
+        return inner
+
+    call = inner
+
+    for middleware in reversed(steps):
+
+        async def _call(call_args: Any, _mw: Any = middleware, _nxt: Any = call) -> Any:
+            return await _mw(_nxt, call_args)
+
+        call = _call
+
+    return call
+
+
+@pytest.mark.perf
+@pytest.mark.parametrize("n", [1, 3, 5])
+def test_wrap_fold_cost_benchmark(benchmark: Any, n: int) -> None:
+    """Sync per-call fold cost for N middleware — the exact saving prebuilding gives.
+
+    Prebuilding moves this composition from per-call to once-per-scope, so this
+    number IS the per-call win (it does not touch the N awaits, which remain).
+    """
+
+    pipeline = _wrap_pipeline(n)
+
+    benchmark(lambda: _compose_wrap(pipeline, _wrap_inner))
+
+
+# ----------------------- #
+# Aggregate load conversion (AggregateRepository.load: read model -> domain).
+#
+# Today: ``domain_type.model_validate(read.model_dump())`` — dump the just-read read
+# model to a dict, then full-validate (incl. domain invariants) into the domain type.
+# The recursive dump is the cost (and it scales with nesting). Three strategies, on a
+# flat and a nested aggregate:
+#
+#   roundtrip       = D.model_validate(read.model_dump())       -- current
+#   from_attributes = D.model_validate(read, from_attributes=True)
+#                     -- the robust replacement: reads each domain field by attribute
+#                     (so @computed_field properties are picked up via getattr) and
+#                     passes nested instances through (revalidate_instances='never'),
+#                     skipping the recursive dump. KEEPS validation + invariants and is
+#                     faithful incl. computed fields + aliases (verified == roundtrip;
+#                     the ``read.__dict__`` shortcut instead CRASHES on computed fields).
+#   construct       = D.model_construct(**read.__dict__)        -- floor: skips
+#                     everything incl. invariants (unsafe; timing floor only).
+#
+#   roundtrip - from_attributes = the safe, faithful saving (the recommended change).
+#   roundtrip - construct       = max possible saving (unsafe; for context only).
+# ----------------------- #
+
+
+class _AddrVO(BaseDTO):
+    street: str
+    city: str
+    postcode: str
+
+
+class _LineVO(BaseDTO):
+    sku: str
+    qty: int
+    price: float
+
+
+class _SmallRead(BaseDTO):
+    id: UUID
+    rev: int
+    created_at: datetime
+    last_update_at: datetime
+    name: str
+    amount: float
+    active: bool
+
+
+class _SmallAgg(Document):
+    name: str
+    amount: float
+    active: bool
+
+    @invariant
+    def _amount_non_negative(self) -> None:
+        if self.amount < 0:
+            raise ValueError("amount must be >= 0")
+
+
+class _NestedRead(BaseDTO):
+    id: UUID
+    rev: int
+    created_at: datetime
+    last_update_at: datetime
+    name: str
+    address: _AddrVO
+    lines: list[_LineVO]
+
+
+class _NestedAgg(Document):
+    name: str
+    address: _AddrVO
+    lines: list[_LineVO]
+
+    @invariant
+    def _has_lines(self) -> None:
+        if not self.lines:
+            raise ValueError("must have at least one line")
+
+
+def _agg_shape(shape: str) -> tuple[Any, type[Document]]:
+    """Return a populated read-model instance and its target domain type."""
+
+    if shape == "small":
+        return (
+            _SmallRead(
+                id=uuid7(),
+                rev=1,
+                created_at=utcnow(),
+                last_update_at=utcnow(),
+                name="acme",
+                amount=100.0,
+                active=True,
+            ),
+            _SmallAgg,
+        )
+
+    return (
+        _NestedRead(
+            id=uuid7(),
+            rev=1,
+            created_at=utcnow(),
+            last_update_at=utcnow(),
+            name="acme",
+            address=_AddrVO(street="1 Main", city="Springfield", postcode="00001"),
+            lines=[
+                _LineVO(sku=f"sku-{i}", qty=i + 1, price=1.5 * i) for i in range(5)
+            ],
+        ),
+        _NestedAgg,
+    )
+
+
+@pytest.mark.perf
+@pytest.mark.parametrize("shape", ["small", "nested"])
+def test_aggregate_load_roundtrip_benchmark(benchmark: Any, shape: str) -> None:
+    """Current path: ``D.model_validate(read.model_dump())`` (dump + full validate)."""
+
+    read, domain_type = _agg_shape(shape)
+
+    benchmark(lambda: domain_type.model_validate(read.model_dump()))
+
+
+@pytest.mark.perf
+@pytest.mark.parametrize("shape", ["small", "nested"])
+def test_aggregate_load_from_attributes_benchmark(benchmark: Any, shape: str) -> None:
+    """Robust replacement: ``D.model_validate(read, from_attributes=True)``.
+
+    Skips the recursive dump, keeps validation + invariants, faithful incl. computed
+    fields and aliases (verified equal to the roundtrip path).
+    """
+
+    read, domain_type = _agg_shape(shape)
+
+    benchmark(lambda: domain_type.model_validate(read, from_attributes=True))
+
+
+@pytest.mark.perf
+@pytest.mark.parametrize("shape", ["small", "nested"])
+def test_aggregate_load_construct_benchmark(benchmark: Any, shape: str) -> None:
+    """Floor: ``D.model_construct(**read.__dict__)`` — skips validation + invariants."""
+
+    read, domain_type = _agg_shape(shape)
+
+    benchmark(lambda: domain_type.model_construct(**read.__dict__))
 
 
 # In-process and deterministic: participates in the CI perf regression gate.
