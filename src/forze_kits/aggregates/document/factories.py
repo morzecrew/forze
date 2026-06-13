@@ -6,7 +6,7 @@ import attrs
 from pydantic import BaseModel
 
 from forze.application.contracts.document import DocumentSpec
-from forze.application.contracts.querying import QueryFieldGuard
+from forze.application.contracts.querying import QueryFieldGuard, build_query_discovery
 from forze.application.execution.operations import OperationDescriptor, OperationRegistry
 from .handlers import (
     AggregatedListDocuments,
@@ -150,6 +150,15 @@ def _build_document_descriptors(
 
     read = dtos.read
 
+    # The read model's filter/sort/aggregate surface (per-field operators), attached to
+    # every filter-accepting list op so generated HTTP/MCP surfaces can advertise it.
+    discovery = build_query_discovery(
+        spec.read,
+        filterable=spec.filterable_fields(),
+        sortable=spec.sortable_fields(),
+        aggregatable=spec.aggregatable_fields(),
+    )
+
     descriptors: dict[StrKey, OperationDescriptor] = {
         DocumentKernelOp.GET: OperationDescriptor(
             input_type=DocumentIdDTO,
@@ -160,26 +169,31 @@ def _build_document_descriptors(
             input_type=ListRequestDTO,
             output_type=_parametrized(Paginated, read),
             description="List documents by filters and sorts (offset pagination).",
+            query_discovery=discovery,
         ),
         DocumentKernelOp.RAW_LIST: OperationDescriptor(
             input_type=ProjectedListRequestDTO,
             output_type=ProjectedPaginated,
             description="List projected document fields (offset pagination).",
+            query_discovery=discovery,
         ),
         DocumentKernelOp.LIST_CURSOR: OperationDescriptor(
             input_type=CursorListRequestDTO,
             output_type=_parametrized(CursorPaginated, read),
             description="List documents by filters and sorts (cursor pagination).",
+            query_discovery=discovery,
         ),
         DocumentKernelOp.RAW_LIST_CURSOR: OperationDescriptor(
             input_type=ProjectedCursorListRequestDTO,
             output_type=ProjectedCursorPaginated,
             description="List projected document fields (cursor pagination).",
+            query_discovery=discovery,
         ),
         DocumentKernelOp.AGG_LIST: OperationDescriptor(
             input_type=AggregatedListRequestDTO,
             output_type=ProjectedPaginated,
             description="List documents with aggregates by filters and sorts.",
+            query_discovery=discovery,
         ),
     }
 

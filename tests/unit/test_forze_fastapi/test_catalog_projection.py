@@ -58,6 +58,7 @@ _SPEC = DocumentSpec(
 )
 _CREATE_OP = str(_SPEC.default_namespace.key(DocumentKernelOp.CREATE))
 _GET_OP = str(_SPEC.default_namespace.key(DocumentKernelOp.GET))
+_LIST_OP = str(_SPEC.default_namespace.key(DocumentKernelOp.LIST))
 
 
 def _registry(*, with_hooks: bool) -> FrozenOperationRegistry:
@@ -204,3 +205,65 @@ class TestEndToEndProjection:
         assert "x-requires-authn" not in raw
         assert "x-deadline-seconds" not in raw
         assert "Time budget" not in raw
+
+
+class TestQueryDiscoveryProjection:
+    """The read model's filter surface is projected as the ``x-forze-query`` extension on
+    filter-accepting list routes (and absent on routes that take no filter)."""
+
+    def test_list_route_carries_query_discovery_extension(self) -> None:
+        ext = _operations(_openapi(with_hooks=False))[_LIST_OP]["x-forze-query"]
+
+        fields = {f["field"]: f for f in ext["filterable"]}
+        # The user field plus the inherited ReadDocument fields are all filterable.
+        assert "title" in fields
+        assert fields["title"]["type"] == "string"
+        assert "$like" in fields["title"]["operators"]
+        assert "$gt" not in fields["title"]["operators"]  # not orderable
+        assert "title" in ext["sortable"]
+        assert "title" in ext["aggregatable"]
+
+    def test_array_field_reports_quantifiers(self) -> None:
+        # A fresh spec with an array field, to assert quantifier reporting.
+        class _TagDoc(ReadDocument):
+            tags: list[str]
+
+        class _TagCreate(BaseDTO):
+            tags: list[str] = []
+
+        class _TagDomain(Document):
+            tags: list[str] = []
+
+        spec = DocumentSpec(
+            name="tagged",
+            read=_TagDoc,
+            write=DocumentWriteTypes(domain=_TagDomain, create_cmd=_TagCreate),
+        )
+        reg = build_document_registry(
+            spec, DocumentDTOs(read=_TagDoc, create=_TagCreate)
+        ).freeze()
+        list_op = str(spec.default_namespace.key(DocumentKernelOp.LIST))
+
+        router = APIRouter(prefix="/tagged")
+        attach_document_routes(
+            router,
+            registry=reg,
+            ns=spec.default_namespace,
+            ctx_dep=lambda: context_from_modules(MockDepsModule(state=MockState())),
+            style="rest",
+        )
+        app = FastAPI()
+        app.include_router(router)
+
+        ext = _operations(app.openapi())[list_op]["x-forze-query"]
+        tags = next(f for f in ext["filterable"] if f["field"] == "tags")
+
+        assert tags["type"] == "collection"
+        assert "$superset" in tags["operators"]
+        assert tags["quantifiers"] == ["$any", "$all", "$none"]
+
+    def test_non_filter_routes_have_no_query_extension(self) -> None:
+        ops = _operations(_openapi(with_hooks=False))
+
+        assert "x-forze-query" not in ops[_GET_OP]
+        assert "x-forze-query" not in ops[_CREATE_OP]

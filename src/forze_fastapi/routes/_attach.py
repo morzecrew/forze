@@ -31,6 +31,7 @@ import attrs
 from fastapi import APIRouter
 from pydantic import BaseModel, ValidationError
 
+from forze.application.contracts.querying import QUANTIFIER_OPS, QueryDiscovery
 from forze.application.execution.context import ExecutionContextFactory
 from forze.application.execution.operations import (
     FrozenOperationRegistry,
@@ -233,9 +234,11 @@ def _route_openapi_extra(
     ``x-requires-authn: true`` — :func:`forze_fastapi.security.apply_openapi_security`
     reads that flag to attach OpenAPI ``security`` to the protected operations.
     A plan-declared deadline surfaces as ``x-deadline-seconds`` (the merged
-    per-invocation budget; expiry returns **504**). FastAPI deep-merges
-    ``openapi_extra`` into the operation object, appending to ``parameters``,
-    so unflagged routes (``None``) are emitted unchanged.
+    per-invocation budget; expiry returns **504**). A filter-accepting operation's
+    query surface (filterable fields and their operators, sortable/aggregatable fields)
+    surfaces as the ``x-forze-query`` extension. FastAPI deep-merges ``openapi_extra``
+    into the operation object, appending to ``parameters``, so unflagged routes
+    (``None``) are emitted unchanged.
     """
 
     extra: dict[str, Any] = {}
@@ -263,7 +266,44 @@ def _route_openapi_extra(
     if entry.deadline is not None:
         extra["x-deadline-seconds"] = entry.deadline.total_seconds()
 
+    if entry.descriptor is not None and entry.descriptor.query_discovery is not None:
+        extra["x-forze-query"] = _query_discovery_extension(
+            entry.descriptor.query_discovery,
+        )
+
     return extra or None
+
+
+# ....................... #
+
+
+def _query_discovery_extension(discovery: QueryDiscovery) -> dict[str, Any]:
+    """The ``x-forze-query`` vendor extension: the read model's filter surface.
+
+    Tells a client which fields are filterable (and which operators each accepts, plus
+    element quantifiers for array fields), sortable, and aggregatable — the type-derived
+    upper bound, independent of the serving backend.
+    """
+
+    filterable: list[dict[str, Any]] = []
+
+    for field in discovery.filterable:
+        entry: dict[str, Any] = {
+            "field": field.field,
+            "type": field.type,
+            "operators": list(field.operators),
+        }
+
+        if field.quantifiable:
+            entry["quantifiers"] = list(QUANTIFIER_OPS)
+
+        filterable.append(entry)
+
+    return {
+        "filterable": filterable,
+        "sortable": list(discovery.sortable),
+        "aggregatable": list(discovery.aggregatable),
+    }
 
 
 # ....................... #

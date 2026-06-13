@@ -31,6 +31,7 @@ from pydantic import BaseModel
 
 from forze.base.exceptions import exc
 
+from .capabilities import ALL_VALUE_OPS
 from .internal.nodes import (
     ELEM_SCALAR_FIELD,
     QueryAnd,
@@ -70,6 +71,12 @@ _MEMB_OPS: Final[frozenset[str]] = frozenset({"$in", "$nin"})
 _SET_OPS: Final[frozenset[str]] = frozenset(
     {"$superset", "$subset", "$disjoint", "$overlaps"},
 )
+
+# Operators valid on a field of any type — equality and the null check.
+_UNIVERSAL_OPS: Final[frozenset[str]] = _EQ_OPS | frozenset({"$null"})
+
+# Element quantifiers — available on (and only on) array/collection fields.
+_QUANTIFIERS: Final[frozenset[str]] = frozenset({"$any", "$all", "$none"})
 
 
 # Per-class allowed operators. ``$eq`` / ``$neq`` / ``$null`` are universal and omitted
@@ -267,7 +274,7 @@ def validate_query_field_types(
         raise exc.precondition(detail, code=OPERATOR_TYPE_MISMATCH_CODE)
 
     def _check_op(op: str, ann: Any, *, path: str) -> None:
-        if op in _EQ_OPS or op == "$null":
+        if op in _UNIVERSAL_OPS:
             return  # universal
 
         cls = _classify(ann)
@@ -387,3 +394,49 @@ def validate_query_field_types(
                 pass
 
     _walk(expr)
+
+
+# ....................... #
+
+
+def classify_field_type(annotation: Any) -> str:
+    """Coarse type-class label for a field annotation (the inverse-facing classifier).
+
+    One of ``"string"``, ``"number"``, ``"bool"``, ``"temporal"``, ``"scalar"``,
+    ``"collection"``, ``"mapping"``, ``"object"``, or ``"unknown"`` (the last when the
+    annotation can't be resolved to a concrete class). The same classification
+    :func:`validate_query_field_types` uses, exposed for discovery surfaces.
+    """
+
+    return _classify(annotation)
+
+
+# ....................... #
+
+
+def field_value_operators(annotation: Any) -> frozenset[str]:
+    """The filter value-operators valid on a field of type *annotation*.
+
+    The inverse of the validator: instead of rejecting a bad pairing it enumerates the
+    allowed one, for discovery (OpenAPI / MCP). Universal ops (``$eq``/``$neq``/``$null``)
+    plus the per-class set; an unresolvable type reports the full value-op surface
+    (:data:`~forze.application.contracts.querying.ALL_VALUE_OPS`), since the validator
+    likewise places no constraint on it. Element quantifiers are reported separately
+    (see :func:`is_quantifiable_field`), as they take a nested predicate, not a value.
+    """
+
+    cls = _classify(annotation)
+
+    if cls is _UNKNOWN:
+        return ALL_VALUE_OPS
+
+    return _UNIVERSAL_OPS | _ALLOWED[cls]
+
+
+# ....................... #
+
+
+def is_quantifiable_field(annotation: Any) -> bool:
+    """Whether *annotation* is an array/collection — i.e. element quantifiers apply."""
+
+    return _classify(annotation) is _COLLECTION

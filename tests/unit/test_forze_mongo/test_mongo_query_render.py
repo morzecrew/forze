@@ -823,52 +823,84 @@ class TestMongoObjectElementMatch:
 
 
 class TestMongoNestedQuantifiers:
-    """Nested quantifiers render as nested $elemMatch (under outer $any)."""
+    """Nested quantifiers compile to an aggregation ``$expr`` that composes at any depth
+    and under any outer quantifier (the ``$elemMatch`` query form can't negate a nested
+    match for ``$all`` / ``$none``)."""
 
     @staticmethod
-    def _nested(scalar_q: str) -> QueryExpr:
-        # items $any { tags <scalar_q> "hot" }
+    def _nested(outer_q: str, inner_q: str) -> QueryExpr:
+        # items <outer_q> { tags <inner_q> "hot" }
         return QueryElem(
             "items",
-            "$any",
+            outer_q,  # type: ignore[arg-type]
             QueryAnd(
-                (QueryElem("tags", scalar_q, QueryField(ELEM_SCALAR_FIELD, "$eq", "hot")),)
+                (QueryElem("tags", inner_q, QueryField(ELEM_SCALAR_FIELD, "$eq", "hot")),)
             ),
         )
 
-    def test_any_inner_any(self) -> None:
-        r = MongoQueryRenderer()
-        out = r.render(self._nested("$any"))["$or"][1]["$and"][1]
-        assert out == {"items": {"$elemMatch": {"tags": {"$elemMatch": {"$eq": "hot"}}}}}
+    @staticmethod
+    def _safe(ref: str) -> dict:
+        return {"$cond": [{"$isArray": [ref]}, ref, []]}
 
-    def test_any_inner_none(self) -> None:
-        r = MongoQueryRenderer()
-        out = r.render(self._nested("$none"))["$or"][1]["$and"][1]
-        assert out == {
-            "items": {"$elemMatch": {"tags": {"$not": {"$elemMatch": {"$eq": "hot"}}}}}
-        }
-
-    def test_any_inner_all_negates(self) -> None:
-        r = MongoQueryRenderer()
-        out = r.render(self._nested("$all"))["$or"][1]["$and"][1]
-        assert out == {
-            "items": {
-                "$elemMatch": {"tags": {"$not": {"$elemMatch": {"$not": {"$eq": "hot"}}}}}
+    def _inner_matched(self) -> dict:
+        # count of ``tags`` elements equal to "hot" (the depth-1 sub-array)
+        return {
+            "$size": {
+                "$filter": {
+                    "input": self._safe("$$e0.tags"),
+                    "as": "e1",
+                    "cond": {"$eq": ["$$e1", "hot"]},
+                }
             }
         }
 
-    @pytest.mark.parametrize("outer", ["$all", "$none"])
-    def test_outer_all_none_nested_rejected(self, outer: str) -> None:
+    def _outer_matched(self, inner_cond: dict) -> dict:
+        return {
+            "$size": {
+                "$filter": {
+                    "input": self._safe("$items"),
+                    "as": "e0",
+                    "cond": inner_cond,
+                }
+            }
+        }
+
+    def test_outer_any_inner_any(self) -> None:
         r = MongoQueryRenderer()
-        nested = QueryElem(
-            "items",
-            outer,  # type: ignore[arg-type]
-            QueryAnd(
-                (QueryElem("tags", "$any", QueryField(ELEM_SCALAR_FIELD, "$eq", "hot")),)
-            ),
-        )
-        with pytest.raises(CoreException, match="Nested element quantifiers under"):
-            r.render(nested)
+        out = r.render(self._nested("$any", "$any"))
+        inner_cond = {"$and": [{"$gt": [self._inner_matched(), 0]}]}
+        assert out == {"$expr": {"$gt": [self._outer_matched(inner_cond), 0]}}
+
+    def test_outer_all_inner_all(self) -> None:
+        # Previously rejected (outer $all + nested, with the inner $all needing a
+        # negation the query form can't express). Now a clean aggregation expression.
+        r = MongoQueryRenderer()
+        out = r.render(self._nested("$all", "$all"))
+        inner_cond = {
+            "$and": [
+                {"$eq": [self._inner_matched(), {"$size": self._safe("$$e0.tags")}]},
+            ],
+        }
+        assert out == {
+            "$expr": {
+                "$eq": [self._outer_matched(inner_cond), {"$size": self._safe("$items")}],
+            },
+        }
+
+    def test_outer_none_inner_any(self) -> None:
+        r = MongoQueryRenderer()
+        out = r.render(self._nested("$none", "$any"))
+        inner_cond = {"$and": [{"$gt": [self._inner_matched(), 0]}]}
+        assert out == {"$expr": {"$eq": [self._outer_matched(inner_cond), 0]}}
+
+    @pytest.mark.parametrize("outer", ["$any", "$all", "$none"])
+    @pytest.mark.parametrize("inner", ["$any", "$all", "$none"])
+    def test_all_combinations_render_via_expr(self, outer: str, inner: str) -> None:
+        # Every outer×inner combination now compiles (none raises) to an aggregation
+        # $expr — semantic correctness is pinned by the cross-backend parity suite.
+        r = MongoQueryRenderer()
+        out = r.render(self._nested(outer, inner))
+        assert set(out) == {"$expr"}
 
 
 class TestMongoRenderExprEmptyParts:

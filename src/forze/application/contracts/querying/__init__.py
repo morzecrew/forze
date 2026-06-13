@@ -8,8 +8,17 @@ from .capabilities import (
     QueryCapabilities,
     validate_query_capabilities,
 )
+from .discovery import (
+    QUANTIFIER_OPS,
+    FieldQuerySupport,
+    QueryDiscovery,
+    build_query_discovery,
+)
 from .field_types import (
     OPERATOR_TYPE_MISMATCH_CODE,
+    classify_field_type,
+    field_value_operators,
+    is_quantifiable_field,
     validate_query_field_types,
 )
 from .expressions import (
@@ -141,6 +150,13 @@ __all__ = [
     "validate_query_capabilities",
     "OPERATOR_TYPE_MISMATCH_CODE",
     "validate_query_field_types",
+    "classify_field_type",
+    "field_value_operators",
+    "is_quantifiable_field",
+    "QUANTIFIER_OPS",
+    "FieldQuerySupport",
+    "QueryDiscovery",
+    "build_query_discovery",
     "QueryFilterExpression",
     "QueryNegation",
     "ElementOp",

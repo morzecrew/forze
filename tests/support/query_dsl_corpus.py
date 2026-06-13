@@ -177,6 +177,33 @@ CASES: tuple[QueryCase, ...] = (
               filters={"$values": {"items": {"$any": {"$values": {"tags": {"$none": "cold"}}}}}},
               # any item with NO 'cold' tag: alice item a [hot]; dave item c; bob[cold] no.
               expected=frozenset({"alice", "dave"})),
+    # Nested quantifiers under an OUTER $all/$none — the cases that need the aggregation
+    # ($expr) rendering on Mongo (query-form negation can't De-Morgan a nested $elemMatch).
+    QueryCase(name="nested_all_any",
+              filters={"$values": {"items": {"$all": {"$values": {"tags": {"$any": "hot"}}}}}},
+              # every item has a 'hot' tag: alice item b [cold] no; bob [cold] no;
+              # carol [] vacuous; dave item c [hot,new] yes.
+              expected=frozenset({"carol", "dave"})),
+    QueryCase(name="nested_all_all",
+              filters={"$values": {"items": {"$all": {"$values": {"tags": {"$all": "hot"}}}}}},
+              # every item's tags are ALL 'hot': alice item b [cold] no; bob no;
+              # carol [] vacuous; dave [hot,new] no. → only carol.
+              expected=frozenset({"carol"})),
+    QueryCase(name="nested_all_none",
+              filters={"$values": {"items": {"$all": {"$values": {"tags": {"$none": "cold"}}}}}},
+              # every item has NO 'cold' tag: alice item b [cold] no; bob [cold] no;
+              # carol [] vacuous; dave [hot,new] yes.
+              expected=frozenset({"carol", "dave"})),
+    QueryCase(name="nested_none_any",
+              filters={"$values": {"items": {"$none": {"$values": {"tags": {"$any": "hot"}}}}}},
+              # no item has a 'hot' tag: alice (item a hot) no; bob [cold] yes;
+              # carol [] vacuous; dave (hot) no.
+              expected=frozenset({"bob", "carol"})),
+    QueryCase(name="nested_none_all",
+              filters={"$values": {"items": {"$none": {"$values": {"tags": {"$all": "hot"}}}}}},
+              # no item whose tags are ALL 'hot': alice (item a all-hot) no; bob yes;
+              # carol [] vacuous; dave [hot,new] not all-hot → yes.
+              expected=frozenset({"bob", "carol", "dave"})),
     QueryCase(name="quant_any_object",
               filters={"$values": {"items": {"$any": {"$values": {"qty": {"$gte": 5}}}}}},
               expected=frozenset({"alice", "dave"})),
