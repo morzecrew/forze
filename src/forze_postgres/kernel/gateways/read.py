@@ -493,6 +493,18 @@ class PostgresReadGateway[M: BaseModel](
         if group_clause is not None:
             stmt += sql.SQL(" GROUP BY {group}").format(group=group_clause)
 
+        if parsed_.having is not None:
+            # ``$having`` filters the aggregated rows: wrap the group query and filter on
+            # its output aliases (a fresh renderer with no column types — values pass
+            # through; Postgres compares against the computed/group columns).
+            having_renderer = PsycopgQueryRenderer(table_alias="_agg")
+            having_sql, having_params = having_renderer.render(parsed_.having)
+            stmt = sql.SQL("SELECT * FROM ({inner}) AS _agg WHERE {having}").format(
+                inner=stmt,
+                having=having_sql,
+            )
+            params = list(params) + list(having_params)
+
         if sort_clause is not None:
             stmt += sql.SQL(" ORDER BY {sort}").format(sort=sort_clause)
 

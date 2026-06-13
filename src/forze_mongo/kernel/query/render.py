@@ -129,6 +129,10 @@ class MongoQueryRenderer:
 
         pipeline.append({"$project": project})
 
+        if parsed.having is not None:
+            # ``$having``: filter the aggregated rows (the projected aliases) post-group.
+            pipeline.append({"$match": self._render_expr(parsed.having)})
+
         sort = self.render_aggregate_sorts(parsed, sorts)
 
         if sort:

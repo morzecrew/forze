@@ -563,4 +563,8 @@ def _aggregate_docs(  # type: ignore[reportPrivateUsage]
 
         rows.append(row)
 
+    if parsed.having is not None:
+        # ``$having``: keep only aggregated rows matching the post-group filter.
+        rows = [row for row in rows if _match_expr(row, parsed.having)]
+
     return rows

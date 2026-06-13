@@ -267,6 +267,7 @@ AggregatesExpression = TypedDict(
     {
         "$groups": AggregateGroupKeysExpression,
         "$computed": AggregateComputedFieldExpression,
+        "$having": "QueryFilterExpression",
     },
     total=False,
 )
@@ -276,6 +277,11 @@ AggregatesExpression = TypedDict(
 ``{\"$trunc\": {\"field\", \"unit\", optional \"timezone\"}}`` for calendar buckets
 (output alias is the map key). List/tuple ``$groups`` accepts path strings only.
 ``$computed`` maps output aliases to aggregate function applications.
+
+``$having`` is an optional filter applied to the **aggregated** rows (post-group),
+referencing only the output aliases — group keys and computed metrics — e.g. keep only
+groups whose ``$count`` exceeds a threshold. It is the aggregate analogue of a SQL
+``HAVING`` clause and uses the same filter grammar as ``filters``.
 """
 
 

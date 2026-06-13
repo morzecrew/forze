@@ -8,7 +8,15 @@ import attrs
 from forze.base.exceptions import exc
 
 from ..expressions import AggregateFunction, AggregatesExpression, QueryFilterExpression
-from .nodes import QueryExpr
+from .nodes import (
+    QueryAnd,
+    QueryCompare,
+    QueryElem,
+    QueryExpr,
+    QueryField,
+    QueryNot,
+    QueryOr,
+)
 from .parse import QueryFilterExpressionParser
 from .time_bucket import ResolvedTimeBucketTimezone, parse_aggregate_timezone
 
@@ -18,6 +26,38 @@ _ALIAS_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _FUNCTIONS: frozenset[str] = frozenset(get_args(AggregateFunction))
 _UNITS: frozenset[str] = frozenset(("hour", "day", "week", "month"))
 _GROUP_OPS: frozenset[str] = frozenset(("$trunc",))
+
+
+def _having_field_roots(expr: QueryExpr) -> frozenset[str]:
+    """Top-level field names a ``$having`` AST references (for alias validation)."""
+
+    roots: set[str] = set()
+
+    def _walk(node: QueryExpr) -> None:
+        match node:
+            case QueryAnd(items) | QueryOr(items):
+                for item in items:
+                    _walk(item)
+
+            case QueryNot(item):
+                _walk(item)
+
+            case QueryField(name, _, _):
+                roots.add(name.split(".", 1)[0])
+
+            case QueryCompare(left, _, right):
+                roots.add(left.split(".", 1)[0])
+                roots.add(right.split(".", 1)[0])
+
+            case QueryElem(path, _, _):
+                roots.add(path.split(".", 1)[0])
+
+            case _:
+                pass
+
+    _walk(expr)
+
+    return frozenset(roots)
 
 # ....................... #
 
@@ -97,6 +137,9 @@ class ParsedAggregates:
     computed_fields: tuple[AggregateComputedField, ...]
     """Computed aggregate fields."""
 
+    having: QueryExpr | None = None
+    """Optional post-group filter (``$having``) over the output aliases, or ``None``."""
+
     # ....................... #
 
     @property
@@ -144,10 +187,38 @@ class AggregatesExpressionParser:
         if duplicates:
             raise exc.internal(f"Duplicate aggregate aliases: {duplicates}")
 
+        having = cls._having(expr.get("$having"), frozenset(aliases))
+
         return ParsedAggregates(
             groups=groups,
             computed_fields=computed_fields,
+            having=having,
         )
+
+    # ....................... #
+
+    @classmethod
+    def _having(
+        cls,
+        raw: QueryFilterExpression | None,
+        aliases: frozenset[str],
+    ) -> QueryExpr | None:
+        """Parse and validate the ``$having`` filter over the output aliases."""
+
+        if not raw:
+            return None
+
+        expr = QueryFilterExpressionParser.parse(raw)
+        referenced = _having_field_roots(expr)
+        unknown = sorted(referenced - aliases)
+
+        if unknown:
+            raise exc.internal(
+                f"$having may only reference aggregate output aliases "
+                f"({sorted(aliases)}); unknown: {unknown}.",
+            )
+
+        return expr
 
     # ....................... #
 
