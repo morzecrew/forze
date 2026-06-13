@@ -1,13 +1,18 @@
 """SQS client that resolves credentials per tenant via :class:`~forze.application.contracts.secrets.SecretsPort`."""
 
+from __future__ import annotations
+
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
-from typing import AsyncGenerator, Callable, Mapping, Sequence, cast, final
+from typing import TYPE_CHECKING, AsyncGenerator, Callable, Mapping, Sequence, cast, final
 from uuid import UUID
 
 import attrs
 from pydantic import BaseModel
-from types_aiobotocore_sqs.client import SQSClient as AsyncSQSClient
+
+if TYPE_CHECKING:
+    # Type-only stub package; kept off the runtime import path.
+    from types_aiobotocore_sqs.client import SQSClient as AsyncSQSClient
 
 from forze.application.contracts.secrets import SecretRef, SecretsPort
 from forze.application.contracts.tenancy.routed_client_base import (

@@ -1,7 +1,10 @@
 """Structural protocol for SQS clients (single endpoint or tenant-routed)."""
 
+from __future__ import annotations
+
 from datetime import datetime, timedelta
 from typing import (
+    TYPE_CHECKING,
     AsyncContextManager,
     AsyncGenerator,
     Awaitable,
@@ -10,7 +13,9 @@ from typing import (
     Sequence,
 )
 
-from types_aiobotocore_sqs.client import SQSClient as AsyncSQSClient
+if TYPE_CHECKING:
+    # Type-only stub package; kept off the runtime import path.
+    from types_aiobotocore_sqs.client import SQSClient as AsyncSQSClient
 
 from .types import SQSQueueMessage
 

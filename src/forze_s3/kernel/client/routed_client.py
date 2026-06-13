@@ -1,12 +1,17 @@
 """S3 client that resolves credentials per tenant via :class:`~forze.application.contracts.secrets.SecretsPort`."""
 
+from __future__ import annotations
+
 from contextlib import asynccontextmanager
-from typing import AsyncGenerator, Callable, Mapping, cast, final
+from typing import TYPE_CHECKING, AsyncGenerator, Callable, Mapping, cast, final
 from uuid import UUID
 
 import attrs
 from pydantic import BaseModel
-from types_aiobotocore_s3.client import S3Client as AsyncS3Client
+
+if TYPE_CHECKING:
+    # Type-only stub package; kept off the runtime import path.
+    from types_aiobotocore_s3.client import S3Client as AsyncS3Client
 
 from forze.application.contracts.secrets import SecretRef, SecretsPort
 from forze.application.integrations.storage import RoutedObjectStorageClientBase

@@ -26,12 +26,23 @@ class DeploymentProfile(StrEnum):
     ``singleton_guarded`` (e.g. wrapped in ``forze_kits``'
     ``singleton_lifecycle_step``), or runtime assembly fails — N replicas
     stampeding a migration is a deploy-time mistake, caught at composition.
-    Advisory by design: the marker is declared by the step author, not
+
+    ``SERVERLESS`` states the app runs as a function that freezes between
+    invocations (Lambda, Cloud Functions, …): a lifecycle step declared
+    ``requires_long_running`` fails runtime assembly — a frozen host cannot keep
+    a background poller/relay/scheduler alive. It also drops the graceful-drain
+    default to zero (see :func:`~forze.application.execution.assemble.build_runtime`),
+    since there is no drain window between a response and a freeze. For warm
+    containers, hold one ``scope()`` open across invocations (module-level, like
+    the FastAPI/MCP ``runtime_lifespan``) so the per-scope caches stay warm.
+
+    Advisory by design: both markers are declared by the step author, not
     detected structurally.
     """
 
     SINGLE_PROCESS = "single_process"
     FLEET = "fleet"
+    SERVERLESS = "serverless"
 
 
 @final
@@ -106,23 +117,37 @@ class ExecutionRuntime:
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
-        if self.deployment is not DeploymentProfile.FLEET:
-            return
-
-        offending = sorted(
-            str(step.id)
-            for step in self.lifecycle.graph.steps.values()
-            if step.mutates_shared_state and not step.singleton_guarded
-        )
-
-        if offending:
-            raise exc.configuration(
-                "FLEET deployment forbids unguarded shared-state-mutating "
-                "lifecycle steps (N replicas would stampede them at startup): "
-                + ", ".join(offending)
-                + ". Wrap each in a singleton guard (e.g. forze_kits "
-                "singleton_lifecycle_step) or run it as a deploy step instead.",
+        if self.deployment is DeploymentProfile.FLEET:
+            offending = sorted(
+                str(step.id)
+                for step in self.lifecycle.graph.steps.values()
+                if step.mutates_shared_state and not step.singleton_guarded
             )
+
+            if offending:
+                raise exc.configuration(
+                    "FLEET deployment forbids unguarded shared-state-mutating "
+                    "lifecycle steps (N replicas would stampede them at startup): "
+                    + ", ".join(offending)
+                    + ". Wrap each in a singleton guard (e.g. forze_kits "
+                    "singleton_lifecycle_step) or run it as a deploy step instead.",
+                )
+
+        elif self.deployment is DeploymentProfile.SERVERLESS:
+            offending = sorted(
+                str(step.id)
+                for step in self.lifecycle.graph.steps.values()
+                if step.requires_long_running
+            )
+
+            if offending:
+                raise exc.configuration(
+                    "SERVERLESS deployment forbids lifecycle steps that require a "
+                    "long-running host (background pollers/relays/schedulers cannot "
+                    "survive a function freeze between invocations): "
+                    + ", ".join(offending)
+                    + ". Run each as a separate long-running worker instead.",
+                )
 
     # ....................... #
 
