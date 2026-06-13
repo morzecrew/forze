@@ -29,6 +29,7 @@ from ..guards import (
 from ..types import (
     CompareOp,
     EqOp,
+    HierarchyOp,
     MembOp,
     Numeric,
     OrdOp,
@@ -60,6 +61,7 @@ _ELEMENT_OPS: frozenset[str] = _EQ_OPS | _ORD_OPS | _TEXT_OPS | _MEMB_OPS
 _COMPARE_OPS: frozenset[str] = frozenset(get_args(CompareOp))
 _UNARY_OPS: frozenset[str] = frozenset(get_args(UnaryOp))
 _SET_REL_OPS: frozenset[str] = frozenset(get_args(SetRelOp))
+_HIERARCHY_OPS: frozenset[str] = frozenset(get_args(HierarchyOp))
 _IN_SIZE_OPS: frozenset[str] = _MEMB_OPS | _SET_REL_OPS
 _QUANTIFIER_OPS: frozenset[str] = frozenset(get_args(QueryElementQuantifier))
 
@@ -616,10 +618,66 @@ class QueryFilterExpressionParser:
                 raise exc.precondition(f"Invalid value for {op} operator: {value!r}")
             self._check_in_size(field, op, value)
 
+        elif op in _HIERARCHY_OPS:
+            return self._expand_hierarchy_op(field, op, value, ctx)
+
         else:
             raise exc.precondition(f"Invalid operator: {op!r}")
 
         return QueryField(field, op, value)  # type: ignore[arg-type]
+
+    # ....................... #
+
+    def _expand_hierarchy_op(
+        self,
+        field: str,
+        op: str,
+        value: Any,
+        ctx: _ParseCtx,
+    ) -> QueryExpr:
+        """Expand a hierarchy operand (one path, or a list → ``OR`` / "any" semantics).
+
+        A scalar path produces a single node; a list produces an ``OR`` of one node per
+        path — so ``path $descendant_of [a, b]`` matches rows under *a* or *b*. "All" and
+        "none" come from composing ``$and`` / ``$not`` over the single-path form, so no
+        dedicated quantified hierarchy operators are needed.
+        """
+
+        if isinstance(value, str):
+            paths: list[str] = [value]
+
+        elif isinstance(value, list | tuple):
+            items: list[Any] = list(value)  # type: ignore[arg-type]
+
+            if not items:
+                raise exc.precondition(f"{op} operand list cannot be empty")
+
+            if not all(isinstance(v, str) for v in items):
+                raise exc.precondition(
+                    f"{op} requires a path string or a list of path strings, "
+                    f"got {value!r}",
+                )
+
+            self._check_in_size(field, op, items)
+            paths = items
+
+        else:
+            raise exc.precondition(
+                f"{op} requires a path string or a list of path strings, got {value!r}",
+            )
+
+        for path in paths:
+            if not path.strip():
+                raise exc.precondition(f"{op} path must be a non-empty string")
+
+        if len(paths) == 1:
+            return QueryField(field, op, paths[0])  # type: ignore[arg-type]
+
+        self._add_clauses(ctx, len(paths) - 1)
+
+        return QueryOr(
+            tuple(QueryField(field, op, path) for path in paths)  # type: ignore[arg-type]
+        )
 
     # ....................... #
 

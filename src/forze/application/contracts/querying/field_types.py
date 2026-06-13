@@ -42,6 +42,7 @@ from .internal.nodes import (
     QueryNot,
     QueryOr,
 )
+from .types import TreePath
 
 # ----------------------- #
 
@@ -60,6 +61,7 @@ _SCALAR_OTHER: Final = "scalar"  # UUID, Enum, and other opaque scalars
 _COLLECTION: Final = "collection"
 _MAPPING: Final = "mapping"
 _OBJECT: Final = "object"  # a nested model used as a leaf
+_HIERARCHY: Final = "hierarchy"  # a TreePath materialized-path field
 _UNKNOWN: Final = "unknown"
 
 
@@ -71,6 +73,7 @@ _MEMB_OPS: Final[frozenset[str]] = frozenset({"$in", "$nin"})
 _SET_OPS: Final[frozenset[str]] = frozenset(
     {"$superset", "$subset", "$disjoint", "$overlaps"},
 )
+_HIERARCHY_OPS: Final[frozenset[str]] = frozenset({"$descendant_of", "$ancestor_of"})
 
 # Operators valid on a field of any type — equality and the null check.
 _UNIVERSAL_OPS: Final[frozenset[str]] = _EQ_OPS | frozenset({"$null"})
@@ -97,6 +100,9 @@ _ALLOWED: Final[dict[str, frozenset[str]]] = {
     _COLLECTION: _SET_OPS | _MEMB_OPS | frozenset({"$empty"}),
     _MAPPING: frozenset(),
     _OBJECT: frozenset(),
+    # A materialized path is still a string — keep text/membership available alongside
+    # the hierarchy operators, which are valid *only* here (rejected on a plain string).
+    _HIERARCHY: _TEXT_OPS | _MEMB_OPS | _HIERARCHY_OPS,
 }
 
 _CLASS_LABEL: Final[dict[str, str]] = {
@@ -108,6 +114,7 @@ _CLASS_LABEL: Final[dict[str, str]] = {
     _COLLECTION: "an array",
     _MAPPING: "a mapping",
     _OBJECT: "a nested object",
+    _HIERARCHY: "a hierarchy path",
 }
 
 
@@ -195,6 +202,11 @@ def _classify(ann: Any) -> str:
 
     if issubclass(ann, (int, float, Decimal)):
         return _NUMBER
+
+    # TreePath is a str subtype — match it before the generic string check so its
+    # hierarchy operators resolve and a plain string keeps rejecting them.
+    if issubclass(ann, TreePath):
+        return _HIERARCHY
 
     if issubclass(ann, str):
         return _STRING

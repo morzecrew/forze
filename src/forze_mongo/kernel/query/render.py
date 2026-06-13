@@ -49,11 +49,15 @@ _SCALAR_ELEM_CMP: dict[str, str] = {
 """DSL comparison op → Mongo aggregation/query operator for element predicates."""
 
 
-MONGO_QUERY_CAPABILITIES = FULL_QUERY_CAPABILITIES
+MONGO_QUERY_CAPABILITIES = attrs.evolve(
+    FULL_QUERY_CAPABILITIES, supports_hierarchy=False
+)
 """Mongo compiles the full DSL surface at the AST level (every operator, element
 quantifiers via ``$elemMatch``, ``$not`` via ``$nor``, field-to-field comparison via
-``$expr``). Semantic parity with the canonical mock is enforced by the cross-backend
-parity suite, not by this capability check."""
+``$expr``) — *except* the hierarchy operators (``$descendant_of`` / ``$ancestor_of``),
+which need label-aware materialized-path containment Mongo can't express without a stored
+ancestor array; those are rejected up front. Semantic parity with the canonical mock is
+enforced by the cross-backend parity suite, not by this capability check."""
 
 
 @attrs.define(slots=True, frozen=True)
@@ -125,7 +129,7 @@ class MongoQueryRenderer:
             project[group_key.alias] = f"$_id.{group_key.alias}"
 
         for computed in parsed.computed_fields:
-            project[computed.alias] = 1
+            project[computed.alias] = self._aggregate_projection(computed)
 
         pipeline.append({"$project": project})
 
@@ -240,6 +244,31 @@ class MongoQueryRenderer:
                     },
                 }
 
+            case "$count_distinct":
+                # Accumulate the distinct set (null-excluded); $size in the projection.
+                return {"$addToSet": self._distinct_value(computed, field_ref)}
+
+            case "$stddev_pop" | "$var_pop":
+                # Variance is rendered as the population stddev, squared in projection.
+                return {
+                    "$stdDevPop": self._conditional_value(computed, field_ref, None)
+                }
+
+            case "$stddev_samp" | "$var_samp":
+                return {
+                    "$stdDevSamp": self._conditional_value(computed, field_ref, None)
+                }
+
+            case "$percentile":
+                # Returns a 1-element array; the projection extracts the scalar.
+                return {
+                    "$percentile": {
+                        "input": self._conditional_value(computed, field_ref, None),
+                        "p": [computed.p],
+                        "method": "approximate",
+                    },
+                }
+
     # ....................... #
 
     def _conditional_value(
@@ -256,6 +285,56 @@ class MongoQueryRenderer:
             expr = QueryFilterExpressionParser.parse(computed.filter)
 
         return {"$cond": [self.render_expr_predicate(expr), value, otherwise]}
+
+    # ....................... #
+
+    def _distinct_value(
+        self,
+        computed: AggregateComputedField,
+        field_ref: str,
+    ) -> JsonDict:
+        """Value for a ``$count_distinct`` ``$addToSet``: null-excluded, filter-aware.
+
+        ``$$REMOVE`` omits the value from the set, so nulls (excluded by SQL ``DISTINCT``)
+        and rows failing the per-metric filter never count toward the distinct cardinality.
+        """
+
+        not_null: JsonDict = {"$ne": [field_ref, None]}
+
+        if computed.filter is None:
+            cond: JsonDict = not_null
+
+        else:
+            expr = computed.parsed_filter or QueryFilterExpressionParser.parse(
+                computed.filter
+            )
+            cond = {"$and": [not_null, self.render_expr_predicate(expr)]}
+
+        return {"$cond": [cond, field_ref, "$$REMOVE"]}
+
+    # ....................... #
+
+    @staticmethod
+    def _aggregate_projection(computed: AggregateComputedField) -> Any:
+        """Post-``$group`` projection that turns an accumulator into the final value.
+
+        Most functions project as-is (``1``); the two-stage ones transform their
+        accumulated intermediate: ``$count_distinct`` takes the set size, variance squares
+        the stddev, and ``$percentile`` extracts its single array element.
+        """
+
+        match computed.function:
+            case "$count_distinct":
+                return {"$size": f"${computed.alias}"}
+
+            case "$var_pop" | "$var_samp":
+                return {"$pow": [f"${computed.alias}", 2]}
+
+            case "$percentile":
+                return {"$arrayElemAt": [f"${computed.alias}", 0]}
+
+            case _:
+                return 1
 
     # ....................... #
 
@@ -419,6 +498,9 @@ class MongoQueryRenderer:
             case "$like" | "$ilike" | "$regex":
                 return self._render_text_predicate(ref, op, value)
 
+            case _:
+                raise exc.internal(f"Unknown field operator: {op!r}")
+
     # ....................... #
 
     @staticmethod
@@ -515,9 +597,7 @@ class MongoQueryRenderer:
                 return True
 
             case QueryAnd(items) | QueryOr(items):
-                return any(
-                    MongoQueryRenderer._inner_has_nested_elem(i) for i in items
-                )
+                return any(MongoQueryRenderer._inner_has_nested_elem(i) for i in items)
 
             case QueryNot(item):
                 return MongoQueryRenderer._inner_has_nested_elem(item)
@@ -677,7 +757,8 @@ class MongoQueryRenderer:
 
         if op in ("$like", "$ilike", "$regex"):
             regex, options = self._text_regex_and_options(
-                op, str(self.caster.pass_through(value)),
+                op,
+                str(self.caster.pass_through(value)),
             )
             match_spec: JsonDict = {"input": {"$ifNull": [ref, ""]}, "regex": regex}
 
@@ -764,7 +845,11 @@ class MongoQueryRenderer:
             return {"$in": ["$$this", [self.caster.pass_through(v) for v in value]]}
 
         if op == "$nin":
-            return {"$not": [{"$in": ["$$this", [self.caster.pass_through(v) for v in value]]}]}
+            return {
+                "$not": [
+                    {"$in": ["$$this", [self.caster.pass_through(v) for v in value]]}
+                ]
+            }
 
         val = self.caster.pass_through(value)
 
@@ -823,8 +908,7 @@ class MongoQueryRenderer:
 
             elif f.op in ("$in", "$nin"):
                 spec[f.op] = [
-                    self.caster.pass_through(v)
-                    for v in cast(Sequence[Any], f.value)
+                    self.caster.pass_through(v) for v in cast(Sequence[Any], f.value)
                 ]
 
             else:

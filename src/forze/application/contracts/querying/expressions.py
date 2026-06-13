@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Literal, Mapping, NotRequired, Sequence, TypeAlias, TypedDict
 
-from .types import Array, Numeric, Scalar, TextPatternValue
+from .types import Array, HierarchyValue, Numeric, Scalar, TextPatternValue
 
 # ----------------------- #
 # Filter: literal constraints ($values)
@@ -32,6 +32,8 @@ QueryValueOpConjunction = TypedDict(
         "$like": TextPatternValue,
         "$ilike": TextPatternValue,
         "$regex": TextPatternValue,
+        "$descendant_of": HierarchyValue,
+        "$ancestor_of": HierarchyValue,
     },
     total=False,
 )
@@ -193,7 +195,20 @@ keeps the canonical null placement; the spec form overrides it per key."""
 
 # ....................... #
 
-AggregateFunction = Literal["$count", "$sum", "$avg", "$min", "$max", "$median"]
+AggregateFunction = Literal[
+    "$count",
+    "$count_distinct",
+    "$sum",
+    "$avg",
+    "$min",
+    "$max",
+    "$median",
+    "$stddev_pop",
+    "$stddev_samp",
+    "$var_pop",
+    "$var_samp",
+    "$percentile",
+]
 """Supported aggregate function names."""
 
 AggregateTruncUnit = Literal["hour", "day", "week", "month"]
@@ -243,20 +258,34 @@ class AggregateComputedFunctionApplication(TypedDict, total=False):
     filter: QueryFilterExpression
     """Optional row filter applied only to this computed aggregate."""
 
+    p: float
+    """Quantile in ``[0, 1]`` — required for ``$percentile``, ignored otherwise."""
+
 
 AggregateComputedFunctionExpression = TypedDict(
     "AggregateComputedFunctionExpression",
     {
         "$count": str | None | AggregateComputedFunctionApplication,
+        "$count_distinct": str | AggregateComputedFunctionApplication,
         "$sum": str | AggregateComputedFunctionApplication,
         "$avg": str | AggregateComputedFunctionApplication,
         "$min": str | AggregateComputedFunctionApplication,
         "$max": str | AggregateComputedFunctionApplication,
         "$median": str | AggregateComputedFunctionApplication,
+        "$stddev_pop": str | AggregateComputedFunctionApplication,
+        "$stddev_samp": str | AggregateComputedFunctionApplication,
+        "$var_pop": str | AggregateComputedFunctionApplication,
+        "$var_samp": str | AggregateComputedFunctionApplication,
+        "$percentile": AggregateComputedFunctionApplication,
     },
     total=False,
 )
-"""Single aggregate function application keyed by function name."""
+"""Single aggregate function application keyed by function name.
+
+``$percentile`` requires the application form with a ``p`` quantile (it has no scalar
+shorthand). Note: ``$median`` and ``$percentile`` are **exact** on Postgres and the
+in-memory backend but **approximate** on Mongo (its native estimator), so they are not
+oracle-matched on large datasets."""
 
 AggregateComputedFieldExpression = Mapping[str, AggregateComputedFunctionExpression]
 """Map of aggregate output aliases to computed aggregate function specs."""

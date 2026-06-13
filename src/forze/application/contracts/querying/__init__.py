@@ -113,7 +113,15 @@ from .pagination import (
     validate_cursor_token,
     validate_sort_fields,
 )
-from .types import ElementOp, QueryElementQuantifier, QueryOp, QueryValue
+from .types import (
+    ElementOp,
+    HierarchyOp,
+    HierarchyValue,
+    QueryElementQuantifier,
+    QueryOp,
+    QueryValue,
+    TreePath,
+)
 
 # ----------------------- #
 
@@ -196,6 +204,9 @@ __all__ = [
     "QueryOr",
     "QueryOp",
     "QueryValue",
+    "HierarchyOp",
+    "HierarchyValue",
+    "TreePath",
     "elem_inner_is_scalar",
     "compare_keyset_sort_values",
     "assert_default_null_ordering",

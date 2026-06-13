@@ -69,6 +69,7 @@ _NESTED_JSON_UNSUPPORTED: frozenset[str] = frozenset(
 )
 
 _TEXT_LIKE_BASES: frozenset[str] = frozenset({"text", "varchar", "char", "citext"})
+_LTREE_BASE: str = "ltree"
 
 _COMPARE_EQ_SQL: dict[str, str] = {"$eq": "=", "$neq": "<>"}
 _COMPARE_ORD_SQL: dict[str, str] = {
@@ -343,6 +344,26 @@ class PsycopgQueryRenderer:
                     "percentile_cont(0.5) WITHIN GROUP (ORDER BY {})",
                 ).format(field_expr)
 
+            case "$count_distinct":
+                agg_expr = sql.SQL("COUNT(DISTINCT {})").format(field_expr)
+
+            case "$stddev_pop":
+                agg_expr = sql.SQL("stddev_pop({})").format(field_expr)
+
+            case "$stddev_samp":
+                agg_expr = sql.SQL("stddev_samp({})").format(field_expr)
+
+            case "$var_pop":
+                agg_expr = sql.SQL("var_pop({})").format(field_expr)
+
+            case "$var_samp":
+                agg_expr = sql.SQL("var_samp({})").format(field_expr)
+
+            case "$percentile":
+                agg_expr = sql.SQL(
+                    "percentile_cont({}) WITHIN GROUP (ORDER BY {})",
+                ).format(sql.Literal(computed.p), field_expr)
+
         return self._render_aggregate_filter(agg_expr, computed)
 
     # ....................... #
@@ -599,6 +620,9 @@ class PsycopgQueryRenderer:
             case "$like" | "$ilike" | "$regex":
                 return self._render_text(col, op, value, t=t)
 
+            case "$descendant_of" | "$ancestor_of":
+                return self._render_hierarchy(col, op, value, t=t)
+
             case _:  # pyright: ignore[reportUnnecessaryComparison]
                 raise exc.internal(f"Unknown operator: {op!r}")
 
@@ -645,6 +669,63 @@ class PsycopgQueryRenderer:
                 raise exc.internal(f"Unknown text operator: {op!r}")
 
         return sql.SQL("{} {} {}").format(col, op_sql, self.binder.add(pattern))
+
+    # ....................... #
+
+    def _render_hierarchy(
+        self,
+        col: sql.Composable,
+        op: str,
+        value: Any,
+        *,
+        t: PostgresType | None,
+    ) -> sql.Composable:
+        """Render a materialized-path containment predicate (both ends inclusive).
+
+        Native ``ltree`` columns use the index-backed ancestor/descendant operators
+        (``@>`` / ``<@``). Plain text columns fall back to label-aware prefix matching via
+        ``starts_with`` (appending the ``.`` separator so a label boundary is required —
+        ``top.science`` is *not* a descendant of ``top.sci``). The parser has already
+        expanded a list operand into an ``OR`` of single-path predicates, so *value* is a
+        single path string here.
+        """
+
+        path = str(value)
+
+        if t is not None and t.is_array:
+            raise exc.internal(
+                f"Hierarchy operator {op!r} is not supported on array column type {t!r}",
+            )
+
+        if t is not None and t.base == _LTREE_BASE:
+            bound = sql.SQL("{}::ltree").format(self.binder.add(path))
+
+            # ``a <@ b`` ⇔ a is a descendant of b; ``a @> b`` ⇔ a is an ancestor of b
+            # (both inclusive). Column on the left, the given node on the right.
+            ltree_op = sql.SQL("<@") if op == "$descendant_of" else sql.SQL("@>")
+
+            return sql.SQL("{} {} {}").format(col, ltree_op, bound)
+
+        if t is not None and t.base not in _TEXT_LIKE_BASES:
+            raise exc.internal(
+                f"Hierarchy operator {op!r} requires an ltree or text-like column; "
+                f"got {t.base!r}",
+            )
+
+        # Compare label sequences with a trailing separator so equality and strict
+        # containment fold into one ``starts_with`` (and a label boundary is required:
+        # ``top.science.`` is not a prefix of ``top.scientist.``). The bound node value
+        # is referenced once — appending ``'.'`` to *both* sides makes ``col == node``
+        # the inclusive case.
+        col_path = sql.SQL("(({})::text || '.')").format(col)
+        node_path = sql.SQL("({} || '.')").format(self.binder.add(path))
+
+        if op == "$descendant_of":
+            # col is at or below the node: col's path starts with the node's path.
+            return sql.SQL("starts_with({}, {})").format(col_path, node_path)
+
+        # col is at or above the node: the node's path starts with col's path.
+        return sql.SQL("starts_with({}, {})").format(node_path, col_path)
 
     # ....................... #
 

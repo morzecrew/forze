@@ -18,6 +18,7 @@ from forze_mock.adapters import MockDocumentAdapter, MockState
 from forze_mongo.execution.deps import ConfigurableMongoDocument, MongoDocumentConfig
 from forze_mongo.execution.deps.keys import MongoClientDepKey
 from forze_mongo.kernel.client import MongoClient
+from tests.support.aggregate_functions import assert_aggregate_function_parity
 from tests.support.aggregate_having import (
     AggCreate,
     AggDoc,
@@ -76,3 +77,7 @@ async def test_aggregate_having_mongo(mongo_client: MongoClient) -> None:
     await seed_aggregate_corpus(oracle)
 
     await assert_aggregate_having_parity(ctx.document.query(spec), oracle)
+    # Mongo $percentile is approximate, so its values aren't oracle-matched.
+    await assert_aggregate_function_parity(
+        ctx.document.query(spec), oracle, exclude_approx=True
+    )

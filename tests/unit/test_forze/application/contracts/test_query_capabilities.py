@@ -97,6 +97,30 @@ class TestRejections:
         with pytest.raises(CoreException, match="field-to-field"):
             _check({"$fields": {"a": {"$eq": "b"}}}, caps)
 
+    @pytest.mark.parametrize("op", ["$descendant_of", "$ancestor_of"])
+    def test_hierarchy_unsupported_by_default(self, op: str) -> None:
+        # supports_hierarchy defaults off — a backend that doesn't advertise it rejects
+        # the hierarchy operators rather than 500ing in the renderer.
+        caps = QueryCapabilities()
+
+        assert caps.supports_hierarchy is False
+
+        with pytest.raises(CoreException, match=r"hierarchy operator") as ei:
+            _check({"$values": {"path": {op: "top.science"}}}, caps)
+
+        assert ei.value.code == UNSUPPORTED_QUERY_FEATURE_CODE
+
+    @pytest.mark.parametrize("op", ["$descendant_of", "$ancestor_of"])
+    def test_hierarchy_supported_when_advertised(self, op: str) -> None:
+        caps = QueryCapabilities(supports_hierarchy=True)
+
+        _check({"$values": {"path": {op: "top.science"}}}, caps)
+        # A list operand expands to OR of single-path predicates — still supported.
+        _check({"$values": {"path": {op: ["top.science", "top.arts"]}}}, caps)
+
+    def test_full_capabilities_advertise_hierarchy(self) -> None:
+        assert FULL_QUERY_CAPABILITIES.supports_hierarchy is True
+
     def test_element_op_distinct_from_top_level(self) -> None:
         # An op allowed at top level but not inside an element quantifier is rejected
         # only in the element context (the two axes are independent).

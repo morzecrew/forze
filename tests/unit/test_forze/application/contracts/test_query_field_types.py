@@ -19,6 +19,7 @@ from pydantic import BaseModel
 from forze.application.contracts.querying import (
     OPERATOR_TYPE_MISMATCH_CODE,
     QueryFilterExpressionParser,
+    TreePath,
     validate_query_field_types,
 )
 from forze.base.exceptions import CoreException, ExceptionKind
@@ -43,6 +44,7 @@ class _Doc(BaseModel):
     nums: list[int]
     items: list[_Item]
     matrix: list[list[str]]  # scalar array-of-arrays
+    path: TreePath  # materialized hierarchy path
     note: str | None = None
 
 
@@ -166,6 +168,39 @@ class TestBestEffortSkips:
                 {"$values": {"name": {"$like": "x"}}},
                 field_type_hints={"name": int},
             )
+
+        assert ei.value.code == OPERATOR_TYPE_MISMATCH_CODE
+
+
+class TestHierarchyPath:
+    @pytest.mark.parametrize(
+        "expr",
+        [
+            {"$values": {"path": {"$descendant_of": "top.science"}}},
+            {"$values": {"path": {"$ancestor_of": "top.science.math"}}},
+            {"$values": {"path": {"$descendant_of": ["top.science", "top.arts"]}}},
+            # A TreePath is still a string — text/membership/equality stay valid on it.
+            {"$values": {"path": {"$like": "top.%"}}},
+            {"$values": {"path": {"$in": ["a", "b"]}}},
+            {"$values": {"path": {"$eq": "top"}}},
+        ],
+    )
+    def test_hierarchy_ops_pass_on_tree_path(self, expr: dict) -> None:
+        _check(expr)
+
+    @pytest.mark.parametrize("op", ["$descendant_of", "$ancestor_of"])
+    def test_hierarchy_op_on_plain_string_rejected(self, op: str) -> None:
+        # ``name`` is a plain str, not a TreePath — the hierarchy operators don't apply.
+        with pytest.raises(CoreException, match=r"\$\w+") as ei:
+            _check({"$values": {"name": {op: "top.science"}}})
+
+        assert ei.value.code == OPERATOR_TYPE_MISMATCH_CODE
+        assert op in str(ei.value)
+
+    @pytest.mark.parametrize("op", ["$descendant_of", "$ancestor_of"])
+    def test_hierarchy_op_on_number_rejected(self, op: str) -> None:
+        with pytest.raises(CoreException) as ei:
+            _check({"$values": {"age": {op: "top"}}})
 
         assert ei.value.code == OPERATOR_TYPE_MISMATCH_CODE
 

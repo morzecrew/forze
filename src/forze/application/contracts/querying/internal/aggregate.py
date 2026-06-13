@@ -27,6 +27,8 @@ _FUNCTIONS: frozenset[str] = frozenset(get_args(AggregateFunction))
 _UNITS: frozenset[str] = frozenset(("hour", "day", "week", "month"))
 _GROUP_OPS: frozenset[str] = frozenset(("$trunc",))
 
+# ....................... #
+
 
 def _having_field_roots(expr: QueryExpr) -> frozenset[str]:
     """Top-level field names a ``$having`` AST references (for alias validation)."""
@@ -58,6 +60,7 @@ def _having_field_roots(expr: QueryExpr) -> frozenset[str]:
     _walk(expr)
 
     return frozenset(roots)
+
 
 # ....................... #
 
@@ -122,6 +125,9 @@ class AggregateComputedField:
 
     parsed_filter: QueryExpr | None = None
     """Parsed AST for :attr:`filter`, set when the aggregate expression is validated."""
+
+    p: float | None = None
+    """Quantile in ``[0, 1]`` for ``$percentile``; ``None`` for every other function."""
 
 
 # ....................... #
@@ -351,26 +357,15 @@ class AggregatesExpressionParser:
         if function not in _FUNCTIONS:
             raise exc.internal(f"Invalid aggregate function: {function!r}")
 
-        field_path, filter_expr, parsed_filter = cls._function_arg(function, field)
-
-        if function == "$count":
-            if field_path is not None:
-                raise exc.internal("$count aggregate expects no field")
-
-            return AggregateComputedField(
-                alias=alias,
-                function=function,
-                field=None,
-                filter=filter_expr,
-                parsed_filter=parsed_filter,
-            )  # type: ignore[arg-type]
+        field_path, filter_expr, parsed_filter, p = cls._function_arg(function, field)
 
         return AggregateComputedField(
             alias=alias,
             function=function,  # type: ignore[arg-type]
-            field=cls._field(field_path),
+            field=field_path,
             filter=filter_expr,
             parsed_filter=parsed_filter,
+            p=p,
         )
 
     # ....................... #
@@ -380,24 +375,33 @@ class AggregatesExpressionParser:
         cls,
         function: object,
         raw: object,
-    ) -> tuple[str | None, QueryFilterExpression | None, QueryExpr | None]:  # type: ignore[valid-type]
+    ) -> tuple[str | None, QueryFilterExpression | None, QueryExpr | None, float | None]:  # type: ignore[valid-type]
+        fieldless = function == "$count"  # only plain count takes no field
+        needs_p = function == "$percentile"
+
         if not isinstance(raw, Mapping):
-            return raw, None, None  # type: ignore[return-value]
+            if needs_p:
+                raise exc.internal(
+                    "$percentile requires the {field, p} form; no scalar shorthand",
+                )
+
+            field_path = cls._field(raw) if raw is not None else None  # type: ignore[arg-type]
+            cls._check_field_presence(function, field_path, fieldless=fieldless)
+            return field_path, None, None, None
 
         raw_spec: Mapping[Any, Any] = raw  # type: ignore[assignment]
         field = raw_spec.get("field")
         filter_expr = raw_spec.get("filter")
-        allowed = {"field", "filter"}
+        p = raw_spec.get("p")
+        allowed: set[str] = {"field", "filter"} | ({"p"} if needs_p else set())
         extra = sorted(str(key) for key in set(raw_spec) - allowed)
 
         if extra:
             raise exc.internal(f"Invalid aggregate function keys: {extra}")
 
-        if function == "$count" and field is not None:
-            raise exc.internal("$count aggregate expects no field")
+        cls._check_field_presence(function, field, fieldless=fieldless)
 
-        if function != "$count" and field is None:
-            raise exc.internal(f"{function} aggregate requires a field")
+        resolved_p = cls._quantile(p) if needs_p else None
 
         parsed_filter: QueryExpr | None = None
         if filter_expr is not None:
@@ -407,4 +411,29 @@ class AggregatesExpressionParser:
             cls._field(field) if field is not None else None,
             filter_expr,  # type: ignore[return-value]
             parsed_filter,
+            resolved_p,
         )
+
+    @classmethod
+    def _check_field_presence(
+        cls,
+        function: object,
+        field: object,
+        *,
+        fieldless: bool,
+    ) -> None:
+        if fieldless and field is not None:
+            raise exc.internal("$count aggregate expects no field")
+
+        if not fieldless and field is None:
+            raise exc.internal(f"{function} aggregate requires a field")
+
+    @classmethod
+    def _quantile(cls, p: object) -> float:
+        if p is None:
+            raise exc.internal("$percentile requires a 'p' quantile")
+
+        if isinstance(p, bool) or not isinstance(p, (int, float)) or not 0 <= p <= 1:
+            raise exc.internal(f"$percentile 'p' must be a number in [0, 1], got {p!r}")
+
+        return float(p)

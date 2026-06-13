@@ -224,6 +224,19 @@ class TestMongoQueryRenderer:
         with pytest.raises(CoreException, match="Unknown operator"):
             r._render_expr(QueryField("f", "$bogus", 1))  # type: ignore[arg-type]
 
+    @pytest.mark.parametrize("op", ["$descendant_of", "$ancestor_of"])
+    def test_hierarchy_ops_rejected_by_capability(self, op: str) -> None:
+        # Mongo can't express label-aware materialized-path containment, so it does not
+        # advertise supports_hierarchy — render() rejects the operators up front rather
+        # than emitting an invalid pipeline.
+        r = MongoQueryRenderer()
+        expr = QueryFilterExpressionParser.parse(
+            {"$values": {"path": {op: "top.science"}}}
+        )
+
+        with pytest.raises(CoreException, match="hierarchy operator"):
+            r.render(expr)
+
     def test_eq_neq_ord(self) -> None:
         r = MongoQueryRenderer()
         assert r.render(QueryField("n", "$gt", 3)) == {"n": {"$gt": 3}}

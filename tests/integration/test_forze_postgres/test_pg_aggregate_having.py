@@ -28,6 +28,7 @@ from forze_postgres.execution.deps.keys import (
 )
 from forze_postgres.kernel.catalog.introspect import PostgresIntrospector
 from forze_postgres.kernel.client.client import PostgresClient
+from tests.support.aggregate_functions import assert_aggregate_function_parity
 from tests.support.aggregate_having import (
     AggCreate,
     AggDoc,
@@ -105,3 +106,7 @@ async def test_aggregate_having_postgres(pg_client: PostgresClient) -> None:
     await seed_aggregate_corpus(oracle)
 
     await assert_aggregate_having_parity(ctx.document.query(spec), oracle)
+    # Postgres percentile_cont is exact, so all functions are value-checked.
+    await assert_aggregate_function_parity(
+        ctx.document.query(spec), oracle, exclude_approx=False
+    )

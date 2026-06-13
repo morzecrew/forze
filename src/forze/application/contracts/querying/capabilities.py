@@ -88,6 +88,10 @@ ALL_ELEMENT_OPS: Final[frozenset[str]] = frozenset(
 )
 """Every operator the DSL allows inside an element quantifier (the full ``ElementOp`` set)."""
 
+HIERARCHY_OPS: Final[frozenset[str]] = frozenset({"$descendant_of", "$ancestor_of"})
+"""Hierarchy operators — gated by :attr:`QueryCapabilities.supports_hierarchy`, not
+``value_ops``, so adding them doesn't make every backend claim support."""
+
 
 # ....................... #
 
@@ -120,14 +124,24 @@ class QueryCapabilities:
     supports_field_compare: bool = True
     """Whether field-to-field comparison (``$fields`` → :class:`QueryCompare`) compiles."""
 
+    supports_hierarchy: bool = False
+    """Whether hierarchy operators (``$descendant_of`` / ``$ancestor_of`` on a
+    materialized-path field) compile. Off by default — only backends that can express
+    label-aware path containment (Postgres ``ltree`` / text prefix, the in-memory oracle)
+    advertise it; others reject these operators cleanly."""
+
 
 # ....................... #
 
-FULL_QUERY_CAPABILITIES: Final[QueryCapabilities] = QueryCapabilities()
+FULL_QUERY_CAPABILITIES: Final[QueryCapabilities] = QueryCapabilities(
+    supports_hierarchy=True,
+)
 """The canonical full surface — every operator and feature the DSL defines.
 
 The in-memory mock evaluates all of it, so it is both the reference semantics and the
-capability superset every other backend is a subset of.
+capability superset every other backend is a subset of. (``supports_hierarchy`` defaults
+off on :class:`QueryCapabilities` so a backend that omits it doesn't accidentally claim
+hierarchy support; the full surface opts in explicitly.)
 """
 
 
@@ -165,6 +179,13 @@ def validate_query_capabilities(
                     _fail("negation ($not)")
 
                 _walk(item, in_element=in_element)
+
+            case QueryField(_, op, _) if op in HIERARCHY_OPS:
+                if in_element:
+                    _fail(f"hierarchy operator {op!r} inside element quantifiers")
+
+                if not caps.supports_hierarchy:
+                    _fail(f"hierarchy operator {op!r}")
 
             case QueryField(_, op, _):
                 allowed = caps.element_ops if in_element else caps.value_ops

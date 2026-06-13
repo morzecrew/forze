@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import math
 import re
+import statistics
 from datetime import datetime, timezone
 from typing import (
     Any,
@@ -137,6 +139,23 @@ def _match_text(value: Any, op: str, pattern: str) -> bool:
             return False
 
 
+def _is_descendant_path(a: Any, b: Any) -> bool:
+    """Whether materialized path *a* is at or below path *b* (label-aware, inclusive).
+
+    Compares dot-separated label sequences: *a* is a descendant of *b* when *b* is a
+    label-boundary prefix of *a* (``top.science`` is *not* a descendant of ``top.sci``).
+    Equal paths qualify — a node is its own ancestor and descendant.
+    """
+
+    if not isinstance(a, str) or not isinstance(b, str):
+        return False
+
+    a_labels = a.split(".")
+    b_labels = b.split(".")
+
+    return len(a_labels) >= len(b_labels) and a_labels[: len(b_labels)] == b_labels
+
+
 def _match_field(doc: JsonDict, field: QueryField) -> bool:
     value = _path_get(doc, field.name)
 
@@ -233,6 +252,16 @@ def _match_field(doc: JsonDict, field: QueryField) -> bool:
 
         case "$like" | "$ilike" | "$regex":
             return _match_text(value, field.op, str(field.value))
+
+        case "$descendant_of":
+            if value is _MISSING:
+                return False
+            return _is_descendant_path(value, field.value)
+
+        case "$ancestor_of":
+            if value is _MISSING:
+                return False
+            return _is_descendant_path(field.value, value)
 
 
 def _match_compare(doc: JsonDict, node: QueryCompare) -> bool:
@@ -437,6 +466,34 @@ def _require_numeric(value: Any, *, function: str, field: str) -> int | float:
     return value
 
 
+def _numeric_values(values: list[Any], computed: Any) -> list[int | float]:
+    return [
+        _require_numeric(value, function=computed.function, field=computed.field)
+        for value in values
+    ]
+
+
+def _percentile_cont(nums: list[int | float], p: float) -> float | None:
+    """Continuous (interpolated) percentile — matches Postgres ``percentile_cont``."""
+
+    if not nums:
+        return None
+
+    ordered = sorted(nums)
+
+    if len(ordered) == 1:
+        return float(ordered[0])
+
+    idx = p * (len(ordered) - 1)
+    lo = math.floor(idx)
+    hi = math.ceil(idx)
+
+    if lo == hi:
+        return float(ordered[lo])
+
+    return ordered[lo] + (ordered[hi] - ordered[lo]) * (idx - lo)
+
+
 def _coerce_datetime_for_bucket(raw: Any) -> datetime:
     if isinstance(raw, datetime):
         return raw if raw.tzinfo is not None else raw.replace(tzinfo=timezone.utc)
@@ -560,6 +617,35 @@ def _aggregate_docs(  # type: ignore[reportPrivateUsage]
 
                 case "$max":
                     row[computed.alias] = max(values) if values else None
+
+                case "$count_distinct":
+                    row[computed.alias] = len(set(values))
+
+                case "$stddev_pop":
+                    nums = _numeric_values(values, computed)
+                    row[computed.alias] = statistics.pstdev(nums) if nums else None
+
+                case "$stddev_samp":
+                    nums = _numeric_values(values, computed)
+                    row[computed.alias] = (
+                        statistics.stdev(nums) if len(nums) >= 2 else None
+                    )
+
+                case "$var_pop":
+                    nums = _numeric_values(values, computed)
+                    row[computed.alias] = statistics.pvariance(nums) if nums else None
+
+                case "$var_samp":
+                    nums = _numeric_values(values, computed)
+                    row[computed.alias] = (
+                        statistics.variance(nums) if len(nums) >= 2 else None
+                    )
+
+                case "$percentile":
+                    nums = _numeric_values(values, computed)
+                    row[computed.alias] = _percentile_cont(
+                        nums, cast(float, computed.p)
+                    )
 
         rows.append(row)
 

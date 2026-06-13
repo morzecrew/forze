@@ -1,7 +1,7 @@
 """Scalar and operator types for filter expressions."""
 
 from datetime import date, datetime
-from typing import Literal, Sequence
+from typing import Any, Literal, Sequence
 from uuid import UUID
 
 # ----------------------- #
@@ -48,8 +48,47 @@ comparison, ordering, text patterns, and membership (``$in`` / ``$nin``)."""
 SetRelOp = Literal["$superset", "$subset", "$disjoint", "$overlaps"]
 """Set relation operators."""
 
-Op = EqOp | OrdOp | MembOp | UnaryOp | SetRelOp | TextOp
+HierarchyOp = Literal["$descendant_of", "$ancestor_of"]
+"""Hierarchy (materialized-path) operators on a :class:`TreePath` field.
+
+``$descendant_of`` keeps rows whose path is *at or below* the given node; ``$ancestor_of``
+keeps rows whose path is *at or above* it (the row *has* the given node as a descendant).
+Both are **inclusive** (a node is its own ancestor/descendant). Backend-specific
+(Postgres ``ltree`` / materialized-path prefix); capability-gated."""
+
+HierarchyValue = str | Sequence[str]
+"""Hierarchy operand: one path, or several (``OR`` / "any" semantics)."""
+
+Op = EqOp | OrdOp | MembOp | UnaryOp | SetRelOp | TextOp | HierarchyOp
 """All supported filter operators."""
+
+
+class TreePath(str):
+    """A materialized hierarchy path (dot-separated labels, e.g. ``"top.science.math"``).
+
+    A marker ``str`` subtype: type a read-model field as ``TreePath`` to make the
+    hierarchy operators (:data:`HierarchyOp`) valid on it. Stored as ``ltree`` or plain
+    text in Postgres; the operators render per backend and are rejected by backends that
+    declare no hierarchy support."""
+
+    __slots__ = ()
+
+    @classmethod
+    def __get_pydantic_core_schema__(cls, source: Any, handler: Any) -> Any:
+        """Validate as a plain string, then wrap in :class:`TreePath`.
+
+        Lets read-models annotate a field as ``TreePath`` directly; Pydantic treats it as
+        a ``str`` for validation/serialization while the query layer still sees the marker
+        subtype to enable the hierarchy operators.
+        """
+
+        from pydantic_core import core_schema
+
+        return core_schema.no_info_after_validator_function(
+            cls,
+            core_schema.str_schema(),
+        )
+
 
 # ....................... #
 # Shit below is only for annotations and short imports
@@ -66,6 +105,7 @@ class QueryOp:
     Memb = MembOp
     SetRel = SetRelOp
     Text = TextOp
+    Hierarchy = HierarchyOp
     All = Op
 
 

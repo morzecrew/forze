@@ -628,6 +628,65 @@ class TestQueryFilterExpressionParser:
             assert isinstance(f, QueryField)
             assert f.op == op
 
+    def test_parse_hierarchy_scalar(self) -> None:
+        for op in ("$descendant_of", "$ancestor_of"):
+            result = QueryFilterExpressionParser.parse(
+                {"$values": {"path": {op: "top.science"}}},
+            )
+            f = result.items[0]
+            assert isinstance(f, QueryField)
+            assert f.op == op
+            assert f.value == "top.science"
+
+    def test_parse_hierarchy_list_desugars_to_or(self) -> None:
+        # A list operand is "any" semantics → OR of single-path predicates.
+        result = QueryFilterExpressionParser.parse(
+            {"$values": {"path": {"$descendant_of": ["top.science", "top.arts"]}}},
+        )
+        assert isinstance(result, QueryAnd)
+        or_node = result.items[0]
+        assert isinstance(or_node, QueryOr)
+        assert len(or_node.items) == 2
+        assert [i.value for i in or_node.items if isinstance(i, QueryField)] == [
+            "top.science",
+            "top.arts",
+        ]
+        assert all(
+            isinstance(i, QueryField) and i.op == "$descendant_of"
+            for i in or_node.items
+        )
+
+    def test_parse_hierarchy_single_item_list_stays_flat(self) -> None:
+        result = QueryFilterExpressionParser.parse(
+            {"$values": {"path": {"$ancestor_of": ["top.science"]}}},
+        )
+        f = result.items[0]
+        assert isinstance(f, QueryField)
+        assert f.op == "$ancestor_of" and f.value == "top.science"
+
+    def test_parse_hierarchy_rejects_empty_list(self) -> None:
+        with pytest.raises(CoreException, match="cannot be empty"):
+            QueryFilterExpressionParser.parse(
+                {"$values": {"path": {"$descendant_of": []}}},
+            )
+
+    def test_parse_hierarchy_rejects_non_string_operand(self) -> None:
+        with pytest.raises(CoreException, match="path string"):
+            QueryFilterExpressionParser.parse(
+                {"$values": {"path": {"$descendant_of": 42}}},
+            )
+
+        with pytest.raises(CoreException, match="path string"):
+            QueryFilterExpressionParser.parse(
+                {"$values": {"path": {"$ancestor_of": ["top", 7]}}},
+            )
+
+    def test_parse_hierarchy_rejects_blank_path(self) -> None:
+        with pytest.raises(CoreException, match="non-empty"):
+            QueryFilterExpressionParser.parse(
+                {"$values": {"path": {"$descendant_of": "   "}}},
+            )
+
     def test_parse_ilike_single_pattern(self) -> None:
         result = QueryFilterExpressionParser.parse(
             {"$values": {"title": {"$ilike": "%road%"}}},
