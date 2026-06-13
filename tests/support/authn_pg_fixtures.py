@@ -49,6 +49,7 @@ async def create_authn_tables(
             created_at timestamptz NOT NULL,
             last_update_at timestamptz NOT NULL,
             principal_id uuid NOT NULL,
+            actor_principal_id uuid,
             prefix text,
             key_hash text NOT NULL,
             expires_at timestamptz,

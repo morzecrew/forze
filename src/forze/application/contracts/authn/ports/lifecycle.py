@@ -58,6 +58,8 @@ class ApiKeyLifecyclePort(Protocol):  # pragma: no cover
     def issue_api_key(
         self,
         identity: AuthnIdentity,  # noqa: F841
+        *,
+        actor_principal_id: UUID | None = None,  # noqa: F841
     ) -> Awaitable[IssuedApiKey]: ...
 
     def refresh_api_key(

@@ -1,8 +1,9 @@
-from typing import final
+from typing import Any, final
 
 import attrs
 
 from forze.application.contracts.authn import (
+    ACT_CLAIM,
     ApiKeyCredentials,
     ApiKeyVerifierPort,
     VerifiedAssertion,
@@ -61,7 +62,15 @@ class HmacApiKeyVerifier(ApiKeyVerifierPort):
         if not ok:
             raise exc.authentication("Invalid API key")
 
+        claims: dict[str, Any] = {}
+
+        # A delegation key carries its agent as an RFC 8693 ``act`` claim; the
+        # orchestrator resolves it into AuthnIdentity.actor (intrinsic, trusted).
+        if account.actor_principal_id is not None:
+            claims[ACT_CLAIM] = {"sub": str(account.actor_principal_id)}
+
         return VerifiedAssertion(
             issuer=ISSUER_FORZE_API_KEY,
             subject=str(account.principal_id),
+            claims=claims,
         )

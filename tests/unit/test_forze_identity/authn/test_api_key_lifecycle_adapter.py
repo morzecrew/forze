@@ -115,6 +115,68 @@ def _created_key() -> MagicMock:
     return created
 
 
+class TestApiKeyLifecycleAdapterIssueDelegation:
+    @pytest.mark.asyncio
+    async def test_issue_persists_actor_principal_id(self) -> None:
+        pid, agent = uuid4(), uuid4()
+        ak_cmd = _port()
+        ak_cmd.create = AsyncMock(return_value=_created_key())
+
+        adapter = _adapter(ak_cmd=ak_cmd)
+        adapter.eligibility.require_authentication_allowed = AsyncMock()
+
+        await adapter.issue_api_key(
+            AuthnIdentity(principal_id=pid), actor_principal_id=agent
+        )
+
+        create_cmd = ak_cmd.create.await_args.args[0]
+        assert create_cmd.principal_id == pid
+        assert create_cmd.actor_principal_id == agent
+
+    @pytest.mark.asyncio
+    async def test_issue_without_agent_is_non_delegated(self) -> None:
+        ak_cmd = _port()
+        ak_cmd.create = AsyncMock(return_value=_created_key())
+
+        adapter = _adapter(ak_cmd=ak_cmd)
+        adapter.eligibility.require_authentication_allowed = AsyncMock()
+
+        await adapter.issue_api_key(AuthnIdentity(principal_id=uuid4()))
+
+        assert ak_cmd.create.await_args.args[0].actor_principal_id is None
+
+    @pytest.mark.asyncio
+    async def test_refresh_preserves_the_delegation_agent(self) -> None:
+        pid, agent = uuid4(), uuid4()
+        svc = ApiKeyService(pepper=b"x" * 32, config=ApiKeyConfig())
+        key = "raw-key"
+        now = datetime.now(tz=UTC)
+        account = ReadApiKeyAccount(
+            id=uuid4(),
+            rev=2,
+            created_at=now,
+            last_update_at=now,
+            principal_id=pid,
+            actor_principal_id=agent,
+            key_hash=svc.calculate_key_digest(key),
+            is_active=True,
+        )
+
+        ak_qry = _port()
+        ak_qry.find = AsyncMock(return_value=account)
+        ak_cmd = _port()
+        ak_cmd.create = AsyncMock(return_value=_created_key())
+        ak_cmd.update = AsyncMock()
+
+        adapter = _adapter(api_key_svc=svc, ak_qry=ak_qry, ak_cmd=ak_cmd)
+        adapter.eligibility.require_authentication_allowed = AsyncMock()
+
+        await adapter.refresh_api_key(ApiKeyCredentials(key=key))
+
+        # The rotated key keeps acting for the same agent.
+        assert ak_cmd.create.await_args.args[0].actor_principal_id == agent
+
+
 class TestApiKeyLifecycleAdapterRefresh:
     @pytest.mark.asyncio
     async def test_refresh_rotates_active_key(self) -> None:

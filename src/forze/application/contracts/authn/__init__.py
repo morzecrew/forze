@@ -60,6 +60,7 @@ from .ports import (
 )
 from .specs import AuthnMethod, AuthnSpec
 from .value_objects import (
+    ACT_CLAIM,
     AccessTokenCredentials,
     ApiKeyCredentials,
     AuthnIdentity,
@@ -140,5 +141,6 @@ __all__ = [
     "TokenVerifierDepKey",
     "TokenVerifierDepPort",
     "TokenVerifierPort",
+    "ACT_CLAIM",
     "VerifiedAssertion",
 ]

@@ -17,6 +17,12 @@ for you. By default only ``QUERY`` operations are exposed and a configurable sta
 is bound; pass ``include_writes=True`` to expose command operations (tagged with destructive
 hints) and supply a :class:`DelegatedIdentityResolver` to run calls on behalf of a user with
 the agent attached as actor (least-privilege intersection enforced by the engine).
+
+To protect the server with API-key auth backed by the same forze_identity brain as the HTTP
+edge, pass :class:`ForzeApiKeyVerifier` as ``auth`` (FastMCP validates the bearer and rejects
+unauthenticated calls) and :class:`AccessTokenIdentityResolver` as the identity resolver (it
+binds the verified principal, attaching a fixed agent service principal as the delegation
+actor). No OAuth flow — the bearer is a forze API key the caller already holds.
 """
 
 from ._compat import require_mcp
@@ -25,6 +31,10 @@ require_mcp()
 
 # ....................... #
 
+from .auth import (  # noqa: E402
+    AccessTokenIdentityResolver,
+    ForzeApiKeyVerifier,
+)
 from .identity import (  # noqa: E402
     DelegatedIdentityResolver,
     MCPIdentityResolver,
@@ -44,7 +54,9 @@ from .server import build_mcp_server  # noqa: E402
 # ----------------------- #
 
 __all__ = [
+    "AccessTokenIdentityResolver",
     "DelegatedIdentityResolver",
+    "ForzeApiKeyVerifier",
     "LoggingMiddleware",
     "MCPIdentityResolver",
     "ResourceTemplateSpec",

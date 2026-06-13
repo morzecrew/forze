@@ -15,6 +15,7 @@ from typing import Any, Final, cast, final
 import attrs
 
 from forze.application.contracts.authn import (
+    ACT_CLAIM,
     AccessTokenCredentials,
     ApiKeyCredentials,
     ApiKeyVerifierPort,
@@ -316,6 +317,21 @@ class AuthnOrchestrator(AuthnPort):
         assertion = await self.api_key_verifier.verify_api_key(credentials)
         identity = await self.resolver.resolve(assertion)
         await self.eligibility.require_authentication_allowed(identity.principal_id)
+
+        # API-key delegation is *intrinsic*, not opt-in: a key the framework minted
+        # for a user→agent pair carries the agent under the well-known ``act`` claim,
+        # which the verifier emits and we always honor (unlike the token path, gated
+        # on ``actor_claim`` because external tokens are not first-party). The actor
+        # principal is still resolved and eligibility-gated like any other.
+        act = assertion.claims.get(ACT_CLAIM)
+
+        if isinstance(act, Mapping):
+            identity = attrs.evolve(
+                identity,
+                actor=await self._resolve_actor(
+                    assertion, cast("Mapping[str, Any]", act)
+                ),
+            )
 
         return AuthnResult(
             identity=identity,

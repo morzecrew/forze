@@ -5,7 +5,7 @@ as before; submodules expose narrower seams when needed (e.g. resolvers consume 
 :class:`~forze.application.contracts.authn.value_objects.assertion.VerifiedAssertion`).
 """
 
-from .assertion import VerifiedAssertion
+from .assertion import ACT_CLAIM, VerifiedAssertion
 from .credentials import (
     AccessTokenCredentials,
     ApiKeyCredentials,
@@ -40,5 +40,6 @@ __all__ = [
     "IssuedTokens",
     "PasswordCredentials",
     "RefreshTokenCredentials",
+    "ACT_CLAIM",
     "VerifiedAssertion",
 ]

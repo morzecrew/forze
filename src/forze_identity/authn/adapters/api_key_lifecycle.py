@@ -66,10 +66,18 @@ class ApiKeyLifecycleAdapter(ApiKeyLifecyclePort):
 
     # ....................... #
 
-    async def issue_api_key(self, identity: AuthnIdentity) -> IssuedApiKey:
+    async def issue_api_key(
+        self,
+        identity: AuthnIdentity,
+        *,
+        actor_principal_id: UUID | None = None,
+    ) -> IssuedApiKey:
         await self.eligibility.require_authentication_allowed(identity.principal_id)
 
-        return await self._issue_for_principal(identity.principal_id)
+        return await self._issue_for_principal(
+            identity.principal_id,
+            actor_principal_id=actor_principal_id,
+        )
 
     # ....................... #
 
@@ -106,8 +114,12 @@ class ApiKeyLifecycleAdapter(ApiKeyLifecyclePort):
 
         # Rotate: issue a fresh key, then retire the presented one. Account fields
         # (prefix/expires_at/key_hash) are immutable, so refresh mints a new document
-        # rather than mutating the existing key in place.
-        issued = await self._issue_for_principal(account.principal_id)
+        # rather than mutating the existing key in place. The delegation binding
+        # (actor) is preserved so a rotated key keeps acting for the same agent.
+        issued = await self._issue_for_principal(
+            account.principal_id,
+            actor_principal_id=account.actor_principal_id,
+        )
 
         await self.ak_cmd.update(
             account.id,
@@ -120,7 +132,12 @@ class ApiKeyLifecycleAdapter(ApiKeyLifecyclePort):
 
     # ....................... #
 
-    async def _issue_for_principal(self, principal_id: UUID) -> IssuedApiKey:
+    async def _issue_for_principal(
+        self,
+        principal_id: UUID,
+        *,
+        actor_principal_id: UUID | None = None,
+    ) -> IssuedApiKey:
         now = utcnow()
         expires_in = self.api_key_svc.config.expires_in
         expires_at = (now + expires_in) if expires_in is not None else None
@@ -138,6 +155,7 @@ class ApiKeyLifecycleAdapter(ApiKeyLifecyclePort):
 
         create_cmd = CreateApiKeyAccountCmd(
             principal_id=principal_id,
+            actor_principal_id=actor_principal_id,
             key_hash=key_hash,
             prefix=prefix,
             expires_at=expires_at,

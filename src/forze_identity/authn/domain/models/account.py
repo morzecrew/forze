@@ -100,7 +100,16 @@ class ApiKeyAccountImmutableFields(CoreModel):
     """Immutable fields for API key-based authentication account."""
 
     principal_id: UUID = Field(frozen=True)
-    """Principal ID."""
+    """Principal ID (the effective subject — the user the key acts for)."""
+
+    actor_principal_id: UUID | None = Field(default=None, frozen=True)
+    """Optional delegation **actor** (the agent acting on the subject's behalf).
+
+    When set, the key is a user→agent delegation: verification attaches this principal
+    as :attr:`~forze.application.contracts.authn.AuthnIdentity.actor`, so the engine
+    enforces the least-privilege intersection of the subject's and agent's grants. The
+    same agent principal (e.g. one per connector type) can back many keys, while each
+    key stays independently revocable. ``None`` is a direct (non-delegated) key."""
 
     prefix: str | None = Field(default=None, frozen=True)
     """Prefix."""
