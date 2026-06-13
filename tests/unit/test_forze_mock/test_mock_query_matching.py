@@ -83,6 +83,37 @@ def test_match_text_patterns() -> None:
     assert _match_field({"t": "foo"}, QueryField("t", "$regex", "^f")) is True
 
 
+def test_match_descendant_of_label_aware_inclusive() -> None:
+    f = QueryField("p", "$descendant_of", "top.science")
+
+    # at or below the node, on label boundaries
+    assert _match_field({"p": "top.science"}, f) is True  # inclusive
+    assert _match_field({"p": "top.science.math"}, f) is True
+    assert _match_field({"p": "top.science.math.algebra"}, f) is True
+
+    # not below it
+    assert _match_field({"p": "top"}, f) is False  # an ancestor, not a descendant
+    assert _match_field({"p": "top.arts"}, f) is False
+    # label-boundary: "scientist" is not the "science" label
+    assert _match_field({"p": "top.scientist"}, f) is False
+    assert _match_field({}, f) is False
+
+
+def test_match_ancestor_of_label_aware_inclusive() -> None:
+    f = QueryField("p", "$ancestor_of", "top.science.math")
+
+    # at or above the node
+    assert _match_field({"p": "top.science.math"}, f) is True  # inclusive
+    assert _match_field({"p": "top.science"}, f) is True
+    assert _match_field({"p": "top"}, f) is True
+
+    # not above it
+    assert _match_field({"p": "top.science.math.algebra"}, f) is False  # below
+    assert _match_field({"p": "top.arts"}, f) is False
+    assert _match_field({"p": "top.scien"}, f) is False  # not a label prefix
+    assert _match_field({}, f) is False
+
+
 def test_unknown_operator_falls_through_without_match() -> None:
     """Unsupported ops are not handled by the mock matcher (no default case)."""
     assert _match_field({"a": 1}, QueryField("a", cast(Any, "$nope"), 1)) is None

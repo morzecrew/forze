@@ -308,6 +308,52 @@ class TestAggregatesExpressionParser:
         assert parsed.computed_fields[0].field == "price"
         assert parsed.computed_fields[0].parsed_filter is None
 
+    def test_percentile_rejects_non_numeric_quantile(self) -> None:
+        with pytest.raises(CoreException, match="must be a number"):
+            AggregatesExpressionParser.parse(
+                {"$computed": {"p": {"$percentile": {"field": "x", "p": "bad"}}}},
+            )
+
+    def test_percentile_rejects_out_of_range_quantile(self) -> None:
+        with pytest.raises(CoreException, match="must be a number"):
+            AggregatesExpressionParser.parse(
+                {"$computed": {"p": {"$percentile": {"field": "x", "p": 1.5}}}},
+            )
+
+    def test_percentile_rejects_bool_quantile(self) -> None:
+        # bool is an int subtype; reject it explicitly rather than treating True as 1.
+        with pytest.raises(CoreException, match="must be a number"):
+            AggregatesExpressionParser.parse(
+                {"$computed": {"p": {"$percentile": {"field": "x", "p": True}}}},
+            )
+
+    def test_having_walks_not_and_field_compare(self) -> None:
+        # The $having alias-root validation walks $not (negation) and $fields (compare)
+        # nodes, not just plain value predicates.
+        parsed = AggregatesExpressionParser.parse(
+            {
+                "$groups": {"region": "region"},
+                "$computed": {"cnt": {"$count": None}, "total": {"$sum": "amount"}},
+                "$having": {
+                    "$and": [
+                        {"$not": {"$values": {"cnt": {"$lt": 2}}}},
+                        {"$fields": {"total": {"$gt": "cnt"}}},
+                    ],
+                },
+            },
+        )
+        assert parsed.having is not None
+
+    def test_having_rejects_unknown_alias_via_field_compare(self) -> None:
+        with pytest.raises(CoreException):
+            AggregatesExpressionParser.parse(
+                {
+                    "$groups": {"region": "region"},
+                    "$computed": {"cnt": {"$count": None}},
+                    "$having": {"$fields": {"cnt": {"$gt": "ghost"}}},
+                },
+            )
+
 
 # ----------------------- #
 
@@ -627,6 +673,65 @@ class TestQueryFilterExpressionParser:
             f = result.items[0]
             assert isinstance(f, QueryField)
             assert f.op == op
+
+    def test_parse_hierarchy_scalar(self) -> None:
+        for op in ("$descendant_of", "$ancestor_of"):
+            result = QueryFilterExpressionParser.parse(
+                {"$values": {"path": {op: "top.science"}}},
+            )
+            f = result.items[0]
+            assert isinstance(f, QueryField)
+            assert f.op == op
+            assert f.value == "top.science"
+
+    def test_parse_hierarchy_list_desugars_to_or(self) -> None:
+        # A list operand is "any" semantics → OR of single-path predicates.
+        result = QueryFilterExpressionParser.parse(
+            {"$values": {"path": {"$descendant_of": ["top.science", "top.arts"]}}},
+        )
+        assert isinstance(result, QueryAnd)
+        or_node = result.items[0]
+        assert isinstance(or_node, QueryOr)
+        assert len(or_node.items) == 2
+        assert [i.value for i in or_node.items if isinstance(i, QueryField)] == [
+            "top.science",
+            "top.arts",
+        ]
+        assert all(
+            isinstance(i, QueryField) and i.op == "$descendant_of"
+            for i in or_node.items
+        )
+
+    def test_parse_hierarchy_single_item_list_stays_flat(self) -> None:
+        result = QueryFilterExpressionParser.parse(
+            {"$values": {"path": {"$ancestor_of": ["top.science"]}}},
+        )
+        f = result.items[0]
+        assert isinstance(f, QueryField)
+        assert f.op == "$ancestor_of" and f.value == "top.science"
+
+    def test_parse_hierarchy_rejects_empty_list(self) -> None:
+        with pytest.raises(CoreException, match="cannot be empty"):
+            QueryFilterExpressionParser.parse(
+                {"$values": {"path": {"$descendant_of": []}}},
+            )
+
+    def test_parse_hierarchy_rejects_non_string_operand(self) -> None:
+        with pytest.raises(CoreException, match="path string"):
+            QueryFilterExpressionParser.parse(
+                {"$values": {"path": {"$descendant_of": 42}}},
+            )
+
+        with pytest.raises(CoreException, match="path string"):
+            QueryFilterExpressionParser.parse(
+                {"$values": {"path": {"$ancestor_of": ["top", 7]}}},
+            )
+
+    def test_parse_hierarchy_rejects_blank_path(self) -> None:
+        with pytest.raises(CoreException, match="non-empty"):
+            QueryFilterExpressionParser.parse(
+                {"$values": {"path": {"$descendant_of": "   "}}},
+            )
 
     def test_parse_ilike_single_pattern(self) -> None:
         result = QueryFilterExpressionParser.parse(
@@ -985,16 +1090,33 @@ class TestQueryCompareExpressionParser:
         assert isinstance(none_result.items[0], QueryElem)
         assert none_result.items[0].quantifier == "$none"
 
-    def test_parse_element_invalid_nested_quantifier_raises(self) -> None:
-        with pytest.raises(CoreException, match="Nested element quantifiers"):
+    def test_parse_scalar_array_of_arrays_nesting(self) -> None:
+        # A quantifier directly on the (array) element — scalar array-of-arrays.
+        # Modeled as a nested QueryElem on the element itself ("$" sentinel path).
+        result = QueryFilterExpressionParser.parse(
+            {"$values": {"matrix": {"$any": {"$all": "x"}}}},
+        )
+        outer = result.items[0]
+        assert isinstance(outer, QueryElem)
+        assert outer.path == "matrix" and outer.quantifier == "$any"
+        inner = outer.inner
+        assert isinstance(inner, QueryElem)
+        assert inner.path == "$" and inner.quantifier == "$all"
+        assert isinstance(inner.inner, QueryField)
+        assert inner.inner.name == "$" and inner.inner.value == "x"
+
+    def test_parse_element_quantifier_mixed_with_operator_raises(self) -> None:
+        # A quantifier key cannot be combined with other operators in the same map.
+        with pytest.raises(CoreException, match="cannot be combined"):
             QueryFilterExpressionParser.parse(
-                {"$values": {"tags": {"$any": {"$all": "x"}}}},
+                {"$values": {"tags": {"$any": {"$any": "x", "$gt": 1}}}},
             )
 
     def test_parse_element_invalid_operator_raises(self) -> None:
+        # $superset is a set-relation op, not an element op (unlike $in/$gt/...).
         with pytest.raises(CoreException, match="Element constraint must be"):
             QueryFilterExpressionParser.parse(
-                {"$values": {"tags": {"$any": {"$in": ["a"]}}}},
+                {"$values": {"tags": {"$any": {"$superset": ["a"]}}}},
             )
 
 
@@ -1059,13 +1181,19 @@ class TestQueryFilterParserBranches:
                 {"$values": {"tags": {"$any": {}}}},
             )
 
-    def test_element_scalar_constraint_multiple_ops_raises(self) -> None:
-        with pytest.raises(
-            CoreException, match="must declare exactly one operator"
-        ):
-            QueryFilterExpressionParser.parse(
-                {"$values": {"scores": {"$any": {"$gt": 1, "$lt": 5}}}},
-            )
+    def test_element_scalar_constraint_multiple_ops_conjoins_to_range(self) -> None:
+        # Multiple operators on a scalar element are a range — they conjoin into a
+        # QueryAnd of element-scalar predicates.
+        ast = QueryFilterExpressionParser.parse(
+            {"$values": {"scores": {"$any": {"$gt": 1, "$lt": 5}}}},
+        )
+        elem = ast.items[0]  # type: ignore[attr-defined]
+        assert isinstance(elem, QueryElem)
+        assert elem.path == "scores" and elem.quantifier == "$any"
+        assert isinstance(elem.inner, QueryAnd)
+        ops = {f.op for f in elem.inner.items}  # type: ignore[attr-defined]
+        assert ops == {"$gt", "$lt"}
+        assert all(f.name == ELEM_SCALAR_FIELD for f in elem.inner.items)  # type: ignore[attr-defined]
 
     def test_element_scalar_eq_invalid_value_raises(self) -> None:
         with pytest.raises(CoreException, match="Invalid value for"):
@@ -1090,17 +1218,22 @@ class TestQueryFilterParserBranches:
 
     # Object-array element $values edge cases .................. #
 
-    def test_element_values_quantifier_inside_raises(self) -> None:
-        with pytest.raises(
-            CoreException, match="cannot use element quantifiers inside"
-        ):
-            QueryFilterExpressionParser.parse(
-                {
-                    "$values": {
-                        "items": {"$any": {"$values": {"f": {"$any": "x"}}}},
-                    },
+    def test_element_values_nested_quantifier_parses(self) -> None:
+        # A quantifier inside an object element's $values is a nested quantifier
+        # (over a sub-array) — it parses to a nested QueryElem (capability-gated
+        # per backend at render time).
+        ast = QueryFilterExpressionParser.parse(
+            {
+                "$values": {
+                    "items": {"$any": {"$values": {"f": {"$any": "x"}}}},
                 },
-            )
+            },
+        )
+        outer = ast.items[0]  # type: ignore[attr-defined]
+        assert isinstance(outer, QueryElem) and outer.path == "items"
+        nested = outer.inner.items[0]  # type: ignore[attr-defined]
+        assert isinstance(nested, QueryElem)
+        assert nested.path == "f" and nested.quantifier == "$any"
 
     def test_element_values_null_shortcut_raises(self) -> None:
         with pytest.raises(CoreException, match="cannot use null shortcut"):
@@ -1133,7 +1266,7 @@ class TestQueryFilterParserBranches:
 
     def test_element_values_nested_quantifier_in_conjunction_raises(self) -> None:
         # dict with a quantifier key plus extra key -> conjunction, then rejected.
-        with pytest.raises(CoreException, match="Nested element quantifiers"):
+        with pytest.raises(CoreException, match="cannot be combined"):
             QueryFilterExpressionParser.parse(
                 {
                     "$values": {
@@ -1146,29 +1279,32 @@ class TestQueryFilterParserBranches:
                 },
             )
 
-    def test_element_values_field_multiple_element_ops_raises(self) -> None:
-        with pytest.raises(
-            CoreException, match=r"must declare exactly\n? *one operator"
-        ):
-            QueryFilterExpressionParser.parse(
-                {
-                    "$values": {
-                        "items": {
-                            "$any": {"$values": {"f": {"$gt": 1, "$lt": 5}}},
-                        },
+    def test_element_values_field_multiple_element_ops_conjoins(self) -> None:
+        # A range on an object element's field conjoins into two QueryFields on it.
+        ast = QueryFilterExpressionParser.parse(
+            {
+                "$values": {
+                    "items": {
+                        "$any": {"$values": {"f": {"$gt": 1, "$lt": 5}}},
                     },
                 },
-            )
+            },
+        )
+        elem = ast.items[0]  # type: ignore[attr-defined]
+        assert isinstance(elem, QueryElem)
+        assert isinstance(elem.inner, QueryAnd)
+        pairs = {(f.name, f.op) for f in elem.inner.items}  # type: ignore[attr-defined]
+        assert pairs == {("f", "$gt"), ("f", "$lt")}
 
     def test_element_values_field_mixed_ops_invalid_op_raises(self) -> None:
-        # Not all keys are element ops -> falls to the multi-op branch, then
-        # ``$in`` is rejected as an invalid element operator.
+        # A non-element op ($superset) mixed into an element field's op-map is
+        # rejected per-op as an invalid element operator.
         with pytest.raises(CoreException, match="Invalid element operator"):
             QueryFilterExpressionParser.parse(
                 {
                     "$values": {
                         "items": {
-                            "$any": {"$values": {"f": {"$gt": 1, "$in": [1]}}},
+                            "$any": {"$values": {"f": {"$gt": 1, "$superset": [1]}}},
                         },
                     },
                 },

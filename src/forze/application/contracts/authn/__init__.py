@@ -60,12 +60,14 @@ from .ports import (
 )
 from .specs import AuthnMethod, AuthnSpec
 from .value_objects import (
+    ACT_CLAIM,
     AccessTokenCredentials,
     ApiKeyCredentials,
     AuthnIdentity,
     AuthnResult,
     CredentialLifetime,
     IssuedAccessToken,
+    ApiKeyInfo,
     IssuedApiKey,
     IssuedInvite,
     IssuedPasswordReset,
@@ -106,6 +108,7 @@ __all__ = [
     "login_digest",
     "resolve_authn_event_emitter",
     "IssuedAccessToken",
+    "ApiKeyInfo",
     "IssuedApiKey",
     "IssuedInvite",
     "IssuedPasswordReset",
@@ -140,5 +143,6 @@ __all__ = [
     "TokenVerifierDepKey",
     "TokenVerifierDepPort",
     "TokenVerifierPort",
+    "ACT_CLAIM",
     "VerifiedAssertion",
 ]

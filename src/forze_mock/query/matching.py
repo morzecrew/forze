@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import math
 import re
+import statistics
 from datetime import datetime, timezone
 from typing import (
     Any,
@@ -10,6 +12,8 @@ from typing import (
     cast,
 )
 from uuid import UUID
+
+from functools import cmp_to_key
 
 from forze.application.contracts.querying import (
     ELEM_SCALAR_FIELD,
@@ -25,6 +29,8 @@ from forze.application.contracts.querying import (
     QueryNot,
     QueryOr,
     QuerySortExpression,
+    ordered_compare,
+    resolve_sort_keys,
 )
 from forze.application.contracts.querying.internal.text_pattern import (
     like_pattern_to_regex,
@@ -133,6 +139,23 @@ def _match_text(value: Any, op: str, pattern: str) -> bool:
             return False
 
 
+def _is_descendant_path(a: Any, b: Any) -> bool:
+    """Whether materialized path *a* is at or below path *b* (label-aware, inclusive).
+
+    Compares dot-separated label sequences: *a* is a descendant of *b* when *b* is a
+    label-boundary prefix of *a* (``top.science`` is *not* a descendant of ``top.sci``).
+    Equal paths qualify — a node is its own ancestor and descendant.
+    """
+
+    if not isinstance(a, str) or not isinstance(b, str):
+        return False
+
+    a_labels = a.split(".")
+    b_labels = b.split(".")
+
+    return len(a_labels) >= len(b_labels) and a_labels[: len(b_labels)] == b_labels
+
+
 def _match_field(doc: JsonDict, field: QueryField) -> bool:
     value = _path_get(doc, field.name)
 
@@ -230,6 +253,16 @@ def _match_field(doc: JsonDict, field: QueryField) -> bool:
         case "$like" | "$ilike" | "$regex":
             return _match_text(value, field.op, str(field.value))
 
+        case "$descendant_of":
+            if value is _MISSING:
+                return False
+            return _is_descendant_path(value, field.value)
+
+        case "$ancestor_of":
+            if value is _MISSING:
+                return False
+            return _is_descendant_path(field.value, value)
+
 
 def _match_compare(doc: JsonDict, node: QueryCompare) -> bool:
     left_value = _path_get(doc, node.left)
@@ -304,25 +337,31 @@ def _match_elem_inner(elem: Any, inner: QueryExpr) -> bool:
                 return False
             return _match_field(cast(JsonDict, elem), field)
         case QueryAnd(items):
-            if not isinstance(elem, dict):
-                return False
-            elem_doc = cast(JsonDict, elem)
-            return all(
-                _match_field(elem_doc, i) for i in items if isinstance(i, QueryField)
-            )
+            # Recurse each item so scalar-element conjunctions (a range over a
+            # primitive element, e.g. {$gt:1, $lt:3}) and object-element conjunctions
+            # are both handled — not just object elements.
+            return all(_match_elem_inner(elem, item) for item in items)
         case QueryOr(items):
             return any(_match_elem_inner(elem, item) for item in items)
+        case QueryElem() as nested:
+            if nested.path == ELEM_SCALAR_FIELD:
+                # Scalar array-of-arrays: the element is itself the sub-array to quantify.
+                return _match_elem_over(elem, nested)
+
+            # A nested quantifier: the element is itself a document with a sub-array.
+            if not isinstance(elem, dict):
+                return False
+            return _match_elem(cast(JsonDict, elem), nested)
         case _:
             return False
 
 
-def _match_elem(doc: JsonDict, node: QueryElem) -> bool:
-    raw = _path_get(doc, node.path)
-    arr = _normalize_array_value(raw)
-    if arr is None:
-        return _elem_vacuous_match(node.quantifier)
+def _match_elem_over(raw: Any, node: QueryElem) -> bool:
+    """Quantify *node* over the array value *raw* (already extracted, not a field path)."""
 
-    if not arr:
+    arr = _normalize_array_value(raw)
+
+    if not arr:  # ``None`` (missing/non-array) or empty → vacuous
         return _elem_vacuous_match(node.quantifier)
 
     results = [_match_elem_inner(item, node.inner) for item in arr]
@@ -334,6 +373,10 @@ def _match_elem(doc: JsonDict, node: QueryElem) -> bool:
             return all(results)
         case "$none":
             return not any(results)
+
+
+def _match_elem(doc: JsonDict, node: QueryElem) -> bool:
+    return _match_elem_over(_path_get(doc, node.path), node)
 
 
 def _match_expr(doc: JsonDict, expr: QueryExpr) -> bool:
@@ -386,19 +429,33 @@ def _sort_docs(  # type: ignore[reportPrivateUsage]
     docs: list[JsonDict],
     sorts: QuerySortExpression | None,
 ) -> list[JsonDict]:
-    if not sorts:
+    keys = resolve_sort_keys(sorts)
+
+    if not keys:
         return docs
 
-    out = list(docs)
-    for field, direction in reversed(list(sorts.items())):
-        reverse = direction == "desc"
+    def _val(d: JsonDict, field: str) -> Any:
+        v = _path_get(d, field)
+        return None if v is _MISSING else v
 
-        def _sort_key(d: JsonDict, _f: str = field) -> tuple[bool, str]:
-            v = _path_get(d, _f)
-            return (v is _MISSING, str(v))
+    def _cmp(a: JsonDict, b: JsonDict) -> int:
+        # Same canonical key comparison as keyset pagination: type-aware, per-key
+        # direction, and null = smallest unless an explicit ``nulls`` overrides — so
+        # offset and cursor sorts agree, and a missing field sorts like a null.
+        for field, direction, nulls in keys:
+            c = ordered_compare(
+                _val(a, field),
+                _val(b, field),
+                direction=direction,
+                nulls=nulls,
+            )
 
-        out.sort(key=_sort_key, reverse=reverse)
-    return out
+            if c:
+                return c
+
+        return 0
+
+    return sorted(docs, key=cmp_to_key(_cmp))
 
 
 def _require_numeric(value: Any, *, function: str, field: str) -> int | float:
@@ -407,6 +464,34 @@ def _require_numeric(value: Any, *, function: str, field: str) -> int | float:
             f"Aggregate {function} expects numeric values for field {field!r}",
         )
     return value
+
+
+def _numeric_values(values: list[Any], computed: Any) -> list[int | float]:
+    return [
+        _require_numeric(value, function=computed.function, field=computed.field)
+        for value in values
+    ]
+
+
+def _percentile_cont(nums: list[int | float], p: float) -> float | None:
+    """Continuous (interpolated) percentile — matches Postgres ``percentile_cont``."""
+
+    if not nums:
+        return None
+
+    ordered = sorted(nums)
+
+    if len(ordered) == 1:
+        return float(ordered[0])
+
+    idx = p * (len(ordered) - 1)
+    lo = math.floor(idx)
+    hi = math.ceil(idx)
+
+    if lo == hi:
+        return float(ordered[lo])
+
+    return ordered[lo] + (ordered[hi] - ordered[lo]) * (idx - lo)
 
 
 def _coerce_datetime_for_bucket(raw: Any) -> datetime:
@@ -533,6 +618,39 @@ def _aggregate_docs(  # type: ignore[reportPrivateUsage]
                 case "$max":
                     row[computed.alias] = max(values) if values else None
 
+                case "$count_distinct":
+                    row[computed.alias] = len(set(values))
+
+                case "$stddev_pop":
+                    nums = _numeric_values(values, computed)
+                    row[computed.alias] = statistics.pstdev(nums) if nums else None
+
+                case "$stddev_samp":
+                    nums = _numeric_values(values, computed)
+                    row[computed.alias] = (
+                        statistics.stdev(nums) if len(nums) >= 2 else None
+                    )
+
+                case "$var_pop":
+                    nums = _numeric_values(values, computed)
+                    row[computed.alias] = statistics.pvariance(nums) if nums else None
+
+                case "$var_samp":
+                    nums = _numeric_values(values, computed)
+                    row[computed.alias] = (
+                        statistics.variance(nums) if len(nums) >= 2 else None
+                    )
+
+                case "$percentile":
+                    nums = _numeric_values(values, computed)
+                    row[computed.alias] = _percentile_cont(
+                        nums, cast(float, computed.p)
+                    )
+
         rows.append(row)
+
+    if parsed.having is not None:
+        # ``$having``: keep only aggregated rows matching the post-group filter.
+        rows = [row for row in rows if _match_expr(row, parsed.having)]
 
     return rows

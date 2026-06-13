@@ -38,6 +38,14 @@ from ._attach import (
 
 # ----------------------- #
 
+
+def _rpc_path(op: object) -> str:
+    """Operation-named path for an RPC binding (``/<op value>``)."""
+
+    return f"/{op.value}"  # type: ignore[attr-defined]
+
+# ----------------------- #
+
 _REST_BINDINGS: Mapping[str, RouteBinding] = {
     DocumentKernelOp.GET: RouteBinding(method="GET", path="/{id}", build=id_endpoint),
     DocumentKernelOp.LIST: RouteBinding(
@@ -75,19 +83,62 @@ _REST_BINDINGS: Mapping[str, RouteBinding] = {
 }
 """Resource-style bindings per kernel operation."""
 
+_RPC_LIST_OPS = (
+    DocumentKernelOp.LIST,
+    DocumentKernelOp.RAW_LIST,
+    DocumentKernelOp.LIST_CURSOR,
+    DocumentKernelOp.RAW_LIST_CURSOR,
+    DocumentKernelOp.AGG_LIST,
+)
+"""RPC operations whose filter body has no query-param mapping — kept ``POST``."""
+
 _RPC_BINDINGS: Mapping[str, RouteBinding] = {
-    **{
-        op.value: RouteBinding(method="POST", path=f"/{op.value}", build=body_endpoint)
-        for op in (*DocumentKernelOp, *SoftDeletionKernelOp)
-    },
-    DocumentKernelOp.KILL: RouteBinding(
+    # Reads and id-addressed writes mirror the REST verbs but carry the id (and
+    # rev) as query parameters on the operation-named path, so the surface is
+    # linkable/cacheable instead of an opaque POST body.
+    DocumentKernelOp.GET: RouteBinding(
+        method="GET", path=_rpc_path(DocumentKernelOp.GET), build=id_endpoint
+    ),
+    DocumentKernelOp.CREATE: RouteBinding(
         method="POST",
-        path=f"/{DocumentKernelOp.KILL.value}",
+        path=_rpc_path(DocumentKernelOp.CREATE),
         build=body_endpoint,
+        status_code=201,
+    ),
+    DocumentKernelOp.UPDATE: RouteBinding(
+        method="PATCH",
+        path=_rpc_path(DocumentKernelOp.UPDATE),
+        build=id_rev_body_endpoint,
+    ),
+    DocumentKernelOp.KILL: RouteBinding(
+        method="DELETE",
+        path=_rpc_path(DocumentKernelOp.KILL),
+        build=id_endpoint,
         status_code=204,
     ),
+    # Soft-delete and restore are reversible state transitions, not removals —
+    # PATCH the resource (id + rev as query params, no body).
+    SoftDeletionKernelOp.DELETE: RouteBinding(
+        method="PATCH",
+        path=_rpc_path(SoftDeletionKernelOp.DELETE),
+        build=id_rev_endpoint,
+    ),
+    SoftDeletionKernelOp.RESTORE: RouteBinding(
+        method="PATCH",
+        path=_rpc_path(SoftDeletionKernelOp.RESTORE),
+        build=id_rev_endpoint,
+    ),
+    # List/aggregate operations carry filter/sort/pagination bodies that do not
+    # map onto query parameters — POST with the input DTO as body.
+    **{
+        op.value: RouteBinding(
+            method="POST", path=_rpc_path(op), build=body_endpoint
+        )
+        for op in _RPC_LIST_OPS
+    },
 }
-"""Uniform ``POST /<op>`` bindings; ``kill`` has no output and answers 204."""
+"""Operation-named bindings using REST verbs with id/rev as query parameters;
+``create``/list operations keep ``POST`` with the input DTO as body."""
 
 
 # ....................... #
@@ -113,6 +164,11 @@ def attach_document_routes(
     ``style="rest"``, ``create`` targets the router's prefix root — give the
     router (or ``include_router``) a prefix.
 
+    Both styles use REST verbs; they differ only in how a resource is addressed.
+    REST puts the id in the path (``GET /{id}``); RPC keeps one operation-named
+    path per operation and puts the id in a query parameter
+    (``GET /notes.get?id=``), so the catalog still maps one-to-one.
+
     :param router: A plain FastAPI router the caller owns.
     :param registry: Frozen registry holding the document operations.
     :param ns: Namespace the operations were registered under
@@ -121,7 +177,11 @@ def attach_document_routes(
     :param style: ``"rest"`` for resource paths (``GET /{id}``, ``PATCH /{id}?rev=``,
         ``DELETE /{id}``, ``POST /{id}/delete|restore``; list operations stay
         ``POST /<op>`` since their filter bodies have no REST verb) or ``"rpc"``
-        for uniform ``POST /<op>`` with the input DTO as body.
+        for operation-named paths with the same verbs and the id/rev as query
+        parameters (``GET /<op>?id=``, ``PATCH /<op>?id=&rev=`` with the patch
+        body, ``DELETE /<op>?id=``, ``PATCH /<op>?id=&rev=`` for soft
+        delete/restore; ``create`` and list operations keep ``POST /<op>`` with
+        the input DTO as body).
     :param include: Optional narrowing to a subset of kernel operations; including
         an operation the registry lacks is a configuration error.
     :returns: *router*, for chaining.

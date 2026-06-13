@@ -59,7 +59,6 @@ async def test_order_by_empty_sorts_is_none() -> None:
     [
         "ASC; DROP TABLE items",
         "asc, sku; --",
-        "ASC",  # strict: only lowercase literals from the contract
         "descending",
         "",
     ],

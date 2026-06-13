@@ -99,17 +99,14 @@ class TestMongoQueryRenderer:
         )
         r = MongoQueryRenderer()
         out = r.render(expr)
-        assert out["$or"][1] == {
-            "$and": [
-                {
-                    "$and": [
-                        {"tags": {"$exists": True}},
-                        {"tags": {"$type": "array"}},
-                        {"tags": {"$not": {"$size": 0}}},
-                    ],
-                },
-                {"tags": "urgent"},
-            ],
+        # Scalar element predicates render uniformly via $filter (range-correct).
+        assert out["$or"][1]["$and"][1] == {
+            "$expr": {
+                "$gt": [
+                    {"$size": {"$filter": {"input": "$tags", "cond": {"$eq": ["$$this", "urgent"]}}}},
+                    0,
+                ],
+            },
         }
         assert out["$or"][0]["$and"][1] == {"$expr": False}
 
@@ -127,33 +124,48 @@ class TestMongoQueryRenderer:
         out = r.render(expr)
         match = out["$or"][1]["$and"][1]
         assert match == {
-            "items": {"$elemMatch": {"status": "open", "qty": {"$gte": 1}}}
+            "items": {"$elemMatch": {"status": {"$eq": "open"}, "qty": {"$gte": 1}}}
         }
 
-    def test_element_all_scalar_eq_uses_min_max_expr(self) -> None:
+    def test_element_all_scalar_eq_uses_filter(self) -> None:
         expr = QueryFilterExpressionParser.parse(
             {"$values": {"tags": {"$all": {"$eq": "x"}}}},
         )
         r = MongoQueryRenderer()
         match = r.render(expr)["$or"][1]["$and"][1]
-        assert "$expr" in match
-        assert "$min" in str(match)
+        # $all compares the filtered count to the total size — not a $min/$max shortcut.
+        assert "$filter" in str(match)
+        assert "$min" not in str(match) and "$max" not in str(match)
 
-    def test_element_none_scalar_eq_uses_nor(self) -> None:
+    def test_element_none_scalar_eq_uses_filter(self) -> None:
         expr = QueryFilterExpressionParser.parse(
             {"$values": {"tags": {"$none": "spam"}}},
         )
         r = MongoQueryRenderer()
         match = r.render(expr)["$or"][1]["$and"][1]
-        assert match == {"$nor": [{"tags": "spam"}]}
+        assert match == {
+            "$expr": {
+                "$eq": [
+                    {"$size": {"$filter": {"input": "$tags", "cond": {"$eq": ["$$this", "spam"]}}}},
+                    0,
+                ],
+            },
+        }
 
-    def test_element_any_scalar_gte_uses_expr(self) -> None:
+    def test_element_any_scalar_gte_uses_filter(self) -> None:
         expr = QueryFilterExpressionParser.parse(
             {"$values": {"scores": {"$any": {"$gte": 10}}}},
         )
         r = MongoQueryRenderer()
         match = r.render(expr)["$or"][1]["$and"][1]
-        assert match == {"$expr": {"$gte": [{"$max": "$scores"}, 10]}}
+        assert match == {
+            "$expr": {
+                "$gt": [
+                    {"$size": {"$filter": {"input": "$scores", "cond": {"$gte": ["$$this", 10]}}}},
+                    0,
+                ],
+            },
+        }
 
     def test_element_all_object_uses_not_elem_match(self) -> None:
         inner = QueryAnd(
@@ -206,9 +218,24 @@ class TestMongoQueryRenderer:
         }
 
     def test_unknown_operator_raises(self) -> None:
+        # The capability validator rejects unknown ops at render(); this exercises
+        # the renderer's own defense-in-depth backstop directly.
         r = MongoQueryRenderer()
         with pytest.raises(CoreException, match="Unknown operator"):
-            r.render(QueryField("f", "$bogus", 1))  # type: ignore[arg-type]
+            r._render_expr(QueryField("f", "$bogus", 1))  # type: ignore[arg-type]
+
+    @pytest.mark.parametrize("op", ["$descendant_of", "$ancestor_of"])
+    def test_hierarchy_ops_rejected_by_capability(self, op: str) -> None:
+        # Mongo can't express label-aware materialized-path containment, so it does not
+        # advertise supports_hierarchy — render() rejects the operators up front rather
+        # than emitting an invalid pipeline.
+        r = MongoQueryRenderer()
+        expr = QueryFilterExpressionParser.parse(
+            {"$values": {"path": {op: "top.science"}}}
+        )
+
+        with pytest.raises(CoreException, match="hierarchy operator"):
+            r.render(expr)
 
     def test_eq_neq_ord(self) -> None:
         r = MongoQueryRenderer()
@@ -454,6 +481,75 @@ class TestMongoAggregateRendering:
             "$median": {"input": "$p", "method": "approximate"},
         }
 
+    def test_renders_extended_aggregate_functions(self) -> None:
+        renderer = MongoQueryRenderer()
+        _parsed, pipeline = renderer.render_aggregates(
+            {
+                "$groups": {"cat": "category"},
+                "$computed": {
+                    "distinct": {"$count_distinct": "price"},
+                    "sp": {"$stddev_pop": "price"},
+                    "ss": {"$stddev_samp": "price"},
+                    "vp": {"$var_pop": "price"},
+                    "vs": {"$var_samp": "price"},
+                    "p90": {"$percentile": {"field": "price", "p": 0.9}},
+                },
+            },
+        )
+        group = pipeline[0]["$group"]
+        project = pipeline[1]["$project"]
+
+        # $count_distinct accumulates a null-excluded set, sized in the projection.
+        assert group["distinct"] == {
+            "$addToSet": {"$cond": [{"$ne": ["$price", None]}, "$price", "$$REMOVE"]},
+        }
+        assert project["distinct"] == {"$size": "$distinct"}
+
+        # variance is the population/sample stddev, squared in the projection.
+        assert group["sp"] == {"$stdDevPop": "$price"}
+        assert group["ss"] == {"$stdDevSamp": "$price"}
+        assert group["vp"] == {"$stdDevPop": "$price"}
+        assert group["vs"] == {"$stdDevSamp": "$price"}
+        assert project["sp"] == 1
+        assert project["ss"] == 1
+        assert project["vp"] == {"$pow": ["$vp", 2]}
+        assert project["vs"] == {"$pow": ["$vs", 2]}
+
+        # $percentile (approximate) returns a 1-element array, unwrapped in projection.
+        assert group["p90"] == {
+            "$percentile": {"input": "$price", "p": [0.9], "method": "approximate"},
+        }
+        assert project["p90"] == {"$arrayElemAt": ["$p90", 0]}
+
+    def test_count_distinct_with_filter_is_null_and_predicate_guarded(self) -> None:
+        renderer = MongoQueryRenderer()
+        _parsed, pipeline = renderer.render_aggregates(
+            {
+                "$computed": {
+                    "d": {
+                        "$count_distinct": {
+                            "field": "price",
+                            "filter": {"$values": {"category": "books"}},
+                        },
+                    },
+                },
+            },
+        )
+        assert pipeline[0]["$group"]["d"] == {
+            "$addToSet": {
+                "$cond": [
+                    {
+                        "$and": [
+                            {"$ne": ["$price", None]},
+                            {"$eq": ["$category", "books"]},
+                        ],
+                    },
+                    "$price",
+                    "$$REMOVE",
+                ],
+            },
+        }
+
     def test_renders_trunc_in_group_id(self) -> None:
         renderer = MongoQueryRenderer()
         _parsed, pipeline = renderer.render_aggregates(
@@ -507,6 +603,9 @@ class TestMongoQueryRendererExprPredicate:
         assert out == {"$nor": [{"$eq": ["$a", 1]}]}
 
     def test_elem_expr_predicate_scalar_any(self) -> None:
+        # In an aggregation-expression context (computed-field filter / $having) an element
+        # quantifier must compile to a pure aggregation boolean — never the query form
+        # ($or/$expr/$elemMatch), which is invalid inside a $cond.
         r = MongoQueryRenderer()
         out = r.render_expr_predicate(
             QueryElem(
@@ -515,7 +614,11 @@ class TestMongoQueryRendererExprPredicate:
                 QueryField(ELEM_SCALAR_FIELD, "$eq", "z"),
             ),
         )
-        assert "$or" in out
+        assert "$or" not in out
+        assert "$expr" not in out
+        # $any → at least one element survives the $filter.
+        assert "$gt" in out
+        assert "$filter" in out["$gt"][0]["$size"]
 
     def test_or_multi_and_empty(self) -> None:
         r = MongoQueryRenderer()
@@ -665,239 +768,228 @@ class TestMongoExprPredicateBranches:
 
 
 class TestMongoScalarElementMatch:
-    """Scalar element-quantifier inner-predicate shapes (via ``render``)."""
+    """Scalar element predicates render via $filter (range-correct, not min/max)."""
 
     @staticmethod
-    def _elem(quantifier: str, inner: QueryExpr) -> dict:
+    def _body(quantifier: str, inner: QueryExpr) -> dict:
         r = MongoQueryRenderer()
         return r.render(QueryElem("tags", quantifier, inner))["$or"][1]["$and"][1]
 
-    def test_scalar_and_single_field(self) -> None:
-        inner = QueryAnd((QueryField(ELEM_SCALAR_FIELD, "$eq", "x"),))
-        assert self._elem("$any", inner) == {"tags": "x"}
+    @classmethod
+    def _cond(cls, quantifier: str, inner: QueryExpr) -> dict:
+        expr = cls._body(quantifier, inner)["$expr"]
+        if quantifier == "$any":
+            return expr["$gt"][0]["$size"]["$filter"]["cond"]
+        if quantifier == "$none":
+            return expr["$eq"][0]["$size"]["$filter"]["cond"]
+        return expr["$eq"][1]["$size"]["$filter"]["cond"]
 
-    def test_scalar_and_multiple_fields_raises(self) -> None:
-        inner = QueryAnd(
-            (
-                QueryField(ELEM_SCALAR_FIELD, "$eq", "x"),
-                QueryField(ELEM_SCALAR_FIELD, "$gt", 1),
-            ),
-        )
-        r = MongoQueryRenderer()
-        with pytest.raises(CoreException, match="one comparison only"):
-            r.render(QueryElem("tags", "$any", inner))
-
-    def test_scalar_or_single_collapses(self) -> None:
-        inner = QueryOr((QueryField(ELEM_SCALAR_FIELD, "$eq", "x"),))
-        assert self._elem("$any", inner) == {"tags": "x"}
-
-    def test_scalar_or_any_uses_or(self) -> None:
-        inner = QueryOr(
-            (
-                QueryField(ELEM_SCALAR_FIELD, "$eq", "x"),
-                QueryField(ELEM_SCALAR_FIELD, "$eq", "y"),
-            ),
-        )
-        out = self._elem("$any", inner)
-        assert out == {"$or": [{"tags": "x"}, {"tags": "y"}]}
-
-    def test_scalar_or_none_uses_and(self) -> None:
-        inner = QueryOr(
-            (
-                QueryField(ELEM_SCALAR_FIELD, "$eq", "x"),
-                QueryField(ELEM_SCALAR_FIELD, "$eq", "y"),
-            ),
-        )
-        out = self._elem("$none", inner)
-        assert out == {"$and": [{"$nor": [{"tags": "x"}]}, {"$nor": [{"tags": "y"}]}]}
-
-    def test_scalar_or_all_uses_and(self) -> None:
-        inner = QueryOr(
-            (
-                QueryField(ELEM_SCALAR_FIELD, "$eq", "x"),
-                QueryField(ELEM_SCALAR_FIELD, "$eq", "y"),
-            ),
-        )
-        out = self._elem("$all", inner)
-        assert "$and" in out
-        assert len(out["$and"]) == 2
-
-    def test_scalar_invalid_inner_raises(self) -> None:
-        # A scalar inner that is neither field/and/or (an empty QueryAnd is scalar
-        # per ``elem_inner_is_scalar`` but hits the field-count guard); use a
-        # QueryElem nested inner which is "scalar" only if it recurses — instead
-        # force the default branch with a Compare wrapped where scalar detection
-        # passes vacuously.
-        r = MongoQueryRenderer()
-        # empty QueryAnd -> elem_inner_is_scalar True, fields == [] -> count guard
-        with pytest.raises(CoreException, match="one comparison only"):
-            r.render(QueryElem("tags", "$any", QueryAnd(())))
-
-    @pytest.mark.parametrize(
-        ("op", "quantifier", "expected"),
-        [
-            ("$eq", "$any", {"tags": "v"}),
-            ("$eq", "$none", {"$nor": [{"tags": "v"}]}),
-        ],
-    )
-    def test_scalar_eq_quantifiers(
-        self,
-        op: str,
-        quantifier: str,
-        expected: dict,
-    ) -> None:
-        inner = QueryField(ELEM_SCALAR_FIELD, op, "v")  # type: ignore[arg-type]
-        assert self._elem(quantifier, inner) == expected
-
-    def test_scalar_eq_all_min_max(self) -> None:
-        inner = QueryField(ELEM_SCALAR_FIELD, "$eq", "v")
-        out = self._elem("$all", inner)
-        assert out == {
-            "$expr": {
-                "$and": [
-                    {"$eq": [{"$min": "$tags"}, "v"]},
-                    {"$eq": [{"$max": "$tags"}, "v"]},
-                ],
-            },
-        }
-
-    @pytest.mark.parametrize(
-        ("op", "quantifier", "expected"),
-        [
-            # $any -> agg "$max"; $all/$none -> agg "$min" (default)
-            ("$gt", "$any", {"$expr": {"$gt": [{"$max": "$tags"}, 5]}}),
-            ("$gte", "$all", {"$expr": {"$gte": [{"$min": "$tags"}, 5]}}),
-            ("$gt", "$none", {"$expr": {"$gt": [{"$min": "$tags"}, 5]}}),
-        ],
-    )
-    def test_scalar_ordinal_aggregations(
-        self,
-        op: str,
-        quantifier: str,
-        expected: dict,
-    ) -> None:
-        inner = QueryField(ELEM_SCALAR_FIELD, op, 5)  # type: ignore[arg-type]
-        out = self._elem(quantifier, inner)
-        assert out == expected
-
-    def test_scalar_lt_any_uses_min(self) -> None:
-        inner = QueryField(ELEM_SCALAR_FIELD, "$lt", 5)
-        out = self._elem("$any", inner)
-        assert out == {"$expr": {"$lt": [{"$min": "$tags"}, 5]}}
-
-    def test_scalar_lte_all_uses_max(self) -> None:
-        inner = QueryField(ELEM_SCALAR_FIELD, "$lte", 5)
-        out = self._elem("$all", inner)
-        assert out == {"$expr": {"$lte": [{"$max": "$tags"}, 5]}}
-
-    @pytest.mark.parametrize(
-        ("op", "quantifier", "expect_substr"),
-        [
-            ("$like", "$any", "$gt"),
-            ("$ilike", "$none", "$eq"),
-            ("$regex", "$all", "$size"),
-        ],
-    )
-    def test_scalar_text_quantifiers(
-        self,
-        op: str,
-        quantifier: str,
-        expect_substr: str,
-    ) -> None:
-        pattern = "a.*" if op == "$regex" else "%a%"
-        inner = QueryField(ELEM_SCALAR_FIELD, op, pattern)  # type: ignore[arg-type]
-        out = self._elem(quantifier, inner)
-        assert "$expr" in out
-        assert expect_substr in str(out)
-        assert "$filter" in str(out)
-
-    def test_scalar_ilike_carries_options(self) -> None:
-        inner = QueryField(ELEM_SCALAR_FIELD, "$ilike", "%a%")
-        out = self._elem("$any", inner)
-        assert "options" in str(out)
-
-    def test_scalar_neq_any_uses_filter(self) -> None:
-        inner = QueryField(ELEM_SCALAR_FIELD, "$neq", "v")
-        out = self._elem("$any", inner)
-        assert out == {
+    def test_any_counts_matching_elements(self) -> None:
+        body = self._body("$any", QueryField(ELEM_SCALAR_FIELD, "$gt", 5))
+        assert body == {
             "$expr": {
                 "$gt": [
-                    {
-                        "$size": {
-                            "$filter": {
-                                "input": "$tags",
-                                "cond": {"$ne": ["$$this", "v"]},
-                            },
-                        },
-                    },
+                    {"$size": {"$filter": {"input": "$tags", "cond": {"$gt": ["$$this", 5]}}}},
                     0,
                 ],
             },
         }
 
-    def test_scalar_neq_all_unsupported_raises(self) -> None:
-        inner = QueryField(ELEM_SCALAR_FIELD, "$neq", "v")
+    def test_none_counts_zero(self) -> None:
+        body = self._body("$none", QueryField(ELEM_SCALAR_FIELD, "$eq", "v"))
+        assert body == {
+            "$expr": {
+                "$eq": [
+                    {"$size": {"$filter": {"input": "$tags", "cond": {"$eq": ["$$this", "v"]}}}},
+                    0,
+                ],
+            },
+        }
+
+    def test_all_compares_to_total_size(self) -> None:
+        body = self._body("$all", QueryField(ELEM_SCALAR_FIELD, "$gte", 2))
+        assert body == {
+            "$expr": {
+                "$eq": [
+                    {"$size": "$tags"},
+                    {"$size": {"$filter": {"input": "$tags", "cond": {"$gte": ["$$this", 2]}}}},
+                ],
+            },
+        }
+
+    @pytest.mark.parametrize(
+        ("op", "mongo"),
+        [("$eq", "$eq"), ("$neq", "$ne"), ("$gt", "$gt"), ("$gte", "$gte"), ("$lt", "$lt"), ("$lte", "$lte")],
+    )
+    def test_comparison_op_cond(self, op: str, mongo: str) -> None:
+        cond = self._cond("$any", QueryField(ELEM_SCALAR_FIELD, op, 3))  # type: ignore[arg-type]
+        assert cond == {mongo: ["$$this", 3]}
+
+    def test_range_cond_conjoins(self) -> None:
+        inner = QueryAnd(
+            (QueryField(ELEM_SCALAR_FIELD, "$gt", 1), QueryField(ELEM_SCALAR_FIELD, "$lt", 3)),
+        )
+        assert self._cond("$any", inner) == {
+            "$and": [{"$gt": ["$$this", 1]}, {"$lt": ["$$this", 3]}],
+        }
+
+    def test_or_cond(self) -> None:
+        inner = QueryOr(
+            (QueryField(ELEM_SCALAR_FIELD, "$eq", "x"), QueryField(ELEM_SCALAR_FIELD, "$eq", "y")),
+        )
+        assert self._cond("$any", inner) == {
+            "$or": [{"$eq": ["$$this", "x"]}, {"$eq": ["$$this", "y"]}],
+        }
+
+    def test_text_cond_uses_regexmatch_with_options(self) -> None:
+        cond = self._cond("$any", QueryField(ELEM_SCALAR_FIELD, "$ilike", "%a%"))
+        assert cond["$regexMatch"]["input"] == "$$this"
+        assert cond["$regexMatch"]["options"] == "i"
+
+    def test_invalid_scalar_inner_raises(self) -> None:
         r = MongoQueryRenderer()
-        with pytest.raises(CoreException, match="Unsupported scalar element operator"):
-            r.render(QueryElem("tags", "$all", inner))
+        with pytest.raises(CoreException, match="Invalid scalar element inner"):
+            r._scalar_elem_cond(QueryCompare("a", "$eq", "b"))
 
 
 class TestMongoObjectElementMatch:
-    """Object element-quantifier inner-predicate shapes."""
+    """Object element predicates use $elemMatch with operator-form specs."""
 
     @staticmethod
-    def _match(inner: QueryExpr) -> dict:
+    def _match(inner: QueryExpr, quantifier: str = "$any") -> dict:
         r = MongoQueryRenderer()
-        return r.render(QueryElem("items", "$any", inner))["$or"][1]["$and"][1]
+        return r.render(QueryElem("items", quantifier, inner))["$or"][1]["$and"][1]
 
-    def test_single_field(self) -> None:
-        inner = QueryField("status", "$eq", "open")
-        assert self._match(inner) == {"items": {"$elemMatch": {"status": "open"}}}
+    def test_single_field_operator_form(self) -> None:
+        assert self._match(QueryField("status", "$eq", "open")) == {
+            "items": {"$elemMatch": {"status": {"$eq": "open"}}},
+        }
 
     def test_and_fields(self) -> None:
-        inner = QueryAnd(
-            (
-                QueryField("status", "$eq", "open"),
-                QueryField("qty", "$gte", 1),
-            ),
-        )
+        inner = QueryAnd((QueryField("status", "$eq", "open"), QueryField("qty", "$gte", 1)))
         assert self._match(inner) == {
-            "items": {"$elemMatch": {"status": "open", "qty": {"$gte": 1}}},
+            "items": {"$elemMatch": {"status": {"$eq": "open"}, "qty": {"$gte": 1}}},
+        }
+
+    def test_range_on_field_merges(self) -> None:
+        inner = QueryAnd((QueryField("qty", "$gt", 1), QueryField("qty", "$lt", 3)))
+        assert self._match(inner) == {
+            "items": {"$elemMatch": {"qty": {"$gt": 1, "$lt": 3}}},
         }
 
     def test_field_text_op(self) -> None:
-        inner = QueryField("name", "$ilike", "%x%")
-        out = self._match(inner)
-        spec = out["items"]["$elemMatch"]["name"]
-        assert spec == {"$regex": "^.*x.*$", "$options": "i"}
+        out = self._match(QueryField("name", "$ilike", "%x%"))
+        assert out["items"]["$elemMatch"]["name"] == {"$regex": "^.*x.*$", "$options": "i"}
 
     def test_field_text_op_no_options(self) -> None:
-        inner = QueryField("name", "$like", "%x%")
-        out = self._match(inner)
-        spec = out["items"]["$elemMatch"]["name"]
-        assert spec == {"$regex": "^.*x.*$"}
+        out = self._match(QueryField("name", "$like", "%x%"))
+        assert out["items"]["$elemMatch"]["name"] == {"$regex": "^.*x.*$"}
 
     def test_or_branches(self) -> None:
-        inner = QueryOr(
-            (
-                QueryField("status", "$eq", "open"),
-                QueryField("status", "$eq", "closed"),
-            ),
-        )
-        out = self._match(inner)
-        em = out["items"]["$elemMatch"]
-        assert em == {"$or": [{"status": "open"}, {"status": "closed"}]}
+        inner = QueryOr((QueryField("status", "$eq", "open"), QueryField("status", "$eq", "closed")))
+        assert self._match(inner)["items"]["$elemMatch"] == {
+            "$or": [{"status": {"$eq": "open"}}, {"status": {"$eq": "closed"}}],
+        }
+
+    def test_none_uses_nor_elem_match(self) -> None:
+        inner = QueryAnd((QueryField("status", "$eq", "open"),))
+        assert self._match(inner, "$none") == {
+            "$nor": [{"items": {"$elemMatch": {"status": {"$eq": "open"}}}}],
+        }
+
+    def test_all_negates_whole_range_spec(self) -> None:
+        # $all over a range: "no element fails the range" — De Morgan negates the
+        # full operator-doc, not just the first bound.
+        inner = QueryAnd((QueryField("qty", "$gt", 1), QueryField("qty", "$lt", 3)))
+        assert self._match(inner, "$all") == {
+            "items": {"$not": {"$elemMatch": {"qty": {"$not": {"$gt": 1, "$lt": 3}}}}},
+        }
 
     def test_invalid_object_inner_raises(self) -> None:
         r = MongoQueryRenderer()
         with pytest.raises(CoreException, match="Invalid object element inner"):
             r.render(QueryElem("items", "$any", QueryCompare("a", "$eq", "b")))
 
-    def test_none_object_uses_nor_elem_match(self) -> None:
+
+class TestMongoNestedQuantifiers:
+    """Nested quantifiers compile to an aggregation ``$expr`` that composes at any depth
+    and under any outer quantifier (the ``$elemMatch`` query form can't negate a nested
+    match for ``$all`` / ``$none``)."""
+
+    @staticmethod
+    def _nested(outer_q: str, inner_q: str) -> QueryExpr:
+        # items <outer_q> { tags <inner_q> "hot" }
+        return QueryElem(
+            "items",
+            outer_q,  # type: ignore[arg-type]
+            QueryAnd(
+                (QueryElem("tags", inner_q, QueryField(ELEM_SCALAR_FIELD, "$eq", "hot")),)
+            ),
+        )
+
+    @staticmethod
+    def _safe(ref: str) -> dict:
+        return {"$cond": [{"$isArray": [ref]}, ref, []]}
+
+    def _inner_matched(self) -> dict:
+        # count of ``tags`` elements equal to "hot" (the depth-1 sub-array)
+        return {
+            "$size": {
+                "$filter": {
+                    "input": self._safe("$$e0.tags"),
+                    "as": "e1",
+                    "cond": {"$eq": ["$$e1", "hot"]},
+                }
+            }
+        }
+
+    def _outer_matched(self, inner_cond: dict) -> dict:
+        return {
+            "$size": {
+                "$filter": {
+                    "input": self._safe("$items"),
+                    "as": "e0",
+                    "cond": inner_cond,
+                }
+            }
+        }
+
+    def test_outer_any_inner_any(self) -> None:
         r = MongoQueryRenderer()
-        inner = QueryAnd((QueryField("status", "$eq", "open"),))
-        out = r.render(QueryElem("items", "$none", inner))["$or"][1]["$and"][1]
-        assert out == {"$nor": [{"items": {"$elemMatch": {"status": "open"}}}]}
+        out = r.render(self._nested("$any", "$any"))
+        inner_cond = {"$and": [{"$gt": [self._inner_matched(), 0]}]}
+        assert out == {"$expr": {"$gt": [self._outer_matched(inner_cond), 0]}}
+
+    def test_outer_all_inner_all(self) -> None:
+        # Previously rejected (outer $all + nested, with the inner $all needing a
+        # negation the query form can't express). Now a clean aggregation expression.
+        r = MongoQueryRenderer()
+        out = r.render(self._nested("$all", "$all"))
+        inner_cond = {
+            "$and": [
+                {"$eq": [self._inner_matched(), {"$size": self._safe("$$e0.tags")}]},
+            ],
+        }
+        assert out == {
+            "$expr": {
+                "$eq": [self._outer_matched(inner_cond), {"$size": self._safe("$items")}],
+            },
+        }
+
+    def test_outer_none_inner_any(self) -> None:
+        r = MongoQueryRenderer()
+        out = r.render(self._nested("$none", "$any"))
+        inner_cond = {"$and": [{"$gt": [self._inner_matched(), 0]}]}
+        assert out == {"$expr": {"$eq": [self._outer_matched(inner_cond), 0]}}
+
+    @pytest.mark.parametrize("outer", ["$any", "$all", "$none"])
+    @pytest.mark.parametrize("inner", ["$any", "$all", "$none"])
+    def test_all_combinations_render_via_expr(self, outer: str, inner: str) -> None:
+        # Every outer x inner combination now compiles (none raises) to an aggregation
+        # $expr — semantic correctness is pinned by the cross-backend parity suite.
+        r = MongoQueryRenderer()
+        out = r.render(self._nested(outer, inner))
+        assert set(out) == {"$expr"}
 
 
 class TestMongoRenderExprEmptyParts:

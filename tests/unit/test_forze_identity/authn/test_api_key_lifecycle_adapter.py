@@ -115,6 +115,125 @@ def _created_key() -> MagicMock:
     return created
 
 
+class TestApiKeyLifecycleAdapterIssueDelegation:
+    @pytest.mark.asyncio
+    async def test_issue_persists_actor_principal_id(self) -> None:
+        pid, agent = uuid4(), uuid4()
+        ak_cmd = _port()
+        ak_cmd.create = AsyncMock(return_value=_created_key())
+
+        adapter = _adapter(ak_cmd=ak_cmd)
+        adapter.eligibility.require_authentication_allowed = AsyncMock()
+
+        await adapter.issue_api_key(
+            AuthnIdentity(principal_id=pid), actor_principal_id=agent
+        )
+
+        create_cmd = ak_cmd.create.await_args.args[0]
+        assert create_cmd.principal_id == pid
+        assert create_cmd.actor_principal_id == agent
+
+    @pytest.mark.asyncio
+    async def test_issue_without_agent_is_non_delegated(self) -> None:
+        ak_cmd = _port()
+        ak_cmd.create = AsyncMock(return_value=_created_key())
+
+        adapter = _adapter(ak_cmd=ak_cmd)
+        adapter.eligibility.require_authentication_allowed = AsyncMock()
+
+        await adapter.issue_api_key(AuthnIdentity(principal_id=uuid4()))
+
+        assert ak_cmd.create.await_args.args[0].actor_principal_id is None
+
+    @pytest.mark.asyncio
+    async def test_issue_persists_label_and_a_nonsecret_hint(self) -> None:
+        ak_cmd = _port()
+        ak_cmd.create = AsyncMock(return_value=_created_key())
+
+        adapter = _adapter(ak_cmd=ak_cmd)
+        adapter.eligibility.require_authentication_allowed = AsyncMock()
+
+        issued = await adapter.issue_api_key(
+            AuthnIdentity(principal_id=uuid4()), label="ChatGPT"
+        )
+
+        create_cmd = ak_cmd.create.await_args.args[0]
+        assert create_cmd.label == "ChatGPT"
+        assert create_cmd.hint and "…" in create_cmd.hint
+        # The hint never contains the whole secret.
+        assert issued.key.key not in create_cmd.hint
+        assert issued.label == "ChatGPT"
+        assert issued.hint == create_cmd.hint
+
+
+class TestApiKeyLifecycleAdapterList:
+    @pytest.mark.asyncio
+    async def test_list_returns_non_secret_infos(self) -> None:
+        pid, agent = uuid4(), uuid4()
+        now = datetime.now(tz=UTC)
+        account = ReadApiKeyAccount(
+            id=uuid4(),
+            rev=1,
+            created_at=now,
+            last_update_at=now,
+            principal_id=pid,
+            actor_principal_id=agent,
+            prefix="sk",
+            hint="ab…yz",
+            label="Claude",
+            key_hash="secret-digest",
+            is_active=True,
+        )
+
+        ak_qry = _port()
+        ak_qry.find_many = AsyncMock(return_value=MagicMock(hits=[account]))
+
+        adapter = _adapter(ak_qry=ak_qry)
+        adapter.eligibility.require_authentication_allowed = AsyncMock()
+
+        infos = await adapter.list_api_keys(AuthnIdentity(principal_id=pid))
+
+        assert len(infos) == 1
+        info = infos[0]
+        assert info.key_id == account.id
+        assert info.hint == "ab…yz"
+        assert info.label == "Claude"
+        assert info.actor_principal_id == agent
+        # ApiKeyInfo has no field that could carry the secret/hash.
+        assert not hasattr(info, "key_hash")
+
+    @pytest.mark.asyncio
+    async def test_refresh_preserves_the_delegation_agent(self) -> None:
+        pid, agent = uuid4(), uuid4()
+        svc = ApiKeyService(pepper=b"x" * 32, config=ApiKeyConfig())
+        key = "raw-key"
+        now = datetime.now(tz=UTC)
+        account = ReadApiKeyAccount(
+            id=uuid4(),
+            rev=2,
+            created_at=now,
+            last_update_at=now,
+            principal_id=pid,
+            actor_principal_id=agent,
+            key_hash=svc.calculate_key_digest(key),
+            is_active=True,
+        )
+
+        ak_qry = _port()
+        ak_qry.find = AsyncMock(return_value=account)
+        ak_cmd = _port()
+        ak_cmd.create = AsyncMock(return_value=_created_key())
+        ak_cmd.update = AsyncMock()
+
+        adapter = _adapter(api_key_svc=svc, ak_qry=ak_qry, ak_cmd=ak_cmd)
+        adapter.eligibility.require_authentication_allowed = AsyncMock()
+
+        await adapter.refresh_api_key(ApiKeyCredentials(key=key))
+
+        # The rotated key keeps acting for the same agent.
+        assert ak_cmd.create.await_args.args[0].actor_principal_id == agent
+
+
 class TestApiKeyLifecycleAdapterRefresh:
     @pytest.mark.asyncio
     async def test_refresh_rotates_active_key(self) -> None:

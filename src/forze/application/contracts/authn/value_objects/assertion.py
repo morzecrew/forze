@@ -1,9 +1,19 @@
 from datetime import datetime
-from typing import Any, Mapping
+from typing import Any, Final, Mapping
 
 import attrs
 
 # ----------------------- #
+
+ACT_CLAIM: Final[str] = "act"
+"""Claim name carrying an RFC 8693 delegation **actor** in a verified assertion's
+``claims`` (a mapping with a string ``"sub"``, optionally nested). The token path
+honors it only when the orchestrator's ``actor_claim`` is configured to it (external
+tokens vary); the API-key path honors it intrinsically (the framework mints those
+keys, so a carried actor is first-party and trusted)."""
+
+
+# ....................... #
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)

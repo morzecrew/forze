@@ -66,12 +66,12 @@ class TestFirestoreQueryRenderer:
             {"$values": {"tags": {"$any": "urgent"}}},
         )
         r = FirestoreQueryRenderer()
-        with pytest.raises(CoreException, match="quantifiers"):
+        with pytest.raises(CoreException, match="element quantifier"):
             r.render(expr)
 
     def test_elem_node_raises(self) -> None:
         r = FirestoreQueryRenderer()
-        with pytest.raises(CoreException, match="quantifiers"):
+        with pytest.raises(CoreException, match="element quantifier"):
             r.render(QueryElem("tags", "$any", QueryField("x", "$eq", 1)))
 
     def test_aggregates_raises(self) -> None:
@@ -86,7 +86,7 @@ class TestFirestoreQueryRenderer:
 
     def test_ilike_raises(self) -> None:
         r = FirestoreQueryRenderer()
-        with pytest.raises(CoreException, match="text pattern"):
+        with pytest.raises(CoreException, match=r"\$ilike"):
             r.render(QueryField("title", "$ilike", "%x%"))
 
     def test_query_or_empty_raises(self) -> None:
@@ -114,5 +114,5 @@ class TestFirestoreQueryRenderer:
 
     def test_set_ops_raise(self) -> None:
         r = FirestoreQueryRenderer()
-        with pytest.raises(CoreException, match="set operator"):
+        with pytest.raises(CoreException, match=r"\$overlaps"):
             r.render(QueryField("tags", "$overlaps", ["a"]))

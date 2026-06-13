@@ -19,6 +19,9 @@ from forze.application.contracts.querying import (
     QueryFilterExpressionParser,
     QueryFilterLimits,
     QuerySortExpression,
+    assert_default_null_ordering,
+    default_nulls,
+    resolve_sort_keys,
 )
 from forze.application.contracts.tenancy import TENANT_ID_FIELD
 from forze.application.integrations.persistence import (
@@ -41,7 +44,7 @@ from ..relation import RelationSpec, is_static_relation, resolve_mongo_collectio
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class MongoGateway[M: BaseModel](
     ModelCodecGatewayMixin[M],
-    FilterParserMixin,
+    FilterParserMixin[M],
     TenantResolvedRelationMixin,
 ):
     """Base gateway providing collection access, query rendering, and document mapping.
@@ -80,6 +83,11 @@ class MongoGateway[M: BaseModel](
     ``None`` disables the cap (unbounded reads). Defaults to ``10_000`` to reduce
     accidental full-collection scans in application code.
     """
+
+    computed_null_ordering: bool = False
+    """Honor an explicit non-native ``NULLS FIRST``/``LAST`` via a computed-rank
+    aggregation sort (see :class:`~forze_mongo.execution.deps.configs.document.MongoReadOnlyDocumentConfig`).
+    Off by default: such an override is otherwise rejected by :meth:`render_sorts`."""
 
     filter_limits: QueryFilterLimits | None = attrs.field(default=None)
     """Optional filter DSL abuse limits."""
@@ -277,18 +285,80 @@ class MongoGateway[M: BaseModel](
         self,
         sorts: QuerySortExpression | None,
     ) -> list[tuple[str, int]] | None:
-        """Convert a sort expression to Mongo ``(field, direction)`` pairs."""
+        """Convert a sort expression to Mongo ``(field, direction)`` pairs.
+
+        Rejects an explicit non-native null placement unless
+        :attr:`computed_null_ordering` is set — in which case the offset read path honors
+        it through :meth:`offset_null_sort_stages` instead of this plain ``sort`` spec.
+        """
 
         if not sorts:
             return None
 
+        resolved = resolve_sort_keys(sorts)
+
+        if not self.computed_null_ordering:
+            assert_default_null_ordering(resolved, backend="mongo")
+
         out: list[tuple[str, int]] = []
 
-        for field, direction in sorts.items():
+        for field, direction, _nulls in resolved:
             target = "_id" if field == ID_FIELD else field
             out.append((target, 1 if direction == "asc" else -1))
 
         return out
+
+    # ....................... #
+
+    def offset_null_sort_stages(
+        self,
+        sorts: QuerySortExpression | None,
+    ) -> tuple[list[JsonDict], list[str]] | None:
+        """Aggregation ``$addFields`` + ``$sort`` stages for a non-native null sort.
+
+        Returns ``None`` when the plain ``find().sort()`` path suffices — i.e. the
+        :attr:`computed_null_ordering` opt-in is off, or every key uses the canonical
+        (native) null placement. Otherwise returns the stages plus the names of the
+        computed rank fields (for the caller to project out).
+
+        For each overridden key a rank field maps null vs non-null to ``0``/``1`` so an
+        ascending sort on it places the null group first or last as requested; the field
+        itself orders the non-null group. Keys with the canonical placement are sorted
+        natively (Mongo already orders null as the smallest value).
+        """
+
+        if not (self.computed_null_ordering and sorts):
+            return None
+
+        resolved = resolve_sort_keys(sorts)
+
+        if not any(nulls != default_nulls(d) for _, d, nulls in resolved):
+            return None
+
+        add_fields: JsonDict = {}
+        sort_doc: JsonDict = {}
+        rank_fields: list[str] = []
+
+        for i, (field, direction, nulls) in enumerate(resolved):
+            sf = "_id" if field == ID_FIELD else field
+            mongo_dir = 1 if direction == "asc" else -1
+
+            if nulls != default_nulls(direction):
+                rank = f"__fz_nullrank_{i}"
+                rank_fields.append(rank)
+                null_rank, nonnull_rank = (0, 1) if nulls == "first" else (1, 0)
+                add_fields[rank] = {
+                    "$cond": [
+                        {"$eq": [{"$ifNull": [f"${sf}", None]}, None]},
+                        null_rank,
+                        nonnull_rank,
+                    ],
+                }
+                sort_doc[rank] = 1
+
+            sort_doc[sf] = mongo_dir
+
+        return [{"$addFields": add_fields}, {"$sort": sort_doc}], rank_fields
 
     # ....................... #
 

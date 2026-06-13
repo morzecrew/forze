@@ -202,9 +202,10 @@ async def test_cursor_token_decodes_via_shared_keyset_machinery() -> None:
     page = await doc.find_cursor(sorts={"title": "asc"}, cursor={"limit": 2})
     assert page.next_cursor is not None
 
-    keys, dirs, vals = decode_keyset_v1(page.next_cursor)
+    keys, dirs, nulls, vals = decode_keyset_v1(page.next_cursor)
     assert keys == ["title", "id"]
     assert dirs == ["asc", "asc"]
+    assert nulls == ["first", "first"]
 
     last = page.hits[-1]
     assert vals == [last.title, str(last.id)]

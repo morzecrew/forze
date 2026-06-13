@@ -5,6 +5,7 @@ import attrs
 
 from forze.application.contracts.authn import (
     ApiKeyCredentials,
+    ApiKeyInfo,
     ApiKeyLifecyclePort,
     AuthnIdentity,
     CredentialLifetime,
@@ -23,7 +24,30 @@ from ..domain.models.account import (
     UpdateApiKeyAccountCmd,
 )
 from ..services import ApiKeyService
-from ._utils import find_api_key_account_by_id, find_api_key_account_by_key_hash
+from ._utils import (
+    find_api_key_account_by_id,
+    find_api_key_account_by_key_hash,
+    find_api_key_accounts_by_principal,
+)
+
+# ----------------------- #
+
+_HINT_EDGE = 4
+"""Characters kept from each end of the raw key for the display fingerprint."""
+
+
+def _key_hint(key: str) -> str:
+    """Non-secret fingerprint of a raw key: ``first4…last4`` (masked when short).
+
+    Revealing a few edge characters of a high-entropy secret is a fingerprint, not a
+    disclosure (the convention behind "•••• 1234" key displays). A key too short to
+    keep both edges disjoint is fully masked rather than leaked.
+    """
+
+    if len(key) <= _HINT_EDGE * 2:
+        return "…"
+
+    return f"{key[:_HINT_EDGE]}…{key[-_HINT_EDGE:]}"
 
 # ----------------------- #
 
@@ -66,10 +90,43 @@ class ApiKeyLifecycleAdapter(ApiKeyLifecyclePort):
 
     # ....................... #
 
-    async def issue_api_key(self, identity: AuthnIdentity) -> IssuedApiKey:
+    async def issue_api_key(
+        self,
+        identity: AuthnIdentity,
+        *,
+        actor_principal_id: UUID | None = None,
+        label: str | None = None,
+    ) -> IssuedApiKey:
         await self.eligibility.require_authentication_allowed(identity.principal_id)
 
-        return await self._issue_for_principal(identity.principal_id)
+        return await self._issue_for_principal(
+            identity.principal_id,
+            actor_principal_id=actor_principal_id,
+            label=label,
+        )
+
+    # ....................... #
+
+    async def list_api_keys(self, identity: AuthnIdentity) -> Sequence[ApiKeyInfo]:
+        await self.eligibility.require_authentication_allowed(identity.principal_id)
+
+        accounts = await find_api_key_accounts_by_principal(
+            self.ak_qry, identity.principal_id
+        )
+
+        return [
+            ApiKeyInfo(
+                key_id=account.id,
+                hint=account.hint,
+                label=account.label,
+                actor_principal_id=account.actor_principal_id,
+                prefix=account.prefix,
+                is_active=account.is_active,
+                created_at=account.created_at,
+                expires_at=account.expires_at,
+            )
+            for account in accounts
+        ]
 
     # ....................... #
 
@@ -106,8 +163,13 @@ class ApiKeyLifecycleAdapter(ApiKeyLifecyclePort):
 
         # Rotate: issue a fresh key, then retire the presented one. Account fields
         # (prefix/expires_at/key_hash) are immutable, so refresh mints a new document
-        # rather than mutating the existing key in place.
-        issued = await self._issue_for_principal(account.principal_id)
+        # rather than mutating the existing key in place. The delegation binding
+        # (actor) is preserved so a rotated key keeps acting for the same agent.
+        issued = await self._issue_for_principal(
+            account.principal_id,
+            actor_principal_id=account.actor_principal_id,
+            label=account.label,
+        )
 
         await self.ak_cmd.update(
             account.id,
@@ -120,7 +182,13 @@ class ApiKeyLifecycleAdapter(ApiKeyLifecyclePort):
 
     # ....................... #
 
-    async def _issue_for_principal(self, principal_id: UUID) -> IssuedApiKey:
+    async def _issue_for_principal(
+        self,
+        principal_id: UUID,
+        *,
+        actor_principal_id: UUID | None = None,
+        label: str | None = None,
+    ) -> IssuedApiKey:
         now = utcnow()
         expires_in = self.api_key_svc.config.expires_in
         expires_at = (now + expires_in) if expires_in is not None else None
@@ -135,11 +203,15 @@ class ApiKeyLifecycleAdapter(ApiKeyLifecyclePort):
             prefix = None
 
         key_hash = self.api_key_svc.calculate_key_digest(key)
+        hint = _key_hint(key)
 
         create_cmd = CreateApiKeyAccountCmd(
             principal_id=principal_id,
+            actor_principal_id=actor_principal_id,
             key_hash=key_hash,
             prefix=prefix,
+            hint=hint,
+            label=label,
             expires_at=expires_at,
         )
 
@@ -150,6 +222,8 @@ class ApiKeyLifecycleAdapter(ApiKeyLifecyclePort):
         return IssuedApiKey(
             key=creds,
             key_id=str(created_key.id),
+            hint=hint,
+            label=label,
             lifetime=CredentialLifetime(
                 expires_in=expires_in,
                 issued_at=created_key.created_at,

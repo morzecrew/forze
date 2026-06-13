@@ -158,10 +158,12 @@ class TestPsycopgQueryRenderer:
 
     def test_unknown_operator_raises(self) -> None:
         """Unsupported operator raises."""
+        # The capability validator rejects unknown ops at render(); this exercises
+        # the renderer's own defense-in-depth backstop directly.
         r = PsycopgQueryRenderer()
         bad = QueryField("x", cast(Any, "$not_a_real_op"), 1)
         with pytest.raises(CoreException, match="Unknown operator"):
-            r.render(bad)
+            r._render_expr(bad)
 
     def test_null_operators(self) -> None:
         """$null true/false render IS NULL / IS NOT NULL."""
@@ -468,7 +470,7 @@ class TestPsycopgQueryRenderer:
 
         types: PostgresColumnTypes = {"meta": _t("jsonb")}
         r = PsycopgQueryRenderer(types=types, model_type=_Outer)
-        with pytest.raises(CoreException, match="not supported for nested JSON"):
+        with pytest.raises(CoreException, match="not supported on the nested JSON path"):
             r.render(QueryField("meta.score", "$empty", True))
 
     def test_nested_requires_json_column(self) -> None:
@@ -697,6 +699,32 @@ class TestPostgresAggregateRendering:
         )
         assert "percentile_cont(0.5)" in select_clause.as_string(None)
 
+    def test_extended_aggregate_functions_render(self) -> None:
+        renderer = PsycopgQueryRenderer(
+            types={"category": _t("text"), "price": _t("numeric")},
+            model_type=_OrderRow,
+        )
+        _parsed, select_clause, _group, _params = renderer.render_aggregates(
+            {
+                "$groups": {"category": "category"},
+                "$computed": {
+                    "distinct": {"$count_distinct": "price"},
+                    "sp": {"$stddev_pop": "price"},
+                    "ss": {"$stddev_samp": "price"},
+                    "vp": {"$var_pop": "price"},
+                    "vs": {"$var_samp": "price"},
+                    "p90": {"$percentile": {"field": "price", "p": 0.9}},
+                },
+            },
+        )
+        sql = select_clause.as_string(None)
+        assert "COUNT(DISTINCT" in sql
+        assert "stddev_pop(" in sql
+        assert "stddev_samp(" in sql
+        assert "var_pop(" in sql
+        assert "var_samp(" in sql
+        assert "percentile_cont(0.9)" in sql
+
     def test_aggregate_filter_parses_raw_filter_when_unparsed(self) -> None:
         """A computed field with a raw (not pre-parsed) filter is parsed lazily."""
         renderer = PsycopgQueryRenderer(
@@ -766,6 +794,51 @@ class TestPostgresAggregateRenderingErrors:
         )
         with pytest.raises(CoreException, match="no field path"):
             renderer._render_aggregate_function(computed)
+
+
+class TestPostgresHierarchyRendering:
+    """``$descendant_of`` / ``$ancestor_of`` render via ltree ops or a text fallback."""
+
+    def test_ltree_descendant_uses_containment_operator(self) -> None:
+        r = PsycopgQueryRenderer(types={"path": _t("ltree")})
+        _sql, params = r.render(QueryField("path", "$descendant_of", "top.science"))
+        s = _sql.as_string(None)
+        assert "<@" in s and "::ltree" in s
+        assert params == ["top.science"]
+
+    def test_ltree_ancestor_uses_containment_operator(self) -> None:
+        r = PsycopgQueryRenderer(types={"path": _t("ltree")})
+        _sql, params = r.render(QueryField("path", "$ancestor_of", "top.science"))
+        s = _sql.as_string(None)
+        assert "@>" in s and "::ltree" in s
+        assert params == ["top.science"]
+
+    def test_text_column_uses_starts_with_fallback(self) -> None:
+        r = PsycopgQueryRenderer(types={"path": _t("text")})
+        _sql, params = r.render(QueryField("path", "$descendant_of", "top.science"))
+        s = _sql.as_string(None)
+        assert "starts_with" in s and "::text" in s
+        assert params == ["top.science"]
+
+    def test_ancestor_text_fallback_reverses_prefix(self) -> None:
+        r = PsycopgQueryRenderer(types={"path": _t("text")})
+        _sql, _params = r.render(QueryField("path", "$ancestor_of", "a.b"))
+        assert "starts_with" in _sql.as_string(None)
+
+    def test_no_type_metadata_uses_text_fallback(self) -> None:
+        r = PsycopgQueryRenderer()
+        _sql, _params = r.render(QueryField("path", "$descendant_of", "a"))
+        assert "starts_with" in _sql.as_string(None)
+
+    def test_array_column_rejected(self) -> None:
+        r = PsycopgQueryRenderer(types={"path": _t("text", is_array=True)})
+        with pytest.raises(CoreException, match="array column"):
+            r.render(QueryField("path", "$descendant_of", "a"))
+
+    def test_non_text_non_ltree_column_rejected(self) -> None:
+        r = PsycopgQueryRenderer(types={"path": _t("int4")})
+        with pytest.raises(CoreException, match="ltree or text-like"):
+            r.render(QueryField("path", "$ancestor_of", "a"))
 
 
 class _CompareInner(BaseModel):
@@ -933,7 +1006,7 @@ class TestElementErrorBranches:
         inner = QueryField("status", "$eq", "open")
         _sql, params = r.render(QueryElem("items", "$any", inner))
         assert params == ["open"]
-        assert "_fz_elem ->>" in _sql.as_string(None)
+        assert '"_fz_elem" ->>' in _sql.as_string(None)
 
     def test_object_inner_or_branch(self) -> None:
         class _Item(BaseModel):
@@ -973,7 +1046,7 @@ class TestElementErrorBranches:
         _sql, params = r.render(QueryElem("items", "$any", inner))
         s = _sql.as_string(None)
         assert params == ["open"]
-        assert "(_fz_elem ->> 'status')" in s
+        assert '("_fz_elem" ->> \'status\')' in s
 
     def test_object_inner_unwalkable_field_no_cast(self) -> None:
         """A field not present on the element model resolves to text (no cast)."""
@@ -988,7 +1061,7 @@ class TestElementErrorBranches:
         inner = QueryField("unknown_field", "$eq", "v")
         _sql, params = r.render(QueryElem("items", "$any", inner))
         assert params == ["v"]
-        assert "(_fz_elem ->> 'unknown_field')" in _sql.as_string(None)
+        assert '("_fz_elem" ->> \'unknown_field\')' in _sql.as_string(None)
 
     def test_object_inner_invalid_node_raises(self) -> None:
         class _Item(BaseModel):
@@ -1018,7 +1091,7 @@ class TestElementErrorBranches:
         _sql, params = r.render(QueryElem("items", "$any", inner))
         s = _sql.as_string(None)
         assert params == ["x"]
-        assert "_fz_elem #>>" in s
+        assert '"_fz_elem" #>>' in s
 
     def test_object_inner_leaf_type_resolution_failure_is_swallowed(self) -> None:
         """A leaf whose type resolution raises falls back to text (no cast)."""
@@ -1038,7 +1111,7 @@ class TestElementErrorBranches:
         assert params == ["v"]
         # No per-field cast on the extracted value (leaf type stayed unresolved):
         # the extraction uses ``->>`` (text) with no trailing ``)::<type>`` cast.
-        assert "(_fz_elem ->> 'codes')" in _sql.as_string(None)
+        assert '("_fz_elem" ->> \'codes\')' in _sql.as_string(None)
 
     def test_object_inner_typed_field_applies_cast(self) -> None:
         """A resolvable non-text leaf type applies a SQL cast to the extracted value."""
@@ -1096,6 +1169,92 @@ class TestElementErrorBranches:
                     QueryField(ELEM_SCALAR_FIELD, "$eq", "x"),
                 ),
             )
+
+
+class TestNestedQuantifierRendering:
+    """A quantifier nested inside another element's object predicate (jsonb arrays)."""
+
+    class _Item(BaseModel):
+        tags: list[str]
+        scores: list[int]
+
+    class _Row(BaseModel):
+        items: list["TestNestedQuantifierRendering._Item"]
+
+    def _renderer(self) -> PsycopgQueryRenderer:
+        return PsycopgQueryRenderer(
+            types={"items": _t("jsonb")},
+            model_type=self._Row,
+        )
+
+    def _nested(self, sub: str, inner: QueryExpr, quant: str = "$any") -> QueryElem:
+        return QueryElem("items", "$any", QueryElem(sub, quant, inner))
+
+    def test_nested_scalar_subarray_any_eq_uses_jsonb_space(self) -> None:
+        r = self._renderer()
+        node = self._nested("tags", QueryField(ELEM_SCALAR_FIELD, "$eq", "x"))
+        _sql, params = r.render(node)
+        s = _sql.as_string(None)
+        assert "jsonb_array_elements" in s
+        assert "to_jsonb" in s and "::text" in s  # _jsonb_bound text cast
+        assert params == ["x"]
+
+    def test_nested_scalar_subarray_ordering_int_bound(self) -> None:
+        r = self._renderer()
+        node = self._nested("scores", QueryField(ELEM_SCALAR_FIELD, "$gte", 5))
+        _sql, params = r.render(node)
+        s = _sql.as_string(None)
+        assert "::bigint" in s  # _jsonb_bound int cast
+        assert params == [5]
+
+    def test_nested_scalar_subarray_membership_and_text(self) -> None:
+        r = self._renderer()
+        node = self._nested(
+            "tags",
+            QueryAnd(
+                (
+                    QueryField(ELEM_SCALAR_FIELD, "$in", ["a", "b"]),
+                    QueryField(ELEM_SCALAR_FIELD, "$like", "a%"),
+                ),
+            ),
+        )
+        _sql, _params = r.render(node)
+        s = _sql.as_string(None)
+        assert " IN (" in s
+        assert "#>>" in s  # text op extracts element text
+
+    def test_nested_scalar_subarray_all_and_none_quantifiers(self) -> None:
+        r = self._renderer()
+        for quant in ("$all", "$none"):
+            node = self._nested("tags", QueryField(ELEM_SCALAR_FIELD, "$eq", "x"), quant)
+            _sql, _params = r.render(node)
+            s = _sql.as_string(None)
+            assert "jsonb_array_elements" in s
+
+    def test_object_inner_rejects_unsupported_node(self) -> None:
+        # A node that is neither a field nor a nested quantifier must fail fast, not be
+        # silently dropped from the object-element predicate.
+        r = self._renderer()
+        bad_inner = QueryAnd(
+            (QueryField("tags", "$eq", "x"), QueryCompare("a", "$eq", "b")),
+        )
+        with pytest.raises(CoreException, match="Unsupported node in object element"):
+            r.render(QueryElem("items", "$any", bad_inner))
+
+    def test_scalar_array_of_arrays_nested_quantifier(self) -> None:
+        # ``matrix $any {$any: "x"}`` — the element is itself a scalar sub-array.
+        class _Row(BaseModel):
+            matrix: list[list[str]]
+
+        r = PsycopgQueryRenderer(types={"matrix": _t("jsonb")}, model_type=_Row)
+        node = QueryElem(
+            "matrix",
+            "$any",
+            QueryElem(ELEM_SCALAR_FIELD, "$any", QueryField(ELEM_SCALAR_FIELD, "$eq", "x")),
+        )
+        _sql, params = r.render(node)
+        assert "jsonb_array_elements" in _sql.as_string(None)
+        assert params == ["x"]
 
 
 class TestPythonAnnToPostgresType:

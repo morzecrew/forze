@@ -8,6 +8,7 @@ import attrs
 
 from forze.application.contracts.execution import (
     BeforeStep,
+    DeclaresAuthn,
     DeclaresAuthz,
     DispatchStep,
     MiddlewareStep,
@@ -170,6 +171,28 @@ class OperationPlan:
 
     # ....................... #
 
+    def requires_authentication(self) -> bool:
+        """Whether the plan declares it needs an authenticated principal.
+
+        Structural detection over the before/wrap steps: a :class:`DeclaresAuthn`
+        hook that requires authn, **or** any :class:`DeclaresAuthz` hook —
+        authorization presupposes a bound principal, so an authz-guarded
+        operation requires authentication too. Same honesty caveat as
+        :meth:`declared_permission_keys`: declared-hook introspection only, so
+        ``False`` does not prove the operation is open.
+        """
+
+        factories: list[Any] = [step.factory for step in self.iter_before_steps()]
+        factories += [step.factory for step in self.iter_wrap_steps()]
+
+        return any(
+            (isinstance(factory, DeclaresAuthn) and factory.requires_authn())
+            or isinstance(factory, DeclaresAuthz)
+            for factory in factories
+        )
+
+    # ....................... #
+
     def bind_outer(self) -> ScopeBinder[Self, Never]:
         """Enter an outer scope and return a binder for it."""
 
@@ -205,6 +228,7 @@ class OperationPlan:
             deadline=self.deadline,
             supports_idempotency_key=self.supports_idempotency_key(),
             required_permissions=self.declared_permission_keys(),
+            requires_authn=self.requires_authentication(),
         )
 
     # ....................... #
@@ -272,6 +296,12 @@ class FrozenOperationPlan:
     """Derived at freeze (:meth:`OperationPlan.declared_permission_keys`): sorted union
     of permission keys declared by the plan's authz hooks. Declared-hook introspection
     only, not a security statement — empty does not mean unguarded."""
+
+    requires_authn: bool = attrs.field(default=False)
+    """Derived at freeze (:meth:`OperationPlan.requires_authentication`): the plan
+    declares it needs a bound principal (an authn guard, or any authz hook — authz
+    presupposes authn). Declared-hook introspection only — ``False`` does not mean
+    the operation is open."""
 
     # ....................... #
 

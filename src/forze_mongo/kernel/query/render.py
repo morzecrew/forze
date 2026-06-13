@@ -1,12 +1,13 @@
 """Renderer that translates abstract query expressions into Mongo filter dicts."""
 
 from datetime import timedelta
-from typing import Any
+from typing import Any, Sequence, cast
 
 import attrs
 
 from forze.application.contracts.querying import (
     ELEM_SCALAR_FIELD,
+    FULL_QUERY_CAPABILITIES,
     AggregateComputedField,
     AggregatesExpression,
     AggregatesExpressionParser,
@@ -27,6 +28,7 @@ from forze.application.contracts.querying import (
     QueryValue,
     QueryValueCaster,
     elem_inner_is_scalar,
+    validate_query_capabilities,
 )
 from forze.application.contracts.querying.internal.text_pattern import (
     like_pattern_to_regex,
@@ -35,6 +37,27 @@ from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
 
 # ----------------------- #
+
+_SCALAR_ELEM_CMP: dict[str, str] = {
+    "$eq": "$eq",
+    "$neq": "$ne",
+    "$gt": "$gt",
+    "$gte": "$gte",
+    "$lt": "$lt",
+    "$lte": "$lte",
+}
+"""DSL comparison op → Mongo aggregation/query operator for element predicates."""
+
+
+MONGO_QUERY_CAPABILITIES = attrs.evolve(
+    FULL_QUERY_CAPABILITIES, supports_hierarchy=False
+)
+"""Mongo compiles the full DSL surface at the AST level (every operator, element
+quantifiers via ``$elemMatch``, ``$not`` via ``$nor``, field-to-field comparison via
+``$expr``) — *except* the hierarchy operators (``$descendant_of`` / ``$ancestor_of``),
+which need label-aware materialized-path containment Mongo can't express without a stored
+ancestor array; those are rejected up front. Semantic parity with the canonical mock is
+enforced by the cross-backend parity suite, not by this capability check."""
 
 
 @attrs.define(slots=True, frozen=True)
@@ -64,6 +87,8 @@ class MongoQueryRenderer:
         :param expr: Root expression node.
         :returns: Mongo-compatible filter dictionary.
         """
+
+        validate_query_capabilities(expr, MONGO_QUERY_CAPABILITIES, backend="mongo")
 
         return self._render_expr(expr)
 
@@ -104,9 +129,13 @@ class MongoQueryRenderer:
             project[group_key.alias] = f"$_id.{group_key.alias}"
 
         for computed in parsed.computed_fields:
-            project[computed.alias] = 1
+            project[computed.alias] = self._aggregate_projection(computed)
 
         pipeline.append({"$project": project})
+
+        if parsed.having is not None:
+            # ``$having``: filter the aggregated rows (the projected aliases) post-group.
+            pipeline.append({"$match": self._render_expr(parsed.having)})
 
         sort = self.render_aggregate_sorts(parsed, sorts)
 
@@ -215,6 +244,31 @@ class MongoQueryRenderer:
                     },
                 }
 
+            case "$count_distinct":
+                # Accumulate the distinct set (null-excluded); $size in the projection.
+                return {"$addToSet": self._distinct_value(computed, field_ref)}
+
+            case "$stddev_pop" | "$var_pop":
+                # Variance is rendered as the population stddev, squared in projection.
+                return {
+                    "$stdDevPop": self._conditional_value(computed, field_ref, None)
+                }
+
+            case "$stddev_samp" | "$var_samp":
+                return {
+                    "$stdDevSamp": self._conditional_value(computed, field_ref, None)
+                }
+
+            case "$percentile":
+                # Returns a 1-element array; the projection extracts the scalar.
+                return {
+                    "$percentile": {
+                        "input": self._conditional_value(computed, field_ref, None),
+                        "p": [computed.p],
+                        "method": "approximate",
+                    },
+                }
+
     # ....................... #
 
     def _conditional_value(
@@ -231,6 +285,56 @@ class MongoQueryRenderer:
             expr = QueryFilterExpressionParser.parse(computed.filter)
 
         return {"$cond": [self.render_expr_predicate(expr), value, otherwise]}
+
+    # ....................... #
+
+    def _distinct_value(
+        self,
+        computed: AggregateComputedField,
+        field_ref: str,
+    ) -> JsonDict:
+        """Value for a ``$count_distinct`` ``$addToSet``: null-excluded, filter-aware.
+
+        ``$$REMOVE`` omits the value from the set, so nulls (excluded by SQL ``DISTINCT``)
+        and rows failing the per-metric filter never count toward the distinct cardinality.
+        """
+
+        not_null: JsonDict = {"$ne": [field_ref, None]}
+
+        if computed.filter is None:
+            cond: JsonDict = not_null
+
+        else:
+            expr = computed.parsed_filter or QueryFilterExpressionParser.parse(
+                computed.filter
+            )
+            cond = {"$and": [not_null, self.render_expr_predicate(expr)]}
+
+        return {"$cond": [cond, field_ref, "$$REMOVE"]}
+
+    # ....................... #
+
+    @staticmethod
+    def _aggregate_projection(computed: AggregateComputedField) -> Any:
+        """Post-``$group`` projection that turns an accumulator into the final value.
+
+        Most functions project as-is (``1``); the two-stage ones transform their
+        accumulated intermediate: ``$count_distinct`` takes the set size, variance squares
+        the stddev, and ``$percentile`` extracts its single array element.
+        """
+
+        match computed.function:
+            case "$count_distinct":
+                return {"$size": f"${computed.alias}"}
+
+            case "$var_pop" | "$var_samp":
+                return {"$pow": [f"${computed.alias}", 2]}
+
+            case "$percentile":
+                return {"$arrayElemAt": [f"${computed.alias}", 0]}
+
+            case _:
+                return 1
 
     # ....................... #
 
@@ -394,6 +498,9 @@ class MongoQueryRenderer:
             case "$like" | "$ilike" | "$regex":
                 return self._render_text_predicate(ref, op, value)
 
+            case _:
+                raise exc.internal(f"Unknown field operator: {op!r}")
+
     # ....................... #
 
     @staticmethod
@@ -483,12 +590,36 @@ class MongoQueryRenderer:
 
     # ....................... #
 
+    @staticmethod
+    def _inner_has_nested_elem(inner: QueryExpr) -> bool:
+        match inner:
+            case QueryElem():
+                return True
+
+            case QueryAnd(items) | QueryOr(items):
+                return any(MongoQueryRenderer._inner_has_nested_elem(i) for i in items)
+
+            case QueryNot(item):
+                return MongoQueryRenderer._inner_has_nested_elem(item)
+
+            case _:
+                return False
+
+    # ....................... #
+
     def _render_elem(
         self,
         path: str,
         quantifier: str,
         inner: QueryExpr,
     ) -> JsonDict:
+        # A nested quantifier can't be expressed by negating an $elemMatch at arbitrary
+        # depth ($not-of-$not is illegal, and $all/$none negate), so compile the whole
+        # quantifier to an aggregation $expr — it composes recursively for any depth and
+        # quantifier mix, where the $elemMatch query form cannot.
+        if self._inner_has_nested_elem(inner):
+            return {"$expr": self._elem_quant_expr(f"${path}", quantifier, inner, 0)}
+
         vacuous_val = quantifier in ("$all", "$none")
         has_array: JsonDict = {
             "$and": [
@@ -525,7 +656,118 @@ class MongoQueryRenderer:
         quantifier: str,
         inner: QueryExpr,
     ) -> JsonDict:
-        return self._render_elem(path, quantifier, inner)
+        # This is an aggregation-expression context (e.g. a computed-field filter or
+        # ``$having``), so an element quantifier must compile to a pure aggregation
+        # boolean. ``_render_elem`` emits query-form operators ($expr/$elemMatch) that are
+        # invalid inside a ``$cond``, so always use the aggregation form here — nested or
+        # not.
+        return self._elem_quant_expr(f"${path}", quantifier, inner, 0)
+
+    # ....................... #
+
+    def _elem_quant_expr(
+        self,
+        array_ref: str,
+        quantifier: str,
+        inner: QueryExpr,
+        depth: int,
+    ) -> JsonDict:
+        """Aggregation boolean for an element quantifier — composes under nesting.
+
+        Filters the array to elements satisfying *inner* (a predicate over the
+        per-element variable ``$$eN``) and quantifies by count. A missing/non-array
+        field is treated as empty, so ``$all`` / ``$none`` are vacuously true on it —
+        matching the canonical mock. Unlike the ``$elemMatch`` query form this nests to
+        any depth (a nested quantifier becomes a recursive call on ``$$eN.subpath``)
+        with no ``$not``-of-``$elemMatch`` restriction.
+        """
+
+        var = f"e{depth}"
+        safe: JsonDict = {"$cond": [{"$isArray": [array_ref]}, array_ref, []]}
+        cond = self._elem_cond_expr(inner, this=f"$${var}", depth=depth)
+        matched: JsonDict = {
+            "$size": {"$filter": {"input": safe, "as": var, "cond": cond}},
+        }
+
+        if quantifier == "$any":
+            return {"$gt": [matched, 0]}
+
+        if quantifier == "$none":
+            return {"$eq": [matched, 0]}
+
+        # $all: as many matched as elements present (vacuously true on an empty array).
+        return {"$eq": [matched, {"$size": safe}]}
+
+    # ....................... #
+
+    def _elem_cond_expr(self, inner: QueryExpr, *, this: str, depth: int) -> JsonDict:
+        """Aggregation boolean for an element predicate bound to *this* (``$$eN``)."""
+
+        match inner:
+            case QueryField(name, op, value):
+                ref = this if name == ELEM_SCALAR_FIELD else f"{this}.{name}"
+                return self._elem_field_cond_expr(ref, op, value)
+
+            case QueryAnd(items):
+                return {
+                    "$and": [
+                        self._elem_cond_expr(i, this=this, depth=depth) for i in items
+                    ],
+                }
+
+            case QueryOr(items):
+                return {
+                    "$or": [
+                        self._elem_cond_expr(i, this=this, depth=depth) for i in items
+                    ],
+                }
+
+            case QueryNot(item):
+                return {"$not": [self._elem_cond_expr(item, this=this, depth=depth)]}
+
+            case QueryElem(sub_path, sub_quantifier, sub_inner):
+                # ``$`` sentinel = quantify over the element itself (a scalar
+                # array-of-arrays); a named path = a sub-array of an object element.
+                ref = this if sub_path == ELEM_SCALAR_FIELD else f"{this}.{sub_path}"
+                return self._elem_quant_expr(
+                    ref,
+                    sub_quantifier,
+                    sub_inner,
+                    depth + 1,
+                )
+
+            case _:
+                raise exc.internal(f"Invalid element inner: {inner!r}")
+
+    # ....................... #
+
+    def _elem_field_cond_expr(self, ref: str, op: str, value: Any) -> JsonDict:
+        """Aggregation boolean comparing element field *ref* under *op* to *value*."""
+
+        if op == "$in":
+            return {"$in": [ref, [self.caster.pass_through(v) for v in value]]}
+
+        if op == "$nin":
+            return {
+                "$not": [{"$in": [ref, [self.caster.pass_through(v) for v in value]]}],
+            }
+
+        if op in _SCALAR_ELEM_CMP:
+            return {_SCALAR_ELEM_CMP[op]: [ref, self.caster.pass_through(value)]}
+
+        if op in ("$like", "$ilike", "$regex"):
+            regex, options = self._text_regex_and_options(
+                op,
+                str(self.caster.pass_through(value)),
+            )
+            match_spec: JsonDict = {"input": {"$ifNull": [ref, ""]}, "regex": regex}
+
+            if options:
+                match_spec["options"] = options
+
+            return {"$regexMatch": match_spec}
+
+        raise exc.internal(f"Unsupported element operator {op!r}")
 
     # ....................... #
 
@@ -560,118 +802,80 @@ class MongoQueryRenderer:
         quantifier: str,
         inner: QueryExpr,
     ) -> JsonDict:
+        # Count the elements that satisfy the (possibly multi-operator / range) inner
+        # predicate via ``$filter``, then quantify. Correct for a conjunction such as
+        # ``{"$gt": 1, "$lt": 3}`` — unlike a ``$min``/``$max`` shortcut, which only
+        # holds for a single comparison.
+        ref = f"${path}"
+        cond = self._scalar_elem_cond(inner)
+        matched: JsonDict = {"$size": {"$filter": {"input": ref, "cond": cond}}}
+
+        if quantifier == "$any":
+            return {"$expr": {"$gt": [matched, 0]}}
+
+        if quantifier == "$none":
+            return {"$expr": {"$eq": [matched, 0]}}
+
+        # ``$all``: every element satisfies it (the empty-array vacuous case is handled
+        # by the caller, which only invokes this for a non-empty array).
+        return {"$expr": {"$eq": [{"$size": ref}, matched]}}
+
+    # ....................... #
+
+    def _scalar_elem_cond(self, inner: QueryExpr) -> JsonDict:
+        """Aggregation-expression boolean for a scalar element ``$$this`` predicate."""
+
         match inner:
-            case QueryField(name, _, _) if name == ELEM_SCALAR_FIELD:
-                fields = [inner]
+            case QueryField(name, op, value) if name == ELEM_SCALAR_FIELD:
+                return self._scalar_elem_op_cond(op, value)
 
             case QueryAnd(items):
-                fields = [i for i in items if isinstance(i, QueryField)]
+                return {"$and": [self._scalar_elem_cond(i) for i in items]}
 
             case QueryOr(items):
-                parts = [
-                    self._render_elem_scalar_match(path, quantifier, i) for i in items
-                ]
-                if len(parts) == 1:
-                    return parts[0]
-                key = "$or" if quantifier == "$any" else "$and"
-                if quantifier == "$none":
-                    key = "$and"
-                return {key: parts}
+                return {"$or": [self._scalar_elem_cond(i) for i in items]}
 
             case _:
                 raise exc.internal(f"Invalid scalar element inner: {inner!r}")
 
-        if len(fields) != 1:
-            raise exc.internal("Scalar element quantifier supports one comparison only")
+    # ....................... #
 
-        field = fields[0]
-        op = field.op
-        val = self.caster.pass_through(field.value)
-        ref = f"${path}"
+    def _scalar_elem_op_cond(self, op: str, value: Any) -> JsonDict:
+        if op == "$in":
+            return {"$in": ["$$this", [self.caster.pass_through(v) for v in value]]}
 
-        if op == "$eq" and quantifier == "$any":
-            return {path: val}
-
-        if op == "$eq" and quantifier == "$none":
-            return {"$nor": [{path: val}]}
-
-        if op == "$eq" and quantifier == "$all":
+        if op == "$nin":
             return {
-                "$expr": {
-                    "$and": [
-                        {"$eq": [{"$min": ref}, val]},
-                        {"$eq": [{"$max": ref}, val]},
-                    ],
-                },
+                "$not": [
+                    {"$in": ["$$this", [self.caster.pass_through(v) for v in value]]}
+                ]
             }
+
+        val = self.caster.pass_through(value)
+
+        if op in _SCALAR_ELEM_CMP:
+            return {_SCALAR_ELEM_CMP[op]: ["$$this", val]}
 
         if op in ("$like", "$ilike", "$regex"):
             regex, options = self._text_regex_and_options(op, str(val))
             cond: JsonDict = {"$regexMatch": {"input": "$$this", "regex": regex}}
+
             if options:
                 cond["$regexMatch"]["options"] = options
-            filtered = {
-                "$size": {
-                    "$filter": {
-                        "input": ref,
-                        "cond": cond,
-                    },
-                },
-            }
-            if quantifier == "$any":
-                return {"$expr": {"$gt": [filtered, 0]}}
-            if quantifier == "$none":
-                return {"$expr": {"$eq": [filtered, 0]}}
-            return {
-                "$expr": {
-                    "$eq": [
-                        {"$size": ref},
-                        filtered,
-                    ],
-                },
-            }
 
-        agg = "$max" if quantifier == "$any" else "$min"
+            return cond
 
-        if op in ("$lt", "$lte") and quantifier == "$any":
-            agg = "$min"
-
-        if op in ("$lt", "$lte") and quantifier == "$all":
-            agg = "$max"
-
-        cmp_op = op if op in ("$gt", "$gte", "$lt", "$lte") else None
-
-        if cmp_op is None:
-            if op == "$neq" and quantifier == "$any":
-                return {
-                    "$expr": {
-                        "$gt": [
-                            {
-                                "$size": {
-                                    "$filter": {
-                                        "input": ref,
-                                        "cond": {"$ne": ["$$this", val]},
-                                    },
-                                },
-                            },
-                            0,
-                        ],
-                    },
-                }
-
-            raise exc.internal(f"Unsupported scalar element operator {op!r}")
-
-        return {"$expr": {cmp_op: [{agg: ref}, val]}}
+        raise exc.internal(f"Unsupported scalar element operator {op!r}")
 
     # ....................... #
 
     def _render_elem_object_match(self, inner: QueryExpr) -> JsonDict:
         match inner:
             case QueryAnd(items):
-                fields = [i for i in items if isinstance(i, QueryField)]
+                parts: list[QueryExpr] = list(items)
 
-            case QueryField() as f:
-                fields = [f]
+            case QueryField():
+                parts = [inner]
 
             case QueryOr(items):
                 return {
@@ -683,20 +887,32 @@ class MongoQueryRenderer:
 
         out: JsonDict = {}
 
-        for f in fields:
-            if f.op == "$eq":
-                out[f.name] = self.caster.pass_through(f.value)
+        # Accumulate every operator on a field into one operator-document so a range
+        # (e.g. ``qty`` with ``{"$gt": 1, "$lt": 3}``) survives — two QueryFields on
+        # the same name must merge, not overwrite. (Nested quantifiers never reach here:
+        # an inner containing one is compiled via the aggregation $expr path upstream.)
+        for part in parts:
+            if not isinstance(part, QueryField):
+                raise exc.internal(f"Invalid object element inner: {part!r}")
 
-            elif f.op in ("$like", "$ilike", "$regex"):
+            f = part
+            spec = out.setdefault(f.name, {})
+
+            if f.op in ("$like", "$ilike", "$regex"):
                 pattern = str(self.caster.pass_through(f.value))
                 regex, options = self._text_regex_and_options(f.op, pattern)
-                spec: JsonDict = {"$regex": regex}
+                spec["$regex"] = regex
+
                 if options:
                     spec["$options"] = options
-                out[f.name] = spec
+
+            elif f.op in ("$in", "$nin"):
+                spec[f.op] = [
+                    self.caster.pass_through(v) for v in cast(Sequence[Any], f.value)
+                ]
 
             else:
-                out[f.name] = {f.op: self.caster.pass_through(f.value)}
+                spec[_SCALAR_ELEM_CMP[f.op]] = self.caster.pass_through(f.value)
 
         return out
 
@@ -708,8 +924,10 @@ class MongoQueryRenderer:
 
         for key, spec in match.items():
             if isinstance(spec, dict):
-                op_key = next(iter(spec))  # type: ignore[arg-type]
-                negated[key] = {"$not": {op_key: spec[op_key]}}
+                # Negate the whole operator-doc: Mongo's $not treats a multi-operator
+                # spec as an implicit AND, so $not({$gt:1, $lt:3}) is the correct De
+                # Morgan negation of a range (not just the first operator).
+                negated[key] = {"$not": spec}
 
             else:
                 negated[key] = {"$ne": spec}

@@ -230,13 +230,14 @@ _RPC_BINDINGS: Mapping[str, RouteBinding] = {
         build=_download_endpoint,
     ),
     StorageKernelOp.DELETE: RouteBinding(
-        method="POST",
+        method="DELETE",
         path=f"/{StorageKernelOp.DELETE.value}/{{key:path}}",
         build=_delete_endpoint,
         status_code=204,
     ),
 }
-"""Operation-named bindings per storage kernel operation."""
+"""Operation-named bindings per storage kernel operation (REST verbs; the
+slash-bearing key rides the path tail since it is not a JSON field)."""
 
 
 # ....................... #
@@ -294,7 +295,7 @@ def attach_storage_routes(
     :param style: ``"rest"`` for resource paths (``POST ""`` 201, ``POST /list``,
         ``GET /{key}``, ``DELETE /{key}``) or ``"rpc"`` for operation-named paths
         (``POST /upload``, ``POST /list``, ``GET /download/{key}``,
-        ``POST /delete/{key}``).
+        ``DELETE /delete/{key}``).
     :param include: Optional narrowing to a subset of kernel operations; including
         an operation the registry lacks is a configuration error.
     :param max_upload_size: Upload size cap in bytes, enforced by streaming the

@@ -443,8 +443,9 @@ class FrozenOperationRegistry:
         ``supports_idempotency_key`` (the plan has an idempotency wrap — optional-key
         replay, not a requirement), ``required_permissions`` (union of permission
         keys declared by the plan's authz hooks; declared-hook introspection, not a
-        security statement), and ``deadline`` (the plan's merged per-invocation time
-        budget, or ``None`` for no cap).
+        security statement), ``requires_authn`` (the plan declares it needs a bound
+        principal — an authn guard or any authz hook), and ``deadline`` (the plan's
+        merged per-invocation time budget, or ``None`` for no cap).
         """
 
         return {
@@ -454,6 +455,7 @@ class FrozenOperationRegistry:
                 descriptor=self.descriptors.get(op),
                 supports_idempotency_key=self.plans[op].supports_idempotency_key,
                 required_permissions=self.plans[op].required_permissions,
+                requires_authn=self.plans[op].requires_authn,
                 deadline=self.plans[op].deadline,
             )
             for op in self.handlers

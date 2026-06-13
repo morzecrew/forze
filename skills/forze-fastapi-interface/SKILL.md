@@ -68,20 +68,32 @@ attach_document_routes(
 app.include_router(router)
 ```
 
-- `style="rest"` gives resource paths (`POST ""` 201, `GET /{id}`,
-  `PATCH /{id}?rev=`, `DELETE /{id}` 204); `style="rpc"` gives uniform
-  `POST /<op>` with the input DTO as body. List operations are `POST /<op>` in
-  both styles.
+- Both styles use the same REST verbs; they differ only in how the resource is
+  addressed. `style="rest"` puts the id in the path (`POST ""` 201, `GET /{id}`,
+  `PATCH /{id}?rev=`, `DELETE /{id}` 204); `style="rpc"` keeps one
+  operation-named path per op and puts the id in a query parameter
+  (`GET /get?id=`, `PATCH /update?id=&rev=` with the patch body,
+  `DELETE /kill?id=` 204). `create` and list operations are `POST /<op>` with
+  the input DTO as body in both styles (no id to address).
 - Only operations the registry holds are attached (a read-only spec yields a
   read-only router); narrow with `include={"get", "list"}`.
 - Merging `build_soft_deletion_registry(spec)` into the document registry adds
-  `POST /{id}/delete|restore?rev=` automatically.
+  soft delete/restore automatically — `POST /{id}/delete|restore?rev=` (REST) or
+  `PATCH /delete|restore?id=&rev=` (RPC); hard delete keeps the `DELETE` verb.
 - `attach_search_routes` (no `style` — every search request is a filter body,
   always `POST /<op>`) and `attach_storage_routes` (`style` required; multipart
   upload, raw-bytes download) follow the same pattern.
 - An operation with a plan-declared deadline surfaces it as an
   `x-deadline-seconds` OpenAPI extension and a "Time budget" description line —
   see [`forze-resilience-deadlines`](../forze-resilience-deadlines/SKILL.md).
+- `apply_openapi_security(app, requirement)` (from `forze_fastapi.security`) makes
+  the generated OpenAPI honest about auth: it derives `securitySchemes` from the
+  same `AuthnRequirement` you give `SecurityContextMiddleware` (bearer for an
+  `Authorization` token; `apiKey` in header/cookie otherwise) and attaches
+  `security` to operations flagged `requires_authn` (derived at freeze from the
+  plan's `AuthnRequired`/authz hooks). Call once after attaching routers; token-
+  minting routes (`/login`, `/refresh`) stay open. Documents auth, does not enforce
+  it — `exclude={op, ...}` leaves a flagged op open.
 
 ## Readiness and deadline headers
 

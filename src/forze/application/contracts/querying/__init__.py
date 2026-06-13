@@ -1,5 +1,31 @@
 """Basic query contracts."""
 
+from .builder import (
+    FieldRef,
+    Q,
+    QueryCondition,
+)
+from .capabilities import (
+    ALL_ELEMENT_OPS,
+    ALL_VALUE_OPS,
+    FULL_QUERY_CAPABILITIES,
+    UNSUPPORTED_QUERY_FEATURE_CODE,
+    QueryCapabilities,
+    validate_query_capabilities,
+)
+from .discovery import (
+    QUANTIFIER_OPS,
+    FieldQuerySupport,
+    QueryDiscovery,
+    build_query_discovery,
+)
+from .field_types import (
+    OPERATOR_TYPE_MISMATCH_CODE,
+    classify_field_type,
+    field_value_operators,
+    is_quantifiable_field,
+    validate_query_field_types,
+)
 from .expressions import (
     AggregateComputedFieldExpression,
     AggregateComputedFunctionApplication,
@@ -30,6 +56,9 @@ from .expressions import (
     QueryFilterExpression,
     QueryNegation,
     QuerySortExpression,
+    QuerySortKeySpec,
+    QuerySortNulls,
+    QuerySortValue,
     QueryValueMap,
     QueryValueMapValue,
     QueryValueOpConjunction,
@@ -69,22 +98,35 @@ from .internal import (
 from .pagination import (
     assemble_keyset_cursor_page,
     assert_cursor_projection_includes_sort_keys,
+    assert_default_null_ordering,
     compare_keyset_sort_values,
     decode_keyset_v1,
+    default_nulls,
     encode_keyset_v1,
     keyset_canonical_value,
     keyset_page_bounds,
     normalize_sorts_for_keyset,
     normalize_sorts_with_id,
+    ordered_compare,
+    parse_sort_value,
     read_fields_for_model,
     resolve_effective_sorts,
+    resolve_sort_keys,
     resolved_cursor_limit,
     row_passes_keyset_seek,
     row_value_for_sort_key,
     validate_cursor_token,
     validate_sort_fields,
 )
-from .types import ElementOp, QueryElementQuantifier, QueryOp, QueryValue
+from .types import (
+    ElementOp,
+    HierarchyOp,
+    HierarchyValue,
+    QueryElementQuantifier,
+    QueryOp,
+    QueryValue,
+    TreePath,
+)
 
 # ----------------------- #
 
@@ -121,6 +163,21 @@ __all__ = [
     "QueryElementValuesPredicate",
     "QueryFieldGuard",
     "QueryFieldPolicy",
+    "QueryCapabilities",
+    "FULL_QUERY_CAPABILITIES",
+    "ALL_VALUE_OPS",
+    "ALL_ELEMENT_OPS",
+    "UNSUPPORTED_QUERY_FEATURE_CODE",
+    "validate_query_capabilities",
+    "OPERATOR_TYPE_MISMATCH_CODE",
+    "validate_query_field_types",
+    "classify_field_type",
+    "field_value_operators",
+    "is_quantifiable_field",
+    "QUANTIFIER_OPS",
+    "FieldQuerySupport",
+    "QueryDiscovery",
+    "build_query_discovery",
     "QueryFilterExpression",
     "QueryNegation",
     "ElementOp",
@@ -152,8 +209,22 @@ __all__ = [
     "QueryOr",
     "QueryOp",
     "QueryValue",
+    "HierarchyOp",
+    "HierarchyValue",
+    "TreePath",
+    "Q",
+    "QueryCondition",
+    "FieldRef",
     "elem_inner_is_scalar",
     "compare_keyset_sort_values",
+    "assert_default_null_ordering",
+    "ordered_compare",
+    "default_nulls",
+    "parse_sort_value",
+    "resolve_sort_keys",
+    "QuerySortNulls",
+    "QuerySortKeySpec",
+    "QuerySortValue",
     "decode_keyset_v1",
     "encode_keyset_v1",
     "keyset_canonical_value",

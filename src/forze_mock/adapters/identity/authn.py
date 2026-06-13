@@ -44,6 +44,7 @@ from forze.application.contracts.authn.value_objects.credentials import (
 from forze.application.contracts.authn.value_objects.identity import AuthnIdentity
 from forze.application.contracts.authn.value_objects.lifetime import CredentialLifetime
 from forze.application.contracts.authn.value_objects.tokens import (
+    ApiKeyInfo,
     IssuedAccessToken,
     IssuedApiKey,
     IssuedInvite,
@@ -92,6 +93,9 @@ def _assertion_from_store(entry: dict[str, Any]) -> VerifiedAssertion:
         subject=str(entry["subject"]),
         audience=entry.get("audience"),
         issuer_tenant_hint=entry.get("issuer_tenant_hint"),
+        # Pass through any seeded claims (e.g. an RFC 8693 ``act`` delegation actor
+        # on a seeded API key), so mock-backed tests exercise the real actor path.
+        claims=entry.get("claims", {}),
     )
 
 
@@ -813,9 +817,19 @@ class MockPasswordResetPort(PasswordResetPort):
 @final
 @attrs.define(slots=True, kw_only=True)
 class MockApiKeyLifecyclePort(ApiKeyLifecyclePort):
-    async def issue_api_key(self, identity: AuthnIdentity) -> IssuedApiKey:
-        _ = identity
+    async def issue_api_key(
+        self,
+        identity: AuthnIdentity,
+        *,
+        actor_principal_id: UUID | None = None,
+        label: str | None = None,
+    ) -> IssuedApiKey:
+        _ = identity, actor_principal_id, label
         raise exc.internal("Mock API key lifecycle not configured")
+
+    async def list_api_keys(self, identity: AuthnIdentity) -> Sequence[ApiKeyInfo]:
+        _ = identity
+        return []
 
     async def refresh_api_key(self, credentials: ApiKeyCredentials) -> IssuedApiKey:
         _ = credentials

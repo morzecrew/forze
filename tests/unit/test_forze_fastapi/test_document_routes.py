@@ -207,16 +207,17 @@ class TestRpcStyle:
         client = TestClient(_build_app("rpc"))
 
         created = client.post("/notes/create", json={"title": "hello"})
-        assert created.status_code == 200
+        assert created.status_code == 201
         note = created.json()
 
-        fetched = client.post("/notes/get", json={"id": note["id"]})
+        fetched = client.get("/notes/get", params={"id": note["id"]})
         assert fetched.status_code == 200
         assert fetched.json()["title"] == "hello"
 
-        updated = client.post(
+        updated = client.patch(
             "/notes/update",
-            json={"id": note["id"], "rev": note["rev"], "dto": {"title": "world"}},
+            params={"id": note["id"], "rev": note["rev"]},
+            json={"title": "world"},
         )
         assert updated.status_code == 200
         assert updated.json()["data"]["title"] == "world"
@@ -225,7 +226,7 @@ class TestRpcStyle:
         assert listed.status_code == 200
         assert listed.json()["count"] == 1
 
-        killed = client.post("/notes/kill", json={"id": note["id"]})
+        killed = client.delete("/notes/kill", params={"id": note["id"]})
         assert killed.status_code == 204
 
     def test_soft_delete_and_restore(self) -> None:
@@ -233,24 +234,40 @@ class TestRpcStyle:
 
         note = client.post("/notes/create", json={"title": "x"}).json()
 
-        deleted = client.post(
-            "/notes/delete", json={"id": note["id"], "rev": note["rev"]}
+        deleted = client.patch(
+            "/notes/delete", params={"id": note["id"], "rev": note["rev"]}
         )
         assert deleted.status_code == 200
         assert deleted.json()["is_deleted"] is True
 
-        restored = client.post(
+        restored = client.patch(
             "/notes/restore",
-            json={"id": note["id"], "rev": deleted.json()["rev"]},
+            params={"id": note["id"], "rev": deleted.json()["rev"]},
         )
         assert restored.status_code == 200
         assert restored.json()["is_deleted"] is False
 
-    def test_every_operation_is_a_post(self) -> None:
+    def test_paths_and_methods(self) -> None:
         paths = _build_app("rpc").openapi()["paths"]
 
         assert set(paths) == {f"/notes/{op.value}" for op in _ALL_OPS}
-        assert all(set(methods) == {"post"} for methods in paths.values())
+        assert set(paths["/notes/get"]) == {"get"}
+        assert set(paths["/notes/create"]) == {"post"}
+        assert set(paths["/notes/update"]) == {"patch"}
+        assert set(paths["/notes/kill"]) == {"delete"}
+        assert set(paths["/notes/delete"]) == {"patch"}
+        assert set(paths["/notes/restore"]) == {"patch"}
+        assert set(paths["/notes/list"]) == {"post"}
+        assert set(paths["/notes/agg_list"]) == {"post"}
+
+    def test_update_rev_is_a_required_query_param(self) -> None:
+        client = TestClient(_build_app("rpc"))
+
+        created = client.post("/notes/create", json={"title": "x"}).json()
+        # Supply a valid id so the 422 isolates the missing rev, not the missing id.
+        response = client.patch(f"/notes/update?id={created['id']}", json={"title": "y"})
+
+        assert response.status_code == 422
 
 
 class TestCatalogProjection:

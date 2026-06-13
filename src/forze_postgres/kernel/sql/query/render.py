@@ -16,6 +16,8 @@ from pydantic import BaseModel
 
 from forze.application.contracts.querying import (
     ELEM_SCALAR_FIELD,
+    FULL_QUERY_CAPABILITIES,
+    UNSUPPORTED_QUERY_FEATURE_CODE,
     AggregateComputedField,
     AggregatesExpression,
     AggregatesExpressionParser,
@@ -35,11 +37,12 @@ from forze.application.contracts.querying import (
     QueryValue,
     QueryValueCaster,
     elem_inner_is_scalar,
+    validate_query_capabilities,
 )
 from forze.base.exceptions import exc
 
-from forze_postgres.kernel.catalog.introspect import PostgresColumnTypes, PostgresType
-from forze_postgres.kernel.sql.type_cast import cast_sql_for_column_type
+from ...catalog.introspect import PostgresColumnTypes, PostgresType
+from ..type_cast import cast_sql_for_column_type
 from .nested import (
     build_nested_json_scalar_expr,
     resolve_leaf_python_type,
@@ -50,11 +53,23 @@ from .utils import PsycopgPositionalBinder
 
 # ----------------------- #
 
+POSTGRES_QUERY_CAPABILITIES = FULL_QUERY_CAPABILITIES
+"""Postgres compiles the full DSL surface at the AST level: every operator, element
+quantifiers (including *nested* quantifiers — a quantifier inside another's element
+predicate, via an alias-parameterized nested ``EXISTS`` over the object sub-array),
+``$not``, and field-to-field comparison. The one residual gap — set operators /
+``$empty`` on a *nested JSON* path rather than a native array column — depends on a
+column's storage shape the AST cannot see, so it stays a backend-internal check
+(raising the same ``query_feature_unsupported`` code)."""
+
+# ....................... #
+
 _NESTED_JSON_UNSUPPORTED: frozenset[str] = frozenset(
     ("$empty", "$superset", "$subset", "$disjoint", "$overlaps"),
 )
 
 _TEXT_LIKE_BASES: frozenset[str] = frozenset({"text", "varchar", "char", "citext"})
+_LTREE_BASE: str = "ltree"
 
 _COMPARE_EQ_SQL: dict[str, str] = {"$eq": "=", "$neq": "<>"}
 _COMPARE_ORD_SQL: dict[str, str] = {
@@ -188,6 +203,9 @@ class PsycopgQueryRenderer:
     # ....................... #
 
     def render(self, expr: QueryExpr) -> tuple[sql.Composable, list[Any]]:
+        validate_query_capabilities(
+            expr, POSTGRES_QUERY_CAPABILITIES, backend="postgres"
+        )
         query = self._render_expr(expr)
         params = self.binder.values()
 
@@ -267,7 +285,7 @@ class PsycopgQueryRenderer:
     @staticmethod
     def render_aggregate_order_by(
         parsed: ParsedAggregates,
-        sorts: Mapping[str, str] | None,
+        sorts: Mapping[str, Any] | None,
     ) -> sql.Composable | None:
         """Render ORDER BY for aggregate result aliases."""
 
@@ -282,7 +300,8 @@ class PsycopgQueryRenderer:
 
         parts: list[sql.Composable] = []
 
-        for field, order in sorts.items():
+        for field, value in sorts.items():
+            order = value.get("dir") if isinstance(value, Mapping) else value  # type: ignore[arg-type]
             direction = sql.SQL("ASC") if order == "asc" else sql.SQL("DESC")
             parts.append(sql.SQL("{} {}").format(sql.Identifier(field), direction))
 
@@ -324,6 +343,29 @@ class PsycopgQueryRenderer:
                 agg_expr = sql.SQL(
                     "percentile_cont(0.5) WITHIN GROUP (ORDER BY {})",
                 ).format(field_expr)
+
+            case "$count_distinct":
+                agg_expr = sql.SQL("COUNT(DISTINCT {})").format(field_expr)
+
+            case "$stddev_pop":
+                agg_expr = sql.SQL("stddev_pop({})").format(field_expr)
+
+            case "$stddev_samp":
+                agg_expr = sql.SQL("stddev_samp({})").format(field_expr)
+
+            case "$var_pop":
+                agg_expr = sql.SQL("var_pop({})").format(field_expr)
+
+            case "$var_samp":
+                agg_expr = sql.SQL("var_samp({})").format(field_expr)
+
+            case "$percentile":
+                agg_expr = sql.SQL(
+                    "percentile_cont({}) WITHIN GROUP (ORDER BY {})",
+                ).format(sql.Literal(computed.p), field_expr)
+
+            case _:  # pyright: ignore[reportUnnecessaryComparison]
+                raise exc.internal(f"Unsupported aggregate function: {function!r}")
 
         return self._render_aggregate_filter(agg_expr, computed)
 
@@ -483,8 +525,14 @@ class PsycopgQueryRenderer:
                         )
 
                     if op in _NESTED_JSON_UNSUPPORTED:
-                        raise exc.internal(
-                            f"Operator {op!r} is not supported for nested JSON path {name!r}.",
+                        # Storage-shape-dependent (a nested JSON path is not a native
+                        # array column), so the AST-level capability check cannot see
+                        # it — but surface the same clean code, not an internal 500.
+                        raise exc.precondition(
+                            f"Operator {op!r} is not supported on the nested JSON path "
+                            f"{name!r} for the 'postgres' backend (use a top-level array "
+                            "column for set/empty operators).",
+                            code=UNSUPPORTED_QUERY_FEATURE_CODE,
                         )
 
                     col_expr, t = build_nested_json_scalar_expr(
@@ -575,6 +623,9 @@ class PsycopgQueryRenderer:
             case "$like" | "$ilike" | "$regex":
                 return self._render_text(col, op, value, t=t)
 
+            case "$descendant_of" | "$ancestor_of":
+                return self._render_hierarchy(col, op, value, t=t)
+
             case _:  # pyright: ignore[reportUnnecessaryComparison]
                 raise exc.internal(f"Unknown operator: {op!r}")
 
@@ -621,6 +672,63 @@ class PsycopgQueryRenderer:
                 raise exc.internal(f"Unknown text operator: {op!r}")
 
         return sql.SQL("{} {} {}").format(col, op_sql, self.binder.add(pattern))
+
+    # ....................... #
+
+    def _render_hierarchy(
+        self,
+        col: sql.Composable,
+        op: str,
+        value: Any,
+        *,
+        t: PostgresType | None,
+    ) -> sql.Composable:
+        """Render a materialized-path containment predicate (both ends inclusive).
+
+        Native ``ltree`` columns use the index-backed ancestor/descendant operators
+        (``@>`` / ``<@``). Plain text columns fall back to label-aware prefix matching via
+        ``starts_with`` (appending the ``.`` separator so a label boundary is required —
+        ``top.science`` is *not* a descendant of ``top.sci``). The parser has already
+        expanded a list operand into an ``OR`` of single-path predicates, so *value* is a
+        single path string here.
+        """
+
+        path = str(value)
+
+        if t is not None and t.is_array:
+            raise exc.internal(
+                f"Hierarchy operator {op!r} is not supported on array column type {t!r}",
+            )
+
+        if t is not None and t.base == _LTREE_BASE:
+            bound = sql.SQL("{}::ltree").format(self.binder.add(path))
+
+            # ``a <@ b`` ⇔ a is a descendant of b; ``a @> b`` ⇔ a is an ancestor of b
+            # (both inclusive). Column on the left, the given node on the right.
+            ltree_op = sql.SQL("<@") if op == "$descendant_of" else sql.SQL("@>")
+
+            return sql.SQL("{} {} {}").format(col, ltree_op, bound)
+
+        if t is not None and t.base not in _TEXT_LIKE_BASES:
+            raise exc.internal(
+                f"Hierarchy operator {op!r} requires an ltree or text-like column; "
+                f"got {t.base!r}",
+            )
+
+        # Compare label sequences with a trailing separator so equality and strict
+        # containment fold into one ``starts_with`` (and a label boundary is required:
+        # ``top.science.`` is not a prefix of ``top.scientist.``). The bound node value
+        # is referenced once — appending ``'.'`` to *both* sides makes ``col == node``
+        # the inclusive case.
+        col_path = sql.SQL("(({})::text || '.')").format(col)
+        node_path = sql.SQL("({} || '.')").format(self.binder.add(path))
+
+        if op == "$descendant_of":
+            # col is at or below the node: col's path starts with the node's path.
+            return sql.SQL("starts_with({}, {})").format(col_path, node_path)
+
+        # col is at or above the node: the node's path starts with col's path.
+        return sql.SQL("starts_with({}, {})").format(node_path, col_path)
 
     # ....................... #
 
@@ -816,6 +924,14 @@ class PsycopgQueryRenderer:
 
     # ....................... #
 
+    @staticmethod
+    def _elem_alias(depth: int) -> str:
+        """Per-depth subquery alias so nested quantifiers don't shadow their parents."""
+
+        return "_fz_elem" if depth == 0 else f"_fz_elem_{depth}"
+
+    # ....................... #
+
     def _render_elem(
         self,
         path: str,
@@ -830,17 +946,18 @@ class PsycopgQueryRenderer:
                 f"Element quantifier on {path!r} requires an array or jsonb array column",
             )
 
-        elem_pred = self._render_elem_inner(inner, col, t, path)
+        alias = sql.Identifier(self._elem_alias(0))
+        elem_pred = self._render_elem_inner(inner, col, t, path.split("."), depth=0)
         has_array = self._elem_has_array_sql(col, t)
 
         if t is not None and t.is_array:
             exists = sql.SQL(
-                "EXISTS (SELECT 1 FROM unnest({col}) AS _fz_elem WHERE {pred})",
-            ).format(col=col, pred=elem_pred)
+                "EXISTS (SELECT 1 FROM unnest({col}) AS {a} WHERE {pred})",
+            ).format(col=col, a=alias, pred=elem_pred)
 
             forall = sql.SQL(
-                "NOT EXISTS (SELECT 1 FROM unnest({col}) AS _fz_elem WHERE NOT ({pred}))",
-            ).format(col=col, pred=elem_pred)
+                "NOT EXISTS (SELECT 1 FROM unnest({col}) AS {a} WHERE NOT ({pred}))",
+            ).format(col=col, a=alias, pred=elem_pred)
 
         else:
             arr = sql.SQL(
@@ -848,12 +965,12 @@ class PsycopgQueryRenderer:
             ).format(col=col)
 
             exists = sql.SQL(
-                "EXISTS (SELECT 1 FROM jsonb_array_elements({arr}) AS _fz_elem WHERE {pred})",
-            ).format(arr=arr, pred=elem_pred)
+                "EXISTS (SELECT 1 FROM jsonb_array_elements({arr}) AS {a} WHERE {pred})",
+            ).format(arr=arr, a=alias, pred=elem_pred)
 
             forall = sql.SQL(
-                "NOT EXISTS (SELECT 1 FROM jsonb_array_elements({arr}) AS _fz_elem WHERE NOT ({pred}))",
-            ).format(arr=arr, pred=elem_pred)
+                "NOT EXISTS (SELECT 1 FROM jsonb_array_elements({arr}) AS {a} WHERE NOT ({pred}))",
+            ).format(arr=arr, a=alias, pred=elem_pred)
 
         if quantifier == "$any":
             match = exists
@@ -922,12 +1039,14 @@ class PsycopgQueryRenderer:
         inner: QueryExpr,
         col: sql.Composable,
         t: PostgresType | None,
-        path: str,
+        model_path: list[str],
+        *,
+        depth: int,
     ) -> sql.Composable:
         if elem_inner_is_scalar(inner):
-            return self._render_elem_scalar_inner(inner, t)
+            return self._render_elem_scalar_inner(inner, t, depth=depth)
 
-        return self._render_elem_object_inner(inner, col, t, path)
+        return self._render_elem_object_inner(inner, model_path, depth=depth)
 
     # ....................... #
 
@@ -935,6 +1054,8 @@ class PsycopgQueryRenderer:
         self,
         inner: QueryExpr,
         t: PostgresType | None,
+        *,
+        depth: int,
     ) -> sql.Composable:
         match inner:
             case QueryField(name, _, _) if name == ELEM_SCALAR_FIELD:
@@ -944,7 +1065,9 @@ class PsycopgQueryRenderer:
                 fields = [i for i in items if isinstance(i, QueryField)]
 
             case QueryOr(items):
-                parts = [self._render_elem_scalar_inner(i, t) for i in items]
+                parts = [
+                    self._render_elem_scalar_inner(i, t, depth=depth) for i in items
+                ]
 
                 if len(parts) == 1:
                     return parts[0]
@@ -959,7 +1082,7 @@ class PsycopgQueryRenderer:
             else t
         )
 
-        elem = sql.Identifier("_fz_elem")
+        elem = sql.Identifier(self._elem_alias(depth))
         parts = [
             self._render_field(elem, f.op, f.value, t=elem_t)  # type: ignore[arg-type]
             for f in fields
@@ -975,20 +1098,38 @@ class PsycopgQueryRenderer:
     def _render_elem_object_inner(
         self,
         inner: QueryExpr,
-        col: sql.Composable,
-        t: PostgresType | None,
-        path: str,
+        model_path: list[str],
+        *,
+        depth: int,
     ) -> sql.Composable:
+        alias = sql.Identifier(self._elem_alias(depth))
+
         match inner:
             case QueryAnd(items):
                 fields = [i for i in items if isinstance(i, QueryField)]
+                nested = [i for i in items if isinstance(i, QueryElem)]
+
+                unsupported = [
+                    i for i in items if not isinstance(i, (QueryField, QueryElem))
+                ]
+                if unsupported:
+                    raise exc.internal(
+                        "Unsupported node in object element predicate: "
+                        f"{unsupported[0]!r}",
+                    )
 
             case QueryField() as f:
                 fields = [f]
+                nested = []
+
+            case QueryElem() as qe:
+                fields = []
+                nested = [qe]
 
             case QueryOr(items):
                 or_parts = [
-                    self._render_elem_object_inner(i, col, t, path) for i in items
+                    self._render_elem_object_inner(i, model_path, depth=depth)
+                    for i in items
                 ]
 
                 if len(or_parts) == 1:
@@ -1003,17 +1144,18 @@ class PsycopgQueryRenderer:
 
         for f in fields:
             segments = f.name.split(".")
+            full_segments = [*model_path, *segments]
             leaf_t = None
 
             if self.model_type is not None:
-                ann = walk_pydantic_path(self.model_type, [path, *segments])
+                ann = walk_pydantic_path(self.model_type, full_segments)
 
                 if ann is not None:
                     try:
                         leaf_t = resolve_leaf_python_type(
                             model_type=self.model_type,
-                            path=f"{path}.{f.name}",
-                            segments=[path, *segments],
+                            path=".".join(full_segments),
+                            segments=full_segments,
                             nested_field_hints=self.nested_field_hints,
                         )
                     except exc:
@@ -1023,10 +1165,11 @@ class PsycopgQueryRenderer:
 
             if len(segments) == 1:
                 key = segments[0]
-                field_expr = sql.SQL("(_fz_elem ->> {})").format(sql.Literal(key))
+                field_expr = sql.SQL("({} ->> {})").format(alias, sql.Literal(key))
 
             else:
-                field_expr = sql.SQL("(_fz_elem #>> {})").format(
+                field_expr = sql.SQL("({} #>> {})").format(
+                    alias,
                     sql.Literal("{" + ",".join(segments) + "}"),
                 )
 
@@ -1038,10 +1181,217 @@ class PsycopgQueryRenderer:
 
             parts.append(self._render_field(field_expr, f.op, f.value, t=pg_t))
 
+        for qe in nested:
+            parts.append(self._render_nested_elem(qe, model_path, depth=depth))
+
         if len(parts) == 1:
             return parts[0]
 
         return sql.SQL("(") + sql.SQL(" AND ").join(parts) + sql.SQL(")")
+
+    # ....................... #
+
+    def _render_nested_elem(
+        self,
+        node: QueryElem,
+        model_path: list[str],
+        *,
+        depth: int,
+    ) -> sql.Composable:
+        """Render a quantifier nested inside another element's object predicate.
+
+        The outer element is bound to ``_fz_elem[_depth]`` (a ``jsonb`` object); its
+        sub-array ``node.path`` is iterated by a fresh inner alias one level deeper.
+        Scalar sub-arrays compare element-to-value in ``jsonb`` space (``to_jsonb``),
+        sidestepping per-element type resolution; object sub-arrays recurse through
+        :meth:`_render_elem_object_inner`, which can nest again.
+        """
+
+        outer = sql.Identifier(self._elem_alias(depth))
+        next_depth = depth + 1
+        inner_alias = sql.Identifier(self._elem_alias(next_depth))
+
+        if node.path == ELEM_SCALAR_FIELD:
+            # Scalar array-of-arrays: the outer element is itself the sub-array.
+            base = sql.SQL("{}").format(outer)
+            sub_model_path = model_path
+
+        else:
+            sub_segments = node.path.split(".")
+
+            if len(sub_segments) == 1:
+                base = sql.SQL("({} -> {})").format(outer, sql.Literal(sub_segments[0]))
+
+            else:
+                base = sql.SQL("({} #> {})").format(
+                    outer,
+                    sql.Literal("{" + ",".join(sub_segments) + "}"),
+                )
+
+            sub_model_path = [*model_path, *sub_segments]
+
+        arr = sql.SQL(
+            "CASE WHEN jsonb_typeof({b}) = 'array' THEN {b} ELSE '[]'::jsonb END",
+        ).format(b=base)
+
+        if elem_inner_is_scalar(node.inner):
+            elem_pred = self._render_jsonb_scalar_inner(node.inner, depth=next_depth)
+
+        else:
+            elem_pred = self._render_elem_object_inner(
+                node.inner,
+                sub_model_path,
+                depth=next_depth,
+            )
+
+        has_array = sql.SQL(
+            "(jsonb_typeof({b}) = 'array' AND jsonb_array_length({b}) > 0)",
+        ).format(b=base)
+
+        exists = sql.SQL(
+            "EXISTS (SELECT 1 FROM jsonb_array_elements({arr}) AS {a} WHERE {pred})",
+        ).format(arr=arr, a=inner_alias, pred=elem_pred)
+
+        forall = sql.SQL(
+            "NOT EXISTS (SELECT 1 FROM jsonb_array_elements({arr}) AS {a} WHERE NOT ({pred}))",
+        ).format(arr=arr, a=inner_alias, pred=elem_pred)
+
+        vacuous = self._elem_vacuous_sql(node.quantifier)
+
+        if node.quantifier == "$any":
+            match = exists
+
+        elif node.quantifier == "$all":
+            match = forall
+
+        else:
+            match = sql.SQL("NOT ({})").format(exists)
+
+        return sql.SQL(
+            "(((NOT {has}) AND {vac}) OR ({has} AND {match}))",
+        ).format(has=has_array, vac=vacuous, match=match)
+
+    # ....................... #
+
+    def _render_jsonb_scalar_inner(
+        self,
+        inner: QueryExpr,
+        *,
+        depth: int,
+    ) -> sql.Composable:
+        """Element predicate for a *nested* scalar sub-array (``jsonb`` elements).
+
+        Unlike :meth:`_render_elem_scalar_inner` (native array, typed scalar element),
+        the element here is a ``jsonb`` value produced by ``jsonb_array_elements``;
+        comparisons stay in ``jsonb`` space so no per-element type resolution is needed.
+        """
+
+        match inner:
+            case QueryField(name, _, _) if name == ELEM_SCALAR_FIELD:
+                fields = [inner]
+
+            case QueryAnd(items):
+                fields = [i for i in items if isinstance(i, QueryField)]
+
+            case QueryOr(items):
+                parts = [self._render_jsonb_scalar_inner(i, depth=depth) for i in items]
+
+                if len(parts) == 1:
+                    return parts[0]
+                return sql.SQL("(") + sql.SQL(" OR ").join(parts) + sql.SQL(")")
+
+            case _:
+                raise exc.internal(f"Invalid scalar element inner: {inner!r}")
+
+        alias = sql.Identifier(self._elem_alias(depth))
+        parts = [
+            self._render_jsonb_scalar_field(alias, f.op, f.value)  # type: ignore[arg-type]
+            for f in fields
+        ]
+
+        if len(parts) == 1:
+            return parts[0]
+
+        return sql.SQL("(") + sql.SQL(" AND ").join(parts) + sql.SQL(")")
+
+    # ....................... #
+
+    def _render_jsonb_scalar_field(
+        self,
+        elem: sql.Composable,
+        op: str,
+        value: Any,
+    ) -> sql.Composable:
+        """Compare a single ``jsonb`` scalar element to *value* without a typed cast.
+
+        Equality / ordering / membership compare in ``jsonb`` space via ``to_jsonb`` on
+        the bound value (correct for same-typed scalars); text operators extract the
+        element text with ``#>> '{}'`` first.
+        """
+
+        if op in ("$eq", "$neq"):
+            sql_op = sql.SQL("=") if op == "$eq" else sql.SQL("IS DISTINCT FROM")
+
+            return sql.SQL("{} {} {}").format(elem, sql_op, self._jsonb_bound(value))
+
+        if op in ("$gt", "$gte", "$lt", "$lte"):
+            ord_map = {"$gt": ">", "$gte": ">=", "$lt": "<", "$lte": "<="}
+
+            return sql.SQL("{} {} {}").format(
+                elem,
+                sql.SQL(ord_map[op]),  # pyright: ignore[reportArgumentType]
+                self._jsonb_bound(value),
+            )
+
+        if op in ("$in", "$nin"):
+            values = list(value) if isinstance(value, (list, tuple, set)) else [value]  # type: ignore[arg-type]
+
+            if not values:
+                return sql.SQL("FALSE") if op == "$in" else sql.SQL("TRUE")
+
+            members = sql.SQL(", ").join(self._jsonb_bound(v) for v in values)  # type: ignore[arg-type]
+            in_expr = sql.SQL("{} IN ({})").format(elem, members)
+
+            return in_expr if op == "$in" else sql.SQL("NOT ({})").format(in_expr)
+
+        if op in ("$like", "$ilike", "$regex"):
+            text_map = {"$like": "LIKE", "$ilike": "ILIKE", "$regex": "~"}
+            text_elem = sql.SQL("({} #>> '{{}}')").format(elem)
+
+            return sql.SQL("{} {} {}").format(
+                text_elem,
+                sql.SQL(text_map[op]),  # pyright: ignore[reportArgumentType]
+                self.binder.add(value),
+            )
+
+        raise exc.internal(f"Unsupported nested scalar element operator: {op!r}")
+
+    # ....................... #
+
+    def _jsonb_bound(self, value: Any) -> sql.Composable:
+        """Bind *value* and wrap as ``jsonb`` for element-space comparison.
+
+        A bare ``to_jsonb($1)`` fails — a parameter arrives as ``unknown`` and
+        ``to_jsonb`` is polymorphic with nothing to infer from — so the placeholder
+        is cast to a concrete type chosen from the Python value first.
+        """
+
+        if isinstance(value, bool):
+            cast = "boolean"
+
+        elif isinstance(value, int):
+            cast = "bigint"
+
+        elif isinstance(value, float):
+            cast = "double precision"
+
+        else:
+            cast = "text"
+
+        return sql.SQL("to_jsonb({}::{})").format(
+            self.binder.add(value),
+            sql.SQL(cast),
+        )
 
     # ....................... #
 

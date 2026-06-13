@@ -5,8 +5,11 @@ from uuid import UUID
 
 import pytest
 
-from forze.application.contracts.querying import QueryFilterExpressionParser
-from forze.base.exceptions import CoreException
+from forze.application.contracts.querying import (
+    UNSUPPORTED_QUERY_FEATURE_CODE,
+    QueryFilterExpressionParser,
+)
+from forze.base.exceptions import CoreException, ExceptionKind
 from forze_meilisearch.adapters.search._filter_render import (
     MeilisearchFilterRenderer,
     _format_array,
@@ -48,6 +51,43 @@ def test_like_unsupported() -> None:
 
     with pytest.raises(CoreException):
         r._render_expr(expr)
+
+
+class TestCapabilityRejectionViaRenderFilters:
+    """The public entry rejects unsupported features up front with a clean error.
+
+    ``render_filters`` validates against ``MEILISEARCH_QUERY_CAPABILITIES`` before
+    rendering, so the caller gets a ``precondition`` (``query_feature_unsupported``)
+    naming the backend — not the render-time ``internal`` of the inner backstop.
+    """
+
+    @pytest.mark.parametrize(
+        "filters",
+        [
+            {"$values": {"title": {"$regex": "a.*"}}},  # text op
+            {"$values": {"tags": {"$superset": ["a"]}}},  # set op
+            {"$values": {"tags": {"$any": "x"}}},  # element quantifier
+            {"$fields": {"a": {"$eq": "b"}}},  # field-to-field compare
+        ],
+    )
+    def test_unsupported_features_rejected_clean(self, filters: dict) -> None:
+        r = MeilisearchFilterRenderer()
+
+        with pytest.raises(CoreException) as ei:
+            r.render_filters(filters)
+
+        assert ei.value.kind is ExceptionKind.PRECONDITION
+        assert ei.value.code == UNSUPPORTED_QUERY_FEATURE_CODE
+        assert "meilisearch" in str(ei.value)
+
+    def test_supported_filter_still_renders(self) -> None:
+        r = MeilisearchFilterRenderer()
+
+        out = r.render_filters(
+            {"$and": [{"$values": {"age": {"$gte": 18}}}, {"$values": {"city": "NYC"}}]}
+        )
+
+        assert out is not None and "AND" in out
 
 
 def test_safe_attribute_accepts_identifiers_and_nested_paths() -> None:

@@ -21,6 +21,7 @@ from forze.application.contracts.querying import (
     QueryFilterExpressionParser,
     QueryFilterLimits,
     QuerySortExpression,
+    resolve_sort_keys,
 )
 from forze.application.contracts.tenancy import TENANT_ID_FIELD
 from forze.application.integrations.persistence import (
@@ -99,7 +100,7 @@ class PostgresQualifiedName:
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class PostgresGateway[M: BaseModel](
     ModelCodecGatewayMixin[M],
-    FilterParserMixin,
+    FilterParserMixin[M],
     TenantResolvedRelationMixin,
 ):
     """Base gateway providing shared query-building helpers for a single Postgres relation."""
@@ -305,13 +306,7 @@ class PostgresGateway[M: BaseModel](
         alias = self.filter_table_alias if table_alias is None else table_alias
         parts: list[sql.Composable] = []
 
-        for field, order in sorts.items():
-            if order not in ("asc", "desc"):
-                raise exc.validation(
-                    f"Invalid sort direction {order!r} for field {field!r}; "
-                    "expected 'asc' or 'desc'",
-                )
-
+        for field, direction, nulls in resolve_sort_keys(sorts):
             key = sort_key_expr(
                 field=field,
                 column_types=types,
@@ -319,8 +314,11 @@ class PostgresGateway[M: BaseModel](
                 nested_field_hints=self.nested_field_hints,
                 table_alias=alias,
             )
-            direction = sql.SQL("ASC") if order == "asc" else sql.SQL("DESC")
-            parts.append(sql.SQL("{} {}").format(key, direction))
+            dir_st = sql.SQL("ASC") if direction == "asc" else sql.SQL("DESC")
+            null_st = (
+                sql.SQL("NULLS FIRST") if nulls == "first" else sql.SQL("NULLS LAST")
+            )
+            parts.append(sql.SQL("{} {} {}").format(key, dir_st, null_st))
 
         return sql.SQL(", ").join(parts)
 

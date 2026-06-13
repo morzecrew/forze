@@ -30,6 +30,7 @@ def read_gw(
     tenant_aware: bool,
     codec: ModelCodec[Any, Any] | None = None,
     read_validation: Literal["strict", "trusted"] = "strict",
+    computed_null_ordering: bool = False,
 ) -> MongoReadGateway[Any]:
     """Build a read gateway for a source and model."""
     client = ctx.deps.provide(MongoClientDepKey)
@@ -44,6 +45,7 @@ def read_gw(
         tenant_provider=ctx.inv_ctx.get_tenant,
         tenant_aware=tenant_aware,
         read_validation=read_validation,
+        computed_null_ordering=computed_null_ordering,
     )
 
 

@@ -29,6 +29,7 @@ from ..guards import (
 from ..types import (
     CompareOp,
     EqOp,
+    HierarchyOp,
     MembOp,
     Numeric,
     OrdOp,
@@ -55,12 +56,13 @@ from .text_pattern import validate_text_pattern
 _EQ_OPS: frozenset[str] = frozenset(get_args(EqOp))
 _ORD_OPS: frozenset[str] = frozenset(get_args(OrdOp))
 _TEXT_OPS: frozenset[str] = frozenset(get_args(TextOp))
-_ELEMENT_OPS: frozenset[str] = _EQ_OPS | _ORD_OPS | _TEXT_OPS
-_COMPARE_OPS: frozenset[str] = frozenset(get_args(CompareOp))
 _MEMB_OPS: frozenset[str] = frozenset(get_args(MembOp))
+_ELEMENT_OPS: frozenset[str] = _EQ_OPS | _ORD_OPS | _TEXT_OPS | _MEMB_OPS
+_COMPARE_OPS: frozenset[str] = frozenset(get_args(CompareOp))
 _UNARY_OPS: frozenset[str] = frozenset(get_args(UnaryOp))
 _SET_REL_OPS: frozenset[str] = frozenset(get_args(SetRelOp))
-_IN_SIZE_OPS: frozenset[str] = _MEMB_OPS | _SET_REL_OPS
+_HIERARCHY_OPS: frozenset[str] = frozenset(get_args(HierarchyOp))
+_IN_SIZE_OPS: frozenset[str] = _MEMB_OPS | _SET_REL_OPS | _HIERARCHY_OPS
 _QUANTIFIER_OPS: frozenset[str] = frozenset(get_args(QueryElementQuantifier))
 
 _COMBINATOR_KEYS = frozenset({"$and", "$or", "$not"})
@@ -385,18 +387,31 @@ class QueryFilterExpressionParser:
         if not raw:
             raise exc.precondition("Empty element constraint map is not allowed")
 
+        if len(raw) == 1 and next(iter(raw)) in _QUANTIFIER_OPS:
+            # Scalar array-of-arrays: a quantifier directly on the element, which is
+            # itself an array (e.g. ``matrix $any {$any: "x"}`` over ``list[list[str]]``).
+            # Modeled as a nested quantifier on the element itself (``$`` sentinel path).
+            return self._parse_element_quantifier(
+                ELEM_SCALAR_FIELD,
+                cast("dict[str, Any]", raw),
+                ctx,
+            )
+
         if _QUANTIFIER_OPS & raw.keys():
-            raise exc.precondition("Nested element quantifiers are not allowed")
+            raise exc.precondition(
+                "An element quantifier cannot be combined with other operators",
+            )
 
         if all(k in _ELEMENT_OPS for k in raw):
-            if len(raw) != 1:
-                raise exc.precondition(
-                    "Scalar element constraint must declare exactly one operator",
-                )
+            # Multiple operators conjoin into a range over the scalar element
+            # (e.g. ``{"$gt": 1, "$lt": 3}`` → elements strictly inside (1, 3)).
+            self._add_clauses(ctx, len(raw))
+            nodes = [
+                self._validate_element_op(ELEM_SCALAR_FIELD, op, value, ctx)
+                for op, value in raw.items()
+            ]
 
-            op, value = next(iter(raw.items()))
-
-            return self._validate_element_op(ELEM_SCALAR_FIELD, op, value, ctx)
+            return nodes[0] if len(nodes) == 1 else QueryAnd(tuple(nodes))
 
         raise exc.precondition(
             "Element constraint must be a scalar shortcut, an operator map "
@@ -412,9 +427,9 @@ class QueryFilterExpressionParser:
         ctx: _ParseCtx,
     ) -> list[QueryExpr]:
         if is_query_element_quantifier(raw):
-            raise exc.precondition(
-                f"Field {rel_field} cannot use element quantifiers inside $values",
-            )
+            # A nested quantifier over a sub-array of the object element
+            # (e.g. ``orders.$any.items.$any``). Capability-gated per backend.
+            return [self._parse_element_quantifier(rel_field, cast(Any, raw), ctx)]
 
         if is_query_value_shortcut(raw):
             if raw is None:
@@ -434,19 +449,15 @@ class QueryFilterExpressionParser:
                 raise exc.precondition("Empty element $values field map is not allowed")
 
             if _QUANTIFIER_OPS & raw.keys():
-                raise exc.precondition("Nested element quantifiers are not allowed")
+                # A clean ``{field: {$any: ...}}`` is parsed above; reaching here means a
+                # quantifier key was mixed with other operators in the same map.
+                raise exc.precondition(
+                    "An element quantifier cannot be combined with other operators",
+                )
 
-            if all(k in _ELEMENT_OPS for k in raw):
-                if len(raw) != 1:
-                    raise exc.precondition(
-                        f"Field {rel_field} element constraint must declare exactly "
-                        "one operator",
-                    )
-
-                op, value = next(iter(raw.items()))
-
-                return [self._validate_element_op(rel_field, op, value, ctx)]
-
+            # Validate each operator on the object element's field. Multiple ops
+            # conjoin into a range (e.g. ``qty`` with ``{"$gt": 1, "$lt": 3}``); a
+            # non-element op is rejected per-op by ``_validate_element_op``.
             self._add_clauses(ctx, len(raw))
 
             return [
@@ -481,6 +492,11 @@ class QueryFilterExpressionParser:
         elif op in _ORD_OPS:
             if not isinstance(value, Numeric):
                 raise exc.precondition(f"Invalid value for {op} operator: {value!r}")
+
+        elif op in _MEMB_OPS:
+            if not isinstance(value, list | tuple | set):
+                raise exc.precondition(f"Invalid value for {op} operator: {value!r}")
+            self._check_in_size(field, op, value)
 
         return QueryField(field, op, value)  # type: ignore[arg-type]
 
@@ -602,10 +618,66 @@ class QueryFilterExpressionParser:
                 raise exc.precondition(f"Invalid value for {op} operator: {value!r}")
             self._check_in_size(field, op, value)
 
+        elif op in _HIERARCHY_OPS:
+            return self._expand_hierarchy_op(field, op, value, ctx)
+
         else:
             raise exc.precondition(f"Invalid operator: {op!r}")
 
         return QueryField(field, op, value)  # type: ignore[arg-type]
+
+    # ....................... #
+
+    def _expand_hierarchy_op(
+        self,
+        field: str,
+        op: str,
+        value: Any,
+        ctx: _ParseCtx,
+    ) -> QueryExpr:
+        """Expand a hierarchy operand (one path, or a list → ``OR`` / "any" semantics).
+
+        A scalar path produces a single node; a list produces an ``OR`` of one node per
+        path — so ``path $descendant_of [a, b]`` matches rows under *a* or *b*. "All" and
+        "none" come from composing ``$and`` / ``$not`` over the single-path form, so no
+        dedicated quantified hierarchy operators are needed.
+        """
+
+        if isinstance(value, str):
+            paths: list[str] = [value]
+
+        elif isinstance(value, list | tuple):
+            items: list[Any] = list(value)  # type: ignore[arg-type]
+
+            if not items:
+                raise exc.precondition(f"{op} operand list cannot be empty")
+
+            if not all(isinstance(v, str) for v in items):
+                raise exc.precondition(
+                    f"{op} requires a path string or a list of path strings, "
+                    f"got {value!r}",
+                )
+
+            self._check_in_size(field, op, items)
+            paths = items
+
+        else:
+            raise exc.precondition(
+                f"{op} requires a path string or a list of path strings, got {value!r}",
+            )
+
+        for path in paths:
+            if not path.strip():
+                raise exc.precondition(f"{op} path must be a non-empty string")
+
+        if len(paths) == 1:
+            return QueryField(field, op, paths[0])  # type: ignore[arg-type]
+
+        self._add_clauses(ctx, len(paths) - 1)
+
+        return QueryOr(
+            tuple(QueryField(field, op, path) for path in paths)  # type: ignore[arg-type]
+        )
 
     # ....................... #
 

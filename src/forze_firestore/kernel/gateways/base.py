@@ -19,6 +19,8 @@ from forze.application.contracts.querying import (
     QueryFilterExpressionParser,
     QueryFilterLimits,
     QuerySortExpression,
+    assert_default_null_ordering,
+    resolve_sort_keys,
 )
 from forze.application.contracts.tenancy import TENANT_ID_FIELD
 from forze.application.integrations.persistence import (
@@ -41,7 +43,7 @@ from ..relation import RelationSpec, is_static_relation, resolve_firestore_colle
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class FirestoreGateway[M: BaseModel](
     ModelCodecGatewayMixin[M],
-    FilterParserMixin,
+    FilterParserMixin[M],
     TenantResolvedRelationMixin,
 ):
     """Base gateway for Firestore document access."""
@@ -251,9 +253,12 @@ class FirestoreGateway[M: BaseModel](
         if not sorts:
             return None
 
+        resolved = resolve_sort_keys(sorts)
+        assert_default_null_ordering(resolved, backend="firestore")
+
         out: list[tuple[str, str]] = []
 
-        for field, direction in sorts.items():
+        for field, direction, _nulls in resolved:
             target = ID_FIELD if field == ID_FIELD else field
             out.append((target, "ASCENDING" if direction == "asc" else "DESCENDING"))
 

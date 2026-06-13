@@ -134,7 +134,10 @@ Merging a soft-deletion registry (`build_soft_deletion_registry`) into the
 document registry adds its `delete`/`restore` operations to the same router
 automatically.
 
-The `style` is an explicit choice:
+Both styles use the same REST verbs; they differ only in how a resource is
+addressed — REST puts the id in the path, RPC keeps one operation-named path per
+operation (mirroring the catalog one-to-one) and puts the id in a query
+parameter:
 
 - `"rest"` — resource paths: `POST /notes` (201), `GET /notes/{id}`,
   `PATCH /notes/{id}?rev=` with the patch DTO as body, `DELETE /notes/{id}`
@@ -142,8 +145,12 @@ The `style` is an explicit choice:
   `POST /notes/{id}/delete?rev=` and `POST /notes/{id}/restore?rev=`. List
   operations keep `POST /notes/list`-style paths since their filter bodies
   have no natural REST verb.
-- `"rpc"` — one `POST /notes/<op>` per operation with the input DTO as the
-  body; the routes mirror the catalog one-to-one.
+- `"rpc"` — `GET /notes/get?id=`, `PATCH /notes/update?id=&rev=` with the patch
+  DTO as body, `DELETE /notes/kill?id=` (204), and `PATCH /notes/delete?id=&rev=`
+  / `PATCH /notes/restore?id=&rev=` for soft deletion. `create` and the list
+  operations keep `POST /notes/<op>` with the input DTO as body (a new entity or
+  a filter payload has no id to address). So an RPC read is a plain linkable,
+  cacheable `GET`, not an opaque `POST`.
 
 `attach_search_routes` does the same for a search registry
 (`build_search_registry` or its hub/federated siblings). Search requests are
@@ -173,8 +180,8 @@ contain slashes. The style only decides paths and verbs:
 - `"rest"` — `POST /files` (201), `POST /files/list`, `GET /files/{key}`,
   `DELETE /files/{key}`.
 - `"rpc"` — `POST /files/upload`, `POST /files/list`,
-  `GET /files/download/{key}`, `POST /files/delete/{key}`. Download stays
-  `GET` so byte responses remain linkable and cacheable.
+  `GET /files/download/{key}`, `DELETE /files/delete/{key}`. The key rides the
+  path tail in both styles since it is slash-bearing, not a JSON field.
 
 ```python
 from forze_fastapi.routes import attach_storage_routes
@@ -198,12 +205,61 @@ token response), `POST /logout` (204, no body), `POST /change-password` (204),
 `POST /password-reset/confirm` (204), and `POST /deactivate` (204). Login,
 refresh, and the password-reset pair are meant to be reachable without a bearer
 token (the operations authenticate via their bodies, or deliberately not at all
-for the reset request); logout and change-password 401 on their own without a
-bound identity, while `deactivate_principal` ships unguarded — bind
+for the reset request); logout and change-password declare `AuthnRequired` (so
+they 401 without a bound identity and show up protected under
+`apply_openapi_security`), while `deactivate_principal` ships unguarded — bind
 `AuthnRequired` + authz hooks on it or exclude it via `include=`. The full
 wiring (including how the reset token reaches the user via the outbox) is in the
 [Authn, authz & tenancy recipe](../recipes/authn-authz-tenancy-fastapi.md#http-login-endpoints).
 
+It also generates **self-service API-key management** as a resource collection
+(all `AuthnRequired`): `POST /api-keys` issues a key for the caller — the raw
+secret is in the response **once**, optionally a user→agent delegation key
+(`actor_principal_id`) with a human `label` — `GET /api-keys` lists the caller's
+keys as non-secret descriptors (a `hint` like `ab12…wxyz`, never the secret), and
+`DELETE /api-keys/{id}` revokes one. This is the minting surface for the
+[MCP API-key flow](mcp.md#protect-it-with-api-key-auth): the user issues a key
+here and pastes it into the agent host.
+
 Identity, invocation metadata, and error mapping stay with the middlewares and
 exception handlers above — generated routes only validate the input DTO and run
 the operation through the normal pipeline.
+
+## Document auth in OpenAPI
+
+`SecurityContextMiddleware` extracts identity; it doesn't tell the schema. By
+default the generated OpenAPI (and the Scalar/Swagger UI) shows every endpoint as
+open — no Authorize button. `apply_openapi_security` closes that gap from the
+**same** `AuthnRequirement` you handed the middleware, so the scheme is declared
+once:
+
+```python
+from forze.application.contracts.authn import AuthnSpec
+from forze_fastapi.security import (
+    AuthnRequirement,
+    HeaderTokenAuthn,
+    apply_openapi_security,
+)
+
+# Your authn aggregate's spec — the same one your routes and the engine resolve.
+API = AuthnSpec(name="api", enabled_methods=frozenset({"token"}))
+
+requirement = AuthnRequirement(
+    ingress=(HeaderTokenAuthn(authn_spec=API, header_name="Authorization"),),
+)
+app.add_middleware(SecurityContextMiddleware, ctx_dep=runtime.get_context, authn=requirement, ...)
+
+# After every router is attached:
+apply_openapi_security(app, requirement)
+```
+
+It registers one `securityScheme` per ingress (bearer for a token on
+`Authorization`; `apiKey` in header or cookie otherwise) and attaches a `security`
+requirement — the ingress methods as alternatives — to exactly the operations the
+catalog flagged as needing a bound principal. That flag (`requires_authn`) is
+derived at freeze from the plan's `AuthnRequired` or authz hooks, so protected
+routes advertise the scheme while token-minting routes (`/login`, `/refresh`) stay
+open. Use `exclude={"orders.deactivate", ...}` to leave a flagged operation open.
+
+This **documents** auth; it doesn't enforce it — enforcement stays in the engine
+(the `AuthnRequired`/authz hooks) and identity extraction in the middleware.

@@ -11,9 +11,9 @@ from forze.application.contracts.document import (
     DocumentSpec,
 )
 from forze.application.contracts.transaction import AfterCommitPort
+from forze.application.execution import ExecutionContext
 from forze.application.execution.domain import domain_dispatcher_provider
 from forze.application.integrations.document import DocumentCache
-from forze.application.execution import ExecutionContext
 from forze.base.exceptions import exc
 from forze.domain.models import BaseDTO, Document
 
@@ -60,6 +60,7 @@ class ConfigurableMongoReadOnlyDocument(DocumentQueryDepPort[R]):
             tenant_aware=self.config.tenant_aware,
             codec=codecs.read,
             read_validation=self.config.read_validation,
+            computed_null_ordering=self.config.computed_null_ordering,
         )
 
         after_commit: AfterCommitPort | None = None
@@ -126,6 +127,7 @@ class ConfigurableMongoDocument(DocumentCommandDepPort[R, D, C, U]):
             tenant_aware=tenant_aware,
             codec=codecs.read,
             read_validation=config.read_validation,
+            computed_null_ordering=config.computed_null_ordering,
         )
 
         write_relation = config.write

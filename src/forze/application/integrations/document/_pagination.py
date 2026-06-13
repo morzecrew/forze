@@ -212,8 +212,9 @@ class DocumentPaginationMixin(Generic[R]):
             read_fields=self._read_fields,
         )
 
-        sort_keys = [k for k, _ in normalized]
-        directions = [d for _, d in normalized]
+        sort_keys = [k for k, _, _ in normalized]
+        directions = [d for _, d, _ in normalized]
+        nulls = [n for _, _, n in normalized]
 
         assert_cursor_projection_includes_sort_keys(
             return_fields=query.return_fields,
@@ -247,6 +248,7 @@ class DocumentPaginationMixin(Generic[R]):
             cursor=cursor,
             sort_keys=sort_keys,
             directions=directions,
+            nulls=nulls,
             dump_row=_dump,
         )
 

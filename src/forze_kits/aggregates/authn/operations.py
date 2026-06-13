@@ -30,3 +30,12 @@ class AuthnKernelOp(StrEnum):
 
     DEACTIVATE_PRINCIPAL = "deactivate_principal"
     """Deactivate a principal for the application (policy, sessions, credentials)."""
+
+    ISSUE_API_KEY = "issue_api_key"  # nosec B105
+    """Issue an API key for the currently authenticated identity (secret once)."""
+
+    LIST_API_KEYS = "list_api_keys"  # nosec B105
+    """List the currently authenticated identity's API keys (non-secret descriptors)."""
+
+    REVOKE_API_KEY = "revoke_api_key"  # nosec B105
+    """Revoke one of the currently authenticated identity's API keys."""

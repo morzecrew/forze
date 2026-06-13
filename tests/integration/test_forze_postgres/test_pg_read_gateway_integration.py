@@ -351,7 +351,7 @@ async def test_postgres_read_gateway_find_many_with_cursor(
         directions=["asc"],
         values=["x"],
     )
-    with pytest.raises(CoreException, match="sort keys"):
+    with pytest.raises(CoreException, match="does not match current search sort"):
         await gw.find_many_with_cursor(
             None,
             cursor={"after": bad},

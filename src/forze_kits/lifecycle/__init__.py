@@ -5,7 +5,7 @@ from typing import final
 import attrs
 
 from forze.application._logger import logger
-from forze.application.contracts.dlock import DistributedLockCommandPort
+from forze.application.contracts.dlock import DistributedLockSpec
 from forze.application.contracts.execution import LifecycleStep
 from forze.application.execution.context import ExecutionContext
 
@@ -17,7 +17,7 @@ from forze.application.execution.context import ExecutionContext
 class _SingletonGuard:
     """Per-process leadership state shared by the wrapped startup/shutdown."""
 
-    cmd: DistributedLockCommandPort
+    spec: DistributedLockSpec
     key: str
     owner: str
     inner: LifecycleStep
@@ -27,7 +27,10 @@ class _SingletonGuard:
     # ....................... #
 
     async def startup(self, ctx: ExecutionContext) -> None:
-        acquired = await self.cmd.acquire(self.key, self.owner)
+        # Resolve the lock port from the live context, not at wiring time —
+        # the adapter only exists once the scope's deps are bound.
+        cmd = ctx.dlock.command(self.spec)
+        acquired = await cmd.acquire(self.key, self.owner)
 
         if acquired is None:
             logger.info(
@@ -43,7 +46,7 @@ class _SingletonGuard:
             await self.inner.startup(ctx)
 
         finally:
-            await self.cmd.release(self.key, self.owner)
+            await cmd.release(self.key, self.owner)
 
     # ....................... #
 
@@ -59,7 +62,7 @@ class _SingletonGuard:
 def singleton_lifecycle_step(
     step: LifecycleStep,
     *,
-    cmd: DistributedLockCommandPort,
+    spec: DistributedLockSpec,
     owner: str,
     key: str | None = None,
 ) -> LifecycleStep:
@@ -74,21 +77,25 @@ def singleton_lifecycle_step(
     completion marker in your own storage; one-shot work like migrations is
     better run as a deploy step, not a runtime step.
 
-    Size the lock's TTL (on the backend's lock spec) to comfortably exceed
-    the step's duration — no extend heartbeat runs here. Shutdown runs only
-    on the replica whose startup actually executed.
+    The lock command port is resolved from the execution context at startup
+    time (``ctx.dlock.command(spec)``) — you pass the *spec*, not a live port,
+    so the guard composes into a lifecycle plan before any scope exists.
+
+    Size the lock's ``spec.ttl`` to comfortably exceed the step's duration —
+    no extend heartbeat runs here. Shutdown runs only on the replica whose
+    startup actually executed.
 
     Returns the step marked ``singleton_guarded`` (and ``mutates_shared_state``),
     satisfying the ``FLEET`` deployment validation.
 
     :param step: The lifecycle step to guard.
-    :param cmd: Distributed lock command port (e.g. the Redis adapter).
+    :param spec: Distributed lock spec resolved against the scope's deps.
     :param owner: Lock owner identity, unique per replica (e.g. pod name).
     :param key: Lock key; defaults to ``lifecycle:<step id>``.
     """
 
     guard = _SingletonGuard(
-        cmd=cmd,
+        spec=spec,
         key=key if key is not None else f"lifecycle:{step.id}",
         owner=owner,
         inner=step,

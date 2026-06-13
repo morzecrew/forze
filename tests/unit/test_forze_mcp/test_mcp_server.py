@@ -284,6 +284,69 @@ def _doc_setup():
     return spec, reg.freeze(), DocumentKernelOp
 
 
+class TestQueryDiscoveryDescription:
+    """A filter-accepting tool's description advertises its filterable fields and the
+    operators each accepts; a non-filter tool's does not."""
+
+    def test_list_tool_description_lists_filterable_fields(self) -> None:
+        from forze_mcp.registration import _tool_description
+
+        spec, reg, kernel = _doc_setup()
+        catalog = reg.catalog()
+        list_op = spec.default_namespace.key(kernel.LIST)
+        get_op = spec.default_namespace.key(kernel.GET)
+
+        desc = _tool_description(catalog[list_op])
+
+        assert desc is not None
+        assert "Filterable fields" in desc
+        # the user field, typed, with its string operators (not ordering)
+        assert "title (string:" in desc
+        assert "$like" in desc
+        assert "Sortable by:" in desc
+        assert "Aggregatable by:" in desc
+
+        # GET takes no filter → no discovery sentence.
+        get_desc = _tool_description(catalog[get_op])
+        assert get_desc is not None
+        assert "Filterable fields" not in get_desc
+
+    def test_array_field_mentions_element_quantifiers(self) -> None:
+        from forze.application.contracts.document import DocumentSpec, DocumentWriteTypes
+        from forze.domain.models import Document
+        from forze_kits.aggregates.document import (
+            DocumentDTOs,
+            DocumentKernelOp,
+            build_document_registry,
+        )
+        from forze_mcp.registration import _tool_description
+
+        class _TagRead(ReadDocument):
+            tags: list[str]
+
+        class _TagIn(BaseDTO):
+            tags: list[str] = []
+
+        class _TagDomain(Document):
+            tags: list[str] = []
+
+        spec = DocumentSpec(
+            name="tagged",
+            read=_TagRead,
+            write=DocumentWriteTypes(domain=_TagDomain, create_cmd=_TagIn),
+        )
+        reg = build_document_registry(
+            spec, DocumentDTOs(read=_TagRead, create=_TagIn)
+        ).freeze()
+        list_op = spec.default_namespace.key(DocumentKernelOp.LIST)
+
+        desc = _tool_description(reg.catalog()[list_op])
+
+        assert desc is not None
+        assert "tags (collection:" in desc
+        assert "element quantifiers $any, $all, $none" in desc
+
+
 class TestResourceTemplates:
     async def test_get_by_id_template_round_trip(self) -> None:
         import json
@@ -508,6 +571,10 @@ class TestCatalogDerivedDescriptions:
         assert tool.description is not None
         assert tool.description.startswith("write n")
         assert "Supports idempotent retries via an invocation-bound idempotency key" in (
+            tool.description
+        )
+        # The authz hook implies a bound principal — the authn line is advertised too.
+        assert "Requires authentication: a verified principal must be bound" in (
             tool.description
         )
         assert "Requires permissions: calc.write" in tool.description

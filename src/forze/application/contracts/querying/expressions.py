@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Literal, Mapping, NotRequired, Sequence, TypeAlias, TypedDict
 
-from .types import Array, Numeric, Scalar, TextPatternValue
+from .types import Array, HierarchyValue, Numeric, Scalar, TextPatternValue
 
 # ----------------------- #
 # Filter: literal constraints ($values)
@@ -32,6 +32,8 @@ QueryValueOpConjunction = TypedDict(
         "$like": TextPatternValue,
         "$ilike": TextPatternValue,
         "$regex": TextPatternValue,
+        "$descendant_of": HierarchyValue,
+        "$ancestor_of": HierarchyValue,
     },
     total=False,
 )
@@ -52,10 +54,13 @@ QueryElementOpConjunction = TypedDict(
         "$like": TextPatternValue,
         "$ilike": TextPatternValue,
         "$regex": TextPatternValue,
+        "$in": Array,
+        "$nin": Array,
     },
     total=False,
 )
-"""Operator map for a single array element (equality, ordering, and text patterns)."""
+"""Operator map for a single array element (equality, ordering, text patterns, and
+membership) — mirrors ``ALL_ELEMENT_OPS``."""
 
 QueryElementValueMapValue = QueryElementOpConjunction | Scalar
 """Value for one element-relative field inside ``$any`` / ``$all`` / ``$none``."""
@@ -170,12 +175,43 @@ QueryFilterExpression: TypeAlias = (
 QuerySortDirection = Literal["asc", "desc"]
 """Sort direction for a field."""
 
-QuerySortExpression = Mapping[str, QuerySortDirection]
-"""Map of field names to sort direction (supports dot-separated paths like filters)."""
+QuerySortNulls = Literal["first", "last"]
+"""Where null sort-key values are placed, independent of direction (SQL ``NULLS
+FIRST``/``LAST`` semantics). When omitted, the canonical default applies: ``first`` for
+``asc``, ``last`` for ``desc`` (a null sorts as the smallest value)."""
+
+QuerySortKeySpec = TypedDict(
+    "QuerySortKeySpec",
+    {"dir": QuerySortDirection, "nulls": NotRequired[QuerySortNulls]},
+)
+"""Explicit per-key sort spec: a direction plus optional null placement."""
+
+QuerySortValue = QuerySortDirection | QuerySortKeySpec
+"""A sort value: the direction shorthand (``"asc"``) or an explicit
+:data:`QuerySortKeySpec` (``{"dir": "asc", "nulls": "last"}``)."""
+
+QuerySortExpression = Mapping[str, QuerySortValue]
+"""Map of field names to a sort value (supports dot-separated paths like filters).
+
+Each value is either a direction string or a ``{"dir", "nulls"}`` spec. The plain string
+keeps the canonical null placement; the spec form overrides it per key."""
 
 # ....................... #
 
-AggregateFunction = Literal["$count", "$sum", "$avg", "$min", "$max", "$median"]
+AggregateFunction = Literal[
+    "$count",
+    "$count_distinct",
+    "$sum",
+    "$avg",
+    "$min",
+    "$max",
+    "$median",
+    "$stddev_pop",
+    "$stddev_samp",
+    "$var_pop",
+    "$var_samp",
+    "$percentile",
+]
 """Supported aggregate function names."""
 
 AggregateTruncUnit = Literal["hour", "day", "week", "month"]
@@ -225,20 +261,34 @@ class AggregateComputedFunctionApplication(TypedDict, total=False):
     filter: QueryFilterExpression
     """Optional row filter applied only to this computed aggregate."""
 
+    p: float
+    """Quantile in ``[0, 1]`` — required for ``$percentile``, ignored otherwise."""
+
 
 AggregateComputedFunctionExpression = TypedDict(
     "AggregateComputedFunctionExpression",
     {
         "$count": str | None | AggregateComputedFunctionApplication,
+        "$count_distinct": str | AggregateComputedFunctionApplication,
         "$sum": str | AggregateComputedFunctionApplication,
         "$avg": str | AggregateComputedFunctionApplication,
         "$min": str | AggregateComputedFunctionApplication,
         "$max": str | AggregateComputedFunctionApplication,
         "$median": str | AggregateComputedFunctionApplication,
+        "$stddev_pop": str | AggregateComputedFunctionApplication,
+        "$stddev_samp": str | AggregateComputedFunctionApplication,
+        "$var_pop": str | AggregateComputedFunctionApplication,
+        "$var_samp": str | AggregateComputedFunctionApplication,
+        "$percentile": AggregateComputedFunctionApplication,
     },
     total=False,
 )
-"""Single aggregate function application keyed by function name."""
+"""Single aggregate function application keyed by function name.
+
+``$percentile`` requires the application form with a ``p`` quantile (it has no scalar
+shorthand). Note: ``$median`` and ``$percentile`` are **exact** on Postgres and the
+in-memory backend but **approximate** on Mongo (its native estimator), so they are not
+oracle-matched on large datasets."""
 
 AggregateComputedFieldExpression = Mapping[str, AggregateComputedFunctionExpression]
 """Map of aggregate output aliases to computed aggregate function specs."""
@@ -249,6 +299,7 @@ AggregatesExpression = TypedDict(
     {
         "$groups": AggregateGroupKeysExpression,
         "$computed": AggregateComputedFieldExpression,
+        "$having": "QueryFilterExpression",
     },
     total=False,
 )
@@ -258,6 +309,11 @@ AggregatesExpression = TypedDict(
 ``{\"$trunc\": {\"field\", \"unit\", optional \"timezone\"}}`` for calendar buckets
 (output alias is the map key). List/tuple ``$groups`` accepts path strings only.
 ``$computed`` maps output aliases to aggregate function applications.
+
+``$having`` is an optional filter applied to the **aggregated** rows (post-group),
+referencing only the output aliases — group keys and computed metrics — e.g. keep only
+groups whose ``$count`` exceeds a threshold. It is the aggregate analogue of a SQL
+``HAVING`` clause and uses the same filter grammar as ``filters``.
 """
 
 

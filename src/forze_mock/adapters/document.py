@@ -37,11 +37,13 @@ from forze.application.contracts.querying import (
     CursorPaginationExpression,
     PaginationExpression,
     QueryFilterExpression,
+    QueryFilterExpressionParser,
     QuerySortExpression,
     assert_cursor_projection_includes_sort_keys,
     normalize_sorts_for_keyset,
     read_fields_for_model,
     resolve_effective_sorts,
+    validate_query_field_types,
 )
 from forze.application.integrations.document._limits import (
     DEFAULT_MAX_STREAM_PAGES,
@@ -223,6 +225,23 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
         return [self._to_read(doc) for doc in docs]
 
     # ....................... #
+
+    def _validate_filter_types(
+        self,
+        filters: QueryFilterExpression | None,  # type: ignore[valid-type]
+    ) -> None:
+        """Operator/field-type validation, mirroring the real gateways' ``compile_filters``.
+
+        Keeps dev (mock) and prod (Postgres/Mongo) symmetric: a type-incompatible filter
+        (e.g. ``$like`` on a number) raises the same clean ``query_operator_type_mismatch``
+        precondition here instead of silently matching nothing.
+        """
+
+        if filters is None:
+            return
+
+        expr = QueryFilterExpressionParser.parse(filters)
+        validate_query_field_types(expr, self.read_model)
 
     async def find(
         self,
@@ -427,6 +446,8 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
     ) -> Any:
         if aggregates is not None and return_fields is not None:
             raise exc.internal("Aggregates cannot be combined with return_fields")
+
+        self._validate_filter_types(filters)
 
         with self.state.lock:
             docs = [
@@ -862,6 +883,8 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
         # the real document gateways: resolve the effective sort (+ id
         # tie-breaker), seek past the token's sort values, and mint the next
         # cursor from the last returned row.
+        self._validate_filter_types(filters)
+
         read_fields = read_fields_for_model(self.read_model)
         effective = resolve_effective_sorts(
             sorts=sorts,
@@ -870,8 +893,9 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
             spec_name=self.spec.name,
         )
         normalized = normalize_sorts_for_keyset(effective, read_fields=read_fields)
-        sort_keys = [k for k, _ in normalized]
-        directions = [d for _, d in normalized]
+        sort_keys = [k for k, _, _ in normalized]
+        directions = [d for _, d, _ in normalized]
+        nulls = [n for _, _, n in normalized]
 
         assert_cursor_projection_includes_sort_keys(
             return_fields=return_fields,
@@ -889,6 +913,7 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
             cursor=cursor,
             sort_keys=sort_keys,
             directions=directions,
+            nulls=nulls,
         )
         if return_fields is not None:
             out_raw = [
@@ -911,6 +936,8 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
     # ....................... #
 
     async def count(self, filters: QueryFilterExpression | None = None) -> int:  # type: ignore[valid-type, return-value]
+        self._validate_filter_types(filters)
+
         with self.state.lock:
             docs = [
                 dict(doc) for doc in self._store().values() if self._doc_visible(doc)

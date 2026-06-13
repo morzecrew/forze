@@ -7,11 +7,14 @@ from uuid import UUID
 import pytest
 
 from forze.application.contracts.querying.pagination.cursor_token import (
+    _CODEC,
+    _KEYSET_V1,
     compare_keyset_sort_values,
     keyset_canonical_value,
     decode_keyset_v1,
     encode_keyset_v1,
     keyset_page_bounds,
+    ordered_compare,
     row_passes_keyset_seek,
     row_value_for_sort_key,
     validate_cursor_token,
@@ -24,24 +27,30 @@ from forze.domain.constants import ID_FIELD
 
 
 def test_normalize_sorts_empty_defaults_id_asc() -> None:
-    assert normalize_sorts_with_id(None) == [(ID_FIELD, "asc")]
-    assert normalize_sorts_with_id({}) == [(ID_FIELD, "asc")]
+    # Each key carries its canonical null placement (asc → first, desc → last).
+    assert normalize_sorts_with_id(None) == [(ID_FIELD, "asc", "first")]
+    assert normalize_sorts_with_id({}) == [(ID_FIELD, "asc", "first")]
 
 
 def test_normalize_sorts_single_direction_appends_id_tiebreaker() -> None:
     assert normalize_sorts_with_id({"name": "asc"}) == [
-        ("name", "asc"),
-        (ID_FIELD, "asc"),
+        ("name", "asc", "first"),
+        (ID_FIELD, "asc", "first"),
     ]
     assert normalize_sorts_with_id({"name": "desc", ID_FIELD: "desc"}) == [
-        ("name", "desc"),
-        (ID_FIELD, "desc"),
+        ("name", "desc", "last"),
+        (ID_FIELD, "desc", "last"),
     ]
 
 
-def test_normalize_sorts_mixed_directions_rejected() -> None:
-    with pytest.raises(CoreException, match="all sort directions"):
-        normalize_sorts_with_id({"a": "asc", "b": "desc"})
+def test_normalize_sorts_mixed_directions_allowed() -> None:
+    # Mixed asc/desc is supported — the composite seek compares each key in its own
+    # direction. The id tie-breaker is appended (default asc → nulls first).
+    assert normalize_sorts_with_id({"a": "asc", "b": "desc"}) == [
+        ("a", "asc", "first"),
+        ("b", "desc", "last"),
+        (ID_FIELD, "asc", "first"),
+    ]
 
 
 def test_normalize_sorts_invalid_direction() -> None:
@@ -57,9 +66,10 @@ def test_encode_decode_roundtrip_json_types() -> None:
     dirs = ["asc"] * len(keys)
     values: list[object] = ["x", dt, d, Decimal("1.5"), True, 7, u]
     token = encode_keyset_v1(sort_keys=keys, directions=dirs, values=values)
-    k2, d2, v2 = decode_keyset_v1(token)
+    k2, d2, n2, v2 = decode_keyset_v1(token)
     assert k2 == keys
     assert d2 == ["asc"] * len(keys)
+    assert n2 == ["first"] * len(keys)  # canonical for asc
     assert v2[0] == "x"
     assert v2[1] == dt.isoformat()
     assert v2[2] == d.isoformat()
@@ -123,7 +133,7 @@ def test_row_passes_keyset_seek_uuid_after_desc() -> None:
         directions=["desc"],
         values=[u1],
     )
-    _, _, cursor_vals = decode_keyset_v1(token)
+    _, _, _, cursor_vals = decode_keyset_v1(token)
     assert row_passes_keyset_seek(
         {"id": u2},
         sort_keys=["id"],
@@ -300,16 +310,22 @@ def test_pre_codec_fixed_token_decodes_and_reencodes_identically() -> None:
         "MTkzZTRjMi1hYWFhLWJiYmItY2NjYy0xMjM0NTY3ODkwYWIiXX0"
     )
 
-    keys, dirs, vals = decode_keyset_v1(token)
+    keys, dirs, nulls, vals = decode_keyset_v1(token)
 
     assert keys == ["created_at", "name", "id"]
     assert dirs == ["desc", "desc", "desc"]
+    # A pre-null-placement token carries no ``n`` field; nulls default to canonical.
+    assert nulls == ["last", "last", "last"]
     assert vals == [
         "2026-01-02T03:04:05",
         "alice",
         "0193e4c2-aaaa-bbbb-cccc-1234567890ab",
     ]
-    assert encode_keyset_v1(sort_keys=keys, directions=dirs, values=vals) == token
+    # Re-encoding now adds the ``n`` field, so it isn't byte-identical to the old token;
+    # it must round-trip to the same logical payload, including the defaulted nulls.
+    assert decode_keyset_v1(
+        encode_keyset_v1(sort_keys=keys, directions=dirs, nulls=nulls, values=vals)
+    ) == (keys, dirs, nulls, vals)
 
 
 def test_pre_codec_token_with_escaped_unicode_still_decodes() -> None:
@@ -317,17 +333,18 @@ def test_pre_codec_token_with_escaped_unicode_still_decodes() -> None:
     # tokens must keep decoding to the same values.
     token = "eyJkIjpbImFzYyJdLCJrIjpbIm5hbWUiXSwidiI6MSwieCI6WyJoXHUwMGU5bGxvIl19"
 
-    keys, dirs, vals = decode_keyset_v1(token)
+    keys, dirs, nulls, vals = decode_keyset_v1(token)
 
     assert keys == ["name"]
     assert dirs == ["asc"]
+    assert nulls == ["first"]
     assert vals == ["héllo"]
 
 
 def test_non_ascii_value_round_trips() -> None:
     token = encode_keyset_v1(sort_keys=["name"], directions=["asc"], values=["héllo"])
 
-    assert decode_keyset_v1(token) == (["name"], ["asc"], ["héllo"])
+    assert decode_keyset_v1(token) == (["name"], ["asc"], ["first"], ["héllo"])
 
 
 def test_decode_keyset_rejects_non_list_payload() -> None:
@@ -346,5 +363,33 @@ def test_decode_keyset_rejects_length_mismatch() -> None:
 
     raw = json.dumps({"v": 1, "k": ["a", "b"], "d": ["asc"], "x": [1]}).encode()
     token = base64.urlsafe_b64encode(raw).decode().rstrip("=")
+    with pytest.raises(CoreException, match="Invalid cursor token"):
+        decode_keyset_v1(token)
+
+
+def _tampered_token(payload: dict) -> str:
+    """Encode a raw payload directly (bypassing the aligned-by-construction encoder)."""
+    return _CODEC.dumps({"v": _KEYSET_V1, **payload})
+
+
+def test_ordered_compare_type_mismatch_is_invalid_cursor() -> None:
+    # A tampered token can pair a value of the wrong type against a row value; the raw
+    # TypeError is surfaced as a clean invalid-cursor error.
+    with pytest.raises(CoreException, match="Invalid cursor token") as ei:
+        ordered_compare(1, "x", direction="asc", nulls="first")
+
+    assert ei.value.kind is ExceptionKind.VALIDATION
+
+
+def test_decode_rejects_misaligned_nulls_array() -> None:
+    token = _tampered_token(
+        {"k": ["a"], "d": ["asc"], "x": [1], "n": ["first", "last"]},
+    )
+    with pytest.raises(CoreException, match="Invalid cursor token"):
+        decode_keyset_v1(token)
+
+
+def test_decode_rejects_invalid_nulls_placement_value() -> None:
+    token = _tampered_token({"k": ["a"], "d": ["asc"], "x": [1], "n": ["middle"]})
     with pytest.raises(CoreException, match="Invalid cursor token"):
         decode_keyset_v1(token)

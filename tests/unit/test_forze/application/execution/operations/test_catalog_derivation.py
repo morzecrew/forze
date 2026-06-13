@@ -15,6 +15,7 @@ from pydantic import BaseModel
 from forze.application.contracts.authz import AuthzSpec
 from forze.application.contracts.execution import (
     BeforeStep,
+    DeclaresAuthn,
     DeclaresAuthz,
     MiddlewareStep,
 )
@@ -22,6 +23,7 @@ from forze.application.contracts.idempotency import IdempotencySpec
 from forze.application.contracts.resilience import HedgeSafety
 from forze.application.execution.operations import OperationKind
 from forze.application.execution.operations.registry import OperationRegistry
+from forze.application.hooks.authn import AuthnRequired
 from forze.application.hooks.authz import (
     AuthzBeforeAuthorize,
     AuthzDocumentScopeWrap,
@@ -55,6 +57,10 @@ def _authz_before_step(action: str, *, step_id: str = "authz") -> BeforeStep:
         step_id=step_id,
         requires=(),
     )
+
+
+def _authn_before_step(*, step_id: str = "authn") -> BeforeStep:
+    return AuthnRequired().to_step(step_id=step_id)
 
 
 def _authz_scope_step(action: str | None, *, step_id: str = "scope") -> MiddlewareStep:
@@ -224,6 +230,82 @@ class TestAuthzDerivation:
 # ....................... #
 
 
+class TestAuthnDerivation:
+    def test_authn_required_hook_flags_true(self) -> None:
+        reg = (
+            _registry()
+            .bind("op")
+            .bind_outer()
+            .before(_authn_before_step())
+            .finish(deep=True)
+        )
+
+        assert reg.freeze().catalog()["op"].requires_authn is True
+
+    def test_op_without_guard_flags_false(self) -> None:
+        assert _registry().freeze().catalog()["op"].requires_authn is False
+
+    def test_authz_hook_implies_requires_authn(self) -> None:
+        # Authorization presupposes a bound principal — an authz-only op still
+        # requires authentication, even with no AuthnRequired hook.
+        reg = (
+            _registry()
+            .bind("op")
+            .bind_outer()
+            .before(_authz_before_step("notes.read"))
+            .finish(deep=True)
+        )
+
+        entry = reg.freeze().catalog()["op"]
+
+        assert entry.requires_authn is True
+        assert entry.required_permissions == ("notes.read",)
+
+    def test_authz_scope_wrap_without_action_still_requires_authn(self) -> None:
+        # The wrap names no permission key but still scopes by principal.
+        reg = (
+            _registry()
+            .bind("op")
+            .bind_outer()
+            .wrap(_authz_scope_step(None))
+            .finish(deep=True)
+        )
+
+        entry = reg.freeze().catalog()["op"]
+
+        assert entry.requires_authn is True
+        assert entry.required_permissions == ()
+
+    def test_custom_structural_marker_is_detected_without_import_coupling(self) -> None:
+        class _CustomAuthn:
+            def __call__(self, ctx: Any) -> Any:  # pragma: no cover - never resolved
+                raise AssertionError("not resolved at freeze")
+
+            def requires_authn(self) -> bool:
+                return True
+
+        step = BeforeStep(id="custom", factory=_CustomAuthn())
+        reg = _registry().bind("op").bind_outer().before(step).finish(deep=True)
+
+        assert reg.freeze().catalog()["op"].requires_authn is True
+
+    def test_marker_returning_false_does_not_flag(self) -> None:
+        class _DisabledAuthn:
+            def __call__(self, ctx: Any) -> Any:  # pragma: no cover - never resolved
+                raise AssertionError("not resolved at freeze")
+
+            def requires_authn(self) -> bool:
+                return False
+
+        step = BeforeStep(id="custom", factory=_DisabledAuthn())
+        reg = _registry().bind("op").bind_outer().before(step).finish(deep=True)
+
+        assert reg.freeze().catalog()["op"].requires_authn is False
+
+
+# ....................... #
+
+
 class TestMarkers:
     def test_authz_before_declares_its_action(self) -> None:
         hook = AuthzBeforeAuthorize(spec=AuthzSpec(name="z"), action="x.read")
@@ -249,6 +331,15 @@ class TestMarkers:
         )
 
         assert not isinstance(wrap, DeclaresAuthz)
+
+    def test_authn_required_declares_authn(self) -> None:
+        hook = AuthnRequired()
+
+        assert isinstance(hook, DeclaresAuthn)
+        assert hook.requires_authn() is True
+
+    def test_authn_required_is_not_authz(self) -> None:
+        assert not isinstance(AuthnRequired(), DeclaresAuthz)
 
 
 # ....................... #

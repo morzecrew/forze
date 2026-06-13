@@ -81,6 +81,74 @@ def compare_keyset_sort_values(left: Any, right: Any) -> int:
 # ....................... #
 
 
+def ordered_compare(
+    left: Any,
+    right: Any,
+    *,
+    direction: str,
+    nulls: str,
+) -> int:
+    """Sort-order comparison for one key: ``-1`` if *left* sorts before *right*, else.
+
+    Null placement is *absolute* — ``nulls="first"`` puts nulls at the start, ``"last"``
+    at the end, independent of *direction*; only the non-null comparison flips with
+    direction. This is the canonical keyset order every backend conforms to.
+    """
+
+    lc = keyset_canonical_value(left)
+    rc = keyset_canonical_value(right)
+    l_null = lc is None
+    r_null = rc is None
+
+    if l_null and r_null:
+        return 0
+
+    if l_null:
+        return -1 if nulls == "first" else 1
+
+    if r_null:
+        return 1 if nulls == "first" else -1
+
+    if lc == rc:
+        return 0
+
+    # Cursor values are client-controlled: a tampered token can put a value of the wrong
+    # type next to a row value — surface as an invalid-cursor error, not a raw TypeError.
+    try:
+        ordered = -1 if lc < rc else 1
+
+    except TypeError as e:
+        raise exc.validation("Invalid cursor token") from e
+
+    return -ordered if direction == "desc" else ordered
+
+
+# ....................... #
+
+
+def _resolved_nulls(
+    directions: Sequence[str],
+    nulls: Sequence[str] | None,
+) -> list[str]:
+    """The explicit *nulls* placement, or the canonical default per direction.
+
+    Supplied markers are lower-cased and validated so the result matches what
+    :func:`decode_keyset_v1` produces and what :func:`ordered_compare` expects — this
+    helper feeds both the encoded token and the seek-comparison path.
+    """
+
+    if nulls is None:
+        return [_canonical_nulls(d) for d in directions]
+
+    resolved = [str(n).lower() for n in nulls]
+
+    for n in resolved:
+        if n not in ("first", "last"):
+            raise exc.internal(f"Invalid null placement {n!r}; expected 'first'/'last'")
+
+    return resolved
+
+
 def row_passes_keyset_seek(
     row: dict[str, Any],
     *,
@@ -88,27 +156,28 @@ def row_passes_keyset_seek(
     directions: Sequence[str],
     cursor_values: Sequence[Any],
     after: bool,
+    nulls: Sequence[str] | None = None,
 ) -> bool:
     """Return whether *row* is strictly after/before the cursor tuple (composite keyset)."""
 
-    for key, direction, cursor_value in zip(
+    for key, direction, null_order, cursor_value in zip(
         sort_keys,
         directions,
+        _resolved_nulls(directions, nulls),
         cursor_values,
         strict=True,
     ):
-        cmp = compare_keyset_sort_values(
+        cmp = ordered_compare(
             row_value_for_sort_key(row, key),
             cursor_value,
+            direction=direction,
+            nulls=null_order,
         )
 
         if cmp == 0:
             continue
 
-        if direction == "asc":
-            return cmp > 0 if after else cmp < 0
-
-        return cmp < 0 if after else cmp > 0
+        return cmp > 0 if after else cmp < 0
 
     return False
 
@@ -131,15 +200,25 @@ def _parse_value(v: Any) -> Any:
 # ....................... #
 
 
+def _canonical_nulls(direction: str) -> str:
+    """Default null placement for *direction* (asc → first, desc → last)."""
+
+    return "first" if direction == "asc" else "last"
+
+
 def encode_keyset_v1(
     *,
     sort_keys: Sequence[str],
     directions: Sequence[str],
     values: Sequence[Any],
+    nulls: Sequence[str] | None = None,
 ) -> str:
+    null_order = _resolved_nulls(directions, nulls)
+
     if (
         len(sort_keys) != len(values)
         or len(sort_keys) != len(directions)
+        or len(sort_keys) != len(null_order)
         or not sort_keys
     ):
         raise exc.internal(
@@ -150,6 +229,7 @@ def encode_keyset_v1(
         "v": _KEYSET_V1,
         "k": list(sort_keys),
         "d": list(directions),
+        "n": list(null_order),
         "x": [_jsonify_value(x) for x in values],
     }
     return _CODEC.dumps(payload)
@@ -173,7 +253,14 @@ def row_value_for_sort_key(row: dict[str, Any], key: str) -> Any:
 # ....................... #
 
 
-def decode_keyset_v1(token: str) -> tuple[list[str], list[str], list[Any]]:
+def decode_keyset_v1(token: str) -> tuple[list[str], list[str], list[str], list[Any]]:
+    """Decode a keyset token to ``(keys, directions, nulls, values)``.
+
+    A token written before per-key null placement existed carries no ``n`` field; its
+    nulls default to the canonical placement for each direction, so old cursors stay
+    valid as long as the active sort uses that default.
+    """
+
     try:
         data: Any = _CODEC.loads(token)
 
@@ -200,9 +287,24 @@ def decode_keyset_v1(token: str) -> tuple[list[str], list[str], list[Any]]:
         if dr not in _DIRECTIONS:
             raise exc.validation("Invalid cursor token")
 
+    n = data.get("n")  # type: ignore[assignment, misc]
+
+    if n is None:
+        nulls = [_canonical_nulls(dr) for dr in dirs]
+
+    else:
+        if not isinstance(n, list) or len(n) != len(k):  # type: ignore[arg-type]
+            raise exc.validation("Invalid cursor token")
+
+        nulls = [str(a).lower() for a in n]  # type: ignore[arg-type]
+
+        for nn in nulls:
+            if nn not in ("first", "last"):
+                raise exc.validation("Invalid cursor token")
+
     vals = [_parse_value(v) for v in x]  # type: ignore[arg-type]
 
-    return keys, dirs, vals
+    return keys, dirs, nulls, vals
 
 
 # ....................... #
@@ -213,21 +315,28 @@ def validate_cursor_token(
     *,
     sort_keys: Sequence[str],
     directions: Sequence[str],
+    nulls: Sequence[str] | None = None,
 ) -> list[Any]:
     """Decode a keyset *token* and verify it matches the active sort; return its values.
 
-    Raises :func:`~forze.base.exceptions.exc.validation` when the token's keys or
-    directions do not align with the current search sort (a stale or mismatched
-    cursor). Shared by every keyset-cursor search path so the validation is identical.
+    Raises :func:`~forze.base.exceptions.exc.validation` when the token's keys,
+    directions, or null placement do not align with the current search sort (a stale or
+    mismatched cursor). When *nulls* is omitted the canonical placement is assumed.
+    Shared by every keyset-cursor search path so the validation is identical.
     """
 
-    tk, td, tv = decode_keyset_v1(token)
+    null_order = _resolved_nulls(directions, nulls)
+    tk, td, tn, tv = decode_keyset_v1(token)
 
-    if list(tk) != list(sort_keys) or len(td) != len(directions):
+    if (
+        list(tk) != list(sort_keys)
+        or len(td) != len(directions)
+        or len(tn) != len(null_order)
+    ):
         raise exc.validation("Cursor does not match current search sort")
 
     for i, di in enumerate(directions):
-        if (td[i] or "").lower() != di:
+        if (td[i] or "").lower() != di or (tn[i] or "").lower() != null_order[i]:
             raise exc.validation("Cursor does not match current search sort")
 
     return list(tv)
@@ -244,6 +353,7 @@ def keyset_page_bounds(
     directions: Sequence[str],
     use_after: bool,
     use_before: bool,
+    nulls: Sequence[str] | None = None,
 ) -> tuple[list[dict[str, Any]], bool, str | None, str | None]:
     """Trim an over-fetched keyset result to one page and compute next/prev cursors.
 
@@ -266,6 +376,7 @@ def keyset_page_bounds(
         encode_keyset_v1(
             sort_keys=sort_keys,
             directions=directions,
+            nulls=nulls,
             values=_row_token_vals(rows[-1]),
         )
         if has_more and rows
@@ -276,6 +387,7 @@ def keyset_page_bounds(
         encode_keyset_v1(
             sort_keys=sort_keys,
             directions=directions,
+            nulls=nulls,
             values=_row_token_vals(rows[0]),
         )
         if rows and (use_after or (use_before and has_more))

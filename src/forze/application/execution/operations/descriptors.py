@@ -17,6 +17,7 @@ from typing import final
 import attrs
 from pydantic import BaseModel
 
+from forze.application.contracts.querying import QueryDiscovery
 from forze.base.primitives import JsonDict, StrKey
 
 from .planning import OperationKind
@@ -53,6 +54,12 @@ class OperationDescriptor:
     (``spec.sensitive``). An intrinsic fact, not an exposure decision: generated
     external surfaces (HTTP route generators, MCP tools/resources) must refuse to
     project operations marked sensitive."""
+
+    query_discovery: QueryDiscovery | None = None
+    """For a filter-accepting operation, the read model's filter/sort/aggregate surface
+    (which fields, and which operators per field). Lets a driving adapter advertise the
+    query contract — OpenAPI vendor extension, MCP tool text — so a caller need not
+    discover it by trial and error. ``None`` for operations that take no filter."""
 
     # ....................... #
 
@@ -103,6 +110,15 @@ class OperationCatalogEntry:
     Honesty caveat: declared-hook introspection, **not** a security statement. An
     operation may enforce authorization inside its handler (or via an undeclared
     hook) invisibly, so an empty tuple must not be read as "unauthenticated/open"."""
+
+    requires_authn: bool = False
+    """The plan declares it needs an authenticated principal (structural
+    ``DeclaresAuthn`` detection at freeze — an authn guard, or any authz hook, since
+    authorization presupposes a bound principal). Transports project this into their
+    auth surface (FastAPI ``security`` / OpenAPI, MCP tool text).
+
+    Same honesty caveat as :attr:`required_permissions`: declared-hook introspection,
+    **not** a security statement — ``False`` does not prove the operation is open."""
 
     deadline: timedelta | None = None
     """Per-invocation time budget declared by the plan, or ``None`` for no cap.

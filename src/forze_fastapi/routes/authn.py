@@ -65,6 +65,7 @@ from ._attach import (
     RouteBinding,
     attach_operation_routes,
     body_endpoint,
+    id_endpoint,
 )
 
 # ----------------------- #
@@ -123,6 +124,17 @@ _AUTHN_BINDINGS: Mapping[str, RouteBinding] = {
     AuthnKernelOp.DEACTIVATE_PRINCIPAL: RouteBinding(
         method="POST", path="/deactivate", build=body_endpoint, status_code=204
     ),
+    # Self-service API-key management is a genuine resource collection (unlike the
+    # auth-flow actions), so it takes resource-style verbs: create / list / delete.
+    AuthnKernelOp.ISSUE_API_KEY: RouteBinding(
+        method="POST", path="/api-keys", build=body_endpoint, status_code=201
+    ),
+    AuthnKernelOp.LIST_API_KEYS: RouteBinding(
+        method="GET", path="/api-keys", build=_no_body_endpoint
+    ),
+    AuthnKernelOp.REVOKE_API_KEY: RouteBinding(
+        method="DELETE", path="/api-keys/{id}", build=id_endpoint, status_code=204
+    ),
 }
 """Fixed action-path bindings per authn kernel operation.
 
@@ -157,6 +169,13 @@ def attach_authn_routes(
     - ``POST /password-reset/request`` → ``request_password_reset`` (202, uniform ack DTO)
     - ``POST /password-reset/confirm`` → ``reset_password`` (204)
     - ``POST /deactivate`` → ``deactivate_principal`` (204)
+    - ``POST /api-keys`` → ``issue_api_key`` (201, the secret returned once)
+    - ``GET /api-keys`` → ``list_api_keys`` (non-secret descriptors)
+    - ``DELETE /api-keys/{id}`` → ``revoke_api_key`` (204)
+
+    Self-service API-key management is a real resource collection, so it uses
+    resource-style verbs (the auth-flow actions stay ``POST``). All three require a
+    bound identity (``AuthnRequired`` — a 401 without one).
 
     Each route's ``operation_id`` is the operation key verbatim (e.g.
     ``main.password_login``); request/response schemas come from the operation

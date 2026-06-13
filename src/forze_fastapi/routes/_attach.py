@@ -31,6 +31,7 @@ import attrs
 from fastapi import APIRouter
 from pydantic import BaseModel, ValidationError
 
+from forze.application.contracts.querying import QUANTIFIER_OPS, QueryDiscovery
 from forze.application.execution.context import ExecutionContextFactory
 from forze.application.execution.operations import (
     FrozenOperationRegistry,
@@ -46,11 +47,15 @@ from forze_fastapi.middlewares.invocation import IDEMPOTENCY_KEY_HEADER
 RouteStyle = Literal["rest", "rpc"]
 """Path/verb mapping for generated routes.
 
-``"rest"`` maps operations onto resource-style paths and verbs; ``"rpc"``
-exposes one operation-named path per operation, mirroring the catalog
-one-to-one. Each attacher documents its concrete mapping. Attachers whose
-operations have a single natural surface (search, where every request is a
-filter body) take no style argument.
+Both styles use REST verbs (``GET``/``POST``/``PATCH``/``DELETE``); they differ
+only in how a resource is addressed. ``"rest"`` maps operations onto
+resource-style paths with the id in the path (``GET /{id}``). ``"rpc"`` exposes
+one operation-named path per operation — mirroring the catalog one-to-one — with
+the id (and rev) carried as query parameters (``GET /notes.get?id=``); only
+genuine bodies (create, filter/list payloads, multipart upload) stay ``POST``.
+Each attacher documents its concrete mapping. Attachers whose operations have a
+single natural surface (search, where every request is a filter body) take no
+style argument.
 """
 
 OperationRunner = Callable[[Any], Awaitable[Any]]
@@ -225,11 +230,15 @@ def _route_openapi_extra(
     "required-mode" knob (reject keyless requests) is a follow-up.
 
     Declared permissions surface as the ``x-required-permissions`` vendor
-    extension; mapping them onto OpenAPI ``securitySchemes`` is a follow-up.
+    extension; an operation that declares it needs a bound principal surfaces as
+    ``x-requires-authn: true`` — :func:`forze_fastapi.security.apply_openapi_security`
+    reads that flag to attach OpenAPI ``security`` to the protected operations.
     A plan-declared deadline surfaces as ``x-deadline-seconds`` (the merged
-    per-invocation budget; expiry returns **504**). FastAPI deep-merges
-    ``openapi_extra`` into the operation object, appending to ``parameters``,
-    so unflagged routes (``None``) are emitted unchanged.
+    per-invocation budget; expiry returns **504**). A filter-accepting operation's
+    query surface (filterable fields and their operators, sortable/aggregatable fields)
+    surfaces as the ``x-forze-query`` extension. FastAPI deep-merges ``openapi_extra``
+    into the operation object, appending to ``parameters``, so unflagged routes
+    (``None``) are emitted unchanged.
     """
 
     extra: dict[str, Any] = {}
@@ -251,10 +260,50 @@ def _route_openapi_extra(
     if entry.required_permissions:
         extra["x-required-permissions"] = list(entry.required_permissions)
 
+    if entry.requires_authn:
+        extra["x-requires-authn"] = True
+
     if entry.deadline is not None:
         extra["x-deadline-seconds"] = entry.deadline.total_seconds()
 
+    if entry.descriptor is not None and entry.descriptor.query_discovery is not None:
+        extra["x-forze-query"] = _query_discovery_extension(
+            entry.descriptor.query_discovery,
+        )
+
     return extra or None
+
+
+# ....................... #
+
+
+def _query_discovery_extension(discovery: QueryDiscovery) -> dict[str, Any]:
+    """The ``x-forze-query`` vendor extension: the read model's filter surface.
+
+    Tells a client which fields are filterable (and which operators each accepts, plus
+    element quantifiers for array fields), sortable, and aggregatable — the type-derived
+    upper bound, independent of the serving backend.
+    """
+
+    filterable: list[dict[str, Any]] = []
+
+    for field in discovery.filterable:
+        entry: dict[str, Any] = {
+            "field": field.field,
+            "type": field.type,
+            "operators": list(field.operators),
+        }
+
+        if field.quantifiable:
+            entry["quantifiers"] = list(QUANTIFIER_OPS)
+
+        filterable.append(entry)
+
+    return {
+        "filterable": filterable,
+        "sortable": list(discovery.sortable),
+        "aggregatable": list(discovery.aggregatable),
+    }
 
 
 # ....................... #

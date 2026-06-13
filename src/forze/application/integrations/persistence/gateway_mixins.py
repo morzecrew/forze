@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Sequence
+from collections.abc import Awaitable, Mapping, Sequence
 from functools import cached_property
 from typing import TYPE_CHECKING, Any, Generic, Literal, Protocol, TypeVar, overload
 from uuid import UUID
@@ -14,6 +14,7 @@ from forze.application.contracts.querying import (
     QueryFilterExpression,
     QueryFilterExpressionParser,
     QueryFilterLimits,
+    validate_query_field_types,
 )
 from forze.application.contracts.tenancy.mixins import TenancyMixin
 from forze.base.exceptions import exc
@@ -145,7 +146,10 @@ class ReadValidationCodecMixin(Generic[M]):
         @overload
         def _codec_for(self, model: type[TModel]) -> ModelCodec[TModel, Any]: ...
 
-        def _codec_for(self, model: type[BaseModel] | None = None) -> ModelCodec[Any, Any]: ...
+        def _codec_for(
+            self,
+            model: type[BaseModel] | None = None,
+        ) -> ModelCodec[Any, Any]: ...
 
     # ....................... #
 
@@ -225,12 +229,13 @@ class ReadValidationCodecMixin(Generic[M]):
 # ....................... #
 
 
-class FilterParserMixin:
+class FilterParserMixin(Generic[M]):
     """Filter DSL parser setup and :meth:`compile_filters`."""
 
     if TYPE_CHECKING:
         filter_limits: QueryFilterLimits | None
         filter_parser: QueryFilterExpressionParser
+        model_type: type[M]
 
     # ....................... #
 
@@ -255,12 +260,27 @@ class FilterParserMixin:
         self,
         filters: QueryFilterExpression | None,  # type: ignore[valid-type]
     ) -> QueryExpr | None:
-        """Parse *filters* into an AST using :attr:`filter_parser`."""
+        """Parse *filters* into an AST, validating operator/field-type compatibility.
+
+        Beyond structural parsing, each operator is checked against the read model's
+        field types (``$like`` on a number, ``$gt`` on a boolean, a quantifier on a
+        non-array, …) so a caller mistake surfaces as a clean ``precondition`` here
+        rather than a runtime type error deep in a backend.
+        """
 
         if not filters:
             return None
 
-        return self.filter_parser.parse_filter(filters)
+        expr = self.filter_parser.parse_filter(filters)
+
+        hints: Mapping[str, type[Any]] | None = getattr(
+            self,
+            "nested_field_hints",
+            None,
+        )
+        validate_query_field_types(expr, self.model_type, field_type_hints=hints)
+
+        return expr
 
 
 # ....................... #

@@ -58,6 +58,15 @@ _EXPECTED_PATHS = {
     "/auth/password-reset/request",
     "/auth/password-reset/confirm",
     "/auth/deactivate",
+    "/auth/api-keys",
+    "/auth/api-keys/{id}",
+}
+
+# Auth-flow action routes are all POST; the self-service API-key collection uses
+# resource verbs (POST create + GET list on the collection, DELETE on the item).
+_API_KEY_METHODS = {
+    "/auth/api-keys": {"post", "get"},
+    "/auth/api-keys/{id}": {"delete"},
 }
 
 
@@ -187,11 +196,14 @@ def _login(client: TestClient, *, password: str = "pw-1") -> dict[str, Any]:
 
 
 class TestAuthnRouteSurface:
-    def test_every_operation_is_a_post_on_its_action_path(self) -> None:
+    def test_auth_flows_are_post_api_keys_are_resource_verbs(self) -> None:
         paths = _build_app().openapi()["paths"]
 
         assert set(paths) == _EXPECTED_PATHS
-        assert all(set(methods) == {"post"} for methods in paths.values())
+
+        for path, methods in paths.items():
+            expected = _API_KEY_METHODS.get(path, {"post"})
+            assert set(methods) == expected, path
 
     def test_operation_ids_are_registry_keys_verbatim(self) -> None:
         assert _operation_ids(_build_app()) == {

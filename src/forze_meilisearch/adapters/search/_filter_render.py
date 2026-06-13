@@ -8,8 +8,10 @@ from uuid import UUID
 import attrs
 
 from forze.application.contracts.querying import (
+    ALL_VALUE_OPS,
     ELEM_SCALAR_FIELD,
     QueryAnd,
+    QueryCapabilities,
     QueryCompare,
     QueryElem,
     QueryExpr,
@@ -19,6 +21,7 @@ from forze.application.contracts.querying import (
     QueryFilterLimits,
     QueryNot,
     QueryOr,
+    validate_query_capabilities,
 )
 from forze.base.exceptions import exc
 
@@ -36,6 +39,21 @@ _UNSUPPORTED_OPS = frozenset(
         "$overlaps",
     }
 )
+
+MEILISEARCH_QUERY_CAPABILITIES = QueryCapabilities(
+    value_ops=ALL_VALUE_OPS - _UNSUPPORTED_OPS,
+    element_ops=frozenset(),
+    supports_quantifiers=False,
+    supports_negation=True,
+    supports_field_compare=False,
+)
+"""What the Meilisearch filter renderer can compile.
+
+Equality / ordering / membership / null, plus ``$and`` / ``$or`` / ``$not``. No text
+or set operators, no ``$empty``, no array element quantifiers, no field-to-field
+comparison — the validator rejects those up front so the renderer's own guards below
+are a defense-in-depth backstop, never the caller's first signal.
+"""
 
 # Meilisearch attribute names are alphanumeric/underscore with dotted nesting.
 # Anything else (spaces, quotes, parens, operators) is rejected so user-supplied
@@ -117,6 +135,9 @@ class MeilisearchFilterRenderer:
             return None
 
         expr = self.parser.parse(filters)
+        validate_query_capabilities(
+            expr, MEILISEARCH_QUERY_CAPABILITIES, backend="meilisearch"
+        )
         rendered = self._render_expr(expr)
 
         if not rendered:

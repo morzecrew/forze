@@ -22,8 +22,8 @@ from typing import (
 
 from forze.application.contracts.querying import (
     CursorPaginationExpression,
-    compare_keyset_sort_values,
     keyset_page_bounds,
+    ordered_compare,
     row_passes_keyset_seek,
     row_value_for_sort_key,
     validate_cursor_token,
@@ -114,23 +114,28 @@ def _mock_keyset_sort_docs(  # type: ignore[reportPrivateUsage]
     *,
     sort_keys: Sequence[str],
     directions: Sequence[str],
+    nulls: Sequence[str],
 ) -> list[JsonDict]:
-    """Total-order *docs* by the keyset sort spec using cursor wire canonicalization.
+    """Total-order *docs* by the keyset sort spec using the canonical key comparison.
 
-    Sorting with :func:`compare_keyset_sort_values` keeps the in-memory order
-    consistent with the seek comparison applied to decoded token values, so
-    page boundaries match exactly.
+    Sorting with :func:`ordered_compare` (per-key direction and null placement) keeps the
+    in-memory order consistent with the seek comparison applied to decoded token values,
+    so page boundaries match exactly.
     """
 
     def _cmp(a: JsonDict, b: JsonDict) -> int:
-        for key, direction in zip(sort_keys, directions, strict=True):
-            c = compare_keyset_sort_values(
+        for key, direction, null_order in zip(
+            sort_keys, directions, nulls, strict=True
+        ):
+            c = ordered_compare(
                 row_value_for_sort_key(a, key),
                 row_value_for_sort_key(b, key),
+                direction=direction,
+                nulls=null_order,
             )
 
             if c:
-                return -c if direction == "desc" else c
+                return c
 
         return 0
 
@@ -143,6 +148,7 @@ def _mock_keyset_window(  # type: ignore[reportPrivateUsage]
     cursor: CursorPaginationExpression | None,
     sort_keys: Sequence[str],
     directions: Sequence[str],
+    nulls: Sequence[str],
 ) -> tuple[list[JsonDict], bool, str | None, str | None]:
     """Sort *docs*, seek past the cursor's sort values, and trim to one page.
 
@@ -156,7 +162,9 @@ def _mock_keyset_window(  # type: ignore[reportPrivateUsage]
     lim, use_after, use_before = _mock_keyset_parse(cursor)
     c = dict(cursor or {})
 
-    ordered = _mock_keyset_sort_docs(docs, sort_keys=sort_keys, directions=directions)
+    ordered = _mock_keyset_sort_docs(
+        docs, sort_keys=sort_keys, directions=directions, nulls=nulls
+    )
 
     if use_after or use_before:
         token = str(c["after" if use_after else "before"])
@@ -164,6 +172,7 @@ def _mock_keyset_window(  # type: ignore[reportPrivateUsage]
             token,
             sort_keys=sort_keys,
             directions=directions,
+            nulls=nulls,
         )
         ordered = [
             row
@@ -172,6 +181,7 @@ def _mock_keyset_window(  # type: ignore[reportPrivateUsage]
                 row,
                 sort_keys=sort_keys,
                 directions=directions,
+                nulls=nulls,
                 cursor_values=tv,
                 after=use_after,
             )
@@ -187,6 +197,7 @@ def _mock_keyset_window(  # type: ignore[reportPrivateUsage]
         lim,
         sort_keys=sort_keys,
         directions=directions,
+        nulls=nulls,
         use_after=use_after,
         use_before=use_before,
     )
