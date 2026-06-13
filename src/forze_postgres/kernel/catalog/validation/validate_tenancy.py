@@ -69,8 +69,14 @@ def validate_postgres_tenancy_wiring(
     client_is_routed: bool,
     introspector_cache_partition_key_set: bool,
     routes: Sequence[PostgresTenancyRouteSpec],
+    required_isolation: PostgresTenantIsolationMode | None = None,
 ) -> None:
-    """Fail or warn when Postgres client routing and ``tenant_aware`` flags disagree."""
+    """Fail or warn when Postgres client routing and ``tenant_aware`` flags disagree.
+
+    When ``required_isolation`` is declared, also fail closed if the derived isolation
+    mode is weaker than the requirement (e.g. a ``database`` floor wired with only
+    row-level filtering).
+    """
 
     validate_routed_client_tenancy_wiring(
         integration="Postgres",
@@ -82,5 +88,6 @@ def validate_postgres_tenancy_wiring(
             "identity used for routing."
         ),
         validation_failed_code="postgres_tenancy_validation_failed",
+        required_isolation=required_isolation,
         log_warning=logger.warning,
     )

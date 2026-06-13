@@ -1,6 +1,6 @@
 """Configuration for a Neo4j-backed graph module route."""
 
-from typing import final
+from typing import Literal, final
 
 import attrs
 
@@ -24,3 +24,11 @@ class Neo4jGraphConfig(TenantAwareIntegrationConfig):
 
     tenant_property: str = "tenant_id"
     """Vertex/edge property carrying the tenant id when ``tenant_aware``."""
+
+    traversal_isolation: Literal["anchor", "full-path"] = "full-path"
+    """How far tenant scoping reaches on ``neighbors``/``expand``/``shortest_path``.
+
+    ``full-path`` (default) constrains every node on the traversal so a cross-tenant edge
+    cannot surface a foreign node; ``anchor`` constrains only the start/endpoints (cheaper,
+    safe only when no edge ever crosses a tenant boundary).
+    """

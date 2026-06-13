@@ -21,6 +21,64 @@ TenantIsolationMode = Literal["none", "row", "relation", "database"]
 
 # ....................... #
 
+_ISOLATION_RANK: dict[TenantIsolationMode, int] = {
+    "none": 0,
+    "relation": 1,
+    "row": 2,
+    "database": 3,
+}
+"""Strength ordering for isolation modes (weakest → strongest).
+
+``relation`` and ``row`` are both logical (shared-store) isolation; ``row`` outranks
+``relation`` because every row physically carries the tenant tag, whereas relation-level
+scoping depends on a join/grant being applied. ``database`` is the only *physical*
+isolation and outranks every logical mode — it is the only model safe for untrusted raw
+or self-scoping query paths.
+"""
+
+
+def isolation_satisfies(
+    *,
+    derived: TenantIsolationMode,
+    required: TenantIsolationMode,
+) -> bool:
+    """Return whether *derived* isolation is at least as strong as *required*."""
+
+    return _ISOLATION_RANK[derived] >= _ISOLATION_RANK[required]
+
+
+def validate_required_isolation(
+    *,
+    integration: str,
+    derived: TenantIsolationMode,
+    required: TenantIsolationMode | None,
+    code: str,
+) -> None:
+    """Fail closed when the wired isolation is weaker than the declared requirement.
+
+    A deployment declares the *minimum* isolation it accepts (``required``); this refuses
+    to wire any combination whose ``derived`` mode is weaker. Pass ``required=None`` to opt
+    out (no declared floor — the historical behavior).
+    """
+
+    if required is None:
+        return
+
+    if isolation_satisfies(derived=derived, required=required):
+        return
+
+    raise exc.configuration(
+        f"{integration} tenancy validation failed: deployment declares "
+        f"required_isolation={required!r} but the wired isolation is {derived!r}, which "
+        "is weaker. Strengthen the wiring (mark routes tenant_aware, or route the client "
+        "per tenant) or lower the declared requirement.",
+        code=code,
+        details={"required_isolation": required, "derived_isolation": derived},
+    )
+
+
+# ....................... #
+
 
 @attrs.define(slots=True, frozen=True, kw_only=True)
 class TenancyRouteSpec:
@@ -211,9 +269,16 @@ def validate_routed_client_tenancy_wiring(
     routes: Sequence[TenancyRouteSpec],
     partition_key_detail: str,
     validation_failed_code: str,
+    required_isolation: TenantIsolationMode | None = None,
+    has_relation_resolvers: bool = False,
     log_warning: Callable[..., None] | None = None,
 ) -> None:
-    """Fail or warn when a routed client and per-route ``tenant_aware`` disagree."""
+    """Fail or warn when a routed client and per-route ``tenant_aware`` disagree.
+
+    When ``required_isolation`` is set, also fail closed if the derived isolation mode
+    (from ``client_is_routed`` / ``routes`` / ``has_relation_resolvers``) is weaker than
+    the declared floor — see :func:`validate_required_isolation`.
+    """
 
     if client_is_routed and not partition_key_set:
         raise exc.configuration(
@@ -223,6 +288,17 @@ def validate_routed_client_tenancy_wiring(
             code=validation_failed_code,
             details={"client_is_routed": True},
         )
+
+    validate_required_isolation(
+        integration=integration,
+        derived=derive_tenant_isolation_mode(
+            client_is_routed=client_is_routed,
+            routes=routes,
+            has_relation_resolvers=has_relation_resolvers,
+        ),
+        required=required_isolation,
+        code=validation_failed_code,
+    )
 
     if not client_is_routed:
         return

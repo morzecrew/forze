@@ -80,3 +80,85 @@ def test_shortest_path_inlines_hops() -> None:
     )
     assert "shortestPath((a)" in q
     assert "*..5" in q
+
+
+# ----------------------- #
+# interior (full-path) tenant scoping
+
+
+def test_neighbors_anchor_only_leaves_terminal_unscoped() -> None:
+    # tenant_field set but interior=False -> only the anchor carries the tenant map.
+    q = builders.neighbors(
+        label="User",
+        key_field="id",
+        direction=GraphDirection.OUT,
+        edge_types=["FOLLOWS"],
+        tenant_field="tenant_id",
+    )
+    assert "{id: $key, tenant_id: $tenant}" in q
+    assert "(m)" in q  # terminal node unconstrained
+
+
+def test_neighbors_interior_scopes_terminal_node() -> None:
+    q = builders.neighbors(
+        label="User",
+        key_field="id",
+        direction=GraphDirection.OUT,
+        edge_types=["FOLLOWS"],
+        tenant_field="tenant_id",
+        interior=True,
+    )
+    assert "(m {tenant_id: $tenant})" in q
+
+
+def test_neighbors_interior_noop_without_tenant_field() -> None:
+    q = builders.neighbors(
+        label="User",
+        key_field="id",
+        direction=GraphDirection.OUT,
+        edge_types=["FOLLOWS"],
+        interior=True,
+    )
+    assert "$tenant" not in q
+    assert "(m)" in q
+
+
+def test_expand_interior_constrains_all_path_nodes() -> None:
+    q = builders.expand(
+        label="User",
+        key_field="id",
+        direction=GraphDirection.OUT,
+        edge_types=["FOLLOWS"],
+        max_depth=3,
+        tenant_field="tenant_id",
+        interior=True,
+    )
+    assert "WHERE all(_n IN nodes(path) WHERE _n.`tenant_id` = $tenant)" in q
+
+
+def test_expand_anchor_only_has_no_path_predicate() -> None:
+    q = builders.expand(
+        label="User",
+        key_field="id",
+        direction=GraphDirection.OUT,
+        edge_types=["FOLLOWS"],
+        max_depth=3,
+        tenant_field="tenant_id",
+    )
+    assert "all(_n IN nodes(path)" not in q
+
+
+def test_shortest_path_interior_constrains_all_path_nodes() -> None:
+    q = builders.shortest_path(
+        from_label="User",
+        from_key_field="id",
+        to_label="User",
+        to_key_field="id",
+        direction=GraphDirection.OUT,
+        edge_types=[],
+        max_hops=5,
+        tenant_field="tenant_id",
+        interior=True,
+    )
+    assert "shortestPath((a)" in q
+    assert "WHERE all(_n IN nodes(path) WHERE _n.`tenant_id` = $tenant)" in q

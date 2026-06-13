@@ -43,4 +43,5 @@ class ConfigurableNeo4jGraph:
             tenant_provider=ctx.inv_ctx.get_tenant,
             tenant_property=self.config.tenant_property,
             database=self.config.database,
+            traversal_isolation=self.config.traversal_isolation,
         )

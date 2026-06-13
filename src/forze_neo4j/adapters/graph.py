@@ -14,7 +14,7 @@ require_neo4j()
 # ....................... #
 
 from collections.abc import Sequence
-from typing import Any, final
+from typing import Any, Literal, final
 
 import attrs
 from pydantic import BaseModel
@@ -72,6 +72,14 @@ class Neo4jGraphAdapter(TenancyMixin):
     client: Neo4jClientPort
     tenant_property: str = "tenant_id"
     database: str | None = None
+    traversal_isolation: Literal["anchor", "full-path"] = "full-path"
+    """How far tenant scoping reaches on traversals when ``tenant_aware``.
+
+    ``full-path`` (default) constrains every node on a ``neighbors``/``expand``/
+    ``shortest_path`` result, so a cross-tenant edge cannot surface a foreign node.
+    ``anchor`` constrains only the start/endpoint nodes — cheaper, but safe only under the
+    invariant that no edge ever crosses a tenant boundary.
+    """
 
     # ....................... #
     # spec / codec helpers
@@ -140,6 +148,14 @@ class Neo4jGraphAdapter(TenancyMixin):
     @property
     def _tenant_field(self) -> str | None:
         return self.tenant_property if self.tenant_aware else None
+
+    # ....................... #
+
+    @property
+    def _interior_scope(self) -> bool:
+        """Whether traversals also constrain interior/terminal nodes to the tenant."""
+
+        return self.tenant_aware and self.traversal_isolation == "full-path"
 
     # ....................... #
 
@@ -241,6 +257,7 @@ class Neo4jGraphAdapter(TenancyMixin):
             direction=direction,
             edge_types=edge_kinds,
             tenant_field=self._tenant_field,
+            interior=self._interior_scope,
         )
         rows = await self.client.run(
             query,
@@ -281,6 +298,7 @@ class Neo4jGraphAdapter(TenancyMixin):
             edge_types=params.edge_kinds,
             max_depth=params.max_depth,
             tenant_field=self._tenant_field,
+            interior=self._interior_scope,
         )
         rows = await self.client.run(
             query,
@@ -339,6 +357,7 @@ class Neo4jGraphAdapter(TenancyMixin):
             edge_types=params.edge_kinds,
             max_hops=params.max_hops,
             tenant_field=self._tenant_field,
+            interior=self._interior_scope,
         )
         rows = await self.client.run(
             query,

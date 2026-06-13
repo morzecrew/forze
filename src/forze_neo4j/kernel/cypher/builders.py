@@ -8,6 +8,11 @@ parameter for the ``*min..max`` quantifier); callers must pass validated integer
 When ``tenant_field`` is supplied, anchor nodes (the matched vertex, edge, or path
 endpoints) are additionally constrained by ``{<tenant_field>: $tenant}`` for
 tenant-property isolation; the parameter ``$tenant`` must then be provided.
+
+For traversals (``neighbors`` / ``expand`` / ``shortest_path``) passing ``interior=True``
+additionally constrains every *interior and terminal* node on the path, not just the
+anchor — so a cross-tenant edge cannot leak a foreign node's properties (defense-in-depth
+that does not depend on the "no edge crosses a tenant boundary" write-path invariant).
 """
 
 from collections.abc import Iterable
@@ -31,6 +36,33 @@ def _match_map(key_field: str, tenant_field: str | None, *, key_param: str = "ke
         return f"{{{key_field}: ${key_param}, {tenant_field}: $tenant}}"
 
     return f"{{{key_field}: ${key_param}}}"
+
+
+# ....................... #
+
+
+def _tenant_only_map(tenant_field: str | None, *, interior: bool) -> str:
+    """Inline ``{<tenant_field>: $tenant}`` for an adjacent (keyless) traversal node."""
+
+    if tenant_field and interior:
+        return f" {{{tenant_field}: $tenant}}"
+
+    return ""
+
+
+def _path_tenant_pred(tenant_field: str | None, *, interior: bool, path_var: str = "path") -> str:
+    """``WHERE``-clause constraining every node on *path_var* to ``$tenant``.
+
+    Used for variable-length and shortest-path matches where interior nodes cannot be
+    pinned with an inline property map.
+    """
+
+    if not (tenant_field and interior):
+        return ""
+
+    return (
+        f"WHERE all(_n IN nodes({path_var}) WHERE _n.{quote(tenant_field)} = $tenant)\n"
+    )
 
 
 # ....................... #
@@ -147,11 +179,13 @@ def neighbors(
     direction: GraphDirection,
     edge_types: Iterable[str],
     tenant_field: str | None = None,
+    interior: bool = False,
 ) -> str:
     rel = _rel(direction, _type_pattern(edge_types))
+    other = f"(m{_tenant_only_map(tenant_field, interior=interior)})"
 
     return (
-        f"MATCH (n:{quote(label)} {_match_map(key_field, tenant_field)}){rel}(m)\n"
+        f"MATCH (n:{quote(label)} {_match_map(key_field, tenant_field)}){rel}{other}\n"
         f"RETURN properties(m) AS other, labels(m) AS other_labels, "
         f"properties(r) AS via_edge, type(r) AS via_type\nLIMIT $limit"
     )
@@ -165,11 +199,13 @@ def expand(
     edge_types: Iterable[str],
     max_depth: int,
     tenant_field: str | None = None,
+    interior: bool = False,
 ) -> str:
     rel = _rel(direction, _type_pattern(edge_types), quant=f"*1..{int(max_depth)}")
 
     return (
         f"MATCH path = (n:{quote(label)} {_match_map(key_field, tenant_field)}){rel}(m)\n"
+        f"{_path_tenant_pred(tenant_field, interior=interior)}"
         f"RETURN length(path) AS depth, "
         f"properties(m) AS vertex, labels(m) AS vertex_labels, "
         f"properties(last(relationships(path))) AS from_parent, "
@@ -189,6 +225,7 @@ def shortest_path(
     edge_types: Iterable[str],
     max_hops: int,
     tenant_field: str | None = None,
+    interior: bool = False,
 ) -> str:
     rel = _rel(direction, _type_pattern(edge_types), quant=f"*..{int(max_hops)}")
 
@@ -196,6 +233,7 @@ def shortest_path(
         f"MATCH (a:{quote(from_label)} {_match_map(from_key_field, tenant_field, key_param='from_key')}), "
         f"(b:{quote(to_label)} {_match_map(to_key_field, tenant_field, key_param='to_key')})\n"
         f"MATCH path = shortestPath((a){rel}(b))\n"
+        f"{_path_tenant_pred(tenant_field, interior=interior)}"
         f"RETURN [n IN nodes(path) | properties(n)] AS vertices, "
         f"[n IN nodes(path) | labels(n)] AS vertex_labels, "
         f"[e IN relationships(path) | properties(e)] AS edges, "

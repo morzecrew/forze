@@ -31,6 +31,7 @@ from ...kernel.catalog.validation.validate_relation_specs import (
 )
 from ...kernel.catalog.validation.validate_tenancy import (
     PostgresTenancyRouteSpec,
+    PostgresTenantIsolationMode,
     validate_postgres_tenancy_wiring,
 )
 from ...kernel.client import PostgresClientPort, RoutedPostgresClient
@@ -80,6 +81,17 @@ class PostgresDepsModule(DepsModule):
 
     introspector_cache_ttl: timedelta | None = attrs.field(default=None)
     """Optional TTL for :class:`PostgresIntrospector` catalog caches (``None`` = no expiry)."""
+
+    required_tenant_isolation: PostgresTenantIsolationMode | None = attrs.field(
+        default=None,
+    )
+    """Declared minimum tenant isolation for this deployment (``None`` = no floor).
+
+    When set, wiring fails closed if the derived isolation (routed client / per-route
+    ``tenant_aware`` / relation resolvers) is weaker than the requirement. Set to
+    ``"database"`` to refuse any shared-store (row/relation) wiring — the only model safe
+    for untrusted callers.
+    """
 
     ro_documents: StrKeyMapping[PostgresReadOnlyDocumentConfig] | None = attrs.field(
         default=None,
@@ -281,6 +293,7 @@ class PostgresDepsModule(DepsModule):
                 self.introspector_cache_partition_key is not None
             ),
             routes=routes,
+            required_isolation=self.required_tenant_isolation,
         )
 
     # ....................... #

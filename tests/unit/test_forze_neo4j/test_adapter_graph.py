@@ -201,6 +201,42 @@ async def test_tenant_aware_stamps_and_filters() -> None:
 
 
 @pytest.mark.asyncio
+async def test_full_path_isolation_constrains_traversal_interior() -> None:
+    # Default traversal_isolation="full-path": neighbors terminal node and expand path
+    # nodes are tenant-constrained, not just the anchor.
+    tid = uuid4()
+    adapter, client = _adapter(
+        rows=[],
+        tenant_aware=True,
+        tenant_provider=lambda: TenantIdentity(tenant_id=tid),
+    )
+
+    await adapter.neighbors(
+        VertexRef(kind="User", key="a"), GraphDirection.OUT, frozenset({"FOLLOWS"}), limit=10
+    )
+    query, _ = client.calls[-1]
+    assert "(m {tenant_id: $tenant})" in query
+
+
+@pytest.mark.asyncio
+async def test_anchor_isolation_leaves_traversal_interior_open() -> None:
+    tid = uuid4()
+    adapter, client = _adapter(
+        rows=[],
+        tenant_aware=True,
+        tenant_provider=lambda: TenantIdentity(tenant_id=tid),
+        traversal_isolation="anchor",
+    )
+
+    await adapter.neighbors(
+        VertexRef(kind="User", key="a"), GraphDirection.OUT, frozenset({"FOLLOWS"}), limit=10
+    )
+    query, _ = client.calls[-1]
+    assert "(m {tenant_id: $tenant})" not in query
+    assert "{id: $key, tenant_id: $tenant}" in query  # anchor still scoped
+
+
+@pytest.mark.asyncio
 async def test_tenant_required_when_aware_without_provider_value() -> None:
     adapter, _ = _adapter(
         rows=[], tenant_aware=True, tenant_provider=lambda: None

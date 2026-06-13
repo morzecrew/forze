@@ -99,3 +99,28 @@ def test_routed_with_partition_key_and_tenant_aware_warns_only() -> None:
             ),
         ],
     )
+
+
+def test_required_database_isolation_rejects_row_wiring() -> None:
+    with pytest.raises(CoreException, match="postgres_tenancy_validation_failed"):
+        validate_postgres_tenancy_wiring(
+            client_is_routed=False,
+            introspector_cache_partition_key_set=False,
+            routes=[
+                PostgresTenancyRouteSpec(
+                    name="doc",
+                    tenant_aware=True,
+                    kind="document",
+                ),
+            ],
+            required_isolation="database",
+        )
+
+
+def test_required_database_isolation_satisfied_by_routed_client() -> None:
+    validate_postgres_tenancy_wiring(
+        client_is_routed=True,
+        introspector_cache_partition_key_set=True,
+        routes=[],
+        required_isolation="database",
+    )
