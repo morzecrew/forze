@@ -202,6 +202,70 @@ async def test_invoke_hookless_benchmark(async_benchmark: Any) -> None:
 
 
 # ----------------------- #
+# Dispatch overhead (pre-resolved: isolates the per-call dispatch chain from
+# the resolve dict-hit, against a direct ``await handler(args)`` floor).
+# ----------------------- #
+
+
+@pytest.mark.perf
+async def test_invoke_direct_baseline_benchmark(async_benchmark: Any) -> None:
+    """Floor: ``await handler(args)`` with no Forze dispatch chain at all.
+
+    The baseline every other invocation benchmark is measured against — the
+    irreducible cost of awaiting the handler coroutine itself.
+    """
+
+    handler: Handler[str, str] = _EchoHandler()
+
+    async def _run() -> str:
+        return await handler("x")
+
+    await async_benchmark(_run)
+
+
+@pytest.mark.perf
+async def test_dispatch_hookless_benchmark(async_benchmark: Any) -> None:
+    """Pure empty-plan dispatch: pre-resolved op, no hooks/middleware.
+
+    Resolved once up front so the per-call cost is *only* the dispatch chain
+    (``__call__`` → ``_run`` → ``run_resolved_operation_plan`` →
+    ``run_resolved_scope`` → ``transactional_core`` → handler) plus the
+    active-operation / drain-gate / deadline-read overhead — no resolve dict
+    hit. Compare against :func:`test_invoke_direct_baseline_benchmark` to size
+    the empty-path frame overhead.
+    """
+
+    reg = _hookless_registry()
+    ctx = _context(cache=True)
+    resolved = reg.resolve(_OP, ctx)
+
+    async def _run() -> str:
+        return await resolved("x")
+
+    await async_benchmark(_run)
+
+
+@pytest.mark.perf
+async def test_dispatch_hooked_benchmark(async_benchmark: Any) -> None:
+    """Pure full-plan dispatch: pre-resolved op with 3 before hooks + 2 middleware.
+
+    Same isolation as :func:`test_dispatch_hookless_benchmark` (no resolve cost
+    per call), but exercises ``_run_scope_body`` and the per-call middleware
+    wrap-fold. Difference vs the hookless dispatch benchmark is the hook/wrap
+    machinery; difference vs the direct baseline is total dispatch overhead.
+    """
+
+    reg = _registry()
+    ctx = _context(cache=True)
+    resolved = reg.resolve(_OP, ctx)
+
+    async def _run() -> str:
+        return await resolved("x")
+
+    await async_benchmark(_run)
+
+
+# ----------------------- #
 # Port resolution (resolve_configurable: ctx.<x>.query(spec))
 # ----------------------- #
 
@@ -269,6 +333,96 @@ def test_resolve_port_cache_off_benchmark(benchmark: Any) -> None:
             ctx, _PORT_KEY, _PORT_SPEC, route=_PORT_ROUTE
         ),
     )
+
+
+# ----------------------- #
+# Simple-dep resolution (resolve_simple: tx manager / domain dispatcher / tenant
+# resolver). Now scope-memoized (keyed by ``(key, route)``) under the same
+# ``cache_ports`` flag as configurable ports:
+#
+#   cache_off = factory re-run + allocation + bookkeeping on every access (old behavior)
+#   cache_on  = memo hit (dict get) after the first build per scope (new behavior)
+#   provide   = plain-instance dict-get floor, for reference
+#
+# The cache_off - cache_on gap is the realized per-access win.
+# ----------------------- #
+
+_SIMPLE_KEY = DepKey[object]("perf.simple")
+_PLAIN_INSTANCE_KEY = DepKey[object]("perf.plain.instance")
+
+
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class _Registry:
+    """Stand-in for the shared handler registry a dispatcher captures."""
+
+
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class _Dispatcher:
+    """Representative simple-dep object, mirroring ``InProcessDomainEventDispatcher``.
+
+    Captures a scope-shared registry plus the per-scope context — the shape that
+    :mod:`forze.application.execution.domain.module` builds. With memoization it is
+    built once per scope (matching that module's "built per scope" intent) instead of
+    on every access.
+    """
+
+    registry: _Registry
+    ctx: ExecutionContext
+
+
+_SHARED_REGISTRY = _Registry()
+_PLAIN_SINGLETON = object()
+
+
+def _simple_context(*, cache: bool) -> ExecutionContext:
+    """Context holding one allocating simple dep and one plain instance."""
+
+    deps = (
+        DepsRegistry.from_deps(
+            Deps.plain(
+                {
+                    _SIMPLE_KEY: lambda ctx: _Dispatcher(
+                        registry=_SHARED_REGISTRY, ctx=ctx
+                    ),
+                    _PLAIN_INSTANCE_KEY: _PLAIN_SINGLETON,
+                }
+            )
+        )
+        .freeze()
+        .resolve()
+    )
+
+    return ExecutionContext(deps=deps, cache_ports=cache)
+
+
+@pytest.mark.perf
+def test_resolve_simple_cache_on_benchmark(benchmark: Any) -> None:
+    """Memoized simple-dep resolution: build the dispatcher once per scope, then dict hit."""
+
+    ctx = _simple_context(cache=True)
+
+    benchmark(lambda: ctx.deps.resolve_simple(ctx, _SIMPLE_KEY))
+
+
+@pytest.mark.perf
+def test_resolve_simple_cache_off_benchmark(benchmark: Any) -> None:
+    """Unmemoized simple-dep resolution: re-run the factory (+ allocation) every call.
+
+    The pre-memoization behavior, kept as the before-number for the per-scope cache.
+    """
+
+    ctx = _simple_context(cache=False)
+
+    benchmark(lambda: ctx.deps.resolve_simple(ctx, _SIMPLE_KEY))
+
+
+@pytest.mark.perf
+def test_provide_plain_instance_benchmark(benchmark: Any) -> None:
+    """Floor: ``provide()`` dict-get of a pre-built instance, for reference."""
+
+    ctx = _simple_context(cache=True)
+
+    benchmark(lambda: ctx.deps.provide(_PLAIN_INSTANCE_KEY))
 
 
 # In-process and deterministic: participates in the CI perf regression gate.

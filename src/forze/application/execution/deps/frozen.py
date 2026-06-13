@@ -235,7 +235,27 @@ class FrozenDeps:
         *,
         route: StrKey | None = None,
     ) -> Any:
-        """Resolve a simple dependency: lookup factory and invoke with ``ctx`` only."""
+        """Resolve a simple dependency: lookup factory and invoke with ``ctx`` only.
+
+        Memoized per scope (keyed by ``(key, route)``) when port caching is enabled,
+        mirroring :meth:`resolve_configurable`: a simple dep's factory is a synchronous,
+        scope-stable builder (it takes only the scope ``ctx`` and defers per-request reads
+        to call time), so it is built once per scope and reused. Caching is bypassed while
+        resolution tracing is active so per-task resolution traces stay complete; the
+        runtime tracer still records each access.
+        """
+
+        cache_key = (key, route)
+        use_cache = not self.resolution_tracer.enabled
+
+        if use_cache:
+            cached = ctx.cached_simple(cache_key)
+
+            if cached is not None:
+                if self.runtime_tracer.enabled:
+                    record_simple_resolve(self, ctx, key, route)
+
+                return cached
 
         frame = frame_for(key, route)
         token = self._resolution.push(frame)
@@ -244,10 +264,14 @@ class FrozenDeps:
             factory = self.store.get_provider(key, route=route)
             result = factory(ctx)
             record_simple_resolve(self, ctx, key, route)
-            return result
 
         finally:
             self._resolution.pop(token)
+
+        if use_cache:
+            ctx.store_simple(cache_key, result)
+
+        return result
 
     # ....................... #
 
