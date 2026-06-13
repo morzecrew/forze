@@ -62,3 +62,23 @@ def test_deps_module_registers_analytics_keys() -> None:
     spec = _spec()
     assert ctx.analytics.query(spec) is not None
     assert ctx.analytics.ingest(spec) is not None
+
+
+def test_required_database_isolation_rejects_shared_client_with_analytics() -> None:
+    # A tenant-aware analytics route on a shared client derives "row"; a declared
+    # "database" floor rejects it at wiring.
+    with pytest.raises(CoreException, match="postgres_tenancy_validation_failed"):
+        PostgresDepsModule(
+            client=PostgresClient(),
+            required_tenant_isolation="database",
+            analytics={
+                "events": PostgresAnalyticsConfig(
+                    tenant_aware=True,
+                    queries={
+                        "counts": PostgresQueryConfig(
+                            sql="SELECT 1 AS value WHERE tenant_id = %(tenant)s",
+                        ),
+                    },
+                ),
+            },
+        )

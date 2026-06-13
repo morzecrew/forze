@@ -52,3 +52,10 @@ class PostgresAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
         eq=False,
         repr=False,
     )
+
+    _query_schema_cell: OnceCell[str] = attrs.field(
+        factory=OnceCell,
+        init=False,
+        eq=False,
+        repr=False,
+    )

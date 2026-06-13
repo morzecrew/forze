@@ -1,6 +1,9 @@
 """Shared warehouse analytics adapter helpers."""
 
 from .adapter_common import (
+    TENANT_PARAM,
+    assert_tenant_param_referenced,
+    bind_tenant_param,
     dry_run_enabled,
     dry_run_offset_page,
     encode_keyset_cursor_next,
@@ -29,7 +32,10 @@ from .sql import (
 __all__ = [
     "AnalyticsQueryPortMixin",
     "COUNT_COLUMN",
+    "TENANT_PARAM",
     "apply_limit_offset",
+    "assert_tenant_param_referenced",
+    "bind_tenant_param",
     "build_count_sql",
     "parameters_from_model",
     "dry_run_enabled",

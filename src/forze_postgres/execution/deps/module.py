@@ -287,6 +287,16 @@ class PostgresDepsModule(DepsModule):
                             ],
                         )
 
+        if self.analytics:
+            for name, analytics_cfg in self.analytics.items():
+                routes.append(
+                    PostgresTenancyRouteSpec(
+                        name=str(name),
+                        tenant_aware=analytics_cfg.tenant_aware,
+                        kind="analytics",
+                    ),
+                )
+
         validate_postgres_tenancy_wiring(
             client_is_routed=isinstance(self.client, RoutedPostgresClient),
             introspector_cache_partition_key_set=(

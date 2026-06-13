@@ -191,3 +191,101 @@ async def test_dry_run_skips_execution(
     page = await adapter.run("by_day", Params(min_total=0), options={"dry_run": True})
 
     assert page.hits == []
+
+
+# ----------------------- #
+# tenant advisory floor (real engine)
+
+
+from pathlib import Path  # noqa: E402
+from uuid import UUID, uuid4  # noqa: E402
+
+import duckdb  # noqa: E402
+
+from forze.application.contracts.analytics import (  # noqa: E402
+    AnalyticsQueryDefinition,
+    AnalyticsSpec,
+)
+from forze.application.contracts.tenancy import TenantIdentity  # noqa: E402
+from forze.base.exceptions import CoreException  # noqa: E402
+from forze_duckdb import DuckDbAnalyticsConfig, DuckDbQueryConfig  # noqa: E402
+from forze_duckdb.adapters import DuckDbAnalyticsAdapter  # noqa: E402
+
+from tests.unit.test_forze_duckdb.conftest import Row  # noqa: E402
+
+
+def _tenant_parquet(tmp_path: Path, t1: str, t2: str) -> str:
+    path = tmp_path / "tenant_events.parquet"
+    with duckdb.connect() as conn:
+        conn.execute(
+            "COPY (SELECT * FROM (VALUES "
+            f"('a', 10, '{t1}'), ('b', 20, '{t1}'), ('c', 30, '{t2}')) "
+            "t(day, total, tenant_id)) TO ? (FORMAT parquet)",
+            [str(path)],
+        )
+
+    return str(path)
+
+
+def _tenant_adapter(client: Any, parquet: str, tenant_provider: Any) -> Any:
+    spec = AnalyticsSpec(
+        name="events",
+        read=Row,
+        queries={"by_day": AnalyticsQueryDefinition(params=Params)},
+    )
+    config = DuckDbAnalyticsConfig(
+        tenant_aware=True,
+        queries={
+            "by_day": DuckDbQueryConfig(
+                sql=(
+                    f"SELECT day, total FROM read_parquet('{parquet}') "
+                    "WHERE total >= $min_total AND tenant_id = $tenant ORDER BY day"
+                ),
+            ),
+        },
+    )
+    return DuckDbAnalyticsAdapter(
+        client=client, spec=spec, config=config, tenant_provider=tenant_provider
+    )
+
+
+async def test_tenant_aware_scopes_rows_to_bound_tenant(
+    client: Any,
+    tmp_path: Path,
+) -> None:
+    t1, t2 = str(uuid4()), str(uuid4())
+    parquet = _tenant_parquet(tmp_path, t1, t2)
+    adapter = _tenant_adapter(
+        client, parquet, lambda: TenantIdentity(tenant_id=UUID(t1))
+    )
+
+    page = await adapter.run("by_day", Params(min_total=0))
+
+    assert [r.day for r in page.hits] == ["a", "b"]  # t2's row 'c' excluded
+
+
+async def test_tenant_aware_fails_closed_without_tenant(
+    client: Any,
+    tmp_path: Path,
+) -> None:
+    t1, t2 = str(uuid4()), str(uuid4())
+    parquet = _tenant_parquet(tmp_path, t1, t2)
+    adapter = _tenant_adapter(client, parquet, lambda: None)
+
+    with pytest.raises(CoreException, match="tenant_required"):
+        await adapter.run("by_day", Params(min_total=0))
+
+
+def test_tenant_aware_config_rejects_unscoped_sql() -> None:
+    spec = AnalyticsSpec(
+        name="events",
+        read=Row,
+        queries={"by_day": AnalyticsQueryDefinition(params=Params)},
+    )
+    config = DuckDbAnalyticsConfig(
+        tenant_aware=True,
+        queries={"by_day": DuckDbQueryConfig(sql="SELECT day, total FROM t")},
+    )
+
+    with pytest.raises(CoreException, match="analytics_tenant_param_unreferenced"):
+        config.validate_against_spec(spec)

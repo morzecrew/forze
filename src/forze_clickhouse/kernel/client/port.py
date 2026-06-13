@@ -34,7 +34,7 @@ class ClickHouseClientPort(Protocol):
     def run_query_all_pages(
         self,
         sql: str,
-        params: BaseModel | None = None,
+        params: BaseModel | JsonDict | None = None,
         *,
         database: str | None = None,
         max_rows: int | None = None,

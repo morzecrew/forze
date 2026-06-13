@@ -5,6 +5,11 @@ from typing import final
 import attrs
 
 from forze.application.contracts.analytics import AnalyticsQueryDepKey
+from forze.application.contracts.tenancy import (
+    TenancyRouteSpec,
+    TenantIsolationMode,
+    validate_routed_client_tenancy_wiring,
+)
 from forze.application.execution import Deps, DepsModule
 from forze.application.execution.deps.builders import merge_deps, routed_from_mapping
 from forze.base.primitives import MappingConverter, StrKeyMapping
@@ -33,6 +38,31 @@ class DuckDbDepsModule(DepsModule):
         converter=MappingConverter.to_str_key_frozen,  # type: ignore[misc]
     )
     """Mapping from analytics route names to DuckDB configuration."""
+
+    required_tenant_isolation: TenantIsolationMode | None = attrs.field(default=None)
+    """Declared minimum tenant isolation (``None`` = no floor).
+
+    DuckDB is in-process with no per-tenant client routing, so it can never derive
+    ``"database"`` isolation — declaring that floor fails closed by design (use row-level
+    ``tenant_aware`` queries, or a networked backend with a routed client).
+    """
+
+    # ....................... #
+
+    def __attrs_post_init__(self) -> None:
+        routes = [
+            TenancyRouteSpec(name=str(name), tenant_aware=cfg.tenant_aware, kind="analytics")
+            for name, cfg in (self.analytics or {}).items()
+        ]
+        validate_routed_client_tenancy_wiring(
+            integration="DuckDB",
+            client_is_routed=False,
+            partition_key_set=True,
+            routes=routes,
+            partition_key_detail="",
+            validation_failed_code="duckdb_analytics_tenancy_validation_failed",
+            required_isolation=self.required_tenant_isolation,
+        )
 
     # ....................... #
 

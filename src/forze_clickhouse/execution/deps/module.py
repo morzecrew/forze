@@ -8,11 +8,16 @@ from forze.application.contracts.analytics import (
     AnalyticsIngestDepKey,
     AnalyticsQueryDepKey,
 )
+from forze.application.contracts.tenancy import (
+    TenancyRouteSpec,
+    TenantIsolationMode,
+    validate_routed_client_tenancy_wiring,
+)
 from forze.application.execution import Deps, DepsModule
 from forze.application.execution.deps.builders import merge_deps, routed_from_mapping
 from forze.base.primitives import MappingConverter, StrKeyMapping
 
-from ...kernel.client import ClickHouseClientPort
+from ...kernel.client import ClickHouseClientPort, RoutedClickHouseClient
 from .configs import ClickHouseAnalyticsConfig
 from .factories import ConfigurableClickHouseAnalytics
 from .keys import ClickHouseClientDepKey
@@ -33,6 +38,30 @@ class ClickHouseDepsModule(DepsModule):
         converter=MappingConverter.to_str_key_frozen,  # type: ignore[misc]
     )
     """Mapping from analytics route names to ClickHouse configuration."""
+
+    required_tenant_isolation: TenantIsolationMode | None = attrs.field(default=None)
+    """Declared minimum tenant isolation (``None`` = no floor).
+
+    Set ``"database"`` to require a routed (per-tenant) client — wiring fails closed if the
+    client is shared, since row-level binding alone cannot isolate untrusted callers.
+    """
+
+    # ....................... #
+
+    def __attrs_post_init__(self) -> None:
+        routes = [
+            TenancyRouteSpec(name=str(name), tenant_aware=cfg.tenant_aware, kind="analytics")
+            for name, cfg in (self.analytics or {}).items()
+        ]
+        validate_routed_client_tenancy_wiring(
+            integration="ClickHouse",
+            client_is_routed=isinstance(self.client, RoutedClickHouseClient),
+            partition_key_set=True,
+            routes=routes,
+            partition_key_detail="",
+            validation_failed_code="clickhouse_analytics_tenancy_validation_failed",
+            required_isolation=self.required_tenant_isolation,
+        )
 
     # ....................... #
 

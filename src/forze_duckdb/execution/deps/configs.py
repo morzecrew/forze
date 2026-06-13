@@ -4,6 +4,8 @@ from typing import TYPE_CHECKING, Any
 
 import attrs
 
+from forze.application.contracts.tenancy import TenantAwareIntegrationConfig
+from forze.application.integrations.analytics import assert_tenant_param_referenced
 from forze.base.exceptions import exc
 from forze.base.primitives import MappingConverter, StrKeyMapping
 
@@ -38,8 +40,13 @@ class DuckDbQueryConfig:
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class DuckDbAnalyticsConfig:
-    """Physical DuckDB mapping for one :class:`~forze.application.contracts.analytics.AnalyticsSpec` route."""
+class DuckDbAnalyticsConfig(TenantAwareIntegrationConfig):
+    """Physical DuckDB mapping for one :class:`~forze.application.contracts.analytics.AnalyticsSpec` route.
+
+    When ``tenant_aware`` (inherited), the adapter binds the current tenant id as the
+    ``$tenant`` query parameter and fails closed if no tenant is bound; every registered
+    query SQL must reference that parameter (checked at wiring).
+    """
 
     queries: StrKeyMapping[DuckDbQueryConfig] = attrs.field(
         converter=MappingConverter.to_str_key_frozen,  # type: ignore[misc]
@@ -72,4 +79,13 @@ class DuckDbAnalyticsConfig:
             raise exc.configuration(
                 f"DuckDB analytics config for route {spec.name!r} cannot serve "
                 "AnalyticsSpec.ingest: the DuckDB integration is query-only."
+            )
+
+        if self.tenant_aware:
+            assert_tenant_param_referenced(
+                {str(k): v.sql for k, v in self.queries.items()},
+                pattern=r"\$tenant\b",
+                placeholder_hint="$tenant",
+                integration="DuckDB",
+                route=str(spec.name),
             )

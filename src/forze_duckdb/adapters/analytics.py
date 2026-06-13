@@ -20,8 +20,10 @@ from forze.application.contracts.querying import (
     CursorPaginationExpression,
     PaginationExpression,
 )
+from forze.application.contracts.tenancy import TenantProviderPort
 from forze.application.integrations.analytics import AnalyticsQueryPortMixin
 from forze.application.integrations.analytics.adapter_common import (
+    bind_tenant_param,
     dry_run_enabled,
     dry_run_offset_page,
     encode_offset_cursor_next_prev,
@@ -63,6 +65,19 @@ class DuckDbAnalyticsAdapter[R: BaseModel](
     client: DuckDbClientPort
     spec: AnalyticsSpec[R, Any]
     config: DuckDbAnalyticsConfig
+    tenant_provider: TenantProviderPort | None = None
+    """Tenant context for the ``$tenant`` advisory floor on a tenant-aware route."""
+
+    # ....................... #
+
+    def _bind_tenant(self, params: BaseModel | JsonDict) -> BaseModel | JsonDict:
+        """Bind the current tenant as ``$tenant`` on a tenant-aware route (fail-closed)."""
+
+        return bind_tenant_param(
+            params,
+            tenant_aware=self.config.tenant_aware,
+            tenant_provider=self.tenant_provider,
+        )
 
     # ....................... #
 
@@ -111,7 +126,7 @@ class DuckDbAnalyticsAdapter[R: BaseModel](
         max_rows = (options or {}).get("max_rows")
         result = await self.client.run_query(
             self._sql(query_key),
-            params,
+            self._bind_tenant(params),
             limit=limit,
             offset=offset,
             max_rows=int(max_rows) if max_rows is not None else None,
@@ -131,7 +146,7 @@ class DuckDbAnalyticsAdapter[R: BaseModel](
     ) -> int:
         result = await self.client.run_query(
             build_count_sql(self._sql(query_key)),
-            params,
+            self._bind_tenant(params),
             limit=1,
             timeout=self._run_timeout(options),
         )
@@ -197,7 +212,7 @@ class DuckDbAnalyticsAdapter[R: BaseModel](
         max_rows = (options or {}).get("max_rows")
         rows = await self.client.run_query_all_pages(
             self._sql(query_key),
-            params,
+            self._bind_tenant(params),
             max_rows=int(max_rows) if max_rows is not None else None,
             timeout=self._run_timeout(options),
             fetch_batch_size=fetch_batch_size,
@@ -229,7 +244,7 @@ class DuckDbAnalyticsAdapter[R: BaseModel](
         max_rows = (options or {}).get("max_rows")
         rows = await self.client.run_query_all_pages(
             self._sql(query_key),
-            params,
+            self._bind_tenant(params),
             max_rows=int(max_rows) if max_rows is not None else None,
             timeout=self._run_timeout(options),
             fetch_batch_size=fetch_batch_size,

@@ -72,3 +72,36 @@ def test_deps_module_registers_analytics_keys() -> None:
     spec = _spec()
     assert ctx.analytics.query(spec) is not None
     assert ctx.analytics.ingest(spec) is not None
+
+
+def test_required_database_isolation_rejects_shared_client() -> None:
+    # A shared (non-routed) client cannot satisfy a declared "database" isolation floor.
+    with pytest.raises(CoreException, match="clickhouse_analytics_tenancy_validation_failed"):
+        ClickHouseDepsModule(
+            client=ClickHouseClient(),
+            analytics={
+                "events": ClickHouseAnalyticsConfig(
+                    database="analytics",
+                    tenant_aware=True,
+                    queries={
+                        "counts": ClickHouseQueryConfig(
+                            sql="SELECT 1 AS value WHERE tenant_id = {tenant:UUID}",
+                        ),
+                    },
+                ),
+            },
+            required_tenant_isolation="database",
+        )
+
+
+def test_no_isolation_floor_allows_shared_client() -> None:
+    # Default (no declared floor) — shared client is fine.
+    ClickHouseDepsModule(
+        client=ClickHouseClient(),
+        analytics={
+            "events": ClickHouseAnalyticsConfig(
+                database="analytics",
+                queries={"counts": ClickHouseQueryConfig(sql="SELECT 1 AS value")},
+            ),
+        },
+    )

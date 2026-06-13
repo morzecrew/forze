@@ -16,6 +16,7 @@ from forze.application.contracts.analytics import (
 )
 from forze.application.integrations.analytics import AnalyticsQueryPortMixin
 from forze.application.integrations.analytics.adapter_common import (
+    bind_tenant_param,
     dry_run_enabled,
     dry_run_offset_page,
     encode_keyset_cursor_next,
@@ -52,7 +53,11 @@ from forze_clickhouse.kernel.client import (
 )
 from forze_clickhouse.kernel.client.query import parameters_from_model
 from forze_clickhouse.kernel.client.value_objects import ClickHouseQueryResult
-from forze.application.contracts.resolution import is_static_relation
+from forze.application.contracts.resolution import (
+    is_static_named_resource,
+    is_static_relation,
+    resolve_value,
+)
 from forze.base.primitives import OnceCell
 from forze_clickhouse.kernel.relation import resolve_clickhouse_ingest_target
 
@@ -89,10 +94,28 @@ class ClickHouseAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
         repr=False,
     )
 
+    _query_database_cell: OnceCell[str] = attrs.field(
+        factory=OnceCell,
+        init=False,
+        eq=False,
+        repr=False,
+    )
+
     # ....................... #
 
     def _tenant_id_for_resolve(self) -> UUID | None:
         return soft_tenant_id(self.tenant_provider)
+
+    # ....................... #
+
+    def _bind_tenant(self, params: BaseModel | JsonDict) -> BaseModel | JsonDict:
+        """Bind the current tenant as ``{tenant:UUID}`` on a tenant-aware route (fail-closed)."""
+
+        return bind_tenant_param(
+            params,
+            tenant_aware=self.config.tenant_aware,
+            tenant_provider=self.tenant_provider,
+        )
 
     # ....................... #
 
@@ -138,8 +161,21 @@ class ClickHouseAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
 
     # ....................... #
 
-    def _database(self) -> str:
-        return self.config.database
+    async def _database(self) -> str:
+        spec = self.config.query_database
+
+        if spec is None:
+            return self.config.database
+
+        async def _factory() -> str:
+            return await resolve_value(spec, self._tenant_id_for_resolve())
+
+        # Static names are tenant-independent → memoize; a dynamic resolver depends on the
+        # bound tenant and the adapter may be shared across tenants.
+        return await self._query_database_cell.resolve(
+            _factory,
+            cache=is_static_named_resource(spec),
+        )
 
     # ....................... #
 
@@ -182,8 +218,8 @@ class ClickHouseAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
 
         return await self.client.run_query(
             self._sql(query_key),
-            params,
-            database=self._database(),
+            self._bind_tenant(params),
+            database=await self._database(),
             limit=limit,
             offset=offset,
             timeout=self._run_timeout(options),
@@ -202,8 +238,8 @@ class ClickHouseAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
         count_sql = build_count_sql(self._sql(query_key))
         result = await self.client.run_query(
             count_sql,
-            params,
-            database=self._database(),
+            self._bind_tenant(params),
+            database=await self._database(),
             limit=1,
             timeout=self._run_timeout(options),
         )
@@ -271,8 +307,8 @@ class ClickHouseAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
         max_rows = (options or {}).get("max_rows")
         rows = await self.client.run_query_all_pages(
             self._sql(query_key),
-            params,
-            database=self._database(),
+            self._bind_tenant(params),
+            database=await self._database(),
             max_rows=int(max_rows) if max_rows is not None else None,
             timeout=self._run_timeout(options),
             fetch_batch_size=fetch_batch_size,
@@ -304,8 +340,8 @@ class ClickHouseAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
         max_rows = (options or {}).get("max_rows")
         rows = await self.client.run_query_all_pages(
             self._sql(query_key),
-            params,
-            database=self._database(),
+            self._bind_tenant(params),
+            database=await self._database(),
             max_rows=int(max_rows) if max_rows is not None else None,
             timeout=self._run_timeout(options),
             fetch_batch_size=fetch_batch_size,

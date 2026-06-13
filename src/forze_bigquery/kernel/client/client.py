@@ -301,7 +301,7 @@ class BigQueryClient(BigQueryClientPort):
     async def run_query(
         self,
         sql: str,
-        params: BaseModel | None = None,
+        params: BaseModel | JsonDict | None = None,
         *,
         dry_run: bool = False,
         maximum_bytes_billed: int | None = None,
@@ -309,6 +309,7 @@ class BigQueryClient(BigQueryClientPort):
         start_index: int | None = None,
         page_token: str | None = None,
         timeout: timedelta | None = None,
+        default_dataset: str | None = None,
     ) -> BigQueryQueryResult:
         async def _run() -> BigQueryQueryResult:
             query_parameters = (
@@ -328,6 +329,7 @@ class BigQueryClient(BigQueryClientPort):
                 max_results=max_results,
                 start_index=start_index,
                 page_token=page_token,
+                default_dataset=default_dataset,
             )
 
             job = self.job()
@@ -371,12 +373,13 @@ class BigQueryClient(BigQueryClientPort):
     async def run_query_all_pages(
         self,
         sql: str,
-        params: BaseModel | None = None,
+        params: BaseModel | JsonDict | None = None,
         *,
         maximum_bytes_billed: int | None = None,
         max_rows: int | None = None,
         timeout: timedelta | None = None,
         fetch_batch_size: int = 2000,
+        default_dataset: str | None = None,
     ) -> list[JsonDict]:
         if fetch_batch_size < 1:
             raise exc.internal("fetch_batch_size must be >= 1")
@@ -393,6 +396,7 @@ class BigQueryClient(BigQueryClientPort):
                     max_results=fetch_batch_size,
                     page_token=page_token,
                     timeout=timeout,
+                    default_dataset=default_dataset,
                 )
                 all_rows.extend(result.rows)
 
