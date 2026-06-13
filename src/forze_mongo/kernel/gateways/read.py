@@ -550,7 +550,7 @@ class MongoReadGateway[M: BaseModel](
             read_fields=self.read_fields,
         )
 
-        if [k for k, _ in normalized] != [ID_FIELD] or len(normalized) != 1:
+        if [k for k, _, _ in normalized] != [ID_FIELD] or len(normalized) != 1:
             raise exc.internal(
                 "Mongo find_many_with_cursor (v1) requires sorting only by primary key: "
                 "omit ``sorts`` or pass a single {id: asc|desc}.",
@@ -562,7 +562,7 @@ class MongoReadGateway[M: BaseModel](
 
         if use_after or use_before:
             token = str(c["after" if use_after else "before"])
-            tk, td, tv = decode_keyset_v1(token)
+            tk, td, _tn, tv = decode_keyset_v1(token)
             if (
                 tk != [ID_FIELD]
                 or len(td) != 1

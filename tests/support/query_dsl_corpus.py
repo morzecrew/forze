@@ -49,6 +49,7 @@ class _CorpusFields(BaseModel):
     nums: list[int] = []
     score: int | None = None
     items: list[CorpusItem] = []
+    matrix: list[list[str]] = []  # scalar array-of-arrays, for `{$any:{$any}}` nesting
 
 
 class CorpusCreate(CreateDocumentCmd, _CorpusFields):
@@ -73,17 +74,21 @@ SEED: dict[str, CorpusCreate] = {
             CorpusItem(sku="a", qty=5, tags=["hot"]),
             CorpusItem(sku="b", qty=1, tags=["cold"]),
         ],
+        matrix=[["hot", "cold"], ["hot"]],
     ),
     "bob": CorpusCreate(
         name="bob", nick="robert", age=25, tags=["y", "z"], nums=[1, 3], score=None,
         items=[CorpusItem(sku="a", qty=2, tags=["cold"])],
+        matrix=[["cold", "cold"]],
     ),
     "carol": CorpusCreate(
         name="carol", nick="carol", age=40, tags=[], nums=[], score=5, items=[],
+        matrix=[],
     ),
     "dave": CorpusCreate(
         name="dave", nick="dave", age=30, tags=["x"], nums=[9], score=10,
         items=[CorpusItem(sku="c", qty=9, tags=["hot", "new"])],
+        matrix=[["hot", "new"], ["x"]],
     ),
 }
 
@@ -204,6 +209,25 @@ CASES: tuple[QueryCase, ...] = (
               # no item whose tags are ALL 'hot': alice (item a all-hot) no; bob yes;
               # carol [] vacuous; dave [hot,new] not all-hot → yes.
               expected=frozenset({"bob", "carol", "dave"})),
+    # SCALAR array-of-arrays: a quantifier directly on the (array) element — {$any:{$any}}.
+    # matrix: alice[[hot,cold],[hot]] bob[[cold,cold]] carol[] dave[[hot,new],[x]].
+    QueryCase(name="saoa_any_any",
+              filters={"$values": {"matrix": {"$any": {"$any": "hot"}}}},
+              # any inner list has any 'hot': alice, dave; bob[cold] no; carol none.
+              expected=frozenset({"alice", "dave"})),
+    QueryCase(name="saoa_any_all",
+              filters={"$values": {"matrix": {"$any": {"$all": "hot"}}}},
+              # any inner list that is ALL 'hot': alice [hot]; bob no; dave no.
+              expected=frozenset({"alice"})),
+    QueryCase(name="saoa_all_any",
+              filters={"$values": {"matrix": {"$all": {"$any": "hot"}}}},
+              # every inner list has a 'hot': alice (both do); carol [] vacuous;
+              # bob[cold] no; dave [x] inner has none → no.
+              expected=frozenset({"alice", "carol"})),
+    QueryCase(name="saoa_none_any",
+              filters={"$values": {"matrix": {"$none": {"$any": "hot"}}}},
+              # no inner list has 'hot': bob[cold]; carol [] vacuous; alice/dave have hot.
+              expected=frozenset({"bob", "carol"})),
     QueryCase(name="quant_any_object",
               filters={"$values": {"items": {"$any": {"$values": {"qty": {"$gte": 5}}}}}},
               expected=frozenset({"alice", "dave"})),

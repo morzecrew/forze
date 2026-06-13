@@ -42,6 +42,7 @@ class _Doc(BaseModel):
     tags: list[str]
     nums: list[int]
     items: list[_Item]
+    matrix: list[list[str]]  # scalar array-of-arrays
     note: str | None = None
 
 
@@ -164,5 +165,27 @@ class TestBestEffortSkips:
                 {"$values": {"name": {"$like": "x"}}},
                 field_type_hints={"name": int},
             )
+
+        assert ei.value.code == OPERATOR_TYPE_MISMATCH_CODE
+
+
+class TestScalarArrayOfArrays:
+    def test_nested_scalar_quantifier_on_array_of_arrays_passes(self) -> None:
+        # matrix is list[list[str]]; the inner element is a str array → valid.
+        _check({"$values": {"matrix": {"$any": {"$any": "hot"}}}})
+        _check({"$values": {"matrix": {"$all": {"$any": {"$like": "h%"}}}}})
+
+    def test_inner_quantifier_on_non_array_element_rejected(self) -> None:
+        # tags is list[str]; its element is a str, not an array → the inner quantifier
+        # has nothing to range over.
+        with pytest.raises(CoreException, match="requires an array") as ei:
+            _check({"$values": {"tags": {"$any": {"$any": "x"}}}})
+
+        assert ei.value.code == OPERATOR_TYPE_MISMATCH_CODE
+
+    def test_op_mismatch_inside_array_of_arrays_rejected(self) -> None:
+        # the deepest element is a str → ordering is invalid on it.
+        with pytest.raises(CoreException) as ei:
+            _check({"$values": {"matrix": {"$any": {"$any": {"$gt": 5}}}}})
 
         assert ei.value.code == OPERATOR_TYPE_MISMATCH_CODE

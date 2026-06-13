@@ -78,7 +78,8 @@ async def test_dsl_parity_postgres(pg_client: PostgresClient) -> None:
             tags text[] NOT NULL,
             nums integer[] NOT NULL,
             score integer,
-            items jsonb NOT NULL
+            items jsonb NOT NULL,
+            matrix jsonb NOT NULL
         );
         """
     )

@@ -385,8 +385,20 @@ class QueryFilterExpressionParser:
         if not raw:
             raise exc.precondition("Empty element constraint map is not allowed")
 
+        if len(raw) == 1 and next(iter(raw)) in _QUANTIFIER_OPS:
+            # Scalar array-of-arrays: a quantifier directly on the element, which is
+            # itself an array (e.g. ``matrix $any {$any: "x"}`` over ``list[list[str]]``).
+            # Modeled as a nested quantifier on the element itself (``$`` sentinel path).
+            return self._parse_element_quantifier(
+                ELEM_SCALAR_FIELD,
+                cast("dict[str, Any]", raw),
+                ctx,
+            )
+
         if _QUANTIFIER_OPS & raw.keys():
-            raise exc.precondition("Nested element quantifiers are not allowed")
+            raise exc.precondition(
+                "An element quantifier cannot be combined with other operators",
+            )
 
         if all(k in _ELEMENT_OPS for k in raw):
             # Multiple operators conjoin into a range over the scalar element
@@ -435,7 +447,11 @@ class QueryFilterExpressionParser:
                 raise exc.precondition("Empty element $values field map is not allowed")
 
             if _QUANTIFIER_OPS & raw.keys():
-                raise exc.precondition("Nested element quantifiers are not allowed")
+                # A clean ``{field: {$any: ...}}`` is parsed above; reaching here means a
+                # quantifier key was mixed with other operators in the same map.
+                raise exc.precondition(
+                    "An element quantifier cannot be combined with other operators",
+                )
 
             # Validate each operator on the object element's field. Multiple ops
             # conjoin into a range (e.g. ``qty`` with ``{"$gt": 1, "$lt": 3}``); a

@@ -52,11 +52,14 @@ def assemble_keyset_cursor_page(
     sort_keys: Sequence[str],
     directions: Sequence[str],
     dump_row: Callable[[Any], JsonDict],
+    nulls: Sequence[str] | None = None,
 ) -> tuple[list[Any], bool, str | None, str | None]:
     """Slice ``fetched`` to the requested window and derive opaque cursors.
 
     Gateways commonly return ``limit + 1`` rows so callers can infer
-    ``has_more`` without a separate count query.
+    ``has_more`` without a separate count query. *nulls* (the per-key placement) is
+    carried into the emitted tokens so a follow-up page validates; omit it for the
+    canonical default.
     """
 
     c = dict(cursor or {})
@@ -73,6 +76,7 @@ def assemble_keyset_cursor_page(
         next_tok = encode_keyset_v1(
             sort_keys=sort_keys,
             directions=directions,
+            nulls=nulls,
             values=[row_value_for_sort_key(last, k) for k in sort_keys],
         )
 
@@ -84,6 +88,7 @@ def assemble_keyset_cursor_page(
         prev_tok = encode_keyset_v1(
             sort_keys=sort_keys,
             directions=directions,
+            nulls=nulls,
             values=[row_value_for_sort_key(first, k) for k in sort_keys],
         )
 

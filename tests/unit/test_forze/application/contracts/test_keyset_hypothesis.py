@@ -25,7 +25,7 @@ def test_keyset_v1_roundtrip(
     vals = values[:n]
 
     token = encode_keyset_v1(sort_keys=keys, directions=dirs, values=vals)
-    decoded_keys, decoded_dirs, decoded_vals = decode_keyset_v1(token)
+    decoded_keys, decoded_dirs, _decoded_nulls, decoded_vals = decode_keyset_v1(token)
 
     assert decoded_keys == keys
     assert decoded_dirs == dirs

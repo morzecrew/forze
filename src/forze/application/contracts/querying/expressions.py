@@ -170,8 +170,26 @@ QueryFilterExpression: TypeAlias = (
 QuerySortDirection = Literal["asc", "desc"]
 """Sort direction for a field."""
 
-QuerySortExpression = Mapping[str, QuerySortDirection]
-"""Map of field names to sort direction (supports dot-separated paths like filters)."""
+QuerySortNulls = Literal["first", "last"]
+"""Where null sort-key values are placed, independent of direction (SQL ``NULLS
+FIRST``/``LAST`` semantics). When omitted, the canonical default applies: ``first`` for
+``asc``, ``last`` for ``desc`` (a null sorts as the smallest value)."""
+
+QuerySortKeySpec = TypedDict(
+    "QuerySortKeySpec",
+    {"dir": QuerySortDirection, "nulls": NotRequired[QuerySortNulls]},
+)
+"""Explicit per-key sort spec: a direction plus optional null placement."""
+
+QuerySortValue = QuerySortDirection | QuerySortKeySpec
+"""A sort value: the direction shorthand (``"asc"``) or an explicit
+:data:`QuerySortKeySpec` (``{"dir": "asc", "nulls": "last"}``)."""
+
+QuerySortExpression = Mapping[str, QuerySortValue]
+"""Map of field names to a sort value (supports dot-separated paths like filters).
+
+Each value is either a direction string or a ``{"dir", "nulls"}`` spec. The plain string
+keeps the canonical null placement; the spec form overrides it per key."""
 
 # ....................... #
 

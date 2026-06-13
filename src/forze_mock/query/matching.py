@@ -11,6 +11,8 @@ from typing import (
 )
 from uuid import UUID
 
+from functools import cmp_to_key
+
 from forze.application.contracts.querying import (
     ELEM_SCALAR_FIELD,
     AggregatesExpression,
@@ -25,6 +27,8 @@ from forze.application.contracts.querying import (
     QueryNot,
     QueryOr,
     QuerySortExpression,
+    ordered_compare,
+    resolve_sort_keys,
 )
 from forze.application.contracts.querying.internal.text_pattern import (
     like_pattern_to_regex,
@@ -311,6 +315,10 @@ def _match_elem_inner(elem: Any, inner: QueryExpr) -> bool:
         case QueryOr(items):
             return any(_match_elem_inner(elem, item) for item in items)
         case QueryElem() as nested:
+            if nested.path == ELEM_SCALAR_FIELD:
+                # Scalar array-of-arrays: the element is itself the sub-array to quantify.
+                return _match_elem_over(elem, nested)
+
             # A nested quantifier: the element is itself a document with a sub-array.
             if not isinstance(elem, dict):
                 return False
@@ -319,13 +327,12 @@ def _match_elem_inner(elem: Any, inner: QueryExpr) -> bool:
             return False
 
 
-def _match_elem(doc: JsonDict, node: QueryElem) -> bool:
-    raw = _path_get(doc, node.path)
-    arr = _normalize_array_value(raw)
-    if arr is None:
-        return _elem_vacuous_match(node.quantifier)
+def _match_elem_over(raw: Any, node: QueryElem) -> bool:
+    """Quantify *node* over the array value *raw* (already extracted, not a field path)."""
 
-    if not arr:
+    arr = _normalize_array_value(raw)
+
+    if not arr:  # ``None`` (missing/non-array) or empty → vacuous
         return _elem_vacuous_match(node.quantifier)
 
     results = [_match_elem_inner(item, node.inner) for item in arr]
@@ -337,6 +344,10 @@ def _match_elem(doc: JsonDict, node: QueryElem) -> bool:
             return all(results)
         case "$none":
             return not any(results)
+
+
+def _match_elem(doc: JsonDict, node: QueryElem) -> bool:
+    return _match_elem_over(_path_get(doc, node.path), node)
 
 
 def _match_expr(doc: JsonDict, expr: QueryExpr) -> bool:
@@ -389,19 +400,33 @@ def _sort_docs(  # type: ignore[reportPrivateUsage]
     docs: list[JsonDict],
     sorts: QuerySortExpression | None,
 ) -> list[JsonDict]:
-    if not sorts:
+    keys = resolve_sort_keys(sorts)
+
+    if not keys:
         return docs
 
-    out = list(docs)
-    for field, direction in reversed(list(sorts.items())):
-        reverse = direction == "desc"
+    def _val(d: JsonDict, field: str) -> Any:
+        v = _path_get(d, field)
+        return None if v is _MISSING else v
 
-        def _sort_key(d: JsonDict, _f: str = field) -> tuple[bool, str]:
-            v = _path_get(d, _f)
-            return (v is _MISSING, str(v))
+    def _cmp(a: JsonDict, b: JsonDict) -> int:
+        # Same canonical key comparison as keyset pagination: type-aware, per-key
+        # direction, and null = smallest unless an explicit ``nulls`` overrides — so
+        # offset and cursor sorts agree, and a missing field sorts like a null.
+        for field, direction, nulls in keys:
+            c = ordered_compare(
+                _val(a, field),
+                _val(b, field),
+                direction=direction,
+                nulls=nulls,
+            )
 
-        out.sort(key=_sort_key, reverse=reverse)
-    return out
+            if c:
+                return c
+
+        return 0
+
+    return sorted(docs, key=cmp_to_key(_cmp))
 
 
 def _require_numeric(value: Any, *, function: str, field: str) -> int | float:

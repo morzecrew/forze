@@ -7,13 +7,16 @@ from pydantic import BaseModel
 
 from forze.application.contracts.document import DocumentSpec
 from forze.application.contracts.querying.sort_resolution import (
+    assert_default_null_ordering,
     normalize_sorts_for_keyset,
+    parse_sort_value,
     read_fields_for_model,
     resolve_effective_sorts,
+    resolve_sort_keys,
     validate_sort_fields,
 )
 from forze.application.contracts.search import SearchSpec
-from forze.base.exceptions import CoreException
+from forze.base.exceptions import CoreException, ExceptionKind
 from forze.domain.constants import ID_FIELD
 
 
@@ -77,7 +80,10 @@ def test_normalize_sorts_for_keyset_skips_id_tiebreaker_when_absent() -> None:
         {"generated_at": "desc", "tb_chat_id": "desc"},
         read_fields=fields,
     )
-    assert out == [("generated_at", "desc"), ("tb_chat_id", "desc")]
+    assert out == [
+        ("generated_at", "desc", "last"),
+        ("tb_chat_id", "desc", "last"),
+    ]
 
 
 def test_normalize_sorts_for_keyset_appends_id_when_present() -> None:
@@ -86,7 +92,7 @@ def test_normalize_sorts_for_keyset_appends_id_when_present() -> None:
         {"name": "asc"},
         read_fields=fields,
     )
-    assert out == [("name", "asc"), (ID_FIELD, "asc")]
+    assert out == [("name", "asc", "first"), (ID_FIELD, "asc", "first")]
 
 
 def test_validate_sort_fields_unknown_field() -> None:
@@ -123,3 +129,60 @@ def test_search_spec_validates_default_sort() -> None:
         fields=["generated_at"],
         default_sort={"generated_at": "desc", "tb_chat_id": "asc"},
     )
+
+
+# ----------------------- #
+# Per-key NULLS FIRST/LAST control
+
+
+class TestSortNullPlacement:
+    def test_parse_string_shorthand_defaults_nulls(self) -> None:
+        # Canonical default: asc → nulls first, desc → nulls last.
+        assert parse_sort_value("asc") == ("asc", "first")
+        assert parse_sort_value("desc") == ("desc", "last")
+        assert parse_sort_value("ASC") == ("asc", "first")  # case-insensitive
+
+    def test_parse_dict_form_overrides_nulls(self) -> None:
+        assert parse_sort_value({"dir": "asc", "nulls": "last"}) == ("asc", "last")
+        assert parse_sort_value({"dir": "desc", "nulls": "first"}) == ("desc", "first")
+        # dict without nulls falls back to the canonical default
+        assert parse_sort_value({"dir": "desc"}) == ("desc", "last")
+
+    def test_parse_invalid_direction_or_nulls_raises(self) -> None:
+        with pytest.raises(CoreException, match="Invalid sort direction"):
+            parse_sort_value("sideways")
+
+        with pytest.raises(CoreException, match="Invalid null placement"):
+            parse_sort_value({"dir": "asc", "nulls": "middle"})
+
+    def test_resolve_sort_keys_mixed_forms(self) -> None:
+        out = resolve_sort_keys(
+            {"a": "desc", "b": {"dir": "asc", "nulls": "last"}},
+        )
+        assert out == [("a", "desc", "last"), ("b", "asc", "last")]
+
+    def test_normalize_keyset_carries_explicit_nulls(self) -> None:
+        fields = read_fields_for_model(_WithId)
+        out = normalize_sorts_for_keyset(
+            {"name": {"dir": "asc", "nulls": "last"}},
+            read_fields=fields,
+        )
+        # explicit override on ``name``; the id tie-breaker keeps the canonical default
+        assert out == [("name", "asc", "last"), (ID_FIELD, "asc", "first")]
+
+    def test_assert_default_null_ordering_allows_default(self) -> None:
+        # Canonical placements pass (a backend that orders nulls-as-smallest supports them).
+        assert_default_null_ordering(
+            [("a", "asc", "first"), ("b", "desc", "last")],
+            backend="mongo",
+        )
+
+    def test_assert_default_null_ordering_rejects_override(self) -> None:
+        with pytest.raises(CoreException, match="does not support") as ei:
+            assert_default_null_ordering(
+                [("score", "asc", "last")],  # asc + nulls last = non-native override
+                backend="mongo",
+            )
+
+        assert ei.value.kind is ExceptionKind.PRECONDITION
+        assert ei.value.code == "query_feature_unsupported"

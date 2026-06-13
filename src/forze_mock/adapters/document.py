@@ -870,8 +870,9 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
             spec_name=self.spec.name,
         )
         normalized = normalize_sorts_for_keyset(effective, read_fields=read_fields)
-        sort_keys = [k for k, _ in normalized]
-        directions = [d for _, d in normalized]
+        sort_keys = [k for k, _, _ in normalized]
+        directions = [d for _, d, _ in normalized]
+        nulls = [n for _, _, n in normalized]
 
         assert_cursor_projection_includes_sort_keys(
             return_fields=return_fields,
@@ -889,6 +890,7 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
             cursor=cursor,
             sort_keys=sort_keys,
             directions=directions,
+            nulls=nulls,
         )
         if return_fields is not None:
             out_raw = [

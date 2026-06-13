@@ -83,7 +83,7 @@ def test_assemble_has_more_and_next_cursor() -> None:
     assert hits == rows[:2]
     assert has_more is True
     assert nxt is not None
-    k, _d, v = decode_keyset_v1(nxt)
+    k, _d, _n, v = decode_keyset_v1(nxt)
     assert k == [ID_FIELD]
     assert v == ["b"]
     assert prev is None
@@ -99,7 +99,7 @@ def test_assemble_prev_when_after_cursor_present() -> None:
         dump_row=_as_json_dict,
     )
     assert prev is not None
-    k, d, v = decode_keyset_v1(prev)
+    k, d, _n, v = decode_keyset_v1(prev)
     assert k == [ID_FIELD]
     assert d == ["desc"]
     assert v == ["x"]

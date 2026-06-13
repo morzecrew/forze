@@ -985,10 +985,26 @@ class TestQueryCompareExpressionParser:
         assert isinstance(none_result.items[0], QueryElem)
         assert none_result.items[0].quantifier == "$none"
 
-    def test_parse_element_invalid_nested_quantifier_raises(self) -> None:
-        with pytest.raises(CoreException, match="Nested element quantifiers"):
+    def test_parse_scalar_array_of_arrays_nesting(self) -> None:
+        # A quantifier directly on the (array) element — scalar array-of-arrays.
+        # Modeled as a nested QueryElem on the element itself ("$" sentinel path).
+        result = QueryFilterExpressionParser.parse(
+            {"$values": {"matrix": {"$any": {"$all": "x"}}}},
+        )
+        outer = result.items[0]
+        assert isinstance(outer, QueryElem)
+        assert outer.path == "matrix" and outer.quantifier == "$any"
+        inner = outer.inner
+        assert isinstance(inner, QueryElem)
+        assert inner.path == "$" and inner.quantifier == "$all"
+        assert isinstance(inner.inner, QueryField)
+        assert inner.inner.name == "$" and inner.inner.value == "x"
+
+    def test_parse_element_quantifier_mixed_with_operator_raises(self) -> None:
+        # A quantifier key cannot be combined with other operators in the same map.
+        with pytest.raises(CoreException, match="cannot be combined"):
             QueryFilterExpressionParser.parse(
-                {"$values": {"tags": {"$any": {"$all": "x"}}}},
+                {"$values": {"tags": {"$any": {"$any": "x", "$gt": 1}}}},
             )
 
     def test_parse_element_invalid_operator_raises(self) -> None:
@@ -1145,7 +1161,7 @@ class TestQueryFilterParserBranches:
 
     def test_element_values_nested_quantifier_in_conjunction_raises(self) -> None:
         # dict with a quantifier key plus extra key -> conjunction, then rejected.
-        with pytest.raises(CoreException, match="Nested element quantifiers"):
+        with pytest.raises(CoreException, match="cannot be combined"):
             QueryFilterExpressionParser.parse(
                 {
                     "$values": {

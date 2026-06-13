@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Sequence, cast
+from typing import Any, Mapping, Sequence, cast
 
 from forze_postgres._compat import require_psycopg
 
@@ -164,7 +164,8 @@ class HubSearchSqlMixin[M: BaseModel]:
         types = await host.column_types()
         parts: list[sql.Composable] = []
 
-        for field, order in sorts.items():
+        for field, value in sorts.items():
+            order = value.get("dir") if isinstance(value, Mapping) else value
             key = sort_key_expr(
                 field=field,
                 column_types=types,
@@ -172,7 +173,8 @@ class HubSearchSqlMixin[M: BaseModel]:
                 nested_field_hints=host.nested_field_hints,
                 table_alias=None,
             )
-            parts.append(sql.SQL("{} {}").format(key, sql.SQL(order.upper())))
+            dir_sql = "ASC" if str(order).lower() == "asc" else "DESC"
+            parts.append(sql.SQL("{} {}").format(key, sql.SQL(dir_sql)))
 
         return sql.SQL(", ").join(parts)
 

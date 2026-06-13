@@ -30,6 +30,7 @@ from forze.application.contracts.querying import (
     QueryExpr,
     QueryFilterExpression,
     QuerySortExpression,
+    validate_cursor_token,
 )
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
@@ -42,7 +43,6 @@ from forze.application.contracts.querying.sort_resolution import (
 from forze_postgres.kernel.sql import (
     build_order_by_sql,
     build_seek_condition,
-    decode_keyset_v1,
 )
 
 from forze.application.integrations.persistence import ReadValidationCodecMixin
@@ -628,8 +628,9 @@ class PostgresReadGateway[M: BaseModel](
             sorts,
             read_fields=self.read_fields,
         )
-        sort_keys = [k for k, _ in normalized]
-        directions = [d for _, d in normalized]
+        sort_keys = [k for k, _, _ in normalized]
+        directions = [d for _, d, _ in normalized]
+        nulls = [n for _, _, n in normalized]
 
         where_base, params = await self.where_clause(filters)
         types = await self.column_types()
@@ -642,7 +643,7 @@ class PostgresReadGateway[M: BaseModel](
                 nested_field_hints=self.nested_field_hints,
                 table_alias=alias,
             )
-            for k, _ in normalized
+            for k, _, _ in normalized
         ]
 
         seek_params: list[Any] = []
@@ -650,26 +651,25 @@ class PostgresReadGateway[M: BaseModel](
 
         if use_after or use_before:
             token = str(c["after" if use_after else "before"])
-            tk, td, tv = decode_keyset_v1(token)
-
-            if tk != sort_keys or len(td) != len(directions):
-                raise exc.internal("Cursor does not match current sort keys")
-
-            for i in range(len(directions)):
-                if (td[i] or "").lower() != (directions[i] or "").lower():
-                    raise exc.internal("Cursor does not match current sort order")
+            tv = validate_cursor_token(
+                token,
+                sort_keys=sort_keys,
+                directions=directions,
+                nulls=nulls,
+            )
 
             seek_sql, seek_params = build_seek_condition(
                 exprs,
                 directions,
                 tv,
                 "before" if use_before else "after",
+                nulls=nulls,
             )
             where_fin = sql.SQL("({} AND ({}))").format(where_base, seek_sql)
             params = list(params) + seek_params  # type: ignore[operator]
 
-        order_fwd = build_order_by_sql(exprs, directions, flip=False)
-        order_bwd = build_order_by_sql(exprs, directions, flip=True)
+        order_fwd = build_order_by_sql(exprs, directions, nulls=nulls, flip=False)
+        order_bwd = build_order_by_sql(exprs, directions, nulls=nulls, flip=True)
 
         stmt = sql.SQL("SELECT {cols} FROM {table} WHERE {where}").format(
             cols=self.return_clause(return_model, return_fields),

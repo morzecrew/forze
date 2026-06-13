@@ -73,12 +73,13 @@ async def execute_mongo_ranked_cursor_search[M: BaseModel](
             read_fields=gw.read_fields,
             spec_name=gw.spec.name,
         )
-        key_spec = list(
-            normalize_sorts_for_keyset(
+        key_spec = [
+            (k, d)
+            for k, d, _ in normalize_sorts_for_keyset(
                 effective,
                 read_fields=gw.read_fields,
             )
-        )
+        ]
 
     sort_keys = [k for k, _ in key_spec]
     directions = [d for _, d in key_spec]
@@ -87,7 +88,7 @@ async def execute_mongo_ranked_cursor_search[M: BaseModel](
 
     if use_after or use_before:
         token = str(c["after" if use_after else "before"])
-        tk, td, tv = decode_keyset_v1(token)
+        tk, td, _tn, tv = decode_keyset_v1(token)
 
         if tk != sort_keys or len(td) != len(directions):
             raise exc.internal("Cursor does not match current search sort")

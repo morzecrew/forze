@@ -315,7 +315,7 @@ async def test_read_gateway_cursor_rejects_order_mismatch(
         directions=["desc"],
         values=[uuid4()],
     )
-    with pytest.raises(CoreException, match="sort order"):
+    with pytest.raises(CoreException, match="does not match current search sort"):
         await gw.find_many_with_cursor(
             None,
             cursor={"after": tok},

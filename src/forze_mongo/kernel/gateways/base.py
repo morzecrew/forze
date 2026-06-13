@@ -19,6 +19,8 @@ from forze.application.contracts.querying import (
     QueryFilterExpressionParser,
     QueryFilterLimits,
     QuerySortExpression,
+    assert_default_null_ordering,
+    resolve_sort_keys,
 )
 from forze.application.contracts.tenancy import TENANT_ID_FIELD
 from forze.application.integrations.persistence import (
@@ -282,9 +284,12 @@ class MongoGateway[M: BaseModel](
         if not sorts:
             return None
 
+        resolved = resolve_sort_keys(sorts)
+        assert_default_null_ordering(resolved, backend="mongo")
+
         out: list[tuple[str, int]] = []
 
-        for field, direction in sorts.items():
+        for field, direction, _nulls in resolved:
             target = "_id" if field == ID_FIELD else field
             out.append((target, 1 if direction == "asc" else -1))
 

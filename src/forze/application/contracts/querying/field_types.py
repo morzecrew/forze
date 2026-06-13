@@ -325,7 +325,29 @@ def validate_query_field_types(
                     _check_op(op, ann, path=f"{array_path}[].{name}")
 
             case QueryElem() as nested:
-                _walk_quantifier(nested, base_model=elem_model, prefix=f"{array_path}[].")
+                if nested.path == ELEM_SCALAR_FIELD:
+                    # Scalar array-of-arrays: the element itself is the sub-array.
+                    cls = _classify(elem_ann)
+
+                    if cls not in (_COLLECTION, _UNKNOWN):
+                        _fail(
+                            f"Element quantifier {nested.quantifier!r} requires an "
+                            f"array, but {array_path}[] is {_CLASS_LABEL[cls]}.",
+                        )
+
+                    deeper = _element_annotation(elem_ann)
+                    deeper = deeper if deeper is not None else Any
+                    _walk_elem_inner(
+                        nested.inner,
+                        elem_ann=deeper,
+                        elem_model=_as_model(deeper),
+                        array_path=f"{array_path}[]",
+                    )
+
+                else:
+                    _walk_quantifier(
+                        nested, base_model=elem_model, prefix=f"{array_path}[]."
+                    )
 
             case _:
                 pass

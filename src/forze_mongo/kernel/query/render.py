@@ -642,8 +642,11 @@ class MongoQueryRenderer:
                 return {"$not": [self._elem_cond_expr(item, this=this, depth=depth)]}
 
             case QueryElem(sub_path, sub_quantifier, sub_inner):
+                # ``$`` sentinel = quantify over the element itself (a scalar
+                # array-of-arrays); a named path = a sub-array of an object element.
+                ref = this if sub_path == ELEM_SCALAR_FIELD else f"{this}.{sub_path}"
                 return self._elem_quant_expr(
-                    f"{this}.{sub_path}",
+                    ref,
                     sub_quantifier,
                     sub_inner,
                     depth + 1,

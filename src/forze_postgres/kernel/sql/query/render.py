@@ -284,7 +284,7 @@ class PsycopgQueryRenderer:
     @staticmethod
     def render_aggregate_order_by(
         parsed: ParsedAggregates,
-        sorts: Mapping[str, str] | None,
+        sorts: Mapping[str, Any] | None,
     ) -> sql.Composable | None:
         """Render ORDER BY for aggregate result aliases."""
 
@@ -299,7 +299,8 @@ class PsycopgQueryRenderer:
 
         parts: list[sql.Composable] = []
 
-        for field, order in sorts.items():
+        for field, value in sorts.items():
+            order = value.get("dir") if isinstance(value, Mapping) else value  # type: ignore[arg-type]
             direction = sql.SQL("ASC") if order == "asc" else sql.SQL("DESC")
             parts.append(sql.SQL("{} {}").format(sql.Identifier(field), direction))
 
@@ -1114,24 +1115,31 @@ class PsycopgQueryRenderer:
         """
 
         outer = sql.Identifier(self._elem_alias(depth))
-        sub_segments = node.path.split(".")
         next_depth = depth + 1
         inner_alias = sql.Identifier(self._elem_alias(next_depth))
 
-        if len(sub_segments) == 1:
-            base = sql.SQL("({} -> {})").format(outer, sql.Literal(sub_segments[0]))
+        if node.path == ELEM_SCALAR_FIELD:
+            # Scalar array-of-arrays: the outer element is itself the sub-array.
+            base = sql.SQL("{}").format(outer)
+            sub_model_path = model_path
 
         else:
-            base = sql.SQL("({} #> {})").format(
-                outer,
-                sql.Literal("{" + ",".join(sub_segments) + "}"),
-            )
+            sub_segments = node.path.split(".")
+
+            if len(sub_segments) == 1:
+                base = sql.SQL("({} -> {})").format(outer, sql.Literal(sub_segments[0]))
+
+            else:
+                base = sql.SQL("({} #> {})").format(
+                    outer,
+                    sql.Literal("{" + ",".join(sub_segments) + "}"),
+                )
+
+            sub_model_path = [*model_path, *sub_segments]
 
         arr = sql.SQL(
             "CASE WHEN jsonb_typeof({b}) = 'array' THEN {b} ELSE '[]'::jsonb END",
         ).format(b=base)
-
-        sub_model_path = [*model_path, *sub_segments]
 
         if elem_inner_is_scalar(node.inner):
             elem_pred = self._render_jsonb_scalar_inner(node.inner, depth=next_depth)
