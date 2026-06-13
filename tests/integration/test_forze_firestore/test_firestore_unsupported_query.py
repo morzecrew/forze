@@ -22,10 +22,12 @@ from tests.support.execution_context import context_from_deps
 
 class QDoc(Document):
     tag: str
+    tags: list[str] = []
 
 
 class QCreate(CreateDocumentCmd):
     tag: str
+    tags: list[str] = []
 
 
 class QUpdate(BaseDTO):
@@ -34,6 +36,7 @@ class QUpdate(BaseDTO):
 
 class QRead(ReadDocument):
     tag: str
+    tags: list[str] = []
 
 
 def _ctx(client: FirestoreClient, collection: str) -> ExecutionContext:
@@ -90,9 +93,11 @@ async def test_element_quantifier_raises(firestore_client: FirestoreClient) -> N
     await ctx.document.command(spec).create(QCreate(tag="x"))
     query = ctx.document.query(spec)
 
+    # ``tags`` is an array (so the quantifier is type-valid and reaches the renderer);
+    # Firestore rejects it on capability grounds — it compiles no element quantifiers.
     with pytest.raises(CoreException, match="element quantifier"):
         await query.find_many(
-            filters={"$values": {"tag": {"$any": "x"}}},
+            filters={"$values": {"tags": {"$any": "x"}}},
             pagination={"limit": 10},
         )
 

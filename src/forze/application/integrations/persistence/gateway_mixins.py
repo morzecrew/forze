@@ -147,7 +147,8 @@ class ReadValidationCodecMixin(Generic[M]):
         def _codec_for(self, model: type[TModel]) -> ModelCodec[TModel, Any]: ...
 
         def _codec_for(
-            self, model: type[BaseModel] | None = None
+            self,
+            model: type[BaseModel] | None = None,
         ) -> ModelCodec[Any, Any]: ...
 
     # ....................... #
@@ -235,7 +236,6 @@ class FilterParserMixin(Generic[M]):
         filter_limits: QueryFilterLimits | None
         filter_parser: QueryFilterExpressionParser
         model_type: type[M]
-        nested_field_hints: Mapping[str, type[Any]] | None
 
     # ....................... #
 
@@ -273,11 +273,12 @@ class FilterParserMixin(Generic[M]):
 
         expr = self.filter_parser.parse_filter(filters)
 
-        validate_query_field_types(
-            expr,
-            self.model_type,
-            field_type_hints=self.nested_field_hints,
+        hints: Mapping[str, type[Any]] | None = getattr(
+            self,
+            "nested_field_hints",
+            None,
         )
+        validate_query_field_types(expr, self.model_type, field_type_hints=hints)
 
         return expr
 
