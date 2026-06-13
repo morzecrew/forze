@@ -31,6 +31,8 @@ from __future__ import annotations
 
 from typing import Any, Iterable, cast
 
+import attrs
+
 from forze.base.exceptions import exc
 
 from .expressions import QueryFilterExpression
@@ -41,6 +43,7 @@ from .types import HierarchyValue
 # ----------------------- #
 
 
+@attrs.define(slots=True, frozen=True)
 class QueryCondition:
     """A built filter predicate — combine with ``&`` / ``|`` / ``~``, finalize with
     :meth:`build` (dict) or :meth:`to_ast` (parsed :class:`~.internal.nodes.QueryExpr`).
@@ -49,9 +52,7 @@ class QueryCondition:
     type is what to annotate a built condition with.
     """
 
-    __slots__ = ()
-
-    # -- combinators --------------------------------------------------------- #
+    # combinators
 
     def __and__(self, other: QueryCondition) -> QueryCondition:
         return _And((*_flatten(_And, self), *_flatten(_And, other)))
@@ -62,7 +63,8 @@ class QueryCondition:
     def __invert__(self) -> QueryCondition:
         return _Not(self)
 
-    # -- finalize ------------------------------------------------------------ #
+    # ....................... #
+    # finalize
 
     def build(self) -> QueryFilterExpression:
         """Lower to a :data:`~.expressions.QueryFilterExpression` dict (the wire form)."""
@@ -74,10 +76,8 @@ class QueryCondition:
 
         return QueryFilterExpressionParser.parse(self.build())
 
-    def __repr__(self) -> str:
-        return f"{type(self).__name__}({self._filter()!r})"
-
-    # -- internal lowering --------------------------------------------------- #
+    # ....................... #
+    # internal lowering
 
     def _filter(self) -> dict[str, Any]:
         """Lower to a top-level filter expression dict."""
@@ -113,14 +113,16 @@ class QueryCondition:
 # ....................... #
 
 
+@attrs.define(slots=True, frozen=True)
 class _And(QueryCondition):
-    __slots__ = ("items",)
+    items: tuple[QueryCondition, ...]
 
-    def __init__(self, items: tuple[QueryCondition, ...]) -> None:
-        self.items = items
+    # ....................... #
 
     def _filter(self) -> dict[str, Any]:
         return {"$and": [item._filter() for item in self.items]}
+
+    # ....................... #
 
     def _elem(self) -> Any:
         # The element-constraint grammar has no ``$and`` — conjunction folds into a single
@@ -145,11 +147,11 @@ class _And(QueryCondition):
 # ....................... #
 
 
+@attrs.define(slots=True, frozen=True)
 class _Or(QueryCondition):
-    __slots__ = ("items",)
+    items: tuple[QueryCondition, ...]
 
-    def __init__(self, items: tuple[QueryCondition, ...]) -> None:
-        self.items = items
+    # ....................... #
 
     def _filter(self) -> dict[str, Any]:
         return {"$or": [item._filter() for item in self.items]}
@@ -158,11 +160,11 @@ class _Or(QueryCondition):
 # ....................... #
 
 
+@attrs.define(slots=True, frozen=True)
 class _Not(QueryCondition):
-    __slots__ = ("item",)
+    item: QueryCondition
 
-    def __init__(self, item: QueryCondition) -> None:
-        self.item = item
+    # ....................... #
 
     def _filter(self) -> dict[str, Any]:
         return {"$not": self.item._filter()}
@@ -171,21 +173,23 @@ class _Not(QueryCondition):
 # ....................... #
 
 
+@attrs.define(slots=True, frozen=True)
 class _FieldPredicate(QueryCondition):
-    __slots__ = ("field", "op", "value", "compare")
+    field: str
+    op: str
+    value: Any
+    compare: bool = attrs.field(default=False, kw_only=True)
 
-    def __init__(self, field: str, op: str, value: Any, *, compare: bool = False) -> None:
-        if not compare and isinstance(value, FieldRef):
+    # ....................... #
+
+    def __attrs_post_init__(self) -> None:
+        if not self.compare and isinstance(self.value, FieldRef):
             raise exc.precondition(
-                "A field operand is only valid for field-to-field comparison — use one of "
-                "eq/neq/gt/gte/lt/lte, not "
-                f"{op!r}",
+                "A field operand is only valid for field-to-field comparison — use one "
+                f"of eq/neq/gt/gte/lt/lte, not {self.op!r}",
             )
 
-        self.field = field
-        self.op = op
-        self.value = value
-        self.compare = compare
+    # ....................... #
 
     def _filter(self) -> dict[str, Any]:
         if self.compare:
@@ -193,14 +197,20 @@ class _FieldPredicate(QueryCondition):
 
         return {"$values": {self.field: {self.op: self.value}}}
 
+    # ....................... #
+
     def _is_scalar_elem(self) -> bool:
         return self.field == ELEM_SCALAR_FIELD and not self.compare
+
+    # ....................... #
 
     def _elem(self) -> Any:
         if self.field == ELEM_SCALAR_FIELD:
             return {self.op: self.value}
 
         return {"$values": {self.field: {self.op: self.value}}}
+
+    # ....................... #
 
     def _elem_entry(self) -> tuple[str, dict[str, Any]]:
         if self.field == ELEM_SCALAR_FIELD:
@@ -215,16 +225,18 @@ class _FieldPredicate(QueryCondition):
 # ....................... #
 
 
+@attrs.define(slots=True, frozen=True)
 class _Quantifier(QueryCondition):
-    __slots__ = ("field", "quantifier", "inner")
+    field: str
+    quantifier: str
+    inner: QueryCondition
 
-    def __init__(self, field: str, quantifier: str, inner: QueryCondition) -> None:
-        self.field = field
-        self.quantifier = quantifier
-        self.inner = inner
+    # ....................... #
 
     def _filter(self) -> dict[str, Any]:
         return {"$values": {self.field: {self.quantifier: self.inner._elem()}}}
+
+    # ....................... #
 
     def _elem(self) -> Any:
         if self.field == ELEM_SCALAR_FIELD:
@@ -232,6 +244,8 @@ class _Quantifier(QueryCondition):
             return {self.quantifier: self.inner._elem()}
 
         return {"$values": {self.field: {self.quantifier: self.inner._elem()}}}
+
+    # ....................... #
 
     def _elem_entry(self) -> tuple[str, dict[str, Any]]:
         if self.field == ELEM_SCALAR_FIELD:
@@ -246,13 +260,19 @@ class _Quantifier(QueryCondition):
 # ....................... #
 
 
-def _flatten(kind: type[QueryCondition], node: QueryCondition) -> tuple[QueryCondition, ...]:
+def _flatten(
+    kind: type[QueryCondition],
+    node: QueryCondition,
+) -> tuple[QueryCondition, ...]:
     """Flatten same-kind nesting so ``a & b & c`` is one ``$and`` of three, not nested."""
 
     if isinstance(node, kind):
         return node.items  # type: ignore[attr-defined, no-any-return]
 
     return (node,)
+
+
+# ....................... #
 
 
 def _coerce_inner(inner: QueryCondition | Any) -> QueryCondition:
@@ -262,6 +282,9 @@ def _coerce_inner(inner: QueryCondition | Any) -> QueryCondition:
         return inner
 
     return _FieldPredicate(ELEM_SCALAR_FIELD, "$eq", inner)
+
+
+# ....................... #
 
 
 def _seq(values: Iterable[Any]) -> list[Any]:
@@ -278,18 +301,22 @@ def _seq(values: Iterable[Any]) -> list[Any]:
 # ....................... #
 
 
+def _non_empty_name(_instance: Any, _attribute: Any, value: Any) -> None:
+    if not isinstance(value, str) or not value.strip():
+        raise exc.precondition("Field name must be a non-empty string")
+
+
+# ....................... #
+
+
+@attrs.define(slots=True, frozen=True)
 class FieldRef:
     """A reference to a (dot-pathed) field; its methods produce :class:`QueryCondition`."""
 
-    __slots__ = ("name",)
+    name: str = attrs.field(validator=_non_empty_name)
 
-    def __init__(self, name: str) -> None:
-        if not isinstance(name, str) or not name.strip():  # pyright: ignore[reportUnnecessaryIsInstance]
-            raise exc.precondition("Field name must be a non-empty string")
-
-        self.name = name
-
-    # -- comparison (a field operand → field-to-field compare) --------------- #
+    # ....................... #
+    # comparison (a field operand → field-to-field compare)
 
     def _compare_or_value(self, op: str, value: Any) -> _FieldPredicate:
         # A field operand means field-to-field comparison ($fields); only the six
@@ -323,7 +350,8 @@ class FieldRef:
         """``field <= value``."""
         return self._compare_or_value("$lte", value)
 
-    # -- membership ---------------------------------------------------------- #
+    # ....................... #
+    # membership
 
     def in_(self, values: Iterable[Any]) -> QueryCondition:
         """``field`` is one of *values* (``$in``)."""
@@ -333,7 +361,8 @@ class FieldRef:
         """``field`` is none of *values* (``$nin``)."""
         return _FieldPredicate(self.name, "$nin", _seq(values))
 
-    # -- text ---------------------------------------------------------------- #
+    # ....................... #
+    # text
 
     def like(self, pattern: str | Iterable[str]) -> QueryCondition:
         """SQL ``LIKE`` (one pattern, or several with ``OR`` semantics)."""
@@ -347,7 +376,8 @@ class FieldRef:
         """Regular-expression match."""
         return _FieldPredicate(self.name, "$regex", pattern)
 
-    # -- null / empty -------------------------------------------------------- #
+    # ....................... #
+    # null / empty
 
     def is_null(self, flag: bool = True) -> QueryCondition:
         """``field IS NULL`` (or ``IS NOT NULL`` when *flag* is ``False``)."""
@@ -357,7 +387,8 @@ class FieldRef:
         """The array ``field`` is empty (or non-empty when *flag* is ``False``)."""
         return _FieldPredicate(self.name, "$empty", bool(flag))
 
-    # -- set relations (native array columns) -------------------------------- #
+    # ....................... #
+    # set relations (native array columns)
 
     def superset(self, values: Iterable[Any]) -> QueryCondition:
         """``field`` contains every value in *values* (``$superset``)."""
@@ -375,7 +406,8 @@ class FieldRef:
         """``field`` shares at least one element with *values* (``$overlaps``)."""
         return _FieldPredicate(self.name, "$overlaps", _seq(values))
 
-    # -- hierarchy (TreePath fields) ----------------------------------------- #
+    # ....................... #
+    # hierarchy (TreePath fields)
 
     def descendant_of(self, paths: HierarchyValue) -> QueryCondition:
         """``field``'s path is at or below *paths* (one node, or any of several)."""
@@ -385,7 +417,8 @@ class FieldRef:
         """``field``'s path is at or above *paths* (one node, or any of several)."""
         return _FieldPredicate(self.name, "$ancestor_of", paths)
 
-    # -- element quantifiers ------------------------------------------------- #
+    # ....................... #
+    # element quantifiers
 
     def any(self, inner: QueryCondition | Any) -> QueryCondition:
         """At least one array element satisfies *inner* (a bare scalar means ``== value``)."""
@@ -416,10 +449,14 @@ class Q:
         """Open a predicate on field *name* (use a dotted path for nested JSON)."""
         return FieldRef(name)
 
+    # ....................... #
+
     @staticmethod
     def elem() -> FieldRef:
         """Reference the scalar array element itself (inside ``any``/``all``/``none``)."""
         return FieldRef(ELEM_SCALAR_FIELD)
+
+    # ....................... #
 
     @staticmethod
     def and_(*conditions: QueryCondition) -> QueryCondition:
@@ -436,6 +473,8 @@ class Q:
 
         return _And(flat)
 
+    # ....................... #
+
     @staticmethod
     def or_(*conditions: QueryCondition) -> QueryCondition:
         """Disjunction of *conditions* (at least one required)."""
@@ -450,6 +489,8 @@ class Q:
             flat = (*flat, *_flatten(_Or, cond))
 
         return _Or(flat)
+
+    # ....................... #
 
     @staticmethod
     def not_(condition: QueryCondition) -> QueryCondition:

@@ -157,7 +157,8 @@ class TestCombinatorShape:
 
 
 class TestRepr:
-    def test_repr_shows_lowered_dict(self) -> None:
+    def test_repr_is_informative(self) -> None:
+        # attrs-generated repr exposes the field name and operator.
         r = repr(Q.field("age").gt(1))
         assert "age" in r and "$gt" in r
 
