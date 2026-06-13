@@ -383,14 +383,28 @@ class MongoReadGateway[M: BaseModel](
             )
 
         query = self.render_filters(filters, parsed=parsed)
-        rows = await self.client.find_many(
-            await self.coll(),
-            query,
-            projection=self.render_projection(return_fields),
-            sort=self.render_sorts(sorts),
-            limit=self._effective_find_limit(limit),
-            skip=offset,
-        )
+        null_sort = self.offset_null_sort_stages(sorts)
+
+        if null_sort is not None:
+            rows = await self._find_many_null_ordered(
+                query,
+                stages=null_sort[0],
+                rank_fields=null_sort[1],
+                limit=limit,
+                offset=offset,
+                return_fields=return_fields,
+            )
+
+        else:
+            rows = await self.client.find_many(
+                await self.coll(),
+                query,
+                projection=self.render_projection(return_fields),
+                sort=self.render_sorts(sorts),
+                limit=self._effective_find_limit(limit),
+                skip=offset,
+            )
+
         normalized = [self._from_storage_doc(row) for row in rows]
 
         if return_model is not None:
@@ -400,6 +414,53 @@ class MongoReadGateway[M: BaseModel](
             return [self.return_subset(row, return_fields) for row in normalized]
 
         return self._decode_rows(normalized)
+
+    # ....................... #
+
+    async def _find_many_null_ordered(
+        self,
+        query: JsonDict,
+        *,
+        stages: list[JsonDict],
+        rank_fields: list[str],
+        limit: int | None,
+        offset: int | None,
+        return_fields: Sequence[str] | None,
+    ) -> list[JsonDict]:
+        """Offset read honoring a non-native null placement via an aggregation pipeline.
+
+        Built only when :attr:`~forze_mongo.kernel.gateways.base.MongoGateway.computed_null_ordering`
+        is set and a sort key overrides the canonical null order (see
+        :meth:`~forze_mongo.kernel.gateways.base.MongoGateway.offset_null_sort_stages`).
+        The computed rank fields are projected out so rows decode like a plain find.
+        """
+
+        eff_limit = self._effective_find_limit(limit)
+        pipeline: list[JsonDict] = []
+
+        if query:
+            pipeline.append({"$match": query})
+
+        pipeline.extend(stages)
+
+        if offset:
+            pipeline.append({"$skip": offset})
+
+        if eff_limit is not None:
+            pipeline.append({"$limit": eff_limit})
+
+        # Inclusion projection (return_fields) drops the rank fields; otherwise exclude
+        # only the ranks so the full document survives.
+        projection = self.render_projection(return_fields)
+
+        if projection is None:
+            projection = {rank: 0 for rank in rank_fields}
+
+        pipeline.append({"$project": projection})
+
+        return await self.client.aggregate(
+            await self.coll(), pipeline, limit=eff_limit
+        )
 
     # ....................... #
 

@@ -23,6 +23,17 @@ class MongoReadOnlyDocumentConfig(TenantAwareIntegrationConfig):
     read_validation: Literal["strict", "trusted"] = "strict"
     """Row decode mode for reads (``trusted`` skips Pydantic validation)."""
 
+    computed_null_ordering: bool = False
+    """Honor an explicit per-key ``NULLS FIRST``/``LAST`` that differs from Mongo's native
+    null-as-smallest order, by sorting offset reads through an aggregation pipeline (a
+    computed null-rank key) instead of a plain ``find().sort()``.
+
+    Off by default — an explicit non-native null ordering is otherwise rejected with a
+    clean ``query_feature_unsupported`` error. **Cost:** the computed sort key cannot use
+    an index, so Mongo performs an in-memory sort (bounded by its sort-memory limit);
+    enable it only for read models where you accept that. The canonical default null
+    ordering always uses the native indexed sort regardless of this flag."""
+
 
 # ....................... #
 

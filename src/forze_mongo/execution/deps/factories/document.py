@@ -60,6 +60,7 @@ class ConfigurableMongoReadOnlyDocument(DocumentQueryDepPort[R]):
             tenant_aware=self.config.tenant_aware,
             codec=codecs.read,
             read_validation=self.config.read_validation,
+            computed_null_ordering=self.config.computed_null_ordering,
         )
 
         after_commit: AfterCommitPort | None = None
@@ -126,6 +127,7 @@ class ConfigurableMongoDocument(DocumentCommandDepPort[R, D, C, U]):
             tenant_aware=tenant_aware,
             codec=codecs.read,
             read_validation=config.read_validation,
+            computed_null_ordering=config.computed_null_ordering,
         )
 
         write_relation = config.write
