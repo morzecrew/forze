@@ -1,12 +1,14 @@
 """Renderer that translates abstract query expressions into Mongo filter dicts."""
 
 from datetime import timedelta
-from typing import Any
+from typing import Any, Sequence, cast
 
 import attrs
 
 from forze.application.contracts.querying import (
     ELEM_SCALAR_FIELD,
+    FULL_QUERY_CAPABILITIES,
+    UNSUPPORTED_QUERY_FEATURE_CODE,
     AggregateComputedField,
     AggregatesExpression,
     AggregatesExpressionParser,
@@ -27,6 +29,7 @@ from forze.application.contracts.querying import (
     QueryValue,
     QueryValueCaster,
     elem_inner_is_scalar,
+    validate_query_capabilities,
 )
 from forze.application.contracts.querying.internal.text_pattern import (
     like_pattern_to_regex,
@@ -35,6 +38,23 @@ from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
 
 # ----------------------- #
+
+_SCALAR_ELEM_CMP: dict[str, str] = {
+    "$eq": "$eq",
+    "$neq": "$ne",
+    "$gt": "$gt",
+    "$gte": "$gte",
+    "$lt": "$lt",
+    "$lte": "$lte",
+}
+"""DSL comparison op → Mongo aggregation/query operator for element predicates."""
+
+
+MONGO_QUERY_CAPABILITIES = FULL_QUERY_CAPABILITIES
+"""Mongo compiles the full DSL surface at the AST level (every operator, element
+quantifiers via ``$elemMatch``, ``$not`` via ``$nor``, field-to-field comparison via
+``$expr``). Semantic parity with the canonical mock is enforced by the cross-backend
+parity suite, not by this capability check."""
 
 
 @attrs.define(slots=True, frozen=True)
@@ -64,6 +84,8 @@ class MongoQueryRenderer:
         :param expr: Root expression node.
         :returns: Mongo-compatible filter dictionary.
         """
+
+        validate_query_capabilities(expr, MONGO_QUERY_CAPABILITIES, backend="mongo")
 
         return self._render_expr(expr)
 
@@ -483,12 +505,38 @@ class MongoQueryRenderer:
 
     # ....................... #
 
+    @staticmethod
+    def _inner_has_nested_elem(inner: QueryExpr) -> bool:
+        match inner:
+            case QueryElem():
+                return True
+
+            case QueryAnd(items) | QueryOr(items):
+                return any(
+                    MongoQueryRenderer._inner_has_nested_elem(i) for i in items
+                )
+
+            case _:
+                return False
+
+    # ....................... #
+
     def _render_elem(
         self,
         path: str,
         quantifier: str,
         inner: QueryExpr,
     ) -> JsonDict:
+        # The $all/$none object paths negate the element match; a nested quantifier's
+        # query-form spec cannot be cleanly De-Morgan-negated there, so reject that
+        # combo with the clean capability error instead of emitting a wrong query.
+        if quantifier in ("$all", "$none") and self._inner_has_nested_elem(inner):
+            raise exc.precondition(
+                f"Nested element quantifiers under {quantifier!r} are not supported "
+                "by the 'mongo' backend.",
+                code=UNSUPPORTED_QUERY_FEATURE_CODE,
+            )
+
         vacuous_val = quantifier in ("$all", "$none")
         has_array: JsonDict = {
             "$and": [
@@ -560,118 +608,76 @@ class MongoQueryRenderer:
         quantifier: str,
         inner: QueryExpr,
     ) -> JsonDict:
+        # Count the elements that satisfy the (possibly multi-operator / range) inner
+        # predicate via ``$filter``, then quantify. Correct for a conjunction such as
+        # ``{"$gt": 1, "$lt": 3}`` — unlike a ``$min``/``$max`` shortcut, which only
+        # holds for a single comparison.
+        ref = f"${path}"
+        cond = self._scalar_elem_cond(inner)
+        matched: JsonDict = {"$size": {"$filter": {"input": ref, "cond": cond}}}
+
+        if quantifier == "$any":
+            return {"$expr": {"$gt": [matched, 0]}}
+
+        if quantifier == "$none":
+            return {"$expr": {"$eq": [matched, 0]}}
+
+        # ``$all``: every element satisfies it (the empty-array vacuous case is handled
+        # by the caller, which only invokes this for a non-empty array).
+        return {"$expr": {"$eq": [{"$size": ref}, matched]}}
+
+    # ....................... #
+
+    def _scalar_elem_cond(self, inner: QueryExpr) -> JsonDict:
+        """Aggregation-expression boolean for a scalar element ``$$this`` predicate."""
+
         match inner:
-            case QueryField(name, _, _) if name == ELEM_SCALAR_FIELD:
-                fields = [inner]
+            case QueryField(name, op, value) if name == ELEM_SCALAR_FIELD:
+                return self._scalar_elem_op_cond(op, value)
 
             case QueryAnd(items):
-                fields = [i for i in items if isinstance(i, QueryField)]
+                return {"$and": [self._scalar_elem_cond(i) for i in items]}
 
             case QueryOr(items):
-                parts = [
-                    self._render_elem_scalar_match(path, quantifier, i) for i in items
-                ]
-                if len(parts) == 1:
-                    return parts[0]
-                key = "$or" if quantifier == "$any" else "$and"
-                if quantifier == "$none":
-                    key = "$and"
-                return {key: parts}
+                return {"$or": [self._scalar_elem_cond(i) for i in items]}
 
             case _:
                 raise exc.internal(f"Invalid scalar element inner: {inner!r}")
 
-        if len(fields) != 1:
-            raise exc.internal("Scalar element quantifier supports one comparison only")
+    # ....................... #
 
-        field = fields[0]
-        op = field.op
-        val = self.caster.pass_through(field.value)
-        ref = f"${path}"
+    def _scalar_elem_op_cond(self, op: str, value: Any) -> JsonDict:
+        if op == "$in":
+            return {"$in": ["$$this", [self.caster.pass_through(v) for v in value]]}
 
-        if op == "$eq" and quantifier == "$any":
-            return {path: val}
+        if op == "$nin":
+            return {"$not": [{"$in": ["$$this", [self.caster.pass_through(v) for v in value]]}]}
 
-        if op == "$eq" and quantifier == "$none":
-            return {"$nor": [{path: val}]}
+        val = self.caster.pass_through(value)
 
-        if op == "$eq" and quantifier == "$all":
-            return {
-                "$expr": {
-                    "$and": [
-                        {"$eq": [{"$min": ref}, val]},
-                        {"$eq": [{"$max": ref}, val]},
-                    ],
-                },
-            }
+        if op in _SCALAR_ELEM_CMP:
+            return {_SCALAR_ELEM_CMP[op]: ["$$this", val]}
 
         if op in ("$like", "$ilike", "$regex"):
             regex, options = self._text_regex_and_options(op, str(val))
             cond: JsonDict = {"$regexMatch": {"input": "$$this", "regex": regex}}
+
             if options:
                 cond["$regexMatch"]["options"] = options
-            filtered = {
-                "$size": {
-                    "$filter": {
-                        "input": ref,
-                        "cond": cond,
-                    },
-                },
-            }
-            if quantifier == "$any":
-                return {"$expr": {"$gt": [filtered, 0]}}
-            if quantifier == "$none":
-                return {"$expr": {"$eq": [filtered, 0]}}
-            return {
-                "$expr": {
-                    "$eq": [
-                        {"$size": ref},
-                        filtered,
-                    ],
-                },
-            }
 
-        agg = "$max" if quantifier == "$any" else "$min"
+            return cond
 
-        if op in ("$lt", "$lte") and quantifier == "$any":
-            agg = "$min"
-
-        if op in ("$lt", "$lte") and quantifier == "$all":
-            agg = "$max"
-
-        cmp_op = op if op in ("$gt", "$gte", "$lt", "$lte") else None
-
-        if cmp_op is None:
-            if op == "$neq" and quantifier == "$any":
-                return {
-                    "$expr": {
-                        "$gt": [
-                            {
-                                "$size": {
-                                    "$filter": {
-                                        "input": ref,
-                                        "cond": {"$ne": ["$$this", val]},
-                                    },
-                                },
-                            },
-                            0,
-                        ],
-                    },
-                }
-
-            raise exc.internal(f"Unsupported scalar element operator {op!r}")
-
-        return {"$expr": {cmp_op: [{agg: ref}, val]}}
+        raise exc.internal(f"Unsupported scalar element operator {op!r}")
 
     # ....................... #
 
     def _render_elem_object_match(self, inner: QueryExpr) -> JsonDict:
         match inner:
             case QueryAnd(items):
-                fields = [i for i in items if isinstance(i, QueryField)]
+                parts: list[QueryExpr] = list(items)
 
-            case QueryField() as f:
-                fields = [f]
+            case QueryField() | QueryElem():
+                parts = [inner]
 
             case QueryOr(items):
                 return {
@@ -683,22 +689,101 @@ class MongoQueryRenderer:
 
         out: JsonDict = {}
 
-        for f in fields:
-            if f.op == "$eq":
-                out[f.name] = self.caster.pass_through(f.value)
+        # Accumulate every operator on a field into one operator-document so a range
+        # (e.g. ``qty`` with ``{"$gt": 1, "$lt": 3}``) survives — two QueryFields on
+        # the same name must merge, not overwrite.
+        for part in parts:
+            if isinstance(part, QueryElem):
+                # A nested quantifier on a sub-array field of the object element.
+                out.update(self._render_nested_elem_query(part))
+                continue
 
-            elif f.op in ("$like", "$ilike", "$regex"):
+            if not isinstance(part, QueryField):
+                raise exc.internal(f"Invalid object element inner: {part!r}")
+
+            f = part
+            spec = out.setdefault(f.name, {})
+
+            if f.op in ("$like", "$ilike", "$regex"):
                 pattern = str(self.caster.pass_through(f.value))
                 regex, options = self._text_regex_and_options(f.op, pattern)
-                spec: JsonDict = {"$regex": regex}
+                spec["$regex"] = regex
+
                 if options:
                     spec["$options"] = options
-                out[f.name] = spec
+
+            elif f.op in ("$in", "$nin"):
+                spec[f.op] = [
+                    self.caster.pass_through(v)
+                    for v in cast(Sequence[Any], f.value)
+                ]
 
             else:
-                out[f.name] = {f.op: self.caster.pass_through(f.value)}
+                spec[_SCALAR_ELEM_CMP[f.op]] = self.caster.pass_through(f.value)
 
         return out
+
+    # ....................... #
+
+    def _render_nested_elem_query(self, node: QueryElem) -> JsonDict:
+        """Query-form rendering of a nested quantifier (within an outer ``$elemMatch``).
+
+        ``$any`` → ``{path: {$elemMatch: body}}``; ``$none`` → ``{path: {$not:
+        {$elemMatch: body}}}``; ``$all`` → ``{path: {$not: {$elemMatch: <negated>}}}``
+        (no element fails). A missing/empty sub-array makes ``$all``/``$none``
+        vacuously true, matching the canonical semantics.
+        """
+
+        scalar = elem_inner_is_scalar(node.inner)
+        body = (
+            self._scalar_elemmatch_body(node.inner)
+            if scalar
+            else self._render_elem_object_match(node.inner)
+        )
+
+        if node.quantifier == "$any":
+            return {node.path: {"$elemMatch": body}}
+
+        if node.quantifier == "$none":
+            return {node.path: {"$not": {"$elemMatch": body}}}
+
+        negated = (
+            {"$not": body} if scalar else self._negate_elem_object(body)
+        )
+
+        return {node.path: {"$not": {"$elemMatch": negated}}}
+
+    # ....................... #
+
+    def _scalar_elemmatch_body(self, inner: QueryExpr) -> JsonDict:
+        """``$elemMatch`` operator-document for a scalar sub-array element predicate."""
+
+        fields = inner.items if isinstance(inner, QueryAnd) else (inner,)
+        body: JsonDict = {}
+
+        for f in fields:
+            if not isinstance(f, QueryField):
+                raise exc.internal(f"Invalid nested scalar element inner: {inner!r}")
+
+            if f.op in ("$like", "$ilike", "$regex"):
+                regex, options = self._text_regex_and_options(
+                    f.op, str(self.caster.pass_through(f.value))
+                )
+                body["$regex"] = regex
+
+                if options:
+                    body["$options"] = options
+
+            elif f.op in ("$in", "$nin"):
+                body[f.op] = [
+                    self.caster.pass_through(v)
+                    for v in cast(Sequence[Any], f.value)
+                ]
+
+            else:
+                body[_SCALAR_ELEM_CMP[f.op]] = self.caster.pass_through(f.value)
+
+        return body
 
     # ....................... #
 
@@ -708,8 +793,10 @@ class MongoQueryRenderer:
 
         for key, spec in match.items():
             if isinstance(spec, dict):
-                op_key = next(iter(spec))  # type: ignore[arg-type]
-                negated[key] = {"$not": {op_key: spec[op_key]}}
+                # Negate the whole operator-doc: Mongo's $not treats a multi-operator
+                # spec as an implicit AND, so $not({$gt:1, $lt:3}) is the correct De
+                # Morgan negation of a range (not just the first operator).
+                negated[key] = {"$not": spec}
 
             else:
                 negated[key] = {"$ne": spec}

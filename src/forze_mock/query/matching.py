@@ -304,14 +304,17 @@ def _match_elem_inner(elem: Any, inner: QueryExpr) -> bool:
                 return False
             return _match_field(cast(JsonDict, elem), field)
         case QueryAnd(items):
-            if not isinstance(elem, dict):
-                return False
-            elem_doc = cast(JsonDict, elem)
-            return all(
-                _match_field(elem_doc, i) for i in items if isinstance(i, QueryField)
-            )
+            # Recurse each item so scalar-element conjunctions (a range over a
+            # primitive element, e.g. {$gt:1, $lt:3}) and object-element conjunctions
+            # are both handled — not just object elements.
+            return all(_match_elem_inner(elem, item) for item in items)
         case QueryOr(items):
             return any(_match_elem_inner(elem, item) for item in items)
+        case QueryElem() as nested:
+            # A nested quantifier: the element is itself a document with a sub-array.
+            if not isinstance(elem, dict):
+                return False
+            return _match_elem(cast(JsonDict, elem), nested)
         case _:
             return False
 

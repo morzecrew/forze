@@ -35,14 +35,15 @@ TextOp = Literal["$like", "$ilike", "$regex"]
 TextPatternValue = str | Sequence[str]
 """Text operator operand: one pattern or several (OR semantics at parse time)."""
 
-ElementOp = EqOp | OrdOp | TextOp
-"""Operators allowed inside array element quantifiers (``$any``, ``$all``, ``$none``)."""
-
 QueryElementQuantifier = Literal["$any", "$all", "$none"]
 """Array element quantifier operators under ``$values``."""
 
 MembOp = Literal["$in", "$nin"]
 """Membership operators."""
+
+ElementOp = EqOp | OrdOp | TextOp | MembOp
+"""Operators allowed inside array element quantifiers (``$any``, ``$all``, ``$none``):
+comparison, ordering, text patterns, and membership (``$in`` / ``$nin``)."""
 
 SetRelOp = Literal["$superset", "$subset", "$disjoint", "$overlaps"]
 """Set relation operators."""

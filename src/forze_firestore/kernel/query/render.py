@@ -10,6 +10,7 @@ from google.cloud.firestore_v1.base_query import And, BaseFilter, FieldFilter, O
 from forze.application.contracts.querying import (
     AggregatesExpression,
     QueryAnd,
+    QueryCapabilities,
     QueryCompare,
     QueryElem,
     QueryExpr,
@@ -19,6 +20,7 @@ from forze.application.contracts.querying import (
     QueryOr,
     QueryValue,
     QueryValueCaster,
+    validate_query_capabilities,
 )
 from forze.base.exceptions import exc
 
@@ -35,6 +37,20 @@ _OP_MAP: dict[str, str] = {
     "$nin": "not-in",
 }
 
+FIRESTORE_QUERY_CAPABILITIES = QueryCapabilities(
+    value_ops=frozenset(
+        {"$eq", "$neq", "$gt", "$gte", "$lt", "$lte", "$null", "$empty", "$in", "$nin"}
+    ),
+    element_ops=frozenset(),
+    supports_quantifiers=False,
+    supports_negation=False,
+    supports_field_compare=False,
+)
+"""What the Firestore MVP renderer compiles: equality / ordering / membership /
+null / empty, plus ``$and`` / ``$or``. No ``$not``, set or text operators, array
+element quantifiers, field-to-field comparison, or aggregates — the validator
+rejects those up front; the renderer's inner raises are a defense-in-depth backstop."""
+
 
 # ....................... #
 
@@ -49,6 +65,10 @@ class FirestoreQueryRenderer:
 
     def render(self, expr: QueryExpr) -> BaseFilter | None:
         """Render a parsed query expression into a Firestore filter."""
+
+        validate_query_capabilities(
+            expr, FIRESTORE_QUERY_CAPABILITIES, backend="firestore"
+        )
 
         return self._render_expr(expr)
 

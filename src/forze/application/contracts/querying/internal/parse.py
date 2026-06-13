@@ -55,9 +55,9 @@ from .text_pattern import validate_text_pattern
 _EQ_OPS: frozenset[str] = frozenset(get_args(EqOp))
 _ORD_OPS: frozenset[str] = frozenset(get_args(OrdOp))
 _TEXT_OPS: frozenset[str] = frozenset(get_args(TextOp))
-_ELEMENT_OPS: frozenset[str] = _EQ_OPS | _ORD_OPS | _TEXT_OPS
-_COMPARE_OPS: frozenset[str] = frozenset(get_args(CompareOp))
 _MEMB_OPS: frozenset[str] = frozenset(get_args(MembOp))
+_ELEMENT_OPS: frozenset[str] = _EQ_OPS | _ORD_OPS | _TEXT_OPS | _MEMB_OPS
+_COMPARE_OPS: frozenset[str] = frozenset(get_args(CompareOp))
 _UNARY_OPS: frozenset[str] = frozenset(get_args(UnaryOp))
 _SET_REL_OPS: frozenset[str] = frozenset(get_args(SetRelOp))
 _IN_SIZE_OPS: frozenset[str] = _MEMB_OPS | _SET_REL_OPS
@@ -389,14 +389,15 @@ class QueryFilterExpressionParser:
             raise exc.precondition("Nested element quantifiers are not allowed")
 
         if all(k in _ELEMENT_OPS for k in raw):
-            if len(raw) != 1:
-                raise exc.precondition(
-                    "Scalar element constraint must declare exactly one operator",
-                )
+            # Multiple operators conjoin into a range over the scalar element
+            # (e.g. ``{"$gt": 1, "$lt": 3}`` → elements strictly inside (1, 3)).
+            self._add_clauses(ctx, len(raw))
+            nodes = [
+                self._validate_element_op(ELEM_SCALAR_FIELD, op, value, ctx)
+                for op, value in raw.items()
+            ]
 
-            op, value = next(iter(raw.items()))
-
-            return self._validate_element_op(ELEM_SCALAR_FIELD, op, value, ctx)
+            return nodes[0] if len(nodes) == 1 else QueryAnd(tuple(nodes))
 
         raise exc.precondition(
             "Element constraint must be a scalar shortcut, an operator map "
@@ -412,9 +413,9 @@ class QueryFilterExpressionParser:
         ctx: _ParseCtx,
     ) -> list[QueryExpr]:
         if is_query_element_quantifier(raw):
-            raise exc.precondition(
-                f"Field {rel_field} cannot use element quantifiers inside $values",
-            )
+            # A nested quantifier over a sub-array of the object element
+            # (e.g. ``orders.$any.items.$any``). Capability-gated per backend.
+            return [self._parse_element_quantifier(rel_field, cast(Any, raw), ctx)]
 
         if is_query_value_shortcut(raw):
             if raw is None:
@@ -436,17 +437,9 @@ class QueryFilterExpressionParser:
             if _QUANTIFIER_OPS & raw.keys():
                 raise exc.precondition("Nested element quantifiers are not allowed")
 
-            if all(k in _ELEMENT_OPS for k in raw):
-                if len(raw) != 1:
-                    raise exc.precondition(
-                        f"Field {rel_field} element constraint must declare exactly "
-                        "one operator",
-                    )
-
-                op, value = next(iter(raw.items()))
-
-                return [self._validate_element_op(rel_field, op, value, ctx)]
-
+            # Validate each operator on the object element's field. Multiple ops
+            # conjoin into a range (e.g. ``qty`` with ``{"$gt": 1, "$lt": 3}``); a
+            # non-element op is rejected per-op by ``_validate_element_op``.
             self._add_clauses(ctx, len(raw))
 
             return [
@@ -481,6 +474,11 @@ class QueryFilterExpressionParser:
         elif op in _ORD_OPS:
             if not isinstance(value, Numeric):
                 raise exc.precondition(f"Invalid value for {op} operator: {value!r}")
+
+        elif op in _MEMB_OPS:
+            if not isinstance(value, list | tuple | set):
+                raise exc.precondition(f"Invalid value for {op} operator: {value!r}")
+            self._check_in_size(field, op, value)
 
         return QueryField(field, op, value)  # type: ignore[arg-type]
 

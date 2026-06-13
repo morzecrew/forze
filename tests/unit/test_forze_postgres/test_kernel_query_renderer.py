@@ -158,10 +158,12 @@ class TestPsycopgQueryRenderer:
 
     def test_unknown_operator_raises(self) -> None:
         """Unsupported operator raises."""
+        # The capability validator rejects unknown ops at render(); this exercises
+        # the renderer's own defense-in-depth backstop directly.
         r = PsycopgQueryRenderer()
         bad = QueryField("x", cast(Any, "$not_a_real_op"), 1)
         with pytest.raises(CoreException, match="Unknown operator"):
-            r.render(bad)
+            r._render_expr(bad)
 
     def test_null_operators(self) -> None:
         """$null true/false render IS NULL / IS NOT NULL."""
@@ -468,7 +470,7 @@ class TestPsycopgQueryRenderer:
 
         types: PostgresColumnTypes = {"meta": _t("jsonb")}
         r = PsycopgQueryRenderer(types=types, model_type=_Outer)
-        with pytest.raises(CoreException, match="not supported for nested JSON"):
+        with pytest.raises(CoreException, match="not supported on the nested JSON path"):
             r.render(QueryField("meta.score", "$empty", True))
 
     def test_nested_requires_json_column(self) -> None:
@@ -933,7 +935,7 @@ class TestElementErrorBranches:
         inner = QueryField("status", "$eq", "open")
         _sql, params = r.render(QueryElem("items", "$any", inner))
         assert params == ["open"]
-        assert "_fz_elem ->>" in _sql.as_string(None)
+        assert '"_fz_elem" ->>' in _sql.as_string(None)
 
     def test_object_inner_or_branch(self) -> None:
         class _Item(BaseModel):
@@ -973,7 +975,7 @@ class TestElementErrorBranches:
         _sql, params = r.render(QueryElem("items", "$any", inner))
         s = _sql.as_string(None)
         assert params == ["open"]
-        assert "(_fz_elem ->> 'status')" in s
+        assert '("_fz_elem" ->> \'status\')' in s
 
     def test_object_inner_unwalkable_field_no_cast(self) -> None:
         """A field not present on the element model resolves to text (no cast)."""
@@ -988,7 +990,7 @@ class TestElementErrorBranches:
         inner = QueryField("unknown_field", "$eq", "v")
         _sql, params = r.render(QueryElem("items", "$any", inner))
         assert params == ["v"]
-        assert "(_fz_elem ->> 'unknown_field')" in _sql.as_string(None)
+        assert '("_fz_elem" ->> \'unknown_field\')' in _sql.as_string(None)
 
     def test_object_inner_invalid_node_raises(self) -> None:
         class _Item(BaseModel):
@@ -1018,7 +1020,7 @@ class TestElementErrorBranches:
         _sql, params = r.render(QueryElem("items", "$any", inner))
         s = _sql.as_string(None)
         assert params == ["x"]
-        assert "_fz_elem #>>" in s
+        assert '"_fz_elem" #>>' in s
 
     def test_object_inner_leaf_type_resolution_failure_is_swallowed(self) -> None:
         """A leaf whose type resolution raises falls back to text (no cast)."""
@@ -1038,7 +1040,7 @@ class TestElementErrorBranches:
         assert params == ["v"]
         # No per-field cast on the extracted value (leaf type stayed unresolved):
         # the extraction uses ``->>`` (text) with no trailing ``)::<type>`` cast.
-        assert "(_fz_elem ->> 'codes')" in _sql.as_string(None)
+        assert '("_fz_elem" ->> \'codes\')' in _sql.as_string(None)
 
     def test_object_inner_typed_field_applies_cast(self) -> None:
         """A resolvable non-text leaf type applies a SQL cast to the extracted value."""

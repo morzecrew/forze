@@ -41,7 +41,7 @@ from ..relation import RelationSpec, is_static_relation, resolve_firestore_colle
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class FirestoreGateway[M: BaseModel](
     ModelCodecGatewayMixin[M],
-    FilterParserMixin,
+    FilterParserMixin[M],
     TenantResolvedRelationMixin,
 ):
     """Base gateway for Firestore document access."""

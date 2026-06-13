@@ -11,7 +11,7 @@
 [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/morzecrew/forze/badge)](https://scorecard.dev/viewer/?uri=github.com/morzecrew/forze)
 [![CodeFactor](https://www.codefactor.io/repository/github/morzecrew/forze/badge)](https://www.codefactor.io/repository/github/morzecrew/forze)
 [![codecov](https://codecov.io/github/morzecrew/forze/graph/badge.svg?token=WIKAC2IUS9)](https://codecov.io/github/morzecrew/forze)
-[![Socket Badge](https://badge.socket.dev/pypi/package/forze)](https://badge.socket.dev/pypi/package/forze)
+[![Socket Badge](https://badge.socket.dev/pypi/package/forze)](https://socket.dev/pypi/package/forze)
 
 </div>
 

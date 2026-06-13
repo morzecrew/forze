@@ -1,5 +1,17 @@
 """Basic query contracts."""
 
+from .capabilities import (
+    ALL_ELEMENT_OPS,
+    ALL_VALUE_OPS,
+    FULL_QUERY_CAPABILITIES,
+    UNSUPPORTED_QUERY_FEATURE_CODE,
+    QueryCapabilities,
+    validate_query_capabilities,
+)
+from .field_types import (
+    OPERATOR_TYPE_MISMATCH_CODE,
+    validate_query_field_types,
+)
 from .expressions import (
     AggregateComputedFieldExpression,
     AggregateComputedFunctionApplication,
@@ -121,6 +133,14 @@ __all__ = [
     "QueryElementValuesPredicate",
     "QueryFieldGuard",
     "QueryFieldPolicy",
+    "QueryCapabilities",
+    "FULL_QUERY_CAPABILITIES",
+    "ALL_VALUE_OPS",
+    "ALL_ELEMENT_OPS",
+    "UNSUPPORTED_QUERY_FEATURE_CODE",
+    "validate_query_capabilities",
+    "OPERATOR_TYPE_MISMATCH_CODE",
+    "validate_query_field_types",
     "QueryFilterExpression",
     "QueryNegation",
     "ElementOp",

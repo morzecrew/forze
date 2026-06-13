@@ -99,7 +99,7 @@ class PostgresQualifiedName:
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class PostgresGateway[M: BaseModel](
     ModelCodecGatewayMixin[M],
-    FilterParserMixin,
+    FilterParserMixin[M],
     TenantResolvedRelationMixin,
 ):
     """Base gateway providing shared query-building helpers for a single Postgres relation."""

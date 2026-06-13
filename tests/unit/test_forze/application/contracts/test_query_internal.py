@@ -992,9 +992,10 @@ class TestQueryCompareExpressionParser:
             )
 
     def test_parse_element_invalid_operator_raises(self) -> None:
+        # $superset is a set-relation op, not an element op (unlike $in/$gt/...).
         with pytest.raises(CoreException, match="Element constraint must be"):
             QueryFilterExpressionParser.parse(
-                {"$values": {"tags": {"$any": {"$in": ["a"]}}}},
+                {"$values": {"tags": {"$any": {"$superset": ["a"]}}}},
             )
 
 
@@ -1059,13 +1060,19 @@ class TestQueryFilterParserBranches:
                 {"$values": {"tags": {"$any": {}}}},
             )
 
-    def test_element_scalar_constraint_multiple_ops_raises(self) -> None:
-        with pytest.raises(
-            CoreException, match="must declare exactly one operator"
-        ):
-            QueryFilterExpressionParser.parse(
-                {"$values": {"scores": {"$any": {"$gt": 1, "$lt": 5}}}},
-            )
+    def test_element_scalar_constraint_multiple_ops_conjoins_to_range(self) -> None:
+        # Multiple operators on a scalar element are a range — they conjoin into a
+        # QueryAnd of element-scalar predicates.
+        ast = QueryFilterExpressionParser.parse(
+            {"$values": {"scores": {"$any": {"$gt": 1, "$lt": 5}}}},
+        )
+        elem = ast.items[0]  # type: ignore[attr-defined]
+        assert isinstance(elem, QueryElem)
+        assert elem.path == "scores" and elem.quantifier == "$any"
+        assert isinstance(elem.inner, QueryAnd)
+        ops = {f.op for f in elem.inner.items}  # type: ignore[attr-defined]
+        assert ops == {"$gt", "$lt"}
+        assert all(f.name == ELEM_SCALAR_FIELD for f in elem.inner.items)  # type: ignore[attr-defined]
 
     def test_element_scalar_eq_invalid_value_raises(self) -> None:
         with pytest.raises(CoreException, match="Invalid value for"):
@@ -1090,17 +1097,22 @@ class TestQueryFilterParserBranches:
 
     # Object-array element $values edge cases .................. #
 
-    def test_element_values_quantifier_inside_raises(self) -> None:
-        with pytest.raises(
-            CoreException, match="cannot use element quantifiers inside"
-        ):
-            QueryFilterExpressionParser.parse(
-                {
-                    "$values": {
-                        "items": {"$any": {"$values": {"f": {"$any": "x"}}}},
-                    },
+    def test_element_values_nested_quantifier_parses(self) -> None:
+        # A quantifier inside an object element's $values is a nested quantifier
+        # (over a sub-array) — it parses to a nested QueryElem (capability-gated
+        # per backend at render time).
+        ast = QueryFilterExpressionParser.parse(
+            {
+                "$values": {
+                    "items": {"$any": {"$values": {"f": {"$any": "x"}}}},
                 },
-            )
+            },
+        )
+        outer = ast.items[0]  # type: ignore[attr-defined]
+        assert isinstance(outer, QueryElem) and outer.path == "items"
+        nested = outer.inner.items[0]  # type: ignore[attr-defined]
+        assert isinstance(nested, QueryElem)
+        assert nested.path == "f" and nested.quantifier == "$any"
 
     def test_element_values_null_shortcut_raises(self) -> None:
         with pytest.raises(CoreException, match="cannot use null shortcut"):
@@ -1146,29 +1158,32 @@ class TestQueryFilterParserBranches:
                 },
             )
 
-    def test_element_values_field_multiple_element_ops_raises(self) -> None:
-        with pytest.raises(
-            CoreException, match=r"must declare exactly\n? *one operator"
-        ):
-            QueryFilterExpressionParser.parse(
-                {
-                    "$values": {
-                        "items": {
-                            "$any": {"$values": {"f": {"$gt": 1, "$lt": 5}}},
-                        },
+    def test_element_values_field_multiple_element_ops_conjoins(self) -> None:
+        # A range on an object element's field conjoins into two QueryFields on it.
+        ast = QueryFilterExpressionParser.parse(
+            {
+                "$values": {
+                    "items": {
+                        "$any": {"$values": {"f": {"$gt": 1, "$lt": 5}}},
                     },
                 },
-            )
+            },
+        )
+        elem = ast.items[0]  # type: ignore[attr-defined]
+        assert isinstance(elem, QueryElem)
+        assert isinstance(elem.inner, QueryAnd)
+        pairs = {(f.name, f.op) for f in elem.inner.items}  # type: ignore[attr-defined]
+        assert pairs == {("f", "$gt"), ("f", "$lt")}
 
     def test_element_values_field_mixed_ops_invalid_op_raises(self) -> None:
-        # Not all keys are element ops -> falls to the multi-op branch, then
-        # ``$in`` is rejected as an invalid element operator.
+        # A non-element op ($superset) mixed into an element field's op-map is
+        # rejected per-op as an invalid element operator.
         with pytest.raises(CoreException, match="Invalid element operator"):
             QueryFilterExpressionParser.parse(
                 {
                     "$values": {
                         "items": {
-                            "$any": {"$values": {"f": {"$gt": 1, "$in": [1]}}},
+                            "$any": {"$values": {"f": {"$gt": 1, "$superset": [1]}}},
                         },
                     },
                 },

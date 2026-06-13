@@ -41,7 +41,7 @@ from ..relation import RelationSpec, is_static_relation, resolve_mongo_collectio
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class MongoGateway[M: BaseModel](
     ModelCodecGatewayMixin[M],
-    FilterParserMixin,
+    FilterParserMixin[M],
     TenantResolvedRelationMixin,
 ):
     """Base gateway providing collection access, query rendering, and document mapping.

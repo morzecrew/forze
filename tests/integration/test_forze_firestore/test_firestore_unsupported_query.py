@@ -90,7 +90,7 @@ async def test_element_quantifier_raises(firestore_client: FirestoreClient) -> N
     await ctx.document.command(spec).create(QCreate(tag="x"))
     query = ctx.document.query(spec)
 
-    with pytest.raises(CoreException, match="quantifiers"):
+    with pytest.raises(CoreException, match="element quantifier"):
         await query.find_many(
             filters={"$values": {"tag": {"$any": "x"}}},
             pagination={"limit": 10},
