@@ -62,7 +62,7 @@ _COMPARE_OPS: frozenset[str] = frozenset(get_args(CompareOp))
 _UNARY_OPS: frozenset[str] = frozenset(get_args(UnaryOp))
 _SET_REL_OPS: frozenset[str] = frozenset(get_args(SetRelOp))
 _HIERARCHY_OPS: frozenset[str] = frozenset(get_args(HierarchyOp))
-_IN_SIZE_OPS: frozenset[str] = _MEMB_OPS | _SET_REL_OPS
+_IN_SIZE_OPS: frozenset[str] = _MEMB_OPS | _SET_REL_OPS | _HIERARCHY_OPS
 _QUANTIFIER_OPS: frozenset[str] = frozenset(get_args(QueryElementQuantifier))
 
 _COMBINATOR_KEYS = frozenset({"$and", "$or", "$not"})

@@ -66,6 +66,8 @@ async def execute_mongo_ranked_cursor_search[M: BaseModel](
             sorts=sorts,
             read_fields=gw.read_fields,
         )
+        nulls = ["first" if d == "asc" else "last" for _, d in key_spec]
+
     else:
         effective = resolve_effective_sorts(
             sorts=sorts,
@@ -73,13 +75,14 @@ async def execute_mongo_ranked_cursor_search[M: BaseModel](
             read_fields=gw.read_fields,
             spec_name=gw.spec.name,
         )
-        key_spec = [
-            (k, d)
-            for k, d, _ in normalize_sorts_for_keyset(
+        _norm = list(
+            normalize_sorts_for_keyset(
                 effective,
                 read_fields=gw.read_fields,
             )
-        ]
+        )
+        key_spec = [(k, d) for k, d, _ in _norm]
+        nulls = [n for _, _, n in _norm]
 
     sort_keys = [k for k, _ in key_spec]
     directions = [d for _, d in key_spec]
@@ -90,11 +93,11 @@ async def execute_mongo_ranked_cursor_search[M: BaseModel](
         token = str(c["after" if use_after else "before"])
         tk, td, _tn, tv = decode_keyset_v1(token)
 
-        if tk != sort_keys or len(td) != len(directions):
+        if tk != sort_keys or len(td) != len(directions) or len(_tn) != len(nulls):
             raise exc.internal("Cursor does not match current search sort")
 
         for i, di in enumerate(directions):
-            if (td[i] or "").lower() != di:
+            if (td[i] or "").lower() != di or (_tn[i] or "").lower() != nulls[i]:
                 raise exc.internal("Cursor does not match current search sort")
 
         seek = build_keyset_seek_match(
