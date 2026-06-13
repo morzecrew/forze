@@ -49,6 +49,7 @@ from .resource_templates import (  # noqa: E402
     register_resource_templates,
 )
 from .schemas import register_schema_resources  # noqa: E402
+from .lifespan import runtime_lifespan  # noqa: E402
 from .server import build_mcp_server  # noqa: E402
 
 # ----------------------- #
@@ -63,6 +64,7 @@ __all__ = [
     "StaticIdentityResolver",
     "build_mcp_server",
     "exposed_operations",
+    "runtime_lifespan",
     "register_dsl_query_prompts",
     "register_resource_templates",
     "register_schema_resources",

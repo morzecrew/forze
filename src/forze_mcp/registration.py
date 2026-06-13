@@ -200,7 +200,10 @@ def register_tools(
 
     :param server: A FastMCP server the caller owns (and configures with auth/transport).
     :param registry: The frozen operation registry to project.
-    :param ctx_factory: Factory yielding a fresh execution context per tool call.
+    :param ctx_factory: Yields the execution context for a tool call. Use the scope's
+        shared context (e.g. ``runtime.get_context`` under
+        :func:`~forze_mcp.lifespan.runtime_lifespan`) so resolved operations/ports stay
+        warm across calls; constructing a fresh context per call is unsupported.
     :param identity: Resolver for the principal/tenant bound per call (defaults to a
         no-identity :class:`StaticIdentityResolver`).
     :param include_writes: When ``False`` (default, read-only) only ``QUERY`` operations are

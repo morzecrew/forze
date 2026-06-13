@@ -104,16 +104,23 @@ def build_registry() -> FrozenOperationRegistry:
 
 
 def build_context_factory() -> tuple[ExecutionContextFactory, MockState]:
-    """Build a context factory backed by a shared in-memory ``MockState``.
+    """Build a context factory backed by a single shared in-memory context.
 
-    The same ``MockState`` backs every context, so data written by one tool call is visible
-    to the next — exactly what you want when poking at the server interactively.
+    One :class:`ExecutionContext` is created and reused for every tool call (the factory
+    just hands back that same instance), so resolved operations and ports stay memoized
+    across calls instead of being rebuilt each time — and the one ``MockState`` behind it
+    makes a write from one call visible to the next. This mock has no lifecycle steps, so
+    a bare shared context is enough; a production server with real adapters should instead
+    drive ``ctx_factory`` and ``lifespan`` from one ``ExecutionRuntime`` (pass
+    ``runtime.get_context`` here and ``forze_mcp.runtime_lifespan(runtime)`` to the
+    server), which additionally runs lifecycle startup/shutdown.
     """
 
     state = MockState()
     frozen = DepsRegistry.from_modules(MockDepsModule(state=state)).freeze().resolve()
+    ctx = ExecutionContext(deps=frozen)
 
-    return (lambda: ExecutionContext(deps=frozen)), state
+    return (lambda: ctx), state
 
 
 async def seed(
