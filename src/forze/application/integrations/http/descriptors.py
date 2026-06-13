@@ -45,7 +45,9 @@ class async_http_op(Generic[In, Out]):  # noqa: N801
     def __get__(self, obj: None, objtype: type[Any] | None = None) -> Self: ...
 
     @overload
-    def __get__(self, obj: BaseHttpIntegration, objtype: type[Any] | None = None) -> HttpBoundOperation[In, Out]: ...
+    def __get__(
+        self, obj: BaseHttpIntegration, objtype: type[Any] | None = None
+    ) -> HttpBoundOperation[In, Out]: ...
 
     def __get__(
         self,
@@ -92,7 +94,7 @@ class HttpBoundOperation(Generic[In, Out]):
         if isinstance(result, self.return_type):
             return result
 
-        return self.return_type.model_validate(result.model_dump())
+        return self.return_type.model_validate(result, from_attributes=True)
 
 
 # ....................... #

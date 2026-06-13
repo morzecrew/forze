@@ -61,3 +61,33 @@ async def test_descriptor_invoke() -> None:
     result = await client.get_orders(GetOrdersQuery(status="open"))
 
     assert result.items == []
+
+
+class _ForeignResponse(BaseModel):
+    """A different model type carrying the same fields as ``OrdersListResponse``."""
+
+    items: list[str]
+
+
+class _ForeignPort:
+    spec: HttpServiceSpec
+
+    def __init__(self, spec: HttpServiceSpec) -> None:
+        self.spec = spec
+
+    async def invoke(self, op: str, args: BaseModel | None = None) -> BaseModel:
+        # Not an ``OrdersListResponse`` instance, so the bound op must convert it.
+        return _ForeignResponse(items=["x", "y"])
+
+
+async def test_descriptor_invoke_converts_foreign_result() -> None:
+    """A non-return-type result is validated into the return type via ``from_attributes``."""
+
+    spec = build_http_service_spec(OrdersClient, name="orders")
+    port: HttpServicePort = _ForeignPort(spec)  # type: ignore[assignment]
+    client = OrdersClient(port=port, spec=spec)
+
+    result = await client.get_orders(GetOrdersQuery(status="open"))
+
+    assert isinstance(result, OrdersListResponse)
+    assert result.items == ["x", "y"]

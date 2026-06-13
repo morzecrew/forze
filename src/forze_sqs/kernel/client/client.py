@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from forze_sqs._compat import require_sqs
 
 require_sqs()
@@ -13,6 +15,7 @@ from contextvars import ContextVar
 from datetime import datetime, timedelta, timezone
 from re import Pattern
 from typing import (
+    TYPE_CHECKING,
     Any,
     AsyncContextManager,
     AsyncGenerator,
@@ -27,7 +30,11 @@ from uuid import uuid4
 import aioboto3
 import attrs
 from pydantic import SecretStr
-from types_aiobotocore_sqs.client import SQSClient as AsyncSQSClient
+
+if TYPE_CHECKING:
+    # Type-only: ``types-aiobotocore-sqs`` is a stub package with no runtime value, so
+    # keep it off the import path (saves ~40 ms of cold-start import).
+    from types_aiobotocore_sqs.client import SQSClient as AsyncSQSClient
 
 from forze.application.contracts.envelope import HEADER_EVENT_ID
 from forze.application.contracts.queue import SQS_MAX_DELAY, resolve_delivery_delay
@@ -334,7 +341,7 @@ class SQSClient(SQSClientPort):
 
         cm = session.client("sqs", **kwargs)  # type: ignore
 
-        return cast(AsyncContextManager[AsyncSQSClient], cm)
+        return cast("AsyncContextManager[AsyncSQSClient]", cm)
 
     # ....................... #
 

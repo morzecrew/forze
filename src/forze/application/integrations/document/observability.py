@@ -11,8 +11,9 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Callable, Iterable
 
-from opentelemetry import metrics
-from opentelemetry.metrics import Observation
+# OpenTelemetry is imported lazily inside ``instrument_document_l1`` so importing this
+# module (re-exported from the document integration package) does not pull
+# ``opentelemetry`` into an uninstrumented app's import path.
 
 from .l1 import L1Stats, iter_l1_stats
 
@@ -49,6 +50,9 @@ def instrument_document_l1(*, meter: "Meter | None" = None) -> None:
     global OTel meter unless *meter* is supplied. Call once at assembly time,
     alongside the other ``instrument_*`` calls.
     """
+
+    from opentelemetry import metrics
+    from opentelemetry.metrics import Observation
 
     meter = meter or metrics.get_meter("forze")
 

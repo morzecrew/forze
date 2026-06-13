@@ -53,10 +53,19 @@ class AggregateRepository(Generic[R, D, C, U]):
 
         Reconstructed from the read model, so the read model must carry the domain's
         fields. Behavior methods (deciders) then validate state and return a patch.
+
+        The read model is validated into the domain type via ``from_attributes`` — each
+        domain field is read off the read model by attribute (so ``@computed_field``
+        properties are picked up too) and nested models pass through as instances
+        (``revalidate_instances='never'``) instead of being dumped to a dict and rebuilt.
+        This runs the domain type's full validation and invariants exactly as the prior
+        ``model_validate(read.model_dump())`` did (faithful for computed fields and
+        aliases alike), while skipping the recursive dump roundtrip — measurably cheaper,
+        and increasingly so the more nested the aggregate.
         """
 
         read = await self.query.get(pk)
-        return self.domain_type.model_validate(read.model_dump())
+        return self.domain_type.model_validate(read, from_attributes=True)
 
     # ....................... #
 

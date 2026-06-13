@@ -49,7 +49,8 @@ class ExecutionContext:
     :attr:`~forze.application.execution.runtime.ExecutionRuntime.cache_resolved_operations`)."""
 
     cache_ports: bool = attrs.field(default=True)
-    """Whether resolved configurable ports are memoized for this scope (see
+    """Whether resolved dependencies are memoized for this scope — both configurable
+    ports and simple deps (see
     :attr:`~forze.application.execution.runtime.ExecutionRuntime.cache_resolved_ports`)."""
 
     # ....................... #
@@ -78,6 +79,24 @@ class ExecutionContext:
     )
     """Per-scope resolved-port memo: ``(dep key, route) -> (spec, port)`` (``None`` when
     caching is disabled)."""
+
+    _resolved_simple_cache: dict[Any, Any] | None = attrs.field(
+        default=attrs.Factory(
+            lambda self: {} if self.cache_ports else None,
+            takes_self=True,
+        ),
+        init=False,
+        repr=False,
+        eq=False,
+        hash=False,
+    )
+    """Per-scope resolved simple-dependency memo: ``(dep key, route) -> instance``
+    (``None`` when caching is disabled).
+
+    Gated by :attr:`cache_ports`, the same flag as configurable ports: a simple dep's
+    factory takes only the scope-stable ``ctx`` (no spec) and defers per-request reads to
+    call time, so it is built once per scope and reused. Unlike :attr:`_resolved_port_cache`
+    there is no spec to validate, so a ``(key, route)`` match alone is sufficient."""
 
     lifecycle_started: set[StrKey] = attrs.field(
         factory=set,
@@ -240,6 +259,30 @@ class ExecutionContext:
 
         if cache is not None:
             cache[key] = (spec, port)
+
+    # ....................... #
+
+    def cached_simple(self, key: Any) -> Any | None:
+        """Return a memoized simple dependency for ``(dep key, route)``, or ``None``.
+
+        ``None`` means a cache miss or caching disabled; callers resolve and then call
+        :meth:`store_simple`. Simple deps take no spec, so a key match is sufficient
+        (unlike :meth:`cached_port`).
+        """
+
+        cache = self._resolved_simple_cache
+
+        return cache.get(key) if cache is not None else None
+
+    # ....................... #
+
+    def store_simple(self, key: Any, value: Any) -> None:
+        """Memoize a resolved simple dependency for this scope (no-op when disabled)."""
+
+        cache = self._resolved_simple_cache
+
+        if cache is not None:
+            cache[key] = value
 
     # ....................... #
 

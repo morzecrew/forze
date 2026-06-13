@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import timedelta
 from typing import Any
 
 import attrs
@@ -106,6 +107,48 @@ class TestDeploymentProfile:
         rt = build_runtime(deployment=DeploymentProfile.FLEET)
 
         assert rt.deployment is DeploymentProfile.FLEET
+
+    def test_serverless_rejects_long_running_step(self) -> None:
+        plan = LifecyclePlan.from_steps(
+            _noop_step("relay", requires_long_running=True)
+        ).freeze()
+
+        with pytest.raises(CoreException) as ei:
+            ExecutionRuntime(lifecycle=plan, deployment=DeploymentProfile.SERVERLESS)
+
+        assert ei.value.kind is ExceptionKind.CONFIGURATION
+        assert "relay" in ei.value.summary
+
+    def test_serverless_accepts_ordinary_step(self) -> None:
+        plan = LifecyclePlan.from_steps(_noop_step("warm")).freeze()
+
+        ExecutionRuntime(lifecycle=plan, deployment=DeploymentProfile.SERVERLESS)
+
+    def test_single_process_skips_serverless_validation(self) -> None:
+        plan = LifecyclePlan.from_steps(
+            _noop_step("relay", requires_long_running=True)
+        ).freeze()
+
+        ExecutionRuntime(lifecycle=plan)
+
+    def test_build_runtime_serverless_drops_drain_to_zero(self) -> None:
+        rt = build_runtime(deployment=DeploymentProfile.SERVERLESS)
+
+        assert rt.deployment is DeploymentProfile.SERVERLESS
+        assert rt.drain_timeout == timedelta(0)
+
+    def test_build_runtime_default_drain_is_ten_seconds(self) -> None:
+        rt = build_runtime()
+
+        assert rt.drain_timeout == timedelta(seconds=10)
+
+    def test_build_runtime_explicit_drain_honored_under_serverless(self) -> None:
+        rt = build_runtime(
+            deployment=DeploymentProfile.SERVERLESS,
+            drain_timeout=timedelta(seconds=3),
+        )
+
+        assert rt.drain_timeout == timedelta(seconds=3)
 
 
 class TestDrainStateExposure:

@@ -233,6 +233,92 @@ class TestFrozenDepsPortCache:
         assert port_a is not port_b
 
 
+class TestFrozenDepsSimpleCache:
+    """Per-scope memoization of ``resolve_simple`` (gated by the same ``cache_ports`` flag)."""
+
+    def _counting_reg(self) -> tuple[Deps, list[int]]:
+        calls = [0]
+
+        def factory(ctx: ExecutionContext) -> object:
+            calls[0] += 1
+            return object()
+
+        return Deps.plain({_CLIENT: factory}), calls
+
+    def _ctx(
+        self,
+        reg: Deps,
+        *,
+        cache_ports: bool = True,
+        resolution_tracing: bool = False,
+        runtime_tracing: bool = False,
+    ) -> ExecutionContext:
+        fd = (
+            DepsRegistry.from_deps(reg)
+            .with_tracing(resolution=resolution_tracing, runtime=runtime_tracing)
+            .freeze()
+            .resolve()
+        )
+
+        return ExecutionContext(deps=fd, cache_ports=cache_ports)
+
+    def test_caching_on_reuses_resolved_dep(self) -> None:
+        reg, calls = self._counting_reg()
+        ctx = self._ctx(reg)
+
+        first = ctx.deps.resolve_simple(ctx, _CLIENT)
+        second = ctx.deps.resolve_simple(ctx, _CLIENT)
+
+        assert first is second
+        assert calls[0] == 1
+
+    def test_caching_off_rebuilds_each_time(self) -> None:
+        reg, calls = self._counting_reg()
+        ctx = self._ctx(reg, cache_ports=False)
+
+        first = ctx.deps.resolve_simple(ctx, _CLIENT)
+        second = ctx.deps.resolve_simple(ctx, _CLIENT)
+
+        assert first is not second
+        assert calls[0] == 2
+
+    def test_resolution_tracing_bypasses_cache(self) -> None:
+        reg, calls = self._counting_reg()
+        ctx = self._ctx(reg, resolution_tracing=True)
+
+        first = ctx.deps.resolve_simple(ctx, _CLIENT)
+        second = ctx.deps.resolve_simple(ctx, _CLIENT)
+
+        assert first is not second
+        assert calls[0] == 2
+
+    def test_runtime_tracer_records_on_cache_hit(self) -> None:
+        reg, calls = self._counting_reg()
+        ctx = self._ctx(reg, runtime_tracing=True)
+
+        first = ctx.deps.resolve_simple(ctx, _CLIENT)
+        second = ctx.deps.resolve_simple(ctx, _CLIENT)
+
+        # Still cached (factory built once), but the runtime tracer records each access —
+        # including the cache hit.
+        assert first is second
+        assert calls[0] == 1
+
+        trace = ctx.deps.runtime_trace()
+        assert trace is not None
+        assert [e.op for e in trace.events].count("resolve") == 2
+
+    def test_cache_is_per_scope(self) -> None:
+        reg, _ = self._counting_reg()
+        ctx_a = self._ctx(reg)
+        ctx_b = self._ctx(reg)
+
+        a = ctx_a.deps.resolve_simple(ctx_a, _CLIENT)
+        b = ctx_b.deps.resolve_simple(ctx_b, _CLIENT)
+
+        assert a is not b
+
+
 class TestFrozenDepsResolutionTrace:
     def test_trace_records_scope_and_provide_edges(self) -> None:
         resolved = (

@@ -698,3 +698,54 @@ class TestSensitiveRefusal:
         names = register_tools(server, reg, _ctx_factory)
 
         assert names
+
+
+# ....................... #
+
+
+class TestRuntimeLifespan:
+    """``runtime_lifespan`` holds one scope so ``get_context`` is warm across calls."""
+
+    async def test_holds_scope_and_shares_one_context(self) -> None:
+        from forze.application.execution import build_runtime
+        from forze_mcp import runtime_lifespan
+
+        runtime = build_runtime(MockDepsModule())
+        server = FastMCP("calc")
+
+        # Outside the scope there is no context.
+        with pytest.raises(Exception):
+            runtime.get_context()
+
+        async with runtime_lifespan(runtime)(server):
+            first = runtime.get_context()
+            second = runtime.get_context()
+
+            # Every call within the server's lifetime gets the *same* context, so its
+            # per-scope operation/port caches stay warm instead of rebuilding per call.
+            assert first is second
+
+        # Scope is torn down on exit.
+        with pytest.raises(Exception):
+            runtime.get_context()
+
+    async def test_wired_into_build_mcp_server(self) -> None:
+        from forze.application.execution import build_runtime
+        from forze_mcp import runtime_lifespan
+
+        runtime = build_runtime(MockDepsModule())
+        reg = _registry()
+
+        server = build_mcp_server(
+            reg,
+            runtime.get_context,
+            name="calc",
+            include_writes=True,
+            lifespan=runtime_lifespan(runtime),
+        )
+
+        # The lifespan opens the scope; tool calls then run against the shared context.
+        async with Client(server) as client:
+            result = await client.call_tool("calc.double", {"n": 21})
+
+        assert result.data.doubled == 42

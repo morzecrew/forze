@@ -218,3 +218,13 @@ class LifecycleStep(GraphStep):
     """The startup runs on one replica at a time (e.g. wrapped by ``forze_kits``
     ``singleton_lifecycle_step`` under a distributed lock). Satisfies the
     ``FLEET`` validation for a ``mutates_shared_state`` step."""
+
+    requires_long_running: bool = False
+    """Honesty marker: this step needs a long-running host process to keep working
+    after startup — a background poller, in-process relay/scheduler, or warm-up loop
+    that runs for the process lifetime rather than completing at startup.
+
+    Declared by the step author (cannot be detected structurally). Under a
+    ``SERVERLESS`` deployment profile such a step fails runtime assembly: a function
+    that freezes between invocations cannot host it — run it as a separate
+    long-running worker instead."""

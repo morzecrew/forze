@@ -3,7 +3,6 @@ import traceback
 from typing import Any, cast
 
 import attrs
-from opentelemetry import trace as otel_trace
 from structlog import DropEvent
 from structlog.typing import EventDict, ExcInfo
 
@@ -125,6 +124,10 @@ class OpenTelemetryContextInjector:
 
     def __call__(self, _: Any, __: str, event_dict: EventDict) -> EventDict:
         """Inject OpenTelemetry context into the event dict."""
+
+        # Deferred import: this processor is only added to the pipeline when OTel
+        # injection is enabled, so importing this module never pulls ``opentelemetry``.
+        from opentelemetry import trace as otel_trace
 
         span = otel_trace.get_current_span()
         ctx = span.get_span_context()

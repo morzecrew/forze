@@ -109,7 +109,10 @@ def register_resource_templates(
 
     :param server: A FastMCP server the caller owns.
     :param registry: The frozen operation registry to dispatch through.
-    :param ctx_factory: Factory yielding a fresh execution context per read.
+    :param ctx_factory: Yields the execution context for a read. Use the scope's shared
+        context (e.g. ``runtime.get_context`` under
+        :func:`~forze_mcp.lifespan.runtime_lifespan`); constructing a fresh context per
+        read is unsupported.
     :param templates: One :class:`ResourceTemplateSpec` per get-by-id operation to expose.
     :param identity: Resolver for the principal/tenant bound per read (defaults to a
         no-identity :class:`StaticIdentityResolver`).

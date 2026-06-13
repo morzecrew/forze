@@ -18,7 +18,7 @@ def build_runtime(
     concurrent_lifecycle: bool = False,
     cache_resolved_operations: bool = True,
     cache_resolved_ports: bool = True,
-    drain_timeout: timedelta = timedelta(seconds=10),
+    drain_timeout: timedelta | None = None,
     deployment: DeploymentProfile = DeploymentProfile.SINGLE_PROCESS,
 ) -> ExecutionRuntime:
     """Assemble an :class:`ExecutionRuntime` in one call.
@@ -55,12 +55,21 @@ def build_runtime(
         :attr:`ExecutionRuntime.cache_resolved_ports`.
     :param drain_timeout: Passed through to
         :attr:`ExecutionRuntime.drain_timeout` (bounded wait for in-flight
-        operations before lifecycle shutdown).
+        operations before lifecycle shutdown). ``None`` (default) resolves to
+        ``0`` under a ``SERVERLESS`` deployment — a frozen function has no drain
+        window — and ``10s`` otherwise; an explicit value is always honored.
     :param deployment: Passed through to :attr:`ExecutionRuntime.deployment`
         (``FLEET`` validates that shared-state-mutating lifecycle steps are
-        singleton-guarded).
+        singleton-guarded; ``SERVERLESS`` forbids ``requires_long_running`` steps).
     :returns: Runtime ready for :meth:`ExecutionRuntime.scope`.
     """
+
+    if drain_timeout is None:
+        drain_timeout = (
+            timedelta(0)
+            if deployment is DeploymentProfile.SERVERLESS
+            else timedelta(seconds=10)
+        )
 
     registry = DepsRegistry(modules=tuple(modules), deps=tuple(deps))
     plan = LifecyclePlan(

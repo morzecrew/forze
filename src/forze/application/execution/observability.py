@@ -12,9 +12,9 @@ from __future__ import annotations
 from time import perf_counter
 from typing import TYPE_CHECKING, Any, Callable, Iterable
 
-from opentelemetry import metrics, trace
-from opentelemetry.metrics import Observation
-from opentelemetry.trace import Status, StatusCode
+# OpenTelemetry is imported lazily inside the ``instrument_*`` functions below so that
+# merely importing this module (it is re-exported from ``forze.application.execution``)
+# does not pull ``opentelemetry`` into the import path of an uninstrumented app.
 
 from forze.application.contracts.execution import (
     Middleware,
@@ -80,6 +80,8 @@ def instrument_operations(
     correlate logs to the active span.
     """
 
+    from opentelemetry import metrics, trace
+
     tracer = tracer or trace.get_tracer("forze")
     meter = meter or metrics.get_meter("forze")
 
@@ -142,6 +144,9 @@ def instrument_resilience(
     Emits via the global OTel meter unless *meter* is supplied. Call once at
     assembly time, alongside :func:`instrument_operations`.
     """
+
+    from opentelemetry import metrics
+    from opentelemetry.metrics import Observation
 
     meter = meter or metrics.get_meter("forze")
 
@@ -249,6 +254,9 @@ def instrument_tenant_pools(
     assembly time, alongside the other ``instrument_*`` calls.
     """
 
+    from opentelemetry import metrics
+    from opentelemetry.metrics import Observation
+
     meter = meter or metrics.get_meter("forze")
 
     def _observe(
@@ -303,6 +311,8 @@ def _telemetry_factory(
     counter: Counter,
     duration: Histogram,
 ) -> MiddlewareFactory:
+    from opentelemetry.trace import Status, StatusCode
+
     def factory(ctx: ExecutionContext) -> Middleware[Any, Any]:
         async def middleware(
             next: Any,  # noqa: A002 — matches the Middleware protocol parameter name
