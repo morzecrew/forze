@@ -32,3 +32,11 @@ class Neo4jGraphConfig(TenantAwareIntegrationConfig):
     cannot surface a foreign node; ``anchor`` constrains only the start/endpoints (cheaper,
     safe only when no edge ever crosses a tenant boundary).
     """
+
+    allow_raw_query: bool = True
+    """Whether the whole-query raw hatch (``ctx.graph.raw``) is permitted.
+
+    Raw is a trusted-caller escape (a caller-written query can read cross-tenant even with
+    ``$tenant`` bound). Set ``False`` to fail closed in enforced-tenancy deployments and use
+    the structured ports / ``scoped_walk`` instead.
+    """

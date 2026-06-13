@@ -308,6 +308,43 @@ class TestRefs:
         assert (ep.from_kind, ep.to_kind) == ("person", "tag")
 
 
+class TestScopedWalkParams:
+    def test_valid(self) -> None:
+        from forze.application.contracts.graph import GraphPathStep, ScopedWalkParams
+
+        params = ScopedWalkParams(
+            steps=[GraphPathStep(edge_kinds=frozenset({"knows"}), min_hops=1, max_hops=3)],
+            target_kind="person",
+        )
+        assert len(params.steps) == 1
+        assert params.limit == 100
+
+    def test_step_rejects_bad_hop_bounds(self) -> None:
+        from forze.application.contracts.graph import GraphPathStep
+
+        with pytest.raises(CoreException, match="graph_path_step_bounds"):
+            GraphPathStep(min_hops=3, max_hops=1)
+
+        with pytest.raises(CoreException, match="graph_path_step_bounds"):
+            GraphPathStep(min_hops=-1, max_hops=2)
+
+    def test_rejects_empty_steps(self) -> None:
+        from forze.application.contracts.graph import ScopedWalkParams
+
+        with pytest.raises(CoreException, match="graph_scoped_walk_steps"):
+            ScopedWalkParams(steps=[], target_kind="person")
+
+    def test_rejects_nonpositive_limit(self) -> None:
+        from forze.application.contracts.graph import GraphPathStep, ScopedWalkParams
+
+        with pytest.raises(CoreException, match="graph_scoped_walk_limit"):
+            ScopedWalkParams(
+                steps=[GraphPathStep()],
+                target_kind="person",
+                limit=0,
+            )
+
+
 class TestKeyField:
     def test_node_key_field_default_and_override(self) -> None:
         assert _person_node().key_field == "id"
@@ -494,6 +531,9 @@ class TestGraphPortProtocols:
 
             async def shortest_path(self, from_ref, to_ref, params):  # noqa: ANN001, ANN202
                 return None
+
+            async def scoped_walk(self, anchor, params):  # noqa: ANN001, ANN202
+                return []
 
             async def k_shortest_paths(self, from_ref, to_ref, params, *, k):  # noqa: ANN001, ANN202
                 return []

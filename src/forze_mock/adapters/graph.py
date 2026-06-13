@@ -22,6 +22,7 @@ from forze.application.contracts.graph import (
     GraphWalkParams,
     GraphWalkStep,
     NeighborRow,
+    ScopedWalkParams,
     ShortestPathParams,
     ShortestPathResult,
     VertexRef,
@@ -183,6 +184,13 @@ class MockGraphAdapter(MockTenancyMixin):
         params: ShortestPathParams,
     ) -> ShortestPathResult | None:
         raise _nyi("shortest_path")
+
+    async def scoped_walk(
+        self,
+        anchor: VertexRef,
+        params: ScopedWalkParams,
+    ) -> Sequence[BaseModel]:
+        raise _nyi("scoped_walk")
 
     # ....................... #
     # GraphCommandPort

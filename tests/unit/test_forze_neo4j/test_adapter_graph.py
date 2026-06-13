@@ -280,6 +280,67 @@ async def test_raw_query_passthrough_when_not_tenant_aware() -> None:
 
 
 @pytest.mark.asyncio
+async def test_raw_query_disabled_fails_closed() -> None:
+    # allow_raw_query=False refuses the whole-query hatch before touching the client.
+    adapter, client = _adapter(rows=[], allow_raw_query=False)
+
+    with pytest.raises(CoreException, match="graph_raw_disabled"):
+        await adapter.run("MATCH (n) RETURN n")
+
+    assert client.calls == []
+
+
+@pytest.mark.asyncio
+async def test_scoped_walk_builds_tenant_scoped_query_and_materializes() -> None:
+    from forze.application.contracts.graph import GraphPathStep, ScopedWalkParams
+    from forze.application.contracts.tenancy import TenantIdentity
+
+    tid = uuid4()
+    adapter, client = _adapter(
+        rows=[{"m": {"id": "b"}}, {"m": {"id": "c"}}],
+        tenant_aware=True,
+        tenant_provider=lambda: TenantIdentity(tenant_id=tid),
+    )
+
+    out = await adapter.scoped_walk(
+        VertexRef(kind="User", key="a"),
+        ScopedWalkParams(
+            steps=[GraphPathStep(edge_kinds=frozenset({"FOLLOWS"}), max_hops=3)],
+            target_kind="User",
+            limit=10,
+        ),
+    )
+
+    query, params = client.calls[-1]
+    # anchor + target + full-path tenant constraint, all adapter-owned
+    assert "(n0:`User` {id: $key, tenant_id: $tenant})" in query
+    assert "(m:`User` {tenant_id: $tenant})" in query
+    assert "WHERE all(_n IN nodes(path) WHERE _n.`tenant_id` = $tenant)" in query
+    assert params == {"key": "a", "limit": 10, "tenant": str(tid)}
+    assert [u.id for u in out] == ["b", "c"]
+
+
+@pytest.mark.asyncio
+async def test_scoped_walk_fails_closed_without_tenant() -> None:
+    from forze.application.contracts.graph import GraphPathStep, ScopedWalkParams
+
+    adapter, client = _adapter(
+        rows=[], tenant_aware=True, tenant_provider=lambda: None
+    )
+
+    with pytest.raises(CoreException, match="tenant_required"):
+        await adapter.scoped_walk(
+            VertexRef(kind="User", key="a"),
+            ScopedWalkParams(
+                steps=[GraphPathStep(edge_kinds=frozenset({"FOLLOWS"}))],
+                target_kind="User",
+            ),
+        )
+
+    assert client.calls == []
+
+
+@pytest.mark.asyncio
 async def test_deferred_method_raises() -> None:
     adapter, _ = _adapter()
     with pytest.raises(CoreException, match="not implemented by forze_neo4j yet") as ei:

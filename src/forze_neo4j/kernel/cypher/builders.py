@@ -15,7 +15,7 @@ anchor — so a cross-tenant edge cannot leak a foreign node's properties (defen
 that does not depend on the "no edge crosses a tenant boundary" write-path invariant).
 """
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 
 from forze.application.contracts.graph import GraphDirection
 
@@ -80,8 +80,14 @@ def _type_pattern(types: Iterable[str]) -> str:
 # ....................... #
 
 
-def _rel(direction: GraphDirection, type_pattern: str, *, quant: str = "") -> str:
-    body = f"[r{type_pattern}{quant}]"
+def _rel(
+    direction: GraphDirection,
+    type_pattern: str,
+    *,
+    quant: str = "",
+    var: str = "r",
+) -> str:
+    body = f"[{var}{type_pattern}{quant}]"
 
     if direction is GraphDirection.OUT:
         return f"-{body}->"
@@ -212,6 +218,49 @@ def expand(
         f"type(last(relationships(path))) AS from_parent_type, "
         f"properties(nodes(path)[-2]) AS parent, labels(nodes(path)[-2]) AS parent_labels\n"
         f"ORDER BY depth\nLIMIT $max_results"
+    )
+
+
+def scoped_walk(
+    *,
+    anchor_label: str,
+    anchor_key_field: str,
+    segments: Sequence[tuple[GraphDirection, Iterable[str], int, int]],
+    target_label: str,
+    tenant_field: str | None = None,
+) -> str:
+    """Tenant-safe multi-segment walk: anchor → chained var-length segments → typed target.
+
+    Every node on the path is tenant-constrained (anchor inline, interior + target via the
+    ``WHERE all(...)`` predicate), so the traversal cannot cross tenants. Anonymous junction
+    nodes separate consecutive segments. Returns distinct target property maps.
+    """
+
+    parts = [
+        f"(n0:{quote(anchor_label)} {_match_map(anchor_key_field, tenant_field)})"
+    ]
+    last = len(segments) - 1
+
+    for i, (direction, edge_types, lo, hi) in enumerate(segments):
+        # Anonymous relationships (no ``r`` var) so multiple segments don't collide; the
+        # walk returns only the target vertex, so edge bindings are not needed.
+        parts.append(
+            _rel(direction, _type_pattern(edge_types), quant=f"*{int(lo)}..{int(hi)}", var="")
+        )
+
+        if i < last:
+            parts.append("()")
+        else:
+            parts.append(
+                f"(m:{quote(target_label)}{_tenant_only_map(tenant_field, interior=True)})"
+            )
+
+    pattern = "".join(parts)
+
+    return (
+        f"MATCH path = {pattern}\n"
+        f"{_path_tenant_pred(tenant_field, interior=True)}"
+        f"RETURN DISTINCT properties(m) AS m\nLIMIT $limit"
     )
 
 

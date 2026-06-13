@@ -44,4 +44,5 @@ class ConfigurableNeo4jGraph:
             tenant_property=self.config.tenant_property,
             database=self.config.database,
             traversal_isolation=self.config.traversal_isolation,
+            allow_raw_query=self.config.allow_raw_query,
         )

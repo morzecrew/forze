@@ -28,6 +28,7 @@ from forze.application.contracts.graph import (
     GraphWalkParams,
     GraphWalkStep,
     NeighborRow,
+    ScopedWalkParams,
     ShortestPathParams,
     ShortestPathResult,
     VertexRef,
@@ -79,6 +80,16 @@ class Neo4jGraphAdapter(TenancyMixin):
     ``shortest_path`` result, so a cross-tenant edge cannot surface a foreign node.
     ``anchor`` constrains only the start/endpoint nodes — cheaper, but safe only under the
     invariant that no edge ever crosses a tenant boundary.
+    """
+
+    allow_raw_query: bool = True
+    """Whether the whole-query raw hatch :meth:`run` is permitted.
+
+    The raw hatch is a **trusted-caller** escape: the caller writes the entire Cypher, so a
+    buggy or hostile query can read cross-tenant even though ``$tenant`` is bound. Set this
+    ``False`` to fail closed (code ``graph_raw_disabled``) in deployments that require
+    enforced tenancy — use the structured ports (full-path scoped) and :meth:`scoped_walk`
+    instead.
     """
 
     # ....................... #
@@ -381,6 +392,35 @@ class Neo4jGraphAdapter(TenancyMixin):
         return ShortestPathResult(vertices=vertices, edges=edges)
 
     # ....................... #
+
+    async def scoped_walk(
+        self,
+        anchor: VertexRef,
+        params: ScopedWalkParams,
+    ) -> Sequence[BaseModel]:
+        anchor_node = self._node(anchor.kind)
+        self._node(params.target_kind)  # validate the target kind is in the spec
+
+        segments = [
+            (step.direction, step.edge_kinds, step.min_hops, step.max_hops)
+            for step in params.steps
+        ]
+        query = builders.scoped_walk(
+            anchor_label=anchor.kind,
+            anchor_key_field=anchor_node.key_field,
+            segments=segments,
+            target_label=params.target_kind,
+            tenant_field=self._tenant_field,
+        )
+        rows = await self.client.run(
+            query,
+            self._params(key=anchor.key, limit=params.limit),
+            database=self.database,
+        )
+
+        return [self._vertex_model(params.target_kind, row["m"]) for row in rows]
+
+    # ....................... #
     # GraphCommandPort
 
     async def create_vertex(
@@ -518,6 +558,16 @@ class Neo4jGraphAdapter(TenancyMixin):
     async def run(
         self, query: str, params: JsonDict | None = None
     ) -> Sequence[JsonDict]:
+        # The whole-query raw hatch is trusted-caller by construction; a deployment that
+        # requires enforced tenancy disables it (``allow_raw_query=False``) and uses the
+        # structured ports / ``scoped_walk`` instead.
+        if not self.allow_raw_query:
+            raise exc.configuration(
+                f"Raw graph queries are disabled for module {self.spec.name!r} "
+                "(allow_raw_query=False); use the structured ports or scoped_walk.",
+                code="graph_raw_disabled",
+            )
+
         # Tenant-aware raw queries fail closed: ``_tenant_str`` →
         # ``require_tenant_if_aware`` raises if no tenant is bound (was: silent
         # cross-tenant access). The framework tenant is bound as ``$tenant`` (authoritative

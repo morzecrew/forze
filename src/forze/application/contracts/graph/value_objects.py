@@ -193,6 +193,74 @@ class GraphWalkStep:
 
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
+class GraphPathStep:
+    """One variable-length segment of a :class:`ScopedWalkParams` traversal."""
+
+    edge_kinds: frozenset[str] = frozenset()
+    """Logical edge kinds allowed on this segment; empty = any kind in the spec."""
+
+    direction: GraphDirection = GraphDirection.OUT
+    """Direction for this segment's hops."""
+
+    min_hops: int = 1
+    """Minimum hops for this segment (``>= 0``)."""
+
+    max_hops: int = 1
+    """Maximum hops for this segment (``>= min_hops``)."""
+
+    # ....................... #
+
+    def __attrs_post_init__(self) -> None:
+        if self.min_hops < 0 or self.max_hops < self.min_hops:
+            raise exc.validation(
+                "GraphPathStep requires 0 <= min_hops <= max_hops",
+                code="graph_path_step_bounds",
+            )
+
+
+# ....................... #
+
+
+@final
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class ScopedWalkParams:
+    """Parameters for :meth:`GraphQueryPort.scoped_walk` — a tenant-safe multi-segment walk.
+
+    The traversal is fully adapter-owned and tenant-scoped end to end (anchor, every
+    intermediate node, and the typed target), so it is a safe alternative to the raw hatch
+    for multi-segment patterns the fixed traversal ports cannot express.
+    """
+
+    steps: tuple[GraphPathStep, ...] = attrs.field(converter=tuple)
+    """Ordered segments; each is a variable-length hop chained to the next."""
+
+    target_kind: str
+    """Logical node kind of the terminal vertex; results are typed per its ``read`` model."""
+
+    limit: int = 100
+    """Maximum number of distinct target vertices returned."""
+
+    # ....................... #
+
+    def __attrs_post_init__(self) -> None:
+        if not self.steps:
+            raise exc.validation(
+                "ScopedWalkParams requires at least one step",
+                code="graph_scoped_walk_steps",
+            )
+
+        if self.limit < 1:
+            raise exc.validation(
+                "ScopedWalkParams limit must be >= 1",
+                code="graph_scoped_walk_limit",
+            )
+
+
+# ....................... #
+
+
+@final
+@attrs.define(slots=True, kw_only=True, frozen=True)
 class ShortestPathParams:
     """Parameters for :meth:`GraphQueryPort.shortest_path` and ``k_shortest_paths``.
 

@@ -162,3 +162,48 @@ def test_shortest_path_interior_constrains_all_path_nodes() -> None:
     )
     assert "shortestPath((a)" in q
     assert "WHERE all(_n IN nodes(path) WHERE _n.`tenant_id` = $tenant)" in q
+
+
+# ----------------------- #
+# scoped_walk
+
+
+def test_scoped_walk_single_segment_plain() -> None:
+    q = builders.scoped_walk(
+        anchor_label="User",
+        anchor_key_field="id",
+        segments=[(GraphDirection.OUT, ["FOLLOWS"], 1, 3)],
+        target_label="User",
+    )
+    assert "MATCH path = (n0:`User` {id: $key})" in q
+    assert "-[:`FOLLOWS`*1..3]->(m:`User`)" in q
+    assert "RETURN DISTINCT properties(m) AS m" in q
+    assert "$tenant" not in q  # no tenant field → no scoping
+
+
+def test_scoped_walk_tenant_scoped_anchor_target_and_path() -> None:
+    q = builders.scoped_walk(
+        anchor_label="User",
+        anchor_key_field="id",
+        segments=[(GraphDirection.OUT, ["FOLLOWS"], 1, 2)],
+        target_label="User",
+        tenant_field="tenant_id",
+    )
+    assert "(n0:`User` {id: $key, tenant_id: $tenant})" in q  # anchor scoped
+    assert "(m:`User` {tenant_id: $tenant})" in q  # target scoped
+    assert "WHERE all(_n IN nodes(path) WHERE _n.`tenant_id` = $tenant)" in q  # interior
+
+
+def test_scoped_walk_multi_segment_chains_with_junction() -> None:
+    q = builders.scoped_walk(
+        anchor_label="User",
+        anchor_key_field="id",
+        segments=[
+            (GraphDirection.OUT, ["FOLLOWS"], 1, 1),
+            (GraphDirection.IN, ["LIKES"], 1, 2),
+        ],
+        target_label="Post",
+        tenant_field="tenant_id",
+    )
+    # segment 1 → anonymous junction () → segment 2 → typed target
+    assert "-[:`FOLLOWS`*1..1]->()<-[:`LIKES`*1..2]-(m:`Post` {tenant_id: $tenant})" in q
