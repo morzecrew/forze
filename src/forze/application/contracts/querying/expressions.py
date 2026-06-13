@@ -54,10 +54,13 @@ QueryElementOpConjunction = TypedDict(
         "$like": TextPatternValue,
         "$ilike": TextPatternValue,
         "$regex": TextPatternValue,
+        "$in": Array,
+        "$nin": Array,
     },
     total=False,
 )
-"""Operator map for a single array element (equality, ordering, and text patterns)."""
+"""Operator map for a single array element (equality, ordering, text patterns, and
+membership) — mirrors ``ALL_ELEMENT_OPS``."""
 
 QueryElementValueMapValue = QueryElementOpConjunction | Scalar
 """Value for one element-relative field inside ``$any`` / ``$all`` / ``$none``."""

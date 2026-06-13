@@ -205,6 +205,8 @@ class _FieldPredicate(QueryCondition):
     # ....................... #
 
     def _elem(self) -> Any:
+        self._reject_compare()
+
         if self.field == ELEM_SCALAR_FIELD:
             return {self.op: self.value}
 
@@ -213,6 +215,8 @@ class _FieldPredicate(QueryCondition):
     # ....................... #
 
     def _elem_entry(self) -> tuple[str, dict[str, Any]]:
+        self._reject_compare()
+
         if self.field == ELEM_SCALAR_FIELD:
             raise exc.precondition(
                 "A scalar-element predicate cannot be combined with object-field "
@@ -220,6 +224,17 @@ class _FieldPredicate(QueryCondition):
             )
 
         return self.field, {self.op: self.value}
+
+    # ....................... #
+
+    def _reject_compare(self) -> None:
+        # Field-to-field comparison ($fields) has no element-constraint form; lowering it
+        # here would silently treat the referenced field name as a literal value.
+        if self.compare:
+            raise exc.precondition(
+                "Field-to-field comparison is not expressible inside an element "
+                "quantifier predicate",
+            )
 
 
 # ....................... #

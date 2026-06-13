@@ -255,6 +255,20 @@ class TestBuilderCoverage:
         with pytest.raises(NotImplementedError):
             QueryCondition().build()
 
+    def test_field_compare_cannot_be_quantifier_inner(self) -> None:
+        # Field-to-field comparison has no element-constraint form; reject it rather than
+        # lowering the referenced field name to a literal value.
+        built = Q.field("items").any(Q.field("a").gt(Q.field("b")))
+        with pytest.raises(CoreException, match="Field-to-field comparison"):
+            built.build()
+
+    def test_field_compare_in_quantifier_object_merge_rejected(self) -> None:
+        built = Q.field("items").any(
+            Q.field("a").gt(Q.field("b")) & Q.field("c").eq(1)
+        )
+        with pytest.raises(CoreException, match="Field-to-field comparison"):
+            built.build()
+
 
 class TestTypeSurface:
     def test_field_returns_field_ref(self) -> None:

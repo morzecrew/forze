@@ -1231,6 +1231,16 @@ class TestNestedQuantifierRendering:
             s = _sql.as_string(None)
             assert "jsonb_array_elements" in s
 
+    def test_object_inner_rejects_unsupported_node(self) -> None:
+        # A node that is neither a field nor a nested quantifier must fail fast, not be
+        # silently dropped from the object-element predicate.
+        r = self._renderer()
+        bad_inner = QueryAnd(
+            (QueryField("tags", "$eq", "x"), QueryCompare("a", "$eq", "b")),
+        )
+        with pytest.raises(CoreException, match="Unsupported node in object element"):
+            r.render(QueryElem("items", "$any", bad_inner))
+
     def test_scalar_array_of_arrays_nested_quantifier(self) -> None:
         # ``matrix $any {$any: "x"}`` — the element is itself a scalar sub-array.
         class _Row(BaseModel):

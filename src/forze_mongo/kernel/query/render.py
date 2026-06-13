@@ -656,12 +656,12 @@ class MongoQueryRenderer:
         quantifier: str,
         inner: QueryExpr,
     ) -> JsonDict:
-        # Already an aggregation-expression context (e.g. a computed-field filter): a
-        # nested quantifier renders as the bare boolean, not wrapped in a query $expr.
-        if self._inner_has_nested_elem(inner):
-            return self._elem_quant_expr(f"${path}", quantifier, inner, 0)
-
-        return self._render_elem(path, quantifier, inner)
+        # This is an aggregation-expression context (e.g. a computed-field filter or
+        # ``$having``), so an element quantifier must compile to a pure aggregation
+        # boolean. ``_render_elem`` emits query-form operators ($expr/$elemMatch) that are
+        # invalid inside a ``$cond``, so always use the aggregation form here — nested or
+        # not.
+        return self._elem_quant_expr(f"${path}", quantifier, inner, 0)
 
     # ....................... #
 

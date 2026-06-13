@@ -264,7 +264,8 @@ class TestRpcStyle:
         client = TestClient(_build_app("rpc"))
 
         created = client.post("/notes/create", json={"title": "x"}).json()
-        response = client.patch("/notes/update", json={"title": "y"})
+        # Supply a valid id so the 422 isolates the missing rev, not the missing id.
+        response = client.patch(f"/notes/update?id={created['id']}", json={"title": "y"})
 
         assert response.status_code == 422
 

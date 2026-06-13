@@ -234,11 +234,15 @@ open — no Authorize button. `apply_openapi_security` closes that gap from the
 once:
 
 ```python
+from forze.application.contracts.authn import AuthnSpec
 from forze_fastapi.security import (
     AuthnRequirement,
     HeaderTokenAuthn,
     apply_openapi_security,
 )
+
+# Your authn aggregate's spec — the same one your routes and the engine resolve.
+API = AuthnSpec(name="api", enabled_methods=frozenset({"token"}))
 
 requirement = AuthnRequirement(
     ingress=(HeaderTokenAuthn(authn_spec=API, header_name="Authorization"),),

@@ -10,7 +10,6 @@ from forze.application.contracts.document import DocumentSpec, DocumentWriteType
 from forze.base.exceptions import CoreException
 from forze_mock.adapters import MockDocumentAdapter, MockState
 from tests.support.aggregate_having import (
-    SEED,
     AggCreate,
     AggDoc,
     AggRead,

@@ -130,12 +130,23 @@ def _resolved_nulls(
     directions: Sequence[str],
     nulls: Sequence[str] | None,
 ) -> list[str]:
-    """The explicit *nulls* placement, or the canonical default per direction."""
+    """The explicit *nulls* placement, or the canonical default per direction.
+
+    Supplied markers are lower-cased and validated so the result matches what
+    :func:`decode_keyset_v1` produces and what :func:`ordered_compare` expects — this
+    helper feeds both the encoded token and the seek-comparison path.
+    """
 
     if nulls is None:
         return [_canonical_nulls(d) for d in directions]
 
-    return list(nulls)
+    resolved = [str(n).lower() for n in nulls]
+
+    for n in resolved:
+        if n not in ("first", "last"):
+            raise exc.internal(f"Invalid null placement {n!r}; expected 'first'/'last'")
+
+    return resolved
 
 
 def row_passes_keyset_seek(

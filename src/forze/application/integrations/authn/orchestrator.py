@@ -78,10 +78,14 @@ class AuthnOrchestrator(AuthnPort):
     """Principal eligibility gate applied after credential verification."""
 
     actor_claim: str | None = attrs.field(default=None)
-    """When set (e.g. ``"act"``), the token's claim of this name is read as an RFC 8693
-    delegation assertion: the on-behalf-of **actor** is resolved through the same principal
-    resolver and attached as :attr:`AuthnIdentity.actor`. ``None`` (default) ignores any such
-    claim. Only the token path honors it — password/API-key assertions carry no actor."""
+    """When set (e.g. ``"act"``), the **token** path reads the claim of this name as an
+    RFC 8693 delegation assertion: the on-behalf-of **actor** is resolved through the same
+    principal resolver and attached as :attr:`AuthnIdentity.actor`. ``None`` (default)
+    ignores token actor claims. This gate applies only to tokens, which are not
+    first-party. API-key assertions carry an **intrinsic** actor under the well-known
+    ``act`` claim (:data:`ACT_CLAIM`) that the verifier emits and the framework always
+    honors — regardless of ``actor_claim`` — still resolving and eligibility-gating the
+    actor principal. Password assertions carry no actor."""
 
     events: AuthnEventEmitter | None = attrs.field(default=None)
     """Optional authn event emitter. ``None`` (default) disables emission.

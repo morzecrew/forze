@@ -603,6 +603,9 @@ class TestMongoQueryRendererExprPredicate:
         assert out == {"$nor": [{"$eq": ["$a", 1]}]}
 
     def test_elem_expr_predicate_scalar_any(self) -> None:
+        # In an aggregation-expression context (computed-field filter / $having) an element
+        # quantifier must compile to a pure aggregation boolean — never the query form
+        # ($or/$expr/$elemMatch), which is invalid inside a $cond.
         r = MongoQueryRenderer()
         out = r.render_expr_predicate(
             QueryElem(
@@ -611,7 +614,11 @@ class TestMongoQueryRendererExprPredicate:
                 QueryField(ELEM_SCALAR_FIELD, "$eq", "z"),
             ),
         )
-        assert "$or" in out
+        assert "$or" not in out
+        assert "$expr" not in out
+        # $any → at least one element survives the $filter.
+        assert "$gt" in out
+        assert "$filter" in out["$gt"][0]["$size"]
 
     def test_or_multi_and_empty(self) -> None:
         r = MongoQueryRenderer()
@@ -978,7 +985,7 @@ class TestMongoNestedQuantifiers:
     @pytest.mark.parametrize("outer", ["$any", "$all", "$none"])
     @pytest.mark.parametrize("inner", ["$any", "$all", "$none"])
     def test_all_combinations_render_via_expr(self, outer: str, inner: str) -> None:
-        # Every outer×inner combination now compiles (none raises) to an aggregation
+        # Every outer x inner combination now compiles (none raises) to an aggregation
         # $expr — semantic correctness is pinned by the cross-backend parity suite.
         r = MongoQueryRenderer()
         out = r.render(self._nested(outer, inner))

@@ -364,6 +364,9 @@ class PsycopgQueryRenderer:
                     "percentile_cont({}) WITHIN GROUP (ORDER BY {})",
                 ).format(sql.Literal(computed.p), field_expr)
 
+            case _:  # pyright: ignore[reportUnnecessaryComparison]
+                raise exc.internal(f"Unsupported aggregate function: {function!r}")
+
         return self._render_aggregate_filter(agg_expr, computed)
 
     # ....................... #
@@ -1105,6 +1108,15 @@ class PsycopgQueryRenderer:
             case QueryAnd(items):
                 fields = [i for i in items if isinstance(i, QueryField)]
                 nested = [i for i in items if isinstance(i, QueryElem)]
+
+                unsupported = [
+                    i for i in items if not isinstance(i, (QueryField, QueryElem))
+                ]
+                if unsupported:
+                    raise exc.internal(
+                        "Unsupported node in object element predicate: "
+                        f"{unsupported[0]!r}",
+                    )
 
             case QueryField() as f:
                 fields = [f]

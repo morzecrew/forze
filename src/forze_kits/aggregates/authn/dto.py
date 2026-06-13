@@ -1,6 +1,8 @@
 from datetime import datetime
 from uuid import UUID
 
+from pydantic import Field
+
 from forze.domain.models import BaseDTO
 
 # ----------------------- #
@@ -192,7 +194,7 @@ class AuthnApiKeyListItemDTO(BaseDTO):
 class AuthnApiKeyListDTO(BaseDTO):
     """A principal's API keys (non-secret descriptors)."""
 
-    keys: list[AuthnApiKeyListItemDTO] = []
+    keys: list[AuthnApiKeyListItemDTO] = Field(default_factory=list)
     """The principal's keys, newest-first ordering left to the adapter."""
 
 

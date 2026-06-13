@@ -543,7 +543,7 @@ class PostgresReadGateway[M: BaseModel](
             model_type=self.model_type,
             nested_field_hints=self.nested_field_hints,
         )
-        _parsed, select_clause, group_clause, aggregate_params = (
+        parsed_, select_clause, group_clause, aggregate_params = (
             renderer.render_aggregates(
                 aggregates,
             )
@@ -558,6 +558,17 @@ class PostgresReadGateway[M: BaseModel](
 
         if group_clause is not None:
             inner += sql.SQL(" GROUP BY {group}").format(group=group_clause)
+
+        if parsed_.having is not None:
+            # ``$having`` filters grouped rows, so apply it before counting (mirrors
+            # ``find_many_aggregates``); otherwise the count includes filtered-out groups.
+            having_renderer = PsycopgQueryRenderer(table_alias="_agg")
+            having_sql, having_params = having_renderer.render(parsed_.having)
+            inner = sql.SQL("SELECT * FROM ({inner}) AS _agg WHERE {having}").format(
+                inner=inner,
+                having=having_sql,
+            )
+            params = list(params) + list(having_params)
 
         stmt = sql.SQL("SELECT COUNT(*) FROM ({inner}) AS agg").format(inner=inner)
         res = await self.client.fetch_value(stmt, params, default=0)

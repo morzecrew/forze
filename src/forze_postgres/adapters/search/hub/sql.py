@@ -166,6 +166,7 @@ class HubSearchSqlMixin[M: BaseModel]:
 
         for field, value in sorts.items():
             order = value.get("dir") if isinstance(value, Mapping) else value
+            nulls = value.get("nulls") if isinstance(value, Mapping) else None
             key = sort_key_expr(
                 field=field,
                 column_types=types,
@@ -174,7 +175,18 @@ class HubSearchSqlMixin[M: BaseModel]:
                 table_alias=None,
             )
             dir_sql = "ASC" if str(order).lower() == "asc" else "DESC"
-            parts.append(sql.SQL("{} {}").format(key, sql.SQL(dir_sql)))
+
+            if nulls is not None:
+                nulls_sql = (
+                    "NULLS FIRST" if str(nulls).lower() == "first" else "NULLS LAST"
+                )
+                parts.append(
+                    sql.SQL("{} {} {}").format(
+                        key, sql.SQL(dir_sql), sql.SQL(nulls_sql)
+                    ),
+                )
+            else:
+                parts.append(sql.SQL("{} {}").format(key, sql.SQL(dir_sql)))
 
         return sql.SQL(", ").join(parts)
 

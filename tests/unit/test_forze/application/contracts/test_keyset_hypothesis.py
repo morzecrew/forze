@@ -25,8 +25,10 @@ def test_keyset_v1_roundtrip(
     vals = values[:n]
 
     token = encode_keyset_v1(sort_keys=keys, directions=dirs, values=vals)
-    decoded_keys, decoded_dirs, _decoded_nulls, decoded_vals = decode_keyset_v1(token)
+    decoded_keys, decoded_dirs, decoded_nulls, decoded_vals = decode_keyset_v1(token)
 
     assert decoded_keys == keys
     assert decoded_dirs == dirs
     assert decoded_vals == vals
+    # No explicit nulls were encoded → canonical placement per direction round-trips.
+    assert decoded_nulls == ["first" if d == "asc" else "last" for d in dirs]

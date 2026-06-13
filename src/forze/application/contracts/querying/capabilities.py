@@ -160,58 +160,71 @@ def validate_query_capabilities(
     :func:`~forze.base.exceptions.exc.precondition` with code
     :data:`UNSUPPORTED_QUERY_FEATURE_CODE`, naming the feature and *backend*. Call it at
     the top of a renderer's filter entry, before compiling to the backend dialect.
+
+    This runs on every query, so the walk is allocation-free (module-level helpers, no
+    per-call closures) and the hot ``QueryField`` case is matched first.
     """
 
-    def _fail(feature: str) -> None:
-        raise exc.precondition(
-            f"Query feature {feature} is not supported by the {backend!r} backend.",
-            code=UNSUPPORTED_QUERY_FEATURE_CODE,
-        )
+    _walk_caps(expr, caps, backend, caps.value_ops, in_element=False)
 
-    def _walk(node: QueryExpr, *, in_element: bool) -> None:
-        match node:
-            case QueryAnd(items) | QueryOr(items):
-                for item in items:
-                    _walk(item, in_element=in_element)
 
-            case QueryNot(item):
-                if not caps.supports_negation:
-                    _fail("negation ($not)")
+def _cap_fail(backend: str, feature: str) -> None:
+    raise exc.precondition(
+        f"Query feature {feature} is not supported by the {backend!r} backend.",
+        code=UNSUPPORTED_QUERY_FEATURE_CODE,
+    )
 
-                _walk(item, in_element=in_element)
 
-            case QueryField(_, op, _):
-                allowed = caps.element_ops if in_element else caps.value_ops
+def _walk_caps(
+    node: QueryExpr,
+    caps: QueryCapabilities,
+    backend: str,
+    allowed: frozenset[str],
+    *,
+    in_element: bool,
+) -> None:
+    # ``allowed`` (value_ops or element_ops for the current level) is threaded down so the
+    # hot per-field check is one membership test with no re-derivation.
+    match node:
+        case QueryField(_, op, _):
+            if op not in allowed:
+                # Hierarchy ops live on their own capability axis, not in value_ops, so
+                # they only reach this slow branch when not already allowed.
+                if op in HIERARCHY_OPS:
+                    if in_element:
+                        _cap_fail(
+                            backend, f"hierarchy operator {op!r} inside element quantifiers"
+                        )
 
-                # A supported value op short-circuits on one membership test (the hot
-                # case). Hierarchy ops live on their own capability axis, not in value_ops,
-                # so they only reach the slower branch when not already allowed.
-                if op not in allowed:
-                    if op in HIERARCHY_OPS:
-                        if in_element:
-                            _fail(f"hierarchy operator {op!r} inside element quantifiers")
+                    if not caps.supports_hierarchy:
+                        _cap_fail(backend, f"hierarchy operator {op!r}")
 
-                        if not caps.supports_hierarchy:
-                            _fail(f"hierarchy operator {op!r}")
+                else:
+                    where = " inside element quantifiers" if in_element else ""
+                    _cap_fail(backend, f"operator {op!r}{where}")
 
-                    else:
-                        where = " inside element quantifiers" if in_element else ""
-                        _fail(f"operator {op!r}{where}")
+        case QueryAnd(items) | QueryOr(items):
+            for item in items:
+                _walk_caps(item, caps, backend, allowed, in_element=in_element)
 
-            case QueryCompare(_, _, _):
-                if not caps.supports_field_compare:
-                    _fail("field-to-field comparison ($fields)")
+        case QueryNot(item):
+            if not caps.supports_negation:
+                _cap_fail(backend, "negation ($not)")
 
-            case QueryElem(_, quantifier, inner):
-                if not caps.supports_quantifiers:
-                    _fail(f"element quantifier {quantifier!r}")
+            _walk_caps(item, caps, backend, allowed, in_element=in_element)
 
-                if in_element and not caps.supports_nested_quantifiers:
-                    _fail("nested element quantifiers")
+        case QueryCompare(_, _, _):
+            if not caps.supports_field_compare:
+                _cap_fail(backend, "field-to-field comparison ($fields)")
 
-                _walk(inner, in_element=True)
+        case QueryElem(_, quantifier, inner):
+            if not caps.supports_quantifiers:
+                _cap_fail(backend, f"element quantifier {quantifier!r}")
 
-            case _:
-                pass
+            if in_element and not caps.supports_nested_quantifiers:
+                _cap_fail(backend, "nested element quantifiers")
 
-    _walk(expr, in_element=False)
+            _walk_caps(inner, caps, backend, caps.element_ops, in_element=True)
+
+        case _:
+            pass
