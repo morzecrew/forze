@@ -1,5 +1,10 @@
 """Basic query contracts."""
 
+from .builder import (
+    FieldRef,
+    Q,
+    QueryCondition,
+)
 from .capabilities import (
     ALL_ELEMENT_OPS,
     ALL_VALUE_OPS,
@@ -207,6 +212,9 @@ __all__ = [
     "HierarchyOp",
     "HierarchyValue",
     "TreePath",
+    "Q",
+    "QueryCondition",
+    "FieldRef",
     "elem_inner_is_scalar",
     "compare_keyset_sort_values",
     "assert_default_null_ordering",
