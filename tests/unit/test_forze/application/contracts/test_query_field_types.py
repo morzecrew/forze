@@ -171,6 +171,26 @@ class TestBestEffortSkips:
 
         assert ei.value.code == OPERATOR_TYPE_MISMATCH_CODE
 
+    def test_genuine_union_hint_is_skipped(self) -> None:
+        # A real union (not just Optional) can't be classified → never a false rejection.
+        _check({"$values": {"name": {"$gt": 1}}}, field_type_hints={"name": int | str})
+
+    def test_unmodeled_generic_hint_is_skipped(self) -> None:
+        from typing import Iterator
+
+        _check(
+            {"$values": {"name": {"$gt": 1}}},
+            field_type_hints={"name": Iterator[int]},
+        )
+
+    def test_opaque_type_hint_is_skipped(self) -> None:
+        # A concrete type that maps to no coarse class (here ``object``) → unknown → skip.
+        _check({"$values": {"name": {"$gt": 1}}}, field_type_hints={"name": object})
+
+    def test_path_through_non_model_is_skipped(self) -> None:
+        # ``name`` is a str; descending into ``name.sub`` can't resolve → not checked.
+        _check({"$values": {"name.sub": {"$eq": 1}}})
+
 
 class TestHierarchyPath:
     @pytest.mark.parametrize(

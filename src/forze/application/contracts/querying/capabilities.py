@@ -180,19 +180,23 @@ def validate_query_capabilities(
 
                 _walk(item, in_element=in_element)
 
-            case QueryField(_, op, _) if op in HIERARCHY_OPS:
-                if in_element:
-                    _fail(f"hierarchy operator {op!r} inside element quantifiers")
-
-                if not caps.supports_hierarchy:
-                    _fail(f"hierarchy operator {op!r}")
-
             case QueryField(_, op, _):
                 allowed = caps.element_ops if in_element else caps.value_ops
 
+                # A supported value op short-circuits on one membership test (the hot
+                # case). Hierarchy ops live on their own capability axis, not in value_ops,
+                # so they only reach the slower branch when not already allowed.
                 if op not in allowed:
-                    where = " inside element quantifiers" if in_element else ""
-                    _fail(f"operator {op!r}{where}")
+                    if op in HIERARCHY_OPS:
+                        if in_element:
+                            _fail(f"hierarchy operator {op!r} inside element quantifiers")
+
+                        if not caps.supports_hierarchy:
+                            _fail(f"hierarchy operator {op!r}")
+
+                    else:
+                        where = " inside element quantifiers" if in_element else ""
+                        _fail(f"operator {op!r}{where}")
 
             case QueryCompare(_, _, _):
                 if not caps.supports_field_compare:

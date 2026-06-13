@@ -7,11 +7,14 @@ from uuid import UUID
 import pytest
 
 from forze.application.contracts.querying.pagination.cursor_token import (
+    _CODEC,
+    _KEYSET_V1,
     compare_keyset_sort_values,
     keyset_canonical_value,
     decode_keyset_v1,
     encode_keyset_v1,
     keyset_page_bounds,
+    ordered_compare,
     row_passes_keyset_seek,
     row_value_for_sort_key,
     validate_cursor_token,
@@ -360,5 +363,33 @@ def test_decode_keyset_rejects_length_mismatch() -> None:
 
     raw = json.dumps({"v": 1, "k": ["a", "b"], "d": ["asc"], "x": [1]}).encode()
     token = base64.urlsafe_b64encode(raw).decode().rstrip("=")
+    with pytest.raises(CoreException, match="Invalid cursor token"):
+        decode_keyset_v1(token)
+
+
+def _tampered_token(payload: dict) -> str:
+    """Encode a raw payload directly (bypassing the aligned-by-construction encoder)."""
+    return _CODEC.dumps({"v": _KEYSET_V1, **payload})
+
+
+def test_ordered_compare_type_mismatch_is_invalid_cursor() -> None:
+    # A tampered token can pair a value of the wrong type against a row value; the raw
+    # TypeError is surfaced as a clean invalid-cursor error.
+    with pytest.raises(CoreException, match="Invalid cursor token") as ei:
+        ordered_compare(1, "x", direction="asc", nulls="first")
+
+    assert ei.value.kind is ExceptionKind.VALIDATION
+
+
+def test_decode_rejects_misaligned_nulls_array() -> None:
+    token = _tampered_token(
+        {"k": ["a"], "d": ["asc"], "x": [1], "n": ["first", "last"]},
+    )
+    with pytest.raises(CoreException, match="Invalid cursor token"):
+        decode_keyset_v1(token)
+
+
+def test_decode_rejects_invalid_nulls_placement_value() -> None:
+    token = _tampered_token({"k": ["a"], "d": ["asc"], "x": [1], "n": ["middle"]})
     with pytest.raises(CoreException, match="Invalid cursor token"):
         decode_keyset_v1(token)

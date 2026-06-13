@@ -481,6 +481,75 @@ class TestMongoAggregateRendering:
             "$median": {"input": "$p", "method": "approximate"},
         }
 
+    def test_renders_extended_aggregate_functions(self) -> None:
+        renderer = MongoQueryRenderer()
+        _parsed, pipeline = renderer.render_aggregates(
+            {
+                "$groups": {"cat": "category"},
+                "$computed": {
+                    "distinct": {"$count_distinct": "price"},
+                    "sp": {"$stddev_pop": "price"},
+                    "ss": {"$stddev_samp": "price"},
+                    "vp": {"$var_pop": "price"},
+                    "vs": {"$var_samp": "price"},
+                    "p90": {"$percentile": {"field": "price", "p": 0.9}},
+                },
+            },
+        )
+        group = pipeline[0]["$group"]
+        project = pipeline[1]["$project"]
+
+        # $count_distinct accumulates a null-excluded set, sized in the projection.
+        assert group["distinct"] == {
+            "$addToSet": {"$cond": [{"$ne": ["$price", None]}, "$price", "$$REMOVE"]},
+        }
+        assert project["distinct"] == {"$size": "$distinct"}
+
+        # variance is the population/sample stddev, squared in the projection.
+        assert group["sp"] == {"$stdDevPop": "$price"}
+        assert group["ss"] == {"$stdDevSamp": "$price"}
+        assert group["vp"] == {"$stdDevPop": "$price"}
+        assert group["vs"] == {"$stdDevSamp": "$price"}
+        assert project["sp"] == 1
+        assert project["ss"] == 1
+        assert project["vp"] == {"$pow": ["$vp", 2]}
+        assert project["vs"] == {"$pow": ["$vs", 2]}
+
+        # $percentile (approximate) returns a 1-element array, unwrapped in projection.
+        assert group["p90"] == {
+            "$percentile": {"input": "$price", "p": [0.9], "method": "approximate"},
+        }
+        assert project["p90"] == {"$arrayElemAt": ["$p90", 0]}
+
+    def test_count_distinct_with_filter_is_null_and_predicate_guarded(self) -> None:
+        renderer = MongoQueryRenderer()
+        _parsed, pipeline = renderer.render_aggregates(
+            {
+                "$computed": {
+                    "d": {
+                        "$count_distinct": {
+                            "field": "price",
+                            "filter": {"$values": {"category": "books"}},
+                        },
+                    },
+                },
+            },
+        )
+        assert pipeline[0]["$group"]["d"] == {
+            "$addToSet": {
+                "$cond": [
+                    {
+                        "$and": [
+                            {"$ne": ["$price", None]},
+                            {"$eq": ["$category", "books"]},
+                        ],
+                    },
+                    "$price",
+                    "$$REMOVE",
+                ],
+            },
+        }
+
     def test_renders_trunc_in_group_id(self) -> None:
         renderer = MongoQueryRenderer()
         _parsed, pipeline = renderer.render_aggregates(

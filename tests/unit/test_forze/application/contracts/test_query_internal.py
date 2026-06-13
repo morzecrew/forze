@@ -308,6 +308,52 @@ class TestAggregatesExpressionParser:
         assert parsed.computed_fields[0].field == "price"
         assert parsed.computed_fields[0].parsed_filter is None
 
+    def test_percentile_rejects_non_numeric_quantile(self) -> None:
+        with pytest.raises(CoreException, match="must be a number"):
+            AggregatesExpressionParser.parse(
+                {"$computed": {"p": {"$percentile": {"field": "x", "p": "bad"}}}},
+            )
+
+    def test_percentile_rejects_out_of_range_quantile(self) -> None:
+        with pytest.raises(CoreException, match="must be a number"):
+            AggregatesExpressionParser.parse(
+                {"$computed": {"p": {"$percentile": {"field": "x", "p": 1.5}}}},
+            )
+
+    def test_percentile_rejects_bool_quantile(self) -> None:
+        # bool is an int subtype; reject it explicitly rather than treating True as 1.
+        with pytest.raises(CoreException, match="must be a number"):
+            AggregatesExpressionParser.parse(
+                {"$computed": {"p": {"$percentile": {"field": "x", "p": True}}}},
+            )
+
+    def test_having_walks_not_and_field_compare(self) -> None:
+        # The $having alias-root validation walks $not (negation) and $fields (compare)
+        # nodes, not just plain value predicates.
+        parsed = AggregatesExpressionParser.parse(
+            {
+                "$groups": {"region": "region"},
+                "$computed": {"cnt": {"$count": None}, "total": {"$sum": "amount"}},
+                "$having": {
+                    "$and": [
+                        {"$not": {"$values": {"cnt": {"$lt": 2}}}},
+                        {"$fields": {"total": {"$gt": "cnt"}}},
+                    ],
+                },
+            },
+        )
+        assert parsed.having is not None
+
+    def test_having_rejects_unknown_alias_via_field_compare(self) -> None:
+        with pytest.raises(CoreException):
+            AggregatesExpressionParser.parse(
+                {
+                    "$groups": {"region": "region"},
+                    "$computed": {"cnt": {"$count": None}},
+                    "$having": {"$fields": {"cnt": {"$gt": "ghost"}}},
+                },
+            )
+
 
 # ----------------------- #
 

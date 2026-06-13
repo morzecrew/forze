@@ -203,6 +203,59 @@ class TestBuildTimeErrors:
             Q.or_()
 
 
+class TestBuilderCoverage:
+    """Less-travelled lowering paths and grammar-limit guards."""
+
+    def test_none_quantifier(self) -> None:
+        assert Q.field("tags").none("x").build() == {
+            "$values": {"tags": {"$none": {"$eq": "x"}}}
+        }
+
+    def test_q_or_single_condition_is_identity(self) -> None:
+        a = Q.field("a").eq(1)
+        assert Q.or_(a).build() == a.build()
+
+    def test_single_object_field_quantifier_inner(self) -> None:
+        # A lone object-field predicate as the quantifier inner lowers via $values.
+        assert Q.field("items").any(Q.field("qty").gte(1)).build() == {
+            "$values": {"items": {"$any": {"$values": {"qty": {"$gte": 1}}}}}
+        }
+
+    def test_object_merge_with_nested_quantifier_entry(self) -> None:
+        # An object element predicate that conjoins a nested quantifier with a field.
+        built = Q.field("items").any(
+            Q.field("subs").any("x") & Q.field("a").eq(1)
+        )
+        assert built.build() == {
+            "$values": {
+                "items": {
+                    "$any": {
+                        "$values": {
+                            "subs": {"$any": {"$eq": "x"}},
+                            "a": {"$eq": 1},
+                        }
+                    }
+                }
+            }
+        }
+
+    def test_scalar_array_of_arrays_quantifier_cannot_combine(self) -> None:
+        built = Q.field("matrix").any(Q.elem().any("x") & Q.field("a").eq(1))
+        with pytest.raises(CoreException, match="array-of-arrays"):
+            built.build()
+
+    def test_or_node_cannot_be_element_values_entry(self) -> None:
+        built = Q.field("items").any(
+            (Q.field("a").eq(1) | Q.field("b").eq(2)) & Q.field("c").eq(1)
+        )
+        with pytest.raises(CoreException, match="combined inside an element"):
+            built.build()
+
+    def test_base_condition_filter_is_abstract(self) -> None:
+        with pytest.raises(NotImplementedError):
+            QueryCondition().build()
+
+
 class TestTypeSurface:
     def test_field_returns_field_ref(self) -> None:
         assert isinstance(Q.field("x"), FieldRef)
