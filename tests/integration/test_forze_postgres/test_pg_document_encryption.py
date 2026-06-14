@@ -160,6 +160,27 @@ async def test_pg_document_field_encryption(pg_client: PostgresClient) -> None:
     assert page.count == 1
     assert page.hits[0].email == "alice@example.com"
 
+    # Raw field-dict projections (`project` / `project_page`) decrypt too — and on a
+    # fresh context (cold keyring), exercising the projection decrypt pre-pass.
+    one = await _ctx(pg_client).document.query(_SPEC).project(
+        {"$values": {"name": "Alice"}}, ["id", "email"]
+    )
+    assert one is not None
+    assert one["email"] == "alice@example.com"
+
+    raw_page = await _ctx(pg_client).document.query(_SPEC).project_page(
+        ["id", "email"],
+        filters={"$values": {"name": "Alice"}},
+    )
+    assert raw_page.count == 1
+    assert raw_page.hits[0]["email"] == "alice@example.com"
+
+    # A projection of only plaintext fields is unaffected (no decryption needed).
+    name_only = await _ctx(pg_client).document.query(_SPEC).project(
+        {"$values": {"name": "Alice"}}, ["name"]
+    )
+    assert name_only == {"name": "Alice"}
+
 
 @pytest.mark.integration
 @pytest.mark.asyncio

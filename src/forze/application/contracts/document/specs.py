@@ -66,9 +66,11 @@ class DocumentSpec(BaseSpec, Generic[R, D, C, U]):
 
     Empty (default) = no field encryption. When set, a backend that wires a keyring
     transparently encrypts these fields on write and decrypts on read; the rest stay
-    plaintext and queryable. Encrypted fields cannot be filtered/sorted on and are only
-    decrypted on full-model reads (not projections). Requires a ``KeyringDepKey`` in the
-    deps (e.g. via ``CryptoDepsModule``)."""
+    plaintext and queryable. Encrypted fields cannot be filtered/sorted on. They are
+    decrypted on full-model reads and on both typed (``select_*``) and raw (``project_*``)
+    projections that select them — except that a projection of an
+    :attr:`encryption_binds_record_id` field must also select ``id`` (the AAD needs it).
+    Requires a ``KeyringDepKey`` in the deps (e.g. via ``CryptoDepsModule``)."""
 
     searchable_fields: frozenset[str] = attrs.field(
         default=frozenset(),

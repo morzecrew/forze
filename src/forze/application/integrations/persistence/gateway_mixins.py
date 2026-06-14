@@ -295,6 +295,32 @@ class ReadValidationCodecMixin(Generic[M]):
         rows = [self._predecrypt_for_projection(r, model) for r in rows]
         return self._decode_rows(rows, model=model, trust_source=trust_source)
 
+    # ....................... #
+
+    async def _adecrypt_projection_rows(
+        self,
+        rows: Sequence[JsonDict],
+    ) -> list[JsonDict]:
+        """Decrypt encrypted/searchable fields in raw rows bound for a field projection.
+
+        The raw analog of the decrypt that ``_adecode_*`` applies to typed
+        ``select_*`` projections: ``project_*`` returns plain field dicts (no model
+        decode), so a selected encrypted/searchable field is decrypted here. No-op for
+        plain (non-encrypting) codecs; otherwise runs the async unwrap pre-pass once,
+        then decrypts each row. The caller still shapes the field subset. Decryption
+        needs the row to carry the ciphertext (and, for record-id-bound fields, the
+        ``id``) — so a projection of a bound encrypted field must also select ``id``.
+        """
+
+        decrypt = getattr(self._codec_for(), "decrypt_mapping", None)
+
+        if decrypt is None:
+            return list(rows)
+
+        await self._prepare_decode(rows)
+
+        return [decrypt(dict(row)) for row in rows]
+
 
 # ....................... #
 

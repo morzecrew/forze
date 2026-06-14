@@ -243,7 +243,8 @@ class MongoReadGateway[M: BaseModel](
             return await self._adecode_row(data, model=return_model)
 
         if return_fields is not None:
-            return self.return_subset(data, return_fields)
+            [decrypted] = await self._adecrypt_projection_rows((data,))
+            return self.return_subset(decrypted, return_fields)
 
         return await self._adecode_row(data)
 
@@ -411,7 +412,8 @@ class MongoReadGateway[M: BaseModel](
             return await self._adecode_rows(normalized, model=return_model)
 
         if return_fields is not None:
-            return [self.return_subset(row, return_fields) for row in normalized]
+            decrypted = await self._adecrypt_projection_rows(normalized)
+            return [self.return_subset(row, return_fields) for row in decrypted]
 
         return await self._adecode_rows(normalized)
 
@@ -689,7 +691,8 @@ class MongoReadGateway[M: BaseModel](
             return await self._adecode_rows(raw_normalized, model=return_model)
 
         if return_fields is not None:
-            return [self.return_subset(row, return_fields) for row in raw_normalized]
+            decrypted = await self._adecrypt_projection_rows(raw_normalized)
+            return [self.return_subset(row, return_fields) for row in decrypted]
 
         return await self._adecode_rows(raw_normalized)
 

@@ -159,3 +159,31 @@ async def test_record_id_binding_rejects_cross_record_transplant() -> None:
 
     with pytest.raises(CoreException):
         await adapter.get(b.id)
+
+
+# ....................... #
+
+
+async def test_raw_projection_decrypts_encrypted_field() -> None:
+    state = MockState()
+    adapter, ring = _build(state)
+    await ring.warm(None)
+
+    created = await adapter.create(_CustomerCreate(name="Alice", email="a@example.com"))
+    # Stored ciphertext, but the projection decrypts (parity with full reads).
+    assert _stored_email(state, created.id) != "a@example.com"
+
+    projected = await adapter.project({"$values": {"name": "Alice"}}, ["id", "email"])
+    assert projected is not None
+    assert projected["email"] == "a@example.com"
+
+
+async def test_raw_projection_of_plaintext_only_field_is_unaffected() -> None:
+    state = MockState()
+    adapter, ring = _build(state)
+    await ring.warm(None)
+
+    await adapter.create(_CustomerCreate(name="Alice", email="a@example.com"))
+
+    projected = await adapter.project({"$values": {"name": "Alice"}}, ["name"])
+    assert projected == {"name": "Alice"}

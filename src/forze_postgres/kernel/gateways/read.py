@@ -237,7 +237,8 @@ class PostgresReadGateway[M: BaseModel](
             return await self._adecode_row(row, model=return_model)
 
         if return_fields is not None:
-            return {k: row.get(k, None) for k in return_fields}
+            [decrypted] = await self._adecrypt_projection_rows((row,))
+            return {k: decrypted.get(k, None) for k in return_fields}
 
         return await self._adecode_row(row)
 
@@ -380,7 +381,8 @@ class PostgresReadGateway[M: BaseModel](
             return await self._adecode_rows(rows, model=return_model)
 
         if return_fields is not None:
-            return [{k: row.get(k, None) for k in return_fields} for row in rows]
+            decrypted = await self._adecrypt_projection_rows(rows)
+            return [{k: row.get(k, None) for k in return_fields} for row in decrypted]
 
         return await self._adecode_rows(rows)
 
@@ -440,8 +442,9 @@ class PostgresReadGateway[M: BaseModel](
                 continue
 
             if return_fields is not None:
+                decrypted = await self._adecrypt_projection_rows(dict_chunk)
                 yield [
-                    {k: row.get(k, None) for k in return_fields} for row in dict_chunk
+                    {k: row.get(k, None) for k in return_fields} for row in decrypted
                 ]
 
             elif return_model is not None:
@@ -718,7 +721,8 @@ class PostgresReadGateway[M: BaseModel](
             return await self._adecode_rows(raw_rows, model=return_model)
 
         if return_fields is not None:
-            return [{k: r.get(k, None) for k in return_fields} for r in raw_rows]
+            decrypted = await self._adecrypt_projection_rows(raw_rows)
+            return [{k: r.get(k, None) for k in return_fields} for r in decrypted]
 
         return await self._adecode_rows(raw_rows)
 

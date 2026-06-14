@@ -186,7 +186,13 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
         return_fields: Sequence[str] | None,
     ) -> R | JsonDict:
         if return_fields is not None:
-            return _project(doc, return_fields)
+            # Mirror the real backends: a raw projection of an encrypted/searchable
+            # field is decrypted before projecting (full reads already decrypt via the
+            # read codec). No-op for plain codecs. Synchronous: the mock keyring cache
+            # is seeded at encrypt time / via warm(), so no async pre-pass is needed.
+            decrypt = getattr(self._read_codec(), "decrypt_mapping", None)
+            source = decrypt(dict(doc)) if decrypt is not None else doc
+            return _project(source, return_fields)
         return self._to_read(doc)
 
     # ....................... #
