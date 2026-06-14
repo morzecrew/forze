@@ -361,8 +361,10 @@ jobs:
             pyproject.toml
 
       - name: Prepare merge-base worktree and sync both envs
+        env:
+          BASE_REF: ${{ github.base_ref }}
         run: |
-          BASE="$(git merge-base HEAD "origin/${{ github.base_ref }}")"
+          BASE="$(git merge-base HEAD "origin/${BASE_REF}")"
           git worktree add /tmp/base-ref "$BASE"
           ( cd /tmp/base-ref && uv sync --all-groups --all-extras )
           uv sync --all-groups --all-extras
@@ -382,7 +384,9 @@ jobs:
           for r in $(seq 1 "$ROUNDS"); do
             echo "::group::perf round $r/$ROUNDS"
             # `base` first, then `head`, so the two sides are temporally adjacent.
-            # `|| true` on base tolerates a merge-base predating the perf_gate marker.
+            # base tolerates a merge-base predating the perf_gate marker (no data);
+            # a head failure (the PR's own benches erroring) fails the gate explicitly
+            # rather than letting gate_compare.py pass on empty head data.
             ( cd /tmp/base-ref && ./.venv/bin/pytest \
                 --benchmark-only --benchmark-warmup=on --benchmark-disable-gc \
                 --benchmark-storage="$STORAGE" --benchmark-save=base \
@@ -391,8 +395,7 @@ jobs:
             ( cd "${GITHUB_WORKSPACE}" && ./.venv/bin/pytest \
                 --benchmark-only --benchmark-warmup=on --benchmark-disable-gc \
                 --benchmark-storage="$STORAGE" --benchmark-save=head \
-                -m perf_gate tests/perf ) \
-              || echo "::warning::head perf round $r failed"
+                -m perf_gate tests/perf )
             echo "::endgroup::"
           done
           ./.venv/bin/python tests/perf/gate_compare.py \

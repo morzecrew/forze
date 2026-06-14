@@ -131,6 +131,10 @@ class TenancyRouteSpec:
     kind: str
     """Resource kind for log messages (e.g. ``document``, ``search``)."""
 
+    has_namespace_routing: bool = False
+    """Whether *this* route resolves a per-tenant namespace (a dynamic resolver) — the
+    ``namespace`` tier. Per-route so a declared floor is enforced route by route."""
+
 
 # ....................... #
 
@@ -309,16 +313,18 @@ def validate_routed_client_tenancy_wiring(
     partition_key_detail: str,
     validation_failed_code: str,
     required_isolation: TenantIsolationMode | None = None,
-    has_namespace_routing: bool = False,
     max_supported_isolation: TenantIsolationMode | None = None,
     log_warning: Callable[..., None] | None = None,
 ) -> None:
     """Fail or warn when a routed client and per-route ``tenant_aware`` disagree.
 
-    When ``required_isolation`` is set, also fail closed if the derived isolation tier
-    (from ``client_is_routed`` / ``has_namespace_routing`` / ``routes``) is weaker than the
-    declared floor, or exceeds ``max_supported_isolation`` — see
-    :func:`validate_required_isolation`.
+    When ``required_isolation`` is set, the floor is enforced **per route** — the weakest
+    route is the module's real isolation, so an unscoped sibling cannot slip through under a
+    stronger one. A routed client scopes every connection per tenant (``dedicated`` for all
+    routes); otherwise each route's tier comes from its own ``has_namespace_routing`` /
+    ``tenant_aware``. The capability ceiling (``max_supported_isolation``) is also enforced —
+    see :func:`validate_required_isolation`. Put intentionally tenant-agnostic routes in a
+    module without a declared floor.
     """
 
     if client_is_routed and not partition_key_set:
@@ -330,17 +336,42 @@ def validate_routed_client_tenancy_wiring(
             details={"client_is_routed": True},
         )
 
-    validate_required_isolation(
-        integration=integration,
-        derived=derive_tenant_isolation_mode(
-            client_is_routed=client_is_routed,
-            routes=routes,
-            has_namespace_routing=has_namespace_routing,
-        ),
-        required=required_isolation,
-        code=validation_failed_code,
-        max_supported=max_supported_isolation,
-    )
+    if required_isolation is not None:
+        if client_is_routed:
+            # Routed client → every route (and a module with no routes) is dedicated; only
+            # the capability ceiling can fail.
+            validate_required_isolation(
+                integration=integration,
+                derived="dedicated",
+                required=required_isolation,
+                code=validation_failed_code,
+                max_supported=max_supported_isolation,
+            )
+        elif not routes:
+            # No routed client and no routes → no tenant isolation at all.
+            validate_required_isolation(
+                integration=integration,
+                derived="none",
+                required=required_isolation,
+                code=validation_failed_code,
+                max_supported=max_supported_isolation,
+            )
+        else:
+            for route in routes:
+                route_mode: TenantIsolationMode = (
+                    "namespace"
+                    if route.has_namespace_routing
+                    else "tagged"
+                    if route.tenant_aware
+                    else "none"
+                )
+                validate_required_isolation(
+                    integration=f"{integration} {route.kind} route {route.name!r}",
+                    derived=route_mode,
+                    required=required_isolation,
+                    code=validation_failed_code,
+                    max_supported=max_supported_isolation,
+                )
 
     if not client_is_routed:
         return
@@ -450,24 +481,21 @@ def validate_module_tenancy(
     """
 
     routes: list[TenancyRouteSpec] = []
-    has_namespace_routing = False
 
     for group in groups:
         for name, config in (group.configs or {}).items():
+            # A *dynamic* (callable) namespace/relation resolver scopes this route per
+            # tenant → namespace tier. A static name (str) or static relation (tuple) does not.
+            namespace = group.namespace_resolver(config)
+
             routes.append(
                 TenancyRouteSpec(
                     name=str(name),
                     tenant_aware=group.tenant_aware(config),
                     kind=group.kind,
+                    has_namespace_routing=callable(namespace),
                 )
             )
-
-            # A *dynamic* (callable) namespace/relation resolver scopes the resource per
-            # tenant → namespace tier. A static name (str) or static relation (tuple) does not.
-            namespace = group.namespace_resolver(config)
-
-            if callable(namespace):
-                has_namespace_routing = True
 
     validate_routed_client_tenancy_wiring(
         integration=integration,
@@ -477,7 +505,6 @@ def validate_module_tenancy(
         partition_key_detail=partition_key_detail,
         validation_failed_code=validation_failed_code,
         required_isolation=required_isolation,
-        has_namespace_routing=has_namespace_routing,
         max_supported_isolation=max_supported_isolation,
         log_warning=log_warning,
     )

@@ -164,6 +164,7 @@ class PostgresDepsModule(DepsModule):
                         name=str(name),
                         tenant_aware=cfg.tenant_aware,
                         kind="document",
+                        has_namespace_routing=callable(cfg.read),
                     ),
                 )
                 warn_dynamic_relation_with_tenant_aware(
@@ -180,6 +181,7 @@ class PostgresDepsModule(DepsModule):
                         name=str(name),
                         tenant_aware=cfg.tenant_aware,
                         kind="document",
+                        has_namespace_routing=callable(cfg.read) or callable(cfg.write),
                     ),
                 )
                 warn_dynamic_relation_with_tenant_aware(
@@ -200,6 +202,7 @@ class PostgresDepsModule(DepsModule):
                         name=str(name),
                         tenant_aware=search_cfg.tenant_aware,
                         kind="search",
+                        has_namespace_routing=callable(search_cfg.index),
                     ),
                 )
                 warn_dynamic_relation_with_tenant_aware(
@@ -294,6 +297,7 @@ class PostgresDepsModule(DepsModule):
                         name=str(name),
                         tenant_aware=analytics_cfg.tenant_aware,
                         kind="analytics",
+                        has_namespace_routing=callable(analytics_cfg.query_schema),
                     ),
                 )
 
@@ -317,25 +321,8 @@ class PostgresDepsModule(DepsModule):
                     ),
                 )
 
-        # Schema tier: any DYNAMIC (callable) per-tenant namespace/relation resolver — a
-        # document/search per-tenant schema, or an analytics query_schema.
-        namespace_specs: list[object] = []
-
-        for ro_cfg in (self.ro_documents or {}).values():
-            namespace_specs.append(ro_cfg.read)
-
-        for rw_cfg in (self.rw_documents or {}).values():
-            namespace_specs.extend([rw_cfg.read, rw_cfg.write])
-
-        for search_cfg2 in (self.searches or {}).values():
-            namespace_specs.append(search_cfg2.index)
-
-        for an_cfg in (self.analytics or {}).values():
-            if an_cfg.query_schema is not None:
-                namespace_specs.append(an_cfg.query_schema)
-
-        has_namespace_routing = any(callable(spec) for spec in namespace_specs)
-
+        # Namespace tier is now tracked per route (a DYNAMIC per-tenant relation /
+        # query_schema resolver on that route) so a declared floor is enforced route by route.
         validate_postgres_tenancy_wiring(
             client_is_routed=isinstance(self.client, RoutedPostgresClient),
             introspector_cache_partition_key_set=(
@@ -343,7 +330,6 @@ class PostgresDepsModule(DepsModule):
             ),
             routes=routes,
             required_isolation=self.required_tenant_isolation,
-            has_namespace_routing=has_namespace_routing,
         )
 
     # ....................... #

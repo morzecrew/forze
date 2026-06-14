@@ -37,12 +37,15 @@ class PostgresTenancyRouteSpec:
     name: str
     tenant_aware: bool
     kind: PostgresTenancyRouteKind
+    has_namespace_routing: bool = False
+    """Whether this route resolves a per-tenant schema (a dynamic relation / ``query_schema``)."""
 
     def to_contract(self) -> TenancyRouteSpec:
         return TenancyRouteSpec(
             name=self.name,
             tenant_aware=self.tenant_aware,
             kind=self.kind,
+            has_namespace_routing=self.has_namespace_routing,
         )
 
 
@@ -73,14 +76,13 @@ def validate_postgres_tenancy_wiring(
     introspector_cache_partition_key_set: bool,
     routes: Sequence[PostgresTenancyRouteSpec],
     required_isolation: PostgresTenantIsolationMode | None = None,
-    has_namespace_routing: bool = False,
 ) -> None:
     """Fail or warn when Postgres client routing and ``tenant_aware`` flags disagree.
 
-    When ``required_isolation`` is declared, also fail closed if the derived isolation
-    tier is weaker than the requirement. ``has_namespace_routing`` marks a per-tenant
-    schema (e.g. an analytics ``query_schema`` resolver), which derives the ``namespace`` tier.
-    Postgres can reach every tier (up to ``dedicated`` via a routed client).
+    When ``required_isolation`` is declared, the floor is enforced per route (each route's
+    ``tenant_aware`` / ``has_namespace_routing`` — the latter a per-tenant schema, e.g. an
+    analytics ``query_schema`` resolver). Postgres can reach every tier (up to ``dedicated``
+    via a routed client).
     """
 
     validate_routed_client_tenancy_wiring(
@@ -94,7 +96,6 @@ def validate_postgres_tenancy_wiring(
         ),
         validation_failed_code="postgres_tenancy_validation_failed",
         required_isolation=required_isolation,
-        has_namespace_routing=has_namespace_routing,
         # Postgres reaches a routed per-tenant client / credentials.
         max_supported_isolation="dedicated",
         log_warning=logger.warning,

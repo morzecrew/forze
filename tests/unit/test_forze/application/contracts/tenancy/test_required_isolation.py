@@ -173,6 +173,71 @@ def test_module_tenancy_declared_ceiling_caps_the_floor() -> None:
         )
 
 
+def test_module_tenancy_floor_enforced_per_route_rejects_unscoped_sibling() -> None:
+    # The floor is per-route: a namespace-scoped route does NOT cover an unscoped sibling.
+    # Under a `namespace` floor the unscoped route must fail (was the module-max gap).
+    from forze.application.contracts.tenancy import (
+        TenancyRouteGroup,
+        validate_module_tenancy,
+    )
+
+    scoped = object()
+    unscoped = object()
+
+    with pytest.raises(CoreException, match="mongo_tenancy_validation_failed") as ei:
+        validate_module_tenancy(
+            integration="Mongo",
+            client_is_routed=False,
+            groups=[
+                TenancyRouteGroup(
+                    kind="document",
+                    configs={"scoped": scoped, "unscoped": unscoped},
+                    tenant_aware=lambda _c: False,
+                    namespace_resolver=lambda c: (
+                        (lambda tid: (f"t_{tid}", "users")) if c is scoped else None
+                    ),
+                )
+            ],
+            required_isolation="namespace",
+            max_supported_isolation="dedicated",
+            validation_failed_code="mongo_tenancy_validation_failed",
+        )
+
+    # The error names the offending route and its (weaker) derived tier.
+    assert "document route 'unscoped'" in str(ei.value)
+    assert ei.value.details["derived_isolation"] == "none"
+
+
+def test_module_tenancy_mixed_routes_above_floor_pass() -> None:
+    # Mixing tiers is fine as long as EVERY route meets the floor: a namespace route and a
+    # tagged route both satisfy a `tagged` floor.
+    from forze.application.contracts.tenancy import (
+        TenancyRouteGroup,
+        validate_module_tenancy,
+    )
+
+    scoped = object()
+    flagged = object()
+
+    validate_module_tenancy(
+        integration="Mongo",
+        client_is_routed=False,
+        groups=[
+            TenancyRouteGroup(
+                kind="document",
+                configs={"scoped": scoped, "flagged": flagged},
+                tenant_aware=lambda c: c is flagged,
+                namespace_resolver=lambda c: (
+                    (lambda tid: (f"t_{tid}", "users")) if c is scoped else None
+                ),
+            )
+        ],
+        required_isolation="tagged",
+        max_supported_isolation="dedicated",
+        validation_failed_code="mongo_tenancy_validation_failed",
+    )
+
+
 def test_routed_wiring_floor_met_by_routed_client() -> None:
     # Routed client derives "dedicated" and satisfies the floor.
     validate_routed_client_tenancy_wiring(
