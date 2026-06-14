@@ -21,29 +21,31 @@ from forze.application.contracts.durable.workflow import (
 from forze.base.exceptions import exc
 from forze.base.primitives import utcnow, uuid7
 from forze_mock.state import MockState
+from forze_mock.tenancy import MockTenancyMixin
 
 # ----------------------- #
 
 
-def _route(spec_name: str) -> str:
-    return str(spec_name)
-
-
-def _workflow_runs(state: MockState, spec_name: str) -> dict[str, Any]:
+def _workflow_runs(state: MockState, namespace: str) -> dict[str, Any]:
     with state.lock:
-        return state.durable_workflows.setdefault(_route(spec_name), {})
+        return state.durable_workflows.setdefault(namespace, {})
 
 
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class MockDurableWorkflowCommandAdapter[In: BaseModel, Out: BaseModel](
+    MockTenancyMixin,
     DurableWorkflowCommandPort[In, Out],
 ):
     spec: DurableWorkflowSpec[In, Out]
     state: MockState
 
     def _runs(self) -> dict[str, Any]:
-        return _workflow_runs(self.state, self.spec.name)
+        # Tenant-partition the run store (mirrors Temporal's per-tenant task queue);
+        # fails closed when tenant_aware with no bound tenant.
+        return _workflow_runs(
+            self.state, self._partitioned_namespace(str(self.spec.name))
+        )
 
     async def start(
         self,
@@ -114,13 +116,16 @@ class MockDurableWorkflowCommandAdapter[In: BaseModel, Out: BaseModel](
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class MockDurableWorkflowQueryAdapter[In: BaseModel, Out: BaseModel](
+    MockTenancyMixin,
     DurableWorkflowQueryPort[In, Out],
 ):
     spec: DurableWorkflowSpec[In, Out]
     state: MockState
 
     def _runs(self) -> dict[str, Any]:
-        return _workflow_runs(self.state, self.spec.name)
+        return _workflow_runs(
+            self.state, self._partitioned_namespace(str(self.spec.name))
+        )
 
     async def query[Q: BaseModel, Res: BaseModel](
         self,

@@ -13,19 +13,25 @@ from forze.application.contracts.durable.function import (
     DurableFunctionEventSpec,
 )
 from forze_mock.state import MockState
+from forze_mock.tenancy import MockTenancyMixin
 
 # ----------------------- #
 
 
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class MockDurableFunctionEventAdapter[M: BaseModel](DurableFunctionEventCommandPort[M]):
+class MockDurableFunctionEventAdapter[M: BaseModel](
+    MockTenancyMixin,
+    DurableFunctionEventCommandPort[M],
+):
     spec: DurableFunctionEventSpec[M]
     state: MockState
 
     def _events(self) -> list[dict[str, object]]:
+        # Mirrors the real Inngest adapter, which stamps tenant_id into the envelope.
+        ns = self._partitioned_namespace(str(self.spec.name))
         with self.state.lock:
-            return self.state.durable_events.setdefault(str(self.spec.name), [])
+            return self.state.durable_events.setdefault(ns, [])
 
     async def send(
         self,

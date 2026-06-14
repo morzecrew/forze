@@ -17,13 +17,14 @@ from forze.application.contracts.durable.workflow import (
 )
 from forze.base.exceptions import exc
 from forze_mock.state import MockState
+from forze_mock.tenancy import MockTenancyMixin
 
 # ----------------------- #
 
 
-def _workflow_schedules(state: MockState, spec_name: str) -> dict[str, Any]:
+def _workflow_schedules(state: MockState, namespace: str) -> dict[str, Any]:
     with state.lock:
-        return state.durable_schedules.setdefault(str(spec_name), {})
+        return state.durable_schedules.setdefault(namespace, {})
 
 
 # ....................... #
@@ -32,13 +33,16 @@ def _workflow_schedules(state: MockState, spec_name: str) -> dict[str, Any]:
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class MockDurableWorkflowScheduleCommandAdapter[In: BaseModel](
+    MockTenancyMixin,
     DurableWorkflowScheduleCommandPort[In],
 ):
     spec: DurableWorkflowSpec[In, BaseModel]
     state: MockState
 
     def _schedules(self) -> dict[str, Any]:
-        return _workflow_schedules(self.state, self.spec.name)
+        return _workflow_schedules(
+            self.state, self._partitioned_namespace(str(self.spec.name))
+        )
 
     async def create(
         self,
@@ -132,13 +136,16 @@ class MockDurableWorkflowScheduleCommandAdapter[In: BaseModel](
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class MockDurableWorkflowScheduleQueryAdapter[In: BaseModel](
+    MockTenancyMixin,
     DurableWorkflowScheduleQueryPort[In],
 ):
     spec: DurableWorkflowSpec[In, BaseModel]
     state: MockState
 
     def _schedules(self) -> dict[str, Any]:
-        return _workflow_schedules(self.state, self.spec.name)
+        return _workflow_schedules(
+            self.state, self._partitioned_namespace(str(self.spec.name))
+        )
 
     async def describe(
         self,

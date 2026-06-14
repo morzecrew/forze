@@ -13,7 +13,12 @@ from forze.application.contracts.dlock import (
 )
 from forze.application.contracts.idempotency import IdempotencyDepKey
 from forze.application.contracts.search import SearchResultSnapshotDepKey
-from forze.application.contracts.tenancy import warn_integration_routes
+from forze.application.contracts.tenancy import (
+    TenancyRouteGroup,
+    TenantIsolationMode,
+    validate_module_tenancy,
+    warn_integration_routes,
+)
 from forze.application.execution import Deps, DepsModule
 from forze.application.execution.deps.builders import (
     merge_deps,
@@ -23,7 +28,7 @@ from forze.application.execution.deps.builders import (
 from forze.base.primitives import MappingConverter, StrKey, StrKeyMapping
 
 from ...kernel._logger import logger
-from ...kernel.client import RedisClientPort
+from ...kernel.client import RedisClientPort, RoutedRedisClient
 from ._warnings import (
     REDIS_CACHE_WARNING,
     REDIS_COUNTER_WARNING,
@@ -168,6 +173,13 @@ class RedisDepsModule(DepsModule):
     )
     """Mapping from distributed lock spec names to their Redis-specific configurations."""
 
+    required_tenant_isolation: TenantIsolationMode | None = attrs.field(default=None)
+    """Declared minimum tenant isolation (``None`` = no floor).
+
+    Redis spans: ``row`` (per-tenant key prefix via ``tenant_aware``), ``schema`` (a
+    per-tenant ``namespace`` resolver), ``database`` (a routed per-tenant client).
+    """
+
     #! read and write separately?
 
     # pubsub: dict[str, RedisPubSubConfig] = attrs.field(factory=dict)
@@ -223,6 +235,37 @@ class RedisDepsModule(DepsModule):
             routes=self.dlocks,
             warning=REDIS_DLOCK_WARNING,
             log_warning=logger.warning,
+        )
+
+        idempotency_routes: Mapping[Any, Any] | None
+        if self.idempotency is None:
+            idempotency_routes = None
+        elif _is_idem_routed(self.idempotency):
+            idempotency_routes = self.idempotency
+        else:
+            idempotency_routes = {"idempotency": self.idempotency}
+
+        validate_module_tenancy(
+            integration="Redis",
+            client_is_routed=isinstance(self.client, RoutedRedisClient),
+            groups=[
+                TenancyRouteGroup(
+                    kind=kind,
+                    configs=configs,
+                    tenant_aware=lambda cfg: cfg.tenant_aware,
+                    namespace_resolver=lambda cfg: cfg.namespace,
+                )
+                for kind, configs in (
+                    ("cache", self.caches),
+                    ("counter", self.counters),
+                    ("idempotency", idempotency_routes),
+                    ("search_snapshot", self.search_snapshots),
+                    ("dlock", self.dlocks),
+                )
+            ],
+            required_isolation=self.required_tenant_isolation,
+            validation_failed_code="redis_tenancy_validation_failed",
+            max_supported_isolation="database",
         )
 
     # ....................... #

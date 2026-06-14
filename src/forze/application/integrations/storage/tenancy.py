@@ -8,11 +8,10 @@ carries and enforces a declared ``required_tenant_isolation`` floor.
 
 from typing import Any, Callable, Mapping, Protocol
 
-from forze.application.contracts.resolution import is_static_named_resource
 from forze.application.contracts.tenancy import (
-    TenancyRouteSpec,
+    TenancyRouteGroup,
     TenantIsolationMode,
-    validate_routed_client_tenancy_wiring,
+    validate_module_tenancy,
 )
 from forze.base.primitives import StrKey, StrKeyMapping
 
@@ -46,29 +45,25 @@ def validate_storage_tenancy_wiring(
 ) -> None:
     """Derive the storage isolation tier and enforce the declared floor (fail closed).
 
-    Tier (strongest wins): routed client → ``database``; a per-tenant (dynamic) ``bucket``
-    resolver → ``schema``; a ``tenant_aware`` route (path prefix) → ``row``; else ``none``.
-    Object stores can reach every tier, so the capability ceiling is ``database``.
+    A thin storage wrapper over :func:`~forze.application.contracts.tenancy.validate_module_tenancy`:
+    routed client → ``database``; a per-tenant (dynamic) ``bucket`` resolver → ``schema``;
+    a ``tenant_aware`` route (path prefix) → ``row``; else ``none``. Object stores can reach
+    every tier, so the capability ceiling is ``database``.
     """
 
-    configs = list((storages or {}).values())
-    routes = [
-        TenancyRouteSpec(name=str(name), tenant_aware=cfg.tenant_aware, kind="storage")
-        for name, cfg in (storages or {}).items()
-    ]
-    has_namespace_routing = any(
-        not is_static_named_resource(cfg.bucket) for cfg in configs
-    )
-
-    validate_routed_client_tenancy_wiring(
+    validate_module_tenancy(
         integration=integration,
         client_is_routed=client_is_routed,
-        partition_key_set=True,
-        routes=routes,
-        partition_key_detail="",
-        validation_failed_code=validation_failed_code,
+        groups=[
+            TenancyRouteGroup(
+                kind="storage",
+                configs=storages,
+                tenant_aware=lambda cfg: cfg.tenant_aware,
+                namespace_resolver=lambda cfg: cfg.bucket,
+            )
+        ],
         required_isolation=required_isolation,
-        has_namespace_routing=has_namespace_routing,
+        validation_failed_code=validation_failed_code,
         max_supported_isolation="database",
         log_warning=log_warning,
     )

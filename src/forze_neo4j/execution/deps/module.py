@@ -9,6 +9,11 @@ from forze.application.contracts.graph import (
     GraphQueryDepKey,
     GraphRawQueryDepKey,
 )
+from forze.application.contracts.tenancy import (
+    TenancyRouteGroup,
+    TenantIsolationMode,
+    validate_module_tenancy,
+)
 from forze.application.execution import Deps, DepsModule
 from forze.application.execution.deps.builders import (
     merge_deps,
@@ -41,6 +46,32 @@ class Neo4jDepsModule(DepsModule):
         converter=MappingConverter.to_str_key_frozen,  # type: ignore[misc]
     )
     """Mapping from graph module names to their Neo4j configuration."""
+
+    required_tenant_isolation: TenantIsolationMode | None = attrs.field(default=None)
+    """Declared minimum tenant isolation (``None`` = no floor).
+
+    Neo4j is single-client (no routed per-tenant client) and its ``database`` is a static
+    name, so it caps at ``row`` (property-partition via ``tenant_property``). Declaring a
+    ``schema``/``database`` floor fails closed by design until per-tenant routing exists.
+    """
+
+    # ....................... #
+
+    def __attrs_post_init__(self) -> None:
+        validate_module_tenancy(
+            integration="Neo4j",
+            client_is_routed=False,
+            groups=[
+                TenancyRouteGroup(
+                    kind="graph",
+                    configs=self.graphs,
+                    tenant_aware=lambda cfg: cfg.tenant_aware,
+                )
+            ],
+            required_isolation=self.required_tenant_isolation,
+            validation_failed_code="neo4j_tenancy_validation_failed",
+            max_supported_isolation="row",
+        )
 
     # ....................... #
 

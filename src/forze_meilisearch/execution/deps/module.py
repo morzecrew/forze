@@ -10,6 +10,9 @@ from forze.application.contracts.search import (
     SearchQueryDepKey,
 )
 from forze.application.contracts.tenancy import (
+    TenancyRouteGroup,
+    TenantIsolationMode,
+    validate_module_tenancy,
     warn_dynamic_relation_with_tenant_aware,
     warn_integration_routes,
 )
@@ -27,6 +30,7 @@ from forze_meilisearch.execution.deps.factories import (
 )
 from forze_meilisearch.execution.deps.keys import MeilisearchClientDepKey
 from forze_meilisearch.kernel._logger import logger
+from forze_meilisearch.kernel.client import RoutedMeilisearchClient
 from forze_meilisearch.kernel.client.port import MeilisearchClientPort
 
 from ._warnings import MEILISEARCH_SEARCH_WARNING
@@ -56,6 +60,13 @@ class MeilisearchDepsModule(DepsModule):
     )
     """Mapping from federated search names to their Meilisearch-specific configurations."""
 
+    required_tenant_isolation: TenantIsolationMode | None = attrs.field(default=None)
+    """Declared minimum tenant isolation (``None`` = no floor).
+
+    Search spans: ``row`` (tenant filter via ``tenant_aware``), ``schema`` (a per-tenant
+    ``index_uid`` resolver), ``database`` (a routed per-tenant client).
+    """
+
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
@@ -64,6 +75,27 @@ class MeilisearchDepsModule(DepsModule):
             routes=self.searches,
             warning=MEILISEARCH_SEARCH_WARNING,
             log_warning=logger.warning,
+        )
+
+        validate_module_tenancy(
+            integration="Meilisearch",
+            client_is_routed=isinstance(self.client, RoutedMeilisearchClient),
+            groups=[
+                TenancyRouteGroup(
+                    kind="search",
+                    configs=self.searches,
+                    tenant_aware=lambda cfg: cfg.tenant_aware,
+                    namespace_resolver=lambda cfg: cfg.index_uid,
+                ),
+                TenancyRouteGroup(
+                    kind="search",
+                    configs=self.federated_searches,
+                    tenant_aware=lambda cfg: cfg.tenant_aware,
+                ),
+            ],
+            required_isolation=self.required_tenant_isolation,
+            validation_failed_code="meilisearch_tenancy_validation_failed",
+            max_supported_isolation="database",
         )
 
         if self.federated_searches:

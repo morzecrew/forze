@@ -34,6 +34,35 @@ Derived from the config an integration already carries (it is not configured dir
 
 # ....................... #
 
+INTEGRATION_ISOLATION_CEILINGS: dict[str, TenantIsolationMode] = {
+    # Networked stores/brokers with a routed per-tenant client reach `database`.
+    "postgres": "database",
+    "mongo": "database",
+    "firestore": "database",
+    "meilisearch": "database",
+    "clickhouse": "database",
+    "bigquery": "database",
+    "redis": "database",
+    "sqs": "database",
+    "rabbitmq": "database",
+    "temporal": "database",
+    "inngest": "database",
+    "s3": "database",
+    "gcs": "database",
+    # In-process / single-client backends cap at row-level.
+    "neo4j": "row",  # no routed client; static database name
+    "duckdb": "row",  # in-process, no per-tenant namespace or routing
+}
+"""The tenant-isolation tier each integration can reach (the capability matrix).
+
+The strongest tier an integration can derive given its mechanisms (routed client →
+``database``; per-tenant namespace resolver → ``schema``; ``tenant_aware`` → ``row``). A
+deps module passes its ceiling as ``max_supported_isolation`` so a declared
+``required_isolation`` floor it can never meet fails closed as a capability mismatch.
+"""
+
+# ....................... #
+
 _ISOLATION_RANK: dict[TenantIsolationMode, int] = {
     "none": 0,
     "relation": 1,
@@ -395,3 +424,90 @@ def _emit_dynamic_warn(
 
     else:
         logger.warning(message)
+
+
+# ----------------------- #
+# Consolidated per-module tenancy validation
+
+
+@attrs.define(slots=True, frozen=True, kw_only=True)
+class TenancyRouteGroup[ConfigT]:
+    """One group of same-kind routes plus how to read tenancy from each config.
+
+    Lets a deps module declare its routes once (the config mapping + accessors) and hand
+    them to :func:`validate_module_tenancy`, instead of hand-building ``TenancyRouteSpec``
+    lists and recomputing the ``schema``-tier (namespace-routing) signal in every module.
+    """
+
+    kind: str
+    """Resource kind for diagnostics (e.g. ``document``, ``analytics``, ``storage``)."""
+
+    configs: StrKeyMapping[ConfigT] | None
+    """Route-name → config mapping for this group (``None`` / empty = no routes)."""
+
+    tenant_aware: Callable[[ConfigT], bool]
+    """Return whether a route applies row-level (tenant_aware) filtering."""
+
+    namespace_resolver: Callable[[ConfigT], NamedResourceSpec | None] = (
+        lambda _config: None
+    )
+    """Return the route's per-tenant namespace spec (bucket / schema / dataset / database),
+    or ``None``. A *dynamic* (callable) spec marks the ``schema`` isolation tier."""
+
+
+# ....................... #
+
+
+def validate_module_tenancy(
+    *,
+    integration: str,
+    client_is_routed: bool,
+    groups: Sequence[TenancyRouteGroup[Any]],
+    required_isolation: TenantIsolationMode | None,
+    validation_failed_code: str,
+    max_supported_isolation: TenantIsolationMode | None = None,
+    has_relation_resolvers: bool = False,
+    partition_key_set: bool = True,
+    partition_key_detail: str = "",
+    log_warning: Callable[..., None] | None = None,
+) -> None:
+    """Derive an integration's isolation tier from its route groups and enforce the floor.
+
+    The single entry point every deps module uses: it flattens the groups into routes,
+    detects ``schema``-tier namespace routing (any dynamic namespace resolver), and
+    delegates to :func:`validate_routed_client_tenancy_wiring`. ``max_supported_isolation``
+    is the integration's capability ceiling (e.g. ``row`` for in-process backends,
+    ``database`` for object stores / networked DBs).
+    """
+
+    routes: list[TenancyRouteSpec] = []
+    has_namespace_routing = False
+
+    for group in groups:
+        for name, config in (group.configs or {}).items():
+            routes.append(
+                TenancyRouteSpec(
+                    name=str(name),
+                    tenant_aware=group.tenant_aware(config),
+                    kind=group.kind,
+                )
+            )
+
+            namespace = group.namespace_resolver(config)
+
+            if namespace is not None and not is_static_named_resource(namespace):
+                has_namespace_routing = True
+
+    validate_routed_client_tenancy_wiring(
+        integration=integration,
+        client_is_routed=client_is_routed,
+        partition_key_set=partition_key_set,
+        routes=routes,
+        partition_key_detail=partition_key_detail,
+        validation_failed_code=validation_failed_code,
+        required_isolation=required_isolation,
+        has_relation_resolvers=has_relation_resolvers,
+        has_namespace_routing=has_namespace_routing,
+        max_supported_isolation=max_supported_isolation,
+        log_warning=log_warning,
+    )

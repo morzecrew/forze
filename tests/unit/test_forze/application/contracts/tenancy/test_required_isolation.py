@@ -29,6 +29,21 @@ def test_isolation_rank_total_order() -> None:
     assert not isolation_satisfies(derived="none", required="relation")
 
 
+def test_isolation_ceiling_matrix_is_consistent() -> None:
+    from forze.application.contracts.tenancy import INTEGRATION_ISOLATION_CEILINGS
+    from forze.application.contracts.tenancy.wiring import _ISOLATION_RANK
+
+    # Every declared ceiling is a valid tier, and the in-process backends are capped below
+    # the networked ones (a regression guard on the matrix).
+    assert set(INTEGRATION_ISOLATION_CEILINGS.values()) <= set(_ISOLATION_RANK)
+    assert INTEGRATION_ISOLATION_CEILINGS["neo4j"] == "row"
+    assert INTEGRATION_ISOLATION_CEILINGS["duckdb"] == "row"
+    assert INTEGRATION_ISOLATION_CEILINGS["postgres"] == "database"
+    assert not isolation_satisfies(
+        derived=INTEGRATION_ISOLATION_CEILINGS["duckdb"], required="database"
+    )
+
+
 def test_max_supported_capability_ceiling() -> None:
     from forze.application.contracts.tenancy.wiring import validate_required_isolation
 

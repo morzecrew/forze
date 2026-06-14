@@ -5,12 +5,17 @@ from typing import final
 import attrs
 
 from forze.application.contracts.queue import QueueCommandDepKey, QueueQueryDepKey
-from forze.application.contracts.tenancy import warn_integration_routes
+from forze.application.contracts.tenancy import (
+    TenancyRouteGroup,
+    TenantIsolationMode,
+    validate_module_tenancy,
+    warn_integration_routes,
+)
 from forze.application.execution import Deps, DepsModule
 from forze.application.execution.deps.builders import merge_deps, routed_from_mapping
 from forze.base.primitives import MappingConverter, StrKeyMapping
 
-from ...kernel.client import SQSClientPort
+from ...kernel.client import RoutedSQSClient, SQSClientPort
 from ._warnings import SQS_QUEUE_READER_WARNING, SQS_QUEUE_WRITER_WARNING
 from .configs import SQSQueueConfig
 from .factories import ConfigurableSQSQueueRead, ConfigurableSQSQueueWrite
@@ -39,6 +44,13 @@ class SQSDepsModule(DepsModule):
     )
     """Mapping from queue names to their SQS-specific configurations."""
 
+    required_tenant_isolation: TenantIsolationMode | None = attrs.field(default=None)
+    """Declared minimum tenant isolation (``None`` = no floor).
+
+    Queues span: ``row`` (per-tenant name prefix via ``tenant_aware``), ``schema`` (a
+    per-tenant ``namespace`` resolver), ``database`` (a routed per-tenant client).
+    """
+
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
@@ -51,6 +63,27 @@ class SQSDepsModule(DepsModule):
             integration="SQS",
             routes=self.queue_writers,
             warning=SQS_QUEUE_WRITER_WARNING,
+        )
+        validate_module_tenancy(
+            integration="SQS",
+            client_is_routed=isinstance(self.client, RoutedSQSClient),
+            groups=[
+                TenancyRouteGroup(
+                    kind="queue",
+                    configs=self.queue_readers,
+                    tenant_aware=lambda cfg: cfg.tenant_aware,
+                    namespace_resolver=lambda cfg: cfg.namespace,
+                ),
+                TenancyRouteGroup(
+                    kind="queue",
+                    configs=self.queue_writers,
+                    tenant_aware=lambda cfg: cfg.tenant_aware,
+                    namespace_resolver=lambda cfg: cfg.namespace,
+                ),
+            ],
+            required_isolation=self.required_tenant_isolation,
+            validation_failed_code="sqs_tenancy_validation_failed",
+            max_supported_isolation="database",
         )
 
     # ....................... #

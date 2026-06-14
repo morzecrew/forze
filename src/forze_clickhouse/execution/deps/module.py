@@ -8,11 +8,10 @@ from forze.application.contracts.analytics import (
     AnalyticsIngestDepKey,
     AnalyticsQueryDepKey,
 )
-from forze.application.contracts.resolution import is_static_named_resource
 from forze.application.contracts.tenancy import (
-    TenancyRouteSpec,
+    TenancyRouteGroup,
     TenantIsolationMode,
-    validate_routed_client_tenancy_wiring,
+    validate_module_tenancy,
 )
 from forze.application.execution import Deps, DepsModule
 from forze.application.execution.deps.builders import merge_deps, routed_from_mapping
@@ -50,25 +49,19 @@ class ClickHouseDepsModule(DepsModule):
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
-        configs = list((self.analytics or {}).values())
-        routes = [
-            TenancyRouteSpec(name=str(name), tenant_aware=cfg.tenant_aware, kind="analytics")
-            for name, cfg in (self.analytics or {}).items()
-        ]
-        has_namespace_routing = any(
-            cfg.query_database is not None
-            and not is_static_named_resource(cfg.query_database)
-            for cfg in configs
-        )
-        validate_routed_client_tenancy_wiring(
+        validate_module_tenancy(
             integration="ClickHouse",
             client_is_routed=isinstance(self.client, RoutedClickHouseClient),
-            partition_key_set=True,
-            routes=routes,
-            partition_key_detail="",
-            validation_failed_code="clickhouse_analytics_tenancy_validation_failed",
+            groups=[
+                TenancyRouteGroup(
+                    kind="analytics",
+                    configs=self.analytics,
+                    tenant_aware=lambda cfg: cfg.tenant_aware,
+                    namespace_resolver=lambda cfg: cfg.query_database,
+                )
+            ],
             required_isolation=self.required_tenant_isolation,
-            has_namespace_routing=has_namespace_routing,
+            validation_failed_code="clickhouse_analytics_tenancy_validation_failed",
             max_supported_isolation="database",
         )
 
