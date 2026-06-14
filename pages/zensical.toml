@@ -23,6 +23,7 @@ extra_javascript = ["_javascripts/theme.js", "_javascripts/hero.js"]
 nav = [
     { "Home" = "index.md" },
     { "Get Started" = [
+        "get-started/introduction.md",
         "get-started/installation.md",
         "get-started/quickstart.md",
         "get-started/project-structure.md",
@@ -39,6 +40,7 @@ nav = [
         { "In Depth" = [
             "in-depth/wiring.md",
             "in-depth/transactions.md",
+            "in-depth/testing.md",
             "in-depth/errors.md",
             "in-depth/concurrency-conflicts.md",
             "in-depth/idempotency.md",
@@ -123,6 +125,7 @@ nav = [
         ] },
     ] },
     { "Reference" = [
+        "reference/glossary.md",
         { "Contracts" = [
             "reference/contracts.md",
             "reference/contracts/document.md",
@@ -133,6 +136,7 @@ nav = [
         "reference/query-syntax.md",
         "reference/mapping.md",
         "reference/errors.md",
+        "reference/migration.md",
     ] },
 ]
 

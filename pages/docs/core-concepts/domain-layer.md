@@ -25,9 +25,14 @@ frozen, purpose-built types that carry data across boundaries.
 | Type | Role | Base class |
 |------|------|-----------|
 | **Aggregate** | The entity with identity, versioning, and rules | `Document` |
-| **Create command** | Frozen input that creates one | `CreateDocumentCmd` |
+| **Create command** | Frozen input that creates one | `BaseDTO` |
 | **Update command** | Frozen partial-update payload (all fields optional) | `BaseDTO` |
 | **Read model** | Frozen projection returned from queries | `ReadDocument` |
+
+!!! note "CreateDocumentCmd is deprecated"
+
+    `CreateDocumentCmd` still works as an alias for `BaseDTO` but is deprecated.
+    Use `BaseDTO` for new create commands.
 
 You build an aggregate by subclassing `Document`, which carries four built-in
 fields so you don't redefine identity and versioning every time:
