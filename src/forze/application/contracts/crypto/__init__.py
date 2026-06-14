@@ -27,7 +27,7 @@ from .directory import (
     StaticKeyDirectory,
     TenantTemplateKeyDirectory,
 )
-from .ports import BytesCipherPort, KeyManagementPort
+from .ports import BytesCipherPort, FieldCipherPort, KeyManagementPort
 from .value_objects import DataKey, KeyRef
 from .wiring import (
     EncryptionTier,
@@ -52,6 +52,7 @@ __all__ = [
     "DataKey",
     "EnvelopeCipher",
     "BytesCipherPort",
+    "FieldCipherPort",
     # key directory (tenant → key)
     "KeyDirectoryPort",
     "StaticKeyDirectory",

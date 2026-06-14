@@ -195,3 +195,88 @@ async def test_warm_pre_resolves_active_key() -> None:
 
     await ring.encrypt(b"x", tenant=None)
     assert kms.generated == 1  # encrypt reused the warmed key
+
+
+# ....................... #
+# Synchronous fast path (the codec bridge)
+
+
+async def test_sync_round_trip_after_warm() -> None:
+    ring = _keyring()
+    await ring.warm(None)
+
+    blob = ring.encrypt_sync(b"secret", tenant=None, aad=b"ctx")
+
+    assert ring.decrypt_sync(blob, aad=b"ctx") == b"secret"
+
+
+# ....................... #
+
+
+def test_encrypt_sync_without_warm_raises() -> None:
+    ring = _keyring()
+
+    with pytest.raises(CoreException) as excinfo:
+        ring.encrypt_sync(b"secret", tenant=None)
+
+    assert excinfo.value.kind is ExceptionKind.INTERNAL
+    assert excinfo.value.code == "core.crypto.cipher_not_warm"
+
+
+# ....................... #
+
+
+async def test_decrypt_sync_cold_then_pre_pass() -> None:
+    """A fresh reader (cross-process) must run the read pre-pass before sync decode."""
+
+    writer = _keyring()
+    await writer.warm(None)
+    blob = writer.encrypt_sync(b"secret", tenant=None)
+    envelope = unpack_envelope(blob)
+
+    reader = _keyring()  # cold cache, as in another process
+
+    with pytest.raises(CoreException) as excinfo:
+        reader.decrypt_sync(blob)
+    assert excinfo.value.code == "core.crypto.cipher_not_warm"
+
+    await reader.ensure_unwrapped([envelope])
+    assert reader.decrypt_sync(blob) == b"secret"
+
+
+# ....................... #
+
+
+async def test_same_process_decrypt_sync_hits_seeded_cache() -> None:
+    """Encrypt seeds the decrypt cache, so a read-after-write needs no pre-pass."""
+
+    ring = _keyring()
+    await ring.warm(None)
+    blob = ring.encrypt_sync(b"secret", tenant=None)
+
+    assert ring.decrypt_sync(blob) == b"secret"  # no ensure_unwrapped needed
+
+
+# ....................... #
+
+
+async def test_ensure_unwrapped_is_deduplicated() -> None:
+    kms = _CountingKms(MockKeyManagement())
+    writer = Keyring(
+        kms=kms,
+        aead=AesGcmAead(),
+        directory=StaticKeyDirectory(KeyRef(key_id="cmk")),
+    )
+    await writer.warm(None)
+    envelopes = [unpack_envelope(writer.encrypt_sync(b"x", tenant=None)) for _ in range(4)]
+
+    reader = Keyring(
+        kms=kms,
+        aead=AesGcmAead(),
+        directory=StaticKeyDirectory(KeyRef(key_id="cmk")),
+    )
+    before = kms.unwrapped
+    await reader.ensure_unwrapped(envelopes)
+
+    # All four share one reused data key → a single unwrap.
+    assert kms.unwrapped - before == 1

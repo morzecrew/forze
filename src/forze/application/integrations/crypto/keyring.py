@@ -10,13 +10,16 @@ and decrypt byte values. It:
   data key is reused for many values on the encrypt path (bounded by
   ``max_dek_messages``), and unwrapped data keys are cached on the decrypt path.
 
-Caching is what later lets a *synchronous* codec encrypt/decrypt after an async
-``warm`` — see Phase 2. On the async seams wired now (object storage) it is a
-pure latency optimization: a cold value simply pays one KMS call inline.
+Caching is also what lets a *synchronous* codec encrypt/decrypt: an async
+pre-pass (:meth:`Keyring.warm` before a sync encode, :meth:`Keyring.ensure_unwrapped`
+before a sync decode) primes the cache, then :meth:`Keyring.encrypt_sync` /
+:meth:`Keyring.decrypt_sync` run purely against it — raising ``cipher_not_warm``
+on a cold miss rather than blocking. On the async seams (object storage) the
+cache is a pure latency optimization: a cold value simply pays one KMS call inline.
 """
 
 import asyncio
-from typing import final
+from typing import Iterable, final
 
 import attrs
 
@@ -27,8 +30,27 @@ from forze.application.contracts.crypto import (
 )
 from forze.application.contracts.tenancy import TenantIdentity
 from forze.base.crypto import Aead, EncryptedEnvelope, pack_envelope, unpack_envelope
+from forze.base.exceptions import exc
 
 # ----------------------- #
+
+_NONE_TENANT = "\x00none"
+"""Cache key for the no-tenant (single-key) case."""
+
+
+def _tenant_cache_key(tenant: TenantIdentity | None) -> str:
+    return _NONE_TENANT if tenant is None else str(tenant.tenant_id)
+
+
+def _not_warm(operation: str) -> Exception:
+    return exc.internal(
+        f"Keyring not warmed for {operation}: run the async pre-pass "
+        f"(warm()/ensure_unwrapped()) before the synchronous codec {operation}.",
+        code="core.crypto.cipher_not_warm",
+    )
+
+
+# ....................... #
 
 
 @final
@@ -73,8 +95,18 @@ class Keyring:
     _dec_cache: dict[bytes, bytes] = attrs.field(factory=dict, init=False)
     """wrapped data key → plaintext data key (decrypt path)."""
 
+    _tenant_key: dict[str, str] = attrs.field(factory=dict, init=False)
+    """tenant cache key → resolved key_id (lets the sync path skip the directory)."""
+
     _lock: asyncio.Lock = attrs.field(factory=asyncio.Lock, init=False, repr=False)
     """Serializes cache fills so a cold key triggers a single KMS call."""
+
+    # ....................... #
+
+    async def _resolve_key_ref(self, tenant: TenantIdentity | None) -> KeyRef:
+        key_ref = await self.directory.resolve(tenant)
+        self._tenant_key[_tenant_cache_key(tenant)] = key_ref.key_id
+        return key_ref
 
     # ....................... #
 
@@ -87,7 +119,7 @@ class Keyring:
     ) -> bytes:
         """Encrypt *plaintext* under *tenant*'s key, returning a packed envelope."""
 
-        key_ref = await self.directory.resolve(tenant)
+        key_ref = await self._resolve_key_ref(tenant)
         dek = await self._active_data_key(key_ref)
         nonce, ciphertext = self.aead.seal(
             key=dek.plaintext,
@@ -124,10 +156,82 @@ class Keyring:
     # ....................... #
 
     async def warm(self, tenant: TenantIdentity | None) -> None:
-        """Pre-resolve *tenant*'s active data key so the next encrypt pays no KMS call."""
+        """Pre-resolve *tenant*'s active data key so a later (a)sync encrypt pays no KMS call."""
 
-        key_ref = await self.directory.resolve(tenant)
+        key_ref = await self._resolve_key_ref(tenant)
         await self._active_data_key(key_ref)
+
+    # ....................... #
+
+    async def ensure_unwrapped(self, envelopes: Iterable[EncryptedEnvelope]) -> None:
+        """Unwrap and cache the data keys for *envelopes* so sync decrypts hit.
+
+        The read pre-pass: with per-tenant data-key reuse a result set carries
+        only a handful of distinct wrapped keys, so this is a few KMS calls
+        regardless of row count. A same-process read-after-write is already a
+        cache hit and unwraps nothing.
+        """
+
+        for envelope in envelopes:
+            if envelope.wrapped_dek not in self._dec_cache:
+                await self._unwrap(envelope)
+
+    # ....................... #
+
+    def encrypt_sync(
+        self,
+        plaintext: bytes,
+        *,
+        tenant: TenantIdentity | None,
+        aad: bytes = b"",
+    ) -> bytes:
+        """Encrypt against the warmed cache (no awaits); requires a prior :meth:`warm`."""
+
+        key_id = self._tenant_key.get(_tenant_cache_key(tenant))
+        active = self._enc_cache.get(key_id) if key_id is not None else None
+
+        if active is None or active.uses >= self.max_dek_messages:
+            raise _not_warm("encrypt")
+
+        active.uses += 1
+        nonce, ciphertext = self.aead.seal(
+            key=active.plaintext,
+            plaintext=plaintext,
+            aad=aad,
+        )
+
+        return pack_envelope(
+            EncryptedEnvelope(
+                alg=self.aead.algorithm,
+                key_id=active.key_id,
+                key_version=active.key_version,
+                nonce=nonce,
+                wrapped_dek=active.wrapped,
+                ciphertext=ciphertext,
+            )
+        )
+
+    # ....................... #
+
+    def decrypt_sync(self, blob: bytes, *, aad: bytes = b"") -> bytes:
+        """Decrypt against the warmed cache (no awaits); requires a prior unwrap.
+
+        A same-process read-after-write hits the cache seeded at encrypt time;
+        otherwise call :meth:`ensure_unwrapped` for the rows first.
+        """
+
+        envelope = unpack_envelope(blob)
+        dek = self._dec_cache.get(envelope.wrapped_dek)
+
+        if dek is None:
+            raise _not_warm("decrypt")
+
+        return self.aead.open(
+            key=dek,
+            nonce=envelope.nonce,
+            ciphertext=envelope.ciphertext,
+            aad=aad,
+        )
 
     # ....................... #
 

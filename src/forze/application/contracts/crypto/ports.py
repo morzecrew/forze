@@ -1,8 +1,9 @@
 """Ports for key management and value-level encryption."""
 
-from typing import Awaitable, Protocol
+from typing import Awaitable, Iterable, Protocol
 
 from forze.application.contracts.tenancy import TenantIdentity
+from forze.base.crypto import EncryptedEnvelope
 
 from .value_objects import DataKey, KeyRef
 
@@ -79,6 +80,64 @@ class BytesCipherPort(Protocol):
         :param aad: Must equal the value passed to :meth:`encrypt`.
         :raises CoreException: ``validation`` on a malformed envelope or an
             authentication failure (tamper / wrong ``aad`` / wrong tenant).
+        """
+
+        ...  # pragma: no cover
+
+
+# ....................... #
+
+
+class FieldCipherPort(Protocol):
+    """Cipher with a synchronous fast path, for the field-encrypting codec.
+
+    The codec runs inside synchronous ``ModelCodec`` methods, so it cannot await
+    a key backend. Instead, an async *pre-pass* primes the data-key cache and the
+    sync methods then operate purely against it:
+
+    - before a synchronous *encode*, :meth:`warm` resolves the tenant's active
+      data key;
+    - before a synchronous *decode*, :meth:`ensure_unwrapped` unwraps the data
+      keys named by the stored envelopes (only needed across processes / after a
+      key rotation — a same-process read-after-write already hits the cache).
+
+    A sync call with a cold cache raises rather than blocking, surfacing a
+    missing pre-pass as a wiring bug.
+    """
+
+    def warm(self, tenant: TenantIdentity | None) -> Awaitable[None]:
+        """Pre-resolve *tenant*'s active data key for subsequent sync encrypts."""
+
+        ...  # pragma: no cover
+
+    def ensure_unwrapped(
+        self,
+        envelopes: Iterable[EncryptedEnvelope],
+    ) -> Awaitable[None]:
+        """Unwrap and cache the data keys for *envelopes* for sync decrypts."""
+
+        ...  # pragma: no cover
+
+    def encrypt_sync(
+        self,
+        plaintext: bytes,
+        *,
+        tenant: TenantIdentity | None,
+        aad: bytes = b"",
+    ) -> bytes:
+        """Encrypt synchronously against the warmed cache.
+
+        :raises CoreException: ``internal`` ``core.crypto.cipher_not_warm`` when
+            the tenant's active data key has not been :meth:`warm`-ed.
+        """
+
+        ...  # pragma: no cover
+
+    def decrypt_sync(self, blob: bytes, *, aad: bytes = b"") -> bytes:
+        """Decrypt synchronously against the warmed cache.
+
+        :raises CoreException: ``internal`` ``core.crypto.cipher_not_warm`` when
+            the envelope's data key is not cached (run :meth:`ensure_unwrapped`).
         """
 
         ...  # pragma: no cover
