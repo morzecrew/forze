@@ -196,7 +196,7 @@ async def test_tenant_property_isolation(neo4j_client: Neo4jClient) -> None:
 
 
 async def test_raw_escape_hatch(neo4j_client: Neo4jClient) -> None:
-    a = _adapter(neo4j_client)
+    a = _adapter(neo4j_client, allow_raw_query=True)
     await a.create_vertex("User", UserCreate(id="a"))
     await a.create_vertex("User", UserCreate(id="b"))
 
@@ -208,7 +208,10 @@ async def test_raw_query_is_tenant_scoped(neo4j_client: Neo4jClient) -> None:
     t1, t2 = uuid4(), uuid4()
     current: dict[str, TenantIdentity | None] = {"id": TenantIdentity(tenant_id=t1)}
     a = _adapter(
-        neo4j_client, tenant_aware=True, tenant_provider=lambda: current["id"]
+        neo4j_client,
+        tenant_aware=True,
+        tenant_provider=lambda: current["id"],
+        allow_raw_query=True,
     )
 
     await a.create_vertex("User", UserCreate(id="t1u"))
@@ -236,7 +239,10 @@ async def test_full_path_isolation_blocks_cross_tenant_edge(
     current: dict[str, TenantIdentity] = {"id": TenantIdentity(tenant_id=t1)}
 
     a = _adapter(
-        neo4j_client, tenant_aware=True, tenant_provider=lambda: current["id"]
+        neo4j_client,
+        tenant_aware=True,
+        tenant_provider=lambda: current["id"],
+        allow_raw_query=True,
     )
 
     # Tenant 1: A -FOLLOWS-> B (a legitimate same-tenant edge).
@@ -287,7 +293,10 @@ async def test_scoped_walk_is_tenant_safe(neo4j_client: Neo4jClient) -> None:
     aid, bid, fid = f"A-{tok}", f"B-{tok}", f"F-{tok}"
     current: dict[str, TenantIdentity] = {"id": TenantIdentity(tenant_id=t1)}
     a = _adapter(
-        neo4j_client, tenant_aware=True, tenant_provider=lambda: current["id"]
+        neo4j_client,
+        tenant_aware=True,
+        tenant_provider=lambda: current["id"],
+        allow_raw_query=True,
     )
 
     await a.create_vertex("User", UserCreate(id=aid))
