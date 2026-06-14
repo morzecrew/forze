@@ -281,6 +281,16 @@ Categories:
 
 Exclude internal changes such as CI updates, test-only changes, or trivial refactors.
 
+**Keep entries concise.** One bullet = a headline, the key public API/migration, and any
+breaking note — not an essay. Leave out the *why*, the implementation mechanics, and
+"verified by …" (those live in the PR and commits). Prefer one tight bullet over several
+overlapping ones; group a multi-PR arc (e.g. a hardening initiative) under a bold sub-heading
+rather than repeating context in each line. Always preserve **breaking** markers, new public
+symbol names, and any **Migration:** SQL. When the `[Unreleased]` section grows large or several
+bullets describe one feature, compact it: consolidate the overlap into grouped, single-line
+entries (keep every breaking/migration/public-API fact). Edit only `[Unreleased]` — never
+rewrite an already-released version section.
+
 ## Release Process
 
 Releases are tag-driven.
