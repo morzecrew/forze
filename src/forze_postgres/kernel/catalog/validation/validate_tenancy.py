@@ -71,12 +71,14 @@ def validate_postgres_tenancy_wiring(
     introspector_cache_partition_key_set: bool,
     routes: Sequence[PostgresTenancyRouteSpec],
     required_isolation: PostgresTenantIsolationMode | None = None,
+    has_namespace_routing: bool = False,
 ) -> None:
     """Fail or warn when Postgres client routing and ``tenant_aware`` flags disagree.
 
     When ``required_isolation`` is declared, also fail closed if the derived isolation
-    mode is weaker than the requirement (e.g. a ``database`` floor wired with only
-    row-level filtering).
+    tier is weaker than the requirement. ``has_namespace_routing`` marks a per-tenant
+    schema (e.g. an analytics ``query_schema`` resolver), which derives the ``schema`` tier.
+    Postgres can reach every tier (up to ``database`` via a routed client).
     """
 
     validate_routed_client_tenancy_wiring(
@@ -90,5 +92,7 @@ def validate_postgres_tenancy_wiring(
         ),
         validation_failed_code="postgres_tenancy_validation_failed",
         required_isolation=required_isolation,
+        has_namespace_routing=has_namespace_routing,
+        max_supported_isolation="database",
         log_warning=logger.warning,
     )

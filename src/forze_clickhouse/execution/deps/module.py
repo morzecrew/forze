@@ -8,6 +8,7 @@ from forze.application.contracts.analytics import (
     AnalyticsIngestDepKey,
     AnalyticsQueryDepKey,
 )
+from forze.application.contracts.resolution import is_static_named_resource
 from forze.application.contracts.tenancy import (
     TenancyRouteSpec,
     TenantIsolationMode,
@@ -49,10 +50,16 @@ class ClickHouseDepsModule(DepsModule):
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
+        configs = list((self.analytics or {}).values())
         routes = [
             TenancyRouteSpec(name=str(name), tenant_aware=cfg.tenant_aware, kind="analytics")
             for name, cfg in (self.analytics or {}).items()
         ]
+        has_namespace_routing = any(
+            cfg.query_database is not None
+            and not is_static_named_resource(cfg.query_database)
+            for cfg in configs
+        )
         validate_routed_client_tenancy_wiring(
             integration="ClickHouse",
             client_is_routed=isinstance(self.client, RoutedClickHouseClient),
@@ -61,6 +68,8 @@ class ClickHouseDepsModule(DepsModule):
             partition_key_detail="",
             validation_failed_code="clickhouse_analytics_tenancy_validation_failed",
             required_isolation=self.required_tenant_isolation,
+            has_namespace_routing=has_namespace_routing,
+            max_supported_isolation="database",
         )
 
     # ....................... #

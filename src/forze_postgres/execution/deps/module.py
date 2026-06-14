@@ -15,6 +15,7 @@ from forze.application.contracts.document import (
 )
 from forze.application.contracts.inbox import InboxDepKey
 from forze.application.contracts.outbox import OutboxCommandDepKey, OutboxQueryDepKey
+from forze.application.contracts.resolution import is_static_named_resource
 from forze.application.contracts.search import (
     FederatedSearchQueryDepKey,
     HubSearchQueryDepKey,
@@ -287,6 +288,8 @@ class PostgresDepsModule(DepsModule):
                             ],
                         )
 
+        has_namespace_routing = False
+
         if self.analytics:
             for name, analytics_cfg in self.analytics.items():
                 routes.append(
@@ -297,6 +300,11 @@ class PostgresDepsModule(DepsModule):
                     ),
                 )
 
+                if analytics_cfg.query_schema is not None and not is_static_named_resource(
+                    analytics_cfg.query_schema
+                ):
+                    has_namespace_routing = True
+
         validate_postgres_tenancy_wiring(
             client_is_routed=isinstance(self.client, RoutedPostgresClient),
             introspector_cache_partition_key_set=(
@@ -304,6 +312,7 @@ class PostgresDepsModule(DepsModule):
             ),
             routes=routes,
             required_isolation=self.required_tenant_isolation,
+            has_namespace_routing=has_namespace_routing,
         )
 
     # ....................... #

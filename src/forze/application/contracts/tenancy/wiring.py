@@ -16,8 +16,21 @@ from forze.base.primitives import StrKey, StrKeyMapping
 
 # ----------------------- #
 
-TenantIsolationMode = Literal["none", "row", "relation", "database"]
-"""Derived isolation mode for docs and diagnostics (not configured directly)."""
+TenantIsolationMode = Literal["none", "row", "relation", "schema", "database"]
+"""Derived isolation tier for docs, diagnostics, and the ``required_isolation`` floor.
+
+The physical-strength ladder (weakest → strongest) is ``none < relation < row < schema <
+database``. The three tenant-discriminator tiers map to a deployment's mechanism:
+
+- ``row`` — shared resource, tenant discriminator embedded (column / key prefix / path
+  prefix / graph property).
+- ``schema`` — separate logical namespace per tenant on a shared instance/connection
+  (DB schema, warehouse dataset/database, object-store bucket) resolved from the tenant.
+- ``database`` — separate instance/credentials per tenant (a routed client). The only
+  model safe for untrusted raw or self-scoping query paths.
+
+Derived from the config an integration already carries (it is not configured directly).
+"""
 
 # ....................... #
 
@@ -25,14 +38,16 @@ _ISOLATION_RANK: dict[TenantIsolationMode, int] = {
     "none": 0,
     "relation": 1,
     "row": 2,
-    "database": 3,
+    "schema": 3,
+    "database": 4,
 }
 """Strength ordering for isolation modes (weakest → strongest).
 
 ``relation`` and ``row`` are both logical (shared-store) isolation; ``row`` outranks
 ``relation`` because every row physically carries the tenant tag, whereas relation-level
-scoping depends on a join/grant being applied. ``database`` is the only *physical*
-isolation and outranks every logical mode — it is the only model safe for untrusted raw
+scoping depends on a join/grant being applied. ``schema`` (a per-tenant namespace on a
+shared instance) is physically stronger than ``row`` but weaker than ``database`` (a
+separate instance/credentials per tenant), which is the only model safe for untrusted raw
 or self-scoping query paths.
 """
 
@@ -53,16 +68,36 @@ def validate_required_isolation(
     derived: TenantIsolationMode,
     required: TenantIsolationMode | None,
     code: str,
+    max_supported: TenantIsolationMode | None = None,
 ) -> None:
     """Fail closed when the wired isolation is weaker than the declared requirement.
 
     A deployment declares the *minimum* isolation it accepts (``required``); this refuses
     to wire any combination whose ``derived`` mode is weaker. Pass ``required=None`` to opt
     out (no declared floor — the historical behavior).
+
+    ``max_supported`` is the strongest tier the integration can ever provide (its
+    capability ceiling — e.g. an in-process backend caps at ``row``, an object store at
+    ``database``). When ``required`` exceeds it, the failure is reported as a capability
+    mismatch (the floor is unreachable by configuration) rather than a wiring gap.
     """
 
     if required is None:
         return
+
+    if max_supported is not None and not isolation_satisfies(
+        derived=max_supported, required=required
+    ):
+        raise exc.configuration(
+            f"{integration} supports at most {max_supported!r} tenant isolation, but the "
+            f"deployment declares required_isolation={required!r}, which it cannot provide. "
+            "Lower the declared requirement or use a backend that supports it.",
+            code=code,
+            details={
+                "required_isolation": required,
+                "max_supported_isolation": max_supported,
+            },
+        )
 
     if isolation_satisfies(derived=derived, required=required):
         return
@@ -70,8 +105,8 @@ def validate_required_isolation(
     raise exc.configuration(
         f"{integration} tenancy validation failed: deployment declares "
         f"required_isolation={required!r} but the wired isolation is {derived!r}, which "
-        "is weaker. Strengthen the wiring (mark routes tenant_aware, or route the client "
-        "per tenant) or lower the declared requirement.",
+        "is weaker. Strengthen the wiring (mark routes tenant_aware, route a per-tenant "
+        "namespace, or route the client per tenant) or lower the declared requirement.",
         code=code,
         details={"required_isolation": required, "derived_isolation": derived},
     )
@@ -102,11 +137,21 @@ def derive_tenant_isolation_mode(
     client_is_routed: bool,
     routes: Sequence[TenancyRouteSpec],
     has_relation_resolvers: bool = False,
+    has_namespace_routing: bool = False,
 ) -> TenantIsolationMode:
-    """Return the effective isolation mode implied by client and route flags."""
+    """Return the effective isolation tier implied by an integration's wiring.
+
+    Strongest applicable tier wins: a per-tenant routed *client* → ``database``; a
+    per-tenant *namespace* resolver (schema / dataset / bucket) → ``schema``; a row-level
+    ``tenant_aware`` route → ``row``; a dynamic relation resolver → ``relation``; else
+    ``none``.
+    """
 
     if client_is_routed:
         return "database"
+
+    if has_namespace_routing:
+        return "schema"
 
     if any(r.tenant_aware for r in routes):
         return "row"
@@ -271,13 +316,16 @@ def validate_routed_client_tenancy_wiring(
     validation_failed_code: str,
     required_isolation: TenantIsolationMode | None = None,
     has_relation_resolvers: bool = False,
+    has_namespace_routing: bool = False,
+    max_supported_isolation: TenantIsolationMode | None = None,
     log_warning: Callable[..., None] | None = None,
 ) -> None:
     """Fail or warn when a routed client and per-route ``tenant_aware`` disagree.
 
-    When ``required_isolation`` is set, also fail closed if the derived isolation mode
-    (from ``client_is_routed`` / ``routes`` / ``has_relation_resolvers``) is weaker than
-    the declared floor — see :func:`validate_required_isolation`.
+    When ``required_isolation`` is set, also fail closed if the derived isolation tier
+    (from ``client_is_routed`` / ``has_namespace_routing`` / ``routes`` /
+    ``has_relation_resolvers``) is weaker than the declared floor, or exceeds
+    ``max_supported_isolation`` — see :func:`validate_required_isolation`.
     """
 
     if client_is_routed and not partition_key_set:
@@ -295,9 +343,11 @@ def validate_routed_client_tenancy_wiring(
             client_is_routed=client_is_routed,
             routes=routes,
             has_relation_resolvers=has_relation_resolvers,
+            has_namespace_routing=has_namespace_routing,
         ),
         required=required_isolation,
         code=validation_failed_code,
+        max_supported=max_supported_isolation,
     )
 
     if not client_is_routed:

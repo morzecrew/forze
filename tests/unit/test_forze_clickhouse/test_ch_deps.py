@@ -105,3 +105,38 @@ def test_no_isolation_floor_allows_shared_client() -> None:
             ),
         },
     )
+
+
+def test_schema_floor_satisfied_by_per_tenant_query_database() -> None:
+    # A dynamic (per-tenant) query_database resolver derives the "schema" tier on a shared
+    # client, satisfying a "schema" floor.
+    ClickHouseDepsModule(
+        client=ClickHouseClient(),
+        required_tenant_isolation="schema",
+        analytics={
+            "events": ClickHouseAnalyticsConfig(
+                database="analytics",
+                query_database=lambda t: f"tenant_{t}",
+                queries={"counts": ClickHouseQueryConfig(sql="SELECT 1 AS value")},
+            ),
+        },
+    )
+
+
+def test_schema_floor_rejects_static_query_database() -> None:
+    with pytest.raises(CoreException, match="clickhouse_analytics_tenancy_validation_failed"):
+        ClickHouseDepsModule(
+            client=ClickHouseClient(),
+            required_tenant_isolation="schema",
+            analytics={
+                "events": ClickHouseAnalyticsConfig(
+                    database="analytics",
+                    tenant_aware=True,
+                    queries={
+                        "counts": ClickHouseQueryConfig(
+                            sql="SELECT 1 AS value WHERE tenant_id = {tenant:UUID}",
+                        ),
+                    },
+                ),
+            },
+        )

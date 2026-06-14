@@ -62,6 +62,8 @@ class DuckDbDepsModule(DepsModule):
             partition_key_detail="",
             validation_failed_code="duckdb_analytics_tenancy_validation_failed",
             required_isolation=self.required_tenant_isolation,
+            # In-process, no per-tenant namespace or routed client → caps at row-level.
+            max_supported_isolation="row",
         )
 
     # ....................... #

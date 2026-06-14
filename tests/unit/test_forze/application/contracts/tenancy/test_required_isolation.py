@@ -16,15 +16,42 @@ from forze.base.exceptions import CoreException
 
 
 def test_isolation_rank_total_order() -> None:
-    # weakest -> strongest: none < relation < row < database
-    assert isolation_satisfies(derived="database", required="row")
+    # weakest -> strongest: none < relation < row < schema < database
+    assert isolation_satisfies(derived="database", required="schema")
+    assert isolation_satisfies(derived="schema", required="row")
     assert isolation_satisfies(derived="row", required="relation")
     assert isolation_satisfies(derived="relation", required="none")
-    assert isolation_satisfies(derived="row", required="row")  # equal satisfies
+    assert isolation_satisfies(derived="schema", required="schema")  # equal satisfies
 
-    assert not isolation_satisfies(derived="row", required="database")
+    assert not isolation_satisfies(derived="row", required="schema")
+    assert not isolation_satisfies(derived="schema", required="database")
     assert not isolation_satisfies(derived="relation", required="row")
     assert not isolation_satisfies(derived="none", required="relation")
+
+
+def test_max_supported_capability_ceiling() -> None:
+    from forze.application.contracts.tenancy.wiring import validate_required_isolation
+
+    # An integration capped at "row" cannot meet a "database" floor — capability mismatch.
+    with pytest.raises(CoreException, match="x_failed") as ei:
+        validate_required_isolation(
+            integration="X",
+            derived="row",
+            required="database",
+            code="x_failed",
+            max_supported="row",
+        )
+
+    assert ei.value.details["max_supported_isolation"] == "row"
+
+    # Within the ceiling, a satisfied floor passes.
+    validate_required_isolation(
+        integration="X",
+        derived="schema",
+        required="schema",
+        code="x_failed",
+        max_supported="database",
+    )
 
 
 def test_required_isolation_none_is_opt_out() -> None:
