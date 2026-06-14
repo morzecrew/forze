@@ -320,7 +320,10 @@ noise is one-directional (interference only ever *slows* an iteration), so the
 per-run `min` is the cleanest estimate of the code path; `mean`, dragged up by
 every outlier, would flag *more* false positives, not fewer. The comparator is
 [`tests/perf/gate_compare.py`](tests/perf/gate_compare.py); rounds per side are
-tunable via `PERF_GATE_ROUNDS` (default 3 — higher is more robust but slower).
+tunable via `PERF_GATE_ROUNDS` (default 3 — higher is more robust but slower). Only
+benchmarks ≥ `--min-floor-ms` (default 1 ms) can fail the gate — sub-millisecond ones
+are below a shared runner's timing-noise floor and are reported for trend only, so a new
+micro-benchmark won't make the gate flaky.
 
 If it fires: fix the regression, or justify it in the PR and apply the
 `skip-perf-gate` label. Comparisons match benchmarks by name — new benchmarks

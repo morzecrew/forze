@@ -13,8 +13,11 @@ benchmarks.
 
 Reads the ``*_base.json`` / ``*_head.json`` runs pytest-benchmark saved into the
 shared storage dir, matches benchmarks by ``fullname``, and fails (exit 1) when a
-benchmark's median-of-mins regressed by more than the threshold. New benchmarks
-(head-only) and dropped ones (base-only) are reported but never fail the gate.
+benchmark's median-of-mins regressed by more than the threshold. Only benchmarks at
+or above ``--min-floor-ms`` can fail — sub-millisecond ones sit below a shared CI
+runner's timing noise floor (a 15% swing there is jitter, not signal, even after
+median-of-mins) and are reported for trend only. New benchmarks (head-only) and
+dropped ones (base-only) are reported but never fail the gate.
 
 Usage::
 
@@ -60,7 +63,17 @@ def main() -> int:
         default=15.0,
         help="Max tolerated regression of the median-of-mins, in percent (default: 15).",
     )
+    parser.add_argument(
+        "--min-floor-ms",
+        type=float,
+        default=1.0,
+        help="Only GATE benchmarks whose baseline median-min is at least this many ms. "
+        "Sub-millisecond benchmarks sit below a shared CI runner's timing noise floor — a "
+        "15%% swing there is jitter, not signal, even after median-of-mins — so they are "
+        "reported for trend but never fail the gate (default: 1.0).",
+    )
     args = parser.parse_args()
+    floor_s = args.min_floor_ms / _MS
 
     base = _load_mins(args.storage, "base")
     head = _load_mins(args.storage, "head")
@@ -91,16 +104,26 @@ def main() -> int:
         rows.append((delta, name, base_med, head_med, len(base[name]), len(head[name])))
 
     rows.sort(reverse=True)  # worst regression first
-    regressed = [r for r in rows if r[0] > args.threshold]
+    # Only benchmarks at or above the floor can fail — sub-ms ones are below the runner's
+    # noise floor and are reported for trend only.
+    regressed = [r for r in rows if r[0] > args.threshold and r[2] >= floor_s]
 
     print(
         f"perf-gate: median of per-run min over {rounds_base}×base / {rounds_head}×head "
-        f"interleaved rounds; fail at +{args.threshold:g}%\n"
+        f"interleaved rounds; fail at +{args.threshold:g}% for benchmarks ≥ "
+        f"{args.min_floor_ms:g} ms (smaller = reported only)\n"
     )
     print(f"{'Δ%':>8}  {'base(ms)':>10}  {'head(ms)':>10}  {'n(b/h)':>7}  benchmark")
     print(f"{'-' * 8}  {'-' * 10}  {'-' * 10}  {'-' * 7}  {'-' * 40}")
     for delta, name, base_med, head_med, nb, nh in rows:
-        flag = "  <-- REGRESSED" if delta > args.threshold else ""
+        if delta > args.threshold:
+            flag = (
+                "  <-- REGRESSED"
+                if base_med >= floor_s
+                else "  (below gate floor — info)"
+            )
+        else:
+            flag = ""
         print(
             f"{delta:+8.2f}  {base_med * _MS:10.4f}  {head_med * _MS:10.4f}  "
             f"{nb:>3}/{nh:<3}  {name}{flag}"
