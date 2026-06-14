@@ -33,13 +33,19 @@ from forze.application.contracts.graph import (
     ShortestPathResult,
     VertexRef,
 )
+from forze.application.contracts.resolution import (
+    NamedResourceSpec,
+    is_static_named_resource,
+    resolve_scoped_namespace,
+)
 from forze.application.contracts.tenancy import TenancyMixin
 from forze.base.exceptions import CoreException, exc
-from forze.base.primitives import JsonDict
+from forze.base.primitives import JsonDict, OnceCell
 from forze.base.serialization import default_model_codec
 
 from ..kernel.client import Neo4jClientPort
 from ..kernel.cypher import builders
+from ..kernel.relation import resolve_neo4j_database
 
 # ----------------------- #
 
@@ -72,7 +78,17 @@ class Neo4jGraphAdapter(TenancyMixin):
     spec: GraphModuleSpec
     client: Neo4jClientPort
     tenant_property: str = "tenant_id"
-    database: str | None = None
+    database: NamedResourceSpec | None = None
+    """Target Neo4j database — a static name, a per-tenant resolver (``namespace`` tier:
+    per-tenant database on a shared cluster), or ``None`` (client default)."""
+
+    _database_cell: OnceCell[str] = attrs.field(
+        factory=OnceCell,
+        init=False,
+        eq=False,
+        repr=False,
+    )
+
     traversal_isolation: Literal["anchor", "full-path"] = "full-path"
     """How far tenant scoping reaches on traversals when ``tenant_aware``.
 
@@ -91,6 +107,28 @@ class Neo4jGraphAdapter(TenancyMixin):
     enforced tenancy — use the structured ports (full-path scoped) and :meth:`scoped_walk`
     instead.
     """
+
+    # ....................... #
+    # tenancy / database resolution
+
+    async def _resolved_database(self) -> str | None:
+        """Target Neo4j database for the current tenant (``None`` = client default).
+
+        A static name (or ``None``) resolves without a tenant; a per-tenant resolver scopes
+        each query to the tenant's own database (the ``namespace`` tier).
+        """
+
+        spec = self.database
+
+        if spec is None or is_static_named_resource(spec):
+            return spec
+
+        return await resolve_scoped_namespace(
+            spec,
+            tenant_id=self._tenant_id_for_resolve(),
+            cell=self._database_cell,
+            resolver=resolve_neo4j_database,
+        )
 
     # ....................... #
     # spec / codec helpers
@@ -203,7 +241,7 @@ class Neo4jGraphAdapter(TenancyMixin):
             ref.kind, node.key_field, tenant_field=self._tenant_field
         )
         rows = await self.client.run(
-            query, self._params(key=ref.key), database=self.database
+            query, self._params(key=ref.key), database=await self._resolved_database()
         )
 
         if not rows:
@@ -219,7 +257,7 @@ class Neo4jGraphAdapter(TenancyMixin):
             ref.kind, node.key_field, tenant_field=self._tenant_field
         )
         rows = await self.client.run(
-            query, self._params(key=ref.key), database=self.database
+            query, self._params(key=ref.key), database=await self._resolved_database()
         )
 
         return bool(rows and rows[0]["exists"])
@@ -242,7 +280,7 @@ class Neo4jGraphAdapter(TenancyMixin):
             ref.kind, edge.key_field, tenant_field=self._tenant_field
         )
         rows = await self.client.run(
-            query, self._params(key=ref.key), database=self.database
+            query, self._params(key=ref.key), database=await self._resolved_database()
         )
 
         if not rows:
@@ -273,7 +311,7 @@ class Neo4jGraphAdapter(TenancyMixin):
         rows = await self.client.run(
             query,
             self._params(key=origin.key, limit=limit),
-            database=self.database,
+            database=await self._resolved_database(),
         )
 
         out: list[NeighborRow] = []
@@ -314,7 +352,7 @@ class Neo4jGraphAdapter(TenancyMixin):
         rows = await self.client.run(
             query,
             self._params(key=start.key, max_results=params.max_results),
-            database=self.database,
+            database=await self._resolved_database(),
         )
 
         out: list[GraphWalkStep] = []
@@ -373,7 +411,7 @@ class Neo4jGraphAdapter(TenancyMixin):
         rows = await self.client.run(
             query,
             self._params(from_key=from_ref.key, to_key=to_ref.key),
-            database=self.database,
+            database=await self._resolved_database(),
         )
 
         if not rows:
@@ -415,7 +453,7 @@ class Neo4jGraphAdapter(TenancyMixin):
         rows = await self.client.run(
             query,
             self._params(key=anchor.key, limit=params.limit),
-            database=self.database,
+            database=await self._resolved_database(),
         )
 
         return [self._vertex_model(params.target_kind, row["m"]) for row in rows]
@@ -435,7 +473,7 @@ class Neo4jGraphAdapter(TenancyMixin):
         rows = await self.client.run(
             query,
             {"props": self._encode(cmd), **self._params()},
-            database=self.database,
+            database=await self._resolved_database(),
         )
 
         if not return_new:
@@ -453,7 +491,7 @@ class Neo4jGraphAdapter(TenancyMixin):
         rows = await self.client.run(
             query,
             {"props": self._encode(cmd), **self._params(key=ref.key)},
-            database=self.database,
+            database=await self._resolved_database(),
         )
 
         if not rows:
@@ -471,7 +509,7 @@ class Neo4jGraphAdapter(TenancyMixin):
         query = builders.delete_vertex(
             ref.kind, node.key_field, tenant_field=self._tenant_field
         )
-        await self.client.run(query, self._params(key=ref.key), database=self.database)
+        await self.client.run(query, self._params(key=ref.key), database=await self._resolved_database())
 
     # ....................... #
 
@@ -538,7 +576,7 @@ class Neo4jGraphAdapter(TenancyMixin):
         rows = await self.client.run(
             query,
             {"props": data, **self._params(from_key=from_key, to_key=to_key)},
-            database=self.database,
+            database=await self._resolved_database(),
         )
 
         if not rows:
@@ -577,7 +615,7 @@ class Neo4jGraphAdapter(TenancyMixin):
         if self.tenant_aware:
             merged["tenant"] = self._tenant_str()
 
-        return await self.client.run(query, merged or None, database=self.database)
+        return await self.client.run(query, merged or None, database=await self._resolved_database())
 
     # ....................... #
     # Deferred GraphQueryPort methods

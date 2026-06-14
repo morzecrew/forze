@@ -21,8 +21,15 @@ from .execution import (
     Neo4jShutdownHook,
     Neo4jStartupHook,
     neo4j_lifecycle_step,
+    routed_neo4j_lifecycle_step,
 )
-from .kernel.client import Neo4jClient, Neo4jClientPort, Neo4jConfig
+from .kernel.client import (
+    Neo4jClient,
+    Neo4jClientPort,
+    Neo4jConfig,
+    Neo4jRoutingCredentials,
+    RoutedNeo4jClient,
+)
 from .kernel.relation import (
     NamedResourceSpec,
     coerce_named_resource_spec,
@@ -44,6 +51,9 @@ __all__ = [
     "Neo4jStartupHook",
     "Neo4jShutdownHook",
     "neo4j_lifecycle_step",
+    "routed_neo4j_lifecycle_step",
+    "RoutedNeo4jClient",
+    "Neo4jRoutingCredentials",
     "NamedResourceSpec",
     "coerce_named_resource_spec",
     "is_static_named_resource",

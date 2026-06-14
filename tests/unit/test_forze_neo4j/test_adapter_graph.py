@@ -67,9 +67,11 @@ class _FakeClient:
     def __init__(self, rows: list[dict[str, Any]] | None = None) -> None:
         self.rows = rows if rows is not None else []
         self.calls: list[tuple[str, dict[str, Any]]] = []
+        self.databases: list[str | None] = []
 
     async def run(self, query, params=None, *, database=None):  # noqa: ANN001, ANN202
         self.calls.append((query, dict(params or {})))
+        self.databases.append(database)
         return self.rows
 
     async def close(self) -> None: ...
@@ -107,6 +109,30 @@ async def test_get_vertex_materializes() -> None:
     query, params = client.calls[-1]
     assert "MATCH (n:`User` {`id`: $key})" in query
     assert params == {"key": "a"}
+
+
+@pytest.mark.asyncio
+async def test_static_database_resolves_without_a_tenant() -> None:
+    adapter, client = _adapter(rows=[{"n": {"id": "a"}}], database="analytics")
+    await adapter.get_vertex(VertexRef(kind="User", key="a"))
+    assert client.databases[-1] == "analytics"
+
+
+@pytest.mark.asyncio
+async def test_per_tenant_database_routes_to_resolved_namespace() -> None:
+    from uuid import uuid4
+
+    from forze.application.contracts.tenancy import TenantIdentity
+
+    tid = uuid4()
+    adapter, client = _adapter(
+        rows=[{"n": {"id": "a"}}],
+        database=lambda t: f"tenant_{t}",  # per-tenant database = namespace tier
+        tenant_aware=True,
+        tenant_provider=lambda: TenantIdentity(tenant_id=tid),
+    )
+    await adapter.get_vertex(VertexRef(kind="User", key="a"))
+    assert client.databases[-1] == f"tenant_{tid}"
 
 
 @pytest.mark.asyncio

@@ -4,6 +4,10 @@ from typing import Literal, final
 
 import attrs
 
+from forze.application.contracts.resolution import (
+    NamedResourceSpec,
+    coerce_optional_named_resource_spec,
+)
 from forze.application.contracts.tenancy import TenantAwareIntegrationConfig
 
 # ----------------------- #
@@ -19,8 +23,15 @@ class Neo4jGraphConfig(TenantAwareIntegrationConfig):
     matched on anchor nodes.
     """
 
-    database: str | None = None
-    """Default Neo4j database for this route (``None`` uses the client default)."""
+    database: NamedResourceSpec | None = attrs.field(
+        default=None,
+        converter=coerce_optional_named_resource_spec,
+    )
+    """Default Neo4j database for this route.
+
+    A static name, a ``(tenant_id) -> str`` per-tenant resolver (the ``namespace`` tier — a
+    per-tenant database on a shared cluster, Neo4j 4+ multi-database), or ``None`` (the
+    client default)."""
 
     tenant_property: str = "tenant_id"
     """Vertex/edge property carrying the tenant id when ``tenant_aware``."""
