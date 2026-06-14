@@ -52,6 +52,49 @@ def _adapter() -> TenantManagementAdapter:
     )
 
 
+@pytest.mark.asyncio
+async def test_provision_tenant_runs_provisioner_with_new_identity() -> None:
+    from forze.application.contracts.tenancy import (
+        FunctionTenantProvisioner,
+        TenantIdentity,
+    )
+
+    tid = uuid4()
+    row = MagicMock()
+    row.id = tid
+    row.tenant_key = "acme"
+
+    tenant_qry = MagicMock()
+    tenant_qry.spec = tenant_spec
+    tenant_cmd = MagicMock()
+    tenant_cmd.spec = tenant_spec
+    tenant_cmd.create = AsyncMock(return_value=row)
+    binding_qry = MagicMock()
+    binding_qry.spec = principal_tenant_binding_spec
+    binding_cmd = MagicMock()
+    binding_cmd.spec = principal_tenant_binding_spec
+
+    provisioned: list[TenantIdentity] = []
+
+    async def _on_provision(tenant: TenantIdentity) -> None:
+        provisioned.append(tenant)
+
+    adapter = TenantManagementAdapter(
+        tenant_qry=tenant_qry,
+        tenant_cmd=tenant_cmd,
+        binding_qry=binding_qry,
+        binding_cmd=binding_cmd,
+        provisioner=FunctionTenantProvisioner(on_provision=_on_provision),
+    )
+
+    identity = await adapter.provision_tenant(tenant_key="acme")
+
+    assert identity.tenant_id == tid
+    # The record is created before infrastructure, and the provisioner sees the new identity.
+    tenant_cmd.create.assert_awaited_once()
+    assert provisioned == [identity]
+
+
 def test_post_init_rejects_mismatched_specs() -> None:
     adapter = _adapter()
     adapter.tenant_qry.spec = DocumentSpec(name="wrong", read=ReadTenant)

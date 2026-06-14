@@ -4,7 +4,11 @@ from uuid import UUID
 import attrs
 
 from forze.application.contracts.document import DocumentCommandPort, DocumentQueryPort
-from forze.application.contracts.tenancy import TenantIdentity, TenantManagementPort
+from forze.application.contracts.tenancy import (
+    TenantIdentity,
+    TenantManagementPort,
+    TenantProvisionerPort,
+)
 from forze.base.exceptions import exc
 from forze_identity._secure_spec import forbid_cache_and_history
 
@@ -40,6 +44,13 @@ class TenantManagementAdapter(TenantManagementPort):
         CreatePrincipalTenantBindingCmd,
         Any,
     ]
+    provisioner: TenantProvisionerPort | None = None
+    """Optional per-tenant infrastructure provisioner run on :meth:`provision_tenant`.
+
+    When set, onboarding creates the tenant record then ensures its resources (bucket /
+    schema / dataset) exist — so the ``schema``/``database`` isolation tiers don't assume
+    hand-provisioned infrastructure. ``None`` (the default) leaves onboarding record-only.
+    """
 
     # ....................... #
 
@@ -79,8 +90,14 @@ class TenantManagementAdapter(TenantManagementPort):
         tenant_key: str | None = None,
     ) -> TenantIdentity:
         row = await self.tenant_cmd.create(CreateTenantCmd(tenant_key=tenant_key))
+        identity = TenantIdentity(tenant_id=row.id, tenant_key=row.tenant_key)
 
-        return TenantIdentity(tenant_id=row.id, tenant_key=row.tenant_key)
+        # Record first, then infrastructure: a provisioner failure leaves the record so the
+        # idempotent provisioning can be retried.
+        if self.provisioner is not None:
+            await self.provisioner.provision(identity)
+
+        return identity
 
     # ....................... #
 

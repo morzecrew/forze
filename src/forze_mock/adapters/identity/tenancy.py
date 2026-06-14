@@ -10,6 +10,7 @@ import attrs
 from forze.application.contracts.tenancy import (
     TenantIdentity,
     TenantManagementPort,
+    TenantProvisionerPort,
     TenantResolverPort,
 )
 from forze.base.exceptions import exc
@@ -112,6 +113,9 @@ class MockTenantResolverPort(_TenantRouteStore, TenantResolverPort):
 @final
 @attrs.define(slots=True, kw_only=True)
 class MockTenantManagementPort(_TenantRouteStore, TenantManagementPort):
+    provisioner: TenantProvisionerPort | None = None
+    """Optional per-tenant infrastructure provisioner run on :meth:`provision_tenant`."""
+
     async def provision_tenant(
         self,
         *,
@@ -126,7 +130,12 @@ class MockTenantManagementPort(_TenantRouteStore, TenantManagementPort):
                 "active": True,
                 "created_at": utcnow(),
             }
-        return TenantIdentity(tenant_id=tid, tenant_key=key)
+        identity = TenantIdentity(tenant_id=tid, tenant_key=key)
+
+        if self.provisioner is not None:
+            await self.provisioner.provision(identity)
+
+        return identity
 
     async def attach_principal(
         self,

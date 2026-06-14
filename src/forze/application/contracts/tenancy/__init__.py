@@ -20,6 +20,12 @@ from .helpers import (
 from .integration_config import TenantAwareIntegrationConfig
 from .mixins import TenancyMixin
 from .ports import TenantManagementPort, TenantProviderPort, TenantResolverPort
+from .provisioning import (
+    CompositeTenantProvisioner,
+    FunctionTenantProvisioner,
+    NoopTenantProvisioner,
+    TenantProvisionerPort,
+)
 from .registry import TenantClientRegistry, TenantPoolStats
 from .value_objects import TenantIdentity
 from .wiring import (
@@ -51,6 +57,10 @@ __all__ = [
     "TenantResolverDepKey",
     "TenantResolverDepPort",
     "TenantProviderPort",
+    "TenantProvisionerPort",
+    "NoopTenantProvisioner",
+    "FunctionTenantProvisioner",
+    "CompositeTenantProvisioner",
     "TenantAwareIntegrationConfig",
     "TenancyMixin",
     "TENANT_ID_HEADER",

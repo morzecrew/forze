@@ -8,6 +8,7 @@ from .client import (
 )
 from .codec import ObjectStoragePathCodec, default_path_codec
 from .metadata import object_metadata_from_user_metadata
+from .provisioning import ObjectStorageTenantProvisioner
 from .routed_client import RoutedObjectStorageClientBase
 from .tenancy import validate_storage_tenancy_wiring
 
@@ -20,6 +21,7 @@ __all__ = [
     "ObjectStorageHead",
     "ObjectStorageListedObject",
     "ObjectStoragePathCodec",
+    "ObjectStorageTenantProvisioner",
     "RoutedObjectStorageClientBase",
     "default_path_codec",
     "guess_content_type_with_magic",
