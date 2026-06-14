@@ -15,3 +15,6 @@ class TenancyKernelOp(StrEnum):
 
     SWITCH_TENANT = "switch_tenant"
     """Activate one of the principal's tenants — re-mint a token scoped to it."""
+
+    LEAVE_TENANT = "leave_tenant"
+    """Self-service: drop the principal's own membership in one of their tenants."""

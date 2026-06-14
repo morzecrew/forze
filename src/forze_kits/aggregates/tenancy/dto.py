@@ -39,3 +39,13 @@ class TenantSwitchRequestDTO(BaseDTO):
 
     id: UUID
     """Tenant id to activate (must be one of the principal's memberships)."""
+
+
+# ....................... #
+
+
+class TenantLeaveRequestDTO(BaseDTO):
+    """Request to drop the principal's own membership in a tenant."""
+
+    id: UUID
+    """Tenant id to leave (the principal's own membership is removed)."""

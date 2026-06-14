@@ -17,8 +17,10 @@ from forze.application.contracts.authn.value_objects.tokens import (
 from forze.application.contracts.tenancy import TenantIdentity
 from forze.base.exceptions import CoreException, exc
 from forze_kits.aggregates.tenancy import (
+    LeaveTenant,
     ListTenants,
     SwitchTenant,
+    TenantLeaveRequestDTO,
     TenantSwitchRequestDTO,
 )
 
@@ -35,10 +37,14 @@ class _FakeManagement:
     def __init__(self, tenants: list[TenantIdentity]) -> None:
         self._tenants = tenants
         self.listed_for = None
+        self.detached: tuple | None = None
 
     async def list_principal_tenants(self, principal_id):  # noqa: ANN001, ANN202
         self.listed_for = principal_id
         return self._tenants
+
+    async def detach_principal(self, principal_id, tenant_id):  # noqa: ANN001, ANN202
+        self.detached = (principal_id, tenant_id)
 
 
 class _FakeResolver:
@@ -151,3 +157,27 @@ class TestSwitchTenant:
 
         with pytest.raises(CoreException, match="auth_required"):
             await handler(TenantSwitchRequestDTO(id=uuid4()))
+
+
+class TestLeaveTenant:
+    @pytest.mark.asyncio
+    async def test_detaches_the_current_principal_only(self) -> None:
+        target = uuid4()
+        mgmt = _FakeManagement([])
+        handler = LeaveTenant(resolver=_resolver(_USER), tenant_management=mgmt)
+
+        result = await handler(TenantLeaveRequestDTO(id=target))
+
+        # Keyed on the bound principal — a caller can only ever remove themselves.
+        assert result is None
+        assert mgmt.detached == (_USER.principal_id, target)
+
+    @pytest.mark.asyncio
+    async def test_no_identity_is_401(self) -> None:
+        mgmt = _FakeManagement([])
+        handler = LeaveTenant(resolver=_resolver(None), tenant_management=mgmt)
+
+        with pytest.raises(CoreException, match="auth_required"):
+            await handler(TenantLeaveRequestDTO(id=uuid4()))
+
+        assert mgmt.detached is None  # never touched membership without an identity

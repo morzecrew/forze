@@ -162,6 +162,18 @@ class TenantManagementAdapter(TenantManagementPort):
 
     # ....................... #
 
+    async def list_tenant_principals(
+        self,
+        tenant_id: UUID,
+    ) -> Sequence[UUID]:
+        page = await self.binding_qry.find_many(
+            filters={"$values": {"tenant_id": tenant_id}},
+        )
+
+        return [bind.principal_id for bind in page.hits]
+
+    # ....................... #
+
     async def deactivate_tenant(self, tenant_id: UUID) -> None:
         row = await self.tenant_qry.get(tenant_id)
 

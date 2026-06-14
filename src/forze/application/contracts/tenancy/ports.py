@@ -50,6 +50,19 @@ class TenantManagementPort(Protocol):
         """
         ...
 
+    def list_tenant_principals(
+        self,
+        tenant_id: UUID,
+    ) -> Awaitable[Sequence[UUID]]:
+        """List the principal ids that are members of *tenant_id* (the admin inverse of
+        :meth:`list_principal_tenants`).
+
+        Returns principal ids only; joining them with principal details (login, name) is the
+        caller's concern (those live in the identity plane). Expose this only on an
+        authorization-gated admin surface.
+        """
+        ...
+
     def attach_principal(
         self,
         principal_id: UUID,

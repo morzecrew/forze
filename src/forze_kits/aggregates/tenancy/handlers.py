@@ -19,7 +19,12 @@ from forze.base.exceptions import exc
 
 from ..authn.dto import AuthnTokenResponseDTO
 from ..authn.handlers._utils import token_response_from_issued_tokens
-from .dto import TenantListDTO, TenantListItemDTO, TenantSwitchRequestDTO
+from .dto import (
+    TenantLeaveRequestDTO,
+    TenantListDTO,
+    TenantListItemDTO,
+    TenantSwitchRequestDTO,
+)
 
 # ----------------------- #
 
@@ -108,3 +113,28 @@ class SwitchTenant(Handler[TenantSwitchRequestDTO, AuthnTokenResponseDTO]):
         )
 
         return token_response_from_issued_tokens(tokens)
+
+
+# ....................... #
+
+
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class LeaveTenant(Handler[TenantLeaveRequestDTO, None]):
+    """Self-service: drop the *current* principal's own membership in a tenant.
+
+    ``detach_principal`` is keyed on the bound principal, so a caller can only ever remove
+    *themselves* — never another member (that is the authz-gated admin surface). Leaving the
+    tenant currently on the token does not revoke the token, but its ``tid`` no longer matches a
+    live membership, so the next request fails closed at the resolver (switch to another tenant
+    or re-authenticate)."""
+
+    resolver: Callable[[], AuthnIdentity | None]
+    """Resolve the current authenticated identity."""
+
+    tenant_management: TenantManagementPort
+    """Tenant management port (membership revocation)."""
+
+    async def __call__(self, args: TenantLeaveRequestDTO) -> None:
+        identity = _require_identity(self.resolver)
+
+        await self.tenant_management.detach_principal(identity.principal_id, args.id)

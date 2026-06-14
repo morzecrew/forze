@@ -269,3 +269,23 @@ async def test_list_principal_tenants_filters_inactive() -> None:
     result = await adapter.list_principal_tenants(pid)
 
     assert [t.tenant_id for t in result] == [t1]  # inactive t2 omitted
+
+
+@pytest.mark.asyncio
+async def test_list_tenant_principals_returns_binding_principals() -> None:
+    tenant = uuid4()
+    p1, p2 = uuid4(), uuid4()
+    b1, b2 = MagicMock(), MagicMock()
+    b1.principal_id, b2.principal_id = p1, p2
+
+    adapter = _adapter()
+    adapter.binding_qry.find_many = AsyncMock(
+        return_value=Page(hits=[b1, b2], count=2, page=1, size=10),
+    )
+
+    result = await adapter.list_tenant_principals(tenant)
+
+    assert list(result) == [p1, p2]
+    adapter.binding_qry.find_many.assert_awaited_once_with(
+        filters={"$values": {"tenant_id": tenant}},
+    )

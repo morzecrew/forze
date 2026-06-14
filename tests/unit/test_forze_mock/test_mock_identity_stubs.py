@@ -329,3 +329,21 @@ async def test_list_principal_tenants_returns_active_memberships() -> None:
     await mgmt.deactivate_tenant(a.tenant_id)
     listed = await mgmt.list_principal_tenants(pid)
     assert {t.tenant_id for t in listed} == {b.tenant_id}
+
+
+async def test_list_tenant_principals_returns_members() -> None:
+    state = MockState()
+    mgmt = MockTenantManagementPort(state=state)
+
+    tenant = await mgmt.provision_tenant(tenant_key="acme")
+    p1, p2 = uuid4(), uuid4()
+    await mgmt.attach_principal(p1, tenant.tenant_id)
+    await mgmt.attach_principal(p2, tenant.tenant_id)
+
+    members = await mgmt.list_tenant_principals(tenant.tenant_id)
+    assert set(members) == {p1, p2}
+
+    # Detaching drops the principal; an unknown tenant is empty (not an error).
+    await mgmt.detach_principal(p1, tenant.tenant_id)
+    assert set(await mgmt.list_tenant_principals(tenant.tenant_id)) == {p2}
+    assert await mgmt.list_tenant_principals(uuid4()) == []

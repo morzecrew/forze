@@ -247,6 +247,9 @@ projects:
 - `POST /tenants/{id}/activate` — validates the choice against membership via the
   `TenantResolverPort`, then returns a **new token pair scoped to the selected tenant** (the
   same body as `/login`); the client swaps to the new token.
+- `DELETE /tenants/{id}` — leave a tenant. Keyed on the bound principal, so a caller can only
+  drop their *own* membership; leaving the tenant on the current token makes its `tid` stop
+  matching a live membership, so the next request fails closed (switch or re-authenticate).
 
 ```python
 from forze_fastapi.routes import attach_tenancy_routes
@@ -263,6 +266,46 @@ attach_tenancy_routes(
 The active tenant rides the signed `tid` claim and is re-validated against live membership on
 every request, so removing a principal from a tenant invalidates their scoped token at once.
 Requires a `TenancyDepsModule` wiring a `tenant_resolver` **and** `tenant_management` route.
+
+## Tenant administration
+
+The selector is **self-service** — every op acts on the caller's *own* membership. Managing
+*other* tenants and members (create an org, invite/remove a member, list members, deactivate a
+tenant) is the privileged inverse, in a separate aggregate:
+`build_tenancy_admin_registry(ns)` → `attach_tenancy_admin_routes` (`POST /tenants`,
+`GET /tenants/{id}/members`, `POST /tenants/{id}/deactivate`, `POST`/`DELETE /memberships`).
+
+Because *who* may administer a tenant is your authorization model — not something the framework
+can define — these ops ship **unguarded**, exactly like `/deactivate`. Bind `AuthnRequired` plus
+an `AuthzBeforeAuthorize` on each operation before exposing the router (or keep ops off it with
+`include=`):
+
+```python
+from forze.application.hooks.authn import AuthnRequired
+from forze.application.hooks.authz import AuthzBeforeAuthorize
+from forze_fastapi.routes import attach_tenancy_admin_routes
+from forze_kits.aggregates.tenancy_admin import TenancyAdminKernelOp, build_tenancy_admin_registry
+
+reg = build_tenancy_admin_registry(spec.default_namespace)
+for op in TenancyAdminKernelOp:
+    reg = (
+        reg.bind(spec.default_namespace.key(op))
+        .bind_outer()
+        .before(
+            AuthnRequired().to_step(),
+            AuthzBeforeAuthorize(spec=AUTHZ, action=f"tenants:{op}").to_step(),
+        )
+        .finish(deep=True)
+    )
+
+admin_router = APIRouter(prefix="/admin", tags=["tenant-admin"])
+attach_tenancy_admin_routes(
+    admin_router, registry=reg.freeze(), ns=spec.default_namespace, ctx_dep=ctx_dep
+)
+```
+
+`list_members` returns principal ids only (`TenantManagementPort.list_tenant_principals`); join
+them with identity-plane details out of band.
 
 ## Notes
 

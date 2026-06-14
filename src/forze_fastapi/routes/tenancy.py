@@ -7,8 +7,9 @@ Projects the tenancy self-service operations of a frozen registry (built with
 - ``GET /tenants`` → ``list_tenants`` (the principal's active memberships)
 - ``POST /tenants/{id}/activate`` → ``switch_tenant`` (re-mint a token pair scoped to the
   selected tenant — the same OAuth2-shaped body as ``/login``)
+- ``DELETE /tenants/{id}`` → ``leave_tenant`` (204 — drop the caller's *own* membership)
 
-Both require a bound identity (``AuthnRequired`` — a 401 without one) and are **tenant-unaware**
+All require a bound identity (``AuthnRequired`` — a 401 without one) and are **tenant-unaware**
 (you are *selecting* the tenant). ``switch_tenant`` validates the selection against the
 principal's membership before minting (``tenant_mismatch`` / ``tenant_inactive``). The
 ``/activate`` response carries token material in the body by design — the client swaps to the
@@ -66,6 +67,9 @@ _TENANCY_BINDINGS: Mapping[str, RouteBinding] = {
     TenancyKernelOp.SWITCH_TENANT: RouteBinding(
         method="POST", path="/tenants/{id}/activate", build=id_endpoint
     ),
+    TenancyKernelOp.LEAVE_TENANT: RouteBinding(
+        method="DELETE", path="/tenants/{id}", build=id_endpoint, status_code=204
+    ),
 }
 
 
@@ -85,8 +89,9 @@ def attach_tenancy_routes(
     - ``GET /tenants`` → ``list_tenants`` (the principal's active memberships)
     - ``POST /tenants/{id}/activate`` → ``switch_tenant`` (200, a fresh token pair scoped to
       the selected tenant — same shape as ``/login``)
+    - ``DELETE /tenants/{id}`` → ``leave_tenant`` (204, drops the caller's own membership)
 
-    Both require a bound identity (``AuthnRequired``) and are tenant-unaware. Each route's
+    All require a bound identity (``AuthnRequired``) and are tenant-unaware. Each route's
     ``operation_id`` is the operation key verbatim; request/response schemas come from the
     operation descriptors; every call dispatches through ``run_operation`` (plans + hooks
     apply, no bypass).

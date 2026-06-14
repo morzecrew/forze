@@ -8,8 +8,8 @@ from forze.application.hooks.authn import AuthnRequired
 from forze.base.primitives import StrKeyNamespace
 
 from ..authn.dto import AuthnTokenResponseDTO
-from .dto import TenantListDTO, TenantSwitchRequestDTO
-from .handlers import ListTenants, SwitchTenant
+from .dto import TenantLeaveRequestDTO, TenantListDTO, TenantSwitchRequestDTO
+from .handlers import LeaveTenant, ListTenants, SwitchTenant
 from .operations import TenancyKernelOp
 
 # ----------------------- #
@@ -20,14 +20,15 @@ def build_tenancy_registry(
     *,
     ns: StrKeyNamespace | None = None,
 ) -> OperationRegistry:
-    """Build the tenant-selector registry (``list_tenants`` / ``switch_tenant``).
+    """Build the tenant-selector registry (``list_tenants`` / ``switch_tenant`` / ``leave_tenant``).
 
     Re-uses *spec* (the authn route) so ``switch_tenant`` can re-mint a tenant-scoped token
-    via that route's ``TokenLifecyclePort``. Both ops require a bound principal and are
+    via that route's ``TokenLifecyclePort``. All three ops require a bound principal and are
     **tenant-unaware** (you are *selecting* the tenant, so none is bound yet). The principal's
     membership is the authority: ``switch_tenant`` validates the requested tenant via the
-    ``TenantResolverPort`` before minting. Merge the result with the app's authn registry (or
-    register it under the same namespace) and project it with
+    ``TenantResolverPort`` before minting; ``leave_tenant`` removes only the *caller's own*
+    membership (keyed on the bound principal). Merge the result with the app's authn registry
+    (or register it under the same namespace) and project it with
     :func:`~forze_fastapi.attach_tenancy_routes`.
     """
 
@@ -52,10 +53,17 @@ def build_tenancy_registry(
             ),
         )
 
+    def _leave_tenant(ctx: ExecutionContext) -> LeaveTenant:
+        return LeaveTenant(
+            resolver=ctx.inv_ctx.get_authn,
+            tenant_management=ctx.tenancy.require_manager(),
+        )
+
     reg = OperationRegistry(
         handlers={
             ns.key(TenancyKernelOp.LIST_TENANTS): _list_tenants,
             ns.key(TenancyKernelOp.SWITCH_TENANT): _switch_tenant,
+            ns.key(TenancyKernelOp.LEAVE_TENANT): _leave_tenant,
         },
     )
 
@@ -76,6 +84,13 @@ def build_tenancy_registry(
                     "scoped to it (validates membership first)."
                 ),
             ),
+            TenancyKernelOp.LEAVE_TENANT: OperationDescriptor(
+                input_type=TenantLeaveRequestDTO,
+                description=(
+                    "Drop the authenticated principal's own membership in one of their "
+                    "tenants (self-service; never affects other members)."
+                ),
+            ),
         },
         namespace=ns,
     )
@@ -91,8 +106,15 @@ def build_tenancy_registry(
         .finish(deep=True)
     )
 
-    return (
+    reg = (
         reg.bind(ns.key(TenancyKernelOp.SWITCH_TENANT))
+        .bind_outer()
+        .before(AuthnRequired().to_step())
+        .finish(deep=True)
+    )
+
+    return (
+        reg.bind(ns.key(TenancyKernelOp.LEAVE_TENANT))
         .bind_outer()
         .before(AuthnRequired().to_step())
         .finish(deep=True)

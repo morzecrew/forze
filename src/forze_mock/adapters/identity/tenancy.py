@@ -181,6 +181,20 @@ class MockTenantManagementPort(_TenantRouteStore, TenantManagementPort):
                 and principal_id in entry.get("principals", [])  # type: ignore[operator]
             ]
 
+    async def list_tenant_principals(
+        self,
+        tenant_id: UUID,
+    ) -> Sequence[UUID]:
+        with self.state.lock:
+            entry = self._tenants().get(str(tenant_id))
+
+            if entry is None:
+                return []
+
+            principals = entry.get("principals", [])
+
+            return list(principals) if isinstance(principals, list) else []
+
     async def deactivate_tenant(self, tenant_id: UUID) -> None:
         with self.state.lock:
             entry = self._tenants().get(str(tenant_id))

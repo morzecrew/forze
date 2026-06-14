@@ -39,12 +39,17 @@ def _op_ids(app: FastAPI) -> set[str]:
 
 
 class TestTenancyRouteSurface:
-    def test_routes_are_list_and_activate(self) -> None:
+    def test_routes_are_list_activate_and_leave(self) -> None:
         paths = _build_app().openapi()["paths"]
 
-        assert set(paths) == {"/auth/tenants", "/auth/tenants/{id}/activate"}
+        assert set(paths) == {
+            "/auth/tenants",
+            "/auth/tenants/{id}/activate",
+            "/auth/tenants/{id}",
+        }
         assert set(paths["/auth/tenants"]) == {"get"}
         assert set(paths["/auth/tenants/{id}/activate"]) == {"post"}
+        assert set(paths["/auth/tenants/{id}"]) == {"delete"}
 
     def test_operation_ids_are_registry_keys_verbatim(self) -> None:
         assert _op_ids(_build_app()) == {f"main.{op.value}" for op in TenancyKernelOp}
