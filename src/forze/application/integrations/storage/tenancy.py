@@ -63,6 +63,8 @@ def validate_storage_tenancy_wiring(
             )
         ],
         required_isolation=required_isolation,
+        # Object stores reach a routed per-tenant client / credentials.
+        max_supported_isolation="dedicated",
         validation_failed_code=validation_failed_code,
         log_warning=log_warning,
     )

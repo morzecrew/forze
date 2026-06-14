@@ -5,7 +5,6 @@ from typing import Literal, Sequence
 import attrs
 
 from forze.application.contracts.tenancy import (
-    INTEGRATION_ISOLATION_CEILINGS,
     TenancyRouteSpec,
     TenantIsolationMode,
     derive_tenant_isolation_mode,
@@ -96,6 +95,7 @@ def validate_postgres_tenancy_wiring(
         validation_failed_code="postgres_tenancy_validation_failed",
         required_isolation=required_isolation,
         has_namespace_routing=has_namespace_routing,
-        max_supported_isolation=INTEGRATION_ISOLATION_CEILINGS["postgres"],
+        # Postgres reaches a routed per-tenant client / credentials.
+        max_supported_isolation="dedicated",
         log_warning=logger.warning,
     )

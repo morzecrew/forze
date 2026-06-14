@@ -166,6 +166,7 @@ class MongoDepsModule(DepsModule):
                 ),
             ],
             required_isolation=self.required_tenant_isolation,
+            max_supported_isolation="dedicated",
             validation_failed_code="mongo_tenancy_validation_failed",
         )
 

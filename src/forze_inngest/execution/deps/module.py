@@ -69,6 +69,7 @@ class InngestDepsModule(DepsModule):
             client_is_routed=isinstance(self.client, RoutedInngestClient),
             groups=[],
             required_isolation=self.required_tenant_isolation,
+            max_supported_isolation="dedicated",
             validation_failed_code="inngest_tenancy_validation_failed",
         )
 

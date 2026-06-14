@@ -39,35 +39,6 @@ Derived from the config an integration already carries (it is not configured dir
 
 # ....................... #
 
-INTEGRATION_ISOLATION_CEILINGS: dict[str, TenantIsolationMode] = {
-    # Networked stores/brokers with a routed per-tenant client reach `dedicated`.
-    "postgres": "dedicated",
-    "mongo": "dedicated",
-    "firestore": "dedicated",
-    "meilisearch": "dedicated",
-    "clickhouse": "dedicated",
-    "bigquery": "dedicated",
-    "redis": "dedicated",
-    "sqs": "dedicated",
-    "rabbitmq": "dedicated",
-    "temporal": "dedicated",
-    "inngest": "dedicated",
-    "s3": "dedicated",
-    "gcs": "dedicated",
-    # In-process / single-client backends cap at the tagged tier.
-    "neo4j": "tagged",  # no routed client; static database name
-    "duckdb": "tagged",  # in-process, no per-tenant namespace or routing
-}
-"""The tenant-isolation tier each integration can reach (the capability matrix).
-
-The strongest tier an integration can derive given its mechanisms (routed client →
-``dedicated``; per-tenant namespace resolver → ``namespace``; ``tenant_aware`` →
-``tagged``). A deps module passes its ceiling as ``max_supported_isolation`` so a declared
-``required_isolation`` floor it can never meet fails closed as a capability mismatch.
-"""
-
-# ....................... #
-
 _ISOLATION_RANK: dict[TenantIsolationMode, int] = {
     "none": 0,
     "tagged": 1,
@@ -461,6 +432,7 @@ def validate_module_tenancy(
     client_is_routed: bool,
     groups: Sequence[TenancyRouteGroup[Any]],
     required_isolation: TenantIsolationMode | None,
+    max_supported_isolation: TenantIsolationMode,
     validation_failed_code: str,
     partition_key_set: bool = True,
     partition_key_detail: str = "",
@@ -472,13 +444,15 @@ def validate_module_tenancy(
     detects ``namespace``-tier namespace routing (any *dynamic* per-tenant namespace/relation
     resolver — a callable spec, whether a ``NamedResourceSpec`` bucket/index or a
     ``RelationSpec`` collection), and delegates to
-    :func:`validate_routed_client_tenancy_wiring`. The capability ceiling
-    (``max_supported_isolation``) is the integration's entry in
-    :data:`INTEGRATION_ISOLATION_CEILINGS` (keyed by ``integration`` lower-cased) — the
-    single source of truth, so it cannot drift from a per-module literal.
+    :func:`validate_routed_client_tenancy_wiring`.
+
+    ``max_supported_isolation`` is the strongest tier this integration's mechanisms can ever
+    reach (``dedicated`` for a backend with a routed per-tenant client; ``tagged`` for an
+    in-process or single-client one). The integration declares its own ceiling here — it is
+    the sole authority on its capability — so a declared ``required_isolation`` it can never
+    meet fails closed as a capability mismatch rather than a wiring gap.
     """
 
-    max_supported_isolation = INTEGRATION_ISOLATION_CEILINGS.get(integration.lower())
     routes: list[TenancyRouteSpec] = []
     has_namespace_routing = False
 

@@ -69,6 +69,8 @@ class Neo4jDepsModule(DepsModule):
                 )
             ],
             required_isolation=self.required_tenant_isolation,
+            # Single-client, static database name — no routed per-tenant client.
+            max_supported_isolation="tagged",
             validation_failed_code="neo4j_tenancy_validation_failed",
         )
 

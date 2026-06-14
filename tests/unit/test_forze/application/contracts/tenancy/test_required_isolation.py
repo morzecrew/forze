@@ -27,21 +27,6 @@ def test_isolation_rank_total_order() -> None:
     assert not isolation_satisfies(derived="none", required="tagged")
 
 
-def test_isolation_ceiling_matrix_is_consistent() -> None:
-    from forze.application.contracts.tenancy import INTEGRATION_ISOLATION_CEILINGS
-    from forze.application.contracts.tenancy.wiring import _ISOLATION_RANK
-
-    # Every declared ceiling is a valid tier, and the in-process backends are capped below
-    # the networked ones (a regression guard on the matrix).
-    assert set(INTEGRATION_ISOLATION_CEILINGS.values()) <= set(_ISOLATION_RANK)
-    assert INTEGRATION_ISOLATION_CEILINGS["neo4j"] == "tagged"
-    assert INTEGRATION_ISOLATION_CEILINGS["duckdb"] == "tagged"
-    assert INTEGRATION_ISOLATION_CEILINGS["postgres"] == "dedicated"
-    assert not isolation_satisfies(
-        derived=INTEGRATION_ISOLATION_CEILINGS["duckdb"], required="dedicated"
-    )
-
-
 def test_max_supported_capability_ceiling() -> None:
     from forze.application.contracts.tenancy.wiring import validate_required_isolation
 
@@ -133,6 +118,7 @@ def test_module_tenancy_dynamic_relation_resolver_derives_namespace() -> None:
             )
         ],
         required_isolation="namespace",
+        max_supported_isolation="dedicated",
         validation_failed_code="mongo_tenancy_validation_failed",
     )
 
@@ -157,13 +143,14 @@ def test_module_tenancy_static_relation_is_only_tagged() -> None:
                 )
             ],
             required_isolation="namespace",  # tagged < namespace → fails
+            max_supported_isolation="dedicated",
             validation_failed_code="mongo_tenancy_validation_failed",
         )
 
 
-def test_module_tenancy_ceiling_comes_from_matrix() -> None:
-    # DuckDB's ceiling (tagged, from INTEGRATION_ISOLATION_CEILINGS) makes a dedicated floor a
-    # capability mismatch — no per-module literal involved.
+def test_module_tenancy_declared_ceiling_caps_the_floor() -> None:
+    # A module declaring max_supported_isolation="tagged" (an in-process backend) makes a
+    # dedicated floor a capability mismatch — the integration owns its own ceiling.
     from forze.application.contracts.tenancy import (
         TenancyRouteGroup,
         validate_module_tenancy,
@@ -181,6 +168,7 @@ def test_module_tenancy_ceiling_comes_from_matrix() -> None:
                 )
             ],
             required_isolation="dedicated",
+            max_supported_isolation="tagged",
             validation_failed_code="duckdb_analytics_tenancy_validation_failed",
         )
 

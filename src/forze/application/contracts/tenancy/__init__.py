@@ -31,7 +31,6 @@ from .value_objects import TenantIdentity
 from .wiring import (
     IntegrationRouteWarning,
     TenancyRouteSpec,
-    INTEGRATION_ISOLATION_CEILINGS,
     TenancyRouteGroup,
     TenantIsolationMode,
     derive_tenant_isolation_mode,
@@ -69,7 +68,6 @@ __all__ = [
     "require_tenant_id",
     "TenancyRouteSpec",
     "TenancyRouteGroup",
-    "INTEGRATION_ISOLATION_CEILINGS",
     "IntegrationRouteWarning",
     "TenantIsolationMode",
     "derive_tenant_isolation_mode",

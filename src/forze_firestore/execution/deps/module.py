@@ -116,6 +116,7 @@ class FirestoreDepsModule(DepsModule):
                 ),
             ],
             required_isolation=self.required_tenant_isolation,
+            max_supported_isolation="dedicated",
             validation_failed_code="firestore_tenancy_validation_failed",
         )
 
