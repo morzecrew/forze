@@ -22,30 +22,44 @@ Tenant: {
     |
 }
 
-Database: {
+shared: {
+    label: "Shared instance"
+    style: {
+        stroke-dash: 4
+        font-size: 18
+    }
+
+    tagged: {
+        shape: rectangle
+        label: |md
+            ### tagged
+            tenant marker, filtered
+            `tenant_aware`
+        |
+    }
+
+    namespace: {
+        shape: rectangle
+        label: |md
+            ### namespace
+            per-tenant schema / bucket / dataset
+            named or relation resolver
+        |
+    }
+}
+
+dedicated: {
     shape: rectangle
+    style: {
+        stroke: "#4a90d9"
+    }
     label: |md
-        ### Database per tenant
+        ### dedicated
+        per-tenant instance & credentials
         routed client
     |
 }
 
-Schema: {
-    shape: rectangle
-    label: |md
-        ### Schema per tenant
-        relation resolver
-    |
-}
-
-Row: {
-    shape: rectangle
-    label: |md
-        ### Shared, row-filtered
-        tenant_aware
-    |
-}
-
-Tenant -> Database
-Tenant -> Schema
-Tenant -> Row
+Tenant -> shared.tagged: weakest
+Tenant -> shared.namespace
+Tenant -> dedicated: strongest
