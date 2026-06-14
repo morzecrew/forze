@@ -9,7 +9,12 @@ from forze.application.contracts.document import (
     DocumentQueryDepKey,
 )
 from forze.application.contracts.document.wiring import derive_read_only_document_config
-from forze.application.contracts.tenancy import warn_integration_routes
+from forze.application.contracts.tenancy import (
+    TenancyRouteGroup,
+    TenantIsolationMode,
+    validate_module_tenancy,
+    warn_integration_routes,
+)
 from forze.application.contracts.transaction import TransactionManagerDepKey
 from forze.application.execution import Deps, DepsModule
 from forze.application.execution.deps.builders import (
@@ -20,7 +25,7 @@ from forze.application.execution.deps.builders import (
 from forze.base.primitives import MappingConverter, StrKey, StrKeyMapping
 
 from ...kernel._logger import logger
-from ...kernel.client import FirestoreClientPort
+from ...kernel.client import FirestoreClientPort, RoutedFirestoreClient
 from ._warnings import FIRESTORE_DOCUMENT_RO_WARNING, FIRESTORE_DOCUMENT_RW_WARNING
 from .configs import FirestoreDocumentConfig, FirestoreReadOnlyDocumentConfig
 from .factories import (
@@ -71,6 +76,13 @@ class FirestoreDepsModule(DepsModule):
     tx: set[StrKey] | None = attrs.field(default=None)
     """Set of transaction routes to register."""
 
+    required_tenant_isolation: TenantIsolationMode | None = attrs.field(default=None)
+    """Declared minimum tenant isolation (``None`` = no floor).
+
+    Documents span ``tagged`` (tenant filter via ``tenant_aware``) and ``dedicated`` (a routed
+    per-tenant client).
+    """
+
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
@@ -85,6 +97,27 @@ class FirestoreDepsModule(DepsModule):
             routes=self.rw_documents,
             warning=FIRESTORE_DOCUMENT_RW_WARNING,
             log_warning=logger.warning,
+        )
+        validate_module_tenancy(
+            integration="Firestore",
+            client_is_routed=isinstance(self.client, RoutedFirestoreClient),
+            groups=[
+                TenancyRouteGroup(
+                    kind="document",
+                    configs=self.ro_documents,
+                    tenant_aware=lambda cfg: cfg.tenant_aware,
+                    namespace_resolver=lambda cfg: cfg.read,
+                ),
+                TenancyRouteGroup(
+                    kind="document",
+                    configs=self.rw_documents,
+                    tenant_aware=lambda cfg: cfg.tenant_aware,
+                    namespace_resolver=lambda cfg: cfg.read,
+                ),
+            ],
+            required_isolation=self.required_tenant_isolation,
+            max_supported_isolation="dedicated",
+            validation_failed_code="firestore_tenancy_validation_failed",
         )
 
     # ....................... #

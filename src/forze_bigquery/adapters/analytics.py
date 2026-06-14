@@ -16,6 +16,7 @@ from forze.application.contracts.analytics import (
 )
 from forze.application.integrations.analytics import AnalyticsQueryPortMixin
 from forze.application.integrations.analytics.adapter_common import (
+    bind_tenant_param,
     dry_run_enabled,
     dry_run_offset_page,
     execute_analytics_offset_page,
@@ -47,7 +48,10 @@ from forze_bigquery.kernel.client import (
     build_count_sql,
 )
 from forze_bigquery.kernel.client.value_objects import BigQueryQueryResult
-from forze.application.contracts.resolution import is_static_relation
+from forze.application.contracts.resolution import (
+    is_static_relation,
+    resolve_scoped_namespace,
+)
 from forze.base.primitives import OnceCell
 from forze_bigquery.kernel.relation import resolve_bigquery_ingest_target
 
@@ -84,10 +88,44 @@ class BigQueryAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
         repr=False,
     )
 
+    _query_dataset_cell: OnceCell[str] = attrs.field(
+        factory=OnceCell,
+        init=False,
+        eq=False,
+        repr=False,
+    )
+
     # ....................... #
 
     def _tenant_id_for_resolve(self) -> UUID | None:
         return soft_tenant_id(self.tenant_provider)
+
+    # ....................... #
+
+    def _bind_tenant(self, params: BaseModel | JsonDict) -> BaseModel | JsonDict:
+        """Bind the current tenant as ``@tenant`` on a tenant-aware route (fail-closed)."""
+
+        return bind_tenant_param(
+            params,
+            tenant_aware=self.config.tenant_aware,
+            tenant_provider=self.tenant_provider,
+        )
+
+    # ....................... #
+
+    async def _dataset(self) -> str | None:
+        """Per-tenant default dataset, or ``None`` (queries must self-qualify)."""
+
+        spec = self.config.query_dataset
+
+        if spec is None:
+            return None
+
+        return await resolve_scoped_namespace(
+            spec,
+            tenant_id=self._tenant_id_for_resolve(),
+            cell=self._query_dataset_cell,
+        )
 
     # ....................... #
 
@@ -229,13 +267,14 @@ class BigQueryAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
 
         return await self.client.run_query(
             self._sql(query_key),
-            params,
+            self._bind_tenant(params),
             dry_run=dry_run_enabled(options),
             maximum_bytes_billed=self._max_bytes(query_key, options),
             max_results=effective_max,
             start_index=start_index,
             page_token=page_token,
             timeout=self._run_timeout(options),
+            default_dataset=await self._dataset(),
         )
 
     # ....................... #
@@ -250,11 +289,12 @@ class BigQueryAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
         count_sql = build_count_sql(self._sql(query_key))
         result = await self.client.run_query(
             count_sql,
-            params,
+            self._bind_tenant(params),
             dry_run=False,
             maximum_bytes_billed=self._max_bytes(query_key, options),
             max_results=1,
             timeout=self._run_timeout(options),
+            default_dataset=await self._dataset(),
         )
 
         return parse_count_row(result.rows)
@@ -321,11 +361,12 @@ class BigQueryAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
         max_rows = (options or {}).get("max_rows")
         rows = await self.client.run_query_all_pages(
             self._sql(query_key),
-            params,
+            self._bind_tenant(params),
             maximum_bytes_billed=self._max_bytes(query_key, options),
             max_rows=max_rows,
             timeout=self._run_timeout(options),
             fetch_batch_size=fetch_batch_size,
+            default_dataset=await self._dataset(),
         )
 
         typed = self.spec.resolved_read_codec.decode_mapping_many(rows)
@@ -353,11 +394,12 @@ class BigQueryAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
         max_rows = (options or {}).get("max_rows")
         rows = await self.client.run_query_all_pages(
             self._sql(query_key),
-            params,
+            self._bind_tenant(params),
             maximum_bytes_billed=self._max_bytes(query_key, options),
             max_rows=max_rows,
             timeout=self._run_timeout(options),
             fetch_batch_size=fetch_batch_size,
+            default_dataset=await self._dataset(),
         )
         typed = default_model_codec(return_type).decode_mapping_many(rows)
         for offset in range(0, len(typed), fetch_batch_size):

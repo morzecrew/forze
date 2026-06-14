@@ -18,12 +18,13 @@ from forze.base.primitives import JsonDict
 # ----------------------- #
 
 
-def params_to_query_parameters(params: BaseModel) -> list[JsonDict]:
-    """Convert a Pydantic params model to BigQuery ``queryParameters`` entries."""
+def params_to_query_parameters(params: BaseModel | JsonDict) -> list[JsonDict]:
+    """Convert a params model (or already-lowered dict) to BigQuery ``queryParameters``."""
 
+    data = params.model_dump() if isinstance(params, BaseModel) else dict(params)
     out: list[JsonDict] = []
 
-    for name, value in params.model_dump().items():
+    for name, value in data.items():
         param_type, param_value = _infer_parameter(value)
         out.append(
             {
@@ -101,6 +102,7 @@ def build_sync_query_request(
     start_index: int | None = None,
     page_token: str | None = None,
     timeout_ms: int | None = None,
+    default_dataset: str | None = None,
 ) -> JsonDict:
     """Build a body for ``POST .../projects/{project}/queries``."""
 
@@ -109,6 +111,9 @@ def build_sync_query_request(
         "useLegacySql": use_legacy_sql,
         "dryRun": dry_run,
     }
+
+    if default_dataset is not None:
+        body["defaultDataset"] = {"datasetId": default_dataset}
 
     if query_parameters:
         body["parameterMode"] = "NAMED"

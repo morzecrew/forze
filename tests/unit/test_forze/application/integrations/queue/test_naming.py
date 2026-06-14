@@ -102,7 +102,8 @@ async def test_static_namespace_is_memoized() -> None:
 def test_tenant_id_for_resolve_requires_tenant_when_aware() -> None:
     adapter = _ColonAdapter(tenant_aware=True, tenant_provider=lambda: None)
 
-    with pytest.raises(CoreException, match="colon queue adapter"):
+    # Canonical fail-closed: authentication / tenant_required (consistent across backends).
+    with pytest.raises(CoreException, match="tenant_required"):
         adapter._tenant_id_for_resolve()
 
 

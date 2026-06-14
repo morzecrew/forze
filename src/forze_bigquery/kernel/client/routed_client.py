@@ -111,7 +111,7 @@ class RoutedBigQueryClient(
     async def run_query(
         self,
         sql: str,
-        params: BaseModel | None = None,
+        params: BaseModel | JsonDict | None = None,
         *,
         dry_run: bool = False,
         maximum_bytes_billed: int | None = None,
@@ -119,6 +119,7 @@ class RoutedBigQueryClient(
         start_index: int | None = None,
         page_token: str | None = None,
         timeout: timedelta | None = None,
+        default_dataset: str | None = None,
     ) -> BigQueryQueryResult:
         inner = await self._get_client()
 
@@ -131,17 +132,19 @@ class RoutedBigQueryClient(
             start_index=start_index,
             page_token=page_token,
             timeout=timeout,
+            default_dataset=default_dataset,
         )
 
     async def run_query_all_pages(
         self,
         sql: str,
-        params: BaseModel | None = None,
+        params: BaseModel | JsonDict | None = None,
         *,
         maximum_bytes_billed: int | None = None,
         max_rows: int | None = None,
         timeout: timedelta | None = None,
         fetch_batch_size: int = 2000,
+        default_dataset: str | None = None,
     ) -> list[JsonDict]:
         inner = await self._get_client()
 
@@ -152,6 +155,7 @@ class RoutedBigQueryClient(
             max_rows=max_rows,
             timeout=timeout,
             fetch_batch_size=fetch_batch_size,
+            default_dataset=default_dataset,
         )
 
     async def insert_rows(

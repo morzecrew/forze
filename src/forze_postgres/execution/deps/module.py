@@ -31,6 +31,7 @@ from ...kernel.catalog.validation.validate_relation_specs import (
 )
 from ...kernel.catalog.validation.validate_tenancy import (
     PostgresTenancyRouteSpec,
+    PostgresTenantIsolationMode,
     validate_postgres_tenancy_wiring,
 )
 from ...kernel.client import PostgresClientPort, RoutedPostgresClient
@@ -80,6 +81,17 @@ class PostgresDepsModule(DepsModule):
 
     introspector_cache_ttl: timedelta | None = attrs.field(default=None)
     """Optional TTL for :class:`PostgresIntrospector` catalog caches (``None`` = no expiry)."""
+
+    required_tenant_isolation: PostgresTenantIsolationMode | None = attrs.field(
+        default=None,
+    )
+    """Declared minimum tenant isolation for this deployment (``None`` = no floor).
+
+    When set, wiring fails closed if the derived isolation (routed client / per-route
+    ``tenant_aware`` / relation resolvers) is weaker than the requirement. Set to
+    ``"dedicated"`` to refuse any shared-store (``tagged``/``namespace``) wiring — the only
+    model safe for untrusted callers.
+    """
 
     ro_documents: StrKeyMapping[PostgresReadOnlyDocumentConfig] | None = attrs.field(
         default=None,
@@ -152,6 +164,7 @@ class PostgresDepsModule(DepsModule):
                         name=str(name),
                         tenant_aware=cfg.tenant_aware,
                         kind="document",
+                        has_namespace_routing=callable(cfg.read),
                     ),
                 )
                 warn_dynamic_relation_with_tenant_aware(
@@ -168,6 +181,7 @@ class PostgresDepsModule(DepsModule):
                         name=str(name),
                         tenant_aware=cfg.tenant_aware,
                         kind="document",
+                        has_namespace_routing=callable(cfg.read) or callable(cfg.write),
                     ),
                 )
                 warn_dynamic_relation_with_tenant_aware(
@@ -188,6 +202,7 @@ class PostgresDepsModule(DepsModule):
                         name=str(name),
                         tenant_aware=search_cfg.tenant_aware,
                         kind="search",
+                        has_namespace_routing=callable(search_cfg.index),
                     ),
                 )
                 warn_dynamic_relation_with_tenant_aware(
@@ -275,12 +290,48 @@ class PostgresDepsModule(DepsModule):
                             ],
                         )
 
+        if self.analytics:
+            for name, analytics_cfg in self.analytics.items():
+                routes.append(
+                    PostgresTenancyRouteSpec(
+                        name=str(name),
+                        tenant_aware=analytics_cfg.tenant_aware,
+                        kind="analytics",
+                        has_namespace_routing=callable(analytics_cfg.query_schema),
+                    ),
+                )
+
+        if self.outboxes:
+            for name, outbox_cfg in self.outboxes.items():
+                routes.append(
+                    PostgresTenancyRouteSpec(
+                        name=str(name),
+                        tenant_aware=outbox_cfg.tenant_aware,
+                        kind="outbox",
+                        has_namespace_routing=callable(outbox_cfg.relation),
+                    ),
+                )
+
+        if self.inboxes:
+            for name, inbox_cfg in self.inboxes.items():
+                routes.append(
+                    PostgresTenancyRouteSpec(
+                        name=str(name),
+                        tenant_aware=inbox_cfg.tenant_aware,
+                        kind="inbox",
+                        has_namespace_routing=callable(inbox_cfg.relation),
+                    ),
+                )
+
+        # Namespace tier is now tracked per route (a DYNAMIC per-tenant relation /
+        # query_schema resolver on that route) so a declared floor is enforced route by route.
         validate_postgres_tenancy_wiring(
             client_is_routed=isinstance(self.client, RoutedPostgresClient),
             introspector_cache_partition_key_set=(
                 self.introspector_cache_partition_key is not None
             ),
             routes=routes,
+            required_isolation=self.required_tenant_isolation,
         )
 
     # ....................... #

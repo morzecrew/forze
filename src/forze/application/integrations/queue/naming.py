@@ -1,17 +1,14 @@
 """Shared tenant/namespace-scoped queue-name resolution for queue adapters."""
 
 from typing import ClassVar
-from uuid import UUID
 
 import attrs
 
 from forze.application.contracts.resolution import (
     NamedResourceSpec,
-    is_static_named_resource,
-    resolve_value,
+    resolve_scoped_namespace,
 )
 from forze.application.contracts.tenancy import TenancyMixin
-from forze.base.exceptions import exc
 from forze.base.primitives import OnceCell
 
 # ----------------------- #
@@ -47,36 +44,11 @@ class ScopedQueueNamingMixin(TenancyMixin):
 
     # ....................... #
 
-    def _tenant_id_for_resolve(self) -> UUID | None:
-        if self.tenant_provider is None:
-            return None
-
-        tenant = self.tenant_provider()
-
-        if tenant is None:
-            if self.tenant_aware:
-                raise exc.internal(
-                    f"Tenant ID is required for the {self.queue_backend_label} adapter"
-                )
-
-            return None
-
-        return tenant.tenant_id
-
-    # ....................... #
-
     async def _resolved_namespace(self) -> str:
-        async def _factory() -> str:
-            return await resolve_value(
-                self.namespace,
-                self._tenant_id_for_resolve(),
-            )
-
-        # Only memoize tenant-independent (static) namespaces; a dynamic resolver
-        # depends on the bound tenant and the adapter may be shared across tenants.
-        return await self._namespace_cell.resolve(
-            _factory,
-            cache=is_static_named_resource(self.namespace),
+        return await resolve_scoped_namespace(
+            self.namespace,
+            tenant_id=self._tenant_id_for_resolve(),
+            cell=self._namespace_cell,
         )
 
     # ....................... #

@@ -6,6 +6,7 @@ import attrs
 
 from forze.application.contracts.tenancy import (
     TenantManagementDepKey,
+    TenantProvisionerPort,
     TenantResolverDepKey,
     TenantResolverDepPort,
 )
@@ -41,6 +42,14 @@ class TenancyDepsModule(DepsModule):
     )
     """Optional per-route tenant resolver overrides (e.g. local file/env backend)."""
 
+    tenant_provisioner: TenantProvisionerPort | None = attrs.field(default=None)
+    """Optional infrastructure provisioner run on ``provision_tenant`` for management routes.
+
+    Pass a :class:`~forze.application.contracts.tenancy.CompositeTenantProvisioner` of
+    per-integration provisioners (e.g. an object-storage bucket provisioner) so onboarding a
+    tenant also creates its per-tenant resources.
+    """
+
     # ....................... #
 
     def __call__(self) -> Deps:
@@ -74,7 +83,10 @@ class TenancyDepsModule(DepsModule):
                 Deps.routed(
                     {
                         TenantManagementDepKey: {
-                            name: ConfigurableTenantManagement() for name in tm
+                            name: ConfigurableTenantManagement(
+                                provisioner=self.tenant_provisioner,
+                            )
+                            for name in tm
                         },
                     },
                 ),

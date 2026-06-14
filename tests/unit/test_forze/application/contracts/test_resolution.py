@@ -36,3 +36,42 @@ async def test_resolve_value_async_callable() -> None:
         return ("tenant_b", "items")
 
     assert await resolve_value(resolver, tid) == ("tenant_b", "items")
+
+
+# ----------------------- #
+# resolve_scoped_namespace
+
+
+@pytest.mark.asyncio
+async def test_resolve_scoped_namespace_memoizes_static() -> None:
+    from forze.application.contracts.resolution import resolve_scoped_namespace
+    from forze.base.primitives import OnceCell
+
+    cell: OnceCell[str] = OnceCell()
+    calls = 0
+
+    async def resolver(spec, tenant_id):  # noqa: ANN001, ANN202
+        nonlocal calls
+        calls += 1
+        return f"{spec}"
+
+    # Static spec (str) → resolved once and cached.
+    assert await resolve_scoped_namespace("idx", tenant_id=None, cell=cell, resolver=resolver) == "idx"
+    assert await resolve_scoped_namespace("idx", tenant_id=None, cell=cell, resolver=resolver) == "idx"
+    assert calls == 1
+
+
+@pytest.mark.asyncio
+async def test_resolve_scoped_namespace_reresolves_dynamic() -> None:
+    from forze.application.contracts.resolution import resolve_scoped_namespace
+    from forze.base.primitives import OnceCell
+
+    cell: OnceCell[str] = OnceCell()
+    t1, t2 = uuid4(), uuid4()
+
+    def spec(tenant_id: UUID | None) -> str:
+        return f"idx-{tenant_id}"
+
+    # Dynamic resolver → never memoized; each tenant resolves independently.
+    assert await resolve_scoped_namespace(spec, tenant_id=t1, cell=cell) == f"idx-{t1}"
+    assert await resolve_scoped_namespace(spec, tenant_id=t2, cell=cell) == f"idx-{t2}"

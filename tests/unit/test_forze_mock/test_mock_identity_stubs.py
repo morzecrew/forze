@@ -35,6 +35,7 @@ from forze.application.contracts.authz.value_objects import (
 )
 from forze.application.contracts.secrets import SecretsDepKey, SecretRef
 from forze.application.contracts.tenancy import (
+    NoopTenantProvisioner,
     TenantManagementDepKey,
     TenantResolverDepKey,
 )
@@ -232,6 +233,18 @@ async def test_tenant_resolver_requested_tenant_requires_membership() -> None:
     assert excinfo.value.code == "tenant_mismatch"
 
 
+async def test_deprovision_missing_tenant_raises_like_real_adapter() -> None:
+    # Parity: the real adapter loads the tenant (a document ``get`` that raises) before
+    # tearing down infra, so the mock must fail closed on a missing tenant too.
+    state = MockState()
+    mgmt = MockTenantManagementPort(state=state, provisioner=NoopTenantProvisioner())
+
+    with pytest.raises(CoreException) as excinfo:
+        await mgmt.deprovision_tenant(uuid4())
+
+    assert excinfo.value.kind is ExceptionKind.NOT_FOUND
+
+
 async def test_tenant_resolver_resolves_member_requested_tenant() -> None:
     state = MockState()
     mgmt = MockTenantManagementPort(state=state)
@@ -296,3 +309,41 @@ async def test_tenant_resolver_no_membership_returns_none() -> None:
     resolver = MockTenantResolverPort(state=MockState())
 
     assert await resolver.resolve_from_principal(uuid4()) is None
+
+
+async def test_list_principal_tenants_returns_active_memberships() -> None:
+    state = MockState()
+    mgmt = MockTenantManagementPort(state=state)
+
+    a = await mgmt.provision_tenant(tenant_key="acme")
+    b = await mgmt.provision_tenant(tenant_key="globex")
+    await mgmt.provision_tenant(tenant_key="initech")  # exists but not a member
+    pid = uuid4()
+    await mgmt.attach_principal(pid, a.tenant_id)
+    await mgmt.attach_principal(pid, b.tenant_id)
+
+    listed = await mgmt.list_principal_tenants(pid)
+    assert {t.tenant_id for t in listed} == {a.tenant_id, b.tenant_id}
+
+    # Deactivating a tenant drops it from the selector list.
+    await mgmt.deactivate_tenant(a.tenant_id)
+    listed = await mgmt.list_principal_tenants(pid)
+    assert {t.tenant_id for t in listed} == {b.tenant_id}
+
+
+async def test_list_tenant_principals_returns_members() -> None:
+    state = MockState()
+    mgmt = MockTenantManagementPort(state=state)
+
+    tenant = await mgmt.provision_tenant(tenant_key="acme")
+    p1, p2 = uuid4(), uuid4()
+    await mgmt.attach_principal(p1, tenant.tenant_id)
+    await mgmt.attach_principal(p2, tenant.tenant_id)
+
+    members = await mgmt.list_tenant_principals(tenant.tenant_id)
+    assert set(members) == {p1, p2}
+
+    # Detaching drops the principal; an unknown tenant is empty (not an error).
+    await mgmt.detach_principal(p1, tenant.tenant_id)
+    assert set(await mgmt.list_tenant_principals(tenant.tenant_id)) == {p2}
+    assert await mgmt.list_tenant_principals(uuid4()) == []

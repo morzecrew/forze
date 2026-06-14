@@ -67,9 +67,11 @@ class _FakeClient:
     def __init__(self, rows: list[dict[str, Any]] | None = None) -> None:
         self.rows = rows if rows is not None else []
         self.calls: list[tuple[str, dict[str, Any]]] = []
+        self.databases: list[str | None] = []
 
     async def run(self, query, params=None, *, database=None):  # noqa: ANN001, ANN202
         self.calls.append((query, dict(params or {})))
+        self.databases.append(database)
         return self.rows
 
     async def close(self) -> None: ...
@@ -105,8 +107,32 @@ async def test_get_vertex_materializes() -> None:
     assert isinstance(out, UserRead)
     assert out.id == "a" and out.name == "Alice"
     query, params = client.calls[-1]
-    assert "MATCH (n:`User` {id: $key})" in query
+    assert "MATCH (n:`User` {`id`: $key})" in query
     assert params == {"key": "a"}
+
+
+@pytest.mark.asyncio
+async def test_static_database_resolves_without_a_tenant() -> None:
+    adapter, client = _adapter(rows=[{"n": {"id": "a"}}], database="analytics")
+    await adapter.get_vertex(VertexRef(kind="User", key="a"))
+    assert client.databases[-1] == "analytics"
+
+
+@pytest.mark.asyncio
+async def test_per_tenant_database_routes_to_resolved_namespace() -> None:
+    from uuid import uuid4
+
+    from forze.application.contracts.tenancy import TenantIdentity
+
+    tid = uuid4()
+    adapter, client = _adapter(
+        rows=[{"n": {"id": "a"}}],
+        database=lambda t: f"tenant_{t}",  # per-tenant database = namespace tier
+        tenant_aware=True,
+        tenant_provider=lambda: TenantIdentity(tenant_id=tid),
+    )
+    await adapter.get_vertex(VertexRef(kind="User", key="a"))
+    assert client.databases[-1] == f"tenant_{tid}"
 
 
 @pytest.mark.asyncio
@@ -192,12 +218,48 @@ async def test_tenant_aware_stamps_and_filters() -> None:
     )
     await adapter.get_vertex(VertexRef(kind="User", key="a"))
     query, params = client.calls[-1]
-    assert "tenant_id: $tenant" in query
+    assert "`tenant_id`: $tenant" in query
     assert params["tenant"] == str(tid)
 
     await adapter.create_vertex("User", UserCreate(id="a"))
     _, params = client.calls[-1]
     assert params["props"]["tenant_id"] == str(tid)
+
+
+@pytest.mark.asyncio
+async def test_full_path_isolation_constrains_traversal_interior() -> None:
+    # Default traversal_isolation="full-path": neighbors terminal node and expand path
+    # nodes are tenant-constrained, not just the anchor.
+    tid = uuid4()
+    adapter, client = _adapter(
+        rows=[],
+        tenant_aware=True,
+        tenant_provider=lambda: TenantIdentity(tenant_id=tid),
+    )
+
+    await adapter.neighbors(
+        VertexRef(kind="User", key="a"), GraphDirection.OUT, frozenset({"FOLLOWS"}), limit=10
+    )
+    query, _ = client.calls[-1]
+    assert "(m {`tenant_id`: $tenant})" in query
+
+
+@pytest.mark.asyncio
+async def test_anchor_isolation_leaves_traversal_interior_open() -> None:
+    tid = uuid4()
+    adapter, client = _adapter(
+        rows=[],
+        tenant_aware=True,
+        tenant_provider=lambda: TenantIdentity(tenant_id=tid),
+        traversal_isolation="anchor",
+    )
+
+    await adapter.neighbors(
+        VertexRef(kind="User", key="a"), GraphDirection.OUT, frozenset({"FOLLOWS"}), limit=10
+    )
+    query, _ = client.calls[-1]
+    assert "(m {`tenant_id`: $tenant})" not in query
+    assert "{`id`: $key, `tenant_id`: $tenant}" in query  # anchor still scoped
 
 
 @pytest.mark.asyncio
@@ -213,10 +275,13 @@ async def test_tenant_required_when_aware_without_provider_value() -> None:
 async def test_raw_query_binds_tenant_when_aware() -> None:
     tid = uuid4()
     adapter, client = _adapter(
-        rows=[], tenant_aware=True, tenant_provider=lambda: TenantIdentity(tenant_id=tid)
+        rows=[],
+        tenant_aware=True,
+        tenant_provider=lambda: TenantIdentity(tenant_id=tid),
+        allow_raw_query=True,
     )
 
-    await adapter.run("MATCH (n {tenant_id: $tenant}) RETURN n", {"x": 1})
+    await adapter.run("MATCH (n {`tenant_id`: $tenant}) RETURN n", {"x": 1})
 
     _, params = client.calls[-1]
     assert params == {"x": 1, "tenant": str(tid)}
@@ -225,7 +290,9 @@ async def test_raw_query_binds_tenant_when_aware() -> None:
 @pytest.mark.asyncio
 async def test_raw_query_fails_closed_without_tenant() -> None:
     # A tenant-aware raw query with no bound tenant raises instead of running unscoped.
-    adapter, client = _adapter(rows=[], tenant_aware=True, tenant_provider=lambda: None)
+    adapter, client = _adapter(
+        rows=[], tenant_aware=True, tenant_provider=lambda: None, allow_raw_query=True
+    )
 
     with pytest.raises(CoreException):
         await adapter.run("MATCH (n) RETURN n")
@@ -235,12 +302,84 @@ async def test_raw_query_fails_closed_without_tenant() -> None:
 
 @pytest.mark.asyncio
 async def test_raw_query_passthrough_when_not_tenant_aware() -> None:
-    adapter, client = _adapter(rows=[])
+    adapter, client = _adapter(rows=[], allow_raw_query=True)
 
     await adapter.run("MATCH (n) RETURN n", {"x": 1})
 
     _, params = client.calls[-1]
     assert params == {"x": 1}  # unchanged — no tenant injected
+
+
+@pytest.mark.asyncio
+async def test_raw_query_disabled_fails_closed() -> None:
+    # allow_raw_query=False refuses the whole-query hatch before touching the client.
+    adapter, client = _adapter(rows=[], allow_raw_query=False)
+
+    with pytest.raises(CoreException, match="graph_raw_disabled"):
+        await adapter.run("MATCH (n) RETURN n")
+
+
+@pytest.mark.asyncio
+async def test_raw_query_disabled_by_default() -> None:
+    # Fail closed by default: the raw hatch is opt-in (allow_raw_query defaults to False).
+    adapter, client = _adapter(rows=[])
+
+    with pytest.raises(CoreException, match="graph_raw_disabled"):
+        await adapter.run("MATCH (n) RETURN n")
+
+    assert client.calls == []
+
+    assert client.calls == []
+
+
+@pytest.mark.asyncio
+async def test_scoped_walk_builds_tenant_scoped_query_and_materializes() -> None:
+    from forze.application.contracts.graph import GraphPathStep, ScopedWalkParams
+    from forze.application.contracts.tenancy import TenantIdentity
+
+    tid = uuid4()
+    adapter, client = _adapter(
+        rows=[{"m": {"id": "b"}}, {"m": {"id": "c"}}],
+        tenant_aware=True,
+        tenant_provider=lambda: TenantIdentity(tenant_id=tid),
+    )
+
+    out = await adapter.scoped_walk(
+        VertexRef(kind="User", key="a"),
+        ScopedWalkParams(
+            steps=[GraphPathStep(edge_kinds=frozenset({"FOLLOWS"}), max_hops=3)],
+            target_kind="User",
+            limit=10,
+        ),
+    )
+
+    query, params = client.calls[-1]
+    # anchor + target + full-path tenant constraint, all adapter-owned
+    assert "(n0:`User` {`id`: $key, `tenant_id`: $tenant})" in query
+    assert "(m:`User` {`tenant_id`: $tenant})" in query
+    assert "WHERE all(_n IN nodes(path) WHERE _n.`tenant_id` = $tenant)" in query
+    assert params == {"key": "a", "limit": 10, "tenant": str(tid)}
+    assert [u.id for u in out] == ["b", "c"]
+
+
+@pytest.mark.asyncio
+async def test_scoped_walk_fails_closed_without_tenant() -> None:
+    from forze.application.contracts.graph import GraphPathStep, ScopedWalkParams
+
+    adapter, client = _adapter(
+        rows=[], tenant_aware=True, tenant_provider=lambda: None
+    )
+
+    with pytest.raises(CoreException, match="tenant_required"):
+        await adapter.scoped_walk(
+            VertexRef(kind="User", key="a"),
+            ScopedWalkParams(
+                steps=[GraphPathStep(edge_kinds=frozenset({"FOLLOWS"}))],
+                target_kind="User",
+            ),
+        )
+
+    assert client.calls == []
 
 
 @pytest.mark.asyncio

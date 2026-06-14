@@ -4,9 +4,16 @@ from typing import TYPE_CHECKING, Any
 
 import attrs
 
+from forze.application.contracts.resolution import (
+    NamedResourceSpec,
+    coerce_optional_named_resource_spec,
+)
+from forze.application.contracts.tenancy import TenantAwareIntegrationConfig
+from forze.application.integrations.analytics import assert_tenant_param_referenced
 from forze.base.exceptions import exc
 from forze.base.primitives import MappingConverter, StrKeyMapping
 from forze_bigquery.kernel.relation import RelationSpec, coerce_relation_spec
+
 
 if TYPE_CHECKING:
     from forze.application.contracts.analytics import AnalyticsSpec
@@ -48,16 +55,33 @@ class BigQueryQueryConfig:
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class BigQueryAnalyticsConfig:
-    """Physical BigQuery mapping for one :class:`~forze.application.contracts.analytics.AnalyticsSpec` route."""
+class BigQueryAnalyticsConfig(TenantAwareIntegrationConfig):
+    """Physical BigQuery mapping for one :class:`~forze.application.contracts.analytics.AnalyticsSpec` route.
+
+    When ``tenant_aware`` (inherited), the adapter binds the current tenant id as the
+    ``@tenant`` query parameter and fails closed if no tenant is bound; every registered
+    query SQL must reference that parameter (checked at wiring).
+    """
 
     dataset: str
-    """BigQuery dataset id."""
+    """BigQuery dataset id (used for ingest; see :attr:`query_dataset` for per-tenant query)."""
 
     queries: StrKeyMapping[BigQueryQueryConfig] = attrs.field(
         converter=MappingConverter.to_str_key_frozen,  # type: ignore[misc]
     )
     """Named queries; keys must match ``AnalyticsSpec.queries``."""
+
+    query_dataset: NamedResourceSpec | None = attrs.field(
+        default=None,
+        converter=coerce_optional_named_resource_spec,
+    )
+    """Per-tenant query dataset — a static name or ``(tenant_id) -> str`` resolver.
+
+    When set, queries run with this as the BigQuery *default dataset*, so an unqualified
+    table in the registered SQL resolves in the tenant's own dataset (dataset-per-tenant
+    isolation on a shared project). ``None`` leaves the default dataset unset (the SQL must
+    fully-qualify its tables — the prior behavior).
+    """
 
     ingest_relation: RelationSpec | None = attrs.field(
         default=None,
@@ -113,4 +137,13 @@ class BigQueryAnalyticsConfig:
             raise exc.configuration(
                 f"BigQuery analytics config for route {spec.name!r} requires "
                 "ingest_relation (or legacy ingest_table) when AnalyticsSpec.ingest is set."
+            )
+
+        if self.tenant_aware:
+            assert_tenant_param_referenced(
+                {str(k): v.sql for k, v in self.queries.items()},
+                pattern=r"@tenant\b",
+                placeholder_hint="@tenant",
+                integration="BigQuery",
+                route=str(spec.name),
             )

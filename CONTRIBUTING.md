@@ -281,6 +281,16 @@ Categories:
 
 Exclude internal changes such as CI updates, test-only changes, or trivial refactors.
 
+**Keep entries concise.** One bullet = a headline, the key public API/migration, and any
+breaking note — not an essay. Leave out the *why*, the implementation mechanics, and
+"verified by …" (those live in the PR and commits). Prefer one tight bullet over several
+overlapping ones; group a multi-PR arc (e.g. a hardening initiative) under a bold sub-heading
+rather than repeating context in each line. Always preserve **breaking** markers, new public
+symbol names, and any **Migration:** SQL. When the `[Unreleased]` section grows large or several
+bullets describe one feature, compact it: consolidate the overlap into grouped, single-line
+entries (keep every breaking/migration/public-API fact). Edit only `[Unreleased]` — never
+rewrite an already-released version section.
+
 ## Release Process
 
 Releases are tag-driven.
@@ -300,8 +310,22 @@ If you have questions about contributing or the codebase, please open an issue o
 ## Performance regression gate
 
 The in-process benchmark subset (marked `perf_gate`) is compared in CI against
-your PR's merge-base **on the same runner** and fails on a >15% regression of
-`min`. If it fires: fix the regression, or justify it in the PR and apply the
+your PR's merge-base **on the same runner**, **interleaved** across several rounds
+(base, head, base, …), and fails on a >15% regression of the **median of each
+side's per-run `min`**. Same-runner pairing cancels the between-runner lottery;
+interleaving + median-of-mins cancels within-job drift (thermal throttle, a noisy
+neighbour) and the unlucky-round flakiness a single `min` sample suffers on
+sub-millisecond benchmarks. `min` is the per-run metric on purpose — micro-bench
+noise is one-directional (interference only ever *slows* an iteration), so the
+per-run `min` is the cleanest estimate of the code path; `mean`, dragged up by
+every outlier, would flag *more* false positives, not fewer. The comparator is
+[`tests/perf/gate_compare.py`](tests/perf/gate_compare.py); rounds per side are
+tunable via `PERF_GATE_ROUNDS` (default 3 — higher is more robust but slower). Only
+benchmarks ≥ `--min-floor-ms` (default 1 ms) can fail the gate — sub-millisecond ones
+are below a shared runner's timing-noise floor and are reported for trend only, so a new
+micro-benchmark won't make the gate flaky.
+
+If it fires: fix the regression, or justify it in the PR and apply the
 `skip-perf-gate` label. Comparisons match benchmarks by name — new benchmarks
 pass trivially; renames silently drop out of comparison, so prefer keeping
 names stable. Locally: `just perf-save` to snapshot a baseline, `just

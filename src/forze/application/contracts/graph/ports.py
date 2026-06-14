@@ -17,6 +17,7 @@ from .value_objects import (
     GraphWalkParams,
     GraphWalkStep,
     NeighborRow,
+    ScopedWalkParams,
     ShortestPathParams,
     ShortestPathResult,
     VertexRef,
@@ -129,6 +130,23 @@ class GraphQueryPort(BaseGraphModulePort, Protocol):
         params: ShortestPathParams,
     ) -> Awaitable[ShortestPathResult | None]:
         """Return one of the shortest paths, or ``None`` if no path within *params* exists."""
+        ...  # pragma: no cover
+
+    def scoped_walk(
+        self,
+        anchor: VertexRef,  # noqa: F841
+        params: ScopedWalkParams,
+    ) -> Awaitable[Sequence[BaseModel]]:
+        """Tenant-safe multi-segment walk returning the distinct typed target vertices.
+
+        Unlike the raw hatch, the adapter owns the entire query: the anchor and the typed
+        target are tenant-scoped and a full-path predicate constrains every intermediate
+        node, so the traversal cannot cross tenants. Every caller input is structured (edge
+        kinds, direction, hop bounds, target kind) — there is no engine query string, hence
+        no injection or escape surface. Use it for multi-segment patterns that
+        :meth:`neighbors` / :meth:`expand` / :meth:`shortest_path` cannot express, in place
+        of the whole-query raw hatch.
+        """
         ...  # pragma: no cover
 
     def k_shortest_paths(

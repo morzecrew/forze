@@ -1,10 +1,14 @@
-from typing import Any, final
+from typing import Any, Sequence, final
 from uuid import UUID
 
 import attrs
 
 from forze.application.contracts.document import DocumentCommandPort, DocumentQueryPort
-from forze.application.contracts.tenancy import TenantIdentity, TenantManagementPort
+from forze.application.contracts.tenancy import (
+    TenantIdentity,
+    TenantManagementPort,
+    TenantProvisionerPort,
+)
 from forze.base.exceptions import exc
 from forze_identity._secure_spec import forbid_cache_and_history
 
@@ -23,6 +27,9 @@ from ..domain.models.tenant import (
 
 # ----------------------- #
 
+_BINDING_PAGE_SIZE = 200
+"""Page size for fully draining membership bindings (selector / admin lists must not truncate)."""
+
 
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
@@ -40,6 +47,13 @@ class TenantManagementAdapter(TenantManagementPort):
         CreatePrincipalTenantBindingCmd,
         Any,
     ]
+    provisioner: TenantProvisionerPort | None = None
+    """Optional per-tenant infrastructure provisioner run on :meth:`provision_tenant`.
+
+    When set, onboarding creates the tenant record then ensures its resources (bucket /
+    schema / dataset) exist — so the ``namespace``/``dedicated`` isolation tiers don't assume
+    hand-provisioned infrastructure. ``None`` (the default) leaves onboarding record-only.
+    """
 
     # ....................... #
 
@@ -79,8 +93,14 @@ class TenantManagementAdapter(TenantManagementPort):
         tenant_key: str | None = None,
     ) -> TenantIdentity:
         row = await self.tenant_cmd.create(CreateTenantCmd(tenant_key=tenant_key))
+        identity = TenantIdentity(tenant_id=row.id, tenant_key=row.tenant_key)
 
-        return TenantIdentity(tenant_id=row.id, tenant_key=row.tenant_key)
+        # Record first, then infrastructure: a provisioner failure leaves the record so the
+        # idempotent provisioning can be retried.
+        if self.provisioner is not None:
+            await self.provisioner.provision(identity)
+
+        return identity
 
     # ....................... #
 
@@ -123,6 +143,60 @@ class TenantManagementAdapter(TenantManagementPort):
 
     # ....................... #
 
+    async def _all_bindings(self, filters: Any) -> list[ReadPrincipalTenantBinding]:
+        """Page through *every* binding matching *filters*.
+
+        Membership lists feed the tenant selector and admin member list, so they must drain to
+        exhaustion rather than silently truncate at the default page size.
+        """
+
+        hits: list[ReadPrincipalTenantBinding] = []
+        offset = 0
+
+        while True:
+            page = await self.binding_qry.find_many(
+                filters=filters,
+                pagination={"limit": _BINDING_PAGE_SIZE, "offset": offset},
+            )
+            hits.extend(page.hits)
+
+            if len(page.hits) < _BINDING_PAGE_SIZE:
+                break
+
+            offset += _BINDING_PAGE_SIZE
+
+        return hits
+
+    # ....................... #
+
+    async def list_principal_tenants(
+        self,
+        principal_id: UUID,
+    ) -> Sequence[TenantIdentity]:
+        out: list[TenantIdentity] = []
+
+        for bind in await self._all_bindings({"$values": {"principal_id": principal_id}}):
+            tenant = await self.tenant_qry.get(bind.tenant_id)
+
+            if tenant.is_active:
+                out.append(
+                    TenantIdentity(tenant_id=tenant.id, tenant_key=tenant.tenant_key)
+                )
+
+        return out
+
+    # ....................... #
+
+    async def list_tenant_principals(
+        self,
+        tenant_id: UUID,
+    ) -> Sequence[UUID]:
+        bindings = await self._all_bindings({"$values": {"tenant_id": tenant_id}})
+
+        return [bind.principal_id for bind in bindings]
+
+    # ....................... #
+
     async def deactivate_tenant(self, tenant_id: UUID) -> None:
         row = await self.tenant_qry.get(tenant_id)
 
@@ -131,4 +205,16 @@ class TenantManagementAdapter(TenantManagementPort):
             row.rev,
             UpdateTenantCmd(is_active=False),
             return_new=False,
+        )
+
+    # ....................... #
+
+    async def deprovision_tenant(self, tenant_id: UUID) -> None:
+        if self.provisioner is None:
+            return
+
+        row = await self.tenant_qry.get(tenant_id)
+
+        await self.provisioner.deprovision(
+            TenantIdentity(tenant_id=row.id, tenant_key=row.tenant_key)
         )

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import final
+from typing import Sequence, final
 from uuid import UUID
 
 import attrs
@@ -10,6 +10,7 @@ import attrs
 from forze.application.contracts.tenancy import (
     TenantIdentity,
     TenantManagementPort,
+    TenantProvisionerPort,
     TenantResolverPort,
 )
 from forze.base.exceptions import exc
@@ -112,6 +113,9 @@ class MockTenantResolverPort(_TenantRouteStore, TenantResolverPort):
 @final
 @attrs.define(slots=True, kw_only=True)
 class MockTenantManagementPort(_TenantRouteStore, TenantManagementPort):
+    provisioner: TenantProvisionerPort | None = None
+    """Optional per-tenant infrastructure provisioner run on :meth:`provision_tenant`."""
+
     async def provision_tenant(
         self,
         *,
@@ -126,7 +130,12 @@ class MockTenantManagementPort(_TenantRouteStore, TenantManagementPort):
                 "active": True,
                 "created_at": utcnow(),
             }
-        return TenantIdentity(tenant_id=tid, tenant_key=key)
+        identity = TenantIdentity(tenant_id=tid, tenant_key=key)
+
+        if self.provisioner is not None:
+            await self.provisioner.provision(identity)
+
+        return identity
 
     async def attach_principal(
         self,
@@ -157,8 +166,53 @@ class MockTenantManagementPort(_TenantRouteStore, TenantManagementPort):
             if isinstance(principals, list) and principal_id in principals:
                 principals.remove(principal_id)  # type: ignore[arg-type]
 
+    async def list_principal_tenants(
+        self,
+        principal_id: UUID,
+    ) -> Sequence[TenantIdentity]:
+        with self.state.lock:
+            return [
+                TenantIdentity(
+                    tenant_id=UUID(tid),
+                    tenant_key=str(entry.get("tenant_key", tid)),
+                )
+                for tid, entry in self._tenants().items()
+                if entry.get("active", True)
+                and principal_id in entry.get("principals", [])  # type: ignore[operator]
+            ]
+
+    async def list_tenant_principals(
+        self,
+        tenant_id: UUID,
+    ) -> Sequence[UUID]:
+        with self.state.lock:
+            entry = self._tenants().get(str(tenant_id))
+
+            if entry is None:
+                return []
+
+            principals = entry.get("principals", [])
+
+            return list(principals) if isinstance(principals, list) else []
+
     async def deactivate_tenant(self, tenant_id: UUID) -> None:
         with self.state.lock:
             entry = self._tenants().get(str(tenant_id))
             if entry is not None:
                 entry["active"] = False
+
+    async def deprovision_tenant(self, tenant_id: UUID) -> None:
+        if self.provisioner is None:
+            return
+
+        with self.state.lock:
+            entry = self._tenants().get(str(tenant_id))
+            if entry is None:
+                # Mirror the real adapter, which loads the tenant (a document ``get``
+                # that raises on a missing row) before tearing down its infrastructure.
+                raise exc.not_found(f"Tenant {tenant_id!r} not found")
+            key = str(entry["tenant_key"])
+
+        await self.provisioner.deprovision(
+            TenantIdentity(tenant_id=tenant_id, tenant_key=key)
+        )

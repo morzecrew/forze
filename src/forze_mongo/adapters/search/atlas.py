@@ -10,7 +10,7 @@ from pydantic import BaseModel
 from forze.application.contracts.querying import QuerySortExpression
 from forze.application.contracts.resolution import (
     NamedResourceSpec,
-    is_static_named_resource,
+    resolve_scoped_namespace,
 )
 from forze.base.primitives import OnceCell
 from forze_mongo.kernel.relation import resolve_mongo_named_resource
@@ -42,17 +42,11 @@ class MongoAtlasSearchAdapter[M: BaseModel](MongoSimpleSearchAdapter[M]):
     # ....................... #
 
     async def _resolved_index_name(self) -> str:
-        async def _factory() -> str:
-            return await resolve_mongo_named_resource(
-                self.index_name,
-                self._tenant_id_for_resolve(),
-            )
-
-        # Only memoize tenant-independent (static) index names; a dynamic resolver
-        # depends on the bound tenant and the adapter may be shared across tenants.
-        return await self._index_name_cell.resolve(
-            _factory,
-            cache=is_static_named_resource(self.index_name),
+        return await resolve_scoped_namespace(
+            self.index_name,
+            tenant_id=self._tenant_id_for_resolve(),
+            cell=self._index_name_cell,
+            resolver=resolve_mongo_named_resource,
         )
 
     # ....................... #

@@ -174,7 +174,7 @@ class TestMongoWriteGateway:
         await gw.update(pk, MyUpdateDoc(name="after"))
 
         update_filter = client.find_one_and_update.await_args.args[1]
-        assert update_filter[TENANT_ID_FIELD].tenant_id == tid
+        assert update_filter[TENANT_ID_FIELD] == tid
         assert update_filter["_id"] == str(pk)
         assert update_filter["rev"] == 1
 

@@ -54,6 +54,12 @@ def coerce_named_resource_spec(value: Any) -> NamedResourceSpec:
     )
 
 
+def coerce_optional_named_resource_spec(value: Any) -> NamedResourceSpec | None:
+    """Like :func:`coerce_named_resource_spec`, but passes ``None`` through unchanged."""
+
+    return None if value is None else coerce_named_resource_spec(value)
+
+
 # ....................... #
 
 

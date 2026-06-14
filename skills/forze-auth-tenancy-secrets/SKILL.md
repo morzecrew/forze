@@ -176,6 +176,25 @@ For database-per-tenant Postgres routing, set `PostgresDepsModule.introspector_c
 
 `AuthnIdentity.tenant_id` is set by the resolver when the assertion carries a `tenant_hint` (e.g. JWT `tid` claim or an OIDC tenant claim). `TenantIdentityResolver` then merges credential-bound tenant id, optional header hint, and `TenantResolverPort` results.
 
+## Isolation tiers and the declared floor
+
+Every tenant-aware deps module reports the isolation tier its wiring reaches — `none < tagged < namespace < dedicated` (storage-agnostic names):
+
+- `tagged` — a shared store with a tenant marker (`tenant_aware=True`): a SQL `tenant_id` column, a Redis key prefix, an object-store path prefix, a graph property.
+- `namespace` — a per-tenant container on a shared instance via a dynamic resolver (schema / dataset / bucket / collection).
+- `dedicated` — a routed client with per-tenant credentials and connections.
+
+Set `required_tenant_isolation` on a module to declare a **minimum** and fail wiring closed below it — checked once at startup, never per request:
+
+```python
+PostgresDepsModule(
+    client=RoutedPostgresClient(...),
+    required_tenant_isolation="dedicated",
+)
+```
+
+A floor the backend can never reach (e.g. `"dedicated"` on in-process DuckDB or single-client Neo4j) fails as a capability mismatch. Use it to refuse under-isolated wiring on untrusted or self-scoping query paths (raw SQL hatches, self-filtering analytics). Default `None` enforces nothing.
+
 ## Tenancy deps module
 
 `TenancyDepsModule` (`from forze_identity.tenancy.execution import TenancyDepsModule`) registers `TenantResolverDepKey` and/or `TenantManagementDepKey` factories (`ConfigurableTenantResolver`, `ConfigurableTenantManagement`) for the route names you pass. Merge it into `DepsRegistry.from_modules` alongside Postgres/Mongo and auth modules when tenant catalog documents drive `TenantResolverPort` / `TenantManagementPort`.
@@ -191,6 +210,25 @@ TenancyDepsModule(
 ```
 
 See [Multi-tenancy](https://morzecrew.github.io/forze/in-depth/multi-tenancy/) for aggregates, adapters, and FastAPI `TenantIdentityResolver` pairing.
+
+## Tenant provisioning
+
+The `namespace` / `dedicated` tiers assume the per-tenant container already exists. `TenantProvisionerPort` creates it on onboarding and tears it down on offboarding; wire it through `TenancyDepsModule.tenant_provisioner`:
+
+```python
+from forze.application.integrations.storage import ObjectStorageTenantProvisioner
+from forze_identity.tenancy.execution import TenancyDepsModule
+
+TenancyDepsModule(
+    tenant_management={"main"},
+    tenant_provisioner=ObjectStorageTenantProvisioner(
+        client=s3_client,
+        bucket=lambda tid: f"tenant-{tid}",
+    ),
+)
+```
+
+`TenantManagementPort.provision_tenant(...)` records the tenant first, then runs the provisioner — idempotent, so a failure leaves the record for retry; `deprovision_tenant(tenant_id)` runs the inverse. Provisioners receive the onboarded `TenantIdentity` **explicitly** (it is not the ambient bound tenant — an admin onboards tenant X without acting as X). Compose per-integration provisioners with `CompositeTenantProvisioner`, wrap a callable with `FunctionTenantProvisioner`, or omit it (`NoopTenantProvisioner`, the default). `forze_postgres` ships `PostgresSchemaTenantProvisioner` (`CREATE SCHEMA IF NOT EXISTS`); object storage ships `ObjectStorageTenantProvisioner`.
 
 ## Secrets
 
@@ -243,6 +281,7 @@ Use secrets for credentials and routed client configuration; avoid putting secre
 6. **Storing external IdP subject strings as principal ids** — always go through a `PrincipalResolverPort` so internal identifiers stay UUID.
 7. **Re-validating tokens inside resolvers** — verification is the verifier's job; resolvers only translate `(issuer, subject, tenant_hint)`.
 8. **Using `AccessTokenCredentials.scheme` / `profile` as a security gate** — they are routing hints; the verifier's signature/claim checks are the boundary.
+9. **Declaring strong isolation but never creating the namespace** — pair per-tenant resolvers / `required_tenant_isolation` with a `TenantProvisionerPort` so onboarding provisions the schema / bucket / dataset.
 
 ## Reference
 

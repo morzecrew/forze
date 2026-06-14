@@ -4,9 +4,16 @@ from typing import TYPE_CHECKING, Any
 
 import attrs
 
+from forze.application.contracts.resolution import (
+    NamedResourceSpec,
+    coerce_optional_named_resource_spec,
+)
+from forze.application.contracts.tenancy import TenantAwareIntegrationConfig
+from forze.application.integrations.analytics import assert_tenant_param_referenced
 from forze.base.exceptions import exc
 from forze.base.primitives import MappingConverter, StrKeyMapping
 from forze_postgres.kernel.relation import RelationSpec, coerce_relation_spec
+
 
 if TYPE_CHECKING:
     from forze.application.contracts.analytics import AnalyticsSpec
@@ -48,8 +55,13 @@ class PostgresQueryConfig:
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class PostgresAnalyticsConfig:
-    """Physical Postgres mapping for one :class:`~forze.application.contracts.analytics.AnalyticsSpec` route."""
+class PostgresAnalyticsConfig(TenantAwareIntegrationConfig):
+    """Physical Postgres mapping for one :class:`~forze.application.contracts.analytics.AnalyticsSpec` route.
+
+    When ``tenant_aware`` (inherited), the adapter binds the current tenant id as the
+    ``%(tenant)s`` query parameter and fails closed if no tenant is bound; every registered
+    query SQL must reference that parameter (checked at wiring).
+    """
 
     queries: StrKeyMapping[PostgresQueryConfig] = attrs.field(
         converter=MappingConverter.to_str_key_frozen,  # type: ignore[misc]
@@ -64,6 +76,18 @@ class PostgresAnalyticsConfig:
 
     schema: str = "public"
     """Legacy schema for :attr:`ingest_table` when :attr:`ingest_relation` is omitted."""
+
+    query_schema: NamedResourceSpec | None = attrs.field(
+        default=None,
+        converter=coerce_optional_named_resource_spec,
+    )
+    """Per-tenant query schema — a static name or ``(tenant_id) -> str`` resolver.
+
+    When set, each query runs in a transaction with ``SET LOCAL search_path`` to the
+    resolved (per-tenant) schema, so an unqualified table in the registered SQL resolves in
+    the tenant's own schema (schema-per-tenant isolation on a shared connection). ``None``
+    leaves ``search_path`` untouched (the prior behavior).
+    """
 
     ingest_table: str | None = None
     """Legacy table name; use :attr:`ingest_relation` ``(schema, table)`` instead."""
@@ -112,4 +136,13 @@ class PostgresAnalyticsConfig:
             raise exc.configuration(
                 f"Postgres analytics config for route {spec.name!r} requires "
                 "ingest_relation (or legacy ingest_table) when AnalyticsSpec.ingest is set."
+            )
+
+        if self.tenant_aware:
+            assert_tenant_param_referenced(
+                {str(k): v.sql for k, v in self.queries.items()},
+                pattern=r"%\(tenant\)s",
+                placeholder_hint="%(tenant)s",
+                integration="Postgres",
+                route=str(spec.name),
             )

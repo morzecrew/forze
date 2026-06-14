@@ -21,7 +21,7 @@ def test_derive_mode_none() -> None:
     )
 
 
-def test_derive_mode_row() -> None:
+def test_derive_mode_tagged() -> None:
     assert (
         derive_postgres_tenant_isolation_mode(
             client_is_routed=False,
@@ -33,22 +33,42 @@ def test_derive_mode_row() -> None:
                 ),
             ],
         )
-        == "row"
+        == "tagged"
     )
 
 
-def test_derive_mode_relation() -> None:
+def test_derive_mode_namespace() -> None:
+    # A per-tenant namespace resolver derives the namespace tier (relation rung removed).
     assert (
         derive_postgres_tenant_isolation_mode(
             client_is_routed=False,
             routes=[],
-            has_relation_resolvers=True,
+            has_namespace_routing=True,
         )
-        == "relation"
+        == "namespace"
     )
 
 
-def test_derive_mode_database() -> None:
+def test_derive_mode_namespace_from_per_route_flag() -> None:
+    # A route's own has_namespace_routing (tenant_aware=False) derives namespace without the
+    # module-level override.
+    assert (
+        derive_postgres_tenant_isolation_mode(
+            client_is_routed=False,
+            routes=[
+                PostgresTenancyRouteSpec(
+                    name="evt",
+                    tenant_aware=False,
+                    kind="outbox",
+                    has_namespace_routing=True,
+                ),
+            ],
+        )
+        == "namespace"
+    )
+
+
+def test_derive_mode_dedicated() -> None:
     assert (
         derive_postgres_tenant_isolation_mode(
             client_is_routed=True,
@@ -60,7 +80,7 @@ def test_derive_mode_database() -> None:
                 ),
             ],
         )
-        == "database"
+        == "dedicated"
     )
 
 
@@ -98,4 +118,29 @@ def test_routed_with_partition_key_and_tenant_aware_warns_only() -> None:
                 kind="document",
             ),
         ],
+    )
+
+
+def test_required_dedicated_isolation_rejects_tagged_wiring() -> None:
+    with pytest.raises(CoreException, match="postgres_tenancy_validation_failed"):
+        validate_postgres_tenancy_wiring(
+            client_is_routed=False,
+            introspector_cache_partition_key_set=False,
+            routes=[
+                PostgresTenancyRouteSpec(
+                    name="doc",
+                    tenant_aware=True,
+                    kind="document",
+                ),
+            ],
+            required_isolation="dedicated",
+        )
+
+
+def test_required_dedicated_isolation_satisfied_by_routed_client() -> None:
+    validate_postgres_tenancy_wiring(
+        client_is_routed=True,
+        introspector_cache_partition_key_set=True,
+        routes=[],
+        required_isolation="dedicated",
     )

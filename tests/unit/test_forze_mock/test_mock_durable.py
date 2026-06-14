@@ -93,3 +93,67 @@ async def test_schedule_and_event_and_step_memo() -> None:
     assert await step.run("s1", body) == "ok"
     assert await step.run("s1", body) == "ok"
     assert calls == 1
+
+
+# ----------------------- #
+# tenant isolation (parity with Temporal per-tenant queue / Inngest envelope)
+
+
+@pytest.mark.asyncio
+async def test_workflow_runs_partitioned_by_tenant() -> None:
+    from uuid import uuid4
+
+    from forze.application.contracts.tenancy import TenantIdentity
+
+    t1, t2 = uuid4(), uuid4()
+    current: dict[str, TenantIdentity] = {"id": TenantIdentity(tenant_id=t1)}
+    state = MockState()
+    spec = DurableWorkflowSpec(
+        name="wf",
+        run=DurableWorkflowInvokeSpec(args_type=_In, return_type=_Out),
+    )
+
+    def _cmd() -> MockDurableWorkflowCommandAdapter[_In, _Out]:
+        return MockDurableWorkflowCommandAdapter(
+            spec=spec, state=state, tenant_aware=True, tenant_provider=lambda: current["id"]
+        )
+
+    def _qry() -> MockDurableWorkflowQueryAdapter[_In, _Out]:
+        return MockDurableWorkflowQueryAdapter(
+            spec=spec, state=state, tenant_aware=True, tenant_provider=lambda: current["id"]
+        )
+
+    handle = await _cmd().start(_In(n=1), workflow_id="shared-id")
+
+    # Tenant 2 must not see (or collide with) tenant 1's run under the same workflow id.
+    current["id"] = TenantIdentity(tenant_id=t2)
+    from forze.base.exceptions import CoreException
+
+    with pytest.raises(CoreException):
+        await _qry().describe(handle)
+
+    # A same-id workflow in tenant 2 is independent (no "already started" collision).
+    other = await _cmd().start(_In(n=2), workflow_id="shared-id")
+    assert other.workflow_id == "shared-id"
+
+    # Back to tenant 1 — its run is intact.
+    current["id"] = TenantIdentity(tenant_id=t1)
+    desc = await _qry().describe(handle)
+    assert desc.workflow_name == "wf"
+
+
+@pytest.mark.asyncio
+async def test_durable_fails_closed_without_tenant() -> None:
+    from forze.base.exceptions import CoreException
+
+    state = MockState()
+    spec = DurableWorkflowSpec(
+        name="wf",
+        run=DurableWorkflowInvokeSpec(args_type=_In, return_type=_Out),
+    )
+    cmd = MockDurableWorkflowCommandAdapter(
+        spec=spec, state=state, tenant_aware=True, tenant_provider=lambda: None
+    )
+
+    with pytest.raises(CoreException, match="tenant_required"):
+        await cmd.start(_In(n=1))

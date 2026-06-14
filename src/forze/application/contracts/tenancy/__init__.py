@@ -20,14 +20,24 @@ from .helpers import (
 from .integration_config import TenantAwareIntegrationConfig
 from .mixins import TenancyMixin
 from .ports import TenantManagementPort, TenantProviderPort, TenantResolverPort
+from .provisioning import (
+    CompositeTenantProvisioner,
+    FunctionTenantProvisioner,
+    NoopTenantProvisioner,
+    TenantProvisionerPort,
+)
 from .registry import TenantClientRegistry, TenantPoolStats
 from .value_objects import TenantIdentity
 from .wiring import (
     IntegrationRouteWarning,
     TenancyRouteSpec,
+    TenancyRouteGroup,
     TenantIsolationMode,
     derive_tenant_isolation_mode,
+    isolation_satisfies,
     namespace_route_warning,
+    validate_module_tenancy,
+    validate_required_isolation,
     validate_routed_client_tenancy_wiring,
     warn_dynamic_relation_with_tenant_aware,
     warn_integration_routes,
@@ -46,6 +56,10 @@ __all__ = [
     "TenantResolverDepKey",
     "TenantResolverDepPort",
     "TenantProviderPort",
+    "TenantProvisionerPort",
+    "NoopTenantProvisioner",
+    "FunctionTenantProvisioner",
+    "CompositeTenantProvisioner",
     "TenantAwareIntegrationConfig",
     "TenancyMixin",
     "TENANT_ID_HEADER",
@@ -53,9 +67,13 @@ __all__ = [
     "parse_tenant_hint",
     "require_tenant_id",
     "TenancyRouteSpec",
+    "TenancyRouteGroup",
     "IntegrationRouteWarning",
     "TenantIsolationMode",
     "derive_tenant_isolation_mode",
+    "isolation_satisfies",
+    "validate_required_isolation",
+    "validate_module_tenancy",
     "namespace_route_warning",
     "validate_routed_client_tenancy_wiring",
     "warn_dynamic_relation_with_tenant_aware",

@@ -13,6 +13,7 @@ import msgspec
 from forze.application.contracts.resolution import (
     NamedResourceSpec,
     is_static_named_resource,
+    resolve_scoped_namespace,
 )
 from forze.application.contracts.storage.ports import (
     StorageCommandPort,
@@ -74,34 +75,14 @@ class ObjectStorageAdapter(StorageQueryPort, StorageCommandPort, TenancyMixin):
 
     # ....................... #
 
-    def _tenant_id_for_resolve(self) -> UUID | None:
-        if self.tenant_provider is None:
-            return None
-
-        tenant = self.tenant_provider()
-
-        if tenant is None:
-            if self.tenant_aware:
-                raise exc.internal("Tenant ID is required for the storage adapter")
-
-            return None
-
-        return tenant.tenant_id
-
     # ....................... #
 
     async def _resolved_bucket(self) -> str:
-        async def _factory() -> str:
-            return await self.resolve_bucket(
-                self.bucket_spec,
-                self._tenant_id_for_resolve(),
-            )
-
-        # Only memoize tenant-independent (static) bucket names; a dynamic resolver
-        # depends on the bound tenant and the adapter may be shared across tenants.
-        return await self._bucket_cell.resolve(
-            _factory,
-            cache=is_static_named_resource(self.bucket_spec),
+        return await resolve_scoped_namespace(
+            self.bucket_spec,
+            tenant_id=self._tenant_id_for_resolve(),
+            cell=self._bucket_cell,
+            resolver=self.resolve_bucket,
         )
 
     # ....................... #

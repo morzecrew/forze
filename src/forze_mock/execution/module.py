@@ -680,7 +680,13 @@ class ConfigurableMockDurableWorkflowCommand(_MockFactoryBase):
         context: ExecutionContext,
         spec: DurableWorkflowSpec[Any, Any],
     ) -> MockDurableWorkflowCommandAdapter[Any, Any]:
-        return MockDurableWorkflowCommandAdapter(spec=spec, state=self._state(context))
+        cfg = self._route(spec.name)
+        return MockDurableWorkflowCommandAdapter(
+            spec=spec,
+            state=self._state(context),
+            tenant_aware=cfg.tenant_aware if cfg else False,
+            tenant_provider=_tenant_provider(context),
+        )
 
 
 @final
@@ -691,7 +697,13 @@ class ConfigurableMockDurableWorkflowQuery(_MockFactoryBase):
         context: ExecutionContext,
         spec: DurableWorkflowSpec[Any, Any],
     ) -> MockDurableWorkflowQueryAdapter[Any, Any]:
-        return MockDurableWorkflowQueryAdapter(spec=spec, state=self._state(context))
+        cfg = self._route(spec.name)
+        return MockDurableWorkflowQueryAdapter(
+            spec=spec,
+            state=self._state(context),
+            tenant_aware=cfg.tenant_aware if cfg else False,
+            tenant_provider=_tenant_provider(context),
+        )
 
 
 @final
@@ -702,9 +714,12 @@ class ConfigurableMockDurableWorkflowScheduleCommand(_MockFactoryBase):
         context: ExecutionContext,
         spec: DurableWorkflowSpec[Any, Any],
     ) -> MockDurableWorkflowScheduleCommandAdapter[Any]:
+        cfg = self._route(spec.name)
         return MockDurableWorkflowScheduleCommandAdapter(
             spec=spec,
             state=self._state(context),
+            tenant_aware=cfg.tenant_aware if cfg else False,
+            tenant_provider=_tenant_provider(context),
         )
 
 
@@ -716,9 +731,12 @@ class ConfigurableMockDurableWorkflowScheduleQuery(_MockFactoryBase):
         context: ExecutionContext,
         spec: DurableWorkflowSpec[Any, Any],
     ) -> MockDurableWorkflowScheduleQueryAdapter[Any]:
+        cfg = self._route(spec.name)
         return MockDurableWorkflowScheduleQueryAdapter(
             spec=spec,
             state=self._state(context),
+            tenant_aware=cfg.tenant_aware if cfg else False,
+            tenant_provider=_tenant_provider(context),
         )
 
 
@@ -730,7 +748,13 @@ class ConfigurableMockDurableFunctionEvent(_MockFactoryBase):
         context: ExecutionContext,
         spec: DurableFunctionEventSpec[Any],
     ) -> MockDurableFunctionEventAdapter[Any]:
-        return MockDurableFunctionEventAdapter(spec=spec, state=self._state(context))
+        cfg = self._route(spec.name)
+        return MockDurableFunctionEventAdapter(
+            spec=spec,
+            state=self._state(context),
+            tenant_aware=cfg.tenant_aware if cfg else False,
+            tenant_provider=_tenant_provider(context),
+        )
 
 
 @final

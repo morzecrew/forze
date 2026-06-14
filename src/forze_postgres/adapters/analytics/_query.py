@@ -8,8 +8,10 @@ from psycopg.abc import QueryNoTemplate
 from pydantic import BaseModel
 
 from forze.application.contracts.analytics import AnalyticsRunOptions, AnalyticsSpec
+from forze.application.contracts.resolution import resolve_scoped_namespace
 from forze.application.contracts.tenancy import TenantProviderPort, soft_tenant_id
 from forze.application.integrations.analytics.adapter_common import (
+    bind_tenant_param,
     dry_run_enabled,
     dry_run_offset_page,
     execute_analytics_offset_page,
@@ -51,6 +53,7 @@ class PostgresAnalyticsQueryMixin[R: BaseModel, Ing: BaseModel]:
     config: PostgresAnalyticsConfig
     tenant_provider: TenantProviderPort | None
     _ingest_qname_cell: OnceCell[PostgresQualifiedName]
+    _query_schema_cell: OnceCell[str]
 
     # ....................... #
 
@@ -74,7 +77,42 @@ class PostgresAnalyticsQueryMixin[R: BaseModel, Ing: BaseModel]:
     # ....................... #
 
     def _tenant_id_for_resolve(self) -> UUID | None:
+        # Fail closed on a tenant-aware route with no bound tenant — same as
+        # ``bind_tenant_param`` and the canonical ``TenancyMixin._tenant_id_for_resolve`` —
+        # so a dynamic ``query_schema`` resolver is never invoked with ``None`` ahead of the
+        # authentication error. A non-tenant-aware route keeps the soft passthrough (a dynamic
+        # resolver still scopes per tenant when one is bound).
+        if self.config.tenant_aware:
+            if self.tenant_provider is None:
+                raise exc.configuration(
+                    "Tenant provider is required for a tenant-aware analytics route.",
+                    code="analytics_tenant_provider_missing",
+                )
+
+            tenant = self.tenant_provider()
+
+            if tenant is None:
+                raise exc.authentication("Tenant ID is required", code="tenant_required")
+
+            return tenant.tenant_id
+
         return soft_tenant_id(self.tenant_provider)
+
+    # ....................... #
+
+    async def _query_schema(self) -> str | None:
+        """Per-tenant query schema (for ``search_path``), or ``None`` (no scoping)."""
+
+        spec = self.config.query_schema
+
+        if spec is None:
+            return None
+
+        return await resolve_scoped_namespace(
+            spec,
+            tenant_id=self._tenant_id_for_resolve(),
+            cell=self._query_schema_cell,
+        )
 
     # ....................... #
 
@@ -119,10 +157,19 @@ class PostgresAnalyticsQueryMixin[R: BaseModel, Ing: BaseModel]:
     # ....................... #
 
     def _param_dict(self, params: BaseModel | JsonDict) -> dict[str, object]:
-        if isinstance(params, BaseModel):
-            return parameters_from_model(params)
+        # Single chokepoint for every analytics query path (fetch / count / cursor /
+        # chunked) — binds the ``%(tenant)s`` advisory floor here, failing closed on a
+        # tenant-aware route with no bound tenant.
+        bound = bind_tenant_param(
+            params,
+            tenant_aware=self.config.tenant_aware,
+            tenant_provider=self.tenant_provider,
+        )
 
-        return dict(params)
+        if isinstance(bound, BaseModel):
+            return parameters_from_model(bound)
+
+        return dict(bound)
 
     # ....................... #
 
@@ -132,16 +179,35 @@ class PostgresAnalyticsQueryMixin[R: BaseModel, Ing: BaseModel]:
         fn: Callable[[], Awaitable[Any]],
     ) -> Any:
         timeout_sec = self._timeout_sec(options)
+        schema = await self._query_schema()
 
-        if timeout_sec is None:
+        if timeout_sec is None and schema is None:
             return await fn()
 
+        # A per-tenant query schema or a statement timeout needs a transaction so the
+        # ``SET LOCAL`` is scoped to this query (schema-per-tenant isolation on a shared
+        # connection: unqualified table names in the registered SQL resolve in the
+        # tenant's own schema).
         async with self.client.transaction():
-            await self.client.execute(
-                sql.SQL("SET LOCAL statement_timeout = {}").format(
-                    sql.Literal(timeout_sec * 1000),
-                ),
-            )
+            if timeout_sec is not None:
+                await self.client.execute(
+                    sql.SQL("SET LOCAL statement_timeout = {}").format(
+                        sql.Literal(timeout_sec * 1000),
+                    ),
+                )
+
+            if schema is not None:
+                # Tenant schema first (so its tables shadow ``public``), then ``public`` so
+                # unqualified extension objects (uuid-ossp / pgcrypto / PostGIS, installed in
+                # public by default) and shared lookup tables stay reachable — a bare
+                # search_path would silently drop them and fail at query time.
+                await self.client.execute(
+                    sql.SQL("SET LOCAL search_path TO {}, {}").format(
+                        sql.Identifier(schema),
+                        sql.Identifier("public"),
+                    ),
+                )
+
             return await fn()
 
     # ....................... #

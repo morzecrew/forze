@@ -107,7 +107,7 @@ Use them for:
 3. Validate architecture and tool constraints in `pyproject.toml` before code changes.
 4. Use `justfile` commands as the default way to run tests and quality checks.
 5. For user-visible behavior changes, update tests and docs together.
-6. Record user-facing changes in `CHANGELOG.md` under `[Unreleased]`.
+6. Record user-facing changes in `CHANGELOG.md` under `[Unreleased]`, keeping entries concise (see `CONTRIBUTING.md` → Changelog: one tight bullet per change, group multi-PR arcs, compact the section when it grows; always keep breaking/migration/public-API facts).
 7. For security-sensitive work, follow `SECURITY.md` and minimize public detail.
 
 ## Cross-tool compatibility

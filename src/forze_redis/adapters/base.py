@@ -6,7 +6,6 @@ require_redis()
 
 from contextvars import ContextVar
 from typing import Any
-from uuid import UUID
 
 import attrs
 
@@ -67,21 +66,6 @@ class RedisBaseAdapter(TenancyMixin):
 
         await self._resolved_namespace()
 
-    # ....................... #
-
-    def _tenant_id_for_resolve(self) -> UUID | None:
-        if self.tenant_provider is None:
-            return None
-
-        tenant = self.tenant_provider()
-
-        if tenant is None:
-            if self.tenant_aware:
-                raise exc.internal("Tenant ID is required for the Redis adapter")
-
-            return None
-
-        return tenant.tenant_id
 
     # ....................... #
 

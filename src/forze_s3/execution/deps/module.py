@@ -8,13 +8,17 @@ from forze.application.contracts.storage import (
     StorageCommandDepKey,
     StorageQueryDepKey,
 )
-from forze.application.contracts.tenancy import warn_integration_routes
+from forze.application.contracts.tenancy import (
+    TenantIsolationMode,
+    warn_integration_routes,
+)
 from forze.application.execution import Deps, DepsModule
 from forze.application.execution.deps.builders import merge_deps, routed_from_mapping
+from forze.application.integrations.storage import validate_storage_tenancy_wiring
 from forze.base.primitives import MappingConverter, StrKeyMapping
 
 from ...kernel._logger import logger
-from ...kernel.client import S3ClientPort
+from ...kernel.client import RoutedS3Client, S3ClientPort
 from ._warnings import S3_STORAGE_WARNING
 from .configs import S3StorageConfig
 from .factories import ConfigurableS3StorageCommand, ConfigurableS3StorageQuery
@@ -42,6 +46,15 @@ class S3DepsModule(DepsModule):
     )
     """Mapping from storage names to their S3-specific configurations."""
 
+    required_tenant_isolation: TenantIsolationMode | None = attrs.field(default=None)
+    """Declared minimum tenant isolation (``None`` = no floor).
+
+    Object storage spans the full ladder: ``tagged`` (per-tenant path prefix via
+    ``tenant_aware``), ``namespace`` (a per-tenant ``bucket`` resolver), ``dedicated`` (a
+    routed per-tenant client / credentials). Wiring fails closed if the derived tier is
+    weaker than the declared floor.
+    """
+
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
@@ -49,6 +62,14 @@ class S3DepsModule(DepsModule):
             integration="S3",
             routes=self.storages,
             warning=S3_STORAGE_WARNING,
+            log_warning=logger.warning,
+        )
+        validate_storage_tenancy_wiring(
+            integration="S3",
+            client_is_routed=isinstance(self.client, RoutedS3Client),
+            storages=self.storages,
+            required_isolation=self.required_tenant_isolation,
+            validation_failed_code="s3_storage_tenancy_validation_failed",
             log_warning=logger.warning,
         )
 

@@ -18,7 +18,9 @@ from forze.application.contracts.graph import (
     GraphEdgeSpec,
     GraphModuleSpec,
     GraphNodeSpec,
+    GraphPathStep,
     GraphWalkParams,
+    ScopedWalkParams,
     ShortestPathParams,
     VertexRef,
 )
@@ -194,7 +196,7 @@ async def test_tenant_property_isolation(neo4j_client: Neo4jClient) -> None:
 
 
 async def test_raw_escape_hatch(neo4j_client: Neo4jClient) -> None:
-    a = _adapter(neo4j_client)
+    a = _adapter(neo4j_client, allow_raw_query=True)
     await a.create_vertex("User", UserCreate(id="a"))
     await a.create_vertex("User", UserCreate(id="b"))
 
@@ -206,7 +208,10 @@ async def test_raw_query_is_tenant_scoped(neo4j_client: Neo4jClient) -> None:
     t1, t2 = uuid4(), uuid4()
     current: dict[str, TenantIdentity | None] = {"id": TenantIdentity(tenant_id=t1)}
     a = _adapter(
-        neo4j_client, tenant_aware=True, tenant_provider=lambda: current["id"]
+        neo4j_client,
+        tenant_aware=True,
+        tenant_provider=lambda: current["id"],
+        allow_raw_query=True,
     )
 
     await a.create_vertex("User", UserCreate(id="t1u"))
@@ -221,3 +226,101 @@ async def test_raw_query_is_tenant_scoped(neo4j_client: Neo4jClient) -> None:
     current["id"] = None
     with pytest.raises(CoreException):
         await a.run("MATCH (n:User) RETURN n")
+
+
+async def test_full_path_isolation_blocks_cross_tenant_edge(
+    neo4j_client: Neo4jClient,
+) -> None:
+    # A cross-tenant edge (planted via the raw hatch, which the structured writer would
+    # forbid) must not leak a foreign node through traversal under full-path isolation.
+    t1, t2 = uuid4(), uuid4()
+    tok = uuid4().hex[:8]
+    aid, bid, fid = f"A-{tok}", f"B-{tok}", f"F-{tok}"
+    current: dict[str, TenantIdentity] = {"id": TenantIdentity(tenant_id=t1)}
+
+    a = _adapter(
+        neo4j_client,
+        tenant_aware=True,
+        tenant_provider=lambda: current["id"],
+        allow_raw_query=True,
+    )
+
+    # Tenant 1: A -FOLLOWS-> B (a legitimate same-tenant edge).
+    await a.create_vertex("User", UserCreate(id=aid))
+    await a.create_vertex("User", UserCreate(id=bid))
+    await a.create_edge("FOLLOWS", FollowsCreate(from_key=aid, to_key=bid))
+
+    # Tenant 2: a foreign node F.
+    current["id"] = TenantIdentity(tenant_id=t2)
+    await a.create_vertex("User", UserCreate(id=fid))
+
+    # Plant a cross-tenant edge A(t1) -FOLLOWS-> F(t2) by matching F without a tenant scope.
+    current["id"] = TenantIdentity(tenant_id=t1)
+    await a.run(
+        "MATCH (x:User {id: $aid, tenant_id: $tenant}) "
+        "MATCH (f:User {id: $fid}) "
+        "MERGE (x)-[:FOLLOWS]->(f)",
+        {"aid": aid, "fid": fid},
+    )
+
+    origin = VertexRef(kind="User", key=aid)
+    edge_kinds = frozenset({"FOLLOWS"})
+
+    # Default (full-path): only the same-tenant neighbor B is returned.
+    out = await a.neighbors(origin, GraphDirection.OUT, edge_kinds, limit=10)
+    assert {n.other.id for n in out} == {bid}
+
+    # Anchor-only isolation leaks the foreign node — proves the predicate is load-bearing.
+    anchor = _adapter(
+        neo4j_client,
+        tenant_aware=True,
+        tenant_provider=lambda: current["id"],
+        traversal_isolation="anchor",
+    )
+    leaked = await anchor.neighbors(origin, GraphDirection.OUT, edge_kinds, limit=10)
+    assert {n.other.id for n in leaked} == {bid, fid}
+
+    # expand is likewise scoped to the tenant under full-path.
+    walked = await a.expand(origin, GraphWalkParams(direction=GraphDirection.OUT, edge_kinds=edge_kinds, max_depth=3, max_results=10))
+    assert all(step.vertex.id != fid for step in walked)
+
+
+async def test_scoped_walk_is_tenant_safe(neo4j_client: Neo4jClient) -> None:
+    # The structured scoped walk (no caller Cypher) excludes a foreign node reachable only
+    # via a planted cross-tenant edge.
+    t1, t2 = uuid4(), uuid4()
+    tok = uuid4().hex[:8]
+    aid, bid, fid = f"A-{tok}", f"B-{tok}", f"F-{tok}"
+    current: dict[str, TenantIdentity] = {"id": TenantIdentity(tenant_id=t1)}
+    a = _adapter(
+        neo4j_client,
+        tenant_aware=True,
+        tenant_provider=lambda: current["id"],
+        allow_raw_query=True,
+    )
+
+    await a.create_vertex("User", UserCreate(id=aid))
+    await a.create_vertex("User", UserCreate(id=bid))
+    await a.create_edge("FOLLOWS", FollowsCreate(from_key=aid, to_key=bid))
+
+    current["id"] = TenantIdentity(tenant_id=t2)
+    await a.create_vertex("User", UserCreate(id=fid))
+
+    current["id"] = TenantIdentity(tenant_id=t1)
+    await a.run(
+        "MATCH (x:User {id: $aid, tenant_id: $tenant}) "
+        "MATCH (f:User {id: $fid}) "
+        "MERGE (x)-[:FOLLOWS]->(f)",
+        {"aid": aid, "fid": fid},
+    )
+
+    targets = await a.scoped_walk(
+        VertexRef(kind="User", key=aid),
+        ScopedWalkParams(
+            steps=[GraphPathStep(edge_kinds=frozenset({"FOLLOWS"}), max_hops=3)],
+            target_kind="User",
+            limit=10,
+        ),
+    )
+
+    assert {u.id for u in targets} == {bid}  # foreign node F excluded

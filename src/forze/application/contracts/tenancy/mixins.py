@@ -37,3 +37,26 @@ class TenancyMixin:
             raise exc.authentication("Tenant ID is required", code="tenant_required")
 
         return tenant.tenant_id
+
+    # ....................... #
+
+    def _tenant_id_for_resolve(self) -> UUID | None:
+        """Tenant id for per-tenant namespace / relation resolution.
+
+        Returns the bound tenant id whenever one is present — so a dynamic per-tenant
+        resolver (bucket / queue / index / collection) can scope itself even *without*
+        tagged-tier ``tenant_aware`` (namespace-level isolation). When ``tenant_aware`` and no
+        tenant is bound it fails closed with the same ``authentication`` /
+        ``tenant_required`` error as :meth:`require_tenant_if_aware` — so every enforcement
+        site is consistent. The single canonical implementation; adapters inherit it.
+        """
+
+        if self.tenant_aware:
+            return self.require_tenant_if_aware()
+
+        if self.tenant_provider is None:
+            return None
+
+        tenant = self.tenant_provider()
+
+        return tenant.tenant_id if tenant is not None else None

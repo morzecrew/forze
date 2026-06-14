@@ -1,4 +1,4 @@
-from typing import Awaitable, Protocol
+from typing import Awaitable, Protocol, Sequence
 from uuid import UUID
 
 from .value_objects import TenantIdentity
@@ -38,6 +38,31 @@ class TenantManagementPort(Protocol):
         """Create a tenant aggregate and return its identity."""
         ...
 
+    def list_principal_tenants(
+        self,
+        principal_id: UUID,
+    ) -> Awaitable[Sequence[TenantIdentity]]:
+        """List the active tenants a principal belongs to (the basis of a tenant selector).
+
+        Returns one :class:`TenantIdentity` (id + key) per active membership; inactive
+        tenants are omitted. Membership-scoped, so it is safe to expose to the principal as a
+        "switch organization" list.
+        """
+        ...
+
+    def list_tenant_principals(
+        self,
+        tenant_id: UUID,
+    ) -> Awaitable[Sequence[UUID]]:
+        """List the principal ids that are members of *tenant_id* (the admin inverse of
+        :meth:`list_principal_tenants`).
+
+        Returns principal ids only; joining them with principal details (login, name) is the
+        caller's concern (those live in the identity plane). Expose this only on an
+        authorization-gated admin surface.
+        """
+        ...
+
     def attach_principal(
         self,
         principal_id: UUID,
@@ -56,6 +81,16 @@ class TenantManagementPort(Protocol):
 
     def deactivate_tenant(self, tenant_id: UUID) -> Awaitable[None]:
         """Disable tenant (exact semantics adapter-defined, e.g. soft deactivate)."""
+        ...
+
+    def deprovision_tenant(self, tenant_id: UUID) -> Awaitable[None]:
+        """Tear down a tenant's per-tenant infrastructure (the inverse of provisioning).
+
+        Runs the configured ``TenantProvisionerPort``'s ``deprovision`` for the tenant. It
+        is the infrastructure counterpart of :meth:`provision_tenant`; the *record*
+        lifecycle (e.g. :meth:`deactivate_tenant`) is separate, so a full offboarding calls
+        both. No-op when no provisioner is wired.
+        """
         ...
 
 

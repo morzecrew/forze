@@ -12,7 +12,10 @@ from forze.application.contracts.base import Page
 from forze.application.contracts.cache import CacheSpec
 from forze.application.contracts.document import DocumentSpec
 from forze.base.exceptions import CoreException
-from forze_identity.tenancy.adapters.management import TenantManagementAdapter
+from forze_identity.tenancy.adapters.management import (
+    _BINDING_PAGE_SIZE,
+    TenantManagementAdapter,
+)
 from forze_identity.tenancy.application.specs import (
     principal_tenant_binding_spec,
     tenant_spec,
@@ -50,6 +53,100 @@ def _adapter() -> TenantManagementAdapter:
         binding_qry=binding_qry,
         binding_cmd=binding_cmd,
     )
+
+
+@pytest.mark.asyncio
+async def test_provision_tenant_runs_provisioner_with_new_identity() -> None:
+    from forze.application.contracts.tenancy import (
+        FunctionTenantProvisioner,
+        TenantIdentity,
+    )
+
+    tid = uuid4()
+    row = MagicMock()
+    row.id = tid
+    row.tenant_key = "acme"
+
+    tenant_qry = MagicMock()
+    tenant_qry.spec = tenant_spec
+    tenant_cmd = MagicMock()
+    tenant_cmd.spec = tenant_spec
+    tenant_cmd.create = AsyncMock(return_value=row)
+    binding_qry = MagicMock()
+    binding_qry.spec = principal_tenant_binding_spec
+    binding_cmd = MagicMock()
+    binding_cmd.spec = principal_tenant_binding_spec
+
+    provisioned: list[TenantIdentity] = []
+
+    async def _on_provision(tenant: TenantIdentity) -> None:
+        provisioned.append(tenant)
+
+    adapter = TenantManagementAdapter(
+        tenant_qry=tenant_qry,
+        tenant_cmd=tenant_cmd,
+        binding_qry=binding_qry,
+        binding_cmd=binding_cmd,
+        provisioner=FunctionTenantProvisioner(on_provision=_on_provision),
+    )
+
+    identity = await adapter.provision_tenant(tenant_key="acme")
+
+    assert identity.tenant_id == tid
+    # The record is created before infrastructure, and the provisioner sees the new identity.
+    tenant_cmd.create.assert_awaited_once()
+    assert provisioned == [identity]
+
+
+@pytest.mark.asyncio
+async def test_deprovision_tenant_runs_provisioner_teardown() -> None:
+    from forze.application.contracts.tenancy import (
+        FunctionTenantProvisioner,
+        TenantIdentity,
+    )
+
+    tid = uuid4()
+    row = MagicMock()
+    row.id = tid
+    row.tenant_key = "acme"
+
+    tenant_qry = MagicMock()
+    tenant_qry.spec = tenant_spec
+    tenant_qry.get = AsyncMock(return_value=row)
+    tenant_cmd = MagicMock()
+    tenant_cmd.spec = tenant_spec
+    binding_qry = MagicMock()
+    binding_qry.spec = principal_tenant_binding_spec
+    binding_cmd = MagicMock()
+    binding_cmd.spec = principal_tenant_binding_spec
+
+    torn_down: list[TenantIdentity] = []
+
+    async def _noop(_t: TenantIdentity) -> None:
+        return None
+
+    async def _on_deprovision(tenant: TenantIdentity) -> None:
+        torn_down.append(tenant)
+
+    adapter = TenantManagementAdapter(
+        tenant_qry=tenant_qry,
+        tenant_cmd=tenant_cmd,
+        binding_qry=binding_qry,
+        binding_cmd=binding_cmd,
+        provisioner=FunctionTenantProvisioner(
+            on_provision=_noop, on_deprovision=_on_deprovision
+        ),
+    )
+
+    await adapter.deprovision_tenant(tid)
+
+    assert [t.tenant_id for t in torn_down] == [tid]
+
+
+@pytest.mark.asyncio
+async def test_deprovision_tenant_noop_without_provisioner() -> None:
+    adapter = _adapter()  # no provisioner
+    await adapter.deprovision_tenant(uuid4())  # no error, no tenant load
 
 
 def test_post_init_rejects_mismatched_specs() -> None:
@@ -145,3 +242,76 @@ async def test_deactivate_tenant() -> None:
     adapter.tenant_qry.get = AsyncMock(return_value=row)
     await adapter.deactivate_tenant(tid)
     adapter.tenant_cmd.update.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_list_principal_tenants_filters_inactive() -> None:
+    pid = uuid4()
+    t1, t2 = uuid4(), uuid4()
+    b1, b2 = MagicMock(), MagicMock()
+    b1.tenant_id, b2.tenant_id = t1, t2
+
+    adapter = _adapter()
+    adapter.binding_qry.find_many = AsyncMock(
+        return_value=Page(hits=[b1, b2], count=2, page=1, size=10),
+    )
+
+    def _get(tid: object) -> ReadTenant:
+        now = datetime.now(tz=timezone.utc)
+        return ReadTenant(
+            id=tid,  # type: ignore[arg-type]
+            rev=1,
+            created_at=now,
+            last_update_at=now,
+            tenant_key="k",
+            is_active=(tid == t1),
+        )
+
+    adapter.tenant_qry.get = AsyncMock(side_effect=_get)
+
+    result = await adapter.list_principal_tenants(pid)
+
+    assert [t.tenant_id for t in result] == [t1]  # inactive t2 omitted
+
+
+@pytest.mark.asyncio
+async def test_list_tenant_principals_returns_binding_principals() -> None:
+    tenant = uuid4()
+    p1, p2 = uuid4(), uuid4()
+    b1, b2 = MagicMock(), MagicMock()
+    b1.principal_id, b2.principal_id = p1, p2
+
+    adapter = _adapter()
+    adapter.binding_qry.find_many = AsyncMock(
+        return_value=Page(hits=[b1, b2], count=2, page=1, size=10),
+    )
+
+    result = await adapter.list_tenant_principals(tenant)
+
+    assert list(result) == [p1, p2]
+    _, kwargs = adapter.binding_qry.find_many.await_args
+    assert kwargs["filters"] == {"$values": {"tenant_id": tenant}}
+
+
+@pytest.mark.asyncio
+async def test_membership_lists_drain_all_pages() -> None:
+    # A full page must trigger another fetch — memberships beyond the first page are not dropped.
+    tenant = uuid4()
+    full = [MagicMock(principal_id=uuid4()) for _ in range(_BINDING_PAGE_SIZE)]
+    tail = [MagicMock(principal_id=uuid4()) for _ in range(3)]
+
+    adapter = _adapter()
+    adapter.binding_qry.find_many = AsyncMock(
+        side_effect=[
+            Page(hits=full, count=0, page=1, size=_BINDING_PAGE_SIZE),
+            Page(hits=tail, count=0, page=2, size=_BINDING_PAGE_SIZE),
+        ],
+    )
+
+    result = await adapter.list_tenant_principals(tenant)
+
+    assert len(result) == _BINDING_PAGE_SIZE + 3
+    assert adapter.binding_qry.find_many.await_count == 2
+    # Second fetch advanced the offset by one page.
+    _, kwargs = adapter.binding_qry.find_many.await_args_list[1]
+    assert kwargs["pagination"] == {"limit": _BINDING_PAGE_SIZE, "offset": _BINDING_PAGE_SIZE}

@@ -14,7 +14,7 @@ require_neo4j()
 # ....................... #
 
 from collections.abc import Sequence
-from typing import Any, final
+from typing import Any, Literal, final
 
 import attrs
 from pydantic import BaseModel
@@ -28,17 +28,24 @@ from forze.application.contracts.graph import (
     GraphWalkParams,
     GraphWalkStep,
     NeighborRow,
+    ScopedWalkParams,
     ShortestPathParams,
     ShortestPathResult,
     VertexRef,
 )
+from forze.application.contracts.resolution import (
+    NamedResourceSpec,
+    is_static_named_resource,
+    resolve_scoped_namespace,
+)
 from forze.application.contracts.tenancy import TenancyMixin
 from forze.base.exceptions import CoreException, exc
-from forze.base.primitives import JsonDict
+from forze.base.primitives import JsonDict, OnceCell
 from forze.base.serialization import default_model_codec
 
 from ..kernel.client import Neo4jClientPort
 from ..kernel.cypher import builders
+from ..kernel.relation import resolve_neo4j_database
 
 # ----------------------- #
 
@@ -71,7 +78,57 @@ class Neo4jGraphAdapter(TenancyMixin):
     spec: GraphModuleSpec
     client: Neo4jClientPort
     tenant_property: str = "tenant_id"
-    database: str | None = None
+    database: NamedResourceSpec | None = None
+    """Target Neo4j database — a static name, a per-tenant resolver (``namespace`` tier:
+    per-tenant database on a shared cluster), or ``None`` (client default)."""
+
+    _database_cell: OnceCell[str] = attrs.field(
+        factory=OnceCell,
+        init=False,
+        eq=False,
+        repr=False,
+    )
+
+    traversal_isolation: Literal["anchor", "full-path"] = "full-path"
+    """How far tenant scoping reaches on traversals when ``tenant_aware``.
+
+    ``full-path`` (default) constrains every node on a ``neighbors``/``expand``/
+    ``shortest_path`` result, so a cross-tenant edge cannot surface a foreign node.
+    ``anchor`` constrains only the start/endpoint nodes — cheaper, but safe only under the
+    invariant that no edge ever crosses a tenant boundary.
+    """
+
+    allow_raw_query: bool = False
+    """Whether the whole-query raw hatch :meth:`run` is permitted.
+
+    The raw hatch is a **trusted-caller** escape: the caller writes the entire Cypher, so a
+    buggy or hostile query can read cross-tenant even though ``$tenant`` is bound. It is
+    therefore **disabled by default** (fail closed, code ``graph_raw_disabled``); set this
+    ``True`` to opt in where trusted raw Cypher is genuinely needed — otherwise use the
+    structured ports (full-path scoped) and :meth:`scoped_walk` instead.
+    """
+
+    # ....................... #
+    # tenancy / database resolution
+
+    async def _resolved_database(self) -> str | None:
+        """Target Neo4j database for the current tenant (``None`` = client default).
+
+        A static name (or ``None``) resolves without a tenant; a per-tenant resolver scopes
+        each query to the tenant's own database (the ``namespace`` tier).
+        """
+
+        spec = self.database
+
+        if spec is None or is_static_named_resource(spec):
+            return spec
+
+        return await resolve_scoped_namespace(
+            spec,
+            tenant_id=self._tenant_id_for_resolve(),
+            cell=self._database_cell,
+            resolver=resolve_neo4j_database,
+        )
 
     # ....................... #
     # spec / codec helpers
@@ -143,6 +200,14 @@ class Neo4jGraphAdapter(TenancyMixin):
 
     # ....................... #
 
+    @property
+    def _interior_scope(self) -> bool:
+        """Whether traversals also constrain interior/terminal nodes to the tenant."""
+
+        return self.tenant_aware and self.traversal_isolation == "full-path"
+
+    # ....................... #
+
     def _tenant_str(self) -> str | None:
         tid = self.require_tenant_if_aware()
         return str(tid) if tid is not None else None
@@ -176,7 +241,7 @@ class Neo4jGraphAdapter(TenancyMixin):
             ref.kind, node.key_field, tenant_field=self._tenant_field
         )
         rows = await self.client.run(
-            query, self._params(key=ref.key), database=self.database
+            query, self._params(key=ref.key), database=await self._resolved_database()
         )
 
         if not rows:
@@ -192,7 +257,7 @@ class Neo4jGraphAdapter(TenancyMixin):
             ref.kind, node.key_field, tenant_field=self._tenant_field
         )
         rows = await self.client.run(
-            query, self._params(key=ref.key), database=self.database
+            query, self._params(key=ref.key), database=await self._resolved_database()
         )
 
         return bool(rows and rows[0]["exists"])
@@ -215,7 +280,7 @@ class Neo4jGraphAdapter(TenancyMixin):
             ref.kind, edge.key_field, tenant_field=self._tenant_field
         )
         rows = await self.client.run(
-            query, self._params(key=ref.key), database=self.database
+            query, self._params(key=ref.key), database=await self._resolved_database()
         )
 
         if not rows:
@@ -241,11 +306,12 @@ class Neo4jGraphAdapter(TenancyMixin):
             direction=direction,
             edge_types=edge_kinds,
             tenant_field=self._tenant_field,
+            interior=self._interior_scope,
         )
         rows = await self.client.run(
             query,
             self._params(key=origin.key, limit=limit),
-            database=self.database,
+            database=await self._resolved_database(),
         )
 
         out: list[NeighborRow] = []
@@ -281,11 +347,12 @@ class Neo4jGraphAdapter(TenancyMixin):
             edge_types=params.edge_kinds,
             max_depth=params.max_depth,
             tenant_field=self._tenant_field,
+            interior=self._interior_scope,
         )
         rows = await self.client.run(
             query,
             self._params(key=start.key, max_results=params.max_results),
-            database=self.database,
+            database=await self._resolved_database(),
         )
 
         out: list[GraphWalkStep] = []
@@ -339,11 +406,12 @@ class Neo4jGraphAdapter(TenancyMixin):
             edge_types=params.edge_kinds,
             max_hops=params.max_hops,
             tenant_field=self._tenant_field,
+            interior=self._interior_scope,
         )
         rows = await self.client.run(
             query,
             self._params(from_key=from_ref.key, to_key=to_ref.key),
-            database=self.database,
+            database=await self._resolved_database(),
         )
 
         if not rows:
@@ -362,6 +430,35 @@ class Neo4jGraphAdapter(TenancyMixin):
         return ShortestPathResult(vertices=vertices, edges=edges)
 
     # ....................... #
+
+    async def scoped_walk(
+        self,
+        anchor: VertexRef,
+        params: ScopedWalkParams,
+    ) -> Sequence[BaseModel]:
+        anchor_node = self._node(anchor.kind)
+        self._node(params.target_kind)  # validate the target kind is in the spec
+
+        segments = [
+            (step.direction, step.edge_kinds, step.min_hops, step.max_hops)
+            for step in params.steps
+        ]
+        query = builders.scoped_walk(
+            anchor_label=anchor.kind,
+            anchor_key_field=anchor_node.key_field,
+            segments=segments,
+            target_label=params.target_kind,
+            tenant_field=self._tenant_field,
+        )
+        rows = await self.client.run(
+            query,
+            self._params(key=anchor.key, limit=params.limit),
+            database=await self._resolved_database(),
+        )
+
+        return [self._vertex_model(params.target_kind, row["m"]) for row in rows]
+
+    # ....................... #
     # GraphCommandPort
 
     async def create_vertex(
@@ -376,7 +473,7 @@ class Neo4jGraphAdapter(TenancyMixin):
         rows = await self.client.run(
             query,
             {"props": self._encode(cmd), **self._params()},
-            database=self.database,
+            database=await self._resolved_database(),
         )
 
         if not return_new:
@@ -394,7 +491,7 @@ class Neo4jGraphAdapter(TenancyMixin):
         rows = await self.client.run(
             query,
             {"props": self._encode(cmd), **self._params(key=ref.key)},
-            database=self.database,
+            database=await self._resolved_database(),
         )
 
         if not rows:
@@ -412,7 +509,7 @@ class Neo4jGraphAdapter(TenancyMixin):
         query = builders.delete_vertex(
             ref.kind, node.key_field, tenant_field=self._tenant_field
         )
-        await self.client.run(query, self._params(key=ref.key), database=self.database)
+        await self.client.run(query, self._params(key=ref.key), database=await self._resolved_database())
 
     # ....................... #
 
@@ -479,7 +576,7 @@ class Neo4jGraphAdapter(TenancyMixin):
         rows = await self.client.run(
             query,
             {"props": data, **self._params(from_key=from_key, to_key=to_key)},
-            database=self.database,
+            database=await self._resolved_database(),
         )
 
         if not rows:
@@ -499,6 +596,16 @@ class Neo4jGraphAdapter(TenancyMixin):
     async def run(
         self, query: str, params: JsonDict | None = None
     ) -> Sequence[JsonDict]:
+        # The whole-query raw hatch is trusted-caller by construction; a deployment that
+        # requires enforced tenancy disables it (``allow_raw_query=False``) and uses the
+        # structured ports / ``scoped_walk`` instead.
+        if not self.allow_raw_query:
+            raise exc.configuration(
+                f"Raw graph queries are disabled for module {self.spec.name!r} "
+                "(allow_raw_query=False); use the structured ports or scoped_walk.",
+                code="graph_raw_disabled",
+            )
+
         # Tenant-aware raw queries fail closed: ``_tenant_str`` →
         # ``require_tenant_if_aware`` raises if no tenant is bound (was: silent
         # cross-tenant access). The framework tenant is bound as ``$tenant`` (authoritative
@@ -508,7 +615,7 @@ class Neo4jGraphAdapter(TenancyMixin):
         if self.tenant_aware:
             merged["tenant"] = self._tenant_str()
 
-        return await self.client.run(query, merged or None, database=self.database)
+        return await self.client.run(query, merged or None, database=await self._resolved_database())
 
     # ....................... #
     # Deferred GraphQueryPort methods
