@@ -42,7 +42,11 @@ from forze.application.contracts.counter import CounterDepKey, CounterPort, Coun
 from forze.application.contracts.crypto import (
     AeadDepKey,
     AesGcmAead,
+    KeyDirectoryDepKey,
     KeyManagementDepKey,
+    KeyRef,
+    KeyringDepKey,
+    StaticKeyDirectory,
 )
 from forze.application.contracts.deps import DepKey
 from forze.application.contracts.dlock import (
@@ -151,6 +155,7 @@ from forze.application.integrations.authn import (
     LockoutConfig,
     LoginLockoutGuard,
 )
+from forze.application.integrations.crypto import Keyring
 from forze.application.integrations.outbox import StagingOutboxCommand
 from forze.application.integrations.search import SearchResultSnapshot
 from forze.base.exceptions import exc
@@ -986,6 +991,15 @@ class MockDepsModule(DepsModule):
         graph = ConfigurableMockGraph(module=self)
         secrets = MockSecretsPort(state=self.state)
 
+        crypto_kms = MockKeyManagement()
+        crypto_aead = AesGcmAead()
+        crypto_directory = StaticKeyDirectory(KeyRef(key_id="mock-cmk"))
+        crypto_keyring = Keyring(
+            kms=crypto_kms,
+            aead=crypto_aead,
+            directory=crypto_directory,
+        )
+
         resilience_executor = (
             PassthroughResilienceExecutor()
             if self.resilience == "passthrough"
@@ -1054,8 +1068,10 @@ class MockDepsModule(DepsModule):
             ),
             DurableFunctionStepDepKey: MockDurableFunctionStepAdapter(state=self.state),
             SecretsDepKey: secrets,
-            KeyManagementDepKey: MockKeyManagement(),
-            AeadDepKey: AesGcmAead(),
+            KeyManagementDepKey: crypto_kms,
+            AeadDepKey: crypto_aead,
+            KeyDirectoryDepKey: crypto_directory,
+            KeyringDepKey: crypto_keyring,
         }
 
         if self.routed_state is not None:

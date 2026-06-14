@@ -1,6 +1,8 @@
-"""Ports for key management (the async half of envelope encryption)."""
+"""Ports for key management and value-level encryption."""
 
 from typing import Awaitable, Protocol
+
+from forze.application.contracts.tenancy import TenantIdentity
 
 from .value_objects import DataKey, KeyRef
 
@@ -43,6 +45,40 @@ class KeyManagementPort(Protocol):
         :returns: The raw plaintext data-encryption key.
         :raises CoreException: ``infrastructure`` / ``not_found`` when the key
             version cannot be resolved or unwrapping fails.
+        """
+
+        ...  # pragma: no cover
+
+
+# ....................... #
+
+
+class BytesCipherPort(Protocol):
+    """Encrypt/decrypt opaque byte values, resolving the tenant's key internally.
+
+    The async value-encryption seam used by integration adapters (object storage,
+    later message/field paths). Implementations (see the keyring) resolve the
+    key-encryption key per tenant, perform envelope encryption, and cache data
+    keys; callers pass associated data to bind ciphertext to its context.
+    """
+
+    def encrypt(
+        self,
+        plaintext: bytes,
+        *,
+        tenant: TenantIdentity | None,
+        aad: bytes = b"",
+    ) -> Awaitable[bytes]:
+        """Encrypt *plaintext* under *tenant*'s key, returning a packed envelope."""
+
+        ...  # pragma: no cover
+
+    def decrypt(self, blob: bytes, *, aad: bytes = b"") -> Awaitable[bytes]:
+        """Decrypt a packed envelope; the key is resolved from the envelope itself.
+
+        :param aad: Must equal the value passed to :meth:`encrypt`.
+        :raises CoreException: ``validation`` on a malformed envelope or an
+            authentication failure (tamper / wrong ``aad`` / wrong tenant).
         """
 
         ...  # pragma: no cover
