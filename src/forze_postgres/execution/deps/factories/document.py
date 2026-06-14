@@ -5,7 +5,10 @@ from typing import TYPE_CHECKING, Any, TypeVar, final
 import attrs
 from pydantic import BaseModel
 
-from forze.application.contracts.crypto import KeyringDepKey
+from forze.application.contracts.crypto import (
+    DeterministicCipherDepKey,
+    KeyringDepKey,
+)
 from forze.application.contracts.document import (
     DocumentCodecs,
     DocumentCommandDepPort,
@@ -45,13 +48,19 @@ def _resolve_codecs(
 
     codecs = spec.resolved_codecs
 
-    if spec.encrypted_fields:
+    if spec.encrypted_fields or spec.searchable_fields:
         codecs = encrypting_document_codecs(
             codecs,
             fields=spec.encrypted_fields,
             cipher=ctx.deps.provide(KeyringDepKey),
             tenant_provider=ctx.inv_ctx.get_tenant,
             label=str(spec.name),
+            searchable_fields=spec.searchable_fields,
+            deterministic=(
+                ctx.deps.provide(DeterministicCipherDepKey)
+                if spec.searchable_fields
+                else None
+            ),
         )
 
     return codecs

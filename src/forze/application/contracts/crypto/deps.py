@@ -4,7 +4,7 @@ from forze.base.crypto import Aead
 
 from ..deps import DepKey
 from .directory import KeyDirectoryPort
-from .ports import KeyManagementPort, KeyringPort
+from .ports import DeterministicFieldCipherPort, KeyManagementPort, KeyringPort
 
 # ----------------------- #
 
@@ -25,3 +25,8 @@ KeyDirectoryDepKey = DepKey[KeyDirectoryPort]("crypto.key_directory")
 
 KeyringDepKey = DepKey[KeyringPort]("crypto.keyring")
 """Key used to register the keyring (async value cipher + sync field cipher)."""
+
+# ....................... #
+
+DeterministicCipherDepKey = DepKey[DeterministicFieldCipherPort]("crypto.deterministic")
+"""Key used to register the deterministic (searchable) field cipher."""

@@ -389,7 +389,26 @@ class FilterParserMixin(Generic[M]):
         )
         validate_query_field_types(expr, self.model_type, field_type_hints=hints)
 
-        return expr
+        return self._rewrite_encrypted_filter(expr)
+
+    def _rewrite_encrypted_filter(self, expr: QueryExpr) -> QueryExpr:
+        """Let an encrypting codec rewrite equality on searchable (deterministic) fields.
+
+        The single, backend-agnostic seam: an :class:`EncryptingModelCodec` exposes
+        ``rewrite_filter`` and replaces the literal in an equality predicate on a
+        searchable field with its deterministic ciphertext, so the comparison matches
+        the value stored at rest. Plain codecs / non-document gateways have no such
+        method and this is a no-op.
+        """
+
+        codec_for = getattr(self, "_codec_for", None)
+
+        if codec_for is None:
+            return expr
+
+        rewrite = getattr(codec_for(), "rewrite_filter", None)
+
+        return expr if rewrite is None else rewrite(expr)
 
 
 # ....................... #

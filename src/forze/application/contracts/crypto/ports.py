@@ -154,3 +154,40 @@ class KeyringPort(BytesCipherPort, FieldCipherPort, Protocol):
     :class:`FieldCipherPort` half. The :class:`~forze.application.integrations.crypto.Keyring`
     implements all of it.
     """
+
+
+# ....................... #
+
+
+class DeterministicFieldCipherPort(Protocol):
+    """Synchronous deterministic cipher for equality-searchable encrypted fields.
+
+    Same ``(tenant, field, plaintext)`` always maps to the same ciphertext, so an
+    equality filter can be rewritten to match the value stored at rest. Fully sync
+    (a stable key, no KMS round-trip) — no warm/pre-pass needed.
+    """
+
+    def encrypt(
+        self,
+        *,
+        tenant: TenantIdentity | None,
+        field: str,
+        plaintext: bytes,
+    ) -> bytes:
+        """Deterministically encrypt *plaintext* for ``(tenant, field)``."""
+
+        ...  # pragma: no cover
+
+    def decrypt(
+        self,
+        *,
+        tenant: TenantIdentity | None,
+        field: str,
+        ciphertext: bytes,
+    ) -> bytes:
+        """Decrypt a value produced by :meth:`encrypt`.
+
+        :raises CoreException: ``validation`` when authentication fails.
+        """
+
+        ...  # pragma: no cover

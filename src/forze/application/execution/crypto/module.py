@@ -14,6 +14,7 @@ import attrs
 from forze.application.contracts.crypto import (
     AeadDepKey,
     AesGcmAead,
+    DeterministicCipherDepKey,
     KeyDirectoryDepKey,
     KeyDirectoryPort,
     KeyManagementDepKey,
@@ -21,7 +22,7 @@ from forze.application.contracts.crypto import (
     KeyringDepKey,
 )
 from forze.application.contracts.deps import DepKey
-from forze.application.integrations.crypto import Keyring
+from forze.application.integrations.crypto import DeterministicFieldCipher, Keyring
 from forze.base.crypto import Aead
 
 from ..deps import Deps
@@ -46,6 +47,13 @@ class CryptoDepsModule:
     max_dek_messages: int = 1 << 20
     """Data-key reuse bound passed to the keyring."""
 
+    deterministic_root: bytes | None = attrs.field(default=None, repr=False)
+    """Stable root secret (>= 32 bytes) enabling searchable (deterministic) fields.
+
+    When set, a :class:`DeterministicFieldCipher` is registered under
+    ``DeterministicCipherDepKey``. Long-lived: rotating it requires re-encrypting
+    searchable fields. Load it from a secret store (e.g. Vault) at startup."""
+
     # ....................... #
 
     def __call__(self) -> Deps:
@@ -62,5 +70,10 @@ class CryptoDepsModule:
             KeyDirectoryDepKey: self.directory,
             KeyringDepKey: keyring,
         }
+
+        if self.deterministic_root is not None:
+            deps[DeterministicCipherDepKey] = DeterministicFieldCipher(
+                root=self.deterministic_root,
+            )
 
         return Deps.plain(deps)

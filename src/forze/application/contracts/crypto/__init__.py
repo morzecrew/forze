@@ -18,6 +18,7 @@ from forze.base.crypto import (
 from .cipher import EnvelopeCipher
 from .deps import (
     AeadDepKey,
+    DeterministicCipherDepKey,
     KeyDirectoryDepKey,
     KeyManagementDepKey,
     KeyringDepKey,
@@ -29,6 +30,7 @@ from .directory import (
 )
 from .ports import (
     BytesCipherPort,
+    DeterministicFieldCipherPort,
     FieldCipherPort,
     KeyManagementPort,
     KeyringPort,
@@ -59,6 +61,7 @@ __all__ = [
     "BytesCipherPort",
     "FieldCipherPort",
     "KeyringPort",
+    "DeterministicFieldCipherPort",
     # key directory (tenant → key)
     "KeyDirectoryPort",
     "StaticKeyDirectory",
@@ -68,6 +71,7 @@ __all__ = [
     "AeadDepKey",
     "KeyDirectoryDepKey",
     "KeyringDepKey",
+    "DeterministicCipherDepKey",
     # wiring policy
     "EncryptionTier",
     "encryption_satisfies",

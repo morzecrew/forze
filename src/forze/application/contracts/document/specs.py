@@ -62,13 +62,25 @@ class DocumentSpec(BaseSpec, Generic[R, D, C, U]):
         default=frozenset(),
         converter=frozenset,
     )
-    """Stored field names to encrypt at rest (field-level envelope encryption).
+    """Stored field names to encrypt at rest (randomized field-level encryption).
 
     Empty (default) = no field encryption. When set, a backend that wires a keyring
     transparently encrypts these fields on write and decrypts on read; the rest stay
     plaintext and queryable. Encrypted fields cannot be filtered/sorted on and are only
     decrypted on full-model reads (not projections). Requires a ``KeyringDepKey`` in the
     deps (e.g. via ``CryptoDepsModule``)."""
+
+    searchable_fields: frozenset[str] = attrs.field(
+        default=frozenset(),
+        converter=frozenset,
+    )
+    """Stored field names to encrypt *deterministically* so equality queries work.
+
+    Same plaintext maps to the same ciphertext, so `$eq`/`$neq`/`$in`/`$nin` filters on
+    these fields are transparently rewritten to match the value at rest — no separate
+    blind-index column. The trade: deterministic encryption leaks equality/frequency
+    within a tenant, and only equality (not range/sort/like) is supported. Disjoint from
+    :attr:`encrypted_fields`. Requires a ``DeterministicCipherDepKey`` in the deps."""
 
     codecs: DocumentCodecs[R, D, C, U] | None = attrs.field(
         default=None,

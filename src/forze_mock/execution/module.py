@@ -42,6 +42,7 @@ from forze.application.contracts.counter import CounterDepKey, CounterPort, Coun
 from forze.application.contracts.crypto import (
     AeadDepKey,
     AesGcmAead,
+    DeterministicCipherDepKey,
     KeyDirectoryDepKey,
     KeyManagementDepKey,
     KeyRef,
@@ -155,7 +156,7 @@ from forze.application.integrations.authn import (
     LockoutConfig,
     LoginLockoutGuard,
 )
-from forze.application.integrations.crypto import Keyring
+from forze.application.integrations.crypto import DeterministicFieldCipher, Keyring
 from forze.application.integrations.outbox import StagingOutboxCommand
 from forze.application.integrations.search import SearchResultSnapshot
 from forze.base.exceptions import exc
@@ -999,6 +1000,7 @@ class MockDepsModule(DepsModule):
             aead=crypto_aead,
             directory=crypto_directory,
         )
+        crypto_deterministic = DeterministicFieldCipher(root=b"mock-deterministic-root-secret!!")
 
         resilience_executor = (
             PassthroughResilienceExecutor()
@@ -1072,6 +1074,7 @@ class MockDepsModule(DepsModule):
             AeadDepKey: crypto_aead,
             KeyDirectoryDepKey: crypto_directory,
             KeyringDepKey: crypto_keyring,
+            DeterministicCipherDepKey: crypto_deterministic,
         }
 
         if self.routed_state is not None:

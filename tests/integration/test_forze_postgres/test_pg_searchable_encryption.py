@@ -1,9 +1,4 @@
-"""Integration test: Postgres document field encryption end-to-end (real Postgres).
-
-Covers both the same-process path (encrypt seeds the decrypt cache) and a
-cross-process cold read (a fresh keyring whose decrypt cache is empty, forcing the
-gateway's async ``ensure_unwrapped`` pre-pass before the synchronous decode).
-"""
+"""Integration test: equality search over a deterministically-encrypted Postgres field."""
 
 import pytest
 
@@ -57,13 +52,11 @@ _SPEC = DocumentSpec(
         "create_cmd": _PersonCreate,
         "update_cmd": _PersonUpdate,
     },
-    encrypted_fields=frozenset({"email"}),
+    searchable_fields=frozenset({"email"}),
 )
 
 
 def _ctx(pg_client: PostgresClient) -> ExecutionContext:
-    """Fresh execution context with its OWN keyring (simulates a separate process)."""
-
     configurable = ConfigurablePostgresDocument(
         config=PostgresDocumentConfig(
             read=("public", "people"),
@@ -75,6 +68,7 @@ def _ctx(pg_client: PostgresClient) -> ExecutionContext:
         CryptoDepsModule(
             kms=MockKeyManagement(),
             directory=StaticKeyDirectory(KeyRef(key_id="people-cmk")),
+            deterministic_root=b"searchable-root-secret-32-bytes!",
         )(),
         Deps.plain(
             {
@@ -93,7 +87,7 @@ def _ctx(pg_client: PostgresClient) -> ExecutionContext:
 
 @pytest.mark.integration
 @pytest.mark.asyncio
-async def test_pg_document_field_encryption(pg_client: PostgresClient) -> None:
+async def test_pg_equality_search_on_encrypted_field(pg_client: PostgresClient) -> None:
     await pg_client.execute("DROP TABLE IF EXISTS people CASCADE;")
     await pg_client.execute(
         """
@@ -108,26 +102,30 @@ async def test_pg_document_field_encryption(pg_client: PostgresClient) -> None:
         """
     )
 
-    writer = _ctx(pg_client).document.command(_SPEC)
-    created = await writer.create(_PersonCreate(name="Alice", email="alice@example.com"))
-
-    # The email column holds ciphertext at rest; name stays plaintext (queryable).
-    row = await pg_client.fetch_one(
-        "SELECT name, email FROM people WHERE id = %s",
-        [created.id],
-        row_factory="dict",
+    ctx = _ctx(pg_client)
+    await ctx.document.command(_SPEC).create(
+        _PersonCreate(name="Alice", email="alice@example.com")
     )
-    assert row is not None
-    assert row["name"] == "Alice"
-    assert row["email"] != "alice@example.com"
+    await ctx.document.command(_SPEC).create(
+        _PersonCreate(name="Bob", email="bob@example.com")
+    )
 
-    # Same-process read decrypts transparently.
-    same = await writer.get(created.id)
-    assert same.email == "alice@example.com"
+    # Stored deterministically: equal plaintext would store equal ciphertext.
+    row = await pg_client.fetch_one(
+        "SELECT email FROM people WHERE name = %s", ["Alice"], row_factory="dict"
+    )
+    assert row is not None and row["email"] != "alice@example.com"
 
-    # Cross-process read: a brand-new context/keyring (cold decrypt cache) must run
-    # the async ensure_unwrapped pre-pass before the synchronous decode.
-    reader = _ctx(pg_client).document.query(_SPEC)
-    fresh = await reader.get(created.id)
-    assert fresh.name == "Alice"
-    assert fresh.email == "alice@example.com"
+    # Equality query on the encrypted field — the filter is rewritten to match.
+    page = await ctx.document.query(_SPEC).find_page(
+        filters={"$values": {"email": "alice@example.com"}},
+    )
+    assert page.count == 1
+    assert page.hits[0].name == "Alice"
+    assert page.hits[0].email == "alice@example.com"  # decrypted on read
+
+    # A non-matching value finds nothing.
+    empty = await ctx.document.query(_SPEC).find_page(
+        filters={"$values": {"email": "nobody@example.com"}},
+    )
+    assert empty.count == 0
