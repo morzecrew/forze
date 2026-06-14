@@ -49,6 +49,25 @@ def test_derive_mode_namespace() -> None:
     )
 
 
+def test_derive_mode_namespace_from_per_route_flag() -> None:
+    # A route's own has_namespace_routing (tenant_aware=False) derives namespace without the
+    # module-level override.
+    assert (
+        derive_postgres_tenant_isolation_mode(
+            client_is_routed=False,
+            routes=[
+                PostgresTenancyRouteSpec(
+                    name="evt",
+                    tenant_aware=False,
+                    kind="outbox",
+                    has_namespace_routing=True,
+                ),
+            ],
+        )
+        == "namespace"
+    )
+
+
 def test_derive_mode_dedicated() -> None:
     assert (
         derive_postgres_tenant_isolation_mode(

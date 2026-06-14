@@ -149,13 +149,16 @@ def derive_tenant_isolation_mode(
 
     Strongest applicable tier wins: a per-tenant routed *client* → ``dedicated``; a dynamic
     per-tenant *namespace* resolver (schema / dataset / bucket / collection) → ``namespace``;
-    a ``tenant_aware`` route (embedded tenant marker) → ``tagged``; else ``none``.
+    a ``tenant_aware`` route (embedded tenant marker) → ``tagged``; else ``none``. The
+    namespace signal is read per route (``TenancyRouteSpec.has_namespace_routing``); the
+    module-level ``has_namespace_routing`` arg is an optional override for callers that have
+    not yet populated it per route.
     """
 
     if client_is_routed:
         return "dedicated"
 
-    if has_namespace_routing:
+    if has_namespace_routing or any(r.has_namespace_routing for r in routes):
         return "namespace"
 
     if any(r.tenant_aware for r in routes):
