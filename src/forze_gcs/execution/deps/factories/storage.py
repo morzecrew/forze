@@ -4,6 +4,7 @@ from typing import final
 
 import attrs
 
+from forze.application.contracts.crypto import KeyringDepKey
 from forze.application.contracts.storage import (
     StorageCommandDepPort,
     StorageQueryDepPort,
@@ -23,12 +24,14 @@ def _build_adapter(
     config: GCSStorageConfig,
 ) -> GCSStorageAdapter:
     client = ctx.deps.provide(GCSClientDepKey)
+    cipher = ctx.deps.provide(KeyringDepKey) if config.encrypt else None
 
     return GCSStorageAdapter(
         client=client,
         bucket_spec=config.bucket,
         tenant_aware=config.tenant_aware,
         tenant_provider=ctx.inv_ctx.get_tenant,
+        cipher=cipher,
     )
 
 

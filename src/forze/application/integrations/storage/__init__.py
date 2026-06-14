@@ -7,6 +7,7 @@ from .client import (
     presign_expiry_seconds,
 )
 from .codec import ObjectStoragePathCodec, default_path_codec
+from .encryption import validate_storage_encryption_wiring
 from .metadata import object_metadata_from_user_metadata
 from .provisioning import ObjectStorageTenantProvisioner
 from .routed_client import RoutedObjectStorageClientBase
@@ -27,5 +28,6 @@ __all__ = [
     "guess_content_type_with_magic",
     "object_metadata_from_user_metadata",
     "presign_expiry_seconds",
+    "validate_storage_encryption_wiring",
     "validate_storage_tenancy_wiring",
 ]

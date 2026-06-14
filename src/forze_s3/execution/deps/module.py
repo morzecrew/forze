@@ -8,13 +8,17 @@ from forze.application.contracts.storage import (
     StorageCommandDepKey,
     StorageQueryDepKey,
 )
+from forze.application.contracts.crypto import EncryptionTier
 from forze.application.contracts.tenancy import (
     TenantIsolationMode,
     warn_integration_routes,
 )
 from forze.application.execution import Deps, DepsModule
 from forze.application.execution.deps.builders import merge_deps, routed_from_mapping
-from forze.application.integrations.storage import validate_storage_tenancy_wiring
+from forze.application.integrations.storage import (
+    validate_storage_encryption_wiring,
+    validate_storage_tenancy_wiring,
+)
 from forze.base.primitives import MappingConverter, StrKeyMapping
 
 from ...kernel._logger import logger
@@ -55,6 +59,13 @@ class S3DepsModule(DepsModule):
     weaker than the declared floor.
     """
 
+    required_encryption: EncryptionTier | None = attrs.field(default=None)
+    """Declared minimum encryption coverage (``None`` = no floor).
+
+    Object storage does whole-object ``envelope`` encryption when a route sets
+    ``encrypt=True``; wiring fails closed if a route's coverage is weaker than the
+    declared floor. Requires a ``KeyringDepKey`` (e.g. via ``CryptoDepsModule``)."""
+
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
@@ -71,6 +82,12 @@ class S3DepsModule(DepsModule):
             required_isolation=self.required_tenant_isolation,
             validation_failed_code="s3_storage_tenancy_validation_failed",
             log_warning=logger.warning,
+        )
+        validate_storage_encryption_wiring(
+            integration="S3",
+            storages=self.storages,
+            required_encryption=self.required_encryption,
+            validation_failed_code="s3_storage_encryption_validation_failed",
         )
 
     # ....................... #

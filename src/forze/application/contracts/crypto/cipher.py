@@ -13,8 +13,7 @@ from typing import final
 
 import attrs
 
-from forze.base.crypto import Aead, pack_envelope, unpack_envelope
-from forze.base.crypto.envelope import EncryptedEnvelope
+from forze.base.crypto import Aead, EncryptedEnvelope, pack_envelope, unpack_envelope
 
 from .ports import KeyManagementPort
 from .value_objects import KeyRef
@@ -50,6 +49,7 @@ class EnvelopeCipher:
         """
 
         data_key = await self.kms.generate_data_key(key_ref)
+
         nonce, ciphertext = self.aead.seal(
             key=data_key.plaintext,
             plaintext=plaintext,
@@ -81,6 +81,7 @@ class EnvelopeCipher:
         """
 
         envelope = unpack_envelope(blob)
+
         data_key = await self.kms.unwrap_data_key(
             wrapped=envelope.wrapped_dek,
             key_ref=KeyRef(key_id=envelope.key_id, version=envelope.key_version),

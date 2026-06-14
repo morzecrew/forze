@@ -42,6 +42,8 @@ class StaticKeyDirectory:
     key_ref: KeyRef
     """The single key-encryption-key reference used for all tenants."""
 
+    # ....................... #
+
     async def resolve(self, tenant: TenantIdentity | None) -> KeyRef:
         _ = tenant
         return self.key_ref
@@ -70,6 +72,8 @@ class TenantTemplateKeyDirectory:
 
     version: str | None = None
     """Optional fixed key version applied to every resolved reference."""
+
+    # ....................... #
 
     async def resolve(self, tenant: TenantIdentity | None) -> KeyRef:
         if tenant is None:

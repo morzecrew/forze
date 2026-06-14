@@ -61,6 +61,7 @@ from .observability import (
 )
 from .runtime import DeploymentProfile, ExecutionRuntime
 from .assemble import build_runtime
+from .crypto import CryptoDepsModule
 from .saga import (
     InProcessSagaExecutor,
     SagaDepsModule,
@@ -106,6 +107,7 @@ __all__ = [
     "DomainEventHandlerFactory",
     "DomainEventRegistry",
     "DomainEventsDepsModule",
+    "CryptoDepsModule",
     "ExecutionContext",
     "ExecutionRuntime",
     "DeploymentProfile",
