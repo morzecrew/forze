@@ -39,6 +39,11 @@ from forze.application.contracts.authz import (
 )
 from forze.application.contracts.cache import CacheDepKey, CachePort, CacheSpec
 from forze.application.contracts.counter import CounterDepKey, CounterPort, CounterSpec
+from forze.application.contracts.crypto import (
+    AeadDepKey,
+    AesGcmAead,
+    KeyManagementDepKey,
+)
 from forze.application.contracts.deps import DepKey
 from forze.application.contracts.dlock import (
     DistributedLockCommandDepKey,
@@ -167,6 +172,7 @@ from forze_mock.adapters import (
     MockHubSearchAdapter,
     MockIdempotencyAdapter,
     MockInboxAdapter,
+    MockKeyManagement,
     MockPubSubAdapter,
     MockQueueAdapter,
     MockSearchAdapter,
@@ -1048,6 +1054,8 @@ class MockDepsModule(DepsModule):
             ),
             DurableFunctionStepDepKey: MockDurableFunctionStepAdapter(state=self.state),
             SecretsDepKey: secrets,
+            KeyManagementDepKey: MockKeyManagement(),
+            AeadDepKey: AesGcmAead(),
         }
 
         if self.routed_state is not None:

@@ -193,7 +193,11 @@ class MockTenantManagementPort(_TenantRouteStore, TenantManagementPort):
 
             principals = entry.get("principals", [])
 
-            return list(principals) if isinstance(principals, list) else []
+            return (
+                list(principals)  # pyright: ignore[reportUnknownArgumentType]
+                if isinstance(principals, list)
+                else []
+            )
 
     async def deactivate_tenant(self, tenant_id: UUID) -> None:
         with self.state.lock:

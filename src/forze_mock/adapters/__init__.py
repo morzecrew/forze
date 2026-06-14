@@ -5,6 +5,7 @@ from __future__ import annotations
 from forze_mock.adapters.analytics import MockAnalyticsAdapter
 from forze_mock.adapters.cache import MockCacheAdapter
 from forze_mock.adapters.counter import MockCounterAdapter
+from forze_mock.adapters.crypto import MockKeyManagement
 from forze_mock.adapters.dlock import MockDistributedLockAdapter
 from forze_mock.adapters.document import MockDocumentAdapter
 from forze_mock.adapters.durable import (
@@ -44,6 +45,7 @@ __all__ = [
     "MockFederatedSearchAdapter",
     "MockGraphAdapter",
     "MockCounterAdapter",
+    "MockKeyManagement",
     "MockCacheAdapter",
     "MockIdempotencyAdapter",
     "MockInboxAdapter",
