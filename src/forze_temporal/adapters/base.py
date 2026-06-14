@@ -9,7 +9,11 @@ from uuid import UUID
 
 import attrs
 
-from forze.application.contracts.resolution import NamedResourceSpec, is_static_named_resource
+from forze.application.contracts.resolution import (
+    NamedResourceSpec,
+    is_static_named_resource,
+    resolve_scoped_namespace,
+)
 from forze.application.contracts.tenancy import TenancyMixin
 from forze.base.exceptions import exc
 from forze.base.primitives import OnceCell, uuid4
@@ -59,17 +63,11 @@ class TemporalBaseAdapter(TenancyMixin):
     # ....................... #
 
     async def _resolved_queue(self) -> str:
-        async def _factory() -> str:
-            return await resolve_temporal_queue(
-                self.queue,
-                self._tenant_id_for_resolve(),
-            )
-
-        # Only memoize tenant-independent (static) queues; a dynamic resolver
-        # depends on the bound tenant and the adapter may be shared across tenants.
-        return await self._queue_cell.resolve(
-            _factory,
-            cache=is_static_named_resource(self.queue),
+        return await resolve_scoped_namespace(
+            self.queue,
+            tenant_id=self._tenant_id_for_resolve(),
+            cell=self._queue_cell,
+            resolver=resolve_temporal_queue,
         )
 
     # ....................... #

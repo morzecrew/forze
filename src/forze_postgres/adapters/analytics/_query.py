@@ -8,10 +8,7 @@ from psycopg.abc import QueryNoTemplate
 from pydantic import BaseModel
 
 from forze.application.contracts.analytics import AnalyticsRunOptions, AnalyticsSpec
-from forze.application.contracts.resolution import (
-    is_static_named_resource,
-    resolve_value,
-)
+from forze.application.contracts.resolution import resolve_scoped_namespace
 from forze.application.contracts.tenancy import TenantProviderPort, soft_tenant_id
 from forze.application.integrations.analytics.adapter_common import (
     bind_tenant_param,
@@ -92,12 +89,10 @@ class PostgresAnalyticsQueryMixin[R: BaseModel, Ing: BaseModel]:
         if spec is None:
             return None
 
-        async def _factory() -> str:
-            return await resolve_value(spec, self._tenant_id_for_resolve())
-
-        return await self._query_schema_cell.resolve(
-            _factory,
-            cache=is_static_named_resource(spec),
+        return await resolve_scoped_namespace(
+            spec,
+            tenant_id=self._tenant_id_for_resolve(),
+            cell=self._query_schema_cell,
         )
 
     # ....................... #

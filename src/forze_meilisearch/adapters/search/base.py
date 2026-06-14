@@ -13,7 +13,10 @@ from forze.application.contracts.querying import (
     QueryFilterExpressionParser,
     QueryFilterLimits,
 )
-from forze.application.contracts.resolution import is_static_named_resource
+from forze.application.contracts.resolution import (
+    is_static_named_resource,
+    resolve_scoped_namespace,
+)
 from forze.application.contracts.search import SearchSpec
 from forze.application.contracts.tenancy import TENANT_ID_FIELD
 from forze.application.contracts.tenancy.mixins import TenancyMixin
@@ -75,17 +78,11 @@ class MeilisearchSearchGateway[M: BaseModel](TenancyMixin):
     # ....................... #
 
     async def _resolved_index_uid(self) -> str:
-        async def _factory() -> str:
-            return await resolve_meilisearch_index_uid(
-                self.config.index_uid,
-                self._tenant_id_for_resolve(),
-            )
-
-        # Only memoize tenant-independent (static) index uids; a dynamic resolver
-        # depends on the bound tenant and the adapter may be shared across tenants.
-        return await self._index_uid_cell.resolve(
-            _factory,
-            cache=is_static_named_resource(self.config.index_uid),
+        return await resolve_scoped_namespace(
+            self.config.index_uid,
+            tenant_id=self._tenant_id_for_resolve(),
+            cell=self._index_uid_cell,
+            resolver=resolve_meilisearch_index_uid,
         )
 
     # ....................... #

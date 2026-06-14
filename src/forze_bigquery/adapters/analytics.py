@@ -49,9 +49,8 @@ from forze_bigquery.kernel.client import (
 )
 from forze_bigquery.kernel.client.value_objects import BigQueryQueryResult
 from forze.application.contracts.resolution import (
-    is_static_named_resource,
     is_static_relation,
-    resolve_value,
+    resolve_scoped_namespace,
 )
 from forze.base.primitives import OnceCell
 from forze_bigquery.kernel.relation import resolve_bigquery_ingest_target
@@ -122,12 +121,10 @@ class BigQueryAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
         if spec is None:
             return None
 
-        async def _factory() -> str:
-            return await resolve_value(spec, self._tenant_id_for_resolve())
-
-        return await self._query_dataset_cell.resolve(
-            _factory,
-            cache=is_static_named_resource(spec),
+        return await resolve_scoped_namespace(
+            spec,
+            tenant_id=self._tenant_id_for_resolve(),
+            cell=self._query_dataset_cell,
         )
 
     # ....................... #

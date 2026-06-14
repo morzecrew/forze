@@ -1,6 +1,6 @@
 """Contracts for tenant-scoped static or dynamic value resolution."""
 
-from .helpers import resolve_value
+from .helpers import resolve_scoped_namespace, resolve_value
 from .specs import (
     NamedResourceSpec,
     RelationSpec,
@@ -21,6 +21,7 @@ __all__ = [
     "RelationSpec",
     "NamedResourceSpec",
     "resolve_value",
+    "resolve_scoped_namespace",
     "coerce_relation_spec",
     "coerce_named_resource_spec",
     "is_static_relation",

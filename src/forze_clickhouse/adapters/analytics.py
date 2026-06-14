@@ -54,9 +54,8 @@ from forze_clickhouse.kernel.client import (
 from forze_clickhouse.kernel.client.query import parameters_from_model
 from forze_clickhouse.kernel.client.value_objects import ClickHouseQueryResult
 from forze.application.contracts.resolution import (
-    is_static_named_resource,
     is_static_relation,
-    resolve_value,
+    resolve_scoped_namespace,
 )
 from forze.base.primitives import OnceCell
 from forze_clickhouse.kernel.relation import resolve_clickhouse_ingest_target
@@ -167,14 +166,10 @@ class ClickHouseAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
         if spec is None:
             return self.config.database
 
-        async def _factory() -> str:
-            return await resolve_value(spec, self._tenant_id_for_resolve())
-
-        # Static names are tenant-independent → memoize; a dynamic resolver depends on the
-        # bound tenant and the adapter may be shared across tenants.
-        return await self._query_database_cell.resolve(
-            _factory,
-            cache=is_static_named_resource(spec),
+        return await resolve_scoped_namespace(
+            spec,
+            tenant_id=self._tenant_id_for_resolve(),
+            cell=self._query_database_cell,
         )
 
     # ....................... #
