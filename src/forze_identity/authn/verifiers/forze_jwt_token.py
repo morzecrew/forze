@@ -47,7 +47,7 @@ class ForzeJwtTokenVerifier(TokenVerifierPort):
         self,
         credentials: AccessTokenCredentials,
     ) -> VerifiedAssertion:
-        claims = self.access_svc.verify_token(credentials.token)
+        claims = await self.access_svc.verify_token(credentials.token)
 
         if self.session_qry is not None:
             await self._require_active_session(claims)

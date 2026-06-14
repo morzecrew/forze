@@ -341,9 +341,111 @@ class VaultClient(VaultClientPort):
     # ....................... #
 
     async def transit_decrypt(self, key_name: str, ciphertext: str) -> bytes:
-        return await asyncio.to_thread(
-            self._transit_decrypt_sync, key_name, ciphertext
+        return await asyncio.to_thread(self._transit_decrypt_sync, key_name, ciphertext)
+
+    # ....................... #
+
+    def _transit_sign_sync(self, key_name: str, data: bytes) -> bytes:
+        client = self._require_client()
+
+        try:
+            response = client.secrets.transit.sign_data(
+                name=key_name,
+                hash_input=base64.b64encode(data).decode("ascii"),
+                hash_algorithm="sha2-256",
+                signature_algorithm="pkcs1v15",
+                mount_point=self.config.transit_mount,
+            )
+
+        except InvalidPath as e:
+            raise exc.not_found(
+                f"No Transit key {key_name!r}",
+                details={"key": key_name},
+            ) from e
+
+        except VaultError as e:
+            raise exc.infrastructure(
+                f"Vault transit sign failed for {key_name!r}: {e}"
+            ) from e
+
+        except Exception as e:
+            raise exc.infrastructure(
+                f"Vault transit sign failed for {key_name!r}: {e}"
+            ) from e
+
+        signature = response.get("data", {}).get("signature")
+
+        if not isinstance(signature, str):
+            raise exc.infrastructure(
+                f"Vault transit sign for {key_name!r} has unexpected payload shape",
+            )
+
+        # Vault returns ``vault:vN:<base64 signature>``; the raw bytes are the JWS
+        # signature for an RSA (pkcs1v15) key.
+        return base64.b64decode(signature.rsplit(":", 1)[-1])
+
+    # ....................... #
+
+    async def transit_sign(self, key_name: str, data: bytes) -> bytes:
+        """Sign *data* with a Transit signing key (RSA/pkcs1v15, SHA-256)."""
+
+        return await asyncio.to_thread(self._transit_sign_sync, key_name, data)
+
+    # ....................... #
+
+    def _transit_public_key_sync(self, key_name: str) -> str:
+        client = self._require_client()
+
+        try:
+            response = client.secrets.transit.read_key(
+                name=key_name,
+                mount_point=self.config.transit_mount,
+            )
+
+        except InvalidPath as e:
+            raise exc.not_found(
+                f"No Transit key {key_name!r}",
+                details={"key": key_name},
+            ) from e
+
+        except VaultError as e:
+            raise exc.infrastructure(
+                f"Vault transit read-key failed for {key_name!r}: {e}"
+            ) from e
+
+        except Exception as e:
+            raise exc.infrastructure(
+                f"Vault transit read-key failed for {key_name!r}: {e}"
+            ) from e
+
+        data = response.get("data", {})
+        keys = data.get("keys", {})
+        latest = data.get("latest_version")
+
+        entry = (  # pyright: ignore[reportUnknownVariableType]
+            keys.get(str(latest))  # pyright: ignore[reportUnknownMemberType]
+            if isinstance(keys, dict)
+            else None
         )
+        public_key = (  # pyright: ignore[reportUnknownVariableType]
+            entry.get("public_key")  # pyright: ignore[reportUnknownMemberType]
+            if isinstance(entry, dict)
+            else None
+        )
+
+        if not isinstance(public_key, str):
+            raise exc.infrastructure(
+                f"Vault transit key {key_name!r} has no readable public key",
+            )
+
+        return public_key
+
+    # ....................... #
+
+    async def transit_public_key(self, key_name: str) -> str:
+        """Return the PEM public key of a Transit signing key's latest version."""
+
+        return await asyncio.to_thread(self._transit_public_key_sync, key_name)
 
     # ....................... #
 

@@ -53,3 +53,13 @@ class VaultClientPort(Protocol):
         """Decrypt a Transit ``vault:vN:...`` token, returning the raw plaintext."""
 
         ...  # pragma: no cover
+
+    def transit_sign(self, key_name: str, data: bytes) -> Awaitable[bytes]:
+        """Sign *data* with a Transit signing key, returning the raw signature."""
+
+        ...  # pragma: no cover
+
+    def transit_public_key(self, key_name: str) -> Awaitable[str]:
+        """Return the PEM public key of a Transit signing key's latest version."""
+
+        ...  # pragma: no cover

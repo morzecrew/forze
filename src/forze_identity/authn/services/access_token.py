@@ -4,16 +4,23 @@ from uuid import UUID
 
 import attrs
 import jwt
+import orjson
+from jwt.utils import base64url_encode
 
 from forze.base.exceptions import exc
 from forze.base.primitives import utcnow
+
+from .signing import SignerPort
 
 # ----------------------- #
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class AccessTokenConfig:
-    """Access token configuration."""
+    """Access token configuration.
+
+    The JWS algorithm is determined by the wired :class:`SignerPort`, not here.
+    """
 
     issuer: str = "forze"
     """Issuer of the token."""
@@ -23,9 +30,6 @@ class AccessTokenConfig:
 
     expires_in: timedelta = timedelta(minutes=15)
     """Expiration time of the token."""
-
-    algorithm: str = "HS256"
-    """Algorithm of the token."""
 
     # ....................... #
 
@@ -55,14 +59,19 @@ class AccessTokenClaims(TypedDict):
 
 @attrs.define(slots=True, kw_only=True)
 class AccessTokenService:
-    """Access token service."""
+    """Access token service.
 
-    secret_key: bytes = attrs.field(repr=False, validator=attrs.validators.min_len(32))
+    Signs/verifies via a pluggable :class:`SignerPort`, so the private key may be
+    an in-process secret (HS256), an in-process asymmetric key, or a KMS-held key
+    that never leaves the backend (BYOK).
+    """
+
+    signer: SignerPort
     config: AccessTokenConfig = attrs.field(factory=AccessTokenConfig)
 
     # ....................... #
 
-    def issue_token(
+    async def issue_token(
         self,
         *,
         principal_id: UUID,
@@ -86,15 +95,19 @@ class AccessTokenService:
         if session_id is not None:
             payload["sid"] = str(session_id)
 
-        return jwt.encode(  # pyright: ignore[reportUnknownMemberType]
-            payload=payload,
-            key=self.secret_key,
-            algorithm=self.config.algorithm,
+        header = {"alg": self.signer.algorithm, "typ": "JWT"}
+        signing_input = (
+            base64url_encode(orjson.dumps(header))
+            + b"."
+            + base64url_encode(orjson.dumps(payload))
         )
+        signature = await self.signer.sign(signing_input)
+
+        return (signing_input + b"." + base64url_encode(signature)).decode("ascii")
 
     # ....................... #
 
-    def verify_token(
+    async def verify_token(
         self,
         token: str,
         *,
@@ -103,8 +116,8 @@ class AccessTokenService:
         try:
             res = jwt.decode(  # pyright: ignore[reportUnknownMemberType]
                 jwt=token,
-                key=self.secret_key,
-                algorithms=[self.config.algorithm],
+                key=await self.signer.verification_key(),
+                algorithms=[self.signer.algorithm],
                 issuer=self.config.issuer,
                 audience=self.config.audience,
                 options={
