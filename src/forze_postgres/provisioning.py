@@ -1,9 +1,9 @@
 """Postgres schema tenant provisioner — ensure a tenant's schema exists on onboarding.
 
-The ``schema``-tier provisioner for Postgres: on ``provision`` it resolves the tenant's
+The ``namespace``-tier provisioner for Postgres: on ``provision`` it resolves the tenant's
 schema name (a per-tenant ``NamedResourceSpec`` resolver) and ``CREATE SCHEMA IF NOT
 EXISTS``. The same pattern (resolve per-tenant namespace → create-if-missing) applies to the
-other schema-tier backends — a BigQuery dataset or a ClickHouse database — for which a
+other ``namespace``-tier backends — a BigQuery dataset or a ClickHouse database — for which a
 ``FunctionTenantProvisioner`` wrapping the backend client is usually enough.
 """
 

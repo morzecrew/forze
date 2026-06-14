@@ -50,9 +50,9 @@ class Neo4jDepsModule(DepsModule):
     required_tenant_isolation: TenantIsolationMode | None = attrs.field(default=None)
     """Declared minimum tenant isolation (``None`` = no floor).
 
-    Neo4j is single-client (no routed per-tenant client) and its ``database`` is a static
-    name, so it caps at ``row`` (property-partition via ``tenant_property``). Declaring a
-    ``schema``/``database`` floor fails closed by design until per-tenant routing exists.
+    Neo4j is single-client (no routed per-tenant client) and its database is a static
+    name, so it caps at ``tagged`` (property-partition via ``tenant_property``). Declaring a
+    ``namespace``/``dedicated`` floor fails closed by design until per-tenant routing exists.
     """
 
     # ....................... #

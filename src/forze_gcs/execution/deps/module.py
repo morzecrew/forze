@@ -44,8 +44,8 @@ class GCSDepsModule(DepsModule):
     required_tenant_isolation: TenantIsolationMode | None = attrs.field(default=None)
     """Declared minimum tenant isolation (``None`` = no floor).
 
-    Object storage spans the full ladder: ``row`` (per-tenant path prefix via
-    ``tenant_aware``), ``schema`` (a per-tenant ``bucket`` resolver), ``database`` (a
+    Object storage spans the full ladder: ``tagged`` (per-tenant path prefix via
+    ``tenant_aware``), ``namespace`` (a per-tenant ``bucket`` resolver), ``dedicated`` (a
     routed per-tenant client / credentials). Wiring fails closed if the derived tier is
     weaker than the declared floor.
     """

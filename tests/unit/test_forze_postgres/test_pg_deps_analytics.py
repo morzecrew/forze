@@ -64,13 +64,13 @@ def test_deps_module_registers_analytics_keys() -> None:
     assert ctx.analytics.ingest(spec) is not None
 
 
-def test_required_database_isolation_rejects_shared_client_with_analytics() -> None:
-    # A tenant-aware analytics route on a shared client derives "row"; a declared
-    # "database" floor rejects it at wiring.
+def test_required_dedicated_isolation_rejects_shared_client_with_analytics() -> None:
+    # A tenant-aware analytics route on a shared client derives "tagged"; a declared
+    # "dedicated" floor rejects it at wiring.
     with pytest.raises(CoreException, match="postgres_tenancy_validation_failed"):
         PostgresDepsModule(
             client=PostgresClient(),
-            required_tenant_isolation="database",
+            required_tenant_isolation="dedicated",
             analytics={
                 "events": PostgresAnalyticsConfig(
                     tenant_aware=True,
@@ -86,13 +86,13 @@ def test_required_database_isolation_rejects_shared_client_with_analytics() -> N
 
 def test_outbox_route_is_validated_against_isolation_floor() -> None:
     # A tenant-aware outbox route is now included in tenancy validation (was excluded):
-    # a "database" floor on a shared client rejects it.
+    # a "dedicated" floor on a shared client rejects it.
     from forze_postgres.execution.deps.configs import PostgresOutboxConfig
 
     with pytest.raises(CoreException, match="postgres_tenancy_validation_failed"):
         PostgresDepsModule(
             client=PostgresClient(),
-            required_tenant_isolation="database",
+            required_tenant_isolation="dedicated",
             outboxes={
                 "events": PostgresOutboxConfig(
                     relation=("public", "outbox"),

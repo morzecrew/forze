@@ -56,8 +56,8 @@ class InngestDepsModule(DepsModule):
     required_tenant_isolation: TenantIsolationMode | None = attrs.field(default=None)
     """Declared minimum tenant isolation (``None`` = no floor).
 
-    Inngest event configs carry no row-level tenant flag (tenancy rides the event envelope),
-    so a declared floor is met only by a routed per-tenant client (``database``); a shared
+    Inngest event configs carry no tagged-tier tenant flag (tenancy rides the event envelope),
+    so a declared floor is met only by a routed per-tenant client (``dedicated``); a shared
     client derives ``none`` and fails a declared floor closed.
     """
 

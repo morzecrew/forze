@@ -42,8 +42,8 @@ class BigQueryDepsModule(DepsModule):
     required_tenant_isolation: TenantIsolationMode | None = attrs.field(default=None)
     """Declared minimum tenant isolation (``None`` = no floor).
 
-    Set ``"database"`` to require a routed (per-tenant) client — wiring fails closed if the
-    client is shared, since row-level binding alone cannot isolate untrusted callers.
+    Set ``"dedicated"`` to require a routed (per-tenant) client — wiring fails closed if the
+    client is shared, since tagged-tier binding alone cannot isolate untrusted callers.
     """
 
     # ....................... #

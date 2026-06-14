@@ -100,34 +100,34 @@ def _shared_client() -> object:
     return Mock(spec=S3Client)
 
 
-def test_required_database_isolation_rejects_shared_client() -> None:
+def test_required_dedicated_isolation_rejects_shared_client() -> None:
     from forze.base.exceptions import CoreException
 
     with pytest.raises(CoreException, match="s3_storage_tenancy_validation_failed"):
         S3DepsModule(
             client=_shared_client(),
-            required_tenant_isolation="database",
+            required_tenant_isolation="dedicated",
             storages={"r": S3StorageConfig(bucket="b", tenant_aware=True)},
         )
 
 
-def test_schema_floor_satisfied_by_per_tenant_bucket_resolver() -> None:
-    # A dynamic (per-tenant) bucket resolver derives the "schema" tier.
+def test_namespace_floor_satisfied_by_per_tenant_bucket_resolver() -> None:
+    # A dynamic (per-tenant) bucket resolver derives the "namespace" tier.
     S3DepsModule(
         client=_shared_client(),
-        required_tenant_isolation="schema",
+        required_tenant_isolation="namespace",
         storages={"r": S3StorageConfig(bucket=lambda t: f"tenant-{t}")},
     )
 
 
-def test_schema_floor_rejects_static_bucket() -> None:
+def test_namespace_floor_rejects_static_bucket() -> None:
     from forze.base.exceptions import CoreException
 
-    # Static bucket + tenant_aware path prefix is only "row" — below a "schema" floor.
+    # Static bucket + tenant_aware path prefix is only "tagged" — below a "namespace" floor.
     with pytest.raises(CoreException, match="s3_storage_tenancy_validation_failed"):
         S3DepsModule(
             client=_shared_client(),
-            required_tenant_isolation="schema",
+            required_tenant_isolation="namespace",
             storages={"r": S3StorageConfig(bucket="static", tenant_aware=True)},
         )
 

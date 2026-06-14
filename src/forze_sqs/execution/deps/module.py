@@ -47,8 +47,8 @@ class SQSDepsModule(DepsModule):
     required_tenant_isolation: TenantIsolationMode | None = attrs.field(default=None)
     """Declared minimum tenant isolation (``None`` = no floor).
 
-    Queues span: ``row`` (per-tenant name prefix via ``tenant_aware``), ``schema`` (a
-    per-tenant ``namespace`` resolver), ``database`` (a routed per-tenant client).
+    Queues span: ``tagged`` (per-tenant name prefix via ``tenant_aware``), ``namespace`` (a
+    per-tenant ``namespace`` resolver), ``dedicated`` (a routed per-tenant client).
     """
 
     # ....................... #

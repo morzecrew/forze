@@ -2,7 +2,7 @@
 
 The reference :class:`~forze.application.contracts.tenancy.TenantProvisionerPort` for object
 storage: on ``provision`` it resolves the tenant's bucket (a per-tenant resolver for the
-``schema`` tier, or the shared static bucket for the ``row`` tier) and ensures it exists.
+``namespace`` tier, or the shared static bucket for the ``tagged`` tier) and ensures it exists.
 """
 
 import attrs
@@ -19,8 +19,8 @@ class ObjectStorageTenantProvisioner(TenantProvisionerPort):
     """Ensure a tenant's object-storage bucket exists when the tenant is onboarded.
 
     Pair this with the bucket spec used by the storage adapter: a per-tenant ``bucket``
-    resolver (``lambda t: f"tenant-{t}"``) provisions a bucket per tenant (``schema`` tier);
-    a static name ensures the single shared bucket (idempotent, harmless under the ``row``
+    resolver (``lambda t: f"tenant-{t}"``) provisions a bucket per tenant (``namespace`` tier);
+    a static name ensures the single shared bucket (idempotent, harmless under the ``tagged``
     tier). Teardown is a deliberate no-op — buckets are not auto-deleted (the client exposes
     no delete, and destroying a tenant's data implicitly is unsafe); remove them out-of-band.
     """

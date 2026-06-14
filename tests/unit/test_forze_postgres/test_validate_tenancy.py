@@ -21,7 +21,7 @@ def test_derive_mode_none() -> None:
     )
 
 
-def test_derive_mode_row() -> None:
+def test_derive_mode_tagged() -> None:
     assert (
         derive_postgres_tenant_isolation_mode(
             client_is_routed=False,
@@ -33,23 +33,23 @@ def test_derive_mode_row() -> None:
                 ),
             ],
         )
-        == "row"
+        == "tagged"
     )
 
 
-def test_derive_mode_schema() -> None:
-    # A per-tenant namespace resolver derives the schema tier (relation rung removed).
+def test_derive_mode_namespace() -> None:
+    # A per-tenant namespace resolver derives the namespace tier (relation rung removed).
     assert (
         derive_postgres_tenant_isolation_mode(
             client_is_routed=False,
             routes=[],
             has_namespace_routing=True,
         )
-        == "schema"
+        == "namespace"
     )
 
 
-def test_derive_mode_database() -> None:
+def test_derive_mode_dedicated() -> None:
     assert (
         derive_postgres_tenant_isolation_mode(
             client_is_routed=True,
@@ -61,7 +61,7 @@ def test_derive_mode_database() -> None:
                 ),
             ],
         )
-        == "database"
+        == "dedicated"
     )
 
 
@@ -102,7 +102,7 @@ def test_routed_with_partition_key_and_tenant_aware_warns_only() -> None:
     )
 
 
-def test_required_database_isolation_rejects_row_wiring() -> None:
+def test_required_dedicated_isolation_rejects_tagged_wiring() -> None:
     with pytest.raises(CoreException, match="postgres_tenancy_validation_failed"):
         validate_postgres_tenancy_wiring(
             client_is_routed=False,
@@ -114,14 +114,14 @@ def test_required_database_isolation_rejects_row_wiring() -> None:
                     kind="document",
                 ),
             ],
-            required_isolation="database",
+            required_isolation="dedicated",
         )
 
 
-def test_required_database_isolation_satisfied_by_routed_client() -> None:
+def test_required_dedicated_isolation_satisfied_by_routed_client() -> None:
     validate_postgres_tenancy_wiring(
         client_is_routed=True,
         introspector_cache_partition_key_set=True,
         routes=[],
-        required_isolation="database",
+        required_isolation="dedicated",
     )

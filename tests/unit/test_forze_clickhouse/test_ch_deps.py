@@ -74,8 +74,8 @@ def test_deps_module_registers_analytics_keys() -> None:
     assert ctx.analytics.ingest(spec) is not None
 
 
-def test_required_database_isolation_rejects_shared_client() -> None:
-    # A shared (non-routed) client cannot satisfy a declared "database" isolation floor.
+def test_required_dedicated_isolation_rejects_shared_client() -> None:
+    # A shared (non-routed) client cannot satisfy a declared "dedicated" isolation floor.
     with pytest.raises(CoreException, match="clickhouse_analytics_tenancy_validation_failed"):
         ClickHouseDepsModule(
             client=ClickHouseClient(),
@@ -90,7 +90,7 @@ def test_required_database_isolation_rejects_shared_client() -> None:
                     },
                 ),
             },
-            required_tenant_isolation="database",
+            required_tenant_isolation="dedicated",
         )
 
 
@@ -107,12 +107,12 @@ def test_no_isolation_floor_allows_shared_client() -> None:
     )
 
 
-def test_schema_floor_satisfied_by_per_tenant_query_database() -> None:
-    # A dynamic (per-tenant) query_database resolver derives the "schema" tier on a shared
-    # client, satisfying a "schema" floor.
+def test_namespace_floor_satisfied_by_per_tenant_query_database() -> None:
+    # A dynamic (per-tenant) query_database resolver derives the "namespace" tier on a shared
+    # client, satisfying a "namespace" floor.
     ClickHouseDepsModule(
         client=ClickHouseClient(),
-        required_tenant_isolation="schema",
+        required_tenant_isolation="namespace",
         analytics={
             "events": ClickHouseAnalyticsConfig(
                 database="analytics",
@@ -123,11 +123,11 @@ def test_schema_floor_satisfied_by_per_tenant_query_database() -> None:
     )
 
 
-def test_schema_floor_rejects_static_query_database() -> None:
+def test_namespace_floor_rejects_static_query_database() -> None:
     with pytest.raises(CoreException, match="clickhouse_analytics_tenancy_validation_failed"):
         ClickHouseDepsModule(
             client=ClickHouseClient(),
-            required_tenant_isolation="schema",
+            required_tenant_isolation="namespace",
             analytics={
                 "events": ClickHouseAnalyticsConfig(
                     database="analytics",

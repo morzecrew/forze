@@ -33,7 +33,7 @@ PostgresTenancyRouteKind = Literal[
 
 @attrs.define(slots=True, frozen=True, kw_only=True)
 class PostgresTenancyRouteSpec:
-    """One registered Postgres route and its row-level tenant flag."""
+    """One registered Postgres route and its tagged-tier tenant flag."""
 
     name: str
     tenant_aware: bool
@@ -80,8 +80,8 @@ def validate_postgres_tenancy_wiring(
 
     When ``required_isolation`` is declared, also fail closed if the derived isolation
     tier is weaker than the requirement. ``has_namespace_routing`` marks a per-tenant
-    schema (e.g. an analytics ``query_schema`` resolver), which derives the ``schema`` tier.
-    Postgres can reach every tier (up to ``database`` via a routed client).
+    schema (e.g. an analytics ``query_schema`` resolver), which derives the ``namespace`` tier.
+    Postgres can reach every tier (up to ``dedicated`` via a routed client).
     """
 
     validate_routed_client_tenancy_wiring(

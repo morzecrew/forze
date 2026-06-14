@@ -63,8 +63,8 @@ class MeilisearchDepsModule(DepsModule):
     required_tenant_isolation: TenantIsolationMode | None = attrs.field(default=None)
     """Declared minimum tenant isolation (``None`` = no floor).
 
-    Search spans: ``row`` (tenant filter via ``tenant_aware``), ``schema`` (a per-tenant
-    ``index_uid`` resolver), ``database`` (a routed per-tenant client).
+    Search spans: ``tagged`` (tenant filter via ``tenant_aware``), ``namespace`` (a per-tenant
+    ``index_uid`` resolver), ``dedicated`` (a routed per-tenant client).
     """
 
     # ....................... #

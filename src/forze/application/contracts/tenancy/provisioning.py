@@ -1,6 +1,6 @@
 """Tenant infrastructure provisioning — create/tear down per-tenant resources on onboarding.
 
-The ``schema`` and ``database`` isolation tiers (see :mod:`.wiring`) assume the per-tenant
+The ``namespace`` and ``dedicated`` isolation tiers (see :mod:`.wiring`) assume the per-tenant
 namespace already exists — an object-store bucket, a DB schema, a warehouse dataset. A
 :class:`TenantProvisionerPort` is the seam that creates those resources when a tenant is
 onboarded (and tears them down when offboarded), so the higher tiers are operationally real

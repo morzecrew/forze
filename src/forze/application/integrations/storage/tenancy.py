@@ -1,8 +1,8 @@
 """Shared tenancy-tier validation for object-storage deps modules (S3 / GCS).
 
-Object stores support the full isolation ladder: a per-tenant path prefix (``row``), a
-per-tenant *bucket* resolver (``schema``), and a routed per-tenant client / credentials
-(``database``). This derives the effective tier from the config an S3/GCS module already
+Object stores support the full isolation ladder: a per-tenant path prefix (``tagged``), a
+per-tenant *bucket* resolver (``namespace``), and a routed per-tenant client / credentials
+(``dedicated``). This derives the effective tier from the config an S3/GCS module already
 carries and enforces a declared ``required_tenant_isolation`` floor.
 """
 
@@ -19,7 +19,7 @@ from forze.base.primitives import StrKey, StrKeyMapping
 
 
 class _StorageRouteConfig(Protocol):
-    """Structural storage config: a row-level tenant flag and a bucket resource."""
+    """Structural storage config: a tagged-tier tenant flag and a bucket resource."""
 
     @property
     def tenant_aware(self) -> bool: ...
@@ -46,9 +46,9 @@ def validate_storage_tenancy_wiring(
     """Derive the storage isolation tier and enforce the declared floor (fail closed).
 
     A thin storage wrapper over :func:`~forze.application.contracts.tenancy.validate_module_tenancy`:
-    routed client → ``database``; a per-tenant (dynamic) ``bucket`` resolver → ``schema``;
-    a ``tenant_aware`` route (path prefix) → ``row``; else ``none``. Object stores can reach
-    every tier, so the capability ceiling is ``database``.
+    routed client → ``dedicated``; a per-tenant (dynamic) ``bucket`` resolver → ``namespace``;
+    a ``tenant_aware`` route (path prefix) → ``tagged``; else ``none``. Object stores can reach
+    every tier, so the capability ceiling is ``dedicated``.
     """
 
     validate_module_tenancy(

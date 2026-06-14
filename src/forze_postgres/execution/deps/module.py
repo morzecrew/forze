@@ -89,8 +89,8 @@ class PostgresDepsModule(DepsModule):
 
     When set, wiring fails closed if the derived isolation (routed client / per-route
     ``tenant_aware`` / relation resolvers) is weaker than the requirement. Set to
-    ``"database"`` to refuse any shared-store (row/relation) wiring — the only model safe
-    for untrusted callers.
+    ``"dedicated"`` to refuse any shared-store (``tagged``/``namespace``) wiring — the only
+    model safe for untrusted callers.
     """
 
     ro_documents: StrKeyMapping[PostgresReadOnlyDocumentConfig] | None = attrs.field(

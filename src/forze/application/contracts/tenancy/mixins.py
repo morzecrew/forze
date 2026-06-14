@@ -45,7 +45,7 @@ class TenancyMixin:
 
         Returns the bound tenant id whenever one is present — so a dynamic per-tenant
         resolver (bucket / queue / index / collection) can scope itself even *without*
-        row-level ``tenant_aware`` (relation-level isolation). When ``tenant_aware`` and no
+        tagged-tier ``tenant_aware`` (namespace-level isolation). When ``tenant_aware`` and no
         tenant is bound it fails closed with the same ``authentication`` /
         ``tenant_required`` error as :meth:`require_tenant_if_aware` — so every enforcement
         site is consistent. The single canonical implementation; adapters inherit it.

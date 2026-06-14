@@ -48,7 +48,7 @@ class TenantManagementAdapter(TenantManagementPort):
     """Optional per-tenant infrastructure provisioner run on :meth:`provision_tenant`.
 
     When set, onboarding creates the tenant record then ensures its resources (bucket /
-    schema / dataset) exist — so the ``schema``/``database`` isolation tiers don't assume
+    schema / dataset) exist — so the ``namespace``/``dedicated`` isolation tiers don't assume
     hand-provisioned infrastructure. ``None`` (the default) leaves onboarding record-only.
     """
 

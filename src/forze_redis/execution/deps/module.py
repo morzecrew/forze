@@ -176,8 +176,8 @@ class RedisDepsModule(DepsModule):
     required_tenant_isolation: TenantIsolationMode | None = attrs.field(default=None)
     """Declared minimum tenant isolation (``None`` = no floor).
 
-    Redis spans: ``row`` (per-tenant key prefix via ``tenant_aware``), ``schema`` (a
-    per-tenant ``namespace`` resolver), ``database`` (a routed per-tenant client).
+    Redis spans: ``tagged`` (per-tenant key prefix via ``tenant_aware``), ``namespace`` (a
+    per-tenant ``namespace`` resolver), ``dedicated`` (a routed per-tenant client).
     """
 
     #! read and write separately?

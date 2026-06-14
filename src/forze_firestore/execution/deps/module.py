@@ -79,7 +79,7 @@ class FirestoreDepsModule(DepsModule):
     required_tenant_isolation: TenantIsolationMode | None = attrs.field(default=None)
     """Declared minimum tenant isolation (``None`` = no floor).
 
-    Documents span ``row`` (tenant filter via ``tenant_aware``) and ``database`` (a routed
+    Documents span ``tagged`` (tenant filter via ``tenant_aware``) and ``dedicated`` (a routed
     per-tenant client).
     """
 

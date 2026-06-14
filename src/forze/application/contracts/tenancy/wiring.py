@@ -16,18 +16,22 @@ from forze.base.primitives import StrKey, StrKeyMapping
 
 # ----------------------- #
 
-TenantIsolationMode = Literal["none", "row", "schema", "database"]
+TenantIsolationMode = Literal["none", "tagged", "namespace", "dedicated"]
 """Derived isolation tier for docs, diagnostics, and the ``required_isolation`` floor.
 
-The physical-strength ladder (weakest → strongest) is ``none < row < schema < database``.
-Each tenant-discriminator tier maps to a deployment's mechanism:
+The physical-strength ladder (weakest → strongest) is ``none < tagged < namespace <
+dedicated``. The names are storage-agnostic (the model spans SQL, document, object, queue,
+cache and graph backends); each tier maps to a deployment's mechanism:
 
-- ``row`` — shared resource, tenant discriminator embedded (column / key prefix / path
-  prefix / graph property).
-- ``schema`` — separate logical namespace per tenant on a shared instance/connection
-  (DB schema, warehouse dataset/database, object-store bucket, per-tenant collection)
-  resolved from the tenant via a dynamic namespace/relation resolver.
-- ``database`` — separate instance/credentials per tenant (a routed client). The only
+- ``tagged`` — shared resource, tenant marker embedded that operations must filter on
+  (column / key prefix / path prefix / graph property). Per-tenant *table partitioning* is
+  this tier too — a forgotten predicate still scans every partition, so the guarantee is
+  the same as a plain discriminator.
+- ``namespace`` — a separate per-tenant container on a shared instance/connection (DB
+  schema, warehouse dataset/database, object-store bucket, per-tenant collection) resolved
+  from the tenant via a dynamic namespace/relation resolver. A name-resolution boundary, so
+  a forgotten predicate cannot cross tenants.
+- ``dedicated`` — a separate instance/credentials per tenant (a routed client). The only
   model safe for untrusted raw or self-scoping query paths.
 
 Derived from the config an integration already carries (it is not configured directly).
@@ -36,29 +40,29 @@ Derived from the config an integration already carries (it is not configured dir
 # ....................... #
 
 INTEGRATION_ISOLATION_CEILINGS: dict[str, TenantIsolationMode] = {
-    # Networked stores/brokers with a routed per-tenant client reach `database`.
-    "postgres": "database",
-    "mongo": "database",
-    "firestore": "database",
-    "meilisearch": "database",
-    "clickhouse": "database",
-    "bigquery": "database",
-    "redis": "database",
-    "sqs": "database",
-    "rabbitmq": "database",
-    "temporal": "database",
-    "inngest": "database",
-    "s3": "database",
-    "gcs": "database",
-    # In-process / single-client backends cap at row-level.
-    "neo4j": "row",  # no routed client; static database name
-    "duckdb": "row",  # in-process, no per-tenant namespace or routing
+    # Networked stores/brokers with a routed per-tenant client reach `dedicated`.
+    "postgres": "dedicated",
+    "mongo": "dedicated",
+    "firestore": "dedicated",
+    "meilisearch": "dedicated",
+    "clickhouse": "dedicated",
+    "bigquery": "dedicated",
+    "redis": "dedicated",
+    "sqs": "dedicated",
+    "rabbitmq": "dedicated",
+    "temporal": "dedicated",
+    "inngest": "dedicated",
+    "s3": "dedicated",
+    "gcs": "dedicated",
+    # In-process / single-client backends cap at the tagged tier.
+    "neo4j": "tagged",  # no routed client; static database name
+    "duckdb": "tagged",  # in-process, no per-tenant namespace or routing
 }
 """The tenant-isolation tier each integration can reach (the capability matrix).
 
 The strongest tier an integration can derive given its mechanisms (routed client →
-``database``; per-tenant namespace resolver → ``schema``; ``tenant_aware`` → ``row``). A
-deps module passes its ceiling as ``max_supported_isolation`` so a declared
+``dedicated``; per-tenant namespace resolver → ``namespace``; ``tenant_aware`` →
+``tagged``). A deps module passes its ceiling as ``max_supported_isolation`` so a declared
 ``required_isolation`` floor it can never meet fails closed as a capability mismatch.
 """
 
@@ -66,16 +70,17 @@ deps module passes its ceiling as ``max_supported_isolation`` so a declared
 
 _ISOLATION_RANK: dict[TenantIsolationMode, int] = {
     "none": 0,
-    "row": 1,
-    "schema": 2,
-    "database": 3,
+    "tagged": 1,
+    "namespace": 2,
+    "dedicated": 3,
 }
 """Strength ordering for isolation modes (weakest → strongest).
 
-``row`` is shared-store isolation (every row physically carries the tenant tag). ``schema``
-(a per-tenant namespace on a shared instance, resolved from the tenant) is physically
-stronger than ``row`` but weaker than ``database`` (a separate instance/credentials per
-tenant), which is the only model safe for untrusted raw or self-scoping query paths.
+``tagged`` is shared-store isolation (every item carries an embedded tenant marker that
+operations filter on). ``namespace`` (a separate per-tenant container on a shared instance,
+resolved from the tenant) is physically stronger — a name-resolution boundary rather than a
+filter — and ``dedicated`` (a separate instance/credentials per tenant) is the strongest,
+the only model safe for untrusted raw or self-scoping query paths.
 """
 
 
@@ -104,8 +109,8 @@ def validate_required_isolation(
     out (no declared floor — the historical behavior).
 
     ``max_supported`` is the strongest tier the integration can ever provide (its
-    capability ceiling — e.g. an in-process backend caps at ``row``, an object store at
-    ``database``). When ``required`` exceeds it, the failure is reported as a capability
+    capability ceiling — e.g. an in-process backend caps at ``tagged``, an object store at
+    ``dedicated``). When ``required`` exceeds it, the failure is reported as a capability
     mismatch (the floor is unreachable by configuration) rather than a wiring gap.
     """
 
@@ -144,13 +149,13 @@ def validate_required_isolation(
 
 @attrs.define(slots=True, frozen=True, kw_only=True)
 class TenancyRouteSpec:
-    """One registered integration route and its row-level tenant flag."""
+    """One registered integration route and its tagged-tier tenant flag."""
 
     name: StrKey
     """Route name (document, search, or analytics spec key)."""
 
     tenant_aware: bool
-    """Whether the route applies row-level tenant filtering."""
+    """Whether the route applies tagged-tier (tenant-marker) filtering."""
 
     kind: str
     """Resource kind for log messages (e.g. ``document``, ``search``)."""
@@ -167,19 +172,19 @@ def derive_tenant_isolation_mode(
 ) -> TenantIsolationMode:
     """Return the effective isolation tier implied by an integration's wiring.
 
-    Strongest applicable tier wins: a per-tenant routed *client* → ``database``; a dynamic
-    per-tenant *namespace* resolver (schema / dataset / bucket / collection) → ``schema``; a
-    row-level ``tenant_aware`` route → ``row``; else ``none``.
+    Strongest applicable tier wins: a per-tenant routed *client* → ``dedicated``; a dynamic
+    per-tenant *namespace* resolver (schema / dataset / bucket / collection) → ``namespace``;
+    a ``tenant_aware`` route (embedded tenant marker) → ``tagged``; else ``none``.
     """
 
     if client_is_routed:
-        return "database"
+        return "dedicated"
 
     if has_namespace_routing:
-        return "schema"
+        return "namespace"
 
     if any(r.tenant_aware for r in routes):
-        return "row"
+        return "tagged"
 
     return "none"
 
@@ -199,7 +204,7 @@ class IntegrationRouteWarning[ConfigT]:
     """Resource kind for log messages (e.g. ``document``, ``storage``)."""
 
     tenant_aware: Callable[[ConfigT], bool]
-    """Return whether the route applies row-level tenant filtering."""
+    """Return whether the route applies tagged-tier (tenant-marker) filtering."""
 
     relation_fields: Callable[
         [ConfigT],
@@ -218,7 +223,7 @@ class IntegrationRouteWarning[ConfigT]:
 
 
 class _NamespacedRouteConfig(Protocol):
-    """Structural config exposing a base namespace and a row-level tenant flag."""
+    """Structural config exposing a base namespace and a tagged-tier tenant flag."""
 
     @property
     def tenant_aware(self) -> bool: ...
@@ -382,7 +387,7 @@ def validate_routed_client_tenancy_wiring(
         message = (
             f"{integration} tenancy for {route.kind} route {route.name!r}: routed client "
             "already scopes connections per tenant; tenant_aware=True adds redundant "
-            "row-level filtering (defense-in-depth is acceptable)."
+            "tenant-marker filtering (defense-in-depth is acceptable)."
         )
 
         if log_warning is not None:
@@ -427,7 +432,7 @@ class TenancyRouteGroup[ConfigT]:
 
     Lets a deps module declare its routes once (the config mapping + accessors) and hand
     them to :func:`validate_module_tenancy`, instead of hand-building ``TenancyRouteSpec``
-    lists and recomputing the ``schema``-tier (namespace-routing) signal in every module.
+    lists and recomputing the ``namespace``-tier (namespace-routing) signal in every module.
     """
 
     kind: str
@@ -437,14 +442,14 @@ class TenancyRouteGroup[ConfigT]:
     """Route-name → config mapping for this group (``None`` / empty = no routes)."""
 
     tenant_aware: Callable[[ConfigT], bool]
-    """Return whether a route applies row-level (tenant_aware) filtering."""
+    """Return whether a route applies tagged-tier (tenant_aware) filtering."""
 
     namespace_resolver: Callable[[ConfigT], NamedResourceSpec | RelationSpec | None] = (
         lambda _config: None
     )
     """Return the route's per-tenant namespace spec — a ``NamedResourceSpec`` (bucket /
     index / dataset) or a ``RelationSpec`` (schema/collection pair), or ``None``. A
-    *dynamic* (callable) spec marks the ``schema`` isolation tier."""
+    *dynamic* (callable) spec marks the ``namespace`` isolation tier."""
 
 
 # ....................... #
@@ -464,7 +469,7 @@ def validate_module_tenancy(
     """Derive an integration's isolation tier from its route groups and enforce the floor.
 
     The single entry point every deps module uses: it flattens the groups into routes,
-    detects ``schema``-tier namespace routing (any *dynamic* per-tenant namespace/relation
+    detects ``namespace``-tier namespace routing (any *dynamic* per-tenant namespace/relation
     resolver — a callable spec, whether a ``NamedResourceSpec`` bucket/index or a
     ``RelationSpec`` collection), and delegates to
     :func:`validate_routed_client_tenancy_wiring`. The capability ceiling
@@ -488,7 +493,7 @@ def validate_module_tenancy(
             )
 
             # A *dynamic* (callable) namespace/relation resolver scopes the resource per
-            # tenant → schema tier. A static name (str) or static relation (tuple) does not.
+            # tenant → namespace tier. A static name (str) or static relation (tuple) does not.
             namespace = group.namespace_resolver(config)
 
             if callable(namespace):

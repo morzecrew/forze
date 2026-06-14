@@ -57,8 +57,8 @@ class TemporalDepsModule(DepsModule):
     required_tenant_isolation: TenantIsolationMode | None = attrs.field(default=None)
     """Declared minimum tenant isolation (``None`` = no floor).
 
-    Workflows span: ``row`` (``tenant_aware``), ``schema`` (a per-tenant ``queue``
-    resolver — a per-tenant task queue), ``database`` (a routed per-tenant client).
+    Workflows span: ``tagged`` (``tenant_aware``), ``namespace`` (a per-tenant ``queue``
+    resolver — a per-tenant task queue), ``dedicated`` (a routed per-tenant client).
     """
 
     # ....................... #

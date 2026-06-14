@@ -122,13 +122,13 @@ def test_deps_module_resolves_analytics_query_adapter() -> None:
     assert ctx.analytics.query(_spec()) is not None
 
 
-def test_database_isolation_floor_always_fails_for_duckdb() -> None:
+def test_dedicated_isolation_floor_always_fails_for_duckdb() -> None:
     # DuckDB is in-process with no per-tenant routing, so it can never satisfy a
-    # "database" isolation floor — wiring fails closed by design.
+    # "dedicated" isolation floor — wiring fails closed by design.
     with pytest.raises(CoreException, match="duckdb_analytics_tenancy_validation_failed"):
         DuckDbDepsModule(
             client=DuckDbClient(),
-            required_tenant_isolation="database",
+            required_tenant_isolation="dedicated",
             analytics={
                 "events": DuckDbAnalyticsConfig(
                     queries={"by_day": DuckDbQueryConfig(sql="SELECT 1")},

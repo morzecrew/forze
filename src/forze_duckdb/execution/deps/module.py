@@ -43,7 +43,7 @@ class DuckDbDepsModule(DepsModule):
     """Declared minimum tenant isolation (``None`` = no floor).
 
     DuckDB is in-process with no per-tenant client routing, so it can never derive
-    ``"database"`` isolation — declaring that floor fails closed by design (use row-level
+    ``"dedicated"`` isolation — declaring that floor fails closed by design (use tagged-tier
     ``tenant_aware`` queries, or a networked backend with a routed client).
     """
 
