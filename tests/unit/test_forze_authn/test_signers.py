@@ -97,6 +97,51 @@ async def test_asymmetric_rejects_token_from_a_different_key() -> None:
     assert excinfo.value.code == "invalid_access_token"
 
 
+async def test_kid_rotation_overlap() -> None:
+    """During rotation, the new signer issues; both old and new tokens verify."""
+
+    old = LocalAsymmetricSigner(
+        private_key=rsa.generate_private_key(public_exponent=65537, key_size=2048),
+        algorithm="RS256",
+        kid="k1",
+    )
+    new = LocalAsymmetricSigner(
+        private_key=rsa.generate_private_key(public_exponent=65537, key_size=2048),
+        algorithm="RS256",
+        kid="k2",
+    )
+    pid = uuid4()
+    old_token = await _svc(old).issue_token(principal_id=pid)
+
+    rotated = AccessTokenService(
+        signer=new, config=_CFG, additional_verifiers=(old,)
+    )
+    new_token = await rotated.issue_token(principal_id=pid)
+
+    assert jwt.get_unverified_header(new_token)["kid"] == "k2"
+    assert (await rotated.verify_token(old_token))["sub"] == str(pid)  # overlap
+    assert (await rotated.verify_token(new_token))["sub"] == str(pid)
+
+
+async def test_unknown_kid_is_rejected() -> None:
+    a = LocalAsymmetricSigner(
+        private_key=rsa.generate_private_key(public_exponent=65537, key_size=2048),
+        algorithm="RS256",
+        kid="k1",
+    )
+    b = LocalAsymmetricSigner(
+        private_key=rsa.generate_private_key(public_exponent=65537, key_size=2048),
+        algorithm="RS256",
+        kid="k2",
+    )
+    token = await _svc(a).issue_token(principal_id=uuid4())  # carries kid k1
+
+    with pytest.raises(CoreException) as excinfo:
+        await _svc(b).verify_token(token)  # only knows k2
+
+    assert excinfo.value.code == "invalid_access_token"
+
+
 async def test_jwks_document_excludes_symmetric_signers() -> None:
     hs = Hs256Signer(secret=secrets.token_bytes(32))
     rs = LocalAsymmetricSigner(

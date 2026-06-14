@@ -280,3 +280,67 @@ async def test_ensure_unwrapped_is_deduplicated() -> None:
 
     # All four share one reused data key → a single unwrap.
     assert kms.unwrapped - before == 1
+
+
+# ....................... #
+# Bounded LRU caches (hardening)
+
+
+def _per_tenant_keyring(**kw) -> Keyring:  # type: ignore[no-untyped-def]
+    return Keyring(
+        kms=MockKeyManagement(),
+        aead=AesGcmAead(),
+        directory=TenantTemplateKeyDirectory(
+            template="tenant/{tenant_id}/cmk", default_key_id="default"
+        ),
+        **kw,
+    )
+
+
+async def test_enc_cache_evicts_least_recently_used() -> None:
+    ring = _per_tenant_keyring(enc_cache_max=1)
+    a = TenantIdentity(tenant_id=uuid4())
+    b = TenantIdentity(tenant_id=uuid4())
+
+    await ring.warm(a)
+    await ring.warm(b)  # evicts a's active key (cap 1)
+
+    # b is warm; a was evicted → its sync encrypt fails closed.
+    ring.encrypt_sync(b"x", tenant=b)
+    with pytest.raises(CoreException) as excinfo:
+        ring.encrypt_sync(b"x", tenant=a)
+    assert excinfo.value.code == "core.crypto.cipher_not_warm"
+
+
+async def test_decrypt_cache_is_lru_not_clear_all() -> None:
+    """At capacity the decrypt cache evicts one entry, not the whole cache."""
+
+    ring = _per_tenant_keyring(decrypt_cache_max=2, enc_cache_max=8)
+    tenants = [TenantIdentity(tenant_id=uuid4()) for _ in range(3)]
+
+    blobs = []
+    for t in tenants:
+        await ring.warm(t)
+        blobs.append(ring.encrypt_sync(b"v", tenant=t))
+
+    # 3 distinct data keys seeded into a cap-2 cache → only the oldest is evicted.
+    with pytest.raises(CoreException):
+        ring.decrypt_sync(blobs[0])  # evicted
+    assert ring.decrypt_sync(blobs[1]) == b"v"  # retained
+    assert ring.decrypt_sync(blobs[2]) == b"v"  # retained
+
+
+async def test_distinct_keys_use_distinct_locks() -> None:
+    """Cold fills for different key_ids do not serialize on a shared lock."""
+
+    ring = _per_tenant_keyring()
+    a = TenantIdentity(tenant_id=uuid4())
+    b = TenantIdentity(tenant_id=uuid4())
+
+    await ring.warm(a)
+    await ring.warm(b)
+
+    # Different key_ids → different lock objects.
+    lock_a = ring._lock_for(f"tenant/{a.tenant_id}/cmk")  # type: ignore[attr-defined]
+    lock_b = ring._lock_for(f"tenant/{b.tenant_id}/cmk")  # type: ignore[attr-defined]
+    assert lock_a is not lock_b

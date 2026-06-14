@@ -242,6 +242,31 @@ class ReadValidationCodecMixin(Generic[M]):
 
     # ....................... #
 
+    def _predecrypt_for_projection(
+        self,
+        row: JsonDict,
+        model: type[BaseModel] | None,
+    ) -> JsonDict:
+        """Decrypt encrypted fields in a raw row when decoding to a *projection*.
+
+        A full read decodes with the encrypting read codec (which decrypts itself),
+        so nothing is needed. A projection (``model`` other than the read model)
+        decodes with a plaintext codec, so the encrypted/searchable fields it
+        selects must be decrypted here first. No-op for plain (non-encrypting)
+        codecs and for full reads.
+        """
+
+        read_codec = self._codec_for()
+
+        if model is None or self._codec_for(model) is read_codec:
+            return row
+
+        decrypt = getattr(read_codec, "decrypt_mapping", None)
+
+        return row if decrypt is None else decrypt(dict(row))
+
+    # ....................... #
+
     async def _adecode_row(
         self,
         row: JsonDict,
@@ -252,6 +277,7 @@ class ReadValidationCodecMixin(Generic[M]):
         """Async decrypt pre-pass + synchronous single-row decode."""
 
         await self._prepare_decode((row,))
+        row = self._predecrypt_for_projection(row, model)
         return self._decode_row(row, model=model, trust_source=trust_source)
 
     # ....................... #
@@ -266,6 +292,7 @@ class ReadValidationCodecMixin(Generic[M]):
         """Async decrypt pre-pass + synchronous multi-row decode."""
 
         await self._prepare_decode(rows)
+        rows = [self._predecrypt_for_projection(r, model) for r in rows]
         return self._decode_rows(rows, model=model, trust_source=trust_source)
 
 

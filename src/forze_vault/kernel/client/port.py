@@ -63,3 +63,8 @@ class VaultClientPort(Protocol):
         """Return the PEM public key of a Transit signing key's latest version."""
 
         ...  # pragma: no cover
+
+    def transit_rewrap(self, key_name: str, ciphertext: str) -> Awaitable[str]:
+        """Re-wrap a ``vault:vN:...`` ciphertext under the key's latest version."""
+
+        ...  # pragma: no cover

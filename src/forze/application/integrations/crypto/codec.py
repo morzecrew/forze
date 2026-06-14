@@ -37,6 +37,8 @@ from forze.application.contracts.crypto import (
 from forze.application.contracts.document import DocumentCodecs
 from forze.application.contracts.querying import (
     QueryAnd,
+    QueryCompare,
+    QueryElem,
     QueryExpr,
     QueryField,
     QueryNot,
@@ -190,6 +192,18 @@ class EncryptingModelCodec[T](ModelCodec[T, Any]):
 
         return out
 
+    def decrypt_mapping(self, mapping: JsonDict) -> JsonDict:
+        """Decrypt the encrypted/searchable fields in a raw stored row.
+
+        Public entry for the read gateway's projection path: a projection decodes
+        with a *different* (plaintext) codec, so the gateway pre-decrypts the raw
+        row with this before that decode. Requires the data keys to be warmed
+        (the gateway runs :meth:`prepare_decrypt` first). A no-op on rows whose
+        marked fields are already plaintext (migration tolerance).
+        """
+
+        return self._decrypt_fields(mapping)
+
     def _decrypt_fields(self, mapping: JsonDict) -> JsonDict:
         if not self.fields and not self.searchable_fields:
             return mapping
@@ -284,6 +298,28 @@ class EncryptingModelCodec[T](ModelCodec[T, Any]):
 
             case QueryField(name, op, value) if name in self.searchable_fields:
                 return self._rewrite_field(name, op, value, tenant)
+
+            case QueryCompare(left, _op, right) if (
+                left in self.searchable_fields or right in self.searchable_fields
+            ):
+                raise exc.precondition(
+                    "Field-to-field comparison is not supported on an encrypted "
+                    f"searchable field ({left!r} vs {right!r}); only equality against "
+                    "a literal.",
+                    code="core.crypto.searchable_op_unsupported",
+                )
+
+            case QueryElem(path, quantifier, inner):
+                if path in self.searchable_fields:
+                    raise exc.precondition(
+                        f"Array-element quantifiers are not supported on encrypted "
+                        f"searchable field {path!r}.",
+                        code="core.crypto.searchable_op_unsupported",
+                    )
+
+                # Recurse the element predicate to catch (and reject) any searchable
+                # field referenced inside it.
+                return QueryElem(path, quantifier, self._rewrite_node(inner, tenant))
 
             case _:
                 return node

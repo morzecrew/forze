@@ -5,7 +5,10 @@ cross-process cold read (a fresh keyring whose decrypt cache is empty, forcing t
 gateway's async ``ensure_unwrapped`` pre-pass before the synchronous decode).
 """
 
+from uuid import UUID
+
 import pytest
+from pydantic import BaseModel
 
 from forze.application.contracts.crypto import KeyRef, StaticKeyDirectory
 from forze.application.contracts.document import (
@@ -46,6 +49,11 @@ class _PersonUpdate(BaseDTO):
 
 class _PersonRead(ReadDocument):
     name: str
+    email: str
+
+
+class _PersonEmailView(BaseModel):
+    id: UUID
     email: str
 
 
@@ -131,3 +139,65 @@ async def test_pg_document_field_encryption(pg_client: PostgresClient) -> None:
     fresh = await reader.get(created.id)
     assert fresh.name == "Alice"
     assert fresh.email == "alice@example.com"
+
+    # Typed projection (`select_page`) over the encrypted field decrypts too.
+    page = await _ctx(pg_client).document.query(_SPEC).select_page(
+        _PersonEmailView,
+        filters={"$values": {"name": "Alice"}},
+    )
+    assert page.count == 1
+    assert page.hits[0].email == "alice@example.com"
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_pg_reencrypt_documents_refreshes_envelope(
+    pg_client: PostgresClient,
+) -> None:
+    from forze.application.integrations.crypto import reencrypt_documents
+
+    await pg_client.execute("DROP TABLE IF EXISTS people CASCADE;")
+    await pg_client.execute(
+        """
+        CREATE TABLE people (
+            id uuid PRIMARY KEY,
+            rev integer NOT NULL,
+            created_at timestamptz NOT NULL,
+            last_update_at timestamptz NOT NULL,
+            name text NOT NULL,
+            email text NOT NULL
+        );
+        """
+    )
+
+    ctx = _ctx(pg_client)
+    created = await ctx.document.command(_SPEC).create(
+        _PersonCreate(name="Alice", email="alice@example.com")
+    )
+
+    before = (
+        await pg_client.fetch_one(
+            "SELECT email FROM people WHERE id = %s", [created.id], row_factory="dict"
+        )
+    )["email"]
+
+    # Re-encrypt sweep (fresh context/keyring, like a maintenance job).
+    sweep = _ctx(pg_client)
+    count = await reencrypt_documents(
+        sweep.document.query(_SPEC),
+        sweep.document.command(_SPEC),
+        to_update=lambda d: _PersonUpdate(email=d.email),
+    )
+
+    after = (
+        await pg_client.fetch_one(
+            "SELECT email FROM people WHERE id = %s", [created.id], row_factory="dict"
+        )
+    )["email"]
+
+    assert count == 1
+    assert after != before  # re-encrypted under a fresh data key
+    # Still decrypts to the original value.
+    assert (await _ctx(pg_client).document.query(_SPEC).get(created.id)).email == (
+        "alice@example.com"
+    )

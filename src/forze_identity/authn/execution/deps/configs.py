@@ -50,6 +50,12 @@ class AuthnKernelConfig:
     """Explicit JWT signer (e.g. an asymmetric or KMS-backed BYOK signer). When set,
     it takes precedence over :attr:`access_token_secret`."""
 
+    access_token_verifiers: tuple[SignerPort, ...] = attrs.field(
+        default=(), repr=False, converter=tuple
+    )
+    """Extra signers whose keys are also accepted on verify, selected by token ``kid``
+    (key-rotation overlap: keep the previous signer here until its tokens expire)."""
+
     access_token: AccessTokenConfig = attrs.field(factory=AccessTokenConfig)
     """Access token service configuration."""
 
@@ -133,7 +139,11 @@ def build_authn_shared_services(kernel: AuthnKernelConfig) -> AuthnSharedService
         signer = Hs256Signer(secret=kernel.access_token_secret)
 
     access_svc = (
-        AccessTokenService(signer=signer, config=kernel.access_token)
+        AccessTokenService(
+            signer=signer,
+            config=kernel.access_token,
+            additional_verifiers=kernel.access_token_verifiers,
+        )
         if signer is not None
         else None
     )

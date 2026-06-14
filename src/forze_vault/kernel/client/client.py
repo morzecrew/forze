@@ -449,6 +449,56 @@ class VaultClient(VaultClientPort):
 
     # ....................... #
 
+    def _transit_rewrap_sync(self, key_name: str, ciphertext: str) -> str:
+        client = self._require_client()
+
+        try:
+            response = client.secrets.transit.rewrap_data(
+                name=key_name,
+                ciphertext=ciphertext,
+                mount_point=self.config.transit_mount,
+            )
+
+        except InvalidPath as e:
+            raise exc.not_found(
+                f"No Transit key {key_name!r}",
+                details={"key": key_name},
+            ) from e
+
+        except VaultError as e:
+            raise exc.infrastructure(
+                f"Vault transit rewrap failed for {key_name!r}: {e}"
+            ) from e
+
+        except Exception as e:
+            raise exc.infrastructure(
+                f"Vault transit rewrap failed for {key_name!r}: {e}"
+            ) from e
+
+        rewrapped = response.get("data", {}).get("ciphertext")
+
+        if not isinstance(rewrapped, str):
+            raise exc.infrastructure(
+                f"Vault transit rewrap for {key_name!r} has unexpected payload shape",
+            )
+
+        return rewrapped
+
+    # ....................... #
+
+    async def transit_rewrap(self, key_name: str, ciphertext: str) -> str:
+        """Re-wrap a ``vault:vN:...`` ciphertext under the key's latest version.
+
+        Re-encrypts the wrapper without exposing plaintext — the underlying data
+        key is unchanged, only the key-version that protects it advances. Lets a
+        deployment roll a Transit key forward and lazily upgrade stored wrapped
+        data keys without a decrypt/re-encrypt cycle.
+        """
+
+        return await asyncio.to_thread(self._transit_rewrap_sync, key_name, ciphertext)
+
+    # ....................... #
+
     def _health_sync(self) -> tuple[str, bool]:
         client = self._require_client()
         status = client.sys.read_health_status(method="GET")

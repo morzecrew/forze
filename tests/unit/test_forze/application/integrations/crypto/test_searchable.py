@@ -14,7 +14,12 @@ from forze.application.contracts.crypto import (
     KeyRef,
     StaticKeyDirectory,
 )
-from forze.application.contracts.querying import QueryField
+from forze.application.contracts.querying import (
+    QueryAnd,
+    QueryCompare,
+    QueryElem,
+    QueryField,
+)
 from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.integrations.crypto import (
     DeterministicFieldCipher,
@@ -133,6 +138,42 @@ def test_filter_rewrite_rejects_range_on_searchable_field() -> None:
         codec.rewrite_filter(QueryField("email", "$gt", "a"))
 
     assert excinfo.value.kind is ExceptionKind.PRECONDITION
+
+
+def test_filter_rewrite_rejects_field_to_field_compare_on_searchable() -> None:
+    codec = _codec(_det())
+
+    with pytest.raises(CoreException) as excinfo:
+        codec.rewrite_filter(QueryCompare("email", "$eq", "other"))
+
+    assert excinfo.value.kind is ExceptionKind.PRECONDITION
+
+
+def test_filter_rewrite_rejects_element_quantifier_on_searchable() -> None:
+    codec = _codec(_det())
+    node = QueryElem("email", "$any", QueryField("$", "$eq", "x"))
+
+    with pytest.raises(CoreException) as excinfo:
+        codec.rewrite_filter(node)
+
+    assert excinfo.value.kind is ExceptionKind.PRECONDITION
+
+
+def test_filter_rewrite_recurses_into_and_or() -> None:
+    codec = _codec(_det())
+    stored = codec.encode_persistence_mapping(_Profile(id="1", email="a@x.com"))
+
+    node = QueryAnd(
+        (QueryField("id", "$eq", "1"), QueryField("email", "$eq", "a@x.com"))
+    )
+    rewritten = codec.rewrite_filter(node)
+
+    # The searchable predicate inside the AND is rewritten to the stored ciphertext;
+    # the non-searchable one is untouched.
+    assert isinstance(rewritten, QueryAnd)
+    id_pred, email_pred = rewritten.items
+    assert id_pred.value == "1"
+    assert email_pred.value == stored["email"]
 
 
 def test_filter_rewrite_leaves_non_searchable_fields() -> None:

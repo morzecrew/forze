@@ -32,6 +32,15 @@ class SignerPort(Protocol):
 
         ...  # pragma: no cover
 
+    @property
+    def kid(self) -> str | None:
+        """Key id for rotation, written to the token header and the public JWK.
+
+        ``None`` for symmetric signers (no published key, no rotation overlap).
+        """
+
+        ...  # pragma: no cover
+
     def sign(self, signing_input: bytes) -> Awaitable[bytes]:
         """Return the raw JWS signature for ``base64url(header).base64url(payload)``."""
 
@@ -76,6 +85,10 @@ class Hs256Signer:
     @property
     def algorithm(self) -> str:
         return "HS256"
+
+    @property
+    def kid(self) -> str | None:
+        return None
 
     async def sign(self, signing_input: bytes) -> bytes:
         return HMACAlgorithm(HMACAlgorithm.SHA256).sign(signing_input, self.secret)

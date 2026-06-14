@@ -67,7 +67,14 @@ class AccessTokenService:
     """
 
     signer: SignerPort
+    """Signer used to **issue** tokens."""
+
     config: AccessTokenConfig = attrs.field(factory=AccessTokenConfig)
+
+    additional_verifiers: tuple[SignerPort, ...] = ()
+    """Extra signers whose keys are also **accepted on verify**, selected by the
+    token's ``kid``. Holds the previous key during a rotation overlap so in-flight
+    tokens keep verifying until they expire; drop it once they have."""
 
     # ....................... #
 
@@ -95,7 +102,11 @@ class AccessTokenService:
         if session_id is not None:
             payload["sid"] = str(session_id)
 
-        header = {"alg": self.signer.algorithm, "typ": "JWT"}
+        header: dict[str, object] = {"alg": self.signer.algorithm, "typ": "JWT"}
+
+        if self.signer.kid is not None:
+            header["kid"] = self.signer.kid
+
         signing_input = (
             base64url_encode(orjson.dumps(header))
             + b"."
@@ -107,6 +118,26 @@ class AccessTokenService:
 
     # ....................... #
 
+    def _verifier_for(self, kid: str | None) -> SignerPort:
+        """Select the signer to verify with, by the token header's ``kid``.
+
+        No ``kid`` (symmetric / legacy) → the issuing signer. A ``kid`` that
+        matches no configured key is rejected as an invalid token.
+        """
+
+        if kid is None:
+            return self.signer
+
+        for candidate in (self.signer, *self.additional_verifiers):
+            if candidate.kid == kid:
+                return candidate
+
+        raise exc.authentication(
+            "Unknown signing key", code="invalid_access_token"
+        )
+
+    # ....................... #
+
     async def verify_token(
         self,
         token: str,
@@ -114,10 +145,13 @@ class AccessTokenService:
         leeway: timedelta = timedelta(seconds=10),
     ) -> AccessTokenClaims:
         try:
+            kid = jwt.get_unverified_header(token).get("kid")
+            verifier = self._verifier_for(kid)
+
             res = jwt.decode(  # pyright: ignore[reportUnknownMemberType]
                 jwt=token,
-                key=await self.signer.verification_key(),
-                algorithms=[self.signer.algorithm],
+                key=await verifier.verification_key(),
+                algorithms=[verifier.algorithm],
                 issuer=self.config.issuer,
                 audience=self.config.audience,
                 options={

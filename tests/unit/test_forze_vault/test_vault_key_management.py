@@ -73,6 +73,20 @@ async def test_client_generate_missing_key_is_not_found() -> None:
         await client.transit_generate_data_key("missing")
 
 
+async def test_client_rewrap_returns_new_ciphertext() -> None:
+    client = VaultClient(config=_config())
+    mock_hvac = MagicMock()
+    mock_hvac.secrets.transit.rewrap_data.return_value = {
+        "data": {"ciphertext": "vault:v2:bmV3"}
+    }
+    client._client = mock_hvac
+
+    assert await client.transit_rewrap("app", "vault:v1:b2xk") == "vault:v2:bmV3"
+    mock_hvac.secrets.transit.rewrap_data.assert_called_once_with(
+        name="app", ciphertext="vault:v1:b2xk", mount_point="transit"
+    )
+
+
 async def test_client_decrypt_vault_error_is_infrastructure() -> None:
     client = VaultClient(config=_config())
     mock_hvac = MagicMock()

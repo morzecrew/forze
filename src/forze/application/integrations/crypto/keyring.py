@@ -19,7 +19,8 @@ cache is a pure latency optimization: a cold value simply pays one KMS call inli
 """
 
 import asyncio
-from typing import Iterable, final
+from collections import OrderedDict
+from typing import Any, Iterable, final
 
 import attrs
 
@@ -48,6 +49,23 @@ def _not_warm(operation: str) -> Exception:
         f"(warm()/ensure_unwrapped()) before the synchronous codec {operation}.",
         code="core.crypto.cipher_not_warm",
     )
+
+
+def _lru_get(cache: OrderedDict[Any, Any], key: Any) -> Any:
+    value = cache.get(key)
+
+    if value is not None:
+        cache.move_to_end(key)
+
+    return value
+
+
+def _lru_put(cache: OrderedDict[Any, Any], key: Any, value: Any, *, cap: int) -> None:
+    cache[key] = value
+    cache.move_to_end(key)
+
+    while len(cache) > cap:
+        cache.popitem(last=False)
 
 
 # ....................... #
@@ -87,25 +105,50 @@ class Keyring:
     regenerating (bounds GCM nonce-collision risk and limits blast radius)."""
 
     decrypt_cache_max: int = 1024
-    """Maximum number of unwrapped data keys to keep on the decrypt path."""
+    """Maximum unwrapped data keys to keep on the decrypt path (LRU)."""
 
-    _enc_cache: dict[str, _ActiveDataKey] = attrs.field(factory=dict, init=False)
-    """key_id → active data key (encrypt path)."""
+    enc_cache_max: int = 1024
+    """Maximum active data keys / tenant→key entries to keep (LRU). Bounds memory
+    in deployments with many distinct tenants/keys; eviction just re-fetches."""
 
-    _dec_cache: dict[bytes, bytes] = attrs.field(factory=dict, init=False)
-    """wrapped data key → plaintext data key (decrypt path)."""
+    _enc_cache: OrderedDict[str, _ActiveDataKey] = attrs.field(
+        factory=OrderedDict, init=False
+    )
+    """key_id → active data key (encrypt path, LRU)."""
 
-    _tenant_key: dict[str, str] = attrs.field(factory=dict, init=False)
-    """tenant cache key → resolved key_id (lets the sync path skip the directory)."""
+    _dec_cache: OrderedDict[bytes, bytes] = attrs.field(
+        factory=OrderedDict, init=False
+    )
+    """wrapped data key → plaintext data key (decrypt path, LRU)."""
 
-    _lock: asyncio.Lock = attrs.field(factory=asyncio.Lock, init=False, repr=False)
-    """Serializes cache fills so a cold key triggers a single KMS call."""
+    _tenant_key: OrderedDict[str, str] = attrs.field(factory=OrderedDict, init=False)
+    """tenant cache key → resolved key_id (lets the sync path skip the directory, LRU)."""
+
+    _locks: dict[str, asyncio.Lock] = attrs.field(factory=dict, init=False, repr=False)
+    """key_id → fill lock, so a cold key triggers a single KMS call while different
+    keys (e.g. different tenants) fill in parallel."""
+
+    # ....................... #
+
+    def _lock_for(self, key_id: str) -> asyncio.Lock:
+        # ``get``/assignment with no ``await`` between is atomic under asyncio.
+        lock = self._locks.get(key_id)
+
+        if lock is None:
+            lock = self._locks[key_id] = asyncio.Lock()
+
+        return lock
 
     # ....................... #
 
     async def _resolve_key_ref(self, tenant: TenantIdentity | None) -> KeyRef:
         key_ref = await self.directory.resolve(tenant)
-        self._tenant_key[_tenant_cache_key(tenant)] = key_ref.key_id
+        _lru_put(
+            self._tenant_key,
+            _tenant_cache_key(tenant),
+            key_ref.key_id,
+            cap=self.enc_cache_max,
+        )
         return key_ref
 
     # ....................... #
@@ -187,8 +230,8 @@ class Keyring:
     ) -> bytes:
         """Encrypt against the warmed cache (no awaits); requires a prior :meth:`warm`."""
 
-        key_id = self._tenant_key.get(_tenant_cache_key(tenant))
-        active = self._enc_cache.get(key_id) if key_id is not None else None
+        key_id = _lru_get(self._tenant_key, _tenant_cache_key(tenant))
+        active = _lru_get(self._enc_cache, key_id) if key_id is not None else None
 
         if active is None or active.uses >= self.max_dek_messages:
             raise _not_warm("encrypt")
@@ -221,7 +264,7 @@ class Keyring:
         """
 
         envelope = unpack_envelope(blob)
-        dek = self._dec_cache.get(envelope.wrapped_dek)
+        dek = _lru_get(self._dec_cache, envelope.wrapped_dek)
 
         if dek is None:
             raise _not_warm("decrypt")
@@ -236,8 +279,8 @@ class Keyring:
     # ....................... #
 
     async def _active_data_key(self, key_ref: KeyRef) -> _ActiveDataKey:
-        async with self._lock:
-            cached = self._enc_cache.get(key_ref.key_id)
+        async with self._lock_for(key_ref.key_id):
+            cached = _lru_get(self._enc_cache, key_ref.key_id)
 
             if cached is not None and cached.uses < self.max_dek_messages:
                 cached.uses += 1
@@ -251,21 +294,28 @@ class Keyring:
                 key_version=data_key.key_version,
                 uses=1,
             )
-            self._enc_cache[key_ref.key_id] = active
+            _lru_put(
+                self._enc_cache, key_ref.key_id, active, cap=self.enc_cache_max
+            )
             # Seed the decrypt cache so a read-after-write is a hit.
-            self._dec_cache[data_key.wrapped] = data_key.plaintext
+            _lru_put(
+                self._dec_cache,
+                data_key.wrapped,
+                data_key.plaintext,
+                cap=self.decrypt_cache_max,
+            )
             return active
 
     # ....................... #
 
     async def _unwrap(self, envelope: EncryptedEnvelope) -> bytes:
-        cached = self._dec_cache.get(envelope.wrapped_dek)
+        cached = _lru_get(self._dec_cache, envelope.wrapped_dek)
 
         if cached is not None:
             return cached
 
-        async with self._lock:
-            cached = self._dec_cache.get(envelope.wrapped_dek)
+        async with self._lock_for(envelope.key_id):
+            cached = _lru_get(self._dec_cache, envelope.wrapped_dek)
 
             if cached is not None:
                 return cached
@@ -274,9 +324,10 @@ class Keyring:
                 wrapped=envelope.wrapped_dek,
                 key_ref=KeyRef(key_id=envelope.key_id, version=envelope.key_version),
             )
-
-            if len(self._dec_cache) >= self.decrypt_cache_max:
-                self._dec_cache.clear()
-
-            self._dec_cache[envelope.wrapped_dek] = dek
+            _lru_put(
+                self._dec_cache,
+                envelope.wrapped_dek,
+                dek,
+                cap=self.decrypt_cache_max,
+            )
             return dek
