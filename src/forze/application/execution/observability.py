@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Any, Callable, Iterable
 # merely importing this module (it is re-exported from ``forze.application.execution``)
 # does not pull ``opentelemetry`` into the import path of an uninstrumented app.
 
+from forze.application.contracts.crypto import CryptoKeyringStats
 from forze.application.contracts.execution import (
     Middleware,
     MiddlewareFactory,
@@ -47,6 +48,11 @@ BREAKER_STATE_GAUGE = "forze.resilience.breaker.state"
 BULKHEAD_QUEUE_GAUGE = "forze.resilience.bulkhead.queue_depth"
 BULKHEAD_LIMIT_GAUGE = "forze.resilience.bulkhead.limit"
 HEDGE_DELAY_GAUGE = "forze.resilience.hedge.delay"
+
+CRYPTO_DATA_KEYS_GENERATED_COUNTER = "forze.crypto.data_keys.generated"
+CRYPTO_DATA_KEYS_UNWRAPPED_COUNTER = "forze.crypto.data_keys.unwrapped"
+CRYPTO_CACHE_HITS_COUNTER = "forze.crypto.cache.hits"
+CRYPTO_COLD_MISS_COUNTER = "forze.crypto.cold_miss"
 
 TENANT_POOL_SIZE_GAUGE = "forze.tenancy.pool.size"
 TENANT_POOL_CAPACITY_GAUGE = "forze.tenancy.pool.capacity"
@@ -299,6 +305,91 @@ def instrument_tenant_pools(
         callbacks=[_observe(lambda s: s.evicted_explicit)],
         unit="1",
         description="Cumulative explicit tenant evictions (rotation signals).",
+    )
+
+
+# ....................... #
+
+
+def instrument_crypto(
+    keyrings: dict[str, Any],
+    *,
+    meter: Meter | None = None,
+) -> None:
+    """Export each keyring's KMS + cache counters as OpenTelemetry observable metrics.
+
+    *keyrings* maps a label (e.g. ``"default"``) to anything exposing
+    ``stats() -> CryptoKeyringStats`` — every ``Keyring`` does. Emits, per keyring
+    (labelled ``forze.keyring``):
+
+    - ``forze.crypto.data_keys.generated`` / ``….unwrapped`` (observable counters):
+      KMS round-trips on the encrypt / decrypt paths (cache misses — DEK wraps / unwraps).
+    - ``forze.crypto.cache.hits`` (observable counter, labelled ``forze.crypto.path``
+      ∈ ``encrypt`` / ``decrypt``): data keys reused without a KMS call. Hit ratio is
+      ``hits / (hits + the matching generated|unwrapped)`` — composed downstream, never
+      precomputed, so it aggregates correctly across processes.
+    - ``forze.crypto.cold_miss`` (observable counter): synchronous (en|de)crypts that hit
+      a cold cache and raised ``cipher_not_warm`` (a missing async pre-pass). The alert
+      that matters — it should sit at ~0; a sustained rate means a gateway read/write path
+      is skipping ``warm`` / ``ensure_unwrapped``.
+
+    Emits via the global OTel meter unless *meter* is supplied. Call once at assembly
+    time, alongside the other ``instrument_*`` calls.
+    """
+
+    from opentelemetry import metrics
+    from opentelemetry.metrics import Observation
+
+    meter = meter or metrics.get_meter("forze")
+
+    def _observe(
+        pick: Callable[[CryptoKeyringStats], int],
+    ) -> Callable[[CallbackOptions], Iterable[Observation]]:
+        def callback(_options: CallbackOptions) -> Iterable[Observation]:
+            for label, keyring in keyrings.items():
+                stats: CryptoKeyringStats = keyring.stats()
+
+                yield Observation(pick(stats), {"forze.keyring": label})
+
+        return callback
+
+    meter.create_observable_counter(
+        CRYPTO_DATA_KEYS_GENERATED_COUNTER,
+        callbacks=[_observe(lambda s: s.data_keys_generated)],
+        unit="1",
+        description="Cumulative KMS data-key generations (encrypt-path cache misses).",
+    )
+    meter.create_observable_counter(
+        CRYPTO_DATA_KEYS_UNWRAPPED_COUNTER,
+        callbacks=[_observe(lambda s: s.data_keys_unwrapped)],
+        unit="1",
+        description="Cumulative KMS data-key unwraps (decrypt-path cache misses).",
+    )
+
+    def _observe_hits(_options: CallbackOptions) -> Iterable[Observation]:
+        for label, keyring in keyrings.items():
+            stats: CryptoKeyringStats = keyring.stats()
+
+            yield Observation(
+                stats.encrypt_cache_hits,
+                {"forze.keyring": label, "forze.crypto.path": "encrypt"},
+            )
+            yield Observation(
+                stats.decrypt_cache_hits,
+                {"forze.keyring": label, "forze.crypto.path": "decrypt"},
+            )
+
+    meter.create_observable_counter(
+        CRYPTO_CACHE_HITS_COUNTER,
+        callbacks=[_observe_hits],
+        unit="1",
+        description="Cumulative data-key cache hits (no KMS call), per encrypt/decrypt path.",
+    )
+    meter.create_observable_counter(
+        CRYPTO_COLD_MISS_COUNTER,
+        callbacks=[_observe(lambda s: s.cold_misses)],
+        unit="1",
+        description="Cumulative synchronous cipher cold misses (cipher_not_warm).",
     )
 
 

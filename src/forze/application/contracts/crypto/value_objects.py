@@ -51,3 +51,34 @@ class DataKey:
 
     key_version: str | None = None
     """Version of the key-encryption key, when the backend exposes one."""
+
+
+# ....................... #
+
+
+@final
+@attrs.define(slots=True, frozen=True, kw_only=True)
+class CryptoKeyringStats:
+    """Cumulative, monotonic counters describing a keyring's KMS + cache activity.
+
+    A snapshot taken by :meth:`forze.application.integrations.crypto.Keyring.stats`,
+    sampled by the OpenTelemetry observable instruments in ``instrument_crypto``.
+    Hit *ratios* are intentionally not precomputed — exporting hits and misses as
+    separate counters lets a dashboard aggregate them correctly across processes.
+    """
+
+    data_keys_generated: int
+    """KMS ``generate_data_key`` calls — encrypt-path cache misses (DEK wraps)."""
+
+    data_keys_unwrapped: int
+    """KMS ``unwrap_data_key`` calls — decrypt-path cache misses (DEK unwraps)."""
+
+    encrypt_cache_hits: int
+    """Active data keys reused without a KMS call (encrypt path)."""
+
+    decrypt_cache_hits: int
+    """Unwrapped data keys reused without a KMS call (decrypt path)."""
+
+    cold_misses: int
+    """Synchronous (en|de)crypts that found the cache cold and raised
+    ``cipher_not_warm`` — a missing async pre-pass. Healthy deployments sit at ~0."""

@@ -25,6 +25,7 @@ from typing import Any, Iterable, final
 import attrs
 
 from forze.application.contracts.crypto import (
+    CryptoKeyringStats,
     KeyDirectoryPort,
     KeyManagementPort,
     KeyRef,
@@ -127,6 +128,27 @@ class Keyring:
     _locks: dict[str, asyncio.Lock] = attrs.field(factory=dict, init=False, repr=False)
     """key_id → fill lock, so a cold key triggers a single KMS call while different
     keys (e.g. different tenants) fill in parallel."""
+
+    # Cumulative observability counters (sampled by ``instrument_crypto``). Plain ints:
+    # increments happen on the event loop thread / sync codec path, never concurrently.
+    _n_generated: int = attrs.field(default=0, init=False)
+    _n_unwrapped: int = attrs.field(default=0, init=False)
+    _n_enc_hits: int = attrs.field(default=0, init=False)
+    _n_dec_hits: int = attrs.field(default=0, init=False)
+    _n_cold: int = attrs.field(default=0, init=False)
+
+    # ....................... #
+
+    def stats(self) -> CryptoKeyringStats:
+        """Snapshot the keyring's cumulative KMS + cache counters for metrics export."""
+
+        return CryptoKeyringStats(
+            data_keys_generated=self._n_generated,
+            data_keys_unwrapped=self._n_unwrapped,
+            encrypt_cache_hits=self._n_enc_hits,
+            decrypt_cache_hits=self._n_dec_hits,
+            cold_misses=self._n_cold,
+        )
 
     # ....................... #
 
@@ -234,8 +256,10 @@ class Keyring:
         active = _lru_get(self._enc_cache, key_id) if key_id is not None else None
 
         if active is None or active.uses >= self.max_dek_messages:
+            self._n_cold += 1
             raise _not_warm("encrypt")
 
+        self._n_enc_hits += 1
         active.uses += 1
         nonce, ciphertext = self.aead.seal(
             key=active.plaintext,
@@ -267,7 +291,10 @@ class Keyring:
         dek = _lru_get(self._dec_cache, envelope.wrapped_dek)
 
         if dek is None:
+            self._n_cold += 1
             raise _not_warm("decrypt")
+
+        self._n_dec_hits += 1
 
         return self.aead.open(
             key=dek,
@@ -283,9 +310,11 @@ class Keyring:
             cached = _lru_get(self._enc_cache, key_ref.key_id)
 
             if cached is not None and cached.uses < self.max_dek_messages:
+                self._n_enc_hits += 1
                 cached.uses += 1
                 return cached
 
+            self._n_generated += 1
             data_key = await self.kms.generate_data_key(key_ref)
             active = _ActiveDataKey(
                 plaintext=data_key.plaintext,
@@ -312,14 +341,17 @@ class Keyring:
         cached = _lru_get(self._dec_cache, envelope.wrapped_dek)
 
         if cached is not None:
+            self._n_dec_hits += 1
             return cached
 
         async with self._lock_for(envelope.key_id):
             cached = _lru_get(self._dec_cache, envelope.wrapped_dek)
 
             if cached is not None:
+                self._n_dec_hits += 1
                 return cached
 
+            self._n_unwrapped += 1
             dek = await self.kms.unwrap_data_key(
                 wrapped=envelope.wrapped_dek,
                 key_ref=KeyRef(key_id=envelope.key_id, version=envelope.key_version),
