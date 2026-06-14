@@ -73,6 +73,25 @@ class TenancyDeps(ConvenientDeps):
 
     # ....................... #
 
+    def require_manager(self) -> TenantManagementPort:
+        """Return the tenant management port, raising when none is registered.
+
+        Raising variant of :meth:`manager` for callers that treat a missing manager as a
+        wiring error rather than a feature toggle.
+        """
+
+        manager = self.manager()
+
+        if manager is None:
+            raise exc.configuration(
+                "Tenant management is not registered "
+                f"(no {TenantManagementDepKey.name!r} dependency)",
+            )
+
+        return manager
+
+    # ....................... #
+
     def current(self) -> TenantIdentity | None:
         """Return the current tenant identity, if any."""
 

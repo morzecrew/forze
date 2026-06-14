@@ -1,4 +1,4 @@
-from typing import Awaitable, Protocol
+from typing import Awaitable, Protocol, Sequence
 from uuid import UUID
 
 from .value_objects import TenantIdentity
@@ -36,6 +36,18 @@ class TenantManagementPort(Protocol):
         tenant_key: str | None = None,
     ) -> Awaitable[TenantIdentity]:
         """Create a tenant aggregate and return its identity."""
+        ...
+
+    def list_principal_tenants(
+        self,
+        principal_id: UUID,
+    ) -> Awaitable[Sequence[TenantIdentity]]:
+        """List the active tenants a principal belongs to (the basis of a tenant selector).
+
+        Returns one :class:`TenantIdentity` (id + key) per active membership; inactive
+        tenants are omitted. Membership-scoped, so it is safe to expose to the principal as a
+        "switch organization" list.
+        """
         ...
 
     def attach_principal(

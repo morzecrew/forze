@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import final
+from typing import Sequence, final
 from uuid import UUID
 
 import attrs
@@ -165,6 +165,21 @@ class MockTenantManagementPort(_TenantRouteStore, TenantManagementPort):
 
             if isinstance(principals, list) and principal_id in principals:
                 principals.remove(principal_id)  # type: ignore[arg-type]
+
+    async def list_principal_tenants(
+        self,
+        principal_id: UUID,
+    ) -> Sequence[TenantIdentity]:
+        with self.state.lock:
+            return [
+                TenantIdentity(
+                    tenant_id=UUID(tid),
+                    tenant_key=str(entry.get("tenant_key", tid)),
+                )
+                for tid, entry in self._tenants().items()
+                if entry.get("active", True)
+                and principal_id in entry.get("principals", [])  # type: ignore[operator]
+            ]
 
     async def deactivate_tenant(self, tenant_id: UUID) -> None:
         with self.state.lock:

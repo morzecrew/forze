@@ -239,3 +239,33 @@ async def test_deactivate_tenant() -> None:
     adapter.tenant_qry.get = AsyncMock(return_value=row)
     await adapter.deactivate_tenant(tid)
     adapter.tenant_cmd.update.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_list_principal_tenants_filters_inactive() -> None:
+    pid = uuid4()
+    t1, t2 = uuid4(), uuid4()
+    b1, b2 = MagicMock(), MagicMock()
+    b1.tenant_id, b2.tenant_id = t1, t2
+
+    adapter = _adapter()
+    adapter.binding_qry.find_many = AsyncMock(
+        return_value=Page(hits=[b1, b2], count=2, page=1, size=10),
+    )
+
+    def _get(tid: object) -> ReadTenant:
+        now = datetime.now(tz=timezone.utc)
+        return ReadTenant(
+            id=tid,  # type: ignore[arg-type]
+            rev=1,
+            created_at=now,
+            last_update_at=now,
+            tenant_key="k",
+            is_active=(tid == t1),
+        )
+
+    adapter.tenant_qry.get = AsyncMock(side_effect=_get)
+
+    result = await adapter.list_principal_tenants(pid)
+
+    assert [t.tenant_id for t in result] == [t1]  # inactive t2 omitted

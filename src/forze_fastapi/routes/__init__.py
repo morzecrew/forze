@@ -6,6 +6,7 @@ from .health import attach_readiness_route
 from .document import attach_document_routes
 from .search import attach_search_routes
 from .storage import DEFAULT_MAX_UPLOAD_SIZE, attach_storage_routes
+from .tenancy import attach_tenancy_routes
 
 # ----------------------- #
 
@@ -17,4 +18,5 @@ __all__ = [
     "attach_document_routes",
     "attach_search_routes",
     "attach_storage_routes",
+    "attach_tenancy_routes",
 ]

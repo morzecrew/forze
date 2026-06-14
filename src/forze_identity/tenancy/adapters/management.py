@@ -1,4 +1,4 @@
-from typing import Any, final
+from typing import Any, Sequence, final
 from uuid import UUID
 
 import attrs
@@ -137,6 +137,28 @@ class TenantManagementAdapter(TenantManagementPort):
 
         for hit in page.hits:
             await self.binding_cmd.kill(hit.id)
+
+    # ....................... #
+
+    async def list_principal_tenants(
+        self,
+        principal_id: UUID,
+    ) -> Sequence[TenantIdentity]:
+        page = await self.binding_qry.find_many(
+            filters={"$values": {"principal_id": principal_id}},
+        )
+
+        out: list[TenantIdentity] = []
+
+        for bind in page.hits:
+            tenant = await self.tenant_qry.get(bind.tenant_id)
+
+            if tenant.is_active:
+                out.append(
+                    TenantIdentity(tenant_id=tenant.id, tenant_key=tenant.tenant_key)
+                )
+
+        return out
 
     # ....................... #
 

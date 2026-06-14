@@ -309,3 +309,23 @@ async def test_tenant_resolver_no_membership_returns_none() -> None:
     resolver = MockTenantResolverPort(state=MockState())
 
     assert await resolver.resolve_from_principal(uuid4()) is None
+
+
+async def test_list_principal_tenants_returns_active_memberships() -> None:
+    state = MockState()
+    mgmt = MockTenantManagementPort(state=state)
+
+    a = await mgmt.provision_tenant(tenant_key="acme")
+    b = await mgmt.provision_tenant(tenant_key="globex")
+    await mgmt.provision_tenant(tenant_key="initech")  # exists but not a member
+    pid = uuid4()
+    await mgmt.attach_principal(pid, a.tenant_id)
+    await mgmt.attach_principal(pid, b.tenant_id)
+
+    listed = await mgmt.list_principal_tenants(pid)
+    assert {t.tenant_id for t in listed} == {a.tenant_id, b.tenant_id}
+
+    # Deactivating a tenant drops it from the selector list.
+    await mgmt.deactivate_tenant(a.tenant_id)
+    listed = await mgmt.list_principal_tenants(pid)
+    assert {t.tenant_id for t in listed} == {b.tenant_id}
