@@ -4,6 +4,26 @@ icon: lucide/compass
 summary: The mental model behind Forze — what it separates, and the vocabulary you'll meet
 ---
 
+## Background: DDD and Hexagonal Architecture
+
+Forze builds on two established architectural patterns. You don't need deep expertise in either — but knowing the basics helps you understand why Forze works the way it does.
+
+**Domain-Driven Design (DDD)** puts business concepts at the center of software development. Instead of modeling your app around database tables or API endpoints, you model it around the domain — the real-world problem you're solving. Key ideas:
+
+- **Aggregates** — clusters of related objects treated as a unit for data changes
+- **Domain events** — facts about things that happened in the business domain
+- **Bounded contexts** — clear boundaries around parts of the system with their own models
+
+**Hexagonal Architecture** (also called Ports and Adapters) separates core logic from external systems. The core defines "ports" — abstract interfaces for capabilities it needs — and "adapters" implement those ports for specific technologies. This means:
+
+- Business logic never imports database drivers, HTTP clients, or queue libraries
+- You can swap implementations (Postgres → Mongo, Redis → Memcached) without changing handlers
+- Testing uses in-memory adapters instead of spinning up containers
+
+Forze combines these patterns into a practical toolkit for Python backends. The rest of this page shows how.
+
+---
+
 Forze splits a backend into two halves and keeps them honest:
 
 - **What your app does** — the business rules and the operations that run them.
