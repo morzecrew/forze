@@ -287,7 +287,12 @@ async def test_query_schema_sets_search_path_per_tenant() -> None:
     assert len(page.hits) == 2
     set_calls = [_rendered(q) for q, _ in mock.executes]
     expected = f"tenant_{str(tid).replace('-', '')}"
-    assert any("search_path" in s and expected in s for s in set_calls)
+    # search_path must scope to the tenant schema FIRST, then keep `public` reachable so
+    # unqualified extension objects / shared lookups don't break at query time.
+    search_path = next(s for s in set_calls if "search_path" in s)
+    assert expected in search_path
+    assert "public" in search_path
+    assert search_path.index(expected) < search_path.index("public")
 
 
 @pytest.mark.asyncio

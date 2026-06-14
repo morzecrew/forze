@@ -64,7 +64,9 @@ class TenantClientRegistry[C, R = str]:
     guarded: bool = attrs.field(default=False, on_setattr=attrs.setters.frozen)
     """Whether to use a guarded LRU registry underneath."""
 
-    __fingerprints: "OrderedDict[UUID, R]" = attrs.field(
+    # ....................... #
+
+    __fingerprints: OrderedDict[UUID, R] = attrs.field(
         factory=OrderedDict,
         init=False,
         repr=False,
@@ -83,7 +85,6 @@ class TenantClientRegistry[C, R = str]:
     """Monotonic timestamps for cached fingerprints, used for optional TTL refresh."""
 
     __started: bool = attrs.field(default=False, init=False)
-
     __created_count: int = attrs.field(default=0, init=False, repr=False)
     __disposed_count: int = attrs.field(default=0, init=False, repr=False)
     __evicted_explicit_count: int = attrs.field(default=0, init=False, repr=False)

@@ -1,5 +1,6 @@
 """Shared tenant-routed client pooling for integration packages."""
 
+from collections.abc import Awaitable
 from contextlib import asynccontextmanager
 from datetime import timedelta
 from typing import Any, AsyncGenerator, Callable, Generic, Mapping, Protocol, TypeVar
@@ -20,7 +21,6 @@ from .helpers import (
 )
 from .registry import TenantClientRegistry, TenantPoolStats
 from .value_objects import TenantIdentity
-from collections.abc import Awaitable
 
 # ----------------------- #
 
@@ -208,9 +208,10 @@ class RoutedTenantClientBase(Generic[C]):
 
 @attrs.define(slots=True, kw_only=True)
 class DsnRoutedTenantClientBase(RoutedTenantClientBase[C]):
-    """DSN-backed routed client (Postgres, Redis, …)."""
+    """DSN-backed routed client."""
 
     dsn_backend: str
+    """The backend used to resolve the DSN."""
 
     # ....................... #
 
@@ -249,7 +250,10 @@ class StructuredSecretRoutedTenantClientBase(RoutedTenantClientBase[C]):
     """
 
     creds_type: type[BaseModel]
+    """The type of credentials to resolve."""
+
     backend: str
+    """The backend used to resolve the credentials."""
 
     # ....................... #
 

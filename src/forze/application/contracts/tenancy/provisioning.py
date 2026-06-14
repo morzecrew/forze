@@ -62,8 +62,12 @@ class FunctionTenantProvisioner(TenantProvisionerPort):
     on_provision: Callable[[TenantIdentity], Awaitable[None]]
     on_deprovision: Callable[[TenantIdentity], Awaitable[None]] | None = None
 
+    # ....................... #
+
     async def provision(self, tenant: TenantIdentity) -> None:
         await self.on_provision(tenant)
+
+    # ....................... #
 
     async def deprovision(self, tenant: TenantIdentity) -> None:
         if self.on_deprovision is not None:
@@ -84,9 +88,13 @@ class CompositeTenantProvisioner(TenantProvisionerPort):
 
     provisioners: Sequence[TenantProvisionerPort] = ()
 
+    # ....................... #
+
     async def provision(self, tenant: TenantIdentity) -> None:
         for provisioner in self.provisioners:
             await provisioner.provision(tenant)
+
+    # ....................... #
 
     async def deprovision(self, tenant: TenantIdentity) -> None:
         for provisioner in reversed(list(self.provisioners)):

@@ -54,6 +54,8 @@ filter — and ``dedicated`` (a separate instance/credentials per tenant) is the
 the only model safe for untrusted raw or self-scoping query paths.
 """
 
+# ....................... #
+
 
 def isolation_satisfies(
     *,
@@ -63,6 +65,9 @@ def isolation_satisfies(
     """Return whether *derived* isolation is at least as strong as *required*."""
 
     return _ISOLATION_RANK[derived] >= _ISOLATION_RANK[required]
+
+
+# ....................... #
 
 
 def validate_required_isolation(
@@ -350,6 +355,7 @@ def validate_routed_client_tenancy_wiring(
                 code=validation_failed_code,
                 max_supported=max_supported_isolation,
             )
+
         elif not routes:
             # No routed client and no routes → no tenant isolation at all.
             validate_required_isolation(
@@ -359,15 +365,15 @@ def validate_routed_client_tenancy_wiring(
                 code=validation_failed_code,
                 max_supported=max_supported_isolation,
             )
+
         else:
             for route in routes:
                 route_mode: TenantIsolationMode = (
                     "namespace"
                     if route.has_namespace_routing
-                    else "tagged"
-                    if route.tenant_aware
-                    else "none"
+                    else "tagged" if route.tenant_aware else "none"
                 )
+
                 validate_required_isolation(
                     integration=f"{integration} {route.kind} route {route.name!r}",
                     derived=route_mode,

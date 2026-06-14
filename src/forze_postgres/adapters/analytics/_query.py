@@ -178,9 +178,14 @@ class PostgresAnalyticsQueryMixin[R: BaseModel, Ing: BaseModel]:
                 )
 
             if schema is not None:
+                # Tenant schema first (so its tables shadow ``public``), then ``public`` so
+                # unqualified extension objects (uuid-ossp / pgcrypto / PostGIS, installed in
+                # public by default) and shared lookup tables stay reachable — a bare
+                # search_path would silently drop them and fail at query time.
                 await self.client.execute(
-                    sql.SQL("SET LOCAL search_path TO {}").format(
+                    sql.SQL("SET LOCAL search_path TO {}, {}").format(
                         sql.Identifier(schema),
+                        sql.Identifier("public"),
                     ),
                 )
 
