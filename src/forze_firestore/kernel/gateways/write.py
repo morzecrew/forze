@@ -299,7 +299,7 @@ class FirestoreWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
         rev: int | None = None,
     ) -> tuple[D, JsonDict]:
         self._require_update_cmd()
-        update_data = await self._encode_patch_one(dto)
+        update_data = await self._encode_patch_one(dto, record_id=pk)
 
         return await self._patch(pk, update_data, rev=rev)
 

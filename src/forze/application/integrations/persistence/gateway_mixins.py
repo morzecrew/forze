@@ -345,21 +345,42 @@ class DocumentWriteCodecMixin(Generic[D]):
 
     # ....................... #
 
-    async def _encode_patch_one(self, dto: Any) -> JsonDict:
+    async def _encode_patch_one(
+        self, dto: Any, *, record_id: UUID | None = None
+    ) -> JsonDict:
         await self._prepare_encode()
-        return self._patch_codec().encode_persistence_mapping(
-            dto,
-            exclude={"unset": True},
-        )
+        codec = self._patch_codec()
+
+        # Encrypting codecs expose ``encode_persistence_patch`` to thread the target pk
+        # into encrypted-field AAD (a partial DTO carries no id). Duck-typed so plain
+        # codecs need not define it; with record-id binding off it is a no-op passthrough.
+        encode_patch = getattr(codec, "encode_persistence_patch", None)
+
+        if encode_patch is not None:
+            return encode_patch(dto, record_id=record_id, exclude={"unset": True})
+
+        return codec.encode_persistence_mapping(dto, exclude={"unset": True})
 
     # ....................... #
 
-    async def _encode_patch_many(self, dtos: Any) -> list[JsonDict]:
+    async def _encode_patch_many(
+        self, dtos: Any, *, record_ids: Sequence[UUID] | None = None
+    ) -> list[JsonDict]:
         await self._prepare_encode()
-        return self._patch_codec().encode_persistence_mapping_many(
-            dtos,
-            exclude={"unset": True},
-        )
+        codec = self._patch_codec()
+
+        encode_patch = getattr(codec, "encode_persistence_patch", None)
+
+        if encode_patch is not None:
+            ids: Sequence[UUID | None] = (
+                record_ids if record_ids is not None else [None] * len(dtos)
+            )
+            return [
+                encode_patch(dto, record_id=rid, exclude={"unset": True})
+                for dto, rid in zip(dtos, ids, strict=True)
+            ]
+
+        return codec.encode_persistence_mapping_many(dtos, exclude={"unset": True})
 
 
 # ....................... #

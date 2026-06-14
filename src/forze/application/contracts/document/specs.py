@@ -82,6 +82,18 @@ class DocumentSpec(BaseSpec, Generic[R, D, C, U]):
     within a tenant, and only equality (not range/sort/like) is supported. Disjoint from
     :attr:`encrypted_fields`. Requires a ``DeterministicCipherDepKey`` in the deps."""
 
+    encryption_binds_record_id: bool = attrs.field(default=False)
+    """Bind the record's ``id`` into the AAD of every :attr:`encrypted_fields` ciphertext.
+
+    Defaults to ``False`` (the AAD already binds field name + tenant). When ``True``, a
+    ciphertext additionally cannot be transplanted to a *different record of the same
+    tenant and field*. Applies only to randomized :attr:`encrypted_fields` (never to
+    :attr:`searchable_fields`, whose ciphertext must stay record-independent for equality
+    queries). Two consequences: a filter-based bulk ``update_matching`` of a bound field is
+    refused (no per-record id), and existing ciphertext written before enabling this still
+    reads (decrypt falls back to the legacy AAD) — run ``reencrypt_documents`` to upgrade it
+    to the bound form."""
+
     codecs: DocumentCodecs[R, D, C, U] | None = attrs.field(
         default=None,
         eq=False,

@@ -55,6 +55,11 @@ from forze.base.serialization.model_codec import ModelCodec, ModelDumpExcludeOpt
 _MISSING = object()
 _UNSET = object()
 
+_AEAD_AUTH_FAILED_CODE = "core.crypto.aead_auth_failed"
+"""Code raised by the AEAD when a tag check fails (see ``forze.base.crypto.ciphers``).
+The decrypt path treats *only* this as a signal to retry with the legacy (pre-record-id)
+AAD during a binding migration — any other failure (e.g. ``cipher_not_warm``) propagates."""
+
 
 def _maybe_envelope(value: str) -> bytes | None:
     """Return the envelope bytes if *value* is base64 of a Forze envelope, else ``None``."""
@@ -99,6 +104,13 @@ class EncryptingModelCodec[T](ModelCodec[T, Any]):
     label: str = "forze.field"
     """Associated-data namespace, so ciphertext cannot move between aggregates."""
 
+    record_id_field: str | None = None
+    """When set (e.g. ``"id"``), the record's value at this field is bound into the
+    AAD of every randomized :attr:`fields` ciphertext, so a ciphertext cannot be
+    transplanted to a different record (same tenant, same field). Off by default.
+    Never applied to :attr:`searchable_fields` — deterministic ciphertext must stay
+    record-independent for equality queries to match across rows."""
+
     # ....................... #
 
     @property
@@ -134,9 +146,45 @@ class EncryptingModelCodec[T](ModelCodec[T, Any]):
     # ....................... #
     # field crypto helpers
 
-    def _aad(self, field: str, tenant: TenantIdentity | None) -> bytes:
+    def _aad(
+        self,
+        field: str,
+        tenant: TenantIdentity | None,
+        *,
+        record_id: str | None = None,
+    ) -> bytes:
         tenant_id = None if tenant is None else tenant.tenant_id
-        return f"{self.label}|field={field}|tenant={tenant_id}".encode("utf-8")
+        base = f"{self.label}|field={field}|tenant={tenant_id}"
+
+        if record_id is not None:
+            base += f"|id={record_id}"
+
+        return base.encode("utf-8")
+
+    def _resolve_record_id(self, mapping: JsonDict, record_id: Any) -> str | None:
+        """The record id to bind into AAD, or ``None`` when binding is off.
+
+        Prefers an explicit *record_id* (the patch path threads the target pk, since
+        a partial update DTO has none) and falls back to the value in *mapping* (the
+        full-document and read paths carry it). Raises when binding is on but no id is
+        available — e.g. a filter-based bulk update of an id-bound encrypted field,
+        which cannot supply a per-record id.
+        """
+
+        if self.record_id_field is None:
+            return None
+
+        rid = record_id if record_id is not None else mapping.get(self.record_id_field)
+
+        if rid is None:
+            raise exc.precondition(
+                f"Encrypted field bound to record id cannot be written without one "
+                f"({self.record_id_field!r} absent). A filter-based bulk update of an "
+                "id-bound encrypted field is unsupported — update records individually.",
+                code="core.crypto.record_id_required",
+            )
+
+        return str(rid)
 
     def _require_det(self) -> DeterministicFieldCipherPort:
         if self.deterministic is None:
@@ -162,12 +210,16 @@ class EncryptingModelCodec[T](ModelCodec[T, Any]):
         )
         return base64.b64encode(blob).decode("ascii")
 
-    def _encrypt_fields(self, mapping: JsonDict) -> JsonDict:
+    def _encrypt_fields(self, mapping: JsonDict, *, record_id: Any = None) -> JsonDict:
         if not self.fields and not self.searchable_fields:
             return mapping
 
         tenant = self.tenant_provider()
         out = dict(mapping)
+
+        # Resolve the bound id lazily — only when a field is actually encrypted — so a
+        # bulk update touching no encrypted field never trips the no-id guard.
+        bound_id: Any = _UNSET
 
         for field in self.fields:
             value = out.get(field, _MISSING)
@@ -175,10 +227,13 @@ class EncryptingModelCodec[T](ModelCodec[T, Any]):
             if value is _MISSING or value is None:
                 continue
 
+            if bound_id is _UNSET:
+                bound_id = self._resolve_record_id(mapping, record_id)
+
             blob = self.cipher.encrypt_sync(
                 orjson.dumps(value),
                 tenant=tenant,
-                aad=self._aad(field, tenant),
+                aad=self._aad(field, tenant, record_id=bound_id),
             )
             out[field] = base64.b64encode(blob).decode("ascii")
 
@@ -229,7 +284,7 @@ class EncryptingModelCodec[T](ModelCodec[T, Any]):
                 out = dict(mapping)
 
             out[field] = orjson.loads(
-                self.cipher.decrypt_sync(blob, aad=self._aad(field, tenant))
+                self._decrypt_field_blob(field, tenant, mapping, blob)
             )
 
         if self.searchable_fields:
@@ -266,6 +321,37 @@ class EncryptingModelCodec[T](ModelCodec[T, Any]):
                 out[field] = orjson.loads(raw)
 
         return out if out is not None else mapping
+
+    def _decrypt_field_blob(
+        self,
+        field: str,
+        tenant: TenantIdentity | None,
+        mapping: JsonDict,
+        blob: bytes,
+    ) -> bytes:
+        """Decrypt one randomized-field envelope, tolerating a binding migration.
+
+        With record-id binding on, try the id-bound AAD first; on an AEAD auth
+        failure (only) retry with the legacy AAD, so ciphertext written before
+        binding was enabled still reads. A transplanted id-bound ciphertext fails
+        both AADs and stays rejected; any non-auth failure propagates unchanged.
+        """
+
+        if self.record_id_field is not None:
+            rid = mapping.get(self.record_id_field)
+
+            if rid is not None:
+                try:
+                    return self.cipher.decrypt_sync(
+                        blob, aad=self._aad(field, tenant, record_id=str(rid))
+                    )
+
+                except CoreException as error:
+                    if error.code != _AEAD_AUTH_FAILED_CODE:
+                        raise
+                    # fall through to the legacy (pre-binding) AAD
+
+        return self.cipher.decrypt_sync(blob, aad=self._aad(field, tenant))
 
     # ....................... #
     # query rewrite (deterministic searchable fields)
@@ -374,6 +460,28 @@ class EncryptingModelCodec[T](ModelCodec[T, Any]):
                 objs, mode=mode, exclude=exclude
             )
         ]
+
+    def encode_persistence_patch(
+        self,
+        obj: T,
+        *,
+        record_id: Any = None,
+        mode: Literal["json", "python"] = "python",
+        exclude: ModelDumpExcludeOptions = {},
+    ) -> JsonDict:
+        """Encode an update DTO, binding *record_id* into encrypted-field AAD.
+
+        The patch-path analog of :meth:`encode_persistence_mapping`: a partial update
+        DTO carries no record id, so the gateway threads the target ``pk`` here. With
+        record-id binding off (the default) this is equivalent to
+        ``encode_persistence_mapping`` — *record_id* is ignored. The write gateways
+        discover this method by duck typing, so plain codecs need not define it.
+        """
+
+        return self._encrypt_fields(
+            self.inner.encode_persistence_mapping(obj, mode=mode, exclude=exclude),
+            record_id=record_id,
+        )
 
     def decode_mapping(
         self,
@@ -502,6 +610,7 @@ def encrypting_document_codecs(
     label: str,
     searchable_fields: frozenset[str] = frozenset(),
     deterministic: DeterministicFieldCipherPort | None = None,
+    record_id_field: str | None = None,
 ) -> DocumentCodecs[Any, Any, Any, Any]:
     """Wrap a document codec bundle so fields are encrypted on the persistence path.
 
@@ -511,6 +620,9 @@ def encrypting_document_codecs(
     ``create`` codec is left untouched — it only transforms create commands into
     domain models, which is then encrypted via ``domain``. ``history`` is left
     plaintext (encrypted-field history is not supported).
+
+    *record_id_field* (e.g. ``"id"``) opts the randomized *fields* into record-id AAD
+    binding (transplant resistance); ``None`` keeps the legacy unbound AAD.
     """
 
     def _wrap(inner: ModelCodec[Any, Any]) -> EncryptingModelCodec[Any]:
@@ -522,6 +634,7 @@ def encrypting_document_codecs(
             searchable_fields=searchable_fields,
             deterministic=deterministic,
             label=label,
+            record_id_field=record_id_field,
         )
 
     return DocumentCodecs(

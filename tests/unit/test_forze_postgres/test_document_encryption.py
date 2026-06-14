@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import pytest
+
 from forze.application.contracts.crypto import KeyRef, StaticKeyDirectory
 from forze.application.contracts.document import DocumentSpec
 from forze.application.execution import CryptoDepsModule
 from forze.application.integrations.crypto import EncryptingModelCodec
+from forze.base.exceptions import CoreException, ExceptionKind
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
 from forze_mock import MockKeyManagement
 from forze_postgres.execution.deps.factories.document import _resolve_codecs
@@ -73,3 +76,38 @@ def test_no_encrypted_fields_leaves_codecs_plain() -> None:
     codecs = _resolve_codecs(_ctx(), spec)
 
     assert not isinstance(codecs.read, EncryptingModelCodec)
+
+
+# ....................... #
+
+
+def test_encrypted_fields_without_keyring_fails_closed() -> None:
+    """A spec marking fields encrypted but no CryptoDepsModule wired must raise."""
+
+    spec = DocumentSpec(
+        name="people",
+        read=_Read,
+        write=_WRITE,  # type: ignore[arg-type]
+        encrypted_fields=frozenset({"email"}),
+    )
+
+    with pytest.raises(CoreException) as ei:
+        _resolve_codecs(context_from_modules(), spec)
+
+    assert ei.value.kind is ExceptionKind.CONFIGURATION
+    assert "no keyring is wired" in str(ei.value)
+
+
+# ....................... #
+
+
+def test_required_encryption_floor_refuses_unmarked_spec() -> None:
+    """A deployment floor refuses a spec that encrypts nothing."""
+
+    spec = DocumentSpec(name="people", read=_Read, write=_WRITE)  # type: ignore[arg-type]
+
+    with pytest.raises(CoreException) as ei:
+        _resolve_codecs(_ctx(), spec, required_encryption="field")
+
+    assert ei.value.kind is ExceptionKind.CONFIGURATION
+    assert "required_encryption" in str(ei.value)

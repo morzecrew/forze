@@ -68,6 +68,18 @@ _SPEC = DocumentSpec(
     encrypted_fields=frozenset({"email"}),
 )
 
+_SPEC_BOUND = DocumentSpec(
+    name="people_ns",
+    read=_PersonRead,
+    write={  # type: ignore[arg-type]
+        "domain": _Person,
+        "create_cmd": _PersonCreate,
+        "update_cmd": _PersonUpdate,
+    },
+    encrypted_fields=frozenset({"email"}),
+    encryption_binds_record_id=True,
+)
+
 
 def _ctx(pg_client: PostgresClient) -> ExecutionContext:
     """Fresh execution context with its OWN keyring (simulates a separate process)."""
@@ -201,3 +213,93 @@ async def test_pg_reencrypt_documents_refreshes_envelope(
     assert (await _ctx(pg_client).document.query(_SPEC).get(created.id)).email == (
         "alice@example.com"
     )
+
+
+# ....................... #
+
+
+async def _create_people_table(pg_client: PostgresClient) -> None:
+    await pg_client.execute("DROP TABLE IF EXISTS people CASCADE;")
+    await pg_client.execute(
+        """
+        CREATE TABLE people (
+            id uuid PRIMARY KEY,
+            rev integer NOT NULL,
+            created_at timestamptz NOT NULL,
+            last_update_at timestamptz NOT NULL,
+            name text NOT NULL,
+            email text NOT NULL
+        );
+        """
+    )
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_pg_record_id_binding_update_threads_pk(
+    pg_client: PostgresClient,
+) -> None:
+    """The patch path threads the pk, so an updated bound field reads back (cold)."""
+
+    await _create_people_table(pg_client)
+
+    writer = _ctx(pg_client).document.command(_SPEC_BOUND)
+    created = await writer.create(_PersonCreate(name="Alice", email="alice@example.com"))
+    await writer.update(created.id, created.rev, _PersonUpdate(email="alice2@example.com"))
+
+    # Cross-process cold read decrypts the id-bound ciphertext written via the patch.
+    fresh = await _ctx(pg_client).document.query(_SPEC_BOUND).get(created.id)
+    assert fresh.email == "alice2@example.com"
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_pg_record_id_binding_rejects_transplant(
+    pg_client: PostgresClient,
+) -> None:
+    """A ciphertext moved to a different row fails to decrypt under the new id."""
+
+    from forze.base.exceptions import CoreException
+
+    await _create_people_table(pg_client)
+
+    writer = _ctx(pg_client).document.command(_SPEC_BOUND)
+    a = await writer.create(_PersonCreate(name="Alice", email="alice@example.com"))
+    b = await writer.create(_PersonCreate(name="Bob", email="bob@example.com"))
+
+    a_cipher = (
+        await pg_client.fetch_one(
+            "SELECT email FROM people WHERE id = %s", [a.id], row_factory="dict"
+        )
+    )["email"]
+    # Transplant A's ciphertext onto B's row (an attacker with DB write access).
+    await pg_client.execute(
+        "UPDATE people SET email = %s WHERE id = %s", [a_cipher, b.id]
+    )
+
+    with pytest.raises(CoreException):
+        await _ctx(pg_client).document.query(_SPEC_BOUND).get(b.id)
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_pg_record_id_binding_refuses_bulk_update_matching(
+    pg_client: PostgresClient,
+) -> None:
+    """A filter-based bulk update of a bound encrypted field is refused (no per-row id)."""
+
+    from forze.base.exceptions import CoreException, ExceptionKind
+
+    await _create_people_table(pg_client)
+
+    writer = _ctx(pg_client).document.command(_SPEC_BOUND)
+    await writer.create(_PersonCreate(name="Alice", email="alice@example.com"))
+
+    with pytest.raises(CoreException) as ei:
+        await writer.update_matching(
+            {"$values": {"name": "Alice"}},
+            _PersonUpdate(email="hacked@example.com"),
+        )
+
+    assert ei.value.kind is ExceptionKind.PRECONDITION
+    assert ei.value.code == "core.crypto.record_id_required"

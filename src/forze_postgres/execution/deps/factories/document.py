@@ -7,6 +7,7 @@ from pydantic import BaseModel
 
 from forze.application.contracts.crypto import (
     DeterministicCipherDepKey,
+    EncryptionTier,
     KeyringDepKey,
 )
 from forze.application.contracts.document import (
@@ -15,7 +16,7 @@ from forze.application.contracts.document import (
     DocumentQueryDepPort,
 )
 from forze.application.execution.domain import domain_dispatcher_provider
-from forze.application.integrations.crypto import encrypting_document_codecs
+from forze.application.integrations.crypto import resolve_document_codecs
 from forze.application.integrations.document import DocumentCache
 from forze.base.exceptions import exc
 from forze.domain.models import BaseDTO, Document
@@ -43,27 +44,37 @@ U = TypeVar("U", bound=BaseDTO)
 def _resolve_codecs(
     ctx: "ExecutionContext",
     spec: "DocumentSpec[Any, Any, Any, Any]",
+    *,
+    required_encryption: EncryptionTier | None = None,
 ) -> DocumentCodecs[Any, Any, Any, Any]:
-    """Spec codecs, wrapped for field encryption when ``encrypted_fields`` is set."""
+    """Spec codecs, wrapped for field encryption when ``encrypted_fields`` is set.
 
-    codecs = spec.resolved_codecs
+    Resolves the ciphers as optional (``None`` when unregistered) so the shared
+    helper can fail closed with a precise error instead of the generic dependency
+    lookup raising.
+    """
 
-    if spec.encrypted_fields or spec.searchable_fields:
-        codecs = encrypting_document_codecs(
-            codecs,
-            fields=spec.encrypted_fields,
-            cipher=ctx.deps.provide(KeyringDepKey),
-            tenant_provider=ctx.inv_ctx.get_tenant,
-            label=str(spec.name),
-            searchable_fields=spec.searchable_fields,
-            deterministic=(
-                ctx.deps.provide(DeterministicCipherDepKey)
-                if spec.searchable_fields
-                else None
-            ),
-        )
-
-    return codecs
+    return resolve_document_codecs(
+        spec.resolved_codecs,
+        spec_name=str(spec.name),
+        encrypted_fields=spec.encrypted_fields,
+        searchable_fields=spec.searchable_fields,
+        keyring=(
+            ctx.deps.provide(KeyringDepKey)
+            if ctx.deps.exists(KeyringDepKey)
+            else None
+        ),
+        deterministic=(
+            ctx.deps.provide(DeterministicCipherDepKey)
+            if ctx.deps.exists(DeterministicCipherDepKey)
+            else None
+        ),
+        tenant_provider=ctx.inv_ctx.get_tenant,
+        integration="postgres",
+        code="postgres.document.encryption_wiring",
+        required_encryption=required_encryption,
+        bind_record_id=spec.encryption_binds_record_id,
+    )
 
 
 # ....................... #
@@ -79,6 +90,9 @@ class ConfigurablePostgresReadOnlyDocument(DocumentQueryDepPort[R]):
     )
     """Configuration for the document."""
 
+    required_encryption: EncryptionTier | None = attrs.field(default=None)
+    """Declared minimum field-encryption coverage for this deployment (``None`` = no floor)."""
+
     # ....................... #
 
     def __call__(
@@ -88,7 +102,9 @@ class ConfigurablePostgresReadOnlyDocument(DocumentQueryDepPort[R]):
     ) -> PostgresDocumentAdapter[R, Any, Any, Any]:
         cache = ctx.cache(spec.cache) if spec.cache is not None else None
 
-        codecs = _resolve_codecs(ctx, spec)
+        codecs = _resolve_codecs(
+            ctx, spec, required_encryption=self.required_encryption
+        )
 
         read = read_gw(
             ctx,
@@ -139,6 +155,9 @@ class ConfigurablePostgresDocument(DocumentCommandDepPort[R, D, C, U]):
     )
     """Configuration for the document."""
 
+    required_encryption: EncryptionTier | None = attrs.field(default=None)
+    """Declared minimum field-encryption coverage for this deployment (``None`` = no floor)."""
+
     # ....................... #
 
     def __call__(
@@ -154,7 +173,9 @@ class ConfigurablePostgresDocument(DocumentCommandDepPort[R, D, C, U]):
                 "Write relation is required for non read-only documents."
             )
 
-        codecs = _resolve_codecs(ctx, spec)
+        codecs = _resolve_codecs(
+            ctx, spec, required_encryption=self.required_encryption
+        )
 
         read = read_gw(
             ctx,

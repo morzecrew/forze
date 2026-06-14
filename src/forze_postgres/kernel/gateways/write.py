@@ -853,7 +853,7 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
     ) -> tuple[D, JsonDict]:
         self._require_update_cmd()
 
-        update_data = await self._encode_patch_one(dto)
+        update_data = await self._encode_patch_one(dto, record_id=pk)
 
         return await self.__patch(pk, update_data, rev=rev)
 
@@ -1097,8 +1097,11 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
 
         updates: list[JsonDict] = []
         for start in range(0, len(dtos), batch_size):
+            stop = start + batch_size
             updates.extend(
-                await self._encode_patch_many(dtos[start : start + batch_size]),
+                await self._encode_patch_many(
+                    dtos[start:stop], record_ids=pks[start:stop]
+                ),
             )
 
         res, res_diffs = await self.__patch_many(
