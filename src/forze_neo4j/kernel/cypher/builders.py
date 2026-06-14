@@ -278,6 +278,12 @@ def shortest_path(
 ) -> str:
     rel = _rel(direction, _type_pattern(edge_types), quant=f"*..{int(max_hops)}")
 
+    # In full-path mode (``interior=True``) the ``all(nodes(path) ...)`` tenant predicate is the
+    # canonical all-path-nodes form: Neo4j runs an *exhaustive* shortest-path search and returns
+    # the shortest path that satisfies it (the same-tenant path, even when a shorter cross-tenant
+    # one exists), emitting only an EXHAUSTIVE_SHORTEST_PATH perf notification — it does not
+    # post-filter the global shortest and yield NULL. (With cypher.forbid_exhaustive_shortestpath
+    # the engine errors instead — fail-closed — never returning a cross-tenant path.)
     return (
         f"MATCH (a:{quote(from_label)} {_match_map(from_key_field, tenant_field, key_param='from_key')}), "
         f"(b:{quote(to_label)} {_match_map(to_key_field, tenant_field, key_param='to_key')})\n"

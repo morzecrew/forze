@@ -11,6 +11,7 @@ from forze.application.contracts.secrets import SecretRef, SecretsPort
 from forze.application.contracts.tenancy.routed_client_base import (
     StructuredSecretRoutedTenantClientBase,
 )
+from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
 from forze.base.primitives.fingerprint import build_routing_fingerprint
 
@@ -77,6 +78,17 @@ class RoutedNeo4jClient(
     ) -> Neo4jClient:
         _ = tenant_id
         client = Neo4jClient()
+
+        # Fail closed on partial credentials: a username without a password (or vice versa) is a
+        # misconfigured secret, not an anonymous connection. Require both or neither — never
+        # silently downgrade to ``auth=None``.
+        if (creds.username is None) != (creds.password is None):
+            raise exc.configuration(
+                "Neo4j routing credentials must set both 'username' and 'password', "
+                "or neither (anonymous / URI-embedded auth).",
+                code="neo4j_partial_credentials",
+            )
+
         auth = (
             (creds.username, creds.password.get_secret_value())
             if creds.username is not None and creds.password is not None

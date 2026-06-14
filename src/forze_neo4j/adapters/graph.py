@@ -98,14 +98,14 @@ class Neo4jGraphAdapter(TenancyMixin):
     invariant that no edge ever crosses a tenant boundary.
     """
 
-    allow_raw_query: bool = True
+    allow_raw_query: bool = False
     """Whether the whole-query raw hatch :meth:`run` is permitted.
 
     The raw hatch is a **trusted-caller** escape: the caller writes the entire Cypher, so a
-    buggy or hostile query can read cross-tenant even though ``$tenant`` is bound. Set this
-    ``False`` to fail closed (code ``graph_raw_disabled``) in deployments that require
-    enforced tenancy — use the structured ports (full-path scoped) and :meth:`scoped_walk`
-    instead.
+    buggy or hostile query can read cross-tenant even though ``$tenant`` is bound. It is
+    therefore **disabled by default** (fail closed, code ``graph_raw_disabled``); set this
+    ``True`` to opt in where trusted raw Cypher is genuinely needed — otherwise use the
+    structured ports (full-path scoped) and :meth:`scoped_walk` instead.
     """
 
     # ....................... #

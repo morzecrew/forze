@@ -1,9 +1,10 @@
 """Unit tests for forze_neo4j execution deps (module + factory)."""
 
 from unittest.mock import MagicMock
+from uuid import uuid4
 
 import pytest
-from pydantic import BaseModel
+from pydantic import BaseModel, SecretStr
 
 from forze.application.contracts.graph import (
     GraphCommandDepKey,
@@ -21,7 +22,11 @@ from forze_neo4j.execution.deps import (
     Neo4jDepsModule,
     Neo4jGraphConfig,
 )
-from forze_neo4j.kernel.client import Neo4jClient, RoutedNeo4jClient
+from forze_neo4j.kernel.client import (
+    Neo4jClient,
+    Neo4jRoutingCredentials,
+    RoutedNeo4jClient,
+)
 from tests.support.execution_context import context_from_deps
 
 
@@ -128,3 +133,22 @@ def test_dedicated_floor_rejects_shared_client() -> None:
             graphs={"g": Neo4jGraphConfig(tenant_aware=True)},
             required_tenant_isolation="dedicated",
         )
+
+
+def test_raw_query_disabled_by_default() -> None:
+    # The whole-query raw hatch is fail-closed by default (opt-in only).
+    assert Neo4jGraphConfig().allow_raw_query is False
+
+
+async def test_routed_client_rejects_partial_credentials() -> None:
+    # Fail closed: a username without a password (or vice versa) is a misconfigured secret,
+    # never a silent downgrade to anonymous auth.
+    client = RoutedNeo4jClient(
+        secrets=MagicMock(),
+        secret_ref_for_tenant={},
+        tenant_provider=lambda: None,
+    )
+    creds = Neo4jRoutingCredentials(uri=SecretStr("neo4j://h:7687"), username="u")
+
+    with pytest.raises(CoreException, match="neo4j_partial_credentials"):
+        await client.initialize_client(uuid4(), creds)

@@ -275,7 +275,10 @@ async def test_tenant_required_when_aware_without_provider_value() -> None:
 async def test_raw_query_binds_tenant_when_aware() -> None:
     tid = uuid4()
     adapter, client = _adapter(
-        rows=[], tenant_aware=True, tenant_provider=lambda: TenantIdentity(tenant_id=tid)
+        rows=[],
+        tenant_aware=True,
+        tenant_provider=lambda: TenantIdentity(tenant_id=tid),
+        allow_raw_query=True,
     )
 
     await adapter.run("MATCH (n {`tenant_id`: $tenant}) RETURN n", {"x": 1})
@@ -287,7 +290,9 @@ async def test_raw_query_binds_tenant_when_aware() -> None:
 @pytest.mark.asyncio
 async def test_raw_query_fails_closed_without_tenant() -> None:
     # A tenant-aware raw query with no bound tenant raises instead of running unscoped.
-    adapter, client = _adapter(rows=[], tenant_aware=True, tenant_provider=lambda: None)
+    adapter, client = _adapter(
+        rows=[], tenant_aware=True, tenant_provider=lambda: None, allow_raw_query=True
+    )
 
     with pytest.raises(CoreException):
         await adapter.run("MATCH (n) RETURN n")
@@ -297,7 +302,7 @@ async def test_raw_query_fails_closed_without_tenant() -> None:
 
 @pytest.mark.asyncio
 async def test_raw_query_passthrough_when_not_tenant_aware() -> None:
-    adapter, client = _adapter(rows=[])
+    adapter, client = _adapter(rows=[], allow_raw_query=True)
 
     await adapter.run("MATCH (n) RETURN n", {"x": 1})
 
@@ -312,6 +317,17 @@ async def test_raw_query_disabled_fails_closed() -> None:
 
     with pytest.raises(CoreException, match="graph_raw_disabled"):
         await adapter.run("MATCH (n) RETURN n")
+
+
+@pytest.mark.asyncio
+async def test_raw_query_disabled_by_default() -> None:
+    # Fail closed by default: the raw hatch is opt-in (allow_raw_query defaults to False).
+    adapter, client = _adapter(rows=[])
+
+    with pytest.raises(CoreException, match="graph_raw_disabled"):
+        await adapter.run("MATCH (n) RETURN n")
+
+    assert client.calls == []
 
     assert client.calls == []
 
