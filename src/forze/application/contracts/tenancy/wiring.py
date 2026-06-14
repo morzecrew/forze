@@ -16,16 +16,17 @@ from forze.base.primitives import StrKey, StrKeyMapping
 
 # ----------------------- #
 
-TenantIsolationMode = Literal["none", "row", "relation", "schema", "database"]
+TenantIsolationMode = Literal["none", "row", "schema", "database"]
 """Derived isolation tier for docs, diagnostics, and the ``required_isolation`` floor.
 
-The physical-strength ladder (weakest → strongest) is ``none < relation < row < schema <
-database``. The three tenant-discriminator tiers map to a deployment's mechanism:
+The physical-strength ladder (weakest → strongest) is ``none < row < schema < database``.
+Each tenant-discriminator tier maps to a deployment's mechanism:
 
 - ``row`` — shared resource, tenant discriminator embedded (column / key prefix / path
   prefix / graph property).
 - ``schema`` — separate logical namespace per tenant on a shared instance/connection
-  (DB schema, warehouse dataset/database, object-store bucket) resolved from the tenant.
+  (DB schema, warehouse dataset/database, object-store bucket, per-tenant collection)
+  resolved from the tenant via a dynamic namespace/relation resolver.
 - ``database`` — separate instance/credentials per tenant (a routed client). The only
   model safe for untrusted raw or self-scoping query paths.
 
@@ -65,19 +66,16 @@ deps module passes its ceiling as ``max_supported_isolation`` so a declared
 
 _ISOLATION_RANK: dict[TenantIsolationMode, int] = {
     "none": 0,
-    "relation": 1,
-    "row": 2,
-    "schema": 3,
-    "database": 4,
+    "row": 1,
+    "schema": 2,
+    "database": 3,
 }
 """Strength ordering for isolation modes (weakest → strongest).
 
-``relation`` and ``row`` are both logical (shared-store) isolation; ``row`` outranks
-``relation`` because every row physically carries the tenant tag, whereas relation-level
-scoping depends on a join/grant being applied. ``schema`` (a per-tenant namespace on a
-shared instance) is physically stronger than ``row`` but weaker than ``database`` (a
-separate instance/credentials per tenant), which is the only model safe for untrusted raw
-or self-scoping query paths.
+``row`` is shared-store isolation (every row physically carries the tenant tag). ``schema``
+(a per-tenant namespace on a shared instance, resolved from the tenant) is physically
+stronger than ``row`` but weaker than ``database`` (a separate instance/credentials per
+tenant), which is the only model safe for untrusted raw or self-scoping query paths.
 """
 
 
@@ -165,15 +163,13 @@ def derive_tenant_isolation_mode(
     *,
     client_is_routed: bool,
     routes: Sequence[TenancyRouteSpec],
-    has_relation_resolvers: bool = False,
     has_namespace_routing: bool = False,
 ) -> TenantIsolationMode:
     """Return the effective isolation tier implied by an integration's wiring.
 
-    Strongest applicable tier wins: a per-tenant routed *client* → ``database``; a
-    per-tenant *namespace* resolver (schema / dataset / bucket) → ``schema``; a row-level
-    ``tenant_aware`` route → ``row``; a dynamic relation resolver → ``relation``; else
-    ``none``.
+    Strongest applicable tier wins: a per-tenant routed *client* → ``database``; a dynamic
+    per-tenant *namespace* resolver (schema / dataset / bucket / collection) → ``schema``; a
+    row-level ``tenant_aware`` route → ``row``; else ``none``.
     """
 
     if client_is_routed:
@@ -184,9 +180,6 @@ def derive_tenant_isolation_mode(
 
     if any(r.tenant_aware for r in routes):
         return "row"
-
-    if has_relation_resolvers:
-        return "relation"
 
     return "none"
 
@@ -344,7 +337,6 @@ def validate_routed_client_tenancy_wiring(
     partition_key_detail: str,
     validation_failed_code: str,
     required_isolation: TenantIsolationMode | None = None,
-    has_relation_resolvers: bool = False,
     has_namespace_routing: bool = False,
     max_supported_isolation: TenantIsolationMode | None = None,
     log_warning: Callable[..., None] | None = None,
@@ -352,9 +344,9 @@ def validate_routed_client_tenancy_wiring(
     """Fail or warn when a routed client and per-route ``tenant_aware`` disagree.
 
     When ``required_isolation`` is set, also fail closed if the derived isolation tier
-    (from ``client_is_routed`` / ``has_namespace_routing`` / ``routes`` /
-    ``has_relation_resolvers``) is weaker than the declared floor, or exceeds
-    ``max_supported_isolation`` — see :func:`validate_required_isolation`.
+    (from ``client_is_routed`` / ``has_namespace_routing`` / ``routes``) is weaker than the
+    declared floor, or exceeds ``max_supported_isolation`` — see
+    :func:`validate_required_isolation`.
     """
 
     if client_is_routed and not partition_key_set:
@@ -371,7 +363,6 @@ def validate_routed_client_tenancy_wiring(
         derived=derive_tenant_isolation_mode(
             client_is_routed=client_is_routed,
             routes=routes,
-            has_relation_resolvers=has_relation_resolvers,
             has_namespace_routing=has_namespace_routing,
         ),
         required=required_isolation,
@@ -448,11 +439,12 @@ class TenancyRouteGroup[ConfigT]:
     tenant_aware: Callable[[ConfigT], bool]
     """Return whether a route applies row-level (tenant_aware) filtering."""
 
-    namespace_resolver: Callable[[ConfigT], NamedResourceSpec | None] = (
+    namespace_resolver: Callable[[ConfigT], NamedResourceSpec | RelationSpec | None] = (
         lambda _config: None
     )
-    """Return the route's per-tenant namespace spec (bucket / schema / dataset / database),
-    or ``None``. A *dynamic* (callable) spec marks the ``schema`` isolation tier."""
+    """Return the route's per-tenant namespace spec — a ``NamedResourceSpec`` (bucket /
+    index / dataset) or a ``RelationSpec`` (schema/collection pair), or ``None``. A
+    *dynamic* (callable) spec marks the ``schema`` isolation tier."""
 
 
 # ....................... #
@@ -465,8 +457,6 @@ def validate_module_tenancy(
     groups: Sequence[TenancyRouteGroup[Any]],
     required_isolation: TenantIsolationMode | None,
     validation_failed_code: str,
-    max_supported_isolation: TenantIsolationMode | None = None,
-    has_relation_resolvers: bool = False,
     partition_key_set: bool = True,
     partition_key_detail: str = "",
     log_warning: Callable[..., None] | None = None,
@@ -474,12 +464,16 @@ def validate_module_tenancy(
     """Derive an integration's isolation tier from its route groups and enforce the floor.
 
     The single entry point every deps module uses: it flattens the groups into routes,
-    detects ``schema``-tier namespace routing (any dynamic namespace resolver), and
-    delegates to :func:`validate_routed_client_tenancy_wiring`. ``max_supported_isolation``
-    is the integration's capability ceiling (e.g. ``row`` for in-process backends,
-    ``database`` for object stores / networked DBs).
+    detects ``schema``-tier namespace routing (any *dynamic* per-tenant namespace/relation
+    resolver — a callable spec, whether a ``NamedResourceSpec`` bucket/index or a
+    ``RelationSpec`` collection), and delegates to
+    :func:`validate_routed_client_tenancy_wiring`. The capability ceiling
+    (``max_supported_isolation``) is the integration's entry in
+    :data:`INTEGRATION_ISOLATION_CEILINGS` (keyed by ``integration`` lower-cased) — the
+    single source of truth, so it cannot drift from a per-module literal.
     """
 
+    max_supported_isolation = INTEGRATION_ISOLATION_CEILINGS.get(integration.lower())
     routes: list[TenancyRouteSpec] = []
     has_namespace_routing = False
 
@@ -493,9 +487,11 @@ def validate_module_tenancy(
                 )
             )
 
+            # A *dynamic* (callable) namespace/relation resolver scopes the resource per
+            # tenant → schema tier. A static name (str) or static relation (tuple) does not.
             namespace = group.namespace_resolver(config)
 
-            if namespace is not None and not is_static_named_resource(namespace):
+            if callable(namespace):
                 has_namespace_routing = True
 
     validate_routed_client_tenancy_wiring(
@@ -506,7 +502,6 @@ def validate_module_tenancy(
         partition_key_detail=partition_key_detail,
         validation_failed_code=validation_failed_code,
         required_isolation=required_isolation,
-        has_relation_resolvers=has_relation_resolvers,
         has_namespace_routing=has_namespace_routing,
         max_supported_isolation=max_supported_isolation,
         log_warning=log_warning,

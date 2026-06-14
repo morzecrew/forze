@@ -5,7 +5,6 @@ require_temporal()
 # ....................... #
 
 from typing import Callable
-from uuid import UUID
 
 import attrs
 
@@ -15,7 +14,6 @@ from forze.application.contracts.resolution import (
     resolve_scoped_namespace,
 )
 from forze.application.contracts.tenancy import TenancyMixin
-from forze.base.exceptions import exc
 from forze.base.primitives import OnceCell, uuid4
 
 from ..kernel.client import TemporalClientPort
@@ -43,22 +41,6 @@ class TemporalBaseAdapter(TenancyMixin):
         eq=False,
         repr=False,
     )
-
-    # ....................... #
-
-    def _tenant_id_for_resolve(self) -> UUID | None:
-        if self.tenant_provider is None:
-            return None
-
-        tenant = self.tenant_provider()
-
-        if tenant is None:
-            if self.tenant_aware:
-                raise exc.internal("Tenant ID is required for the Temporal adapter")
-
-            return None
-
-        return tenant.tenant_id
 
     # ....................... #
 

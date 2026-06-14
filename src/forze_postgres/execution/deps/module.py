@@ -15,7 +15,6 @@ from forze.application.contracts.document import (
 )
 from forze.application.contracts.inbox import InboxDepKey
 from forze.application.contracts.outbox import OutboxCommandDepKey, OutboxQueryDepKey
-from forze.application.contracts.resolution import is_static_named_resource
 from forze.application.contracts.search import (
     FederatedSearchQueryDepKey,
     HubSearchQueryDepKey,
@@ -288,8 +287,6 @@ class PostgresDepsModule(DepsModule):
                             ],
                         )
 
-        has_namespace_routing = False
-
         if self.analytics:
             for name, analytics_cfg in self.analytics.items():
                 routes.append(
@@ -300,10 +297,24 @@ class PostgresDepsModule(DepsModule):
                     ),
                 )
 
-                if analytics_cfg.query_schema is not None and not is_static_named_resource(
-                    analytics_cfg.query_schema
-                ):
-                    has_namespace_routing = True
+        # Schema tier: any DYNAMIC (callable) per-tenant namespace/relation resolver — a
+        # document/search per-tenant schema, or an analytics query_schema.
+        namespace_specs: list[object] = []
+
+        for ro_cfg in (self.ro_documents or {}).values():
+            namespace_specs.append(ro_cfg.read)
+
+        for rw_cfg in (self.rw_documents or {}).values():
+            namespace_specs.extend([rw_cfg.read, rw_cfg.write])
+
+        for search_cfg2 in (self.searches or {}).values():
+            namespace_specs.append(search_cfg2.index)
+
+        for an_cfg in (self.analytics or {}).values():
+            if an_cfg.query_schema is not None:
+                namespace_specs.append(an_cfg.query_schema)
+
+        has_namespace_routing = any(callable(spec) for spec in namespace_specs)
 
         validate_postgres_tenancy_wiring(
             client_is_routed=isinstance(self.client, RoutedPostgresClient),

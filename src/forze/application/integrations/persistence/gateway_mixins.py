@@ -287,21 +287,11 @@ class FilterParserMixin(Generic[M]):
 
 
 class TenantResolvedRelationMixin(TenancyMixin):
-    """Tenant id for relation resolution and resolve-once caching."""
+    """Marker base for gateways that resolve per-tenant relations.
 
-    def _tenant_id_for_resolve(self) -> UUID | None:
-        if self.tenant_aware:
-            return self.require_tenant_if_aware()
-
-        if self.tenant_provider is None:
-            return None
-
-        tenant = self.tenant_provider()
-
-        if tenant is None:
-            return None
-
-        return tenant.tenant_id
+    The tenant-id-for-resolution logic now lives on :class:`TenancyMixin`
+    (:meth:`~TenancyMixin._tenant_id_for_resolve`), so this only documents intent.
+    """
 
 
 # ....................... #

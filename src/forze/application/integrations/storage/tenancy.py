@@ -64,6 +64,5 @@ def validate_storage_tenancy_wiring(
         ],
         required_isolation=required_isolation,
         validation_failed_code=validation_failed_code,
-        max_supported_isolation="database",
         log_warning=log_warning,
     )

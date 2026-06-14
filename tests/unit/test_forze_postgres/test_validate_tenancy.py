@@ -37,14 +37,15 @@ def test_derive_mode_row() -> None:
     )
 
 
-def test_derive_mode_relation() -> None:
+def test_derive_mode_schema() -> None:
+    # A per-tenant namespace resolver derives the schema tier (relation rung removed).
     assert (
         derive_postgres_tenant_isolation_mode(
             client_is_routed=False,
             routes=[],
-            has_relation_resolvers=True,
+            has_namespace_routing=True,
         )
-        == "relation"
+        == "schema"
     )
 
 

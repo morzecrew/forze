@@ -229,12 +229,12 @@ class MongoGateway[M: BaseModel](
 
         if self.tenant_aware:
             if self.tenant_provider is None:
-                raise exc.internal("Tenant provider is required for the gateway")
+                raise exc.configuration("Tenant provider is required for the gateway")
 
             tenant_id = self.tenant_provider()
 
             if tenant_id is None:
-                raise exc.internal("Tenant ID is required for the gateway")
+                raise exc.authentication("Tenant ID is required", code="tenant_required")
 
             cp[TENANT_ID_FIELD] = tenant_id
 
@@ -247,12 +247,12 @@ class MongoGateway[M: BaseModel](
 
         if self.tenant_aware:
             if self.tenant_provider is None:
-                raise exc.internal("Tenant provider is required for the gateway")
+                raise exc.configuration("Tenant provider is required for the gateway")
 
             tenant_id = self.tenant_provider()
 
             if tenant_id is None:
-                raise exc.internal("Tenant ID is required for the gateway")
+                raise exc.authentication("Tenant ID is required", code="tenant_required")
 
             out[TENANT_ID_FIELD] = tenant_id
 

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from typing import Any, Callable, Sequence
-from uuid import UUID
 
 import attrs
 from pydantic import BaseModel
@@ -60,20 +59,6 @@ class MeilisearchSearchGateway[M: BaseModel](TenancyMixin):
     )
 
     # ....................... #
-
-    def _tenant_id_for_resolve(self) -> UUID | None:
-        if self.tenant_provider is None:
-            return None
-
-        tenant = self.tenant_provider()
-
-        if tenant is None:
-            if self.tenant_aware:
-                raise exc.internal("Tenant ID is required for Meilisearch search")
-
-            return None
-
-        return tenant.tenant_id
 
     # ....................... #
 

@@ -145,16 +145,19 @@ class MongoDepsModule(DepsModule):
                     kind="document",
                     configs=self.ro_documents,
                     tenant_aware=lambda cfg: cfg.tenant_aware,
+                    namespace_resolver=lambda cfg: cfg.read,
                 ),
                 TenancyRouteGroup(
                     kind="document",
                     configs=self.rw_documents,
                     tenant_aware=lambda cfg: cfg.tenant_aware,
+                    namespace_resolver=lambda cfg: cfg.read,
                 ),
                 TenancyRouteGroup(
                     kind="search",
                     configs=self.searches,
                     tenant_aware=lambda cfg: cfg.tenant_aware,
+                    namespace_resolver=lambda cfg: cfg.index_name,
                 ),
                 TenancyRouteGroup(
                     kind="outbox",
@@ -164,7 +167,6 @@ class MongoDepsModule(DepsModule):
             ],
             required_isolation=self.required_tenant_isolation,
             validation_failed_code="mongo_tenancy_validation_failed",
-            max_supported_isolation="database",
         )
 
     # ....................... #

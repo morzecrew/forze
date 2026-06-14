@@ -70,7 +70,6 @@ class InngestDepsModule(DepsModule):
             groups=[],
             required_isolation=self.required_tenant_isolation,
             validation_failed_code="inngest_tenancy_validation_failed",
-            max_supported_isolation="database",
         )
 
     # ....................... #

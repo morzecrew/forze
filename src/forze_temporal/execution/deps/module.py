@@ -88,7 +88,6 @@ class TemporalDepsModule(DepsModule):
             ],
             required_isolation=self.required_tenant_isolation,
             validation_failed_code="temporal_tenancy_validation_failed",
-            max_supported_isolation="database",
         )
 
     # ....................... #
