@@ -308,6 +308,7 @@ class PostgresDepsModule(DepsModule):
                         name=str(name),
                         tenant_aware=outbox_cfg.tenant_aware,
                         kind="outbox",
+                        has_namespace_routing=callable(outbox_cfg.relation),
                     ),
                 )
 
@@ -318,6 +319,7 @@ class PostgresDepsModule(DepsModule):
                         name=str(name),
                         tenant_aware=inbox_cfg.tenant_aware,
                         kind="inbox",
+                        has_namespace_routing=callable(inbox_cfg.relation),
                     ),
                 )
 

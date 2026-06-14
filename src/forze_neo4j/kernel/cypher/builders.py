@@ -33,9 +33,9 @@ def quote(name: str) -> str:
 
 def _match_map(key_field: str, tenant_field: str | None, *, key_param: str = "key") -> str:
     if tenant_field:
-        return f"{{{key_field}: ${key_param}, {tenant_field}: $tenant}}"
+        return f"{{{quote(key_field)}: ${key_param}, {quote(tenant_field)}: $tenant}}"
 
-    return f"{{{key_field}: ${key_param}}}"
+    return f"{{{quote(key_field)}: ${key_param}}}"
 
 
 # ....................... #
@@ -45,7 +45,7 @@ def _tenant_only_map(tenant_field: str | None, *, interior: bool) -> str:
     """Inline ``{<tenant_field>: $tenant}`` for an adjacent (keyless) traversal node."""
 
     if tenant_field and interior:
-        return f" {{{tenant_field}: $tenant}}"
+        return f" {{{quote(tenant_field)}: $tenant}}"
 
     return ""
 

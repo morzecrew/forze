@@ -10,11 +10,11 @@ def test_quote_escapes_backticks() -> None:
 
 def test_get_vertex_plain_and_tenant() -> None:
     plain = builders.get_vertex("User", "id")
-    assert "MATCH (n:`User` {id: $key})" in plain
+    assert "MATCH (n:`User` {`id`: $key})" in plain
     assert "$tenant" not in plain
 
     scoped = builders.get_vertex("User", "id", tenant_field="tenant_id")
-    assert "{id: $key, tenant_id: $tenant}" in scoped
+    assert "{`id`: $key, `tenant_id`: $tenant}" in scoped
 
 
 def test_create_edge_merge_vs_create() -> None:
@@ -95,7 +95,7 @@ def test_neighbors_anchor_only_leaves_terminal_unscoped() -> None:
         edge_types=["FOLLOWS"],
         tenant_field="tenant_id",
     )
-    assert "{id: $key, tenant_id: $tenant}" in q
+    assert "{`id`: $key, `tenant_id`: $tenant}" in q
     assert "(m)" in q  # terminal node unconstrained
 
 
@@ -108,7 +108,7 @@ def test_neighbors_interior_scopes_terminal_node() -> None:
         tenant_field="tenant_id",
         interior=True,
     )
-    assert "(m {tenant_id: $tenant})" in q
+    assert "(m {`tenant_id`: $tenant})" in q
 
 
 def test_neighbors_interior_noop_without_tenant_field() -> None:
@@ -175,7 +175,7 @@ def test_scoped_walk_single_segment_plain() -> None:
         segments=[(GraphDirection.OUT, ["FOLLOWS"], 1, 3)],
         target_label="User",
     )
-    assert "MATCH path = (n0:`User` {id: $key})" in q
+    assert "MATCH path = (n0:`User` {`id`: $key})" in q
     assert "-[:`FOLLOWS`*1..3]->(m:`User`)" in q
     assert "RETURN DISTINCT properties(m) AS m" in q
     assert "$tenant" not in q  # no tenant field → no scoping
@@ -189,8 +189,8 @@ def test_scoped_walk_tenant_scoped_anchor_target_and_path() -> None:
         target_label="User",
         tenant_field="tenant_id",
     )
-    assert "(n0:`User` {id: $key, tenant_id: $tenant})" in q  # anchor scoped
-    assert "(m:`User` {tenant_id: $tenant})" in q  # target scoped
+    assert "(n0:`User` {`id`: $key, `tenant_id`: $tenant})" in q  # anchor scoped
+    assert "(m:`User` {`tenant_id`: $tenant})" in q  # target scoped
     assert "WHERE all(_n IN nodes(path) WHERE _n.`tenant_id` = $tenant)" in q  # interior
 
 
@@ -206,4 +206,4 @@ def test_scoped_walk_multi_segment_chains_with_junction() -> None:
         tenant_field="tenant_id",
     )
     # segment 1 → anonymous junction () → segment 2 → typed target
-    assert "-[:`FOLLOWS`*1..1]->()<-[:`LIKES`*1..2]-(m:`Post` {tenant_id: $tenant})" in q
+    assert "-[:`FOLLOWS`*1..1]->()<-[:`LIKES`*1..2]-(m:`Post` {`tenant_id`: $tenant})" in q

@@ -105,7 +105,7 @@ async def test_get_vertex_materializes() -> None:
     assert isinstance(out, UserRead)
     assert out.id == "a" and out.name == "Alice"
     query, params = client.calls[-1]
-    assert "MATCH (n:`User` {id: $key})" in query
+    assert "MATCH (n:`User` {`id`: $key})" in query
     assert params == {"key": "a"}
 
 
@@ -192,7 +192,7 @@ async def test_tenant_aware_stamps_and_filters() -> None:
     )
     await adapter.get_vertex(VertexRef(kind="User", key="a"))
     query, params = client.calls[-1]
-    assert "tenant_id: $tenant" in query
+    assert "`tenant_id`: $tenant" in query
     assert params["tenant"] == str(tid)
 
     await adapter.create_vertex("User", UserCreate(id="a"))
@@ -215,7 +215,7 @@ async def test_full_path_isolation_constrains_traversal_interior() -> None:
         VertexRef(kind="User", key="a"), GraphDirection.OUT, frozenset({"FOLLOWS"}), limit=10
     )
     query, _ = client.calls[-1]
-    assert "(m {tenant_id: $tenant})" in query
+    assert "(m {`tenant_id`: $tenant})" in query
 
 
 @pytest.mark.asyncio
@@ -232,8 +232,8 @@ async def test_anchor_isolation_leaves_traversal_interior_open() -> None:
         VertexRef(kind="User", key="a"), GraphDirection.OUT, frozenset({"FOLLOWS"}), limit=10
     )
     query, _ = client.calls[-1]
-    assert "(m {tenant_id: $tenant})" not in query
-    assert "{id: $key, tenant_id: $tenant}" in query  # anchor still scoped
+    assert "(m {`tenant_id`: $tenant})" not in query
+    assert "{`id`: $key, `tenant_id`: $tenant}" in query  # anchor still scoped
 
 
 @pytest.mark.asyncio
@@ -252,7 +252,7 @@ async def test_raw_query_binds_tenant_when_aware() -> None:
         rows=[], tenant_aware=True, tenant_provider=lambda: TenantIdentity(tenant_id=tid)
     )
 
-    await adapter.run("MATCH (n {tenant_id: $tenant}) RETURN n", {"x": 1})
+    await adapter.run("MATCH (n {`tenant_id`: $tenant}) RETURN n", {"x": 1})
 
     _, params = client.calls[-1]
     assert params == {"x": 1, "tenant": str(tid)}
@@ -313,8 +313,8 @@ async def test_scoped_walk_builds_tenant_scoped_query_and_materializes() -> None
 
     query, params = client.calls[-1]
     # anchor + target + full-path tenant constraint, all adapter-owned
-    assert "(n0:`User` {id: $key, tenant_id: $tenant})" in query
-    assert "(m:`User` {tenant_id: $tenant})" in query
+    assert "(n0:`User` {`id`: $key, `tenant_id`: $tenant})" in query
+    assert "(m:`User` {`tenant_id`: $tenant})" in query
     assert "WHERE all(_n IN nodes(path) WHERE _n.`tenant_id` = $tenant)" in query
     assert params == {"key": "a", "limit": 10, "tenant": str(tid)}
     assert [u.id for u in out] == ["b", "c"]
