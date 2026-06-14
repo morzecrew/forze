@@ -27,6 +27,9 @@ from ..domain.models.tenant import (
 
 # ----------------------- #
 
+_BINDING_PAGE_SIZE = 200
+"""Page size for fully draining membership bindings (selector / admin lists must not truncate)."""
+
 
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
@@ -140,17 +143,39 @@ class TenantManagementAdapter(TenantManagementPort):
 
     # ....................... #
 
+    async def _all_bindings(self, filters: Any) -> list[ReadPrincipalTenantBinding]:
+        """Page through *every* binding matching *filters*.
+
+        Membership lists feed the tenant selector and admin member list, so they must drain to
+        exhaustion rather than silently truncate at the default page size.
+        """
+
+        hits: list[ReadPrincipalTenantBinding] = []
+        offset = 0
+
+        while True:
+            page = await self.binding_qry.find_many(
+                filters=filters,
+                pagination={"limit": _BINDING_PAGE_SIZE, "offset": offset},
+            )
+            hits.extend(page.hits)
+
+            if len(page.hits) < _BINDING_PAGE_SIZE:
+                break
+
+            offset += _BINDING_PAGE_SIZE
+
+        return hits
+
+    # ....................... #
+
     async def list_principal_tenants(
         self,
         principal_id: UUID,
     ) -> Sequence[TenantIdentity]:
-        page = await self.binding_qry.find_many(
-            filters={"$values": {"principal_id": principal_id}},
-        )
-
         out: list[TenantIdentity] = []
 
-        for bind in page.hits:
+        for bind in await self._all_bindings({"$values": {"principal_id": principal_id}}):
             tenant = await self.tenant_qry.get(bind.tenant_id)
 
             if tenant.is_active:
@@ -166,11 +191,9 @@ class TenantManagementAdapter(TenantManagementPort):
         self,
         tenant_id: UUID,
     ) -> Sequence[UUID]:
-        page = await self.binding_qry.find_many(
-            filters={"$values": {"tenant_id": tenant_id}},
-        )
+        bindings = await self._all_bindings({"$values": {"tenant_id": tenant_id}})
 
-        return [bind.principal_id for bind in page.hits]
+        return [bind.principal_id for bind in bindings]
 
     # ....................... #
 

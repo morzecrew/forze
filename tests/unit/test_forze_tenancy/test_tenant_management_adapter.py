@@ -12,7 +12,10 @@ from forze.application.contracts.base import Page
 from forze.application.contracts.cache import CacheSpec
 from forze.application.contracts.document import DocumentSpec
 from forze.base.exceptions import CoreException
-from forze_identity.tenancy.adapters.management import TenantManagementAdapter
+from forze_identity.tenancy.adapters.management import (
+    _BINDING_PAGE_SIZE,
+    TenantManagementAdapter,
+)
 from forze_identity.tenancy.application.specs import (
     principal_tenant_binding_spec,
     tenant_spec,
@@ -286,6 +289,29 @@ async def test_list_tenant_principals_returns_binding_principals() -> None:
     result = await adapter.list_tenant_principals(tenant)
 
     assert list(result) == [p1, p2]
-    adapter.binding_qry.find_many.assert_awaited_once_with(
-        filters={"$values": {"tenant_id": tenant}},
+    _, kwargs = adapter.binding_qry.find_many.await_args
+    assert kwargs["filters"] == {"$values": {"tenant_id": tenant}}
+
+
+@pytest.mark.asyncio
+async def test_membership_lists_drain_all_pages() -> None:
+    # A full page must trigger another fetch — memberships beyond the first page are not dropped.
+    tenant = uuid4()
+    full = [MagicMock(principal_id=uuid4()) for _ in range(_BINDING_PAGE_SIZE)]
+    tail = [MagicMock(principal_id=uuid4()) for _ in range(3)]
+
+    adapter = _adapter()
+    adapter.binding_qry.find_many = AsyncMock(
+        side_effect=[
+            Page(hits=full, count=0, page=1, size=_BINDING_PAGE_SIZE),
+            Page(hits=tail, count=0, page=2, size=_BINDING_PAGE_SIZE),
+        ],
     )
+
+    result = await adapter.list_tenant_principals(tenant)
+
+    assert len(result) == _BINDING_PAGE_SIZE + 3
+    assert adapter.binding_qry.find_many.await_count == 2
+    # Second fetch advanced the offset by one page.
+    _, kwargs = adapter.binding_qry.find_many.await_args_list[1]
+    assert kwargs["pagination"] == {"limit": _BINDING_PAGE_SIZE, "offset": _BINDING_PAGE_SIZE}
