@@ -231,7 +231,12 @@ class ScopedWalkParams:
     for multi-segment patterns the fixed traversal ports cannot express.
     """
 
-    steps: tuple[GraphPathStep, ...] = attrs.field(converter=tuple)
+    steps: tuple[GraphPathStep, ...] = attrs.field(
+        converter=tuple,
+        validator=attrs.validators.deep_iterable(
+            member_validator=attrs.validators.instance_of(GraphPathStep),
+        ),
+    )
     """Ordered segments; each is a variable-length hop chained to the next."""
 
     target_kind: str

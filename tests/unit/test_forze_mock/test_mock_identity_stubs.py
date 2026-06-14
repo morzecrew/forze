@@ -35,6 +35,7 @@ from forze.application.contracts.authz.value_objects import (
 )
 from forze.application.contracts.secrets import SecretsDepKey, SecretRef
 from forze.application.contracts.tenancy import (
+    NoopTenantProvisioner,
     TenantManagementDepKey,
     TenantResolverDepKey,
 )
@@ -230,6 +231,18 @@ async def test_tenant_resolver_requested_tenant_requires_membership() -> None:
 
     assert excinfo.value.kind is ExceptionKind.AUTHENTICATION
     assert excinfo.value.code == "tenant_mismatch"
+
+
+async def test_deprovision_missing_tenant_raises_like_real_adapter() -> None:
+    # Parity: the real adapter loads the tenant (a document ``get`` that raises) before
+    # tearing down infra, so the mock must fail closed on a missing tenant too.
+    state = MockState()
+    mgmt = MockTenantManagementPort(state=state, provisioner=NoopTenantProvisioner())
+
+    with pytest.raises(CoreException) as excinfo:
+        await mgmt.deprovision_tenant(uuid4())
+
+    assert excinfo.value.kind is ExceptionKind.NOT_FOUND
 
 
 async def test_tenant_resolver_resolves_member_requested_tenant() -> None:

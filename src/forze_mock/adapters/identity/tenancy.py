@@ -178,7 +178,11 @@ class MockTenantManagementPort(_TenantRouteStore, TenantManagementPort):
 
         with self.state.lock:
             entry = self._tenants().get(str(tenant_id))
-            key = str(entry["tenant_key"]) if entry else None
+            if entry is None:
+                # Mirror the real adapter, which loads the tenant (a document ``get``
+                # that raises on a missing row) before tearing down its infrastructure.
+                raise exc.not_found(f"Tenant {tenant_id!r} not found")
+            key = str(entry["tenant_key"])
 
         await self.provisioner.deprovision(
             TenantIdentity(tenant_id=tenant_id, tenant_key=key)

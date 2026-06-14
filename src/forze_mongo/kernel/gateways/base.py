@@ -231,10 +231,9 @@ class MongoGateway[M: BaseModel](
             if self.tenant_provider is None:
                 raise exc.configuration("Tenant provider is required for the gateway")
 
-            tenant_id = self.tenant_provider()
-
-            if tenant_id is None:
-                raise exc.authentication("Tenant ID is required", code="tenant_required")
+            # Canonical extractor: returns the tenant UUID (not the TenantIdentity),
+            # so TENANT_ID_FIELD carries the same shape writes stamp and Mongo matches.
+            tenant_id = self.require_tenant_if_aware()
 
             cp[TENANT_ID_FIELD] = tenant_id
 
@@ -249,10 +248,8 @@ class MongoGateway[M: BaseModel](
             if self.tenant_provider is None:
                 raise exc.configuration("Tenant provider is required for the gateway")
 
-            tenant_id = self.tenant_provider()
-
-            if tenant_id is None:
-                raise exc.authentication("Tenant ID is required", code="tenant_required")
+            # Canonical extractor: the tenant UUID, not the TenantIdentity object.
+            tenant_id = self.require_tenant_if_aware()
 
             out[TENANT_ID_FIELD] = tenant_id
 

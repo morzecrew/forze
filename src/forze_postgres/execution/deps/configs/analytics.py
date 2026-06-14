@@ -6,7 +6,7 @@ import attrs
 
 from forze.application.contracts.resolution import (
     NamedResourceSpec,
-    coerce_named_resource_spec,
+    coerce_optional_named_resource_spec,
 )
 from forze.application.contracts.tenancy import TenantAwareIntegrationConfig
 from forze.application.integrations.analytics import assert_tenant_param_referenced
@@ -14,12 +14,6 @@ from forze.base.exceptions import exc
 from forze.base.primitives import MappingConverter, StrKeyMapping
 from forze_postgres.kernel.relation import RelationSpec, coerce_relation_spec
 
-
-def _optional_named_resource(value: object) -> NamedResourceSpec | None:
-    if value is None:
-        return None
-
-    return coerce_named_resource_spec(value)
 
 if TYPE_CHECKING:
     from forze.application.contracts.analytics import AnalyticsSpec
@@ -85,7 +79,7 @@ class PostgresAnalyticsConfig(TenantAwareIntegrationConfig):
 
     query_schema: NamedResourceSpec | None = attrs.field(
         default=None,
-        converter=_optional_named_resource,
+        converter=coerce_optional_named_resource_spec,
     )
     """Per-tenant query schema — a static name or ``(tenant_id) -> str`` resolver.
 

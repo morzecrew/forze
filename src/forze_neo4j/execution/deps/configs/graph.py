@@ -25,7 +25,10 @@ class Neo4jGraphConfig(TenantAwareIntegrationConfig):
     tenant_property: str = "tenant_id"
     """Vertex/edge property carrying the tenant id when ``tenant_aware``."""
 
-    traversal_isolation: Literal["anchor", "full-path"] = "full-path"
+    traversal_isolation: Literal["anchor", "full-path"] = attrs.field(
+        default="full-path",
+        validator=attrs.validators.in_(("anchor", "full-path")),
+    )
     """How far tenant scoping reaches on ``neighbors``/``expand``/``shortest_path``.
 
     ``full-path`` (default) constrains every node on the traversal so a cross-tenant edge

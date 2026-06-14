@@ -1,6 +1,6 @@
 """Shared tenancy wiring validation for integration deps modules."""
 
-from typing import Any, Callable, Literal, Protocol, Sequence, TypeVar
+from typing import Any, Callable, Literal, Protocol, Sequence
 
 import attrs
 
@@ -159,10 +159,6 @@ def derive_tenant_isolation_mode(
 
     return "none"
 
-
-# ....................... #
-
-ConfigT = TypeVar("ConfigT")
 
 # ....................... #
 

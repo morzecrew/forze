@@ -32,7 +32,9 @@ async def resolve_scoped_namespace(
     *,
     tenant_id: UUID | None,
     cell: OnceCell[str],
-    resolver: Callable[[NamedResourceSpec, UUID | None], Awaitable[str]] = resolve_value,
+    resolver: Callable[
+        [NamedResourceSpec, UUID | None], Awaitable[str]
+    ] = resolve_value,
 ) -> str:
     """Resolve a per-tenant namespace spec to a name, memoizing only static specs.
 
