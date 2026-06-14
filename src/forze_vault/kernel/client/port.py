@@ -32,3 +32,24 @@ class VaultClientPort(Protocol):
         """Return ``(message, ok)``; must not raise."""
 
         ...  # pragma: no cover
+
+    def transit_generate_data_key(
+        self,
+        key_name: str,
+    ) -> Awaitable[tuple[bytes, str]]:
+        """Generate a Transit data key, returning ``(plaintext, wrapped_ciphertext)``.
+
+        ``plaintext`` is the raw data key; ``wrapped_ciphertext`` is Vault's
+        ``vault:vN:...`` token, which only the named Transit key can decrypt.
+        """
+
+        ...  # pragma: no cover
+
+    def transit_decrypt(
+        self,
+        key_name: str,
+        ciphertext: str,
+    ) -> Awaitable[bytes]:
+        """Decrypt a Transit ``vault:vN:...`` token, returning the raw plaintext."""
+
+        ...  # pragma: no cover

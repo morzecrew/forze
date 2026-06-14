@@ -7,6 +7,7 @@ require_vault()
 # ....................... #
 
 import asyncio
+import base64
 import contextlib
 from typing import Any, cast, final
 
@@ -255,6 +256,94 @@ class VaultClient(VaultClientPort):
         """
 
         return await asyncio.to_thread(self._kv_exists_sync, path)
+
+    # ....................... #
+
+    def _transit_generate_data_key_sync(self, key_name: str) -> tuple[bytes, str]:
+        client = self._require_client()
+
+        try:
+            response = client.secrets.transit.generate_data_key(
+                name=key_name,
+                key_type="plaintext",
+                mount_point=self.config.transit_mount,
+            )
+
+        except InvalidPath as e:
+            raise exc.not_found(
+                f"No Transit key {key_name!r}",
+                details={"key": key_name},
+            ) from e
+
+        except VaultError as e:
+            raise exc.infrastructure(
+                f"Vault transit generate-data-key failed for {key_name!r}: {e}"
+            ) from e
+
+        except Exception as e:
+            raise exc.infrastructure(
+                f"Vault transit generate-data-key failed for {key_name!r}: {e}"
+            ) from e
+
+        data = response.get("data", {})
+        plaintext_b64 = data.get("plaintext")
+        ciphertext = data.get("ciphertext")
+
+        if not isinstance(plaintext_b64, str) or not isinstance(ciphertext, str):
+            raise exc.infrastructure(
+                f"Vault transit data key for {key_name!r} has unexpected payload shape",
+            )
+
+        return base64.b64decode(plaintext_b64), ciphertext
+
+    # ....................... #
+
+    async def transit_generate_data_key(self, key_name: str) -> tuple[bytes, str]:
+        return await asyncio.to_thread(self._transit_generate_data_key_sync, key_name)
+
+    # ....................... #
+
+    def _transit_decrypt_sync(self, key_name: str, ciphertext: str) -> bytes:
+        client = self._require_client()
+
+        try:
+            response = client.secrets.transit.decrypt_data(
+                name=key_name,
+                ciphertext=ciphertext,
+                mount_point=self.config.transit_mount,
+            )
+
+        except InvalidPath as e:
+            raise exc.not_found(
+                f"No Transit key {key_name!r}",
+                details={"key": key_name},
+            ) from e
+
+        except VaultError as e:
+            raise exc.infrastructure(
+                f"Vault transit decrypt failed for {key_name!r}: {e}"
+            ) from e
+
+        except Exception as e:
+            raise exc.infrastructure(
+                f"Vault transit decrypt failed for {key_name!r}: {e}"
+            ) from e
+
+        plaintext_b64 = response.get("data", {}).get("plaintext")
+
+        if not isinstance(plaintext_b64, str):
+            raise exc.infrastructure(
+                f"Vault transit decrypt for {key_name!r} has unexpected payload shape",
+            )
+
+        return base64.b64decode(plaintext_b64)
+
+    # ....................... #
+
+    async def transit_decrypt(self, key_name: str, ciphertext: str) -> bytes:
+        return await asyncio.to_thread(
+            self._transit_decrypt_sync, key_name, ciphertext
+        )
 
     # ....................... #
 
