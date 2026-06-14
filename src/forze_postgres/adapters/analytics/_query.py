@@ -77,6 +77,25 @@ class PostgresAnalyticsQueryMixin[R: BaseModel, Ing: BaseModel]:
     # ....................... #
 
     def _tenant_id_for_resolve(self) -> UUID | None:
+        # Fail closed on a tenant-aware route with no bound tenant — same as
+        # ``bind_tenant_param`` and the canonical ``TenancyMixin._tenant_id_for_resolve`` —
+        # so a dynamic ``query_schema`` resolver is never invoked with ``None`` ahead of the
+        # authentication error. A non-tenant-aware route keeps the soft passthrough (a dynamic
+        # resolver still scopes per tenant when one is bound).
+        if self.config.tenant_aware:
+            if self.tenant_provider is None:
+                raise exc.configuration(
+                    "Tenant provider is required for a tenant-aware analytics route.",
+                    code="analytics_tenant_provider_missing",
+                )
+
+            tenant = self.tenant_provider()
+
+            if tenant is None:
+                raise exc.authentication("Tenant ID is required", code="tenant_required")
+
+            return tenant.tenant_id
+
         return soft_tenant_id(self.tenant_provider)
 
     # ....................... #
