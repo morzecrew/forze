@@ -5,11 +5,14 @@ from typing import TYPE_CHECKING, Any, TypeVar, final
 import attrs
 from pydantic import BaseModel
 
+from forze.application.contracts.crypto import KeyringDepKey
 from forze.application.contracts.document import (
+    DocumentCodecs,
     DocumentCommandDepPort,
     DocumentQueryDepPort,
 )
 from forze.application.execution.domain import domain_dispatcher_provider
+from forze.application.integrations.crypto import encrypting_document_codecs
 from forze.application.integrations.document import DocumentCache
 from forze.base.exceptions import exc
 from forze.domain.models import BaseDTO, Document
@@ -34,6 +37,29 @@ U = TypeVar("U", bound=BaseDTO)
 # ....................... #
 
 
+def _resolve_codecs(
+    ctx: "ExecutionContext",
+    spec: "DocumentSpec[Any, Any, Any, Any]",
+) -> DocumentCodecs[Any, Any, Any, Any]:
+    """Spec codecs, wrapped for field encryption when ``encrypted_fields`` is set."""
+
+    codecs = spec.resolved_codecs
+
+    if spec.encrypted_fields:
+        codecs = encrypting_document_codecs(
+            codecs,
+            fields=spec.encrypted_fields,
+            cipher=ctx.deps.provide(KeyringDepKey),
+            tenant_provider=ctx.inv_ctx.get_tenant,
+            label=str(spec.name),
+        )
+
+    return codecs
+
+
+# ....................... #
+
+
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class ConfigurablePostgresReadOnlyDocument(DocumentQueryDepPort[R]):
@@ -53,7 +79,7 @@ class ConfigurablePostgresReadOnlyDocument(DocumentQueryDepPort[R]):
     ) -> PostgresDocumentAdapter[R, Any, Any, Any]:
         cache = ctx.cache(spec.cache) if spec.cache is not None else None
 
-        codecs = spec.resolved_codecs
+        codecs = _resolve_codecs(ctx, spec)
 
         read = read_gw(
             ctx,
@@ -119,7 +145,7 @@ class ConfigurablePostgresDocument(DocumentCommandDepPort[R, D, C, U]):
                 "Write relation is required for non read-only documents."
             )
 
-        codecs = spec.resolved_codecs
+        codecs = _resolve_codecs(ctx, spec)
 
         read = read_gw(
             ctx,

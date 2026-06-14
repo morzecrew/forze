@@ -4,7 +4,7 @@ from forze.base.crypto import Aead
 
 from ..deps import DepKey
 from .directory import KeyDirectoryPort
-from .ports import BytesCipherPort, KeyManagementPort
+from .ports import KeyManagementPort, KeyringPort
 
 # ----------------------- #
 
@@ -23,5 +23,5 @@ KeyDirectoryDepKey = DepKey[KeyDirectoryPort]("crypto.key_directory")
 
 # ....................... #
 
-KeyringDepKey = DepKey[BytesCipherPort]("crypto.keyring")
-"""Key used to register the value-level :class:`BytesCipherPort` (keyring)."""
+KeyringDepKey = DepKey[KeyringPort]("crypto.keyring")
+"""Key used to register the keyring (async value cipher + sync field cipher)."""

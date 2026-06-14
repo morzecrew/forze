@@ -6,7 +6,7 @@ require_firestore()
 
 # ....................... #
 
-from typing import Any, Sequence, cast, final
+from typing import Any, Sequence, final
 from uuid import UUID
 
 import attrs
@@ -17,6 +17,7 @@ from forze.application.execution.resilience import (
     default_resilience_executor,
     occ_retry,
 )
+from forze.application.integrations.persistence import DocumentWriteCodecMixin
 from forze.base.exceptions import CoreException, ExceptionKind, exc
 from forze.base.primitives import JsonDict
 from forze.base.serialization import ModelCodec
@@ -34,7 +35,8 @@ from .read import FirestoreReadGateway
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class FirestoreWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
-    FirestoreGateway[D]
+    DocumentWriteCodecMixin[D],
+    FirestoreGateway[D],
 ):
     """Write gateway for Firestore documents with optimistic concurrency."""
 
@@ -205,7 +207,7 @@ class FirestoreWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
     @occ_retry
     async def create(self, payload: C, *, id: UUID | None = None) -> D:
         model = self._from_cdto(payload, id)
-        data = self.read_codec.encode_persistence_mapping(model)
+        data = await self._encode_domain_one(model)
         data = self.adapt_payload_for_write(data, create=True)
         coll = await self.coll()
         await self.client.set_document(coll, self._storage_pk(model.id), data)
@@ -229,7 +231,7 @@ class FirestoreWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
             return []
 
         models = self._from_cdto_many(payloads)
-        raw_payloads = self.read_codec.encode_persistence_mapping_many(models)
+        raw_payloads = await self._encode_domain_many(models)
         write_payloads = self.adapt_many_payload_for_write(raw_payloads, create=True)
         documents = [
             (self._storage_pk(m.id), dict(p))
@@ -276,7 +278,7 @@ class FirestoreWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
             return current, diff
 
         diff = self._bump_rev(current, diff)
-        merged = self.read_codec.encode_persistence_mapping(current)
+        merged = await self._encode_domain_one(current)
         merged.update(self.adapt_payload_for_write(diff, create=False))
 
         coll = await self.coll()
@@ -297,10 +299,7 @@ class FirestoreWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
         rev: int | None = None,
     ) -> tuple[D, JsonDict]:
         self._require_update_cmd()
-        update_data = self._patch_codec().encode_persistence_mapping(
-            cast(Any, dto),
-            exclude={"unset": True},
-        )
+        update_data = await self._encode_patch_one(dto)
 
         return await self._patch(pk, update_data, rev=rev)
 

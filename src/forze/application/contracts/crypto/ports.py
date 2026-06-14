@@ -141,3 +141,16 @@ class FieldCipherPort(Protocol):
         """
 
         ...  # pragma: no cover
+
+
+# ....................... #
+
+
+class KeyringPort(BytesCipherPort, FieldCipherPort, Protocol):
+    """The keyring's full surface: the async value cipher plus the sync field path.
+
+    A single registration (``KeyringDepKey``) serves both consumers — object
+    storage uses the async :class:`BytesCipherPort` half, the field codec uses the
+    :class:`FieldCipherPort` half. The :class:`~forze.application.integrations.crypto.Keyring`
+    implements all of it.
+    """

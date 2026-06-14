@@ -225,6 +225,115 @@ class ReadValidationCodecMixin(Generic[M]):
             trust_source=eff_trust,
         )
 
+    # ....................... #
+
+    async def _prepare_decode(self, rows: Sequence[JsonDict]) -> None:
+        """Run the read codec's async decrypt pre-pass, if it has one.
+
+        For a field-encrypting codec this unwraps the data keys named by *rows*'
+        encrypted fields so the subsequent synchronous decode hits the cache. A
+        plain codec has no ``prepare_decrypt`` and this is a no-op.
+        """
+
+        prepare = getattr(self._codec_for(), "prepare_decrypt", None)
+
+        if prepare is not None:
+            await prepare(rows)
+
+    # ....................... #
+
+    async def _adecode_row(
+        self,
+        row: JsonDict,
+        *,
+        model: type[BaseModel] | None = None,
+        trust_source: bool | None = None,
+    ) -> Any:
+        """Async decrypt pre-pass + synchronous single-row decode."""
+
+        await self._prepare_decode((row,))
+        return self._decode_row(row, model=model, trust_source=trust_source)
+
+    # ....................... #
+
+    async def _adecode_rows(
+        self,
+        rows: Sequence[JsonDict],
+        *,
+        model: type[BaseModel] | None = None,
+        trust_source: bool | None = None,
+    ) -> Any:
+        """Async decrypt pre-pass + synchronous multi-row decode."""
+
+        await self._prepare_decode(rows)
+        return self._decode_rows(rows, model=model, trust_source=trust_source)
+
+
+# ....................... #
+
+
+class DocumentWriteCodecMixin(Generic[D]):
+    """Encode helpers that warm the field cipher before synchronous encode.
+
+    Shared by the Postgres / Mongo / Firestore write gateways so the
+    sync-codec-vs-async-KMS bridge is identical across backends: each helper runs
+    the async warm pre-pass, then the synchronous ``encode_persistence_mapping``.
+    A plain (non-encrypting) codec has no ``prepare_encrypt`` and the warm is a
+    no-op. ``read_codec`` is the domain codec; ``_patch_codec`` is supplied by the
+    concrete gateway.
+    """
+
+    if TYPE_CHECKING:
+
+        @property
+        def read_codec(self) -> ModelCodec[D, Any]: ...
+
+        def _patch_codec(self) -> ModelCodec[Any, Any]: ...
+
+    # ....................... #
+
+    async def _prepare_encode(self) -> None:
+        """Warm the active data key so the synchronous encode can encrypt fields.
+
+        The domain and update codecs share one keyring, so warming once covers
+        both the create/upsert (domain) and update (patch) encode paths.
+        """
+
+        prepare = getattr(self.read_codec, "prepare_encrypt", None)
+
+        if prepare is not None:
+            await prepare()
+
+    # ....................... #
+
+    async def _encode_domain_one(self, model: D) -> JsonDict:
+        await self._prepare_encode()
+        return self.read_codec.encode_persistence_mapping(model)
+
+    # ....................... #
+
+    async def _encode_domain_many(self, models: Sequence[D]) -> list[JsonDict]:
+        await self._prepare_encode()
+        return self.read_codec.encode_persistence_mapping_many(models)
+
+    # ....................... #
+
+    async def _encode_patch_one(self, dto: Any) -> JsonDict:
+        await self._prepare_encode()
+        return self._patch_codec().encode_persistence_mapping(
+            dto,
+            exclude={"unset": True},
+        )
+
+    # ....................... #
+
+    async def _encode_patch_many(self, dtos: Any) -> list[JsonDict]:
+        await self._prepare_encode()
+        return self._patch_codec().encode_persistence_mapping_many(
+            dtos,
+            exclude={"unset": True},
+        )
+
 
 # ....................... #
 

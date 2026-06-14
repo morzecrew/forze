@@ -115,7 +115,7 @@ class MongoReadGateway[M: BaseModel](
 
         data = self._from_storage_doc(raw)
 
-        return self._decode_row(data)
+        return await self._adecode_row(data)
 
     # ....................... #
 
@@ -152,7 +152,7 @@ class MongoReadGateway[M: BaseModel](
 
         ordered = [by_pk[self._storage_pk(pk)] for pk in pks]
 
-        return self._decode_rows(ordered)
+        return await self._adecode_rows(ordered)
 
     # ....................... #
 
@@ -240,12 +240,12 @@ class MongoReadGateway[M: BaseModel](
         data = self._from_storage_doc(raw)
 
         if return_model is not None:
-            return self._decode_row(data, model=return_model)
+            return await self._adecode_row(data, model=return_model)
 
         if return_fields is not None:
             return self.return_subset(data, return_fields)
 
-        return self._decode_row(data)
+        return await self._adecode_row(data)
 
     # ....................... #
 
@@ -408,12 +408,12 @@ class MongoReadGateway[M: BaseModel](
         normalized = [self._from_storage_doc(row) for row in rows]
 
         if return_model is not None:
-            return self._decode_rows(normalized, model=return_model)
+            return await self._adecode_rows(normalized, model=return_model)
 
         if return_fields is not None:
             return [self.return_subset(row, return_fields) for row in normalized]
 
-        return self._decode_rows(normalized)
+        return await self._adecode_rows(normalized)
 
     # ....................... #
 
@@ -502,7 +502,7 @@ class MongoReadGateway[M: BaseModel](
             rows = [_empty_global_aggregate_row(parsed_)]
 
         if return_model is not None:
-            return self._decode_rows(rows, model=return_model)
+            return await self._adecode_rows(rows, model=return_model)
 
         return rows
 
@@ -686,12 +686,12 @@ class MongoReadGateway[M: BaseModel](
         raw_normalized = [self._from_storage_doc(row) for row in rows]
 
         if return_model is not None:
-            return self._decode_rows(raw_normalized, model=return_model)
+            return await self._adecode_rows(raw_normalized, model=return_model)
 
         if return_fields is not None:
             return [self.return_subset(row, return_fields) for row in raw_normalized]
 
-        return self._decode_rows(raw_normalized)
+        return await self._adecode_rows(raw_normalized)
 
     # ....................... #
 

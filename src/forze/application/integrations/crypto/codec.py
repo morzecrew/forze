@@ -31,6 +31,7 @@ import attrs
 import orjson
 
 from forze.application.contracts.crypto import FieldCipherPort
+from forze.application.contracts.document import DocumentCodecs
 from forze.application.contracts.tenancy import TenantIdentity
 from forze.base.crypto import is_envelope, unpack_envelope
 from forze.base.primitives import JsonDict
@@ -309,3 +310,40 @@ class EncryptingModelCodec[T](ModelCodec[T, Any]):
         return self.inner.decode_json_bytes(
             raw, forbid_extra=forbid_extra, encoding=encoding
         )
+
+
+# ....................... #
+
+
+def encrypting_document_codecs(
+    codecs: DocumentCodecs[Any, Any, Any, Any],
+    *,
+    fields: frozenset[str],
+    cipher: FieldCipherPort,
+    tenant_provider: Callable[[], TenantIdentity | None],
+    label: str,
+) -> DocumentCodecs[Any, Any, Any, Any]:
+    """Wrap a document codec bundle so *fields* are encrypted on the persistence path.
+
+    The ``read`` (decrypt-on-read), ``domain`` (encrypt-on-write) and ``update``
+    (encrypt-on-patch) codecs are wrapped. The ``create`` codec is left untouched —
+    it only transforms create commands into domain models, which is then encrypted via
+    ``domain``. ``history`` is left plaintext (encrypted-field history is not supported).
+    """
+
+    def _wrap(inner: ModelCodec[Any, Any]) -> EncryptingModelCodec[Any]:
+        return EncryptingModelCodec(
+            inner=inner,
+            cipher=cipher,
+            fields=fields,
+            tenant_provider=tenant_provider,
+            label=label,
+        )
+
+    return DocumentCodecs(
+        read=_wrap(codecs.read),
+        domain=_wrap(codecs.domain) if codecs.domain is not None else None,
+        create=codecs.create,
+        update=_wrap(codecs.update) if codecs.update is not None else None,
+        history=codecs.history,
+    )

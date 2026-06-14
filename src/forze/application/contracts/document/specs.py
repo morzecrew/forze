@@ -58,6 +58,18 @@ class DocumentSpec(BaseSpec, Generic[R, D, C, U]):
     ``None`` (default) allows every read-model field. Drives discovery and (when enforced)
     boundary validation."""
 
+    encrypted_fields: frozenset[str] = attrs.field(
+        default=frozenset(),
+        converter=frozenset,
+    )
+    """Stored field names to encrypt at rest (field-level envelope encryption).
+
+    Empty (default) = no field encryption. When set, a backend that wires a keyring
+    transparently encrypts these fields on write and decrypts on read; the rest stay
+    plaintext and queryable. Encrypted fields cannot be filtered/sorted on and are only
+    decrypted on full-model reads (not projections). Requires a ``KeyringDepKey`` in the
+    deps (e.g. via ``CryptoDepsModule``)."""
+
     codecs: DocumentCodecs[R, D, C, U] | None = attrs.field(
         default=None,
         eq=False,
