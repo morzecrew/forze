@@ -95,6 +95,57 @@ async def test_provision_tenant_runs_provisioner_with_new_identity() -> None:
     assert provisioned == [identity]
 
 
+@pytest.mark.asyncio
+async def test_deprovision_tenant_runs_provisioner_teardown() -> None:
+    from forze.application.contracts.tenancy import (
+        FunctionTenantProvisioner,
+        TenantIdentity,
+    )
+
+    tid = uuid4()
+    row = MagicMock()
+    row.id = tid
+    row.tenant_key = "acme"
+
+    tenant_qry = MagicMock()
+    tenant_qry.spec = tenant_spec
+    tenant_qry.get = AsyncMock(return_value=row)
+    tenant_cmd = MagicMock()
+    tenant_cmd.spec = tenant_spec
+    binding_qry = MagicMock()
+    binding_qry.spec = principal_tenant_binding_spec
+    binding_cmd = MagicMock()
+    binding_cmd.spec = principal_tenant_binding_spec
+
+    torn_down: list[TenantIdentity] = []
+
+    async def _noop(_t: TenantIdentity) -> None:
+        return None
+
+    async def _on_deprovision(tenant: TenantIdentity) -> None:
+        torn_down.append(tenant)
+
+    adapter = TenantManagementAdapter(
+        tenant_qry=tenant_qry,
+        tenant_cmd=tenant_cmd,
+        binding_qry=binding_qry,
+        binding_cmd=binding_cmd,
+        provisioner=FunctionTenantProvisioner(
+            on_provision=_noop, on_deprovision=_on_deprovision
+        ),
+    )
+
+    await adapter.deprovision_tenant(tid)
+
+    assert [t.tenant_id for t in torn_down] == [tid]
+
+
+@pytest.mark.asyncio
+async def test_deprovision_tenant_noop_without_provisioner() -> None:
+    adapter = _adapter()  # no provisioner
+    await adapter.deprovision_tenant(uuid4())  # no error, no tenant load
+
+
 def test_post_init_rejects_mismatched_specs() -> None:
     adapter = _adapter()
     adapter.tenant_qry.spec = DocumentSpec(name="wrong", read=ReadTenant)

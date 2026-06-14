@@ -58,6 +58,16 @@ class TenantManagementPort(Protocol):
         """Disable tenant (exact semantics adapter-defined, e.g. soft deactivate)."""
         ...
 
+    def deprovision_tenant(self, tenant_id: UUID) -> Awaitable[None]:
+        """Tear down a tenant's per-tenant infrastructure (the inverse of provisioning).
+
+        Runs the configured ``TenantProvisionerPort``'s ``deprovision`` for the tenant. It
+        is the infrastructure counterpart of :meth:`provision_tenant`; the *record*
+        lifecycle (e.g. :meth:`deactivate_tenant`) is separate, so a full offboarding calls
+        both. No-op when no provisioner is wired.
+        """
+        ...
+
 
 # ....................... #
 

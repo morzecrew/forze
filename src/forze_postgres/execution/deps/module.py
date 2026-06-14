@@ -297,6 +297,26 @@ class PostgresDepsModule(DepsModule):
                     ),
                 )
 
+        if self.outboxes:
+            for name, outbox_cfg in self.outboxes.items():
+                routes.append(
+                    PostgresTenancyRouteSpec(
+                        name=str(name),
+                        tenant_aware=outbox_cfg.tenant_aware,
+                        kind="outbox",
+                    ),
+                )
+
+        if self.inboxes:
+            for name, inbox_cfg in self.inboxes.items():
+                routes.append(
+                    PostgresTenancyRouteSpec(
+                        name=str(name),
+                        tenant_aware=inbox_cfg.tenant_aware,
+                        kind="inbox",
+                    ),
+                )
+
         # Schema tier: any DYNAMIC (callable) per-tenant namespace/relation resolver — a
         # document/search per-tenant schema, or an analytics query_schema.
         namespace_specs: list[object] = []

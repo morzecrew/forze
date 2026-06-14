@@ -171,3 +171,15 @@ class MockTenantManagementPort(_TenantRouteStore, TenantManagementPort):
             entry = self._tenants().get(str(tenant_id))
             if entry is not None:
                 entry["active"] = False
+
+    async def deprovision_tenant(self, tenant_id: UUID) -> None:
+        if self.provisioner is None:
+            return
+
+        with self.state.lock:
+            entry = self._tenants().get(str(tenant_id))
+            key = str(entry["tenant_key"]) if entry else None
+
+        await self.provisioner.deprovision(
+            TenantIdentity(tenant_id=tenant_id, tenant_key=key)
+        )

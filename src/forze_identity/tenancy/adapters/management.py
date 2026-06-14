@@ -149,3 +149,15 @@ class TenantManagementAdapter(TenantManagementPort):
             UpdateTenantCmd(is_active=False),
             return_new=False,
         )
+
+    # ....................... #
+
+    async def deprovision_tenant(self, tenant_id: UUID) -> None:
+        if self.provisioner is None:
+            return
+
+        row = await self.tenant_qry.get(tenant_id)
+
+        await self.provisioner.deprovision(
+            TenantIdentity(tenant_id=row.id, tenant_key=row.tenant_key)
+        )
