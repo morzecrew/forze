@@ -38,6 +38,9 @@ lifecycle = LifecyclePlan.from_steps(vault_lifecycle_step())
 |----------|---------------|---------|
 | Secrets (`resolve_str`, `exists`) | `VaultKvSecrets` (KV v2) | `SecretsDepKey` |
 | Raw client | `VaultClient` | `VaultClientDepKey` |
+| Key management (envelope encryption) | `VaultTransitKeyManagement` (Transit) | `KeyManagementDepKey` |
+| Per-tenant KEK provisioning | `VaultTransitTenantProvisioner` (Transit) | via `TenantProvisionerPort` |
+| Token signing (RS256 / ES256) | `VaultTransitSigner` (Transit) | via the identity authn signer |
 
 ## Notes
 
@@ -48,3 +51,8 @@ lifecycle = LifecyclePlan.from_steps(vault_lifecycle_step())
 - This is what powers per-tenant secret routing (`secret_ref_for_tenant`) for the
   routed Postgres/Mongo/HTTP/… clients — see
   [Multi-tenancy](../in-depth/multi-tenancy.md).
+- **Transit** is a separate mount from KV. `VaultTransitKeyManagement` is the KMS
+  backend for [envelope encryption](../in-depth/encryption.md) (the KEK never
+  leaves Vault), `VaultTransitTenantProvisioner` creates a tenant's Transit key
+  on onboarding, and `VaultTransitSigner` signs JWTs (RS256/ES256) without the
+  private key leaving Vault.

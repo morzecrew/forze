@@ -48,6 +48,7 @@ nav = [
             "in-depth/reading-data.md",
             "in-depth/multi-tenancy.md",
             "in-depth/identity.md",
+            "in-depth/encryption.md",
         ] },
         { "Execution Engine" = [
             "in-depth/capability-execution.md",
