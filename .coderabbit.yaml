@@ -3,6 +3,8 @@ early_access: true
 reviews:
   request_changes_workflow: true
   auto_apply_labels: true
+  high_level_summary: false
+
   slop_detection:
     enabled: true
     label: slop

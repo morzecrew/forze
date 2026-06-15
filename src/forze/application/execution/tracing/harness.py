@@ -32,7 +32,7 @@ class TracedOperationResult:
     trace: RuntimeTrace | None
     """Observed runtime trace when tracing was enabled on ``ctx.deps``."""
 
-    violations: tuple[TracingViolation, ...] = ()
+    violations: tuple[TracingViolation, ...] = attrs.field(factory=tuple)
     """Aggregated validator violations (empty when valid)."""
 
 

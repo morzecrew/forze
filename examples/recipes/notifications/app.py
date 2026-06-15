@@ -24,7 +24,7 @@ from forze_kits.integrations.notify import (
     NotificationRouter,
     process_notification_message,
 )
-from forze_kits.integrations.outbox import relay_outbox_to_queue
+from forze_kits.integrations.outbox import OutboxRelay
 from forze_mock import MockDepsModule
 
 
@@ -88,11 +88,7 @@ async def deliver_notifications(
     senders: RecordingSenders,
 ) -> int:
     # Relay staged events to the queue, then route each queued message to a sender.
-    await relay_outbox_to_queue(
-        ctx,
-        outbox_spec=NOTIFY_EVENTS,
-        queue_spec=NOTIFICATIONS,
-    )
+    await OutboxRelay(outbox_spec=NOTIFY_EVENTS).to_queue(ctx, NOTIFICATIONS)
 
     queue = ctx.deps.resolve_configurable(
         ctx,

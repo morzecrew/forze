@@ -37,7 +37,7 @@ from forze_identity.authn import (
     JwtNativeUuidResolver,
 )
 from forze_identity.authn.resolvers.deterministic_uuid import derive_principal_id
-from forze_identity.authn.services import AccessTokenService
+from forze_identity.authn.services import AccessTokenService, Hs256Signer
 
 # ----------------------- #
 
@@ -79,10 +79,10 @@ class TestForzeJwtSessionVerifier:
         import secrets
 
         secret = secrets.token_bytes(32)
-        svc = AccessTokenService(secret_key=secret)
+        svc = AccessTokenService(signer=Hs256Signer(secret=secret))
         pid = uuid4()
         sid = uuid4()
-        token = svc.issue_token(principal_id=pid, session_id=sid)
+        token = await svc.issue_token(principal_id=pid, session_id=sid)
 
         session = MagicMock()
         session.principal_id = pid
@@ -103,8 +103,8 @@ class TestForzeJwtSessionVerifier:
         import secrets
 
         secret = secrets.token_bytes(32)
-        svc = AccessTokenService(secret_key=secret)
-        token = svc.issue_token(principal_id=uuid4())
+        svc = AccessTokenService(signer=Hs256Signer(secret=secret))
+        token = await svc.issue_token(principal_id=uuid4())
         session_qry = MagicMock()
 
         verifier = ForzeJwtTokenVerifier(access_svc=svc, session_qry=session_qry)
@@ -119,9 +119,9 @@ class TestForzeJwtSessionVerifier:
         import secrets
 
         secret = secrets.token_bytes(32)
-        svc = AccessTokenService(secret_key=secret)
+        svc = AccessTokenService(signer=Hs256Signer(secret=secret))
         sid = uuid4()
-        token = svc.issue_token(principal_id=uuid4(), session_id=sid)
+        token = await svc.issue_token(principal_id=uuid4(), session_id=sid)
 
         session = MagicMock()
         session.revoked_at = datetime.now(tz=UTC)
@@ -140,9 +140,9 @@ class TestForzeJwtSessionVerifier:
         import secrets
 
         secret = secrets.token_bytes(32)
-        svc = AccessTokenService(secret_key=secret)
+        svc = AccessTokenService(signer=Hs256Signer(secret=secret))
         sid = uuid4()
-        token = svc.issue_token(principal_id=uuid4(), session_id=sid)
+        token = await svc.issue_token(principal_id=uuid4(), session_id=sid)
 
         session = MagicMock()
         session.revoked_at = None
@@ -161,11 +161,11 @@ class TestForzeJwtSessionVerifier:
         import secrets
 
         secret = secrets.token_bytes(32)
-        svc = AccessTokenService(secret_key=secret)
+        svc = AccessTokenService(signer=Hs256Signer(secret=secret))
         token_pid = uuid4()
         session_pid = uuid4()
         sid = uuid4()
-        token = svc.issue_token(principal_id=token_pid, session_id=sid)
+        token = await svc.issue_token(principal_id=token_pid, session_id=sid)
 
         session = MagicMock()
         session.principal_id = session_pid
@@ -186,12 +186,12 @@ class TestForzeJwtSessionVerifier:
         import secrets
 
         secret = secrets.token_bytes(32)
-        svc = AccessTokenService(secret_key=secret)
+        svc = AccessTokenService(signer=Hs256Signer(secret=secret))
         pid = uuid4()
         sid = uuid4()
         token_tid = uuid4()
         session_tid = uuid4()
-        token = svc.issue_token(
+        token = await svc.issue_token(
             principal_id=pid,
             tenant_id=token_tid,
             session_id=sid,
@@ -216,11 +216,11 @@ class TestForzeJwtSessionVerifier:
         import secrets
 
         secret = secrets.token_bytes(32)
-        svc = AccessTokenService(secret_key=secret)
+        svc = AccessTokenService(signer=Hs256Signer(secret=secret))
         pid = uuid4()
         sid = uuid4()
         session_tid = uuid4()
-        token = svc.issue_token(principal_id=pid, session_id=sid)
+        token = await svc.issue_token(principal_id=pid, session_id=sid)
 
         session = MagicMock()
         session.principal_id = pid

@@ -1,0 +1,76 @@
+style: {
+    fill: transparent
+}
+
+vars: {
+    d2-config: {
+        pad: 40
+    }
+}
+
+direction: right
+
+kms: {
+    shape: rectangle
+    style: {
+        stroke: "#4a90d9"
+        stroke-width: 2
+    }
+    label: |md
+        ### Key backend (KMS / BYOK)
+        Vault Transit, cloud KMS
+        **the KEK never leaves here**
+    |
+}
+
+keyring: {
+    label: "Keyring"
+    style: {
+        stroke-dash: 4
+        font-size: 18
+    }
+
+    dek: {
+        shape: rectangle
+        label: |md
+            ### Data key (DEK)
+            generated per scope,
+            cached & reused
+        |
+    }
+
+    aead: {
+        shape: rectangle
+        label: |md
+            ### AEAD
+            AES-256-GCM / ChaCha20
+            AAD = tenant + field (+ id)
+        |
+    }
+}
+
+plaintext: {
+    shape: rectangle
+    label: |md
+        ### Plaintext value
+        a document field,
+        object bytes, an event
+    |
+}
+
+envelope: {
+    shape: rectangle
+    style: {
+        stroke: "#4a90d9"
+    }
+    label: |md
+        ### EncryptedEnvelope
+        wrapped DEK + ciphertext
+        self-describing, at rest
+    |
+}
+
+kms -> keyring.dek: wraps / unwraps DEK
+keyring.dek -> keyring.aead: derives cipher key
+plaintext -> keyring.aead: encrypt
+keyring.aead -> envelope: ciphertext + wrapped DEK

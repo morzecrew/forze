@@ -38,7 +38,7 @@ class ResilienceDepsModule:
     independently, so the fleet-effective rate is ``permits × replicas``."""
 
     port_policies: tuple[PortPolicy, ...] = attrs.field(
-        default=(),
+        factory=tuple,
         converter=tuple,
     )
     """Declarative port-level policy bindings: each resolved configurable port

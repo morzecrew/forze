@@ -440,9 +440,16 @@ async def test_create_and_update_use_dedicated_codecs() -> None:
     create_codec.transform_many.return_value = [model]
 
     update_codec = MagicMock()
+    # A plain codec has no ``encode_persistence_patch`` (the id-binding patch path is
+    # encrypting-codec only); the bare mock would otherwise fabricate it and divert the
+    # write off ``encode_persistence_mapping``.
+    update_codec.encode_persistence_patch = None
     update_codec.encode_persistence_mapping.return_value = {"name": "after"}
 
     read_codec = MagicMock()
+    # A plain (non-encrypting) codec has no ``prepare_encrypt``; the bare mock would
+    # otherwise fabricate a truthy attribute the warm pre-pass tries to await.
+    read_codec.prepare_encrypt = None
     read_codec.encode_persistence_mapping.return_value = {
         "id": pk,
         "rev": 1,

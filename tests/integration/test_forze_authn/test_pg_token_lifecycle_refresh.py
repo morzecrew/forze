@@ -18,6 +18,7 @@ from forze.base.exceptions import CoreException, ExceptionKind
 from forze_identity.authn.adapters import TokenLifecycleAdapter
 from forze_identity.authn.services import (
     AccessTokenService,
+    Hs256Signer,
     RefreshTokenConfig,
     RefreshTokenService,
 )
@@ -40,7 +41,7 @@ def _token_services(
     *,
     pepper: bytes,
 ) -> tuple[TokenLifecycleAdapter, AccessTokenService]:
-    access_svc = AccessTokenService(secret_key=secrets.token_bytes(32))
+    access_svc = AccessTokenService(signer=Hs256Signer(secret=secrets.token_bytes(32)))
     refresh_svc = RefreshTokenService(
         pepper=pepper,
         config=RefreshTokenConfig(expires_in=timedelta(days=30)),

@@ -1,9 +1,11 @@
 """Dependency module for Vault client and secrets adapter."""
 
-from typing import final
+from typing import Any, final
 
 import attrs
 
+from forze.application.contracts.crypto import KeyManagementDepKey, KeyManagementPort
+from forze.application.contracts.deps import DepKey
 from forze.application.contracts.secrets import SecretsDepKey, SecretsPort
 from forze.application.execution import Deps, DepsModule
 
@@ -25,6 +27,11 @@ class VaultDepsModule(DepsModule):
     secrets: SecretsPort | None = attrs.field(default=None)
     """Optional secrets adapter; defaults to :class:`~forze_vault.adapters.VaultKvSecrets`."""
 
+    key_management: KeyManagementPort | None = attrs.field(default=None)
+    """Optional envelope key manager (e.g. :class:`~forze_vault.adapters.VaultTransitKeyManagement`).
+    Registered under ``KeyManagementDepKey`` only when set, so KV-only deployments
+    need not enable the Transit engine."""
+
     # ....................... #
 
     def __call__(self) -> Deps:
@@ -34,9 +41,12 @@ class VaultDepsModule(DepsModule):
             else VaultKvSecrets(client=self.client)
         )
 
-        return Deps.plain(
-            {
-                VaultClientDepKey: self.client,
-                SecretsDepKey: adapter,
-            },
-        )
+        deps: dict[DepKey[Any], Any] = {
+            VaultClientDepKey: self.client,
+            SecretsDepKey: adapter,
+        }
+
+        if self.key_management is not None:
+            deps[KeyManagementDepKey] = self.key_management
+
+        return Deps.plain(deps)

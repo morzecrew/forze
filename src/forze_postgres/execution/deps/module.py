@@ -1,7 +1,8 @@
 """Postgres dependency module for the application kernel."""
 
 from datetime import timedelta
-from typing import Callable, final
+from functools import partial
+from typing import Any, Callable, cast, final
 
 import attrs
 
@@ -9,6 +10,7 @@ from forze.application.contracts.analytics import (
     AnalyticsIngestDepKey,
     AnalyticsQueryDepKey,
 )
+from forze.application.contracts.crypto import EncryptionTier
 from forze.application.contracts.document import (
     DocumentCommandDepKey,
     DocumentQueryDepKey,
@@ -22,6 +24,7 @@ from forze.application.contracts.search import (
 )
 from forze.application.contracts.transaction import TransactionManagerDepKey
 from forze.application.execution import Deps, DepsModule
+from forze.application.execution.deps.builders import merge_deps, routed_from_mapping
 from forze.base.exceptions import exc
 from forze.base.primitives import MappingConverter, StrKey, StrKeyMapping
 
@@ -91,6 +94,15 @@ class PostgresDepsModule(DepsModule):
     ``tenant_aware`` / relation resolvers) is weaker than the requirement. Set to
     ``"dedicated"`` to refuse any shared-store (``tagged``/``namespace``) wiring — the only
     model safe for untrusted callers.
+    """
+
+    required_encryption: EncryptionTier | None = attrs.field(default=None)
+    """Declared minimum document field-encryption coverage (``None`` = no floor).
+
+    When set, a document spec served by this module whose derived coverage is weaker
+    is refused at resolution: ``"field"`` requires every document to mark at least one
+    ``encrypted_fields``/``searchable_fields`` entry (and have a keyring wired). Documents
+    can only ever provide per-``field`` coverage.
     """
 
     ro_documents: StrKeyMapping[PostgresReadOnlyDocumentConfig] | None = attrs.field(
@@ -350,7 +362,6 @@ class PostgresDepsModule(DepsModule):
             }
         )
 
-        doc_deps = Deps()
         search_deps = Deps()
         hub_search_deps = Deps()
         federated_search_deps = Deps()
@@ -358,33 +369,38 @@ class PostgresDepsModule(DepsModule):
         analytics_deps = Deps()
         outbox_deps = Deps()
 
-        if self.ro_documents:
-            doc_deps = doc_deps.merge(
-                Deps.routed(
-                    {
-                        DocumentQueryDepKey: {
-                            name: ConfigurablePostgresReadOnlyDocument(config=config)
-                            for name, config in self.ro_documents.items()
-                        }
-                    }
-                )
-            )
+        # ``cast`` erases the factories' generic parameters (``partial`` would otherwise
+        # leak them as Unknown); the encryption floor is partial-applied so the route
+        # builder only deals in plain ``factory(config=...)`` callables. A read-write
+        # config is also a read-only config, so the query side reuses the RO factory.
+        ro_query_factory = cast(
+            Callable[..., Any],
+            partial(
+                ConfigurablePostgresReadOnlyDocument,
+                required_encryption=self.required_encryption,
+            ),
+        )
+        rw_command_factory = cast(
+            Callable[..., Any],
+            partial(
+                ConfigurablePostgresDocument,
+                required_encryption=self.required_encryption,
+            ),
+        )
 
-        if self.rw_documents:
-            doc_deps = doc_deps.merge(
-                Deps.routed(
-                    {
-                        DocumentQueryDepKey: {
-                            name: ConfigurablePostgresReadOnlyDocument(config=config)
-                            for name, config in self.rw_documents.items()
-                        },
-                        DocumentCommandDepKey: {
-                            name: ConfigurablePostgresDocument(config=config)
-                            for name, config in self.rw_documents.items()
-                        },
-                    }
-                ),
-            )
+        doc_deps = merge_deps(
+            routed_from_mapping(
+                self.ro_documents,
+                bindings=[(DocumentQueryDepKey, ro_query_factory)],
+            ),
+            routed_from_mapping(
+                self.rw_documents,
+                bindings=[
+                    (DocumentQueryDepKey, ro_query_factory),
+                    (DocumentCommandDepKey, rw_command_factory),
+                ],
+            ),
+        )
 
         if self.searches:
             search_deps = search_deps.merge(

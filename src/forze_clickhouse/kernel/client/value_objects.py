@@ -115,5 +115,5 @@ class ClickHouseInsertResult:
     rejected: int = 0
     """Rows rejected (always 0 for ClickHouse insert API failures)."""
 
-    errors: tuple[JsonDict, ...] = ()
+    errors: tuple[JsonDict, ...] = attrs.field(factory=tuple)
     """Row-level errors when provided by the engine."""

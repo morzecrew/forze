@@ -19,7 +19,7 @@ from forze.application.contracts.outbox import OutboxDestination, OutboxSpec
 from forze.application.contracts.queue import QueueSpec
 from forze.application.execution import DepsRegistry, ExecutionContext
 from forze.base.serialization import PydanticModelCodec
-from forze_kits.integrations.outbox import relay_outbox_to_queue
+from forze_kits.integrations.outbox import OutboxRelay
 from forze_mock import MockDepsModule
 
 # --8<-- [start:event]
@@ -51,7 +51,7 @@ async def place_order(ctx: ExecutionContext, order_id: str) -> None:
 async def relay(ctx: ExecutionContext) -> int:
     # In production this runs in the background (outbox_relay_background_lifecycle_step);
     # here we drive one pass. It claims staged rows and publishes them to the queue.
-    result = await relay_outbox_to_queue(ctx, outbox_spec=ORDER_EVENTS, queue_spec=ORDERS_QUEUE)
+    result = await OutboxRelay(outbox_spec=ORDER_EVENTS).to_queue(ctx, ORDERS_QUEUE)
     return result.published
 # --8<-- [end:relay]
 

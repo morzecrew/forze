@@ -7,6 +7,7 @@ require_vault()
 # ....................... #
 
 import asyncio
+import base64
 import contextlib
 from typing import Any, cast, final
 
@@ -14,6 +15,7 @@ import attrs
 import hvac
 import requests
 from hvac.exceptions import InvalidPath, VaultError
+from jwt.utils import base64url_decode
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
@@ -255,6 +257,371 @@ class VaultClient(VaultClientPort):
         """
 
         return await asyncio.to_thread(self._kv_exists_sync, path)
+
+    # ....................... #
+
+    def _transit_generate_data_key_sync(self, key_name: str) -> tuple[bytes, str]:
+        client = self._require_client()
+
+        try:
+            response = client.secrets.transit.generate_data_key(
+                name=key_name,
+                key_type="plaintext",
+                mount_point=self.config.transit_mount,
+            )
+
+        except InvalidPath as e:
+            raise exc.not_found(
+                f"No Transit key {key_name!r}",
+                details={"key": key_name},
+            ) from e
+
+        except VaultError as e:
+            raise exc.infrastructure(
+                f"Vault transit generate-data-key failed for {key_name!r}: {e}"
+            ) from e
+
+        except Exception as e:
+            raise exc.infrastructure(
+                f"Vault transit generate-data-key failed for {key_name!r}: {e}"
+            ) from e
+
+        data = response.get("data", {})
+        plaintext_b64 = data.get("plaintext")
+        ciphertext = data.get("ciphertext")
+
+        if not isinstance(plaintext_b64, str) or not isinstance(ciphertext, str):
+            raise exc.infrastructure(
+                f"Vault transit data key for {key_name!r} has unexpected payload shape",
+            )
+
+        return base64.b64decode(plaintext_b64), ciphertext
+
+    # ....................... #
+
+    async def transit_generate_data_key(self, key_name: str) -> tuple[bytes, str]:
+        return await asyncio.to_thread(self._transit_generate_data_key_sync, key_name)
+
+    # ....................... #
+
+    def _transit_decrypt_sync(self, key_name: str, ciphertext: str) -> bytes:
+        client = self._require_client()
+
+        try:
+            response = client.secrets.transit.decrypt_data(
+                name=key_name,
+                ciphertext=ciphertext,
+                mount_point=self.config.transit_mount,
+            )
+
+        except InvalidPath as e:
+            raise exc.not_found(
+                f"No Transit key {key_name!r}",
+                details={"key": key_name},
+            ) from e
+
+        except VaultError as e:
+            raise exc.infrastructure(
+                f"Vault transit decrypt failed for {key_name!r}: {e}"
+            ) from e
+
+        except Exception as e:
+            raise exc.infrastructure(
+                f"Vault transit decrypt failed for {key_name!r}: {e}"
+            ) from e
+
+        plaintext_b64 = response.get("data", {}).get("plaintext")
+
+        if not isinstance(plaintext_b64, str):
+            raise exc.infrastructure(
+                f"Vault transit decrypt for {key_name!r} has unexpected payload shape",
+            )
+
+        return base64.b64decode(plaintext_b64)
+
+    # ....................... #
+
+    async def transit_decrypt(self, key_name: str, ciphertext: str) -> bytes:
+        return await asyncio.to_thread(self._transit_decrypt_sync, key_name, ciphertext)
+
+    # ....................... #
+
+    def _transit_sign_sync(
+        self,
+        key_name: str,
+        data: bytes,
+        *,
+        signature_algorithm: str | None,
+        marshaling_algorithm: str | None,
+    ) -> bytes:
+        client = self._require_client()
+
+        # ECDSA keys take ``marshaling_algorithm`` (``jws`` → raw r||s for JWS) and
+        # ignore ``signature_algorithm`` (RSA-only). Pass only the relevant one.
+        params: dict[str, Any] = {
+            "name": key_name,
+            "hash_input": base64.b64encode(data).decode("ascii"),
+            "hash_algorithm": "sha2-256",
+            "mount_point": self.config.transit_mount,
+        }
+
+        if marshaling_algorithm is not None:
+            params["marshaling_algorithm"] = marshaling_algorithm
+
+        if signature_algorithm is not None:
+            params["signature_algorithm"] = signature_algorithm
+
+        try:
+            response = client.secrets.transit.sign_data(**params)
+
+        except InvalidPath as e:
+            raise exc.not_found(
+                f"No Transit key {key_name!r}",
+                details={"key": key_name},
+            ) from e
+
+        except VaultError as e:
+            raise exc.infrastructure(
+                f"Vault transit sign failed for {key_name!r}: {e}"
+            ) from e
+
+        except Exception as e:
+            raise exc.infrastructure(
+                f"Vault transit sign failed for {key_name!r}: {e}"
+            ) from e
+
+        signature = response.get("data", {}).get("signature")
+
+        if not isinstance(signature, str):
+            raise exc.infrastructure(
+                f"Vault transit sign for {key_name!r} has unexpected payload shape",
+            )
+
+        # Vault returns ``vault:vN:<encoded signature>``. ``jws`` marshaling (ECDSA)
+        # base64url-encodes the raw r||s the JWS spec wants; everything else (RSA
+        # pkcs1v15) is standard base64. Either way return the raw JWS signature bytes.
+        encoded = signature.rsplit(":", 1)[-1]
+
+        if marshaling_algorithm == "jws":
+            return bytes(base64url_decode(encoded))
+
+        return base64.b64decode(encoded)
+
+    # ....................... #
+
+    async def transit_sign(
+        self,
+        key_name: str,
+        data: bytes,
+        *,
+        signature_algorithm: str | None = "pkcs1v15",
+        marshaling_algorithm: str | None = None,
+    ) -> bytes:
+        """Sign *data* with a Transit signing key, returning the raw JWS signature.
+
+        Defaults to RSA ``pkcs1v15`` (RS256). For an ECDSA (``ecdsa-p256``) key pass
+        ``signature_algorithm=None, marshaling_algorithm="jws"`` so Vault returns the
+        raw ``r||s`` an ES256 JWS expects. Hash is always SHA-256.
+        """
+
+        return await asyncio.to_thread(
+            self._transit_sign_sync,
+            key_name,
+            data,
+            signature_algorithm=signature_algorithm,
+            marshaling_algorithm=marshaling_algorithm,
+        )
+
+    # ....................... #
+
+    def _transit_public_key_sync(self, key_name: str) -> str:
+        client = self._require_client()
+
+        try:
+            response = client.secrets.transit.read_key(
+                name=key_name,
+                mount_point=self.config.transit_mount,
+            )
+
+        except InvalidPath as e:
+            raise exc.not_found(
+                f"No Transit key {key_name!r}",
+                details={"key": key_name},
+            ) from e
+
+        except VaultError as e:
+            raise exc.infrastructure(
+                f"Vault transit read-key failed for {key_name!r}: {e}"
+            ) from e
+
+        except Exception as e:
+            raise exc.infrastructure(
+                f"Vault transit read-key failed for {key_name!r}: {e}"
+            ) from e
+
+        data = response.get("data", {})
+        keys = data.get("keys", {})
+        latest = data.get("latest_version")
+
+        entry = (  # pyright: ignore[reportUnknownVariableType]
+            keys.get(str(latest))  # pyright: ignore[reportUnknownMemberType]
+            if isinstance(keys, dict)
+            else None
+        )
+        public_key = (  # pyright: ignore[reportUnknownVariableType]
+            entry.get("public_key")  # pyright: ignore[reportUnknownMemberType]
+            if isinstance(entry, dict)
+            else None
+        )
+
+        if not isinstance(public_key, str):
+            raise exc.infrastructure(
+                f"Vault transit key {key_name!r} has no readable public key",
+            )
+
+        return public_key
+
+    # ....................... #
+
+    async def transit_public_key(self, key_name: str) -> str:
+        """Return the PEM public key of a Transit signing key's latest version."""
+
+        return await asyncio.to_thread(self._transit_public_key_sync, key_name)
+
+    # ....................... #
+
+    def _transit_rewrap_sync(self, key_name: str, ciphertext: str) -> str:
+        client = self._require_client()
+
+        try:
+            response = client.secrets.transit.rewrap_data(
+                name=key_name,
+                ciphertext=ciphertext,
+                mount_point=self.config.transit_mount,
+            )
+
+        except InvalidPath as e:
+            raise exc.not_found(
+                f"No Transit key {key_name!r}",
+                details={"key": key_name},
+            ) from e
+
+        except VaultError as e:
+            raise exc.infrastructure(
+                f"Vault transit rewrap failed for {key_name!r}: {e}"
+            ) from e
+
+        except Exception as e:
+            raise exc.infrastructure(
+                f"Vault transit rewrap failed for {key_name!r}: {e}"
+            ) from e
+
+        rewrapped = response.get("data", {}).get("ciphertext")
+
+        if not isinstance(rewrapped, str):
+            raise exc.infrastructure(
+                f"Vault transit rewrap for {key_name!r} has unexpected payload shape",
+            )
+
+        return rewrapped
+
+    # ....................... #
+
+    async def transit_rewrap(self, key_name: str, ciphertext: str) -> str:
+        """Re-wrap a ``vault:vN:...`` ciphertext under the key's latest version.
+
+        Re-encrypts the wrapper without exposing plaintext — the underlying data
+        key is unchanged, only the key-version that protects it advances. Lets a
+        deployment roll a Transit key forward and lazily upgrade stored wrapped
+        data keys without a decrypt/re-encrypt cycle.
+        """
+
+        return await asyncio.to_thread(self._transit_rewrap_sync, key_name, ciphertext)
+
+    # ....................... #
+
+    def _transit_create_key_sync(self, key_name: str, key_type: str) -> None:
+        client = self._require_client()
+
+        try:
+            # Idempotent in Vault: creating an existing key is a no-op (the type is
+            # not changed), so this is safe to retry on a re-provision.
+            client.secrets.transit.create_key(
+                name=key_name,
+                key_type=key_type,
+                mount_point=self.config.transit_mount,
+            )
+
+        except VaultError as e:
+            raise exc.infrastructure(
+                f"Vault transit create-key failed for {key_name!r}: {e}"
+            ) from e
+
+        except Exception as e:
+            raise exc.infrastructure(
+                f"Vault transit create-key failed for {key_name!r}: {e}"
+            ) from e
+
+    # ....................... #
+
+    async def transit_create_key(self, key_name: str, *, key_type: str) -> None:
+        """Create a Transit key (idempotent — creating an existing key is a no-op).
+
+        *key_type* is a Vault Transit key type — e.g. ``aes256-gcm96`` for data-key
+        generation (envelope encryption), ``rsa-2048`` / ``ecdsa-p256`` for signing.
+        """
+
+        return await asyncio.to_thread(
+            self._transit_create_key_sync, key_name, key_type
+        )
+
+    # ....................... #
+
+    def _transit_delete_key_sync(self, key_name: str) -> None:
+        client = self._require_client()
+
+        try:
+            # Probe first: an absent key makes ``read_key`` raise ``InvalidPath``, so a
+            # repeated deprovision is a clean no-op (Vault answers a missing-key config
+            # update with a generic error, not ``InvalidPath``).
+            client.secrets.transit.read_key(
+                name=key_name,
+                mount_point=self.config.transit_mount,
+            )
+
+            # Deletion is refused unless the key opts in, so enable it first.
+            client.secrets.transit.update_key_configuration(
+                name=key_name,
+                deletion_allowed=True,
+                mount_point=self.config.transit_mount,
+            )
+            client.secrets.transit.delete_key(
+                name=key_name,
+                mount_point=self.config.transit_mount,
+            )
+
+        except InvalidPath:
+            return None  # already absent — deprovision is safe to repeat
+
+        except VaultError as e:
+            raise exc.infrastructure(
+                f"Vault transit delete-key failed for {key_name!r}: {e}"
+            ) from e
+
+        except Exception as e:
+            raise exc.infrastructure(
+                f"Vault transit delete-key failed for {key_name!r}: {e}"
+            ) from e
+
+    # ....................... #
+
+    async def transit_delete_key(self, key_name: str) -> None:
+        """Delete a Transit key (enabling deletion first); a no-op if already absent.
+
+        Destructive — every value wrapped/signed under the key becomes unrecoverable.
+        """
+
+        return await asyncio.to_thread(self._transit_delete_key_sync, key_name)
 
     # ....................... #
 

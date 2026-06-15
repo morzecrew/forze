@@ -58,6 +58,44 @@ class DocumentSpec(BaseSpec, Generic[R, D, C, U]):
     ``None`` (default) allows every read-model field. Drives discovery and (when enforced)
     boundary validation."""
 
+    encrypted_fields: frozenset[str] = attrs.field(
+        default=frozenset(),
+        converter=frozenset,
+    )
+    """Stored field names to encrypt at rest (randomized field-level encryption).
+
+    Empty (default) = no field encryption. When set, a backend that wires a keyring
+    transparently encrypts these fields on write and decrypts on read; the rest stay
+    plaintext and queryable. Encrypted fields cannot be filtered/sorted on. They are
+    decrypted on full-model reads and on both typed (``select_*``) and raw (``project_*``)
+    projections that select them — except that a projection of an
+    :attr:`encryption_binds_record_id` field must also select ``id`` (the AAD needs it).
+    Requires a ``KeyringDepKey`` in the deps (e.g. via ``CryptoDepsModule``)."""
+
+    searchable_fields: frozenset[str] = attrs.field(
+        default=frozenset(),
+        converter=frozenset,
+    )
+    """Stored field names to encrypt *deterministically* so equality queries work.
+
+    Same plaintext maps to the same ciphertext, so `$eq`/`$neq`/`$in`/`$nin` filters on
+    these fields are transparently rewritten to match the value at rest — no separate
+    blind-index column. The trade: deterministic encryption leaks equality/frequency
+    within a tenant, and only equality (not range/sort/like) is supported. Disjoint from
+    :attr:`encrypted_fields`. Requires a ``DeterministicCipherDepKey`` in the deps."""
+
+    encryption_binds_record_id: bool = attrs.field(default=False)
+    """Bind the record's ``id`` into the AAD of every :attr:`encrypted_fields` ciphertext.
+
+    Defaults to ``False`` (the AAD already binds field name + tenant). When ``True``, a
+    ciphertext additionally cannot be transplanted to a *different record of the same
+    tenant and field*. Applies only to randomized :attr:`encrypted_fields` (never to
+    :attr:`searchable_fields`, whose ciphertext must stay record-independent for equality
+    queries). Two consequences: a filter-based bulk ``update_matching`` of a bound field is
+    refused (no per-record id), and existing ciphertext written before enabling this still
+    reads (decrypt falls back to the legacy AAD) — run ``reencrypt_documents`` to upgrade it
+    to the bound form."""
+
     codecs: DocumentCodecs[R, D, C, U] | None = attrs.field(
         default=None,
         eq=False,

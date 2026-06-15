@@ -44,7 +44,7 @@ from forze.application.execution import (
 from forze.base.primitives import uuid7
 from forze.base.serialization import PydanticModelCodec
 from forze_kits.integrations.inbox import process_with_inbox
-from forze_kits.integrations.outbox import relay_outbox_to_queue
+from forze_kits.integrations.outbox import OutboxRelay
 from forze_mock import MockStateDepKey
 from forze_mock.adapters import MockState
 from forze_mock.execution.module import (
@@ -151,12 +151,9 @@ async def test_end_to_end_correlation_survives_the_sqs_hop(
             )
             await ctx.outbox.command(outbox_spec).flush()
 
-        result = await relay_outbox_to_queue(
-            ctx,
-            outbox_spec=outbox_spec,
-            queue_spec=queue_spec,
-            reclaim_stale_after=None,
-        )
+        result = await OutboxRelay(
+            outbox_spec=outbox_spec, reclaim_stale_after=None
+        ).to_queue(ctx, queue_spec)
         assert result.published == 1
 
         message: QueueMessage[Any] = await _receive_until(sqs_queue, "jobs")

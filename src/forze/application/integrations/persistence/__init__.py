@@ -1,6 +1,7 @@
 """Shared persistence gateway mixins for document/SQL integrations."""
 
 from .gateway_mixins import (
+    DocumentWriteCodecMixin,
     FilterParserMixin,
     HistoryOccMixin,
     ModelCodecGatewayMixin,
@@ -9,6 +10,7 @@ from .gateway_mixins import (
 )
 
 __all__ = [
+    "DocumentWriteCodecMixin",
     "FilterParserMixin",
     "HistoryOccMixin",
     "ModelCodecGatewayMixin",

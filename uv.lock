@@ -1141,6 +1141,7 @@ name = "forze"
 source = { editable = "." }
 dependencies = [
     { name = "attrs" },
+    { name = "cryptography" },
     { name = "msgspec" },
     { name = "opentelemetry-api" },
     { name = "opentelemetry-sdk" },
@@ -1294,6 +1295,7 @@ requires-dist = [
     { name = "botocore", marker = "extra == 's3'", specifier = ">=1.40.61" },
     { name = "botocore", marker = "extra == 'sqs'", specifier = ">=1.40.61" },
     { name = "clickhouse-connect", extras = ["async"], marker = "extra == 'clickhouse'", specifier = ">=1.0.0" },
+    { name = "cryptography", specifier = ">=44.0.1" },
     { name = "duckdb", marker = "extra == 'duckdb'", specifier = ">=1.1.0" },
     { name = "email-validator", marker = "extra == 'authn'", specifier = ">=2.3.0" },
     { name = "fastapi", marker = "extra == 'fastapi'", specifier = ">=0.135.1" },

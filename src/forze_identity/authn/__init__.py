@@ -38,7 +38,9 @@ from .execution import (
     ConfigurableTokenLifecycle,
     build_authn_shared_services,
 )
+from .observability import instrument_signing
 from .orchestrator import AuthnOrchestrator
+from .services import SigningStats
 from .resolvers import (
     DeterministicUuidResolver,
     JwtNativeUuidResolver,
@@ -80,4 +82,6 @@ __all__ = [
     "LoggingAuthnEventSink",
     "LoginLockoutGuard",
     "MappingTableResolver",
+    "SigningStats",
+    "instrument_signing",
 ]

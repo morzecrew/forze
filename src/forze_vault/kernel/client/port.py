@@ -32,3 +32,62 @@ class VaultClientPort(Protocol):
         """Return ``(message, ok)``; must not raise."""
 
         ...  # pragma: no cover
+
+    def transit_generate_data_key(
+        self,
+        key_name: str,
+    ) -> Awaitable[tuple[bytes, str]]:
+        """Generate a Transit data key, returning ``(plaintext, wrapped_ciphertext)``.
+
+        ``plaintext`` is the raw data key; ``wrapped_ciphertext`` is Vault's
+        ``vault:vN:...`` token, which only the named Transit key can decrypt.
+        """
+
+        ...  # pragma: no cover
+
+    def transit_decrypt(
+        self,
+        key_name: str,
+        ciphertext: str,
+    ) -> Awaitable[bytes]:
+        """Decrypt a Transit ``vault:vN:...`` token, returning the raw plaintext."""
+
+        ...  # pragma: no cover
+
+    def transit_sign(
+        self,
+        key_name: str,
+        data: bytes,
+        *,
+        signature_algorithm: str | None = "pkcs1v15",
+        marshaling_algorithm: str | None = None,
+    ) -> Awaitable[bytes]:
+        """Sign *data* with a Transit signing key, returning the raw JWS signature.
+
+        RSA (RS256) by default; for an ECDSA (ES256) key pass
+        ``signature_algorithm=None, marshaling_algorithm="jws"``.
+        """
+
+        ...  # pragma: no cover
+
+    def transit_public_key(self, key_name: str) -> Awaitable[str]:
+        """Return the PEM public key of a Transit signing key's latest version."""
+
+        ...  # pragma: no cover
+
+    def transit_rewrap(self, key_name: str, ciphertext: str) -> Awaitable[str]:
+        """Re-wrap a ``vault:vN:...`` ciphertext under the key's latest version."""
+
+        ...  # pragma: no cover
+
+    def transit_create_key(
+        self, key_name: str, *, key_type: str
+    ) -> Awaitable[None]:
+        """Create a Transit key of *key_type* (idempotent — existing key is a no-op)."""
+
+        ...  # pragma: no cover
+
+    def transit_delete_key(self, key_name: str) -> Awaitable[None]:
+        """Delete a Transit key (enabling deletion first); a no-op if already absent."""
+
+        ...  # pragma: no cover

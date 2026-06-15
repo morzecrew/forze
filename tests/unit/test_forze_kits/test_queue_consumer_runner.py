@@ -34,7 +34,7 @@ from forze.base.primitives import StrKey
 from forze.base.serialization import PydanticModelCodec
 from tests.support.execution_context import context_from_deps, context_from_modules
 
-from forze_kits.integrations.consumer import ConsumerRunResult, run_consumer
+from forze_kits.integrations.consumer import ConsumerRunResult, QueueConsumer
 from forze_mock import MockDepsModule, MockStateDepKey
 from forze_mock.adapters import MockQueueAdapter, MockState
 from forze_mock.execution.module import (
@@ -118,17 +118,17 @@ async def _run(
     handler: Callable[[QueueMessage[_Payload]], Awaitable[None]],
     **overrides: Any,
 ) -> ConsumerRunResult:
-    kwargs: dict[str, Any] = {
+    timeout = overrides.pop("timeout", _IDLE)
+    config: dict[str, Any] = {
         "queue": "jobs",
         "queue_spec": _QUEUE_SPEC,
         "handler": handler,
         "inbox_spec": _INBOX_SPEC,
         "tx_route": "mock",
-        "timeout": _IDLE,
     }
-    kwargs.update(overrides)
+    config.update(overrides)
 
-    return await run_consumer(ctx, **kwargs)
+    return await QueueConsumer(**config).run(ctx, timeout=timeout)
 
 
 # ----------------------- #

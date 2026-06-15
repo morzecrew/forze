@@ -189,7 +189,7 @@ class DurableWorkflowScheduleHandle:
 class DurableWorkflowScheduleTiming:
     """Provider-agnostic schedule timing specification."""
 
-    cron_expressions: tuple[str, ...] = ()
+    cron_expressions: tuple[str, ...] = attrs.field(factory=tuple)
     """Cron expressions (provider interprets timezone; Temporal uses UTC by default)."""
 
     interval: timedelta | None = None
@@ -245,7 +245,7 @@ class DurableWorkflowScheduleDescription:
     note: str | None = None
     """Optional operator note."""
 
-    next_run_times: tuple[datetime, ...] = ()
+    next_run_times: tuple[datetime, ...] = attrs.field(factory=tuple)
     """Upcoming fire times when the provider exposes them."""
 
 

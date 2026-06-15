@@ -64,6 +64,7 @@ from forze_identity.authn.services import (
     AccessTokenService,
     ApiKeyConfig,
     ApiKeyService,
+    Hs256Signer,
     PasswordConfig,
     PasswordService,
     RefreshTokenConfig,
@@ -295,7 +296,7 @@ async def test_pg_issue_oauth_tokens_and_bearer_auth(pg_client: PostgresClient) 
         principal_id=pid,
     )
 
-    access_svc = AccessTokenService(secret_key=secrets.token_bytes(32))
+    access_svc = AccessTokenService(signer=Hs256Signer(secret=secrets.token_bytes(32)))
     refresh_svc = RefreshTokenService(
         pepper=pepper,
         config=RefreshTokenConfig(expires_in=timedelta(days=30)),
@@ -457,7 +458,7 @@ async def test_pg_change_password(pg_client: PostgresClient) -> None:
 
     # Open a live session so the "log out everywhere" cascade has something to revoke.
     token_adapter = TokenLifecycleAdapter(
-        access_svc=AccessTokenService(secret_key=secrets.token_bytes(32)),
+        access_svc=AccessTokenService(signer=Hs256Signer(secret=secrets.token_bytes(32))),
         refresh_svc=RefreshTokenService(pepper=secrets.token_bytes(32)),
         session_qry=ctx.document.query(session_spec),
         session_cmd=ctx.document.command(session_spec),
@@ -539,7 +540,7 @@ async def test_pg_password_reset_flow(pg_client: PostgresClient) -> None:
 
     # Open a live session so the "log out everywhere" cascade has something to revoke.
     token_adapter = TokenLifecycleAdapter(
-        access_svc=AccessTokenService(secret_key=secrets.token_bytes(32)),
+        access_svc=AccessTokenService(signer=Hs256Signer(secret=secrets.token_bytes(32))),
         refresh_svc=RefreshTokenService(pepper=secrets.token_bytes(32)),
         session_qry=ctx.document.query(session_spec),
         session_cmd=ctx.document.command(session_spec),

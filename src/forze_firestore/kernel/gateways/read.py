@@ -81,7 +81,7 @@ class FirestoreReadGateway[M: BaseModel](
 
         data = self._from_storage_doc(raw)
 
-        return self._decode_row(data)
+        return await self._adecode_row(data)
 
     # ....................... #
 
@@ -108,7 +108,7 @@ class FirestoreReadGateway[M: BaseModel](
 
         ordered = [by_pk[str(pk)] for pk in pks]
 
-        return self._decode_rows(ordered)
+        return await self._adecode_rows(ordered)
 
     # ....................... #
 
@@ -181,12 +181,13 @@ class FirestoreReadGateway[M: BaseModel](
         data = self._from_storage_doc(rows[0])
 
         if return_model is not None:
-            return self._decode_row(data, model=return_model)
+            return await self._adecode_row(data, model=return_model)
 
         if return_fields is not None:
-            return self.return_subset(data, return_fields)
+            [decrypted] = await self._adecrypt_projection_rows((data,))
+            return self.return_subset(decrypted, return_fields)
 
-        return self._decode_row(data)
+        return await self._adecode_row(data)
 
     # ....................... #
 
@@ -316,12 +317,13 @@ class FirestoreReadGateway[M: BaseModel](
         normalized = [self._from_storage_doc(row) for row in rows]
 
         if return_model is not None:
-            return self._decode_rows(normalized, model=return_model)
+            return await self._adecode_rows(normalized, model=return_model)
 
         if return_fields is not None:
-            return [self.return_subset(row, return_fields) for row in normalized]
+            decrypted = await self._adecrypt_projection_rows(normalized)
+            return [self.return_subset(row, return_fields) for row in decrypted]
 
-        return self._decode_rows(normalized)
+        return await self._adecode_rows(normalized)
 
     # ....................... #
 
@@ -454,12 +456,13 @@ class FirestoreReadGateway[M: BaseModel](
         raw_normalized = [self._from_storage_doc(row) for row in rows]
 
         if return_model is not None:
-            return self._decode_rows(raw_normalized, model=return_model)
+            return await self._adecode_rows(raw_normalized, model=return_model)
 
         if return_fields is not None:
-            return [self.return_subset(row, return_fields) for row in raw_normalized]
+            decrypted = await self._adecrypt_projection_rows(raw_normalized)
+            return [self.return_subset(row, return_fields) for row in decrypted]
 
-        return self._decode_rows(raw_normalized)
+        return await self._adecode_rows(raw_normalized)
 
     # ....................... #
 

@@ -21,7 +21,10 @@ from forze.application.execution.resilience import (
     default_resilience_executor,
     occ_retry,
 )
-from forze.application.integrations.persistence import HistoryOccMixin
+from forze.application.integrations.persistence import (
+    DocumentWriteCodecMixin,
+    HistoryOccMixin,
+)
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict, OnceCell
 from forze.base.serialization import ModelCodec
@@ -78,6 +81,7 @@ def _values_placeholder_for_patch_group(
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
+    DocumentWriteCodecMixin[D],
     HistoryOccMixin[D],
     PostgresGateway[D],
 ):
@@ -258,7 +262,7 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
     async def create(self, payload: C, *, id: UUID | None = None) -> D:
         async with self._write_tx():
             model = self._from_create_dto(payload, id)
-            insert_data_raw = self.read_codec.encode_persistence_mapping(model)
+            insert_data_raw = await self._encode_domain_one(model)
             insert_data = await self.adapt_payload_for_write(
                 insert_data_raw, create=True
             )
@@ -345,9 +349,7 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
             for offset in range(0, len(payloads), batch_size):
                 payload_batch = payloads[offset : offset + batch_size]
                 models = self._from_create_dto_many(payload_batch)
-                insert_data_raw = self.read_codec.encode_persistence_mapping_many(
-                    models
-                )
+                insert_data_raw = await self._encode_domain_many(models)
                 insert_data = await self.adapt_many_payload_for_write(
                     insert_data_raw,
                     create=True,
@@ -397,7 +399,7 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
 
         async with self._write_tx():
             model = self._from_create_dto(payload, id)
-            insert_data_raw = self.read_codec.encode_persistence_mapping(model)
+            insert_data_raw = await self._encode_domain_one(model)
             insert_data = await self.adapt_payload_for_write(
                 insert_data_raw, create=True
             )
@@ -537,9 +539,7 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
                 id_batch = ids[offset : offset + batch_size]
                 payload_batch = payloads[offset : offset + batch_size]
                 models = self._from_create_dto_many(payload_batch, id_batch)
-                insert_data_raw = self.read_codec.encode_persistence_mapping_many(
-                    models
-                )
+                insert_data_raw = await self._encode_domain_many(models)
                 insert_data = await self.adapt_many_payload_for_write(
                     insert_data_raw,
                     create=True,
@@ -581,7 +581,7 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
 
         async with self._write_tx():
             model = self._from_create_dto(create, id)
-            insert_data_raw = self.read_codec.encode_persistence_mapping(model)
+            insert_data_raw = await self._encode_domain_one(model)
             insert_data = await self.adapt_payload_for_write(
                 insert_data_raw, create=True
             )
@@ -742,9 +742,7 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
                 create_batch = creates[offset : offset + batch_size]
                 update_batch = updates[offset : offset + batch_size]
                 models = self._from_create_dto_many(create_batch, id_batch)
-                insert_data_raw = self.read_codec.encode_persistence_mapping_many(
-                    models
-                )
+                insert_data_raw = await self._encode_domain_many(models)
                 insert_data = await self.adapt_many_payload_for_write(
                     insert_data_raw,
                     create=True,
@@ -855,10 +853,7 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
     ) -> tuple[D, JsonDict]:
         self._require_update_cmd()
 
-        update_data = self._patch_codec().encode_persistence_mapping(
-            cast(Any, dto),
-            exclude={"unset": True},
-        )
+        update_data = await self._encode_patch_one(dto, record_id=pk)
 
         return await self.__patch(pk, update_data, rev=rev)
 
@@ -1102,10 +1097,10 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
 
         updates: list[JsonDict] = []
         for start in range(0, len(dtos), batch_size):
+            stop = start + batch_size
             updates.extend(
-                self._patch_codec().encode_persistence_mapping_many(
-                    cast(Any, dtos[start : start + batch_size]),
-                    exclude={"unset": True},
+                await self._encode_patch_many(
+                    dtos[start:stop], record_ids=pks[start:stop]
                 ),
             )
 
@@ -1136,10 +1131,7 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
 
         self._require_update_cmd()
 
-        update_data = self._patch_codec().encode_persistence_mapping(
-            cast(Any, dto),
-            exclude={"unset": True},
-        )
+        update_data = await self._encode_patch_one(dto)
 
         if not update_data:
             return 0, []

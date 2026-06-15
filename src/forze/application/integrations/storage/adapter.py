@@ -26,13 +26,15 @@ from forze.application.contracts.storage.value_objects import (
     StoredObject,
     UploadedObject,
 )
-from forze.application.contracts.tenancy import TenancyMixin
+from forze.application.contracts.crypto import BytesCipherPort
+from forze.application.contracts.tenancy import TenancyMixin, TenantIdentity
 from forze.application.integrations.storage.client import ObjectStorageClientPort
 from forze.application.integrations.storage.codec import default_path_codec
 from forze.application.integrations.storage.metadata import (
     object_metadata_from_user_metadata,
 )
 from forze.base.codecs import AsciiB64Codec
+from forze.base.crypto import is_envelope
 from forze.base.exceptions import CoreException, exc
 from forze.base.primitives import JsonDict, OnceCell, utcnow, uuid7
 
@@ -73,7 +75,45 @@ class ObjectStorageAdapter(StorageQueryPort, StorageCommandPort, TenancyMixin):
     key_generator: Callable[[], str] = attrs.field(default=lambda: str(uuid7()))
     """Callable to generate a unique key segment."""
 
+    cipher: BytesCipherPort | None = None
+    """Optional keyring for client-side (envelope) encryption. When set, object
+    bytes are encrypted before upload and decrypted after download; presigned
+    URLs are refused (they bypass this adapter)."""
+
     # ....................... #
+
+    def _cipher_tenant(self) -> TenantIdentity | None:
+        # Resolve through the canonical path so encryption key selection respects
+        # ``tenant_aware`` (fail-closed when a tenant is required but unbound), exactly
+        # like ``_encryption_aad`` — not the raw provider, which would silently route to
+        # the no-tenant key.
+        tenant_id = self._tenant_id_for_resolve()
+
+        if tenant_id is None:
+            return None
+
+        return TenantIdentity(tenant_id=tenant_id)
+
+    # ....................... #
+
+    def _encryption_aad(self, bucket: str, key: str) -> bytes:
+        """Associated data binding ciphertext to its bucket, key, and tenant.
+
+        A blob moved to a different key, bucket, or tenant fails to decrypt.
+        """
+
+        tenant_id = self._tenant_id_for_resolve()
+        return f"forze.storage|{bucket}|{key}|tenant={tenant_id}".encode("utf-8")
+
+    # ....................... #
+
+    def _reject_presign_when_encrypted(self) -> None:
+        if self.cipher is not None:
+            raise exc.precondition(
+                "Presigned URLs are unavailable when client-side encryption is "
+                "enabled: bytes transferred directly to/from the object store "
+                "bypass the keyring and would be stored or served in the clear.",
+            )
 
     # ....................... #
 
@@ -202,13 +242,25 @@ class ObjectStorageAdapter(StorageQueryPort, StorageCommandPort, TenancyMixin):
 
         bucket = await self._resolved_bucket()
 
+        # Content type and metadata are derived from the plaintext above; encrypt
+        # only the bytes that hit the store. Metadata ``size`` stays the logical
+        # (plaintext) size.
+        payload = data
+
+        if self.cipher is not None:
+            payload = await self.cipher.encrypt(
+                data,
+                tenant=self._cipher_tenant(),
+                aad=self._encryption_aad(bucket, key),
+            )
+
         async with self.client.client():
             await self.client.ensure_bucket(bucket)
 
             await self.client.upload_bytes(
                 bucket=bucket,
                 key=key,
-                data=data,
+                data=payload,
                 content_type=content_type,
                 metadata=safe_meta,
                 tags=tags,
@@ -249,6 +301,15 @@ class ObjectStorageAdapter(StorageQueryPort, StorageCommandPort, TenancyMixin):
 
             data = await self.client.download_bytes(bucket=bucket, key=key)
 
+            # Decrypt only when encryption is enabled AND the bytes are an
+            # envelope — objects written before encryption was turned on are
+            # served as-is (migration tolerance).
+            if self.cipher is not None and is_envelope(data):
+                data = await self.cipher.decrypt(
+                    data,
+                    aad=self._encryption_aad(bucket, key),
+                )
+
             return DownloadedObject(
                 data=data,
                 content_type=h.content_type,
@@ -270,8 +331,12 @@ class ObjectStorageAdapter(StorageQueryPort, StorageCommandPort, TenancyMixin):
         signed) and the same tenant-aware bucket resolution, then delegates the
         signing to the client. Existence is **not** checked — signing is local
         and a ``GET`` on a missing object simply fails at request time.
+
+        Refused when client-side encryption is enabled: a direct ``GET`` would
+        return ciphertext the caller cannot decrypt.
         """
 
+        self._reject_presign_when_encrypted()
         self._validate_key(key)
         bucket = await self._resolved_bucket()
 
@@ -303,8 +368,12 @@ class ObjectStorageAdapter(StorageQueryPort, StorageCommandPort, TenancyMixin):
         Objects uploaded through the URL bypass this adapter's metadata
         envelope — see
         :meth:`forze.application.contracts.storage.StorageCommandPort.presign_upload`.
+
+        Refused when client-side encryption is enabled: bytes uploaded directly
+        would be stored unencrypted, silently breaking the encryption guarantee.
         """
 
+        self._reject_presign_when_encrypted()
         self._validate_key(key)
         bucket = await self._resolved_bucket()
 

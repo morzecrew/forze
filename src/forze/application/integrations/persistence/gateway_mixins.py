@@ -225,6 +225,189 @@ class ReadValidationCodecMixin(Generic[M]):
             trust_source=eff_trust,
         )
 
+    # ....................... #
+
+    async def _prepare_decode(self, rows: Sequence[JsonDict]) -> None:
+        """Run the read codec's async decrypt pre-pass, if it has one.
+
+        For a field-encrypting codec this unwraps the data keys named by *rows*'
+        encrypted fields so the subsequent synchronous decode hits the cache. A
+        plain codec has no ``prepare_decrypt`` and this is a no-op.
+        """
+
+        prepare = getattr(self._codec_for(), "prepare_decrypt", None)
+
+        if prepare is not None:
+            await prepare(rows)
+
+    # ....................... #
+
+    def _predecrypt_for_projection(
+        self,
+        row: JsonDict,
+        model: type[BaseModel] | None,
+    ) -> JsonDict:
+        """Decrypt encrypted fields in a raw row when decoding to a *projection*.
+
+        A full read decodes with the encrypting read codec (which decrypts itself),
+        so nothing is needed. A projection (``model`` other than the read model)
+        decodes with a plaintext codec, so the encrypted/searchable fields it
+        selects must be decrypted here first. No-op for plain (non-encrypting)
+        codecs and for full reads.
+        """
+
+        read_codec = self._codec_for()
+
+        if model is None or self._codec_for(model) is read_codec:
+            return row
+
+        decrypt = getattr(read_codec, "decrypt_mapping", None)
+
+        return row if decrypt is None else decrypt(dict(row))
+
+    # ....................... #
+
+    async def _adecode_row(
+        self,
+        row: JsonDict,
+        *,
+        model: type[BaseModel] | None = None,
+        trust_source: bool | None = None,
+    ) -> Any:
+        """Async decrypt pre-pass + synchronous single-row decode."""
+
+        await self._prepare_decode((row,))
+        row = self._predecrypt_for_projection(row, model)
+        return self._decode_row(row, model=model, trust_source=trust_source)
+
+    # ....................... #
+
+    async def _adecode_rows(
+        self,
+        rows: Sequence[JsonDict],
+        *,
+        model: type[BaseModel] | None = None,
+        trust_source: bool | None = None,
+    ) -> Any:
+        """Async decrypt pre-pass + synchronous multi-row decode."""
+
+        await self._prepare_decode(rows)
+        rows = [self._predecrypt_for_projection(r, model) for r in rows]
+        return self._decode_rows(rows, model=model, trust_source=trust_source)
+
+    # ....................... #
+
+    async def _adecrypt_projection_rows(
+        self,
+        rows: Sequence[JsonDict],
+    ) -> list[JsonDict]:
+        """Decrypt encrypted/searchable fields in raw rows bound for a field projection.
+
+        The raw analog of the decrypt that ``_adecode_*`` applies to typed
+        ``select_*`` projections: ``project_*`` returns plain field dicts (no model
+        decode), so a selected encrypted/searchable field is decrypted here. No-op for
+        plain (non-encrypting) codecs; otherwise runs the async unwrap pre-pass once,
+        then decrypts each row. The caller still shapes the field subset. Decryption
+        needs the row to carry the ciphertext (and, for record-id-bound fields, the
+        ``id``) — so a projection of a bound encrypted field must also select ``id``.
+        """
+
+        decrypt = getattr(self._codec_for(), "decrypt_mapping", None)
+
+        if decrypt is None:
+            return list(rows)
+
+        await self._prepare_decode(rows)
+
+        return [decrypt(dict(row)) for row in rows]
+
+
+# ....................... #
+
+
+class DocumentWriteCodecMixin(Generic[D]):
+    """Encode helpers that warm the field cipher before synchronous encode.
+
+    Shared by the Postgres / Mongo / Firestore write gateways so the
+    sync-codec-vs-async-KMS bridge is identical across backends: each helper runs
+    the async warm pre-pass, then the synchronous ``encode_persistence_mapping``.
+    A plain (non-encrypting) codec has no ``prepare_encrypt`` and the warm is a
+    no-op. ``read_codec`` is the domain codec; ``_patch_codec`` is supplied by the
+    concrete gateway.
+    """
+
+    if TYPE_CHECKING:
+
+        @property
+        def read_codec(self) -> ModelCodec[D, Any]: ...
+
+        def _patch_codec(self) -> ModelCodec[Any, Any]: ...
+
+    # ....................... #
+
+    async def _prepare_encode(self) -> None:
+        """Warm the active data key so the synchronous encode can encrypt fields.
+
+        The domain and update codecs share one keyring, so warming once covers
+        both the create/upsert (domain) and update (patch) encode paths.
+        """
+
+        prepare = getattr(self.read_codec, "prepare_encrypt", None)
+
+        if prepare is not None:
+            await prepare()
+
+    # ....................... #
+
+    async def _encode_domain_one(self, model: D) -> JsonDict:
+        await self._prepare_encode()
+        return self.read_codec.encode_persistence_mapping(model)
+
+    # ....................... #
+
+    async def _encode_domain_many(self, models: Sequence[D]) -> list[JsonDict]:
+        await self._prepare_encode()
+        return self.read_codec.encode_persistence_mapping_many(models)
+
+    # ....................... #
+
+    async def _encode_patch_one(
+        self, dto: Any, *, record_id: UUID | None = None
+    ) -> JsonDict:
+        await self._prepare_encode()
+        codec = self._patch_codec()
+
+        # Encrypting codecs expose ``encode_persistence_patch`` to thread the target pk
+        # into encrypted-field AAD (a partial DTO carries no id). Duck-typed so plain
+        # codecs need not define it; with record-id binding off it is a no-op passthrough.
+        encode_patch = getattr(codec, "encode_persistence_patch", None)
+
+        if encode_patch is not None:
+            return encode_patch(dto, record_id=record_id, exclude={"unset": True})
+
+        return codec.encode_persistence_mapping(dto, exclude={"unset": True})
+
+    # ....................... #
+
+    async def _encode_patch_many(
+        self, dtos: Any, *, record_ids: Sequence[UUID] | None = None
+    ) -> list[JsonDict]:
+        await self._prepare_encode()
+        codec = self._patch_codec()
+
+        encode_patch = getattr(codec, "encode_persistence_patch", None)
+
+        if encode_patch is not None:
+            ids: Sequence[UUID | None] = (
+                record_ids if record_ids is not None else [None] * len(dtos)
+            )
+            return [
+                encode_patch(dto, record_id=rid, exclude={"unset": True})
+                for dto, rid in zip(dtos, ids, strict=True)
+            ]
+
+        return codec.encode_persistence_mapping_many(dtos, exclude={"unset": True})
+
 
 # ....................... #
 
@@ -280,7 +463,26 @@ class FilterParserMixin(Generic[M]):
         )
         validate_query_field_types(expr, self.model_type, field_type_hints=hints)
 
-        return expr
+        return self._rewrite_encrypted_filter(expr)
+
+    def _rewrite_encrypted_filter(self, expr: QueryExpr) -> QueryExpr:
+        """Let an encrypting codec rewrite equality on searchable (deterministic) fields.
+
+        The single, backend-agnostic seam: an :class:`EncryptingModelCodec` exposes
+        ``rewrite_filter`` and replaces the literal in an equality predicate on a
+        searchable field with its deterministic ciphertext, so the comparison matches
+        the value stored at rest. Plain codecs / non-document gateways have no such
+        method and this is a no-op.
+        """
+
+        codec_for = getattr(self, "_codec_for", None)
+
+        if codec_for is None:
+            return expr
+
+        rewrite = getattr(codec_for(), "rewrite_filter", None)
+
+        return expr if rewrite is None else rewrite(expr)
 
 
 # ....................... #

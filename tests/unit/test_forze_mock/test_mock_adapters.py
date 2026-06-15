@@ -243,9 +243,7 @@ async def test_document_create_and_update_use_spec_codecs() -> None:
     create_codec = MagicMock()
     create_codec.transform.side_effect = real_create.transform
     update_codec = MagicMock()
-    update_codec.encode_persistence_mapping.side_effect = (
-        real_update.encode_persistence_mapping
-    )
+    update_codec.encode_mapping.side_effect = real_update.encode_mapping
     spec = DocumentSpec(
         name="products",
         read=_ProductRead,
@@ -274,9 +272,12 @@ async def test_document_create_and_update_use_spec_codecs() -> None:
     assert created.title == "Codec Test"
 
     await doc.update(created.id, created.rev, _ProductUpdate(title="Renamed"))
-    update_codec.encode_persistence_mapping.assert_called_once()
-    assert update_codec.encode_persistence_mapping.call_args.kwargs == {
-        "exclude": {"unset": True},
+    # The patch goes through the codec's non-encrypting ``encode_mapping`` path so
+    # the merge stays plaintext (see _document_command.update); the single
+    # domain-codec encode on write-back is what encrypts.
+    update_codec.encode_mapping.assert_called_once()
+    assert update_codec.encode_mapping.call_args.kwargs == {
+        "exclude": {"computed_fields": True, "unset": True},
     }
 
 

@@ -46,7 +46,7 @@ class OperationDescriptor:
     title: str | None = None
     """Optional short, human-friendly title."""
 
-    tags: tuple[str, ...] = ()
+    tags: tuple[str, ...] = attrs.field(factory=tuple)
     """Optional free-form tags for grouping/filtering in a catalog."""
 
     sensitive: bool = False
@@ -103,7 +103,7 @@ class OperationCatalogEntry:
     not "requires" — the wrap is a no-op when the caller binds no key, so surfaces
     should document the key as an *optional* parameter."""
 
-    required_permissions: tuple[str, ...] = ()
+    required_permissions: tuple[str, ...] = attrs.field(factory=tuple)
     """Sorted union of permission keys declared by the plan's authz hooks
     (structural ``DeclaresAuthz`` detection at freeze); empty = no declared authz.
 
