@@ -16,8 +16,10 @@ from forze.application.contracts.crypto import (
 from forze.application.contracts.codecs import default_model_codec
 from forze.application.contracts.search import SearchSpec
 from forze.application.integrations.crypto import EncryptingModelCodec, Keyring
-from forze.application.integrations.search import resolve_search_read_codec_spec
-from forze.application.integrations.search.offset_executor import _decrypt_rows
+from forze.application.integrations.search import (
+    decrypt_search_rows,
+    resolve_search_read_codec_spec,
+)
 from forze.base.crypto import is_envelope
 from forze.base.exceptions import CoreException, ExceptionKind
 from forze.base.serialization import PydanticModelCodec
@@ -112,7 +114,7 @@ async def test_executor_decrypts_rows_once_for_every_decode_path() -> None:
     sealed_row = codec.encode_persistence_mapping(_Doc(id="1", title="t", secret="zzz"))
     assert is_envelope(base64.b64decode(sealed_row["secret"]))
 
-    rows, decode_codec = await _decrypt_rows(codec, [sealed_row])
+    rows, decode_codec = await decrypt_search_rows(codec, [sealed_row])
 
     # The raw row is now plaintext and the decode codec is the plain inner one.
     assert rows[0]["secret"] == "zzz"
@@ -129,7 +131,7 @@ async def test_decrypt_rows_is_noop_for_plain_codec() -> None:
     plain = PydanticModelCodec(_Doc)
     row = {"id": "1", "title": "t", "secret": "plain"}
 
-    rows, decode_codec = await _decrypt_rows(plain, [row])
+    rows, decode_codec = await decrypt_search_rows(plain, [row])
 
     assert rows == [row]
     assert decode_codec is plain

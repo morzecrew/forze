@@ -18,6 +18,7 @@ from forze.application.contracts.querying import (
     row_value_for_sort_key,
 )
 from forze.application.contracts.search import ranked_search_cursor_key_spec
+from forze.application.integrations.search import decrypt_search_rows
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
 from forze_mongo.kernel.client.port import MongoClientPort
@@ -152,6 +153,12 @@ async def execute_mongo_ranked_cursor_search[M: BaseModel](
     for doc in page_rows_with_rank:
         doc.pop(MONGO_RANK_FIELD, None)
 
+    # Decrypt sealed fields out of the raw rows once, before materialization, so the spec
+    # model, a custom return_type, and raw field projections all read plaintext.
+    page_rows_with_rank, decode_codec = await decrypt_search_rows(
+        gw.spec.resolved_read_codec, page_rows_with_rank
+    )
+
     hits = materialize_search_page(
         page_rows=page_rows_with_rank,
         pool=None,
@@ -160,7 +167,7 @@ async def execute_mongo_ranked_cursor_search[M: BaseModel](
         return_type=return_type,
         return_fields=return_fields,
         model_type=gw.model_type,
-        codec=gw.spec.resolved_read_codec,
+        codec=decode_codec,
     )
 
     return CursorPage(

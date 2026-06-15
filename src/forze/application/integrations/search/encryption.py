@@ -12,6 +12,7 @@ decrypts the document's own ciphertext. The spec's ``encrypted_fields`` / ``sear
 """
 
 from collections.abc import Callable
+from typing import Any
 
 import attrs
 from pydantic import BaseModel
@@ -24,6 +25,8 @@ from forze.application.contracts.search import SearchSpec
 from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.integrations.crypto import EncryptingModelCodec
 from forze.base.exceptions import exc
+from forze.base.primitives import JsonDict
+from forze.base.serialization import ModelCodec
 from forze.domain.constants import ID_FIELD
 
 # ----------------------- #
@@ -72,3 +75,28 @@ def resolve_search_read_codec_spec[M: BaseModel](
     )
 
     return attrs.evolve(spec, read_codec=wrapped)
+
+
+async def decrypt_search_rows(
+    codec: ModelCodec[Any, Any], rows: list[JsonDict]
+) -> tuple[list[JsonDict], ModelCodec[Any, Any]]:
+    """Decrypt sealed fields in raw search rows **once**, before any decode.
+
+    Every search read path (offset, cursor, ...) calls this right after fetching rows, so
+    the spec model, a custom ``return_type``, and raw field projections all receive
+    plaintext — decryption belongs to the row, not to one decode path. Returns the rows
+    and the codec to decode them with: the plain inner codec on decryption (the encrypting
+    codec would re-attempt it), or the codec unchanged when it is not an encrypting one.
+    """
+
+    decrypt_mapping = getattr(codec, "decrypt_mapping", None)
+
+    if decrypt_mapping is None:
+        return rows, codec
+
+    prepare_decrypt = getattr(codec, "prepare_decrypt", None)
+    if prepare_decrypt is not None:
+        await prepare_decrypt(rows)
+
+    decrypted = [decrypt_mapping(dict(row)) for row in rows]
+    return decrypted, getattr(codec, "inner", codec)

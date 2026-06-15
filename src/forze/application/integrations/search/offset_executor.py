@@ -15,6 +15,7 @@ from forze.application.contracts.search import (
     SearchResultSnapshotOptions,
     SearchSpec,
 )
+from forze.application.integrations.search.encryption import decrypt_search_rows
 from forze.application.integrations.search.snapshot import SearchResultSnapshot
 from forze.base.primitives import JsonDict
 from forze.base.serialization import ModelCodec, materialize_mapping_rows
@@ -199,7 +200,7 @@ async def execute_simple_offset_search_with_snapshot[M: BaseModel](
     )
 
     outcome = await hooks.fetch_rows(window, want_snap=want_snap)
-    rows, codec = await _decrypt_rows(codec, outcome.rows)
+    rows, codec = await decrypt_search_rows(codec, outcome.rows)
 
     if return_count and total is None and outcome.total is not None:
         total = outcome.total
@@ -228,30 +229,6 @@ async def execute_simple_offset_search_with_snapshot[M: BaseModel](
         codec=codec,
         trust_source=trust_source,
     )
-
-
-async def _decrypt_rows(
-    codec: ModelCodec[Any, Any], rows: list[JsonDict]
-) -> tuple[list[JsonDict], ModelCodec[Any, Any]]:
-    """Decrypt sealed fields in the raw search rows **once**, before any decode.
-
-    So the spec model, a custom ``return_type``, and raw field projections all receive
-    plaintext — decryption belongs to the row, not to one decode path. Then decode with
-    the plain inner codec (the encrypting codec would re-attempt decryption). No-op (and
-    the codec unchanged) for a plain, non-encrypting codec.
-    """
-
-    decrypt_mapping = getattr(codec, "decrypt_mapping", None)
-
-    if decrypt_mapping is None:
-        return rows, codec
-
-    prepare_decrypt = getattr(codec, "prepare_decrypt", None)
-    if prepare_decrypt is not None:
-        await prepare_decrypt(rows)
-
-    decrypted = [decrypt_mapping(dict(row)) for row in rows]
-    return decrypted, getattr(codec, "inner", codec)
 
 
 # ....................... #
