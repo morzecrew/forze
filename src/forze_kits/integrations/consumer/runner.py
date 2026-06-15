@@ -7,14 +7,12 @@ from collections.abc import Awaitable, Callable
 from contextlib import aclosing
 from datetime import timedelta
 from functools import partial
-from typing import Any, cast, final
-from uuid import UUID
+from typing import Any, final
 
 import attrs
 
 from forze.application._logger import logger
 from forze.application.contracts.crypto import KeyringDepKey
-from forze.application.contracts.envelope import HEADER_EVENT_ID, HEADER_TENANT_ID
 from forze.application.contracts.inbox import InboxSpec
 from forze.application.contracts.queue import (
     QueueMessage,
@@ -23,12 +21,9 @@ from forze.application.contracts.queue import (
     QueueSpec,
 )
 from forze.application.execution.context import ExecutionContext
-from forze.application.integrations.outbox import (
-    decrypt_outbox_payload,
-    is_encrypted_payload,
-)
+from forze.application.integrations.outbox import decrypt_consumed_payload
 from forze.base.exceptions import CoreException, exc
-from forze.base.primitives import JsonDict, StrKey
+from forze.base.primitives import StrKey
 
 from ..inbox import process_with_inbox
 
@@ -36,18 +31,6 @@ from ..inbox import process_with_inbox
 
 _CIPHER_MISSING_CODE = "core.outbox.payload_cipher_missing"
 """Decrypt config error (no keyring): a deployment fault, not a poison message."""
-
-
-def _header_uuid(headers: object, key: str) -> UUID | None:
-    value = cast(JsonDict, headers).get(key) if isinstance(headers, dict) else None
-
-    if not isinstance(value, str):
-        return None
-
-    try:
-        return UUID(value)
-    except ValueError:
-        return None
 
 
 # ....................... #
@@ -151,16 +134,15 @@ async def _decrypt_message[M](
     sees the typed model. Plaintext messages are returned unchanged.
     """
 
-    if not is_encrypted_payload(message.payload):
-        return message
-
-    plaintext = await decrypt_outbox_payload(
+    model = await decrypt_consumed_payload(
         cipher,  # type: ignore[arg-type]
-        message.payload,  # type: ignore[arg-type]
-        tenant_id=_header_uuid(message.headers, HEADER_TENANT_ID),
-        event_id=_header_uuid(message.headers, HEADER_EVENT_ID),
+        message.payload,
+        codec=queue_spec.codec,
+        headers=message.headers,
     )
-    model = queue_spec.codec.decode_mapping(plaintext)
+
+    if model is message.payload:  # plaintext — nothing decrypted
+        return message
 
     return attrs.evolve(message, payload=model)
 

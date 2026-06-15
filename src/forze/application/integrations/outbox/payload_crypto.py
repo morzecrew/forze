@@ -16,6 +16,8 @@ reconstruct the AAD and a ciphertext cannot be transplanted between events.
 """
 
 import base64
+from collections.abc import Mapping
+from typing import Any, cast
 from uuid import UUID
 
 import orjson
@@ -26,9 +28,11 @@ from forze.application.contracts.crypto import (
     is_encrypted_payload,
     wrap_encrypted_payload,
 )
+from forze.application.contracts.envelope import HEADER_EVENT_ID, HEADER_TENANT_ID
 from forze.application.contracts.tenancy import TenantIdentity
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
+from forze.base.serialization import ModelCodec
 
 # ----------------------- #
 
@@ -37,7 +41,20 @@ __all__ = [
     "is_encrypted_payload",
     "encrypt_outbox_payload",
     "decrypt_outbox_payload",
+    "decrypt_consumed_payload",
 ]
+
+
+def _header_uuid(headers: Mapping[str, str], key: str) -> UUID | None:
+    value = headers.get(key)
+
+    if not isinstance(value, str):
+        return None
+
+    try:
+        return UUID(value)
+    except ValueError:
+        return None
 
 
 def _aad(tenant_id: UUID | None, event_id: UUID | None) -> bytes:
@@ -103,3 +120,34 @@ async def decrypt_outbox_payload(
     )
 
     return orjson.loads(raw)
+
+
+# ....................... #
+
+
+async def decrypt_consumed_payload[M](
+    cipher: BytesCipherPort | None,
+    payload: M,
+    *,
+    codec: ModelCodec[M, Any],
+    headers: Mapping[str, str],
+) -> M:
+    """Turn a consumed message payload into the typed model, decrypting e2e ciphertext.
+
+    The transport-agnostic consumer counterpart of staging encryption, for any consume
+    path (the queue runner, or an app-driven stream/pubsub loop): a plaintext payload is
+    already the model and returned as-is; a one-key envelope wrapper is decrypted (AAD
+    rebuilt from the ``event_id``/``tenant`` envelope headers) and decoded via *codec*.
+    """
+
+    if not is_encrypted_payload(payload):
+        return payload
+
+    plaintext = await decrypt_outbox_payload(
+        cipher,
+        cast(JsonDict, payload),
+        tenant_id=_header_uuid(headers, HEADER_TENANT_ID),
+        event_id=_header_uuid(headers, HEADER_EVENT_ID),
+    )
+
+    return codec.decode_mapping(plaintext)

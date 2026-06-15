@@ -2,7 +2,12 @@ from datetime import datetime
 from typing import Any, Final, Mapping, final
 
 import attrs
+import orjson
 
+from forze.application.contracts.crypto import (
+    is_encrypted_payload,
+    looks_encrypted_body,
+)
 from forze.application.contracts.pubsub import PubSubMessage
 from forze.application.contracts.stream import StreamMessage
 from forze.base.codecs import JsonCodec, TextCodec
@@ -81,9 +86,16 @@ def _encode_envelope[M](
     because headers live in their own nested object).
     """
 
-    data: dict[str, str] = {
-        _F_PAYLOAD: payload_codec.encode_json_bytes(payload).decode(),
-    }
+    # An end-to-end encrypted payload arrives as the one-key envelope wrapper (the relay
+    # forwards ciphertext). Serialize it opaquely into the payload field — the model codec
+    # would reject a wrapper that is not its own model. The consumer decrypts it.
+    payload_field = (
+        orjson.dumps(payload).decode()
+        if is_encrypted_payload(payload)
+        else payload_codec.encode_json_bytes(payload).decode()
+    )
+
+    data: dict[str, str] = {_F_PAYLOAD: payload_field}
 
     if type is not None:
         data[_F_TYPE] = type
@@ -98,6 +110,22 @@ def _encode_envelope[M](
         data[_F_HEADERS] = default_json_codec.dumps(dict(headers)).decode()
 
     return data
+
+
+# ....................... #
+
+
+def _decode_payload_field[M](payload_codec: ModelCodec[M, Any], payload_raw: str) -> M:
+    """Decode the payload envelope field, passing an encrypted wrapper through.
+
+    A one-key envelope wrapper (end-to-end ciphertext) survives to the consumer as the
+    message payload, for it to decrypt; a plaintext field decodes to the model as before.
+    """
+
+    if looks_encrypted_body(payload_raw.encode("utf-8")):
+        return orjson.loads(payload_raw)  # type: ignore[no-any-return]
+
+    return payload_codec.decode_json_bytes(payload_raw)
 
 
 # ....................... #
@@ -196,7 +224,7 @@ class RedisPubSubCodec[M]:
 
         return PubSubMessage(
             topic=topic,
-            payload=self.payload_codec.decode_json_bytes(payload_raw),
+            payload=_decode_payload_field(self.payload_codec, payload_raw),
             type=type_raw if isinstance(type_raw, str) else None,
             key=key_raw if isinstance(key_raw, str) else None,
             published_at=(
@@ -267,7 +295,7 @@ class RedisStreamCodec[M]:
         return StreamMessage(
             stream=stream,
             id=id,
-            payload=self.payload_codec.decode_json_bytes(payload_raw),
+            payload=_decode_payload_field(self.payload_codec, payload_raw),
             type=decoded.get(_F_TYPE),
             key=decoded.get(_F_KEY),
             timestamp=datetime.fromisoformat(timestamp_raw) if timestamp_raw else None,

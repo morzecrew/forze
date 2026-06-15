@@ -3,6 +3,7 @@
 from .command import StagingOutboxCommand
 from .enrichment import OutboxEventEnricher
 from .payload_crypto import (
+    decrypt_consumed_payload,
     decrypt_outbox_payload,
     encrypt_outbox_payload,
     is_encrypted_payload,
@@ -13,6 +14,7 @@ __all__ = [
     "OutboxEventEnricher",
     "OutboxStaging",
     "StagingOutboxCommand",
+    "decrypt_consumed_payload",
     "decrypt_outbox_payload",
     "encrypt_outbox_payload",
     "is_encrypted_payload",
