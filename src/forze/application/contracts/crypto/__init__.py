@@ -28,6 +28,7 @@ from .directory import (
     StaticKeyDirectory,
     TenantTemplateKeyDirectory,
 )
+from .field_encryption import FieldEncryption
 from .ports import (
     BytesCipherPort,
     DeterministicFieldCipherPort,
@@ -74,6 +75,8 @@ __all__ = [
     "KeyDirectoryPort",
     "StaticKeyDirectory",
     "TenantTemplateKeyDirectory",
+    # field-encryption policy
+    "FieldEncryption",
     # deps
     "KeyManagementDepKey",
     "AeadDepKey",

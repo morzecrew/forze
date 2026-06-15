@@ -4,7 +4,11 @@ from __future__ import annotations
 
 import pytest
 
-from forze.application.contracts.crypto import KeyRef, StaticKeyDirectory
+from forze.application.contracts.crypto import (
+    FieldEncryption,
+    KeyRef,
+    StaticKeyDirectory,
+)
 from forze.application.contracts.document import DocumentSpec
 from forze.application.execution import CryptoDepsModule
 from forze.application.integrations.crypto import EncryptingModelCodec
@@ -57,7 +61,7 @@ def test_encrypted_fields_wrap_codecs() -> None:
         name="people",
         read=_Read,
         write=_WRITE,  # type: ignore[arg-type]
-        encrypted_fields=frozenset({"email"}),
+        encryption=FieldEncryption(encrypted=frozenset({"email"})),
     )
 
     codecs = _resolve_codecs(_ctx(), spec)
@@ -88,7 +92,7 @@ def test_encrypted_fields_without_keyring_fails_closed() -> None:
         name="people",
         read=_Read,
         write=_WRITE,  # type: ignore[arg-type]
-        encrypted_fields=frozenset({"email"}),
+        encryption=FieldEncryption(encrypted=frozenset({"email"})),
     )
 
     with pytest.raises(CoreException) as ei:

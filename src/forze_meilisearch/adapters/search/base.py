@@ -143,7 +143,7 @@ class MeilisearchSearchGateway[M: BaseModel](TenancyMixin):
     @property
     def _encrypts(self) -> bool:
         # The factory wraps the read codec with an EncryptingModelCodec (which exposes
-        # ``prepare_encrypt``) when the spec declares encrypted_fields.
+        # ``prepare_encrypt``) when the spec declares an ``encryption`` policy.
         return hasattr(self.spec.resolved_read_codec, "prepare_encrypt")
 
     async def prepare_encrypt(self) -> None:

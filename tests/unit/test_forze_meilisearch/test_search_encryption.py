@@ -11,6 +11,7 @@ from pydantic import BaseModel
 
 from forze.application.contracts.crypto import (
     AesGcmAead,
+    FieldEncryption,
     KeyRef,
     StaticKeyDirectory,
 )
@@ -48,7 +49,7 @@ def _encrypting_adapter(client: MagicMock) -> MeilisearchSearchCommandAdapter[_D
         model_type=_Doc,
         fields=["title"],
         read_codec=wrapped,
-        encrypted_fields=frozenset({"secret"}),
+        encryption=FieldEncryption(encrypted=frozenset({"secret"})),
     )
     return MeilisearchSearchCommandAdapter(
         spec=spec,

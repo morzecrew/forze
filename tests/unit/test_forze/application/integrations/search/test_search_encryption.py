@@ -10,6 +10,7 @@ from pydantic import BaseModel
 
 from forze.application.contracts.crypto import (
     AesGcmAead,
+    FieldEncryption,
     KeyRef,
     StaticKeyDirectory,
 )
@@ -60,7 +61,7 @@ def test_no_encrypted_fields_returns_spec_unchanged() -> None:
 
 
 def test_encrypted_fields_without_keyring_fails_closed() -> None:
-    spec = _spec(encrypted_fields=frozenset({"secret"}))
+    spec = _spec(encryption=FieldEncryption(encrypted=frozenset({"secret"})))
 
     with pytest.raises(CoreException) as ei:
         resolve_search_read_codec_spec(
@@ -77,7 +78,7 @@ async def test_wrapped_codec_decrypts_in_place_search_rows() -> None:
     decrypting the document table's ciphertext out of search results."""
 
     spec = resolve_search_read_codec_spec(
-        _spec(encrypted_fields=frozenset({"secret"})),
+        _spec(encryption=FieldEncryption(encrypted=frozenset({"secret"}))),
         keyring=_keyring(),
         deterministic=None,
         tenant_provider=lambda: None,
@@ -136,7 +137,7 @@ def test_resolver_wraps_hub_spec_too() -> None:
         name="hub",
         model_type=_Doc,
         members=[_spec()],
-        encrypted_fields=frozenset({"secret"}),
+        encryption=FieldEncryption(encrypted=frozenset({"secret"})),
     )
 
     wrapped = resolve_search_read_codec_spec(

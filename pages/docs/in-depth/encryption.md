@@ -75,18 +75,21 @@ A document spec names the fields to seal. Tiers run weakest to strongest —
 DocumentSpec(
     name="patients",
     read=Patient,
-    encrypted_fields=frozenset({"ssn", "diagnosis"}),
-    searchable_fields=frozenset({"email"}),   # deterministic — see below
-    encryption_binds_record_id=True,          # bind the row id into the AAD
+    encryption=FieldEncryption(
+        encrypted=frozenset({"ssn", "diagnosis"}),
+        searchable=frozenset({"email"}),   # deterministic — see below
+        binds_record_id=True,              # bind the row id into the AAD
+    ),
 )
 ```
 
-`encrypted_fields` are randomized AEAD ciphertext; `searchable_fields` use a
-deterministic cipher so equality queries still match. Setting
-`encryption_binds_record_id=True` folds the record's `id` into the AAD of every
-randomized field, so a ciphertext can't be copied between rows — it applies only
-to randomized fields, never searchable ones (whose ciphertext must stay
-record-independent to compare).
+A single `FieldEncryption` policy declares the whole shape, and the `SearchSpec`
+over the same table shares the *same* object — so the two can't drift.
+`encrypted` fields are randomized AEAD ciphertext; `searchable` fields use a
+deterministic cipher so equality queries still match. Setting `binds_record_id=True`
+folds the record's `id` into the AAD of every randomized field, so a ciphertext
+can't be copied between rows — it applies only to randomized fields, never
+searchable ones (whose ciphertext must stay record-independent to compare).
 
 !!! warning "Marking a field requires a wired keyring"
 
@@ -150,7 +153,7 @@ searchable value under the new root, then drop the previous one.
 
     Deterministic encryption leaks equality — identical plaintexts are visible as
     identical ciphertexts. Mark a field `searchable` only when you must query it
-    by exact value; otherwise leave it randomized in `encrypted_fields`.
+    by exact value; otherwise leave it randomized in `FieldEncryption.encrypted`.
 
 ## Declaring a minimum
 

@@ -48,7 +48,7 @@ def _cache_cipher(
     """Keyring for sealing cache bodies — only when the document field-encrypts (so the
     cache does not re-expose what the document protects) and a keyring is wired."""
 
-    if not (spec.encrypted_fields or spec.searchable_fields):
+    if spec.encryption is None or spec.encryption.is_empty:
         return None
 
     return ctx.deps.provide(KeyringDepKey) if ctx.deps.exists(KeyringDepKey) else None
@@ -60,7 +60,7 @@ def _resolve_codecs(
     *,
     required_encryption: EncryptionTier | None = None,
 ) -> DocumentCodecs[Any, Any, Any, Any]:
-    """Spec codecs, wrapped for field encryption when ``encrypted_fields`` is set.
+    """Spec codecs, wrapped for field encryption when ``spec.encryption`` is set.
 
     Resolves the ciphers as optional (``None`` when unregistered) so the shared
     helper can fail closed with a precise error instead of the generic dependency
@@ -70,8 +70,7 @@ def _resolve_codecs(
     return resolve_document_codecs(
         spec.resolved_codecs,
         spec_name=str(spec.name),
-        encrypted_fields=spec.encrypted_fields,
-        searchable_fields=spec.searchable_fields,
+        encryption=spec.encryption,
         keyring=(
             ctx.deps.provide(KeyringDepKey)
             if ctx.deps.exists(KeyringDepKey)
@@ -86,7 +85,6 @@ def _resolve_codecs(
         integration="postgres",
         code="postgres.document.encryption_wiring",
         required_encryption=required_encryption,
-        bind_record_id=spec.encryption_binds_record_id,
     )
 
 

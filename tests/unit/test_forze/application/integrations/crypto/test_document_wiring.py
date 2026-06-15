@@ -8,6 +8,7 @@ from pydantic import BaseModel
 from forze.application.contracts.codecs import default_model_codec
 from forze.application.contracts.crypto import (
     AesGcmAead,
+    FieldEncryption,
     KeyRef,
     StaticKeyDirectory,
 )
@@ -51,10 +52,19 @@ def _det() -> DeterministicFieldCipher:
 
 
 def _resolve(**overrides):  # type: ignore[no-untyped-def]
+    encrypted = overrides.pop("encrypted_fields", frozenset())
+    searchable = overrides.pop("searchable_fields", frozenset())
+    binds = overrides.pop("binds_record_id", False)
+    encryption = (
+        FieldEncryption(
+            encrypted=encrypted, searchable=searchable, binds_record_id=binds
+        )
+        if (encrypted or searchable)
+        else None
+    )
     kwargs = dict(
         spec_name="customers",
-        encrypted_fields=frozenset(),
-        searchable_fields=frozenset(),
+        encryption=encryption,
         keyring=None,
         deterministic=None,
         tenant_provider=lambda: None,

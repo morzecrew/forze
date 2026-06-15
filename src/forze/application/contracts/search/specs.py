@@ -8,6 +8,7 @@ from forze.base.exceptions import exc
 from forze.base.serialization import ModelCodec, default_model_codec
 
 from ..base import BaseSpec
+from ..crypto import FieldEncryption
 from ..querying import QuerySortExpression
 from ..querying.sort_resolution import read_fields_for_model, validate_sort_fields
 
@@ -87,22 +88,13 @@ class SearchSpec[M: BaseModel](BaseSpec):
     )
     """Optional row codec override; use :attr:`resolved_read_codec` at runtime."""
 
-    encrypted_fields: frozenset[str] = attrs.field(factory=frozenset)
-    """Randomized-encrypted fields. For an **external index** (Meilisearch) they are sealed
-    in the index document and decrypted on read; for **in-place search** (Postgres/Mongo
-    over an encrypted document table) they are decrypted out of the search results. Either
-    way, encrypted fields are confidential — *not* searchable/filterable; the fields you
-    search must stay plaintext. Must match the underlying ``DocumentSpec.encrypted_fields``
-    for in-place search to decrypt. Requires a wired keyring."""
-
-    searchable_fields: frozenset[str] = attrs.field(factory=frozenset)
-    """Deterministically-encrypted fields: equality-filterable (the filter value is rewritten
-    to its ciphertext) while sealed at rest. Disjoint from :attr:`encrypted_fields`; mirrors
-    ``DocumentSpec.searchable_fields`` for in-place search. Requires a deterministic cipher."""
-
-    encryption_binds_record_id: bool = attrs.field(default=False)
-    """Mirror of ``DocumentSpec.encryption_binds_record_id`` — must match it so in-place
-    search reproduces the record-id-bound AAD and can decrypt the document's ciphertext."""
+    encryption: FieldEncryption | None = attrs.field(default=None)
+    """Field-encryption policy (see :class:`FieldEncryption`). For an **external index**
+    (Meilisearch) the encrypted fields are sealed in the index document and decrypted on read;
+    for **in-place search** (Postgres/Mongo over an encrypted document table) they are
+    decrypted out of the search results. Must be the **same policy** as the underlying
+    ``DocumentSpec.encryption`` so in-place search reproduces the document write's AAD and
+    decrypts its ciphertext. ``None`` (default) = no field encryption."""
 
     # ....................... #
 
@@ -179,17 +171,9 @@ class HubSearchSpec[M: BaseModel](BaseSpec):
     )
     """Row decode/encode codec; defaults to :class:`PydanticModelCodec`."""
 
-    encrypted_fields: frozenset[str] = attrs.field(factory=frozenset)
-    """Randomized-encrypted hub-row fields, decrypted out of hub search results (mirror of
-    the hub read model's ``DocumentSpec.encrypted_fields``). Requires a wired keyring."""
-
-    searchable_fields: frozenset[str] = attrs.field(factory=frozenset)
-    """Deterministically-encrypted hub-row fields (equality-filterable). Requires a
-    deterministic cipher."""
-
-    encryption_binds_record_id: bool = attrs.field(default=False)
-    """Mirror of ``DocumentSpec.encryption_binds_record_id`` — must match it to decrypt
-    record-id-bound ciphertext."""
+    encryption: FieldEncryption | None = attrs.field(default=None)
+    """Field-encryption policy for hub-row fields (see :class:`FieldEncryption`), decrypted
+    out of hub search results. Mirror of the hub read model's ``DocumentSpec.encryption``."""
 
     # ....................... #
 

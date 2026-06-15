@@ -100,9 +100,9 @@ class PostgresDepsModule(DepsModule):
     """Declared minimum document field-encryption coverage (``None`` = no floor).
 
     When set, a document spec served by this module whose derived coverage is weaker
-    is refused at resolution: ``"field"`` requires every document to mark at least one
-    ``encrypted_fields``/``searchable_fields`` entry (and have a keyring wired). Documents
-    can only ever provide per-``field`` coverage.
+    is refused at resolution: ``"field"`` requires every document to declare a non-empty
+    ``encryption`` policy (``FieldEncryption.encrypted``/``searchable``) and have a keyring
+    wired. Documents can only ever provide per-``field`` coverage.
     """
 
     ro_documents: StrKeyMapping[PostgresReadOnlyDocumentConfig] | None = attrs.field(

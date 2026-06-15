@@ -1,0 +1,67 @@
+"""Field-encryption policy: which record fields are sealed at rest, and how."""
+
+from typing import final
+
+import attrs
+
+from forze.base.exceptions import exc
+
+# ----------------------- #
+
+
+@final
+@attrs.define(slots=True, frozen=True, kw_only=True)
+class FieldEncryption:
+    """Which fields of a record are sealed at rest, and how — one declaration shared by
+    every spec (document, search, hub, ...) that reads or writes the same data.
+
+    Encryption is a *persistence* concern, not a domain one: the field names live here, on
+    an application-layer policy object, never on the domain or read model. A ``DocumentSpec``
+    and the ``SearchSpec`` over the same table point at the *same* policy, so their
+    encrypted / searchable sets and record-id binding cannot drift out of sync.
+    """
+
+    encrypted: frozenset[str] = attrs.field(factory=frozenset, converter=frozenset)
+    """Stored field names to encrypt at rest with **randomized** field-level encryption.
+
+    Confidential: decrypted on full-model reads and on typed (``select_*``) / raw
+    (``project_*``) projections that select them, but *not* filterable or sortable. Requires
+    a ``KeyringDepKey`` in the deps (e.g. via ``CryptoDepsModule``)."""
+
+    searchable: frozenset[str] = attrs.field(factory=frozenset, converter=frozenset)
+    """Stored field names to encrypt **deterministically** so equality queries still work.
+
+    Same plaintext → same ciphertext, so ``$eq``/``$neq``/``$in``/``$nin`` filters are
+    transparently rewritten to match the value at rest — no separate blind-index column. The
+    trade: deterministic encryption leaks equality/frequency within a tenant, and only
+    equality (not range/sort/like) is supported. Disjoint from :attr:`encrypted`. Requires a
+    ``DeterministicCipherDepKey`` in the deps."""
+
+    binds_record_id: bool = False
+    """Bind the record's ``id`` into the AAD of every :attr:`encrypted` ciphertext.
+
+    Defaults to ``False`` (the AAD already binds field name + tenant). When ``True``, a
+    ciphertext additionally cannot be transplanted to a *different record of the same tenant
+    and field*. Applies only to randomized :attr:`encrypted` fields (never to
+    :attr:`searchable`, whose ciphertext must stay record-independent for equality queries).
+    Consequence: a filter-based bulk ``update_matching`` of a bound field is refused (no
+    per-record id), and ciphertext written before enabling this still decrypts only without
+    the binding."""
+
+    # ....................... #
+
+    def __attrs_post_init__(self) -> None:
+        overlap = self.encrypted & self.searchable
+        if overlap:
+            raise exc.configuration(
+                f"FieldEncryption declares fields {sorted(overlap)} as both encrypted "
+                "(randomized) and searchable (deterministic); the sets must be disjoint.",
+            )
+
+    # ....................... #
+
+    @property
+    def is_empty(self) -> bool:
+        """No fields are sealed — nothing to encrypt or decrypt."""
+
+        return not (self.encrypted or self.searchable)

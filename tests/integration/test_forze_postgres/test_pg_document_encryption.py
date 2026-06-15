@@ -10,7 +10,11 @@ from uuid import UUID
 import pytest
 from pydantic import BaseModel
 
-from forze.application.contracts.crypto import KeyRef, StaticKeyDirectory
+from forze.application.contracts.crypto import (
+    FieldEncryption,
+    KeyRef,
+    StaticKeyDirectory,
+)
 from forze.application.contracts.document import (
     DocumentCommandDepKey,
     DocumentQueryDepKey,
@@ -65,7 +69,7 @@ _SPEC = DocumentSpec(
         "create_cmd": _PersonCreate,
         "update_cmd": _PersonUpdate,
     },
-    encrypted_fields=frozenset({"email"}),
+    encryption=FieldEncryption(encrypted=frozenset({"email"})),
 )
 
 _SPEC_BOUND = DocumentSpec(
@@ -76,8 +80,7 @@ _SPEC_BOUND = DocumentSpec(
         "create_cmd": _PersonCreate,
         "update_cmd": _PersonUpdate,
     },
-    encrypted_fields=frozenset({"email"}),
-    encryption_binds_record_id=True,
+    encryption=FieldEncryption(encrypted=frozenset({"email"}), binds_record_id=True),
 )
 
 

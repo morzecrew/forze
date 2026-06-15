@@ -7,8 +7,8 @@ fields are decrypted out of search results (and, for an external index, sealed o
 
 The wrapped codec uses the **default** field-encryption AAD label and the spec's record-id
 binding, so an in-place search reproduces exactly the document write's configuration and
-decrypts the document's own ciphertext. The spec's ``encrypted_fields`` / ``searchable_fields``
-/ ``encryption_binds_record_id`` must therefore match the underlying ``DocumentSpec``.
+decrypts the document's own ciphertext. The spec's ``encryption`` policy must therefore be
+the same as the underlying ``DocumentSpec.encryption``.
 """
 
 from collections.abc import Callable
@@ -20,6 +20,7 @@ import attrs
 from forze.application.contracts.crypto import (
     DeterministicFieldCipherPort,
     FieldCipherPort,
+    FieldEncryption,
 )
 from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.integrations.crypto import EncryptingModelCodec
@@ -39,11 +40,7 @@ class _EncryptableReadSpec(Protocol):
     @property
     def name(self) -> str | StrEnum: ...
     @property
-    def encrypted_fields(self) -> frozenset[str]: ...
-    @property
-    def searchable_fields(self) -> frozenset[str]: ...
-    @property
-    def encryption_binds_record_id(self) -> bool: ...
+    def encryption(self) -> FieldEncryption | None: ...
     @property
     def resolved_read_codec(self) -> ModelCodec[Any, Any]: ...
 
@@ -61,7 +58,8 @@ def resolve_search_read_codec_spec[S: _EncryptableReadSpec](
     raises rather than silently returning ciphertext.
     """
 
-    if not (spec.encrypted_fields or spec.searchable_fields):
+    encryption = spec.encryption
+    if encryption is None or encryption.is_empty:
         return spec
 
     if keyring is None:
@@ -71,9 +69,9 @@ def resolve_search_read_codec_spec[S: _EncryptableReadSpec](
             code=_WIRING_CODE,
         )
 
-    if spec.searchable_fields and deterministic is None:
+    if encryption.searchable and deterministic is None:
         raise exc.configuration(
-            f"SearchSpec {spec.name!r} declares searchable_fields but no deterministic "
+            f"SearchSpec {spec.name!r} declares searchable fields but no deterministic "
             "cipher is wired (CryptoDepsModule(deterministic_root=...)).",
             code=_WIRING_CODE,
         )
@@ -81,11 +79,11 @@ def resolve_search_read_codec_spec[S: _EncryptableReadSpec](
     wrapped = EncryptingModelCodec(
         inner=spec.resolved_read_codec,
         cipher=keyring,
-        fields=spec.encrypted_fields,
-        searchable_fields=spec.searchable_fields,
+        fields=encryption.encrypted,
+        searchable_fields=encryption.searchable,
         deterministic=deterministic,
         tenant_provider=tenant_provider,
-        record_id_field=ID_FIELD if spec.encryption_binds_record_id else None,
+        record_id_field=ID_FIELD if encryption.binds_record_id else None,
     )
 
     # ``spec`` is always a concrete attrs spec (SearchSpec / HubSearchSpec) at runtime;
