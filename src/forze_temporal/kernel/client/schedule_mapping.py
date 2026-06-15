@@ -131,6 +131,7 @@ def description_from_temporal(
         raise TypeError("expected ScheduleDescription")
 
     action = desc.schedule.action
+
     if not isinstance(action, ScheduleActionStartWorkflow):
         msg = "schedule action is not ScheduleActionStartWorkflow"
         raise TypeError(msg)
@@ -171,11 +172,13 @@ def description_from_list_entry(
         return None
 
     action = entry.schedule.action
+
     if not isinstance(action, ScheduleListActionStartWorkflow):
         return None
 
     timing = schedule_spec_to_timing(entry.schedule.spec)
     next_times: tuple[datetime, ...] = ()
+
     if entry.info is not None:
         next_times = tuple(
             t.replace(tzinfo=timezone.utc) if t.tzinfo is None else t

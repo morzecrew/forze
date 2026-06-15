@@ -86,7 +86,7 @@ class CompositeTenantProvisioner(TenantProvisionerPort):
     retried.
     """
 
-    provisioners: Sequence[TenantProvisionerPort] = ()
+    provisioners: Sequence[TenantProvisionerPort] = attrs.field(factory=tuple)
 
     # ....................... #
 

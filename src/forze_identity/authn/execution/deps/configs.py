@@ -51,7 +51,9 @@ class AuthnKernelConfig:
     it takes precedence over :attr:`access_token_secret`."""
 
     access_token_verifiers: tuple[SignerPort, ...] = attrs.field(
-        default=(), repr=False, converter=tuple
+        factory=tuple,
+        repr=False,
+        converter=tuple,
     )
     """Extra signers whose keys are also accepted on verify, selected by token ``kid``
     (key-rotation overlap: keep the previous signer here until its tokens expire)."""
@@ -215,7 +217,9 @@ def validate_route_methods(
         raise exc.internal(msg)
 
     if "token" in methods and shared.access_svc is None and not skip_token_service:
-        msg = "'token' method requires kernel.access_token_secret or access_token_signer"
+        msg = (
+            "'token' method requires kernel.access_token_secret or access_token_signer"
+        )
         raise exc.internal(msg)
 
 

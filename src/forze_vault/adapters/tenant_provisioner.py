@@ -13,7 +13,7 @@ provisioned key and the encrypt-path key can never drift. Default ``key_type`` i
 ``ecdsa-p256`` for a per-tenant signing key.
 """
 
-from typing import final
+from typing import Literal, final
 
 import attrs
 
@@ -23,6 +23,23 @@ from forze.application.contracts.tenancy import TenantIdentity, TenantProvisione
 from ..kernel.client import VaultClientPort
 
 # ----------------------- #
+
+VaultTransitKeyType = Literal[
+    # Symmetric — support ``generate_data_key`` (envelope encryption / the KMS path).
+    "aes128-gcm96",
+    "aes256-gcm96",
+    "chacha20-poly1305",
+    # Asymmetric — signing keys (per-tenant JWT/BYOK signing).
+    "rsa-2048",
+    "rsa-3072",
+    "rsa-4096",
+    "ecdsa-p256",
+    "ecdsa-p384",
+    "ecdsa-p521",
+    "ed25519",
+]
+"""Vault Transit key types Forze provisions. Symmetric types back data-key generation;
+asymmetric types back signing."""
 
 
 @final
@@ -42,7 +59,7 @@ class VaultTransitTenantProvisioner(TenantProvisionerPort):
     directory: KeyDirectoryPort
     """The keyring's key directory — resolves the tenant to the key name to create."""
 
-    key_type: str = "aes256-gcm96"
+    key_type: VaultTransitKeyType = "aes256-gcm96"
     """Vault Transit key type. ``aes256-gcm96`` (default) for data-key generation /
     envelope encryption; ``rsa-2048`` / ``ecdsa-p256`` for a per-tenant signing key."""
 

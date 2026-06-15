@@ -14,8 +14,6 @@ Supports two algorithms, matched to the Transit key type:
   so it returns the raw ``r||s`` an ES256 JWS expects (no DER→raw conversion here).
 """
 
-from __future__ import annotations
-
 import json
 from typing import Any, cast, final
 
@@ -24,13 +22,13 @@ from cryptography.hazmat.primitives import serialization
 from jwt.algorithms import ECAlgorithm, RSAAlgorithm
 
 from forze.base.exceptions import exc
+from forze.base.primitives import JsonDict
 
 from ..kernel.client import VaultClientPort
 
 # ----------------------- #
 
 _SUPPORTED_ALGORITHMS = frozenset({"RS256", "ES256"})
-
 
 # ....................... #
 
@@ -49,11 +47,13 @@ class VaultTransitSigner:
     kid: str | None = None
     """Optional key id, surfaced in the public JWK for rotation."""
 
-    algorithm: str = "RS256"
+    algorithm: str = "RS256"  #! probably enforce Literal
     """JWS algorithm written to the token header: ``RS256`` or ``ES256``."""
 
     _public_pem: str | None = attrs.field(default=None, init=False, repr=False)
     """Cached PEM public key (fetched once from Vault)."""
+
+    # ....................... #
 
     def __attrs_post_init__(self) -> None:
         if self.algorithm not in _SUPPORTED_ALGORITHMS:
@@ -67,6 +67,8 @@ class VaultTransitSigner:
     @property
     def _is_ecdsa(self) -> bool:
         return self.algorithm == "ES256"
+
+    # ....................... #
 
     async def _public_key_pem(self) -> str:
         if self._public_pem is None:
@@ -87,10 +89,16 @@ class VaultTransitSigner:
 
         return await self.client.transit_sign(self.key_name, signing_input)
 
-    async def verification_key(self) -> Any:
-        return serialization.load_pem_public_key((await self._public_key_pem()).encode())
+    # ....................... #
 
-    async def public_jwk(self) -> dict[str, Any]:
+    async def verification_key(self) -> Any:
+        return serialization.load_pem_public_key(
+            (await self._public_key_pem()).encode()
+        )
+
+    # ....................... #
+
+    async def public_jwk(self) -> JsonDict:
         public_key = serialization.load_pem_public_key(
             (await self._public_key_pem()).encode(),
         )
@@ -99,7 +107,7 @@ class VaultTransitSigner:
             if self._is_ecdsa
             else RSAAlgorithm(RSAAlgorithm.SHA256)
         )
-        jwk: dict[str, Any] = json.loads(algo.to_jwk(cast(Any, public_key)))
+        jwk: JsonDict = json.loads(algo.to_jwk(cast(Any, public_key)))
         jwk["use"] = "sig"
         jwk["alg"] = self.algorithm
 

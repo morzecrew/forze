@@ -99,5 +99,5 @@ class BigQueryInsertResult:
     rejected: int = 0
     """Rows rejected."""
 
-    errors: tuple[JsonDict, ...] = ()
+    errors: tuple[JsonDict, ...] = attrs.field(factory=tuple)
     """Row-level insert errors (capped)."""

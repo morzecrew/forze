@@ -63,12 +63,14 @@ class PostgresIndexInfo:
     expr: str | None = attrs.field(default=None)
     """Expression extracted from the index definition, if any."""
 
-    columns: tuple[str, ...] = ()
+    columns: tuple[str, ...] = attrs.field(factory=tuple)
     """Tuple of indexed column names (empty for expression-only indexes)."""
 
     has_tsvector_col: bool = attrs.field(default=False)
     """Whether at least one indexed column has type ``tsvector``."""
 
+
+# ....................... #
 
 PostgresIndexEngine = Literal["pgroonga", "fts", "unknown"]
 """Classified search engine for an index."""

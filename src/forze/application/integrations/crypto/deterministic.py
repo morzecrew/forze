@@ -45,12 +45,24 @@ class DeterministicFieldCipher:
     """Per-``(tenant, field)`` deterministic cipher derived from a stable root.
 
     A :class:`~forze.application.contracts.crypto.DeterministicFieldCipherPort`.
+
+    Rotation: set :attr:`previous_root` to the prior secret during the overlap
+    window. New writes encrypt under :attr:`root`; reads decrypt under either; and
+    :meth:`search_variants` returns the ciphertext under *both* roots so an equality
+    query still matches values written under the old key. Once a re-index sweep
+    (``reencrypt_documents``) has rewritten every searchable value under the new
+    root, drop :attr:`previous_root` and queries collapse back to a single key.
     """
 
     root: bytes = attrs.field(repr=False)
     """Stable root secret (>= 32 bytes). Long-lived; rotating it re-indexes data."""
 
+    previous_root: bytes | None = attrs.field(default=None, repr=False)
+    """Prior root, set only during a rotation overlap. Reads + queries still match
+    values written under it; writes always use :attr:`root`."""
+
     _keys: dict[tuple[str, str], bytes] = attrs.field(factory=dict, init=False)
+    _prev_keys: dict[tuple[str, str], bytes] = attrs.field(factory=dict, init=False)
 
     # ....................... #
 
@@ -60,23 +72,43 @@ class DeterministicFieldCipher:
                 f"Deterministic cipher root secret must be at least {_KEY_BYTES} bytes",
             )
 
+        if self.previous_root is not None and len(self.previous_root) < _KEY_BYTES:
+            raise exc.configuration(
+                f"Deterministic cipher previous root must be at least {_KEY_BYTES} bytes",
+            )
+
     # ....................... #
+
+    def _derive(self, tenant: TenantIdentity | None, field: str, root: bytes) -> bytes:
+        return HKDF(
+            algorithm=hashes.SHA256(),
+            length=_KEY_BYTES,
+            salt=None,
+            info=f"forze.det|{_tenant_key(tenant)}|{field}".encode("utf-8"),
+        ).derive(root)
 
     def _key(self, tenant: TenantIdentity | None, field: str) -> bytes:
         cache_key = (_tenant_key(tenant), field)
         cached = self._keys.get(cache_key)
 
-        if cached is not None:
-            return cached
+        if cached is None:
+            cached = self._keys[cache_key] = self._derive(tenant, field, self.root)
 
-        derived = HKDF(
-            algorithm=hashes.SHA256(),
-            length=_KEY_BYTES,
-            salt=None,
-            info=f"forze.det|{cache_key[0]}|{field}".encode("utf-8"),
-        ).derive(self.root)
-        self._keys[cache_key] = derived
-        return derived
+        return cached
+
+    def _previous_key(self, tenant: TenantIdentity | None, field: str) -> bytes | None:
+        if self.previous_root is None:
+            return None
+
+        cache_key = (_tenant_key(tenant), field)
+        cached = self._prev_keys.get(cache_key)
+
+        if cached is None:
+            cached = self._prev_keys[cache_key] = self._derive(
+                tenant, field, self.previous_root
+            )
+
+        return cached
 
     # ....................... #
 
@@ -87,7 +119,7 @@ class DeterministicFieldCipher:
         field: str,
         plaintext: bytes,
     ) -> bytes:
-        """Deterministically encrypt *plaintext* for ``(tenant, field)``."""
+        """Deterministically encrypt *plaintext* for ``(tenant, field)`` under the root."""
 
         return AESSIV(self._key(tenant, field)).encrypt(plaintext, [])
 
@@ -100,17 +132,53 @@ class DeterministicFieldCipher:
         field: str,
         ciphertext: bytes,
     ) -> bytes:
-        """Decrypt a value produced by :meth:`encrypt`.
+        """Decrypt a value produced by :meth:`encrypt`, under the current or previous root.
 
-        :raises CoreException: ``validation`` when authentication fails (the value
-            was not produced by this cipher for this ``(tenant, field)``).
+        :raises CoreException: ``validation`` when authentication fails under every
+            available key (the value was not produced by this cipher for this
+            ``(tenant, field)``).
         """
 
         try:
             return AESSIV(self._key(tenant, field)).decrypt(ciphertext, [])
 
-        except InvalidTag as error:
-            raise exc.validation(
-                "Deterministic decrypt failed (wrong key, tenant, or field)",
-                code="core.crypto.deterministic_auth_failed",
-            ) from error
+        except InvalidTag:
+            pass
+
+        previous = self._previous_key(tenant, field)
+
+        if previous is not None:
+            try:
+                return AESSIV(previous).decrypt(ciphertext, [])
+
+            except InvalidTag:
+                pass
+
+        raise exc.validation(
+            "Deterministic decrypt failed (wrong key, tenant, or field)",
+            code="core.crypto.deterministic_auth_failed",
+        )
+
+    # ....................... #
+
+    def search_variants(
+        self,
+        *,
+        tenant: TenantIdentity | None,
+        field: str,
+        plaintext: bytes,
+    ) -> tuple[bytes, ...]:
+        """Every ciphertext an equality query must match for *plaintext*.
+
+        Just the current-root ciphertext in steady state; during a rotation overlap
+        (``previous_root`` set) the previous-root ciphertext is appended too, so a
+        query matches values written under either key.
+        """
+
+        primary = AESSIV(self._key(tenant, field)).encrypt(plaintext, [])
+        previous = self._previous_key(tenant, field)
+
+        if previous is None:
+            return (primary,)
+
+        return (primary, AESSIV(previous).encrypt(plaintext, []))

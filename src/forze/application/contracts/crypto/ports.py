@@ -191,3 +191,19 @@ class DeterministicFieldCipherPort(Protocol):
         """
 
         ...  # pragma: no cover
+
+    def search_variants(
+        self,
+        *,
+        tenant: TenantIdentity | None,
+        field: str,
+        plaintext: bytes,
+    ) -> tuple[bytes, ...]:
+        """Every ciphertext an equality query must match for *plaintext*.
+
+        The current ciphertext in steady state; during a key-rotation overlap also
+        the ciphertext under the prior key, so a query still matches values written
+        before rotation. Used by the filter rewrite to lower equality predicates.
+        """
+
+        ...  # pragma: no cover

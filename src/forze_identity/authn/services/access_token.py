@@ -71,7 +71,7 @@ class AccessTokenService:
 
     config: AccessTokenConfig = attrs.field(factory=AccessTokenConfig)
 
-    additional_verifiers: tuple[SignerPort, ...] = ()
+    additional_verifiers: tuple[SignerPort, ...] = attrs.field(factory=tuple)
     """Extra signers whose keys are also **accepted on verify**, selected by the
     token's ``kid``. Holds the previous key during a rotation overlap so in-flight
     tokens keep verifying until they expire; drop it once they have."""
@@ -132,9 +132,7 @@ class AccessTokenService:
             if candidate.kid == kid:
                 return candidate
 
-        raise exc.authentication(
-            "Unknown signing key", code="invalid_access_token"
-        )
+        raise exc.authentication("Unknown signing key", code="invalid_access_token")
 
     # ....................... #
 

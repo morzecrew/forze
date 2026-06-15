@@ -62,6 +62,8 @@ HierarchyValue = str | Sequence[str]
 Op = EqOp | OrdOp | MembOp | UnaryOp | SetRelOp | TextOp | HierarchyOp
 """All supported filter operators."""
 
+# ....................... #
+
 
 class TreePath(str):
     """A materialized hierarchy path (dot-separated labels, e.g. ``"top.science.math"``).
@@ -72,6 +74,8 @@ class TreePath(str):
     declare no hierarchy support."""
 
     __slots__ = ()
+
+    # ....................... #
 
     @classmethod
     def __get_pydantic_core_schema__(cls, source: Any, handler: Any) -> Any:

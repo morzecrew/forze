@@ -54,6 +54,14 @@ class CryptoDepsModule:
     ``DeterministicCipherDepKey``. Long-lived: rotating it requires re-encrypting
     searchable fields. Load it from a secret store (e.g. Vault) at startup."""
 
+    deterministic_previous_root: bytes | None = attrs.field(default=None, repr=False)
+    """Prior deterministic root, set only during a rotation overlap.
+
+    While set, new writes use :attr:`deterministic_root` but reads and equality
+    queries also match values written under this previous root. Run
+    ``reencrypt_documents`` to re-index every searchable value under the new root,
+    then drop this. Ignored unless :attr:`deterministic_root` is also set."""
+
     # ....................... #
 
     def __call__(self) -> Deps:
@@ -74,6 +82,7 @@ class CryptoDepsModule:
         if self.deterministic_root is not None:
             deps[DeterministicCipherDepKey] = DeterministicFieldCipher(
                 root=self.deterministic_root,
+                previous_root=self.deterministic_previous_root,
             )
 
         return Deps.plain(deps)

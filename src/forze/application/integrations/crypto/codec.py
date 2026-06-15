@@ -410,6 +410,16 @@ class EncryptingModelCodec[T](ModelCodec[T, Any]):
             case _:
                 return node
 
+    def _det_search(self, tenant: TenantIdentity | None, field: str, value: Any) -> tuple[str, ...]:
+        """Base64 ciphertext(s) a stored value could match — both keys during rotation."""
+
+        return tuple(
+            base64.b64encode(blob).decode("ascii")
+            for blob in self._require_det().search_variants(
+                tenant=tenant, field=field, plaintext=orjson.dumps(value)
+            )
+        )
+
     def _rewrite_field(
         self,
         name: str,
@@ -418,13 +428,21 @@ class EncryptingModelCodec[T](ModelCodec[T, Any]):
         tenant: TenantIdentity | None,
     ) -> QueryField:
         if op in ("$eq", "$neq"):
-            return QueryField(name, op, self._det_encode(tenant, name, value))
+            variants = self._det_search(tenant, name, value)
+
+            # Steady state → one ciphertext, keep the equality op. During a rotation
+            # overlap a value may sit under either key, so widen to membership so the
+            # predicate matches both: $eq → $in, $neq → $nin.
+            if len(variants) == 1:
+                return QueryField(name, op, variants[0])
+
+            return QueryField(name, "$in" if op == "$eq" else "$nin", variants)
 
         if op in ("$in", "$nin"):
             return QueryField(
                 name,
                 op,
-                tuple(self._det_encode(tenant, name, v) for v in value),
+                tuple(ct for v in value for ct in self._det_search(tenant, name, v)),
             )
 
         raise exc.precondition(
