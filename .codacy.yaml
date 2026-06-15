@@ -1,3 +1,14 @@
 ---
-include_paths:
-  - src
+exclude_paths:
+  - "tests/**"
+  - ".agents/**"
+  - ".cursor/**"
+  - ".vscode/**"
+  - ".github/**"
+  - ".pre-commit/**"
+  - ".pre-commit-config.yaml"
+  - "pages/**"
+  - ".greptile/**"
+  - ".sourcery.yaml"
+  - "justfile"
+  - "skills/**"
