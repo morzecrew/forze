@@ -2,26 +2,31 @@
 
 from __future__ import annotations
 
+from datetime import timedelta
 from uuid import uuid4
 
 import pytest
 from pydantic import BaseModel
 
+from forze.application.contracts.inbox import InboxSpec
 from forze.application.contracts.outbox import (
     OutboxDestination,
+    OutboxEncryptionTier,
     OutboxSpec,
     OutboxStatus,
 )
-from forze.application.contracts.queue import QueueSpec
+from forze.application.contracts.queue import QueueMessage, QueueSpec
 from forze.application.execution import DepsRegistry, ExecutionRuntime
 from forze.application.integrations.outbox import is_encrypted_payload
 from forze.base.primitives import utcnow
 from forze.base.serialization import PydanticModelCodec
+from forze_kits.integrations.consumer import run_consumer
 from forze_kits.integrations.outbox import (
     outbox_flush_tx_on_success_factory,
     relay_outbox_to_queue,
 )
 from forze_mock import MockDepsModule, MockStateDepKey
+from forze_mock.adapters import MockState
 from forze_mock.outbox_adapter import MockOutboxRow
 
 # ----------------------- #
@@ -31,13 +36,15 @@ class _EventPayload(BaseModel):
     n: int
 
 
-def _specs(*, encrypt: bool) -> tuple[OutboxSpec[_EventPayload], QueueSpec[_EventPayload]]:
+def _specs(
+    *, encryption: OutboxEncryptionTier
+) -> tuple[OutboxSpec[_EventPayload], QueueSpec[_EventPayload]]:
     codec = PydanticModelCodec(_EventPayload)
     outbox_spec = OutboxSpec(
         name="events",
         codec=codec,
         destination=OutboxDestination.queue(route="jobs", channel="jobs"),
-        encrypt=encrypt,
+        encryption=encryption,
     )
     return outbox_spec, QueueSpec(name="jobs", codec=codec)
 
@@ -47,7 +54,7 @@ def _specs(*, encrypt: bool) -> tuple[OutboxSpec[_EventPayload], QueueSpec[_Even
 
 @pytest.mark.asyncio
 async def test_payload_encrypted_at_rest_then_decrypted_on_relay() -> None:
-    outbox_spec, queue_spec = _specs(encrypt=True)
+    outbox_spec, queue_spec = _specs(encryption="at_rest")
     runtime = ExecutionRuntime(deps=DepsRegistry.from_modules(MockDepsModule()).freeze())
 
     async with runtime.scope():
@@ -77,7 +84,7 @@ async def test_payload_encrypted_at_rest_then_decrypted_on_relay() -> None:
 async def test_relay_tolerates_legacy_plaintext_rows() -> None:
     """A plaintext row written before encryption was enabled still relays."""
 
-    outbox_spec, queue_spec = _specs(encrypt=True)
+    outbox_spec, queue_spec = _specs(encryption="at_rest")
     runtime = ExecutionRuntime(deps=DepsRegistry.from_modules(MockDepsModule()).freeze())
 
     async with runtime.scope():
@@ -110,10 +117,57 @@ async def test_relay_tolerates_legacy_plaintext_rows() -> None:
 
 
 @pytest.mark.asyncio
+async def test_end_to_end_ciphertext_through_broker_decrypted_by_consumer() -> None:
+    """e2e: relay publishes ciphertext; the consumer decrypts before the handler."""
+
+    outbox_spec, queue_spec = _specs(encryption="end_to_end")
+    inbox_spec = InboxSpec(name="events")
+    state = MockState()
+    runtime = ExecutionRuntime(
+        deps=DepsRegistry.from_modules(
+            MockDepsModule(state=state, strict_tx=True)
+        ).freeze()
+    )
+
+    async with runtime.scope():
+        ctx = runtime.get_context()
+
+        await ctx.outbox.command(outbox_spec).stage("job.requested", _EventPayload(n=42))
+        await outbox_flush_tx_on_success_factory(outbox_spec)(ctx)(0, 0)
+
+        # e2e: the relay forwards ciphertext, it is NOT decrypted before publish.
+        result = await relay_outbox_to_queue(
+            ctx, outbox_spec=outbox_spec, queue_spec=queue_spec
+        )
+        assert result.published == 1
+        # The broker holds the ciphertext envelope, not the plaintext model.
+        assert is_encrypted_payload(state.queues["jobs"]["jobs"][0].message.payload)
+
+        received: list[_EventPayload] = []
+
+        async def _handler(message: QueueMessage[_EventPayload]) -> None:
+            received.append(message.payload)
+
+        run = await run_consumer(
+            ctx,
+            queue="jobs",
+            queue_spec=queue_spec,
+            handler=_handler,
+            inbox_spec=inbox_spec,
+            tx_route="mock",
+            timeout=timedelta(milliseconds=250),
+        )
+
+        # The consumer decrypted the envelope and the handler saw the plaintext model.
+        assert run.processed == 1
+        assert received == [_EventPayload(n=42)]
+
+
+@pytest.mark.asyncio
 async def test_plaintext_route_unaffected() -> None:
     """encrypt=False keeps payloads plaintext at rest (no regression)."""
 
-    outbox_spec, queue_spec = _specs(encrypt=False)
+    outbox_spec, queue_spec = _specs(encryption="none")
     runtime = ExecutionRuntime(deps=DepsRegistry.from_modules(MockDepsModule()).freeze())
 
     async with runtime.scope():

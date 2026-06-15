@@ -56,11 +56,10 @@ class OutboxStaging[M: BaseModel]:
     async def _to_entry(self, event: IntegrationEvent[M]) -> StagedOutboxEntry:
         payload_json = self.spec.codec.encode_mapping(event.payload)
 
-        if self.spec.encrypt and self.payload_cipher is not None:
+        if self.spec.encrypts and self.payload_cipher is not None:
             payload_json = await encrypt_outbox_payload(
                 self.payload_cipher,
                 payload_json,
-                route=self._route,
                 tenant_id=event.tenant_id,
                 event_id=event.event_id,
             )

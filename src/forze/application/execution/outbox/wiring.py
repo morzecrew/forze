@@ -39,13 +39,14 @@ def _resolve_payload_cipher(
     same posture as document field encryption.
     """
 
-    if not spec.encrypt:
+    if not spec.encrypts:
         return None
 
     if not ctx.deps.exists(KeyringDepKey):
         raise exc.configuration(
-            f"Outbox route {spec.name!r} declares encrypt=True but no keyring is wired. "
-            "Add a CryptoDepsModule (registers the keyring) or set encrypt=False.",
+            f"Outbox route {spec.name!r} declares encryption={spec.encryption!r} but no "
+            "keyring is wired. Add a CryptoDepsModule (registers the keyring) or set "
+            "encryption='none'.",
             code="core.outbox.encryption_wiring",
         )
 

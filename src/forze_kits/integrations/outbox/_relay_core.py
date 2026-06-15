@@ -179,11 +179,12 @@ async def relay_outbox_claims(
     if not claims:
         return OutboxRelayResult(reclaimed=reclaimed)
 
-    # Whole-payload encryption is decrypted here (at-rest only): the store holds
-    # ciphertext, the transport/consumer see plaintext. ``None`` keyring + plaintext
-    # rows is the unencrypted path; an encrypted row with no keyring fails loud.
+    # Encryption tier decides what the relay publishes: ``at_rest`` decrypts here (the
+    # broker/consumer see plaintext); ``end_to_end`` forwards the ciphertext opaquely for
+    # the consumer to decrypt; ``none`` is plaintext. A ``None`` keyring + plaintext rows
+    # is the unencrypted path; an encrypted row needing a key with none wired fails loud.
     cipher = ctx.deps.provide(KeyringDepKey) if ctx.deps.exists(KeyringDepKey) else None
-    route = str(outbox_spec.name)
+    end_to_end = outbox_spec.encryption == "end_to_end"
 
     published = 0
     failed = 0
@@ -196,16 +197,20 @@ async def relay_outbox_claims(
 
     for claim in claims:
         try:
-            # Build step: decrypt (if encrypted at rest) then decode. Decode/decrypt
-            # errors are poison — the row can never publish.
-            decrypted = await decrypt_outbox_payload(
-                cipher,
-                claim.payload,
-                route=route,
-                tenant_id=claim.tenant_id,
-                event_id=claim.event_id,
-            )
-            payload = outbox_spec.codec.decode_mapping(decrypted)
+            if end_to_end:
+                # Forward the ciphertext envelope unchanged; the consumer decrypts it.
+                payload = claim.payload
+
+            else:
+                # ``at_rest`` decrypts here; ``none`` passes plaintext through. Decode
+                # then publish. Decode/decrypt errors are poison — the row can't publish.
+                decrypted = await decrypt_outbox_payload(
+                    cipher,
+                    claim.payload,
+                    tenant_id=claim.tenant_id,
+                    event_id=claim.event_id,
+                )
+                payload = outbox_spec.codec.decode_mapping(decrypted)
 
         except Exception as e:
             # Terminal path stays per-row: rare, and error fidelity matters.

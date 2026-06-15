@@ -35,6 +35,13 @@ from .ports import (
     KeyManagementPort,
     KeyringPort,
 )
+from .payload_envelope import (
+    ENCRYPTED_PAYLOAD_KEY,
+    encrypted_payload_ciphertext,
+    is_encrypted_payload,
+    looks_encrypted_body,
+    wrap_encrypted_payload,
+)
 from .value_objects import CryptoKeyringStats, DataKey, KeyRef
 from .wiring import (
     EncryptionTier,
@@ -77,4 +84,10 @@ __all__ = [
     "EncryptionTier",
     "encryption_satisfies",
     "validate_required_encryption",
+    # whole-payload encrypted-message marker
+    "ENCRYPTED_PAYLOAD_KEY",
+    "wrap_encrypted_payload",
+    "is_encrypted_payload",
+    "encrypted_payload_ciphertext",
+    "looks_encrypted_body",
 ]

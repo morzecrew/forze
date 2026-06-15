@@ -13,6 +13,20 @@ from ..base import BaseSpec
 
 OutboxDestinationKind = Literal["queue", "stream", "pubsub"]
 
+OutboxEncryptionTier = Literal["none", "at_rest", "end_to_end"]
+"""Outbox payload encryption coverage, declared per route (like a tenancy isolation tier).
+
+Reach, weakest → strongest:
+
+- ``none`` (default) — payloads are stored and relayed in plaintext.
+- ``at_rest`` — the payload is encrypted in the outbox store and **decrypted by the
+  relay** before publish, so transports and consumers see plaintext. Protects the
+  outbox table against a database compromise.
+- ``end_to_end`` — the payload stays encrypted from staging all the way to the
+  **consumer**, which decrypts it. Protects the payload in the broker too; the consumer
+  service must have a keyring wired.
+"""
+
 
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
@@ -72,13 +86,13 @@ class OutboxSpec[M](BaseSpec):
     destination: OutboxDestination | None = None
     """Optional default relay target honored by relay workers."""
 
-    encrypt: bool = False
-    """Encrypt the whole event payload at rest in the outbox store (default off).
+    encryption: OutboxEncryptionTier = "none"
+    """Whole-payload encryption tier for this route (default ``"none"``).
 
-    When ``True`` and a keyring is wired (``CryptoDepsModule``), the serialized payload
-    is envelope-encrypted before persistence and decrypted in the relay before publish —
-    so the outbox table holds only ciphertext while transports and consumers are
-    unchanged. Requires a ``KeyringDepKey`` in both the staging and relay processes."""
+    ``at_rest`` encrypts the payload in the outbox store and decrypts it in the relay;
+    ``end_to_end`` keeps it encrypted through the broker to the consumer. Both require a
+    keyring (``CryptoDepsModule``) wired wherever decryption happens — the relay for
+    ``at_rest``, the consumer for ``end_to_end``. See :data:`OutboxEncryptionTier`."""
 
     # ....................... #
 
@@ -87,3 +101,19 @@ class OutboxSpec[M](BaseSpec):
         """Payload model type carried by :attr:`codec`."""
 
         return self.codec.model_type
+
+    # ....................... #
+
+    @property
+    def encrypts(self) -> bool:
+        """Whether payloads are encrypted at staging (``at_rest`` or ``end_to_end``)."""
+
+        return self.encryption != "none"
+
+    # ....................... #
+
+    @property
+    def relay_decrypts(self) -> bool:
+        """Whether the relay decrypts before publish (``at_rest`` only)."""
+
+        return self.encryption == "at_rest"

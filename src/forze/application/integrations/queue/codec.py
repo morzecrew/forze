@@ -4,7 +4,12 @@ from datetime import datetime
 from typing import Any, Mapping, Protocol
 
 import attrs
+import orjson
 
+from forze.application.contracts.crypto import (
+    is_encrypted_payload,
+    looks_encrypted_body,
+)
 from forze.application.contracts.queue import QueueMessage
 from forze.base.serialization import ModelCodec
 
@@ -77,15 +82,29 @@ class QueueMessageCodec[M]:
     # ....................... #
 
     def encode(self, payload: M) -> bytes:
+        # End-to-end encrypted payloads arrive here as the one-key envelope wrapper
+        # (the relay forwards ciphertext). Serialize it opaquely — the model codec
+        # would reject a wrapper that is not its own model.
+        if is_encrypted_payload(payload):
+            return orjson.dumps(payload)
+
         return self.payload_codec.encode_json_bytes(payload)
 
     # ....................... #
 
     def decode(self, queue: str, raw: RawQueueMessage) -> QueueMessage[M]:
+        # An encrypted-envelope body is passed through as the wrapper (the consumer
+        # runner decrypts it before the handler); plaintext decodes to the model as
+        # before, byte-for-byte — the peek avoids parsing normal bodies twice.
+        if looks_encrypted_body(raw.body):
+            payload: Any = orjson.loads(raw.body)
+        else:
+            payload = self.payload_codec.decode_json_bytes(raw.body)
+
         return QueueMessage(
             queue=queue,
             id=raw.id,
-            payload=self.payload_codec.decode_json_bytes(raw.body),
+            payload=payload,
             type=raw.type,
             enqueued_at=raw.enqueued_at,
             key=raw.key,

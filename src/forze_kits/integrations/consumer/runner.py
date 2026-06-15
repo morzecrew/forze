@@ -2,17 +2,19 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Awaitable, Callable
 from contextlib import aclosing
 from datetime import timedelta
 from functools import partial
-from typing import Any, final
-
-import asyncio
+from typing import Any, cast, final
+from uuid import UUID
 
 import attrs
 
 from forze.application._logger import logger
+from forze.application.contracts.crypto import KeyringDepKey
+from forze.application.contracts.envelope import HEADER_EVENT_ID, HEADER_TENANT_ID
 from forze.application.contracts.inbox import InboxSpec
 from forze.application.contracts.queue import (
     QueueMessage,
@@ -21,12 +23,34 @@ from forze.application.contracts.queue import (
     QueueSpec,
 )
 from forze.application.execution.context import ExecutionContext
-from forze.base.exceptions import exc
-from forze.base.primitives import StrKey
+from forze.application.integrations.outbox import (
+    decrypt_outbox_payload,
+    is_encrypted_payload,
+)
+from forze.base.exceptions import CoreException, exc
+from forze.base.primitives import JsonDict, StrKey
 
 from ..inbox import process_with_inbox
 
 # ----------------------- #
+
+_CIPHER_MISSING_CODE = "core.outbox.payload_cipher_missing"
+"""Decrypt config error (no keyring): a deployment fault, not a poison message."""
+
+
+def _header_uuid(headers: object, key: str) -> UUID | None:
+    value = cast(JsonDict, headers).get(key) if isinstance(headers, dict) else None
+
+    if not isinstance(value, str):
+        return None
+
+    try:
+        return UUID(value)
+    except ValueError:
+        return None
+
+
+# ....................... #
 
 
 @final
@@ -108,6 +132,37 @@ async def _acknowledge(
             message_id,
             queue,
         )
+
+
+# ....................... #
+
+
+async def _decrypt_message[M](
+    message: QueueMessage[M],
+    *,
+    queue_spec: QueueSpec[M],
+    cipher: object | None,
+) -> QueueMessage[M]:
+    """Decrypt an end-to-end-encrypted message in place; pass plaintext through.
+
+    The consumer counterpart of the relay's at-rest decrypt: a message whose payload is
+    a whole-envelope wrapper is decrypted (AAD rebuilt from the ``event_id``/``tenant``
+    headers the relay forwarded) and decoded via the queue codec, so the handler always
+    sees the typed model. Plaintext messages are returned unchanged.
+    """
+
+    if not is_encrypted_payload(message.payload):
+        return message
+
+    plaintext = await decrypt_outbox_payload(
+        cipher,  # type: ignore[arg-type]
+        message.payload,  # type: ignore[arg-type]
+        tenant_id=_header_uuid(message.headers, HEADER_TENANT_ID),
+        event_id=_header_uuid(message.headers, HEADER_EVENT_ID),
+    )
+    model = queue_spec.codec.decode_mapping(plaintext)
+
+    return attrs.evolve(message, payload=model)
 
 
 # ....................... #
@@ -208,6 +263,11 @@ async def run_consumer[M](
         route=queue_spec.name,
     )
 
+    # End-to-end encrypted messages arrive as ciphertext envelopes; decrypt before the
+    # decision ladder. ``None`` keyring is fine for plaintext queues — an encrypted
+    # message then fails loud (deployment fault) and aborts the loop.
+    cipher = ctx.deps.provide(KeyringDepKey) if ctx.deps.exists(KeyringDepKey) else None
+
     processed = 0
     duplicates = 0
     parked = 0
@@ -215,6 +275,40 @@ async def run_consumer[M](
 
     async with aclosing(port.consume(queue, timeout=timeout)) as messages:
         async for message in messages:
+            # -- Decrypt: end-to-end ciphertext → typed model before the ladder. -- #
+            try:
+                message = await _decrypt_message(
+                    message, queue_spec=queue_spec, cipher=cipher
+                )
+
+            except asyncio.CancelledError:
+                raise
+
+            except CoreException as e:
+                if e.code == _CIPHER_MISSING_CODE:
+                    raise  # deployment fault — abort, don't dead-letter every message
+
+                logger.exception(
+                    "Queue consumer could not decrypt message %s on queue %s; "
+                    "nack(requeue=False) as poison",
+                    message.id,
+                    queue,
+                )
+                await _dispose(port, queue, message.id, requeue=False)
+                parked += 1
+                continue
+
+            except Exception:
+                logger.exception(
+                    "Queue consumer could not decode encrypted message %s on queue %s; "
+                    "nack(requeue=False) as poison",
+                    message.id,
+                    queue,
+                )
+                await _dispose(port, queue, message.id, requeue=False)
+                parked += 1
+                continue
+
             # -- Park: handler-poison detected via the delivery count. ----- #
             if (
                 max_deliveries is not None
