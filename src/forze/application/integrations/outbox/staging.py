@@ -47,6 +47,20 @@ class OutboxStaging[M: BaseModel]:
 
     # ....................... #
 
+    def __attrs_post_init__(self) -> None:
+        # Fail closed at construction (mirrors the decrypt-side
+        # ``payload_cipher_missing``): a route that declares encryption but has no
+        # keyring would otherwise stage sensitive payloads silently as plaintext.
+        if self.spec.encrypts and self.payload_cipher is None:
+            raise exc.configuration(
+                f"Outbox route {self._route!r} declares encryption "
+                f"(OutboxSpec.encryption={self.spec.encryption!r}) but no keyring is wired "
+                "to encrypt its payloads. Register a CryptoDepsModule or lower the tier.",
+                code="core.outbox.payload_cipher_missing",
+            )
+
+    # ....................... #
+
     @property
     def _route(self) -> str:
         return str(self.spec.name)

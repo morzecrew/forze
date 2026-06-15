@@ -11,6 +11,7 @@ from forze.application.contracts.outbox import OutboxSpec, StagedOutboxEntry
 from forze.application.execution import DepsRegistry, ExecutionContext
 from forze.application.execution.outbox import InvocationOutboxEnricher
 from forze.application.integrations.outbox import OutboxStaging
+from forze.base.exceptions import CoreException, ExceptionKind
 from forze.base.serialization import PydanticModelCodec
 
 
@@ -34,6 +35,30 @@ def _coord(
         enricher=InvocationOutboxEnricher(inv=ctx.inv_ctx),
         flush_rows=_flush,
     )
+
+
+def test_construction_without_cipher_for_encrypting_spec_fails_closed() -> None:
+    """A route that declares encryption but is wired without a keyring is refused at
+    construction, not silently staged as plaintext."""
+
+    async def _flush(rows: list[StagedOutboxEntry]) -> int:
+        return 0  # never reached — construction raises first
+
+    ctx = ExecutionContext(deps=DepsRegistry().freeze().resolve())
+    spec = OutboxSpec(
+        name="events", codec=PydanticModelCodec(_Payload), encryption="at_rest"
+    )
+
+    with pytest.raises(CoreException) as ei:
+        OutboxStaging(
+            staging=ctx.outbox_staging,
+            spec=spec,
+            enricher=InvocationOutboxEnricher(inv=ctx.inv_ctx),
+            flush_rows=_flush,
+        )
+
+    assert ei.value.kind is ExceptionKind.CONFIGURATION
+    assert ei.value.code == "core.outbox.payload_cipher_missing"
 
 
 @pytest.mark.asyncio
