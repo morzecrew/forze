@@ -3,13 +3,12 @@
 from __future__ import annotations
 
 import dataclasses
+from collections.abc import Sequence
+from uuid import uuid4
 
 import pytest
 from temporalio.api.common.v1 import Payload
 from temporalio.converter import PayloadCodec
-
-from collections.abc import Sequence
-from uuid import uuid4
 
 from forze.application.contracts.crypto import (
     AesGcmAead,
@@ -31,7 +30,7 @@ def _codec() -> EncryptingPayloadCodec:
         aead=AesGcmAead(),
         directory=StaticKeyDirectory(KeyRef(key_id="cmk")),
     )
-    return EncryptingPayloadCodec(keyring)
+    return EncryptingPayloadCodec(cipher=keyring)
 
 
 def _payload(data: bytes) -> Payload:
@@ -88,7 +87,7 @@ async def test_encode_resolves_bound_tenant_per_call() -> None:
         calls.append(tenant)
         return tenant
 
-    codec = EncryptingPayloadCodec(keyring, tenant_provider=_provider)
+    codec = EncryptingPayloadCodec(cipher=keyring, tenant_provider=_provider)
 
     [sealed] = await codec.encode([_payload(b'{"x": 1}')])
     assert len(calls) == 1  # the bound tenant is resolved at seal time
@@ -127,7 +126,8 @@ class _MarkerCodec(PayloadCodec):
     async def encode(self, payloads: Sequence[Payload]) -> list[Payload]:
         self._order.append("base.encode")
         return [
-            Payload(metadata={**dict(p.metadata), "base": b"1"}, data=p.data) for p in payloads
+            Payload(metadata={**dict(p.metadata), "base": b"1"}, data=p.data)
+            for p in payloads
         ]
 
     async def decode(self, payloads: Sequence[Payload]) -> list[Payload]:
@@ -161,4 +161,6 @@ async def test_encrypting_data_converter_chains_existing_base_codec() -> None:
     # Decode reverses the order: decrypt (outer) first, then the base codec (inner).
     assert order == ["base.encode", "base.decode"]
     assert restored.data == b'{"n": 7}'
-    assert restored.metadata["base"] == b"1"  # the base codec's encode tag survived the seal
+    assert (
+        restored.metadata["base"] == b"1"
+    )  # the base codec's encode tag survived the seal

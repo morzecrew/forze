@@ -49,7 +49,7 @@ class EncryptingPayloadCodec(PayloadCodec):
     """Seals each Temporal ``Payload`` with the keyring; decodes our own back."""
 
     cipher: BytesCipherPort
-    tenant_provider: Callable[[], TenantIdentity | None] | None
+    tenant_provider: Callable[[], TenantIdentity | None] | None = None
 
     # ....................... #
 
