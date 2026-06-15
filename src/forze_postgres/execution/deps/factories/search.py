@@ -10,7 +10,10 @@ from forze.application.contracts.crypto import (
 )
 from forze.application.contracts.embeddings import EmbeddingsSpec
 from forze.application.contracts.search import SearchQueryDepPort
-from forze.application.integrations.search import resolve_search_read_codec_spec
+from forze.application.integrations.search import (
+    resolve_search_read_codec_spec,
+    search_spec_encrypts,
+)
 from forze.base.exceptions import exc
 
 from ....adapters import (
@@ -63,7 +66,9 @@ def postgres_search_port_for_config(
     | PostgresFTSSearchAdapter[Any]
     | PostgresVectorSearchAdapter[Any]
 ):
-    snap = result_snapshot(context, member_spec.snapshot)
+    snap = result_snapshot(
+        context, member_spec.snapshot, encrypted=search_spec_encrypts(member_spec)
+    )
 
     # Decrypt encrypted document fields out of in-place search results (the table was
     # written encrypted by the document gateway; the wrapped codec reproduces its config).

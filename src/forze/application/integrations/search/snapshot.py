@@ -6,8 +6,10 @@ federated rank fusion, and ``SearchResultSnapshotPort`` access here.
 
 from __future__ import annotations
 
+import base64
 import json
 import uuid
+from collections.abc import Callable
 from datetime import timedelta
 from typing import Any, Mapping, Sequence, TypeVar, cast
 
@@ -20,10 +22,13 @@ from forze.application.contracts.base import (
     SearchSnapshotHandle,
     page_from_limit_offset,
 )
+from forze.application.contracts.crypto import BytesCipherPort
 from forze.application.contracts.querying import (
     QueryFilterExpression,
     QuerySortExpression,
 )
+from forze.application.contracts.tenancy import TenantIdentity
+from forze.application.integrations.crypto import payload_aad
 from forze.application.contracts.search import (
     FederatedSearchReadModel,
     FederatedSearchSpec,
@@ -41,6 +46,14 @@ from forze.base.serialization import default_model_codec
 
 M_co = TypeVar("M_co", bound=BaseModel)
 T_co = TypeVar("T_co", bound=BaseModel)
+
+SNAPSHOT_PAYLOAD_DOMAIN = "search.snapshot"
+"""AAD domain isolating snapshot-record ciphertext from other contexts."""
+
+_SEALED_PREFIX = "\x01fz.snap:"
+"""Sentinel marking a sealed record key. A plaintext key is model JSON (``{``) or a
+``member\\0json`` federated key, so it never starts with this control byte — letting reads
+tell sealed from legacy-plaintext records during a zero-downtime rollout."""
 
 # ....................... #
 
@@ -83,6 +96,81 @@ class SearchResultSnapshot:
 
     store: SearchResultSnapshotPort
     """KV backend for snapshot runs."""
+
+    cipher: BytesCipherPort | None = attrs.field(default=None, repr=False)
+    """Keyring sealing the stored record models at rest — set only when the search route
+    field-encrypts, so the snapshot store does not re-expose what the document sealed.
+    ``None`` keeps record keys plaintext (the default, unencrypted routes)."""
+
+    cipher_tenant: Callable[[], TenantIdentity | None] | None = attrs.field(
+        default=None, repr=False
+    )
+    """Resolver for the bound tenant, anchoring the per-record AAD to ``cipher``."""
+
+    # ....................... #
+
+    async def _seal_ids(self, ids: list[str], *, run_id: str) -> list[str]:
+        """Seal each record key under ``(tenant, run_id)`` so the store holds no plaintext.
+
+        Whole-key sealing (the key is opaque model JSON) keeps list order — encryption is
+        per-position — so re-pagination over the sealed run is unchanged. A no-op without a
+        cipher.
+        """
+
+        if self.cipher is None:
+            return ids
+
+        tenant = self.cipher_tenant() if self.cipher_tenant is not None else None
+        aad = payload_aad(
+            SNAPSHOT_PAYLOAD_DOMAIN,
+            tenant.tenant_id if tenant is not None else None,
+            run_id,
+        )
+
+        sealed: list[str] = []
+        for raw in ids:
+            blob = await self.cipher.encrypt(raw.encode("utf-8"), tenant=tenant, aad=aad)
+            sealed.append(_SEALED_PREFIX + base64.b64encode(blob).decode("ascii"))
+
+        return sealed
+
+    # ....................... #
+
+    async def _open_ids(self, ids: Sequence[str], *, run_id: str) -> list[str]:
+        """Open record keys sealed by :meth:`_seal_ids`; pass legacy plaintext through.
+
+        Fail-closed: a sealed key with no cipher wired is a misconfiguration (the key cannot
+        be opened), so it raises rather than handing back ciphertext.
+        """
+
+        if not any(k.startswith(_SEALED_PREFIX) for k in ids):
+            return list(ids)
+
+        if self.cipher is None:
+            raise exc.configuration(
+                "Search snapshot holds sealed records but no keyring is wired to open them. "
+                "Register a CryptoDepsModule or clear the route's encryption.",
+                code="core.search.snapshot_encryption_wiring",
+            )
+
+        tenant = self.cipher_tenant() if self.cipher_tenant is not None else None
+        aad = payload_aad(
+            SNAPSHOT_PAYLOAD_DOMAIN,
+            tenant.tenant_id if tenant is not None else None,
+            run_id,
+        )
+
+        opened: list[str] = []
+        for key in ids:
+            if not key.startswith(_SEALED_PREFIX):
+                opened.append(key)  # legacy plaintext record, replayed as-is
+                continue
+
+            blob = base64.b64decode(key[len(_SEALED_PREFIX) :])
+            raw = await self.cipher.decrypt(blob, aad=aad)
+            opened.append(raw.decode("utf-8"))
+
+        return opened
 
     # ....................... #
 
@@ -475,6 +563,8 @@ class SearchResultSnapshot:
         if raw_keys is None:
             return None
 
+        raw_keys = await self._open_ids(raw_keys, run_id=str(snap_opt["id"]))
+
         sm: SearchResultSnapshotMeta | None = await self.store.get_meta(
             str(snap_opt["id"])
         )
@@ -565,7 +655,10 @@ class SearchResultSnapshot:
         await self.store.put_run(
             run_id=run_id,
             fingerprint=fp_computed,
-            ordered_ids=[self.result_record_key_string(h) for h in to_store],
+            ordered_ids=await self._seal_ids(
+                [self.result_record_key_string(h) for h in to_store],
+                run_id=run_id,
+            ),
             ttl=self.effective_snapshot_ttl(snap_opt, rs_spec),
             chunk_size=self.effective_snapshot_chunk_size(snap_opt, rs_spec),
         )
@@ -599,7 +692,7 @@ class SearchResultSnapshot:
         await self.store.put_run(
             run_id=run_id,
             fingerprint=fp_computed,
-            ordered_ids=sliced,
+            ordered_ids=await self._seal_ids(sliced, run_id=run_id),
             ttl=self.effective_snapshot_ttl(snap_opt, rs_spec),
             chunk_size=self.effective_snapshot_chunk_size(snap_opt, rs_spec),
         )
@@ -649,6 +742,8 @@ class SearchResultSnapshot:
 
         if raw_keys is None:
             return None
+
+        raw_keys = await self._open_ids(raw_keys, run_id=str(snapshot["id"]))
 
         sm = await self.store.get_meta(str(snapshot["id"]))
         total_snap = int(sm.total) if sm and sm.complete else offset + len(raw_keys)

@@ -34,6 +34,18 @@ from forze.domain.constants import ID_FIELD
 _WIRING_CODE = "core.search.encryption_wiring"
 
 
+def search_spec_encrypts(spec: object) -> bool:
+    """Whether a search/hub spec declares non-empty field encryption.
+
+    Drives snapshot sealing: a route that decrypts confidential fields into its result models
+    must seal those models in the snapshot store too (else the at-rest re-exposure the document
+    sealing prevents reappears in the snapshot). Federated routes seal when **any** member does.
+    """
+
+    encryption = getattr(spec, "encryption", None)
+    return encryption is not None and not encryption.is_empty
+
+
 class _EncryptableReadSpec(Protocol):
     """A search spec that can declare field encryption (``SearchSpec``/``HubSearchSpec``)."""
 

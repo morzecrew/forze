@@ -107,6 +107,9 @@ they're never content-searchable, aggregatable, or matchable in a graph predicat
 (that's physics, not a limit) — so encrypt what you store-and-return but never
 query by, and use `searchable` (deterministic) fields for the equality lookups you
 do need. Each plane fails closed the same way (`core.{search,analytics,graph}.encryption_wiring`).
+The downstream caches inherit it: when a search route encrypts, its result-snapshot
+runs (the frozen models kept for stable re-pagination) are sealed at rest too, so the
+snapshot store never re-exposes what the document sealed — automatic, no extra config.
 
 ### Object storage
 

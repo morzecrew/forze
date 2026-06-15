@@ -9,7 +9,10 @@ from forze.application.contracts.crypto import (
     KeyringDepKey,
 )
 from forze.application.contracts.search import HubSearchQueryDepPort
-from forze.application.integrations.search import resolve_search_read_codec_spec
+from forze.application.integrations.search import (
+    resolve_search_read_codec_spec,
+    search_spec_encrypts,
+)
 
 from ....adapters import PostgresHubSearchAdapter
 from ..keys import PostgresClientDepKey, PostgresIntrospectorDepKey
@@ -79,6 +82,8 @@ class ConfigurablePostgresHubSearch(HubSearchQueryDepPort):
             tenant_aware=self.config.tenant_aware,
             filter_table_alias="h",
             nested_field_hints=self.config.nested_field_hints,
-            result_snapshot=result_snapshot(context, spec.snapshot),
+            result_snapshot=result_snapshot(
+                context, spec.snapshot, encrypted=search_spec_encrypts(spec)
+            ),
             read_validation=self.config.read_validation,
         )

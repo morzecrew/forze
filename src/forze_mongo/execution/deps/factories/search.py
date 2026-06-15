@@ -20,6 +20,7 @@ from forze.application.execution import ExecutionContext
 from forze.application.integrations.search import (
     SearchResultSnapshot,
     resolve_search_read_codec_spec,
+    search_spec_encrypts,
 )
 from forze.base.exceptions import exc
 
@@ -59,13 +60,23 @@ def _resolve_result_snapshot(
 def _result_snapshot(
     context: ExecutionContext,
     spec: SearchResultSnapshotSpec | None,
+    *,
+    encrypted: bool = False,
 ) -> SearchResultSnapshot | None:
     port = _resolve_result_snapshot(context, spec)
 
     if port is None:
         return None
 
-    return SearchResultSnapshot(store=port)
+    cipher = (
+        context.deps.provide(KeyringDepKey)
+        if encrypted and context.deps.exists(KeyringDepKey)
+        else None
+    )
+
+    return SearchResultSnapshot(
+        store=port, cipher=cipher, cipher_tenant=context.inv_ctx.get_tenant
+    )
 
 
 # ....................... #
@@ -100,7 +111,9 @@ def _mongo_search_port_for_config(
     )
 
     field_map = dict(c.field_map or {})
-    result_snapshot = _result_snapshot(context, member_spec.snapshot)
+    result_snapshot = _result_snapshot(
+        context, member_spec.snapshot, encrypted=search_spec_encrypts(member_spec)
+    )
     client = context.deps.provide(MongoClientDepKey)
     tenant_aware = c.tenant_aware
 
