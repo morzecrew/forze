@@ -129,6 +129,21 @@ async def test_adapter_unwrap_round_trips_through_client() -> None:
     client.transit_decrypt.assert_awaited_once_with("app", _CIPHERTEXT)
 
 
+async def test_adapter_unwrap_rejects_non_ascii_wrapped_key() -> None:
+    """A tampered/corrupted wrapped key surfaces as validation, not UnicodeDecodeError."""
+
+    client = MagicMock(spec=VaultClient)
+    client.transit_decrypt = AsyncMock(return_value=_DEK)
+
+    kms = VaultTransitKeyManagement(client=client)
+
+    with pytest.raises(CoreException) as excinfo:
+        await kms.unwrap_data_key(wrapped=b"\xff\xfe not ascii", key_ref=KeyRef(key_id="app"))
+
+    assert excinfo.value.code == "core.crypto.wrapped_key_bad_encoding"
+    client.transit_decrypt.assert_not_awaited()
+
+
 # ----------------------- #
 # Deps module wiring
 

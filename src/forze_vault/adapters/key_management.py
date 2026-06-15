@@ -20,6 +20,7 @@ from typing import final
 import attrs
 
 from forze.application.contracts.crypto import DataKey, KeyRef
+from forze.base.exceptions import exc
 
 from ..kernel.client import VaultClientPort
 
@@ -62,7 +63,12 @@ class VaultTransitKeyManagement:
     # ....................... #
 
     async def unwrap_data_key(self, *, wrapped: bytes, key_ref: KeyRef) -> bytes:
-        return await self.client.transit_decrypt(
-            key_ref.key_id,
-            wrapped.decode("ascii"),
-        )
+        try:
+            wrapped_token = wrapped.decode("ascii")
+        except UnicodeDecodeError as error:
+            raise exc.validation(
+                "Wrapped data key is not a valid Vault Transit ciphertext token",
+                code="core.crypto.wrapped_key_bad_encoding",
+            ) from error
+
+        return await self.client.transit_decrypt(key_ref.key_id, wrapped_token)

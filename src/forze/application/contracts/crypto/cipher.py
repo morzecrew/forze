@@ -13,7 +13,13 @@ from typing import final
 
 import attrs
 
-from forze.base.crypto import Aead, EncryptedEnvelope, pack_envelope, unpack_envelope
+from forze.base.crypto import (
+    Aead,
+    EncryptedEnvelope,
+    ensure_algorithm,
+    pack_envelope,
+    unpack_envelope,
+)
 
 from .ports import KeyManagementPort
 from .value_objects import KeyRef
@@ -76,11 +82,13 @@ class EnvelopeCipher:
         wrapped under a now-rotated key still decrypt.
 
         :param aad: Must equal the value passed to :meth:`encrypt`.
-        :raises CoreException: ``validation`` for a malformed envelope, or an
+        :raises CoreException: ``validation`` for a malformed envelope, an
+            algorithm mismatch between the envelope and the wired cipher, or an
             authentication failure surfaced by the AEAD on tamper / wrong ``aad``.
         """
 
         envelope = unpack_envelope(blob)
+        ensure_algorithm(envelope, self.aead.algorithm)
 
         data_key = await self.kms.unwrap_data_key(
             wrapped=envelope.wrapped_dek,

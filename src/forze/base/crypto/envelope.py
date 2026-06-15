@@ -158,6 +158,27 @@ def _take_var(
 # ....................... #
 
 
+def ensure_algorithm(envelope: EncryptedEnvelope, cipher_algorithm: str) -> None:
+    """Guard that *cipher_algorithm* can open *envelope*, else raise a clear error.
+
+    The envelope names the AEAD that produced its ciphertext. If the wired cipher
+    differs (e.g. the deployment switched ``AesGcmAead`` → ``ChaCha20Poly1305Aead``
+    after data was written), opening would fail as an opaque ``aead_auth_failed``
+    tamper error. This surfaces the real cause instead.
+    """
+
+    if envelope.alg != cipher_algorithm:
+        raise exc.validation(
+            f"Envelope was sealed with {envelope.alg!r} but the wired cipher is "
+            f"{cipher_algorithm!r}; the matching AEAD is required to decrypt it",
+            code="core.crypto.algorithm_mismatch",
+            details={"envelope_alg": envelope.alg, "cipher_alg": cipher_algorithm},
+        )
+
+
+# ....................... #
+
+
 def unpack_envelope(blob: bytes) -> EncryptedEnvelope:
     """Parse a packed envelope, validating its magic and scheme version.
 
@@ -195,10 +216,20 @@ def unpack_envelope(blob: bytes) -> EncryptedEnvelope:
     wrapped_dek, offset = _take_var(blob, offset, _U16)
     ciphertext = blob[offset:]
 
+    try:
+        alg = alg_raw.decode("utf-8")
+        key_id = key_id_raw.decode("utf-8")
+        key_version = key_version_raw.decode("utf-8") or None
+    except UnicodeDecodeError as error:
+        raise exc.validation(
+            "Malformed envelope: text field is not valid UTF-8",
+            code="core.crypto.envelope_bad_encoding",
+        ) from error
+
     return EncryptedEnvelope(
-        alg=alg_raw.decode("utf-8"),
-        key_id=key_id_raw.decode("utf-8"),
-        key_version=key_version_raw.decode("utf-8") or None,
+        alg=alg,
+        key_id=key_id,
+        key_version=key_version,
         nonce=nonce,
         wrapped_dek=wrapped_dek,
         ciphertext=ciphertext,

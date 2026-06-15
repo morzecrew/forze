@@ -11,6 +11,7 @@ from .aead import Aead
 from .ciphers import AesGcmAead, ChaCha20Poly1305Aead
 from .envelope import (
     EncryptedEnvelope,
+    ensure_algorithm,
     is_envelope,
     pack_envelope,
     unpack_envelope,
@@ -23,6 +24,7 @@ __all__ = [
     "AesGcmAead",
     "ChaCha20Poly1305Aead",
     "EncryptedEnvelope",
+    "ensure_algorithm",
     "is_envelope",
     "pack_envelope",
     "unpack_envelope",

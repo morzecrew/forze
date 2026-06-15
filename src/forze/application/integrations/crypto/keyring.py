@@ -31,7 +31,13 @@ from forze.application.contracts.crypto import (
     KeyRef,
 )
 from forze.application.contracts.tenancy import TenantIdentity
-from forze.base.crypto import Aead, EncryptedEnvelope, pack_envelope, unpack_envelope
+from forze.base.crypto import (
+    Aead,
+    EncryptedEnvelope,
+    ensure_algorithm,
+    pack_envelope,
+    unpack_envelope,
+)
 from forze.base.exceptions import exc
 
 # ----------------------- #
@@ -209,6 +215,7 @@ class Keyring:
         """Decrypt a packed envelope; the key is resolved from the envelope itself."""
 
         envelope = unpack_envelope(blob)
+        ensure_algorithm(envelope, self.aead.algorithm)
         dek = await self._unwrap(envelope)
 
         return self.aead.open(
@@ -221,10 +228,15 @@ class Keyring:
     # ....................... #
 
     async def warm(self, tenant: TenantIdentity | None) -> None:
-        """Pre-resolve *tenant*'s active data key so a later (a)sync encrypt pays no KMS call."""
+        """Pre-resolve *tenant*'s active data key so a later (a)sync encrypt pays no KMS call.
+
+        Prefetch only — it does **not** spend an encryption from the key's
+        ``max_dek_messages`` budget, so warming a key one use short of the limit
+        still leaves room for the encrypt the warm was preparing for.
+        """
 
         key_ref = await self._resolve_key_ref(tenant)
-        await self._active_data_key(key_ref)
+        await self._active_data_key(key_ref, consume=False)
 
     # ....................... #
 
@@ -288,6 +300,7 @@ class Keyring:
         """
 
         envelope = unpack_envelope(blob)
+        ensure_algorithm(envelope, self.aead.algorithm)
         dek = _lru_get(self._dec_cache, envelope.wrapped_dek)
 
         if dek is None:
@@ -305,13 +318,25 @@ class Keyring:
 
     # ....................... #
 
-    async def _active_data_key(self, key_ref: KeyRef) -> _ActiveDataKey:
+    async def _active_data_key(
+        self, key_ref: KeyRef, *, consume: bool = True
+    ) -> _ActiveDataKey:
+        """Resolve (and cache) the active data key for *key_ref*.
+
+        *consume* records that the caller will perform one encryption with the key:
+        it bumps the reuse counter and the cache-hit metric. :meth:`warm` passes
+        ``consume=False`` to prefetch without spending budget — a non-consuming
+        prefetch of a fresh key starts at ``uses=0`` so the encrypt it primes is
+        the one that counts.
+        """
+
         async with self._lock_for(key_ref.key_id):
             cached = _lru_get(self._enc_cache, key_ref.key_id)
 
             if cached is not None and cached.uses < self.max_dek_messages:
-                self._n_enc_hits += 1
-                cached.uses += 1
+                if consume:
+                    self._n_enc_hits += 1
+                    cached.uses += 1
                 return cached
 
             self._n_generated += 1
@@ -321,7 +346,7 @@ class Keyring:
                 wrapped=data_key.wrapped,
                 key_id=data_key.key_id,
                 key_version=data_key.key_version,
-                uses=1,
+                uses=1 if consume else 0,
             )
             _lru_put(
                 self._enc_cache, key_ref.key_id, active, cap=self.enc_cache_max

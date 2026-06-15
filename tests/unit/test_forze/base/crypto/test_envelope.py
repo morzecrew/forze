@@ -6,6 +6,7 @@ import pytest
 
 from forze.base.crypto import (
     EncryptedEnvelope,
+    ensure_algorithm,
     is_envelope,
     pack_envelope,
     unpack_envelope,
@@ -110,3 +111,39 @@ def test_unpack_rejects_unknown_scheme_version() -> None:
         unpack_envelope(bytes(packed))
 
     assert excinfo.value.kind is ExceptionKind.VALIDATION
+
+
+# ....................... #
+
+
+def test_unpack_rejects_invalid_utf8_text_field() -> None:
+    """Tampered bytes in a text field raise validation, not a raw UnicodeDecodeError."""
+
+    packed = bytearray(pack_envelope(_envelope()))
+    # The alg field's first content byte sits just after the 5-byte header and its
+    # 1-byte length prefix; a lone 0xFF is not valid UTF-8.
+    packed[6] = 0xFF
+
+    with pytest.raises(CoreException) as excinfo:
+        unpack_envelope(bytes(packed))
+
+    assert excinfo.value.kind is ExceptionKind.VALIDATION
+    assert excinfo.value.code == "core.crypto.envelope_bad_encoding"
+
+
+# ....................... #
+
+
+def test_ensure_algorithm_passes_on_match() -> None:
+    ensure_algorithm(_envelope(alg="AES-256-GCM"), "AES-256-GCM")  # no raise
+
+
+# ....................... #
+
+
+def test_ensure_algorithm_rejects_mismatch() -> None:
+    with pytest.raises(CoreException) as excinfo:
+        ensure_algorithm(_envelope(alg="AES-256-GCM"), "ChaCha20-Poly1305")
+
+    assert excinfo.value.kind is ExceptionKind.VALIDATION
+    assert excinfo.value.code == "core.crypto.algorithm_mismatch"

@@ -28,7 +28,15 @@ from forze.base.exceptions import exc
 
 # ----------------------- #
 
-_KEY_BYTES = 32  # AES-SIV key length (AES-128-SIV)
+# AES-SIV uses a double-length key: 64 bytes selects AES-256-SIV (two 256-bit
+# subkeys), matching the AES-256 security level of the randomized envelope path.
+_DERIVED_KEY_BYTES = 64
+# Entropy floor for the root secret; HKDF expands it to the derived key length, so
+# 32 bytes (256 bits) of input is sufficient — it need not equal the derived size.
+_MIN_ROOT_BYTES = 32
+# Fixed, non-secret HKDF salt — a stable salt strengthens extraction over a nil
+# salt (NIST SP 800-56C Rev. 2 §4.1). Changing it re-derives every key.
+_HKDF_SALT = b"forze.det.hkdf.v1"
 _NONE_TENANT = "\x00none"
 
 
@@ -67,14 +75,14 @@ class DeterministicFieldCipher:
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
-        if len(self.root) < _KEY_BYTES:
+        if len(self.root) < _MIN_ROOT_BYTES:
             raise exc.configuration(
-                f"Deterministic cipher root secret must be at least {_KEY_BYTES} bytes",
+                f"Deterministic cipher root secret must be at least {_MIN_ROOT_BYTES} bytes",
             )
 
-        if self.previous_root is not None and len(self.previous_root) < _KEY_BYTES:
+        if self.previous_root is not None and len(self.previous_root) < _MIN_ROOT_BYTES:
             raise exc.configuration(
-                f"Deterministic cipher previous root must be at least {_KEY_BYTES} bytes",
+                f"Deterministic cipher previous root must be at least {_MIN_ROOT_BYTES} bytes",
             )
 
     # ....................... #
@@ -82,8 +90,8 @@ class DeterministicFieldCipher:
     def _derive(self, tenant: TenantIdentity | None, field: str, root: bytes) -> bytes:
         return HKDF(
             algorithm=hashes.SHA256(),
-            length=_KEY_BYTES,
-            salt=None,
+            length=_DERIVED_KEY_BYTES,
+            salt=_HKDF_SALT,
             info=f"forze.det|{_tenant_key(tenant)}|{field}".encode("utf-8"),
         ).derive(root)
 

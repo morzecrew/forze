@@ -9,6 +9,7 @@ import pytest
 
 from forze.application.contracts.crypto import (
     AesGcmAead,
+    ChaCha20Poly1305Aead,
     KeyRef,
     StaticKeyDirectory,
     TenantTemplateKeyDirectory,
@@ -195,6 +196,52 @@ async def test_warm_pre_resolves_active_key() -> None:
 
     await ring.encrypt(b"x", tenant=None)
     assert kms.generated == 1  # encrypt reused the warmed key
+
+
+# ....................... #
+
+
+async def test_warm_does_not_consume_dek_budget() -> None:
+    """Warming must not spend an encryption from ``max_dek_messages``.
+
+    With a budget of one, the warmed key must still have room for the encrypt the
+    warm was preparing — otherwise the very next ``encrypt_sync`` goes cold.
+    """
+
+    ring = _keyring(max_dek_messages=1)
+
+    await ring.warm(None)
+
+    # The warmed key still has its single use available.
+    blob = ring.encrypt_sync(b"secret", tenant=None, aad=b"ctx")
+    assert ring.decrypt_sync(blob, aad=b"ctx") == b"secret"
+
+
+# ....................... #
+
+
+async def test_decrypt_rejects_algorithm_mismatch() -> None:
+    """A blob sealed under one AEAD fails clearly against a different wired cipher."""
+
+    shared_kms = MockKeyManagement()
+    writer = Keyring(
+        kms=shared_kms,
+        aead=AesGcmAead(),
+        directory=StaticKeyDirectory(KeyRef(key_id="cmk")),
+    )
+    blob = await writer.encrypt(b"secret", tenant=None)
+
+    reader = Keyring(
+        kms=shared_kms,
+        aead=ChaCha20Poly1305Aead(),  # deployment swapped the cipher
+        directory=StaticKeyDirectory(KeyRef(key_id="cmk")),
+    )
+
+    with pytest.raises(CoreException) as excinfo:
+        await reader.decrypt(blob)
+
+    assert excinfo.value.kind is ExceptionKind.VALIDATION
+    assert excinfo.value.code == "core.crypto.algorithm_mismatch"
 
 
 # ....................... #
