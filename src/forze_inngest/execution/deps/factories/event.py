@@ -4,6 +4,7 @@ from typing import Any, final
 
 import attrs
 
+from forze.application.contracts.crypto import KeyringDepKey
 from forze.application.contracts.durable.function import (
     DurableFunctionEventCommandDepPort,
     DurableFunctionEventSpec,
@@ -37,10 +38,14 @@ class ConfigurableInngestEventCommand(DurableFunctionEventCommandDepPort):
         client = ctx.deps.provide(InngestClientDepKey)
 
         include = self.config.include_execution_context
+        cipher = (
+            ctx.deps.provide(KeyringDepKey) if ctx.deps.exists(KeyringDepKey) else None
+        )
 
         return InngestEventCommandAdapter(
             client=client,
             spec=spec,
             execution_ctx=ctx,
             include_execution_context=include,
+            cipher=cipher,
         )

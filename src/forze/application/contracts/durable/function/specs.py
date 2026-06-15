@@ -24,6 +24,11 @@ class DurableFunctionEventSpec[M](BaseSpec):
     codec: ModelCodec[M, Any]
     """Payload record codec for events with this name."""
 
+    encrypt: bool = False
+    """When ``True`` and a keyring is wired, the event payload is sealed before it leaves
+    for the durable backend and the function handler receives it decrypted (the ``_forze``
+    context envelope stays plaintext for routing/context binding). Default ``False``."""
+
     # ....................... #
 
     @property

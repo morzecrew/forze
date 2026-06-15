@@ -13,6 +13,7 @@ import attrs
 import inngest
 from pydantic import BaseModel
 
+from forze.application.contracts.crypto import KeyringDepKey
 from forze.application.contracts.durable.function import (
     DurableFunctionCronTrigger,
     DurableFunctionEventTrigger,
@@ -26,13 +27,14 @@ from forze.application.execution.context import (
 )
 from forze.application.execution.operations.registry import FrozenOperationRegistry
 from forze.application.execution.operations.run import handler_for_registry_operation
+from forze.application.integrations.crypto import is_encrypted_payload
 from forze.base.exceptions import exc
 
 from ..adapters.context import (
     InngestDecodedContext,
-    parse_function_args,
     split_envelope,
 )
+from ..adapters.crypto import open_event_payload
 from ..adapters.step import bind_inngest_step, reset_inngest_step
 from ..kernel.client import InngestClientPort
 
@@ -183,10 +185,21 @@ def _register_one(
     async def _handler(ctx: inngest.Context) -> Any:
         raw_data: dict[str, Any] = dict(ctx.event.data) if ctx.event else {}
 
-        envelope, _ = split_envelope(raw_data)
-        args = parse_function_args(raw_data, args_type=binding.spec.run.args_type)
-
+        envelope, payload = split_envelope(raw_data)
         execution_ctx = ctx_factory()
+
+        if is_encrypted_payload(payload):
+            # End-to-end sealed payload: decrypt before validating the typed args, so the
+            # handler never sees ciphertext. The key resolves from the self-describing
+            # envelope; the tenant for the AAD comes from the (plaintext) ``_forze`` context.
+            cipher = (
+                execution_ctx.deps.provide(KeyringDepKey)
+                if execution_ctx.deps.exists(KeyringDepKey)
+                else None
+            )
+            payload = await open_event_payload(cipher, payload, tenant=envelope.tenant)
+
+        args = binding.spec.run.args_type.model_validate(payload)
         step_token = bind_inngest_step(ctx.step)
 
         try:

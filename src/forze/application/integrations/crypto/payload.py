@@ -100,7 +100,7 @@ async def encrypt_payload(
     *,
     domain: str,
     tenant_id: UUID | None,
-    record_id: UUID | str,
+    record_id: UUID | str | None,
 ) -> JsonDict:
     """Encrypt a serialized payload into a one-key envelope wrapper."""
 
