@@ -7,6 +7,7 @@ from uuid import UUID
 import attrs
 from pydantic import BaseModel
 
+from forze.application.contracts.crypto import BytesCipherPort
 from forze.application.contracts.outbox import (
     IntegrationEvent,
     OutboxSpec,
@@ -16,6 +17,7 @@ from forze.application.contracts.outbox.staging_context import OutboxStagingCont
 from forze.base.exceptions import exc
 
 from .enrichment import OutboxEventEnricher
+from .payload_crypto import encrypt_outbox_payload
 
 # ----------------------- #
 
@@ -40,6 +42,9 @@ class OutboxStaging[M: BaseModel]:
     flush_rows: FlushRowsFn
     """Persist buffered rows; invoked by :meth:`flush`."""
 
+    payload_cipher: BytesCipherPort | None = None
+    """Keyring for whole-payload encryption when ``spec.encrypt`` is set (else ``None``)."""
+
     # ....................... #
 
     @property
@@ -48,11 +53,22 @@ class OutboxStaging[M: BaseModel]:
 
     # ....................... #
 
-    def _to_entry(self, event: IntegrationEvent[M]) -> StagedOutboxEntry:
+    async def _to_entry(self, event: IntegrationEvent[M]) -> StagedOutboxEntry:
+        payload_json = self.spec.codec.encode_mapping(event.payload)
+
+        if self.spec.encrypt and self.payload_cipher is not None:
+            payload_json = await encrypt_outbox_payload(
+                self.payload_cipher,
+                payload_json,
+                route=self._route,
+                tenant_id=event.tenant_id,
+                event_id=event.event_id,
+            )
+
         return StagedOutboxEntry(
             outbox_route=self._route,
             event=event,
-            payload_json=self.spec.codec.encode_mapping(event.payload),
+            payload_json=payload_json,
         )
 
     # ....................... #
@@ -110,7 +126,7 @@ class OutboxStaging[M: BaseModel]:
         if self.staging.flushed_for(route):
             raise exc.internal("Cannot stage outbox events after flush")
 
-        self.staging.buffer_for(route).push([self._to_entry(event)])
+        self.staging.buffer_for(route).push([await self._to_entry(event)])
 
     # ....................... #
 

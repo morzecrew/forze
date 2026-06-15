@@ -54,9 +54,11 @@ from datetime import timedelta
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
+from forze.application.contracts.crypto import KeyringDepKey
 from forze.application.contracts.outbox import OutboxRelayResult, OutboxSpec
 from forze.application.contracts.resilience import BackoffStrategy
 from forze.application.execution.resilience.backoff import compute_delay
+from forze.application.integrations.outbox import decrypt_outbox_payload
 from forze.base.exceptions import exc
 from forze.base.primitives import utcnow
 
@@ -177,6 +179,12 @@ async def relay_outbox_claims(
     if not claims:
         return OutboxRelayResult(reclaimed=reclaimed)
 
+    # Whole-payload encryption is decrypted here (at-rest only): the store holds
+    # ciphertext, the transport/consumer see plaintext. ``None`` keyring + plaintext
+    # rows is the unencrypted path; an encrypted row with no keyring fails loud.
+    cipher = ctx.deps.provide(KeyringDepKey) if ctx.deps.exists(KeyringDepKey) else None
+    route = str(outbox_spec.name)
+
     published = 0
     failed = 0
     retried = 0
@@ -188,8 +196,16 @@ async def relay_outbox_claims(
 
     for claim in claims:
         try:
-            # Build step: decode errors are poison — the row can never publish.
-            payload = outbox_spec.codec.decode_mapping(claim.payload)
+            # Build step: decrypt (if encrypted at rest) then decode. Decode/decrypt
+            # errors are poison — the row can never publish.
+            decrypted = await decrypt_outbox_payload(
+                cipher,
+                claim.payload,
+                route=route,
+                tenant_id=claim.tenant_id,
+                event_id=claim.event_id,
+            )
+            payload = outbox_spec.codec.decode_mapping(decrypted)
 
         except Exception as e:
             # Terminal path stays per-row: rare, and error fidelity matters.

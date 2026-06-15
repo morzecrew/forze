@@ -1,14 +1,16 @@
 """Compose outbox command ports at the execution boundary."""
 
 from collections.abc import Sequence
-from typing import Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 
 from pydantic import BaseModel
 
+from forze.application.contracts.crypto import BytesCipherPort, KeyringDepKey
 from forze.application.contracts.outbox import OutboxSpec, StagedOutboxEntry
 from forze.application.execution.context import ExecutionContext
 from forze.application.integrations.outbox import OutboxStaging, StagingOutboxCommand
 from forze.application.integrations.outbox.staging import FlushRowsFn
+from forze.base.exceptions import exc
 
 from .enrichment import InvocationOutboxEnricher
 from collections.abc import Awaitable
@@ -28,6 +30,28 @@ class OutboxRowPersistPort(Protocol):
 # ....................... #
 
 
+def _resolve_payload_cipher(
+    ctx: ExecutionContext, spec: OutboxSpec[Any]
+) -> BytesCipherPort | None:
+    """The keyring for whole-payload encryption, or ``None`` when the route is plaintext.
+
+    Fails closed when a route declares ``encrypt=True`` but no keyring is wired — the
+    same posture as document field encryption.
+    """
+
+    if not spec.encrypt:
+        return None
+
+    if not ctx.deps.exists(KeyringDepKey):
+        raise exc.configuration(
+            f"Outbox route {spec.name!r} declares encrypt=True but no keyring is wired. "
+            "Add a CryptoDepsModule (registers the keyring) or set encrypt=False.",
+            code="core.outbox.encryption_wiring",
+        )
+
+    return ctx.deps.provide(KeyringDepKey)
+
+
 def build_staging_outbox_command[M: BaseModel](
     ctx: ExecutionContext,
     spec: OutboxSpec[M],
@@ -41,6 +65,7 @@ def build_staging_outbox_command[M: BaseModel](
         spec=spec,
         enricher=InvocationOutboxEnricher(inv=ctx.inv_ctx),
         flush_rows=flush_rows,
+        payload_cipher=_resolve_payload_cipher(ctx, spec),
     )
     return StagingOutboxCommand(spec=spec, staging=staging)
 

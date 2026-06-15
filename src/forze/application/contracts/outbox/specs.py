@@ -72,6 +72,14 @@ class OutboxSpec[M](BaseSpec):
     destination: OutboxDestination | None = None
     """Optional default relay target honored by relay workers."""
 
+    encrypt: bool = False
+    """Encrypt the whole event payload at rest in the outbox store (default off).
+
+    When ``True`` and a keyring is wired (``CryptoDepsModule``), the serialized payload
+    is envelope-encrypted before persistence and decrypted in the relay before publish —
+    so the outbox table holds only ciphertext while transports and consumers are
+    unchanged. Requires a ``KeyringDepKey`` in both the staging and relay processes."""
+
     # ....................... #
 
     @property
