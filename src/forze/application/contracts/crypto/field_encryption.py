@@ -1,5 +1,6 @@
 """Field-encryption policy: which record fields are sealed at rest, and how."""
 
+from collections.abc import Iterable
 from typing import final
 
 import attrs
@@ -7,6 +8,23 @@ import attrs
 from forze.base.exceptions import exc
 
 # ----------------------- #
+
+
+def _field_set(value: str | Iterable[str]) -> frozenset[str]:
+    """Coerce field names to a frozenset, treating a bare ``str`` as one field name.
+
+    ``frozenset("email")`` would silently iterate the characters (``{'e','m',...}``), leaving
+    the intended field unencrypted; a single field name passed as a plain string is the common
+    mistake, so it is wrapped into a one-element set instead.
+    """
+
+    if isinstance(value, str):
+        return frozenset({value})
+
+    return frozenset(value)
+
+
+# ....................... #
 
 
 @final
@@ -21,14 +39,14 @@ class FieldEncryption:
     encrypted / searchable sets and record-id binding cannot drift out of sync.
     """
 
-    encrypted: frozenset[str] = attrs.field(factory=frozenset, converter=frozenset)
+    encrypted: frozenset[str] = attrs.field(factory=frozenset, converter=_field_set)
     """Stored field names to encrypt at rest with **randomized** field-level encryption.
 
     Confidential: decrypted on full-model reads and on typed (``select_*``) / raw
     (``project_*``) projections that select them, but *not* filterable or sortable. Requires
     a ``KeyringDepKey`` in the deps (e.g. via ``CryptoDepsModule``)."""
 
-    searchable: frozenset[str] = attrs.field(factory=frozenset, converter=frozenset)
+    searchable: frozenset[str] = attrs.field(factory=frozenset, converter=_field_set)
     """Stored field names to encrypt **deterministically** so equality queries still work.
 
     Same plaintext → same ciphertext, so ``$eq``/``$neq``/``$in``/``$nin`` filters are

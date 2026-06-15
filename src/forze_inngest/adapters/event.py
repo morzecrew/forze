@@ -83,6 +83,12 @@ class InngestEventCommandAdapter[M: BaseModel](DurableFunctionEventCommandPort[M
                 authn=ctx.inv_ctx.get_authn(),
                 tenant=tenant,
             )
+        elif self.spec.encrypt and tenant is not None:
+            # Even with the execution-context envelope suppressed, a tenant-sealed payload
+            # binds the tenant into its AAD (and resolves its key from it). The receive side
+            # rebuilds both from the ``_forze`` envelope, so the tenant must always travel
+            # with the ciphertext — otherwise decryption fails closed with ``aead_auth_failed``.
+            data = merge_envelope(data, tenant=tenant)
 
         ts_ms = 0
 

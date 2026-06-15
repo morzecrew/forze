@@ -105,6 +105,35 @@ def test_binds_record_id_without_key_field_rejected() -> None:
     assert "binds_record_id" in str(ei.value)
 
 
+def test_binds_record_id_on_endpoint_edge_with_key_field_rejected() -> None:
+    # identity="endpoints" is addressed by its endpoints, not a per-edge key — so even with a
+    # stray key_field set, binds_record_id must be rejected (the key is not the edge identity).
+    module = GraphModuleSpec(
+        name="links",
+        nodes=(GraphNodeSpec(name="Person", read=_Person),),
+        edges=(
+            GraphEdgeSpec(
+                name="KNOWS",
+                read=_Person,
+                identity="endpoints",
+                key_field="id",
+                endpoints=(GraphEdgeEndpoint(from_kind="Person", to_kind="Person"),),
+                directionality=GraphEdgeDirectionality.SYMMETRIC,
+                encryption=FieldEncryption(
+                    encrypted=frozenset({"ssn"}), binds_record_id=True
+                ),
+            ),
+        ),
+    )
+
+    with pytest.raises(CoreException) as ei:
+        resolve_graph_codecs(
+            module, keyring=_keyring(), deterministic=None, tenant_provider=lambda: None
+        )
+
+    assert ei.value.code == "core.graph.encryption_wiring"
+
+
 @pytest.mark.asyncio
 async def test_seal_on_write_then_decrypt_on_read() -> None:
     codecs = _resolve(

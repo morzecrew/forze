@@ -107,6 +107,10 @@ they're never content-searchable, aggregatable, or matchable in a graph predicat
 (that's physics, not a limit) — so encrypt what you store-and-return but never
 query by, and use `searchable` (deterministic) fields for the equality lookups you
 do need. Each plane fails closed the same way (`core.{search,analytics,graph}.encryption_wiring`).
+One caveat when sharing a policy: `binds_record_id` needs a stable per-record id, so it
+applies to the document and graph (key-addressed) planes only — an `AnalyticsSpec` (warehouse
+rows have no id) and an endpoint-identity graph edge reject it at wiring. Leave it off the
+policy you share with those, or give them their own.
 The downstream caches inherit it: when a search route encrypts, its result-snapshot
 runs (the frozen models kept for stable re-pagination) are sealed at rest too, so the
 snapshot store never re-exposes what the document sealed — automatic, no extra config.

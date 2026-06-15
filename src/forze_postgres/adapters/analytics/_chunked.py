@@ -36,7 +36,7 @@ class PostgresAnalyticsChunkedMixin[R: BaseModel, Ing: BaseModel](
         *,
         options: AnalyticsRunOptions | None,
         fetch_batch_size: int,
-        _row_type: type[BaseModel],
+        return_type: type[BaseModel] | None,
     ) -> AsyncGenerator[Sequence[BaseModel]]:
         validate_fetch_batch_size(fetch_batch_size)
         host = self._host
@@ -73,7 +73,7 @@ class PostgresAnalyticsChunkedMixin[R: BaseModel, Ing: BaseModel](
                 rows,
                 read_codec=host.spec.resolved_read_codec,
                 read_type=host.spec.read,
-                return_type=None,
+                return_type=return_type,
                 return_fields=None,
             )
             collected += len(typed)
@@ -102,13 +102,12 @@ class PostgresAnalyticsChunkedMixin[R: BaseModel, Ing: BaseModel](
         fetch_batch_size: int = 2000,
     ) -> AsyncGenerator[Sequence[R]]:
         del pagination
-        host = self._host
         async for chunk in self._chunked_scan(
             query_key,
             params,
             options=options,
             fetch_batch_size=fetch_batch_size,
-            _row_type=host.spec.read,
+            return_type=None,
         ):
             yield chunk  # type: ignore[misc]
 
@@ -130,6 +129,6 @@ class PostgresAnalyticsChunkedMixin[R: BaseModel, Ing: BaseModel](
             params,
             options=options,
             fetch_batch_size=fetch_batch_size,
-            _row_type=return_type,
+            return_type=return_type,
         ):
             yield chunk  # type: ignore[misc]

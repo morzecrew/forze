@@ -19,7 +19,7 @@ falls back to the deployment's default key (``tenant=None``).
 """
 
 import dataclasses
-from collections.abc import Callable, Sequence
+from typing import Callable, Sequence
 
 from temporalio.api.common.v1 import Payload
 from temporalio.contrib.pydantic import pydantic_data_converter
@@ -39,6 +39,8 @@ _DURABLE_AAD = b"forze.durable"
 Kept tenant-free so the context-free worker ``decode`` never needs ambient context; the
 per-tenant *key* (self-described in the envelope) provides cross-tenant isolation."""
 
+# ....................... #
+
 
 class EncryptingPayloadCodec(PayloadCodec):
     """Seals each Temporal ``Payload`` with the keyring; decodes our own back."""
@@ -51,6 +53,8 @@ class EncryptingPayloadCodec(PayloadCodec):
     ) -> None:
         self._cipher = cipher
         self._tenant_provider = tenant_provider
+
+    # ....................... #
 
     async def encode(self, payloads: Sequence[Payload]) -> list[Payload]:
         # Resolve the bound tenant in the request scope so the payload seals under that
@@ -66,6 +70,8 @@ class EncryptingPayloadCodec(PayloadCodec):
             out.append(Payload(metadata={"encoding": _ENCODING}, data=sealed))
 
         return out
+
+    # ....................... #
 
     async def decode(self, payloads: Sequence[Payload]) -> list[Payload]:
         out: list[Payload] = []
@@ -87,6 +93,32 @@ class EncryptingPayloadCodec(PayloadCodec):
 # ....................... #
 
 
+class _ChainedPayloadCodec(PayloadCodec):
+    """Runs an *inner* codec under an *outer* one, keeping encryption outermost at rest.
+
+    ``encode`` applies *inner* first then *outer* (e.g. compress, then encrypt the result);
+    ``decode`` reverses it — *outer* first then *inner* (decrypt, then decompress). This
+    keeps the encrypting codec the outermost layer at rest, so a base codec only ever sees
+    plaintext and our seal wraps its output."""
+
+    def __init__(self, inner: PayloadCodec, outer: PayloadCodec) -> None:
+        self._inner = inner
+        self._outer = outer
+
+    # ....................... #
+
+    async def encode(self, payloads: Sequence[Payload]) -> list[Payload]:
+        return await self._outer.encode(await self._inner.encode(payloads))
+
+    # ....................... #
+
+    async def decode(self, payloads: Sequence[Payload]) -> list[Payload]:
+        return await self._inner.decode(await self._outer.decode(payloads))
+
+
+# ....................... #
+
+
 def encrypting_data_converter(
     cipher: BytesCipherPort,
     *,
@@ -98,9 +130,23 @@ def encrypting_data_converter(
     *tenant_provider* (typically ``ctx.inv_ctx.get_tenant``) resolves the bound tenant at
     encode time for per-tenant keys. *base* defaults to the pydantic data converter; pass a
     custom converter to keep its payload/failure conversion while adding encryption.
+
+    If *base* already carries a ``payload_codec`` (e.g. a compression codec), it is
+    preserved by chaining: the base codec runs first on encode (so it compresses plaintext)
+    and last on decode, keeping encryption the outermost layer at rest.
     """
 
-    return dataclasses.replace(
-        base or pydantic_data_converter,
-        payload_codec=EncryptingPayloadCodec(cipher, tenant_provider=tenant_provider),
+    base_converter = base or pydantic_data_converter
+
+    codec: PayloadCodec = EncryptingPayloadCodec(
+        cipher,
+        tenant_provider=tenant_provider,
     )
+
+    if base_converter.payload_codec is not None:
+        codec = _ChainedPayloadCodec(
+            inner=base_converter.payload_codec,
+            outer=codec,
+        )
+
+    return dataclasses.replace(base_converter, payload_codec=codec)

@@ -11,6 +11,7 @@ from pydantic import BaseModel
 from forze.application.contracts.crypto import AesGcmAead, KeyRef, StaticKeyDirectory
 from forze.application.integrations.crypto import Keyring, is_encrypted_payload
 from forze.application.integrations.document.cache import DocumentCache
+from forze.base.exceptions import CoreException, ExceptionKind
 from forze.base.serialization import PydanticModelCodec
 from forze_mock import MockKeyManagement
 from forze_mock.adapters import MockCacheAdapter, MockState
@@ -101,9 +102,12 @@ async def test_cross_key_aad_rejects_transplant() -> None:
     other = uuid4()
     await cache.set_versioned(str(other), "1", sealed, ttl=None)
 
-    with pytest.raises(Exception):
+    with pytest.raises(CoreException) as ei:
         await _doc_cache(cache, keyring).get_read_through(
             other,
             fetch_on_cache_fault=_no_fault,
             fetch_on_miss_without_lock=_no_fault,
         )
+
+    assert ei.value.kind is ExceptionKind.VALIDATION
+    assert ei.value.code == "core.crypto.aead_auth_failed"

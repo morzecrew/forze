@@ -7,7 +7,7 @@ import base64
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from pydantic import BaseModel
+from pydantic import BaseModel, computed_field
 
 from forze.application.contracts.crypto import (
     AesGcmAead,
@@ -30,6 +30,11 @@ class _Doc(BaseModel):
     id: str
     title: str
     secret: str
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def title_upper(self) -> str:
+        return self.title.upper()
 
 
 def _encrypting_adapter(client: MagicMock) -> MeilisearchSearchCommandAdapter[_Doc]:
@@ -85,6 +90,24 @@ async def test_upsert_seals_encrypted_field_keeps_searchable_plaintext() -> None
     # ...the confidential field is a sealed envelope, not the plaintext.
     assert doc["secret"] != "hunter2"
     assert is_envelope(base64.b64decode(doc["secret"]))
+
+
+@pytest.mark.asyncio
+async def test_encrypted_route_still_indexes_computed_fields() -> None:
+    # Regression: the encrypting index path uses the persistence encode, which defaults to
+    # dropping ``@computed_field`` values. The plain index path keeps them, so the encrypted
+    # path must too — otherwise searchable/filterable computed data silently vanishes.
+    client = _client()
+    adapter = _encrypting_adapter(client)
+
+    await adapter.upsert([_Doc(id="1", title="hello", secret="hunter2")])
+
+    [chunk] = client.index.return_value.add_documents.call_args.args
+    doc = chunk[0]
+
+    assert doc["title_upper"] == "HELLO"
+    # ...and the encrypted field is still sealed.
+    assert doc["secret"] != "hunter2"
 
 
 @pytest.mark.asyncio

@@ -102,6 +102,7 @@ def _kind_cipher(
     read: type[BaseModel],
     encryption: FieldEncryption | None,
     key_field: str | None,
+    endpoint_identity: bool = False,
     keyring: FieldCipherPort | None,
     deterministic: DeterministicFieldCipherPort | None,
     tenant_provider: Callable[[], TenantIdentity | None],
@@ -125,10 +126,11 @@ def _kind_cipher(
             code=_WIRING_CODE,
         )
 
-    if encryption.binds_record_id and key_field is None:
+    if encryption.binds_record_id and (endpoint_identity or key_field is None):
         raise exc.configuration(
             f"Graph {spec_name!r} kind {kind!r} sets FieldEncryption.binds_record_id but has "
-            "no key_field (an endpoint-identity edge has no per-edge id). Drop binds_record_id.",
+            "no stable per-record id to bind (an endpoint-identity edge is addressed by its "
+            "endpoints, not a key). Drop binds_record_id.",
             code=_WIRING_CODE,
         )
 
@@ -180,6 +182,7 @@ def resolve_graph_codecs(
             read=e.read,
             encryption=e.encryption,
             key_field=e.key_field,
+            endpoint_identity=e.identity == "endpoints",
             keyring=keyring,
             deterministic=deterministic,
             tenant_provider=tenant_provider,

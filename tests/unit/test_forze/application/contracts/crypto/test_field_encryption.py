@@ -31,6 +31,14 @@ def test_iterables_are_coerced_to_frozensets() -> None:
     assert enc.searchable == frozenset({"c"})
 
 
+def test_bare_string_is_one_field_not_characters() -> None:
+    # frozenset("email") would iterate the characters, silently leaving the field unencrypted.
+    enc = FieldEncryption(encrypted="email", searchable="phone")  # type: ignore[arg-type]
+
+    assert enc.encrypted == frozenset({"email"})
+    assert enc.searchable == frozenset({"phone"})
+
+
 def test_overlapping_sets_are_rejected() -> None:
     with pytest.raises(CoreException) as ei:
         FieldEncryption(encrypted=frozenset({"email"}), searchable=frozenset({"email"}))
