@@ -26,6 +26,9 @@ class VaultConfig:
     mount_point: str = "secret"
     """KV v2 mount point."""
 
+    transit_mount: str = "transit"
+    """Transit secrets-engine mount point (used for envelope key management)."""
+
     namespace: str | None = None
     """Optional Vault enterprise namespace."""
 

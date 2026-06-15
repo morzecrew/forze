@@ -1,0 +1,84 @@
+"""Crypto contract value objects: key references and data keys."""
+
+from typing import final
+
+import attrs
+
+# ----------------------- #
+
+
+@final
+@attrs.define(slots=True, frozen=True, kw_only=True)
+class KeyRef:
+    """Logical reference to a key-encryption key (CMK) in a key manager.
+
+    Backends interpret :attr:`key_id` per their own rules (a KMS key ARN, a Vault
+    transit key name, an alias, …). A deployment that mints one key per tenant
+    resolves the tenant to a distinct :class:`KeyRef`; a single-key deployment
+    uses the same reference for everyone (the degenerate, single-tenant case).
+    """
+
+    key_id: str
+    """Opaque key-encryption-key identifier."""
+
+    version: str | None = None
+    """Optional key version. ``None`` asks the backend for its current version on
+    encrypt; on decrypt it is taken from the stored envelope."""
+
+
+# ....................... #
+
+
+@final
+@attrs.define(slots=True, frozen=True, kw_only=True)
+class DataKey:
+    """A freshly generated data-encryption key in both plaintext and wrapped form.
+
+    The plaintext key seals the payload locally and is then discarded; the
+    wrapped key is stored in the envelope and can only be unwrapped by the key
+    manager. This is the heart of envelope encryption — the key-encryption key
+    never leaves the backend.
+    """
+
+    plaintext: bytes = attrs.field(repr=False)
+    """Raw data-encryption key. Never logged or persisted (``repr`` suppressed)."""
+
+    wrapped: bytes
+    """Data-encryption key encrypted under the key-encryption key, safe to store."""
+
+    key_id: str
+    """Identifier of the key-encryption key that wrapped :attr:`plaintext`."""
+
+    key_version: str | None = None
+    """Version of the key-encryption key, when the backend exposes one."""
+
+
+# ....................... #
+
+
+@final
+@attrs.define(slots=True, frozen=True, kw_only=True)
+class CryptoKeyringStats:
+    """Cumulative, monotonic counters describing a keyring's KMS + cache activity.
+
+    A snapshot taken by :meth:`forze.application.integrations.crypto.Keyring.stats`,
+    sampled by the OpenTelemetry observable instruments in ``instrument_crypto``.
+    Hit *ratios* are intentionally not precomputed — exporting hits and misses as
+    separate counters lets a dashboard aggregate them correctly across processes.
+    """
+
+    data_keys_generated: int
+    """KMS ``generate_data_key`` calls — encrypt-path cache misses (DEK wraps)."""
+
+    data_keys_unwrapped: int
+    """KMS ``unwrap_data_key`` calls — decrypt-path cache misses (DEK unwraps)."""
+
+    encrypt_cache_hits: int
+    """Active data keys reused without a KMS call (encrypt path)."""
+
+    decrypt_cache_hits: int
+    """Unwrapped data keys reused without a KMS call (decrypt path)."""
+
+    cold_misses: int
+    """Synchronous (en|de)crypts that found the cache cold and raised
+    ``cipher_not_warm`` — a missing async pre-pass. Healthy deployments sit at ~0."""

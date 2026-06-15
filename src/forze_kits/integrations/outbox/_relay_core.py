@@ -54,9 +54,14 @@ from datetime import timedelta
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
+from forze.application.contracts.crypto import KeyringDepKey
 from forze.application.contracts.outbox import OutboxRelayResult, OutboxSpec
 from forze.application.contracts.resilience import BackoffStrategy
 from forze.application.execution.resilience.backoff import compute_delay
+from forze.application.integrations.outbox import (
+    decrypt_outbox_payload,
+    is_encrypted_payload,
+)
 from forze.base.exceptions import exc
 from forze.base.primitives import utcnow
 
@@ -177,6 +182,13 @@ async def relay_outbox_claims(
     if not claims:
         return OutboxRelayResult(reclaimed=reclaimed)
 
+    # Encryption tier decides what the relay publishes: ``at_rest`` decrypts here (the
+    # broker/consumer see plaintext); ``end_to_end`` forwards the ciphertext opaquely for
+    # the consumer to decrypt; ``none`` is plaintext. A ``None`` keyring + plaintext rows
+    # is the unencrypted path; an encrypted row needing a key with none wired fails loud.
+    cipher = ctx.deps.provide(KeyringDepKey) if ctx.deps.exists(KeyringDepKey) else None
+    end_to_end = outbox_spec.encryption == "end_to_end"
+
     published = 0
     failed = 0
     retried = 0
@@ -188,8 +200,22 @@ async def relay_outbox_claims(
 
     for claim in claims:
         try:
-            # Build step: decode errors are poison — the row can never publish.
-            payload = outbox_spec.codec.decode_mapping(claim.payload)
+            if end_to_end and is_encrypted_payload(claim.payload):
+                # Forward the ciphertext envelope unchanged; the consumer decrypts it.
+                payload = claim.payload
+
+            else:
+                # ``at_rest`` decrypts here; ``none`` (and a legacy plaintext row on an
+                # ``end_to_end`` route) passes plaintext through. Decode then publish so
+                # the codec gets a model, not a raw dict. Decode/decrypt errors are
+                # poison — the row can't publish.
+                decrypted = await decrypt_outbox_payload(
+                    cipher,
+                    claim.payload,
+                    tenant_id=claim.tenant_id,
+                    event_id=claim.event_id,
+                )
+                payload = outbox_spec.codec.decode_mapping(decrypted)
 
         except Exception as e:
             # Terminal path stays per-row: rare, and error fidelity matters.

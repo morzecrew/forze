@@ -1,4 +1,4 @@
-"""Unit tests for :func:`~forze_kits.integrations.outbox.relay_outbox_to_stream`."""
+"""Unit tests for :meth:`~forze_kits.integrations.outbox.OutboxRelay.to_stream`."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from forze.application.contracts.outbox import OutboxDestination, OutboxSpec
 from forze.application.contracts.stream import StreamSpec
 from forze.application.execution import DepsRegistry, ExecutionRuntime
 from forze.base.serialization import PydanticModelCodec
-from forze_kits.integrations.outbox import relay_outbox_to_stream
+from forze_kits.integrations.outbox import OutboxRelay
 from forze_mock import MockDepsModule, MockStateDepKey
 
 
@@ -37,12 +37,9 @@ async def test_relay_appends_to_stream() -> None:
         )
         await ctx.outbox.command(outbox_spec).flush()
 
-        result = await relay_outbox_to_stream(
-            ctx,
-            outbox_spec=outbox_spec,
-            stream_spec=stream_spec,
-            reclaim_stale_after=None,
-        )
+        result = await OutboxRelay(
+                outbox_spec=outbox_spec, reclaim_stale_after=None
+            ).to_stream(ctx, stream_spec)
 
         assert result.published == 1
         messages = state.streams["audit"]["audit"]
@@ -67,9 +64,6 @@ async def test_relay_stream_wrong_spec_route_raises() -> None:
     async with runtime.scope():
         ctx = runtime.get_context()
         with pytest.raises(Exception, match="spec.name must match"):
-            await relay_outbox_to_stream(
-                ctx,
-                outbox_spec=outbox_spec,
-                stream_spec=stream_spec,
-                reclaim_stale_after=None,
-            )
+            await OutboxRelay(
+                    outbox_spec=outbox_spec, reclaim_stale_after=None
+                ).to_stream(ctx, stream_spec)

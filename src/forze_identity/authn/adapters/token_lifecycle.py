@@ -112,7 +112,7 @@ class TokenLifecycleAdapter(TokenLifecyclePort):
 
         session = await self.session_cmd.create(session_cmd, return_new=True)
 
-        access_token = self.access_svc.issue_token(
+        access_token = await self.access_svc.issue_token(
             principal_id=identity.principal_id,
             tenant_id=tenant_id,
             session_id=session.id,
@@ -228,7 +228,7 @@ class TokenLifecycleAdapter(TokenLifecyclePort):
 
         res = await self.session_cmd.create(new_session_cmd)
 
-        new_access_token = self.access_svc.issue_token(
+        new_access_token = await self.access_svc.issue_token(
             principal_id=old_session.principal_id,
             tenant_id=old_session.tenant_id,
             session_id=res.id,

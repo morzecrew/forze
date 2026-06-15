@@ -423,9 +423,16 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
         return_diff: bool = False,
     ) -> R | JsonDict | None | tuple[R, JsonDict]:
         self._ensure_writable()
-        patch = self._patch_codec().encode_persistence_mapping(
+        # ``encode_mapping`` is the codec's non-encrypting path, so the patch is
+        # plaintext: it merges cleanly into the decrypted domain and the single
+        # ``encode_persistence_mapping(updated)`` below encrypts exactly once (an
+        # encrypting codec's ``encode`` is not idempotent, so encoding the patch
+        # here would double-encrypt). ``computed_fields`` is excluded to match
+        # persistence-dump semantics; for a plain codec this is identical to the
+        # previous behavior.
+        patch = self._patch_codec().encode_mapping(
             cast(Any, dto),
-            exclude={"unset": True},
+            exclude={"computed_fields": True, "unset": True},
         )
 
         with self.state.lock:
@@ -570,9 +577,16 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
         if not self.spec.supports_update():
             raise exc.internal("Update command type is not supported for this model")
 
-        patch = self._patch_codec().encode_persistence_mapping(
+        # ``encode_mapping`` is the codec's non-encrypting path, so the patch is
+        # plaintext: it merges cleanly into the decrypted domain and the single
+        # ``encode_persistence_mapping(updated)`` below encrypts exactly once (an
+        # encrypting codec's ``encode`` is not idempotent, so encoding the patch
+        # here would double-encrypt). ``computed_fields`` is excluded to match
+        # persistence-dump semantics; for a plain codec this is identical to the
+        # previous behavior.
+        patch = self._patch_codec().encode_mapping(
             cast(Any, dto),
-            exclude={"unset": True},
+            exclude={"computed_fields": True, "unset": True},
         )
 
         if not patch:

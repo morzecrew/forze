@@ -17,5 +17,5 @@ class AnalyticsAppendResult:
     rejected: int = 0
     """Number of rows rejected when the engine reports partial failures."""
 
-    errors: tuple[JsonDict, ...] = ()
+    errors: tuple[JsonDict, ...] = attrs.field(factory=tuple)
     """Optional row-level errors (capped by the integration client)."""

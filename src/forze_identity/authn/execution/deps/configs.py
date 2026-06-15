@@ -13,6 +13,7 @@ from ...services import (
     AccessTokenService,
     ApiKeyConfig,
     ApiKeyService,
+    Hs256Signer,
     InviteTokenConfig,
     InviteTokenService,
     PasswordConfig,
@@ -21,6 +22,7 @@ from ...services import (
     RefreshTokenService,
     ResetTokenConfig,
     ResetTokenService,
+    SignerPort,
 )
 
 # ----------------------- #
@@ -41,7 +43,20 @@ class AuthnKernelConfig:
         repr=False,
         validator=attrs.validators.optional(attrs.validators.min_len(32)),
     )
-    """Minimum 32 bytes when set; required for token authentication and token lifecycle."""
+    """Minimum 32 bytes when set; builds the default HS256 signer for token auth and
+    token lifecycle. Ignored when :attr:`access_token_signer` is set."""
+
+    access_token_signer: SignerPort | None = attrs.field(default=None, repr=False)
+    """Explicit JWT signer (e.g. an asymmetric or KMS-backed BYOK signer). When set,
+    it takes precedence over :attr:`access_token_secret`."""
+
+    access_token_verifiers: tuple[SignerPort, ...] = attrs.field(
+        factory=tuple,
+        repr=False,
+        converter=tuple,
+    )
+    """Extra signers whose keys are also accepted on verify, selected by token ``kid``
+    (key-rotation overlap: keep the previous signer here until its tokens expire)."""
 
     access_token: AccessTokenConfig = attrs.field(factory=AccessTokenConfig)
     """Access token service configuration."""
@@ -120,12 +135,18 @@ class AuthnSharedServices:
 def build_authn_shared_services(kernel: AuthnKernelConfig) -> AuthnSharedServices:
     """Construct shared services from kernel configuration."""
 
+    signer: SignerPort | None = kernel.access_token_signer
+
+    if signer is None and kernel.access_token_secret is not None:
+        signer = Hs256Signer(secret=kernel.access_token_secret)
+
     access_svc = (
         AccessTokenService(
-            secret_key=kernel.access_token_secret,
+            signer=signer,
             config=kernel.access_token,
+            additional_verifiers=kernel.access_token_verifiers,
         )
-        if kernel.access_token_secret is not None
+        if signer is not None
         else None
     )
 
@@ -196,7 +217,9 @@ def validate_route_methods(
         raise exc.internal(msg)
 
     if "token" in methods and shared.access_svc is None and not skip_token_service:
-        msg = "'token' method requires kernel.access_token_secret"
+        msg = (
+            "'token' method requires kernel.access_token_secret or access_token_signer"
+        )
         raise exc.internal(msg)
 
 
@@ -230,7 +253,10 @@ def validate_shared_matches_route_sets(
 
     if token_lifecycle:
         if shared.access_svc is None:
-            msg = "token_lifecycle routes require kernel.access_token_secret"
+            msg = (
+                "token_lifecycle routes require kernel.access_token_secret "
+                "or access_token_signer"
+            )
 
             raise exc.internal(msg)
 

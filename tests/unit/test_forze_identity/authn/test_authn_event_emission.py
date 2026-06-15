@@ -126,7 +126,7 @@ class TestTokenLifecycleEmission:
     def _adapter(self, **overrides: Any) -> TokenLifecycleAdapter:
         access_svc = MagicMock()
         access_svc.config.expires_in = timedelta(minutes=15)
-        access_svc.issue_token = MagicMock(return_value="jwt")
+        access_svc.issue_token = AsyncMock(return_value="jwt")
 
         kwargs: dict[str, Any] = {
             "access_svc": access_svc,

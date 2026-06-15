@@ -15,7 +15,10 @@ from forze.application.contracts.queue import QueueMessage, QueueSpec
 from forze.application.execution import DepsRegistry, ExecutionRuntime
 from forze.base.exceptions import CoreException
 from forze.base.serialization import PydanticModelCodec
-from forze_kits.integrations.consumer import queue_consumer_background_lifecycle_step
+from forze_kits.integrations.consumer import (
+    QueueConsumer,
+    queue_consumer_background_lifecycle_step,
+)
 from forze_kits.integrations.consumer.lifecycle import _QueueConsumerBackgroundStartup
 from forze_mock import MockDepsModule
 from forze_mock.adapters import MockQueueAdapter, MockState
@@ -61,13 +64,12 @@ def _runtime(state: MockState | None = None, *, strict_tx: bool = False):
 @pytest.mark.asyncio
 async def test_background_lifecycle_starts_and_stops_task() -> None:
     step = _step()
-    consumer_mock = AsyncMock()
+    run_mock = AsyncMock()
     runtime = _runtime()
 
-    with patch(
-        "forze_kits.integrations.consumer.lifecycle.run_consumer",
-        consumer_mock,
-    ):
+    # Patching the method with an AsyncMock does not bind self, so the call is
+    # ``run(ctx, timeout=None)`` — no instance arg.
+    with patch.object(QueueConsumer, "run", run_mock):
         async with runtime.scope():
             ctx = runtime.get_context()
             await step.startup(ctx)
@@ -79,9 +81,9 @@ async def test_background_lifecycle_starts_and_stops_task() -> None:
             await asyncio.sleep(0.05)
             await step.shutdown(ctx)
 
-    consumer_mock.assert_called()
+    run_mock.assert_called()
     # The background loop consumes forever: idle timeout disabled.
-    assert consumer_mock.call_args.kwargs["timeout"] is None
+    assert run_mock.call_args.kwargs["timeout"] is None
     assert startup.task.done()
 
 
@@ -109,7 +111,7 @@ async def test_consume_crash_is_logged_and_restarts_after_backoff() -> None:
     runtime = _runtime()
 
     with (
-        patch("forze_kits.integrations.consumer.lifecycle.run_consumer", _crashy),
+        patch.object(QueueConsumer, "run", AsyncMock(side_effect=_crashy)),
         patch("forze_kits.integrations.consumer.lifecycle.logger", logger_mock),
     ):
         async with runtime.scope():

@@ -1,4 +1,4 @@
-"""Unit tests for :func:`~forze_kits.integrations.outbox.relay_outbox`."""
+"""Unit tests for :meth:`~forze_kits.integrations.outbox.OutboxRelay.run` dispatch."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from forze.application.contracts.outbox import OutboxDestination, OutboxSpec
 from forze.application.contracts.queue import QueueSpec
 from forze.application.execution import DepsRegistry, ExecutionRuntime
 from forze.base.serialization import PydanticModelCodec
-from forze_kits.integrations.outbox import relay_outbox
+from forze_kits.integrations.outbox import OutboxRelay
 from forze_mock import MockDepsModule, MockStateDepKey
 
 
@@ -35,12 +35,9 @@ async def test_relay_outbox_dispatches_queue() -> None:
         await ctx.outbox.command(outbox_spec).stage("job.requested", _EventPayload(n=1))
         await ctx.outbox.command(outbox_spec).flush()
 
-        result = await relay_outbox(
-            ctx,
-            outbox_spec=outbox_spec,
-            queue_spec=queue_spec,
-            reclaim_stale_after=None,
-        )
+        result = await OutboxRelay(
+            outbox_spec=outbox_spec, reclaim_stale_after=None
+        ).run(ctx, queue_spec=queue_spec)
 
         assert result.published == 1
         assert len(state.queues["jobs"]["jobs"]) == 1
@@ -60,11 +57,9 @@ async def test_relay_outbox_queue_kind_without_queue_spec_raises() -> None:
     async with runtime.scope():
         ctx = runtime.get_context()
         with pytest.raises(Exception, match="queue_spec is required"):
-            await relay_outbox(
-                ctx,
-                outbox_spec=outbox_spec,
-                reclaim_stale_after=None,
-            )
+            await OutboxRelay(
+                outbox_spec=outbox_spec, reclaim_stale_after=None
+            ).run(ctx)
 
 
 @pytest.mark.asyncio
@@ -82,9 +77,6 @@ async def test_relay_outbox_stream_kind_with_queue_spec_only_raises() -> None:
     async with runtime.scope():
         ctx = runtime.get_context()
         with pytest.raises(Exception, match="stream_spec is required"):
-            await relay_outbox(
-                ctx,
-                outbox_spec=outbox_spec,
-                queue_spec=queue_spec,
-                reclaim_stale_after=None,
-            )
+            await OutboxRelay(
+                outbox_spec=outbox_spec, reclaim_stale_after=None
+            ).run(ctx, queue_spec=queue_spec)

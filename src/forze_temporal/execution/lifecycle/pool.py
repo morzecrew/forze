@@ -4,11 +4,11 @@ from typing import Any, Mapping, cast, final
 
 import attrs
 
+from forze.application.contracts.deps import DepKey
 from forze.application.contracts.durable.workflow import (
     DurableWorkflowInvokeSpec,
     DurableWorkflowSpec,
 )
-from forze.application.contracts.deps import DepKey
 from forze.application.contracts.execution import LifecycleHook, LifecycleStep
 from forze.application.execution.context import ExecutionContext
 from forze.application.execution.lifecycle.builtin import (

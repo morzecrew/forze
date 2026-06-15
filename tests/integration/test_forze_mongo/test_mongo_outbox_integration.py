@@ -34,7 +34,7 @@ from forze.application.contracts.queue import (
 from forze.application.execution import Deps, DepsRegistry, ExecutionRuntime
 from forze.base.primitives import utcnow
 from forze.base.serialization import PydanticModelCodec
-from forze_kits.integrations.outbox import relay_outbox_to_queue
+from forze_kits.integrations.outbox import OutboxRelay
 from forze_kits.integrations.outbox._relay_core import relay_outbox_claims
 from forze_mock import MockStateDepKey
 from forze_mock.adapters import MockState
@@ -212,11 +212,7 @@ async def test_mongo_outbox_relay_publishes_ordering_key_to_queue(
             )
             await outbox.flush()
 
-        result = await relay_outbox_to_queue(
-            ctx,
-            outbox_spec=outbox_spec,
-            queue_spec=queue_spec,
-        )
+        result = await OutboxRelay(outbox_spec=outbox_spec).to_queue(ctx, queue_spec)
 
     assert result.published == 2
     messages = [e.message for e in shared_state.queues["relay"]["relay"]]
@@ -394,11 +390,7 @@ async def test_mongo_outbox_relay_to_mock_queue(
             )
             await ctx.outbox.command(outbox_spec).flush()
 
-        result = await relay_outbox_to_queue(
-            ctx,
-            outbox_spec=outbox_spec,
-            queue_spec=queue_spec,
-        )
+        result = await OutboxRelay(outbox_spec=outbox_spec).to_queue(ctx, queue_spec)
 
     assert result.published == 1
     assert len(shared_state.queues["relay"]["relay"]) == 1
@@ -461,12 +453,9 @@ async def test_mongo_outbox_relay_reclaims_stale_processing(
 
     async with runtime.scope():
         ctx = runtime.get_context()
-        result = await relay_outbox_to_queue(
-            ctx,
-            outbox_spec=outbox_spec,
-            queue_spec=queue_spec,
-            reclaim_stale_after=timedelta(minutes=5),
-        )
+        result = await OutboxRelay(
+            outbox_spec=outbox_spec, reclaim_stale_after=timedelta(minutes=5)
+        ).to_queue(ctx, queue_spec)
 
     assert result.reclaimed >= 1
     assert result.published == 1
@@ -532,11 +521,7 @@ async def test_mongo_outbox_requeue_failed_then_relay(
         query = ctx.outbox.query(outbox_spec)
         assert await query.requeue_failed([row_id]) == 1
 
-        result = await relay_outbox_to_queue(
-            ctx,
-            outbox_spec=outbox_spec,
-            queue_spec=queue_spec,
-        )
+        result = await OutboxRelay(outbox_spec=outbox_spec).to_queue(ctx, queue_spec)
 
     assert result.published == 1
     assert len(shared_state.queues["relay"]["relay"]) == 1

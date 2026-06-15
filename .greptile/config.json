@@ -1,0 +1,27 @@
+{
+  "triggerOnUpdates": true,
+  "statusCheck": true,
+  "shouldUpdateDescription": true,
+  "fixWithAI": true,
+  "excludeBranches": [
+    "dependabot-**"
+  ],
+  "summarySection": {
+    "included": true,
+    "collapsible": false
+  },
+  "confidenceScoreSection": {
+    "included": true,
+    "collapsible": false
+  },
+  "issuesTableSection": {
+    "included": true,
+    "collapsible": true,
+    "defaultOpen": false
+  },
+  "sequenceDiagramSection": {
+    "included": true,
+    "collapsible": true,
+    "defaultOpen": false
+  }
+}

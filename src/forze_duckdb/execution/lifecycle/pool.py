@@ -3,7 +3,6 @@
 from typing import Any, Mapping, Sequence, cast, final
 
 import attrs
-
 from pydantic import BaseModel
 
 from forze.application.contracts.deps import DepKey
@@ -107,17 +106,20 @@ class DuckDbStartupHook(LifecycleHook):
     extensions: Sequence[str] = _DEFAULT_EXTENSIONS
     """Extensions to ``INSTALL`` + ``LOAD`` (merged with those required by sources/credentials)."""
 
-    secrets: Sequence[str] = attrs.field(default=(), repr=False)
+    secrets: Sequence[str] = attrs.field(factory=tuple, repr=False)
     """Raw ``CREATE SECRET ...`` statements (escape hatch alongside ``object_stores``)."""
 
-    object_stores: Sequence[ObjectStoreCredentials] = attrs.field(default=(), repr=False)
+    object_stores: Sequence[ObjectStoreCredentials] = attrs.field(
+        factory=tuple,
+        repr=False,
+    )
     """Typed object-storage credentials, resolved via the secrets backend when referenced."""
 
     sources: Mapping[str, str | DuckDbSource] | None = None
     """``name -> source`` views registered at startup; a value may be a typed
     :class:`DuckDbSource` or a raw scan-expression string (escape hatch)."""
 
-    bootstrap_sql: Sequence[str] = ()
+    bootstrap_sql: Sequence[str] = attrs.field(factory=tuple)
     """Additional raw statements run after extensions, secrets, and sources."""
 
     # ....................... #

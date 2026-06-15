@@ -16,6 +16,7 @@ from forze.base.primitives import utcnow
 from forze_identity.authn.services import (
     AccessTokenConfig,
     AccessTokenService,
+    Hs256Signer,
     ApiKeyConfig,
     ApiKeyService,
     InviteTokenService,
@@ -133,56 +134,56 @@ def test_refresh_and_invite_digest_fixed_vector_unpadded_22() -> None:
         assert svc.calculate_token_digest(token) == expected
         assert svc.verify_token(token, expected)
 
-def test_access_token_issue_and_verify() -> None:
+async def test_access_token_issue_and_verify() -> None:
     secret = secrets.token_bytes(32)
     svc = AccessTokenService(
-        secret_key=secret,
+        signer=Hs256Signer(secret=secret),
         config=AccessTokenConfig(issuer="it", audience="api"),
     )
     pid = uuid4()
-    token = svc.issue_token(principal_id=pid)
-    claims = svc.verify_token(token)
+    token = await svc.issue_token(principal_id=pid)
+    claims = await svc.verify_token(token)
     assert claims["sub"] == str(pid)
     assert claims["iss"] == "it"
     assert claims["aud"] == "api"
 
-def test_access_token_optional_sid_claim() -> None:
+async def test_access_token_optional_sid_claim() -> None:
     secret = secrets.token_bytes(32)
     svc = AccessTokenService(
-        secret_key=secret,
+        signer=Hs256Signer(secret=secret),
         config=AccessTokenConfig(issuer="it", audience="api"),
     )
     pid = uuid4()
     sid = uuid4()
-    token = svc.issue_token(principal_id=pid, session_id=sid)
-    claims = svc.verify_token(token)
+    token = await svc.issue_token(principal_id=pid, session_id=sid)
+    claims = await svc.verify_token(token)
     assert claims["sid"] == str(sid)
 
 
-def test_access_token_optional_tid_claim() -> None:
+async def test_access_token_optional_tid_claim() -> None:
     secret = secrets.token_bytes(32)
     svc = AccessTokenService(
-        secret_key=secret,
+        signer=Hs256Signer(secret=secret),
         config=AccessTokenConfig(issuer="it", audience="api"),
     )
     pid = uuid4()
     tid = uuid4()
-    token = svc.issue_token(principal_id=pid, tenant_id=tid)
-    claims = svc.verify_token(token)
+    token = await svc.issue_token(principal_id=pid, tenant_id=tid)
+    claims = await svc.verify_token(token)
     assert claims["tid"] == str(tid)
 
-def test_access_token_rejects_bad_signature() -> None:
-    svc_a = AccessTokenService(secret_key=secrets.token_bytes(32))
-    token = svc_a.issue_token(principal_id=uuid4())
-    svc_b = AccessTokenService(secret_key=secrets.token_bytes(32))
+async def test_access_token_rejects_bad_signature() -> None:
+    svc_a = AccessTokenService(signer=Hs256Signer(secret=secrets.token_bytes(32)))
+    token = await svc_a.issue_token(principal_id=uuid4())
+    svc_b = AccessTokenService(signer=Hs256Signer(secret=secrets.token_bytes(32)))
     with pytest.raises(CoreException) as ei:
-        svc_b.verify_token(token)
+        await svc_b.verify_token(token)
     assert ei.value.code == "invalid_access_token"
 
-def test_access_token_detects_expiry() -> None:
+async def test_access_token_detects_expiry() -> None:
     secret = secrets.token_bytes(32)
     cfg = AccessTokenConfig(issuer="it", audience="api")
-    svc = AccessTokenService(secret_key=secret, config=cfg)
+    svc = AccessTokenService(signer=Hs256Signer(secret=secret), config=cfg)
     stale = utcnow() - timedelta(hours=3)
     exp = utcnow() - timedelta(hours=2)
     payload = {
@@ -192,11 +193,7 @@ def test_access_token_detects_expiry() -> None:
         "iat": int(stale.timestamp()),
         "exp": int(exp.timestamp()),
     }
-    expired_token = jwt.encode(
-        payload,
-        secret,
-        algorithm=cfg.algorithm,
-    )
+    expired_token = jwt.encode(payload, secret, algorithm="HS256")
     with pytest.raises(CoreException) as ei:
-        svc.verify_token(expired_token)
+        await svc.verify_token(expired_token)
     assert ei.value.code == "access_token_expired"

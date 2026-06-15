@@ -39,6 +39,16 @@ from forze.application.contracts.authz import (
 )
 from forze.application.contracts.cache import CacheDepKey, CachePort, CacheSpec
 from forze.application.contracts.counter import CounterDepKey, CounterPort, CounterSpec
+from forze.application.contracts.crypto import (
+    AeadDepKey,
+    AesGcmAead,
+    DeterministicCipherDepKey,
+    KeyDirectoryDepKey,
+    KeyManagementDepKey,
+    KeyRef,
+    KeyringDepKey,
+    StaticKeyDirectory,
+)
 from forze.application.contracts.deps import DepKey
 from forze.application.contracts.dlock import (
     DistributedLockCommandDepKey,
@@ -146,6 +156,7 @@ from forze.application.integrations.authn import (
     LockoutConfig,
     LoginLockoutGuard,
 )
+from forze.application.integrations.crypto import DeterministicFieldCipher, Keyring
 from forze.application.integrations.outbox import StagingOutboxCommand
 from forze.application.integrations.search import SearchResultSnapshot
 from forze.base.exceptions import exc
@@ -167,6 +178,7 @@ from forze_mock.adapters import (
     MockHubSearchAdapter,
     MockIdempotencyAdapter,
     MockInboxAdapter,
+    MockKeyManagement,
     MockPubSubAdapter,
     MockQueueAdapter,
     MockSearchAdapter,
@@ -980,6 +992,16 @@ class MockDepsModule(DepsModule):
         graph = ConfigurableMockGraph(module=self)
         secrets = MockSecretsPort(state=self.state)
 
+        crypto_kms = MockKeyManagement()
+        crypto_aead = AesGcmAead()
+        crypto_directory = StaticKeyDirectory(KeyRef(key_id="mock-cmk"))
+        crypto_keyring = Keyring(
+            kms=crypto_kms,
+            aead=crypto_aead,
+            directory=crypto_directory,
+        )
+        crypto_deterministic = DeterministicFieldCipher(root=b"mock-deterministic-root-secret!!")
+
         resilience_executor = (
             PassthroughResilienceExecutor()
             if self.resilience == "passthrough"
@@ -1048,6 +1070,11 @@ class MockDepsModule(DepsModule):
             ),
             DurableFunctionStepDepKey: MockDurableFunctionStepAdapter(state=self.state),
             SecretsDepKey: secrets,
+            KeyManagementDepKey: crypto_kms,
+            AeadDepKey: crypto_aead,
+            KeyDirectoryDepKey: crypto_directory,
+            KeyringDepKey: crypto_keyring,
+            DeterministicCipherDepKey: crypto_deterministic,
         }
 
         if self.routed_state is not None:

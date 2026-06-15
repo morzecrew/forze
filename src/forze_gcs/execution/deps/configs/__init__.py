@@ -20,6 +20,11 @@ class GCSStorageConfig(TenantAwareIntegrationConfig):
     bucket: NamedResourceSpec = attrs.field(converter=coerce_named_resource_spec)
     """GCS bucket name (static or tenant-scoped resolver)."""
 
+    encrypt: bool = False
+    """When ``True``, object bytes are client-side (envelope) encrypted via the
+    registered keyring before upload and decrypted after download. Requires a
+    ``KeyringDepKey`` in the deps (e.g. via ``CryptoDepsModule``)."""
+
     # ....................... #
 
     def __attrs_post_init__(self) -> None:

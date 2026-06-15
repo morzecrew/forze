@@ -34,4 +34,9 @@ def vault_container():
         except Exception:
             pass
 
+        try:
+            client.sys.enable_secrets_engine(backend_type="transit", path="transit")
+        except Exception:
+            pass
+
         yield container, client

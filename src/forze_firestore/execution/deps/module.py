@@ -1,9 +1,11 @@
 """Firestore dependency module for the application kernel."""
 
-from typing import Any, final
+from functools import partial
+from typing import Any, Callable, cast, final
 
 import attrs
 
+from forze.application.contracts.crypto import EncryptionTier
 from forze.application.contracts.document import (
     DocumentCommandDepKey,
     DocumentQueryDepKey,
@@ -41,12 +43,14 @@ from .keys import FirestoreClientDepKey
 def _rw_document_query_factory(
     *,
     config: FirestoreDocumentConfig,
+    required_encryption: EncryptionTier | None = None,
 ) -> ConfigurableFirestoreReadOnlyDocument[Any]:
     return ConfigurableFirestoreReadOnlyDocument(
         config=derive_read_only_document_config(
             config=config,  # type: ignore[arg-type]
             factory=FirestoreReadOnlyDocumentConfig,
         ),
+        required_encryption=required_encryption,
     )
 
 
@@ -81,6 +85,13 @@ class FirestoreDepsModule(DepsModule):
 
     Documents span ``tagged`` (tenant filter via ``tenant_aware``) and ``dedicated`` (a routed
     per-tenant client).
+    """
+
+    required_encryption: EncryptionTier | None = attrs.field(default=None)
+    """Declared minimum document field-encryption coverage (``None`` = no floor).
+
+    When set, a document spec served by this module whose derived coverage is weaker
+    is refused at resolution. Documents can only ever provide per-``field`` coverage.
     """
 
     # ....................... #
@@ -123,16 +134,40 @@ class FirestoreDepsModule(DepsModule):
     # ....................... #
 
     def __call__(self) -> Deps:
+        # ``cast`` erases the factories' generic parameters (``partial`` would otherwise
+        # leak them as Unknown); ``routed_from_mapping`` only needs a plain callable.
+        ro_query_factory = cast(
+            Callable[..., Any],
+            partial(
+                ConfigurableFirestoreReadOnlyDocument,
+                required_encryption=self.required_encryption,
+            ),
+        )
+        rw_query_factory = cast(
+            Callable[..., Any],
+            partial(
+                _rw_document_query_factory,
+                required_encryption=self.required_encryption,
+            ),
+        )
+        rw_command_factory = cast(
+            Callable[..., Any],
+            partial(
+                ConfigurableFirestoreDocument,
+                required_encryption=self.required_encryption,
+            ),
+        )
+
         return merge_deps(
             routed_from_mapping(
                 self.ro_documents,
-                bindings=[(DocumentQueryDepKey, ConfigurableFirestoreReadOnlyDocument)],
+                bindings=[(DocumentQueryDepKey, ro_query_factory)],
             ),
             routed_from_mapping(
                 self.rw_documents,
                 bindings=[
-                    (DocumentQueryDepKey, _rw_document_query_factory),
-                    (DocumentCommandDepKey, ConfigurableFirestoreDocument),
+                    (DocumentQueryDepKey, rw_query_factory),
+                    (DocumentCommandDepKey, rw_command_factory),
                 ],
             ),
             routed_constant(
