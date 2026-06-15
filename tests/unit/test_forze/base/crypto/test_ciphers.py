@@ -90,6 +90,8 @@ def test_open_wrong_size_key_is_structured_error(aead: Aead) -> None:
         aead.open(key=os.urandom(31), nonce=nonce, ciphertext=ciphertext)
 
     assert excinfo.value.kind is ExceptionKind.VALIDATION
+    # Distinct from a tamper failure, to diagnose key misconfiguration.
+    assert excinfo.value.code == "core.crypto.aead_key_invalid"
 
 
 # ....................... #
@@ -106,3 +108,4 @@ def test_chacha_open_wrong_size_nonce_is_structured_error() -> None:
         aead.open(key=_KEY, nonce=b"too-short", ciphertext=ciphertext)
 
     assert excinfo.value.kind is ExceptionKind.VALIDATION
+    assert excinfo.value.code == "core.crypto.aead_key_invalid"

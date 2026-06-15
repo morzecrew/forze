@@ -4,7 +4,12 @@ from __future__ import annotations
 
 import pytest
 
-from forze.application.contracts.crypto import AesGcmAead, KeyRef, StaticKeyDirectory
+from forze.application.contracts.crypto import (
+    AesGcmAead,
+    DataKey,
+    KeyRef,
+    StaticKeyDirectory,
+)
 from forze.application.integrations.crypto import Keyring
 from forze.base.exceptions import CoreException
 from forze_mock import MockKeyManagement
@@ -15,6 +20,24 @@ from forze_mock import MockKeyManagement
 def _ring() -> Keyring:
     return Keyring(
         kms=MockKeyManagement(),
+        aead=AesGcmAead(),
+        directory=StaticKeyDirectory(KeyRef(key_id="cmk")),
+    )
+
+
+class _BoomKms:
+    """A key backend whose every call fails (a down/unreachable KMS)."""
+
+    async def generate_data_key(self, key_ref: KeyRef) -> DataKey:
+        raise RuntimeError("kms down")
+
+    async def unwrap_data_key(self, *, wrapped: bytes, key_ref: KeyRef) -> bytes:
+        raise RuntimeError("kms down")
+
+
+def _boom_ring() -> Keyring:
+    return Keyring(
+        kms=_BoomKms(),
         aead=AesGcmAead(),
         directory=StaticKeyDirectory(KeyRef(key_id="cmk")),
     )
@@ -64,6 +87,32 @@ async def test_async_decrypt_unwraps_then_caches() -> None:
     stats = reader.stats()
     assert stats.data_keys_unwrapped == 1
     assert stats.decrypt_cache_hits == 1
+
+
+async def test_failed_generate_does_not_count() -> None:
+    """A KMS error must not bump data_keys_generated (else the metric overcounts)."""
+
+    ring = _boom_ring()
+
+    with pytest.raises(RuntimeError):
+        await ring.encrypt(b"x", tenant=None)
+
+    assert ring.stats().data_keys_generated == 0
+
+
+async def test_failed_unwrap_does_not_count() -> None:
+    """A KMS error must not bump data_keys_unwrapped."""
+
+    producer = _ring()
+    await producer.warm(None)
+    blob = producer.encrypt_sync(b"secret", tenant=None)
+
+    reader = _boom_ring()  # cold decrypt cache → reaches the failing unwrap
+
+    with pytest.raises(RuntimeError):
+        await reader.decrypt(blob)
+
+    assert reader.stats().data_keys_unwrapped == 0
 
 
 async def test_cold_sync_calls_count_cold_misses() -> None:

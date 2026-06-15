@@ -344,8 +344,8 @@ class Keyring:
                     cached.uses += 1
                 return cached
 
-            self._n_generated += 1
             data_key = await self.kms.generate_data_key(key_ref)
+            self._n_generated += 1  # count only an actual KMS round-trip, not a failed one
             active = _ActiveDataKey(
                 plaintext=data_key.plaintext,
                 wrapped=data_key.wrapped,
@@ -381,11 +381,11 @@ class Keyring:
                 self._n_dec_hits += 1
                 return cached
 
-            self._n_unwrapped += 1
             dek = await self.kms.unwrap_data_key(
                 wrapped=envelope.wrapped_dek,
                 key_ref=KeyRef(key_id=envelope.key_id, version=envelope.key_version),
             )
+            self._n_unwrapped += 1  # count only an actual KMS round-trip, not a failed one
             _lru_put(
                 self._dec_cache,
                 envelope.wrapped_dek,
