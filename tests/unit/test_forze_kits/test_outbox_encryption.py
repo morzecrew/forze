@@ -20,7 +20,7 @@ from forze.application.execution import DepsRegistry, ExecutionRuntime
 from forze.application.integrations.outbox import is_encrypted_payload
 from forze.base.primitives import utcnow
 from forze.base.serialization import PydanticModelCodec
-from forze_kits.integrations.consumer import run_consumer
+from forze_kits.integrations.consumer import QueueConsumer
 from forze_kits.integrations.outbox import (
     outbox_flush_tx_on_success_factory,
     relay_outbox_to_queue,
@@ -148,15 +148,13 @@ async def test_end_to_end_ciphertext_through_broker_decrypted_by_consumer() -> N
         async def _handler(message: QueueMessage[_EventPayload]) -> None:
             received.append(message.payload)
 
-        run = await run_consumer(
-            ctx,
+        run = await QueueConsumer(
             queue="jobs",
             queue_spec=queue_spec,
             handler=_handler,
             inbox_spec=inbox_spec,
             tx_route="mock",
-            timeout=timedelta(milliseconds=250),
-        )
+        ).run(ctx, timeout=timedelta(milliseconds=250))
 
         # The consumer decrypted the envelope and the handler saw the plaintext model.
         assert run.processed == 1

@@ -100,6 +100,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Queue consumer is now a configurable class.** `run_consumer(ctx, *, queue, queue_spec, handler, inbox_spec, tx_route, …)` → `QueueConsumer(queue=…, queue_spec=…, handler=…, inbox_spec=…, tx_route=…, max_deliveries=…, retry_policy=…).run(ctx, *, timeout=…)`. The consume *configuration* is isolated from the per-run context and validated once at construction; static dependencies (queue port, decrypt keyring, resilience executor) resolve at the top of `run`, never inside the per-message loop. The background lifecycle step (`queue_consumer_background_lifecycle_step`) keeps the same flat params and now holds one `QueueConsumer` instead of duplicating its nine fields. *Breaking for direct `run_consumer` callers.*
 - **Tenant-isolation tier model made coherent** — ladder `none < tagged < namespace < dedicated` (the never-derived `relation` rung removed); per-tenant collections / index names now reach `namespace` via dynamic-resolver detection; each integration owns its `max_supported_isolation` ceiling (required arg, fail-closed) instead of a core registry. Per-tenant namespace resolution unified into one `resolve_scoped_namespace` helper across nine adapters (backend-visible key/path formats unchanged).
 - **Argon2 hashing off the event loop** — `PasswordService.hash_password`/`verify_password`/`timing_dummy_hash` are now `async` on a bounded pool (`PasswordConfig.hashing_concurrency`, default 4); `*_sync` variants remain.
 - **Performance (measured):**

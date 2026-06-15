@@ -1,7 +1,7 @@
 """End-to-end queue-consumer runner over a real RabbitMQ broker.
 
 Composes the full outbox story: stage with bound correlation metadata ->
-relay to RabbitMQ -> ``run_consumer`` (one-shot, finite idle timeout) ->
+relay to RabbitMQ -> ``QueueConsumer.run`` (one-shot, finite idle timeout) ->
 handler runs exactly once under the ORIGINAL correlation id. Plus the
 transient-failure path: a failed-once handler is nacked back and succeeds
 on the broker redelivery within the same run.
@@ -45,7 +45,7 @@ from forze.application.execution import (
 )
 from forze.base.primitives import uuid7
 from forze.base.serialization import PydanticModelCodec
-from forze_kits.integrations.consumer import ConsumerRunResult, run_consumer
+from forze_kits.integrations.consumer import ConsumerRunResult, QueueConsumer
 from forze_kits.integrations.outbox import relay_outbox_to_queue
 from forze_mock import MockKeyManagement, MockStateDepKey
 from forze_mock.adapters import MockState
@@ -149,15 +149,13 @@ async def test_runner_consumes_relayed_event_under_original_correlation(
         )
 
         with ctx.inv_ctx.bind_metadata(metadata=consumer_metadata):
-            result = await run_consumer(
-                ctx,
+            result = await QueueConsumer(
                 queue="jobs",
                 queue_spec=queue_spec,
                 handler=handler,
                 inbox_spec=_INBOX_SPEC,
                 tx_route="mock",
-                timeout=timedelta(seconds=2),
-            )
+            ).run(ctx, timeout=timedelta(seconds=2))
 
         assert result == ConsumerRunResult(processed=1)
         assert observed["value"] == "consume-me"
@@ -207,15 +205,13 @@ async def test_failed_once_handler_succeeds_on_broker_redelivery(
             if len(deliveries) == 1:
                 raise RuntimeError("transient")
 
-        result = await run_consumer(
-            ctx,
+        result = await QueueConsumer(
             queue=queue,
             queue_spec=queue_spec,
             handler=handler,
             inbox_spec=_INBOX_SPEC,
             tx_route="mock",
-            timeout=timedelta(seconds=3),
-        )
+        ).run(ctx, timeout=timedelta(seconds=3))
 
         # nack(requeue=True) -> broker redelivery (redelivered flag -> count 2)
         # -> the strict-tx inbox mark rolled back, so the retry processed.
@@ -301,15 +297,13 @@ async def test_end_to_end_encrypted_event_relayed_through_rabbitmq_and_decrypted
         async def handler(message: QueueMessage[Any]) -> None:
             observed["value"] = message.payload.value
 
-        result = await run_consumer(
-            ctx,
+        result = await QueueConsumer(
             queue="jobs",
             queue_spec=queue_spec,
             handler=handler,
             inbox_spec=_INBOX_SPEC,
             tx_route="mock",
-            timeout=timedelta(seconds=4),
-        )
+        ).run(ctx, timeout=timedelta(seconds=4))
 
         assert result == ConsumerRunResult(processed=1)
         assert observed["value"] == "secret-cargo"

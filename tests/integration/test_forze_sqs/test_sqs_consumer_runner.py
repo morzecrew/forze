@@ -1,7 +1,7 @@
 """End-to-end queue-consumer runner over SQS (LocalStack).
 
 Mirrors the RabbitMQ runner showcase: stage with bound correlation
-metadata -> relay to SQS -> ``run_consumer`` (one-shot, finite idle
+metadata -> relay to SQS -> ``QueueConsumer.run`` (one-shot, finite idle
 timeout) -> handler runs exactly once under the ORIGINAL correlation id,
 and the queue is drained (acked).
 """
@@ -44,7 +44,7 @@ from forze.application.execution import (
 )
 from forze.base.primitives import uuid7
 from forze.base.serialization import PydanticModelCodec
-from forze_kits.integrations.consumer import ConsumerRunResult, run_consumer
+from forze_kits.integrations.consumer import ConsumerRunResult, QueueConsumer
 from forze_kits.integrations.outbox import relay_outbox_to_queue
 from forze_mock import MockKeyManagement, MockStateDepKey
 from forze_mock.adapters import MockState
@@ -161,15 +161,13 @@ async def test_runner_consumes_relayed_event_under_original_correlation(
         )
 
         with ctx.inv_ctx.bind_metadata(metadata=consumer_metadata):
-            result = await run_consumer(
-                ctx,
+            result = await QueueConsumer(
                 queue="jobs",
                 queue_spec=queue_spec,
                 handler=handler,
                 inbox_spec=_INBOX_SPEC,
                 tx_route="mock",
-                timeout=timedelta(seconds=4),
-            )
+            ).run(ctx, timeout=timedelta(seconds=4))
 
         assert result == ConsumerRunResult(processed=1)
         assert observed["value"] == "consume-me"
@@ -265,15 +263,13 @@ async def test_end_to_end_encrypted_event_relayed_through_sqs_and_decrypted(
         async def handler(message: QueueMessage[Any]) -> None:
             observed["value"] = message.payload.value
 
-        result = await run_consumer(
-            ctx,
+        result = await QueueConsumer(
             queue="jobs",
             queue_spec=queue_spec,
             handler=handler,
             inbox_spec=_INBOX_SPEC,
             tx_route="mock",
-            timeout=timedelta(seconds=4),
-        )
+        ).run(ctx, timeout=timedelta(seconds=4))
 
         # The consumer decrypted the SQS-delivered ciphertext to the plaintext model.
         assert result == ConsumerRunResult(processed=1)

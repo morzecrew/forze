@@ -19,7 +19,7 @@ from forze.application.execution.context import ExecutionContext
 from forze.base.exceptions import exc
 from forze.base.primitives import StrKey
 
-from .runner import run_consumer
+from .runner import QueueConsumer
 
 # ----------------------- #
 
@@ -27,17 +27,11 @@ from .runner import run_consumer
 @final
 @attrs.define(slots=True, kw_only=True)
 class _QueueConsumerBackgroundStartup(LifecycleHook):
-    """Start a background task that consumes a queue forever."""
+    """Start a background task that runs a :class:`QueueConsumer` forever."""
 
-    queue: str
-    queue_spec: QueueSpec[Any]
-    handler: Callable[[QueueMessage[Any]], Awaitable[None]]
-    inbox_spec: InboxSpec
-    tx_route: StrKey
-    message_id: Callable[[QueueMessage[Any]], str] | None
-    bind_tenant_from_headers: bool
-    max_deliveries: int | None
-    retry_policy: StrKey | None
+    consumer: QueueConsumer[Any]
+    """The configured consumer; carries all consume options (validated on build)."""
+
     restart_backoff: timedelta
     task: asyncio.Task[None] | None = attrs.field(default=None, init=False)
 
@@ -47,9 +41,6 @@ class _QueueConsumerBackgroundStartup(LifecycleHook):
         if self.restart_backoff.total_seconds() <= 0:
             raise exc.configuration("Restart backoff must be positive")
 
-        if self.max_deliveries is not None and self.max_deliveries < 1:
-            raise exc.configuration("max_deliveries must be >= 1 when set")
-
     # ....................... #
 
     async def __call__(self, ctx: ExecutionContext) -> None:
@@ -57,22 +48,10 @@ class _QueueConsumerBackgroundStartup(LifecycleHook):
             while True:
                 try:
                     # timeout=None: consume forever. Per-message failures are
-                    # absorbed inside run_consumer (its decision ladder); only
-                    # a consume-generator crash (broker connection loss, ...)
+                    # absorbed inside the consumer's decision ladder; only a
+                    # consume-generator crash (broker connection loss, ...)
                     # escapes to here.
-                    await run_consumer(
-                        ctx,
-                        queue=self.queue,
-                        queue_spec=self.queue_spec,
-                        handler=self.handler,
-                        inbox_spec=self.inbox_spec,
-                        tx_route=self.tx_route,
-                        message_id=self.message_id,
-                        bind_tenant_from_headers=self.bind_tenant_from_headers,
-                        max_deliveries=self.max_deliveries,
-                        retry_policy=self.retry_policy,
-                        timeout=None,
-                    )
+                    await self.consumer.run(ctx, timeout=None)
 
                 except asyncio.CancelledError:
                     raise
@@ -80,7 +59,7 @@ class _QueueConsumerBackgroundStartup(LifecycleHook):
                 except Exception:
                     logger.exception(
                         "Queue consumer for %s crashed; restarting after backoff",
-                        self.queue,
+                        self.consumer.queue,
                     )
 
                 # Reached on crash — or if the consume generator ever ends
@@ -100,13 +79,13 @@ class _QueueConsumerBackgroundStartup(LifecycleHook):
             # must not leak (and orphan) the previous consumer task.
             logger.warning(
                 "Queue consumer for %s already running; ignoring duplicate startup",
-                self.queue,
+                self.consumer.queue,
             )
             return
 
         self.task = asyncio.create_task(
             _loop(),
-            name=f"queue_consumer:{self.queue}",
+            name=f"queue_consumer:{self.consumer.queue}",
         )
 
 
@@ -152,12 +131,12 @@ def queue_consumer_background_lifecycle_step(
     restart_backoff: timedelta = timedelta(seconds=5),
     step_id: StrKey | None = None,
 ) -> LifecycleStep:
-    """Build a lifecycle step that runs :func:`~forze_kits.integrations.consumer.run_consumer` in the background.
+    """Build a lifecycle step that runs a :class:`~forze_kits.integrations.consumer.QueueConsumer` in the background.
 
     Startup spawns a consume-forever task (``timeout=None``); shutdown
     cancels and awaits it. Per-message failures never reach this loop —
-    they are handled inside the runner's decision ladder (see
-    :func:`~forze_kits.integrations.consumer.run_consumer`). A crash of the
+    they are handled inside the consumer's decision ladder (see
+    :class:`~forze_kits.integrations.consumer.QueueConsumer`). A crash of the
     consume stream itself (broker connection loss, channel teardown) is
     logged and the consume restarts after *restart_backoff*; unacked
     in-flight messages are redelivered by the broker and deduped by the
@@ -175,7 +154,7 @@ def queue_consumer_background_lifecycle_step(
     pass through with the same defaults and caveats.
     """
 
-    startup = _QueueConsumerBackgroundStartup(
+    consumer = QueueConsumer(
         queue=queue,
         queue_spec=queue_spec,
         handler=handler,
@@ -185,6 +164,9 @@ def queue_consumer_background_lifecycle_step(
         bind_tenant_from_headers=bind_tenant_from_headers,
         max_deliveries=max_deliveries,
         retry_policy=retry_policy,
+    )
+    startup = _QueueConsumerBackgroundStartup(
+        consumer=consumer,
         restart_backoff=restart_backoff,
     )
     shutdown = _QueueConsumerBackgroundShutdown(startup=startup)
