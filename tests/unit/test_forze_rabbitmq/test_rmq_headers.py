@@ -65,6 +65,30 @@ async def test_enqueue_headers_ride_amqp_headers_and_reserved_key_wins() -> None
 
 
 @pytest.mark.asyncio
+async def test_caller_forze_key_stripped_when_no_key() -> None:
+    # The reserved-key contract holds even when ``key`` is None: a caller-supplied
+    # ``forze_key`` must not pass through and silently set the partitioning lane.
+    client = RabbitMQClient()
+    channel = _mock_channel()
+    cm = _patched_channel(client, channel)
+
+    try:
+        await client.enqueue(
+            "ns:jobs",
+            b"{}",
+            key=None,
+            headers={"trace": "t-1", "forze_key": "forged"},
+        )
+    finally:
+        cm.stop()
+
+    message = channel.default_exchange.publish.await_args.args[0]
+
+    assert message.headers["trace"] == "t-1"
+    assert "forze_key" not in message.headers
+
+
+@pytest.mark.asyncio
 async def test_enqueue_many_per_message_headers_are_distinct() -> None:
     client = RabbitMQClient()
     channel = _mock_channel()

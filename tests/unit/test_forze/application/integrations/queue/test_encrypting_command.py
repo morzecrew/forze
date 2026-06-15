@@ -19,6 +19,7 @@ from forze.application.contracts.envelope import HEADER_EVENT_ID
 from forze.application.contracts.queue import QueueSpec
 from forze.application.integrations.crypto import Keyring, is_encrypted_payload
 from forze.application.integrations.queue import encrypting_queue_command
+from forze.base.exceptions import CoreException, ExceptionKind
 from forze.base.serialization import PydanticModelCodec
 from forze_mock import MockKeyManagement
 
@@ -99,3 +100,16 @@ async def test_empty_batch_short_circuits() -> None:
     assert await _wrap(spy).enqueue_many("jobs", []) == []
     assert spy.many_calls == []
     assert spy.enqueue_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_mismatched_message_headers_raise_clean_precondition() -> None:
+    spy = _SpyQueueCommand()
+
+    with pytest.raises(CoreException) as ei:
+        await _wrap(spy).enqueue_many(
+            "jobs", [_Job(n=1), _Job(n=2)], message_headers=[{"h": "1"}]
+        )
+
+    assert ei.value.kind is ExceptionKind.PRECONDITION
+    assert spy.many_calls == []  # nothing published on a bad call

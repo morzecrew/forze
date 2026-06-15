@@ -25,6 +25,7 @@ ignore:
   - ~/.cache
   - ~/.config
   - ~/.local
+  - tests
 
 metrics:
   quality_threshold: 30.0

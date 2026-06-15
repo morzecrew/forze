@@ -71,8 +71,7 @@ class EncryptingIdempotencyPort:
 
     # ....................... #
 
-    def _aad(self, op: str, key: str) -> bytes:
-        tenant = self.tenant_provider()
+    def _aad(self, op: str, key: str, *, tenant: TenantIdentity | None) -> bytes:
         tenant_id = tenant.tenant_id if tenant is not None else None
         # Length-prefix the op so the (op, key) boundary is unambiguous: a naive ``f"{op}:{key}"``
         # collides — ("a:b", "c") and ("a", "b:c") both render "a:b:c", letting a ciphertext open
@@ -81,15 +80,19 @@ class EncryptingIdempotencyPort:
         return payload_aad(IDEMPOTENCY_PAYLOAD_DOMAIN, tenant_id, record_id)
 
     async def _seal(self, op: str, key: str, result: bytes) -> bytes:
+        # Resolve the tenant once and thread it to both key selection and the AAD, so the two
+        # cannot diverge (consistent with the other sealing sites).
+        tenant = self.tenant_provider()
         return await self.cipher.encrypt(
-            result, tenant=self.tenant_provider(), aad=self._aad(op, key)
+            result, tenant=tenant, aad=self._aad(op, key, tenant=tenant)
         )
 
     async def _open(self, op: str, key: str, result: bytes) -> bytes:
         if not is_envelope(result):
             return result  # legacy plaintext record — replay as-is
 
-        return await self.cipher.decrypt(result, aad=self._aad(op, key))
+        tenant = self.tenant_provider()
+        return await self.cipher.decrypt(result, aad=self._aad(op, key, tenant=tenant))
 
 
 # ....................... #

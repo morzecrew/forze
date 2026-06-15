@@ -106,6 +106,12 @@ class EncryptingQueueCommand[M](QueueCommandPort[M]):
         if not payloads:
             return []
 
+        if message_headers is not None and len(message_headers) != len(payloads):
+            raise exc.precondition(
+                "message_headers length must match payloads length "
+                f"({len(message_headers)} != {len(payloads)})."
+            )
+
         sealed = await asyncio.gather(
             *(
                 self._seal(

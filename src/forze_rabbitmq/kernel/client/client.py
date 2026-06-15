@@ -7,7 +7,7 @@ require_rabbitmq()
 # ....................... #
 
 import asyncio
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from datetime import datetime, timedelta, timezone
 from typing import AsyncGenerator, Mapping, Sequence, final
 from uuid import uuid4
@@ -393,10 +393,7 @@ class RabbitMQClient(RabbitMQClientPort):
         if isinstance(raw_key, bytes):
             return raw_key.decode("utf-8")
 
-        if isinstance(raw_key, str):
-            return raw_key
-
-        return None
+        return raw_key if isinstance(raw_key, str) else None
 
     # ....................... #
 
@@ -457,7 +454,9 @@ class RabbitMQClient(RabbitMQClientPort):
                 if not isinstance(entry, Mapping):
                     continue
 
-                reason = entry.get("reason")  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+                reason = entry.get(
+                    "reason"
+                )  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
 
                 if isinstance(reason, bytes):
                     reason = reason.decode("utf-8", errors="replace")
@@ -465,7 +464,9 @@ class RabbitMQClient(RabbitMQClientPort):
                 if reason != "rejected":
                     continue
 
-                count = entry.get("count")  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+                count = entry.get(
+                    "count"
+                )  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
 
                 if isinstance(count, int):
                     rejected += count
@@ -718,9 +719,15 @@ class RabbitMQClient(RabbitMQClientPort):
         def __build_amqp_headers(
             base: Mapping[str, str] | None,
         ) -> dict[str, str] | None:
-            # Caller headers pass through verbatim; reserved transport keys are
-            # written last so they always win on collision.
-            built: dict[str, str] | None = dict(base) if base else None
+            # Strip reserved transport keys from caller input — only the transport sets them.
+            # This must hold even when ``key`` is ``None`` (nothing is written): otherwise a
+            # caller-supplied ``forze_key`` would silently set the partitioning lane.
+            filtered = (
+                {k: v for k, v in base.items() if k not in _RESERVED_HEADERS}
+                if base
+                else {}
+            )
+            built: dict[str, str] | None = filtered or None
 
             if key is not None:
                 built = built or {}
@@ -825,7 +832,7 @@ class RabbitMQClient(RabbitMQClientPort):
         channel = await self.__require_pending_channel()
         declared = await self.__declare_queue(channel, queue)
 
-        try:
+        with suppress(TimeoutError):
             async with asyncio.timeout(window.total_seconds()):
                 # No iterator timeout: the surrounding ``asyncio.timeout``
                 # bounds the whole drain loop (aio_pika treats its iterator
@@ -836,8 +843,6 @@ class RabbitMQClient(RabbitMQClientPort):
 
                         if len(raw_messages) >= max_messages:
                             break
-        except TimeoutError:
-            pass
 
         return await self.__to_message_batch(queue, raw_messages)
 
@@ -872,13 +877,7 @@ class RabbitMQClient(RabbitMQClientPort):
                 try:
                     raw = await it.__anext__()
 
-                except StopAsyncIteration:
-                    return
-
-                except TimeoutError:
-                    # Idle window elapsed: terminate cleanly per the queue
-                    # port contract instead of surfacing an infrastructure
-                    # error (aio_pika closes the iterator before raising).
+                except (StopAsyncIteration, TimeoutError):
                     return
 
                 yield await self.__to_message(queue, raw)
