@@ -7,7 +7,7 @@ from uuid import UUID
 
 import attrs
 
-from forze.base.primitives import JsonDict, utcnow
+from forze.base.primitives import JsonDict, StrKey, utcnow
 
 # ----------------------- #
 
@@ -33,7 +33,7 @@ class IntegrationEvent[M]:
     filled by the staging coordinator from :class:`~forze.application.execution.context.ExecutionContext`.
     """
 
-    event_type: str
+    event_type: StrKey
     """Logical event name (for example ``project.created``)."""
 
     payload: M
@@ -76,7 +76,7 @@ class IntegrationEvent[M]:
 class StagedOutboxEntry:
     """Internal row materialized from a staged integration event before flush."""
 
-    outbox_route: str
+    outbox_route: StrKey
     """Logical outbox route (:attr:`~.OutboxSpec.name`)."""
 
     event: IntegrationEvent[Any]
@@ -97,13 +97,13 @@ class OutboxClaim:
     id: UUID
     """Primary key of the outbox row."""
 
-    outbox_route: str
+    outbox_route: StrKey
     """Logical outbox route."""
 
     event_id: UUID
     """Staged event idempotency key."""
 
-    event_type: str
+    event_type: StrKey
     """Logical event name."""
 
     payload: JsonDict

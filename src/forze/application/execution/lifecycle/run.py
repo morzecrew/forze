@@ -164,7 +164,7 @@ async def run_lifecycle_startup(
 
     except StartupWavePartialError as e:
         partial_error = e
-        executed_waves.append(e.completed)
+        executed_waves.append(partial_error.completed)
 
     except Exception:
         logger.exception("Lifecycle startup failed")

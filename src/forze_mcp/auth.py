@@ -68,6 +68,8 @@ _AGENT_CLAIM = "agent"
 the verified key is a user→agent delegation. Bridges the agent the orchestrator
 resolved (from the key) to the resolver, which prefers it over any fixed agent."""
 
+# ....................... #
+
 
 def _split_api_key(raw: str) -> ApiKeyCredentials:
     """Split a ``prefix:secret`` bearer into credentials (mirrors the HTTP edge).
@@ -82,6 +84,9 @@ def _split_api_key(raw: str) -> ApiKeyCredentials:
         return ApiKeyCredentials(key=head)
 
     return ApiKeyCredentials(key=tail, prefix=head)
+
+
+# ....................... #
 
 
 async def _resolve_tenant(
@@ -104,10 +109,7 @@ async def _resolve_tenant(
             requested_tenant_id=requested,
         )
 
-    if requested is not None:
-        return TenantIdentity(tenant_id=requested)
-
-    return None
+    return TenantIdentity(tenant_id=requested) if requested is not None else None
 
 
 # ....................... #
@@ -131,6 +133,8 @@ class ForzeApiKeyVerifier(TokenVerifier):
     ctx_factory: ExecutionContextFactory
     authn_spec: AuthnSpec
     client_id: str = "forze-mcp"
+
+    # ....................... #
 
     def __attrs_post_init__(self) -> None:
         # TokenVerifier is a plain (non-attrs) base with its own __init__; initialise
@@ -203,6 +207,8 @@ class AccessTokenIdentityResolver(MCPIdentityResolver):
     """
 
     agent: AuthnIdentity | None = None
+
+    # ....................... #
 
     async def resolve(self) -> tuple[AuthnIdentity | None, TenantIdentity | None]:
         token = get_access_token()

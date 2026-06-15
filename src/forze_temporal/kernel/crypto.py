@@ -19,8 +19,9 @@ falls back to the deployment's default key (``tenant=None``).
 """
 
 import dataclasses
-from typing import Callable, Sequence
+from typing import Callable, Sequence, final
 
+import attrs
 from temporalio.api.common.v1 import Payload
 from temporalio.contrib.pydantic import pydantic_data_converter
 from temporalio.converter import DataConverter, PayloadCodec
@@ -42,29 +43,25 @@ per-tenant *key* (self-described in the envelope) provides cross-tenant isolatio
 # ....................... #
 
 
+@final
+@attrs.define(slots=True, kw_only=True, frozen=True)
 class EncryptingPayloadCodec(PayloadCodec):
     """Seals each Temporal ``Payload`` with the keyring; decodes our own back."""
 
-    def __init__(
-        self,
-        cipher: BytesCipherPort,
-        *,
-        tenant_provider: Callable[[], TenantIdentity | None] | None = None,
-    ) -> None:
-        self._cipher = cipher
-        self._tenant_provider = tenant_provider
+    cipher: BytesCipherPort
+    tenant_provider: Callable[[], TenantIdentity | None] | None
 
     # ....................... #
 
     async def encode(self, payloads: Sequence[Payload]) -> list[Payload]:
         # Resolve the bound tenant in the request scope so the payload seals under that
         # tenant's key (the envelope records which one, so decode needs no tenant).
-        tenant = self._tenant_provider() if self._tenant_provider is not None else None
+        tenant = self.tenant_provider() if self.tenant_provider is not None else None
 
         out: list[Payload] = []
 
         for payload in payloads:
-            sealed = await self._cipher.encrypt(
+            sealed = await self.cipher.encrypt(
                 payload.SerializeToString(), tenant=tenant, aad=_DURABLE_AAD
             )
             out.append(Payload(metadata={"encoding": _ENCODING}, data=sealed))
@@ -82,7 +79,7 @@ class EncryptingPayloadCodec(PayloadCodec):
                 out.append(payload)
                 continue
 
-            raw = await self._cipher.decrypt(payload.data, aad=_DURABLE_AAD)
+            raw = await self.cipher.decrypt(payload.data, aad=_DURABLE_AAD)
             inner = Payload()
             inner.ParseFromString(raw)
             out.append(inner)
@@ -93,6 +90,8 @@ class EncryptingPayloadCodec(PayloadCodec):
 # ....................... #
 
 
+@final
+@attrs.define(slots=True, kw_only=True, frozen=True)
 class _ChainedPayloadCodec(PayloadCodec):
     """Runs an *inner* codec under an *outer* one, keeping encryption outermost at rest.
 
@@ -101,19 +100,18 @@ class _ChainedPayloadCodec(PayloadCodec):
     keeps the encrypting codec the outermost layer at rest, so a base codec only ever sees
     plaintext and our seal wraps its output."""
 
-    def __init__(self, inner: PayloadCodec, outer: PayloadCodec) -> None:
-        self._inner = inner
-        self._outer = outer
+    inner: PayloadCodec
+    outer: PayloadCodec
 
     # ....................... #
 
     async def encode(self, payloads: Sequence[Payload]) -> list[Payload]:
-        return await self._outer.encode(await self._inner.encode(payloads))
+        return await self.outer.encode(await self.inner.encode(payloads))
 
     # ....................... #
 
     async def decode(self, payloads: Sequence[Payload]) -> list[Payload]:
-        return await self._inner.decode(await self._outer.decode(payloads))
+        return await self.inner.decode(await self.outer.decode(payloads))
 
 
 # ....................... #
@@ -139,7 +137,7 @@ def encrypting_data_converter(
     base_converter = base or pydantic_data_converter
 
     codec: PayloadCodec = EncryptingPayloadCodec(
-        cipher,
+        cipher=cipher,
         tenant_provider=tenant_provider,
     )
 
