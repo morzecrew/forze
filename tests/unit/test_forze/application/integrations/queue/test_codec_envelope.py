@@ -71,3 +71,17 @@ def test_encrypted_round_trip_through_codec() -> None:
     message = codec.decode("q", _raw(body))
 
     assert message.payload == wrapper
+
+
+def test_decode_falls_back_when_prefix_collides_but_not_a_wrapper() -> None:
+    """A plaintext body sharing the wrapper prefix but with extra keys is not a
+    wrapper — it must decode to the model, not pass through as ciphertext."""
+
+    codec = _codec()
+    # Shares the serialized ``{"__fz_enc__":`` prefix, but it is a two-key object.
+    body = b'{"__fz_enc__":"not-cipher","n":5}'
+
+    message = codec.decode("q", _raw(body))
+
+    assert message.payload == _Payload(n=5)
+    assert not is_encrypted_payload(message.payload)

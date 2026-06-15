@@ -16,6 +16,7 @@ reconstruct the AAD and a ciphertext cannot be transplanted between events.
 """
 
 import base64
+import binascii
 from collections.abc import Mapping
 from typing import Any, cast
 from uuid import UUID
@@ -114,10 +115,15 @@ async def decrypt_outbox_payload(
             code="core.outbox.payload_cipher_missing",
         )
 
-    raw = await cipher.decrypt(
-        base64.b64decode(encrypted_payload_ciphertext(payload)),
-        aad=_aad(tenant_id, event_id),
-    )
+    try:
+        blob = base64.b64decode(encrypted_payload_ciphertext(payload), validate=True)
+    except (binascii.Error, ValueError) as error:
+        raise exc.validation(
+            "Outbox payload ciphertext is not valid base64",
+            code="core.outbox.payload_base64_invalid",
+        ) from error
+
+    raw = await cipher.decrypt(blob, aad=_aad(tenant_id, event_id))
 
     return orjson.loads(raw)
 

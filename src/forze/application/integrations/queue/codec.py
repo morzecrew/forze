@@ -96,8 +96,17 @@ class QueueMessageCodec[M]:
         # An encrypted-envelope body is passed through as the wrapper (the consumer
         # runner decrypts it before the handler); plaintext decodes to the model as
         # before, byte-for-byte — the peek avoids parsing normal bodies twice.
+        payload: Any
         if looks_encrypted_body(raw.body):
-            payload: Any = orjson.loads(raw.body)
+            # The peek matches a serialized prefix only; confirm it is a genuine
+            # one-key wrapper before diverting. A plaintext body that merely shares
+            # the prefix falls back to the model codec (double-parse on rare collision).
+            candidate = orjson.loads(raw.body)
+            payload = (
+                candidate
+                if is_encrypted_payload(candidate)
+                else self.payload_codec.decode_json_bytes(raw.body)
+            )
         else:
             payload = self.payload_codec.decode_json_bytes(raw.body)
 

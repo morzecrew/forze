@@ -16,6 +16,7 @@ from forze.application.contracts.crypto import (
 )
 from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.integrations.crypto import Keyring
+from forze.application.integrations.crypto.keyring import _LOCK_STRIPES
 from forze.base.crypto import unpack_envelope
 from forze.base.exceptions import CoreException, ExceptionKind
 from forze_mock import MockKeyManagement
@@ -377,17 +378,17 @@ async def test_decrypt_cache_is_lru_not_clear_all() -> None:
     assert ring.decrypt_sync(blobs[2]) == b"v"  # retained
 
 
-async def test_distinct_keys_use_distinct_locks() -> None:
-    """Cold fills for different key_ids do not serialize on a shared lock."""
+def test_fill_lock_is_stable_per_key_and_bounded() -> None:
+    """The fill lock is deterministic per key_id (mutual exclusion holds) and the
+    stripe set is bounded, so it can't grow with rotating/per-tenant key_ids."""
 
     ring = _per_tenant_keyring()
-    a = TenantIdentity(tenant_id=uuid4())
-    b = TenantIdentity(tenant_id=uuid4())
 
-    await ring.warm(a)
-    await ring.warm(b)
+    # Same key_id → same lock object (the per-key exclusivity invariant).
+    key = "tenant/abc/cmk"
+    assert ring._lock_for(key) is ring._lock_for(key)  # type: ignore[attr-defined]
 
-    # Different key_ids → different lock objects.
-    lock_a = ring._lock_for(f"tenant/{a.tenant_id}/cmk")  # type: ignore[attr-defined]
-    lock_b = ring._lock_for(f"tenant/{b.tenant_id}/cmk")  # type: ignore[attr-defined]
-    assert lock_a is not lock_b
+    # Many distinct key_ids spread across multiple stripes (cold fills still
+    # parallelize in the common case) but never grow the lock set past the stripe count.
+    locks = {id(ring._lock_for(f"tenant/{i}/cmk")) for i in range(500)}  # type: ignore[attr-defined]
+    assert 1 < len(locks) <= _LOCK_STRIPES

@@ -122,8 +122,13 @@ def _decode_payload_field[M](payload_codec: ModelCodec[M, Any], payload_raw: str
     message payload, for it to decrypt; a plaintext field decodes to the model as before.
     """
 
+    # The peek matches a serialized prefix only; confirm a genuine one-key wrapper
+    # before diverting, so plaintext that merely shares the prefix still decodes to
+    # the model (double-parse on the rare collision).
     if looks_encrypted_body(payload_raw.encode("utf-8")):
-        return orjson.loads(payload_raw)  # type: ignore[no-any-return]
+        candidate = orjson.loads(payload_raw)
+        if is_encrypted_payload(candidate):
+            return candidate  # type: ignore[no-any-return]
 
     return payload_codec.decode_json_bytes(payload_raw)
 

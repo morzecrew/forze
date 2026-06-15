@@ -74,6 +74,20 @@ async def test_decrypt_encrypted_without_keyring_fails_loud() -> None:
     assert ei.value.kind is ExceptionKind.CONFIGURATION
 
 
+async def test_decrypt_rejects_invalid_base64_ciphertext() -> None:
+    """A corrupted (non-base64) wrapper fails as validation, not a raw binascii error."""
+
+    ring = _keyring()
+    enc = await encrypt_outbox_payload(ring, {"n": 1}, tenant_id=None, event_id=uuid4())
+    enc["__fz_enc__"] = "not valid base64!!"  # transport/broker corruption
+
+    with pytest.raises(CoreException) as ei:
+        await decrypt_outbox_payload(ring, enc, tenant_id=None, event_id=uuid4())
+
+    assert ei.value.kind is ExceptionKind.VALIDATION
+    assert ei.value.code == "core.outbox.payload_base64_invalid"
+
+
 async def test_aad_binds_tenant_and_event() -> None:
     """A ciphertext can't be decrypted under a different (tenant, event)."""
 

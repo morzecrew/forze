@@ -45,6 +45,9 @@ from forze.base.exceptions import exc
 _NONE_TENANT = "\x00none"
 """Cache key for the no-tenant (single-key) case."""
 
+_LOCK_STRIPES = 64
+"""Fixed number of fill-lock stripes (bounds the lock set regardless of key count)."""
+
 
 def _tenant_cache_key(tenant: TenantIdentity | None) -> str:
     return _NONE_TENANT if tenant is None else str(tenant.tenant_id)
@@ -131,9 +134,15 @@ class Keyring:
     _tenant_key: OrderedDict[str, str] = attrs.field(factory=OrderedDict, init=False)
     """tenant cache key → resolved key_id (lets the sync path skip the directory, LRU)."""
 
-    _locks: dict[str, asyncio.Lock] = attrs.field(factory=dict, init=False, repr=False)
-    """key_id → fill lock, so a cold key triggers a single KMS call while different
-    keys (e.g. different tenants) fill in parallel."""
+    _locks: tuple[asyncio.Lock, ...] = attrs.field(
+        factory=lambda: tuple(asyncio.Lock() for _ in range(_LOCK_STRIPES)),
+        init=False,
+        repr=False,
+    )
+    """Fixed stripe of fill locks, indexed by key_id hash. A cold key still triggers a
+    single KMS call while different keys (e.g. tenants) fill in parallel; the stripe
+    bounds the lock set so it can't grow unbounded with rotating/per-tenant key_ids.
+    Two key_ids that collide on a stripe just serialize their fills (harmless)."""
 
     # Cumulative observability counters (sampled by ``instrument_crypto``). Plain ints:
     # increments happen on the event loop thread / sync codec path, never concurrently.
@@ -159,13 +168,9 @@ class Keyring:
     # ....................... #
 
     def _lock_for(self, key_id: str) -> asyncio.Lock:
-        # ``get``/assignment with no ``await`` between is atomic under asyncio.
-        lock = self._locks.get(key_id)
-
-        if lock is None:
-            lock = self._locks[key_id] = asyncio.Lock()
-
-        return lock
+        # Deterministic key_id → stripe mapping: the lock object is stable for a given
+        # key_id within the process, so mutual exclusion per key holds.
+        return self._locks[hash(key_id) % len(self._locks)]
 
     # ....................... #
 
