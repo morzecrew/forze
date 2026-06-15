@@ -139,6 +139,17 @@ AAD is reconstructable from the envelope headers (tenant and event id), so any
 transport carries it: queue, stream, or pub/sub, across every messaging
 backend. Legacy plaintext rows written before a tier was raised still relay.
 
+### Idempotency result cache
+
+The idempotency store replays an operation's full **result** for a duplicate
+request, so a Forze-owned store (Redis/Postgres) holds that return value at rest.
+Seal it with one flag — the result is sealed on commit and opened on replay
+(metadata stays plaintext), bound to `(tenant, op:key)`:
+
+```python
+IdempotencySpec(name="orders", encrypt_result=True)
+```
+
 ## Searchable fields and rotation
 
 Deterministic (searchable) fields need a stable root secret, set on the crypto

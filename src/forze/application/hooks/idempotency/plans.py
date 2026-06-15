@@ -12,8 +12,10 @@ from forze.application.contracts.execution import (
     MiddlewareFactory,
     MiddlewareStep,
 )
+from forze.application.contracts.crypto import KeyringDepKey
 from forze.application.contracts.idempotency import IdempotencyRecord, IdempotencySpec
 from forze.application.execution.context import ExecutionContext
+from forze.application.integrations.idempotency import encrypting_idempotency_port
 from forze.base.exceptions import exc
 from forze.base.primitives import StrKey, stable_payload_fingerprint
 from forze.base.serialization import default_model_codec
@@ -75,6 +77,19 @@ class IdempotencyWrap(MiddlewareFactory):
             )
 
         port = ctx.idempotency(self.spec)
+
+        if self.spec.encrypt_result:
+            port = encrypting_idempotency_port(
+                port,
+                cipher=(
+                    ctx.deps.provide(KeyringDepKey)
+                    if ctx.deps.exists(KeyringDepKey)
+                    else None
+                ),
+                tenant_provider=ctx.inv_ctx.get_tenant,
+                spec_name=str(self.spec.name),
+            )
+
         codec = default_model_codec(self.result_type)
 
         async def _wrap(
