@@ -101,6 +101,7 @@ from forze.application.contracts.pubsub import (
 )
 from forze.application.contracts.queue import (
     QueueCommandDepKey,
+    QueueCommandPort,
     QueueQueryDepKey,
     QueueSpec,
 )
@@ -157,6 +158,7 @@ from forze.application.integrations.authn import (
     LoginLockoutGuard,
 )
 from forze.application.integrations.crypto import DeterministicFieldCipher, Keyring
+from forze.application.integrations.queue import encrypting_queue_command
 from forze.application.integrations.outbox import StagingOutboxCommand
 from forze.application.integrations.search import SearchResultSnapshot
 from forze.base.exceptions import exc
@@ -550,18 +552,35 @@ class ConfigurableMockGraph(_MockFactoryBase):
 @final
 @attrs.define(slots=True, kw_only=True)
 class ConfigurableMockQueue(_MockFactoryBase):
+    command: bool = False
+    """When ``True`` (the command-side registration), wrap writes with payload encryption
+    for an ``end_to_end`` route; the query-side registration stays unwrapped so consumers
+    keep the full receive/consume surface."""
+
     def __call__(
         self,
         context: ExecutionContext,
         spec: QueueSpec[Any],
-    ) -> MockQueueAdapter[Any]:
+    ) -> MockQueueAdapter[Any] | QueueCommandPort[Any]:
         cfg = self._route(spec.name)
-        return MockQueueAdapter(
+        adapter = MockQueueAdapter(
             state=self._state(context),
             namespace=self._namespace_for(context, spec.name, default=str(spec.name)),
             codec=spec.codec,
             tenant_aware=cfg.tenant_aware if cfg else False,
             tenant_provider=_tenant_provider(context),
+        )
+
+        if not self.command:
+            return adapter
+
+        cipher = (
+            context.deps.provide(KeyringDepKey)
+            if context.deps.exists(KeyringDepKey)
+            else None
+        )
+        return encrypting_queue_command(
+            adapter, spec, cipher=cipher, tenant_provider=_tenant_provider(context)
         )
 
 
@@ -1039,7 +1058,7 @@ class MockDepsModule(DepsModule):
                 mock_strict_txmanager if self.strict_tx else mock_txmanager
             ),
             QueueQueryDepKey: ConfigurableMockQueue(module=self),
-            QueueCommandDepKey: ConfigurableMockQueue(module=self),
+            QueueCommandDepKey: ConfigurableMockQueue(module=self, command=True),
             PubSubCommandDepKey: ConfigurableMockPubSub(module=self),
             PubSubQueryDepKey: ConfigurableMockPubSub(module=self),
             StreamQueryDepKey: ConfigurableMockStream(module=self),

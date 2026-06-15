@@ -56,7 +56,7 @@ class OutboxStaging[M: BaseModel]:
                 f"Outbox route {self._route!r} declares encryption "
                 f"(OutboxSpec.encryption={self.spec.encryption!r}) but no keyring is wired "
                 "to encrypt its payloads. Register a CryptoDepsModule or lower the tier.",
-                code="core.outbox.payload_cipher_missing",
+                code="core.crypto.payload_cipher_missing",
             )
 
     # ....................... #

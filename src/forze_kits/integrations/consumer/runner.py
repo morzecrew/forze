@@ -29,7 +29,7 @@ from ..inbox import process_with_inbox
 
 # ----------------------- #
 
-_CIPHER_MISSING_CODE = "core.outbox.payload_cipher_missing"
+_CIPHER_MISSING_CODE = "core.crypto.payload_cipher_missing"
 """Decrypt config error (no keyring): a deployment fault, not a poison message."""
 
 

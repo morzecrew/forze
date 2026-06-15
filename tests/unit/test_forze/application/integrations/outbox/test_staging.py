@@ -58,7 +58,7 @@ def test_construction_without_cipher_for_encrypting_spec_fails_closed() -> None:
         )
 
     assert ei.value.kind is ExceptionKind.CONFIGURATION
-    assert ei.value.code == "core.outbox.payload_cipher_missing"
+    assert ei.value.code == "core.crypto.payload_cipher_missing"
 
 
 @pytest.mark.asyncio

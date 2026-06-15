@@ -95,7 +95,7 @@ async def test_consumed_payload_missing_event_id_header_is_clear_error() -> None
         await decrypt_consumed_payload(ring, enc, codec=codec, headers={})
 
     assert ei.value.kind is ExceptionKind.VALIDATION
-    assert ei.value.code == "core.outbox.payload_header_missing"
+    assert ei.value.code == "core.crypto.payload_header_missing"
 
 
 async def test_consumed_payload_with_event_id_header_decrypts() -> None:
@@ -140,7 +140,7 @@ async def test_decrypt_rejects_invalid_base64_ciphertext() -> None:
         await decrypt_outbox_payload(ring, enc, tenant_id=None, event_id=uuid4())
 
     assert ei.value.kind is ExceptionKind.VALIDATION
-    assert ei.value.code == "core.outbox.payload_base64_invalid"
+    assert ei.value.code == "core.crypto.payload_base64_invalid"
 
 
 async def test_aad_binds_tenant_and_event() -> None:
