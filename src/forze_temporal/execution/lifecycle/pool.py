@@ -4,6 +4,7 @@ from typing import Any, Mapping, cast, final
 
 import attrs
 
+from forze.application.contracts.crypto import KeyringDepKey
 from forze.application.contracts.deps import DepKey
 from forze.application.contracts.durable.workflow import (
     DurableWorkflowInvokeSpec,
@@ -19,6 +20,7 @@ from forze.base.exceptions import exc
 
 from ...adapters.schedule import TemporalWorkflowScheduleCommandAdapter
 from ...kernel.client import RoutedTemporalClient, TemporalClient, TemporalConfig
+from ...kernel.crypto import encrypting_data_converter
 from ..deps import TemporalClientDepKey
 from ..deps.configs import TemporalWorkflowConfig
 from ..deps.keys import TemporalScheduleBootstrapDepKey
@@ -50,10 +52,29 @@ class TemporalStartupHook(LifecycleHook):
 
     async def __call__(self, ctx: ExecutionContext) -> None:
         temporal_client = cast(TemporalClient, ctx.deps.provide(TemporalClientDepKey))
-        await temporal_client.initialize(self.host, config=self.config)
+        await temporal_client.initialize(self.host, config=self._resolved_config(ctx))
 
         if self.bootstrap_schedules:
             await _bootstrap_schedules(ctx, workflow_configs=self.workflow_configs)
+
+    def _resolved_config(self, ctx: ExecutionContext) -> TemporalConfig:
+        """Compose payload encryption onto the config when opted in (fail-closed)."""
+
+        if not self.config.encrypt_payloads:
+            return self.config
+
+        if not ctx.deps.exists(KeyringDepKey):
+            raise exc.configuration(
+                "TemporalConfig(encrypt_payloads=True) but no keyring is wired to seal "
+                "payloads. Register a CryptoDepsModule or set encrypt_payloads=False.",
+                code="core.temporal.encryption_wiring",
+            )
+
+        converter = encrypting_data_converter(
+            ctx.deps.provide(KeyringDepKey), base=self.config.data_converter
+        )
+
+        return attrs.evolve(self.config, data_converter=converter)
 
 
 # ....................... #
