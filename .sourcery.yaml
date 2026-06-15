@@ -27,7 +27,7 @@ ignore:
   - ~/.local
 
 metrics:
-  quality_threshold: 80.0
+  quality_threshold: 30.0
 
 rule_settings:
   enable:

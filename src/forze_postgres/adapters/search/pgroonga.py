@@ -43,8 +43,6 @@ from ._pgroonga_plan import (
     is_trivial_filter,
     resolve_pgroonga_plan,
 )
-from ._ranked_pipeline import build_filter_first_ranked_pipeline, ranked_parts_to_sql
-from ._search_count import effective_search_count, resolve_ranked_approximate_total
 from ._pgroonga_sql import pgroonga_match_query_text, pgroonga_score_call
 from ._pipeline_sql import (
     PipelineAliases,
@@ -53,6 +51,8 @@ from ._pipeline_sql import (
     scored_key_columns,
     validate_join_pairs,
 )
+from ._ranked_pipeline import build_filter_first_ranked_pipeline, ranked_parts_to_sql
+from ._search_count import effective_search_count, resolve_ranked_approximate_total
 from ._simple_base import PostgresRankedPipelineSearchAdapter
 
 # ----------------------- #
@@ -166,9 +166,21 @@ class PostgresPGroongaSearchAdapter[M: BaseModel](
         return_fields: Sequence[str] | None = None,
     ) -> Any:
         options = search_options_for_simple_adapter(options)
-        terms = normalize_search_queries(query)
 
-        if not terms:
+        if normalize_search_queries(query):
+            return await super()._offset_search_impl(
+                query,
+                filters,
+                pagination,
+                sorts,
+                options=options,
+                snapshot=snapshot,
+                return_count=return_count,
+                return_type=return_type,
+                return_fields=return_fields,
+            )
+
+        else:
             return await self._offset_empty_query_browse(
                 filters=filters,
                 pagination=pagination,
@@ -180,18 +192,6 @@ class PostgresPGroongaSearchAdapter[M: BaseModel](
                 return_type=return_type,
                 return_fields=return_fields,
             )
-
-        return await super()._offset_search_impl(
-            query,
-            filters,
-            pagination,
-            sorts,
-            options=options,
-            snapshot=snapshot,
-            return_count=return_count,
-            return_type=return_type,
-            return_fields=return_fields,
-        )
 
     # ....................... #
 
@@ -463,9 +463,7 @@ class PostgresPGroongaSearchAdapter[M: BaseModel](
             auto_use_exact_count=use_exact,
             count_filtered_rows=_count_filtered if use_exact else None,
             estimate_filtered_rows=(
-                _estimate_filtered
-                if not is_trivial_filter(parsed_filters)
-                else None
+                None if is_trivial_filter(parsed_filters) else _estimate_filtered
             ),
             tenant_aware=self.tenant_aware,
         )

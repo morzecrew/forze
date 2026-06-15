@@ -103,10 +103,7 @@ class SearchResultSnapshot:
         if opt and "max_ids" in opt:
             return max(1, int(opt["max_ids"]))
 
-        if spec is not None:
-            return max(1, int(spec.max_ids))
-
-        return 50_000
+        return max(1, int(spec.max_ids)) if spec is not None else 50_000
 
     # ....................... #
 
@@ -118,10 +115,7 @@ class SearchResultSnapshot:
         if opt and "chunk_size" in opt:
             return max(1, int(opt["chunk_size"]))
 
-        if spec is not None:
-            return max(1, int(spec.chunk_size))
-
-        return 5_000
+        return max(1, int(spec.chunk_size)) if spec is not None else 5_000
 
     # ....................... #
 
@@ -133,10 +127,7 @@ class SearchResultSnapshot:
         if opt and "ttl_seconds" in opt:
             return timedelta(seconds=max(1, int(opt["ttl_seconds"])))
 
-        if spec is not None:
-            return spec.ttl
-
-        return timedelta(minutes=5)
+        return spec.ttl if spec is not None else timedelta(minutes=5)
 
     # ....................... #
     # Simple / hub fingerprints
@@ -246,7 +237,7 @@ class SearchResultSnapshot:
             payload["rrf_k"] = rrf_k
 
         if extras:
-            payload.update(dict(extras))
+            payload |= dict(extras)
 
         return stable_payload_fingerprint(payload)
 
@@ -370,14 +361,12 @@ class SearchResultSnapshot:
     ) -> tuple[int | None, int, int]:
         p = dict(pagination or {})
         limit = p.get("limit")
-
-        user_offset = int(p.get("offset") or 0)
-
         page_limit = max(1, int(limit)) if limit is not None else 20
 
         if want_snap:
-
             return max(1, max_ids), 0, page_limit
+
+        user_offset = int(p.get("offset") or 0)
 
         return (int(limit) if limit is not None else None, user_offset, page_limit)
 
