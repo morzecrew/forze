@@ -199,13 +199,7 @@ async def execute_simple_offset_search_with_snapshot[M: BaseModel](
     )
 
     outcome = await hooks.fetch_rows(window, want_snap=want_snap)
-
-    # Warm the keyring decrypt cache for any sealed fields before materialization, so the
-    # synchronous decode hits the cache. No-op for a plain (non-encrypting) codec, so this
-    # is safe for every backend; an encrypting codec (in-place or external index) decrypts.
-    prepare_decrypt = getattr(codec, "prepare_decrypt", None)
-    if prepare_decrypt is not None:
-        await prepare_decrypt(outcome.rows)
+    rows, codec = await _decrypt_rows(codec, outcome.rows)
 
     if return_count and total is None and outcome.total is not None:
         total = outcome.total
@@ -218,7 +212,7 @@ async def execute_simple_offset_search_with_snapshot[M: BaseModel](
             )
 
     return await snapshot_materialize_and_paginate(
-        rows=outcome.rows,
+        rows=rows,
         want_snap=want_snap,
         result_snapshot=result_snapshot,
         rs_spec=rs_spec,
@@ -234,6 +228,30 @@ async def execute_simple_offset_search_with_snapshot[M: BaseModel](
         codec=codec,
         trust_source=trust_source,
     )
+
+
+async def _decrypt_rows(
+    codec: ModelCodec[Any, Any], rows: list[JsonDict]
+) -> tuple[list[JsonDict], ModelCodec[Any, Any]]:
+    """Decrypt sealed fields in the raw search rows **once**, before any decode.
+
+    So the spec model, a custom ``return_type``, and raw field projections all receive
+    plaintext — decryption belongs to the row, not to one decode path. Then decode with
+    the plain inner codec (the encrypting codec would re-attempt decryption). No-op (and
+    the codec unchanged) for a plain, non-encrypting codec.
+    """
+
+    decrypt_mapping = getattr(codec, "decrypt_mapping", None)
+
+    if decrypt_mapping is None:
+        return rows, codec
+
+    prepare_decrypt = getattr(codec, "prepare_decrypt", None)
+    if prepare_decrypt is not None:
+        await prepare_decrypt(rows)
+
+    decrypted = [decrypt_mapping(dict(row)) for row in rows]
+    return decrypted, getattr(codec, "inner", codec)
 
 
 # ....................... #

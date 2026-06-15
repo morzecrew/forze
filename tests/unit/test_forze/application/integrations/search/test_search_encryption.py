@@ -13,11 +13,14 @@ from forze.application.contracts.crypto import (
     KeyRef,
     StaticKeyDirectory,
 )
+from forze.application.contracts.codecs import default_model_codec
 from forze.application.contracts.search import SearchSpec
-from forze.application.integrations.crypto import Keyring
+from forze.application.integrations.crypto import EncryptingModelCodec, Keyring
 from forze.application.integrations.search import resolve_search_read_codec_spec
+from forze.application.integrations.search.offset_executor import _decrypt_rows
 from forze.base.crypto import is_envelope
 from forze.base.exceptions import CoreException, ExceptionKind
+from forze.base.serialization import PydanticModelCodec
 from forze_mock import MockKeyManagement
 
 # ----------------------- #
@@ -87,3 +90,46 @@ async def test_wrapped_codec_decrypts_in_place_search_rows() -> None:
     # The search read path: warm the decrypt cache, then the synchronous decode.
     await codec.prepare_decrypt([row])
     assert codec.decode_mapping(row) == _Doc(id="1", title="t", secret="s3cr3t")
+
+
+class _Projection(BaseModel):
+    secret: str  # a custom return_type projecting the encrypted field
+
+
+@pytest.mark.asyncio
+async def test_executor_decrypts_rows_once_for_every_decode_path() -> None:
+    """The executor decrypts raw rows once and hands back the plain inner codec, so the
+    spec model, a custom return_type, and raw field projections all see plaintext."""
+
+    inner = PydanticModelCodec(_Doc)
+    codec = EncryptingModelCodec(
+        inner=inner,
+        cipher=_keyring(),
+        fields=frozenset({"secret"}),
+        tenant_provider=lambda: None,
+    )
+    await codec.prepare_encrypt()
+    sealed_row = codec.encode_persistence_mapping(_Doc(id="1", title="t", secret="zzz"))
+    assert is_envelope(base64.b64decode(sealed_row["secret"]))
+
+    rows, decode_codec = await _decrypt_rows(codec, [sealed_row])
+
+    # The raw row is now plaintext and the decode codec is the plain inner one.
+    assert rows[0]["secret"] == "zzz"
+    assert decode_codec is inner
+
+    # Spec model, a custom return_type, and a raw projection all read plaintext.
+    assert decode_codec.decode_mapping(rows[0]) == _Doc(id="1", title="t", secret="zzz")
+    assert default_model_codec(_Projection).decode_mapping(rows[0]).secret == "zzz"
+    assert rows[0]["secret"] == "zzz"  # raw field projection
+
+
+@pytest.mark.asyncio
+async def test_decrypt_rows_is_noop_for_plain_codec() -> None:
+    plain = PydanticModelCodec(_Doc)
+    row = {"id": "1", "title": "t", "secret": "plain"}
+
+    rows, decode_codec = await _decrypt_rows(plain, [row])
+
+    assert rows == [row]
+    assert decode_codec is plain
