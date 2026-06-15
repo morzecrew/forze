@@ -11,6 +11,7 @@ Backend-agnostic: every backend's write factory wraps its adapter with
 :func:`encrypting_queue_command`; the adapters themselves stay unaware of encryption.
 """
 
+import asyncio
 from collections.abc import Mapping, Sequence
 from datetime import datetime, timedelta
 from typing import cast, final
@@ -42,7 +43,9 @@ class EncryptingQueueCommand[M](QueueCommandPort[M]):
     # ....................... #
 
     async def _seal(
-        self, payload: M, headers: Mapping[str, str] | None
+        self,
+        payload: M,
+        headers: Mapping[str, str] | None,
     ) -> tuple[M, dict[str, str]]:
         tenant = self.tenant_provider()
         wrapper, sealed_headers = await seal_message_payload(
@@ -94,24 +97,38 @@ class EncryptingQueueCommand[M](QueueCommandPort[M]):
         delay: timedelta | None = None,
         not_before: datetime | None = None,
         headers: Mapping[str, str] | None = None,
+        message_headers: Sequence[Mapping[str, str]] | None = None,
     ) -> list[str]:
-        # Each message needs its own event id + AAD, so a batch is published one message
-        # at a time (encryption trades the single backend round-trip for per-message AAD).
-        ids: list[str] = []
-        for payload in payloads:
-            ids.append(
-                await self.enqueue(
-                    queue,
+        # Each message needs its own event id + AAD, but that travels per-message — so seal
+        # the batch concurrently (the keyring is concurrency-safe) and hand the backend ONE
+        # batched publish whose ``message_headers`` carry each message's event id. The single
+        # round-trip (and SQS SendMessageBatch) is preserved under encryption.
+        if not payloads:
+            return []
+
+        sealed = await asyncio.gather(
+            *(
+                self._seal(
                     payload,
-                    type=type,
-                    key=key,
-                    enqueued_at=enqueued_at,
-                    delay=delay,
-                    not_before=not_before,
-                    headers=headers,
+                    {
+                        **(headers or {}),
+                        **(message_headers[i] if message_headers else {}),
+                    },
                 )
+                for i, payload in enumerate(payloads)
             )
-        return ids
+        )
+
+        return await self.inner.enqueue_many(
+            queue,
+            [payload for payload, _ in sealed],
+            type=type,
+            key=key,
+            enqueued_at=enqueued_at,
+            delay=delay,
+            not_before=not_before,
+            message_headers=[msg_headers for _, msg_headers in sealed],
+        )
 
 
 # ....................... #
@@ -141,5 +158,8 @@ def encrypting_queue_command[M](
         )
 
     return EncryptingQueueCommand(
-        inner=inner, spec=spec, cipher=cipher, tenant_provider=tenant_provider
+        inner=inner,
+        spec=spec,
+        cipher=cipher,
+        tenant_provider=tenant_provider,
     )

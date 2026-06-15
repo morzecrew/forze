@@ -65,6 +65,38 @@ async def test_enqueue_headers_ride_amqp_headers_and_reserved_key_wins() -> None
 
 
 @pytest.mark.asyncio
+async def test_enqueue_many_per_message_headers_are_distinct() -> None:
+    client = RabbitMQClient()
+    channel = _mock_channel()
+    cm = _patched_channel(client, channel)
+
+    try:
+        await client.enqueue_many(
+            "ns:jobs",
+            [b"{}", b"{}"],
+            headers={"trace": "shared"},
+            message_headers=[
+                {"forze_event_id": "e1"},
+                {"forze_event_id": "e2"},
+            ],
+        )
+    finally:
+        cm.stop()
+
+    publishes = channel.default_exchange.publish.await_args_list
+    assert len(publishes) == 2
+
+    first, second = (call.args[0] for call in publishes)
+
+    # Per-message header overrides give each message a distinct event id ...
+    assert first.headers["forze_event_id"] == "e1"
+    assert second.headers["forze_event_id"] == "e2"
+    # ... while the shared header still rides on both.
+    assert first.headers["trace"] == "shared"
+    assert second.headers["trace"] == "shared"
+
+
+@pytest.mark.asyncio
 async def test_enqueue_without_headers_keeps_previous_wire_shape() -> None:
     client = RabbitMQClient()
     channel = _mock_channel()

@@ -23,13 +23,11 @@ from forze.application.contracts.base import (
     SearchSnapshotHandle,
     page_from_limit_offset,
 )
-from forze.application.contracts.crypto import BytesCipherPort
+from forze.application.contracts.crypto import KeyringPort
 from forze.application.contracts.querying import (
     QueryFilterExpression,
     QuerySortExpression,
 )
-from forze.application.contracts.tenancy import TenantIdentity
-from forze.application.integrations.crypto import payload_aad
 from forze.application.contracts.search import (
     FederatedSearchReadModel,
     FederatedSearchSpec,
@@ -39,7 +37,10 @@ from forze.application.contracts.search import (
     SearchResultSnapshotSpec,
     SearchSpec,
 )
-from forze.base.exceptions import exc
+from forze.application.contracts.tenancy import TenantIdentity
+from forze.application.integrations.crypto import payload_aad
+from forze.base.crypto import unpack_envelope
+from forze.base.exceptions import CoreException, exc
 from forze.base.primitives import JsonDict, stable_payload_fingerprint
 from forze.base.serialization import default_model_codec
 
@@ -55,6 +56,9 @@ _SEALED_PREFIX = "\x01fz.snap:"
 """Sentinel marking a sealed record key. A plaintext key is model JSON (``{``) or a
 ``member\\0json`` federated key, so it never starts with this control byte — letting reads
 tell sealed from legacy-plaintext records during a zero-downtime rollout."""
+
+_CIPHER_NOT_WARM = "core.crypto.cipher_not_warm"
+"""Raised by the sync cipher when its data key rotated out from under a warmed batch."""
 
 # ....................... #
 
@@ -98,7 +102,7 @@ class SearchResultSnapshot:
     store: SearchResultSnapshotPort
     """KV backend for snapshot runs."""
 
-    cipher: BytesCipherPort | None = attrs.field(default=None, repr=False)
+    cipher: KeyringPort | None = attrs.field(default=None, repr=False)
     """Keyring sealing the stored record models at rest — set only when the search route
     field-encrypts, so the snapshot store does not re-expose what the document sealed.
     ``None`` keeps record keys plaintext (the default, unencrypted routes)."""
@@ -115,7 +119,9 @@ class SearchResultSnapshot:
 
         Whole-key sealing (the key is opaque model JSON) keeps list order — encryption is
         per-position — so re-pagination over the sealed run is unchanged. A no-op without a
-        cipher.
+        cipher. The data key is **warmed once** for the whole run, then each key is sealed
+        with the no-await sync cipher (the same batch path the field codec uses): one key
+        resolution and zero per-item awaits/locks instead of one async round per record.
         """
 
         if self.cipher is None:
@@ -128,12 +134,42 @@ class SearchResultSnapshot:
             run_id,
         )
 
+        cipher = self.cipher
+        await cipher.warm(tenant)
+
         sealed: list[str] = []
+
         for raw in ids:
-            blob = await self.cipher.encrypt(raw.encode("utf-8"), tenant=tenant, aad=aad)
+            blob = await self._encrypt_one(cipher, raw.encode("utf-8"), tenant, aad)
             sealed.append(_SEALED_PREFIX + base64.b64encode(blob).decode("ascii"))
 
         return sealed
+
+    # ....................... #
+
+    @staticmethod
+    async def _encrypt_one(
+        cipher: KeyringPort,
+        plaintext: bytes,
+        tenant: TenantIdentity | None,
+        aad: bytes,
+    ) -> bytes:
+        """Sync-encrypt against the warmed key, re-warming once if the key rotated mid-run.
+
+        A run never exhausts a data key in practice (``max_dek_messages`` ≫ the snapshot
+        cap), but if a shared key tips over its budget mid-loop the sync path raises
+        ``cipher_not_warm``; one re-warm mints the next key and the encrypt retries.
+        """
+
+        try:
+            return cipher.encrypt_sync(plaintext, tenant=tenant, aad=aad)
+
+        except CoreException as error:
+            if error.code != _CIPHER_NOT_WARM:
+                raise
+
+            await cipher.warm(tenant)
+            return cipher.encrypt_sync(plaintext, tenant=tenant, aad=aad)
 
     # ....................... #
 
@@ -161,22 +197,38 @@ class SearchResultSnapshot:
             run_id,
         )
 
-        opened: list[str] = []
+        # Decode every sealed blob first (None marks a passed-through plaintext position),
+        # warm the decrypt cache for all their data keys in one pass (a run reuses only a
+        # handful of distinct keys), then sync-decrypt with no per-record awaits.
+        blobs: list[bytes | None] = []
         for key in ids:
             if not key.startswith(_SEALED_PREFIX):
-                opened.append(key)  # legacy plaintext record, replayed as-is
+                blobs.append(None)
                 continue
 
             try:
-                blob = base64.b64decode(key[len(_SEALED_PREFIX) :], validate=True)
+                blobs.append(
+                    base64.b64decode(key[len(_SEALED_PREFIX) :], validate=True)
+                )
+
             except (binascii.Error, ValueError) as error:
                 raise exc.validation(
                     "Sealed snapshot record key is not valid base64",
                     code="core.search.snapshot_base64_invalid",
                 ) from error
 
-            raw = await self.cipher.decrypt(blob, aad=aad)
-            opened.append(raw.decode("utf-8"))
+        await self.cipher.ensure_unwrapped(
+            unpack_envelope(blob) for blob in blobs if blob is not None
+        )
+
+        opened: list[str] = []
+
+        for key, blob in zip(ids, blobs, strict=True):
+            if blob is None:
+                opened.append(key)  # legacy plaintext record, replayed as-is
+
+            else:
+                opened.append(self.cipher.decrypt_sync(blob, aad=aad).decode("utf-8"))
 
         return opened
 

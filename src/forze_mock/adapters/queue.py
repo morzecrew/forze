@@ -22,6 +22,7 @@ from forze.application.contracts.queue import (
     QueueQueryPort,
     resolve_delivery_delay,
 )
+from forze.base.exceptions import exc
 from forze.base.primitives import utcnow
 from forze.base.serialization import (
     ModelCodec,
@@ -210,9 +211,15 @@ class MockQueueAdapter(MockTenancyMixin, QueueQueryPort[M], QueueCommandPort[M])
         delay: timedelta | None = None,
         not_before: datetime | None = None,
         headers: Mapping[str, str] | None = None,
+        message_headers: Sequence[Mapping[str, str]] | None = None,
     ) -> list[str]:
+        if message_headers is not None and len(message_headers) != len(payloads):
+            raise exc.precondition(
+                "message_headers length must match payloads length."
+            )
+
         out: list[str] = []
-        for payload in payloads:
+        for i, payload in enumerate(payloads):
             out.append(
                 await self.enqueue(
                     queue,
@@ -222,7 +229,11 @@ class MockQueueAdapter(MockTenancyMixin, QueueQueryPort[M], QueueCommandPort[M])
                     enqueued_at=enqueued_at,
                     delay=delay,
                     not_before=not_before,
-                    headers=headers,
+                    headers=(
+                        {**(headers or {}), **message_headers[i]}
+                        if message_headers is not None
+                        else headers
+                    ),
                 )
             )
         return out

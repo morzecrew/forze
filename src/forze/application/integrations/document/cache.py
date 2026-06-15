@@ -1,7 +1,6 @@
 """Document read-through cache coordination (versioned keys, deferred warm, invalidation)."""
 
 import asyncio
-import json
 import math
 import random
 import time
@@ -374,13 +373,17 @@ class DocumentCache[R: BaseModel]:
         metadata stays plaintext, so the read-time election needs no decrypt.
         """
 
-        body = self._encode_for_cache(doc)
-
+        # The seal and the early-refresh ``doc`` slot both want the JSON-mode mapping —
+        # ``encode_mapping(mode="json")`` is exactly ``json.loads(encode_json_bytes(...))``
+        # but without the redundant serialize → parse round-trip. Only the plain,
+        # no-early-refresh path stores raw bytes, so it keeps :meth:`_encode_for_cache`.
         if self.cipher is not None:
             tenant = self.cipher_tenant() if self.cipher_tenant is not None else None
             sealed = await encrypt_payload(
                 self.cipher,
-                cast(JsonDict, json.loads(body)),
+                self.read_codec.encode_mapping(
+                    doc, mode="json", exclude=CACHE_DUMP_EXCLUDE_OPTS
+                ),
                 domain=CACHE_PAYLOAD_DOMAIN,
                 tenant_id=None if tenant is None else tenant.tenant_id,
                 record_id=pk,
@@ -392,11 +395,13 @@ class DocumentCache[R: BaseModel]:
             return {"_xf": self._xf_meta(delta, ttl), "doc": sealed}
 
         if self._early_refresh_beta() is None:
-            return body
+            return self._encode_for_cache(doc)
 
         return {
             "_xf": self._xf_meta(delta, ttl),
-            "doc": cast(JsonDict, json.loads(body)),
+            "doc": self.read_codec.encode_mapping(
+                doc, mode="json", exclude=CACHE_DUMP_EXCLUDE_OPTS
+            ),
         }
 
     # ....................... #

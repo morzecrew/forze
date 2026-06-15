@@ -66,6 +66,7 @@ class SQSClientPort(Protocol):
         delay: timedelta | None = None,
         not_before: datetime | None = None,
         headers: Mapping[str, str] | None = None,
+        message_headers: Sequence[Mapping[str, str]] | None = None,
     ) -> Awaitable[list[str]]: ...  # pragma: no cover
 
     def receive(

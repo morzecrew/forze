@@ -100,6 +100,7 @@ class RabbitMQQueueAdapter[M: BaseModel](
         delay: timedelta | None = None,
         not_before: datetime | None = None,
         headers: Mapping[str, str] | None = None,
+        message_headers: Sequence[Mapping[str, str]] | None = None,
     ) -> list[str]:
         if not payloads:
             return []
@@ -117,6 +118,7 @@ class RabbitMQQueueAdapter[M: BaseModel](
             not_before=not_before,
             delayed_delivery=self.delayed_delivery,
             headers=headers,
+            message_headers=message_headers,
         )
 
     # ....................... #

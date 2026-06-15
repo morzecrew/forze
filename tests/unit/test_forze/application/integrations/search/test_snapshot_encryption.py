@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+from typing import Any
 
+import attrs
 import pytest
 from pydantic import BaseModel
 
@@ -60,6 +62,53 @@ def _snap(cipher: Keyring | None) -> SearchResultSnapshot:
         cipher=cipher,
         cipher_tenant=lambda: None,
     )
+
+
+@attrs.define(slots=True)
+class _CountingKeyring:
+    """Delegates to a real keyring while counting the async warm pre-passes."""
+
+    inner: Keyring
+    warm_calls: int = 0
+    unwrap_calls: int = 0
+
+    async def warm(self, tenant: Any) -> None:
+        self.warm_calls += 1
+        await self.inner.warm(tenant)
+
+    async def ensure_unwrapped(self, envelopes: Any) -> None:
+        self.unwrap_calls += 1
+        await self.inner.ensure_unwrapped(envelopes)
+
+    def encrypt_sync(self, plaintext: bytes, *, tenant: Any, aad: bytes = b"") -> bytes:
+        return self.inner.encrypt_sync(plaintext, tenant=tenant, aad=aad)
+
+    def decrypt_sync(self, blob: bytes, *, aad: bytes = b"") -> bytes:
+        return self.inner.decrypt_sync(blob, aad=aad)
+
+    async def encrypt(self, plaintext: bytes, *, tenant: Any, aad: bytes = b"") -> bytes:
+        return await self.inner.encrypt(plaintext, tenant=tenant, aad=aad)
+
+    async def decrypt(self, blob: bytes, *, aad: bytes = b"") -> bytes:
+        return await self.inner.decrypt(blob, aad=aad)
+
+
+@pytest.mark.asyncio
+async def test_batch_warms_once_then_sync_seals_and_opens() -> None:
+    counting = _CountingKeyring(inner=_keyring())
+    snap = SearchResultSnapshot(
+        store=object(),  # type: ignore[arg-type]
+        cipher=counting,  # type: ignore[arg-type]
+        cipher_tenant=lambda: None,
+    )
+    keys = [json.dumps({"id": str(i), "ssn": f"s{i}"}) for i in range(25)]
+
+    sealed = await snap._seal_ids(keys, run_id="run-1")
+    opened = await snap._open_ids(sealed, run_id="run-1")
+
+    assert opened == keys  # round-trips for the whole batch
+    assert counting.warm_calls == 1  # one warm for 25 records, not 25
+    assert counting.unwrap_calls == 1  # one decrypt pre-pass for the whole batch
 
 
 # ....................... #

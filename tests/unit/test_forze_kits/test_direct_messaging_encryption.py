@@ -81,6 +81,46 @@ async def test_direct_publish_seals_payload_then_consumer_decrypts() -> None:
 
 
 @pytest.mark.asyncio
+async def test_enqueue_many_seals_batch_with_distinct_event_ids() -> None:
+    spec = _spec("end_to_end")
+    inbox_spec = InboxSpec(name="jobs")
+    runtime = ExecutionRuntime(deps=DepsRegistry.from_modules(MockDepsModule()).freeze())
+
+    async with runtime.scope():
+        ctx = runtime.get_context()
+        state = ctx.deps.provide(MockStateDepKey)
+
+        command = ctx.deps.resolve_configurable(
+            ctx, QueueCommandDepKey, spec, route=spec.name
+        )
+        await command.enqueue_many("jobs", [_Job(n=1), _Job(n=2), _Job(n=3)])
+
+        stored = state.queues["jobs"]["jobs"]
+        assert len(stored) == 3
+
+        # Every message is sealed, and each carries its own event id (its per-message AAD).
+        event_ids = {s.message.headers["forze_event_id"] for s in stored}
+        assert len(event_ids) == 3
+        assert all(is_encrypted_payload(s.message.payload) for s in stored)
+
+        received: list[_Job] = []
+
+        async def _handler(message: QueueMessage[_Job]) -> None:
+            received.append(message.payload)
+
+        run = await QueueConsumer(
+            queue="jobs",
+            queue_spec=spec,
+            handler=_handler,
+            inbox_spec=inbox_spec,
+            tx_route="mock",
+        ).run(ctx, timeout=timedelta(milliseconds=250))
+
+        assert run.processed == 3
+        assert sorted(job.n for job in received) == [1, 2, 3]
+
+
+@pytest.mark.asyncio
 async def test_plaintext_route_publishes_plaintext() -> None:
     spec = _spec("none")
     runtime = ExecutionRuntime(deps=DepsRegistry.from_modules(MockDepsModule()).freeze())

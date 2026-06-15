@@ -719,6 +719,7 @@ class SQSClient(SQSClientPort):
         delay: timedelta | None = None,
         not_before: datetime | None = None,
         headers: Mapping[str, str] | None = None,
+        message_headers: Sequence[Mapping[str, str]] | None = None,
     ) -> list[str]:
         """Send a batch of messages and return broker-assigned ``MessageId``s.
 
@@ -732,19 +733,26 @@ class SQSClient(SQSClientPort):
           ordering lane: the outbox relay passes the staged ``ordering_key``
           here, so same-key events deliver in order on the happy path.
         - ``MessageDeduplicationId`` priority: explicit *message_ids* entry →
-          the ``forze_event_id`` header (single-message sends only — headers
-          are batch-wide, so a shared event id must not collapse a multi-body
-          batch) → a fresh random id per message. The event id header is the
-          stable per-event identity, so a relay republishing the same event
-          within the five-minute window dedupes, while **different** events
-          sharing an ordering ``key`` never dedupe each other. The caller
-          ``key`` is deliberately never used as the dedup id — that would
-          drop distinct same-key events (event loss).
+          the per-message ``forze_event_id`` header → a fresh random id per
+          message. When *message_headers* is given each entry derives its dedup
+          id from its own ``forze_event_id``, so a multi-message batch dedups
+          per-message. Otherwise the batch-wide ``headers`` event id is used
+          only for a single-message send — a shared event id must not collapse
+          a multi-body batch. The event id header is the stable per-event
+          identity, so a relay republishing the same event within the
+          five-minute window dedupes, while **different** events sharing an
+          ordering ``key`` never dedupe each other. The caller ``key`` is
+          deliberately never used as the dedup id — that would drop distinct
+          same-key events (event loss).
 
         Caller *headers* ride SQS message attributes (``String`` type)
         verbatim; the reserved transport attributes (``forze_type``,
         ``forze_key``, ``forze_enqueued_at``, ``forze_encoding``) always win
-        on collision.
+        on collision. *message_headers*, when given, supplies one header
+        mapping per body (its length must equal *bodies*); entry ``i`` carries
+        ``{**(headers or {}), **message_headers[i]}`` so a single batched
+        publish can give each message distinct attributes (and distinct dedup
+        ids). ``None`` keeps every entry on the shared *headers*.
 
         Splits into chunks of up to :data:`_SQS_SEND_MESSAGE_BATCH_MAX` (AWS limit).
         Multiple chunks are sent with bounded concurrency derived from
@@ -758,19 +766,45 @@ class SQSClient(SQSClientPort):
         if message_ids is not None and len(message_ids) != len(bodies):
             raise exc.precondition("SQS message_ids size must match batch body size")
 
-        header_event_id = headers.get(HEADER_EVENT_ID) if headers else None
+        if message_headers is not None and len(message_headers) != len(bodies):
+            raise exc.precondition(
+                "SQS message_headers size must match batch body size"
+            )
+
+        # Per-message effective headers (shared headers overridden by the
+        # per-message entry) when message_headers is given; otherwise every
+        # message rides the shared batch-wide headers.
+        per_message_headers: list[Mapping[str, str] | None]
+
+        if message_headers is not None:
+            per_message_headers = [
+                {**(headers or {}), **mh} for mh in message_headers
+            ]
+        else:
+            per_message_headers = [headers] * len(bodies)
 
         if message_ids is not None:
             resolved_ids = list(message_ids)
 
-        elif header_event_id and len(bodies) == 1:
-            resolved_ids = [header_event_id]
+        elif message_headers is not None:
+            # Each entry dedups on its own event id; absent one, a fresh random
+            # id keeps distinct messages from colliding.
+            resolved_ids = [
+                mh.get(HEADER_EVENT_ID) or uuid4().hex for mh in message_headers
+            ]
 
         else:
-            resolved_ids = [uuid4().hex for _ in range(len(bodies))]
+            header_event_id = headers.get(HEADER_EVENT_ID) if headers else None
+
+            if header_event_id and len(bodies) == 1:
+                resolved_ids = [header_event_id]
+            else:
+                resolved_ids = [uuid4().hex for _ in range(len(bodies))]
 
         queue_url = await self.__resolve_queue_url(queue)
-        msg_attrs = self.__build_message_attributes(
+        # Batch-wide attributes reused for every entry when message_headers is
+        # absent (the common path); per-entry attributes built below otherwise.
+        shared_msg_attrs = self.__build_message_attributes(
             type=type,
             key=key,
             enqueued_at=enqueued_at,
@@ -785,16 +819,27 @@ class SQSClient(SQSClientPort):
         def _entries_for_chunk(
             chunk: list[bytes],
             chunk_ids: list[str],
+            chunk_headers: list[Mapping[str, str] | None],
         ) -> list[dict[str, Any]]:
             entries: list[dict[str, Any]] = []
 
-            for i, (body, chunk_message_id) in enumerate(
-                zip(chunk, chunk_ids, strict=True)
+            for i, (body, chunk_message_id, entry_headers) in enumerate(
+                zip(chunk, chunk_ids, chunk_headers, strict=True)
             ):
+                if message_headers is not None:
+                    entry_attrs = self.__build_message_attributes(
+                        type=type,
+                        key=key,
+                        enqueued_at=enqueued_at,
+                        headers=entry_headers,
+                    )
+                else:
+                    entry_attrs = shared_msg_attrs
+
                 entry: dict[str, Any] = {
                     "Id": f"m{i}",
                     "MessageBody": self.__encode_body(body),
-                    "MessageAttributes": msg_attrs,
+                    "MessageAttributes": entry_attrs,
                 }
 
                 if delay_seconds is not None:
@@ -808,10 +853,14 @@ class SQSClient(SQSClientPort):
 
             return entries
 
-        async def _send_chunk(chunk: list[bytes], chunk_ids: list[str]) -> list[str]:
+        async def _send_chunk(
+            chunk: list[bytes],
+            chunk_ids: list[str],
+            chunk_headers: list[Mapping[str, str] | None],
+        ) -> list[str]:
             resp = await c.send_message_batch(
                 QueueUrl=queue_url,
-                Entries=_entries_for_chunk(chunk, chunk_ids),  # type: ignore[arg-type]
+                Entries=_entries_for_chunk(chunk, chunk_ids, chunk_headers),  # type: ignore[arg-type]
             )
             failed = resp.get("Failed") or []
 
@@ -842,15 +891,20 @@ class SQSClient(SQSClientPort):
                 for i, fallback_id in enumerate(chunk_ids)
             ]
 
-        chunks: list[tuple[list[bytes], list[str]]] = []
+        chunks: list[
+            tuple[list[bytes], list[str], list[Mapping[str, str] | None]]
+        ] = []
 
         for offset in range(0, len(bodies), _SQS_SEND_MESSAGE_BATCH_MAX):
             chunk = list(bodies[offset : offset + _SQS_SEND_MESSAGE_BATCH_MAX])
             chunk_ids = resolved_ids[offset : offset + _SQS_SEND_MESSAGE_BATCH_MAX]
-            chunks.append((chunk, chunk_ids))
+            chunk_headers = per_message_headers[
+                offset : offset + _SQS_SEND_MESSAGE_BATCH_MAX
+            ]
+            chunks.append((chunk, chunk_ids, chunk_headers))
 
         if len(chunks) == 1:
-            return await _send_chunk(chunks[0][0], chunks[0][1])
+            return await _send_chunk(chunks[0][0], chunks[0][1], chunks[0][2])
 
         sem = asyncio.Semaphore(self.__enqueue_batch_concurrency)
         chunk_results: list[list[str]] = [[] for _ in chunks]
@@ -859,13 +913,16 @@ class SQSClient(SQSClientPort):
             index: int,
             chunk: list[bytes],
             chunk_ids: list[str],
+            chunk_headers: list[Mapping[str, str] | None],
         ) -> None:
             async with sem:
-                chunk_results[index] = await _send_chunk(chunk, chunk_ids)
+                chunk_results[index] = await _send_chunk(
+                    chunk, chunk_ids, chunk_headers
+                )
 
         async with asyncio.TaskGroup() as tg:
-            for index, (ch, ids) in enumerate(chunks):
-                tg.create_task(_bounded(index, ch, ids))
+            for index, (ch, ids, hdrs) in enumerate(chunks):
+                tg.create_task(_bounded(index, ch, ids, hdrs))
 
         return [broker_id for chunk_ids in chunk_results for broker_id in chunk_ids]
 

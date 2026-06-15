@@ -672,11 +672,18 @@ class RabbitMQClient(RabbitMQClientPort):
         not_before: datetime | None = None,
         delayed_delivery: bool = False,
         headers: Mapping[str, str] | None = None,
+        message_headers: Sequence[Mapping[str, str]] | None = None,
     ) -> list[str]:
         """Publish a batch of messages, optionally with delayed delivery.
 
         Caller *headers* ride the AMQP message headers verbatim; the reserved
         transport keys (``forze_key``) always win on collision.
+        *message_headers*, when given, supplies one header mapping per body (its
+        length must equal *bodies*); publish ``i`` carries
+        ``{**(headers or {}), **message_headers[i]}`` so a single batched
+        publish can give each message distinct headers (e.g. a per-message
+        ``forze_event_id``). ``None`` keeps every publish on the shared
+        *headers* (byte-for-byte unchanged).
 
         Delayed delivery uses the standard RabbitMQ per-TTL-queue pattern:
         each distinct delay value gets its own DLX queue
@@ -697,18 +704,40 @@ class RabbitMQClient(RabbitMQClientPort):
                 "RabbitMQ message_ids size must match batch body size"
             )
 
+        if message_headers is not None and len(message_headers) != len(bodies):
+            raise exc.precondition(
+                "RabbitMQ message_headers size must match batch body size"
+            )
+
         resolved_ids = (
             list(message_ids)
             if message_ids is not None
             else [uuid4().hex for _ in range(len(bodies))]
         )
-        # Caller headers pass through verbatim; reserved transport keys are
-        # written last so they always win on collision.
-        amqp_headers: dict[str, str] | None = dict(headers) if headers else None
 
-        if key is not None:
-            amqp_headers = amqp_headers or {}
-            amqp_headers[_KEY_HEADER] = key
+        def __build_amqp_headers(
+            base: Mapping[str, str] | None,
+        ) -> dict[str, str] | None:
+            # Caller headers pass through verbatim; reserved transport keys are
+            # written last so they always win on collision.
+            built: dict[str, str] | None = dict(base) if base else None
+
+            if key is not None:
+                built = built or {}
+                built[_KEY_HEADER] = key
+
+            return built
+
+        # Per-message effective headers (shared headers overridden by the
+        # per-message entry) when message_headers is given; otherwise every
+        # publish rides the shared batch-wide headers (unchanged path).
+        if message_headers is not None:
+            per_message_amqp_headers = [
+                __build_amqp_headers({**(headers or {}), **mh})
+                for mh in message_headers
+            ]
+        else:
+            per_message_amqp_headers = [__build_amqp_headers(headers)] * len(bodies)
 
         delivery_mode = (
             DeliveryMode.PERSISTENT
@@ -727,7 +756,9 @@ class RabbitMQClient(RabbitMQClientPort):
         )
         messages: list[Message] = []
 
-        for body, resolved_message_id in zip(bodies, resolved_ids, strict=True):
+        for body, resolved_message_id, amqp_headers in zip(
+            bodies, resolved_ids, per_message_amqp_headers, strict=True
+        ):
             message = Message(
                 body=body,
                 content_type="application/json",

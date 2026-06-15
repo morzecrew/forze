@@ -121,3 +121,51 @@ async def test_fifo_default_group_when_no_key() -> None:
 
     assert entries[0]["MessageGroupId"] == "forze"
     assert entries[0]["MessageDeduplicationId"]
+
+
+@pytest.mark.asyncio
+async def test_message_headers_give_each_entry_distinct_event_id_and_dedup() -> None:
+    """Per-message headers: one batch send, distinct event ids + dedup ids."""
+
+    mock_boto = AsyncMock()
+    mock_boto.send_message_batch = AsyncMock(return_value={"Failed": []})
+
+    client = SQSClient()
+
+    with patch.object(
+        client,
+        "_SQSClient__resolve_queue_url",
+        AsyncMock(return_value="https://sqs/queue.fifo"),
+    ):
+        with patch.object(client, "_SQSClient__require_client", return_value=mock_boto):
+            with patch.object(client, "_SQSClient__is_fifo_target", return_value=True):
+                await client.enqueue_many(
+                    "orders.fifo",
+                    [b"a", b"b"],
+                    key="order-42",
+                    headers={"trace": "t-shared"},
+                    message_headers=[
+                        {HEADER_EVENT_ID: "e1"},
+                        {HEADER_EVENT_ID: "e2"},
+                    ],
+                )
+
+    # A single batched SendMessageBatch round-trip preserved.
+    assert mock_boto.send_message_batch.await_count == 1
+
+    [call] = mock_boto.send_message_batch.await_args_list
+    entries = call.kwargs["Entries"]
+    assert len(entries) == 2
+
+    # Each entry carries its own forze_event_id attribute (per-message),
+    # plus the shared header rides every entry.
+    event_ids = [
+        entry["MessageAttributes"][HEADER_EVENT_ID]["StringValue"] for entry in entries
+    ]
+    assert event_ids == ["e1", "e2"]
+    for entry in entries:
+        assert entry["MessageAttributes"]["trace"]["StringValue"] == "t-shared"
+
+    # Per-message dedup: the FIFO dedup id derives from each entry's own event id.
+    assert entries[0]["MessageDeduplicationId"] == "e1"
+    assert entries[1]["MessageDeduplicationId"] == "e2"

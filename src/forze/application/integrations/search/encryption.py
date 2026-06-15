@@ -18,10 +18,10 @@ from typing import Any, Mapping, Protocol, cast
 import attrs
 
 from forze.application.contracts.crypto import (
-    BytesCipherPort,
     DeterministicFieldCipherPort,
     FieldCipherPort,
     FieldEncryption,
+    KeyringPort,
 )
 from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.integrations.crypto import EncryptingModelCodec, decrypt_rows
@@ -77,8 +77,8 @@ def reject_encrypted_sort_fields(
 
 
 def resolve_snapshot_cipher(
-    *, encrypted: bool, keyring: BytesCipherPort | None
-) -> BytesCipherPort | None:
+    *, encrypted: bool, keyring: KeyringPort | None
+) -> KeyringPort | None:
     """Cipher for sealing snapshot records, fail-closed when one is required but unwired.
 
     A route that field-encrypts must not silently snapshot plaintext, so an encrypted route
