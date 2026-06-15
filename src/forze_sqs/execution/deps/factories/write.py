@@ -46,6 +46,7 @@ class ConfigurableSQSQueueWrite(QueueCommandDepPort):
             namespace=self.config.namespace,
             tenant_aware=self.config.tenant_aware,
             tenant_provider=ctx.inv_ctx.get_tenant,
+            max_batch_payload_bytes=self.config.max_batch_payload_bytes,
         )
         cipher = (
             ctx.deps.provide(KeyringDepKey)

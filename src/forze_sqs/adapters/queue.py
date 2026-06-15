@@ -18,7 +18,7 @@ from forze.application.contracts.queue import (
 from forze.application.integrations.queue import ScopedQueueNamingMixin
 from forze.base.exceptions import exc
 
-from ..kernel.client import SQSClientPort
+from ..kernel.client import SQS_DEFAULT_MAX_BATCH_PAYLOAD_BYTES, SQSClientPort
 from ._logger import logger
 from .codecs import SQSQueueCodec
 
@@ -48,6 +48,9 @@ class SQSQueueAdapter[M: BaseModel](
 
     codec: SQSQueueCodec[M]
     """SQS queue codec instance."""
+
+    max_batch_payload_bytes: int = SQS_DEFAULT_MAX_BATCH_PAYLOAD_BYTES
+    """Per-queue ``send_message_batch`` payload cap (from :class:`SQSQueueConfig`)."""
 
     queue_name_separator: ClassVar[str] = "-"
     queue_backend_label: ClassVar[str] = "SQS queue"
@@ -135,6 +138,7 @@ class SQSQueueAdapter[M: BaseModel](
                 not_before=not_before,
                 headers=headers,
                 message_headers=message_headers,
+                max_batch_payload_bytes=self.max_batch_payload_bytes,
             )
 
     # ....................... #

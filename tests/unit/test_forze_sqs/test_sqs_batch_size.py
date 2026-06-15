@@ -67,3 +67,30 @@ async def test_single_oversized_message_fails_closed() -> None:
         await _enqueue(SQSClient(), bodies=[b"x" * 200_000])
 
     assert ei.value.kind is ExceptionKind.PRECONDITION
+
+
+@pytest.mark.asyncio
+async def test_higher_per_queue_limit_packs_more_per_batch() -> None:
+    # The same four ~133 KiB-encoded messages fit one batch under a 1 MiB queue limit
+    # (AWS's 2025 ceiling) instead of splitting at 256 KiB.
+    big = b"x" * 100_000
+    mock = await _enqueue(
+        SQSClient(),
+        bodies=[big, big, big, big],
+        max_batch_payload_bytes=1024 * 1024,
+    )
+
+    assert mock.send_message_batch.await_count == 1
+    assert len(mock.send_message_batch.await_args_list[0].kwargs["Entries"]) == 4
+
+
+def test_config_rejects_out_of_range_limit() -> None:
+    from forze_sqs.execution.deps.configs import SQSQueueConfig
+
+    assert SQSQueueConfig().max_batch_payload_bytes == 256 * 1024  # safe default
+
+    with pytest.raises(CoreException):
+        SQSQueueConfig(max_batch_payload_bytes=512)  # below 1 KiB
+
+    with pytest.raises(CoreException):
+        SQSQueueConfig(max_batch_payload_bytes=2 * 1024 * 1024)  # above 1 MiB

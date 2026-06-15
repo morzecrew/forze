@@ -42,6 +42,7 @@ from forze.base.exceptions import exc
 
 from .._logger import logger
 from .errors import exc_interceptor
+from .constants import SQS_DEFAULT_MAX_BATCH_PAYLOAD_BYTES
 from .port import SQSClientPort
 from .types import SQSQueueMessage
 from .value_objects import SQSConfig, SQSConnectionOpts
@@ -67,10 +68,6 @@ _RECEIVE_COUNT_ATTR = "ApproximateReceiveCount"
 _SQS_SEND_MESSAGE_BATCH_MAX: Final[int] = 10
 """AWS limit for ``send_message_batch`` entries per request."""
 
-_SQS_SEND_MESSAGE_BATCH_MAX_BYTES: Final[int] = 256 * 1024
-"""AWS limit for the total payload of a ``send_message_batch`` request (256 KiB) — the sum
-of every entry's encoded body and its message attributes. Shared by all SQS-compatible
-backends (YMQ, ElasticMQ, LocalStack), which honour the same API contract."""
 
 _SQS_RESERVED_ATTR_BYTES: Final[int] = 1024
 """Generous per-entry headroom for the reserved transport attributes (``forze_type`` /
@@ -730,6 +727,7 @@ class SQSClient(SQSClientPort):
         not_before: datetime | None = None,
         headers: Mapping[str, str] | None = None,
         message_headers: Sequence[Mapping[str, str]] | None = None,
+        max_batch_payload_bytes: int = SQS_DEFAULT_MAX_BATCH_PAYLOAD_BYTES,
     ) -> list[str]:
         """Send a batch of messages and return broker-assigned ``MessageId``s.
 
@@ -764,7 +762,11 @@ class SQSClient(SQSClientPort):
         publish can give each message distinct attributes (and distinct dedup
         ids). ``None`` keeps every entry on the shared *headers*.
 
-        Splits into chunks of up to :data:`_SQS_SEND_MESSAGE_BATCH_MAX` (AWS limit).
+        Splits into chunks bounded by **both** the 10-entry count
+        (:data:`_SQS_SEND_MESSAGE_BATCH_MAX`) and *max_batch_payload_bytes* (the queue's total
+        request-payload limit; default :data:`SQS_DEFAULT_MAX_BATCH_PAYLOAD_BYTES` = 256 KiB,
+        raise it per route for a queue configured up to AWS's 1 MiB ceiling). A single message
+        exceeding the byte limit raises rather than letting the broker reject the request.
         Multiple chunks are sent with bounded concurrency derived from
         ``max_pool_connections`` in :meth:`initialize` so large publishes do not
         serialize on the network while staying within the HTTP connection pool.
@@ -924,15 +926,16 @@ class SQSClient(SQSClientPort):
         for index in range(len(bodies)):
             size = _entry_size(index)
 
-            if size > _SQS_SEND_MESSAGE_BATCH_MAX_BYTES:
+            if size > max_batch_payload_bytes:
                 raise exc.precondition(
                     f"SQS message {index} is ~{size} bytes (body + attributes), exceeding "
-                    f"the {_SQS_SEND_MESSAGE_BATCH_MAX_BYTES}-byte per-message/batch limit."
+                    f"the {max_batch_payload_bytes}-byte per-message/batch limit "
+                    "(raise SQSQueueConfig.max_batch_payload_bytes for a higher-limit queue)."
                 )
 
             if chunk_indices and (
                 len(chunk_indices) >= _SQS_SEND_MESSAGE_BATCH_MAX
-                or chunk_bytes + size > _SQS_SEND_MESSAGE_BATCH_MAX_BYTES
+                or chunk_bytes + size > max_batch_payload_bytes
             ):
                 chunks.append(
                     (

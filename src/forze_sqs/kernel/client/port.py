@@ -17,6 +17,7 @@ if TYPE_CHECKING:
     # Type-only stub package; kept off the runtime import path.
     from types_aiobotocore_sqs.client import SQSClient as AsyncSQSClient
 
+from .constants import SQS_DEFAULT_MAX_BATCH_PAYLOAD_BYTES
 from .types import SQSQueueMessage
 
 # ----------------------- #
@@ -67,6 +68,7 @@ class SQSClientPort(Protocol):
         not_before: datetime | None = None,
         headers: Mapping[str, str] | None = None,
         message_headers: Sequence[Mapping[str, str]] | None = None,
+        max_batch_payload_bytes: int = SQS_DEFAULT_MAX_BATCH_PAYLOAD_BYTES,
     ) -> Awaitable[list[str]]: ...  # pragma: no cover
 
     def receive(
