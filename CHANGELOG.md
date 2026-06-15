@@ -96,6 +96,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Tenant-isolation correctness & parity** — Postgres outbox/inbox now enforce the declared isolation floor (were excluded from validation); a missing bound tenant fails closed consistently as `authentication`/`tenant_required` (was 500 on some backends, 401 on others) via the canonical `TenancyMixin._tenant_id_for_resolve`; the mock durable, graph, and document adapters now tenant-partition their stores (test-double cross-tenant leaks), pinned by a mock-tenancy-parity meta-test.
 - **Post-commit work survives task cancellation** — the after-commit drain runs as a cancellation-protected critical section (`forze.base.asyncio.run_to_completion`), then re-raises; cancellation during the body still rolls back.
+- **PGroonga search honors tenant isolation regardless of plan** — a tenant-aware PGroonga search now always uses `filter_first`, overriding `pgroonga_plan="index_first"`/`"auto"`. `index_first` ranked a heap top-K across **all** tenants and applied the tenant predicate only as an outer post-filter, which scanned cross-tenant rows and could silently truncate a tenant's results to a slice of the global top-K. The tenant predicate now always narrows before ranking (FTS/vector and hub legs were already filter-first).
 
 ### Removed
 

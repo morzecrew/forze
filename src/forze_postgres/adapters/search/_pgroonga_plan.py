@@ -247,8 +247,22 @@ async def resolve_pgroonga_plan(
     auto_use_exact_count: bool,
     count_filtered_rows: Callable[[], Awaitable[int]] | None = None,
     estimate_filtered_rows: Callable[[], Awaitable[int]] | None = None,
+    tenant_aware: bool = False,
 ) -> ResolvedPgroongaPlan:
     """Pick ``filter_first`` or ``index_first`` for one ranked PGroonga query."""
+
+    # Tenant isolation must always narrow *before* ranking. ``index_first`` takes a
+    # heap top-K across all tenants and applies the tenant predicate only in the
+    # outer post-filter, which both scans cross-tenant rows and silently truncates a
+    # tenant's results (its rows are a small slice of a global top-K). The tenant
+    # predicate is injected outside ``parsed_filters`` (see ``where_clause`` ->
+    # ``_add_tenant_where``), so it never makes a filterless browse look non-trivial
+    # to the heuristics below. Force ``filter_first`` so the tenant predicate, carried
+    # in the filtered-CTE ``WHERE``, always narrows first — overriding even an explicit
+    # ``index_first``. Skipping the estimation queries here also avoids the misleading
+    # whole-table row estimate on a multi-tenant relation.
+    if tenant_aware:
+        return "filter_first"
 
     plan = effective_pgroonga_plan_option(options) or configured
 

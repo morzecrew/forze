@@ -467,6 +467,7 @@ class PostgresPGroongaSearchAdapter[M: BaseModel](
                 if not is_trivial_filter(parsed_filters)
                 else None
             ),
+            tenant_aware=self.tenant_aware,
         )
 
         candidate_cap = effective_ranked_candidate_limit(
