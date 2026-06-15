@@ -22,7 +22,7 @@ from forze.base.exceptions import exc
 from forze.base.primitives import StrKey
 
 from ._relay_core import validate_retry_options
-from .relay import relay_outbox, relay_outbox_to_queue
+from .relay import OutboxRelay
 
 # ----------------------- #
 
@@ -79,34 +79,30 @@ class _OutboxRelayBackgroundStartup(LifecycleHook):
         *,
         reclaim_stale_after: timedelta | None,
     ) -> OutboxRelayResult:
+        # Per-batch relay config: reclaim varies (only the first batch of a tick
+        # reclaims stale rows), so build a fresh OutboxRelay per batch.
+        relay = OutboxRelay(
+            outbox_spec=self.outbox_spec,
+            reclaim_stale_after=reclaim_stale_after,
+            max_attempts=self.max_attempts,
+            retry_base_delay=self.retry_base_delay,
+            retry_max_backoff=self.retry_max_backoff,
+        )
+
         if self.transport == "queue":
             if self.queue_spec is None:
                 raise exc.precondition(
                     "queue_spec is required for queue background relay"
                 )
 
-            return await relay_outbox_to_queue(
-                ctx,
-                outbox_spec=self.outbox_spec,
-                queue_spec=self.queue_spec,
-                limit=self.limit,
-                reclaim_stale_after=reclaim_stale_after,
-                max_attempts=self.max_attempts,
-                retry_base_delay=self.retry_base_delay,
-                retry_max_backoff=self.retry_max_backoff,
-            )
+            return await relay.to_queue(ctx, self.queue_spec, limit=self.limit)
 
-        return await relay_outbox(
+        return await relay.run(
             ctx,
-            outbox_spec=self.outbox_spec,
             queue_spec=self.queue_spec,
             stream_spec=self.stream_spec,
             pubsub_spec=self.pubsub_spec,
             limit=self.limit,
-            reclaim_stale_after=reclaim_stale_after,
-            max_attempts=self.max_attempts,
-            retry_base_delay=self.retry_base_delay,
-            retry_max_backoff=self.retry_max_backoff,
         )
 
     # ....................... #
@@ -218,11 +214,11 @@ def outbox_relay_background_lifecycle_step(
 ) -> LifecycleStep:
     """Build a lifecycle step that relays outbox rows on a background interval.
 
-    *transport* selects which relay function runs each tick (default ``queue``).
-    Pass the matching spec for the transport. For ``queue``, *queue_spec* is required
-    unless :attr:`~forze.application.contracts.outbox.OutboxSpec.destination` is unset
-    and you only use :func:`~forze_kits.integrations.outbox.relay_outbox_to_queue`
-    semantics via explicit *queue_spec*.
+    *transport* selects which :class:`~forze_kits.integrations.outbox.OutboxRelay` method
+    runs each tick (default ``queue``). Pass the matching spec for the transport. For
+    ``queue``, *queue_spec* is required unless
+    :attr:`~forze.application.contracts.outbox.OutboxSpec.destination` is unset and you
+    relay via explicit *queue_spec* (``OutboxRelay.to_queue`` semantics).
 
     Each tick **drains the backlog**: batches of up to *limit* rows are relayed
     until a claim returns fewer rows than the batch size, capped at
@@ -234,7 +230,7 @@ def outbox_relay_background_lifecycle_step(
 
     *max_attempts*, *retry_base_delay*, and *retry_max_backoff* configure the
     per-row transient-failure retry policy — see
-    :func:`~forze_kits.integrations.outbox.relay_outbox_to_queue`. Delivery is
+    :class:`~forze_kits.integrations.outbox.OutboxRelay`. Delivery is
     at-least-once and ordering is not preserved across failures/retries.
 
     Opt-in for long-running processes. Production deployments often prefer

@@ -18,7 +18,7 @@ from forze.application.contracts.queue import QueueSpec
 from forze.application.execution import DepsRegistry, ExecutionRuntime
 from forze.base.primitives import utcnow
 from forze.base.serialization import PydanticModelCodec
-from forze_kits.integrations.outbox import relay_outbox_to_queue
+from forze_kits.integrations.outbox import OutboxRelay
 from forze_mock import MockDepsModule, MockStateDepKey
 from forze_mock.outbox_adapter import MockOutboxRow
 
@@ -46,10 +46,8 @@ async def test_mock_outbox_flush_and_relay_to_queue() -> None:
         await outbox.stage("job.requested", _EventPayload(n=1))
         assert await outbox.flush() == 1
 
-        result = await relay_outbox_to_queue(
-            ctx,
-            outbox_spec=outbox_spec,
-            queue_spec=queue_spec,
+        result = await OutboxRelay(outbox_spec=outbox_spec).to_queue(
+            ctx, queue_spec
         )
 
         assert result.claimed == 1

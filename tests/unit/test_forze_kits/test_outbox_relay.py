@@ -1,4 +1,4 @@
-"""Unit tests for :func:`~forze_kits.integrations.outbox.relay_outbox_to_queue`."""
+"""Unit tests for :meth:`~forze_kits.integrations.outbox.OutboxRelay.to_queue`."""
 
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ from forze.application.contracts.queue import QueueSpec
 from forze.application.execution import DepsRegistry, ExecutionRuntime
 from forze.base.primitives import utcnow
 from forze.base.serialization import PydanticModelCodec
-from forze_kits.integrations.outbox import relay_outbox_to_queue
+from forze_kits.integrations.outbox import OutboxRelay
 from forze_mock import MockDepsModule, MockStateDepKey
 from forze_mock.outbox_adapter import MockOutboxRow
 
@@ -60,12 +60,9 @@ async def test_relay_reclaims_stale_processing_before_publish() -> None:
             )
         ]
 
-        result = await relay_outbox_to_queue(
-            ctx,
-            outbox_spec=outbox_spec,
-            queue_spec=queue_spec,
-            reclaim_stale_after=timedelta(minutes=5),
-        )
+        result = await OutboxRelay(
+            outbox_spec=outbox_spec, reclaim_stale_after=timedelta(minutes=5)
+        ).to_queue(ctx, queue_spec)
 
         assert result.reclaimed >= 1
         assert result.published == 1
@@ -105,12 +102,9 @@ async def test_relay_marks_invalid_payload_failed() -> None:
             )
         ]
 
-        result = await relay_outbox_to_queue(
-            ctx,
-            outbox_spec=outbox_spec,
-            queue_spec=queue_spec,
-            reclaim_stale_after=None,
-        )
+        result = await OutboxRelay(
+            outbox_spec=outbox_spec, reclaim_stale_after=None
+        ).to_queue(ctx, queue_spec)
 
         assert result.failed == 1
         assert result.published == 0
@@ -138,18 +132,12 @@ async def test_relay_twice_does_not_duplicate_queue_messages() -> None:
         await ctx.outbox.command(outbox_spec).stage("job.requested", _EventPayload(n=1))
         await ctx.outbox.command(outbox_spec).flush()
 
-        first = await relay_outbox_to_queue(
-            ctx,
-            outbox_spec=outbox_spec,
-            queue_spec=queue_spec,
-            reclaim_stale_after=timedelta(hours=1),
-        )
-        second = await relay_outbox_to_queue(
-            ctx,
-            outbox_spec=outbox_spec,
-            queue_spec=queue_spec,
-            reclaim_stale_after=timedelta(hours=1),
-        )
+        first = await OutboxRelay(
+            outbox_spec=outbox_spec, reclaim_stale_after=timedelta(hours=1)
+        ).to_queue(ctx, queue_spec)
+        second = await OutboxRelay(
+            outbox_spec=outbox_spec, reclaim_stale_after=timedelta(hours=1)
+        ).to_queue(ctx, queue_spec)
 
         assert first.published == 1
         assert second.claimed == 0
@@ -182,12 +170,9 @@ async def test_relay_enqueue_uses_event_id_as_queue_key() -> None:
         )
         await ctx.outbox.command(outbox_spec).flush()
 
-        await relay_outbox_to_queue(
-            ctx,
-            outbox_spec=outbox_spec,
-            queue_spec=queue_spec,
-            reclaim_stale_after=None,
-        )
+        await OutboxRelay(
+            outbox_spec=outbox_spec, reclaim_stale_after=None
+        ).to_queue(ctx, queue_spec)
 
         message = state.queues["jobs"]["jobs"][0].message
         assert message.key == str(event_id)

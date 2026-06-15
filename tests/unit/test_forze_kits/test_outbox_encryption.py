@@ -22,8 +22,8 @@ from forze.base.primitives import utcnow
 from forze.base.serialization import PydanticModelCodec
 from forze_kits.integrations.consumer import QueueConsumer
 from forze_kits.integrations.outbox import (
+    OutboxRelay,
     outbox_flush_tx_on_success_factory,
-    relay_outbox_to_queue,
 )
 from forze_mock import MockDepsModule, MockStateDepKey
 from forze_mock.adapters import MockState
@@ -70,9 +70,7 @@ async def test_payload_encrypted_at_rest_then_decrypted_on_relay() -> None:
         assert is_encrypted_payload(stored)
         assert "n" not in stored
 
-        result = await relay_outbox_to_queue(
-            ctx, outbox_spec=outbox_spec, queue_spec=queue_spec
-        )
+        result = await OutboxRelay(outbox_spec=outbox_spec).to_queue(ctx, queue_spec)
 
         # The relay decrypted, decoded, and published the plaintext model.
         assert result.published == 1
@@ -108,9 +106,7 @@ async def test_relay_tolerates_legacy_plaintext_rows() -> None:
             )
         ]
 
-        result = await relay_outbox_to_queue(
-            ctx, outbox_spec=outbox_spec, queue_spec=queue_spec
-        )
+        result = await OutboxRelay(outbox_spec=outbox_spec).to_queue(ctx, queue_spec)
 
         assert result.published == 1
         assert state.queues["jobs"]["jobs"][0].message.payload == _EventPayload(n=9)
@@ -136,9 +132,7 @@ async def test_end_to_end_ciphertext_through_broker_decrypted_by_consumer() -> N
         await outbox_flush_tx_on_success_factory(outbox_spec)(ctx)(0, 0)
 
         # e2e: the relay forwards ciphertext, it is NOT decrypted before publish.
-        result = await relay_outbox_to_queue(
-            ctx, outbox_spec=outbox_spec, queue_spec=queue_spec
-        )
+        result = await OutboxRelay(outbox_spec=outbox_spec).to_queue(ctx, queue_spec)
         assert result.published == 1
         # The broker holds the ciphertext envelope, not the plaintext model.
         assert is_encrypted_payload(state.queues["jobs"]["jobs"][0].message.payload)

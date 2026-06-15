@@ -26,9 +26,7 @@ from forze.base.primitives import utcnow
 from forze.base.serialization import PydanticModelCodec
 from forze_kits.integrations.inbox import process_with_inbox
 from forze_kits.integrations.outbox import (
-    relay_outbox_to_pubsub,
-    relay_outbox_to_queue,
-    relay_outbox_to_stream,
+    OutboxRelay,
 )
 from forze_mock import MockDepsModule, MockStateDepKey
 from forze_mock.outbox_adapter import MockOutboxRow
@@ -87,12 +85,9 @@ async def test_queue_relay_publishes_ordering_key_with_event_id_header() -> None
     keyed = _row("events", ordering_key="order-42")
     state.outbox_rows["events"] = [keyed]
 
-    result = await relay_outbox_to_queue(
-        ctx,
-        outbox_spec=outbox_spec,
-        queue_spec=queue_spec,
-        reclaim_stale_after=None,
-    )
+    result = await OutboxRelay(
+        outbox_spec=outbox_spec, reclaim_stale_after=None
+    ).to_queue(ctx, queue_spec)
 
     assert result.published == 1
     message = state.queues["jobs"]["jobs"][0].message
@@ -117,12 +112,9 @@ async def test_queue_relay_key_falls_back_to_event_id_without_ordering_key() -> 
     unkeyed = _row("events", ordering_key=None)
     state.outbox_rows["events"] = [unkeyed]
 
-    await relay_outbox_to_queue(
-        ctx,
-        outbox_spec=outbox_spec,
-        queue_spec=queue_spec,
-        reclaim_stale_after=None,
-    )
+    await OutboxRelay(
+        outbox_spec=outbox_spec, reclaim_stale_after=None
+    ).to_queue(ctx, queue_spec)
 
     message = state.queues["jobs"]["jobs"][0].message
     # Pre-ordering-key behavior is preserved exactly.
@@ -141,26 +133,22 @@ async def test_stream_and_pubsub_relay_publish_ordering_key() -> None:
     state.outbox_rows["audit-events"] = [stream_row]
     state.outbox_rows["fanout-events"] = [pubsub_row]
 
-    await relay_outbox_to_stream(
-        ctx,
+    await OutboxRelay(
         outbox_spec=OutboxSpec(
             name="audit-events",
             codec=codec,
             destination=OutboxDestination.stream(route="audit", channel="audit"),
         ),
-        stream_spec=StreamSpec(name="audit", codec=codec),
         reclaim_stale_after=None,
-    )
-    await relay_outbox_to_pubsub(
-        ctx,
+    ).to_stream(ctx, StreamSpec(name="audit", codec=codec))
+    await OutboxRelay(
         outbox_spec=OutboxSpec(
             name="fanout-events",
             codec=codec,
             destination=OutboxDestination.pubsub(route="fanout", channel="fanout"),
         ),
-        pubsub_spec=PubSubSpec(name="fanout", codec=codec),
         reclaim_stale_after=None,
-    )
+    ).to_pubsub(ctx, PubSubSpec(name="fanout", codec=codec))
 
     [stream_message] = state.streams["audit"]["audit"]
     assert stream_message.key == "agg-s"
@@ -197,12 +185,9 @@ async def test_same_ordering_key_events_relay_in_order_and_both_process() -> Non
     await outbox.stage("order.shipped", _EventPayload(n=2), ordering_key="order-1")
     assert await outbox.flush() == 2
 
-    result = await relay_outbox_to_queue(
-        ctx,
-        outbox_spec=outbox_spec,
-        queue_spec=queue_spec,
-        reclaim_stale_after=None,
-    )
+    result = await OutboxRelay(
+        outbox_spec=outbox_spec, reclaim_stale_after=None
+    ).to_queue(ctx, queue_spec)
     assert result.published == 2
 
     messages = [entry.message for entry in state.queues["jobs"]["jobs"]]

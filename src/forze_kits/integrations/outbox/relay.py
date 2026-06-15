@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 from datetime import timedelta
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, final
+
+import attrs
 
 from forze.application._logger import logger
 from forze.application.contracts.base import BaseSpec
@@ -26,7 +28,7 @@ from forze.application.contracts.queue import QueueCommandDepKey, QueueSpec
 from forze.application.contracts.stream import StreamCommandDepKey, StreamSpec
 from forze.base.exceptions import exc
 
-from ._relay_core import relay_outbox_claims
+from ._relay_core import relay_outbox_claims, validate_retry_options
 
 if TYPE_CHECKING:
     from forze.application.contracts.outbox import OutboxClaim, OutboxDestination
@@ -157,292 +159,246 @@ def _claim_envelope_headers(claim: OutboxClaim) -> dict[str, str]:
 # ....................... #
 
 
-async def _relay_outbox_to(
-    ctx: ExecutionContext,
-    *,
-    outbox_spec: OutboxSpec[Any],
-    spec: BaseSpec,
-    dep_key: DepKey[Any],
-    expected_kind: OutboxDestinationKind,
-    method: str,
-    allow_unset_destination: bool = False,
-    limit: int | None,
-    reclaim_stale_after: timedelta | None,
-    max_attempts: int,
-    retry_base_delay: timedelta,
-    retry_max_backoff: timedelta,
-) -> OutboxRelayResult:
-    """Claim pending outbox rows and relay each via ``command.<method>(channel, ...)``.
+@final
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class OutboxRelay:
+    """Configurable relay for one outbox route to a queue, stream, or pubsub backend.
 
-    The command-port method (``enqueue``/``append``/``publish``) shares the same
-    ``(channel, payload, *, type, key, headers)`` signature across queue, stream,
-    and pubsub, so only the resolved command, dep key, and method name differ per
-    transport. Each publish forwards the claim's invocation envelope as
-    transport headers (see :func:`_claim_envelope_headers`); ``key`` is the
-    claim's ``ordering_key`` when staged (partitioning on capable transports),
-    falling back to ``str(event_id)`` — the event id itself always rides the
-    ``forze_event_id`` header either way.
-    """
+    Holds the relay *configuration* — the outbox route and its retry / reclaim policy,
+    validated once on construction; :meth:`to_queue` / :meth:`to_stream` / :meth:`to_pubsub`
+    (or :meth:`run`, which dispatches on the configured destination kind) take the per-run
+    context, the target transport spec, and an optional ``limit``.
 
-    if reclaim_stale_after is not None and reclaim_stale_after.total_seconds() <= 0:
-        raise exc.internal("Reclaim stale after must be positive")
-
-    channel = _resolve_channel(
-        outbox_spec,
-        spec_name=str(spec.name),
-        expected_kind=expected_kind,
-        allow_unset=allow_unset_destination,
-    )
-
-    command = ctx.deps.resolve_configurable(ctx, dep_key, spec, route=spec.name)
-
-    async def _publish(claim: OutboxClaim, payload: Any) -> None:
-        await getattr(command, method)(
-            channel,
-            payload,
-            type=claim.event_type,
-            key=claim.ordering_key or str(claim.event_id),
-            headers=_claim_envelope_headers(claim),
-        )
-
-    return await relay_outbox_claims(
-        ctx,
-        outbox_spec=outbox_spec,
-        publish_one=_publish,
-        limit=limit,
-        reclaim_stale_after=reclaim_stale_after,
-        max_attempts=max_attempts,
-        retry_base_delay=retry_base_delay,
-        retry_max_backoff=retry_max_backoff,
-    )
-
-
-# ....................... #
-
-
-async def relay_outbox_to_queue(
-    ctx: ExecutionContext,
-    *,
-    outbox_spec: OutboxSpec[Any],
-    queue_spec: QueueSpec[Any],
-    limit: int | None = None,
-    reclaim_stale_after: timedelta | None = timedelta(minutes=5),
-    max_attempts: int = 5,
-    retry_base_delay: timedelta = timedelta(seconds=1),
-    retry_max_backoff: timedelta = timedelta(minutes=5),
-) -> OutboxRelayResult:
-    """Claim pending outbox rows, enqueue payloads, and mark each row's outcome.
-
-    Delivery is **at-least-once**, and ordering is **not preserved across
-    failures/retries**: a row rescheduled (or parked as ``failed``) does not
-    stall later rows — including later rows of the same ``ordering_key``
-    (deliberate trade-off: no per-key head-of-line blocking). Rows are claimed
-    (``pending`` → ``processing``) in ``created_at`` order, enqueued one
-    message per claim, then marked ``published``. Enqueue and
-    ``mark_published`` are not atomic—consumers must deduplicate on
+    Delivery is **at-least-once**, and ordering is **not preserved across failures/retries**:
+    a row rescheduled (or parked as ``failed``) does not stall later rows — including later
+    rows of the same ``ordering_key`` (deliberate trade-off: no per-key head-of-line
+    blocking). Rows are claimed (``pending`` → ``processing``) in ``created_at`` order,
+    relayed one message per claim, then marked ``published``. Relay and ``mark_published``
+    are not atomic — consumers must deduplicate on
     :attr:`~forze.application.contracts.outbox.IntegrationEvent.event_id` (the
     ``forze_event_id`` header) and tolerate reordering.
 
-    Failure handling per row (one row's failure never aborts the batch):
-
-    - Payload decode errors (poison) → ``mark_failed`` immediately; an operator
-      re-drives with ``requeue_failed`` after fixing the cause.
-    - Broker publish errors (transient) → rescheduled with exponential backoff
-      plus jitter (``retry_base_delay * 2**attempts``, capped at
-      *retry_max_backoff*) until *max_attempts* publish attempts are exhausted,
-      then ``mark_failed`` (terminal). ``requeue_failed`` resets the counter.
-
-    Each successful enqueue passes ``key=claim.ordering_key or str(claim.event_id)``
-    to :meth:`~forze.application.contracts.queue.QueueCommandPort.enqueue`: on
-    transports that honor ``key`` for partitioning (for example SQS FIFO
-    ``MessageGroupId``), same-``ordering_key`` events deliver in staged
-    (``created_at``) order on the happy path. The event id always rides the
-    ``forze_event_id`` header for consumer-side dedup, so occupying ``key``
-    with the ordering key loses nothing.
-
-    When *reclaim_stale_after* is set, rows stuck in ``processing`` longer than that
-    lease are reset to ``pending`` before claim (requires ``processing_at`` on the
-    outbox store). Pass ``None`` to skip reclaim.
-
-    The logical queue channel comes from
-    :attr:`~forze.application.contracts.outbox.OutboxSpec.destination` when set;
-    otherwise *queue_spec* ``name`` is used as the channel.
+    Per-row failure handling (one row's failure never aborts the batch): payload-decode
+    errors (poison) → ``mark_failed`` immediately (an operator re-drives with
+    ``requeue_failed`` after fixing the cause); broker publish errors (transient) →
+    rescheduled with exponential backoff + jitter (``retry_base_delay * 2**attempts``,
+    capped at :attr:`retry_max_backoff`) until :attr:`max_attempts` is exhausted, then
+    ``mark_failed``. Each publish forwards the claim's invocation envelope as transport
+    headers and passes ``key = ordering_key or str(event_id)`` for partitioning on capable
+    transports; the event id always rides the ``forze_event_id`` header for consumer dedup.
     """
 
-    return await _relay_outbox_to(
-        ctx,
-        outbox_spec=outbox_spec,
-        spec=queue_spec,
-        dep_key=QueueCommandDepKey,
-        expected_kind="queue",
-        method="enqueue",
-        allow_unset_destination=True,
-        limit=limit,
-        reclaim_stale_after=reclaim_stale_after,
-        max_attempts=max_attempts,
-        retry_base_delay=retry_base_delay,
-        retry_max_backoff=retry_max_backoff,
-    )
+    outbox_spec: OutboxSpec[Any]
+    """The outbox route this relay drains."""
 
+    reclaim_stale_after: timedelta | None = timedelta(minutes=5)
+    """Rows stuck in ``processing`` longer than this lease are reset to ``pending`` before
+    claim (requires ``processing_at`` on the store). ``None`` skips reclaim."""
 
-# ....................... #
+    max_attempts: int = 5
+    """Publish attempts before a transiently-failing row is parked ``failed``."""
 
+    retry_base_delay: timedelta = timedelta(seconds=1)
+    """Base of the exponential backoff between publish retries."""
 
-async def relay_outbox_to_stream(
-    ctx: ExecutionContext,
-    *,
-    outbox_spec: OutboxSpec[Any],
-    stream_spec: StreamSpec[Any],
-    limit: int | None = None,
-    reclaim_stale_after: timedelta | None = timedelta(minutes=5),
-    max_attempts: int = 5,
-    retry_base_delay: timedelta = timedelta(seconds=1),
-    retry_max_backoff: timedelta = timedelta(minutes=5),
-) -> OutboxRelayResult:
-    """Claim pending outbox rows, append to a stream, and mark each row's outcome.
+    retry_max_backoff: timedelta = timedelta(minutes=5)
+    """Cap on the backoff delay."""
 
-    Same failure model and ordering caveats as :func:`relay_outbox_to_queue`:
-    at-least-once delivery, no ordering across failures/retries, poison rows
-    fail immediately, transient publish errors retry with backoff up to
-    *max_attempts*.
-    """
+    # ....................... #
 
-    return await _relay_outbox_to(
-        ctx,
-        outbox_spec=outbox_spec,
-        spec=stream_spec,
-        dep_key=StreamCommandDepKey,
-        expected_kind="stream",
-        method="append",
-        limit=limit,
-        reclaim_stale_after=reclaim_stale_after,
-        max_attempts=max_attempts,
-        retry_base_delay=retry_base_delay,
-        retry_max_backoff=retry_max_backoff,
-    )
+    def __attrs_post_init__(self) -> None:
+        validate_retry_options(
+            max_attempts=self.max_attempts,
+            retry_base_delay=self.retry_base_delay,
+            retry_max_backoff=self.retry_max_backoff,
+        )
 
+        if (
+            self.reclaim_stale_after is not None
+            and self.reclaim_stale_after.total_seconds() <= 0
+        ):
+            raise exc.configuration("Reclaim stale after must be positive")
 
-# ....................... #
+    # ....................... #
 
+    async def to_queue(
+        self,
+        ctx: ExecutionContext,
+        queue_spec: QueueSpec[Any],
+        *,
+        limit: int | None = None,
+    ) -> OutboxRelayResult:
+        """Claim pending rows, enqueue payloads, and mark each row's outcome.
 
-async def relay_outbox_to_pubsub(
-    ctx: ExecutionContext,
-    *,
-    outbox_spec: OutboxSpec[Any],
-    pubsub_spec: PubSubSpec[Any],
-    limit: int | None = None,
-    reclaim_stale_after: timedelta | None = timedelta(minutes=5),
-    max_attempts: int = 5,
-    retry_base_delay: timedelta = timedelta(seconds=1),
-    retry_max_backoff: timedelta = timedelta(minutes=5),
-) -> OutboxRelayResult:
-    """Claim pending outbox rows, publish to a topic, and mark each row's outcome.
+        The logical queue channel comes from
+        :attr:`~forze.application.contracts.outbox.OutboxSpec.destination` when set;
+        otherwise *queue_spec* ``name`` is used as the channel.
+        """
 
-    Same failure model and ordering caveats as :func:`relay_outbox_to_queue` —
-    **but the at-least-once guarantee ends at the broker**: pubsub is
-    at-most-once (fire-and-forget), and a row is marked ``published`` after a
-    publish that no live subscriber may have received (see
-    :meth:`~forze.application.contracts.outbox.OutboxDestination.pubsub`).
-    A one-time warning per outbox route is logged to make the downgrade
-    visible. Poison rows still fail immediately and transient publish errors
-    still retry with backoff up to *max_attempts*.
-    """
+        return await self._relay(
+            ctx,
+            queue_spec,
+            dep_key=QueueCommandDepKey,
+            expected_kind="queue",
+            method="enqueue",
+            allow_unset_destination=True,
+            limit=limit,
+        )
 
-    destination = outbox_spec.destination
+    # ....................... #
 
-    if destination is not None and destination.kind == "pubsub":
-        # Missing/mismatched destinations fall through to the precondition
-        # error inside ``_relay_outbox_to`` without a spurious warning.
-        _warn_pubsub_downgrade_once(str(outbox_spec.name), destination.channel)
+    async def to_stream(
+        self,
+        ctx: ExecutionContext,
+        stream_spec: StreamSpec[Any],
+        *,
+        limit: int | None = None,
+    ) -> OutboxRelayResult:
+        """Claim pending rows, append to a stream, and mark each row's outcome.
 
-    return await _relay_outbox_to(
-        ctx,
-        outbox_spec=outbox_spec,
-        spec=pubsub_spec,
-        dep_key=PubSubCommandDepKey,
-        expected_kind="pubsub",
-        method="publish",
-        limit=limit,
-        reclaim_stale_after=reclaim_stale_after,
-        max_attempts=max_attempts,
-        retry_base_delay=retry_base_delay,
-        retry_max_backoff=retry_max_backoff,
-    )
+        Same failure model and ordering caveats as :meth:`to_queue`.
+        """
 
+        return await self._relay(
+            ctx,
+            stream_spec,
+            dep_key=StreamCommandDepKey,
+            expected_kind="stream",
+            method="append",
+            limit=limit,
+        )
 
-# ....................... #
+    # ....................... #
 
+    async def to_pubsub(
+        self,
+        ctx: ExecutionContext,
+        pubsub_spec: PubSubSpec[Any],
+        *,
+        limit: int | None = None,
+    ) -> OutboxRelayResult:
+        """Claim pending rows, publish to a topic, and mark each row's outcome.
 
-async def relay_outbox(
-    ctx: ExecutionContext,
-    *,
-    outbox_spec: OutboxSpec[Any],
-    queue_spec: QueueSpec[Any] | None = None,
-    stream_spec: StreamSpec[Any] | None = None,
-    pubsub_spec: PubSubSpec[Any] | None = None,
-    limit: int | None = None,
-    reclaim_stale_after: timedelta | None = timedelta(minutes=5),
-    max_attempts: int = 5,
-    retry_base_delay: timedelta = timedelta(seconds=1),
-    retry_max_backoff: timedelta = timedelta(minutes=5),
-) -> OutboxRelayResult:
-    """Relay using :attr:`~forze.application.contracts.outbox.OutboxSpec.destination`."""
+        Same failure model and ordering caveats as :meth:`to_queue` — **but the
+        at-least-once guarantee ends at the broker**: pubsub is at-most-once
+        (fire-and-forget), and a row is marked ``published`` after a publish that no
+        live subscriber may have received (see
+        :meth:`~forze.application.contracts.outbox.OutboxDestination.pubsub`). A one-time
+        warning per outbox route is logged to make the downgrade visible.
+        """
 
-    destination = outbox_spec.destination
+        destination = self.outbox_spec.destination
 
-    if destination is None:
-        raise exc.precondition("outbox_spec.destination is required for relay_outbox")
+        if destination is not None and destination.kind == "pubsub":
+            # Missing/mismatched destinations fall through to the precondition error
+            # inside ``_relay`` without a spurious warning.
+            _warn_pubsub_downgrade_once(
+                str(self.outbox_spec.name), destination.channel
+            )
 
-    match destination.kind:
-        case "queue":
-            if queue_spec is None:
+        return await self._relay(
+            ctx,
+            pubsub_spec,
+            dep_key=PubSubCommandDepKey,
+            expected_kind="pubsub",
+            method="publish",
+            limit=limit,
+        )
+
+    # ....................... #
+
+    async def run(
+        self,
+        ctx: ExecutionContext,
+        *,
+        queue_spec: QueueSpec[Any] | None = None,
+        stream_spec: StreamSpec[Any] | None = None,
+        pubsub_spec: PubSubSpec[Any] | None = None,
+        limit: int | None = None,
+    ) -> OutboxRelayResult:
+        """Relay using the configured :attr:`OutboxSpec.destination` kind.
+
+        Dispatches to :meth:`to_queue` / :meth:`to_stream` / :meth:`to_pubsub` by the
+        destination kind; the matching transport spec must be supplied.
+        """
+
+        destination = self.outbox_spec.destination
+
+        if destination is None:
+            raise exc.precondition("outbox_spec.destination is required for run()")
+
+        match destination.kind:
+            case "queue":
+                if queue_spec is None:
+                    raise exc.precondition(
+                        "queue_spec is required when destination.kind is queue"
+                    )
+                return await self.to_queue(ctx, queue_spec, limit=limit)
+
+            case "stream":
+                if stream_spec is None:
+                    raise exc.precondition(
+                        "stream_spec is required when destination.kind is stream"
+                    )
+                return await self.to_stream(ctx, stream_spec, limit=limit)
+
+            case "pubsub":
+                if pubsub_spec is None:
+                    raise exc.precondition(
+                        "pubsub_spec is required when destination.kind is pubsub"
+                    )
+                return await self.to_pubsub(ctx, pubsub_spec, limit=limit)
+
+            case _:  # pyright: ignore[reportUnnecessaryComparison]
                 raise exc.precondition(
-                    "queue_spec is required when destination.kind is queue"
+                    f"unsupported outbox destination kind: {destination.kind!r}"
                 )
-            return await relay_outbox_to_queue(
-                ctx,
-                outbox_spec=outbox_spec,
-                queue_spec=queue_spec,
-                limit=limit,
-                reclaim_stale_after=reclaim_stale_after,
-                max_attempts=max_attempts,
-                retry_base_delay=retry_base_delay,
-                retry_max_backoff=retry_max_backoff,
+
+    # ....................... #
+
+    async def _relay(
+        self,
+        ctx: ExecutionContext,
+        spec: BaseSpec,
+        *,
+        dep_key: DepKey[Any],
+        expected_kind: OutboxDestinationKind,
+        method: str,
+        allow_unset_destination: bool = False,
+        limit: int | None,
+    ) -> OutboxRelayResult:
+        """Resolve the transport command port and relay each claim via ``command.<method>``.
+
+        The command-port method (``enqueue``/``append``/``publish``) shares the same
+        ``(channel, payload, *, type, key, headers)`` signature across transports, so only
+        the resolved command, dep key, and method name differ.
+        """
+
+        channel = _resolve_channel(
+            self.outbox_spec,
+            spec_name=str(spec.name),
+            expected_kind=expected_kind,
+            allow_unset=allow_unset_destination,
+        )
+
+        command = ctx.deps.resolve_configurable(ctx, dep_key, spec, route=spec.name)
+
+        async def _publish(claim: OutboxClaim, payload: Any) -> None:
+            await getattr(command, method)(
+                channel,
+                payload,
+                type=claim.event_type,
+                key=claim.ordering_key or str(claim.event_id),
+                headers=_claim_envelope_headers(claim),
             )
 
-        case "stream":
-            if stream_spec is None:
-                raise exc.precondition(
-                    "stream_spec is required when destination.kind is stream"
-                )
-            return await relay_outbox_to_stream(
-                ctx,
-                outbox_spec=outbox_spec,
-                stream_spec=stream_spec,
-                limit=limit,
-                reclaim_stale_after=reclaim_stale_after,
-                max_attempts=max_attempts,
-                retry_base_delay=retry_base_delay,
-                retry_max_backoff=retry_max_backoff,
-            )
-
-        case "pubsub":
-            if pubsub_spec is None:
-                raise exc.precondition(
-                    "pubsub_spec is required when destination.kind is pubsub"
-                )
-            return await relay_outbox_to_pubsub(
-                ctx,
-                outbox_spec=outbox_spec,
-                pubsub_spec=pubsub_spec,
-                limit=limit,
-                reclaim_stale_after=reclaim_stale_after,
-                max_attempts=max_attempts,
-                retry_base_delay=retry_base_delay,
-                retry_max_backoff=retry_max_backoff,
-            )
-
-        case _:  # pyright: ignore[reportUnnecessaryComparison]
-            raise exc.precondition(
-                f"unsupported outbox destination kind: {destination.kind!r}"
-            )
+        return await relay_outbox_claims(
+            ctx,
+            outbox_spec=self.outbox_spec,
+            publish_one=_publish,
+            limit=limit,
+            reclaim_stale_after=self.reclaim_stale_after,
+            max_attempts=self.max_attempts,
+            retry_base_delay=self.retry_base_delay,
+            retry_max_backoff=self.retry_max_backoff,
+        )

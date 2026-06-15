@@ -32,9 +32,7 @@ from forze.application.execution import (
 )
 from forze.base.primitives import utcnow, uuid7
 from forze_kits.integrations.outbox import (
-    relay_outbox_to_pubsub,
-    relay_outbox_to_queue,
-    relay_outbox_to_stream,
+    OutboxRelay,
 )
 from forze_mock import MockDepsModule, MockStateDepKey
 from forze_mock.outbox_adapter import MockOutboxRow
@@ -94,12 +92,9 @@ async def test_relay_to_queue_forwards_full_envelope_headers() -> None:
             )
         ]
 
-        result = await relay_outbox_to_queue(
-            ctx,
-            outbox_spec=outbox_spec,
-            queue_spec=queue_spec,
-            reclaim_stale_after=None,
-        )
+        result = await OutboxRelay(
+            outbox_spec=outbox_spec, reclaim_stale_after=None
+        ).to_queue(ctx, queue_spec)
 
         assert result.published == 1
 
@@ -152,12 +147,9 @@ async def test_relay_omits_unset_envelope_fields() -> None:
             )
         ]
 
-        await relay_outbox_to_queue(
-            ctx,
-            outbox_spec=outbox_spec,
-            queue_spec=queue_spec,
-            reclaim_stale_after=None,
-        )
+        await OutboxRelay(
+            outbox_spec=outbox_spec, reclaim_stale_after=None
+        ).to_queue(ctx, queue_spec)
 
         message = state.queues["jobs"]["jobs"][0].message
         assert dict(message.headers) == {
@@ -197,12 +189,9 @@ async def test_staged_event_envelope_reaches_queue_headers_via_inv_ctx() -> None
             )
             await ctx.outbox.command(outbox_spec).flush()
 
-        await relay_outbox_to_queue(
-            ctx,
-            outbox_spec=outbox_spec,
-            queue_spec=queue_spec,
-            reclaim_stale_after=None,
-        )
+        await OutboxRelay(
+            outbox_spec=outbox_spec, reclaim_stale_after=None
+        ).to_queue(ctx, queue_spec)
 
         message = state.queues["jobs"]["jobs"][0].message
         assert message.headers[HEADER_CORRELATION_ID] == str(metadata.correlation_id)
@@ -249,24 +238,18 @@ async def test_relay_to_stream_and_pubsub_forward_envelope_headers() -> None:
             codec=codec,
             destination=OutboxDestination.stream(route="audit", channel="audit"),
         )
-        await relay_outbox_to_stream(
-            ctx,
-            outbox_spec=stream_outbox,
-            stream_spec=StreamSpec(name="audit", codec=codec),
-            reclaim_stale_after=None,
-        )
+        await OutboxRelay(
+            outbox_spec=stream_outbox, reclaim_stale_after=None
+        ).to_stream(ctx, StreamSpec(name="audit", codec=codec))
 
         pubsub_outbox = OutboxSpec(
             name="fanout-events",
             codec=codec,
             destination=OutboxDestination.pubsub(route="fanout", channel="fanout"),
         )
-        await relay_outbox_to_pubsub(
-            ctx,
-            outbox_spec=pubsub_outbox,
-            pubsub_spec=PubSubSpec(name="fanout", codec=codec),
-            reclaim_stale_after=None,
-        )
+        await OutboxRelay(
+            outbox_spec=pubsub_outbox, reclaim_stale_after=None
+        ).to_pubsub(ctx, PubSubSpec(name="fanout", codec=codec))
 
         [stream_message] = state.streams["audit"]["audit"]
         assert stream_message.headers[HEADER_EVENT_ID] == str(stream_event)

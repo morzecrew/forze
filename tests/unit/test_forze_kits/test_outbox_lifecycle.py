@@ -15,7 +15,10 @@ from forze.application.contracts.queue import QueueSpec
 from forze.application.execution import DepsRegistry, ExecutionRuntime
 from forze.base.exceptions import CoreException
 from forze.base.serialization import PydanticModelCodec
-from forze_kits.integrations.outbox import outbox_relay_background_lifecycle_step
+from forze_kits.integrations.outbox import (
+    OutboxRelay,
+    outbox_relay_background_lifecycle_step,
+)
 from forze_kits.integrations.outbox.lifecycle import _OutboxRelayBackgroundStartup
 from forze_mock import MockDepsModule
 
@@ -41,10 +44,7 @@ async def test_background_lifecycle_starts_and_stops_task() -> None:
         deps=DepsRegistry.from_modules(MockDepsModule()).freeze()
     )
 
-    with patch(
-        "forze_kits.integrations.outbox.lifecycle.relay_outbox_to_queue",
-        relay_mock,
-    ):
+    with patch.object(OutboxRelay, "to_queue", relay_mock):
         async with runtime.scope():
             ctx = runtime.get_context()
             await step.startup(ctx)
@@ -94,10 +94,7 @@ async def _run_tick(
         deps=DepsRegistry.from_modules(MockDepsModule()).freeze()
     )
 
-    with patch(
-        "forze_kits.integrations.outbox.lifecycle.relay_outbox_to_queue",
-        relay_mock,
-    ):
+    with patch.object(OutboxRelay, "to_queue", relay_mock):
         async with runtime.scope():
             await startup._relay_once(runtime.get_context())
 
@@ -139,14 +136,19 @@ async def test_relay_once_empty_backlog_claims_exactly_once() -> None:
 async def test_relay_once_reclaims_only_with_first_batch() -> None:
     reclaim = timedelta(minutes=5)
     startup = _startup(limit=10, reclaim_stale_after=reclaim)
-    relay_mock = AsyncMock(side_effect=[_result(10), _result(10), _result(0)])
+    runtime = ExecutionRuntime(
+        deps=DepsRegistry.from_modules(MockDepsModule()).freeze()
+    )
 
-    await _run_tick(startup, relay_mock)
+    # autospec passes ``self`` → each batch builds a fresh OutboxRelay carrying that
+    # batch's reclaim policy (first batch reclaims, the rest do not).
+    with patch.object(OutboxRelay, "to_queue", autospec=True) as relay_mock:
+        relay_mock.side_effect = [_result(10), _result(10), _result(0)]
+        async with runtime.scope():
+            await startup._relay_once(runtime.get_context())
 
-    reclaim_args = [
-        call.kwargs["reclaim_stale_after"] for call in relay_mock.call_args_list
-    ]
-    assert reclaim_args == [reclaim, None, None]
+    reclaims = [call.args[0].reclaim_stale_after for call in relay_mock.call_args_list]
+    assert reclaims == [reclaim, None, None]
 
 
 @pytest.mark.asyncio
