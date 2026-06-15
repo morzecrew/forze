@@ -149,11 +149,25 @@ async def decrypt_consumed_payload[M](
     if not is_encrypted_payload(payload):
         return payload
 
+    # The relay always forwards the event id (the tenant id only when present), and the
+    # AAD is rebuilt from them. A missing/garbled event-id header means the AAD cannot be
+    # reconstructed — surface that as its own error rather than letting the AEAD fail with
+    # the same ``aead_auth_failed`` code as genuine tampering (stripped header / non-Forze
+    # producer). A missing tenant header is legitimate (a no-tenant event sealed with None).
+    event_id = _header_uuid(headers, HEADER_EVENT_ID)
+
+    if event_id is None:
+        raise exc.validation(
+            "Encrypted message is missing the event-id header required to reconstruct "
+            "its decryption AAD (stripped header or non-Forze producer).",
+            code="core.outbox.payload_header_missing",
+        )
+
     plaintext = await decrypt_outbox_payload(
         cipher,
         cast(JsonDict, payload),
         tenant_id=_header_uuid(headers, HEADER_TENANT_ID),
-        event_id=_header_uuid(headers, HEADER_EVENT_ID),
+        event_id=event_id,
     )
 
     return codec.decode_mapping(plaintext)

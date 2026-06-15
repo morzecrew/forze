@@ -6,14 +6,19 @@ from uuid import uuid4
 
 import pytest
 
+from pydantic import BaseModel
+
 from forze.application.contracts.crypto import AesGcmAead, KeyRef, StaticKeyDirectory
+from forze.application.contracts.envelope import HEADER_EVENT_ID
 from forze.application.integrations.crypto import Keyring
 from forze.application.integrations.outbox import (
+    decrypt_consumed_payload,
     decrypt_outbox_payload,
     encrypt_outbox_payload,
     is_encrypted_payload,
 )
 from forze.base.exceptions import CoreException, ExceptionKind
+from forze.base.serialization import PydanticModelCodec
 from forze_mock import MockKeyManagement
 
 # ----------------------- #
@@ -72,6 +77,38 @@ async def test_decrypt_encrypted_without_keyring_fails_loud() -> None:
         )
 
     assert ei.value.kind is ExceptionKind.CONFIGURATION
+
+
+class _Model(BaseModel):
+    n: int
+
+
+async def test_consumed_payload_missing_event_id_header_is_clear_error() -> None:
+    """A stripped event-id header fails with its own code, not aead_auth_failed."""
+
+    ring = _keyring()
+    codec = PydanticModelCodec(_Model)
+    enc = await encrypt_outbox_payload(ring, {"n": 1}, tenant_id=None, event_id=uuid4())
+
+    with pytest.raises(CoreException) as ei:
+        # No HEADER_EVENT_ID → the AAD cannot be reconstructed.
+        await decrypt_consumed_payload(ring, enc, codec=codec, headers={})
+
+    assert ei.value.kind is ExceptionKind.VALIDATION
+    assert ei.value.code == "core.outbox.payload_header_missing"
+
+
+async def test_consumed_payload_with_event_id_header_decrypts() -> None:
+    ring = _keyring()
+    codec = PydanticModelCodec(_Model)
+    event_id = uuid4()
+    enc = await encrypt_outbox_payload(ring, {"n": 1}, tenant_id=None, event_id=event_id)
+
+    model = await decrypt_consumed_payload(
+        ring, enc, codec=codec, headers={HEADER_EVENT_ID: str(event_id)}
+    )
+
+    assert model == _Model(n=1)
 
 
 async def test_decrypt_rejects_invalid_base64_ciphertext() -> None:
