@@ -4,8 +4,13 @@ from typing import TYPE_CHECKING, Any, final
 
 import attrs
 
+from forze.application.contracts.crypto import (
+    DeterministicCipherDepKey,
+    KeyringDepKey,
+)
 from forze.application.contracts.embeddings import EmbeddingsSpec
 from forze.application.contracts.search import SearchQueryDepPort
+from forze.application.integrations.search import resolve_search_read_codec_spec
 from forze.base.exceptions import exc
 
 from ....adapters import (
@@ -59,6 +64,23 @@ def postgres_search_port_for_config(
     | PostgresVectorSearchAdapter[Any]
 ):
     snap = result_snapshot(context, member_spec.snapshot)
+
+    # Decrypt encrypted document fields out of in-place search results (the table was
+    # written encrypted by the document gateway; the wrapped codec reproduces its config).
+    member_spec = resolve_search_read_codec_spec(
+        member_spec,
+        keyring=(
+            context.deps.provide(KeyringDepKey)
+            if context.deps.exists(KeyringDepKey)
+            else None
+        ),
+        deterministic=(
+            context.deps.provide(DeterministicCipherDepKey)
+            if context.deps.exists(DeterministicCipherDepKey)
+            else None
+        ),
+        tenant_provider=context.inv_ctx.get_tenant,
+    )
 
     common = dict(
         spec=member_spec,

@@ -5,6 +5,10 @@ from typing import Any, final
 import attrs
 from pydantic import BaseModel
 
+from forze.application.contracts.crypto import (
+    DeterministicCipherDepKey,
+    KeyringDepKey,
+)
 from forze.application.contracts.search import (
     SearchCommandDepPort,
     SearchCommandPort,
@@ -14,8 +18,11 @@ from forze.application.contracts.search import (
     SearchResultSnapshotSpec,
     SearchSpec,
 )
-from forze.application.integrations.search import SearchResultSnapshot
 from forze.application.execution import ExecutionContext
+from forze.application.integrations.search import (
+    SearchResultSnapshot,
+    resolve_search_read_codec_spec,
+)
 from forze_meilisearch.adapters.search._command import MeilisearchSearchCommandAdapter
 from forze_meilisearch.adapters.search._simple_base import (
     MeilisearchSimpleSearchAdapter,
@@ -63,6 +70,28 @@ def result_snapshot(
 # ....................... #
 
 
+def _encrypting_spec[M: BaseModel](
+    context: ExecutionContext, spec: SearchSpec[M]
+) -> SearchSpec[M]:
+    """Wrap the read codec so encrypted/searchable fields are sealed in the index and
+    decrypted on read (shared resolver — default AAD label, fail-closed)."""
+
+    return resolve_search_read_codec_spec(
+        spec,
+        keyring=(
+            context.deps.provide(KeyringDepKey)
+            if context.deps.exists(KeyringDepKey)
+            else None
+        ),
+        deterministic=(
+            context.deps.provide(DeterministicCipherDepKey)
+            if context.deps.exists(DeterministicCipherDepKey)
+            else None
+        ),
+        tenant_provider=context.inv_ctx.get_tenant,
+    )
+
+
 def meilisearch_search_adapter[M: BaseModel](
     context: ExecutionContext,
     member_spec: SearchSpec[M],
@@ -72,7 +101,7 @@ def meilisearch_search_adapter[M: BaseModel](
     tenant_aware = c.tenant_aware
 
     return MeilisearchSimpleSearchAdapter(
-        spec=member_spec,
+        spec=_encrypting_spec(context, member_spec),
         config=c,
         client=client,
         tenant_provider=context.inv_ctx.get_tenant,
@@ -122,7 +151,7 @@ class ConfigurableMeilisearchSearchCommand(SearchCommandDepPort):
         tenant_aware = self.config.tenant_aware
 
         return MeilisearchSearchCommandAdapter(
-            spec=spec,
+            spec=_encrypting_spec(context, spec),
             config=self.config,
             client=client,
             tenant_provider=context.inv_ctx.get_tenant,

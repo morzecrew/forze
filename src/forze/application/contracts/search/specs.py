@@ -87,6 +87,23 @@ class SearchSpec[M: BaseModel](BaseSpec):
     )
     """Optional row codec override; use :attr:`resolved_read_codec` at runtime."""
 
+    encrypted_fields: frozenset[str] = attrs.field(factory=frozenset)
+    """Randomized-encrypted fields. For an **external index** (Meilisearch) they are sealed
+    in the index document and decrypted on read; for **in-place search** (Postgres/Mongo
+    over an encrypted document table) they are decrypted out of the search results. Either
+    way, encrypted fields are confidential — *not* searchable/filterable; the fields you
+    search must stay plaintext. Must match the underlying ``DocumentSpec.encrypted_fields``
+    for in-place search to decrypt. Requires a wired keyring."""
+
+    searchable_fields: frozenset[str] = attrs.field(factory=frozenset)
+    """Deterministically-encrypted fields: equality-filterable (the filter value is rewritten
+    to its ciphertext) while sealed at rest. Disjoint from :attr:`encrypted_fields`; mirrors
+    ``DocumentSpec.searchable_fields`` for in-place search. Requires a deterministic cipher."""
+
+    encryption_binds_record_id: bool = attrs.field(default=False)
+    """Mirror of ``DocumentSpec.encryption_binds_record_id`` — must match it so in-place
+    search reproduces the record-id-bound AAD and can decrypt the document's ciphertext."""
+
     # ....................... #
 
     def __attrs_post_init__(self) -> None:

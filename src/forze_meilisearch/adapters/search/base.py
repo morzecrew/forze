@@ -140,8 +140,28 @@ class MeilisearchSearchGateway[M: BaseModel](TenancyMixin):
 
     # ....................... #
 
+    @property
+    def _encrypts(self) -> bool:
+        # The factory wraps the read codec with an EncryptingModelCodec (which exposes
+        # ``prepare_encrypt``) when the spec declares encrypted_fields.
+        return hasattr(self.spec.resolved_read_codec, "prepare_encrypt")
+
+    async def prepare_encrypt(self) -> None:
+        """Warm the keyring before a synchronous encrypting encode (no-op if plaintext)."""
+
+        prepare = getattr(self.spec.resolved_read_codec, "prepare_encrypt", None)
+        if prepare is not None:
+            await prepare()
+
     def to_index_document(self, model: M) -> dict[str, Any]:
-        data = self.spec.resolved_read_codec.encode_mapping(model)
+        codec = self.spec.resolved_read_codec
+        # Use the persistence (encrypting) encode only when encrypting — its exclude opts
+        # differ from the plaintext index encode, so plain routes keep encode_mapping.
+        data = (
+            codec.encode_persistence_mapping(model)
+            if self._encrypts
+            else codec.encode_mapping(model)
+        )
         out: dict[str, Any] = {}
 
         for key, value in data.items():

@@ -200,6 +200,13 @@ async def execute_simple_offset_search_with_snapshot[M: BaseModel](
 
     outcome = await hooks.fetch_rows(window, want_snap=want_snap)
 
+    # Warm the keyring decrypt cache for any sealed fields before materialization, so the
+    # synchronous decode hits the cache. No-op for a plain (non-encrypting) codec, so this
+    # is safe for every backend; an encrypting codec (in-place or external index) decrypts.
+    prepare_decrypt = getattr(codec, "prepare_decrypt", None)
+    if prepare_decrypt is not None:
+        await prepare_decrypt(outcome.rows)
+
     if return_count and total is None and outcome.total is not None:
         total = outcome.total
 

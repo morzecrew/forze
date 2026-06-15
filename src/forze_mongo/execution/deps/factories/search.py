@@ -11,9 +11,16 @@ from forze.application.contracts.search import (
     SearchResultSnapshotSpec,
     SearchSpec,
 )
+from forze.application.contracts.crypto import (
+    DeterministicCipherDepKey,
+    KeyringDepKey,
+)
 from forze.application.contracts.search.ports import SearchQueryPort
-from forze.application.integrations.search import SearchResultSnapshot
 from forze.application.execution import ExecutionContext
+from forze.application.integrations.search import (
+    SearchResultSnapshot,
+    resolve_search_read_codec_spec,
+)
 from forze.base.exceptions import exc
 
 from ....adapters import (
@@ -74,6 +81,23 @@ def _mongo_search_port_for_config(
     | MongoVectorSearchAdapter[Any]
 ):
     c.validate_against_spec(member_spec)
+
+    # Decrypt encrypted document fields out of in-place search results (the collection was
+    # written encrypted by the document gateway; the wrapped codec reproduces its config).
+    member_spec = resolve_search_read_codec_spec(
+        member_spec,
+        keyring=(
+            context.deps.provide(KeyringDepKey)
+            if context.deps.exists(KeyringDepKey)
+            else None
+        ),
+        deterministic=(
+            context.deps.provide(DeterministicCipherDepKey)
+            if context.deps.exists(DeterministicCipherDepKey)
+            else None
+        ),
+        tenant_provider=context.inv_ctx.get_tenant,
+    )
 
     field_map = dict(c.field_map or {})
     result_snapshot = _result_snapshot(context, member_spec.snapshot)
