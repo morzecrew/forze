@@ -57,6 +57,34 @@ class AccessTokenClaims(TypedDict):
 # ....................... #
 
 
+@attrs.define(slots=True, frozen=True, kw_only=True)
+class SigningStats:
+    """Cumulative, monotonic token sign/verify counters for an access-token service.
+
+    A snapshot taken by :meth:`AccessTokenService.signing_stats`, sampled by the
+    OpenTelemetry observable instruments in ``instrument_signing``. Carries the issuing
+    signer's :attr:`algorithm`/:attr:`kid` so a dashboard can attribute counts to a key.
+    """
+
+    algorithm: str
+    """JWS algorithm of the issuing signer (e.g. ``RS256``)."""
+
+    kid: str | None
+    """Key id of the issuing signer, when set (asymmetric/rotated keys)."""
+
+    signed: int
+    """Access tokens signed (``issue_token``)."""
+
+    verified: int
+    """Access tokens that verified successfully (``verify_token``)."""
+
+    verify_failed: int
+    """Verifications rejected (expired or invalid token)."""
+
+
+# ....................... #
+
+
 @attrs.define(slots=True, kw_only=True)
 class AccessTokenService:
     """Access token service.
@@ -75,6 +103,24 @@ class AccessTokenService:
     """Extra signers whose keys are also **accepted on verify**, selected by the
     token's ``kid``. Holds the previous key during a rotation overlap so in-flight
     tokens keep verifying until they expire; drop it once they have."""
+
+    # Cumulative observability counters (sampled by ``instrument_signing``).
+    _n_signed: int = attrs.field(default=0, init=False)
+    _n_verified: int = attrs.field(default=0, init=False)
+    _n_verify_failed: int = attrs.field(default=0, init=False)
+
+    # ....................... #
+
+    def signing_stats(self) -> SigningStats:
+        """Snapshot the cumulative sign/verify counters for metrics export."""
+
+        return SigningStats(
+            algorithm=self.signer.algorithm,
+            kid=self.signer.kid,
+            signed=self._n_signed,
+            verified=self._n_verified,
+            verify_failed=self._n_verify_failed,
+        )
 
     # ....................... #
 
@@ -113,6 +159,7 @@ class AccessTokenService:
             + base64url_encode(orjson.dumps(payload))
         )
         signature = await self.signer.sign(signing_input)
+        self._n_signed += 1
 
         return (signing_input + b"." + base64url_encode(signature)).decode("ascii")
 
@@ -158,15 +205,18 @@ class AccessTokenService:
                 leeway=leeway,
             )
 
+            self._n_verified += 1
             return AccessTokenClaims(**res)  # type: ignore[typeddict-item]
 
         except jwt.ExpiredSignatureError:
+            self._n_verify_failed += 1
             raise exc.authentication(
                 "Access token expired",
                 code="access_token_expired",
             )
 
         except jwt.InvalidTokenError:
+            self._n_verify_failed += 1
             raise exc.authentication(
                 "Invalid access token",
                 code="invalid_access_token",

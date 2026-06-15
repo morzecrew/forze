@@ -1,4 +1,9 @@
-from .access_token import AccessTokenClaims, AccessTokenConfig, AccessTokenService
+from .access_token import (
+    AccessTokenClaims,
+    AccessTokenConfig,
+    AccessTokenService,
+    SigningStats,
+)
 from .api_key import ApiKeyConfig, ApiKeyService
 from .invite_token import InviteTokenConfig, InviteTokenService
 from .password import PasswordConfig, PasswordService
@@ -19,6 +24,7 @@ __all__ = [
     "AccessTokenClaims",
     "AccessTokenService",
     "AccessTokenConfig",
+    "SigningStats",
     "SignerPort",
     "Hs256Signer",
     "LocalAsymmetricSigner",
