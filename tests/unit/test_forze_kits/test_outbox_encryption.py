@@ -113,6 +113,41 @@ async def test_relay_tolerates_legacy_plaintext_rows() -> None:
 
 
 @pytest.mark.asyncio
+async def test_end_to_end_relay_tolerates_legacy_plaintext_rows() -> None:
+    """A plaintext row on an end_to_end route relays as the decoded model, not the raw
+    dict (which would mis-route through the transient-retry path)."""
+
+    outbox_spec, queue_spec = _specs(encryption="end_to_end")
+    runtime = ExecutionRuntime(deps=DepsRegistry.from_modules(MockDepsModule()).freeze())
+
+    async with runtime.scope():
+        ctx = runtime.get_context()
+        state = ctx.deps.provide(MockStateDepKey)
+        state.outbox_rows["events"] = [
+            MockOutboxRow(
+                id=uuid4(),
+                outbox_route="events",
+                event_id=uuid4(),
+                event_type="job.requested",
+                payload={"n": 11},  # legacy plaintext, no envelope wrapper
+                status=OutboxStatus.PENDING,
+                tenant_id=None,
+                execution_id=None,
+                correlation_id=None,
+                causation_id=None,
+                occurred_at=utcnow(),
+                created_at=utcnow(),
+                processing_at=None,
+            )
+        ]
+
+        result = await OutboxRelay(outbox_spec=outbox_spec).to_queue(ctx, queue_spec)
+
+        assert result.published == 1
+        assert state.queues["jobs"]["jobs"][0].message.payload == _EventPayload(n=11)
+
+
+@pytest.mark.asyncio
 async def test_end_to_end_ciphertext_through_broker_decrypted_by_consumer() -> None:
     """e2e: relay publishes ciphertext; the consumer decrypts before the handler."""
 

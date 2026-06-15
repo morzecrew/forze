@@ -58,7 +58,10 @@ from forze.application.contracts.crypto import KeyringDepKey
 from forze.application.contracts.outbox import OutboxRelayResult, OutboxSpec
 from forze.application.contracts.resilience import BackoffStrategy
 from forze.application.execution.resilience.backoff import compute_delay
-from forze.application.integrations.outbox import decrypt_outbox_payload
+from forze.application.integrations.outbox import (
+    decrypt_outbox_payload,
+    is_encrypted_payload,
+)
 from forze.base.exceptions import exc
 from forze.base.primitives import utcnow
 
@@ -197,13 +200,15 @@ async def relay_outbox_claims(
 
     for claim in claims:
         try:
-            if end_to_end:
+            if end_to_end and is_encrypted_payload(claim.payload):
                 # Forward the ciphertext envelope unchanged; the consumer decrypts it.
                 payload = claim.payload
 
             else:
-                # ``at_rest`` decrypts here; ``none`` passes plaintext through. Decode
-                # then publish. Decode/decrypt errors are poison — the row can't publish.
+                # ``at_rest`` decrypts here; ``none`` (and a legacy plaintext row on an
+                # ``end_to_end`` route) passes plaintext through. Decode then publish so
+                # the codec gets a model, not a raw dict. Decode/decrypt errors are
+                # poison — the row can't publish.
                 decrypted = await decrypt_outbox_payload(
                     cipher,
                     claim.payload,
