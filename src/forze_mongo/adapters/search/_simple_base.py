@@ -21,7 +21,10 @@ from forze.application.contracts.search import (
     normalize_search_queries,
     search_options_for_simple_adapter,
 )
-from forze.application.integrations.search import SearchResultSnapshot
+from forze.application.integrations.search import (
+    SearchResultSnapshot,
+    reject_encrypted_sort_fields,
+)
 from forze_mongo.kernel.client.port import MongoClientPort
 
 from ._cursor_run import execute_mongo_ranked_cursor_search
@@ -85,6 +88,9 @@ class MongoSimpleSearchAdapter[M: BaseModel](
         return_type: type[BaseModel] | None = None,
         return_fields: Sequence[str] | None = None,
     ) -> Any:
+        reject_encrypted_sort_fields(
+            sorts, encryption=self.spec.encryption, spec_name=self.spec.name
+        )
         options = search_options_for_simple_adapter(options)
         terms = tuple(normalize_search_queries(query))
         combine = effective_phrase_combine(options)
@@ -127,6 +133,9 @@ class MongoSimpleSearchAdapter[M: BaseModel](
         return_type: type[BaseModel] | None = None,
         return_fields: Sequence[str] | None = None,
     ) -> Any:
+        reject_encrypted_sort_fields(
+            sorts, encryption=self.spec.encryption, spec_name=self.spec.name
+        )
         options = search_options_for_simple_adapter(options)
         terms = tuple(normalize_search_queries(query))
         combine = effective_phrase_combine(options)

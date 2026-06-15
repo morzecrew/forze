@@ -4,7 +4,10 @@ from typing import TYPE_CHECKING
 
 from forze.application.contracts.crypto import KeyringDepKey
 from forze.application.contracts.search import SearchResultSnapshotDepKey
-from forze.application.integrations.search import SearchResultSnapshot
+from forze.application.integrations.search import (
+    SearchResultSnapshot,
+    resolve_snapshot_cipher,
+)
 
 if TYPE_CHECKING:
     from forze.application.contracts.search import (
@@ -48,10 +51,13 @@ def result_snapshot(
     if port is None:
         return None
 
-    cipher = (
-        context.deps.provide(KeyringDepKey)
-        if encrypted and context.deps.exists(KeyringDepKey)
-        else None
+    cipher = resolve_snapshot_cipher(
+        encrypted=encrypted,
+        keyring=(
+            context.deps.provide(KeyringDepKey)
+            if context.deps.exists(KeyringDepKey)
+            else None
+        ),
     )
 
     return SearchResultSnapshot(

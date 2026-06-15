@@ -9,7 +9,11 @@ from pydantic import BaseModel
 
 from forze.base.exceptions import exc
 from forze.base.primitives import MappingConverter, StrKeyMapping
-from forze.base.serialization import ModelCodec, default_model_codec
+from forze.base.serialization import (
+    ModelCodec,
+    default_model_codec,
+    stored_field_names_for,
+)
 
 from ..base import BaseSpec
 from ..crypto import FieldEncryption
@@ -119,6 +123,17 @@ def validate_analytics_spec(spec: AnalyticsSpec[Any, Any]) -> None:
     if not spec.queries:
         raise exc.configuration(
             "AnalyticsSpec.queries must contain at least one named query."
+        )
+
+    if spec.encryption is not None:
+        if spec.encryption.binds_record_id:
+            raise exc.configuration(
+                "AnalyticsSpec.encryption cannot set binds_record_id: analytics rows have no "
+                "stable record id to bind into the AAD. Use a FieldEncryption without it."
+            )
+
+        spec.encryption.validate_fields_exist(
+            stored_field_names_for(spec.read), spec_name=spec.name
         )
 
     if not issubclass(spec.read, BaseModel):

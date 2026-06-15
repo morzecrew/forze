@@ -7,6 +7,7 @@ federated rank fusion, and ``SearchResultSnapshotPort`` access here.
 from __future__ import annotations
 
 import base64
+import binascii
 import json
 import uuid
 from collections.abc import Callable
@@ -166,7 +167,14 @@ class SearchResultSnapshot:
                 opened.append(key)  # legacy plaintext record, replayed as-is
                 continue
 
-            blob = base64.b64decode(key[len(_SEALED_PREFIX) :], validate=True)
+            try:
+                blob = base64.b64decode(key[len(_SEALED_PREFIX) :], validate=True)
+            except (binascii.Error, ValueError) as error:
+                raise exc.validation(
+                    "Sealed snapshot record key is not valid base64",
+                    code="core.search.snapshot_base64_invalid",
+                ) from error
+
             raw = await self.cipher.decrypt(blob, aad=aad)
             opened.append(raw.decode("utf-8"))
 

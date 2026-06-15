@@ -13,11 +13,12 @@ the same as the underlying ``DocumentSpec.encryption``.
 
 from collections.abc import Callable
 from enum import StrEnum
-from typing import Any, Protocol, cast
+from typing import Any, Mapping, Protocol, cast
 
 import attrs
 
 from forze.application.contracts.crypto import (
+    BytesCipherPort,
     DeterministicFieldCipherPort,
     FieldCipherPort,
     FieldEncryption,
@@ -44,6 +45,58 @@ def search_spec_encrypts(spec: object) -> bool:
 
     encryption = getattr(spec, "encryption", None)
     return encryption is not None and not encryption.is_empty
+
+
+def reject_encrypted_sort_fields(
+    sorts: Mapping[str, Any] | None,
+    *,
+    encryption: FieldEncryption | None,
+    spec_name: str | StrEnum,
+) -> None:
+    """Refuse a sort key that names an encrypted or searchable field.
+
+    A field-encrypted column has no usable order at rest: a ``encrypted`` (randomized)
+    ciphertext is unordered, and a ``searchable`` (deterministic) ciphertext supports
+    equality only — never range/sort. Sorting on either is therefore meaningless, and worse,
+    keyset cursors carry the last row's *raw* sort value (the ciphertext, base64'd JSON, not
+    sealed) in the cursor token — exposing confidential field values to anyone inspecting the
+    token. Reject such sorts fail-closed at the query seam so the leak and the latent
+    no-op-sort bug both close.
+    """
+
+    if not sorts or encryption is None:
+        return
+
+    if forbidden := encryption.forbidden_sort_fields(sorts):
+        raise exc.precondition(
+            f"Sorting on field-encrypted field(s) {forbidden} is not allowed for "
+            f"{spec_name!r}: encrypted (randomized) and searchable (deterministic) "
+            "fields have no order at rest and cannot be used as sort keys.",
+            code="core.search.encrypted_sort_field",
+        )
+
+
+def resolve_snapshot_cipher(
+    *, encrypted: bool, keyring: BytesCipherPort | None
+) -> BytesCipherPort | None:
+    """Cipher for sealing snapshot records, fail-closed when one is required but unwired.
+
+    A route that field-encrypts must not silently snapshot plaintext, so an encrypted route
+    without a wired keyring raises rather than degrading to ``cipher=None``. Returns ``None``
+    (plaintext snapshot) only when the route does not encrypt.
+    """
+
+    if not encrypted:
+        return None
+
+    if keyring is None:
+        raise exc.configuration(
+            "A search route's result snapshot requires field encryption but no keyring is "
+            "wired. Register a CryptoDepsModule or clear the route's encryption.",
+            code="core.search.snapshot_encryption_wiring",
+        )
+
+    return keyring
 
 
 class _EncryptableReadSpec(Protocol):

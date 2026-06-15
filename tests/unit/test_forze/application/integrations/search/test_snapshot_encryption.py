@@ -13,10 +13,29 @@ from forze.application.contracts.crypto import (
     StaticKeyDirectory,
 )
 from forze.application.integrations.crypto import Keyring
-from forze.application.integrations.search import SearchResultSnapshot
+from forze.application.integrations.search import (
+    SearchResultSnapshot,
+    resolve_snapshot_cipher,
+)
 from forze.application.integrations.search.snapshot import _SEALED_PREFIX
 from forze.base.exceptions import CoreException, ExceptionKind
 from forze_mock import MockKeyManagement
+
+# ----------------------- #
+
+
+def test_resolve_snapshot_cipher_fail_closed_without_keyring() -> None:
+    # An encrypted route must not silently snapshot plaintext when no keyring is wired.
+    with pytest.raises(CoreException) as ei:
+        resolve_snapshot_cipher(encrypted=True, keyring=None)
+
+    assert ei.value.kind is ExceptionKind.CONFIGURATION
+    assert ei.value.code == "core.search.snapshot_encryption_wiring"
+
+
+def test_resolve_snapshot_cipher_none_when_not_encrypted() -> None:
+    assert resolve_snapshot_cipher(encrypted=False, keyring=None) is None
+
 
 # ----------------------- #
 

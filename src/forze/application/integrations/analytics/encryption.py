@@ -49,12 +49,8 @@ def resolve_analytics_codecs_spec(
     if encryption is None or encryption.is_empty:
         return spec
 
-    if encryption.binds_record_id:
-        raise exc.configuration(
-            f"AnalyticsSpec {spec.name!r} sets FieldEncryption.binds_record_id, but analytics "
-            "rows have no stable record id to bind into the AAD. Drop binds_record_id.",
-            code=_WIRING_CODE,
-        )
+    # ``binds_record_id`` is rejected at spec construction (validate_analytics_spec) — analytics
+    # rows have no stable id — so it is always False here.
 
     if keyring is None:
         raise exc.configuration(

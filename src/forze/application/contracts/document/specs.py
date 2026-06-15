@@ -111,6 +111,11 @@ class DocumentSpec(BaseSpec, Generic[R, D, C, U]):
                 spec_name=str(self.name),
             )
 
+        if self.encryption is not None:
+            self.encryption.validate_fields_exist(
+                stored_field_names_for(self.read), spec_name=self.name
+            )
+
     # ....................... #
 
     def filterable_fields(self) -> frozenset[str]:

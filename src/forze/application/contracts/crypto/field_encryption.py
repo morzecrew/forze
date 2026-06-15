@@ -82,3 +82,34 @@ class FieldEncryption:
         """No fields are sealed — nothing to encrypt or decrypt."""
 
         return not (self.encrypted or self.searchable)
+
+    # ....................... #
+
+    def validate_fields_exist(
+        self, stored_fields: frozenset[str], *, spec_name: object
+    ) -> None:
+        """Reject a sealed field name absent from *stored_fields* (a typo footgun).
+
+        A misspelt encrypted/searchable field silently encrypts nothing — the intended column
+        stays plaintext at rest — so unknown names are rejected at spec construction against the
+        model's stored field names.
+        """
+
+        if unknown := sorted((self.encrypted | self.searchable) - stored_fields):
+            raise exc.configuration(
+                f"FieldEncryption for {spec_name!r} names field(s) {unknown} that are not "
+                f"stored fields of the read model {sorted(stored_fields)}. Check for typos."
+            )
+
+    # ....................... #
+
+    def forbidden_sort_fields(self, fields: Iterable[str]) -> list[str]:
+        """Of *fields*, the sealed ones — which have no order at rest and can't be sort keys.
+
+        A randomized :attr:`encrypted` ciphertext is unordered and a deterministic
+        :attr:`searchable` one supports equality only; sorting on either is meaningless and a
+        keyset cursor would leak its raw value in the token.
+        """
+
+        sealed = self.encrypted | self.searchable
+        return sorted({field for field in fields if field in sealed})

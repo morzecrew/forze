@@ -1,5 +1,7 @@
 """Saga step and definition value objects."""
 
+from __future__ import annotations
+
 from enum import StrEnum
 from typing import TYPE_CHECKING, Awaitable, Callable, Sequence, final
 

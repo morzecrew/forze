@@ -74,7 +74,11 @@ class EncryptingIdempotencyPort:
     def _aad(self, op: str, key: str) -> bytes:
         tenant = self.tenant_provider()
         tenant_id = tenant.tenant_id if tenant is not None else None
-        return payload_aad(IDEMPOTENCY_PAYLOAD_DOMAIN, tenant_id, f"{op}:{key}")
+        # Length-prefix the op so the (op, key) boundary is unambiguous: a naive ``f"{op}:{key}"``
+        # collides — ("a:b", "c") and ("a", "b:c") both render "a:b:c", letting a ciphertext open
+        # under a different (op, key). ``{len(op)}:{op}:{key}`` cannot.
+        record_id = f"{len(op)}:{op}:{key}"
+        return payload_aad(IDEMPOTENCY_PAYLOAD_DOMAIN, tenant_id, record_id)
 
     async def _seal(self, op: str, key: str, result: bytes) -> bytes:
         return await self.cipher.encrypt(

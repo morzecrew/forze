@@ -20,6 +20,7 @@ from forze.application.execution import ExecutionContext
 from forze.application.integrations.search import (
     SearchResultSnapshot,
     resolve_search_read_codec_spec,
+    resolve_snapshot_cipher,
     search_spec_encrypts,
 )
 from forze.base.exceptions import exc
@@ -68,10 +69,13 @@ def _result_snapshot(
     if port is None:
         return None
 
-    cipher = (
-        context.deps.provide(KeyringDepKey)
-        if encrypted and context.deps.exists(KeyringDepKey)
-        else None
+    cipher = resolve_snapshot_cipher(
+        encrypted=encrypted,
+        keyring=(
+            context.deps.provide(KeyringDepKey)
+            if context.deps.exists(KeyringDepKey)
+            else None
+        ),
     )
 
     return SearchResultSnapshot(

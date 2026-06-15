@@ -91,21 +91,30 @@ def test_without_keyring_fails_closed() -> None:
     assert ei.value.code == "core.analytics.encryption_wiring"
 
 
-def test_binds_record_id_rejected() -> None:
+def test_binds_record_id_rejected_at_construction() -> None:
+    # Caught when the spec is built, not deferred to wiring — analytics rows have no id.
+    with pytest.raises(CoreException) as ei:
+        _spec(
+            encryption=FieldEncryption(
+                encrypted=frozenset({"email"}), binds_record_id=True
+            )
+        )
+
+    assert ei.value.kind is ExceptionKind.CONFIGURATION
+    assert "binds_record_id" in str(ei.value)
+
+
+def test_searchable_without_deterministic_fails_closed() -> None:
     with pytest.raises(CoreException) as ei:
         resolve_analytics_codecs_spec(
-            _spec(
-                encryption=FieldEncryption(
-                    encrypted=frozenset({"email"}), binds_record_id=True
-                )
-            ),
+            _spec(encryption=FieldEncryption(searchable=frozenset({"email"}))),
             keyring=_keyring(),
             deterministic=None,
             tenant_provider=lambda: None,
         )
 
     assert ei.value.kind is ExceptionKind.CONFIGURATION
-    assert "binds_record_id" in str(ei.value)
+    assert ei.value.code == "core.analytics.encryption_wiring"
 
 
 @pytest.mark.asyncio

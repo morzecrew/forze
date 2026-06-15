@@ -52,3 +52,26 @@ def test_frozen() -> None:
 
     with pytest.raises(AttributeError):
         enc.encrypted = frozenset({"b"})  # type: ignore[misc]
+
+
+def test_validate_fields_exist_accepts_known_fields() -> None:
+    FieldEncryption(
+        encrypted=frozenset({"ssn"}), searchable=frozenset({"email"})
+    ).validate_fields_exist(frozenset({"id", "ssn", "email"}), spec_name="people")
+
+
+def test_validate_fields_exist_rejects_typo() -> None:
+    with pytest.raises(CoreException) as ei:
+        FieldEncryption(encrypted=frozenset({"scret"})).validate_fields_exist(
+            frozenset({"id", "secret"}), spec_name="docs"
+        )
+
+    assert ei.value.kind is ExceptionKind.CONFIGURATION
+    assert "scret" in str(ei.value)
+
+
+def test_forbidden_sort_fields() -> None:
+    enc = FieldEncryption(encrypted=frozenset({"ssn"}), searchable=frozenset({"email"}))
+
+    assert enc.forbidden_sort_fields(["title", "ssn", "email"]) == ["email", "ssn"]
+    assert enc.forbidden_sort_fields(["title", "created_at"]) == []

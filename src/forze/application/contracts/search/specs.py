@@ -5,12 +5,44 @@ import attrs
 from pydantic import BaseModel
 
 from forze.base.exceptions import exc
-from forze.base.serialization import ModelCodec, default_model_codec
+from forze.base.serialization import (
+    ModelCodec,
+    default_model_codec,
+    stored_field_names_for,
+)
 
 from ..base import BaseSpec
 from ..crypto import FieldEncryption
 from ..querying import QuerySortExpression
 from ..querying.sort_resolution import read_fields_for_model, validate_sort_fields
+
+
+# ----------------------- #
+
+
+def _validate_search_encryption(
+    *,
+    spec_name: object,
+    model_type: type[BaseModel],
+    encryption: FieldEncryption | None,
+    default_sort: QuerySortExpression | None,
+) -> None:
+    """Reject typo'd sealed field names and sealed fields used as ``default_sort`` keys."""
+
+    if encryption is None:
+        return
+
+    encryption.validate_fields_exist(
+        stored_field_names_for(model_type), spec_name=spec_name
+    )
+
+    if default_sort is not None and (
+        forbidden := encryption.forbidden_sort_fields(default_sort)
+    ):
+        raise exc.configuration(
+            f"Search spec {spec_name!r} default_sort uses field-encrypted field(s) "
+            f"{forbidden}: sealed fields have no order at rest and cannot be sort keys."
+        )
 
 # ----------------------- #
 
@@ -106,6 +138,13 @@ class SearchSpec[M: BaseModel](BaseSpec):
                 spec_name=self.name,
             )
 
+        _validate_search_encryption(
+            spec_name=self.name,
+            model_type=self.model_type,
+            encryption=self.encryption,
+            default_sort=self.default_sort,
+        )
+
         if len(self.fields) != len(set(self.fields)):
             raise exc.configuration("Search fields must be unique.")
 
@@ -184,6 +223,13 @@ class HubSearchSpec[M: BaseModel](BaseSpec):
                 read_fields=read_fields_for_model(self.model_type),
                 spec_name=self.name,
             )
+
+        _validate_search_encryption(
+            spec_name=self.name,
+            model_type=self.model_type,
+            encryption=self.encryption,
+            default_sort=self.default_sort,
+        )
 
         names = [member.name for member in self.members]
 
