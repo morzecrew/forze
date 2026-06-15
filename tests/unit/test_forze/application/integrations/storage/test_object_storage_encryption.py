@@ -5,7 +5,7 @@ from __future__ import annotations
 import contextlib
 from datetime import timedelta
 from typing import AsyncIterator
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import attrs
 import pytest
@@ -16,6 +16,7 @@ from forze.application.contracts.crypto import (
     StaticKeyDirectory,
 )
 from forze.application.contracts.storage.value_objects import UploadedObject
+from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.integrations.crypto import Keyring
 from forze.application.integrations.storage.adapter import ObjectStorageAdapter
 from forze.base.crypto import is_envelope
@@ -120,6 +121,43 @@ async def test_encrypted_round_trip_stores_ciphertext() -> None:
 
     downloaded = await adapter.download(stored.key)
     assert downloaded.data == b"plaintext"
+
+
+# ....................... #
+
+
+def test_cipher_tenant_fails_closed_when_tenant_aware_without_tenant() -> None:
+    """Key selection respects ``tenant_aware``: an unbound tenant fails closed rather
+    than silently routing to the no-tenant key."""
+
+    adapter = ObjectStorageAdapter(
+        client=_InMemoryStorageClient(),  # type: ignore[arg-type]
+        bucket_spec="test-bucket",
+        resolve_bucket=_resolve_static_bucket,
+        cipher=_keyring(),
+        tenant_aware=True,
+        tenant_provider=lambda: None,
+    )
+
+    with pytest.raises(CoreException) as excinfo:
+        adapter._cipher_tenant()
+
+    assert excinfo.value.kind is ExceptionKind.AUTHENTICATION
+    assert excinfo.value.code == "tenant_required"
+
+
+def test_cipher_tenant_returns_bound_identity() -> None:
+    tid = uuid4()
+    adapter = ObjectStorageAdapter(
+        client=_InMemoryStorageClient(),  # type: ignore[arg-type]
+        bucket_spec="test-bucket",
+        resolve_bucket=_resolve_static_bucket,
+        cipher=_keyring(),
+        tenant_aware=True,
+        tenant_provider=lambda: TenantIdentity(tenant_id=tid),
+    )
+
+    assert adapter._cipher_tenant() == TenantIdentity(tenant_id=tid)
 
 
 # ....................... #

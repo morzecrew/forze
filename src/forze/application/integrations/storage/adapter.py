@@ -83,10 +83,16 @@ class ObjectStorageAdapter(StorageQueryPort, StorageCommandPort, TenancyMixin):
     # ....................... #
 
     def _cipher_tenant(self) -> TenantIdentity | None:
-        if self.tenant_provider is None:
+        # Resolve through the canonical path so encryption key selection respects
+        # ``tenant_aware`` (fail-closed when a tenant is required but unbound), exactly
+        # like ``_encryption_aad`` — not the raw provider, which would silently route to
+        # the no-tenant key.
+        tenant_id = self._tenant_id_for_resolve()
+
+        if tenant_id is None:
             return None
 
-        return self.tenant_provider()
+        return TenantIdentity(tenant_id=tenant_id)
 
     # ....................... #
 
