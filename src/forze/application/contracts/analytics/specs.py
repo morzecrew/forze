@@ -12,6 +12,7 @@ from forze.base.primitives import MappingConverter, StrKeyMapping
 from forze.base.serialization import ModelCodec, default_model_codec
 
 from ..base import BaseSpec
+from ..crypto import FieldEncryption
 
 # ----------------------- #
 
@@ -65,6 +66,15 @@ class AnalyticsSpec(BaseSpec, Generic[R, Ing]):
         repr=False,
     )
     """Ingest-row codec when :attr:`ingest` is set."""
+
+    encryption: FieldEncryption | None = attrs.field(default=None)
+    """Field-encryption policy (see :class:`FieldEncryption`): which warehouse columns are
+    sealed at rest. Encrypted columns are **confidential** — sealed on ingest, decrypted out
+    of every read path — but *not* aggregatable, groupable, or range-filterable (randomized
+    ciphertext has no numeric/linguistic structure). Encrypt only columns you store-and-return
+    but never analyze (e.g. PII carried alongside the dimensions/measures you query). Requires
+    a wired keyring; ``binds_record_id`` is unsupported here (analytics rows have no stable id).
+    ``None`` (default) = no encryption."""
 
     # ....................... #
 

@@ -8,6 +8,7 @@ from pydantic import BaseModel
 from forze.base.exceptions import exc
 
 from ..base import BaseSpec
+from ..crypto import FieldEncryption
 from .types import GraphDirection, GraphEdgeDirectionality
 from .value_objects import GraphEdgeEndpoint
 
@@ -45,6 +46,13 @@ class GraphNodeSpec[R: BaseModel](BaseSpec):
 
     update: type[BaseModel] | None = attrs.field(default=None)
     """Optional update/patch DTO; when set, commands can update by ref."""
+
+    encryption: FieldEncryption | None = attrs.field(default=None)
+    """Field-encryption policy for this vertex kind's properties (see :class:`FieldEncryption`):
+    which stored properties are sealed at rest. Encrypted properties are **confidential** —
+    sealed on write, decrypted out of every read (get/neighbors/walk/path), but *not*
+    matchable in traversal predicates (structural traversal is unaffected). ``binds_record_id``
+    binds :attr:`key_field`. Requires a wired keyring. ``None`` (default) = no encryption."""
 
 
 # ....................... #
@@ -84,6 +92,12 @@ class GraphEdgeSpec[R: BaseModel](BaseSpec):
     for ``GraphEdgeDirectionality.SYMMETRIC``).
     """
 
+    encryption: FieldEncryption | None = attrs.field(default=None)
+    """Field-encryption policy for this edge kind's properties (see :class:`FieldEncryption`),
+    decrypted out of every read path. ``binds_record_id`` requires :attr:`key_field`
+    (``identity="key"`` edges); it is rejected for ``identity="endpoints"`` edges, which have
+    no stable per-edge id. Requires a wired keyring. ``None`` (default) = no encryption."""
+
 
 # ....................... #
 
@@ -109,22 +123,14 @@ class GraphModuleSpec(BaseSpec):
     def graph_node_by_kind(self, kind: str) -> GraphNodeSpec[BaseModel] | None:
         """Return the ``GraphNodeSpec`` whose name matches *kind*, or ``None``."""
 
-        for n in self.nodes:
-            if _kind_key(n.name) == kind:
-                return n
-
-        return None
+        return next((n for n in self.nodes if _kind_key(n.name) == kind), None)
 
     # ....................... #
 
     def graph_edge_by_kind(self, kind: str) -> GraphEdgeSpec[BaseModel] | None:
         """Return the ``GraphEdgeSpec`` whose name matches *kind*, or ``None``."""
 
-        for e in self.edges:
-            if _kind_key(e.name) == kind:
-                return e
-
-        return None
+        return next((e for e in self.edges if _kind_key(e.name) == kind), None)
 
 
 # ....................... #
@@ -144,7 +150,9 @@ def _model_has_field(model: type[BaseModel], field: str) -> bool:
 # ....................... #
 
 
-def resolve_query_directions(edge: GraphEdgeSpec[BaseModel]) -> frozenset[GraphDirection]:
+def resolve_query_directions(
+    edge: GraphEdgeSpec[BaseModel],
+) -> frozenset[GraphDirection]:
     """Resolve the directions a kind may be traversed, applying canonical defaults.
 
     Returns :attr:`GraphEdgeSpec.query_directions` verbatim when set, otherwise derives

@@ -6,8 +6,8 @@ from psycopg import sql
 from pydantic import BaseModel
 
 from forze.application.contracts.analytics import AnalyticsAppendResult
+from forze.application.integrations.analytics import encode_ingest_payloads
 from forze.base.exceptions import exc
-from forze.base.primitives import JsonDict
 
 from ._mixin_base import PostgresAnalyticsMixinBase
 
@@ -53,25 +53,7 @@ class PostgresAnalyticsIngestMixin[R: BaseModel, Ing: BaseModel](
                 f"Analytics ingest codec is not configured for route {host.spec.name!r}."
             )
 
-        payloads: list[JsonDict] = []
-
-        for row in rows:
-            if isinstance(row, ingest_codec.model_type):
-                payloads.append(ingest_codec.encode_mapping(row))
-
-            elif isinstance(
-                row, BaseModel
-            ):  # pyright: ignore[reportUnnecessaryIsInstance]
-                payloads.append(
-                    ingest_codec.encode_mapping(
-                        ingest_codec.decode_mapping(row.model_dump()),
-                    )
-                )
-
-            else:
-                raise exc.internal(
-                    "Analytics ingest rows must be Pydantic model instances."
-                )
+        payloads = await encode_ingest_payloads(ingest_codec, list(rows))
 
         keys = list(payloads[0].keys())
         col_idents = [sql.Identifier(k) for k in keys]

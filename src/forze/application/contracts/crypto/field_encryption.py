@@ -51,8 +51,7 @@ class FieldEncryption:
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
-        overlap = self.encrypted & self.searchable
-        if overlap:
+        if overlap := self.encrypted & self.searchable:
             raise exc.configuration(
                 f"FieldEncryption declares fields {sorted(overlap)} as both encrypted "
                 "(randomized) and searchable (deterministic); the sets must be disjoint.",

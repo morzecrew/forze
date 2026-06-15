@@ -247,6 +247,18 @@ class EncryptingModelCodec[T](ModelCodec[T, Any]):
 
         return out
 
+    def encrypt_mapping(self, mapping: JsonDict, *, record_id: Any = None) -> JsonDict:
+        """Encrypt the encrypted/searchable fields in a raw property map.
+
+        Public entry for adapters that seal a field-mapping directly rather than a model — e.g.
+        graph node/edge properties built from a create/update DTO (distinct from the read
+        model). Requires the active data key to be warmed (:meth:`prepare_encrypt`). *record_id*
+        binds the row id into the AAD when ``record_id_field`` is set. A no-op when no fields are
+        marked for encryption.
+        """
+
+        return self._encrypt_fields(mapping, record_id=record_id)
+
     def decrypt_mapping(self, mapping: JsonDict) -> JsonDict:
         """Decrypt the encrypted/searchable fields in a raw stored row.
 

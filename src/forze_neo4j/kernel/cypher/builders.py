@@ -31,7 +31,9 @@ def quote(name: str) -> str:
 # ....................... #
 
 
-def _match_map(key_field: str, tenant_field: str | None, *, key_param: str = "key") -> str:
+def _match_map(
+    key_field: str, tenant_field: str | None, *, key_param: str = "key"
+) -> str:
     if tenant_field:
         return f"{{{quote(key_field)}: ${key_param}, {quote(tenant_field)}: $tenant}}"
 
@@ -50,7 +52,9 @@ def _tenant_only_map(tenant_field: str | None, *, interior: bool) -> str:
     return ""
 
 
-def _path_tenant_pred(tenant_field: str | None, *, interior: bool, path_var: str = "path") -> str:
+def _path_tenant_pred(
+    tenant_field: str | None, *, interior: bool, path_var: str = "path"
+) -> str:
     """``WHERE``-clause constraining every node on *path_var* to ``$tenant``.
 
     Used for variable-length and shortest-path matches where interior nodes cannot be
@@ -71,10 +75,7 @@ def _path_tenant_pred(tenant_field: str | None, *, interior: bool, path_var: str
 def _type_pattern(types: Iterable[str]) -> str:
     kinds = list(types)
 
-    if not kinds:
-        return ""
-
-    return ":" + "|".join(quote(t) for t in kinds)
+    return ":" + "|".join(quote(t) for t in kinds) if kinds else ""
 
 
 # ....................... #
@@ -92,13 +93,10 @@ def _rel(
     if direction is GraphDirection.OUT:
         return f"-{body}->"
 
-    if direction is GraphDirection.IN:
-        return f"<-{body}-"
-
-    return f"-{body}-"
+    return f"<-{body}-" if direction is GraphDirection.IN else f"-{body}-"
 
 
-# ----------------------- #
+# ....................... #
 # Vertices
 
 
@@ -109,31 +107,47 @@ def get_vertex(label: str, key_field: str, *, tenant_field: str | None = None) -
     )
 
 
-def vertex_exists(label: str, key_field: str, *, tenant_field: str | None = None) -> str:
+# ....................... #
+
+
+def vertex_exists(
+    label: str, key_field: str, *, tenant_field: str | None = None
+) -> str:
     return (
         f"MATCH (n:{quote(label)} {_match_map(key_field, tenant_field)})\n"
         f"RETURN count(n) > 0 AS exists"
     )
 
 
+# ....................... #
+
+
 def create_vertex(label: str) -> str:
     return f"CREATE (n:{quote(label)})\nSET n = $props\nRETURN properties(n) AS n"
 
 
-def update_vertex(label: str, key_field: str, *, tenant_field: str | None = None) -> str:
+# ....................... #
+
+
+def update_vertex(
+    label: str, key_field: str, *, tenant_field: str | None = None
+) -> str:
     return (
         f"MATCH (n:{quote(label)} {_match_map(key_field, tenant_field)})\n"
         f"SET n += $props\nRETURN properties(n) AS n"
     )
 
 
-def delete_vertex(label: str, key_field: str, *, tenant_field: str | None = None) -> str:
-    return (
-        f"MATCH (n:{quote(label)} {_match_map(key_field, tenant_field)})\nDETACH DELETE n"
-    )
+# ....................... #
 
 
-# ----------------------- #
+def delete_vertex(
+    label: str, key_field: str, *, tenant_field: str | None = None
+) -> str:
+    return f"MATCH (n:{quote(label)} {_match_map(key_field, tenant_field)})\nDETACH DELETE n"
+
+
+# ....................... #
 # Edges
 
 
@@ -147,6 +161,9 @@ def get_edge_by_key(
         f"MATCH ()-[r:{quote(edge_type)} {_match_map(key_field, tenant_field)}]->()\n"
         f"RETURN properties(r) AS r"
     )
+
+
+# ....................... #
 
 
 def create_edge(
@@ -174,7 +191,7 @@ def create_edge(
     return head + body + "RETURN properties(r) AS r"
 
 
-# ----------------------- #
+# ....................... #
 # Traversal
 
 
@@ -197,6 +214,9 @@ def neighbors(
     )
 
 
+# ....................... #
+
+
 def expand(
     *,
     label: str,
@@ -207,7 +227,7 @@ def expand(
     tenant_field: str | None = None,
     interior: bool = False,
 ) -> str:
-    rel = _rel(direction, _type_pattern(edge_types), quant=f"*1..{int(max_depth)}")
+    rel = _rel(direction, _type_pattern(edge_types), quant=f"*1..{max_depth}")
 
     return (
         f"MATCH path = (n:{quote(label)} {_match_map(key_field, tenant_field)}){rel}(m)\n"
@@ -219,6 +239,9 @@ def expand(
         f"properties(nodes(path)[-2]) AS parent, labels(nodes(path)[-2]) AS parent_labels\n"
         f"ORDER BY depth\nLIMIT $max_results"
     )
+
+
+# ....................... #
 
 
 def scoped_walk(
@@ -236,16 +259,19 @@ def scoped_walk(
     nodes separate consecutive segments. Returns distinct target property maps.
     """
 
-    parts = [
-        f"(n0:{quote(anchor_label)} {_match_map(anchor_key_field, tenant_field)})"
-    ]
+    parts = [f"(n0:{quote(anchor_label)} {_match_map(anchor_key_field, tenant_field)})"]
     last = len(segments) - 1
 
     for i, (direction, edge_types, lo, hi) in enumerate(segments):
         # Anonymous relationships (no ``r`` var) so multiple segments don't collide; the
         # walk returns only the target vertex, so edge bindings are not needed.
         parts.append(
-            _rel(direction, _type_pattern(edge_types), quant=f"*{int(lo)}..{int(hi)}", var="")
+            _rel(
+                direction,
+                _type_pattern(edge_types),
+                quant=f"*{int(lo)}..{int(hi)}",
+                var="",
+            )
         )
 
         if i < last:
@@ -264,6 +290,9 @@ def scoped_walk(
     )
 
 
+# ....................... #
+
+
 def shortest_path(
     *,
     from_label: str,
@@ -276,7 +305,7 @@ def shortest_path(
     tenant_field: str | None = None,
     interior: bool = False,
 ) -> str:
-    rel = _rel(direction, _type_pattern(edge_types), quant=f"*..{int(max_hops)}")
+    rel = _rel(direction, _type_pattern(edge_types), quant=f"*..{max_hops}")
 
     # In full-path mode (``interior=True``) the ``all(nodes(path) ...)`` tenant predicate is the
     # canonical all-path-nodes form: Neo4j runs an *exhaustive* shortest-path search and returns

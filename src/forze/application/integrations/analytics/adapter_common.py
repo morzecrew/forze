@@ -16,6 +16,7 @@ from forze.application.contracts.querying import (
     PaginationExpression,
 )
 from forze.application.contracts.tenancy import TenantProviderPort
+from forze.application.integrations.crypto import decrypt_rows
 from forze.base.codecs import B64UrlJsonCodec
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict, StrKey
@@ -102,9 +103,8 @@ def assert_tenant_param_referenced(
     """
 
     rx = re.compile(pattern)
-    missing = sorted(key for key, sql in queries.items() if not rx.search(sql))
 
-    if missing:
+    if missing := sorted(key for key, sql in queries.items() if not rx.search(sql)):
         raise exc.configuration(
             f"{integration} analytics route {route!r} is tenant_aware but query keys "
             f"{missing!r} never reference the tenant parameter ({placeholder_hint}). A "
@@ -167,10 +167,7 @@ def timeout_seconds(options: AnalyticsRunOptions | None) -> int | None:
 
     timeout = options.get("timeout")
 
-    if timeout is None:
-        return None
-
-    return max(1, int(timeout.total_seconds()))
+    return None if timeout is None else max(1, int(timeout.total_seconds()))
 
 
 # ....................... #
@@ -208,6 +205,38 @@ def shape_rows(
     codec = read_codec or default_model_codec(read_type)
 
     return codec.decode_mapping_many(rows)
+
+
+# ....................... #
+
+
+async def decrypt_and_shape_rows(
+    rows: list[JsonDict],
+    *,
+    read_codec: ModelCodec[Any, Any] | None,
+    read_type: type[BaseModel],
+    return_type: type[T] | None,
+    return_fields: Sequence[str] | None,
+) -> list[Any]:
+    """Decrypt sealed columns out of raw rows **once**, then shape them.
+
+    The encryption analog of :func:`shape_rows` that every read path (offset, cursor, chunked)
+    funnels through. Field encryption belongs to the *row*: decrypting once up front (a no-op
+    for a plain codec) means the spec model, a custom ``return_type``, and raw ``return_fields``
+    projections all see plaintext — so encrypted columns never leak as ciphertext on any path.
+    """
+
+    rows, codec = await decrypt_rows(
+        read_codec or default_model_codec(read_type), rows
+    )
+
+    return shape_rows(
+        rows,
+        read_codec=codec,
+        read_type=read_type,
+        return_type=return_type,
+        return_fields=return_fields,
+    )
 
 
 # ....................... #
@@ -263,7 +292,7 @@ async def execute_analytics_offset_page(
 
     limit, offset = pagination_window(pagination)
     rows = await fetch_rows(limit, offset)
-    data = shape_rows(
+    data = await decrypt_and_shape_rows(
         rows,
         read_codec=read_codec,
         read_type=read_type,

@@ -21,7 +21,10 @@ from forze.application.contracts.querying import (
     PaginationExpression,
 )
 from forze.application.contracts.tenancy import TenantProviderPort
-from forze.application.integrations.analytics import AnalyticsQueryPortMixin
+from forze.application.integrations.analytics import (
+    AnalyticsQueryPortMixin,
+    decrypt_and_shape_rows,
+)
 from forze.application.integrations.analytics.adapter_common import (
     bind_tenant_param,
     dry_run_enabled,
@@ -30,13 +33,11 @@ from forze.application.integrations.analytics.adapter_common import (
     execute_analytics_offset_page,
     parse_count_row,
     parse_offset_cursor_after,
-    shape_rows,
     validate_fetch_batch_size,
     validated_params,
 )
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
-from forze.base.serialization import default_model_codec
 
 from forze_duckdb.execution.deps.configs import (
     DuckDbAnalyticsConfig,
@@ -218,7 +219,13 @@ class DuckDbAnalyticsAdapter[R: BaseModel](
             fetch_batch_size=fetch_batch_size,
         )
 
-        typed = self.spec.resolved_read_codec.decode_mapping_many(rows)
+        typed = await decrypt_and_shape_rows(
+            rows,
+            read_codec=self.spec.resolved_read_codec,
+            read_type=self.spec.read,
+            return_type=None,
+            return_fields=None,
+        )
 
         for offset in range(0, len(typed), fetch_batch_size):
             yield typed[offset : offset + fetch_batch_size]
@@ -249,7 +256,13 @@ class DuckDbAnalyticsAdapter[R: BaseModel](
             timeout=self._run_timeout(options),
             fetch_batch_size=fetch_batch_size,
         )
-        typed = default_model_codec(return_type).decode_mapping_many(rows)
+        typed = await decrypt_and_shape_rows(
+            rows,
+            read_codec=self.spec.resolved_read_codec,
+            read_type=self.spec.read,
+            return_type=return_type,
+            return_fields=None,
+        )
 
         for offset in range(0, len(typed), fetch_batch_size):
             yield typed[offset : offset + fetch_batch_size]
@@ -284,7 +297,7 @@ class DuckDbAnalyticsAdapter[R: BaseModel](
             limit=lim,
             offset=start,
         )
-        hits = shape_rows(
+        hits = await decrypt_and_shape_rows(
             rows,
             read_codec=self.spec.resolved_read_codec,
             read_type=self.spec.read,

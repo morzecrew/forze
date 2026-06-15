@@ -98,6 +98,16 @@ searchable ones (whose ciphertext must stay record-independent to compare).
     factory time rather than writing plaintext. The check is fail-closed by
     design.
 
+The **same** `FieldEncryption` policy carries across planes. Point a `SearchSpec`,
+an `AnalyticsSpec`, or a graph node/edge kind at it and those surfaces seal the
+same fields on write and decrypt them out of every read path — search results,
+warehouse rows (offset / cursor / chunked / projections), and graph
+get / neighbors / walk / shortest-path. Encrypted fields stay **confidential**:
+they're never content-searchable, aggregatable, or matchable in a graph predicate
+(that's physics, not a limit) — so encrypt what you store-and-return but never
+query by, and use `searchable` (deterministic) fields for the equality lookups you
+do need. Each plane fails closed the same way (`core.{search,analytics,graph}.encryption_wiring`).
+
 ### Object storage
 
 Object bytes encrypt per route with a single flag — the stored object is the

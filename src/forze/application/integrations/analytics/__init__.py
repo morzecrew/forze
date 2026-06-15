@@ -4,6 +4,7 @@ from .adapter_common import (
     TENANT_PARAM,
     assert_tenant_param_referenced,
     bind_tenant_param,
+    decrypt_and_shape_rows,
     dry_run_enabled,
     dry_run_offset_page,
     encode_keyset_cursor_next,
@@ -19,6 +20,7 @@ from .adapter_common import (
     timeout_seconds,
     validated_params,
 )
+from .encryption import encode_ingest_payloads, resolve_analytics_codecs_spec
 from .port import AnalyticsQueryPortMixin
 from .sql import (
     COUNT_COLUMN,
@@ -37,7 +39,10 @@ __all__ = [
     "assert_tenant_param_referenced",
     "bind_tenant_param",
     "build_count_sql",
+    "decrypt_and_shape_rows",
+    "encode_ingest_payloads",
     "parameters_from_model",
+    "resolve_analytics_codecs_spec",
     "dry_run_enabled",
     "dry_run_offset_page",
     "encode_keyset_cursor_next",

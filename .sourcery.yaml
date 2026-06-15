@@ -1,0 +1,45 @@
+# 🪄 This is your project's Sourcery configuration file.
+
+# You can use it to get Sourcery working in the way you want, such as
+# ignoring specific refactorings, skipping directories in your project,
+# or writing custom rules.
+
+# 📚 For a complete reference to this file, see the documentation at
+# https://docs.sourcery.ai/Configuration/Project-Settings/
+
+version: "1"
+
+ignore:
+  - .git
+  - env
+  - .env
+  - .tox
+  - node_modules
+  - vendor
+  - venv
+  - .venv
+  - ~/.pyenv
+  - ~/.rye
+  - ~/.vscode
+  - .vscode
+  - ~/.cache
+  - ~/.config
+  - ~/.local
+
+metrics:
+  quality_threshold: 80.0
+
+rule_settings:
+  enable:
+    - default
+  rule_types:
+    - refactoring
+    - suggestion
+    - comment
+  python_version: "3.13"
+
+rules:
+  - id: dont-raise-not-implemented
+    description: NotImplemented is not an Exception, raise NotImplementedError instead
+    pattern: raise NotImplemented
+    replacement: raise NotImplementedError

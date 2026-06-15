@@ -1,17 +1,16 @@
 """Chunked scan helpers for Postgres analytics."""
 
-from __future__ import annotations
-
-from typing import Any, AsyncGenerator, Sequence, TypeVar, cast
+from typing import AsyncGenerator, Sequence, TypeVar
 
 from pydantic import BaseModel
 
 from forze.application.contracts.analytics import AnalyticsRunOptions
+from forze.application.contracts.querying import PaginationExpression
 from forze.application.integrations.analytics.adapter_common import (
+    decrypt_and_shape_rows,
     dry_run_enabled,
     validate_fetch_batch_size,
 )
-from forze.application.contracts.querying import PaginationExpression
 from forze.base.primitives import StrKey
 
 from ._mixin_base import PostgresAnalyticsMixinBase
@@ -53,10 +52,7 @@ class PostgresAnalyticsChunkedMixin[R: BaseModel, Ing: BaseModel](
         collected = 0
         buffer: list[BaseModel] = []
 
-        while True:
-            if cap is not None and collected >= cap:
-                break
-
+        while cap is None or collected < cap:
             fetch_limit = batch
 
             if cap is not None:
@@ -73,8 +69,13 @@ class PostgresAnalyticsChunkedMixin[R: BaseModel, Ing: BaseModel](
             if not rows:
                 break
 
-            read_codec = cast(Any, host.spec.resolved_read_codec)
-            typed = read_codec.decode_mapping_many(rows)
+            typed = await decrypt_and_shape_rows(
+                rows,
+                read_codec=host.spec.resolved_read_codec,
+                read_type=host.spec.read,
+                return_type=None,
+                return_fields=None,
+            )
             collected += len(typed)
             offset += len(typed)
             buffer.extend(typed)

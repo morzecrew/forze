@@ -23,7 +23,7 @@ from forze.application.contracts.crypto import (
     FieldEncryption,
 )
 from forze.application.contracts.tenancy import TenantIdentity
-from forze.application.integrations.crypto import EncryptingModelCodec
+from forze.application.integrations.crypto import EncryptingModelCodec, decrypt_rows
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
 from forze.base.serialization import ModelCodec
@@ -98,19 +98,7 @@ async def decrypt_search_rows(
 
     Every search read path (offset, cursor, ...) calls this right after fetching rows, so
     the spec model, a custom ``return_type``, and raw field projections all receive
-    plaintext — decryption belongs to the row, not to one decode path. Returns the rows
-    and the codec to decode them with: the plain inner codec on decryption (the encrypting
-    codec would re-attempt it), or the codec unchanged when it is not an encrypting one.
+    plaintext. A thin search-named alias over the shared :func:`decrypt_rows` primitive.
     """
 
-    decrypt_mapping = getattr(codec, "decrypt_mapping", None)
-
-    if decrypt_mapping is None:
-        return rows, codec
-
-    prepare_decrypt = getattr(codec, "prepare_decrypt", None)
-    if prepare_decrypt is not None:
-        await prepare_decrypt(rows)
-
-    decrypted = [decrypt_mapping(dict(row)) for row in rows]
-    return decrypted, getattr(codec, "inner", codec)
+    return await decrypt_rows(codec, rows)

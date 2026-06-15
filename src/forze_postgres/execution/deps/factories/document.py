@@ -29,7 +29,6 @@ from ..utils import doc_write_gw, read_gw
 
 if TYPE_CHECKING:
     from forze.application.contracts.document import DocumentSpec
-    from forze.application.contracts.transaction import AfterCommitPort
     from forze.application.execution.context import ExecutionContext
 
 # ----------------------- #
@@ -72,9 +71,7 @@ def _resolve_codecs(
         spec_name=str(spec.name),
         encryption=spec.encryption,
         keyring=(
-            ctx.deps.provide(KeyringDepKey)
-            if ctx.deps.exists(KeyringDepKey)
-            else None
+            ctx.deps.provide(KeyringDepKey) if ctx.deps.exists(KeyringDepKey) else None
         ),
         deterministic=(
             ctx.deps.provide(DeterministicCipherDepKey)
@@ -127,10 +124,7 @@ class ConfigurablePostgresReadOnlyDocument(DocumentQueryDepPort[R]):
             read_validation=self.config.read_validation,
         )
 
-        after_commit: "AfterCommitPort | None" = None
-
-        if cache is not None:
-            after_commit = ctx.tx_ctx.run_or_defer
+        after_commit = ctx.tx_ctx.run_or_defer if cache is not None else None
 
         cc = DocumentCache[R](
             read_model_type=read.model_type,
@@ -226,10 +220,7 @@ class ConfigurablePostgresDocument(DocumentCommandDepPort[R, D, C, U]):
             conflict_target=self.config.conflict_target,
         )
 
-        after_commit: "AfterCommitPort | None" = None
-
-        if cache is not None:
-            after_commit = ctx.tx_ctx.run_or_defer
+        after_commit = ctx.tx_ctx.run_or_defer if cache is not None else None
 
         cc = DocumentCache[R](
             read_model_type=read.model_type,

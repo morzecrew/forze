@@ -14,6 +14,7 @@ from .payload import (
     payload_aad,
     seal_message_payload,
 )
+from .rows import decrypt_rows
 from .wiring import resolve_document_codecs
 
 # ----------------------- #
@@ -25,6 +26,7 @@ __all__ = [
     "DeterministicFieldCipher",
     "reencrypt_documents",
     "resolve_document_codecs",
+    "decrypt_rows",
     "MESSAGE_PAYLOAD_DOMAIN",
     "encrypt_payload",
     "decrypt_payload",
