@@ -18,6 +18,8 @@ from forze.application.contracts.cache import (
     CacheSpec,
     SupportsInvalidationPush,
 )
+from forze.application.contracts.crypto import BytesCipherPort
+from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.contracts.transaction import AfterCommitPort
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
@@ -25,9 +27,13 @@ from forze.base.serialization import CACHE_DUMP_EXCLUDE_OPTS, ModelCodec
 from forze.domain.constants import ID_FIELD, REV_FIELD
 
 from ..._logger import logger
+from ..crypto import decrypt_payload, encrypt_payload, is_encrypted_payload
 from .l1 import L1Store, LruTtlStore, register_l1_store
 
 # ----------------------- #
+
+CACHE_PAYLOAD_DOMAIN = "cache"
+"""AAD domain isolating cache-entry ciphertext from other contexts (messaging, etc.)."""
 
 
 @runtime_checkable
@@ -80,6 +86,18 @@ class DocumentCache[R: BaseModel]:
     coordinator — the in-process L1 cannot rely on that, so it composes the
     tenant into its own keys. Required whenever L1 is active; return ``None``
     when no tenant is bound (single-tenant deployments)."""
+
+    cipher: BytesCipherPort | None = attrs.field(default=None, repr=False)
+    """Optional keyring. When set, the distributed cache entry's document body is
+    sealed at rest (so a field-encrypted document is not re-exposed as plaintext in
+    Redis), bound to ``(tenant, pk)``. The in-process L1 keeps live model objects
+    (plaintext in memory — process-scoped). The early-refresh ``_xf`` metadata stays
+    plaintext so the read-time election needs no decrypt. Legacy plaintext entries
+    still read (zero-downtime rollout)."""
+
+    cipher_tenant: Callable[[], TenantIdentity | None] | None = None
+    """Bound-tenant provider for cache encryption (per-tenant key + AAD); pairs with
+    :attr:`cipher`. Distinct from :attr:`tenant_key` (an L1-key string discriminator)."""
 
     l1_store: L1Store | None = None
     """Optional L1 store override (eviction-policy seam, e.g. a W-TinyLFU
@@ -315,45 +333,90 @@ class DocumentCache[R: BaseModel]:
 
     # ....................... #
 
-    def _encode_cache_value(
+    def _xf_meta(self, delta: float, ttl: timedelta | None) -> JsonDict:
+        meta: JsonDict = {"at": time.time(), "d": delta}
+
+        if ttl is not None:
+            meta["ttl"] = ttl.total_seconds()
+
+        return meta
+
+    # ....................... #
+
+    async def _open_doc(self, doc_value: Any, pk: UUID | str) -> JsonDict:
+        """Decrypt a sealed cache document body; pass legacy plaintext through unchanged."""
+
+        tenant = self.cipher_tenant() if self.cipher_tenant is not None else None
+
+        return await decrypt_payload(
+            self.cipher,
+            cast(JsonDict, doc_value),
+            domain=CACHE_PAYLOAD_DOMAIN,
+            tenant_id=None if tenant is None else tenant.tenant_id,
+            record_id=pk,
+        )
+
+    # ....................... #
+
+    async def _encode_cache_value(
         self,
         doc: R,
         *,
+        pk: UUID,
         delta: float = 0.0,
         ttl: timedelta | None = None,
     ) -> Any:
         """Codec bytes, or — with early refresh on — a metadata envelope.
 
         The envelope records the write instant and the observed recompute cost
-        (*delta*, seconds) the XFetch election needs at read time. Write-path
-        warms pass ``delta=0.0`` and therefore never elect early refresh —
-        they are re-warmed on every write anyway. With a per-entry *ttl*
-        (age-based lifetime), the envelope carries it so the election compares
-        against the entry's real expiry instead of the spec default.
+        (*delta*, seconds) the XFetch election needs at read time. With a keyring
+        wired the document body is sealed (bound to ``(tenant, pk)``) while the ``_xf``
+        metadata stays plaintext, so the read-time election needs no decrypt.
         """
 
-        payload = self._encode_for_cache(doc)
+        body = self._encode_for_cache(doc)
+
+        if self.cipher is not None:
+            tenant = self.cipher_tenant() if self.cipher_tenant is not None else None
+            sealed = await encrypt_payload(
+                self.cipher,
+                cast(JsonDict, json.loads(body)),
+                domain=CACHE_PAYLOAD_DOMAIN,
+                tenant_id=None if tenant is None else tenant.tenant_id,
+                record_id=pk,
+            )
+
+            if self._early_refresh_beta() is None:
+                return sealed
+
+            return {"_xf": self._xf_meta(delta, ttl), "doc": sealed}
 
         if self._early_refresh_beta() is None:
-            return payload
+            return body
 
-        meta: JsonDict = {"at": time.time(), "d": delta}
-
-        if ttl is not None:
-            meta["ttl"] = ttl.total_seconds()
-
-        return {"_xf": meta, "doc": json.loads(payload)}
+        return {
+            "_xf": self._xf_meta(delta, ttl),
+            "doc": cast(JsonDict, json.loads(body)),
+        }
 
     # ....................... #
 
-    def _decode_cached(self, cached: Any) -> tuple[R, JsonDict | None]:
-        """Decode a cached payload, unwrapping the early-refresh envelope if present."""
+    async def _decode_cached(
+        self,
+        cached: Any,
+        *,
+        pk: UUID | str,
+    ) -> tuple[R, JsonDict | None]:
+        """Decode a cached payload, unwrapping the early-refresh envelope and/or the
+        sealed document body if present."""
 
         if isinstance(cached, dict) and "_xf" in cached and "doc" in cached:
-            return (
-                self.read_codec.decode_mapping(cast(JsonDict, cached["doc"])),
-                cast(JsonDict, cached["_xf"]),
-            )
+            opened = await self._open_doc(cached["doc"], pk)
+            return self.read_codec.decode_mapping(opened), cast(JsonDict, cached["_xf"])
+
+        if is_encrypted_payload(cached):  # pyright: ignore[reportUnknownArgumentType]
+            opened = await self._open_doc(cached, pk)
+            return self.read_codec.decode_mapping(opened), None
 
         return self._decode_from_cache(cached), None
 
@@ -534,7 +597,9 @@ class DocumentCache[R: BaseModel]:
 
         try:
             ttl = self._entry_ttl(doc)
-            payload = self._encode_cache_value(doc, delta=delta, ttl=ttl)
+            payload = await self._encode_cache_value(
+                doc, pk=casted_doc.id, delta=delta, ttl=ttl
+            )
 
             await self.cache.set_versioned(
                 str(casted_doc.id), str(casted_doc.rev), payload, ttl=ttl
@@ -574,7 +639,9 @@ class DocumentCache[R: BaseModel]:
             for casted in docs_casted:
                 ttl = self._entry_ttl(cast(R, casted))
                 groups.setdefault(ttl, {})[(str(casted.id), str(casted.rev))] = (
-                    self._encode_cache_value(cast(R, casted), ttl=ttl)
+                    await self._encode_cache_value(
+                        cast(R, casted), pk=casted.id, ttl=ttl
+                    )
                 )
 
             for ttl, versioned_mapping in groups.items():
@@ -655,7 +722,7 @@ class DocumentCache[R: BaseModel]:
             return await fetch_on_cache_fault()
 
         if cached is not None:
-            doc, meta = self._decode_cached(cached)
+            doc, meta = await self._decode_cached(cached, pk=pk)
 
             if not self._elects_early_refresh(meta):
                 logger.trace("Retrieved 1 cached '%s' document", self.document_name)
@@ -826,7 +893,9 @@ class DocumentCache[R: BaseModel]:
 
             await self.after_commit_or_now(lambda: self.set_many(miss_res))
 
-        hits_validated = [self._decode_cached(value)[0] for value in hits.values()]
+        hits_validated = [
+            (await self._decode_cached(value, pk=key))[0] for key, value in hits.items()
+        ]
         hits_validated_cast = [cast(_ReadModelWithIdAndRev, x) for x in hits_validated]
         miss_res_cast = [cast(_ReadModelWithIdAndRev, x) for x in miss_res]
 

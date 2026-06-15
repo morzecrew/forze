@@ -6,6 +6,7 @@ import attrs
 from pydantic import BaseModel
 
 from forze.application.contracts.crypto import (
+    BytesCipherPort,
     DeterministicCipherDepKey,
     EncryptionTier,
     KeyringDepKey,
@@ -39,6 +40,18 @@ C = TypeVar("C", bound=BaseDTO)
 U = TypeVar("U", bound=BaseDTO)
 
 # ....................... #
+
+
+def _cache_cipher(
+    ctx: "ExecutionContext", spec: "DocumentSpec[Any, Any, Any, Any]"
+) -> BytesCipherPort | None:
+    """Keyring for sealing cache bodies — only when the document field-encrypts (so the
+    cache does not re-expose what the document protects) and a keyring is wired."""
+
+    if not (spec.encrypted_fields or spec.searchable_fields):
+        return None
+
+    return ctx.deps.provide(KeyringDepKey) if ctx.deps.exists(KeyringDepKey) else None
 
 
 def _resolve_codecs(
@@ -131,6 +144,8 @@ class ConfigurablePostgresReadOnlyDocument(DocumentQueryDepPort[R]):
             tenant_key=lambda: (
                 str(t.tenant_id) if (t := ctx.inv_ctx.get_tenant()) else None
             ),
+            cipher=_cache_cipher(ctx, spec),
+            cipher_tenant=ctx.inv_ctx.get_tenant,
         )
 
         return PostgresDocumentAdapter(
@@ -228,6 +243,8 @@ class ConfigurablePostgresDocument(DocumentCommandDepPort[R, D, C, U]):
             tenant_key=lambda: (
                 str(t.tenant_id) if (t := ctx.inv_ctx.get_tenant()) else None
             ),
+            cipher=_cache_cipher(ctx, spec),
+            cipher_tenant=ctx.inv_ctx.get_tenant,
         )
 
         return PostgresDocumentAdapter(

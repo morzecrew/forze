@@ -60,8 +60,15 @@ __all__ = [
 ]
 
 
-def payload_aad(domain: str, tenant_id: UUID | None, record_id: UUID | None) -> bytes:
-    """AAD binding a ciphertext to its ``(domain, tenant, record_id)``."""
+def payload_aad(
+    domain: str, tenant_id: UUID | None, record_id: UUID | str | None
+) -> bytes:
+    """AAD binding a ciphertext to its ``(domain, tenant, record_id)``.
+
+    *record_id* accepts a ``str`` as well as a ``UUID`` so non-message contexts (e.g. a
+    cache entry keyed by a document pk) can anchor it; ``str(uuid)`` formats identically,
+    so a UUID and its string render the same AAD.
+    """
 
     return f"forze.{domain}|tenant={tenant_id}|id={record_id}".encode()
 
@@ -93,7 +100,7 @@ async def encrypt_payload(
     *,
     domain: str,
     tenant_id: UUID | None,
-    record_id: UUID,
+    record_id: UUID | str,
 ) -> JsonDict:
     """Encrypt a serialized payload into a one-key envelope wrapper."""
 
@@ -153,7 +160,7 @@ async def decrypt_payload(
     *,
     domain: str,
     tenant_id: UUID | None,
-    record_id: UUID | None,
+    record_id: UUID | str | None,
 ) -> JsonDict:
     """Decrypt a one-key envelope wrapper; pass legacy plaintext through unchanged.
 
