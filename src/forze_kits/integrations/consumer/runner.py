@@ -21,6 +21,7 @@ from forze.application.contracts.queue import (
     QueueSpec,
 )
 from forze.application.execution.context import ExecutionContext
+from forze.application.integrations.crypto import PAYLOAD_CIPHER_MISSING_CODE
 from forze.application.integrations.outbox import decrypt_consumed_payload
 from forze.base.exceptions import CoreException, exc
 from forze.base.primitives import StrKey
@@ -29,7 +30,9 @@ from ..inbox import process_with_inbox
 
 # ----------------------- #
 
-_CIPHER_MISSING_CODE = "core.crypto.payload_cipher_missing"
+# Single source of truth (was "core.outbox.payload_cipher_missing" before the payload
+# primitive moved to the shared crypto plane — unreleased, so no external break).
+_CIPHER_MISSING_CODE = PAYLOAD_CIPHER_MISSING_CODE
 """Decrypt config error (no keyring): a deployment fault, not a poison message."""
 
 

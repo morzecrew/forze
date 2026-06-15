@@ -166,7 +166,7 @@ class SearchResultSnapshot:
                 opened.append(key)  # legacy plaintext record, replayed as-is
                 continue
 
-            blob = base64.b64decode(key[len(_SEALED_PREFIX) :])
+            blob = base64.b64decode(key[len(_SEALED_PREFIX) :], validate=True)
             raw = await self.cipher.decrypt(blob, aad=aad)
             opened.append(raw.decode("utf-8"))
 

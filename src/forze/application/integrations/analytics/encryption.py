@@ -102,6 +102,11 @@ async def encode_ingest_payloads(
     must be instances of the ingest model (or any ``BaseModel``, re-decoded through the codec).
     """
 
+    # ``prepare_encrypt`` is the encrypting-codec discriminator (only ``EncryptingModelCodec``
+    # defines it). ``encode_persistence_mapping`` is *not* — it is a base ``ModelCodec`` method
+    # present on every codec, so it cannot tell encrypting from plain; gating on it would route
+    # plain ingest through the persistence path too. The two are always co-present on the
+    # encrypting codec, so the ``encrypts`` branch below safely calls the latter.
     prepare_encrypt = getattr(ingest_codec, "prepare_encrypt", None)
     encrypts = prepare_encrypt is not None
     if prepare_encrypt is not None:

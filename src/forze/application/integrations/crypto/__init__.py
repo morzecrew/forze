@@ -6,6 +6,7 @@ from .keyring import Keyring
 from .maintenance import reencrypt_documents
 from .payload import (
     MESSAGE_PAYLOAD_DOMAIN,
+    PAYLOAD_CIPHER_MISSING_CODE,
     decrypt_consumed_payload,
     decrypt_payload,
     encrypt_payload,
@@ -27,6 +28,7 @@ __all__ = [
     "reencrypt_documents",
     "resolve_document_codecs",
     "decrypt_rows",
+    "PAYLOAD_CIPHER_MISSING_CODE",
     "MESSAGE_PAYLOAD_DOMAIN",
     "encrypt_payload",
     "decrypt_payload",
