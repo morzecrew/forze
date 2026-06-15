@@ -37,6 +37,10 @@ def is_encrypted_payload(payload: object) -> bool:
         isinstance(payload, dict)
         and len(payload) == 1  # pyright: ignore[reportUnknownArgumentType]
         and ENCRYPTED_PAYLOAD_KEY in payload
+        # The sentinel value must be the base64 ciphertext string; a non-str (a
+        # misrouted message, or a non-Forze producer reusing the key) is not a
+        # wrapper, so it stays on the plaintext path instead of reaching b64decode.
+        and isinstance(payload[ENCRYPTED_PAYLOAD_KEY], str)  # pyright: ignore[reportUnknownArgumentType]
     )
 
 

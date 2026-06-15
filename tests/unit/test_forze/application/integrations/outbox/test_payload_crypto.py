@@ -111,6 +111,24 @@ async def test_consumed_payload_with_event_id_header_decrypts() -> None:
     assert model == _Model(n=1)
 
 
+@pytest.mark.parametrize("bad", [None, 1, 1.5, ["x"], {"k": "v"}])
+def test_non_string_sentinel_is_not_classified_as_encrypted(bad: object) -> None:
+    """A wrapper whose sentinel value is not a string is not an encrypted payload."""
+
+    assert is_encrypted_payload({"__fz_enc__": bad}) is False
+
+
+async def test_decrypt_passes_through_non_string_sentinel() -> None:
+    """A non-string sentinel stays on the plaintext path — no TypeError into b64decode."""
+
+    ring = _keyring()
+    payload = {"__fz_enc__": None}  # misrouted / non-Forze producer
+
+    out = await decrypt_outbox_payload(ring, payload, tenant_id=None, event_id=uuid4())
+
+    assert out == payload  # passed through unchanged, not decrypted
+
+
 async def test_decrypt_rejects_invalid_base64_ciphertext() -> None:
     """A corrupted (non-base64) wrapper fails as validation, not a raw binascii error."""
 
