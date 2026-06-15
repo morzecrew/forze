@@ -54,8 +54,19 @@ class VaultClientPort(Protocol):
 
         ...  # pragma: no cover
 
-    def transit_sign(self, key_name: str, data: bytes) -> Awaitable[bytes]:
-        """Sign *data* with a Transit signing key, returning the raw signature."""
+    def transit_sign(
+        self,
+        key_name: str,
+        data: bytes,
+        *,
+        signature_algorithm: str | None = "pkcs1v15",
+        marshaling_algorithm: str | None = None,
+    ) -> Awaitable[bytes]:
+        """Sign *data* with a Transit signing key, returning the raw JWS signature.
+
+        RSA (RS256) by default; for an ECDSA (ES256) key pass
+        ``signature_algorithm=None, marshaling_algorithm="jws"``.
+        """
 
         ...  # pragma: no cover
 

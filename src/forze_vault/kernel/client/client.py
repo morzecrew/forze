@@ -15,6 +15,7 @@ import attrs
 import hvac
 import requests
 from hvac.exceptions import InvalidPath, VaultError
+from jwt.utils import base64url_decode
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
@@ -345,17 +346,33 @@ class VaultClient(VaultClientPort):
 
     # ....................... #
 
-    def _transit_sign_sync(self, key_name: str, data: bytes) -> bytes:
+    def _transit_sign_sync(
+        self,
+        key_name: str,
+        data: bytes,
+        *,
+        signature_algorithm: str | None,
+        marshaling_algorithm: str | None,
+    ) -> bytes:
         client = self._require_client()
 
+        # ECDSA keys take ``marshaling_algorithm`` (``jws`` → raw r||s for JWS) and
+        # ignore ``signature_algorithm`` (RSA-only). Pass only the relevant one.
+        params: dict[str, Any] = {
+            "name": key_name,
+            "hash_input": base64.b64encode(data).decode("ascii"),
+            "hash_algorithm": "sha2-256",
+            "mount_point": self.config.transit_mount,
+        }
+
+        if marshaling_algorithm is not None:
+            params["marshaling_algorithm"] = marshaling_algorithm
+
+        if signature_algorithm is not None:
+            params["signature_algorithm"] = signature_algorithm
+
         try:
-            response = client.secrets.transit.sign_data(
-                name=key_name,
-                hash_input=base64.b64encode(data).decode("ascii"),
-                hash_algorithm="sha2-256",
-                signature_algorithm="pkcs1v15",
-                mount_point=self.config.transit_mount,
-            )
+            response = client.secrets.transit.sign_data(**params)
 
         except InvalidPath as e:
             raise exc.not_found(
@@ -380,16 +397,40 @@ class VaultClient(VaultClientPort):
                 f"Vault transit sign for {key_name!r} has unexpected payload shape",
             )
 
-        # Vault returns ``vault:vN:<base64 signature>``; the raw bytes are the JWS
-        # signature for an RSA (pkcs1v15) key.
-        return base64.b64decode(signature.rsplit(":", 1)[-1])
+        # Vault returns ``vault:vN:<encoded signature>``. ``jws`` marshaling (ECDSA)
+        # base64url-encodes the raw r||s the JWS spec wants; everything else (RSA
+        # pkcs1v15) is standard base64. Either way return the raw JWS signature bytes.
+        encoded = signature.rsplit(":", 1)[-1]
+
+        if marshaling_algorithm == "jws":
+            return bytes(base64url_decode(encoded))
+
+        return base64.b64decode(encoded)
 
     # ....................... #
 
-    async def transit_sign(self, key_name: str, data: bytes) -> bytes:
-        """Sign *data* with a Transit signing key (RSA/pkcs1v15, SHA-256)."""
+    async def transit_sign(
+        self,
+        key_name: str,
+        data: bytes,
+        *,
+        signature_algorithm: str | None = "pkcs1v15",
+        marshaling_algorithm: str | None = None,
+    ) -> bytes:
+        """Sign *data* with a Transit signing key, returning the raw JWS signature.
 
-        return await asyncio.to_thread(self._transit_sign_sync, key_name, data)
+        Defaults to RSA ``pkcs1v15`` (RS256). For an ECDSA (``ecdsa-p256``) key pass
+        ``signature_algorithm=None, marshaling_algorithm="jws"`` so Vault returns the
+        raw ``r||s`` an ES256 JWS expects. Hash is always SHA-256.
+        """
+
+        return await asyncio.to_thread(
+            self._transit_sign_sync,
+            key_name,
+            data,
+            signature_algorithm=signature_algorithm,
+            marshaling_algorithm=marshaling_algorithm,
+        )
 
     # ....................... #
 
