@@ -97,6 +97,25 @@ def test_deterministic_wrong_field_fails() -> None:
     assert excinfo.value.kind is ExceptionKind.VALIDATION
 
 
+def test_derived_key_cache_is_bounded_and_eviction_safe() -> None:
+    """The per-(tenant, field) key cache is LRU-capped; an evicted key re-derives
+    to the identical value (determinism survives eviction)."""
+
+    det = DeterministicFieldCipher(
+        root=b"a-stable-root-secret-32-bytes!!!", key_cache_max=4
+    )
+    pinned = TenantIdentity(tenant_id=uuid4())
+    before = det.encrypt(tenant=pinned, field="email", plaintext=b"v")
+
+    # Flood with distinct tenants to evict the pinned key several times over.
+    for _ in range(20):
+        det.encrypt(tenant=TenantIdentity(tenant_id=uuid4()), field="email", plaintext=b"v")
+
+    assert len(det._keys) <= 4  # type: ignore[attr-defined]  # bounded
+    # Re-deriving the evicted key yields the same deterministic ciphertext.
+    assert det.encrypt(tenant=pinned, field="email", plaintext=b"v") == before
+
+
 # ----------------------- #
 # Codec searchable path
 

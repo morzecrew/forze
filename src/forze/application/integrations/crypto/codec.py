@@ -337,21 +337,40 @@ class EncryptingModelCodec[T](ModelCodec[T, Any]):
         both AADs and stays rejected; any non-auth failure propagates unchanged.
         """
 
-        if self.record_id_field is not None:
-            rid = mapping.get(self.record_id_field)
+        if self.record_id_field is None:
+            return self.cipher.decrypt_sync(blob, aad=self._aad(field, tenant))
 
-            if rid is not None:
-                try:
-                    return self.cipher.decrypt_sync(
-                        blob, aad=self._aad(field, tenant, record_id=str(rid))
-                    )
+        rid = mapping.get(self.record_id_field)
 
-                except CoreException as error:
-                    if error.code != _AEAD_AUTH_FAILED_CODE:
-                        raise
-                    # fall through to the legacy (pre-binding) AAD
+        if rid is not None:
+            try:
+                return self.cipher.decrypt_sync(
+                    blob, aad=self._aad(field, tenant, record_id=str(rid))
+                )
 
-        return self.cipher.decrypt_sync(blob, aad=self._aad(field, tenant))
+            except CoreException as error:
+                if error.code != _AEAD_AUTH_FAILED_CODE:
+                    raise
+                # Pre-binding ciphertext: retry the legacy id-less AAD. A transplanted
+                # id-bound value fails this too and stays rejected (aead_auth_failed).
+                return self.cipher.decrypt_sync(blob, aad=self._aad(field, tenant))
+
+        # Binding is configured but the record id is absent from this row. A legacy
+        # (pre-binding) value still reads id-less; an id-bound value fails — surface the
+        # missing id as a clear misconfiguration rather than an opaque tamper error
+        # (e.g. a projection that selected the encrypted field but not its id column).
+        try:
+            return self.cipher.decrypt_sync(blob, aad=self._aad(field, tenant))
+
+        except CoreException as error:
+            if error.code != _AEAD_AUTH_FAILED_CODE:
+                raise
+            raise exc.precondition(
+                f"Cannot decrypt id-bound field {field!r}: its record id field "
+                f"({self.record_id_field!r}) is absent from the row — include it in the "
+                "projection (or the value predates record-id binding).",
+                code="core.crypto.record_id_required",
+            ) from error
 
     # ....................... #
     # query rewrite (deterministic searchable fields)

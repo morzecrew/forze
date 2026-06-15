@@ -125,6 +125,25 @@ async def test_decode_falls_back_to_legacy_aad_for_migration() -> None:
     assert bound.decode_mapping(legacy_stored).email == "a@example.com"
 
 
+async def test_decode_bound_field_without_record_id_is_clear_error() -> None:
+    """An id-bound value read without its id column fails as a clear misconfiguration,
+    not an opaque tamper error (e.g. a projection that omitted the id)."""
+
+    ring = _keyring()
+    codec = _codec(ring)
+    await codec.prepare_encrypt()
+
+    stored = codec.encode_persistence_mapping(_A)
+    # A projection that selected the encrypted field but not its id column.
+    without_id = {"name": "Alice", "email": stored["email"]}
+
+    with pytest.raises(CoreException) as ei:
+        codec.decode_mapping(without_id)
+
+    assert ei.value.kind is ExceptionKind.PRECONDITION
+    assert ei.value.code == "core.crypto.record_id_required"
+
+
 async def test_encode_patch_binds_threaded_record_id() -> None:
     """The patch path threads the pk; the resulting ciphertext is bound to it."""
 

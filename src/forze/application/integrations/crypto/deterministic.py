@@ -15,6 +15,7 @@ fields) and deterministic ciphertext leaks equality/frequency *within* a tenant
 fields where equality search is worth that exposure.
 """
 
+from collections import OrderedDict
 from typing import final
 
 import attrs
@@ -69,8 +70,16 @@ class DeterministicFieldCipher:
     """Prior root, set only during a rotation overlap. Reads + queries still match
     values written under it; writes always use :attr:`root`."""
 
-    _keys: dict[tuple[str, str], bytes] = attrs.field(factory=dict, init=False)
-    _prev_keys: dict[tuple[str, str], bytes] = attrs.field(factory=dict, init=False)
+    key_cache_max: int = 1024
+    """Max derived ``(tenant, field)`` keys to retain per root (LRU). Bounds memory
+    under many tenants/fields; eviction just re-derives (cheap, no KMS round-trip)."""
+
+    _keys: OrderedDict[tuple[str, str], bytes] = attrs.field(
+        factory=OrderedDict, init=False, repr=False
+    )
+    _prev_keys: OrderedDict[tuple[str, str], bytes] = attrs.field(
+        factory=OrderedDict, init=False, repr=False
+    )
 
     # ....................... #
 
@@ -95,28 +104,35 @@ class DeterministicFieldCipher:
             info=f"forze.det|{_tenant_key(tenant)}|{field}".encode("utf-8"),
         ).derive(root)
 
-    def _key(self, tenant: TenantIdentity | None, field: str) -> bytes:
+    def _cached_key(
+        self,
+        cache: OrderedDict[tuple[str, str], bytes],
+        tenant: TenantIdentity | None,
+        field: str,
+        root: bytes,
+    ) -> bytes:
         cache_key = (_tenant_key(tenant), field)
-        cached = self._keys.get(cache_key)
+        cached = cache.get(cache_key)
 
-        if cached is None:
-            cached = self._keys[cache_key] = self._derive(tenant, field, self.root)
+        if cached is not None:
+            cache.move_to_end(cache_key)
+            return cached
+
+        cached = cache[cache_key] = self._derive(tenant, field, root)
+
+        while len(cache) > self.key_cache_max:
+            cache.popitem(last=False)
 
         return cached
+
+    def _key(self, tenant: TenantIdentity | None, field: str) -> bytes:
+        return self._cached_key(self._keys, tenant, field, self.root)
 
     def _previous_key(self, tenant: TenantIdentity | None, field: str) -> bytes | None:
         if self.previous_root is None:
             return None
 
-        cache_key = (_tenant_key(tenant), field)
-        cached = self._prev_keys.get(cache_key)
-
-        if cached is None:
-            cached = self._prev_keys[cache_key] = self._derive(
-                tenant, field, self.previous_root
-            )
-
-        return cached
+        return self._cached_key(self._prev_keys, tenant, field, self.previous_root)
 
     # ....................... #
 
