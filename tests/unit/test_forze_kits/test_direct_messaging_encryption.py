@@ -8,14 +8,21 @@ from datetime import timedelta
 import pytest
 from pydantic import BaseModel
 
+from forze.application.contracts.crypto import KeyringDepKey
 from forze.application.contracts.inbox import InboxSpec
+from forze.application.contracts.pubsub import PubSubCommandDepKey, PubSubSpec
 from forze.application.contracts.queue import (
     QueueCommandDepKey,
     QueueMessage,
     QueueSpec,
 )
+from forze.application.contracts.stream import StreamCommandDepKey, StreamSpec
 from forze.application.execution import DepsRegistry, ExecutionRuntime
-from forze.application.integrations.crypto import is_encrypted_payload
+from forze.application.integrations.crypto import (
+    MESSAGE_PAYLOAD_DOMAIN,
+    decrypt_consumed_payload,
+    is_encrypted_payload,
+)
 from forze.application.integrations.queue import encrypting_queue_command
 from forze.base.exceptions import CoreException, ExceptionKind
 from forze.base.serialization import PydanticModelCodec
@@ -88,6 +95,62 @@ async def test_plaintext_route_publishes_plaintext() -> None:
         await command.enqueue("jobs", _Job(n=3))
 
         assert state.queues["jobs"]["jobs"][0].message.payload == _Job(n=3)
+
+
+@pytest.mark.asyncio
+async def test_stream_append_seals_payload() -> None:
+    spec = StreamSpec(name="events", codec=PydanticModelCodec(_Job), encryption="end_to_end")  # type: ignore[arg-type]
+    runtime = ExecutionRuntime(deps=DepsRegistry.from_modules(MockDepsModule()).freeze())
+
+    async with runtime.scope():
+        ctx = runtime.get_context()
+        state = ctx.deps.provide(MockStateDepKey)
+
+        command = ctx.deps.resolve_configurable(
+            ctx, StreamCommandDepKey, spec, route=spec.name
+        )
+        await command.append("events", _Job(n=7))
+
+        [stored] = state.streams["events"]["events"]
+        assert is_encrypted_payload(stored.payload)
+
+        # The stored ciphertext decrypts via the consumer helper using the headers the
+        # decorator set — proving append-side sealing round-trips for a stream consumer.
+        plain = await decrypt_consumed_payload(
+            ctx.deps.provide(KeyringDepKey),
+            stored.payload,
+            domain=MESSAGE_PAYLOAD_DOMAIN,
+            codec=spec.codec,
+            headers=stored.headers,
+        )
+        assert plain == _Job(n=7)
+
+
+@pytest.mark.asyncio
+async def test_pubsub_publish_seals_payload() -> None:
+    spec = PubSubSpec(name="events", codec=PydanticModelCodec(_Job), encryption="end_to_end")  # type: ignore[arg-type]
+    runtime = ExecutionRuntime(deps=DepsRegistry.from_modules(MockDepsModule()).freeze())
+
+    async with runtime.scope():
+        ctx = runtime.get_context()
+        state = ctx.deps.provide(MockStateDepKey)
+
+        command = ctx.deps.resolve_configurable(
+            ctx, PubSubCommandDepKey, spec, route=spec.name
+        )
+        await command.publish("events", _Job(n=9))
+
+        [stored] = state.pubsub_logs["events"]["events"]
+        assert is_encrypted_payload(stored.payload)
+
+        plain = await decrypt_consumed_payload(
+            ctx.deps.provide(KeyringDepKey),
+            stored.payload,
+            domain=MESSAGE_PAYLOAD_DOMAIN,
+            codec=spec.codec,
+            headers=stored.headers,
+        )
+        assert plain == _Job(n=9)
 
 
 def test_encryption_without_keyring_fails_closed() -> None:

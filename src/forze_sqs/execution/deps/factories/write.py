@@ -4,8 +4,14 @@ from typing import Any, final
 
 import attrs
 
-from forze.application.contracts.queue import QueueCommandDepPort, QueueSpec
+from forze.application.contracts.crypto import KeyringDepKey
+from forze.application.contracts.queue import (
+    QueueCommandDepPort,
+    QueueCommandPort,
+    QueueSpec,
+)
 from forze.application.execution import ExecutionContext
+from forze.application.integrations.queue import encrypting_queue_command
 
 from ....adapters import SQSQueueAdapter, SQSQueueCodec
 from ..configs import SQSQueueConfig
@@ -30,14 +36,22 @@ class ConfigurableSQSQueueWrite(QueueCommandDepPort):
         self,
         ctx: ExecutionContext,
         spec: QueueSpec[Any],
-    ) -> SQSQueueAdapter[Any]:
+    ) -> QueueCommandPort[Any]:
         client = ctx.deps.provide(SQSClientDepKey)
         codec = SQSQueueCodec(payload_codec=spec.codec)
 
-        return SQSQueueAdapter(
+        adapter = SQSQueueAdapter(
             client=client,
             codec=codec,
             namespace=self.config.namespace,
             tenant_aware=self.config.tenant_aware,
             tenant_provider=ctx.inv_ctx.get_tenant,
+        )
+        cipher = (
+            ctx.deps.provide(KeyringDepKey)
+            if ctx.deps.exists(KeyringDepKey)
+            else None
+        )
+        return encrypting_queue_command(
+            adapter, spec, cipher=cipher, tenant_provider=ctx.inv_ctx.get_tenant
         )

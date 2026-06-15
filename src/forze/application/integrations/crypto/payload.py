@@ -32,7 +32,7 @@ from forze.application.contracts.crypto import (
 from forze.application.contracts.envelope import HEADER_EVENT_ID, HEADER_TENANT_ID
 from forze.application.contracts.tenancy import TenantIdentity
 from forze.base.exceptions import exc
-from forze.base.primitives import JsonDict
+from forze.base.primitives import JsonDict, uuid7
 from forze.base.serialization import ModelCodec
 
 # ----------------------- #
@@ -55,6 +55,7 @@ __all__ = [
     "header_uuid",
     "encrypt_payload",
     "decrypt_payload",
+    "seal_message_payload",
     "decrypt_consumed_payload",
 ]
 
@@ -103,6 +104,44 @@ async def encrypt_payload(
     )
 
     return wrap_encrypted_payload(base64.b64encode(blob).decode("ascii"))
+
+
+# ....................... #
+
+
+async def seal_message_payload[M](
+    cipher: BytesCipherPort,
+    codec: ModelCodec[M, Any],
+    payload: M,
+    *,
+    domain: str,
+    tenant_id: UUID | None,
+    headers: Mapping[str, str] | None,
+) -> tuple[JsonDict, dict[str, str]]:
+    """Seal a model payload and build the headers a consumer rebuilds its AAD from.
+
+    Shared by every direct-messaging command decorator (queue/stream/pub-sub): mints a
+    fresh record (event) id, encrypts the encoded payload under it, and returns the
+    one-key wrapper plus headers carrying the event id (always) and tenant id (when bound),
+    so the consume side reconstructs the same ``(domain, tenant, id)`` AAD.
+    """
+
+    record_id = uuid7()
+
+    wrapper = await encrypt_payload(
+        cipher,
+        codec.encode_mapping(payload),
+        domain=domain,
+        tenant_id=tenant_id,
+        record_id=record_id,
+    )
+
+    sealed_headers = dict(headers or {})
+    sealed_headers[HEADER_EVENT_ID] = str(record_id)
+    if tenant_id is not None:
+        sealed_headers[HEADER_TENANT_ID] = str(tenant_id)
+
+    return wrapper, sealed_headers
 
 
 # ....................... #

@@ -96,6 +96,7 @@ from forze.application.contracts.outbox import (
 )
 from forze.application.contracts.pubsub import (
     PubSubCommandDepKey,
+    PubSubCommandPort,
     PubSubQueryDepKey,
     PubSubSpec,
 )
@@ -127,6 +128,7 @@ from forze.application.contracts.storage import (
 )
 from forze.application.contracts.stream import (
     StreamCommandDepKey,
+    StreamCommandPort,
     StreamGroupQueryDepKey,
     StreamQueryDepKey,
 )
@@ -158,9 +160,11 @@ from forze.application.integrations.authn import (
     LoginLockoutGuard,
 )
 from forze.application.integrations.crypto import DeterministicFieldCipher, Keyring
-from forze.application.integrations.queue import encrypting_queue_command
 from forze.application.integrations.outbox import StagingOutboxCommand
+from forze.application.integrations.pubsub import encrypting_pubsub_command
+from forze.application.integrations.queue import encrypting_queue_command
 from forze.application.integrations.search import SearchResultSnapshot
+from forze.application.integrations.stream import encrypting_stream_command
 from forze.base.exceptions import exc
 from forze.base.primitives import MappingConverter, StrKey, StrKeyMapping
 from forze_mock.adapters import (
@@ -587,13 +591,17 @@ class ConfigurableMockQueue(_MockFactoryBase):
 @final
 @attrs.define(slots=True, kw_only=True)
 class ConfigurableMockPubSub(_MockFactoryBase):
+    command: bool = False
+    """When ``True`` (the command-side registration), wrap publishes with encryption for an
+    ``end_to_end`` route; the query-side registration stays unwrapped."""
+
     def __call__(
         self,
         context: ExecutionContext,
         spec: PubSubSpec[Any],
-    ) -> MockPubSubAdapter[Any]:
+    ) -> MockPubSubAdapter[Any] | PubSubCommandPort[Any]:
         cfg = self._route(spec.name)
-        return MockPubSubAdapter(
+        adapter = MockPubSubAdapter(
             state=self._state(context),
             namespace=self._namespace_for(context, spec.name, default=str(spec.name)),
             codec=spec.codec,
@@ -601,14 +609,28 @@ class ConfigurableMockPubSub(_MockFactoryBase):
             tenant_provider=_tenant_provider(context),
         )
 
+        if not self.command:
+            return adapter
+
+        cipher = (
+            context.deps.provide(KeyringDepKey)
+            if context.deps.exists(KeyringDepKey)
+            else None
+        )
+        return encrypting_pubsub_command(
+            adapter, spec, cipher=cipher, tenant_provider=_tenant_provider(context)
+        )
+
 
 @final
 @attrs.define(slots=True, kw_only=True)
 class ConfigurableMockStream(_MockFactoryBase):
-    def __call__(
-        self,
-        context: ExecutionContext,
-        spec: StreamSpec[Any],
+    command: bool = False
+    """When ``True`` (the command-side registration), wrap appends with encryption for an
+    ``end_to_end`` route; the query/group-side registrations stay unwrapped."""
+
+    def _adapter(
+        self, context: ExecutionContext, spec: StreamSpec[Any]
     ) -> MockStreamAdapter[Any]:
         cfg = self._route(spec.name)
         return MockStreamAdapter(
@@ -617,6 +639,25 @@ class ConfigurableMockStream(_MockFactoryBase):
             codec=spec.codec,
             tenant_aware=cfg.tenant_aware if cfg else False,
             tenant_provider=_tenant_provider(context),
+        )
+
+    def __call__(
+        self,
+        context: ExecutionContext,
+        spec: StreamSpec[Any],
+    ) -> MockStreamAdapter[Any] | StreamCommandPort[Any]:
+        adapter = self._adapter(context, spec)
+
+        if not self.command:
+            return adapter
+
+        cipher = (
+            context.deps.provide(KeyringDepKey)
+            if context.deps.exists(KeyringDepKey)
+            else None
+        )
+        return encrypting_stream_command(
+            adapter, spec, cipher=cipher, tenant_provider=_tenant_provider(context)
         )
 
 
@@ -628,7 +669,11 @@ class ConfigurableMockStreamGroup(_MockFactoryBase):
         context: ExecutionContext,
         spec: StreamSpec[Any],
     ) -> MockStreamGroupAdapter[Any]:
-        stream = ConfigurableMockStream(module=self.module)(context, spec)
+        stream = ConfigurableMockStream(
+            module=self.module
+        )._adapter(  # pyright: ignore[reportPrivateUsage]
+            context, spec
+        )
         return MockStreamGroupAdapter(
             stream=stream,
             state=self._state(context),
@@ -1019,7 +1064,9 @@ class MockDepsModule(DepsModule):
             aead=crypto_aead,
             directory=crypto_directory,
         )
-        crypto_deterministic = DeterministicFieldCipher(root=b"mock-deterministic-root-secret!!")
+        crypto_deterministic = DeterministicFieldCipher(
+            root=b"mock-deterministic-root-secret!!"
+        )
 
         resilience_executor = (
             PassthroughResilienceExecutor()
@@ -1059,10 +1106,10 @@ class MockDepsModule(DepsModule):
             ),
             QueueQueryDepKey: ConfigurableMockQueue(module=self),
             QueueCommandDepKey: ConfigurableMockQueue(module=self, command=True),
-            PubSubCommandDepKey: ConfigurableMockPubSub(module=self),
+            PubSubCommandDepKey: ConfigurableMockPubSub(module=self, command=True),
             PubSubQueryDepKey: ConfigurableMockPubSub(module=self),
             StreamQueryDepKey: ConfigurableMockStream(module=self),
-            StreamCommandDepKey: ConfigurableMockStream(module=self),
+            StreamCommandDepKey: ConfigurableMockStream(module=self, command=True),
             StreamGroupQueryDepKey: ConfigurableMockStreamGroup(module=self),
             OutboxCommandDepKey: ConfigurableMockOutboxCommand(module=self),
             OutboxQueryDepKey: ConfigurableMockOutboxQuery(module=self),

@@ -12,6 +12,7 @@ from .payload import (
     header_uuid,
     is_encrypted_payload,
     payload_aad,
+    seal_message_payload,
 )
 from .wiring import resolve_document_codecs
 
@@ -27,6 +28,7 @@ __all__ = [
     "MESSAGE_PAYLOAD_DOMAIN",
     "encrypt_payload",
     "decrypt_payload",
+    "seal_message_payload",
     "decrypt_consumed_payload",
     "is_encrypted_payload",
     "payload_aad",

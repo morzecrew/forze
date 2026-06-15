@@ -18,15 +18,13 @@ from typing import cast, final
 import attrs
 
 from forze.application.contracts.crypto import BytesCipherPort
-from forze.application.contracts.envelope import HEADER_EVENT_ID, HEADER_TENANT_ID
 from forze.application.contracts.queue import QueueCommandPort, QueueSpec
 from forze.application.contracts.tenancy import TenantProviderPort
 from forze.application.integrations.crypto import (
     MESSAGE_PAYLOAD_DOMAIN,
-    encrypt_payload,
+    seal_message_payload,
 )
 from forze.base.exceptions import exc
-from forze.base.primitives import uuid7
 
 # ----------------------- #
 
@@ -47,24 +45,14 @@ class EncryptingQueueCommand[M](QueueCommandPort[M]):
         self, payload: M, headers: Mapping[str, str] | None
     ) -> tuple[M, dict[str, str]]:
         tenant = self.tenant_provider()
-        tenant_id = None if tenant is None else tenant.tenant_id
-        event_id = uuid7()
-
-        wrapper = await encrypt_payload(
+        wrapper, sealed_headers = await seal_message_payload(
             self.cipher,
-            self.spec.codec.encode_mapping(payload),
+            self.spec.codec,
+            payload,
             domain=MESSAGE_PAYLOAD_DOMAIN,
-            tenant_id=tenant_id,
-            record_id=event_id,
+            tenant_id=None if tenant is None else tenant.tenant_id,
+            headers=headers,
         )
-
-        # The consumer rebuilds the AAD from these headers (event id always, tenant when
-        # bound), exactly as it does for an outbox-relayed message.
-        sealed_headers = dict(headers or {})
-        sealed_headers[HEADER_EVENT_ID] = str(event_id)
-        if tenant_id is not None:
-            sealed_headers[HEADER_TENANT_ID] = str(tenant_id)
-
         return cast(M, wrapper), sealed_headers
 
     # ....................... #
