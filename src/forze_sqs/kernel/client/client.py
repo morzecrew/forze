@@ -67,6 +67,16 @@ _RECEIVE_COUNT_ATTR = "ApproximateReceiveCount"
 _SQS_SEND_MESSAGE_BATCH_MAX: Final[int] = 10
 """AWS limit for ``send_message_batch`` entries per request."""
 
+_SQS_SEND_MESSAGE_BATCH_MAX_BYTES: Final[int] = 256 * 1024
+"""AWS limit for the total payload of a ``send_message_batch`` request (256 KiB) — the sum
+of every entry's encoded body and its message attributes. Shared by all SQS-compatible
+backends (YMQ, ElasticMQ, LocalStack), which honour the same API contract."""
+
+_SQS_RESERVED_ATTR_BYTES: Final[int] = 1024
+"""Generous per-entry headroom for the reserved transport attributes (``forze_type`` /
+``forze_key`` / ``forze_enqueued_at`` / ``forze_encoding``, ~185 B in practice) that the
+client adds on top of the caller headers, so size accounting over-counts rather than under."""
+
 _MAX_ENQUEUE_BATCH_CONCURRENCY: Final[int] = 32
 """Upper bound for parallel ``send_message_batch`` calls in :meth:`SQSClient.enqueue_many`."""
 
@@ -891,17 +901,60 @@ class SQSClient(SQSClientPort):
                 for i, fallback_id in enumerate(chunk_ids)
             ]
 
+        # Pack into batches bounded by BOTH limits: at most 10 entries (count) and at most
+        # 256 KiB total (size). The size accounting is O(1) per message — the base64 body
+        # length is arithmetic (``ceil(n/3)*4``, no encoding), plus the caller-header bytes
+        # and a reserve for the transport attributes — so it is always on, never disabled.
+        def _entry_size(index: int) -> int:
+            entry_headers = per_message_headers[index]
+            header_bytes = (
+                sum(len(name) + 6 + len(value) for name, value in entry_headers.items())
+                if entry_headers
+                else 0
+            )
+            body_b64_bytes = ((len(bodies[index]) + 2) // 3) * 4
+            return body_b64_bytes + header_bytes + _SQS_RESERVED_ATTR_BYTES
+
         chunks: list[
             tuple[list[bytes], list[str], list[Mapping[str, str] | None]]
         ] = []
+        chunk_indices: list[int] = []
+        chunk_bytes = 0
 
-        for offset in range(0, len(bodies), _SQS_SEND_MESSAGE_BATCH_MAX):
-            chunk = list(bodies[offset : offset + _SQS_SEND_MESSAGE_BATCH_MAX])
-            chunk_ids = resolved_ids[offset : offset + _SQS_SEND_MESSAGE_BATCH_MAX]
-            chunk_headers = per_message_headers[
-                offset : offset + _SQS_SEND_MESSAGE_BATCH_MAX
-            ]
-            chunks.append((chunk, chunk_ids, chunk_headers))
+        for index in range(len(bodies)):
+            size = _entry_size(index)
+
+            if size > _SQS_SEND_MESSAGE_BATCH_MAX_BYTES:
+                raise exc.precondition(
+                    f"SQS message {index} is ~{size} bytes (body + attributes), exceeding "
+                    f"the {_SQS_SEND_MESSAGE_BATCH_MAX_BYTES}-byte per-message/batch limit."
+                )
+
+            if chunk_indices and (
+                len(chunk_indices) >= _SQS_SEND_MESSAGE_BATCH_MAX
+                or chunk_bytes + size > _SQS_SEND_MESSAGE_BATCH_MAX_BYTES
+            ):
+                chunks.append(
+                    (
+                        [bodies[i] for i in chunk_indices],
+                        [resolved_ids[i] for i in chunk_indices],
+                        [per_message_headers[i] for i in chunk_indices],
+                    )
+                )
+                chunk_indices = []
+                chunk_bytes = 0
+
+            chunk_indices.append(index)
+            chunk_bytes += size
+
+        if chunk_indices:
+            chunks.append(
+                (
+                    [bodies[i] for i in chunk_indices],
+                    [resolved_ids[i] for i in chunk_indices],
+                    [per_message_headers[i] for i in chunk_indices],
+                )
+            )
 
         if len(chunks) == 1:
             return await _send_chunk(chunks[0][0], chunks[0][1], chunks[0][2])
