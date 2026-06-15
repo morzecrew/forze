@@ -554,12 +554,15 @@ class EncryptingModelCodec[T](ModelCodec[T, Any]):
         forbid_extra: bool = False,
         trust_source: bool = False,
     ) -> Iterator[list[T]]:
-        return self.inner.decode_mapping_many_batched(
-            [self._decrypt_fields(d) for d in data],
-            batch_size=batch_size,
-            forbid_extra=forbid_extra,
-            trust_source=trust_source,
-        )
+        # Decrypt one batch at a time so peak memory stays at ~``batch_size`` decrypted
+        # rows — decrypting all of ``data`` upfront would defeat the caller's batching.
+        for start in range(0, len(data), batch_size):
+            chunk = data[start : start + batch_size]
+            yield self.inner.decode_mapping_many(
+                [self._decrypt_fields(d) for d in chunk],
+                forbid_extra=forbid_extra,
+                trust_source=trust_source,
+            )
 
     # ....................... #
     # passthrough — no field crypto (events / JSON / transforms / introspection)

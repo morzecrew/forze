@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+from unittest.mock import patch
 
 import pytest
 from pydantic import BaseModel
@@ -199,3 +200,40 @@ def test_is_a_model_codec() -> None:
     codec: ModelCodec[_Profile, object] = _codec(_keyring())
     assert codec.model_type is _Profile
     assert "email" in codec.stored_field_names()
+
+
+async def test_batched_decode_decrypts_lazily_per_batch() -> None:
+    """Each batch decrypts only its own rows as the iterator advances, rather than
+    eagerly decrypting the whole input before yielding the first batch."""
+
+    ring = _keyring()
+    codec = _codec(ring)  # encrypts {"email", "prefs"} → 2 decrypts per row
+    await codec.prepare_encrypt()
+
+    rows = [
+        codec.encode_persistence_mapping(
+            _Profile(id=str(i), name=f"n{i}", email=f"e{i}@x.com", prefs={"k": str(i)})
+        )
+        for i in range(5)
+    ]
+
+    calls = 0
+    original = Keyring.decrypt_sync
+
+    def _counting(self: Keyring, *args: object, **kwargs: object) -> bytes:
+        nonlocal calls
+        calls += 1
+        return original(self, *args, **kwargs)  # type: ignore[arg-type]
+
+    with patch.object(Keyring, "decrypt_sync", _counting):
+        batches = codec.decode_mapping_many_batched(rows, batch_size=2)
+
+        first = next(batches)
+        # Only the first batch (2 rows × 2 encrypted fields) decrypted so far.
+        assert len(first) == 2
+        assert calls == 4
+
+        rest = [model for batch in batches for model in batch]
+
+    assert calls == 10  # every row decrypted exactly once across the full pass
+    assert [m.email for m in (*first, *rest)] == [f"e{i}@x.com" for i in range(5)]
