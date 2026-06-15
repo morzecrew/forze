@@ -74,3 +74,35 @@ def test_open_rejects_wrong_key(aead: Aead) -> None:
         aead.open(key=os.urandom(32), nonce=nonce, ciphertext=ciphertext)
 
     assert excinfo.value.kind is ExceptionKind.VALIDATION
+
+
+# ....................... #
+
+
+@pytest.mark.parametrize("aead", _CIPHERS, ids=lambda a: a.algorithm)
+def test_open_wrong_size_key_is_structured_error(aead: Aead) -> None:
+    """A corrupted envelope yielding a wrong-size key surfaces as CoreException, not a
+    raw ValueError that would bypass the codec's CoreException handler."""
+
+    nonce, ciphertext = aead.seal(key=_KEY, plaintext=b"secret")
+
+    with pytest.raises(CoreException) as excinfo:
+        aead.open(key=os.urandom(31), nonce=nonce, ciphertext=ciphertext)
+
+    assert excinfo.value.kind is ExceptionKind.VALIDATION
+
+
+# ....................... #
+
+
+def test_chacha_open_wrong_size_nonce_is_structured_error() -> None:
+    """ChaCha20 requires a 12-byte nonce; a corrupted shorter one (which raises
+    ValueError, not InvalidTag) must still surface as CoreException."""
+
+    aead = ChaCha20Poly1305Aead()
+    _, ciphertext = aead.seal(key=_KEY, plaintext=b"secret")
+
+    with pytest.raises(CoreException) as excinfo:
+        aead.open(key=_KEY, nonce=b"too-short", ciphertext=ciphertext)
+
+    assert excinfo.value.kind is ExceptionKind.VALIDATION

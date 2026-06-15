@@ -79,7 +79,8 @@ class AesGcmAead:
         try:
             return AESGCM(key).decrypt(nonce, ciphertext, aad)
 
-        except InvalidTag as error:
+        # ValueError: wrong-size key — reachable via a corrupted/truncated envelope.
+        except (InvalidTag, ValueError) as error:
             raise _auth_failed() from error
 
 
@@ -125,5 +126,7 @@ class ChaCha20Poly1305Aead:
         try:
             return ChaCha20Poly1305(key).decrypt(nonce, ciphertext, aad)
 
-        except InvalidTag as error:
+        # ValueError: wrong-size key or non-12-byte nonce — reachable via a corrupted
+        # envelope (ChaCha20 requires exactly 12 bytes; GCM tolerates other lengths).
+        except (InvalidTag, ValueError) as error:
             raise _auth_failed() from error
