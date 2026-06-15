@@ -910,7 +910,7 @@ class SQSClient(SQSClientPort):
         def _entry_size(index: int) -> int:
             entry_headers = per_message_headers[index]
             header_bytes = (
-                sum(len(name) + 6 + len(value) for name, value in entry_headers.items())
+                sum(len(name.encode("utf-8")) + 6 + len(value.encode("utf-8")) for name, value in entry_headers.items())
                 if entry_headers
                 else 0
             )
