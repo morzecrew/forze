@@ -70,8 +70,13 @@ class TemporalStartupHook(LifecycleHook):
                 code="core.temporal.encryption_wiring",
             )
 
+        # ``get_tenant`` reads a per-request ContextVar; under the warm scope a long-lived
+        # Temporal client reuses this context, so encode resolves the calling request's
+        # tenant for per-tenant keys (decode needs none — the envelope self-describes).
         converter = encrypting_data_converter(
-            ctx.deps.provide(KeyringDepKey), base=self.config.data_converter
+            ctx.deps.provide(KeyringDepKey),
+            tenant_provider=ctx.inv_ctx.get_tenant,
+            base=self.config.data_converter,
         )
 
         return attrs.evolve(self.config, data_converter=converter)
