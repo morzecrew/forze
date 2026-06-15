@@ -540,6 +540,91 @@ class VaultClient(VaultClientPort):
 
     # ....................... #
 
+    def _transit_create_key_sync(self, key_name: str, key_type: str) -> None:
+        client = self._require_client()
+
+        try:
+            # Idempotent in Vault: creating an existing key is a no-op (the type is
+            # not changed), so this is safe to retry on a re-provision.
+            client.secrets.transit.create_key(
+                name=key_name,
+                key_type=key_type,
+                mount_point=self.config.transit_mount,
+            )
+
+        except VaultError as e:
+            raise exc.infrastructure(
+                f"Vault transit create-key failed for {key_name!r}: {e}"
+            ) from e
+
+        except Exception as e:
+            raise exc.infrastructure(
+                f"Vault transit create-key failed for {key_name!r}: {e}"
+            ) from e
+
+    # ....................... #
+
+    async def transit_create_key(self, key_name: str, *, key_type: str) -> None:
+        """Create a Transit key (idempotent — creating an existing key is a no-op).
+
+        *key_type* is a Vault Transit key type — e.g. ``aes256-gcm96`` for data-key
+        generation (envelope encryption), ``rsa-2048`` / ``ecdsa-p256`` for signing.
+        """
+
+        return await asyncio.to_thread(
+            self._transit_create_key_sync, key_name, key_type
+        )
+
+    # ....................... #
+
+    def _transit_delete_key_sync(self, key_name: str) -> None:
+        client = self._require_client()
+
+        try:
+            # Probe first: an absent key makes ``read_key`` raise ``InvalidPath``, so a
+            # repeated deprovision is a clean no-op (Vault answers a missing-key config
+            # update with a generic error, not ``InvalidPath``).
+            client.secrets.transit.read_key(
+                name=key_name,
+                mount_point=self.config.transit_mount,
+            )
+
+            # Deletion is refused unless the key opts in, so enable it first.
+            client.secrets.transit.update_key_configuration(
+                name=key_name,
+                deletion_allowed=True,
+                mount_point=self.config.transit_mount,
+            )
+            client.secrets.transit.delete_key(
+                name=key_name,
+                mount_point=self.config.transit_mount,
+            )
+
+        except InvalidPath:
+            return None  # already absent — deprovision is safe to repeat
+
+        except VaultError as e:
+            raise exc.infrastructure(
+                f"Vault transit delete-key failed for {key_name!r}: {e}"
+            ) from e
+
+        except Exception as e:
+            raise exc.infrastructure(
+                f"Vault transit delete-key failed for {key_name!r}: {e}"
+            ) from e
+
+    # ....................... #
+
+    async def transit_delete_key(self, key_name: str) -> None:
+        """Delete a Transit key (enabling deletion first); a no-op if already absent.
+
+        Destructive — every value wrapped/signed under the key becomes unrecoverable.
+        """
+
+        return await asyncio.to_thread(self._transit_delete_key_sync, key_name)
+
+    # ....................... #
+
     def _health_sync(self) -> tuple[str, bool]:
         client = self._require_client()
         status = client.sys.read_health_status(method="GET")

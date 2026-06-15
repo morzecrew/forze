@@ -79,3 +79,15 @@ class VaultClientPort(Protocol):
         """Re-wrap a ``vault:vN:...`` ciphertext under the key's latest version."""
 
         ...  # pragma: no cover
+
+    def transit_create_key(
+        self, key_name: str, *, key_type: str
+    ) -> Awaitable[None]:
+        """Create a Transit key of *key_type* (idempotent — existing key is a no-op)."""
+
+        ...  # pragma: no cover
+
+    def transit_delete_key(self, key_name: str) -> Awaitable[None]:
+        """Delete a Transit key (enabling deletion first); a no-op if already absent."""
+
+        ...  # pragma: no cover
