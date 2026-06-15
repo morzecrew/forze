@@ -179,6 +179,18 @@ class HubSearchSpec[M: BaseModel](BaseSpec):
     )
     """Row decode/encode codec; defaults to :class:`PydanticModelCodec`."""
 
+    encrypted_fields: frozenset[str] = attrs.field(factory=frozenset)
+    """Randomized-encrypted hub-row fields, decrypted out of hub search results (mirror of
+    the hub read model's ``DocumentSpec.encrypted_fields``). Requires a wired keyring."""
+
+    searchable_fields: frozenset[str] = attrs.field(factory=frozenset)
+    """Deterministically-encrypted hub-row fields (equality-filterable). Requires a
+    deterministic cipher."""
+
+    encryption_binds_record_id: bool = attrs.field(default=False)
+    """Mirror of ``DocumentSpec.encryption_binds_record_id`` — must match it to decrypt
+    record-id-bound ciphertext."""
+
     # ....................... #
 
     def __attrs_post_init__(self) -> None:

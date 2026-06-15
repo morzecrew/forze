@@ -12,16 +12,15 @@ decrypts the document's own ciphertext. The spec's ``encrypted_fields`` / ``sear
 """
 
 from collections.abc import Callable
-from typing import Any
+from enum import StrEnum
+from typing import Any, Protocol, cast
 
 import attrs
-from pydantic import BaseModel
 
 from forze.application.contracts.crypto import (
     DeterministicFieldCipherPort,
     FieldCipherPort,
 )
-from forze.application.contracts.search import SearchSpec
 from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.integrations.crypto import EncryptingModelCodec
 from forze.base.exceptions import exc
@@ -34,13 +33,28 @@ from forze.domain.constants import ID_FIELD
 _WIRING_CODE = "core.search.encryption_wiring"
 
 
-def resolve_search_read_codec_spec[M: BaseModel](
-    spec: SearchSpec[M],
+class _EncryptableReadSpec(Protocol):
+    """A search spec that can declare field encryption (``SearchSpec``/``HubSearchSpec``)."""
+
+    @property
+    def name(self) -> str | StrEnum: ...
+    @property
+    def encrypted_fields(self) -> frozenset[str]: ...
+    @property
+    def searchable_fields(self) -> frozenset[str]: ...
+    @property
+    def encryption_binds_record_id(self) -> bool: ...
+    @property
+    def resolved_read_codec(self) -> ModelCodec[Any, Any]: ...
+
+
+def resolve_search_read_codec_spec[S: _EncryptableReadSpec](
+    spec: S,
     *,
     keyring: FieldCipherPort | None,
     deterministic: DeterministicFieldCipherPort | None,
     tenant_provider: Callable[[], TenantIdentity | None],
-) -> SearchSpec[M]:
+) -> S:
     """Return *spec* with its read codec wrapped for field encryption, or unchanged.
 
     Fail-closed: declaring encrypted/searchable fields without the matching cipher wired
@@ -74,7 +88,9 @@ def resolve_search_read_codec_spec[M: BaseModel](
         record_id_field=ID_FIELD if spec.encryption_binds_record_id else None,
     )
 
-    return attrs.evolve(spec, read_codec=wrapped)
+    # ``spec`` is always a concrete attrs spec (SearchSpec / HubSearchSpec) at runtime;
+    # the Protocol bound just can't express "is an attrs class" to evolve's signature.
+    return cast(S, attrs.evolve(cast(Any, spec), read_codec=wrapped))
 
 
 async def decrypt_search_rows(

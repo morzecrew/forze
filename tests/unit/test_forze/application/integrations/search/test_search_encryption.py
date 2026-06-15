@@ -126,6 +126,27 @@ async def test_executor_decrypts_rows_once_for_every_decode_path() -> None:
     assert rows[0]["secret"] == "zzz"  # raw field projection
 
 
+def test_resolver_wraps_hub_spec_too() -> None:
+    """The resolver is generic over the spec type — it also wraps a HubSearchSpec, so
+    hub search decrypts its encrypted hub-row fields."""
+
+    from forze.application.contracts.search import HubSearchSpec
+
+    hub = HubSearchSpec(
+        name="hub",
+        model_type=_Doc,
+        members=[_spec()],
+        encrypted_fields=frozenset({"secret"}),
+    )
+
+    wrapped = resolve_search_read_codec_spec(
+        hub, keyring=_keyring(), deterministic=None, tenant_provider=lambda: None
+    )
+
+    assert isinstance(wrapped, HubSearchSpec)  # same concrete type back
+    assert hasattr(wrapped.resolved_read_codec, "prepare_encrypt")  # now encrypting
+
+
 @pytest.mark.asyncio
 async def test_decrypt_rows_is_noop_for_plain_codec() -> None:
     plain = PydanticModelCodec(_Doc)
