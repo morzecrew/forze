@@ -52,17 +52,9 @@
     document.body.style.setProperty("--forze-top", top + "px");
   }
 
-  function targetScheme() {
-    return isHome() ? "slate" : (userColor() || {}).scheme || "default";
-  }
-
   function apply() {
     var body = document.body;
     if (!body) return;
-    // Suppress Material's color transition when the scheme actually flips on a
-    // navigation (home <-> content), so it snaps instead of visibly fading.
-    var changing = body.getAttribute("data-md-color-scheme") !== targetScheme();
-    if (changing) body.classList.add("forze-no-anim");
     if (isHome()) {
       body.classList.add("forze-home");
       body.setAttribute("data-md-color-scheme", "slate");
@@ -70,12 +62,6 @@
     } else {
       body.classList.remove("forze-home");
       applyUserPalette(body);
-    }
-    if (changing) {
-      void body.offsetWidth; // commit the change before re-enabling transitions
-      requestAnimationFrame(function () {
-        body.classList.remove("forze-no-anim");
-      });
     }
   }
 
@@ -193,4 +179,156 @@
     if (document.readyState !== "loading") applyBanner();
     document.addEventListener("DOMContentLoaded", applyBanner);
   }
+})();
+
+// Version switcher: open on click, not hover ---------------------------------
+// mike/Material opens the version list on :hover, which is fiddly. We drive it
+// with a click-toggled `.md-version--open` class instead (the stylesheet maps
+// that class to the open state and neutralizes the hover trigger). Delegated on
+// document so it works for the selector mike injects and survives instant nav;
+// clicking the current version toggles it, clicking elsewhere or Escape closes.
+(function () {
+  document.addEventListener("click", function (e) {
+    var onCurrent =
+      e.target.closest && e.target.closest(".md-version__current");
+    if (onCurrent) e.preventDefault();
+    document.querySelectorAll(".md-version").forEach(function (v) {
+      if (onCurrent && v.contains(onCurrent)) {
+        v.classList.toggle("md-version--open");
+      } else {
+        v.classList.remove("md-version--open");
+      }
+    });
+  });
+
+  document.addEventListener("keydown", function (e) {
+    if (e.key !== "Escape") return;
+    document.querySelectorAll(".md-version--open").forEach(function (v) {
+      v.classList.remove("md-version--open");
+    });
+  });
+})();
+
+// Version switcher: pin the current version to the top -----------------------
+// Move the version you're viewing to the top of the dropdown, then a separator,
+// then the rest in their original order. The list is injected asynchronously by
+// the theme, so wait for it; the reorder is idempotent (guarded by the
+// separator) and re-runs on instant navigation.
+(function () {
+  function firstText(el) {
+    for (var n = el.firstChild; n; n = n.nextSibling) {
+      if (n.nodeType === 3 && n.textContent.trim()) return n.textContent.trim();
+    }
+    return (el.textContent || "").trim();
+  }
+
+  function reorder() {
+    var version = document.querySelector(".md-version");
+    if (!version) return false;
+    var list = version.querySelector(".md-version__list");
+    var current = version.querySelector(".md-version__current");
+    if (!list || !current) return false;
+    var items = list.querySelectorAll(".md-version__item");
+    if (!items.length) return false; // not populated yet — keep waiting
+    if (list.querySelector(".forze-version-sep")) return true; // already done
+
+    // The current version is the one whose title matches the trigger button.
+    var curTitle = firstText(current);
+    var selected = null;
+    for (var i = 0; i < items.length; i++) {
+      var link = items[i].querySelector(".md-version__link");
+      if (link && firstText(link) === curTitle) {
+        selected = items[i];
+        break;
+      }
+    }
+    if (!selected) return true; // nothing matched — leave the list as-is
+
+    list.insertBefore(selected, list.firstChild);
+    var sep = document.createElement("li");
+    sep.className = "forze-version-sep";
+    sep.setAttribute("aria-hidden", "true");
+    list.insertBefore(sep, selected.nextSibling);
+    return true;
+  }
+
+  function init() {
+    if (reorder()) return;
+    var obs = new MutationObserver(function () {
+      if (reorder()) obs.disconnect();
+    });
+    obs.observe(document.body, { childList: true, subtree: true });
+    setTimeout(function () {
+      obs.disconnect();
+    }, 8000); // safety: stop watching even if the selector never appears
+  }
+
+  if (window.document$ && typeof window.document$.subscribe === "function") {
+    window.document$.subscribe(init);
+  } else if (document.readyState !== "loading") {
+    init();
+  } else {
+    document.addEventListener("DOMContentLoaded", init);
+  }
+})();
+
+// Version switcher: don't 404 when a page is missing in the target version ----
+// Each version entry links to the *same* path in that version; if that page
+// doesn't exist there, you'd land on a 404. Intercept the click (capture phase,
+// ahead of the theme's own handler), HEAD the target, and fall back to that
+// version's home when it's missing. Cross-version is a full load anyway.
+(function () {
+  function versionHome(u) {
+    try {
+      var url = new URL(u, location.href);
+      var m = url.pathname.match(/^(.*?\/(?:dev|latest|stable|\d+(?:\.\d+)+)\/)/);
+      return m ? url.origin + m[1] : url.href;
+    } catch (e) {
+      return u;
+    }
+  }
+
+  document.addEventListener(
+    "click",
+    function (e) {
+      var link = e.target.closest && e.target.closest(".md-version__link");
+      if (!link || !link.href) return;
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      document.querySelectorAll(".md-version--open").forEach(function (v) {
+        v.classList.remove("md-version--open");
+      });
+
+      var target = link.href;
+      var home = versionHome(target);
+      if (target === home) {
+        location.href = target;
+        return;
+      }
+
+      var done = false;
+      function go(url) {
+        if (done) return;
+        done = true;
+        location.href = url;
+      }
+      // Network hiccup: after a moment, just navigate (no worse than today).
+      var timer = setTimeout(function () {
+        go(target);
+      }, 2500);
+      // GET (not HEAD — some dev servers reject HEAD), and only fall back to the
+      // version home on a *confirmed* 404; any other response (200, redirect,
+      // server quirk) goes to the requested page so we never redirect spuriously.
+      fetch(target, { method: "GET", cache: "no-store" })
+        .then(function (r) {
+          clearTimeout(timer);
+          go(r.status === 404 ? home : target);
+        })
+        .catch(function () {
+          clearTimeout(timer);
+          go(target);
+        });
+    },
+    true,
+  );
 })();
