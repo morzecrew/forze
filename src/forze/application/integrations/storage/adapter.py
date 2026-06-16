@@ -980,6 +980,7 @@ class ObjectStorageAdapter(
                 key=session.key,
                 upload_id=session.upload_id,
                 parts=client_parts,
+                content_type=session.content_type,
                 sse=self.sse,
             )
 

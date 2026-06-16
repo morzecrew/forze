@@ -570,6 +570,7 @@ class ObjectStorageClientPort(Protocol):
         *,
         upload_id: str,
         parts: Sequence[ObjectStoragePartInfo],
+        content_type: str | None = None,
         sse: ObjectStorageSSE | None = None,
     ) -> Awaitable[None]:
         """Assemble the uploaded parts into the final object.
@@ -579,10 +580,14 @@ class ObjectStorageClientPort(Protocol):
         ascending ``part_number`` order into *key*, then deletes the temps
         (compose takes at most 32 sources per call, so larger sets chain).
 
-        *sse* is consumed by **GCS** only: S3 inherits the upload's encryption
-        from ``CreateMultipartUpload`` (set at begin time), so it ignores *sse*
-        here; GCS has no native session, so the per-object CMEK ``kmsKeyName``
-        is applied on the final ``compose`` destination.
+        *content_type* is consumed by **GCS** only: it has no native session, so
+        the type bound at ``begin_upload`` is applied to the final
+        ``compose``/copy destination (the temp parts carry none). S3 inherits it
+        from ``CreateMultipartUpload`` (set at begin time) and ignores it here.
+
+        *sse* is likewise consumed by **GCS** only: it carries the per-object
+        CMEK ``kmsKeyName`` for the final destination; S3 inherits the upload's
+        encryption from ``CreateMultipartUpload`` and ignores *sse* here.
         """
         ...  # pragma: no cover
 

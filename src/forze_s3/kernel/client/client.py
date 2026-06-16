@@ -1107,6 +1107,7 @@ class S3Client(S3ClientPort):
         *,
         upload_id: str,
         parts: Sequence[ObjectStoragePartInfo],
+        content_type: str | None = None,
         sse: ObjectStorageSSE | None = None,
     ) -> None:
         """Assemble the parts via ``CompleteMultipartUpload``.
@@ -1115,13 +1116,16 @@ class S3Client(S3ClientPort):
         ETags come from the clients' part ``PUT`` responses (carried back by the
         application). ETags are sent quoted, as S3 expects.
 
-        *sse* is ignored here: an SSE multipart upload binds its encryption on
+        *content_type* and *sse* are ignored here: both bind on
         ``CreateMultipartUpload`` (see :meth:`create_multipart_upload`) and the
-        completed object inherits it; ``CompleteMultipartUpload`` takes no SSE
-        params. Accepted for port symmetry (GCS consumes it on ``compose``).
+        completed object inherits them; ``CompleteMultipartUpload`` takes no
+        such params. Accepted for port symmetry (GCS consumes them on
+        ``compose``, having no native session).
         """
 
-        _ = sse  # S3 inherits SSE from CreateMultipartUpload; none on complete
+        # S3 inherits content type and SSE from CreateMultipartUpload; neither
+        # is settable on complete.
+        _ = (content_type, sse)
 
         c = self.__require_client()
 

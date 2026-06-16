@@ -301,6 +301,7 @@ class RoutedObjectStorageClientBase[C: _RoutedStorageInnerClient](
         *,
         upload_id: str,
         parts: Sequence[ObjectStoragePartInfo],
+        content_type: str | None = None,
         sse: ObjectStorageSSE | None = None,
     ) -> None:
         inner = await self._get_client()
@@ -311,6 +312,7 @@ class RoutedObjectStorageClientBase[C: _RoutedStorageInnerClient](
                 key,
                 upload_id=upload_id,
                 parts=parts,
+                content_type=content_type,
                 sse=sse,
             )
 

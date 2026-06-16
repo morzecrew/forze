@@ -110,6 +110,7 @@ class _FakeClient:
         key: str,
         upload_id: str,
         parts: Any,
+        content_type: str | None = None,
         sse: Any = None,
     ) -> None:
         self.complete_calls.append(
@@ -118,6 +119,7 @@ class _FakeClient:
                 "key": key,
                 "upload_id": upload_id,
                 "parts": list(parts),
+                "content_type": content_type,
                 "sse": sse,
             }
         )
@@ -231,6 +233,17 @@ async def test_complete_sorts_and_forwards_parts_then_heads() -> None:
     assert head.etag == "assembled-etag"
     forwarded = client.complete_calls[0]["parts"]
     assert [p.part_number for p in forwarded] == [1, 2]
+
+
+@pytest.mark.asyncio
+async def test_complete_forwards_session_content_type() -> None:
+    client = _FakeClient()
+    adapter = _adapter(client)
+    session = await adapter.begin_upload("k", content_type="video/mp4")
+
+    await adapter.complete_upload(session, [UploadPart(part_number=1, etag="e1")])
+
+    assert client.complete_calls[0]["content_type"] == "video/mp4"
 
 
 @pytest.mark.asyncio

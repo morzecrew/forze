@@ -390,7 +390,7 @@ class GCSClient(GCSClientPort):
         head = _head_from_object_json(raw)
         total = head.size
 
-        if start >= total and total > 0:
+        if start >= total > 0:
             raise unsatisfiable_range(start, total)
 
         try:
@@ -588,7 +588,18 @@ class GCSClient(GCSClientPort):
         # temp parts at ``<key>.__forze_mpu__/<session>/<n>`` (no metadata
         # envelope), which would otherwise surface as bogus listed objects and
         # break the adapter's per-object metadata read.
-        keys = [k for k in keys if f".{MPU_NAMESPACE}/" not in k]
+        keys = [
+            k
+            for k in keys
+            if not (
+                f".{MPU_NAMESPACE}/" in k
+                and (tail := k.rsplit(f".{MPU_NAMESPACE}/", 1)[1]).count("/") == 1
+                and (
+                    tail.split("/", 1)[1].isdigit()
+                    or tail.split("/", 1)[1] == "__compose__"
+                )
+            )
+        ]
 
         total_count = len(keys)
         window = keys[_offset : _offset + _limit]
@@ -911,6 +922,7 @@ class GCSClient(GCSClientPort):
         *,
         upload_id: str,
         parts: Sequence[ObjectStoragePartInfo],
+        content_type: str | None = None,
         sse: ObjectStorageSSE | None = None,
     ) -> None:
         """Compose the temp parts in order into *key*, then delete the temps.
@@ -919,6 +931,12 @@ class GCSClient(GCSClientPort):
         so larger part sets are assembled by chaining: compose the running
         result with the next batch, repeatedly, until all parts are folded in.
         The temp part objects (and any intermediate temp) are cleaned up after.
+
+        *content_type* (bound by the caller at ``begin_upload``) is applied to
+        the **final** destination object only: temp parts are uploaded via bare
+        presigned ``PUT`` URLs that carry no type, so without this the composed
+        object would inherit ``application/octet-stream`` from the first part.
+        Intermediate accumulators keep the default type (they are deleted).
 
         When *sse* carries a CMEK ``key_id`` it is passed as the ``kmsKeyName``
         compose parameter so the **final** destination object is encrypted at
@@ -954,13 +972,19 @@ class GCSClient(GCSClientPort):
                 part_keys[0],
                 bucket,
                 new_name=key,
+                metadata={"contentType": content_type} if content_type else None,
                 params=_gcs_cmek_rewrite_params(sse) or None,
                 timeout=timeout,
             )
 
         elif len(part_keys) <= COMPOSE_MAX_SOURCES:
             await storage.compose(
-                bucket, key, part_keys, params=cmek_params, timeout=timeout
+                bucket,
+                key,
+                part_keys,
+                content_type=content_type,
+                params=cmek_params,
+                timeout=timeout,
             )
 
         else:
@@ -976,6 +1000,8 @@ class GCSClient(GCSClientPort):
                 bucket,
                 acc_key,
                 part_keys[:COMPOSE_MAX_SOURCES],
+                # Intermediate accumulator: default type, deleted after assembly.
+                content_type=None,
                 params=cmek_params,
                 timeout=timeout,
             )
@@ -987,13 +1013,18 @@ class GCSClient(GCSClientPort):
                 # at most (cap - 1) further parts.
                 batch = rest[: COMPOSE_MAX_SOURCES - 1]
                 rest = rest[COMPOSE_MAX_SOURCES - 1 :]
+
                 # The final fold writes straight to the destination key; earlier
                 # folds round-trip through the accumulator.
-                dest = key if not rest else acc_key
+                dest = acc_key if rest else key
+
                 await storage.compose(
                     bucket,
                     dest,
                     [acc_key, *batch],
+                    # Only the final destination object gets the caller's type;
+                    # intermediate accumulators keep the default and are deleted.
+                    content_type=content_type if dest == key else None,
                     params=cmek_params,
                     timeout=timeout,
                 )
@@ -1070,10 +1101,7 @@ def _gcs_cmek_params(sse: ObjectStorageSSE | None) -> dict[str, str]:
     CMEK key is requested.
     """
 
-    if sse is None or not sse.key_id:
-        return {}
-
-    return {"kmsKeyName": sse.key_id}
+    return {} if sse is None or not sse.key_id else {"kmsKeyName": sse.key_id}
 
 
 # ....................... #

@@ -151,6 +151,49 @@ async def test_complete_chains_composes_past_cap(n_parts: int) -> None:
 
 
 @pytest.mark.asyncio
+async def test_complete_binds_content_type_on_destination() -> None:
+    # The caller's content type (bound at begin_upload) must reach the final
+    # destination object, not the octet-stream the bare part PUTs carry.
+    fake = _fake_storage()
+    client = _client(fake)
+
+    # Multi-part: compose to the destination key gets the content type.
+    parts = [ObjectStoragePartInfo(part_number=n) for n in (1, 2)]
+    await client.complete_multipart_upload(
+        "b", "k", upload_id="SID", parts=parts, content_type="video/mp4"
+    )
+    assert fake.compose.await_args.kwargs["content_type"] == "video/mp4"
+
+    # Single-part: the copy/rewrite carries the type via the metadata body.
+    fake.copy.reset_mock()
+    await client.complete_multipart_upload(
+        "b",
+        "k2",
+        upload_id="SID2",
+        parts=[ObjectStoragePartInfo(part_number=1)],
+        content_type="image/png",
+    )
+    assert fake.copy.await_args.kwargs["metadata"] == {"contentType": "image/png"}
+
+
+@pytest.mark.asyncio
+async def test_complete_chain_binds_content_type_only_on_final_dest() -> None:
+    fake = _fake_storage()
+    client = _client(fake)
+
+    parts = [ObjectStoragePartInfo(part_number=i) for i in range(1, 65)]
+    await client.complete_multipart_upload(
+        "b", "k", upload_id="SID", parts=parts, content_type="application/pdf"
+    )
+
+    # Only the compose whose destination is the real key carries the type;
+    # intermediate accumulators keep the default (they are temp + deleted).
+    for call in fake.compose.await_args_list:
+        expected = "application/pdf" if call.args[1] == "k" else None
+        assert call.kwargs["content_type"] == expected
+
+
+@pytest.mark.asyncio
 async def test_complete_requires_parts() -> None:
     from forze.base.exceptions import CoreException
 
