@@ -36,6 +36,7 @@ from ._attach import (
     attach_operation_routes,
     body_endpoint,
     require_input_type,
+    resolve_namespace,
     validate_payload,
 )
 
@@ -531,11 +532,13 @@ def attach_storage_routes(
     router: APIRouter,
     *,
     registry: FrozenOperationRegistry,
-    ns: StrKeyNamespace,
+    ns: StrKeyNamespace | None = None,
     ctx_dep: ExecutionContextFactory,
     style: RouteStyle,
     include: AbstractSet[StorageKernelOp | str] | None = None,
     max_upload_size: int | None = DEFAULT_MAX_UPLOAD_SIZE,
+    resource: str | None = None,
+    path_overrides: Mapping[StorageKernelOp | str, str] | None = None,
 ) -> APIRouter:
     """Attach the registered storage operations under *ns* to *router*.
 
@@ -583,7 +586,8 @@ def attach_storage_routes(
     :param router: A plain FastAPI router the caller owns.
     :param registry: Frozen registry holding the storage operations.
     :param ns: Namespace the operations were registered under
-        (e.g. ``spec.default_namespace``).
+        (e.g. ``spec.default_namespace``). Mutually exclusive with *resource*;
+        provide exactly one.
     :param ctx_dep: Factory yielding the current execution context per request.
     :param style: ``"rest"`` for resource paths (``POST ""`` 201, ``POST /list``,
         ``GET /{key}``, ``DELETE /{key}``) or ``"rpc"`` for operation-named paths
@@ -597,14 +601,22 @@ def attach_storage_routes(
         :data:`DEFAULT_MAX_UPLOAD_SIZE` (64 MiB); requests over the cap answer
         a 422 validation error with code ``upload_too_large`` before the
         operation runs. ``None`` disables the cap (pre-cap unbounded behavior).
+    :param resource: Convenience alternative to *ns* — a prefix string the
+        namespace is built from; must equal the prefix the operations were
+        registered under. Mutually exclusive with *ns*; provide exactly one.
+    :param path_overrides: Optional per-operation route-path replacements (keyed
+        like *include*); only the path changes, the ``operation_id`` stays
+        verbatim. An override must keep the default path's ``{key:path}``
+        placeholder where present.
     :returns: *router*, for chaining.
     """
 
     return attach_operation_routes(
         router,
         registry=registry,
-        ns=ns,
+        ns=resolve_namespace(ns, resource),
         ctx_dep=ctx_dep,
         bindings=_bindings(style, max_upload_size),
         include=include,
+        path_overrides=path_overrides,
     )

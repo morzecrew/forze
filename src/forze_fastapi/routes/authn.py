@@ -66,6 +66,7 @@ from ._attach import (
     attach_operation_routes,
     body_endpoint,
     id_endpoint,
+    resolve_namespace,
 )
 
 # ----------------------- #
@@ -152,9 +153,11 @@ def attach_authn_routes(
     router: APIRouter,
     *,
     registry: FrozenOperationRegistry,
-    ns: StrKeyNamespace,
+    ns: StrKeyNamespace | None = None,
     ctx_dep: ExecutionContextFactory,
     include: AbstractSet[AuthnKernelOp | str] | None = None,
+    resource: str | None = None,
+    path_overrides: Mapping[AuthnKernelOp | str, str] | None = None,
 ) -> APIRouter:
     """Attach the registered authn operations under *ns* to *router*.
 
@@ -197,18 +200,27 @@ def attach_authn_routes(
     :param router: A plain FastAPI router the caller owns.
     :param registry: Frozen registry holding the authn operations.
     :param ns: Namespace the operations were registered under
-        (e.g. ``spec.default_namespace``).
+        (e.g. ``spec.default_namespace``). Mutually exclusive with *resource*;
+        provide exactly one.
     :param ctx_dep: Factory yielding the current execution context per request.
     :param include: Optional narrowing to a subset of kernel operations; including
         an operation the registry lacks is a configuration error.
+    :param resource: Convenience alternative to *ns* — a prefix string the
+        namespace is built from; must equal the prefix the operations were
+        registered under. Mutually exclusive with *ns*; provide exactly one.
+    :param path_overrides: Optional per-operation route-path replacements (keyed
+        like *include*); only the path changes, the ``operation_id`` stays
+        verbatim. An override must keep any ``{id}`` placeholder the default path
+        binds.
     :returns: *router*, for chaining.
     """
 
     return attach_operation_routes(
         router,
         registry=registry,
-        ns=ns,
+        ns=resolve_namespace(ns, resource),
         ctx_dep=ctx_dep,
         bindings=_AUTHN_BINDINGS,
         include=include,
+        path_overrides=path_overrides,
     )

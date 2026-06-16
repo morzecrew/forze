@@ -25,7 +25,12 @@ from forze.application.execution.operations import FrozenOperationRegistry
 from forze.base.primitives import StrKeyNamespace
 from forze_kits.aggregates.search import SearchKernelOp
 
-from ._attach import RouteBinding, attach_operation_routes, body_endpoint
+from ._attach import (
+    RouteBinding,
+    attach_operation_routes,
+    body_endpoint,
+    resolve_namespace,
+)
 
 # ----------------------- #
 
@@ -43,9 +48,11 @@ def attach_search_routes(
     router: APIRouter,
     *,
     registry: FrozenOperationRegistry,
-    ns: StrKeyNamespace,
+    ns: StrKeyNamespace | None = None,
     ctx_dep: ExecutionContextFactory,
     include: AbstractSet[SearchKernelOp | str] | None = None,
+    resource: str | None = None,
+    path_overrides: Mapping[SearchKernelOp | str, str] | None = None,
 ) -> APIRouter:
     """Attach the registered search operations under *ns* to *router*.
 
@@ -57,18 +64,26 @@ def attach_search_routes(
     :param router: A plain FastAPI router the caller owns.
     :param registry: Frozen registry holding the search operations.
     :param ns: Namespace the operations were registered under
-        (e.g. ``spec.default_namespace``).
+        (e.g. ``spec.default_namespace``). Mutually exclusive with *resource*;
+        provide exactly one.
     :param ctx_dep: Factory yielding the current execution context per request.
     :param include: Optional narrowing to a subset of kernel operations; including
         an operation the registry lacks is a configuration error.
+    :param resource: Convenience alternative to *ns* — a prefix string the
+        namespace is built from; must equal the prefix the operations were
+        registered under. Mutually exclusive with *ns*; provide exactly one.
+    :param path_overrides: Optional per-operation route-path replacements (keyed
+        like *include*); only the path changes, the ``operation_id`` stays
+        verbatim.
     :returns: *router*, for chaining.
     """
 
     return attach_operation_routes(
         router,
         registry=registry,
-        ns=ns,
+        ns=resolve_namespace(ns, resource),
         ctx_dep=ctx_dep,
         bindings=_SEARCH_BINDINGS,
         include=include,
+        path_overrides=path_overrides,
     )

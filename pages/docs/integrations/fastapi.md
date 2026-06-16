@@ -134,6 +134,18 @@ Merging a soft-deletion registry (`build_soft_deletion_registry`) into the
 document registry adds its `delete`/`restore` operations to the same router
 automatically.
 
+Instead of `ns=spec.default_namespace` you can pass `resource="notes"` — the
+attacher builds the namespace for you (`StrKeyNamespace(prefix="notes")`). It
+must equal the prefix the operations were registered under (the kit builders
+default to `spec.default_namespace`); `ns=` and `resource=` are mutually
+exclusive, so provide exactly one. To move a single operation off its default
+path, pass `path_overrides={DocumentKernelOp.GET: "/by-id/{id}"}` (keyed like
+`include=`). Only the path changes — the `operationId` stays the verbatim
+catalog key, so the HTTP/MCP/catalog identity is preserved; an override that
+drops a placeholder the default path binds (e.g. `{id}`) is a configuration
+error rather than a silent demotion to a query parameter. Both knobs are
+available on every `attach_*_routes` helper.
+
 Both styles use the same REST verbs; they differ only in how a resource is
 addressed — REST puts the id in the path, RPC keeps one operation-named path per
 operation (mirroring the catalog one-to-one) and puts the id in a query
