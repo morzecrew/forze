@@ -8,8 +8,8 @@ Forze follows **hexagonal architecture** — ports and adapters. The application
 declares *what* it needs as **ports** (contracts); integration packages provide
 *how* as **adapters**. Neither side knows the other's concrete type.
 
-![The application depends on a port; an integration package provides the adapter behind it](../_diagrams/light/integration-adapter-boundary.svg#only-light){ loading=lazy }
-![The application depends on a port; an integration package provides the adapter behind it](../_diagrams/dark/integration-adapter-boundary.svg#only-dark){ loading=lazy }
+![The application depends on a port; an integration package provides the adapter behind it](../_diagrams/light/integration-adapter-boundary.svg#only-light){ data-src="../_diagrams/light/integration-adapter-boundary.svg" }
+![The application depends on a port; an integration package provides the adapter behind it](../_diagrams/dark/integration-adapter-boundary.svg#only-dark){ data-src="../_diagrams/dark/integration-adapter-boundary.svg" }
 
 ## How a capability gets filled
 

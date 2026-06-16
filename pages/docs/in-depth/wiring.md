@@ -9,8 +9,8 @@ takes a frozen **dependency registry** and a frozen **lifecycle plan**. A real
 service builds both from several integration packages at once. This chapter is
 how you get from `forze[postgres,redis]` to a running runtime.
 
-![Several integration modules register into one dependency container](../_diagrams/light/dependency-plan.svg#only-light){ loading=lazy }
-![Several integration modules register into one dependency container](../_diagrams/dark/dependency-plan.svg#only-dark){ loading=lazy }
+![Several integration modules register into one dependency container](../_diagrams/light/dependency-plan.svg#only-light){ data-src="../_diagrams/light/dependency-plan.svg" }
+![Several integration modules register into one dependency container](../_diagrams/dark/dependency-plan.svg#only-dark){ data-src="../_diagrams/dark/dependency-plan.svg" }
 
 ## Integration modules
 

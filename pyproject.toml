@@ -71,7 +71,15 @@ dev = [
     "deltalake>=0.22.0",
     "pyiceberg[sql-sqlite]>=0.8.0",
 ]
-docs = ["zensical>=0.0.43", "pygments>=2.19.2", "pymdown-extensions>=10.21"]
+docs = [
+    "zensical>=0.0.43",
+    "pygments>=2.19.2",
+    "pymdown-extensions>=10.21",
+    "mike",
+]
+
+[tool.uv.sources]
+mike = { git = "https://github.com/squidfunk/mike" }
 
 # ....................... #
 # Optional dependencies

@@ -44,8 +44,8 @@ Three roles turn business logic into something the runtime can run. Keeping them
 distinct is what lets hooks, transactions, and dependency resolution stay *out*
 of your business code.
 
-![A handler is registered as an operation, then resolved against the context at run time](../_diagrams/light/operation-anatomy.svg#only-light){ loading=lazy }
-![A handler is registered as an operation, then resolved against the context at run time](../_diagrams/dark/operation-anatomy.svg#only-dark){ loading=lazy }
+![A handler is registered as an operation, then resolved against the context at run time](../_diagrams/light/operation-anatomy.svg#only-light){ data-src="../_diagrams/light/operation-anatomy.svg" }
+![A handler is registered as an operation, then resolved against the context at run time](../_diagrams/dark/operation-anatomy.svg#only-dark){ data-src="../_diagrams/dark/operation-anatomy.svg" }
 
 | Role | What it is | When it exists |
 |------|------------|----------------|

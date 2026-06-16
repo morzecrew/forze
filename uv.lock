@@ -1276,6 +1276,7 @@ dev = [
     { name = "vulture" },
 ]
 docs = [
+    { name = "mike" },
     { name = "pygments" },
     { name = "pymdown-extensions" },
     { name = "zensical" },
@@ -1374,6 +1375,7 @@ dev = [
     { name = "vulture", specifier = ">=2.14" },
 ]
 docs = [
+    { name = "mike", git = "https://github.com/squidfunk/mike" },
     { name = "pygments", specifier = ">=2.19.2" },
     { name = "pymdown-extensions", specifier = ">=10.21" },
     { name = "zensical", specifier = ">=0.0.43" },
@@ -2365,6 +2367,17 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/70/2f/48bf5d753d4d6068c75f2ba1b6624c19d60e99142f7d229cccbebbb93d6e/meilisearch_python_sdk-7.2.1.tar.gz", hash = "sha256:f2f820521888a122764c21d50a7c4b70fa2476340488dd3f5e95e588f20bde90", size = 257157, upload-time = "2026-05-28T16:27:33.349Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/4d/a2/6a558502c25a7608c677ab61809de257e691887006c6f3645c11599ae1e6/meilisearch_python_sdk-7.2.1-py3-none-any.whl", hash = "sha256:0ee7ad469950edf2b7a6478326439c8f96c2e3facd286358761fa18b29537a45", size = 79470, upload-time = "2026-05-28T16:27:32.283Z" },
+]
+
+[[package]]
+name = "mike"
+version = "2.2.0+zensical.0.1.0"
+source = { git = "https://github.com/squidfunk/mike#2d4ad799442f4592db8ad53b179bfb33db8c69ac" }
+dependencies = [
+    { name = "jinja2" },
+    { name = "pyparsing" },
+    { name = "verspec" },
+    { name = "zensical" },
 ]
 
 [[package]]
@@ -4327,6 +4340,15 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/c1/37/945b4ca0ac27e3dc4952642d4c900edd030b3da6c9634875af6e13ae80e5/uvloop-0.22.1-cp314-cp314t-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:b91328c72635f6f9e0282e4a57da7470c7350ab1c9f48546c0f2866205349d21", size = 4467065, upload-time = "2025-10-16T22:16:58.206Z" },
     { url = "https://files.pythonhosted.org/packages/97/cc/48d232f33d60e2e2e0b42f4e73455b146b76ebe216487e862700457fbf3c/uvloop-0.22.1-cp314-cp314t-musllinux_1_2_aarch64.whl", hash = "sha256:daf620c2995d193449393d6c62131b3fbd40a63bf7b307a1527856ace637fe88", size = 4328384, upload-time = "2025-10-16T22:16:59.36Z" },
     { url = "https://files.pythonhosted.org/packages/e4/16/c1fd27e9549f3c4baf1dc9c20c456cd2f822dbf8de9f463824b0c0357e06/uvloop-0.22.1-cp314-cp314t-musllinux_1_2_x86_64.whl", hash = "sha256:6cde23eeda1a25c75b2e07d39970f3374105d5eafbaab2a4482be82f272d5a5e", size = 4296730, upload-time = "2025-10-16T22:17:00.744Z" },
+]
+
+[[package]]
+name = "verspec"
+version = "0.1.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/e7/44/8126f9f0c44319b2efc65feaad589cadef4d77ece200ae3c9133d58464d0/verspec-0.1.0.tar.gz", hash = "sha256:c4504ca697b2056cdb4bfa7121461f5a0e81809255b41c03dda4ba823637c01e", size = 27123, upload-time = "2020-11-30T02:24:09.646Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/a4/ce/3b6fee91c85626eaf769d617f1be9d2e15c1cca027bbdeb2e0d751469355/verspec-0.1.0-py3-none-any.whl", hash = "sha256:741877d5633cc9464c45a469ae2a31e801e6dbbaa85b9675d481cda100f11c31", size = 19640, upload-time = "2020-11-30T02:24:08.387Z" },
 ]
 
 [[package]]

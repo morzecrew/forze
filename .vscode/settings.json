@@ -7,7 +7,6 @@
         "*.json.tpl": "jsonc",
         "*.conf": "toml",
         "*.tftpl": "plaintext",
-        "*.md": "python-markdown"
     },
     "files.exclude": {
         "**/__pycache__": true,

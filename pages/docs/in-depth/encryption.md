@@ -19,8 +19,8 @@ plaintext rather than degrading silently.
 
 ## The envelope
 
-![A key backend wraps a data key; the AEAD encrypts the value with it; the wrapped key and ciphertext travel together as a self-describing envelope](../_diagrams/light/crypto-envelope.svg#only-light){ loading=lazy }
-![A key backend wraps a data key; the AEAD encrypts the value with it; the wrapped key and ciphertext travel together as a self-describing envelope](../_diagrams/dark/crypto-envelope.svg#only-dark){ loading=lazy }
+![A key backend wraps a data key; the AEAD encrypts the value with it; the wrapped key and ciphertext travel together as a self-describing envelope](../_diagrams/light/crypto-envelope.svg#only-light){ data-src="../_diagrams/light/crypto-envelope.svg" }
+![A key backend wraps a data key; the AEAD encrypts the value with it; the wrapped key and ciphertext travel together as a self-describing envelope](../_diagrams/dark/crypto-envelope.svg#only-dark){ data-src="../_diagrams/dark/crypto-envelope.svg" }
 
 Each value is sealed into a self-describing `EncryptedEnvelope` — the wrapped
 DEK, the AEAD ciphertext, and the algorithm metadata travel together, so a

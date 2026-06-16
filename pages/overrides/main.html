@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+
+{#-
+  Self-host GLightbox in <head> so its global is defined *before* the theme
+  bundle initializes. The bundle otherwise fetches the library from unpkg.com at
+  runtime (gate: `typeof GLightbox == "undefined" ? <load CDN> : <noop>`), and on
+  the first click — before that async fetch lands, or offline / behind a CDN
+  blocker — the .glightbox anchor falls through to the raw .svg. A synchronous
+  head <script> makes the bundle take the no-op branch and init on first click.
+  Loaded here (not via extra_javascript) because extra_javascript is appended at
+  end of <body>, after the bundle, which is too late to win the gate.
+-#}
+{% block extrahead %}
+  {{ super() }}
+  <script src="{{ '_javascripts/glightbox.min.js' | url }}"></script>
+{% endblock %}
