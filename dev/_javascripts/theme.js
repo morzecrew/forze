@@ -278,14 +278,12 @@
 // ahead of the theme's own handler), HEAD the target, and fall back to that
 // version's home when it's missing. Cross-version is a full load anyway.
 (function () {
-  function versionHome(u) {
-    try {
-      var url = new URL(u, location.href);
-      var m = url.pathname.match(/^(.*?\/(?:dev|latest|stable|\d+(?:\.\d+)+)\/)/);
-      return m ? url.origin + m[1] : url.href;
-    } catch (e) {
-      return u;
-    }
+  // The path after the current version segment, e.g. "get-started/changelog/".
+  function relPath() {
+    var m = location.pathname.match(
+      /^.*?\/(?:dev|latest|stable|\d+(?:\.\d+)+)\/(.*)$/,
+    );
+    return m ? m[1] : "";
   }
 
   document.addEventListener(
@@ -299,10 +297,13 @@
         v.classList.remove("md-version--open");
       });
 
-      var target = link.href;
-      var home = versionHome(target);
-      if (target === home) {
-        location.href = target;
+      // The theme links each entry to the target version's *root*. Rebuild the
+      // same path under that root so we can keep your place when it exists.
+      var home = link.href;
+      var rel = relPath();
+      var samePath = rel ? home.replace(/\/?$/, "/") + rel : home;
+      if (samePath === home) {
+        location.href = home;
         return;
       }
 
@@ -312,23 +313,73 @@
         done = true;
         location.href = url;
       }
-      // Network hiccup: after a moment, just navigate (no worse than today).
+      // Stay on the page only for a confirmed 200; anything else (404, a slow
+      // check, an error) goes to the version home, so we never land on a 404.
       var timer = setTimeout(function () {
-        go(target);
-      }, 2500);
-      // GET (not HEAD — some dev servers reject HEAD), and only fall back to the
-      // version home on a *confirmed* 404; any other response (200, redirect,
-      // server quirk) goes to the requested page so we never redirect spuriously.
-      fetch(target, { method: "GET", cache: "no-store" })
+        go(home);
+      }, 4000);
+      fetch(samePath, { method: "GET", cache: "no-store" })
         .then(function (r) {
           clearTimeout(timer);
-          go(r.status === 404 ? home : target);
+          go(r.status === 200 ? samePath : home);
         })
         .catch(function () {
           clearTimeout(timer);
-          go(target);
+          go(home);
         });
     },
     true,
   );
+})();
+
+// Sidebars: a compact "scroll for more" indicator instead of a scrollbar -------
+// Appended to each scroll container; shown only when there is more content
+// below, hidden at the end. Re-evaluated on scroll, resize, and instant
+// navigation (the TOC changes per page). The scrollbar itself is hidden in CSS.
+(function () {
+  function setup(wrap) {
+    if (wrap.__forzeMore) {
+      requestAnimationFrame(wrap.__forzeMore);
+      return;
+    }
+
+    // A zero-height `position: sticky; bottom: 0` marker placed at the end of the
+    // scroll content; the browser's compositor pins it to the visible bottom edge
+    // (no JS repositioning -> no jump/flicker). JS only toggles visibility.
+    var inner = wrap.querySelector(".md-sidebar__inner") || wrap;
+    var ind = document.createElement("div");
+    ind.className = "forze-scroll-more";
+    ind.setAttribute("aria-hidden", "true");
+    var label = document.createElement("span");
+    label.className = "forze-scroll-more__label";
+    label.textContent = "↓ Scroll for more";
+    ind.appendChild(label);
+    inner.appendChild(ind);
+
+    var raf = 0;
+    function update() {
+      raf = 0;
+      var more = wrap.scrollHeight - wrap.clientHeight - wrap.scrollTop > 8;
+      ind.classList.toggle("is-visible", more);
+    }
+    function schedule() {
+      if (!raf) raf = requestAnimationFrame(update);
+    }
+    wrap.__forzeMore = update;
+    wrap.addEventListener("scroll", schedule, { passive: true });
+    window.addEventListener("resize", schedule);
+    requestAnimationFrame(update);
+  }
+
+  function setupAll() {
+    document.querySelectorAll(".md-sidebar__scrollwrap").forEach(setup);
+  }
+
+  if (window.document$ && typeof window.document$.subscribe === "function") {
+    window.document$.subscribe(setupAll);
+  } else if (document.readyState !== "loading") {
+    setupAll();
+  } else {
+    document.addEventListener("DOMContentLoaded", setupAll);
+  }
 })();
