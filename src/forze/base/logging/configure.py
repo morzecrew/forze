@@ -5,6 +5,7 @@ Some code taken from: https://gist.github.com/nymous/f138c7f06062b7c43c060bf0375
 
 import logging
 import sys
+from enum import StrEnum
 from typing import Any, Callable, Literal, Sequence, TextIO, TypedDict
 
 import orjson
@@ -18,6 +19,7 @@ from .constants import (
     LogLevelToRank,
     RenderMode,
 )
+from .logger import set_configured_min_rank
 from .processors import (
     EventDictSanitizer,
     ExceptionFieldsSanitizer,
@@ -26,7 +28,6 @@ from .processors import (
     RedundantKeysDropper,
     TraceLevelResolver,
 )
-from .logger import set_configured_min_rank
 from .renderers import ForzeConsoleRenderer
 
 # ----------------------- #
@@ -186,13 +187,33 @@ def build_foreign_formatter(
 
 # ....................... #
 
+_LoggerNames = Sequence[str | StrEnum | type[StrEnum]]
+
+
+def _cast_logger_names(x: _LoggerNames) -> list[str]:
+    output: list[str] = []
+
+    for item in x:
+        if isinstance(item, StrEnum):
+            output.append(item.value)
+
+        elif isinstance(item, type) and issubclass(
+            item, StrEnum
+        ):  # pyright: ignore[reportUnnecessaryIsInstance]
+            output.extend(list(map(str, item)))
+
+        else:
+            output.append(str(item))
+
+    return output
+
 
 def configure_logging(
     *,
     level: LogLevel = "info",
     render_mode: Literal["console", "json"] = "console",
     custom_console_renderer: structlog.types.Processor | None = None,
-    logger_names: Sequence[str] | None = None,
+    logger_names: _LoggerNames | None = None,
     stream: TextIO = sys.stdout,
     otel_config: OpenTelemetryConfig | None = None,
     sanitize_logs: bool = True,
@@ -262,7 +283,7 @@ def configure_logging(
         ],
     )
 
-    for name in logger_names or []:
+    for name in _cast_logger_names(logger_names or []):
         logger = logging.getLogger(name)
         logger.handlers.clear()
         logger.setLevel(LogLevelToRank.get(level, 0))
@@ -277,7 +298,7 @@ def configure_logging(
 
 
 def attach_foreign_loggers(
-    names: Sequence[str],
+    names: _LoggerNames,
     *,
     level: LogLevel = "info",
     render_mode: RenderMode = "console",
@@ -299,7 +320,7 @@ def attach_foreign_loggers(
         include_exception_stack=include_exception_stack,
     )
 
-    for name in names:
+    for name in _cast_logger_names(names):
         logger = logging.getLogger(name)
 
         if replace_handlers:
