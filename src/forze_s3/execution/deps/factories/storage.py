@@ -12,12 +12,29 @@ from forze.application.contracts.storage import (
     StorageUploadSessionDepPort,
 )
 from forze.application.execution import ExecutionContext
+from forze.application.integrations.storage.client import ObjectStorageSSE
 
 from ....adapters import S3StorageAdapter
-from ..configs import S3StorageConfig
+from ..configs import S3ServerSideEncryption, S3StorageConfig
 from ..keys import S3ClientDepKey
 
 # ----------------------- #
+
+
+def _build_sse(config: S3ServerSideEncryption) -> ObjectStorageSSE | None:
+    """Translate the route's S3 SSE config to the neutral client descriptor.
+
+    Returns ``None`` when SSE is off (``mode="none"``) so the client sends no
+    SSE params (unchanged behavior).
+    """
+
+    if config.mode == "none":
+        return None
+
+    return ObjectStorageSSE(mode=config.mode, key_id=config.kms_key_id)
+
+
+# ....................... #
 
 
 def _build_adapter(
@@ -33,6 +50,7 @@ def _build_adapter(
         tenant_aware=config.tenant_aware,
         tenant_provider=ctx.inv_ctx.get_tenant,
         cipher=cipher,
+        sse=_build_sse(config.sse),
     )
 
 

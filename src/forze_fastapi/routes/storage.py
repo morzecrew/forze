@@ -351,6 +351,32 @@ _REST_BINDINGS: Mapping[str, RouteBinding] = {
         build=_delete_endpoint,
         status_code=204,
     ),
+    # Presigned & multipart ops are all JSON-body POSTs (the key/session ride
+    # the body, not the path, so they never collide with the ``/{key:path}``
+    # catch-alls and the slash-bearing keys stay safe). The presign/multipart-
+    # begin ops are command ops, so an app can bind ``AuthnRequired``/authz on
+    # them — see :func:`attach_storage_routes`'s authz note.
+    StorageKernelOp.PRESIGN_DOWNLOAD: RouteBinding(
+        method="POST", path="/presign/download", build=body_endpoint
+    ),
+    StorageKernelOp.PRESIGN_UPLOAD: RouteBinding(
+        method="POST", path="/presign/upload", build=body_endpoint
+    ),
+    StorageKernelOp.BEGIN_UPLOAD: RouteBinding(
+        method="POST", path="/uploads", build=body_endpoint, status_code=201
+    ),
+    StorageKernelOp.PRESIGN_PART: RouteBinding(
+        method="POST", path="/uploads/parts/url", build=body_endpoint
+    ),
+    StorageKernelOp.LIST_PARTS: RouteBinding(
+        method="POST", path="/uploads/parts", build=body_endpoint
+    ),
+    StorageKernelOp.COMPLETE_UPLOAD: RouteBinding(
+        method="POST", path="/uploads/complete", build=body_endpoint
+    ),
+    StorageKernelOp.ABORT_UPLOAD: RouteBinding(
+        method="POST", path="/uploads/abort", build=body_endpoint, status_code=204
+    ),
 }
 """Resource-style bindings per storage kernel operation."""
 
@@ -376,6 +402,43 @@ _RPC_BINDINGS: Mapping[str, RouteBinding] = {
         method="DELETE",
         path=f"/{StorageKernelOp.DELETE.value}/{{key:path}}",
         build=_delete_endpoint,
+        status_code=204,
+    ),
+    # JSON-body POSTs named after their operation; the key/session ride the body.
+    StorageKernelOp.PRESIGN_DOWNLOAD: RouteBinding(
+        method="POST",
+        path=f"/{StorageKernelOp.PRESIGN_DOWNLOAD.value}",
+        build=body_endpoint,
+    ),
+    StorageKernelOp.PRESIGN_UPLOAD: RouteBinding(
+        method="POST",
+        path=f"/{StorageKernelOp.PRESIGN_UPLOAD.value}",
+        build=body_endpoint,
+    ),
+    StorageKernelOp.BEGIN_UPLOAD: RouteBinding(
+        method="POST",
+        path=f"/{StorageKernelOp.BEGIN_UPLOAD.value}",
+        build=body_endpoint,
+    ),
+    StorageKernelOp.PRESIGN_PART: RouteBinding(
+        method="POST",
+        path=f"/{StorageKernelOp.PRESIGN_PART.value}",
+        build=body_endpoint,
+    ),
+    StorageKernelOp.LIST_PARTS: RouteBinding(
+        method="POST",
+        path=f"/{StorageKernelOp.LIST_PARTS.value}",
+        build=body_endpoint,
+    ),
+    StorageKernelOp.COMPLETE_UPLOAD: RouteBinding(
+        method="POST",
+        path=f"/{StorageKernelOp.COMPLETE_UPLOAD.value}",
+        build=body_endpoint,
+    ),
+    StorageKernelOp.ABORT_UPLOAD: RouteBinding(
+        method="POST",
+        path=f"/{StorageKernelOp.ABORT_UPLOAD.value}",
+        build=body_endpoint,
         status_code=204,
     ),
 }
@@ -429,6 +492,38 @@ def attach_storage_routes(
     ``operation_id`` is the operation key verbatim (e.g. ``files.upload``).
     With ``style="rest"``, ``upload`` targets the router's prefix root — give
     the router (or ``include_router``) a prefix.
+
+    **Direct & resumable uploads.** When the registry holds the presigned-URL /
+    multipart ops, this also attaches their JSON-body POST routes
+    (``style="rest"`` paths shown; ``rpc`` uses operation-named paths):
+
+    - ``POST /presign/download`` → a presigned GET URL (read grant).
+    - ``POST /presign/upload`` → a presigned PUT URL + headers (write grant).
+    - ``POST /uploads`` (201) → a multipart session ``{key, upload_id, ...}``.
+    - ``POST /uploads/parts/url`` → a presigned PUT URL for one part.
+    - ``POST /uploads/parts`` → the parts already uploaded (resume).
+    - ``POST /uploads/complete`` → the assembled object's :class:`ObjectHead`.
+    - ``POST /uploads/abort`` (204).
+
+    The browser/Uppy flow: begin → request part URLs → ``PUT`` parts directly
+    (in parallel, app out of the data path) → complete. The client round-trips
+    the session ``upload_id`` and the part list back to the app.
+
+    **Authz posture.** These endpoints SHOULD sit behind authn/authz: minting an
+    upload URL (or beginning a multipart session) **grants write to a key**, so
+    treat them like the ``deactivate`` route — ship them guarded. Because
+    ``presign_upload`` and every multipart-session op are *command* ops, an app
+    can bind ``AuthnRequired`` + authz hooks on them in its registry (and they
+    surface as protected under ``apply_openapi_security``). The minted URL is a
+    **bearer credential**: it appears in the response body the client needs but
+    is never logged (the access-log middleware logs only request
+    path/status/duration, never the response body) — prefer short
+    ``expires_in`` windows.
+
+    A presign/multipart op on a **client-side-encrypting** route raises (the
+    adapter refuses — the app never sees the bytes, so it cannot encrypt them);
+    that error propagates cleanly through ``run_operation`` to an error status.
+    Server-side (SSE/CMEK) encryption is transparent and does **not** refuse.
 
     :param router: A plain FastAPI router the caller owns.
     :param registry: Frozen registry holding the storage operations.

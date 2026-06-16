@@ -56,10 +56,20 @@ class _FakeClient:
         pass
 
     async def create_multipart_upload(
-        self, *, bucket: str, key: str, content_type: str | None = None
+        self,
+        *,
+        bucket: str,
+        key: str,
+        content_type: str | None = None,
+        sse: Any = None,
     ) -> str:
         self.create_calls.append(
-            {"bucket": bucket, "key": key, "content_type": content_type}
+            {
+                "bucket": bucket,
+                "key": key,
+                "content_type": content_type,
+                "sse": sse,
+            }
         )
         return self.upload_id
 
@@ -92,18 +102,28 @@ class _FakeClient:
         return self.list_result
 
     async def complete_multipart_upload(
-        self, *, bucket: str, key: str, upload_id: str, parts: Any
+        self,
+        *,
+        bucket: str,
+        key: str,
+        upload_id: str,
+        parts: Any,
+        sse: Any = None,
     ) -> None:
         self.complete_calls.append(
-            {"bucket": bucket, "key": key, "upload_id": upload_id, "parts": list(parts)}
+            {
+                "bucket": bucket,
+                "key": key,
+                "upload_id": upload_id,
+                "parts": list(parts),
+                "sse": sse,
+            }
         )
 
     async def abort_multipart_upload(
         self, *, bucket: str, key: str, upload_id: str
     ) -> None:
-        self.abort_calls.append(
-            {"bucket": bucket, "key": key, "upload_id": upload_id}
-        )
+        self.abort_calls.append({"bucket": bucket, "key": key, "upload_id": upload_id})
 
     async def head_object(
         self, *, bucket: str, key: str, include_tags: bool = False

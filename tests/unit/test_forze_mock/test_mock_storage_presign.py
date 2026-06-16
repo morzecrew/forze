@@ -39,7 +39,10 @@ async def test_presign_download_is_deterministic_under_frozen_time(
 
     expected_expiry = INSTANT + timedelta(hours=1)
     assert first.url == second.url
-    assert first.url == f"mock://files/docs/k1?op=get&expires={expected_expiry.isoformat()}"
+    assert (
+        first.url
+        == f"mock://files/docs/k1?op=get&expires={expected_expiry.isoformat()}"
+    )
     assert first.method == "GET"
     assert first.expires_at == expected_expiry
     assert dict(first.headers) == {}
@@ -57,7 +60,9 @@ async def test_presign_upload_url_shape_and_headers(
         )
 
     expected_expiry = INSTANT + timedelta(minutes=30)
-    assert vo.url == f"mock://files/docs/k1?op=put&expires={expected_expiry.isoformat()}"
+    assert (
+        vo.url == f"mock://files/docs/k1?op=put&expires={expected_expiry.isoformat()}"
+    )
     assert vo.method == "PUT"
     assert dict(vo.headers) == {"Content-Type": "text/plain"}
 
@@ -89,6 +94,7 @@ async def test_presigns_are_recorded_on_the_state(
             "method": "PUT",
             "expires_at": INSTANT + timedelta(minutes=10),
             "content_type": "image/png",
+            "sse": None,
         },
     ]
 

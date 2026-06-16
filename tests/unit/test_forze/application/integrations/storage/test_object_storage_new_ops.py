@@ -135,7 +135,12 @@ async def test_copy_validates_both_keys_and_calls_client(
     assert isinstance(head, ObjectHead)
     assert head.etag == "e"
     kwargs = adapter.client.copy_object.await_args.kwargs
-    assert kwargs == {"bucket": "test-bucket", "src_key": "src/a", "dst_key": "dst/b"}
+    assert kwargs == {
+        "bucket": "test-bucket",
+        "src_key": "src/a",
+        "dst_key": "dst/b",
+        "sse": None,
+    }
 
 
 @pytest.mark.asyncio
@@ -309,7 +314,11 @@ async def test_put_object_tags_validates_and_calls_client(
     await adapter.put_object_tags("docs/k1", {"env": "prod"})
 
     kwargs = adapter.client.put_object_tags.await_args.kwargs
-    assert kwargs == {"bucket": "test-bucket", "key": "docs/k1", "tags": {"env": "prod"}}
+    assert kwargs == {
+        "bucket": "test-bucket",
+        "key": "docs/k1",
+        "tags": {"env": "prod"},
+    }
 
 
 @pytest.mark.asyncio

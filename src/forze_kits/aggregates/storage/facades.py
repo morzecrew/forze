@@ -6,9 +6,16 @@ from forze.application.execution.operations.facade import (
     namespaced_facade,
 )
 from .handlers import (
+    AbortUpload,
+    BeginUpload,
+    CompleteUpload,
     DeleteObject,
     DownloadObject,
     ListObjects,
+    ListParts,
+    PresignDownload,
+    PresignPart,
+    PresignUpload,
     UploadObject,
 )
 
@@ -45,3 +52,45 @@ class StorageFacade(OperationFacade):
         uc=DeleteObject,
     )
     """Delete object usecase."""
+
+    presign_download = facade_op(
+        StorageKernelOp.PRESIGN_DOWNLOAD,
+        uc=PresignDownload,
+    )
+    """Mint a presigned download URL usecase."""
+
+    presign_upload = facade_op(
+        StorageKernelOp.PRESIGN_UPLOAD,
+        uc=PresignUpload,
+    )
+    """Mint a presigned upload URL usecase."""
+
+    begin_upload = facade_op(
+        StorageKernelOp.BEGIN_UPLOAD,
+        uc=BeginUpload,
+    )
+    """Open a multipart upload session usecase."""
+
+    presign_part = facade_op(
+        StorageKernelOp.PRESIGN_PART,
+        uc=PresignPart,
+    )
+    """Mint a presigned multipart-part URL usecase."""
+
+    list_parts = facade_op(
+        StorageKernelOp.LIST_PARTS,
+        uc=ListParts,
+    )
+    """List multipart session parts usecase."""
+
+    complete_upload = facade_op(
+        StorageKernelOp.COMPLETE_UPLOAD,
+        uc=CompleteUpload,
+    )
+    """Complete a multipart upload usecase."""
+
+    abort_upload = facade_op(
+        StorageKernelOp.ABORT_UPLOAD,
+        uc=AbortUpload,
+    )
+    """Abort a multipart upload session usecase."""

@@ -13,12 +13,18 @@ import starlette.datastructures
 from fastapi import APIRouter, FastAPI
 from fastapi.testclient import TestClient
 
-from forze.application.contracts.storage import StorageSpec
-from forze.base.exceptions import CoreException
+from forze.application.contracts.storage import (
+    StorageCommandDepKey,
+    StorageSpec,
+    StorageUploadSessionDepKey,
+)
+from forze.application.execution.operations import OperationRegistry
+from forze.base.exceptions import CoreException, exc
 from forze_fastapi.exceptions import ERROR_CODE_HEADER, register_exception_handlers
 from forze_fastapi.routes import DEFAULT_MAX_UPLOAD_SIZE, attach_storage_routes
 from forze_kits.aggregates.storage import StorageKernelOp, build_storage_registry
 from forze_mock import MockDepsModule, MockState
+from forze_mock.adapters import MockStorageAdapter
 from tests.support.execution_context import context_from_modules
 
 # ----------------------- #
@@ -26,24 +32,56 @@ from tests.support.execution_context import context_from_modules
 _UNSET: Any = object()
 
 
+def _partial_registry(spec: StorageSpec, ops):
+    """A registry holding only *ops* (to exercise capability-aware skip).
+
+    Built from the full kit registry, narrowed to the requested operation keys —
+    so the bindings for the omitted ops have no registered operation and are
+    skipped (not errored) by the capability-aware attacher.
+    """
+
+    full = build_storage_registry(spec)
+    ns = spec.default_namespace
+    wanted = {ns.key(op) for op in ops}
+
+    handlers = {key: fac for key, fac in full._handlers.items() if key in wanted}
+    descriptors = {
+        key: desc for key, desc in full.get_descriptors().items() if key in wanted
+    }
+
+    return OperationRegistry(handlers=handlers, descriptors=descriptors)
+
+
 def _build_app(
     style="rest",
     *,
     state: MockState | None = None,
     include=None,
+    registry_ops=None,
     max_upload_size: int | None = _UNSET,
+    ctx_dep=None,
 ) -> FastAPI:
     spec = StorageSpec(name="files")
     state = state or MockState()
 
     kwargs = {} if max_upload_size is _UNSET else {"max_upload_size": max_upload_size}
 
+    if registry_ops is None:
+        registry = build_storage_registry(spec).freeze()
+    else:
+        registry = _partial_registry(spec, registry_ops).freeze()
+
+    if ctx_dep is None:
+
+        def ctx_dep():
+            return context_from_modules(MockDepsModule(state=state))
+
     router = APIRouter(prefix="/files")
     attach_storage_routes(
         router,
-        registry=build_storage_registry(spec).freeze(),
+        registry=registry,
         ns=spec.default_namespace,
-        ctx_dep=lambda: context_from_modules(MockDepsModule(state=state)),
+        ctx_dep=ctx_dep,
         style=style,
         include=include,
         **kwargs,
@@ -154,10 +192,19 @@ class TestStorageRoutes:
             "/files/list",
             "/files/download/{key}",
             "/files/delete/{key}",
+            "/files/presign_download",
+            "/files/presign_upload",
+            "/files/begin_upload",
+            "/files/presign_part",
+            "/files/list_parts",
+            "/files/complete_upload",
+            "/files/abort_upload",
         }
         assert set(paths["/files/upload"]) == {"post"}
         assert set(paths["/files/download/{key}"]) == {"get"}
         assert set(paths["/files/delete/{key}"]) == {"delete"}
+        assert set(paths["/files/begin_upload"]) == {"post"}
+        assert set(paths["/files/presign_upload"]) == {"post"}
 
     @pytest.mark.parametrize("style", ["rest", "rpc"])
     def test_operation_ids_are_registry_keys_verbatim(self, style: str) -> None:
@@ -173,6 +220,34 @@ class TestStorageRoutes:
     def test_include_of_unknown_operation_raises(self) -> None:
         with pytest.raises(CoreException, match="Unknown operations"):
             _build_app("rest", include={"nope"})
+
+    @pytest.mark.parametrize("style", ["rest", "rpc"])
+    def test_all_new_ops_attach_with_verbatim_operation_ids(self, style: str) -> None:
+        expected = {f"files.{op.value}" for op in StorageKernelOp}
+
+        assert _operation_ids(_build_app(style)) == expected
+
+    def test_rest_presign_and_multipart_paths(self) -> None:
+        paths = _build_app("rest").openapi()["paths"]
+
+        for path, verb in {
+            "/files/presign/download": "post",
+            "/files/presign/upload": "post",
+            "/files/uploads": "post",
+            "/files/uploads/parts/url": "post",
+            "/files/uploads/parts": "post",
+            "/files/uploads/complete": "post",
+            "/files/uploads/abort": "post",
+        }.items():
+            assert path in paths, path
+            assert verb in paths[path], (path, verb)
+
+    def test_capability_aware_skip_partial_registry(self) -> None:
+        # A registry holding only LIST: only its route attaches; the presign /
+        # multipart routes are skipped (not registered), not errored.
+        app = _build_app("rest", include=None, registry_ops={StorageKernelOp.LIST})
+
+        assert _operation_ids(app) == {"files.list"}
 
 
 # ....................... #
@@ -204,9 +279,7 @@ class TestStorageDownloadRangeAndConditional:
         client = TestClient(_build_app("rest"))
         stored = self._upload(client)
 
-        resp = client.get(
-            f"/files/{stored['key']}", headers={"Range": "bytes=2-5"}
-        )
+        resp = client.get(f"/files/{stored['key']}", headers={"Range": "bytes=2-5"})
 
         assert resp.status_code == 206
         assert resp.content == b"2345"
@@ -216,9 +289,7 @@ class TestStorageDownloadRangeAndConditional:
         client = TestClient(_build_app("rest"))
         stored = self._upload(client)
 
-        resp = client.get(
-            f"/files/{stored['key']}", headers={"Range": "bytes=7-"}
-        )
+        resp = client.get(f"/files/{stored['key']}", headers={"Range": "bytes=7-"})
 
         assert resp.status_code == 206
         assert resp.content == b"789"
@@ -228,9 +299,7 @@ class TestStorageDownloadRangeAndConditional:
         client = TestClient(_build_app("rest"))
         stored = self._upload(client)
 
-        resp = client.get(
-            f"/files/{stored['key']}", headers={"Range": "bytes=-3"}
-        )
+        resp = client.get(f"/files/{stored['key']}", headers={"Range": "bytes=-3"})
 
         assert resp.status_code == 206
         assert resp.content == b"789"
@@ -240,9 +309,7 @@ class TestStorageDownloadRangeAndConditional:
         client = TestClient(_build_app("rest"))
         stored = self._upload(client)
 
-        resp = client.get(
-            f"/files/{stored['key']}", headers={"Range": "bytes=99-"}
-        )
+        resp = client.get(f"/files/{stored['key']}", headers={"Range": "bytes=99-"})
 
         assert resp.status_code == 416
         assert resp.headers["content-range"] == "bytes */10"
@@ -254,9 +321,7 @@ class TestStorageDownloadRangeAndConditional:
         full = client.get(f"/files/{stored['key']}")
         etag = full.headers["etag"]
 
-        resp = client.get(
-            f"/files/{stored['key']}", headers={"If-None-Match": etag}
-        )
+        resp = client.get(f"/files/{stored['key']}", headers={"If-None-Match": etag})
 
         assert resp.status_code == 304
         assert resp.content == b""
@@ -351,10 +416,14 @@ class TestStorageUploadCap:
 
         boundary = "capboundary"
         body = (
-            f"--{boundary}\r\n"
-            'Content-Disposition: form-data; name="file"; filename="big.bin"\r\n'
-            "Content-Type: application/octet-stream\r\n\r\n"
-        ).encode() + b"x" * 1000 + f"\r\n--{boundary}--\r\n".encode()
+            (
+                f"--{boundary}\r\n"
+                'Content-Disposition: form-data; name="file"; filename="big.bin"\r\n'
+                "Content-Type: application/octet-stream\r\n\r\n"
+            ).encode()
+            + b"x" * 1000
+            + f"\r\n--{boundary}--\r\n".encode()
+        )
 
         rejected = client.post(
             "/files",
@@ -364,3 +433,236 @@ class TestStorageUploadCap:
 
         assert rejected.status_code == 422
         assert rejected.headers[ERROR_CODE_HEADER] == "upload_too_large"
+
+
+# ....................... #
+
+
+class TestStoragePresignRoutes:
+    """Presigned-URL endpoints: the url rides the response body, never the log."""
+
+    def test_presign_download_returns_get_url_in_body(self) -> None:
+        client = TestClient(_build_app("rest"))
+
+        resp = client.post(
+            "/files/presign/download",
+            json={"key": "docs/report.pdf", "expires_in": 300},
+        )
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["method"] == "GET"
+        assert body["url"]  # the credential the client needs is in the body
+        assert "docs/report.pdf" in body["url"]
+
+    def test_presign_upload_returns_put_url_and_headers(self) -> None:
+        client = TestClient(_build_app("rest"))
+
+        resp = client.post(
+            "/files/presign/upload",
+            json={
+                "key": "docs/new.pdf",
+                "expires_in": 300,
+                "content_type": "application/pdf",
+            },
+        )
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["method"] == "PUT"
+        assert body["url"]
+        assert body["headers"]["Content-Type"] == "application/pdf"
+
+    def test_presigned_url_is_not_written_to_the_access_log(self) -> None:
+        import io
+        import json
+
+        from forze.base.logging import configure_logging
+        from forze_fastapi._logging import ForzeFastAPILogger
+        from forze_fastapi.middlewares.logging import LoggingMiddleware
+
+        buf = io.StringIO()
+        configure_logging(
+            level="info",
+            logger_names=[str(ForzeFastAPILogger.ACCESS)],
+            stream=buf,
+            render_mode="json",
+        )
+
+        app = _build_app("rest")
+        app.add_middleware(LoggingMiddleware)
+        client = TestClient(app)
+
+        resp = client.post(
+            "/files/presign/download",
+            json={"key": "docs/secret.pdf", "expires_in": 300},
+        )
+
+        url = resp.json()["url"]
+        assert url
+
+        records = [
+            json.loads(line)
+            for line in buf.getvalue().strip().split("\n")
+            if line.strip().startswith("{")
+        ]
+        # The access log logged the request (path/status/duration) but never the
+        # response body — so the presigned URL appears in no log line.
+        assert records, "expected an access-log record"
+        assert all(url not in json.dumps(rec) for rec in records)
+        # Sanity: the request path was logged (so we know logging ran) — the URL
+        # is carried under the ``http`` extra, never the response body.
+        assert any("/files/presign/download" in json.dumps(rec) for rec in records)
+
+
+# ....................... #
+
+
+class TestStorageMultipartRoutes:
+    """The resumable multipart flow driven over HTTP (parts deposited out-of-band)."""
+
+    def test_multipart_flow_over_http(self) -> None:
+        state = MockState()
+        client = TestClient(_build_app("rest", state=state))
+
+        # begin -> session handle (201)
+        begun = client.post(
+            "/files/uploads",
+            json={"key": "big/blob.bin", "content_type": "application/octet-stream"},
+        )
+        assert begun.status_code == 201
+        session = begun.json()
+        assert session["key"] == "big/blob.bin"
+        assert session["upload_id"]
+
+        # request a presigned URL per part
+        for n in (1, 2, 3):
+            part_url = client.post(
+                "/files/uploads/parts/url",
+                json={"session": session, "part_number": n, "expires_in": 300},
+            )
+            assert part_url.status_code == 200
+            assert part_url.json()["method"] == "PUT"
+
+        # the client PUTs the part bytes directly to the presigned URLs; here we
+        # deposit them out-of-band through the mock seam against the shared state.
+        adapter = MockStorageAdapter(state=state, bucket="files")
+        from forze.application.contracts.storage import UploadSession
+
+        sess = UploadSession(
+            key=session["key"],
+            upload_id=session["upload_id"],
+            bucket=session.get("bucket"),
+            content_type=session.get("content_type"),
+        )
+        for n, data in {1: b"aaaa", 2: b"bbbb", 3: b"cccc"}.items():
+            adapter.deposit_part(sess, n, data)
+
+        # list_parts over HTTP (resume primitive)
+        listed = client.post("/files/uploads/parts", json={"session": session})
+        assert listed.status_code == 200
+        parts = listed.json()["parts"]
+        assert [p["part_number"] for p in parts] == [1, 2, 3]
+
+        # complete over HTTP -> 200 ObjectHead
+        completed = client.post(
+            "/files/uploads/complete",
+            json={"session": session, "parts": parts},
+        )
+        assert completed.status_code == 200
+        head = completed.json()
+        assert head["size"] == len(b"aaaabbbbcccc")
+        assert head["etag"]
+
+        # the assembled object is now downloadable through the byte route
+        downloaded = client.get(f"/files/{session['key']}")
+        assert downloaded.status_code == 200
+        assert downloaded.content == b"aaaabbbbcccc"
+
+    def test_abort_returns_204(self) -> None:
+        client = TestClient(_build_app("rest"))
+
+        session = client.post("/files/uploads", json={"key": "big/blob.bin"}).json()
+
+        aborted = client.post("/files/uploads/abort", json={"session": session})
+        assert aborted.status_code == 204
+
+
+# ....................... #
+
+
+class _RefusingStoragePort:
+    """A storage port that refuses presign/multipart like a client-side-encrypting
+    adapter does (the app never sees the bytes, so it cannot encrypt them)."""
+
+    async def presign_upload(self, key, *, expires_in, content_type=None):
+        raise exc.precondition(
+            "Presigned URLs are unavailable when client-side encryption is enabled.",
+        )
+
+    async def begin_upload(self, key, *, content_type=None):
+        raise exc.configuration(
+            "Multipart upload sessions are unavailable when client-side "
+            "encryption is enabled.",
+        )
+
+    # Unused on the refusing paths, present for protocol completeness.
+    async def upload(self, obj):  # pragma: no cover
+        raise NotImplementedError
+
+    async def delete(self, key):  # pragma: no cover
+        raise NotImplementedError
+
+
+def _encrypting_ctx_dep():
+    """A ctx whose command + uploads ports refuse, mirroring the encrypting route."""
+
+    def _refuse(_ctx, _spec):
+        return _RefusingStoragePort()
+
+    base = MockDepsModule(state=MockState())()
+    plain = dict(base.plain_deps)
+    plain[StorageCommandDepKey] = _refuse
+    plain[StorageUploadSessionDepKey] = _refuse
+
+    from forze.application.execution import Deps
+    from tests.support.execution_context import context_from_deps
+
+    deps = Deps.plain(plain)
+
+    def _ctx_dep():
+        return context_from_deps(deps)
+
+    return _ctx_dep
+
+
+class TestStorageEncryptingRouteRefusal:
+    """A presign/multipart op on a client-side-encrypting route surfaces an error."""
+
+    def test_presign_upload_refused_propagates_error_status(self) -> None:
+        client = TestClient(
+            _build_app("rest", ctx_dep=_encrypting_ctx_dep()),
+            raise_server_exceptions=False,
+        )
+
+        resp = client.post(
+            "/files/presign/upload",
+            json={"key": "docs/x.pdf", "expires_in": 300},
+        )
+
+        # exc.precondition maps to 400 — a clean client error, not a crash.
+        assert resp.status_code == 400
+
+    def test_begin_upload_refused_propagates_error_status(self) -> None:
+        client = TestClient(
+            _build_app("rest", ctx_dep=_encrypting_ctx_dep()),
+            raise_server_exceptions=False,
+        )
+
+        resp = client.post("/files/uploads", json={"key": "big/blob.bin"})
+
+        # exc.configuration maps to the default 500 (a server-side misconfig); the
+        # error propagates cleanly through run_operation to a proper status — no
+        # leaked stack, standard JSON body.
+        assert resp.status_code == 500
+        assert resp.json() == {"detail": "Internal server error"}

@@ -40,6 +40,7 @@ from forze.application.integrations.storage.client import (
     ObjectStorageHead,
     ObjectStorageListedObject,
     ObjectStoragePartInfo,
+    ObjectStorageSSE,
     build_range_header,
     normalize_list_window,
     presign_expiry_seconds,
@@ -444,6 +445,7 @@ class S3Client(S3ClientPort):
         content_type: str | None = None,
         metadata: dict[str, str] | None = None,
         tags: dict[str, str] | None = None,
+        sse: ObjectStorageSSE | None = None,
     ) -> None:
         """Upload raw bytes to an S3 object.
 
@@ -453,6 +455,9 @@ class S3Client(S3ClientPort):
         :param content_type: Optional MIME type.
         :param metadata: Optional user-defined metadata.
         :param tags: Optional object tags, encoded as URL query parameters.
+        :param sse: Optional server-side-encryption request. ``"s3"`` sets
+            ``ServerSideEncryption=AES256``; ``"kms"`` sets
+            ``ServerSideEncryption=aws:kms`` with ``SSEKMSKeyId``.
         """
 
         c = self.__require_client()
@@ -467,6 +472,8 @@ class S3Client(S3ClientPort):
 
         if tags:
             extra["Tagging"] = urlencode(tags)
+
+        extra.update(_s3_sse_extra_args(sse))
 
         fileobj = io.BytesIO(data)
 
@@ -613,15 +620,22 @@ class S3Client(S3ClientPort):
         bucket: str,
         src_key: str,
         dst_key: str,
+        *,
+        sse: ObjectStorageSSE | None = None,
     ) -> None:
         """Server-side copy within *bucket* via ``CopyObject``.
 
         Single-copy is capped at **5 GiB** by S3; objects larger than that need
         multipart copy (out of scope) and surface S3's ``InvalidRequest`` error.
 
+        When *sse* requests SSE, ``CopyObject`` **re-encrypts** the destination
+        with the supplied SSE params (the destination object is written
+        encrypted at rest regardless of the source's encryption).
+
         :param bucket: Bucket name (same bucket for source and destination).
         :param src_key: Source object key.
         :param dst_key: Destination object key.
+        :param sse: Optional server-side-encryption request for the destination.
         """
 
         c = self.__require_client()
@@ -630,6 +644,7 @@ class S3Client(S3ClientPort):
             Bucket=bucket,
             Key=dst_key,
             CopySource={"Bucket": bucket, "Key": src_key},
+            **cast(Any, _s3_sse_extra_args(sse)),
         )
 
     # ....................... #
@@ -885,6 +900,7 @@ class S3Client(S3ClientPort):
         *,
         expires_in: timedelta,
         content_type: str | None = None,
+        sse: ObjectStorageSSE | None = None,
     ) -> PresignedUrl:
         """Sign a time-limited ``PUT`` URL for the object (SigV4 query auth).
 
@@ -896,10 +912,20 @@ class S3Client(S3ClientPort):
         instance roles) the effective lifetime is further bounded by the
         session token's expiry, whichever comes first.
 
+        When *sse* requests SSE, the SSE headers are bound **into** the
+        signature (via ``put_object`` ``ServerSideEncryption`` /
+        ``SSEKMSKeyId`` params, which generate_presigned_url renders as the
+        ``x-amz-server-side-encryption`` query/header binding) and echoed in
+        :attr:`PresignedUrl.headers` so the uploader sends them verbatim.
+        SSE-KMS **requires** the client to send those headers; SSE-S3 works off
+        a bucket default but binding the header is portable and correct.
+
         :param bucket: Bucket name.
         :param key: Object key to upload to.
         :param expires_in: URL lifetime (positive, at most 7 days).
         :param content_type: Optional MIME type to bind into the signature.
+        :param sse: Optional server-side-encryption request to bind into the
+            signature and surface in the returned headers.
         :raises CoreException: ``validation`` when *expires_in* is out of range.
         """
 
@@ -912,6 +938,9 @@ class S3Client(S3ClientPort):
         if content_type is not None:
             params["ContentType"] = content_type
             headers["Content-Type"] = content_type
+
+        params.update(_s3_sse_extra_args(sse))
+        headers.update(_s3_sse_request_headers(sse))
 
         expires_at = utcnow() + timedelta(seconds=seconds)
         url = await c.generate_presigned_url(
@@ -937,8 +966,15 @@ class S3Client(S3ClientPort):
         key: str,
         *,
         content_type: str | None = None,
+        sse: ObjectStorageSSE | None = None,
     ) -> str:
         """Open a native S3 multipart upload via ``CreateMultipartUpload``.
+
+        When *sse* requests SSE it is set **here**, on the multipart create;
+        all parts inherit the upload's encryption. The per-part presigned
+        ``UploadPart`` URLs therefore do **not** repeat the SSE headers (see
+        :meth:`presign_multipart_part`), so for SSE the part PresignedUrl's
+        ``headers`` stay empty while encryption is still applied at rest.
 
         :returns: The S3 ``UploadId`` addressing the in-progress upload.
         """
@@ -949,6 +985,8 @@ class S3Client(S3ClientPort):
 
         if content_type is not None:
             kwargs["ContentType"] = content_type
+
+        kwargs.update(_s3_sse_extra_args(sse))
 
         resp = await c.create_multipart_upload(**kwargs)
 
@@ -976,6 +1014,11 @@ class S3Client(S3ClientPort):
         bytes to this URL and reads the ``ETag`` from the response header, which
         the application carries into ``CompleteMultipartUpload``. SigV4 caps
         ``expires_in`` at 7 days.
+
+        SSE is **not** bound here: S3 applies the upload's encryption (set on
+        ``CreateMultipartUpload``) to every part automatically, and
+        ``UploadPart`` rejects per-part SSE headers, so the returned
+        :attr:`PresignedUrl.headers` carries no SSE header even on an SSE route.
         """
 
         c = self.__require_client()
@@ -1043,13 +1086,21 @@ class S3Client(S3ClientPort):
         *,
         upload_id: str,
         parts: Sequence[ObjectStoragePartInfo],
+        sse: ObjectStorageSSE | None = None,
     ) -> None:
         """Assemble the parts via ``CompleteMultipartUpload``.
 
         Requires the ``{PartNumber, ETag}`` list in ascending part order; the
         ETags come from the clients' part ``PUT`` responses (carried back by the
         application). ETags are sent quoted, as S3 expects.
+
+        *sse* is ignored here: an SSE multipart upload binds its encryption on
+        ``CreateMultipartUpload`` (see :meth:`create_multipart_upload`) and the
+        completed object inherits it; ``CompleteMultipartUpload`` takes no SSE
+        params. Accepted for port symmetry (GCS consumes it on ``compose``).
         """
+
+        _ = sse  # S3 inherits SSE from CreateMultipartUpload; none on complete
 
         c = self.__require_client()
 
@@ -1089,6 +1140,63 @@ class S3Client(S3ClientPort):
             Key=key,
             UploadId=upload_id,
         )
+
+
+# ....................... #
+
+
+def _s3_sse_extra_args(sse: ObjectStorageSSE | None) -> dict[str, str]:
+    """Map a neutral SSE descriptor to S3 request params (``ExtraArgs``/kwargs).
+
+    Returns ``{}`` for ``None`` / ``mode == "none"`` (no SSE requested). ``"s3"``
+    yields ``ServerSideEncryption=AES256``; ``"kms"`` yields
+    ``ServerSideEncryption=aws:kms`` plus ``SSEKMSKeyId``. These keys are shared
+    by ``PutObject``/``upload_fileobj``, ``CopyObject``,
+    ``CreateMultipartUpload``, and ``generate_presigned_url`` ``Params``.
+    """
+
+    if sse is None or sse.mode == "none":
+        return {}
+
+    if sse.mode == "s3":
+        return {"ServerSideEncryption": "AES256"}
+
+    # mode == "kms"
+    args: dict[str, str] = {"ServerSideEncryption": "aws:kms"}
+
+    if sse.key_id:
+        args["SSEKMSKeyId"] = sse.key_id
+
+    return args
+
+
+# ....................... #
+
+
+def _s3_sse_request_headers(sse: ObjectStorageSSE | None) -> dict[str, str]:
+    """Map a neutral SSE descriptor to the request headers a presigned ``PUT``
+    must send verbatim.
+
+    Mirrors :func:`_s3_sse_extra_args` as HTTP headers
+    (``x-amz-server-side-encryption`` [+ ``...-aws-kms-key-id``]). Binding these
+    into the signature (via the ``put_object`` SSE ``Params``) requires the
+    uploader to send them; SSE-KMS is rejected without them, SSE-S3 tolerates
+    them (and they make the URL portable across buckets without a default).
+    """
+
+    if sse is None or sse.mode == "none":
+        return {}
+
+    if sse.mode == "s3":
+        return {"x-amz-server-side-encryption": "AES256"}
+
+    # mode == "kms"
+    headers = {"x-amz-server-side-encryption": "aws:kms"}
+
+    if sse.key_id:
+        headers["x-amz-server-side-encryption-aws-kms-key-id"] = sse.key_id
+
+    return headers
 
 
 # ....................... #
@@ -1135,9 +1243,7 @@ def _decode_tag_set(resp: Mapping[str, Any]) -> dict[str, str]:
     tag_set = cast(list[dict[str, str]], resp.get("TagSet") or [])
 
     for entry in tag_set:
-        if not isinstance(
-            entry, MappingABC
-        ):  # pyright: ignore[reportUnnecessaryIsInstance]
+        if not isinstance(entry, MappingABC):  # pyright: ignore[reportUnnecessaryIsInstance]
             continue
 
         tag_key = entry.get("Key")

@@ -60,6 +60,7 @@ class _InMemoryStorageClient:
         content_type: str,
         metadata: dict[str, str],
         tags: dict[str, str] | None = None,
+        sse: object = None,
     ) -> None:
         self.objects[(bucket, key)] = (data, dict(metadata), content_type)
 

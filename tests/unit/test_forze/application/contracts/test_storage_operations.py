@@ -27,8 +27,20 @@ class TestStorageKernelOp:
         assert isinstance(StorageKernelOp.UPLOAD, str)
 
     def test_all_members(self) -> None:
-        members = set(StorageKernelOp)
-        assert len(members) == 4
+        members = {op.value for op in StorageKernelOp}
+        assert members == {
+            "upload",
+            "list",
+            "download",
+            "delete",
+            "presign_download",
+            "presign_upload",
+            "begin_upload",
+            "presign_part",
+            "list_parts",
+            "complete_upload",
+            "abort_upload",
+        }
 
     def test_str_comparison(self) -> None:
         assert _STORAGE_KEYS.key(StorageKernelOp.UPLOAD) == "storage.upload"

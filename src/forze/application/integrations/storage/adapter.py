@@ -38,6 +38,7 @@ from forze.application.contracts.tenancy import TenancyMixin, TenantIdentity
 from forze.application.integrations.storage.client import (
     ObjectStorageClientPort,
     ObjectStoragePartInfo,
+    ObjectStorageSSE,
     validate_range,
 )
 from forze.application.integrations.storage.codec import default_path_codec
@@ -96,6 +97,16 @@ class ObjectStorageAdapter(
     """Optional keyring for client-side (envelope) encryption. When set, object
     bytes are encrypted before upload and decrypted after download; presigned
     URLs are refused (they bypass this adapter)."""
+
+    sse: ObjectStorageSSE | None = None
+    """Optional **server-side** (backend, at-rest) encryption request, threaded
+    per-call to the client on every write/direct-upload path (upload, copy,
+    move, presign-upload, multipart begin/complete). This is the *at-rest* axis:
+    the backend encrypts the stored bytes (S3 SSE-S3/SSE-KMS, GCS per-object
+    CMEK), the app holds no keys, so it is compatible with — and does **not**
+    trigger the refusals of — :attr:`cipher` (client-side envelope). ``None``
+    leaves the bucket's default encryption in effect. Set from per-route config
+    by the integration factory."""
 
     # ....................... #
 
@@ -305,6 +316,7 @@ class ObjectStorageAdapter(
                 content_type=content_type,
                 metadata=safe_meta,
                 tags=tags,
+                sse=self.sse,
             )
 
         return StoredObject(
@@ -580,6 +592,7 @@ class ObjectStorageAdapter(
                 key=key,
                 expires_in=expires_in,
                 content_type=content_type,
+                sse=self.sse,
             )
 
     # ....................... #
@@ -618,6 +631,7 @@ class ObjectStorageAdapter(
                 bucket=bucket,
                 src_key=src_key,
                 dst_key=dst_key,
+                sse=self.sse,
             )
             h = await self.client.head_object(bucket=bucket, key=dst_key)
 
@@ -655,6 +669,7 @@ class ObjectStorageAdapter(
                 bucket=bucket,
                 src_key=src_key,
                 dst_key=dst_key,
+                sse=self.sse,
             )
             h = await self.client.head_object(bucket=bucket, key=dst_key)
             await self.client.delete_object(bucket=bucket, key=src_key)
@@ -803,6 +818,7 @@ class ObjectStorageAdapter(
                 bucket=bucket,
                 key=key,
                 content_type=content_type,
+                sse=self.sse,
             )
 
         return UploadSession(
@@ -913,6 +929,7 @@ class ObjectStorageAdapter(
                 key=session.key,
                 upload_id=session.upload_id,
                 parts=client_parts,
+                sse=self.sse,
             )
 
             h = await self.client.head_object(bucket=bucket, key=session.key)

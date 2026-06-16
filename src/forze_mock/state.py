@@ -94,9 +94,9 @@ class MockState:
     cache_kv: dict[str, dict[str, Any]] = attrs.field(factory=dict)
     cache_pointers: dict[str, dict[str, str]] = attrs.field(factory=dict)
     cache_bodies: dict[str, dict[tuple[str, str], Any]] = attrs.field(factory=dict)
-    idempotency: dict[
-        tuple[str, str, str], tuple[str, str, Any | None]
-    ] = attrs.field(factory=dict)
+    idempotency: dict[tuple[str, str, str], tuple[str, str, Any | None]] = attrs.field(
+        factory=dict
+    )
     inbox: set[tuple[str, str, str]] = attrs.field(factory=set)
     tx_read_only_calls: list[bool] = attrs.field(factory=list)
     """Records the ``read_only`` flag of each mock transaction (test observability)."""
@@ -119,7 +119,18 @@ class MockState:
 
     Each record carries ``bucket``, ``key``, ``method`` (``GET``/``PUT``),
     ``expires_at`` and ``content_type`` so tests can assert issuance without
-    parsing the fake URLs."""
+    parsing the fake URLs. For SSE routes a ``sse`` entry (``{mode, key_id}`` or
+    ``None``) records the server-side-encryption requested on the (multipart)
+    upload PUT."""
+    storage_sse: dict[str, dict[str, dict[str, Any] | None]] = attrs.field(factory=dict)
+    """Server-side-encryption requested per stored object: bucket → key → SSE.
+
+    Records what the mock storage adapter was asked to apply at rest (the
+    ``{mode, key_id}`` descriptor, or ``None`` when no SSE was requested) on
+    every write path — ``upload``, ``copy``/``move``, ``presign_upload``, and
+    multipart ``complete_upload``. No real crypto happens; this is pure test
+    observability so a test can assert "SSE was requested" without a live
+    backend. Non-transactional like ``storage`` itself."""
     queues: dict[str, dict[str, list[Any]]] = attrs.field(factory=dict)
     queue_pending: dict[str, dict[str, dict[str, Any]]] = attrs.field(factory=dict)
     pubsub_logs: dict[str, dict[str, list[Any]]] = attrs.field(factory=dict)

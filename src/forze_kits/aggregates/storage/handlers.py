@@ -3,17 +3,33 @@ import attrs
 from forze.application.contracts.execution import Handler
 from forze.application.contracts.storage import (
     DownloadedObject,
+    ObjectHead,
+    PresignedUrl,
     StorageCommandPort,
     StorageQueryPort,
+    StorageUploadSessionPort,
     StoredObject,
     UploadedObject,
+    UploadPart,
+    UploadSession,
 )
 
 from .dto import (
+    BeginUploadRequestDTO,
+    CompleteUploadRequestDTO,
     ListedObjects,
+    ListedPartsDTO,
     ListObjectsRequestDTO,
+    ObjectHeadDTO,
+    PresignDownloadRequestDTO,
+    PresignedUrlDTO,
+    PresignPartRequestDTO,
+    PresignUploadRequestDTO,
     StoredObjectDTO,
     UploadObjectRequestDTO,
+    UploadPartDTO,
+    UploadSessionDTO,
+    UploadSessionRequestDTO,
 )
 
 # ----------------------- #
@@ -28,6 +44,82 @@ def _stored_object_to_dto(obj: StoredObject) -> StoredObjectDTO:
         content_type=obj.content_type,
         description=obj.description,
         tags=dict(obj.tags) if obj.tags is not None else None,
+    )
+
+
+# ....................... #
+
+
+def _presigned_to_dto(url: PresignedUrl) -> PresignedUrlDTO:
+    # The URL is a bearer credential: it MUST appear in the response body the
+    # client needs, but it is never logged (the access-log middleware logs only
+    # request path/status/duration, never the response body) and never placed
+    # in a descriptor example. See PresignedUrlDTO's warning.
+    return PresignedUrlDTO(
+        url=url.url,
+        method=url.method,
+        expires_at=url.expires_at,
+        headers=dict(url.headers),
+    )
+
+
+# ....................... #
+
+
+def _session_to_dto(session: UploadSession) -> UploadSessionDTO:
+    return UploadSessionDTO(
+        key=session.key,
+        upload_id=session.upload_id,
+        bucket=session.bucket,
+        content_type=session.content_type,
+    )
+
+
+# ....................... #
+
+
+def _session_from_dto(dto: UploadSessionDTO) -> UploadSession:
+    return UploadSession(
+        key=dto.key,
+        upload_id=dto.upload_id,
+        bucket=dto.bucket,
+        content_type=dto.content_type,
+    )
+
+
+# ....................... #
+
+
+def _part_to_dto(part: UploadPart) -> UploadPartDTO:
+    return UploadPartDTO(
+        part_number=part.part_number,
+        etag=part.etag,
+        size=part.size,
+    )
+
+
+# ....................... #
+
+
+def _part_from_dto(dto: UploadPartDTO) -> UploadPart:
+    return UploadPart(
+        part_number=dto.part_number,
+        etag=dto.etag,
+        size=dto.size,
+    )
+
+
+# ....................... #
+
+
+def _head_to_dto(head: ObjectHead) -> ObjectHeadDTO:
+    return ObjectHeadDTO(
+        content_type=head.content_type,
+        size=head.size,
+        etag=head.etag,
+        last_modified=head.last_modified,
+        metadata=dict(head.metadata),
+        tags=dict(head.tags),
     )
 
 
@@ -123,3 +215,152 @@ class UploadObject(Handler[UploadObjectRequestDTO, StoredObjectDTO]):
 
         stored = await self.storage.upload(obj)
         return _stored_object_to_dto(stored)
+
+
+# ....................... #
+
+
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class PresignDownload(Handler[PresignDownloadRequestDTO, PresignedUrlDTO]):
+    """Handler minting a presigned download (GET) URL (read grant)."""
+
+    storage: StorageQueryPort
+    """Storage query port (presign download is a read grant)."""
+
+    # ....................... #
+
+    async def __call__(self, args: PresignDownloadRequestDTO) -> PresignedUrlDTO:
+        """Mint a time-limited GET URL for the requested key."""
+
+        url = await self.storage.presign_download(
+            args.key,
+            expires_in=args.expires_in,
+        )
+        return _presigned_to_dto(url)
+
+
+# ....................... #
+
+
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class PresignUpload(Handler[PresignUploadRequestDTO, PresignedUrlDTO]):
+    """Handler minting a presigned upload (PUT) URL (write grant → command)."""
+
+    storage: StorageCommandPort
+    """Storage command port (minting an upload URL is a write grant)."""
+
+    # ....................... #
+
+    async def __call__(self, args: PresignUploadRequestDTO) -> PresignedUrlDTO:
+        """Mint a time-limited PUT URL for the requested key."""
+
+        url = await self.storage.presign_upload(
+            args.key,
+            expires_in=args.expires_in,
+            content_type=args.content_type,
+        )
+        return _presigned_to_dto(url)
+
+
+# ....................... #
+
+
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class BeginUpload(Handler[BeginUploadRequestDTO, UploadSessionDTO]):
+    """Handler opening a resumable multipart upload session (write → command)."""
+
+    storage: StorageUploadSessionPort
+    """Storage upload-session port (all multipart ops are writes)."""
+
+    # ....................... #
+
+    async def __call__(self, args: BeginUploadRequestDTO) -> UploadSessionDTO:
+        """Open a session and return the round-trippable handle."""
+
+        session = await self.storage.begin_upload(
+            args.key,
+            content_type=args.content_type,
+        )
+        return _session_to_dto(session)
+
+
+# ....................... #
+
+
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class PresignPart(Handler[PresignPartRequestDTO, PresignedUrlDTO]):
+    """Handler minting a presigned URL for one multipart part (write → command)."""
+
+    storage: StorageUploadSessionPort
+    """Storage upload-session port (all multipart ops are writes)."""
+
+    # ....................... #
+
+    async def __call__(self, args: PresignPartRequestDTO) -> PresignedUrlDTO:
+        """Mint a time-limited PUT URL for the requested part."""
+
+        url = await self.storage.presign_part(
+            _session_from_dto(args.session),
+            args.part_number,
+            expires_in=args.expires_in,
+        )
+        return _presigned_to_dto(url)
+
+
+# ....................... #
+
+
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class ListParts(Handler[UploadSessionRequestDTO, ListedPartsDTO]):
+    """Handler listing the parts already uploaded for a session (resume primitive)."""
+
+    storage: StorageUploadSessionPort
+    """Storage upload-session port (acquired write-guarded with the session ops)."""
+
+    # ....................... #
+
+    async def __call__(self, args: UploadSessionRequestDTO) -> ListedPartsDTO:
+        """List the already-uploaded parts of the reconstructed session."""
+
+        parts = await self.storage.list_parts(_session_from_dto(args.session))
+        return ListedPartsDTO(parts=[_part_to_dto(p) for p in parts])
+
+
+# ....................... #
+
+
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class CompleteUpload(Handler[CompleteUploadRequestDTO, ObjectHeadDTO]):
+    """Handler assembling the uploaded parts into the final object (write → command)."""
+
+    storage: StorageUploadSessionPort
+    """Storage upload-session port (all multipart ops are writes)."""
+
+    # ....................... #
+
+    async def __call__(self, args: CompleteUploadRequestDTO) -> ObjectHeadDTO:
+        """Complete the reconstructed session and return the object's head."""
+
+        head = await self.storage.complete_upload(
+            _session_from_dto(args.session),
+            [_part_from_dto(p) for p in args.parts],
+        )
+        return _head_to_dto(head)
+
+
+# ....................... #
+
+
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class AbortUpload(Handler[UploadSessionRequestDTO, None]):
+    """Handler discarding an unfinished multipart upload session (write → command)."""
+
+    storage: StorageUploadSessionPort
+    """Storage upload-session port (all multipart ops are writes)."""
+
+    # ....................... #
+
+    async def __call__(self, args: UploadSessionRequestDTO) -> None:
+        """Abort the reconstructed session (best-effort idempotent)."""
+
+        await self.storage.abort_upload(_session_from_dto(args.session))

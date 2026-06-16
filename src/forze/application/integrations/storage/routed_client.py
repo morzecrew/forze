@@ -15,6 +15,7 @@ from .client import (
     ObjectStorageHead,
     ObjectStorageListedObject,
     ObjectStoragePartInfo,
+    ObjectStorageSSE,
 )
 from collections.abc import Awaitable
 
@@ -80,6 +81,7 @@ class RoutedObjectStorageClientBase[C: _RoutedStorageInnerClient](
         content_type: str | None = None,
         metadata: dict[str, str] | None = None,
         tags: dict[str, str] | None = None,
+        sse: ObjectStorageSSE | None = None,
     ) -> None:
         inner = await self._get_client()
 
@@ -91,6 +93,7 @@ class RoutedObjectStorageClientBase[C: _RoutedStorageInnerClient](
                 content_type=content_type,
                 metadata=metadata,
                 tags=tags,
+                sse=sse,
             )
 
     async def download_bytes(self, bucket: str, key: str) -> bytes:
@@ -140,11 +143,13 @@ class RoutedObjectStorageClientBase[C: _RoutedStorageInnerClient](
         bucket: str,
         src_key: str,
         dst_key: str,
+        *,
+        sse: ObjectStorageSSE | None = None,
     ) -> None:
         inner = await self._get_client()
 
         async with inner.client():
-            await inner.copy_object(bucket, src_key, dst_key)
+            await inner.copy_object(bucket, src_key, dst_key, sse=sse)
 
     async def put_object_tags(
         self,
@@ -218,6 +223,7 @@ class RoutedObjectStorageClientBase[C: _RoutedStorageInnerClient](
         *,
         expires_in: timedelta,
         content_type: str | None = None,
+        sse: ObjectStorageSSE | None = None,
     ) -> PresignedUrl:
         inner = await self._get_client()
 
@@ -227,6 +233,7 @@ class RoutedObjectStorageClientBase[C: _RoutedStorageInnerClient](
                 key,
                 expires_in=expires_in,
                 content_type=content_type,
+                sse=sse,
             )
 
     # ....................... #
@@ -238,6 +245,7 @@ class RoutedObjectStorageClientBase[C: _RoutedStorageInnerClient](
         key: str,
         *,
         content_type: str | None = None,
+        sse: ObjectStorageSSE | None = None,
     ) -> str:
         inner = await self._get_client()
 
@@ -246,6 +254,7 @@ class RoutedObjectStorageClientBase[C: _RoutedStorageInnerClient](
                 bucket,
                 key,
                 content_type=content_type,
+                sse=sse,
             )
 
     async def presign_multipart_part(
@@ -291,6 +300,7 @@ class RoutedObjectStorageClientBase[C: _RoutedStorageInnerClient](
         *,
         upload_id: str,
         parts: Sequence[ObjectStoragePartInfo],
+        sse: ObjectStorageSSE | None = None,
     ) -> None:
         inner = await self._get_client()
 
@@ -300,6 +310,7 @@ class RoutedObjectStorageClientBase[C: _RoutedStorageInnerClient](
                 key,
                 upload_id=upload_id,
                 parts=parts,
+                sse=sse,
             )
 
     async def abort_multipart_upload(

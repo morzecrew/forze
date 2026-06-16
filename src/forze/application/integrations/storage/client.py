@@ -6,6 +6,7 @@ from typing import (
     AsyncContextManager,
     Awaitable,
     Final,
+    Literal,
     Mapping,
     Protocol,
     Sequence,
@@ -129,6 +130,49 @@ def unsatisfiable_range(start: int, total: int) -> CoreException:
 
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
+class ObjectStorageSSE:
+    """Backend-neutral server-side-encryption (SSE/CMEK) request descriptor.
+
+    Threaded by the adapter from per-route config to the storage client on the
+    direct-upload paths (upload, copy, presign, multipart create). This is the
+    **at-rest** axis — the *backend* encrypts the bytes it stores — and is
+    orthogonal to (and combinable with) the adapter's client-side envelope
+    encryption (``cipher``), which still refuses direct-upload flows.
+
+    Fields are interpreted per backend:
+
+    - **S3** — ``mode`` selects ``"s3"`` (SSE-S3, ``AES256``) or ``"kms"``
+      (SSE-KMS, ``aws:kms`` with ``key_id`` as the KMS key id). ``"none"`` is
+      the off sentinel (no SSE params sent).
+    - **GCS** — ``key_id`` is the CMEK ``kmsKeyName`` for per-object encryption
+      (``upload``/``compose``); ``mode`` is ignored (GCS has no SSE-S3 analog,
+      Google-managed default encryption is always on). ``None``/empty ``key_id``
+      means the Google-managed default.
+
+    A ``None`` descriptor (the kwarg default everywhere) means "no SSE
+    requested" — behavior is unchanged from before SSE existed.
+    """
+
+    mode: Literal["none", "s3", "kms"] = "none"
+    """SSE mode (S3 semantics). ``"none"`` sends no SSE params."""
+
+    key_id: str | None = None
+    """KMS/CMEK key identifier (S3 ``SSEKMSKeyId`` / GCS ``kmsKeyName``)."""
+
+    # ....................... #
+
+    @property
+    def requested(self) -> bool:
+        """Whether any SSE was actually requested (mode set or a key present)."""
+
+        return self.mode != "none" or bool(self.key_id)
+
+
+# ....................... #
+
+
+@final
+@attrs.define(slots=True, kw_only=True, frozen=True)
 class ObjectStorageHead:
     """Metadata returned by an object head/metadata request."""
 
@@ -240,7 +284,15 @@ class ObjectStorageClientPort(Protocol):
         content_type: str | None = None,
         metadata: dict[str, str] | None = None,
         tags: dict[str, str] | None = None,
-    ) -> Awaitable[None]: ...  # pragma: no cover
+        sse: ObjectStorageSSE | None = None,
+    ) -> Awaitable[None]:
+        """Upload raw bytes to *key* in *bucket*.
+
+        When *sse* requests server-side encryption the backend encrypts the
+        stored bytes at rest (S3 SSE-S3/SSE-KMS, GCS per-object CMEK); ``None``
+        leaves the bucket's default encryption in effect.
+        """
+        ...  # pragma: no cover
 
     def download_bytes(
         self,
@@ -293,11 +345,17 @@ class ObjectStorageClientPort(Protocol):
         bucket: str,
         src_key: str,
         dst_key: str,
+        *,
+        sse: ObjectStorageSSE | None = None,
     ) -> Awaitable[None]:
         """Server-side copy *src_key* to *dst_key* within *bucket*.
 
         S3 ``CopyObject`` (single-copy capped at 5 GiB), GCS object rewrite
         (handles large objects). Same-bucket only.
+
+        When *sse* is set the destination is (re-)encrypted at rest under the
+        route's SSE: S3 ``CopyObject`` re-encrypts the destination with the
+        supplied SSE params; GCS rewrites under the per-object CMEK key.
         """
         ...  # pragma: no cover
 
@@ -379,6 +437,7 @@ class ObjectStorageClientPort(Protocol):
         *,
         expires_in: timedelta,
         content_type: str | None = None,
+        sse: ObjectStorageSSE | None = None,
     ) -> Awaitable[PresignedUrl]:
         """Sign a time-limited ``PUT`` URL for *key* in *bucket*.
 
@@ -389,6 +448,14 @@ class ObjectStorageClientPort(Protocol):
         the returned :attr:`PresignedUrl.headers` carries the header the
         client must send. ``expires_in`` must be positive and within
         :data:`PRESIGN_MAX_EXPIRY` (the shared 7-day S3/GCS cap).
+
+        When *sse* is set, **S3** binds the SSE headers into the signature and
+        returns them in :attr:`PresignedUrl.headers` so the uploader sends them
+        verbatim (mandatory for SSE-KMS; portable for SSE-S3). **GCS** cannot
+        carry a CMEK header on a raw signed ``PUT``: per-object CMEK applies
+        only on the app-path ``upload``/``compose``; for presigned PUTs CMEK
+        rides the bucket's default-encryption config (set out-of-band on the
+        bucket), so no SSE header is added.
         """
         ...  # pragma: no cover
 
@@ -408,6 +475,7 @@ class ObjectStorageClientPort(Protocol):
         key: str,
         *,
         content_type: str | None = None,
+        sse: ObjectStorageSSE | None = None,
     ) -> Awaitable[str]:
         """Open a multipart upload and return its backend upload id.
 
@@ -415,6 +483,12 @@ class ObjectStorageClientPort(Protocol):
         native session, so the client returns a generated temp part-key
         namespace token (the upload id) that the other multipart primitives
         interpret.
+
+        When *sse* is set, **S3** binds it on ``CreateMultipartUpload`` and the
+        parts inherit it — the per-part presigned ``UploadPart`` URLs carry no
+        SSE headers (see :meth:`presign_multipart_part`). **GCS** assembles the
+        object via ``compose`` at completion, where per-object CMEK applies; the
+        ``sse`` here is recorded but the presigned part PUTs cannot carry it.
 
         :returns: The backend-specific upload id (opaque to the caller).
         """
@@ -459,6 +533,7 @@ class ObjectStorageClientPort(Protocol):
         *,
         upload_id: str,
         parts: Sequence[ObjectStoragePartInfo],
+        sse: ObjectStorageSSE | None = None,
     ) -> Awaitable[None]:
         """Assemble the uploaded parts into the final object.
 
@@ -466,6 +541,11 @@ class ObjectStorageClientPort(Protocol):
         part, ascending). GCS chained ``compose`` of the temp parts in
         ascending ``part_number`` order into *key*, then deletes the temps
         (compose takes at most 32 sources per call, so larger sets chain).
+
+        *sse* is consumed by **GCS** only: S3 inherits the upload's encryption
+        from ``CreateMultipartUpload`` (set at begin time), so it ignores *sse*
+        here; GCS has no native session, so the per-object CMEK ``kmsKeyName``
+        is applied on the final ``compose`` destination.
         """
         ...  # pragma: no cover
 

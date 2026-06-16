@@ -21,6 +21,7 @@ from forze.application.integrations.storage.client import (
     ObjectStorageHead,
     ObjectStorageListedObject,
     ObjectStoragePartInfo,
+    ObjectStorageSSE,
     build_range_header,
     normalize_list_window,
     presign_expiry_seconds,
@@ -292,6 +293,7 @@ class GCSClient(GCSClientPort):
         content_type: str | None = None,
         metadata: dict[str, str] | None = None,
         tags: dict[str, str] | None = None,
+        sse: ObjectStorageSSE | None = None,
     ) -> None:
         """Upload raw bytes to a GCS object.
 
@@ -299,6 +301,11 @@ class GCSClient(GCSClientPort):
         :data:`TAG_METADATA_PREFIX` (GCS has no S3-style tag API) and are
         round-tripped back into :attr:`ObjectStorageHead.tags` by
         :meth:`head_object`.
+
+        When *sse* carries a CMEK ``key_id`` it is passed as the ``kmsKeyName``
+        query parameter so this **app-path** object is encrypted at rest under
+        the customer-managed key (GCS has no SSE-S3 analog; the Google-managed
+        default is always on otherwise).
         """
 
         storage = self.__require_storage()
@@ -313,14 +320,16 @@ class GCSClient(GCSClientPort):
         if metadata is not None or tags:
             upload_metadata = {"metadata": custom}
 
-        await storage.upload(
-            bucket,
-            key,
-            data,
-            content_type=content_type,
-            metadata=upload_metadata,
-            timeout=self.__timeout(),
-        )
+        kwargs: dict[str, Any] = {
+            "content_type": content_type,
+            "metadata": upload_metadata,
+            "timeout": self.__timeout(),
+        }
+
+        if cmek := _gcs_cmek_params(sse):
+            kwargs["parameters"] = cmek
+
+        await storage.upload(bucket, key, data, **kwargs)
 
     # ....................... #
 
@@ -441,21 +450,30 @@ class GCSClient(GCSClientPort):
         bucket: str,
         src_key: str,
         dst_key: str,
+        *,
+        sse: ObjectStorageSSE | None = None,
     ) -> None:
         """Server-side copy within *bucket* via the GCS rewrite API.
 
         Uses :meth:`gcloud.aio.storage.Storage.copy`, which drives the
         ``rewriteTo`` endpoint and loops the rewrite token, so it handles
         arbitrarily large objects (no single-call size cap). Same-bucket only.
+
+        When *sse* carries a CMEK ``key_id`` it rides as the ``destinationKmsKeyName``
+        rewrite parameter, so the destination is encrypted at rest under the
+        customer-managed key.
         """
 
         storage = self.__require_storage()
+
+        params = _gcs_cmek_rewrite_params(sse)
 
         await storage.copy(
             bucket,
             src_key,
             bucket,
             new_name=dst_key,
+            params=params or None,
             timeout=self.__timeout(),
         )
 
@@ -616,6 +634,7 @@ class GCSClient(GCSClientPort):
         *,
         expires_in: timedelta,
         content_type: str | None = None,
+        sse: ObjectStorageSSE | None = None,
     ) -> PresignedUrl:
         """Sign a time-limited ``PUT`` URL for the blob (V4 query auth).
 
@@ -624,13 +643,24 @@ class GCSClient(GCSClientPort):
         :attr:`PresignedUrl.headers` carries it. See :meth:`__presign` for
         the credential requirements and limits.
 
+        *sse* is accepted for port symmetry but **does not** add a header:
+        unlike S3, GCS cannot carry a per-object CMEK key on a raw signed
+        ``PUT``. CMEK for presigned (and resumable/multipart) direct uploads
+        relies on the **bucket's default encryption** config (``encryption.
+        defaultKmsKeyName``), set out-of-band on the bucket; per-object CMEK
+        only covers the app-path :meth:`upload_bytes` / ``compose``.
+
         :param bucket: Bucket name.
         :param key: Blob name to upload to.
         :param expires_in: URL lifetime (positive, at most 7 days).
         :param content_type: Optional MIME type to bind into the signature.
+        :param sse: Accepted for port symmetry; not bound on GCS presign (see
+            above — CMEK rides the bucket default for direct PUTs).
         :raises CoreException: ``validation`` when *expires_in* is out of
             range; ``configuration`` when the bound credentials cannot sign.
         """
+
+        _ = sse  # GCS presigned PUTs cannot carry a CMEK header (bucket default)
 
         return await self.__presign(
             bucket,
@@ -767,17 +797,19 @@ class GCSClient(GCSClientPort):
         key: str,
         *,
         content_type: str | None = None,
+        sse: ObjectStorageSSE | None = None,
     ) -> str:
         """Allocate a temp part-key namespace and return its session token.
 
         GCS has no native multipart session, so this mints a session id; the
         temp parts land under ``<key>.__forze_mpu__/<session>/<n>`` and the
         final object is assembled by :meth:`complete_multipart_upload` via
-        ``compose``. *content_type* is bound at completion time (compose
-        ``destination``), not here.
+        ``compose``. *content_type* and *sse* are bound at completion time
+        (the compose destination), not here, so *sse* is accepted for port
+        compatibility and ignored on this no-op token mint.
         """
 
-        _ = (bucket, key, content_type)
+        _ = (bucket, key, content_type, sse)
 
         return str(uuid7())
 
@@ -847,6 +879,7 @@ class GCSClient(GCSClientPort):
         *,
         upload_id: str,
         parts: Sequence[ObjectStoragePartInfo],
+        sse: ObjectStorageSSE | None = None,
     ) -> None:
         """Compose the temp parts in order into *key*, then delete the temps.
 
@@ -854,19 +887,24 @@ class GCSClient(GCSClientPort):
         so larger part sets are assembled by chaining: compose the running
         result with the next batch, repeatedly, until all parts are folded in.
         The temp part objects (and any intermediate temp) are cleaned up after.
+
+        When *sse* carries a CMEK ``key_id`` it is passed as the ``kmsKeyName``
+        compose parameter so the **final** destination object is encrypted at
+        rest under the customer-managed key. (Intermediate compose accumulators
+        for >32-part sets get the same key.)
         """
 
         storage = self.__require_storage()
         timeout = self.__timeout()
+
+        cmek_params = _gcs_cmek_params(sse) or None
 
         ordered = sorted(parts, key=lambda p: p.part_number)
 
         if not ordered:
             raise exc.validation("complete_multipart_upload requires at least one part")
 
-        part_keys = [
-            self._mpu_part_key(key, upload_id, p.part_number) for p in ordered
-        ]
+        part_keys = [self._mpu_part_key(key, upload_id, p.part_number) for p in ordered]
 
         cleanup: set[str] = set(part_keys)
 
@@ -876,14 +914,18 @@ class GCSClient(GCSClientPort):
         sources = part_keys
 
         if len(sources) <= COMPOSE_MAX_SOURCES:
-            await storage.compose(bucket, key, sources, timeout=timeout)
+            await storage.compose(
+                bucket, key, sources, params=cmek_params, timeout=timeout
+            )
 
         else:
             acc_key = f"{self._mpu_prefix(key, upload_id)}__compose__"
             cleanup.add(acc_key)
 
             first_batch = sources[:COMPOSE_MAX_SOURCES]
-            await storage.compose(bucket, acc_key, first_batch, timeout=timeout)
+            await storage.compose(
+                bucket, acc_key, first_batch, params=cmek_params, timeout=timeout
+            )
 
             rest = sources[COMPOSE_MAX_SOURCES:]
 
@@ -896,10 +938,13 @@ class GCSClient(GCSClientPort):
                     bucket,
                     acc_key,
                     [acc_key, *batch],
+                    params=cmek_params,
                     timeout=timeout,
                 )
 
-            await storage.compose(bucket, key, [acc_key], timeout=timeout)
+            await storage.compose(
+                bucket, key, [acc_key], params=cmek_params, timeout=timeout
+            )
 
         await self.__delete_mpu_keys(bucket, cleanup)
 
@@ -959,6 +1004,41 @@ class GCSClient(GCSClientPort):
             headers=headers,
             timeout=self.__timeout(),
         )
+
+
+# ....................... #
+
+
+def _gcs_cmek_params(sse: ObjectStorageSSE | None) -> dict[str, str]:
+    """Map a neutral SSE descriptor to GCS ``kmsKeyName`` query params.
+
+    GCS has no SSE-S3 analog (Google-managed default encryption is always on),
+    so only a CMEK ``key_id`` is meaningful: it becomes the per-object
+    ``kmsKeyName`` parameter on ``insert``/``compose``. Returns ``{}`` when no
+    CMEK key is requested.
+    """
+
+    if sse is None or not sse.key_id:
+        return {}
+
+    return {"kmsKeyName": sse.key_id}
+
+
+# ....................... #
+
+
+def _gcs_cmek_rewrite_params(sse: ObjectStorageSSE | None) -> dict[str, str]:
+    """Map a neutral SSE descriptor to the GCS rewrite CMEK param.
+
+    The rewrite (``copy``) endpoint names the destination key differently:
+    ``destinationKmsKeyName`` rather than ``kmsKeyName``. Returns ``{}`` when no
+    CMEK key is requested.
+    """
+
+    if sse is None or not sse.key_id:
+        return {}
+
+    return {"destinationKmsKeyName": sse.key_id}
 
 
 # ....................... #

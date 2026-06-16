@@ -9,6 +9,7 @@ import mimetypes
 import msgspec
 from datetime import datetime, timedelta
 from typing import (
+    Any,
     Literal,
     Mapping,
     final,
@@ -30,6 +31,7 @@ from forze.application.contracts.storage import (
     UploadSession,
 )
 from forze.application.integrations.storage.client import (
+    ObjectStorageSSE,
     presign_expiry_seconds,
     unsatisfiable_range,
     validate_range,
@@ -38,6 +40,7 @@ from forze.base.exceptions import exc
 from forze.base.primitives import utcnow, uuid7
 from forze_mock.state import MockState
 from forze_mock.tenancy import MockTenancyMixin, partition_namespace
+
 
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
@@ -52,6 +55,12 @@ class MockStorageAdapter(
     state: MockState
     bucket: str
 
+    sse: ObjectStorageSSE | None = None
+    """Server-side (at-rest) encryption requested for this route, mirroring the
+    real adapters. No crypto runs here; the mock only **records** the request on
+    every write path into :attr:`MockState.storage_sse` (and the presign log) so
+    tests can assert "SSE was requested" without a live backend."""
+
     # ....................... #
 
     def _bucket(self) -> str:
@@ -64,6 +73,24 @@ class MockStorageAdapter(
 
     def _payloads(self) -> dict[str, bytes]:
         return self.state.storage_bytes.setdefault(self._bucket(), {})
+
+    # ....................... #
+
+    def _sse_record(self) -> dict[str, Any] | None:
+        """The recordable SSE descriptor for this route (or ``None`` when off)."""
+
+        if self.sse is None or not self.sse.requested:
+            return None
+
+        return {"mode": self.sse.mode, "key_id": self.sse.key_id}
+
+    # ....................... #
+
+    def _record_sse(self, key: str) -> None:
+        """Record the route's requested SSE for *key* (test observability)."""
+
+        bucket_sse = self.state.storage_sse.setdefault(self._bucket(), {})
+        bucket_sse[key] = self._sse_record()
 
     # ....................... #
 
@@ -86,6 +113,7 @@ class MockStorageAdapter(
         with self.state.lock:
             self._objects()[key] = stored
             self._payloads()[key] = bytes(data)
+            self._record_sse(key)
         return stored
 
     # ....................... #
@@ -224,10 +252,7 @@ class MockStorageAdapter(
         if if_none_match is not None and if_none_match.strip('"') == etag:
             not_modified = True
 
-        if (
-            if_modified_since is not None
-            and obj.created_at <= if_modified_since
-        ):
+        if if_modified_since is not None and obj.created_at <= if_modified_since:
             not_modified = True
 
         if not_modified:
@@ -305,16 +330,31 @@ class MockStorageAdapter(
         if content_type is not None:
             headers["Content-Type"] = content_type
 
+        # Mirror the real S3 adapter: an SSE-KMS presigned PUT returns the SSE
+        # request headers the uploader must send; SSE-S3 / off add none. (GCS
+        # presign carries no CMEK header — its mock route leaves sse off.)
+        sse_record = self._sse_record() if method == "PUT" else None
+
+        if method == "PUT" and self.sse is not None and self.sse.mode == "kms":
+            headers["x-amz-server-side-encryption"] = "aws:kms"
+
+            if self.sse.key_id:
+                headers["x-amz-server-side-encryption-aws-kms-key-id"] = self.sse.key_id
+
         with self.state.lock:
-            self.state.storage_presigns.append(
-                {
-                    "bucket": bucket,
-                    "key": key,
-                    "method": method,
-                    "expires_at": expires_at,
-                    "content_type": content_type,
-                }
-            )
+            record: dict[str, Any] = {
+                "bucket": bucket,
+                "key": key,
+                "method": method,
+                "expires_at": expires_at,
+                "content_type": content_type,
+            }
+
+            if method == "PUT":
+                record["sse"] = sse_record
+                self._record_sse(key)
+
+            self.state.storage_presigns.append(record)
 
         return PresignedUrl(
             url=url,
@@ -380,10 +420,12 @@ class MockStorageAdapter(
 
             self._objects()[dst_key] = dst
             self._payloads()[dst_key] = payload
+            self._record_sse(dst_key)
 
             if delete_source:
                 self._objects().pop(src_key, None)
                 self._payloads().pop(src_key, None)
+                self.state.storage_sse.get(self._bucket(), {}).pop(src_key, None)
 
         return ObjectHead(
             content_type=dst.content_type,
@@ -638,6 +680,7 @@ class MockStorageAdapter(
 
             self._objects()[session.key] = stored
             self._payloads()[session.key] = payload
+            self._record_sse(session.key)
             del sessions[session.upload_id]
 
         return ObjectHead(
