@@ -16,12 +16,31 @@
     );
   }
 
-  function applyUserPalette(body) {
+  // The visitor's chosen palette. Prefer Material's persisted `__palette` (a
+  // synchronous localStorage read) over the checked radio: during an instant
+  // navigation the radio may not be re-applied yet when document$ fires, so
+  // reading it would bail and leave the body stuck on the home page's forced
+  // slate (toggle says "light", page stays dark until a refresh).
+  function userColor() {
+    try {
+      var p = window.__md_get && window.__md_get("__palette");
+      if (p && p.color && p.color.scheme) return p.color;
+    } catch (e) {}
     var r = checkedRadio();
-    if (!r) return; // no toggle yet — leave whatever Material set
+    if (!r) return null;
+    return {
+      scheme: r.getAttribute("data-md-color-scheme"),
+      primary: r.getAttribute("data-md-color-primary"),
+      accent: r.getAttribute("data-md-color-accent"),
+    };
+  }
+
+  function applyUserPalette(body) {
+    // Fall back to the light default: off-home the body is only ever slate
+    // because the home page forced it, so an unknown choice means "undo that".
+    var c = userColor() || { scheme: "default" };
     ["scheme", "primary", "accent"].forEach(function (k) {
-      var v = r.getAttribute("data-md-color-" + k);
-      if (v) body.setAttribute("data-md-color-" + k, v);
+      if (c[k]) body.setAttribute("data-md-color-" + k, c[k]);
     });
   }
 
@@ -33,9 +52,17 @@
     document.body.style.setProperty("--forze-top", top + "px");
   }
 
+  function targetScheme() {
+    return isHome() ? "slate" : (userColor() || {}).scheme || "default";
+  }
+
   function apply() {
     var body = document.body;
     if (!body) return;
+    // Suppress Material's color transition when the scheme actually flips on a
+    // navigation (home <-> content), so it snaps instead of visibly fading.
+    var changing = body.getAttribute("data-md-color-scheme") !== targetScheme();
+    if (changing) body.classList.add("forze-no-anim");
     if (isHome()) {
       body.classList.add("forze-home");
       body.setAttribute("data-md-color-scheme", "slate");
@@ -43,6 +70,12 @@
     } else {
       body.classList.remove("forze-home");
       applyUserPalette(body);
+    }
+    if (changing) {
+      void body.offsetWidth; // commit the change before re-enabling transitions
+      requestAnimationFrame(function () {
+        body.classList.remove("forze-no-anim");
+      });
     }
   }
 

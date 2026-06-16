@@ -12,6 +12,13 @@
   display: none;
 }
 
+/* While the scheme flips on a home <-> content navigation, suppress Material's
+   color transition so it snaps instantly instead of a visible ~100ms fade. */
+.forze-no-anim,
+.forze-no-anim * {
+  transition: none !important;
+}
+
 /* No footer on the home page. */
 .forze-home .md-footer {
   display: none;
@@ -156,17 +163,20 @@
 }
 
 /* ---- Version warning banner (dev / older release) ---- */
-/* The theme renders this with a forced light scheme and a bright default; give
-   it the on-brand accent so it reads as an intentional notice in both schemes. */
+/* The outdated div forces the light scheme but carries no accent attribute, so
+   var(--md-accent-fg-color) resolves to the wrong default there — use the brand
+   deep-orange (#ff6e42) directly. Dark text + links (AA-safe on the orange,
+   and consistent — no odd white links). */
 [data-md-component="outdated"] {
   position: relative;
-  background-color: var(--md-accent-fg-color);
-  color: #fff;
+  background-color: #ff6e42;
+  color: rgba(0, 0, 0, 0.87);
   font-size: 0.72rem;
 }
 
 [data-md-component="outdated"] a {
-  color: #fff;
+  color: inherit;
+  font-weight: 700;
   text-decoration: underline;
   text-underline-offset: 2px;
 }
