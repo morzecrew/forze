@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.4.0] - 2026-06-17
 
 ### Added
 
@@ -101,10 +101,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Tenant-isolation correctness & parity** — Postgres outbox/inbox now enforce the declared isolation floor (were excluded); a missing bound tenant fails closed consistently as `authentication`/`tenant_required` (was 500/401 split) via `TenancyMixin._tenant_id_for_resolve`; the mock durable/graph/document adapters now tenant-partition their stores, pinned by a mock-tenancy-parity meta-test.
 - **Post-commit work survives task cancellation** — the after-commit drain runs as a cancellation-protected critical section (`forze.base.asyncio.run_to_completion`), then re-raises; cancellation during the body still rolls back.
 - **PGroonga search honors tenant isolation regardless of plan** — a tenant-aware PGroonga search now always uses `filter_first`, overriding `pgroonga_plan="index_first"`/`"auto"` (which ranked a heap top-K across **all** tenants and post-filtered, scanning cross-tenant rows and possibly truncating a tenant's results to a slice of the global top-K).
-
-### Removed
-
-- _Nothing yet._
 
 ## [0.3.0] - 2026-06-11
 
@@ -647,7 +643,7 @@ Execution and mapping refactor, middleware-first approach for usecases, split se
 
 - Packaging metadata for PyOCI classifiers.
 
-[unreleased]: https://github.com/morzecrew/forze/compare/v0.3.0...HEAD
+[0.4.0]: https://github.com/morzecrew/forze/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/morzecrew/forze/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/morzecrew/forze/compare/v0.1.14...v0.2.0
 [0.1.14]: https://github.com/morzecrew/forze/compare/v0.1.13...v0.1.14
