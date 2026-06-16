@@ -499,30 +499,30 @@ class SQSClient(SQSClientPort):
         # reserved transport attributes are written after them so they always
         # win on collision. Note AWS caps message attributes at 10 per
         # message — headers count against that limit.
-        attrs: dict[str, dict[str, str]] = {}
+        attrs_: dict[str, dict[str, str]] = {}
 
         if headers:
             for header_key, header_value in headers.items():
-                attrs[header_key] = {
+                attrs_[header_key] = {
                     "StringValue": header_value,
                     "DataType": "String",
                 }
 
-        attrs[_ENCODING_ATTR] = {"StringValue": _ENCODING_B64, "DataType": "String"}
+        attrs_[_ENCODING_ATTR] = {"StringValue": _ENCODING_B64, "DataType": "String"}
 
         if type is not None:
-            attrs[_TYPE_ATTR] = {"StringValue": type, "DataType": "String"}
+            attrs_[_TYPE_ATTR] = {"StringValue": type, "DataType": "String"}
 
         if key is not None:
-            attrs[_KEY_ATTR] = {"StringValue": key, "DataType": "String"}
+            attrs_[_KEY_ATTR] = {"StringValue": key, "DataType": "String"}
 
         if enqueued_at is not None:
-            attrs[_ENQUEUED_AT_ATTR] = {
+            attrs_[_ENQUEUED_AT_ATTR] = {
                 "StringValue": enqueued_at.isoformat(),
                 "DataType": "String",
             }
 
-        return attrs
+        return attrs_
 
     # ....................... #
 

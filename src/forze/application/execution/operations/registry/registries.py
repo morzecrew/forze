@@ -333,7 +333,7 @@ class OperationRegistry:
 
         if not self._patches:
             if selectors:
-                raise exc.internal(
+                raise exc.configuration(
                     "materialize_patches called with selectors but the registry "
                     "has no plan patches"
                 )
@@ -346,7 +346,9 @@ class OperationRegistry:
             present = {patch.selector for patch in self._patches}
 
             if missing := [sel for sel in targets if sel not in present]:
-                raise exc.internal(f"No plan patch found for selectors: {missing!r}")
+                raise exc.configuration(
+                    f"No plan patch found for selectors: {missing!r}"
+                )
 
         selected = [
             patch for patch in self._patches if not targets or patch.selector in targets
@@ -363,7 +365,7 @@ class OperationRegistry:
                 str_key_selector.matches(patch.selector, str(op))
                 for op in self._handlers
             ):
-                raise exc.internal(
+                raise exc.configuration(
                     "Orphan plan patch: selector "
                     f"{patch.selector!r} matches no registered operations"
                 )

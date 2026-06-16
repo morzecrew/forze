@@ -12,3 +12,4 @@ exclude_paths:
   - ".sourcery.yaml"
   - "justfile"
   - "skills/**"
+  - "examples/**"

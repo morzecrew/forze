@@ -18,6 +18,9 @@ def _normalize_key(key: StrKey) -> str:
     return str(key)
 
 
+# ....................... #
+
+
 def _require_non_empty(value: str, *, label: str) -> None:
     if not value:
         raise exc.internal(f"{label} must be non-empty")
@@ -157,14 +160,16 @@ class StrKeySelector:
 
     # ....................... #
 
-    def all_keys(self, *except_: StrKey) -> Spec:
+    @staticmethod
+    def all_keys(*except_: StrKey) -> Spec:
         """Build a selector that matches every key."""
 
         return _AllKeys(except_keys=frozenset(map(_normalize_key, except_)))
 
     # ....................... #
 
-    def exact(self, *keys: StrKey) -> Spec:
+    @staticmethod
+    def exact(*keys: StrKey) -> Spec:
         """Build a selector that matches the given literal keys."""
 
         if not keys:
@@ -174,35 +179,40 @@ class StrKeySelector:
 
     # ....................... #
 
-    def prefix(self, value: str) -> Spec:
+    @staticmethod
+    def prefix(value: str) -> Spec:
         """Build a prefix selector."""
 
         return _Prefix(value=value)
 
     # ....................... #
 
-    def suffix(self, value: str) -> Spec:
+    @staticmethod
+    def suffix(value: str) -> Spec:
         """Build a suffix selector."""
 
         return _Suffix(value=value)
 
     # ....................... #
 
-    def glob(self, pattern: str) -> Spec:
+    @staticmethod
+    def glob(pattern: str) -> Spec:
         """Build a case-sensitive :mod:`fnmatch` selector."""
 
         return _Glob(pattern=pattern)
 
     # ....................... #
 
-    def when(self, predicate: Callable[[str], bool]) -> Spec:
+    @staticmethod
+    def when(predicate: Callable[[str], bool]) -> Spec:
         """Build a custom predicate selector."""
 
         return _When(predicate=predicate)
 
     # ....................... #
 
-    def in_namespace(self, namespace: StrKeyNamespace, selector: Spec) -> Spec:
+    @staticmethod
+    def in_namespace(namespace: StrKeyNamespace, selector: Spec) -> Spec:
         """Scope ``selector`` to ``namespace``, matching the namespace-relative key.
 
         The resulting selector matches a key only when it lives under
@@ -250,7 +260,7 @@ class StrKeySelector:
                 if not normalized.startswith(boundary):
                     return False
 
-                return self.matches(inner, normalized[len(boundary):])
+                return self.matches(inner, normalized[len(boundary) :])
 
     # ....................... #
 

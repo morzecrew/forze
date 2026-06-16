@@ -395,9 +395,25 @@ class TestPathOverrides:
         with pytest.raises(CoreException, match="drops path parameter"):
             _build_app("rest", path_overrides={DocumentKernelOp.GET: "/by-id"})
 
+    def test_override_adding_path_param_raises(self) -> None:
+        with pytest.raises(CoreException, match="adds path parameter"):
+            _build_app(
+                "rest", path_overrides={DocumentKernelOp.GET: "/{tenant}/by-id/{id}"}
+            )
+
     def test_override_of_unknown_operation_raises(self) -> None:
         with pytest.raises(CoreException, match="Unknown path override"):
             _build_app("rest", path_overrides={"nope": "/whatever"})
+
+    def test_override_of_excluded_operation_raises(self) -> None:
+        # GET is a real op but excluded by `include`, so the override is dead
+        # config — caught instead of silently ignored.
+        with pytest.raises(CoreException, match="Unknown path override"):
+            _build_app(
+                "rest",
+                include=[DocumentKernelOp.LIST],
+                path_overrides={DocumentKernelOp.GET: "/by-id/{id}"},
+            )
 
 
 # ....................... #

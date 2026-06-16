@@ -489,11 +489,12 @@ def attach_operation_routes(
     *path_overrides* maps an operation (the same kernel-op/str key accepted by
     *include*) to a replacement route path. Only the path changes — method,
     status, builder, and the verbatim ``operation_id`` are untouched, so the
-    catalog identity is preserved. An override must keep every path parameter the
-    default path binds (the endpoint builders synthesize fixed parameter names and
-    FastAPI maps a name to the path only when it appears as a ``{placeholder}``);
-    dropping one is a configuration error rather than a silent demotion to a query
-    parameter.
+    catalog identity is preserved. An override must bind **exactly** the path
+    parameters the default path binds — no more, no less (the endpoint builders
+    synthesize fixed parameter names and FastAPI maps a name to the path only when
+    it appears as a ``{placeholder}``). Dropping one is a configuration error
+    (a silent demotion to a query parameter); adding one the endpoint never
+    synthesizes is too (the placeholder would never be filled).
     """
 
     known = set(bindings)
@@ -506,10 +507,10 @@ def attach_operation_routes(
 
     overrides = {str(key): path for key, path in (path_overrides or {}).items()}
 
-    if unknown := set(overrides) - known:
+    if unknown := set(overrides) - wanted:
         raise exc.configuration(
             f"Unknown path override operations: {sorted(unknown)} "
-            f"(expected {sorted(map(str, known))})"
+            f"(expected {sorted(map(str, wanted))})"
         )
 
     catalog = {str(key): entry for key, entry in registry.catalog().items()}
@@ -522,11 +523,22 @@ def attach_operation_routes(
         op = ns.key(suffix)
         path = overrides.get(str(suffix), binding.path)
 
-        if missing := _path_params(binding.path) - _path_params(path):
+        default_params = _path_params(binding.path)
+        override_params = _path_params(path)
+
+        if missing := default_params - override_params:
             raise exc.configuration(
                 f"Path override '{path}' for operation '{op}' drops path "
                 f"parameter(s) {sorted(missing)} the default path '{binding.path}' "
                 "binds (the endpoint requires them in the path, not the query)"
+            )
+
+        if extra := override_params - default_params:
+            raise exc.configuration(
+                f"Path override '{path}' for operation '{op}' adds path "
+                f"parameter(s) {sorted(extra)} the default path '{binding.path}' "
+                "does not bind (the endpoint synthesizes fixed parameter names, so "
+                "an unknown placeholder would never be filled)"
             )
 
         entry = catalog.get(op)
