@@ -85,7 +85,7 @@ async def test_routed_gcs_object_lifecycle(fake_gcs_container: str) -> None:
         assert await routed.object_exists(bucket, key)
         head = await routed.head_object(bucket, key)
         assert head.content_type == "text/plain"
-        assert await routed.download_bytes(bucket, key) == data
+        assert (await routed.download_bytes(bucket, key)).data == data
 
         items, total = await routed.list_objects(bucket, prefix="docs", limit=10, offset=0)
         assert total == 1 and len(items) == 1

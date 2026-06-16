@@ -18,6 +18,7 @@ from gcloud.aio.storage import Blob, Storage
 from forze.application.contracts.storage import PresignedUrl
 from forze.application.integrations.storage.client import (
     PRESIGN_MAX_EXPIRY,
+    ObjectBody,
     ObjectStorageHead,
     ObjectStorageListedObject,
     ObjectStoragePartInfo,
@@ -334,13 +335,27 @@ class GCSClient(GCSClientPort):
     # ....................... #
 
     @exc_interceptor.coroutine("gcs.download_bytes")  # type: ignore[untyped-decorator]
-    async def download_bytes(self, bucket: str, key: str) -> bytes:
-        storage = self.__require_storage()
+    async def download_bytes(self, bucket: str, key: str) -> ObjectBody:
+        """Download a GCS object's full body plus its metadata.
 
-        return await storage.download(
-            bucket,
-            key,
-            timeout=self.__timeout(),
+        ``Storage.download`` returns only the bytes, so the content type and
+        user metadata are read with a single ``download_metadata`` call and
+        consolidated onto the returned :class:`ObjectBody`. (The adapter used to
+        issue its own ``head_object`` here; the metadata call replaces it — same
+        round-trip count, one place.)
+        """
+
+        storage = self.__require_storage()
+        timeout = self.__timeout()
+
+        data = await storage.download(bucket, key, timeout=timeout)
+        raw = await storage.download_metadata(bucket, key, timeout=timeout)
+        head = _head_from_object_json(raw)
+
+        return ObjectBody(
+            data=data,
+            content_type=head.content_type,
+            metadata=dict(head.metadata),
         )
 
     # ....................... #
@@ -353,7 +368,7 @@ class GCSClient(GCSClientPort):
         *,
         start: int,
         end: int | None = None,
-    ) -> tuple[bytes, str, int]:
+    ) -> tuple[ObjectBody, str, int]:
         """Download an inclusive byte range via a ranged media ``GET``.
 
         Sends ``Range: bytes=start-end`` (``end`` inclusive; ``end=None`` reads
@@ -362,6 +377,10 @@ class GCSClient(GCSClientPort):
         satisfied ``Content-Range`` is synthesized from the returned slice. An
         unsatisfiable range (``start`` beyond the object) raises a precondition
         error (the 416/``RequestedRangeNotSatisfiable`` equivalent).
+
+        :returns: ``(body, content_range, total_size)`` — the body's content
+            type comes from the already-fetched metadata head; its metadata is
+            left empty for ranges.
         """
 
         validate_range(start, end)
@@ -391,7 +410,9 @@ class GCSClient(GCSClientPort):
         end_byte = start + len(data) - 1 if data else start
         content_range = f"bytes {start}-{end_byte}/{total}"
 
-        return data, content_range, total
+        body = ObjectBody(data=data, content_type=head.content_type)
+
+        return body, content_range, total
 
     # ....................... #
 
@@ -403,12 +424,13 @@ class GCSClient(GCSClientPort):
         *,
         if_none_match: str | None = None,
         if_modified_since: datetime | None = None,
-    ) -> tuple[bytes, str] | None:
+    ) -> ObjectBody | None:
         """Conditional media ``GET`` returning ``None`` when not modified.
 
         Sends ``If-None-Match`` / ``If-Modified-Since``; a ``304 Not Modified``
         (or ``412 Precondition Failed``) response maps to ``None``. The content
-        type comes from a metadata head on the changed path.
+        type and user metadata come from a metadata head on the changed path
+        (already fetched here), so the caller needs no separate head.
         """
 
         storage = self.__require_storage()
@@ -440,7 +462,11 @@ class GCSClient(GCSClientPort):
         raw = await storage.download_metadata(bucket, key, timeout=self.__timeout())
         head = _head_from_object_json(raw)
 
-        return data, head.content_type
+        return ObjectBody(
+            data=data,
+            content_type=head.content_type,
+            metadata=dict(head.metadata),
+        )
 
     # ....................... #
 
@@ -908,43 +934,63 @@ class GCSClient(GCSClientPort):
 
         cleanup: set[str] = set(part_keys)
 
-        # Chain composes when there are more than COMPOSE_MAX_SOURCES parts.
-        # The accumulated result is written to a temp object, then folded with
-        # the next batch, so no single compose exceeds the source cap.
-        sources = part_keys
+        # ``compose`` rejects a single-source request (it requires >= 2 sources).
+        # Two code paths can otherwise produce one — a 1-part upload and the
+        # final fold of a >32-part chain — so both are handled explicitly. Note:
+        # fake-gcs-server is lenient and accepts single-source compose, which
+        # masks this; real GCS returns 400.
+        if len(part_keys) == 1:
+            # Rewrite the lone part to the destination (compose can't take one
+            # source). Mirror copy_object's CMEK-aware ``storage.copy`` usage,
+            # including destinationKmsKeyName via the rewrite params.
+            await storage.copy(
+                bucket,
+                part_keys[0],
+                bucket,
+                new_name=key,
+                params=_gcs_cmek_rewrite_params(sse) or None,
+                timeout=timeout,
+            )
 
-        if len(sources) <= COMPOSE_MAX_SOURCES:
+        elif len(part_keys) <= COMPOSE_MAX_SOURCES:
             await storage.compose(
-                bucket, key, sources, params=cmek_params, timeout=timeout
+                bucket, key, part_keys, params=cmek_params, timeout=timeout
             )
 
         else:
+            # Chain composes when there are more than COMPOSE_MAX_SOURCES parts.
+            # The accumulated result is written to a temp object, then folded
+            # with the next batch, so no single compose exceeds the source cap.
+            # Each fold includes the accumulator itself plus >= 1 further part,
+            # so every compose always has >= 2 sources (never single-source).
             acc_key = f"{self._mpu_prefix(key, upload_id)}__compose__"
             cleanup.add(acc_key)
 
-            first_batch = sources[:COMPOSE_MAX_SOURCES]
             await storage.compose(
-                bucket, acc_key, first_batch, params=cmek_params, timeout=timeout
+                bucket,
+                acc_key,
+                part_keys[:COMPOSE_MAX_SOURCES],
+                params=cmek_params,
+                timeout=timeout,
             )
 
-            rest = sources[COMPOSE_MAX_SOURCES:]
+            rest = part_keys[COMPOSE_MAX_SOURCES:]
 
             while rest:
                 # compose includes the accumulator itself, so each step folds in
                 # at most (cap - 1) further parts.
                 batch = rest[: COMPOSE_MAX_SOURCES - 1]
                 rest = rest[COMPOSE_MAX_SOURCES - 1 :]
+                # The final fold writes straight to the destination key; earlier
+                # folds round-trip through the accumulator.
+                dest = key if not rest else acc_key
                 await storage.compose(
                     bucket,
-                    acc_key,
+                    dest,
                     [acc_key, *batch],
                     params=cmek_params,
                     timeout=timeout,
                 )
-
-            await storage.compose(
-                bucket, key, [acc_key], params=cmek_params, timeout=timeout
-            )
 
         await self.__delete_mpu_keys(bucket, cleanup)
 

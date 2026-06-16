@@ -31,6 +31,7 @@ def _fake_storage(blob_keys: list[str] | None = None) -> Any:
     bucket_ref.list_blobs = AsyncMock(return_value=list(blob_keys or []))
     fake.get_bucket = MagicMock(return_value=bucket_ref)
     fake.compose = AsyncMock(return_value={})
+    fake.copy = AsyncMock(return_value={})
     fake.delete = AsyncMock(return_value=None)
     return fake
 
@@ -95,22 +96,51 @@ async def test_complete_composes_in_order_and_cleans_up() -> None:
 
 
 @pytest.mark.asyncio
-async def test_complete_chains_composes_past_cap() -> None:
+async def test_complete_single_part_rewrites_via_copy() -> None:
+    # compose rejects a single source; a 1-part upload must rewrite (copy) the
+    # lone part to the destination instead. (fake-gcs accepts single-source
+    # compose, masking this — real GCS returns 400.)
     fake = _fake_storage()
     client = _client(fake)
 
-    n_parts = COMPOSE_MAX_SOURCES + 5  # forces chaining
+    await client.complete_multipart_upload(
+        "b", "k", upload_id="SID", parts=[ObjectStoragePartInfo(part_number=1)]
+    )
+
+    # No compose at all; a copy from the lone part to the destination key.
+    fake.compose.assert_not_called()
+    fake.copy.assert_awaited_once()
+    call = fake.copy.await_args
+    lone = GCSClient._mpu_part_key("k", "SID", 1)
+    assert call.args[0] == "b"
+    assert call.args[1] == lone
+    assert call.args[2] == "b"
+    assert call.kwargs["new_name"] == "k"
+
+    # The lone temp part is cleaned up.
+    deleted = {c.args[1] for c in fake.delete.await_args_list}
+    assert lone in deleted
+
+
+@pytest.mark.parametrize("n_parts", [COMPOSE_MAX_SOURCES + 1, 65])
+@pytest.mark.asyncio
+async def test_complete_chains_composes_past_cap(n_parts: int) -> None:
+    fake = _fake_storage()
+    client = _client(fake)
+
     parts = [ObjectStoragePartInfo(part_number=i) for i in range(1, n_parts + 1)]
 
     await client.complete_multipart_upload("b", "k", upload_id="SID", parts=parts)
 
-    # More than one compose call (chained); none exceeds the source cap.
+    # More than one compose call (chained); none exceeds the cap and — crucially
+    # — none is single-source (compose rejects a lone source on real GCS).
     assert fake.compose.await_count >= 2
     for call in fake.compose.await_args_list:
         sources = call.args[2]
-        assert len(sources) <= COMPOSE_MAX_SOURCES
+        assert 2 <= len(sources) <= COMPOSE_MAX_SOURCES
 
-    # Final compose writes the destination key.
+    # Final compose writes straight to the destination key (no extra 1-source
+    # fold afterwards).
     final_call = fake.compose.await_args_list[-1]
     assert final_call.args[1] == "k"
 

@@ -265,6 +265,46 @@ class ObjectStorageAdapter(
 
     # ....................... #
 
+    @staticmethod
+    def _key_basename(key: str) -> str:
+        """Last path segment of *key* (the key itself when it has no segment)."""
+
+        basename = key.rsplit("/", 1)[-1]
+
+        return basename or key
+
+    # ....................... #
+
+    def _filename_from_metadata(
+        self,
+        key: str,
+        metadata: Mapping[str, str],
+    ) -> str:
+        """Decode the filename from the object's metadata envelope.
+
+        When the envelope is present (objects written through :meth:`upload`)
+        the base-64-encoded filename is decoded. When it is absent — objects
+        written through a presigned ``PUT`` carry no envelope — the filename
+        falls back to the key's basename instead of raising, so the completion
+        seam (raw uploads) stays downloadable.
+        """
+
+        if not metadata:
+            return self._key_basename(key)
+
+        try:
+            meta = object_metadata_from_user_metadata(dict(metadata))
+
+        except CoreException:
+            raise
+
+        except Exception as e:
+            raise exc.internal("Invalid object metadata") from e
+
+        return default_b64_codec.loads(meta.filename)
+
+    # ....................... #
+
     async def upload(self, obj: UploadedObject) -> StoredObject:
         """Upload a file and return its stored representation."""
 
@@ -332,27 +372,22 @@ class ObjectStorageAdapter(
     # ....................... #
 
     async def download(self, key: str) -> DownloadedObject:
-        """Download an object by key and return its data with metadata."""
+        """Download an object by key and return its data with metadata.
+
+        The body's content type and user metadata come back on the same ``GET``
+        (no separate head call). When the metadata envelope is present its
+        filename/description are decoded as on :meth:`upload`; when it is absent
+        — an object written through a presigned ``PUT`` (the completion seam) —
+        the filename falls back to the key's basename instead of raising.
+        """
 
         self._validate_key(key)
         bucket = await self._resolved_bucket()
 
         async with self.client.client():
-            h = await self.client.head_object(bucket=bucket, key=key)
+            body = await self.client.download_bytes(bucket=bucket, key=key)
 
-            if not h.metadata:
-                raise exc.internal("Invalid object metadata")
-
-            try:
-                meta = object_metadata_from_user_metadata(dict(h.metadata))
-
-            except CoreException:
-                raise
-
-            except Exception as e:
-                raise exc.internal("Invalid object metadata") from e
-
-            data = await self.client.download_bytes(bucket=bucket, key=key)
+            data = body.data
 
             # Decrypt only when encryption is enabled AND the bytes are an
             # envelope — objects written before encryption was turned on are
@@ -363,10 +398,12 @@ class ObjectStorageAdapter(
                     aad=self._encryption_aad(bucket, key),
                 )
 
+            filename = self._filename_from_metadata(key, body.metadata)
+
             return DownloadedObject(
                 data=data,
-                content_type=h.content_type,
-                filename=default_b64_codec.loads(meta.filename),
+                content_type=body.content_type,
+                filename=filename,
             )
 
     # ....................... #
@@ -442,8 +479,7 @@ class ObjectStorageAdapter(
         bucket = await self._resolved_bucket()
 
         async with self.client.client():
-            h = await self.client.head_object(bucket=bucket, key=key)
-            data, content_range, total = await self.client.download_range_bytes(
+            body, content_range, total = await self.client.download_range_bytes(
                 bucket=bucket,
                 key=key,
                 start=start,
@@ -451,8 +487,8 @@ class ObjectStorageAdapter(
             )
 
         return RangedDownload(
-            data=data,
-            content_type=h.content_type,
+            data=body.data,
+            content_type=body.content_type,
             content_range=content_range,
             total_size=total,
         )
@@ -472,7 +508,10 @@ class ObjectStorageAdapter(
         the tenant-aware bucket, then issues a conditional ``GET`` through the
         client. ``None`` is the not-modified answer (HTTP 304 equivalent). When
         a body comes back its filename is decoded from the metadata envelope
-        (same as :meth:`download`), and encryption envelopes are decrypted.
+        (same as :meth:`download`) — or falls back to the key's basename for
+        raw/presigned objects with no envelope — and encryption envelopes are
+        decrypted. The body's content type and metadata come back on the same
+        conditional ``GET`` (no separate head call).
         """
 
         if if_none_match is None and if_modified_since is None:
@@ -485,31 +524,17 @@ class ObjectStorageAdapter(
         bucket = await self._resolved_bucket()
 
         async with self.client.client():
-            result = await self.client.download_bytes_conditional(
+            body = await self.client.download_bytes_conditional(
                 bucket=bucket,
                 key=key,
                 if_none_match=if_none_match,
                 if_modified_since=if_modified_since,
             )
 
-            if result is None:
+            if body is None:
                 return None
 
-            data, content_type = result
-
-            h = await self.client.head_object(bucket=bucket, key=key)
-
-            if not h.metadata:
-                raise exc.internal("Invalid object metadata")
-
-            try:
-                meta = object_metadata_from_user_metadata(dict(h.metadata))
-
-            except CoreException:
-                raise
-
-            except Exception as e:
-                raise exc.internal("Invalid object metadata") from e
+            data = body.data
 
             if self.cipher is not None and is_envelope(data):
                 data = await self.cipher.decrypt(
@@ -517,10 +542,12 @@ class ObjectStorageAdapter(
                     aad=self._encryption_aad(bucket, key),
                 )
 
+            filename = self._filename_from_metadata(key, body.metadata)
+
         return DownloadedObject(
             data=data,
-            content_type=content_type,
-            filename=default_b64_codec.loads(meta.filename),
+            content_type=body.content_type,
+            filename=filename,
         )
 
     # ....................... #

@@ -46,11 +46,12 @@ async def test_download_range_sends_range_header_and_total() -> None:
     fake.download = AsyncMock(return_value=b"2345")
     client = _client(fake)
 
-    data, content_range, total = await client.download_range_bytes(
+    body, content_range, total = await client.download_range_bytes(
         "b", "k", start=2, end=5
     )
 
-    assert data == b"2345"
+    assert body.data == b"2345"
+    assert body.content_type == "text/plain"
     assert content_range == "bytes 2-5/10"
     assert total == 10
     headers = fake.download.await_args.kwargs["headers"]
@@ -106,7 +107,9 @@ async def test_conditional_passes_headers_and_returns_body() -> None:
         "b", "k", if_none_match='"abc"', if_modified_since=since
     )
 
-    assert result == (b"hello", "text/plain")
+    assert result is not None
+    assert result.data == b"hello"
+    assert result.content_type == "text/plain"
     headers = fake.download.await_args.kwargs["headers"]
     assert headers["If-None-Match"] == '"abc"'
     assert "GMT" in headers["If-Modified-Since"]

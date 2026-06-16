@@ -82,13 +82,14 @@ async def test_download_range_sends_range_header_and_parses_total() -> None:
     client, tok = _client_with(api)
 
     try:
-        data, content_range, total = await client.download_range_bytes(
+        body, content_range, total = await client.download_range_bytes(
             "b", "k", start=0, end=4
         )
     finally:
         client._S3Client__ctx_client.reset(tok)
 
-    assert data == b"01234"
+    assert body.data == b"01234"
+    assert body.content_type == "text/plain"
     assert content_range == "bytes 0-4/10"
     assert total == 10
     assert api.get_object_calls[0]["Range"] == "bytes=0-4"
@@ -160,7 +161,9 @@ async def test_conditional_passes_headers_and_returns_body() -> None:
     finally:
         client._S3Client__ctx_client.reset(tok)
 
-    assert result == (b"hi", "text/plain")
+    assert result is not None
+    assert result.data == b"hi"
+    assert result.content_type == "text/plain"
     call = api.get_object_calls[0]
     assert call["IfNoneMatch"] == '"abc"'
     assert call["IfModifiedSince"] == since

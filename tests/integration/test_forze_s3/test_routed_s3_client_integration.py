@@ -106,7 +106,7 @@ async def test_routed_s3_health_and_object_crud(minio_container) -> None:
         head = await routed.head_object(bucket, key)
         assert head.content_type == "text/plain"
         assert head.metadata["filename"] == "readme.txt"
-        assert await routed.download_bytes(bucket, key) == data
+        assert (await routed.download_bytes(bucket, key)).data == data
 
         items, total = await routed.list_objects(
             bucket, prefix="docs", limit=10, offset=0

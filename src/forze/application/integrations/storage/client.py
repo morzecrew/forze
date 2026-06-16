@@ -173,6 +173,34 @@ class ObjectStorageSSE:
 
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
+class ObjectBody:
+    """An object's bytes plus the metadata the same ``GET`` already returned.
+
+    Returned by the client ``GET`` methods (:meth:`ObjectStorageClientPort.download_bytes`,
+    :meth:`~ObjectStorageClientPort.download_bytes_conditional`,
+    :meth:`~ObjectStorageClientPort.download_range_bytes`). A single backend
+    ``GET`` already carries the content type and user metadata, so the body
+    surfaces them instead of forcing the adapter to issue a separate
+    ``head_object`` round-trip. :attr:`metadata` may be empty for objects
+    written through a presigned ``PUT`` (which carry no envelope) and for ranged
+    reads; consumers must tolerate that.
+    """
+
+    data: bytes
+    """Raw object bytes (the requested range slice for a ranged read)."""
+
+    content_type: str = "application/octet-stream"
+    """MIME type reported by the ``GET`` response."""
+
+    metadata: Mapping[str, str] = attrs.field(factory=dict[str, str])
+    """User-defined metadata from the ``GET`` response (may be empty)."""
+
+
+# ....................... #
+
+
+@final
+@attrs.define(slots=True, kw_only=True, frozen=True)
 class ObjectStorageHead:
     """Metadata returned by an object head/metadata request."""
 
@@ -298,7 +326,15 @@ class ObjectStorageClientPort(Protocol):
         self,
         bucket: str,
         key: str,
-    ) -> Awaitable[bytes]: ...  # pragma: no cover
+    ) -> Awaitable[ObjectBody]:
+        """Download an object's full body plus its already-fetched metadata.
+
+        A single backend ``GET`` carries the content type and user metadata, so
+        the returned :class:`ObjectBody` surfaces them — the adapter no longer
+        needs a separate ``head_object`` round-trip. :attr:`ObjectBody.metadata`
+        is empty for objects written through a presigned ``PUT`` (no envelope).
+        """
+        ...  # pragma: no cover
 
     def download_range_bytes(
         self,
@@ -307,7 +343,7 @@ class ObjectStorageClientPort(Protocol):
         *,
         start: int,
         end: int | None = None,
-    ) -> Awaitable[tuple[bytes, str, int]]:
+    ) -> Awaitable[tuple[ObjectBody, str, int]]:
         """Download an inclusive byte range of an object.
 
         Issues a ranged ``GET`` (HTTP ``Range: bytes=start-end``, ``end``
@@ -315,9 +351,10 @@ class ObjectStorageClientPort(Protocol):
         past the object size) raises a precondition error mirroring the backend
         416 response.
 
-        :returns: ``(data, content_range, total_size)`` where *content_range*
-            is the satisfied ``bytes start-end/total`` and *total_size* the full
-            object size.
+        :returns: ``(body, content_range, total_size)`` where *body* carries the
+            range slice and its content type (``body.metadata`` may be empty for
+            ranges), *content_range* is the satisfied ``bytes start-end/total``,
+            and *total_size* the full object size.
         """
         ...  # pragma: no cover
 
@@ -328,15 +365,15 @@ class ObjectStorageClientPort(Protocol):
         *,
         if_none_match: str | None = None,
         if_modified_since: datetime | None = None,
-    ) -> Awaitable[tuple[bytes, str] | None]:
+    ) -> Awaitable[ObjectBody | None]:
         """Conditionally download an object, returning ``None`` when unchanged.
 
         Passes ``If-None-Match`` / ``If-Modified-Since`` to the backend; a
         not-modified / precondition-failed response (S3/GCS map ``304``/``412``)
         becomes ``None``. Any other failure propagates.
 
-        :returns: ``(data, content_type)`` when the object changed, else
-            ``None``.
+        :returns: an :class:`ObjectBody` (bytes + content type + already-fetched
+            metadata) when the object changed, else ``None``.
         """
         ...  # pragma: no cover
 

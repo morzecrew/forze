@@ -338,6 +338,30 @@ class TestStorageDownloadRangeAndConditional:
         assert resp.status_code == 200
         assert resp.content == b"0123456789"
 
+    def test_if_none_match_weak_prefix_only_strips_leading_w_slash(self) -> None:
+        # ``removeprefix("W/")`` strips a single literal ``W/`` (weak validator)
+        # but must NOT over-strip a ``WW/`` prefix the way ``lstrip("W/")`` did
+        # (that stripped every leading W/'/' char). A ``WW/"etag"`` validator is
+        # not the object's strong etag, so it does not 304.
+        client = TestClient(_build_app("rest"))
+        stored = self._upload(client)
+
+        full = client.get(f"/files/{stored['key']}")
+        etag = full.headers["etag"]
+
+        # A genuine weak validator (single W/) over the strong etag still 304s.
+        weak = client.get(
+            f"/files/{stored['key']}", headers={"If-None-Match": f"W/{etag}"}
+        )
+        assert weak.status_code == 304
+
+        # Double-W must not be stripped down to the bare etag → no 304.
+        double = client.get(
+            f"/files/{stored['key']}", headers={"If-None-Match": f"WW/{etag}"}
+        )
+        assert double.status_code == 200
+        assert double.content == b"0123456789"
+
 
 class TestStorageUploadCap:
     def test_default_cap_is_64_mib(self) -> None:

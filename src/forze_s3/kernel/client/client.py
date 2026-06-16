@@ -37,6 +37,7 @@ if TYPE_CHECKING:
 from forze.application.contracts.storage import PresignedUrl
 from forze.application.integrations.storage.client import (
     PRESIGN_MAX_EXPIRY,
+    ObjectBody,
     ObjectStorageHead,
     ObjectStorageListedObject,
     ObjectStoragePartInfo,
@@ -486,20 +487,29 @@ class S3Client(S3ClientPort):
     # ....................... #
 
     @exc_interceptor.coroutine("s3.download_bytes")  # type: ignore[untyped-decorator]
-    async def download_bytes(self, bucket: str, key: str) -> bytes:
-        """Download the full content of an S3 object as bytes.
+    async def download_bytes(self, bucket: str, key: str) -> ObjectBody:
+        """Download the full content of an S3 object plus its metadata.
+
+        A single ``GetObject`` already returns the content type and user
+        metadata alongside the body, so they are surfaced on the returned
+        :class:`ObjectBody` (no separate ``HeadObject`` round-trip needed).
 
         :param bucket: Bucket name.
         :param key: Object key.
-        :returns: Raw object bytes.
+        :returns: The object body with content type and user metadata.
         """
 
         c = self.__require_client()
 
         resp = await c.get_object(Bucket=bucket, Key=key)
         body = resp["Body"]
+        data = await body.read()
 
-        return await body.read()
+        return ObjectBody(
+            data=data,
+            content_type=resp.get("ContentType", "application/octet-stream"),
+            metadata=resp.get("Metadata", {}),
+        )
 
     # ....................... #
 
@@ -511,7 +521,7 @@ class S3Client(S3ClientPort):
         *,
         start: int,
         end: int | None = None,
-    ) -> tuple[bytes, str, int]:
+    ) -> tuple[ObjectBody, str, int]:
         """Download an inclusive byte range via a ranged ``GetObject``.
 
         Sends ``Range: bytes=start-end`` (``end`` inclusive; ``end=None`` reads
@@ -524,7 +534,8 @@ class S3Client(S3ClientPort):
         :param key: Object key.
         :param start: First byte offset (inclusive, ``>= 0``).
         :param end: Last byte offset (inclusive), or ``None`` for EOF.
-        :returns: ``(data, content_range, total_size)``.
+        :returns: ``(body, content_range, total_size)`` where *body* carries the
+            range slice and its content type (metadata may be empty for ranges).
         """
 
         validate_range(start, end)
@@ -559,7 +570,13 @@ class S3Client(S3ClientPort):
             total = total or (start + len(data))
             content_range = f"bytes {start}-{end_byte}/{total}"
 
-        return data, content_range, total
+        object_body = ObjectBody(
+            data=data,
+            content_type=resp.get("ContentType", "application/octet-stream"),
+            metadata=resp.get("Metadata", {}),
+        )
+
+        return object_body, content_range, total
 
     # ....................... #
 
@@ -571,7 +588,7 @@ class S3Client(S3ClientPort):
         *,
         if_none_match: str | None = None,
         if_modified_since: datetime | None = None,
-    ) -> tuple[bytes, str] | None:
+    ) -> ObjectBody | None:
         """Conditional ``GetObject`` returning ``None`` when not modified.
 
         Passes ``IfNoneMatch`` / ``IfModifiedSince``. When the object is
@@ -579,7 +596,8 @@ class S3Client(S3ClientPort):
         with code ``304``/``NotModified``/``PreconditionFailed``), which maps to
         ``None``. Any other error propagates.
 
-        :returns: ``(data, content_type)`` when changed, else ``None``.
+        :returns: an :class:`ObjectBody` (bytes + content type + user metadata,
+            all from the same ``GET``) when changed, else ``None``.
         """
 
         c = self.__require_client()
@@ -608,9 +626,12 @@ class S3Client(S3ClientPort):
 
         body = resp["Body"]
         data = await body.read()
-        content_type = resp.get("ContentType", "application/octet-stream")
 
-        return data, content_type
+        return ObjectBody(
+            data=data,
+            content_type=resp.get("ContentType", "application/octet-stream"),
+            metadata=resp.get("Metadata", {}),
+        )
 
     # ....................... #
 

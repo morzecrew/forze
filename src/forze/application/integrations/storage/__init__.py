@@ -1,6 +1,7 @@
 from .adapter import ObjectStorageAdapter, guess_content_type_with_magic
 from .client import (
     PRESIGN_MAX_EXPIRY,
+    ObjectBody,
     ObjectStorageClientPort,
     ObjectStorageHead,
     ObjectStorageListedObject,
@@ -22,6 +23,7 @@ from .tenancy import validate_storage_tenancy_wiring
 
 __all__ = [
     "PRESIGN_MAX_EXPIRY",
+    "ObjectBody",
     "ObjectStorageAdapter",
     "ObjectStorageClientPort",
     "ObjectStorageHead",

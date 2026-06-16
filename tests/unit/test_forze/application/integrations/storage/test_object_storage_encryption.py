@@ -19,6 +19,7 @@ from forze.application.contracts.storage.value_objects import UploadedObject
 from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.integrations.crypto import Keyring
 from forze.application.integrations.storage.adapter import ObjectStorageAdapter
+from forze.application.integrations.storage.client import ObjectBody
 from forze.base.crypto import is_envelope
 from forze.base.exceptions import CoreException, ExceptionKind
 from forze_mock import MockKeyManagement
@@ -74,8 +75,13 @@ class _InMemoryStorageClient:
         _data, metadata, content_type = self.objects[(bucket, key)]
         return _Head(metadata=metadata, content_type=content_type)
 
-    async def download_bytes(self, *, bucket: str, key: str) -> bytes:
-        return self.objects[(bucket, key)][0]
+    async def download_bytes(self, *, bucket: str, key: str) -> ObjectBody:
+        data, metadata, content_type = self.objects[(bucket, key)]
+        return ObjectBody(
+            data=data,
+            content_type=content_type,
+            metadata=metadata,
+        )
 
 
 # ....................... #

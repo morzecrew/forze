@@ -47,6 +47,8 @@ DEFAULT_MAX_UPLOAD_SIZE: Final[int] = 64 * 1024 * 1024
 _UPLOAD_CHUNK_SIZE: Final[int] = 1024 * 1024
 """Chunk size (1 MiB) for streaming uploads into memory under the cap."""
 
+# ....................... #
+
 
 def _upload_too_large(max_size: int) -> Exception:
     """Over-cap rejection; ``validation`` is the closest kind (no 413 mapping)."""
@@ -56,6 +58,9 @@ def _upload_too_large(max_size: int) -> Exception:
         code="upload_too_large",
         details={"max_upload_size": max_size},
     )
+
+
+# ....................... #
 
 
 async def _read_capped(file: UploadFile, max_size: int | None) -> bytes:
@@ -107,9 +112,12 @@ def _upload_endpoint(
         if max_upload_size is not None:
             declared = request.headers.get("content-length")
 
-            if declared is not None and declared.isdigit():
-                if int(declared) > max_upload_size:
-                    raise _upload_too_large(max_upload_size)
+            if (
+                declared is not None
+                and declared.isdigit()
+                and int(declared) > max_upload_size
+            ):
+                raise _upload_too_large(max_upload_size)
 
         payload = validate_payload(
             dto_type,
@@ -156,7 +164,7 @@ def _download_endpoint(
         obj = await runner(key)
 
         body: bytes = obj.data
-        etag = _weak_body_etag(body)
+        etag = _strong_body_etag(body)
         base_headers = {
             "Content-Disposition": _content_disposition(obj.filename),
             "ETag": etag,
@@ -185,12 +193,22 @@ def _download_endpoint(
     return endpoint
 
 
-def _weak_body_etag(body: bytes) -> str:
-    """A strong ETag derived from the body bytes (MD5 hex, quoted)."""
+# ....................... #
+
+
+def _strong_body_etag(body: bytes) -> str:
+    """A strong ETag derived from the body bytes (MD5 hex, quoted).
+
+    A body-MD5 is a byte-exact validator, so the quoted digest (no ``W/``
+    prefix) is a **strong** ETag.
+    """
 
     import hashlib
 
-    return f'"{hashlib.md5(body, usedforsecurity=False).hexdigest()}"'
+    return f'"{hashlib.md5(body, usedforsecurity=False).hexdigest()}"'  # nosec
+
+
+# ....................... #
 
 
 def _is_not_modified(request: Request, etag: str) -> bool:
@@ -207,9 +225,12 @@ def _is_not_modified(request: Request, etag: str) -> bool:
     if inm is None:
         return False
 
-    candidates = {part.strip().lstrip("W/") for part in inm.split(",")}
+    candidates = {part.strip().removeprefix("W/") for part in inm.split(",")}
 
     return etag in candidates or "*" in candidates
+
+
+# ....................... #
 
 
 def _ranged_response(
@@ -270,6 +291,7 @@ def _parse_byte_range(range_header: str, total: int) -> tuple[int, int] | None:
             return None
 
         start = max(0, total - suffix)
+
         return start, total - 1
 
     if not first.isdigit():
@@ -282,15 +304,17 @@ def _parse_byte_range(range_header: str, total: int) -> tuple[int, int] | None:
 
     if last == "":
         end = total - 1
+
     elif last.isdigit():
         end = min(int(last), total - 1)
+
     else:
         return None
 
-    if end < start:
-        return None
+    return None if end < start else (start, end)
 
-    return start, end
+
+# ....................... #
 
 
 def _content_disposition(filename: str) -> str:

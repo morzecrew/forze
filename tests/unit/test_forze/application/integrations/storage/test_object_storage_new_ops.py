@@ -14,12 +14,16 @@ import pytest
 from forze.application.contracts.crypto import BytesCipherPort
 from forze.application.contracts.storage import ObjectHead, RangedDownload
 from forze.application.integrations.storage import (
+    ObjectBody,
     ObjectStorageAdapter,
     ObjectStorageHead,
 )
+from forze.application.integrations.storage.adapter import default_b64_codec
 from forze.base.exceptions import CoreException
 
 # ----------------------- #
+
+_FOO_ENC = default_b64_codec.dumps("foo")
 
 _META = {
     "filename": "foo.txt",
@@ -190,11 +194,14 @@ async def test_move_copies_then_deletes_source(
 async def test_download_range_threads_args_and_maps(
     adapter: ObjectStorageAdapter,
 ) -> None:
-    adapter.client.head_object = AsyncMock(
-        return_value=ObjectStorageHead(content_type="text/plain", size=10),
-    )
+    # The content type rides on the range GET's body; no separate head call.
+    adapter.client.head_object = AsyncMock()
     adapter.client.download_range_bytes = AsyncMock(
-        return_value=(b"01234", "bytes 0-4/10", 10),
+        return_value=(
+            ObjectBody(data=b"01234", content_type="text/plain"),
+            "bytes 0-4/10",
+            10,
+        ),
     )
 
     ranged = await adapter.download_range("docs/k1", start=0, end=4)
@@ -208,6 +215,8 @@ async def test_download_range_threads_args_and_maps(
     kwargs = adapter.client.download_range_bytes.await_args.kwargs
     assert kwargs["start"] == 0
     assert kwargs["end"] == 4
+    # The range body already carries the content type — no redundant head.
+    adapter.client.head_object.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -271,22 +280,27 @@ async def test_download_if_changed_none_when_unchanged(
 async def test_download_if_changed_returns_body_when_changed(
     adapter: ObjectStorageAdapter,
 ) -> None:
+    # filename rides in the body's metadata envelope (base-64 "Zm9v" == "foo").
     adapter.client.download_bytes_conditional = AsyncMock(
-        return_value=(b"hello world", "text/plain"),
+        return_value=ObjectBody(
+            data=b"hello world",
+            content_type="text/plain",
+            metadata={**_META, "filename": _FOO_ENC},
+        ),
     )
-    adapter.client.head_object = AsyncMock(
-        return_value=ObjectStorageHead(content_type="text/plain", metadata=_META),
-    )
+    adapter.client.head_object = AsyncMock()
 
     result = await adapter.download_if_changed("docs/k1", if_none_match="stale")
 
     assert result is not None
     assert result.data == b"hello world"
     assert result.content_type == "text/plain"
-    assert result.filename == "foo.txt"
+    assert result.filename == "foo"
 
     kwargs = adapter.client.download_bytes_conditional.await_args.kwargs
     assert kwargs["if_none_match"] == "stale"
+    # The conditional GET already carries the metadata — no redundant head.
+    adapter.client.head_object.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -299,6 +313,113 @@ async def test_download_if_changed_requires_a_condition(
         await adapter.download_if_changed("docs/k1")
 
     adapter.client.download_bytes_conditional.assert_not_called()
+
+
+# ----------------------- #
+# download — graceful metadata + single client call (FIX 1)
+
+
+@pytest.mark.asyncio
+async def test_download_decodes_envelope_filename(
+    adapter: ObjectStorageAdapter,
+) -> None:
+    # base-64 "Zm9v" decodes to "foo"; one client call, no separate head.
+    adapter.client.head_object = AsyncMock()
+    adapter.client.download_bytes = AsyncMock(
+        return_value=ObjectBody(
+            data=b"hello",
+            content_type="text/plain",
+            metadata={**_META, "filename": _FOO_ENC},
+        ),
+    )
+
+    result = await adapter.download("docs/k1")
+
+    assert result.data == b"hello"
+    assert result.content_type == "text/plain"
+    assert result.filename == "foo"
+    adapter.client.head_object.assert_not_called()
+    adapter.client.download_bytes.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_download_raw_object_without_envelope_uses_key_basename(
+    adapter: ObjectStorageAdapter,
+) -> None:
+    # A presigned PUT stores no envelope: download must not raise, and the
+    # filename falls back to the key's basename.
+    adapter.client.head_object = AsyncMock()
+    adapter.client.download_bytes = AsyncMock(
+        return_value=ObjectBody(
+            data=b"\x89PNG",
+            content_type="image/png",
+            metadata={},
+        ),
+    )
+
+    result = await adapter.download("inbox/raw/upload.png")
+
+    assert result.data == b"\x89PNG"
+    assert result.content_type == "image/png"
+    assert result.filename == "upload.png"
+    adapter.client.head_object.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_download_raw_object_bare_key_uses_key_itself(
+    adapter: ObjectStorageAdapter,
+) -> None:
+    adapter.client.download_bytes = AsyncMock(
+        return_value=ObjectBody(data=b"x", content_type="application/octet-stream"),
+    )
+
+    result = await adapter.download("blob")
+
+    assert result.filename == "blob"
+
+
+@pytest.mark.asyncio
+async def test_download_if_changed_raw_object_uses_key_basename(
+    adapter: ObjectStorageAdapter,
+) -> None:
+    adapter.client.head_object = AsyncMock()
+    adapter.client.download_bytes_conditional = AsyncMock(
+        return_value=ObjectBody(
+            data=b"data",
+            content_type="image/png",
+            metadata={},
+        ),
+    )
+
+    result = await adapter.download_if_changed("inbox/raw/pic.png", if_none_match="x")
+
+    assert result is not None
+    assert result.filename == "pic.png"
+    adapter.client.head_object.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_download_decrypts_envelope_and_falls_back_to_basename() -> None:
+    # Encrypting route: an envelope-less (raw) object still decrypts when the
+    # bytes are an envelope, and the filename falls back to the key basename.
+    class _Cipher:
+        async def decrypt(self, data: bytes, *, aad: bytes) -> bytes:
+            return b"plain:" + data
+
+    cipher = MagicMock(spec=BytesCipherPort)
+    cipher.decrypt = _Cipher().decrypt
+    adapter = _adapter(cipher=cipher)
+
+    # A non-envelope raw object is served as-is (migration tolerance), filename
+    # from the basename.
+    adapter.client.download_bytes = AsyncMock(
+        return_value=ObjectBody(data=b"raw", content_type="image/png", metadata={}),
+    )
+
+    result = await adapter.download("inbox/x/y.png")
+
+    assert result.data == b"raw"  # not an envelope → not decrypted
+    assert result.filename == "y.png"
 
 
 # ----------------------- #

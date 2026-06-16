@@ -109,12 +109,40 @@ async def test_compose_multipart_full_flow(
     # like presigned uploads), so read raw bytes from the client directly rather
     # than the envelope-decoding download().
     async with gcs_client.client():
-        raw = await gcs_client.download_bytes(gcs_bucket, key)
+        raw = (await gcs_client.download_bytes(gcs_bucket, key)).data
     assert raw == b"".join(bodies)
 
     # Temp parts were cleaned up: a re-list finds nothing.
     after = await uploads.list_parts(session)
     assert after == []
+
+
+async def test_compose_multipart_single_part(
+    gcs_client: GCSClient, gcs_bucket: str
+) -> None:
+    # A single-part completion can't compose (compose needs >= 2 sources on real
+    # GCS); the client rewrites the lone part to the destination via copy. Exercise
+    # that path end-to-end (fake-gcs supports the rewrite/copy API).
+    await _probe_compose(gcs_client, gcs_bucket)
+
+    ctx = _ctx(gcs_client, gcs_bucket)
+    spec = StorageSpec(name=gcs_bucket)
+    uploads = ctx.storage.uploads(spec)
+
+    key = "compose/single.bin"
+    session = await uploads.begin_upload(key)
+
+    await _deposit_part(gcs_client, gcs_bucket, session, 1, b"only-part")
+
+    head = await uploads.complete_upload(session, [UploadPart(part_number=1)])
+    assert head.size == len(b"only-part")
+
+    async with gcs_client.client():
+        raw = (await gcs_client.download_bytes(gcs_bucket, key)).data
+    assert raw == b"only-part"
+
+    # The lone temp part was cleaned up.
+    assert await uploads.list_parts(session) == []
 
 
 async def test_compose_multipart_abort(

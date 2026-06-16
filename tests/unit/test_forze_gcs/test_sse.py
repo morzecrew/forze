@@ -111,6 +111,32 @@ async def test_compose_applies_kms_key_name_on_completion() -> None:
     storage.delete = AsyncMock()
     client = _client_with(storage)
 
+    # >= 2 parts so the assembly goes through compose (a single part would
+    # rewrite via copy with destinationKmsKeyName instead — covered separately).
+    await client.complete_multipart_upload(
+        "bucket",
+        "final/key",
+        upload_id="UID",
+        parts=[
+            ObjectStoragePartInfo(part_number=1),
+            ObjectStoragePartInfo(part_number=2),
+        ],
+        sse=ObjectStorageSSE(key_id="kms/key"),
+    )
+
+    assert storage.compose.await_args.kwargs["params"] == {"kmsKeyName": "kms/key"}
+
+
+@pytest.mark.asyncio
+async def test_single_part_rewrite_applies_destination_kms_key() -> None:
+    storage = MagicMock()
+    storage.copy = AsyncMock()
+    storage.compose = AsyncMock()
+    storage.delete = AsyncMock()
+    client = _client_with(storage)
+
+    # A single part cannot be composed (compose needs >= 2 sources); it is
+    # rewritten via copy, carrying the CMEK as destinationKmsKeyName.
     await client.complete_multipart_upload(
         "bucket",
         "final/key",
@@ -119,7 +145,10 @@ async def test_compose_applies_kms_key_name_on_completion() -> None:
         sse=ObjectStorageSSE(key_id="kms/key"),
     )
 
-    assert storage.compose.await_args.kwargs["params"] == {"kmsKeyName": "kms/key"}
+    storage.compose.assert_not_called()
+    assert storage.copy.await_args.kwargs["params"] == {
+        "destinationKmsKeyName": "kms/key"
+    }
 
 
 # ----------------------- #

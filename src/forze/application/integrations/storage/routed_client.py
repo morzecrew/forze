@@ -11,6 +11,7 @@ from forze.application.contracts.tenancy.routed_client_base import (
 )
 
 from .client import (
+    ObjectBody,
     ObjectStorageClientPort,
     ObjectStorageHead,
     ObjectStorageListedObject,
@@ -96,7 +97,7 @@ class RoutedObjectStorageClientBase[C: _RoutedStorageInnerClient](
                 sse=sse,
             )
 
-    async def download_bytes(self, bucket: str, key: str) -> bytes:
+    async def download_bytes(self, bucket: str, key: str) -> ObjectBody:
         inner = await self._get_client()
 
         async with inner.client():
@@ -109,7 +110,7 @@ class RoutedObjectStorageClientBase[C: _RoutedStorageInnerClient](
         *,
         start: int,
         end: int | None = None,
-    ) -> tuple[bytes, str, int]:
+    ) -> tuple[ObjectBody, str, int]:
         inner = await self._get_client()
 
         async with inner.client():
@@ -127,7 +128,7 @@ class RoutedObjectStorageClientBase[C: _RoutedStorageInnerClient](
         *,
         if_none_match: str | None = None,
         if_modified_since: datetime | None = None,
-    ) -> tuple[bytes, str] | None:
+    ) -> ObjectBody | None:
         inner = await self._get_client()
 
         async with inner.client():
