@@ -4107,8 +4107,8 @@
 takes a frozen <strong>dependency registry</strong> and a frozen <strong>lifecycle plan</strong>. A real
 service builds both from several integration packages at once. This chapter is
 how you get from <code>forze[postgres,redis]</code> to a running runtime.</p>
-<p><a class="glightbox" data-title="Several integration modules register into one dependency container" data-type="image" href="../../_diagrams/light/dependency-plan.svg"><img alt="Several integration modules register into one dependency container" src="../../_diagrams/light/dependency-plan.svg#only-light" /></a>
-<a class="glightbox" data-title="Several integration modules register into one dependency container" data-type="image" href="../../_diagrams/dark/dependency-plan.svg"><img alt="Several integration modules register into one dependency container" src="../../_diagrams/dark/dependency-plan.svg#only-dark" /></a></p>
+<p><a class="glightbox" data-gallery="light" data-title="Several integration modules register into one dependency container" data-type="image" href="../../_diagrams/light/dependency-plan.svg#only-light"><img alt="Several integration modules register into one dependency container" src="../../_diagrams/light/dependency-plan.svg#only-light" /></a>
+<a class="glightbox" data-gallery="dark" data-title="Several integration modules register into one dependency container" data-type="image" href="../../_diagrams/dark/dependency-plan.svg#only-dark"><img alt="Several integration modules register into one dependency container" src="../../_diagrams/dark/dependency-plan.svg#only-dark" /></a></p>
 <h2 id="integration-modules">Integration modules<a class="headerlink" href="#integration-modules" title="Permanent link">&para;</a></h2>
 <p>Every integration package ships a <strong>deps module</strong> — a small object that
 registers its adapters, keyed by <strong>specification name</strong>. You never construct
