@@ -9,6 +9,7 @@ from forze.application.contracts.storage import (
     StorageCommandDepPort,
     StorageQueryDepPort,
     StorageSpec,
+    StorageUploadSessionDepPort,
 )
 from forze.application.execution import ExecutionContext
 
@@ -61,6 +62,25 @@ class ConfigurableS3StorageQuery(StorageQueryDepPort):
 @attrs.define(slots=True, frozen=True, kw_only=True)
 class ConfigurableS3StorageCommand(StorageCommandDepPort):
     """Configurable S3 storage command adapter."""
+
+    config: S3StorageConfig = attrs.field(
+        validator=attrs.validators.instance_of(S3StorageConfig),
+    )
+    """Configuration for the storage."""
+
+    # ....................... #
+
+    def __call__(self, ctx: ExecutionContext, spec: StorageSpec) -> S3StorageAdapter:
+        return _build_adapter(ctx, self.config)
+
+
+# ....................... #
+
+
+@final
+@attrs.define(slots=True, frozen=True, kw_only=True)
+class ConfigurableS3StorageUploads(StorageUploadSessionDepPort):
+    """Configurable S3 storage multipart upload-session adapter."""
 
     config: S3StorageConfig = attrs.field(
         validator=attrs.validators.instance_of(S3StorageConfig),

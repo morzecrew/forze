@@ -1,7 +1,7 @@
 """Tenant-routed object-storage client base shared by S3/GCS integrations."""
 
-from datetime import timedelta
-from typing import Protocol
+from datetime import datetime, timedelta
+from typing import Mapping, Protocol, Sequence
 
 import attrs
 
@@ -14,6 +14,7 @@ from .client import (
     ObjectStorageClientPort,
     ObjectStorageHead,
     ObjectStorageListedObject,
+    ObjectStoragePartInfo,
 )
 from collections.abc import Awaitable
 
@@ -98,6 +99,64 @@ class RoutedObjectStorageClientBase[C: _RoutedStorageInnerClient](
         async with inner.client():
             return await inner.download_bytes(bucket, key)
 
+    async def download_range_bytes(
+        self,
+        bucket: str,
+        key: str,
+        *,
+        start: int,
+        end: int | None = None,
+    ) -> tuple[bytes, str, int]:
+        inner = await self._get_client()
+
+        async with inner.client():
+            return await inner.download_range_bytes(
+                bucket,
+                key,
+                start=start,
+                end=end,
+            )
+
+    async def download_bytes_conditional(
+        self,
+        bucket: str,
+        key: str,
+        *,
+        if_none_match: str | None = None,
+        if_modified_since: datetime | None = None,
+    ) -> tuple[bytes, str] | None:
+        inner = await self._get_client()
+
+        async with inner.client():
+            return await inner.download_bytes_conditional(
+                bucket,
+                key,
+                if_none_match=if_none_match,
+                if_modified_since=if_modified_since,
+            )
+
+    async def copy_object(
+        self,
+        bucket: str,
+        src_key: str,
+        dst_key: str,
+    ) -> None:
+        inner = await self._get_client()
+
+        async with inner.client():
+            await inner.copy_object(bucket, src_key, dst_key)
+
+    async def put_object_tags(
+        self,
+        bucket: str,
+        key: str,
+        tags: Mapping[str, str],
+    ) -> None:
+        inner = await self._get_client()
+
+        async with inner.client():
+            await inner.put_object_tags(bucket, key, tags)
+
     async def delete_object(self, bucket: str, key: str) -> None:
         inner = await self._get_client()
 
@@ -168,4 +227,93 @@ class RoutedObjectStorageClientBase[C: _RoutedStorageInnerClient](
                 key,
                 expires_in=expires_in,
                 content_type=content_type,
+            )
+
+    # ....................... #
+    # Resumable multipart upload primitives.
+
+    async def create_multipart_upload(
+        self,
+        bucket: str,
+        key: str,
+        *,
+        content_type: str | None = None,
+    ) -> str:
+        inner = await self._get_client()
+
+        async with inner.client():
+            return await inner.create_multipart_upload(
+                bucket,
+                key,
+                content_type=content_type,
+            )
+
+    async def presign_multipart_part(
+        self,
+        bucket: str,
+        key: str,
+        *,
+        upload_id: str,
+        part_number: int,
+        expires_in: timedelta,
+    ) -> PresignedUrl:
+        inner = await self._get_client()
+
+        async with inner.client():
+            return await inner.presign_multipart_part(
+                bucket,
+                key,
+                upload_id=upload_id,
+                part_number=part_number,
+                expires_in=expires_in,
+            )
+
+    async def list_multipart_parts(
+        self,
+        bucket: str,
+        key: str,
+        *,
+        upload_id: str,
+    ) -> list[ObjectStoragePartInfo]:
+        inner = await self._get_client()
+
+        async with inner.client():
+            return await inner.list_multipart_parts(
+                bucket,
+                key,
+                upload_id=upload_id,
+            )
+
+    async def complete_multipart_upload(
+        self,
+        bucket: str,
+        key: str,
+        *,
+        upload_id: str,
+        parts: Sequence[ObjectStoragePartInfo],
+    ) -> None:
+        inner = await self._get_client()
+
+        async with inner.client():
+            await inner.complete_multipart_upload(
+                bucket,
+                key,
+                upload_id=upload_id,
+                parts=parts,
+            )
+
+    async def abort_multipart_upload(
+        self,
+        bucket: str,
+        key: str,
+        *,
+        upload_id: str,
+    ) -> None:
+        inner = await self._get_client()
+
+        async with inner.client():
+            await inner.abort_multipart_upload(
+                bucket,
+                key,
+                upload_id=upload_id,
             )

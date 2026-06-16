@@ -125,6 +125,8 @@ from forze.application.contracts.storage import (
     StorageQueryDepKey,
     StorageQueryPort,
     StorageSpec,
+    StorageUploadSessionDepKey,
+    StorageUploadSessionPort,
 )
 from forze.application.contracts.stream import (
     StreamCommandDepKey,
@@ -528,6 +530,21 @@ class ConfigurableMockStorageCommand(_MockFactoryBase):
     def __call__(
         self, context: ExecutionContext, spec: StorageSpec
     ) -> StorageCommandPort:
+        cfg = self._route(spec.name)
+        return MockStorageAdapter(
+            state=self._state(context),
+            bucket=self._namespace_for(context, spec.name, default=str(spec.name)),
+            tenant_aware=cfg.tenant_aware if cfg else False,
+            tenant_provider=_tenant_provider(context),
+        )
+
+
+@final
+@attrs.define(slots=True, kw_only=True)
+class ConfigurableMockStorageUploads(_MockFactoryBase):
+    def __call__(
+        self, context: ExecutionContext, spec: StorageSpec
+    ) -> StorageUploadSessionPort:
         cfg = self._route(spec.name)
         return MockStorageAdapter(
             state=self._state(context),
@@ -1098,6 +1115,7 @@ class MockDepsModule(DepsModule):
             InboxDepKey: ConfigurableMockInbox(module=self),
             StorageQueryDepKey: ConfigurableMockStorageQuery(module=self),
             StorageCommandDepKey: ConfigurableMockStorageCommand(module=self),
+            StorageUploadSessionDepKey: ConfigurableMockStorageUploads(module=self),
             GraphQueryDepKey: graph,
             GraphCommandDepKey: graph,
             GraphRawQueryDepKey: graph,

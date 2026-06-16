@@ -102,6 +102,18 @@ class MockState:
     """Records the ``read_only`` flag of each mock transaction (test observability)."""
     storage: dict[str, dict[str, Any]] = attrs.field(factory=dict)
     storage_bytes: dict[str, dict[str, bytes]] = attrs.field(factory=dict)
+    storage_multipart: dict[str, dict[str, dict[int, bytes]]] = attrs.field(
+        factory=dict
+    )
+    """In-progress multipart upload sessions: bucket → upload_id → {part_number: bytes}.
+
+    Models resumable multipart uploads (the mock equivalent of S3 native
+    multipart / GCS compose). ``begin_upload`` registers a session; parts
+    accumulate by ``part_number`` (parallel, out-of-order allowed) via the
+    :meth:`MockStorageAdapter.deposit_part` test seam; ``complete_upload``
+    assembles them in part-number order into ``storage``/``storage_bytes`` and
+    drops the session; ``abort_upload`` drops it. Non-transactional (object
+    storage survives a DB rollback in production)."""
     storage_presigns: list[dict[str, Any]] = attrs.field(factory=list)
     """Presigned URLs issued by the mock storage adapter (test observability).
 

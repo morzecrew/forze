@@ -4,7 +4,11 @@ from .client import (
     ObjectStorageClientPort,
     ObjectStorageHead,
     ObjectStorageListedObject,
+    ObjectStoragePartInfo,
+    build_range_header,
     presign_expiry_seconds,
+    unsatisfiable_range,
+    validate_range,
 )
 from .codec import ObjectStoragePathCodec, default_path_codec
 from .encryption import validate_storage_encryption_wiring
@@ -21,6 +25,10 @@ __all__ = [
     "ObjectStorageClientPort",
     "ObjectStorageHead",
     "ObjectStorageListedObject",
+    "ObjectStoragePartInfo",
+    "build_range_header",
+    "unsatisfiable_range",
+    "validate_range",
     "ObjectStoragePathCodec",
     "ObjectStorageTenantProvisioner",
     "RoutedObjectStorageClientBase",

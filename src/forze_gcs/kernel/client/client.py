@@ -8,8 +8,8 @@ require_gcs()
 import json
 import os
 from contextlib import asynccontextmanager
-from datetime import datetime, timedelta
-from typing import Any, AsyncGenerator, Literal, cast, final
+from datetime import datetime, timedelta, timezone
+from typing import Any, AsyncGenerator, Literal, Mapping, Sequence, cast, final
 
 import aiohttp
 import attrs
@@ -20,11 +20,20 @@ from forze.application.integrations.storage.client import (
     PRESIGN_MAX_EXPIRY,
     ObjectStorageHead,
     ObjectStorageListedObject,
+    ObjectStoragePartInfo,
+    build_range_header,
     normalize_list_window,
     presign_expiry_seconds,
+    unsatisfiable_range,
+    validate_range,
 )
 from forze.base.exceptions import exc
-from forze.base.primitives import ContextScopedResource, GuardedLifecycle, utcnow
+from forze.base.primitives import (
+    ContextScopedResource,
+    GuardedLifecycle,
+    utcnow,
+    uuid7,
+)
 from forze.base.primitives.owned_temp_path import OwnedTempPath
 
 from .errors import exc_interceptor
@@ -40,6 +49,24 @@ GCS has no S3-style tag API; tags are persisted as namespaced custom metadata
 keys and split back out by :meth:`GCSClient.head_object`. User metadata keys
 that happen to start with this prefix would be surfaced as tags on read-back.
 """
+
+# ....................... #
+
+MPU_NAMESPACE = "__forze_mpu__"
+"""Path segment under which GCS compose-based multipart temp parts live.
+
+GCS has no native multipart-session API, so resumable multipart is emulated:
+each part is uploaded to a temp object at
+``<key>.__forze_mpu__/<session>/<part_number>`` and the final object is
+assembled by composing the temps in part-number order. The session id is the
+``upload_id`` the port threads through every call."""
+
+COMPOSE_MAX_SOURCES = 32
+"""Maximum source objects GCS ``compose`` accepts in a single call.
+
+Multipart completions with more parts than this are assembled by **chaining**
+composes (compose accumulated result + next batch), so arbitrarily many parts
+are supported within the standard 32-per-call limit."""
 
 # ....................... #
 
@@ -309,6 +336,171 @@ class GCSClient(GCSClientPort):
 
     # ....................... #
 
+    @exc_interceptor.coroutine("gcs.download_range_bytes")  # type: ignore[untyped-decorator]
+    async def download_range_bytes(
+        self,
+        bucket: str,
+        key: str,
+        *,
+        start: int,
+        end: int | None = None,
+    ) -> tuple[bytes, str, int]:
+        """Download an inclusive byte range via a ranged media ``GET``.
+
+        Sends ``Range: bytes=start-end`` (``end`` inclusive; ``end=None`` reads
+        to EOF). The object's total size is read from a metadata head (GCS does
+        not return a ``Content-Range`` total uniformly via this client), and the
+        satisfied ``Content-Range`` is synthesized from the returned slice. An
+        unsatisfiable range (``start`` beyond the object) raises a precondition
+        error (the 416/``RequestedRangeNotSatisfiable`` equivalent).
+        """
+
+        validate_range(start, end)
+        storage = self.__require_storage()
+
+        raw = await storage.download_metadata(bucket, key, timeout=self.__timeout())
+        head = _head_from_object_json(raw)
+        total = head.size
+
+        if start >= total and total > 0:
+            raise unsatisfiable_range(start, total)
+
+        try:
+            data = await storage.download(
+                bucket,
+                key,
+                headers={"Range": build_range_header(start, end)},
+                timeout=self.__timeout(),
+            )
+
+        except aiohttp.ClientResponseError as e:
+            if getattr(e, "status", None) == 416 or getattr(e, "code", None) == 416:
+                raise unsatisfiable_range(start, total) from e
+
+            raise
+
+        end_byte = start + len(data) - 1 if data else start
+        content_range = f"bytes {start}-{end_byte}/{total}"
+
+        return data, content_range, total
+
+    # ....................... #
+
+    @exc_interceptor.coroutine("gcs.download_bytes_conditional")  # type: ignore[untyped-decorator]
+    async def download_bytes_conditional(
+        self,
+        bucket: str,
+        key: str,
+        *,
+        if_none_match: str | None = None,
+        if_modified_since: datetime | None = None,
+    ) -> tuple[bytes, str] | None:
+        """Conditional media ``GET`` returning ``None`` when not modified.
+
+        Sends ``If-None-Match`` / ``If-Modified-Since``; a ``304 Not Modified``
+        (or ``412 Precondition Failed``) response maps to ``None``. The content
+        type comes from a metadata head on the changed path.
+        """
+
+        storage = self.__require_storage()
+
+        headers: dict[str, Any] = {}
+
+        if if_none_match is not None:
+            headers["If-None-Match"] = if_none_match
+
+        if if_modified_since is not None:
+            headers["If-Modified-Since"] = _http_date(if_modified_since)
+
+        try:
+            data = await storage.download(
+                bucket,
+                key,
+                headers=headers,
+                timeout=self.__timeout(),
+            )
+
+        except aiohttp.ClientResponseError as e:
+            status = getattr(e, "status", None) or getattr(e, "code", None)
+
+            if status in {304, 412}:
+                return None
+
+            raise
+
+        raw = await storage.download_metadata(bucket, key, timeout=self.__timeout())
+        head = _head_from_object_json(raw)
+
+        return data, head.content_type
+
+    # ....................... #
+
+    @exc_interceptor.coroutine("gcs.copy_object")  # type: ignore[untyped-decorator]
+    async def copy_object(
+        self,
+        bucket: str,
+        src_key: str,
+        dst_key: str,
+    ) -> None:
+        """Server-side copy within *bucket* via the GCS rewrite API.
+
+        Uses :meth:`gcloud.aio.storage.Storage.copy`, which drives the
+        ``rewriteTo`` endpoint and loops the rewrite token, so it handles
+        arbitrarily large objects (no single-call size cap). Same-bucket only.
+        """
+
+        storage = self.__require_storage()
+
+        await storage.copy(
+            bucket,
+            src_key,
+            bucket,
+            new_name=dst_key,
+            timeout=self.__timeout(),
+        )
+
+    # ....................... #
+
+    @exc_interceptor.coroutine("gcs.put_object_tags")  # type: ignore[untyped-decorator]
+    async def put_object_tags(
+        self,
+        bucket: str,
+        key: str,
+        tags: Mapping[str, str],
+    ) -> None:
+        """Replace the object's namespaced tag custom-metadata (full replace).
+
+        GCS has no S3-style tag API; tags live as custom-metadata keys prefixed
+        with :data:`TAG_METADATA_PREFIX`. This reads current metadata, clears
+        every existing namespaced tag key (PATCH ``null`` deletes a custom key),
+        and writes the new set — non-tag user metadata is left untouched.
+        """
+
+        storage = self.__require_storage()
+
+        raw = await storage.download_metadata(bucket, key, timeout=self.__timeout())
+        existing: Any = raw.get("metadata") or {}
+
+        new_custom: dict[str, Any] = {}
+
+        if isinstance(existing, dict):
+            for k in cast(dict[str, Any], existing):
+                if str(k).startswith(TAG_METADATA_PREFIX):
+                    # null deletes the custom-metadata key on PATCH.
+                    new_custom[str(k)] = None
+
+        for tag_key, tag_value in tags.items():
+            new_custom[f"{TAG_METADATA_PREFIX}{tag_key}"] = tag_value
+
+        await storage.patch_metadata(
+            bucket,
+            key,
+            {"metadata": new_custom},
+            timeout=self.__timeout(),
+        )
+
+    # ....................... #
+
     @exc_interceptor.coroutine("gcs.delete_object")  # type: ignore[untyped-decorator]
     async def delete_object(self, bucket: str, key: str) -> None:
         storage = self.__require_storage()
@@ -555,6 +747,202 @@ class GCSClient(GCSClientPort):
 
     # ....................... #
 
+    # ....................... #
+    # Resumable multipart upload primitives (compose-based, see MPU_NAMESPACE).
+
+    @staticmethod
+    def _mpu_prefix(key: str, upload_id: str) -> str:
+        return f"{key}.{MPU_NAMESPACE}/{upload_id}/"
+
+    @classmethod
+    def _mpu_part_key(cls, key: str, upload_id: str, part_number: int) -> str:
+        return f"{cls._mpu_prefix(key, upload_id)}{part_number}"
+
+    # ....................... #
+
+    @exc_interceptor.coroutine("gcs.create_multipart_upload")  # type: ignore[untyped-decorator]
+    async def create_multipart_upload(
+        self,
+        bucket: str,
+        key: str,
+        *,
+        content_type: str | None = None,
+    ) -> str:
+        """Allocate a temp part-key namespace and return its session token.
+
+        GCS has no native multipart session, so this mints a session id; the
+        temp parts land under ``<key>.__forze_mpu__/<session>/<n>`` and the
+        final object is assembled by :meth:`complete_multipart_upload` via
+        ``compose``. *content_type* is bound at completion time (compose
+        ``destination``), not here.
+        """
+
+        _ = (bucket, key, content_type)
+
+        return str(uuid7())
+
+    # ....................... #
+
+    @exc_interceptor.coroutine("gcs.presign_multipart_part")  # type: ignore[untyped-decorator]
+    async def presign_multipart_part(
+        self,
+        bucket: str,
+        key: str,
+        *,
+        upload_id: str,
+        part_number: int,
+        expires_in: timedelta,
+    ) -> PresignedUrl:
+        """Sign a ``PUT`` URL for a temp part object (reuses V4 upload signing)."""
+
+        part_key = self._mpu_part_key(key, upload_id, part_number)
+
+        return await self.__presign(
+            bucket,
+            part_key,
+            expires_in=expires_in,
+            method="PUT",
+            content_type=None,
+        )
+
+    # ....................... #
+
+    @exc_interceptor.coroutine("gcs.list_multipart_parts")  # type: ignore[untyped-decorator]
+    async def list_multipart_parts(
+        self,
+        bucket: str,
+        key: str,
+        *,
+        upload_id: str,
+    ) -> list[ObjectStoragePartInfo]:
+        """List the temp part objects of the session (the resume primitive)."""
+
+        storage = self.__require_storage()
+        bucket_ref = storage.get_bucket(bucket)
+        prefix = self._mpu_prefix(key, upload_id)
+
+        keys = await bucket_ref.list_blobs(prefix=prefix)
+
+        parts: list[ObjectStoragePartInfo] = []
+
+        for blob_key in keys:
+            suffix = blob_key[len(prefix) :]
+
+            if not suffix.isdigit():
+                continue
+
+            parts.append(ObjectStoragePartInfo(part_number=int(suffix)))
+
+        parts.sort(key=lambda p: p.part_number)
+
+        return parts
+
+    # ....................... #
+
+    @exc_interceptor.coroutine("gcs.complete_multipart_upload")  # type: ignore[untyped-decorator]
+    async def complete_multipart_upload(
+        self,
+        bucket: str,
+        key: str,
+        *,
+        upload_id: str,
+        parts: Sequence[ObjectStoragePartInfo],
+    ) -> None:
+        """Compose the temp parts in order into *key*, then delete the temps.
+
+        ``compose`` takes at most :data:`COMPOSE_MAX_SOURCES` sources per call,
+        so larger part sets are assembled by chaining: compose the running
+        result with the next batch, repeatedly, until all parts are folded in.
+        The temp part objects (and any intermediate temp) are cleaned up after.
+        """
+
+        storage = self.__require_storage()
+        timeout = self.__timeout()
+
+        ordered = sorted(parts, key=lambda p: p.part_number)
+
+        if not ordered:
+            raise exc.validation("complete_multipart_upload requires at least one part")
+
+        part_keys = [
+            self._mpu_part_key(key, upload_id, p.part_number) for p in ordered
+        ]
+
+        cleanup: set[str] = set(part_keys)
+
+        # Chain composes when there are more than COMPOSE_MAX_SOURCES parts.
+        # The accumulated result is written to a temp object, then folded with
+        # the next batch, so no single compose exceeds the source cap.
+        sources = part_keys
+
+        if len(sources) <= COMPOSE_MAX_SOURCES:
+            await storage.compose(bucket, key, sources, timeout=timeout)
+
+        else:
+            acc_key = f"{self._mpu_prefix(key, upload_id)}__compose__"
+            cleanup.add(acc_key)
+
+            first_batch = sources[:COMPOSE_MAX_SOURCES]
+            await storage.compose(bucket, acc_key, first_batch, timeout=timeout)
+
+            rest = sources[COMPOSE_MAX_SOURCES:]
+
+            while rest:
+                # compose includes the accumulator itself, so each step folds in
+                # at most (cap - 1) further parts.
+                batch = rest[: COMPOSE_MAX_SOURCES - 1]
+                rest = rest[COMPOSE_MAX_SOURCES - 1 :]
+                await storage.compose(
+                    bucket,
+                    acc_key,
+                    [acc_key, *batch],
+                    timeout=timeout,
+                )
+
+            await storage.compose(bucket, key, [acc_key], timeout=timeout)
+
+        await self.__delete_mpu_keys(bucket, cleanup)
+
+    # ....................... #
+
+    @exc_interceptor.coroutine("gcs.abort_multipart_upload")  # type: ignore[untyped-decorator]
+    async def abort_multipart_upload(
+        self,
+        bucket: str,
+        key: str,
+        *,
+        upload_id: str,
+    ) -> None:
+        """Delete every temp part object of the session (best-effort idempotent)."""
+
+        storage = self.__require_storage()
+        bucket_ref = storage.get_bucket(bucket)
+        prefix = self._mpu_prefix(key, upload_id)
+
+        keys = await bucket_ref.list_blobs(prefix=prefix)
+
+        await self.__delete_mpu_keys(bucket, set(keys))
+
+    # ....................... #
+
+    async def __delete_mpu_keys(self, bucket: str, keys: set[str]) -> None:
+        """Delete temp multipart objects, tolerating already-gone keys."""
+
+        storage = self.__require_storage()
+        timeout = self.__timeout()
+
+        for blob_key in keys:
+            try:
+                await storage.delete(bucket, blob_key, timeout=timeout)
+
+            except aiohttp.ClientResponseError as e:
+                if _response_is_not_found(e):
+                    continue
+
+                raise
+
+    # ....................... #
+
     async def _insert_bucket(self, bucket: str) -> None:
         storage = self.__require_storage()
         project_id = self.__require_project_id()
@@ -571,6 +959,20 @@ class GCSClient(GCSClientPort):
             headers=headers,
             timeout=self.__timeout(),
         )
+
+
+# ....................... #
+
+
+def _http_date(value: datetime) -> str:
+    """Format a datetime as an RFC 7231 IMF-fixdate for ``If-Modified-Since``."""
+
+    from email.utils import format_datetime
+
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+
+    return format_datetime(value, usegmt=True)
 
 
 # ....................... #

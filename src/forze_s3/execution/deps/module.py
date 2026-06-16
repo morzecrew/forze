@@ -7,6 +7,7 @@ import attrs
 from forze.application.contracts.storage import (
     StorageCommandDepKey,
     StorageQueryDepKey,
+    StorageUploadSessionDepKey,
 )
 from forze.application.contracts.crypto import EncryptionTier
 from forze.application.contracts.tenancy import (
@@ -25,7 +26,11 @@ from ...kernel._logger import logger
 from ...kernel.client import RoutedS3Client, S3ClientPort
 from ._warnings import S3_STORAGE_WARNING
 from .configs import S3StorageConfig
-from .factories import ConfigurableS3StorageCommand, ConfigurableS3StorageQuery
+from .factories import (
+    ConfigurableS3StorageCommand,
+    ConfigurableS3StorageQuery,
+    ConfigurableS3StorageUploads,
+)
 from .keys import S3ClientDepKey
 
 # ----------------------- #
@@ -104,6 +109,7 @@ class S3DepsModule(DepsModule):
                 bindings=[
                     (StorageQueryDepKey, ConfigurableS3StorageQuery),
                     (StorageCommandDepKey, ConfigurableS3StorageCommand),
+                    (StorageUploadSessionDepKey, ConfigurableS3StorageUploads),
                 ],
             ),
             plain={S3ClientDepKey: self.client},

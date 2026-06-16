@@ -178,6 +178,102 @@ class TestStorageRoutes:
 # ....................... #
 
 
+class TestStorageDownloadRangeAndConditional:
+    """Range / conditional support on the generated download route (edge-only)."""
+
+    def _upload(self, client: TestClient) -> dict:
+        return client.post(
+            "/files",
+            files={"file": ("big.bin", b"0123456789", "application/octet-stream")},
+        ).json()
+
+    def test_plain_download_is_unchanged_200(self) -> None:
+        client = TestClient(_build_app("rest"))
+        stored = self._upload(client)
+
+        resp = client.get(f"/files/{stored['key']}")
+
+        assert resp.status_code == 200
+        assert resp.content == b"0123456789"
+        assert "content-range" not in resp.headers
+        # ETag/Accept-Ranges are additive, not a behavior change.
+        assert resp.headers["accept-ranges"] == "bytes"
+        assert resp.headers["etag"]
+
+    def test_range_request_returns_206_partial(self) -> None:
+        client = TestClient(_build_app("rest"))
+        stored = self._upload(client)
+
+        resp = client.get(
+            f"/files/{stored['key']}", headers={"Range": "bytes=2-5"}
+        )
+
+        assert resp.status_code == 206
+        assert resp.content == b"2345"
+        assert resp.headers["content-range"] == "bytes 2-5/10"
+
+    def test_open_ended_range(self) -> None:
+        client = TestClient(_build_app("rest"))
+        stored = self._upload(client)
+
+        resp = client.get(
+            f"/files/{stored['key']}", headers={"Range": "bytes=7-"}
+        )
+
+        assert resp.status_code == 206
+        assert resp.content == b"789"
+        assert resp.headers["content-range"] == "bytes 7-9/10"
+
+    def test_suffix_range(self) -> None:
+        client = TestClient(_build_app("rest"))
+        stored = self._upload(client)
+
+        resp = client.get(
+            f"/files/{stored['key']}", headers={"Range": "bytes=-3"}
+        )
+
+        assert resp.status_code == 206
+        assert resp.content == b"789"
+        assert resp.headers["content-range"] == "bytes 7-9/10"
+
+    def test_unsatisfiable_range_returns_416(self) -> None:
+        client = TestClient(_build_app("rest"))
+        stored = self._upload(client)
+
+        resp = client.get(
+            f"/files/{stored['key']}", headers={"Range": "bytes=99-"}
+        )
+
+        assert resp.status_code == 416
+        assert resp.headers["content-range"] == "bytes */10"
+
+    def test_if_none_match_matching_etag_returns_304(self) -> None:
+        client = TestClient(_build_app("rest"))
+        stored = self._upload(client)
+
+        full = client.get(f"/files/{stored['key']}")
+        etag = full.headers["etag"]
+
+        resp = client.get(
+            f"/files/{stored['key']}", headers={"If-None-Match": etag}
+        )
+
+        assert resp.status_code == 304
+        assert resp.content == b""
+        assert resp.headers["etag"] == etag
+
+    def test_if_none_match_stale_etag_returns_200(self) -> None:
+        client = TestClient(_build_app("rest"))
+        stored = self._upload(client)
+
+        resp = client.get(
+            f"/files/{stored['key']}", headers={"If-None-Match": '"stale"'}
+        )
+
+        assert resp.status_code == 200
+        assert resp.content == b"0123456789"
+
+
 class TestStorageUploadCap:
     def test_default_cap_is_64_mib(self) -> None:
         assert DEFAULT_MAX_UPLOAD_SIZE == 64 * 1024 * 1024

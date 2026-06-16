@@ -1,10 +1,12 @@
 """Shared object-storage adapter implementing the storage query and command ports."""
 
 import asyncio
+import builtins
 import mimetypes
 import re
-from collections.abc import Awaitable, Callable
-from datetime import timedelta
+from collections.abc import Awaitable, Callable, Sequence
+from datetime import datetime, timedelta
+from typing import Mapping
 from uuid import UUID
 
 import attrs
@@ -18,17 +20,26 @@ from forze.application.contracts.resolution import (
 from forze.application.contracts.storage.ports import (
     StorageCommandPort,
     StorageQueryPort,
+    StorageUploadSessionPort,
 )
 from forze.application.contracts.storage.value_objects import (
     DownloadedObject,
+    ObjectHead,
     ObjectMetadata,
     PresignedUrl,
+    RangedDownload,
     StoredObject,
     UploadedObject,
+    UploadPart,
+    UploadSession,
 )
 from forze.application.contracts.crypto import BytesCipherPort
 from forze.application.contracts.tenancy import TenancyMixin, TenantIdentity
-from forze.application.integrations.storage.client import ObjectStorageClientPort
+from forze.application.integrations.storage.client import (
+    ObjectStorageClientPort,
+    ObjectStoragePartInfo,
+    validate_range,
+)
 from forze.application.integrations.storage.codec import default_path_codec
 from forze.application.integrations.storage.metadata import (
     object_metadata_from_user_metadata,
@@ -46,11 +57,17 @@ default_b64_codec = AsciiB64Codec()
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class ObjectStorageAdapter(StorageQueryPort, StorageCommandPort, TenancyMixin):
+class ObjectStorageAdapter(
+    StorageQueryPort,
+    StorageCommandPort,
+    StorageUploadSessionPort,
+    TenancyMixin,
+):
     """Storage adapter that persists files in an object-storage bucket.
 
-    Implements both :class:`~forze.application.contracts.storage.StorageQueryPort`
-    and :class:`~forze.application.contracts.storage.StorageCommandPort`.
+    Implements :class:`~forze.application.contracts.storage.StorageQueryPort`,
+    :class:`~forze.application.contracts.storage.StorageCommandPort`, and
+    :class:`~forze.application.contracts.storage.StorageUploadSessionPort`.
     Object keys are built from an optional tenant prefix, a user-supplied
     prefix, and a key generator (defaults to UUID v7). Filenames and
     descriptions are base-64 encoded into user metadata.
@@ -113,6 +130,30 @@ class ObjectStorageAdapter(StorageQueryPort, StorageCommandPort, TenancyMixin):
                 "Presigned URLs are unavailable when client-side encryption is "
                 "enabled: bytes transferred directly to/from the object store "
                 "bypass the keyring and would be stored or served in the clear.",
+            )
+
+    # ....................... #
+
+    def _reject_multipart_when_encrypted(self) -> None:
+        if self.cipher is not None:
+            raise exc.configuration(
+                "Multipart upload sessions are unavailable when client-side "
+                "encryption is enabled: the application never sees the part "
+                "bytes (the client uploads them directly via presigned URLs), "
+                "so it cannot encrypt them and the object would be stored in "
+                "the clear.",
+            )
+
+    # ....................... #
+
+    def _reject_copy_when_encrypted(self) -> None:
+        if self.cipher is not None:
+            raise exc.precondition(
+                "Server-side copy/move is unavailable when client-side "
+                "encryption is enabled: the encryption AAD binds the ciphertext "
+                "to the source object key, so a copy to a new key would be "
+                "undecryptable at the destination. Re-encrypt by downloading and "
+                "re-uploading through this port instead.",
             )
 
     # ....................... #
@@ -318,6 +359,160 @@ class ObjectStorageAdapter(StorageQueryPort, StorageCommandPort, TenancyMixin):
 
     # ....................... #
 
+    async def head(
+        self,
+        key: str,
+        *,
+        include_tags: bool = False,
+    ) -> ObjectHead:
+        """Fetch an object's honest head/metadata view by key.
+
+        Validates the key (same traversal/charset rules as :meth:`download`)
+        and resolves the tenant-aware bucket, then surfaces the client's
+        ``head_object`` result as a public :class:`ObjectHead`. Unlike
+        :meth:`download` / :meth:`list`, this does **not** decode the metadata
+        envelope, so it works for objects stored through a presigned ``PUT``
+        (which carry no envelope) — the completion seam for direct uploads.
+
+        ``include_tags`` is threaded to the client with the same guarantee
+        semantics as :meth:`list` (S3 pays an extra ``GetObjectTagging`` call
+        when ``True``; GCS/mock include tags for free).
+        """
+
+        self._validate_key(key)
+        bucket = await self._resolved_bucket()
+
+        async with self.client.client():
+            h = await self.client.head_object(
+                bucket=bucket,
+                key=key,
+                include_tags=include_tags,
+            )
+
+        return ObjectHead(
+            content_type=h.content_type,
+            size=h.size,
+            etag=h.etag,
+            last_modified=h.last_modified,
+            metadata=dict(h.metadata),
+            tags=dict(h.tags),
+        )
+
+    # ....................... #
+
+    async def download_range(
+        self,
+        key: str,
+        *,
+        start: int,
+        end: int | None = None,
+    ) -> RangedDownload:
+        """Download an inclusive byte range of an object.
+
+        Validates the key and the range window (``start >= 0``, ``end >=
+        start``), resolves the tenant-aware bucket, then delegates the ranged
+        ``GET`` to the client. An unsatisfiable range (``start`` beyond the
+        object) surfaces as a precondition error (the 416 equivalent).
+
+        Refused when client-side encryption is enabled: a slice of an encryption
+        envelope cannot be decrypted, so a partial read would return ciphertext.
+        """
+
+        if self.cipher is not None:
+            raise exc.precondition(
+                "Ranged downloads are unavailable when client-side encryption "
+                "is enabled: a byte slice of the encryption envelope cannot be "
+                "decrypted.",
+            )
+
+        validate_range(start, end)
+        self._validate_key(key)
+        bucket = await self._resolved_bucket()
+
+        async with self.client.client():
+            h = await self.client.head_object(bucket=bucket, key=key)
+            data, content_range, total = await self.client.download_range_bytes(
+                bucket=bucket,
+                key=key,
+                start=start,
+                end=end,
+            )
+
+        return RangedDownload(
+            data=data,
+            content_type=h.content_type,
+            content_range=content_range,
+            total_size=total,
+        )
+
+    # ....................... #
+
+    async def download_if_changed(
+        self,
+        key: str,
+        *,
+        if_none_match: str | None = None,
+        if_modified_since: datetime | None = None,
+    ) -> DownloadedObject | None:
+        """Conditionally download an object, returning ``None`` when unchanged.
+
+        Validates the key and that at least one condition is supplied, resolves
+        the tenant-aware bucket, then issues a conditional ``GET`` through the
+        client. ``None`` is the not-modified answer (HTTP 304 equivalent). When
+        a body comes back its filename is decoded from the metadata envelope
+        (same as :meth:`download`), and encryption envelopes are decrypted.
+        """
+
+        if if_none_match is None and if_modified_since is None:
+            raise exc.validation(
+                "download_if_changed requires at least one of if_none_match / "
+                "if_modified_since",
+            )
+
+        self._validate_key(key)
+        bucket = await self._resolved_bucket()
+
+        async with self.client.client():
+            result = await self.client.download_bytes_conditional(
+                bucket=bucket,
+                key=key,
+                if_none_match=if_none_match,
+                if_modified_since=if_modified_since,
+            )
+
+            if result is None:
+                return None
+
+            data, content_type = result
+
+            h = await self.client.head_object(bucket=bucket, key=key)
+
+            if not h.metadata:
+                raise exc.internal("Invalid object metadata")
+
+            try:
+                meta = object_metadata_from_user_metadata(dict(h.metadata))
+
+            except CoreException:
+                raise
+
+            except Exception as e:
+                raise exc.internal("Invalid object metadata") from e
+
+            if self.cipher is not None and is_envelope(data):
+                data = await self.cipher.decrypt(
+                    data,
+                    aad=self._encryption_aad(bucket, key),
+                )
+
+        return DownloadedObject(
+            data=data,
+            content_type=content_type,
+            filename=default_b64_codec.loads(meta.filename),
+        )
+
+    # ....................... #
+
     async def presign_download(
         self,
         key: str,
@@ -397,6 +592,104 @@ class ObjectStorageAdapter(StorageQueryPort, StorageCommandPort, TenancyMixin):
 
         async with self.client.client():
             await self.client.delete_object(bucket=bucket, key=key)
+
+    # ....................... #
+
+    async def copy(self, src_key: str, dst_key: str) -> ObjectHead:
+        """Server-side copy *src_key* to *dst_key* within the resolved bucket.
+
+        Both keys are validated (traversal/charset) before anything is copied,
+        and the bucket is tenant-resolved exactly like :meth:`download`. The
+        copy is server-side (no bytes through the app); the returned head is a
+        fresh ``head_object`` on the destination. Same-bucket only.
+
+        Refused when client-side encryption is enabled: the encryption AAD binds
+        the ciphertext to the source key, so a server-side copy to a new key
+        produces an object that cannot be decrypted at the destination.
+        """
+
+        self._reject_copy_when_encrypted()
+        self._validate_key(src_key)
+        self._validate_key(dst_key)
+        bucket = await self._resolved_bucket()
+
+        async with self.client.client():
+            await self.client.copy_object(
+                bucket=bucket,
+                src_key=src_key,
+                dst_key=dst_key,
+            )
+            h = await self.client.head_object(bucket=bucket, key=dst_key)
+
+        return ObjectHead(
+            content_type=h.content_type,
+            size=h.size,
+            etag=h.etag,
+            last_modified=h.last_modified,
+            metadata=dict(h.metadata),
+            tags=dict(h.tags),
+        )
+
+    # ....................... #
+
+    async def move(self, src_key: str, dst_key: str) -> ObjectHead:
+        """Move *src_key* to *dst_key* (copy then delete source; non-atomic).
+
+        Both keys are validated and the bucket tenant-resolved like
+        :meth:`copy`. Implemented as a server-side copy followed by a delete of
+        the source: a crash between the two leaves both keys present. The
+        destination head is taken before the source delete, so the returned
+        value reflects the copied object.
+
+        Refused when client-side encryption is enabled (same reason as
+        :meth:`copy` — the AAD binds ciphertext to the source key).
+        """
+
+        self._reject_copy_when_encrypted()
+        self._validate_key(src_key)
+        self._validate_key(dst_key)
+        bucket = await self._resolved_bucket()
+
+        async with self.client.client():
+            await self.client.copy_object(
+                bucket=bucket,
+                src_key=src_key,
+                dst_key=dst_key,
+            )
+            h = await self.client.head_object(bucket=bucket, key=dst_key)
+            await self.client.delete_object(bucket=bucket, key=src_key)
+
+        return ObjectHead(
+            content_type=h.content_type,
+            size=h.size,
+            etag=h.etag,
+            last_modified=h.last_modified,
+            metadata=dict(h.metadata),
+            tags=dict(h.tags),
+        )
+
+    # ....................... #
+
+    async def put_object_tags(
+        self,
+        key: str,
+        tags: Mapping[str, str],
+    ) -> None:
+        """Replace an object's tags (full replacement) by key.
+
+        Validates the key (traversal/charset) and resolves the tenant-aware
+        bucket, then delegates the tag replacement to the client.
+        """
+
+        self._validate_key(key)
+        bucket = await self._resolved_bucket()
+
+        async with self.client.client():
+            await self.client.put_object_tags(
+                bucket=bucket,
+                key=key,
+                tags=dict(tags),
+            )
 
     # ....................... #
 
@@ -481,6 +774,173 @@ class ObjectStorageAdapter(StorageQueryPort, StorageCommandPort, TenancyMixin):
                 )
 
         return out, total_count
+
+    # ....................... #
+
+    async def begin_upload(
+        self,
+        key: str,
+        *,
+        content_type: str | None = None,
+    ) -> UploadSession:
+        """Open a resumable multipart upload session targeting *key*.
+
+        Refused on a client-side-encrypting route (the app never sees the part
+        bytes, so it cannot encrypt them). Validates the key like
+        :meth:`upload`, resolves and ensures the tenant bucket, then opens the
+        backend session and returns the :class:`UploadSession` handle whose
+        ``upload_id`` the caller must persist.
+        """
+
+        self._reject_multipart_when_encrypted()
+        self._validate_key(key)
+        bucket = await self._resolved_bucket()
+
+        async with self.client.client():
+            await self.client.ensure_bucket(bucket)
+
+            upload_id = await self.client.create_multipart_upload(
+                bucket=bucket,
+                key=key,
+                content_type=content_type,
+            )
+
+        return UploadSession(
+            key=key,
+            upload_id=upload_id,
+            bucket=bucket,
+            content_type=content_type,
+        )
+
+    # ....................... #
+
+    async def presign_part(
+        self,
+        session: UploadSession,
+        part_number: int,
+        *,
+        expires_in: timedelta,
+    ) -> PresignedUrl:
+        """Mint a time-limited ``PUT`` URL for one part (``part_number >= 1``).
+
+        Refused on an encrypting route. Validates the session key and that
+        ``part_number >= 1``, resolves the tenant bucket, then signs the part
+        ``PUT``. The URL is a bearer credential — short ``expires_in``.
+        """
+
+        self._reject_multipart_when_encrypted()
+
+        if part_number < 1:
+            raise exc.validation(
+                f"Multipart part_number must be >= 1, got {part_number}",
+            )
+
+        self._validate_key(session.key)
+        bucket = session.bucket or await self._resolved_bucket()
+
+        async with self.client.client():
+            return await self.client.presign_multipart_part(
+                bucket=bucket,
+                key=session.key,
+                upload_id=session.upload_id,
+                part_number=part_number,
+                expires_in=expires_in,
+            )
+
+    # ....................... #
+
+    async def list_parts(self, session: UploadSession) -> builtins.list[UploadPart]:
+        """List the parts that already landed for *session* (the resume primitive)."""
+
+        self._reject_multipart_when_encrypted()
+        self._validate_key(session.key)
+        bucket = session.bucket or await self._resolved_bucket()
+
+        async with self.client.client():
+            parts = await self.client.list_multipart_parts(
+                bucket=bucket,
+                key=session.key,
+                upload_id=session.upload_id,
+            )
+
+        return [
+            UploadPart(
+                part_number=p.part_number,
+                etag=p.etag,
+                size=p.size,
+            )
+            for p in parts
+        ]
+
+    # ....................... #
+
+    async def complete_upload(
+        self,
+        session: UploadSession,
+        parts: Sequence[UploadPart],
+    ) -> ObjectHead:
+        """Assemble *parts* into the final object and return its head.
+
+        Refused on an encrypting route. Validates the session key, resolves the
+        tenant bucket, completes the backend upload (S3
+        ``CompleteMultipartUpload`` with the ``{part_number, etag}`` list; GCS
+        chained ``compose`` in part-number order + temp cleanup), then heads the
+        assembled object.
+        """
+
+        self._reject_multipart_when_encrypted()
+        self._validate_key(session.key)
+
+        if not parts:
+            raise exc.validation(
+                "complete_upload requires at least one part",
+            )
+
+        bucket = session.bucket or await self._resolved_bucket()
+
+        client_parts = [
+            ObjectStoragePartInfo(
+                part_number=p.part_number,
+                etag=p.etag,
+                size=p.size,
+            )
+            for p in sorted(parts, key=lambda p: p.part_number)
+        ]
+
+        async with self.client.client():
+            await self.client.complete_multipart_upload(
+                bucket=bucket,
+                key=session.key,
+                upload_id=session.upload_id,
+                parts=client_parts,
+            )
+
+            h = await self.client.head_object(bucket=bucket, key=session.key)
+
+        return ObjectHead(
+            content_type=h.content_type,
+            size=h.size,
+            etag=h.etag,
+            last_modified=h.last_modified,
+            metadata=dict(h.metadata),
+            tags=dict(h.tags),
+        )
+
+    # ....................... #
+
+    async def abort_upload(self, session: UploadSession) -> None:
+        """Discard an unfinished session and free its in-progress data."""
+
+        self._reject_multipart_when_encrypted()
+        self._validate_key(session.key)
+        bucket = session.bucket or await self._resolved_bucket()
+
+        async with self.client.client():
+            await self.client.abort_multipart_upload(
+                bucket=bucket,
+                key=session.key,
+                upload_id=session.upload_id,
+            )
 
     # ....................... #
 

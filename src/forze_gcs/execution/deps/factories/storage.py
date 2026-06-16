@@ -9,6 +9,7 @@ from forze.application.contracts.storage import (
     StorageCommandDepPort,
     StorageQueryDepPort,
     StorageSpec,
+    StorageUploadSessionDepPort,
 )
 from forze.application.execution import ExecutionContext
 
@@ -61,6 +62,25 @@ class ConfigurableGCSStorageQuery(StorageQueryDepPort):
 @attrs.define(slots=True, frozen=True, kw_only=True)
 class ConfigurableGCSStorageCommand(StorageCommandDepPort):
     """Configurable GCS storage command adapter factory."""
+
+    config: GCSStorageConfig = attrs.field(
+        validator=attrs.validators.instance_of(GCSStorageConfig),
+    )
+    """Configuration for the storage route."""
+
+    # ....................... #
+
+    def __call__(self, ctx: ExecutionContext, spec: StorageSpec) -> GCSStorageAdapter:
+        return _build_adapter(ctx, self.config)
+
+
+# ....................... #
+
+
+@final
+@attrs.define(slots=True, frozen=True, kw_only=True)
+class ConfigurableGCSStorageUploads(StorageUploadSessionDepPort):
+    """Configurable GCS storage multipart upload-session adapter factory."""
 
     config: GCSStorageConfig = attrs.field(
         validator=attrs.validators.instance_of(GCSStorageConfig),

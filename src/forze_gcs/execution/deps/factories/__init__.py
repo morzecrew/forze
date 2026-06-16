@@ -1,7 +1,15 @@
 """GCS dependency factories."""
 
-from .storage import ConfigurableGCSStorageCommand, ConfigurableGCSStorageQuery
+from .storage import (
+    ConfigurableGCSStorageCommand,
+    ConfigurableGCSStorageQuery,
+    ConfigurableGCSStorageUploads,
+)
 
 # ----------------------- #
 
-__all__ = ["ConfigurableGCSStorageQuery", "ConfigurableGCSStorageCommand"]
+__all__ = [
+    "ConfigurableGCSStorageQuery",
+    "ConfigurableGCSStorageCommand",
+    "ConfigurableGCSStorageUploads",
+]

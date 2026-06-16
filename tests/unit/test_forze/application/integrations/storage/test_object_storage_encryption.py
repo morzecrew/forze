@@ -223,3 +223,21 @@ async def test_presign_refused_when_encryption_enabled(method: str) -> None:
             await adapter.presign_upload("some-key", expires_in=timedelta(minutes=5))
 
     assert excinfo.value.kind is ExceptionKind.PRECONDITION
+
+
+# ....................... #
+
+
+@pytest.mark.parametrize("method", ["copy", "move"])
+async def test_copy_move_refused_when_encryption_enabled(method: str) -> None:
+    # Server-side copy/move binds ciphertext to the source key via the AAD;
+    # copying to a new key would leave it undecryptable at the destination.
+    adapter = _adapter(_InMemoryStorageClient(), cipher=_keyring())
+
+    with pytest.raises(CoreException) as excinfo:
+        if method == "copy":
+            await adapter.copy("src-key", "dst-key")
+        else:
+            await adapter.move("src-key", "dst-key")
+
+    assert excinfo.value.kind is ExceptionKind.PRECONDITION

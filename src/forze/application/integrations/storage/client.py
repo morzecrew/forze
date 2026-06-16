@@ -2,12 +2,20 @@
 
 import math
 from datetime import datetime, timedelta
-from typing import AsyncContextManager, Awaitable, Final, Mapping, Protocol, final
+from typing import (
+    AsyncContextManager,
+    Awaitable,
+    Final,
+    Mapping,
+    Protocol,
+    Sequence,
+    final,
+)
 
 import attrs
 
 from forze.application.contracts.storage import PresignedUrl
-from forze.base.exceptions import exc
+from forze.base.exceptions import CoreException, exc
 
 # ----------------------- #
 
@@ -73,6 +81,52 @@ def normalize_list_window(limit: int | None, offset: int | None) -> tuple[int, i
 # ....................... #
 
 
+def validate_range(start: int, end: int | None) -> None:
+    """Validate an inclusive byte range request shared by all backends.
+
+    :raises CoreException: ``validation`` when ``start < 0`` or, when *end* is
+        given, ``end < start``.
+    """
+
+    if start < 0:
+        raise exc.validation(f"Range start must be >= 0, got {start}")
+
+    if end is not None and end < start:
+        raise exc.validation(
+            f"Range end {end} must be >= start {start}",
+        )
+
+
+# ....................... #
+
+
+def build_range_header(start: int, end: int | None) -> str:
+    """Build an HTTP ``Range`` header value for an inclusive byte range."""
+
+    if end is None:
+        return f"bytes={start}-"
+
+    return f"bytes={start}-{end}"
+
+
+# ....................... #
+
+
+def unsatisfiable_range(start: int, total: int) -> CoreException:
+    """Build the precondition error for a range whose start is past the object end.
+
+    Mirrors the backend HTTP 416 (Range Not Satisfiable) response.
+    """
+
+    return exc.precondition(
+        f"Requested range start {start} is beyond object size {total}",
+        code="range_not_satisfiable",
+    )
+
+
+# ....................... #
+
+
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class ObjectStorageHead:
@@ -133,6 +187,29 @@ class ObjectStorageListedObject:
 # ....................... #
 
 
+@final
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class ObjectStoragePartInfo:
+    """One already-uploaded part as reported by the backend on resume.
+
+    Returned by :meth:`ObjectStorageClientPort.list_multipart_parts`. Mirrors
+    S3 ``ListParts`` entries; on GCS it is synthesized from the temp part
+    objects (``part_number`` + ``size``, ``etag`` best-effort).
+    """
+
+    part_number: int
+    """1-indexed part position."""
+
+    etag: str = ""
+    """Backend ETag for the part (S3); may be empty on GCS."""
+
+    size: int = 0
+    """Part size in bytes when the backend reports it; ``0`` otherwise."""
+
+
+# ....................... #
+
+
 class ObjectStorageClientPort(Protocol):
     """Operations implemented by storage clients."""
 
@@ -170,6 +247,71 @@ class ObjectStorageClientPort(Protocol):
         bucket: str,
         key: str,
     ) -> Awaitable[bytes]: ...  # pragma: no cover
+
+    def download_range_bytes(
+        self,
+        bucket: str,
+        key: str,
+        *,
+        start: int,
+        end: int | None = None,
+    ) -> Awaitable[tuple[bytes, str, int]]:
+        """Download an inclusive byte range of an object.
+
+        Issues a ranged ``GET`` (HTTP ``Range: bytes=start-end``, ``end``
+        inclusive; ``end=None`` reads to EOF). An unsatisfiable range (``start``
+        past the object size) raises a precondition error mirroring the backend
+        416 response.
+
+        :returns: ``(data, content_range, total_size)`` where *content_range*
+            is the satisfied ``bytes start-end/total`` and *total_size* the full
+            object size.
+        """
+        ...  # pragma: no cover
+
+    def download_bytes_conditional(
+        self,
+        bucket: str,
+        key: str,
+        *,
+        if_none_match: str | None = None,
+        if_modified_since: datetime | None = None,
+    ) -> Awaitable[tuple[bytes, str] | None]:
+        """Conditionally download an object, returning ``None`` when unchanged.
+
+        Passes ``If-None-Match`` / ``If-Modified-Since`` to the backend; a
+        not-modified / precondition-failed response (S3/GCS map ``304``/``412``)
+        becomes ``None``. Any other failure propagates.
+
+        :returns: ``(data, content_type)`` when the object changed, else
+            ``None``.
+        """
+        ...  # pragma: no cover
+
+    def copy_object(
+        self,
+        bucket: str,
+        src_key: str,
+        dst_key: str,
+    ) -> Awaitable[None]:
+        """Server-side copy *src_key* to *dst_key* within *bucket*.
+
+        S3 ``CopyObject`` (single-copy capped at 5 GiB), GCS object rewrite
+        (handles large objects). Same-bucket only.
+        """
+        ...  # pragma: no cover
+
+    def put_object_tags(
+        self,
+        bucket: str,
+        key: str,
+        tags: Mapping[str, str],
+    ) -> Awaitable[None]:
+        """Replace an object's tags with *tags* (full replacement).
+
+        S3 ``PutObjectTagging``; GCS rewrites the namespaced tag custom metadata.
+        """
+        ...  # pragma: no cover
 
     def delete_object(
         self,
@@ -247,5 +389,96 @@ class ObjectStorageClientPort(Protocol):
         the returned :attr:`PresignedUrl.headers` carries the header the
         client must send. ``expires_in`` must be positive and within
         :data:`PRESIGN_MAX_EXPIRY` (the shared 7-day S3/GCS cap).
+        """
+        ...  # pragma: no cover
+
+    # ....................... #
+    # Resumable multipart upload primitives.
+    #
+    # These are the raw backend calls behind
+    # :class:`~forze.application.contracts.storage.StorageUploadSessionPort`.
+    # The adapter does key validation, tenant-bucket resolution, and VO
+    # mapping; the client does the raw backend work and stays divergent
+    # (S3 native UploadId+ETags vs GCS temp-keys+compose) behind a uniform
+    # signature.
+
+    def create_multipart_upload(
+        self,
+        bucket: str,
+        key: str,
+        *,
+        content_type: str | None = None,
+    ) -> Awaitable[str]:
+        """Open a multipart upload and return its backend upload id.
+
+        S3 ``CreateMultipartUpload`` returns an ``UploadId``. GCS has no
+        native session, so the client returns a generated temp part-key
+        namespace token (the upload id) that the other multipart primitives
+        interpret.
+
+        :returns: The backend-specific upload id (opaque to the caller).
+        """
+        ...  # pragma: no cover
+
+    def presign_multipart_part(
+        self,
+        bucket: str,
+        key: str,
+        *,
+        upload_id: str,
+        part_number: int,
+        expires_in: timedelta,
+    ) -> Awaitable[PresignedUrl]:
+        """Sign a time-limited ``PUT`` URL for one part of a multipart upload.
+
+        S3 signs ``upload_part`` (``Bucket``/``Key``/``UploadId``/``PartNumber``).
+        GCS signs a plain ``PUT`` to the temp part object addressed by
+        ``upload_id`` + ``part_number``. ``part_number`` is 1-indexed;
+        ``expires_in`` is validated like every presign.
+        """
+        ...  # pragma: no cover
+
+    def list_multipart_parts(
+        self,
+        bucket: str,
+        key: str,
+        *,
+        upload_id: str,
+    ) -> Awaitable[list[ObjectStoragePartInfo]]:
+        """List the parts already uploaded for an in-progress multipart upload.
+
+        S3 ``ListParts``; GCS lists the temp part objects of the namespace.
+        Used to resume an interrupted upload (presign only the missing parts).
+        """
+        ...  # pragma: no cover
+
+    def complete_multipart_upload(
+        self,
+        bucket: str,
+        key: str,
+        *,
+        upload_id: str,
+        parts: Sequence[ObjectStoragePartInfo],
+    ) -> Awaitable[None]:
+        """Assemble the uploaded parts into the final object.
+
+        S3 ``CompleteMultipartUpload`` (requires ``{PartNumber, ETag}`` per
+        part, ascending). GCS chained ``compose`` of the temp parts in
+        ascending ``part_number`` order into *key*, then deletes the temps
+        (compose takes at most 32 sources per call, so larger sets chain).
+        """
+        ...  # pragma: no cover
+
+    def abort_multipart_upload(
+        self,
+        bucket: str,
+        key: str,
+        *,
+        upload_id: str,
+    ) -> Awaitable[None]:
+        """Abort an in-progress multipart upload and free its parts.
+
+        S3 ``AbortMultipartUpload``; GCS deletes the temp part objects.
+        Best-effort idempotent.
         """
         ...  # pragma: no cover
