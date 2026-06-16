@@ -45,8 +45,8 @@ namespace it lives in, or the whole connection. Forze names these three tiers,
 weakest to strongest, and every integration reports which one its wiring
 actually reaches:
 
-![A bound TenantIdentity can isolate with a tenant marker, a per-tenant namespace, or a dedicated instance](../_diagrams/light/tenancy-isolation.svg#only-light){ data-src="../_diagrams/light/tenancy-isolation.svg" }
-![A bound TenantIdentity can isolate with a tenant marker, a per-tenant namespace, or a dedicated instance](../_diagrams/dark/tenancy-isolation.svg#only-dark){ data-src="../_diagrams/dark/tenancy-isolation.svg" }
+![A bound TenantIdentity can isolate with a tenant marker, a per-tenant namespace, or a dedicated instance](../_diagrams/light/tenancy-isolation.svg#only-light){ data-src="../_diagrams/light/tenancy-isolation.svg#only-light" }
+![A bound TenantIdentity can isolate with a tenant marker, a per-tenant namespace, or a dedicated instance](../_diagrams/dark/tenancy-isolation.svg#only-dark){ data-src="../_diagrams/dark/tenancy-isolation.svg#only-dark" }
 
 | Tier | Mechanism | Tenants share… |
 |------|-----------|----------------|

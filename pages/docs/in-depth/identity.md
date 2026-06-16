@@ -14,8 +14,8 @@ Identity answers two questions, in order: **is this credential real**
 Proving a credential is valid and deciding *who* it represents are two separate
 jobs. They meet at a single value object — and that's the whole design.
 
-![Verification emits a VerifiedAssertion; resolution turns it into an AuthnIdentity](../_diagrams/light/authn-verify-resolve.svg#only-light){ data-src="../_diagrams/light/authn-verify-resolve.svg" }
-![Verification emits a VerifiedAssertion; resolution turns it into an AuthnIdentity](../_diagrams/dark/authn-verify-resolve.svg#only-dark){ data-src="../_diagrams/dark/authn-verify-resolve.svg" }
+![Verification emits a VerifiedAssertion; resolution turns it into an AuthnIdentity](../_diagrams/light/authn-verify-resolve.svg#only-light){ data-src="../_diagrams/light/authn-verify-resolve.svg#only-light" }
+![Verification emits a VerifiedAssertion; resolution turns it into an AuthnIdentity](../_diagrams/dark/authn-verify-resolve.svg#only-dark){ data-src="../_diagrams/dark/authn-verify-resolve.svg#only-dark" }
 
 - **Verify** — a verifier proves the credential against its issuer (a JWT
   signature, an API-key hash, OIDC JWKS) and emits a **`VerifiedAssertion`**:

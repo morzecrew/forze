@@ -8,8 +8,8 @@ The **runtime** turns a pile of specifications, operations, and adapters into a
 running service. It owns three things: the dependency wiring, the lifecycle of
 infrastructure clients, and the per-request execution context.
 
-![DepsRegistry and LifecyclePlan feed the ExecutionRuntime, which creates an ExecutionContext per scope](../_diagrams/light/execution-runtime.svg#only-light){ data-src="../_diagrams/light/execution-runtime.svg" }
-![DepsRegistry and LifecyclePlan feed the ExecutionRuntime, which creates an ExecutionContext per scope](../_diagrams/dark/execution-runtime.svg#only-dark){ data-src="../_diagrams/dark/execution-runtime.svg" }
+![DepsRegistry and LifecyclePlan feed the ExecutionRuntime, which creates an ExecutionContext per scope](../_diagrams/light/execution-runtime.svg#only-light){ data-src="../_diagrams/light/execution-runtime.svg#only-light" }
+![DepsRegistry and LifecyclePlan feed the ExecutionRuntime, which creates an ExecutionContext per scope](../_diagrams/dark/execution-runtime.svg#only-dark){ data-src="../_diagrams/dark/execution-runtime.svg#only-dark" }
 
 ## Two registries, frozen
 

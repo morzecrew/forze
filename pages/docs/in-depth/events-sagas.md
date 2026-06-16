@@ -14,8 +14,8 @@ We'll trace one worked example throughout — the
 [end-to-end recipe](../recipes/end-to-end-saga-outbox-inbox.md), a complete
 program you can run.
 
-![A state change and its event commit in one transaction, then relay and inbox carry it exactly-once to a shipment](../_diagrams/light/events-flow.svg#only-light){ data-src="../_diagrams/light/events-flow.svg" }
-![A state change and its event commit in one transaction, then relay and inbox carry it exactly-once to a shipment](../_diagrams/dark/events-flow.svg#only-dark){ data-src="../_diagrams/dark/events-flow.svg" }
+![A state change and its event commit in one transaction, then relay and inbox carry it exactly-once to a shipment](../_diagrams/light/events-flow.svg#only-light){ data-src="../_diagrams/light/events-flow.svg#only-light" }
+![A state change and its event commit in one transaction, then relay and inbox carry it exactly-once to a shipment](../_diagrams/dark/events-flow.svg#only-dark){ data-src="../_diagrams/dark/events-flow.svg#only-dark" }
 
 ## A state change worth announcing
 

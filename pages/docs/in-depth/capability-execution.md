@@ -15,8 +15,8 @@ The handler computes the result; everything around it is a **stage**. Stages run
 in a fixed order — some outside any transaction, some inside it, some only after
 it commits.
 
-![Stages wrap the handler: before and wrap on the outside, the handler and on-success inside the transaction, after-commit at the end](../_diagrams/light/operation-composition.svg#only-light){ data-src="../_diagrams/light/operation-composition.svg" }
-![Stages wrap the handler: before and wrap on the outside, the handler and on-success inside the transaction, after-commit at the end](../_diagrams/dark/operation-composition.svg#only-dark){ data-src="../_diagrams/dark/operation-composition.svg" }
+![Stages wrap the handler: before and wrap on the outside, the handler and on-success inside the transaction, after-commit at the end](../_diagrams/light/operation-composition.svg#only-light){ data-src="../_diagrams/light/operation-composition.svg#only-light" }
+![Stages wrap the handler: before and wrap on the outside, the handler and on-success inside the transaction, after-commit at the end](../_diagrams/dark/operation-composition.svg#only-dark){ data-src="../_diagrams/dark/operation-composition.svg#only-dark" }
 
 | Stage | When it runs | Typical use |
 |-------|--------------|-------------|
