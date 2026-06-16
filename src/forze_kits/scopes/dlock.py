@@ -92,7 +92,7 @@ class DistributedLockScope:
     # ....................... #
 
     @asynccontextmanager
-    async def scope(self, key: str) -> AsyncGenerator[AcquiredLock]:
+    async def scope(self, key: str) -> AsyncGenerator[AcquiredLock]:  # skipcq: PY-R1000
         loop = asyncio.get_running_loop()
 
         deadline = (

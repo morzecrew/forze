@@ -40,7 +40,7 @@ _fallback = fallback_exception_mapper("Mongo")
 
 
 @static_fn_conformity(ExceptionMapper)  # type: ignore[type-abstract]
-def _mongo_eh(
+def _mongo_eh(  # skipcq: PY-R1000
     exc: BaseException,
     *,
     site: str,

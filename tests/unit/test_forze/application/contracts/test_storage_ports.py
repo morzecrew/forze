@@ -1,11 +1,13 @@
 """Tests for forze.application.contracts.storage.ports."""
 
 from datetime import datetime, timedelta, timezone
-from typing import Optional
+from typing import Mapping, Optional
 
 from forze.application.contracts.storage import (
     DownloadedObject,
+    ObjectHead,
     PresignedUrl,
+    RangedDownload,
     StoredObject,
     UploadedObject,
 )
@@ -61,7 +63,42 @@ class _StubStorage:
             headers={"Content-Type": content_type} if content_type else {},
         )
 
+    async def head(self, key: str, *, include_tags: bool = False) -> ObjectHead:
+        return ObjectHead(content_type="application/octet-stream", size=7)
+
+    async def download_range(
+        self,
+        key: str,
+        *,
+        start: int,
+        end: Optional[int] = None,
+    ) -> RangedDownload:
+        return RangedDownload(
+            data=b"con",
+            content_type="application/octet-stream",
+            content_range="bytes 0-2/7",
+            total_size=7,
+        )
+
+    async def download_if_changed(
+        self,
+        key: str,
+        *,
+        if_none_match: Optional[str] = None,
+        if_modified_since: Optional[datetime] = None,
+    ) -> Optional[DownloadedObject]:
+        return None
+
     async def delete(self, key: str) -> None:
+        pass
+
+    async def copy(self, src_key: str, dst_key: str) -> ObjectHead:
+        return ObjectHead(content_type="application/octet-stream", size=7)
+
+    async def move(self, src_key: str, dst_key: str) -> ObjectHead:
+        return ObjectHead(content_type="application/octet-stream", size=7)
+
+    async def put_object_tags(self, key: str, tags: Mapping[str, str]) -> None:
         pass
 
     async def list(

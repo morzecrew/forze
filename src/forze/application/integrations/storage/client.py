@@ -2,12 +2,21 @@
 
 import math
 from datetime import datetime, timedelta
-from typing import AsyncContextManager, Awaitable, Final, Mapping, Protocol, final
+from typing import (
+    AsyncContextManager,
+    Awaitable,
+    Final,
+    Literal,
+    Mapping,
+    Protocol,
+    Sequence,
+    final,
+)
 
 import attrs
 
 from forze.application.contracts.storage import PresignedUrl
-from forze.base.exceptions import exc
+from forze.base.exceptions import CoreException, exc
 
 # ----------------------- #
 
@@ -73,6 +82,123 @@ def normalize_list_window(limit: int | None, offset: int | None) -> tuple[int, i
 # ....................... #
 
 
+def validate_range(start: int, end: int | None) -> None:
+    """Validate an inclusive byte range request shared by all backends.
+
+    :raises CoreException: ``validation`` when ``start < 0`` or, when *end* is
+        given, ``end < start``.
+    """
+
+    if start < 0:
+        raise exc.validation(f"Range start must be >= 0, got {start}")
+
+    if end is not None and end < start:
+        raise exc.validation(
+            f"Range end {end} must be >= start {start}",
+        )
+
+
+# ....................... #
+
+
+def build_range_header(start: int, end: int | None) -> str:
+    """Build an HTTP ``Range`` header value for an inclusive byte range."""
+
+    if end is None:
+        return f"bytes={start}-"
+
+    return f"bytes={start}-{end}"
+
+
+# ....................... #
+
+
+def unsatisfiable_range(start: int, total: int) -> CoreException:
+    """Build the precondition error for a range whose start is past the object end.
+
+    Mirrors the backend HTTP 416 (Range Not Satisfiable) response.
+    """
+
+    return exc.precondition(
+        f"Requested range start {start} is beyond object size {total}",
+        code="range_not_satisfiable",
+    )
+
+
+# ....................... #
+
+
+@final
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class ObjectStorageSSE:
+    """Backend-neutral server-side-encryption (SSE/CMEK) request descriptor.
+
+    Threaded by the adapter from per-route config to the storage client on the
+    direct-upload paths (upload, copy, presign, multipart create). This is the
+    **at-rest** axis — the *backend* encrypts the bytes it stores — and is
+    orthogonal to (and combinable with) the adapter's client-side envelope
+    encryption (``cipher``), which still refuses direct-upload flows.
+
+    Fields are interpreted per backend:
+
+    - **S3** — ``mode`` selects ``"s3"`` (SSE-S3, ``AES256``) or ``"kms"``
+      (SSE-KMS, ``aws:kms`` with ``key_id`` as the KMS key id). ``"none"`` is
+      the off sentinel (no SSE params sent).
+    - **GCS** — ``key_id`` is the CMEK ``kmsKeyName`` for per-object encryption
+      (``upload``/``compose``); ``mode`` is ignored (GCS has no SSE-S3 analog,
+      Google-managed default encryption is always on). ``None``/empty ``key_id``
+      means the Google-managed default.
+
+    A ``None`` descriptor (the kwarg default everywhere) means "no SSE
+    requested" — behavior is unchanged from before SSE existed.
+    """
+
+    mode: Literal["none", "s3", "kms"] = "none"
+    """SSE mode (S3 semantics). ``"none"`` sends no SSE params."""
+
+    key_id: str | None = None
+    """KMS/CMEK key identifier (S3 ``SSEKMSKeyId`` / GCS ``kmsKeyName``)."""
+
+    # ....................... #
+
+    @property
+    def requested(self) -> bool:
+        """Whether any SSE was actually requested (mode set or a key present)."""
+
+        return self.mode != "none" or bool(self.key_id)
+
+
+# ....................... #
+
+
+@final
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class ObjectBody:
+    """An object's bytes plus the metadata the same ``GET`` already returned.
+
+    Returned by the client ``GET`` methods (:meth:`ObjectStorageClientPort.download_bytes`,
+    :meth:`~ObjectStorageClientPort.download_bytes_conditional`,
+    :meth:`~ObjectStorageClientPort.download_range_bytes`). A single backend
+    ``GET`` already carries the content type and user metadata, so the body
+    surfaces them instead of forcing the adapter to issue a separate
+    ``head_object`` round-trip. :attr:`metadata` may be empty for objects
+    written through a presigned ``PUT`` (which carry no envelope) and for ranged
+    reads; consumers must tolerate that.
+    """
+
+    data: bytes
+    """Raw object bytes (the requested range slice for a ranged read)."""
+
+    content_type: str = "application/octet-stream"
+    """MIME type reported by the ``GET`` response."""
+
+    metadata: Mapping[str, str] = attrs.field(factory=dict[str, str])
+    """User-defined metadata from the ``GET`` response (may be empty)."""
+
+
+# ....................... #
+
+
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class ObjectStorageHead:
@@ -133,6 +259,29 @@ class ObjectStorageListedObject:
 # ....................... #
 
 
+@final
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class ObjectStoragePartInfo:
+    """One already-uploaded part as reported by the backend on resume.
+
+    Returned by :meth:`ObjectStorageClientPort.list_multipart_parts`. Mirrors
+    S3 ``ListParts`` entries; on GCS it is synthesized from the temp part
+    objects (``part_number`` + ``size``, ``etag`` best-effort).
+    """
+
+    part_number: int
+    """1-indexed part position."""
+
+    etag: str = ""
+    """Backend ETag for the part (S3); may be empty on GCS."""
+
+    size: int = 0
+    """Part size in bytes when the backend reports it; ``0`` otherwise."""
+
+
+# ....................... #
+
+
 class ObjectStorageClientPort(Protocol):
     """Operations implemented by storage clients."""
 
@@ -163,13 +312,101 @@ class ObjectStorageClientPort(Protocol):
         content_type: str | None = None,
         metadata: dict[str, str] | None = None,
         tags: dict[str, str] | None = None,
-    ) -> Awaitable[None]: ...  # pragma: no cover
+        sse: ObjectStorageSSE | None = None,
+    ) -> Awaitable[None]:
+        """Upload raw bytes to *key* in *bucket*.
+
+        When *sse* requests server-side encryption the backend encrypts the
+        stored bytes at rest (S3 SSE-S3/SSE-KMS, GCS per-object CMEK); ``None``
+        leaves the bucket's default encryption in effect.
+        """
+        ...  # pragma: no cover
 
     def download_bytes(
         self,
         bucket: str,
         key: str,
-    ) -> Awaitable[bytes]: ...  # pragma: no cover
+    ) -> Awaitable[ObjectBody]:
+        """Download an object's full body plus its already-fetched metadata.
+
+        A single backend ``GET`` carries the content type and user metadata, so
+        the returned :class:`ObjectBody` surfaces them — the adapter no longer
+        needs a separate ``head_object`` round-trip. :attr:`ObjectBody.metadata`
+        is empty for objects written through a presigned ``PUT`` (no envelope).
+        """
+        ...  # pragma: no cover
+
+    def download_range_bytes(
+        self,
+        bucket: str,
+        key: str,
+        *,
+        start: int,
+        end: int | None = None,
+    ) -> Awaitable[tuple[ObjectBody, str, int]]:
+        """Download an inclusive byte range of an object.
+
+        Issues a ranged ``GET`` (HTTP ``Range: bytes=start-end``, ``end``
+        inclusive; ``end=None`` reads to EOF). An unsatisfiable range (``start``
+        past the object size) raises a precondition error mirroring the backend
+        416 response.
+
+        :returns: ``(body, content_range, total_size)`` where *body* carries the
+            range slice and its content type (``body.metadata`` may be empty for
+            ranges), *content_range* is the satisfied ``bytes start-end/total``,
+            and *total_size* the full object size.
+        """
+        ...  # pragma: no cover
+
+    def download_bytes_conditional(
+        self,
+        bucket: str,
+        key: str,
+        *,
+        if_none_match: str | None = None,
+        if_modified_since: datetime | None = None,
+    ) -> Awaitable[ObjectBody | None]:
+        """Conditionally download an object, returning ``None`` when unchanged.
+
+        Passes ``If-None-Match`` / ``If-Modified-Since`` to the backend; a
+        not-modified / precondition-failed response (S3/GCS map ``304``/``412``)
+        becomes ``None``. Any other failure propagates.
+
+        :returns: an :class:`ObjectBody` (bytes + content type + already-fetched
+            metadata) when the object changed, else ``None``.
+        """
+        ...  # pragma: no cover
+
+    def copy_object(
+        self,
+        bucket: str,
+        src_key: str,
+        dst_key: str,
+        *,
+        sse: ObjectStorageSSE | None = None,
+    ) -> Awaitable[None]:
+        """Server-side copy *src_key* to *dst_key* within *bucket*.
+
+        S3 ``CopyObject`` (single-copy capped at 5 GiB), GCS object rewrite
+        (handles large objects). Same-bucket only.
+
+        When *sse* is set the destination is (re-)encrypted at rest under the
+        route's SSE: S3 ``CopyObject`` re-encrypts the destination with the
+        supplied SSE params; GCS rewrites under the per-object CMEK key.
+        """
+        ...  # pragma: no cover
+
+    def put_object_tags(
+        self,
+        bucket: str,
+        key: str,
+        tags: Mapping[str, str],
+    ) -> Awaitable[None]:
+        """Replace an object's tags with *tags* (full replacement).
+
+        S3 ``PutObjectTagging``; GCS rewrites the namespaced tag custom metadata.
+        """
+        ...  # pragma: no cover
 
     def delete_object(
         self,
@@ -237,6 +474,7 @@ class ObjectStorageClientPort(Protocol):
         *,
         expires_in: timedelta,
         content_type: str | None = None,
+        sse: ObjectStorageSSE | None = None,
     ) -> Awaitable[PresignedUrl]:
         """Sign a time-limited ``PUT`` URL for *key* in *bucket*.
 
@@ -247,5 +485,122 @@ class ObjectStorageClientPort(Protocol):
         the returned :attr:`PresignedUrl.headers` carries the header the
         client must send. ``expires_in`` must be positive and within
         :data:`PRESIGN_MAX_EXPIRY` (the shared 7-day S3/GCS cap).
+
+        When *sse* is set, **S3** binds the SSE headers into the signature and
+        returns them in :attr:`PresignedUrl.headers` so the uploader sends them
+        verbatim (mandatory for SSE-KMS; portable for SSE-S3). **GCS** cannot
+        carry a CMEK header on a raw signed ``PUT``: per-object CMEK applies
+        only on the app-path ``upload``/``compose``; for presigned PUTs CMEK
+        rides the bucket's default-encryption config (set out-of-band on the
+        bucket), so no SSE header is added.
+        """
+        ...  # pragma: no cover
+
+    # ....................... #
+    # Resumable multipart upload primitives.
+    #
+    # These are the raw backend calls behind
+    # :class:`~forze.application.contracts.storage.StorageUploadSessionPort`.
+    # The adapter does key validation, tenant-bucket resolution, and VO
+    # mapping; the client does the raw backend work and stays divergent
+    # (S3 native UploadId+ETags vs GCS temp-keys+compose) behind a uniform
+    # signature.
+
+    def create_multipart_upload(
+        self,
+        bucket: str,
+        key: str,
+        *,
+        content_type: str | None = None,
+        sse: ObjectStorageSSE | None = None,
+    ) -> Awaitable[str]:
+        """Open a multipart upload and return its backend upload id.
+
+        S3 ``CreateMultipartUpload`` returns an ``UploadId``. GCS has no
+        native session, so the client returns a generated temp part-key
+        namespace token (the upload id) that the other multipart primitives
+        interpret.
+
+        When *sse* is set, **S3** binds it on ``CreateMultipartUpload`` and the
+        parts inherit it — the per-part presigned ``UploadPart`` URLs carry no
+        SSE headers (see :meth:`presign_multipart_part`). **GCS** assembles the
+        object via ``compose`` at completion, where per-object CMEK applies; the
+        ``sse`` here is recorded but the presigned part PUTs cannot carry it.
+
+        :returns: The backend-specific upload id (opaque to the caller).
+        """
+        ...  # pragma: no cover
+
+    def presign_multipart_part(
+        self,
+        bucket: str,
+        key: str,
+        *,
+        upload_id: str,
+        part_number: int,
+        expires_in: timedelta,
+    ) -> Awaitable[PresignedUrl]:
+        """Sign a time-limited ``PUT`` URL for one part of a multipart upload.
+
+        S3 signs ``upload_part`` (``Bucket``/``Key``/``UploadId``/``PartNumber``).
+        GCS signs a plain ``PUT`` to the temp part object addressed by
+        ``upload_id`` + ``part_number``. ``part_number`` is 1-indexed;
+        ``expires_in`` is validated like every presign.
+        """
+        ...  # pragma: no cover
+
+    def list_multipart_parts(
+        self,
+        bucket: str,
+        key: str,
+        *,
+        upload_id: str,
+    ) -> Awaitable[list[ObjectStoragePartInfo]]:
+        """List the parts already uploaded for an in-progress multipart upload.
+
+        S3 ``ListParts``; GCS lists the temp part objects of the namespace.
+        Used to resume an interrupted upload (presign only the missing parts).
+        """
+        ...  # pragma: no cover
+
+    def complete_multipart_upload(
+        self,
+        bucket: str,
+        key: str,
+        *,
+        upload_id: str,
+        parts: Sequence[ObjectStoragePartInfo],
+        content_type: str | None = None,
+        sse: ObjectStorageSSE | None = None,
+    ) -> Awaitable[None]:
+        """Assemble the uploaded parts into the final object.
+
+        S3 ``CompleteMultipartUpload`` (requires ``{PartNumber, ETag}`` per
+        part, ascending). GCS chained ``compose`` of the temp parts in
+        ascending ``part_number`` order into *key*, then deletes the temps
+        (compose takes at most 32 sources per call, so larger sets chain).
+
+        *content_type* is consumed by **GCS** only: it has no native session, so
+        the type bound at ``begin_upload`` is applied to the final
+        ``compose``/copy destination (the temp parts carry none). S3 inherits it
+        from ``CreateMultipartUpload`` (set at begin time) and ignores it here.
+
+        *sse* is likewise consumed by **GCS** only: it carries the per-object
+        CMEK ``kmsKeyName`` for the final destination; S3 inherits the upload's
+        encryption from ``CreateMultipartUpload`` and ignores *sse* here.
+        """
+        ...  # pragma: no cover
+
+    def abort_multipart_upload(
+        self,
+        bucket: str,
+        key: str,
+        *,
+        upload_id: str,
+    ) -> Awaitable[None]:
+        """Abort an in-progress multipart upload and free its parts.
+
+        S3 ``AbortMultipartUpload``; GCS deletes the temp part objects.
+        Best-effort idempotent.
         """
         ...  # pragma: no cover

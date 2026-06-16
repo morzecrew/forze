@@ -7,6 +7,7 @@ import attrs
 from forze.application.contracts.storage import (
     StorageCommandDepKey,
     StorageQueryDepKey,
+    StorageUploadSessionDepKey,
 )
 from forze.application.contracts.crypto import EncryptionTier
 from forze.application.contracts.tenancy import (
@@ -25,7 +26,11 @@ from ...kernel._logger import logger
 from ...kernel.client import GCSClientPort, RoutedGCSClient
 from ._warnings import GCS_STORAGE_WARNING
 from .configs import GCSStorageConfig
-from .factories import ConfigurableGCSStorageCommand, ConfigurableGCSStorageQuery
+from .factories import (
+    ConfigurableGCSStorageCommand,
+    ConfigurableGCSStorageQuery,
+    ConfigurableGCSStorageUploads,
+)
 from .keys import GCSClientDepKey
 
 # ----------------------- #
@@ -94,6 +99,7 @@ class GCSDepsModule(DepsModule):
                 bindings=[
                     (StorageQueryDepKey, ConfigurableGCSStorageQuery),
                     (StorageCommandDepKey, ConfigurableGCSStorageCommand),
+                    (StorageUploadSessionDepKey, ConfigurableGCSStorageUploads),
                 ],
             ),
             plain={GCSClientDepKey: self.client},

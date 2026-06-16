@@ -10,7 +10,7 @@ from typing import final
 class AuthnKernelOp(StrEnum):
     """Kernel segments (suffix only) for authentication usecase keys."""
 
-    PASSWORD_LOGIN = "password_login"  # nosec B105
+    PASSWORD_LOGIN = "password_login"  # nosec B105 # skipcq: SCT-A000
     """Authenticate with password credentials and issue a fresh token pair."""
 
     REFRESH_TOKENS = "refresh_tokens"
@@ -19,23 +19,23 @@ class AuthnKernelOp(StrEnum):
     LOGOUT = "logout"
     """Revoke all sessions for the currently authenticated identity."""
 
-    CHANGE_PASSWORD = "change_password"  # nosec B105
+    CHANGE_PASSWORD = "change_password"  # nosec B105 # skipcq: SCT-A000
     """Change the password of the currently authenticated identity."""
 
     REQUEST_PASSWORD_RESET = "request_password_reset"  # nosec B105
     """Request a self-service password reset for a login (uniform ack, no enumeration)."""
 
-    RESET_PASSWORD = "reset_password"  # nosec B105
+    RESET_PASSWORD = "reset_password"  # nosec B105 # skipcq: SCT-A000
     """Consume a single-use reset token and set a new password."""
 
     DEACTIVATE_PRINCIPAL = "deactivate_principal"
     """Deactivate a principal for the application (policy, sessions, credentials)."""
 
-    ISSUE_API_KEY = "issue_api_key"  # nosec B105
+    ISSUE_API_KEY = "issue_api_key"  # nosec B105 # skipcq: SCT-A000
     """Issue an API key for the currently authenticated identity (secret once)."""
 
-    LIST_API_KEYS = "list_api_keys"  # nosec B105
+    LIST_API_KEYS = "list_api_keys"  # nosec B105 # skipcq: SCT-A000
     """List the currently authenticated identity's API keys (non-secret descriptors)."""
 
-    REVOKE_API_KEY = "revoke_api_key"  # nosec B105
+    REVOKE_API_KEY = "revoke_api_key"  # nosec B105 # skipcq: SCT-A000
     """Revoke one of the currently authenticated identity's API keys."""

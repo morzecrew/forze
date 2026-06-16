@@ -66,7 +66,7 @@ async def test_s3_download_bytes_benchmark(
     async def run() -> None:
         async with s3_client.client():
             result = await s3_client.download_bytes(s3_bucket, key)
-            assert result == data
+            assert result.data == data
 
     await async_benchmark(run)
 
@@ -154,7 +154,7 @@ async def test_s3_upload_download_roundtrip_benchmark(
                 content_type="application/octet-stream",
             )
             downloaded = await s3_client.download_bytes(s3_bucket, key)
-            assert downloaded == data
+            assert downloaded.data == data
             await s3_client.delete_object(s3_bucket, key)
 
     await async_benchmark(run)

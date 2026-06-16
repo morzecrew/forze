@@ -11,7 +11,7 @@ import io
 from collections.abc import Mapping as MappingABC
 from contextlib import AsyncExitStack, asynccontextmanager
 from contextvars import ContextVar
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -19,6 +19,7 @@ from typing import (
     AsyncGenerator,
     Final,
     Mapping,
+    Sequence,
     cast,
     final,
 )
@@ -36,13 +37,19 @@ if TYPE_CHECKING:
 from forze.application.contracts.storage import PresignedUrl
 from forze.application.integrations.storage.client import (
     PRESIGN_MAX_EXPIRY,
+    ObjectBody,
     ObjectStorageHead,
     ObjectStorageListedObject,
+    ObjectStoragePartInfo,
+    ObjectStorageSSE,
+    build_range_header,
     normalize_list_window,
     presign_expiry_seconds,
+    unsatisfiable_range,
+    validate_range,
 )
 from forze.base.exceptions import exc
-from forze.base.primitives import utcnow
+from forze.base.primitives import JsonDict, utcnow
 
 from .errors import exc_interceptor
 from .port import S3ClientPort
@@ -310,7 +317,7 @@ class S3Client(S3ClientPort):
 
     # ....................... #
 
-    @exc_interceptor.coroutine("s3.bucket_exists")  # type: ignore[untyped-decorator]
+    @exc_interceptor.coroutine("s3.bucket_exists")
     async def bucket_exists(self, bucket: str) -> bool:
         """Return whether the given bucket exists.
 
@@ -345,7 +352,7 @@ class S3Client(S3ClientPort):
 
     # ....................... #
 
-    @exc_interceptor.coroutine("s3.create_bucket")  # type: ignore[untyped-decorator]
+    @exc_interceptor.coroutine("s3.create_bucket")
     async def create_bucket(self, bucket: str) -> None:
         """Create a bucket, silently succeeding if it already exists.
 
@@ -389,7 +396,7 @@ class S3Client(S3ClientPort):
 
     # ....................... #
 
-    @exc_interceptor.coroutine("s3.ensure_bucket")  # type: ignore[untyped-decorator]
+    @exc_interceptor.coroutine("s3.ensure_bucket")
     async def ensure_bucket(self, bucket: str) -> None:
         """Create the bucket when it does not exist (idempotent).
 
@@ -405,7 +412,7 @@ class S3Client(S3ClientPort):
 
     # ....................... #
 
-    @exc_interceptor.coroutine("s3.object_exists")  # type: ignore[untyped-decorator]
+    @exc_interceptor.coroutine("s3.object_exists")
     async def object_exists(self, bucket: str, key: str) -> bool:
         """Return whether the given object key exists in the bucket.
 
@@ -429,7 +436,7 @@ class S3Client(S3ClientPort):
 
     # ....................... #
 
-    @exc_interceptor.coroutine("s3.upload_bytes")  # type: ignore[untyped-decorator]
+    @exc_interceptor.coroutine("s3.upload_bytes")
     async def upload_bytes(
         self,
         bucket: str,
@@ -439,6 +446,7 @@ class S3Client(S3ClientPort):
         content_type: str | None = None,
         metadata: dict[str, str] | None = None,
         tags: dict[str, str] | None = None,
+        sse: ObjectStorageSSE | None = None,
     ) -> None:
         """Upload raw bytes to an S3 object.
 
@@ -448,6 +456,9 @@ class S3Client(S3ClientPort):
         :param content_type: Optional MIME type.
         :param metadata: Optional user-defined metadata.
         :param tags: Optional object tags, encoded as URL query parameters.
+        :param sse: Optional server-side-encryption request. ``"s3"`` sets
+            ``ServerSideEncryption=AES256``; ``"kms"`` sets
+            ``ServerSideEncryption=aws:kms`` with ``SSEKMSKeyId``.
         """
 
         c = self.__require_client()
@@ -463,6 +474,8 @@ class S3Client(S3ClientPort):
         if tags:
             extra["Tagging"] = urlencode(tags)
 
+        extra |= _s3_sse_extra_args(sse)
+
         fileobj = io.BytesIO(data)
 
         if extra:
@@ -473,25 +486,217 @@ class S3Client(S3ClientPort):
 
     # ....................... #
 
-    @exc_interceptor.coroutine("s3.download_bytes")  # type: ignore[untyped-decorator]
-    async def download_bytes(self, bucket: str, key: str) -> bytes:
-        """Download the full content of an S3 object as bytes.
+    @exc_interceptor.coroutine("s3.download_bytes")
+    async def download_bytes(self, bucket: str, key: str) -> ObjectBody:
+        """Download the full content of an S3 object plus its metadata.
+
+        A single ``GetObject`` already returns the content type and user
+        metadata alongside the body, so they are surfaced on the returned
+        :class:`ObjectBody` (no separate ``HeadObject`` round-trip needed).
 
         :param bucket: Bucket name.
         :param key: Object key.
-        :returns: Raw object bytes.
+        :returns: The object body with content type and user metadata.
         """
 
         c = self.__require_client()
 
         resp = await c.get_object(Bucket=bucket, Key=key)
         body = resp["Body"]
+        data = await body.read()
 
-        return await body.read()
+        return ObjectBody(
+            data=data,
+            content_type=resp.get("ContentType", "application/octet-stream"),
+            metadata=resp.get("Metadata", {}),
+        )
 
     # ....................... #
 
-    @exc_interceptor.coroutine("s3.delete_object")  # type: ignore[untyped-decorator]
+    @exc_interceptor.coroutine("s3.download_range_bytes")
+    async def download_range_bytes(
+        self,
+        bucket: str,
+        key: str,
+        *,
+        start: int,
+        end: int | None = None,
+    ) -> tuple[ObjectBody, str, int]:
+        """Download an inclusive byte range via a ranged ``GetObject``.
+
+        Sends ``Range: bytes=start-end`` (``end`` inclusive; ``end=None`` reads
+        to EOF). The total object size and satisfied range are parsed from the
+        response's ``ContentRange`` header (e.g. ``bytes 0-499/1234``). An
+        unsatisfiable range (``start`` beyond the object) raises a precondition
+        error mirroring S3's ``InvalidRange`` / 416 response.
+
+        :param bucket: Bucket name.
+        :param key: Object key.
+        :param start: First byte offset (inclusive, ``>= 0``).
+        :param end: Last byte offset (inclusive), or ``None`` for EOF.
+        :returns: ``(body, content_range, total_size)`` where *body* carries the
+            range slice and its content type (metadata may be empty for ranges).
+        """
+
+        validate_range(start, end)
+        c = self.__require_client()
+
+        try:
+            resp = await c.get_object(
+                Bucket=bucket,
+                Key=key,
+                Range=build_range_header(start, end),
+            )
+
+        except c.exceptions.ClientError as e:  # type: ignore[attr-defined]
+            code = (e.response or {}).get("Error", {}).get("Code")
+
+            if code in {"InvalidRange", "416"}:
+                total = _content_length_from_error(e)
+                raise unsatisfiable_range(start, total) from e
+
+            raise
+
+        body = resp["Body"]
+        data = await body.read()
+
+        content_range = resp.get("ContentRange", "")
+        total = _parse_total_from_content_range(content_range)
+
+        if not content_range:
+            # S3 always returns ContentRange for a satisfied range; synthesize
+            # defensively if a non-conforming backend omits it.
+            end_byte = start + len(data) - 1 if data else start
+            total = total or (start + len(data))
+            content_range = f"bytes {start}-{end_byte}/{total}"
+
+        object_body = ObjectBody(
+            data=data,
+            content_type=resp.get("ContentType", "application/octet-stream"),
+            metadata=resp.get("Metadata", {}),
+        )
+
+        return object_body, content_range, total
+
+    # ....................... #
+
+    @exc_interceptor.coroutine("s3.download_bytes_conditional")
+    async def download_bytes_conditional(
+        self,
+        bucket: str,
+        key: str,
+        *,
+        if_none_match: str | None = None,
+        if_modified_since: datetime | None = None,
+    ) -> ObjectBody | None:
+        """Conditional ``GetObject`` returning ``None`` when not modified.
+
+        Passes ``IfNoneMatch`` / ``IfModifiedSince``. When the object is
+        unchanged S3 answers ``304 Not Modified`` (surfaced as a ``ClientError``
+        with code ``304``/``NotModified``/``PreconditionFailed``), which maps to
+        ``None``. Any other error propagates.
+
+        :returns: an :class:`ObjectBody` (bytes + content type + user metadata,
+            all from the same ``GET``) when changed, else ``None``.
+        """
+
+        c = self.__require_client()
+
+        kwargs: dict[str, Any] = {"Bucket": bucket, "Key": key}
+
+        if if_none_match is not None:
+            kwargs["IfNoneMatch"] = if_none_match
+
+        if if_modified_since is not None:
+            kwargs["IfModifiedSince"] = if_modified_since
+
+        try:
+            resp = await c.get_object(**kwargs)
+
+        except c.exceptions.ClientError as e:  # type: ignore[attr-defined]
+            status = (
+                (e.response or {}).get("ResponseMetadata", {}).get("HTTPStatusCode")
+            )
+            code = (e.response or {}).get("Error", {}).get("Code")
+
+            if status == 304 or code in {"304", "NotModified", "PreconditionFailed"}:
+                return None
+
+            raise
+
+        body = resp["Body"]
+        data = await body.read()
+
+        return ObjectBody(
+            data=data,
+            content_type=resp.get("ContentType", "application/octet-stream"),
+            metadata=resp.get("Metadata", {}),
+        )
+
+    # ....................... #
+
+    @exc_interceptor.coroutine("s3.copy_object")
+    async def copy_object(
+        self,
+        bucket: str,
+        src_key: str,
+        dst_key: str,
+        *,
+        sse: ObjectStorageSSE | None = None,
+    ) -> None:
+        """Server-side copy within *bucket* via ``CopyObject``.
+
+        Single-copy is capped at **5 GiB** by S3; objects larger than that need
+        multipart copy (out of scope) and surface S3's ``InvalidRequest`` error.
+
+        When *sse* requests SSE, ``CopyObject`` **re-encrypts** the destination
+        with the supplied SSE params (the destination object is written
+        encrypted at rest regardless of the source's encryption).
+
+        :param bucket: Bucket name (same bucket for source and destination).
+        :param src_key: Source object key.
+        :param dst_key: Destination object key.
+        :param sse: Optional server-side-encryption request for the destination.
+        """
+
+        c = self.__require_client()
+
+        await c.copy_object(
+            Bucket=bucket,
+            Key=dst_key,
+            CopySource={"Bucket": bucket, "Key": src_key},
+            **cast(Any, _s3_sse_extra_args(sse)),
+        )
+
+    # ....................... #
+
+    @exc_interceptor.coroutine("s3.put_object_tags")
+    async def put_object_tags(
+        self,
+        bucket: str,
+        key: str,
+        tags: Mapping[str, str],
+    ) -> None:
+        """Replace an object's tag set via ``PutObjectTagging`` (full replace).
+
+        :param bucket: Bucket name.
+        :param key: Object key.
+        :param tags: Complete tag set to store (empties the set when empty).
+        """
+
+        c = self.__require_client()
+
+        tag_set = [{"Key": k, "Value": v} for k, v in tags.items()]
+
+        await c.put_object_tagging(
+            Bucket=bucket,
+            Key=key,
+            Tagging=cast(Any, {"TagSet": tag_set}),
+        )
+
+    # ....................... #
+
+    @exc_interceptor.coroutine("s3.delete_object")
     async def delete_object(self, bucket: str, key: str) -> None:
         """Delete an object from the bucket.
 
@@ -505,7 +710,7 @@ class S3Client(S3ClientPort):
 
     # ....................... #
 
-    @exc_interceptor.coroutine("s3.list_objects")  # type: ignore[untyped-decorator]
+    @exc_interceptor.coroutine("s3.list_objects")
     async def list_objects(
         self,
         bucket: str,
@@ -589,8 +794,8 @@ class S3Client(S3ClientPort):
 
     # ....................... #
 
+    @staticmethod
     async def __attach_tags(
-        self,
         c: AsyncS3Client,
         bucket: str,
         items: list[ObjectStorageListedObject],
@@ -626,7 +831,7 @@ class S3Client(S3ClientPort):
 
     # ....................... #
 
-    @exc_interceptor.coroutine("s3.head_object")  # type: ignore[untyped-decorator]
+    @exc_interceptor.coroutine("s3.head_object")
     async def head_object(
         self,
         bucket: str,
@@ -672,7 +877,7 @@ class S3Client(S3ClientPort):
 
     # ....................... #
 
-    @exc_interceptor.coroutine("s3.presign_download_url")  # type: ignore[untyped-decorator]
+    @exc_interceptor.coroutine("s3.presign_download_url")
     async def presign_download_url(
         self,
         bucket: str,
@@ -708,7 +913,7 @@ class S3Client(S3ClientPort):
 
     # ....................... #
 
-    @exc_interceptor.coroutine("s3.presign_upload_url")  # type: ignore[untyped-decorator]
+    @exc_interceptor.coroutine("s3.presign_upload_url")
     async def presign_upload_url(
         self,
         bucket: str,
@@ -716,6 +921,7 @@ class S3Client(S3ClientPort):
         *,
         expires_in: timedelta,
         content_type: str | None = None,
+        sse: ObjectStorageSSE | None = None,
     ) -> PresignedUrl:
         """Sign a time-limited ``PUT`` URL for the object (SigV4 query auth).
 
@@ -727,10 +933,20 @@ class S3Client(S3ClientPort):
         instance roles) the effective lifetime is further bounded by the
         session token's expiry, whichever comes first.
 
+        When *sse* requests SSE, the SSE headers are bound **into** the
+        signature (via ``put_object`` ``ServerSideEncryption`` /
+        ``SSEKMSKeyId`` params, which generate_presigned_url renders as the
+        ``x-amz-server-side-encryption`` query/header binding) and echoed in
+        :attr:`PresignedUrl.headers` so the uploader sends them verbatim.
+        SSE-KMS **requires** the client to send those headers; SSE-S3 works off
+        a bucket default but binding the header is portable and correct.
+
         :param bucket: Bucket name.
         :param key: Object key to upload to.
         :param expires_in: URL lifetime (positive, at most 7 days).
         :param content_type: Optional MIME type to bind into the signature.
+        :param sse: Optional server-side-encryption request to bind into the
+            signature and surface in the returned headers.
         :raises CoreException: ``validation`` when *expires_in* is out of range.
         """
 
@@ -743,6 +959,9 @@ class S3Client(S3ClientPort):
         if content_type is not None:
             params["ContentType"] = content_type
             headers["Content-Type"] = content_type
+
+        params |= _s3_sse_extra_args(sse)
+        headers |= _s3_sse_request_headers(sse)
 
         expires_at = utcnow() + timedelta(seconds=seconds)
         url = await c.generate_presigned_url(
@@ -757,6 +976,285 @@ class S3Client(S3ClientPort):
             expires_at=expires_at,
             headers=headers,
         )
+
+    # ....................... #
+    # Resumable multipart upload primitives.
+
+    @exc_interceptor.coroutine("s3.create_multipart_upload")
+    async def create_multipart_upload(
+        self,
+        bucket: str,
+        key: str,
+        *,
+        content_type: str | None = None,
+        sse: ObjectStorageSSE | None = None,
+    ) -> str:
+        """Open a native S3 multipart upload via ``CreateMultipartUpload``.
+
+        When *sse* requests SSE it is set **here**, on the multipart create;
+        all parts inherit the upload's encryption. The per-part presigned
+        ``UploadPart`` URLs therefore do **not** repeat the SSE headers (see
+        :meth:`presign_multipart_part`), so for SSE the part PresignedUrl's
+        ``headers`` stay empty while encryption is still applied at rest.
+
+        :returns: The S3 ``UploadId`` addressing the in-progress upload.
+        """
+
+        c = self.__require_client()
+
+        kwargs: dict[str, Any] = {"Bucket": bucket, "Key": key}
+
+        if content_type is not None:
+            kwargs["ContentType"] = content_type
+
+        kwargs.update(_s3_sse_extra_args(sse))
+
+        resp = await c.create_multipart_upload(**kwargs)
+
+        if upload_id := resp.get("UploadId"):
+            return upload_id
+
+        else:
+            raise exc.internal("S3 CreateMultipartUpload returned no UploadId")
+
+    # ....................... #
+
+    @exc_interceptor.coroutine("s3.presign_multipart_part")
+    async def presign_multipart_part(
+        self,
+        bucket: str,
+        key: str,
+        *,
+        upload_id: str,
+        part_number: int,
+        expires_in: timedelta,
+    ) -> PresignedUrl:
+        """Sign a time-limited ``UploadPart`` ``PUT`` URL (SigV4 query auth).
+
+        Signing is **local** (no S3 round-trip). The client ``PUT``\\ s the part
+        bytes to this URL and reads the ``ETag`` from the response header, which
+        the application carries into ``CompleteMultipartUpload``. SigV4 caps
+        ``expires_in`` at 7 days.
+
+        SSE is **not** bound here: S3 applies the upload's encryption (set on
+        ``CreateMultipartUpload``) to every part automatically, and
+        ``UploadPart`` rejects per-part SSE headers, so the returned
+        :attr:`PresignedUrl.headers` carries no SSE header even on an SSE route.
+        """
+
+        c = self.__require_client()
+        seconds = presign_expiry_seconds(expires_in, max_expiry=PRESIGN_MAX_EXPIRY)
+
+        expires_at = utcnow() + timedelta(seconds=seconds)
+        url = await c.generate_presigned_url(
+            "upload_part",
+            Params={
+                "Bucket": bucket,
+                "Key": key,
+                "UploadId": upload_id,
+                "PartNumber": part_number,
+            },
+            ExpiresIn=seconds,
+        )
+
+        return PresignedUrl(url=url, method="PUT", expires_at=expires_at)
+
+    # ....................... #
+
+    @exc_interceptor.coroutine("s3.list_multipart_parts")
+    async def list_multipart_parts(
+        self,
+        bucket: str,
+        key: str,
+        *,
+        upload_id: str,
+    ) -> list[ObjectStoragePartInfo]:
+        """List uploaded parts via the ``ListParts`` paginator (the resume primitive)."""
+
+        c = self.__require_client()
+
+        paginator = c.get_paginator("list_parts")
+        iterator = paginator.paginate(Bucket=bucket, Key=key, UploadId=upload_id)
+
+        parts: list[ObjectStoragePartInfo] = []
+
+        async for page in iterator:
+            for entry in page.get("Parts") or []:
+                number = entry.get("PartNumber")
+
+                if number is None:
+                    continue
+
+                parts.append(
+                    ObjectStoragePartInfo(
+                        part_number=int(number),
+                        etag=str(entry.get("ETag", "")).strip('"'),
+                        size=int(entry.get("Size", 0) or 0),
+                    )
+                )
+
+        parts.sort(key=lambda p: p.part_number)
+
+        return parts
+
+    # ....................... #
+
+    @exc_interceptor.coroutine("s3.complete_multipart_upload")
+    async def complete_multipart_upload(
+        self,
+        bucket: str,
+        key: str,
+        *,
+        upload_id: str,
+        parts: Sequence[ObjectStoragePartInfo],
+        content_type: str | None = None,
+        sse: ObjectStorageSSE | None = None,
+    ) -> None:
+        """Assemble the parts via ``CompleteMultipartUpload``.
+
+        Requires the ``{PartNumber, ETag}`` list in ascending part order; the
+        ETags come from the clients' part ``PUT`` responses (carried back by the
+        application). ETags are sent quoted, as S3 expects.
+
+        *content_type* and *sse* are ignored here: both bind on
+        ``CreateMultipartUpload`` (see :meth:`create_multipart_upload`) and the
+        completed object inherits them; ``CompleteMultipartUpload`` takes no
+        such params. Accepted for port symmetry (GCS consumes them on
+        ``compose``, having no native session).
+        """
+
+        # S3 inherits content type and SSE from CreateMultipartUpload; neither
+        # is settable on complete.
+        _ = (content_type, sse)
+
+        c = self.__require_client()
+
+        ordered = sorted(parts, key=lambda p: p.part_number)
+
+        completed = [
+            {
+                "PartNumber": p.part_number,
+                "ETag": p.etag if p.etag.startswith('"') else f'"{p.etag}"',
+            }
+            for p in ordered
+        ]
+
+        await c.complete_multipart_upload(
+            Bucket=bucket,
+            Key=key,
+            UploadId=upload_id,
+            MultipartUpload=cast(Any, {"Parts": completed}),
+        )
+
+    # ....................... #
+
+    @exc_interceptor.coroutine("s3.abort_multipart_upload")
+    async def abort_multipart_upload(
+        self,
+        bucket: str,
+        key: str,
+        *,
+        upload_id: str,
+    ) -> None:
+        """Abort the in-progress upload via ``AbortMultipartUpload``."""
+
+        c = self.__require_client()
+
+        await c.abort_multipart_upload(
+            Bucket=bucket,
+            Key=key,
+            UploadId=upload_id,
+        )
+
+
+# ....................... #
+
+
+def _s3_sse_extra_args(sse: ObjectStorageSSE | None) -> dict[str, str]:
+    """Map a neutral SSE descriptor to S3 request params (``ExtraArgs``/kwargs).
+
+    Returns ``{}`` for ``None`` / ``mode == "none"`` (no SSE requested). ``"s3"``
+    yields ``ServerSideEncryption=AES256``; ``"kms"`` yields
+    ``ServerSideEncryption=aws:kms`` plus ``SSEKMSKeyId``. These keys are shared
+    by ``PutObject``/``upload_fileobj``, ``CopyObject``,
+    ``CreateMultipartUpload``, and ``generate_presigned_url`` ``Params``.
+    """
+
+    if sse is None or sse.mode == "none":
+        return {}
+
+    if sse.mode == "s3":
+        return {"ServerSideEncryption": "AES256"}
+
+    # mode == "kms"
+    args: dict[str, str] = {"ServerSideEncryption": "aws:kms"}
+
+    if sse.key_id:
+        args["SSEKMSKeyId"] = sse.key_id
+
+    return args
+
+
+# ....................... #
+
+
+def _s3_sse_request_headers(sse: ObjectStorageSSE | None) -> dict[str, str]:
+    """Map a neutral SSE descriptor to the request headers a presigned ``PUT``
+    must send verbatim.
+
+    Mirrors :func:`_s3_sse_extra_args` as HTTP headers
+    (``x-amz-server-side-encryption`` [+ ``...-aws-kms-key-id``]). Binding these
+    into the signature (via the ``put_object`` SSE ``Params``) requires the
+    uploader to send them; SSE-KMS is rejected without them, SSE-S3 tolerates
+    them (and they make the URL portable across buckets without a default).
+    """
+
+    if sse is None or sse.mode == "none":
+        return {}
+
+    if sse.mode == "s3":
+        return {"x-amz-server-side-encryption": "AES256"}
+
+    # mode == "kms"
+    headers = {"x-amz-server-side-encryption": "aws:kms"}
+
+    if sse.key_id:
+        headers["x-amz-server-side-encryption-aws-kms-key-id"] = sse.key_id
+
+    return headers
+
+
+# ....................... #
+
+
+def _parse_total_from_content_range(content_range: str) -> int:
+    """Parse the total object size out of a ``bytes start-end/total`` header.
+
+    Returns ``0`` when the header is absent or non-conforming (the caller
+    synthesizes a best-effort range in that case).
+    """
+
+    if not content_range or "/" not in content_range:
+        return 0
+
+    total_part = content_range.rsplit("/", 1)[-1].strip()
+
+    return int(total_part) if total_part.isdigit() else 0
+
+
+# ....................... #
+
+
+def _content_length_from_error(e: Any) -> int:
+    """Best-effort object size from an ``InvalidRange`` error response (0 if absent)."""
+
+    resp = cast(JsonDict, getattr(e, "response", None) or {})
+    actual = resp.get("Error", {}).get("ActualObjectSize")
+
+    if isinstance(actual, str) and actual.isdigit():
+        return int(actual)
+
+    return actual if isinstance(actual, int) else 0
 
 
 # ....................... #

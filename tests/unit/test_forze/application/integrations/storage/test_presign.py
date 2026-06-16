@@ -206,6 +206,7 @@ class TestAdapterPresignDelegation:
             "key": "docs/key-1",
             "expires_in": timedelta(minutes=15),
             "content_type": "text/plain",
+            "sse": None,
         }
         assert vo.method == "PUT"
 

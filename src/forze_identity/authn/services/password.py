@@ -6,7 +6,7 @@ from argon2 import PasswordHasher
 from argon2.exceptions import InvalidHash, VerificationError, VerifyMismatchError
 
 # Sentinel for constant-time verification when no account exists (not user-facing).
-_TIMING_DUMMY_PASSWORD = "__forze_timing_mitigation__"  # nosec B105 — non-user sentinel for timing-safe verify
+_TIMING_DUMMY_PASSWORD = "__forze_timing_mitigation__"  # nosec B105 # skipcq: SCT-A000 — non-user sentinel for timing-safe verify
 
 # ----------------------- #
 

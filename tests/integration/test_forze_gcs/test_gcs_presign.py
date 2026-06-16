@@ -177,9 +177,9 @@ async def test_presigned_put_roundtrip_via_emulator(
     assert resp.status_code == 200
 
     async with gcs_signing_client.client():
-        data = await gcs_signing_client.download_bytes(bucket, "incoming/data.bin")
+        body = await gcs_signing_client.download_bytes(bucket, "incoming/data.bin")
 
-    assert data == payload
+    assert body.data == payload
 
 
 @pytest.mark.asyncio

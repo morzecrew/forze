@@ -1,5 +1,6 @@
 """Unit tests for :class:`~forze.application.integrations.storage.ObjectStorageAdapter`."""
 
+from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID
 
@@ -168,6 +169,40 @@ async def test_list_enriches_objects_from_head_metadata(
     assert objects[0].key == "docs/k1"
     assert objects[0].content_type == "text/plain"
     assert objects[0].tags is None
+
+
+@pytest.mark.asyncio
+async def test_list_falls_back_for_envelope_less_objects(
+    storage_adapter: ObjectStorageAdapter,
+) -> None:
+    """Raw objects (presigned PUT / completed multipart) carry no envelope, so
+    ``list`` must not raise — it falls back to the key basename + head fields,
+    mirroring ``download``."""
+
+    modified = datetime(2025, 1, 15, 12, 0, tzinfo=timezone.utc)
+    storage_adapter.client.client.return_value.__aenter__ = AsyncMock()
+    storage_adapter.client.client.return_value.__aexit__ = AsyncMock()
+    storage_adapter.client.ensure_bucket = AsyncMock()
+    storage_adapter.client.list_objects = AsyncMock(
+        return_value=([ObjectStorageListedObject(key="docs/raw.bin")], 1),
+    )
+    storage_adapter.client.head_object = AsyncMock(
+        return_value=ObjectStorageHead(
+            content_type="application/octet-stream",
+            metadata={},  # no envelope
+            size=42,
+            last_modified=modified,
+        ),
+    )
+
+    objects, total = await storage_adapter.list(10, 0, prefix="docs")
+
+    assert total == 1
+    assert objects[0].key == "docs/raw.bin"
+    assert objects[0].filename == "raw.bin"
+    assert objects[0].description is None
+    assert objects[0].size == 42
+    assert objects[0].created_at == modified
 
 
 @pytest.mark.asyncio

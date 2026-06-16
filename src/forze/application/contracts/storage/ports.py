@@ -1,13 +1,17 @@
 """Storage query and command ports for object storage providers."""
 
-from datetime import timedelta
-from typing import Awaitable, Protocol, runtime_checkable
+from datetime import datetime, timedelta
+from typing import Awaitable, Mapping, Protocol, Sequence, runtime_checkable
 
 from .value_objects import (
     DownloadedObject,
+    ObjectHead,
     PresignedUrl,
+    RangedDownload,
     StoredObject,
     UploadedObject,
+    UploadPart,
+    UploadSession,
 )
 
 # ----------------------- #
@@ -49,6 +53,94 @@ class StorageQueryPort(Protocol):
         :param expires_in: How long the URL stays valid.
         :returns: The presigned URL with its method, expiry, and any headers
             the client must send.
+        """
+        ...  # pragma: no cover
+
+    def head(
+        self,
+        key: str,
+        *,
+        include_tags: bool = False,
+    ) -> Awaitable[ObjectHead]:
+        """Fetch an object's metadata without downloading the body.
+
+        This is the **completion seam** for direct uploads. An object stored
+        through a presigned ``PUT`` (:meth:`StorageCommandPort.presign_upload`)
+        bypasses this port's metadata envelope, so :meth:`download` /
+        :meth:`list` cannot enrich it — but the bytes still landed. After such
+        an upload the application calls :meth:`head` to verify the object's
+        :attr:`~ObjectHead.size`, :attr:`~ObjectHead.content_type`, and
+        :attr:`~ObjectHead.etag` against what it expected, then registers the
+        object in its own model. Reading metadata writes no state, so this lives
+        on the query port.
+
+        ``include_tags`` is a **guarantee, not a filter**: with ``False``
+        (default) :attr:`ObjectHead.tags` may be empty on backends that need an
+        extra call to fetch tags (S3) — backends that get them for free (GCS,
+        mock) still include them; with ``True`` tags are guaranteed populated,
+        and backends needing the extra call (S3: ``GetObjectTagging``) pay it.
+
+        :param key: Storage key of the object (validated against traversal).
+        :param include_tags: Guarantee :attr:`ObjectHead.tags` is populated.
+        :returns: The object's honest head view.
+        """
+        ...  # pragma: no cover
+
+    def download_range(
+        self,
+        key: str,
+        *,
+        start: int,
+        end: int | None = None,
+    ) -> Awaitable[RangedDownload]:
+        """Download a byte range of an object (HTTP ``Range`` semantics).
+
+        *start* and *end* are **inclusive** byte offsets (``bytes=start-end``);
+        ``end=None`` reads open-ended to the last byte. Useful for streaming
+        media and resuming interrupted downloads without re-fetching the whole
+        object.
+
+        Validation: ``start >= 0`` and, when given, ``end >= start``. A range
+        whose ``start`` is beyond the object's size is **unsatisfiable** and
+        raises a precondition error (the HTTP 416 equivalent).
+
+        Refused (like :meth:`download`'s presign cousins) is out of scope here;
+        when client-side encryption is enabled the adapter rejects ranged reads
+        because a slice of ciphertext cannot be decrypted.
+
+        :param key: Storage key of the object (validated against traversal).
+        :param start: First byte offset to read (inclusive, ``>= 0``).
+        :param end: Last byte offset to read (inclusive), or ``None`` for EOF.
+        :returns: The range bytes plus the satisfied ``Content-Range`` and the
+            object's total size.
+        """
+        ...  # pragma: no cover
+
+    def download_if_changed(
+        self,
+        key: str,
+        *,
+        if_none_match: str | None = None,
+        if_modified_since: datetime | None = None,
+    ) -> Awaitable[DownloadedObject | None]:
+        """Conditionally download an object, returning ``None`` when unchanged.
+
+        The cache-revalidation read: pass the ETag and/or last-modified time the
+        caller already holds; the backend returns the object only when it has
+        changed. ``None`` is the **not-modified** answer (the HTTP 304
+        equivalent) — the caller's cached copy is still current. Unlike
+        :meth:`download`, whose return is always a body, this method is
+        explicitly optional.
+
+        At least one of ``if_none_match`` / ``if_modified_since`` must be given
+        — a conditional read with no condition is a programming error and
+        raises a validation error.
+
+        :param key: Storage key of the object (validated against traversal).
+        :param if_none_match: ETag the caller holds; ``None`` when not used.
+        :param if_modified_since: Last-modified time the caller holds; ``None``
+            when not used.
+        :returns: The downloaded object, or ``None`` when it has not changed.
         """
         ...  # pragma: no cover
 
@@ -142,4 +234,238 @@ class StorageCommandPort(Protocol):
 
     def delete(self, key: str) -> Awaitable[None]:
         """Delete an object identified by ``key``."""
+        ...  # pragma: no cover
+
+    def copy(
+        self,
+        src_key: str,
+        dst_key: str,
+    ) -> Awaitable[ObjectHead]:
+        """Copy an object to a new key within the same bucket.
+
+        The copy is **server-side** — bytes never transit the application
+        (S3 ``CopyObject``, GCS object rewrite). Both keys are validated against
+        traversal. **Same-bucket only** in this version: source and destination
+        live in the configured/tenant-resolved bucket; cross-bucket copy is a
+        follow-up.
+
+        On S3 a single ``CopyObject`` is capped at **5 GiB** — objects larger
+        than that need multipart copy, which is out of scope here and surfaces
+        as a backend error. GCS rewrite handles arbitrarily large objects.
+
+        :param src_key: Existing object key to copy from.
+        :param dst_key: New object key to copy to.
+        :returns: The head of the newly created destination object.
+        """
+        ...  # pragma: no cover
+
+    def move(
+        self,
+        src_key: str,
+        dst_key: str,
+    ) -> Awaitable[ObjectHead]:
+        """Move an object to a new key (copy then delete source).
+
+        **Non-atomic**: implemented as :meth:`copy` followed by a delete of the
+        source. A crash *between* the two leaves both keys present (the copy
+        succeeded, the delete did not) — callers needing exactly-once semantics
+        must reconcile. Same-bucket only and both keys validated, exactly like
+        :meth:`copy`.
+
+        :param src_key: Existing object key to move from.
+        :param dst_key: New object key to move to.
+        :returns: The head of the destination object.
+        """
+        ...  # pragma: no cover
+
+    def put_object_tags(
+        self,
+        key: str,
+        tags: Mapping[str, str],
+    ) -> Awaitable[None]:
+        """Replace an object's tags with *tags* (full replacement, not a merge).
+
+        Post-upload tag management: tags passed here **replace** any existing
+        tag set on the object (S3 ``PutObjectTagging`` semantics; GCS rewrites
+        the namespaced tag custom-metadata). The key is validated against
+        traversal.
+
+        :param key: Storage key of the object (validated against traversal).
+        :param tags: The complete tag set to store.
+        """
+        ...  # pragma: no cover
+
+
+# ....................... #
+
+
+@runtime_checkable
+class StorageUploadSessionPort(Protocol):
+    """Resumable multipart (direct-to-storage) upload sessions.
+
+    For **large or resumable uploads where the application stays out of the
+    data path**: the client uploads part bytes straight to the backend through
+    presigned URLs, in parallel, and the application only orchestrates the
+    session (begin → presign parts → complete / abort) and persists the
+    :class:`UploadSession` handle so an interrupted upload can resume.
+
+    **Lifecycle.**
+
+    1. :meth:`begin_upload` opens a session and returns an
+       :class:`UploadSession` whose :attr:`~UploadSession.upload_id` the
+       application **must persist** (or hand to the client) — it is the only
+       way to resume, complete, or abort later.
+    2. For each part the application calls :meth:`presign_part` and gives the
+       returned URL to the client, which ``PUT``\\ s that part's bytes
+       **directly and in parallel** (no app round-trip for the bytes).
+    3. To resume after an interruption the application calls :meth:`list_parts`
+       to learn which parts already landed, then presigns only the missing
+       ones.
+    4. :meth:`complete_upload` assembles the parts into the final object and
+       returns its :class:`ObjectHead`; :meth:`abort_upload` discards an
+       unfinished session.
+
+    **This is all writes** — a read-only (``QUERY``) operation cannot acquire
+    this port at all (resolved via ``ctx.storage.uploads(spec)``, behind the
+    same deps-level CQRS write-guard as ``ctx.storage.command``), so a query op
+    cannot begin uploads.
+
+    **Presigned part URLs are bearer credentials.** Anyone holding one can
+    ``PUT`` that part until it expires — hand them only to the intended client
+    and prefer short ``expires_in`` windows (the URL is excluded from
+    :class:`PresignedUrl`'s ``repr``).
+
+    **Per-backend mechanics & limits (internal divergence, documented like the
+    broker adapters — not leaked into this port).**
+
+    - **S3 native multipart.** ``CreateMultipartUpload`` mints the
+      :attr:`~UploadSession.upload_id`; each :meth:`presign_part` signs an
+      ``UploadPart`` ``PUT``; the client's part response carries an ``ETag``
+      the application carries back into the :class:`UploadPart` it passes to
+      :meth:`complete_upload` (``CompleteMultipartUpload`` requires the
+      ``{PartNumber, ETag}`` list). **Each part except the last must be at
+      least 5 MiB**; **at most 10,000 parts**.
+    - **GCS compose.** :meth:`begin_upload` allocates a temp part-key namespace
+      under the final key; each :meth:`presign_part` signs a direct ``PUT`` to a
+      temp part object; :meth:`complete_upload` ``compose``\\ s the temp parts
+      in part-number order into the final key (GCS ``compose`` takes **at most
+      32 source objects per call**, so larger uploads are assembled by
+      **chained composes**) and deletes the temps. No per-part ETag is needed
+      (compose addresses objects by name/order).
+
+    **Leftover temp objects.** An aborted or never-completed session may leave
+    temp/in-progress data behind: on GCS the temp part objects persist until
+    :meth:`abort_upload` deletes them; on S3 the in-progress upload's parts
+    persist until aborted or until the bucket's **incomplete-multipart-upload
+    lifecycle rule** reaps them — configuring such a rule is recommended so
+    abandoned sessions do not accrue storage cost.
+
+    **Encryption.** Client-side object-bytes encryption (the ``encrypt=True``
+    route) is incompatible with this port: the application never sees the part
+    bytes, so it cannot encrypt them — :meth:`begin_upload` raises a
+    configuration error on an encrypting route (the same posture as presigned
+    single ``PUT`` uploads).
+    """
+
+    def begin_upload(
+        self,
+        key: str,
+        *,
+        content_type: str | None = None,
+    ) -> Awaitable[UploadSession]:
+        """Open a resumable multipart upload session targeting *key*.
+
+        Validates *key* (traversal/charset, like
+        :meth:`StorageCommandPort.upload`) and resolves the tenant bucket, then
+        opens the backend session (S3 ``CreateMultipartUpload`` / GCS temp-key
+        namespace). The returned :class:`UploadSession` carries the
+        backend-specific :attr:`~UploadSession.upload_id` the application
+        **must persist** to drive the rest of the lifecycle.
+
+        Refused with a configuration error on a client-side-encrypting route
+        (the application cannot encrypt bytes it never sees).
+
+        :param key: Final object key the assembled upload lands at.
+        :param content_type: Optional MIME type bound to the final object.
+        :returns: The opened :class:`UploadSession` handle.
+        """
+        ...  # pragma: no cover
+
+    def presign_part(
+        self,
+        session: UploadSession,
+        part_number: int,
+        *,
+        expires_in: timedelta,
+    ) -> Awaitable[PresignedUrl]:
+        """Mint a time-limited URL for uploading one part directly.
+
+        The client ``PUT``\\ s the part bytes to the returned URL; many parts
+        may be presigned and uploaded **in parallel**. ``part_number`` is
+        1-indexed (``>= 1``). On S3 the part ``PUT`` response carries an
+        ``ETag`` the client must return to the application for
+        :meth:`complete_upload`; on GCS no ETag is needed.
+
+        The URL is a **bearer credential** (short ``expires_in``, never logged
+        — excluded from :class:`PresignedUrl`'s ``repr``). ``expires_in`` is
+        validated like every presign (positive, within the shared 7-day cap).
+
+        :param session: The session from :meth:`begin_upload`.
+        :param part_number: 1-indexed part position (``>= 1``).
+        :param expires_in: How long the part-upload URL stays valid.
+        :returns: The presigned ``PUT`` URL for this part.
+        """
+        ...  # pragma: no cover
+
+    def list_parts(
+        self,
+        session: UploadSession,
+    ) -> Awaitable[list[UploadPart]]:
+        """List the parts that have already landed for *session* (the resume primitive).
+
+        After an interruption the application calls this to learn which
+        :class:`UploadPart`\\ s exist (their ``part_number``, ``etag``, and
+        ``size``), then presigns and re-uploads only the missing ones before
+        :meth:`complete_upload`. On S3 this is ``ListParts``; on GCS it lists
+        the temp part objects of the session's namespace.
+
+        :param session: The session from :meth:`begin_upload`.
+        :returns: The already-uploaded parts (ascending ``part_number``).
+        """
+        ...  # pragma: no cover
+
+    def complete_upload(
+        self,
+        session: UploadSession,
+        parts: Sequence[UploadPart],
+    ) -> Awaitable[ObjectHead]:
+        """Assemble *parts* into the final object and return its head.
+
+        Finalizes the upload: S3 ``CompleteMultipartUpload`` (requires the
+        ``{part_number, etag}`` list, so each :class:`UploadPart` must carry the
+        ETag the client returned), GCS chained ``compose`` of the temp parts in
+        ascending ``part_number`` order followed by temp cleanup. The returned
+        :class:`ObjectHead` is the assembled object's honest head — the same
+        completion-seam shape as :meth:`StorageQueryPort.head`.
+
+        :param session: The session from :meth:`begin_upload`.
+        :param parts: The parts to assemble (S3 needs ``part_number`` + ``etag``
+            per part; GCS needs ``part_number`` only).
+        :returns: The assembled object's head.
+        """
+        ...  # pragma: no cover
+
+    def abort_upload(
+        self,
+        session: UploadSession,
+    ) -> Awaitable[None]:
+        """Discard an unfinished session and free its in-progress data.
+
+        S3 ``AbortMultipartUpload`` drops the uploaded parts; GCS deletes the
+        temp part objects. After this the session cannot be completed.
+        Idempotent on a best-effort basis — aborting an already-aborted or
+        never-started session does not error.
+
+        :param session: The session from :meth:`begin_upload`.
+        """
         ...  # pragma: no cover

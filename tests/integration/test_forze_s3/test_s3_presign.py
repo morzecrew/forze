@@ -73,10 +73,10 @@ async def test_presigned_upload_put_with_bound_content_type(
 
     # The object is now readable through the normal client port.
     async with s3_client.client():
-        data = await s3_client.download_bytes(s3_bucket, "incoming/data.bin")
+        body = await s3_client.download_bytes(s3_bucket, "incoming/data.bin")
         head = await s3_client.head_object(s3_bucket, "incoming/data.bin")
 
-    assert data == payload
+    assert body.data == payload
     assert head.content_type == "application/octet-stream"
 
 
@@ -201,6 +201,6 @@ async def test_storage_adapter_presign_roundtrip(
     # Presign-uploaded objects bypass the adapter's metadata envelope, so they
     # read back through the raw client port (not the enriched download()).
     async with s3_client.client():
-        data = await s3_client.download_bytes(s3_bucket, "inbox/direct-upload.bin")
+        body = await s3_client.download_bytes(s3_bucket, "inbox/direct-upload.bin")
 
-    assert data == b"direct-bytes"
+    assert body.data == b"direct-bytes"

@@ -99,14 +99,13 @@ class Document(CoreModel):
         fields = type(self).model_fields
 
         for k, v in data.items():
-            if k in fields:
-                if fields[k].frozen:
-                    raise exc.domain(f"Field {k} is frozen and not allowed for update.")
-
-                valid[k] = v
-
-            else:
+            if k not in fields:
                 raise exc.domain(f"Field {k} is not found in the model.")
+
+            if fields[k].frozen:
+                raise exc.domain(f"Field {k} is frozen and not allowed for update.")
+
+            valid[k] = v
 
         return valid
 

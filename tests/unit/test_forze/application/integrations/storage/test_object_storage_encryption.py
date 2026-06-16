@@ -19,6 +19,7 @@ from forze.application.contracts.storage.value_objects import UploadedObject
 from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.integrations.crypto import Keyring
 from forze.application.integrations.storage.adapter import ObjectStorageAdapter
+from forze.application.integrations.storage.client import ObjectBody
 from forze.base.crypto import is_envelope
 from forze.base.exceptions import CoreException, ExceptionKind
 from forze_mock import MockKeyManagement
@@ -60,6 +61,7 @@ class _InMemoryStorageClient:
         content_type: str,
         metadata: dict[str, str],
         tags: dict[str, str] | None = None,
+        sse: object = None,
     ) -> None:
         self.objects[(bucket, key)] = (data, dict(metadata), content_type)
 
@@ -73,8 +75,13 @@ class _InMemoryStorageClient:
         _data, metadata, content_type = self.objects[(bucket, key)]
         return _Head(metadata=metadata, content_type=content_type)
 
-    async def download_bytes(self, *, bucket: str, key: str) -> bytes:
-        return self.objects[(bucket, key)][0]
+    async def download_bytes(self, *, bucket: str, key: str) -> ObjectBody:
+        data, metadata, content_type = self.objects[(bucket, key)]
+        return ObjectBody(
+            data=data,
+            content_type=content_type,
+            metadata=metadata,
+        )
 
 
 # ....................... #
@@ -221,5 +228,23 @@ async def test_presign_refused_when_encryption_enabled(method: str) -> None:
             await adapter.presign_download("some-key", expires_in=timedelta(minutes=5))
         else:
             await adapter.presign_upload("some-key", expires_in=timedelta(minutes=5))
+
+    assert excinfo.value.kind is ExceptionKind.PRECONDITION
+
+
+# ....................... #
+
+
+@pytest.mark.parametrize("method", ["copy", "move"])
+async def test_copy_move_refused_when_encryption_enabled(method: str) -> None:
+    # Server-side copy/move binds ciphertext to the source key via the AAD;
+    # copying to a new key would leave it undecryptable at the destination.
+    adapter = _adapter(_InMemoryStorageClient(), cipher=_keyring())
+
+    with pytest.raises(CoreException) as excinfo:
+        if method == "copy":
+            await adapter.copy("src-key", "dst-key")
+        else:
+            await adapter.move("src-key", "dst-key")
 
     assert excinfo.value.kind is ExceptionKind.PRECONDITION

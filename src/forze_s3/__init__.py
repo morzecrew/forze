@@ -13,6 +13,7 @@ require_s3()
 from .execution import (
     S3ClientDepKey,
     S3DepsModule,
+    S3ServerSideEncryption,
     S3StorageConfig,
     routed_s3_lifecycle_step,
     s3_lifecycle_step,
@@ -44,6 +45,7 @@ __all__ = [
     "s3_lifecycle_step",
     "routed_s3_lifecycle_step",
     "S3StorageConfig",
+    "S3ServerSideEncryption",
     "NamedResourceSpec",
     "coerce_named_resource_spec",
     "is_static_named_resource",

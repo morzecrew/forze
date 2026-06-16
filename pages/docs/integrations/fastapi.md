@@ -197,6 +197,59 @@ attach_storage_routes(
 )
 ```
 
+### Direct & resumable uploads over HTTP
+
+For large or direct uploads the application stays **out of the data path**: the
+browser (or an Uppy client) transfers bytes straight to/from the object store
+through short-lived presigned URLs, and the app only mints URLs and orchestrates
+the session. `build_storage_registry` already wires these ops; the same
+`attach_storage_routes` call projects them when they are registered (JSON-body
+`POST`s; `rest` paths shown):
+
+- `POST /files/presign/download` → a presigned `GET` url (`{key, expires_in}`).
+- `POST /files/presign/upload` → a presigned `PUT` url + headers
+  (`{key, expires_in, content_type?}`).
+- `POST /files/uploads` (201) → a multipart session `{key, upload_id, ...}`.
+- `POST /files/uploads/parts/url` → a presigned `PUT` url for one part
+  (`{session, part_number, expires_in}`).
+- `POST /files/uploads/parts` → the parts already uploaded (`{session}`) — the
+  resume primitive.
+- `POST /files/uploads/complete` → the assembled object's head
+  (`{session, parts}`).
+- `POST /files/uploads/abort` (204) → discard an unfinished session.
+
+The browser flow for a resumable multipart upload:
+
+1. **begin** — `POST /files/uploads` with the target key; keep the returned
+   `upload_id` (it is the resume/complete handle — round-trip it on every later
+   call).
+2. **request part URLs** — for each part, `POST /files/uploads/parts/url` with
+   the session and a 1-indexed `part_number`.
+3. **PUT parts** — the browser `PUT`s each part's bytes **directly and in
+   parallel** to its presigned URL (the app never sees the bytes). To resume an
+   interrupted upload, `POST /files/uploads/parts` to learn which parts landed,
+   then presign only the missing ones.
+4. **complete** — `POST /files/uploads/complete` with the session and the part
+   list (each part carries the `etag` the client got back from its `PUT`); the
+   response is the assembled object's head.
+
+!!! warning "Guard these endpoints — and never log the URL"
+
+    Minting an upload URL (or beginning a multipart session) **grants write to a
+    key**, so these endpoints should sit behind authn/authz — treat them like the
+    `deactivate` route. `presign_upload` and every multipart-session op are
+    *command* ops, so you can bind `AuthnRequired` + authz hooks on them in your
+    registry (they then show up protected under `apply_openapi_security`). The
+    minted URL is a **bearer credential**: it appears in the response body the
+    client needs but is never logged (the access-log middleware logs only request
+    path/status/duration, never the response body) — prefer short `expires_in`
+    windows.
+
+    A presign/multipart op on a **client-side-encrypting** route is refused by the
+    adapter (the app never sees the bytes, so it cannot encrypt them) and the
+    error propagates to a normal error status. **Server-side** (SSE/CMEK)
+    encryption is transparent and does not refuse.
+
 `attach_authn_routes` projects an authn registry (`build_authn_registry`) the
 same way. Authn flows are RPC-shaped with one natural surface each, so there is
 no style choice — fixed action paths: `POST /login` and `POST /refresh` (200,

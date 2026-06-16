@@ -25,7 +25,7 @@ _fallback = fallback_exception_mapper("S3")
 
 
 @static_fn_conformity(ExceptionMapper)  # type: ignore[type-abstract]
-def _s3_eh(
+def _s3_eh(  # skipcq: PY-R1000
     exc: BaseException,
     *,
     site: str,

@@ -25,7 +25,7 @@ _fallback = fallback_exception_mapper("SQS")
 
 
 @static_fn_conformity(ExceptionMapper)  # type: ignore[type-abstract]
-def _sqs_eh(
+def _sqs_eh(  # skipcq: PY-R1000
     exc: BaseException,
     *,
     site: str,

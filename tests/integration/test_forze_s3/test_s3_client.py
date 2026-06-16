@@ -38,7 +38,7 @@ async def test_s3_client_bucket_and_object_crud(
         assert head.size == len(data)
 
         downloaded = await s3_client.download_bytes(s3_bucket, key)
-        assert downloaded == data
+        assert downloaded.data == data
 
         items, total_count = await s3_client.list_objects(
             bucket=s3_bucket,
@@ -115,7 +115,7 @@ async def test_sequential_operations_reuse_single_aiobotocore_client(
             await client.upload_bytes(bucket, "reuse/key.txt", b"payload")
 
         async with client.client():
-            assert await client.download_bytes(bucket, "reuse/key.txt") == b"payload"
+            assert (await client.download_bytes(bucket, "reuse/key.txt")).data == b"payload"
 
         assert create_calls == 1
 

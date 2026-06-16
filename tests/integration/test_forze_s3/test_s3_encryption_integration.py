@@ -40,7 +40,7 @@ async def test_s3_encrypted_upload_is_ciphertext_at_rest(
 
     # Raw object in the bucket is an envelope, not the plaintext.
     async with s3_client.client():
-        raw = await s3_client.download_bytes(bucket=s3_bucket, key=stored.key)
+        raw = (await s3_client.download_bytes(bucket=s3_bucket, key=stored.key)).data
 
     assert raw != b"top-secret-payload"
     assert is_envelope(raw)

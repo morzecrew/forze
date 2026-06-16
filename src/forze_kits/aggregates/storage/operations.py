@@ -21,3 +21,24 @@ class StorageKernelOp(StrEnum):
 
     DELETE = "delete"
     """Delete an object from a bucket."""
+
+    PRESIGN_DOWNLOAD = "presign_download"
+    """Mint a time-limited URL for downloading an object directly (read grant)."""
+
+    PRESIGN_UPLOAD = "presign_upload"
+    """Mint a time-limited URL for uploading an object directly (write grant)."""
+
+    BEGIN_UPLOAD = "begin_upload"
+    """Open a resumable multipart upload session."""
+
+    PRESIGN_PART = "presign_part"
+    """Mint a time-limited URL for uploading one multipart part directly."""
+
+    LIST_PARTS = "list_parts"
+    """List the parts already uploaded for a multipart session (resume primitive)."""
+
+    COMPLETE_UPLOAD = "complete_upload"
+    """Assemble the uploaded parts into the final object."""
+
+    ABORT_UPLOAD = "abort_upload"
+    """Discard an unfinished multipart upload session."""

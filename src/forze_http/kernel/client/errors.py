@@ -14,8 +14,10 @@ from forze.base.exceptions import (
     ExceptionInterceptor,
     ExceptionMapper,
     default_chain_exc_mapper,
-    exc as forze_exc,
     fallback_exception_mapper,
+)
+from forze.base.exceptions import (
+    exc as forze_exc,
 )
 
 # ----------------------- #
@@ -36,7 +38,7 @@ def _response_status(exc: BaseException) -> int | None:
 
 
 @static_fn_conformity(ExceptionMapper)  # type: ignore[type-abstract]
-def _httpx_eh(
+def _httpx_eh(  # skipcq: PY-R1000
     exc: BaseException,
     *,
     site: str,

@@ -1,15 +1,19 @@
 """Shared object-storage adapter implementing the storage query and command ports."""
 
 import asyncio
+import builtins
 import mimetypes
 import re
-from collections.abc import Awaitable, Callable
-from datetime import timedelta
+from collections.abc import Awaitable, Callable, Sequence
+from contextlib import suppress
+from datetime import datetime, timedelta
+from typing import Mapping
 from uuid import UUID
 
 import attrs
 import msgspec
 
+from forze.application.contracts.crypto import BytesCipherPort
 from forze.application.contracts.resolution import (
     NamedResourceSpec,
     is_static_named_resource,
@@ -18,17 +22,27 @@ from forze.application.contracts.resolution import (
 from forze.application.contracts.storage.ports import (
     StorageCommandPort,
     StorageQueryPort,
+    StorageUploadSessionPort,
 )
 from forze.application.contracts.storage.value_objects import (
     DownloadedObject,
+    ObjectHead,
     ObjectMetadata,
     PresignedUrl,
+    RangedDownload,
     StoredObject,
     UploadedObject,
+    UploadPart,
+    UploadSession,
 )
-from forze.application.contracts.crypto import BytesCipherPort
 from forze.application.contracts.tenancy import TenancyMixin, TenantIdentity
-from forze.application.integrations.storage.client import ObjectStorageClientPort
+from forze.application.integrations.storage.client import (
+    ObjectStorageClientPort,
+    ObjectStorageHead,
+    ObjectStoragePartInfo,
+    ObjectStorageSSE,
+    validate_range,
+)
 from forze.application.integrations.storage.codec import default_path_codec
 from forze.application.integrations.storage.metadata import (
     object_metadata_from_user_metadata,
@@ -45,12 +59,39 @@ default_b64_codec = AsciiB64Codec()
 # ....................... #
 
 
+def _reject_duplicate_part_numbers(parts: Sequence[UploadPart]) -> None:
+    """Reject a parts list with a repeated ``part_number`` before assembly.
+
+    Duplicate part numbers would silently corrupt the assembled object (a later
+    part overwriting an earlier one, or both being composed), so fail closed.
+    """
+
+    seen: set[int] = set()
+
+    for part in parts:
+        if part.part_number in seen:
+            raise exc.validation(
+                f"Duplicate part_number in complete_upload: {part.part_number}",
+            )
+
+        seen.add(part.part_number)
+
+
+# ....................... #
+
+
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class ObjectStorageAdapter(StorageQueryPort, StorageCommandPort, TenancyMixin):
+class ObjectStorageAdapter(
+    StorageQueryPort,
+    StorageCommandPort,
+    StorageUploadSessionPort,
+    TenancyMixin,
+):
     """Storage adapter that persists files in an object-storage bucket.
 
-    Implements both :class:`~forze.application.contracts.storage.StorageQueryPort`
-    and :class:`~forze.application.contracts.storage.StorageCommandPort`.
+    Implements :class:`~forze.application.contracts.storage.StorageQueryPort`,
+    :class:`~forze.application.contracts.storage.StorageCommandPort`, and
+    :class:`~forze.application.contracts.storage.StorageUploadSessionPort`.
     Object keys are built from an optional tenant prefix, a user-supplied
     prefix, and a key generator (defaults to UUID v7). Filenames and
     descriptions are base-64 encoded into user metadata.
@@ -80,6 +121,16 @@ class ObjectStorageAdapter(StorageQueryPort, StorageCommandPort, TenancyMixin):
     bytes are encrypted before upload and decrypted after download; presigned
     URLs are refused (they bypass this adapter)."""
 
+    sse: ObjectStorageSSE | None = None
+    """Optional **server-side** (backend, at-rest) encryption request, threaded
+    per-call to the client on every write/direct-upload path (upload, copy,
+    move, presign-upload, multipart begin/complete). This is the *at-rest* axis:
+    the backend encrypts the stored bytes (S3 SSE-S3/SSE-KMS, GCS per-object
+    CMEK), the app holds no keys, so it is compatible with — and does **not**
+    trigger the refusals of — :attr:`cipher` (client-side envelope). ``None``
+    leaves the bucket's default encryption in effect. Set from per-route config
+    by the integration factory."""
+
     # ....................... #
 
     def _cipher_tenant(self) -> TenantIdentity | None:
@@ -89,10 +140,7 @@ class ObjectStorageAdapter(StorageQueryPort, StorageCommandPort, TenancyMixin):
         # the no-tenant key.
         tenant_id = self._tenant_id_for_resolve()
 
-        if tenant_id is None:
-            return None
-
-        return TenantIdentity(tenant_id=tenant_id)
+        return None if tenant_id is None else TenantIdentity(tenant_id=tenant_id)
 
     # ....................... #
 
@@ -113,6 +161,30 @@ class ObjectStorageAdapter(StorageQueryPort, StorageCommandPort, TenancyMixin):
                 "Presigned URLs are unavailable when client-side encryption is "
                 "enabled: bytes transferred directly to/from the object store "
                 "bypass the keyring and would be stored or served in the clear.",
+            )
+
+    # ....................... #
+
+    def _reject_multipart_when_encrypted(self) -> None:
+        if self.cipher is not None:
+            raise exc.configuration(
+                "Multipart upload sessions are unavailable when client-side "
+                "encryption is enabled: the application never sees the part "
+                "bytes (the client uploads them directly via presigned URLs), "
+                "so it cannot encrypt them and the object would be stored in "
+                "the clear.",
+            )
+
+    # ....................... #
+
+    def _reject_copy_when_encrypted(self) -> None:
+        if self.cipher is not None:
+            raise exc.precondition(
+                "Server-side copy/move is unavailable when client-side "
+                "encryption is enabled: the encryption AAD binds the ciphertext "
+                "to the source object key, so a copy to a new key would be "
+                "undecryptable at the destination. Re-encrypt by downloading and "
+                "re-uploading through this port instead.",
             )
 
     # ....................... #
@@ -148,10 +220,7 @@ class ObjectStorageAdapter(StorageQueryPort, StorageCommandPort, TenancyMixin):
     def __tenant_prefix(self) -> str | None:
         tenant_id = self.require_tenant_if_aware()
 
-        if tenant_id is not None:
-            return f"tenant_{tenant_id}"
-
-        return None
+        return f"tenant_{tenant_id}" if tenant_id is not None else None
 
     # ....................... #
 
@@ -176,8 +245,10 @@ class ObjectStorageAdapter(StorageQueryPort, StorageCommandPort, TenancyMixin):
 
         if prefix is None:
             parts = (key,)
+
         elif isinstance(prefix, str):
             parts = (prefix, key)
+
         else:
             parts = (*prefix, key)
 
@@ -185,7 +256,8 @@ class ObjectStorageAdapter(StorageQueryPort, StorageCommandPort, TenancyMixin):
 
     # ....................... #
 
-    def _validate_prefix(self, prefix: str | None) -> None:
+    @staticmethod
+    def _validate_prefix(prefix: str | None) -> None:
         if prefix is None:
             return
 
@@ -194,7 +266,8 @@ class ObjectStorageAdapter(StorageQueryPort, StorageCommandPort, TenancyMixin):
 
     # ....................... #
 
-    def _validate_key(self, key: str) -> None:
+    @staticmethod
+    def _validate_key(key: str) -> None:
         """Reject object keys that could escape the bucket/tenant prefix.
 
         Keys minted by this adapter are a validated prefix plus a generated id, so a
@@ -210,6 +283,105 @@ class ObjectStorageAdapter(StorageQueryPort, StorageCommandPort, TenancyMixin):
 
         if key.startswith("/") or ".." in key.split("/"):
             raise exc.precondition(f"Unsafe object storage key: {key!r}")
+
+    # ....................... #
+
+    @staticmethod
+    def _key_basename(key: str) -> str:
+        """Last path segment of *key* (the key itself when it has no segment)."""
+
+        basename = key.rsplit("/", 1)[-1]
+
+        return basename or key
+
+    # ....................... #
+
+    def _filename_from_metadata(
+        self,
+        key: str,
+        metadata: Mapping[str, str],
+    ) -> str:
+        """Decode the filename from the object's metadata envelope.
+
+        When the envelope is present (objects written through :meth:`upload`)
+        the base-64-encoded filename is decoded. When it is absent — objects
+        written through a presigned ``PUT`` carry no envelope — the filename
+        falls back to the key's basename instead of raising, so the completion
+        seam (raw uploads) stays downloadable.
+        """
+
+        if not metadata:
+            return self._key_basename(key)
+
+        try:
+            meta = object_metadata_from_user_metadata(dict(metadata))
+
+        except CoreException:
+            raise
+
+        except Exception as e:
+            raise exc.internal("Invalid object metadata") from e
+
+        return default_b64_codec.loads(meta.filename)
+
+    # ....................... #
+
+    def _stored_from_head(
+        self,
+        key: str,
+        head: ObjectStorageHead,
+        listed_tags: Mapping[str, str] | None,
+    ) -> StoredObject:
+        """Build a :class:`StoredObject` from a listed object's head.
+
+        Honors the metadata envelope when present (objects written through
+        :meth:`upload`); for raw objects that carry **no** envelope — written
+        through a presigned ``PUT`` or assembled by ``complete_upload`` — it
+        falls back to honest head fields (basename for the filename, head size
+        and last-modified) instead of raising, mirroring :meth:`download`.
+
+        Tags either ride on the listed object (S3 with ``include_tags=True``)
+        or on the head (GCS, which round-trips them for free); the listed-object
+        tags win when present.
+        """
+
+        tags = (
+            dict(listed_tags)
+            if listed_tags
+            else (dict(head.tags) if head.tags else None)
+        )
+
+        if not head.metadata:
+            return StoredObject(
+                key=key,
+                filename=self._key_basename(key),
+                description=None,
+                content_type=head.content_type,
+                size=head.size,
+                created_at=head.last_modified or utcnow(),
+                tags=tags,
+            )
+
+        try:
+            meta = object_metadata_from_user_metadata(dict(head.metadata))
+
+        except CoreException:
+            raise
+
+        except Exception as e:
+            raise exc.internal("Invalid object metadata") from e
+
+        return StoredObject(
+            key=key,
+            filename=default_b64_codec.loads(meta.filename),
+            description=(
+                default_b64_codec.loads(meta.description) if meta.description else None
+            ),
+            content_type=head.content_type,
+            size=meta.size,
+            created_at=meta.created_at,
+            tags=tags,
+        )
 
     # ....................... #
 
@@ -264,6 +436,7 @@ class ObjectStorageAdapter(StorageQueryPort, StorageCommandPort, TenancyMixin):
                 content_type=content_type,
                 metadata=safe_meta,
                 tags=tags,
+                sse=self.sse,
             )
 
         return StoredObject(
@@ -279,27 +452,22 @@ class ObjectStorageAdapter(StorageQueryPort, StorageCommandPort, TenancyMixin):
     # ....................... #
 
     async def download(self, key: str) -> DownloadedObject:
-        """Download an object by key and return its data with metadata."""
+        """Download an object by key and return its data with metadata.
+
+        The body's content type and user metadata come back on the same ``GET``
+        (no separate head call). When the metadata envelope is present its
+        filename/description are decoded as on :meth:`upload`; when it is absent
+        — an object written through a presigned ``PUT`` (the completion seam) —
+        the filename falls back to the key's basename instead of raising.
+        """
 
         self._validate_key(key)
         bucket = await self._resolved_bucket()
 
         async with self.client.client():
-            h = await self.client.head_object(bucket=bucket, key=key)
+            body = await self.client.download_bytes(bucket=bucket, key=key)
 
-            if not h.metadata:
-                raise exc.internal("Invalid object metadata")
-
-            try:
-                meta = object_metadata_from_user_metadata(dict(h.metadata))
-
-            except CoreException:
-                raise
-
-            except Exception as e:
-                raise exc.internal("Invalid object metadata") from e
-
-            data = await self.client.download_bytes(bucket=bucket, key=key)
+            data = body.data
 
             # Decrypt only when encryption is enabled AND the bytes are an
             # envelope — objects written before encryption was turned on are
@@ -310,11 +478,157 @@ class ObjectStorageAdapter(StorageQueryPort, StorageCommandPort, TenancyMixin):
                     aad=self._encryption_aad(bucket, key),
                 )
 
+            filename = self._filename_from_metadata(key, body.metadata)
+
             return DownloadedObject(
                 data=data,
-                content_type=h.content_type,
-                filename=default_b64_codec.loads(meta.filename),
+                content_type=body.content_type,
+                filename=filename,
             )
+
+    # ....................... #
+
+    async def head(
+        self,
+        key: str,
+        *,
+        include_tags: bool = False,
+    ) -> ObjectHead:
+        """Fetch an object's honest head/metadata view by key.
+
+        Validates the key (same traversal/charset rules as :meth:`download`)
+        and resolves the tenant-aware bucket, then surfaces the client's
+        ``head_object`` result as a public :class:`ObjectHead`. Unlike
+        :meth:`download` / :meth:`list`, this does **not** decode the metadata
+        envelope, so it works for objects stored through a presigned ``PUT``
+        (which carry no envelope) — the completion seam for direct uploads.
+
+        ``include_tags`` is threaded to the client with the same guarantee
+        semantics as :meth:`list` (S3 pays an extra ``GetObjectTagging`` call
+        when ``True``; GCS/mock include tags for free).
+        """
+
+        self._validate_key(key)
+        bucket = await self._resolved_bucket()
+
+        async with self.client.client():
+            h = await self.client.head_object(
+                bucket=bucket,
+                key=key,
+                include_tags=include_tags,
+            )
+
+        return ObjectHead(
+            content_type=h.content_type,
+            size=h.size,
+            etag=h.etag,
+            last_modified=h.last_modified,
+            metadata=dict(h.metadata),
+            tags=dict(h.tags),
+        )
+
+    # ....................... #
+
+    async def download_range(
+        self,
+        key: str,
+        *,
+        start: int,
+        end: int | None = None,
+    ) -> RangedDownload:
+        """Download an inclusive byte range of an object.
+
+        Validates the key and the range window (``start >= 0``, ``end >=
+        start``), resolves the tenant-aware bucket, then delegates the ranged
+        ``GET`` to the client. An unsatisfiable range (``start`` beyond the
+        object) surfaces as a precondition error (the 416 equivalent).
+
+        Refused when client-side encryption is enabled: a slice of an encryption
+        envelope cannot be decrypted, so a partial read would return ciphertext.
+        """
+
+        if self.cipher is not None:
+            raise exc.precondition(
+                "Ranged downloads are unavailable when client-side encryption "
+                "is enabled: a byte slice of the encryption envelope cannot be "
+                "decrypted.",
+            )
+
+        validate_range(start, end)
+        self._validate_key(key)
+        bucket = await self._resolved_bucket()
+
+        async with self.client.client():
+            body, content_range, total = await self.client.download_range_bytes(
+                bucket=bucket,
+                key=key,
+                start=start,
+                end=end,
+            )
+
+        return RangedDownload(
+            data=body.data,
+            content_type=body.content_type,
+            content_range=content_range,
+            total_size=total,
+        )
+
+    # ....................... #
+
+    async def download_if_changed(
+        self,
+        key: str,
+        *,
+        if_none_match: str | None = None,
+        if_modified_since: datetime | None = None,
+    ) -> DownloadedObject | None:
+        """Conditionally download an object, returning ``None`` when unchanged.
+
+        Validates the key and that at least one condition is supplied, resolves
+        the tenant-aware bucket, then issues a conditional ``GET`` through the
+        client. ``None`` is the not-modified answer (HTTP 304 equivalent). When
+        a body comes back its filename is decoded from the metadata envelope
+        (same as :meth:`download`) — or falls back to the key's basename for
+        raw/presigned objects with no envelope — and encryption envelopes are
+        decrypted. The body's content type and metadata come back on the same
+        conditional ``GET`` (no separate head call).
+        """
+
+        if if_none_match is None and if_modified_since is None:
+            raise exc.validation(
+                "download_if_changed requires at least one of if_none_match / "
+                "if_modified_since",
+            )
+
+        self._validate_key(key)
+        bucket = await self._resolved_bucket()
+
+        async with self.client.client():
+            body = await self.client.download_bytes_conditional(
+                bucket=bucket,
+                key=key,
+                if_none_match=if_none_match,
+                if_modified_since=if_modified_since,
+            )
+
+            if body is None:
+                return None
+
+            data = body.data
+
+            if self.cipher is not None and is_envelope(data):
+                data = await self.cipher.decrypt(
+                    data,
+                    aad=self._encryption_aad(bucket, key),
+                )
+
+            filename = self._filename_from_metadata(key, body.metadata)
+
+        return DownloadedObject(
+            data=data,
+            content_type=body.content_type,
+            filename=filename,
+        )
 
     # ....................... #
 
@@ -385,6 +699,7 @@ class ObjectStorageAdapter(StorageQueryPort, StorageCommandPort, TenancyMixin):
                 key=key,
                 expires_in=expires_in,
                 content_type=content_type,
+                sse=self.sse,
             )
 
     # ....................... #
@@ -397,6 +712,107 @@ class ObjectStorageAdapter(StorageQueryPort, StorageCommandPort, TenancyMixin):
 
         async with self.client.client():
             await self.client.delete_object(bucket=bucket, key=key)
+
+    # ....................... #
+
+    async def copy(self, src_key: str, dst_key: str) -> ObjectHead:
+        """Server-side copy *src_key* to *dst_key* within the resolved bucket.
+
+        Both keys are validated (traversal/charset) before anything is copied,
+        and the bucket is tenant-resolved exactly like :meth:`download`. The
+        copy is server-side (no bytes through the app); the returned head is a
+        fresh ``head_object`` on the destination. Same-bucket only.
+
+        Refused when client-side encryption is enabled: the encryption AAD binds
+        the ciphertext to the source key, so a server-side copy to a new key
+        produces an object that cannot be decrypted at the destination.
+        """
+
+        self._reject_copy_when_encrypted()
+        self._validate_key(src_key)
+        self._validate_key(dst_key)
+        bucket = await self._resolved_bucket()
+
+        async with self.client.client():
+            await self.client.copy_object(
+                bucket=bucket,
+                src_key=src_key,
+                dst_key=dst_key,
+                sse=self.sse,
+            )
+            h = await self.client.head_object(bucket=bucket, key=dst_key)
+
+        return ObjectHead(
+            content_type=h.content_type,
+            size=h.size,
+            etag=h.etag,
+            last_modified=h.last_modified,
+            metadata=dict(h.metadata),
+            tags=dict(h.tags),
+        )
+
+    # ....................... #
+
+    async def move(self, src_key: str, dst_key: str) -> ObjectHead:
+        """Move *src_key* to *dst_key* (copy then delete source; non-atomic).
+
+        Both keys are validated and the bucket tenant-resolved like
+        :meth:`copy`. Implemented as a server-side copy followed by a delete of
+        the source: a crash between the two leaves both keys present. The
+        destination head is taken before the source delete, so the returned
+        value reflects the copied object.
+
+        Refused when client-side encryption is enabled (same reason as
+        :meth:`copy` — the AAD binds ciphertext to the source key).
+        """
+
+        self._reject_copy_when_encrypted()
+        self._validate_key(src_key)
+        self._validate_key(dst_key)
+        bucket = await self._resolved_bucket()
+
+        async with self.client.client():
+            await self.client.copy_object(
+                bucket=bucket,
+                src_key=src_key,
+                dst_key=dst_key,
+                sse=self.sse,
+            )
+            h = await self.client.head_object(bucket=bucket, key=dst_key)
+            if src_key != dst_key:
+                await self.client.delete_object(bucket=bucket, key=src_key)
+
+        return ObjectHead(
+            content_type=h.content_type,
+            size=h.size,
+            etag=h.etag,
+            last_modified=h.last_modified,
+            metadata=dict(h.metadata),
+            tags=dict(h.tags),
+        )
+
+    # ....................... #
+
+    async def put_object_tags(
+        self,
+        key: str,
+        tags: Mapping[str, str],
+    ) -> None:
+        """Replace an object's tags (full replacement) by key.
+
+        Validates the key (traversal/charset) and resolves the tenant-aware
+        bucket, then delegates the tag replacement to the client.
+        """
+
+        self._validate_key(key)
+        bucket = await self._resolved_bucket()
+
+        async with self.client.client():
+            await self.client.put_object_tags(
+                bucket=bucket,
+                key=key,
+                tags=dict(tags),
+            )
 
     # ....................... #
 
@@ -444,43 +860,184 @@ class ObjectStorageAdapter(StorageQueryPort, StorageCommandPort, TenancyMixin):
                 *(self.client.head_object(bucket=bucket, key=o.key) for o in objects)
             )
 
-            out: list[StoredObject] = []
-
-            for o, h in zip(objects, heads, strict=True):
-                if not h.metadata:
-                    raise exc.internal("Invalid object metadata")
-
-                try:
-                    meta = object_metadata_from_user_metadata(dict(h.metadata))
-
-                except CoreException:
-                    raise
-
-                except Exception as e:
-                    raise exc.internal("Invalid object metadata") from e
-
-                # Tags either ride on the listed object (S3 with
-                # ``include_tags=True``) or on the head metadata (GCS, which
-                # round-trips them for free); prefer the listed-object tags.
-                tags = dict(o.tags) if o.tags else (dict(h.tags) if h.tags else None)
-
-                out.append(
-                    StoredObject(
-                        key=o.key,
-                        filename=default_b64_codec.loads(meta.filename),
-                        description=(
-                            default_b64_codec.loads(meta.description)
-                            if meta.description
-                            else None
-                        ),
-                        content_type=h.content_type,
-                        size=meta.size,
-                        created_at=meta.created_at,
-                        tags=tags,
-                    )
-                )
+            out = [
+                self._stored_from_head(o.key, h, o.tags)
+                for o, h in zip(objects, heads, strict=True)
+            ]
 
         return out, total_count
+
+    # ....................... #
+
+    async def begin_upload(
+        self,
+        key: str,
+        *,
+        content_type: str | None = None,
+    ) -> UploadSession:
+        """Open a resumable multipart upload session targeting *key*.
+
+        Refused on a client-side-encrypting route (the app never sees the part
+        bytes, so it cannot encrypt them). Validates the key like
+        :meth:`upload`, resolves and ensures the tenant bucket, then opens the
+        backend session and returns the :class:`UploadSession` handle whose
+        ``upload_id`` the caller must persist.
+        """
+
+        self._reject_multipart_when_encrypted()
+        self._validate_key(key)
+        bucket = await self._resolved_bucket()
+
+        async with self.client.client():
+            await self.client.ensure_bucket(bucket)
+
+            upload_id = await self.client.create_multipart_upload(
+                bucket=bucket,
+                key=key,
+                content_type=content_type,
+                sse=self.sse,
+            )
+
+        return UploadSession(
+            key=key,
+            upload_id=upload_id,
+            bucket=bucket,
+            content_type=content_type,
+        )
+
+    # ....................... #
+
+    async def presign_part(
+        self,
+        session: UploadSession,
+        part_number: int,
+        *,
+        expires_in: timedelta,
+    ) -> PresignedUrl:
+        """Mint a time-limited ``PUT`` URL for one part (``part_number >= 1``).
+
+        Refused on an encrypting route. Validates the session key and that
+        ``part_number >= 1``, resolves the tenant bucket, then signs the part
+        ``PUT``. The URL is a bearer credential — short ``expires_in``.
+        """
+
+        self._reject_multipart_when_encrypted()
+
+        if part_number < 1:
+            raise exc.validation(
+                f"Multipart part_number must be >= 1, got {part_number}",
+            )
+
+        self._validate_key(session.key)
+        bucket = await self._resolved_bucket()
+
+        async with self.client.client():
+            return await self.client.presign_multipart_part(
+                bucket=bucket,
+                key=session.key,
+                upload_id=session.upload_id,
+                part_number=part_number,
+                expires_in=expires_in,
+            )
+
+    # ....................... #
+
+    async def list_parts(self, session: UploadSession) -> builtins.list[UploadPart]:
+        """List the parts that already landed for *session* (the resume primitive)."""
+
+        self._reject_multipart_when_encrypted()
+        self._validate_key(session.key)
+        bucket = await self._resolved_bucket()
+
+        async with self.client.client():
+            parts = await self.client.list_multipart_parts(
+                bucket=bucket,
+                key=session.key,
+                upload_id=session.upload_id,
+            )
+
+        return [
+            UploadPart(
+                part_number=p.part_number,
+                etag=p.etag,
+                size=p.size,
+            )
+            for p in parts
+        ]
+
+    # ....................... #
+
+    async def complete_upload(
+        self,
+        session: UploadSession,
+        parts: Sequence[UploadPart],
+    ) -> ObjectHead:
+        """Assemble *parts* into the final object and return its head.
+
+        Refused on an encrypting route. Validates the session key, resolves the
+        tenant bucket, completes the backend upload (S3
+        ``CompleteMultipartUpload`` with the ``{part_number, etag}`` list; GCS
+        chained ``compose`` in part-number order + temp cleanup), then heads the
+        assembled object.
+        """
+
+        self._reject_multipart_when_encrypted()
+        self._validate_key(session.key)
+
+        if not parts:
+            raise exc.validation(
+                "complete_upload requires at least one part",
+            )
+
+        _reject_duplicate_part_numbers(parts)
+
+        bucket = await self._resolved_bucket()
+
+        client_parts = [
+            ObjectStoragePartInfo(
+                part_number=p.part_number,
+                etag=p.etag,
+                size=p.size,
+            )
+            for p in sorted(parts, key=lambda p: p.part_number)
+        ]
+
+        async with self.client.client():
+            await self.client.complete_multipart_upload(
+                bucket=bucket,
+                key=session.key,
+                upload_id=session.upload_id,
+                parts=client_parts,
+                content_type=session.content_type,
+                sse=self.sse,
+            )
+
+            h = await self.client.head_object(bucket=bucket, key=session.key)
+
+        return ObjectHead(
+            content_type=h.content_type,
+            size=h.size,
+            etag=h.etag,
+            last_modified=h.last_modified,
+            metadata=dict(h.metadata),
+            tags=dict(h.tags),
+        )
+
+    # ....................... #
+
+    async def abort_upload(self, session: UploadSession) -> None:
+        """Discard an unfinished session and free its in-progress data."""
+
+        self._reject_multipart_when_encrypted()
+        self._validate_key(session.key)
+        bucket = await self._resolved_bucket()
+
+        async with self.client.client():
+            await self.client.abort_multipart_upload(
+                bucket=bucket,
+                key=session.key,
+                upload_id=session.upload_id,
+            )
 
     # ....................... #
 
@@ -513,15 +1070,10 @@ def guess_content_type_with_magic(filename: str, data: bytes) -> str:
     the package being absent) this falls back to extension-based guessing.
     """
 
-    try:
+    with suppress(Exception):  # nosec B110
         import magic
 
-        ct_magic = magic.from_buffer(data, mime=True)
-
-        if ct_magic:
+        if ct_magic := magic.from_buffer(data, mime=True):
             return ct_magic
-
-    except Exception:  # nosec B110
-        pass
 
     return _guess_content_type_from_name(filename)
