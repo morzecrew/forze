@@ -316,7 +316,9 @@ def _parse_byte_range(
 
         suffix = int(last)
 
-        if suffix == 0:
+        # A zero-length suffix, or any suffix against an empty body, has no
+        # bytes to serve (the latter would otherwise yield ``bytes 0--1/0``).
+        if suffix == 0 or total == 0:
             return _UNSATISFIABLE
 
         start = max(0, total - suffix)

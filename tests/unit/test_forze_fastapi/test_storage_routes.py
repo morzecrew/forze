@@ -319,6 +319,19 @@ class TestStorageDownloadRangeAndConditional:
             assert resp.content == b"0123456789"
             assert "content-range" not in resp.headers
 
+    def test_suffix_range_on_empty_body_returns_416(self) -> None:
+        client = TestClient(_build_app("rest"))
+        stored = client.post(
+            "/files",
+            files={"file": ("empty.bin", b"", "application/octet-stream")},
+        ).json()
+
+        resp = client.get(f"/files/{stored['key']}", headers={"Range": "bytes=-5"})
+
+        # No bytes to serve: 416 with a valid ``*/0`` header, never ``0--1/0``.
+        assert resp.status_code == 416
+        assert resp.headers["content-range"] == "bytes */0"
+
     def test_if_none_match_matching_etag_returns_304(self) -> None:
         client = TestClient(_build_app("rest"))
         stored = self._upload(client)

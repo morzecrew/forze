@@ -100,7 +100,7 @@ class Document(CoreModel):
 
         for k, v in data.items():
             if k not in fields:
-                raise exc.domain(f"Field {k} is frozen and not allowed for update.")
+                raise exc.domain(f"Field {k} is not found in the model.")
 
             if fields[k].frozen:
                 raise exc.domain(f"Field {k} is frozen and not allowed for update.")
