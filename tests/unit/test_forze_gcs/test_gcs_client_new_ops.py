@@ -203,3 +203,30 @@ async def test_put_object_tags_clears_old_and_sets_new() -> None:
     assert patched[f"{TAG_METADATA_PREFIX}old"] is None
     assert patched[f"{TAG_METADATA_PREFIX}new"] == "2"
     assert "filename" not in patched
+
+
+# ----------------------- #
+# list_objects
+
+
+@pytest.mark.asyncio
+async def test_list_objects_filters_multipart_scaffolding() -> None:
+    """Compose-based multipart temp parts must not surface as listed objects."""
+
+    fake = MagicMock()
+    bucket_ref = MagicMock()
+    bucket_ref.list_blobs = AsyncMock(
+        return_value=[
+            "docs/a.txt",
+            "docs/b.txt.__forze_mpu__/sess-1/1",
+            "docs/b.txt.__forze_mpu__/sess-1/2",
+            "docs/c.txt",
+        ],
+    )
+    fake.get_bucket = MagicMock(return_value=bucket_ref)
+    client = _client(fake)
+
+    items, total = await client.list_objects("b", prefix="docs/")
+
+    assert [i.key for i in items] == ["docs/a.txt", "docs/c.txt"]
+    assert total == 2

@@ -177,12 +177,17 @@ def _download_endpoint(
         range_header = request.headers.get("range")
 
         if range_header is not None:
-            return _ranged_response(
+            ranged = _ranged_response(
                 body,
                 obj.content_type,
                 range_header,
                 base_headers,
             )
+
+            # ``None`` => the Range is malformed or names an unknown unit; per
+            # RFC 7233 it is ignored and the full body is served (200 below).
+            if ranged is not None:
+                return ranged
 
         return Response(
             content=body,
@@ -233,18 +238,38 @@ def _is_not_modified(request: Request, etag: str) -> bool:
 # ....................... #
 
 
+class _Unsatisfiable:
+    """Sentinel: a well-formed byte range that does not overlap the body → 416.
+
+    Distinct from ``None``, which marks an unparseable Range or unknown unit
+    that RFC 7233 says to ignore (serve the full body, 200).
+    """
+
+
+_UNSATISFIABLE = _Unsatisfiable()
+
+
 def _ranged_response(
     body: bytes,
     content_type: str,
     range_header: str,
     base_headers: Mapping[str, str],
-) -> Response:
-    """Build a 206/416 response for a single ``bytes=`` range over *body*."""
+) -> Response | None:
+    """Build a 206/416 response for a single ``bytes=`` range over *body*.
+
+    Returns ``None`` when *range_header* is not a parseable single ``bytes=``
+    range (malformed syntax or an unknown unit); per RFC 7233 the caller then
+    ignores the header and serves the full body. A well-formed range that does
+    not overlap the body yields **416**.
+    """
 
     total = len(body)
     parsed = _parse_byte_range(range_header, total)
 
     if parsed is None:
+        return None
+
+    if isinstance(parsed, _Unsatisfiable):
         headers = {**base_headers, "Content-Range": f"bytes */{total}"}
         return Response(status_code=416, headers=headers)
 
@@ -263,13 +288,17 @@ def _ranged_response(
     )
 
 
-def _parse_byte_range(range_header: str, total: int) -> tuple[int, int] | None:
-    """Parse a single ``bytes=start-end`` range; ``None`` when unsatisfiable.
+def _parse_byte_range(
+    range_header: str,
+    total: int,
+) -> tuple[int, int] | _Unsatisfiable | None:
+    """Parse a single ``bytes=start-end`` range.
 
     Supports ``start-end``, ``start-`` (open-ended to EOF), and ``-suffix``
-    (last *suffix* bytes). Multi-range and non-``bytes`` units are ignored
-    (treated as no range by the caller's fallthrough — only well-formed single
-    ranges reach here).
+    (last *suffix* bytes). Returns ``None`` for a malformed range or an unknown
+    unit (multi-range, non-``bytes``, non-numeric positions) so the caller can
+    ignore it and serve the full body; returns :data:`_UNSATISFIABLE` for a
+    well-formed range that does not overlap the body (→ 416).
     """
 
     value = range_header.strip()
@@ -288,7 +317,7 @@ def _parse_byte_range(range_header: str, total: int) -> tuple[int, int] | None:
         suffix = int(last)
 
         if suffix == 0:
-            return None
+            return _UNSATISFIABLE
 
         start = max(0, total - suffix)
 
@@ -300,7 +329,7 @@ def _parse_byte_range(range_header: str, total: int) -> tuple[int, int] | None:
     start = int(first)
 
     if start >= total:
-        return None
+        return _UNSATISFIABLE
 
     if last == "":
         end = total - 1

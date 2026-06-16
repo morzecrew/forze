@@ -584,6 +584,12 @@ class GCSClient(GCSClientPort):
         bucket_ref = storage.get_bucket(bucket)
         keys = await bucket_ref.list_blobs(prefix=_prefix)
 
+        # Drop in-flight/orphaned multipart scaffolding: compose-based MPU stores
+        # temp parts at ``<key>.__forze_mpu__/<session>/<n>`` (no metadata
+        # envelope), which would otherwise surface as bogus listed objects and
+        # break the adapter's per-object metadata read.
+        keys = [k for k in keys if f".{MPU_NAMESPACE}/" not in k]
+
         total_count = len(keys)
         window = keys[_offset : _offset + _limit]
         items: list[ObjectStorageListedObject] = [

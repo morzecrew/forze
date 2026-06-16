@@ -83,7 +83,7 @@ class PresignDownloadRequestDTO(BaseDTO):
     key: str
     """Storage key of the object to download."""
 
-    expires_in: timedelta
+    expires_in: timedelta = Field(gt=timedelta(0), le=timedelta(days=7))
     """How long the minted URL stays valid (positive; backends cap at 7 days)."""
 
 
@@ -96,7 +96,7 @@ class PresignUploadRequestDTO(BaseDTO):
     key: str
     """Storage key to upload to."""
 
-    expires_in: timedelta
+    expires_in: timedelta = Field(gt=timedelta(0), le=timedelta(days=7))
     """How long the minted URL stays valid (positive; backends cap at 7 days)."""
 
     content_type: str | None = None
@@ -167,7 +167,7 @@ class UploadSessionDTO(BaseDTO):
 class UploadPartDTO(BaseDTO):
     """One multipart part the client carries back from its direct part PUT."""
 
-    part_number: int
+    part_number: int = Field(ge=1)
     """1-indexed position of this part (``>= 1``)."""
 
     etag: str = ""
@@ -187,10 +187,10 @@ class PresignPartRequestDTO(BaseDTO):
     session: UploadSessionDTO
     """The session handle returned by ``begin_upload`` (round-tripped)."""
 
-    part_number: int
+    part_number: int = Field(ge=1)
     """1-indexed part position to presign (``>= 1``)."""
 
-    expires_in: timedelta
+    expires_in: timedelta = Field(gt=timedelta(0), le=timedelta(days=7))
     """How long the part-upload URL stays valid (positive; capped at 7 days)."""
 
 

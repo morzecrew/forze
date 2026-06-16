@@ -308,6 +308,17 @@ class TestStorageDownloadRangeAndConditional:
         assert resp.status_code == 416
         assert resp.headers["content-range"] == "bytes */10"
 
+    def test_malformed_range_is_ignored_and_serves_full_body(self) -> None:
+        client = TestClient(_build_app("rest"))
+        stored = self._upload(client)
+
+        for bad in ("bytes=abc-5", "items=0-3", "bytes=0-2,5-7", "garbage"):
+            resp = client.get(f"/files/{stored['key']}", headers={"Range": bad})
+
+            assert resp.status_code == 200, bad
+            assert resp.content == b"0123456789"
+            assert "content-range" not in resp.headers
+
     def test_if_none_match_matching_etag_returns_304(self) -> None:
         client = TestClient(_build_app("rest"))
         stored = self._upload(client)
